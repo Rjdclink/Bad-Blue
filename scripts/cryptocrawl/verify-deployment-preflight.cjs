@@ -1,36 +1,39 @@
-const fs = require('fs');
+const { spawnSync } = require('child_process');
 const path = require('path');
-const root = path.resolve(__dirname, '../..');
-const read = p => fs.readFileSync(path.join(root, p), 'utf8');
-const req = (s,t) => { if (!s.includes(t)) process.exit(41); };
-const no = (s,t) => { if (s.includes(t)) process.exit(42); };
 
-const canonicalIndex=read('server/services/cryptocrawl/index.ts');
-const canonicalRuntime=read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
-const masterShim=read('server/services/cryptocrawl/integration/master-orchestrator-measured-wiring.ts');
-const masterPipeline=read('server/services/cryptocrawl/integration/master-pipeline.ts');
-const killSwitch=read('server/services/cryptocrawl/governance/kill-switch.ts');
-const enhanced=read('server/services/cryptocrawl/agents/enhanced-micro-crawler.ts');
-const swarm=read('server/services/cryptocrawl/agents/swarm-orchestrator.ts');
-const starburst=read('server/services/cryptocrawl/agents/starburst-replication.ts');
-const snake=read('server/services/cryptocrawl/agents/starburst-snake.ts');
-const readiness=read('server/services/cryptocrawl/execution/execution-readiness.ts');
-const relay=read('server/services/cryptocrawl/execution/multi-relay-submitter.ts');
+const root = path.resolve(__dirname, '..', '..');
+const safeEnv = {
+  ...process.env,
+  NO_EXECUTION: 'true',
+  NO_INTERVALS: 'true',
+  CRYPTARA_MODE: 'SILENT_WATCHER_ONLY',
+};
 
-for (const t of ['CryptoCrawler canonical public surface','ensureCanonicalCryptoCrawlerRuntimeWiring','ensureAuthoritativeMonteCarloWiring','canonicalExecutionScheduler','assessCanonicalExecutionEnvironment']) req(canonicalIndex,t);
-for (const t of ['assessSharedExecutionEnvironment','getSharedExecutionCapabilities','SixCaneSystem','sixCaneSystem','DivineOptimizationEngine','StarburstEngine','EdenStorage','ELITE_STRATEGIES','MARKET_CONDITIONS','swarmIntelligence','CryptocrawlerAIHarmony',"from './core/lux-swarm","from './core/master-orchestrator"]) no(canonicalIndex,t);
-for (const t of ['master-orchestrator','lux-swarm','eden/service','starburst']) no(canonicalRuntime,t);
-req(canonicalRuntime,'executionAuthorityGranted: false');
-req(masterShim,'ensureCanonicalCryptoCrawlerRuntimeWiring()'); no(masterShim,'../core/master-orchestrator');
-for (const t of ["from '../core/lux-swarm",'StealthSuperiority','TripleDipExtractor','ReinforcementLearningBidder','assessSharedExecutionEnvironment']) no(masterPipeline,t);
-for (const t of ['canonicalExecutionScheduler','assessCanonicalExecutionEnvironment']) req(masterPipeline,t);
-for (const t of ['normalizePrivateKey(process.env.FLASHBOTS_AUTH_KEY)','privateRelayOptional: true','[krakenConfigured, okxConfigured, coinbaseConfigured].filter(Boolean).length >= 2','!noExecutionGuardEnabled && liveExecutionEnabled && liveExecutionConfirmed']) req(readiness,t);
-no(readiness,'flashbotsAuthConfigured = rpcConfigured');
-for (const t of ['direct broadcast remains authoritative','process.env.FLASHBOTS_AUTH_KEY?.trim()','providers.size === 0']) req(relay,t); no(relay,'randomBytes');
-no(killSwitch,'../eden/'); no(killSwitch,'../agents/swarm-orchestrator'); req(killSwitch,'stageManager.pause'); req(killSwitch,'riskGovernor.exportState');
-for (const s of [enhanced,swarm,starburst,snake]) { req(s,'COMPATIBILITY SHELL'); no(s,'Math.random'); no(s,'simulateExecution'); }
-req(enhanced,'profitGenerated: 0'); req(starburst,'success: false'); req(starburst,'replicasCreated: 0');
+function run(label, executable, args) {
+  console.log(`[deployment-preflight] ${label}`);
+  const result = spawnSync(executable, args, { cwd: root, env: safeEnv, stdio: 'inherit' });
+  if (result.error) { console.error(`[deployment-preflight] ${label} could not start: ${result.error.message}`); process.exit(1); }
+  if (result.signal) { console.error(`[deployment-preflight] ${label} terminated by signal ${result.signal}`); process.exit(1); }
+  if (result.status !== 0) { console.error(`[deployment-preflight] ${label} failed with exit code ${result.status}`); process.exit(result.status || 1); }
+}
 
-console.log('[deployment-preflight] DIAGNOSTIC first-half clean-house passed; holding 30s');
-Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30000);
-process.exit(77);
+run('CryptoCrawler clean-house authority boundaries', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-clean-house.cjs')]);
+run('CryptoCrawler clean-house authority extensions', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-clean-house-authority-extensions.cjs')]);
+run('CryptoCrawler solution implementation invariants', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-solution-implementation.cjs')]);
+run('CryptoCrawler exact execution/settlement/learning identity binding', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-execution-identity-binding.cjs')]);
+run('CryptoCrawler expanded canonical runtime wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-expanded-runtime-wiring.cjs')]);
+run('CryptoCrawler 0x price-only discovery boundary', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-zerox-discovery-boundary.cjs')]);
+run('CryptoCrawler 0x purpose-aware local request budget', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-zerox-request-budget.cjs')]);
+run('CryptoCrawler concurrent DEX discovery coverage', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-dex-concurrent-discovery.cjs')]);
+run('CryptoCrawler multi-topology latency telemetry boundary', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-multi-topology-latency.cjs')]);
+run('CryptoCrawler Alchemy filtered hash-first mempool boundary', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-alchemy-filtered-mempool.cjs')]);
+run('CryptoCrawler current Across cross-chain economics boundary', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-across-cross-chain-economics.cjs')]);
+run('CryptoCrawler zero-capital advisory quote-budget preselection', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-zero-capital-route-preselection.cjs')]);
+run('CryptoCrawler no-regression invariants v2', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-no-regression-opportunity-pipeline-v2.cjs')]);
+run('CryptoCrawler core topology lifecycle wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-core-topology-wiring.cjs')]);
+run('CryptoCrawler competition evidence wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-competition-evidence-wiring.cjs')]);
+run('CryptoCrawler expanded profit blocker wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-profit-blocker-wiring.cjs')]);
+run('CryptoCrawler Coinbase Advanced Trade integration wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-coinbase-integration-wiring.cjs')]);
+run('CryptoCrawler truthful admin diagnostics wiring', process.execPath, [path.join(root,'scripts','cryptocrawl','verify-truthful-admin-diagnostics.cjs')]);
+
+console.log('[deployment-preflight] PASS — CryptoCrawler invariants are clean; normal production build continues with Vite/esbuild');
