@@ -19,6 +19,7 @@ import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
 import { ensurePredictiveCainWiring } from './predictive-cain-wiring.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
+import { ensureSlippageCalibrationWiring } from './slippage-calibration-wiring.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 
 let installed = false;
@@ -42,6 +43,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureExecutionLatencyInstrumentation();
   ensureLatencyObservability();
   ensurePredictiveCainWiring();
+  ensureSlippageCalibrationWiring();
   ensureContinuousPostTradeLearning();
   ensureInventoryReadinessWiring();
   void canonicalIntelligenceRepository.hydrate();
@@ -68,6 +70,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     predictiveCainActions: ['warm_market_data', 'warm_cex_l2', 'warm_validated_rpc'],
     predictiveCainExecutionAuthority: false,
     predictiveCainDeterministicPositiveAuthority: false,
+    slippageCalibration: 'terminal_measured_residual_curves',
+    slippageCalibrationDimensions: ['venue_pair', 'symbol', 'size_bucket', 'volatility_bucket', 'time_bucket'],
+    slippageCalibrationEconomicsAuthority: 'conservative_residual_cost_input',
     continuousPostTradeLearning: 'terminal_labels_segmented_decay_uncertainty',
     continuousPostTradeLearningExecutionAuthority: false,
     inventoryReadiness: 'learned_terminal_evidence_advisory_targets',
