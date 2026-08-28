@@ -1,11 +1,11 @@
 import type { VerifiedArbitragePlan, QuoteVenue } from '../arbitrage/arbitrage-verifier.js';
-import { stageManager } from '../governance/stage-management.js';
 import { resolveCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 import { getOkxExecutionRestBaseUrl } from '../intelligence/cex-private-authority.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { floorToIncrement } from './coinbase-product-policy.js';
 import { getSpotProductConstraints } from './cex-spot-product-policy.js';
+import { getCryptaraDynamicMakerCanaryDecision } from './cryptara-dynamic-canary-controller.js';
 
 export type MakerLegMode = 'maker';
 export type MakerRecoveryStrategy = 'stablecoin_post_only' | 'volatile_spread_post_only';
@@ -20,6 +20,8 @@ type MakerExecutionMetadata = {
   bookAuthority: 'websocket' | 'rest_fallback';
   canaryCeilingUsd: number;
   canaryProofSamples: number;
+  canaryConfidenceScore: number;
+  canarySizingAuthority: 'bootstrap' | 'cryptara_realized_evidence';
   volatileMinGrossSpreadBps: number | null;
 };
 
@@ -46,11 +48,12 @@ type MakerCanaryProof = {
   wins: number;
   winRate: number | null;
   ceilingUsd: number;
+  confidenceScore: number;
+  sizingAuthority: 'bootstrap' | 'cryptara_realized_evidence';
 };
 
 const STABLECOIN_SYMBOLS = new Set(['USDGUSDT', 'USDCUSDT', 'DAIUSDT', 'RLUSDUSDT']);
 const DEFAULT_TTL_MS = 30_000;
-const PROOF_CAPS_USD = [10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000] as const;
 
 function finitePositive(value: unknown): number | null {
   const parsed = Number(value);
@@ -70,37 +73,15 @@ function authenticatedMakerFeeBps(evidence: CexFeeEvidence | null): number | nul
   return null;
 }
 
-function isMakerEvidence(item: ReturnType<typeof stageManager.getState>['cryptaraExecutionEvidence'][number]): boolean {
-  const strategy = String(item.strategy || '').toLowerCase();
-  const provenance = item.provenance || [];
-  return strategy.includes('maker') || provenance.some(entry => String(entry).toLowerCase().includes('maker'));
-}
-
 function makerCanaryProof(): MakerCanaryProof {
-  const bootstrapUsd = finiteBoundedEnv('CRYPTO_ARBITRAGE_MAKER_CANARY_BOOTSTRAP_USD', 10, 10, 100);
-  const hardMaxUsd = finiteBoundedEnv('CRYPTO_ARBITRAGE_MAKER_CANARY_MAX_USD', 5_000, bootstrapUsd, 5_000);
-  const evidence = stageManager.getState().cryptaraExecutionEvidence
-    .filter(item => item.settlementConfirmed === true && isMakerEvidence(item))
-    .slice(-20);
-  const wins = evidence.filter(item => item.success === true && Number(item.realizedProfitUsd) > 0).length;
-  const winRate = evidence.length > 0 ? wins / evidence.length : null;
-
-  let tier = 0;
-  if (wins >= 1 && (winRate ?? 0) >= 0.80) tier = 1;
-  if (wins >= 3 && (winRate ?? 0) >= 0.85) tier = 2;
-  if (wins >= 5 && (winRate ?? 0) >= 0.85) tier = 3;
-  if (wins >= 10 && (winRate ?? 0) >= 0.90) tier = 4;
-  if (wins >= 20 && (winRate ?? 0) >= 0.90) tier = 5;
-  if (wins >= 35 && (winRate ?? 0) >= 0.92) tier = 6;
-  if (wins >= 50 && (winRate ?? 0) >= 0.94) tier = 7;
-  if (wins >= 75 && (winRate ?? 0) >= 0.95) tier = 8;
-
-  const proofCap = Math.max(bootstrapUsd, PROOF_CAPS_USD[tier]);
+  const decision = getCryptaraDynamicMakerCanaryDecision();
   return {
-    samples: evidence.length,
-    wins,
-    winRate,
-    ceilingUsd: Math.min(hardMaxUsd, proofCap),
+    samples: decision.samples,
+    wins: decision.wins,
+    winRate: decision.winRate,
+    ceilingUsd: decision.ceilingUsd,
+    confidenceScore: decision.confidenceScore,
+    sizingAuthority: decision.sizingAuthority,
   };
 }
 
@@ -282,6 +263,8 @@ async function evaluateMakerCandidate(input: {
           bookAuthority: authority,
           canaryCeilingUsd: canary.proof.ceilingUsd,
           canaryProofSamples: canary.proof.samples,
+          canaryConfidenceScore: canary.proof.confidenceScore,
+          canarySizingAuthority: canary.proof.sizingAuthority,
           volatileMinGrossSpreadBps: volatileFloorBps,
         },
       };
