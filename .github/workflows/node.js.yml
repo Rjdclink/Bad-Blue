@@ -27,6 +27,8 @@ jobs:
         run: npm ci
       - name: Verify CryptoCrawler clean-house boundaries
         run: node scripts/cryptocrawl/verify-clean-house.cjs
+      - name: Verify CryptoCrawler runtime invariant quarantine
+        run: npx --no-install tsx scripts/cryptocrawl/verify-runtime-invariant-monitor.ts
       - name: Verify CryptoCrawler no-regression opportunity pipeline
         run: node scripts/cryptocrawl/verify-no-regression-opportunity-pipeline.cjs
       - name: Build
