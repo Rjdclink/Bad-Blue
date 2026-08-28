@@ -93,6 +93,39 @@ function vectorLiteral(embedding: readonly number[]): string {
   return `[${embedding.join(',')}]`;
 }
 
+function normalizeTerminalOutcome(feedback: CryptaraExecutionFeedback, eventId: string): DurableTerminalOutcome {
+  const settlement = feedback.settlement;
+  if (!settlement || settlement.terminal !== true) {
+    throw new Error('Canonical intelligence memory accepts terminal normalized execution evidence only');
+  }
+  if (!eventId.trim()) throw new Error('Canonical intelligence memory requires a deterministic terminal event id');
+
+  const now = Date.now();
+  const settledAt = asTimestamp(settlement.settledAt, asTimestamp(settlement.submittedAt, feedback.timestamp || now));
+  const observedAt = asTimestamp(feedback.timestamp, settledAt);
+  return {
+    eventId,
+    opportunityId: feedback.opportunityId || eventId,
+    observedAt,
+    settledAt,
+    topology: topologyFor(feedback),
+    symbol: feedback.symbol,
+    chain: feedback.chain,
+    strategy: feedback.strategy,
+    success: feedback.success,
+    terminal: true,
+    settlementConfirmed: settlement.settlementConfirmed === true,
+    realizedProfitUsd: finiteOrNull(feedback.realizedProfitUsd),
+    realizedFeeUsd: finiteOrNull(feedback.feeUsd),
+    realizedSlippageBps: finiteOrNull(feedback.slippageBps),
+    latencyMs: Number.isFinite(feedback.latencyMs) && feedback.latencyMs >= 0 ? feedback.latencyMs : 0,
+    modelVersion: modelVersion(),
+    configVersion: configVersion(),
+    provenance: [...new Set([...(feedback.provenance || []), ...(settlement.provenance || []), 'canonical_terminal_memory'])],
+    sourceEventIds: [...new Set([eventId])],
+  };
+}
+
 class CanonicalIntelligenceRepository {
   private readonly hotOutcomes = new Map<string, DurableTerminalOutcome>();
   private readonly persistenceQueue: PersistTask[] = [];
@@ -124,39 +157,28 @@ class CanonicalIntelligenceRepository {
   }
 
   observeTerminalOutcome(feedback: CryptaraExecutionFeedback, eventId: string): void {
-    const settlement = feedback.settlement;
-    if (!settlement || settlement.terminal !== true) {
-      throw new Error('Canonical intelligence memory accepts terminal normalized execution evidence only');
-    }
-    if (!eventId.trim()) throw new Error('Canonical intelligence memory requires a deterministic terminal event id');
-
-    const now = Date.now();
-    const settledAt = asTimestamp(settlement.settledAt, asTimestamp(settlement.submittedAt, feedback.timestamp || now));
-    const observedAt = asTimestamp(feedback.timestamp, settledAt);
-    const outcome: DurableTerminalOutcome = {
-      eventId,
-      opportunityId: feedback.opportunityId || eventId,
-      observedAt,
-      settledAt,
-      topology: topologyFor(feedback),
-      symbol: feedback.symbol,
-      chain: feedback.chain,
-      strategy: feedback.strategy,
-      success: feedback.success,
-      terminal: true,
-      settlementConfirmed: settlement.settlementConfirmed === true,
-      realizedProfitUsd: finiteOrNull(feedback.realizedProfitUsd),
-      realizedFeeUsd: finiteOrNull(feedback.feeUsd),
-      realizedSlippageBps: finiteOrNull(feedback.slippageBps),
-      latencyMs: Number.isFinite(feedback.latencyMs) && feedback.latencyMs >= 0 ? feedback.latencyMs : 0,
-      modelVersion: modelVersion(),
-      configVersion: configVersion(),
-      provenance: [...new Set([...(feedback.provenance || []), ...(settlement.provenance || []), 'canonical_terminal_memory'])],
-      sourceEventIds: [...new Set([eventId])],
-    };
-
+    const outcome = normalizeTerminalOutcome(feedback, eventId);
     this.rememberHot(outcome);
     this.enqueue({ eventId, outcome, feedback: structuredClone(feedback) });
+  }
+
+  /**
+   * Durable-outbox replay path. It uses the exact same normalization and
+   * idempotent insert as the low-latency in-process path, but deliberately does
+   * not enqueue another persistence task. The outbox is recovery transport, not
+   * a second settlement or execution authority.
+   */
+  async persistTerminalOutcomeFromOutbox(feedback: CryptaraExecutionFeedback, eventId: string): Promise<void> {
+    const outcome = normalizeTerminalOutcome(feedback, eventId);
+    this.rememberHot(outcome);
+    try {
+      await this.persist({ eventId, outcome, feedback: structuredClone(feedback) });
+      this.lastPersistedAt = Date.now();
+      this.lastPersistenceError = null;
+    } catch (error) {
+      this.lastPersistenceError = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 
   getRecentTerminalOutcomes(limit = 128): DurableTerminalOutcome[] {
