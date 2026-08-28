@@ -6,6 +6,7 @@ import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-r
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
+import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
@@ -52,6 +53,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   // 0x request-budget telemetry is local process admission truth only. It does
   // not claim provider quotas and cannot authorize execution.
   ensureZeroXBudgetObservability();
+  // Across remains optional bridge evidence. Its health is observable but it
+  // cannot become global readiness, profitability, settlement, or execution authority.
+  ensureAcrossBridgeObservability();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
@@ -79,6 +83,10 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     zeroXRequestAdmission: 'purpose_aware_local_budget_with_execution_reserve',
     zeroXProviderRateLimitClaim: false,
     zeroXRequestAdmissionExecutionAuthority: false,
+    acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
+    acrossBridgeTelemetry: 'configuration_catalog_quote_freshness_and_failure_health',
+    acrossBridgeGlobalReadinessAuthority: false,
+    acrossBridgeExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
