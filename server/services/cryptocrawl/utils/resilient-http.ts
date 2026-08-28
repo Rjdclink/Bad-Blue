@@ -9,10 +9,63 @@ interface RetryableFetchOptions {
   shouldRetryError?: (error: unknown) => boolean;
 }
 
+interface HttpCircuitState {
+  consecutiveFailures: number;
+  openUntil: number;
+  lastFailureAt: number;
+}
+
 const DEFAULT_RETRYABLE_STATUS_CODES = [408, 409, 425, 429, 500, 502, 503, 504];
+const CIRCUIT_FAILURE_THRESHOLD = Math.max(3, Number(process.env.CRYPTOCRAWL_HTTP_CIRCUIT_FAILURES || 6));
+const CIRCUIT_COOLDOWN_MS = Math.max(1_000, Number(process.env.CRYPTOCRAWL_HTTP_CIRCUIT_COOLDOWN_MS || 10_000));
+const circuitStates = new Map<string, HttpCircuitState>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function requestOrigin(url: string): string | null {
+  try { return new URL(url).origin; } catch { return null; }
+}
+
+function circuitState(url: string): HttpCircuitState | null {
+  const origin = requestOrigin(url);
+  if (!origin) return null;
+  let state = circuitStates.get(origin);
+  if (!state) {
+    state = { consecutiveFailures: 0, openUntil: 0, lastFailureAt: 0 };
+    circuitStates.set(origin, state);
+  }
+  if (circuitStates.size > 128) {
+    const now = Date.now();
+    for (const [key, value] of circuitStates.entries()) {
+      if (value.openUntil <= now && now - value.lastFailureAt > 60_000) circuitStates.delete(key);
+    }
+  }
+  return state;
+}
+
+function assertCircuitAvailable(url: string): void {
+  const state = circuitState(url);
+  if (!state || state.openUntil <= Date.now()) return;
+  throw new Error(`Provider circuit temporarily open for ${requestOrigin(url) || 'unknown-origin'}`);
+}
+
+function recordCircuitSuccess(url: string): void {
+  const state = circuitState(url);
+  if (!state) return;
+  state.consecutiveFailures = 0;
+  state.openUntil = 0;
+}
+
+function recordCircuitFailure(url: string): void {
+  const state = circuitState(url);
+  if (!state) return;
+  state.consecutiveFailures += 1;
+  state.lastFailureAt = Date.now();
+  if (state.consecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD) {
+    state.openUntil = Date.now() + CIRCUIT_COOLDOWN_MS;
+  }
 }
 
 function parseRetryAfterMs(retryAfterHeader: string | null): number | undefined {
@@ -75,6 +128,7 @@ export async function fetchJsonWithRetry<T>(
   } = options;
 
   const retryableSet = new Set(retryableStatusCodes);
+  assertCircuitAvailable(url);
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
@@ -89,12 +143,14 @@ export async function fetchJsonWithRetry<T>(
       clearTimeout(timeout);
 
       if (response.ok) {
+        recordCircuitSuccess(url);
         return await response.json() as T;
       }
 
       const retryable = retryableSet.has(response.status);
       if (!retryable || attempt === maxRetries) {
         const body = await response.text().catch(() => '');
+        if (retryable) recordCircuitFailure(url);
         throw new Error(`HTTP ${response.status}: ${body.slice(0, 240)}`);
       }
 
@@ -106,6 +162,7 @@ export async function fetchJsonWithRetry<T>(
 
       const retryable = shouldRetryError(error);
       if (!retryable || attempt === maxRetries) {
+        if (retryable) recordCircuitFailure(url);
         throw error;
       }
 
