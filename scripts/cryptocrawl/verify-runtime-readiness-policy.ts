@@ -48,6 +48,24 @@ assert.equal(readiness.GOVERNANCE_READY.ready, true);
 assert.equal(readiness.EXECUTION_READY.ready, true);
 assert.equal(readiness.TRADING_READY.ready, true);
 
+// A detected source/deployment SHA mismatch is a hard execution-readiness
+// failure even when every market/governance/resource input would otherwise pass.
+readiness = computeCryptoRuntimeReadiness({
+  ...base,
+  runtimeIdentitySafe: false,
+  runtimeIdentityMismatch: true,
+  reconciledInventoryAssets: 4,
+  eligibleCandidates: 1,
+  eligibleCexCandidates: 1,
+  stageCanExecute: true,
+  currentStage: 2,
+});
+assert.equal(readiness.APP_READY.ready, false);
+assert.equal(readiness.EXECUTION_CAPABILITY_READY.ready, false);
+assert.equal(readiness.EXECUTION_READY.ready, false);
+assert.equal(readiness.TRADING_READY.ready, false);
+assert.match(readiness.EXECUTION_CAPABILITY_READY.detail, /runtimeIdentitySafe=false/);
+
 // Zero-capital gas readiness is a separate topology and must never make a CEX
 // candidate appear resource-ready when reconciled CEX inventory is absent.
 readiness = computeCryptoRuntimeReadiness({
