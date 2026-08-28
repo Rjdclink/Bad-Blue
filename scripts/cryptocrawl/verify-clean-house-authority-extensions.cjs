@@ -16,6 +16,7 @@ const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical
 const genie = read('server/services/genie-controller/index.ts');
 const beam = read('server/services/cryptocrawl/integration/cryptara-beam-wiring.ts');
 const stageManager = read('server/services/cryptocrawl/governance/stage-management.ts');
+const automaticProgression = read('server/services/cryptocrawl/governance/automatic-stage-progression.ts');
 const executionIndex = read('server/services/cryptocrawl/execution/index.ts');
 const executionReadiness = read('server/services/cryptocrawl/execution/execution-readiness.ts');
 const ultraLowLatency = read('server/services/cryptocrawl/execution/ultra-low-latency-executor.ts');
@@ -44,6 +45,14 @@ requireText(stageRetirement, 'Number.POSITIVE_INFINITY', 'legacy maximum-profit 
 requireText(canonicalRuntime, 'ensureStageProfitCapRetirement()', 'canonical runtime installs StageManager profit-cap retirement before operations');
 requireText(canonicalRuntime, 'profitCeilingAuthority: false', 'runtime attests no profit ceiling authority');
 requireText(stageManager, 'recordExecutionEvidence', 'terminal evidence accounting path remains present');
+
+// Terminal learning must remain exactly-once and independent of retired Faucet wiring.
+requireText(automaticProgression, 'feedback.settlement.terminal !== true', 'non-terminal settlement evidence is rejected');
+requireText(automaticProgression, 'terminalFeedbackAlreadyApplied(eventId)', 'persisted duplicate terminal feedback is rejected');
+requireText(automaticProgression, 'terminalFeedbackInFlight.get(eventId)', 'concurrent duplicate terminal feedback is coalesced');
+requireText(automaticProgression, 'terminalFeedbackApplied.add(eventId)', 'applied terminal feedback identity is recorded');
+forbidText(automaticProgression, 'concurrent-execution-wiring', 'authoritative stage progression cannot import retired Faucet concurrency wiring');
+forbidText(automaticProgression, 'ensureConcurrentExecutionWiring', 'authoritative stage progression cannot initialize retired Faucet compatibility wiring');
 
 // Genie/4JI must not instantiate a second Cryptara Monte Carlo authority.
 requireText(genie, "ensureCryptaraBeamWiring", 'Genie imports canonical Cryptara Beam wiring');
