@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
+import { endToEndLatencyHarness, type LatencyOutcome } from '../runtime/end-to-end-latency-harness.js';
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
 import { executeVerifiedArbitragePlan } from './index.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
@@ -64,6 +65,14 @@ function terminalResult(status: string, settlementConfirmed: boolean): boolean {
   return settlementConfirmed || ['cancelled', 'rejected', 'failed'].includes(status);
 }
 
+function settlementLatencyOutcome(status: string, settlementConfirmed: boolean): LatencyOutcome {
+  if (settlementConfirmed) return 'ok';
+  if (status === 'settlement_unknown') return 'timeout';
+  if (status === 'cancelled') return 'cancel';
+  if (status === 'failed' || status === 'rejected') return 'error';
+  return 'retry';
+}
+
 class CanonicalExecutionScheduler {
   private timer: NodeJS.Timeout | null = null;
   private dispatchInFlight: Promise<void> | null = null;
@@ -94,6 +103,7 @@ class CanonicalExecutionScheduler {
       legacyBusinessCapsAuthoritative: false,
       distributedResourceLeases: true,
       runtimeInvariantQuarantine: true,
+      latencyHarness: 'telemetry_only',
     });
   }
 
@@ -141,7 +151,13 @@ class CanonicalExecutionScheduler {
       this.setIdle('live_execution_posture_disabled');
       return;
     }
-    if (!stageManager.canExecuteTrades()) {
+    const governanceAllowed = endToEndLatencyHarness.measureSync(
+      'governance_risk',
+      'compute',
+      { backend: 'stage_manager', worker: executionResourceScheduler.getOwnerId() },
+      () => stageManager.canExecuteTrades(),
+    );
+    if (!governanceAllowed) {
       this.setIdle('governance_stage_blocked');
       return;
     }
@@ -167,7 +183,21 @@ class CanonicalExecutionScheduler {
 
     const selected: Array<{ candidate: Candidate; lease: ExecutionResourceLease }> = [];
     for (const candidate of candidates) {
-      const lease = await executionResourceScheduler.acquireCexPlan(candidate.plan, candidate.opportunityId);
+      const dimensions = {
+        traceId: candidate.opportunityId,
+        worker: executionResourceScheduler.getOwnerId(),
+        backend: 'cex_resource_scheduler',
+        venue: `${candidate.plan.buyVenue}->${candidate.plan.sellVenue}`,
+        chain: 'cex',
+        symbol: candidate.symbol,
+        strategy: 'verified_cex_arbitrage',
+      };
+      const lease = await endToEndLatencyHarness.measureAsync(
+        'resource_lease',
+        'queue',
+        dimensions,
+        () => executionResourceScheduler.acquireCexPlan(candidate.plan, candidate.opportunityId),
+      );
       if (!lease) continue;
       selected.push({ candidate, lease });
     }
@@ -199,12 +229,23 @@ class CanonicalExecutionScheduler {
       this.lastAttemptAt.set(candidate.opportunityId, Date.now());
       this.attempts++;
       let retainOpportunityUntilExpiry = false;
+      const dimensions = {
+        traceId: candidate.opportunityId,
+        worker: executionResourceScheduler.getOwnerId(),
+        backend: 'canonical_cex_execution',
+        venue: `${candidate.plan.buyVenue}->${candidate.plan.sellVenue}`,
+        chain: 'cex',
+        symbol: candidate.symbol,
+        strategy: 'verified_cex_arbitrage',
+      };
+      const settlementSpan = endToEndLatencyHarness.startSpan('terminal_settlement', 'network', dimensions);
       try {
         const result = await executeVerifiedArbitragePlan(candidate.plan, {
           source: 'master_pipeline',
           chain: candidate.plan.bridge?.from,
           observedSlippageBps: candidate.plan.expectedSlippageBps ?? undefined,
         });
+        settlementSpan.end(settlementLatencyOutcome(result.status, result.settlementConfirmed));
 
         if (result.success && result.settlementConfirmed) {
           this.settled++;
@@ -229,6 +270,7 @@ class CanonicalExecutionScheduler {
           error: result.error,
         });
       } catch (error) {
+        settlementSpan.end('error');
         this.failed++;
         logger.error('[ExecutionScheduler] Canonical execution attempt failed closed', {
           component: 'CanonicalExecutionScheduler',
