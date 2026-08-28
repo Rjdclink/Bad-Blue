@@ -85,8 +85,12 @@ function assertBbo(
   return { venue, symbol, bid, ask, observedAt, source: 'public_rest_bbo', executable: false };
 }
 
-function snapshotTtlMs(): number {
-  return Math.max(250, Math.min(10_000, Number(process.env.CRYPTOCRAWL_PUBLIC_BBO_CACHE_MS || 1_500)));
+function snapshotTtlMs(venue: PublicDiscoveryVenue): number {
+  const base = Math.max(250, Math.min(10_000, Number(process.env.CRYPTOCRAWL_PUBLIC_BBO_CACHE_MS || 1_500)));
+  // Bitfinex documents 30 public ticker requests/minute. A 2.5s floor
+  // leaves headroom for clock skew/retries while other venues retain the
+  // lower shared cache TTL for fresher broad-market awareness.
+  return venue === 'bitfinex' ? Math.max(2_500, base) : base;
 }
 
 function addSnapshotRow(
@@ -138,88 +142,60 @@ async function fetchVenueSnapshotUncached(venue: PublicDiscoveryVenue): Promise<
       options,
     );
     for (const row of Array.isArray(payload?.products) ? payload.products : []) {
-      // Coinbase Advanced Trade exposes exact product quote currencies. Preserve
-      // that currency in the canonical symbol; USD, USDC and USDT are never
-      // treated as interchangeable execution assets.
       addSnapshotRow(output, venue, row?.product_id, row?.best_bid_price, row?.best_ask_price, observedAt);
     }
     return output;
   }
-
   if (venue === 'binance') {
     const rows = await fetchJsonWithRetry<any[]>('https://api.binance.com/api/v3/ticker/bookTicker', options);
     for (const row of Array.isArray(rows) ? rows : []) addSnapshotRow(output, venue, row?.symbol, row?.bidPrice, row?.askPrice, observedAt);
     return output;
   }
-
   if (venue === 'bybit') {
     const payload = await fetchJsonWithRetry<any>('https://api.bybit.com/v5/market/tickers?category=spot', options);
-    for (const row of Array.isArray(payload?.result?.list) ? payload.result.list : []) {
-      addSnapshotRow(output, venue, row?.symbol, row?.bid1Price, row?.ask1Price, observedAt);
-    }
+    for (const row of Array.isArray(payload?.result?.list) ? payload.result.list : []) addSnapshotRow(output, venue, row?.symbol, row?.bid1Price, row?.ask1Price, observedAt);
     return output;
   }
-
   if (venue === 'kucoin') {
     const payload = await fetchJsonWithRetry<any>('https://api.kucoin.com/api/v1/market/allTickers', options);
-    for (const row of Array.isArray(payload?.data?.ticker) ? payload.data.ticker : []) {
-      addSnapshotRow(output, venue, row?.symbol, row?.buy ?? row?.bestBid, row?.sell ?? row?.bestAsk, observedAt);
-    }
+    for (const row of Array.isArray(payload?.data?.ticker) ? payload.data.ticker : []) addSnapshotRow(output, venue, row?.symbol, row?.buy ?? row?.bestBid, row?.sell ?? row?.bestAsk, observedAt);
     return output;
   }
-
   if (venue === 'gate') {
     const rows = await fetchJsonWithRetry<any[]>('https://api.gateio.ws/api/v4/spot/tickers', options);
-    for (const row of Array.isArray(rows) ? rows : []) {
-      addSnapshotRow(output, venue, row?.currency_pair, row?.highest_bid, row?.lowest_ask, observedAt);
-    }
+    for (const row of Array.isArray(rows) ? rows : []) addSnapshotRow(output, venue, row?.currency_pair, row?.highest_bid, row?.lowest_ask, observedAt);
     return output;
   }
-
   if (venue === 'huobi') {
     const payload = await fetchJsonWithRetry<any>('https://api.huobi.pro/market/tickers', options);
-    for (const row of Array.isArray(payload?.data) ? payload.data : []) {
-      addSnapshotRow(output, venue, row?.symbol, row?.bid, row?.ask, observedAt);
-    }
+    for (const row of Array.isArray(payload?.data) ? payload.data : []) addSnapshotRow(output, venue, row?.symbol, row?.bid, row?.ask, observedAt);
     return output;
   }
-
   if (venue === 'mexc') {
     const rows = await fetchJsonWithRetry<any[]>('https://api.mexc.com/api/v3/ticker/bookTicker', options);
-    for (const row of Array.isArray(rows) ? rows : []) {
-      addSnapshotRow(output, venue, row?.symbol, row?.bidPrice, row?.askPrice, observedAt);
-    }
+    for (const row of Array.isArray(rows) ? rows : []) addSnapshotRow(output, venue, row?.symbol, row?.bidPrice, row?.askPrice, observedAt);
     return output;
   }
-
   if (venue === 'bitfinex') {
     const rows = await fetchJsonWithRetry<any[]>('https://api-pub.bitfinex.com/v2/tickers?symbols=ALL', options);
     for (const row of Array.isArray(rows) ? rows : []) addBitfinexSnapshotRow(output, row, observedAt);
     return output;
   }
-
   const payload = await fetchJsonWithRetry<any>('https://api.crypto.com/exchange/v1/public/get-tickers', options);
-  for (const row of Array.isArray(payload?.result?.data) ? payload.result.data : []) {
-    addSnapshotRow(output, venue, row?.i, row?.b, row?.k, observedAt);
-  }
+  for (const row of Array.isArray(payload?.result?.data) ? payload.result.data : []) addSnapshotRow(output, venue, row?.i, row?.b, row?.k, observedAt);
   return output;
 }
 
 async function getVenueSnapshot(venue: PublicDiscoveryVenue): Promise<VenueSnapshot> {
   const capability = getVenueCapability(venue as CryptoCrawlerCexVenue);
-  // Public discovery and executable capability are independent. Coinbase may be
-  // executable through its authenticated Advanced Trade path while its batched
-  // public products snapshot still contributes non-executable search evidence.
   if (!capability.enabled || !capability.publicDiscovery) return new Map();
-
   const cached = snapshotCache.get(venue);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   const existing = snapshotInFlight.get(venue);
   if (existing) return existing;
-
   const promise = fetchVenueSnapshotUncached(venue)
     .then(value => {
-      snapshotCache.set(venue, { value, expiresAt: Date.now() + snapshotTtlMs() });
+      snapshotCache.set(venue, { value, expiresAt: Date.now() + snapshotTtlMs(venue) });
       return value;
     })
     .finally(() => snapshotInFlight.delete(venue));
@@ -236,14 +212,7 @@ function recordSearchObservation(observation: PublicCexBboObservation): void {
   });
 }
 
-/**
- * Compatibility single-symbol lookup backed by one all-ticker venue snapshot.
- * This avoids one HTTP request per symbol while preserving the existing API.
- */
-export async function discoverPublicCexBbo(
-  venue: PublicDiscoveryVenue,
-  symbolInput: string,
-): Promise<PublicCexBboObservation | null> {
+export async function discoverPublicCexBbo(venue: PublicDiscoveryVenue, symbolInput: string): Promise<PublicCexBboObservation | null> {
   const symbol = symbolInput.trim().toUpperCase();
   if (!splitSymbol(symbol)) return null;
   try {
@@ -252,20 +221,13 @@ export async function discoverPublicCexBbo(
     return observation ? { ...observation } : null;
   } catch (error) {
     logger.debug('[PublicCexDiscovery] Public venue snapshot unavailable', {
-      component: 'PublicCexDiscovery',
-      venue,
-      symbol,
+      component: 'PublicCexDiscovery', venue, symbol,
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
 }
 
-/**
- * Broad discovery costs approximately one public request per venue per cache
- * window rather than venues x symbols requests. This makes 50+ pair discovery
- * practical without adding API keys or multiplying provider load linearly.
- */
 export async function scanPublicCexUniverse(symbolsInput: readonly string[]): Promise<PublicCexDiscoveryBatch> {
   const startedAt = Date.now();
   const maxSymbols = Math.max(64, Math.min(128, Number(process.env.CRYPTOCRAWL_PUBLIC_DISCOVERY_SYMBOLS || 96)));
@@ -273,17 +235,12 @@ export async function scanPublicCexUniverse(symbolsInput: readonly string[]): Pr
   const requested = new Set(symbols);
   const observations: PublicCexBboObservation[] = [];
   const failures: PublicCexDiscoveryBatch['failures'] = [];
-
   const settled = await Promise.allSettled(VENUES.map(async venue => ({ venue, snapshot: await getVenueSnapshot(venue) })));
   for (let index = 0; index < settled.length; index++) {
     const result = settled[index];
     const venue = VENUES[index];
     if (result.status === 'rejected') {
-      failures.push({
-        venue,
-        symbol: '*',
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-      });
+      failures.push({ venue, symbol: '*', error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
       continue;
     }
     for (const [symbol, observation] of result.value.snapshot.entries()) {
@@ -292,16 +249,10 @@ export async function scanPublicCexUniverse(symbolsInput: readonly string[]): Pr
       recordSearchObservation(observation);
     }
   }
-
   logger.debug('[PublicCexDiscovery] Batched public BBO scan completed', {
-    component: 'PublicCexDiscovery',
-    requestedSymbols: symbols.length,
-    venues: VENUES.length,
-    publicHttpRequestsUpperBound: VENUES.length,
-    observations: observations.length,
-    failures: failures.length,
+    component: 'PublicCexDiscovery', requestedSymbols: symbols.length, venues: VENUES.length,
+    publicHttpRequestsUpperBound: VENUES.length, observations: observations.length, failures: failures.length,
   });
-
   return { startedAt, completedAt: Date.now(), symbols: symbols.length, observations, failures };
 }
 
