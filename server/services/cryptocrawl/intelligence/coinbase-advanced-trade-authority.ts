@@ -93,11 +93,12 @@ function privateKeyFromSecret(secret: string): { key: KeyObject; algorithm: 'ES2
   }
 
   const decoded = Buffer.from(secret, 'base64');
-  if (decoded.length !== 64 && decoded.length !== 32) {
-    throw new Error('Coinbase non-PEM secret is not a supported Ed25519 seed/key payload');
+  if (decoded.length !== 64) {
+    throw new Error(`Coinbase Ed25519 API secret must decode to exactly 64 bytes; received ${decoded.length}`);
   }
+  // Coinbase's documented Ed25519 secret is seed || publicKey. Node's PKCS#8
+  // constructor needs the 32-byte seed; the public half remains a format check.
   const seed = decoded.subarray(0, 32);
-  // RFC 8410 PKCS#8 wrapper for a raw Ed25519 32-byte private seed.
   const prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
   const key = createPrivateKey({ key: Buffer.concat([prefix, seed]), format: 'der', type: 'pkcs8' });
   return { key, algorithm: 'EdDSA' };
