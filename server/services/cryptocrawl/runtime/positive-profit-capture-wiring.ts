@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { getCryptara } from '../../cryptara/index.js';
 import type { CryptaraOpportunityAssessment, CryptaraOpportunityContext } from '../../cryptara/index.js';
 import { arbitrageVerifier, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { normalizeCoinbaseExecutablePlan } from '../execution/coinbase-executable-plan-policy.js';
 import { stageManager } from '../governance/stage-management.js';
 
 let installed = false;
@@ -72,6 +73,14 @@ export function ensurePositiveProfitCaptureWiring(): void {
     verifyOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
     evaluateOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
   };
+  const originalEvaluateOnce = verifier.evaluateOnce.bind(verifier);
+  verifier.evaluateOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
+    const plan = await originalEvaluateOnce(request);
+    if (!plan) return null;
+    // Coinbase increments/minimums are deterministic execution evidence, not an
+    // order-submission concern. Normalize before a plan can become eligible.
+    return normalizeCoinbaseExecutablePlan(plan);
+  };
   verifier.verifyOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
     const plan = await verifier.evaluateOnce(request);
     return plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0 ? plan : null;
@@ -106,6 +115,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
     arbitraryMinimumProfitUsd: false,
     maximumDailyProfitExecutionStop: false,
     rankScoreExecutionGate: false,
+    coinbaseProductConstraintsBeforeEligibility: true,
     retainedAuthorities: [
       'deterministic_all_in_economics',
       'monte_carlo_execution_risk',
