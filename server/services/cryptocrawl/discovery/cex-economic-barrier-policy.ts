@@ -31,14 +31,24 @@ export interface CexEconomicBarrierSnapshot {
     available: boolean;
     combinedEffectiveMakerFeeBps: number | null;
     grossMinusMakerFeesBps: number | null;
+    economicallyPositive: boolean;
+    candidatePathAvailable: boolean;
     executable: false;
     reason: string;
   };
   reason: string;
 }
 
+const MAKER_STABLECOINS = new Set(['USDGUSDT', 'USDCUSDT', 'DAIUSDT', 'RLUSDUSDT']);
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+function stablecoinMakerPathAvailable(symbol: string, buyVenue: string, sellVenue: string): boolean {
+  if (!MAKER_STABLECOINS.has(symbol.trim().toUpperCase())) return false;
+  const venues = new Set([buyVenue.trim().toLowerCase(), sellVenue.trim().toLowerCase()]);
+  return venues.size === 2 && venues.has('kraken') && venues.has('okx');
 }
 
 export function unknownCexEconomicBarrier(coverageFraction: number, observedAt = Date.now()): CexEconomicBarrierSnapshot {
@@ -59,20 +69,21 @@ export function unknownCexEconomicBarrier(coverageFraction: number, observedAt =
       available: false,
       combinedEffectiveMakerFeeBps: null,
       grossMinusMakerFeesBps: null,
+      economicallyPositive: false,
+      candidatePathAvailable: false,
       executable: false,
-      reason: 'Authenticated maker-fee evidence and empirical maker execution evidence are not both available',
+      reason: 'No complete authenticated maker-fee context is available for this sampled route',
     },
     reason: 'No fresh authenticated cross-venue taker-fee/spread context is available',
   };
 }
 
 /**
- * Pure arithmetic/policy authority for the CEX fee barrier.
- *
- * The current settlement-safe Kraken/OKX execution path is IOC/taker. Maker fee
- * evidence is useful for discovery and account-tier diagnostics only; it cannot
- * become executable until maker fill/queue/adverse-selection/cancel-latency
- * behavior is measured and settlement-proven.
+ * Pure arithmetic/diagnostic authority for the CEX fee barrier. It reports when
+ * the already-installed Kraken/OKX stablecoin post-only candidate path could
+ * recover a taker-negative edge. This object never grants execution authority:
+ * depth, product constraints, Cryptara Hyper MC, inventory, governance and
+ * terminal settlement remain separate mandatory gates.
  */
 export function computeCexEconomicBarrier(input: CexEconomicBarrierPolicyInput): CexEconomicBarrierSnapshot {
   const required = [
@@ -99,6 +110,22 @@ export function computeCexEconomicBarrier(input: CexEconomicBarrierPolicyInput):
   const combinedEffectiveMakerFeeBps = makerAvailable
     ? input.buyEffectiveMakerFeeBps! + input.sellEffectiveMakerFeeBps!
     : null;
+  const grossMinusMakerFeesBps = makerAvailable ? grossSpreadBps - combinedEffectiveMakerFeeBps! : null;
+  const economicallyPositive = grossMinusMakerFeesBps !== null && grossMinusMakerFeesBps > 0;
+  const candidatePathAvailable = stablecoinMakerPathAvailable(input.symbol, input.buyVenue, input.sellVenue);
+
+  let makerReason: string;
+  if (!makerAvailable) {
+    makerReason = 'Authenticated maker-fee evidence is incomplete for this route';
+  } else if (!candidatePathAvailable) {
+    makerReason = economicallyPositive
+      ? 'Maker economics are positive, but this sampled route is outside the installed Kraken/OKX stablecoin post-only path'
+      : 'Authenticated maker fees are known, but the sampled maker economics are not positive';
+  } else if (!economicallyPositive) {
+    makerReason = 'The Kraken/OKX stablecoin post-only path is installed, but this sampled spread does not clear authenticated maker fees';
+  } else {
+    makerReason = 'Maker economics are positive and the Kraken/OKX stablecoin post-only candidate path is installed; execution still requires measured depth/product constraints, Cryptara Hyper MC, reconciled inventory, governance, and terminal settlement';
+  }
 
   return {
     observedAt: input.observedAt,
@@ -110,19 +137,17 @@ export function computeCexEconomicBarrier(input: CexEconomicBarrierPolicyInput):
     combinedTakerFeeBps,
     netSpreadAfterTakerFeesBps,
     feeReductionNeededBps,
-    // This is deliberately only the fee ceiling. Slippage, transfer costs and
-    // any other execution costs can require an even lower combined fee.
     maxCombinedTakerFeeForFeeOnlyBreakEvenBps: Math.max(0, grossSpreadBps),
     coverageFraction: clamp01(input.coverageFraction),
     executionFeeMode: 'taker_ioc',
     makerObservation: {
       available: makerAvailable,
       combinedEffectiveMakerFeeBps,
-      grossMinusMakerFeesBps: makerAvailable ? grossSpreadBps - combinedEffectiveMakerFeeBps! : null,
+      grossMinusMakerFeesBps,
+      economicallyPositive,
+      candidatePathAvailable,
       executable: false,
-      reason: makerAvailable
-        ? 'Authenticated maker fees observed, but maker execution remains discovery-only until fill/queue/adverse-selection/cancel-latency evidence is settlement-proven'
-        : 'Authenticated maker-fee evidence is incomplete for this route; maker execution remains discovery-only',
+      reason: makerReason,
     },
     reason: netSpreadAfterTakerFeesBps > 0
       ? 'Best sampled gross spread clears authenticated taker fees before remaining execution costs'
