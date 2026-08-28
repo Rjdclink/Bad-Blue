@@ -1,6 +1,7 @@
 import { addUsersStatusColumn } from './add_users_status_column';
 import { addFMIFields } from './addFMIFields';
 import { createCryptoGovernanceStateTable } from './createCryptoGovernanceStateTable';
+import { reconcileCryptoPrivateIntelligenceMemory } from './reconcileCryptoPrivateIntelligenceMemory';
 import { removeCryptocrawlFlashbotsAuthIdentityTable } from './removeCryptocrawlFlashbotsAuthIdentityTable';
 import { createComplaintRoutingTables } from './createComplaintRoutingTables';
 import { createCoreTables } from './createCoreTables';
@@ -46,6 +47,7 @@ const migrationSteps: MigrationStep[] = [
   { name: 'Search Prioritization tables', run: createSearchPrioritizationTables },
   { name: 'Document Creator tables', run: createDocumentCreatorTables },
   { name: 'F.M.I. evidence fields', run: addFMIFields },
+  { name: 'CryptoCrawler private intelligence memory', run: reconcileCryptoPrivateIntelligenceMemory },
   { name: 'CryptoCrawler governance state', run: createCryptoGovernanceStateTable },
   { name: 'Remove legacy CryptoCrawler Flashbots auth secret table', run: removeCryptocrawlFlashbotsAuthIdentityTable },
   { name: 'Free Access for All Users', run: runFreeAccessMigration },
