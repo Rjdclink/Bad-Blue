@@ -11,11 +11,12 @@ import { ensureStablecoinMakerExecutionWiring } from './stablecoin-maker-executi
 
 let installed = false;
 
-function criticalMissingInformation(items: readonly string[]): string[] {
+function criticalMissingInformation(items: readonly string[], makerCanary = false): string[] {
   return [...new Set(items)].filter(item =>
     !item.startsWith('optional:')
     && !item.startsWith('optional_missing:')
-    && !item.startsWith('not_applicable:'),
+    && !item.startsWith('not_applicable:')
+    && !(makerCanary && (item === 'runtime_confidence_bootstrap' || item === 'posttrade_calibration_pending')),
   );
 }
 
@@ -42,7 +43,8 @@ function normalizePositiveAssessment(
   const plan = context.plan;
   if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) return assessment;
 
-  const criticalMissing = criticalMissingInformation(assessment.missingInformation);
+  const makerCanary = isStablecoinMakerPlan(plan);
+  const criticalMissing = criticalMissingInformation(assessment.missingInformation, makerCanary);
   if (criticalMissing.length > 0 || !assessment.monteCarlo) {
     assessment.recommendation = 'observe';
     assessment.provenance = [...new Set([
@@ -53,11 +55,18 @@ function normalizePositiveAssessment(
     return assessment;
   }
 
-  if (!Number.isFinite(assessment.monteCarlo.probabilityOfProfit) || assessment.monteCarlo.probabilityOfProfit < 0.6) {
+  // Cold-start maker canaries are the mechanism that creates empirical maker
+  // fill/cancel evidence, so they may pass before the historical-confidence
+  // counter is populated — but only under a stronger Hyper MC threshold and the
+  // hard canary/post-only/no-taker-fallback limits carried by the plan.
+  const minimumProbability = makerCanary
+    ? Math.max(0.75, Math.min(0.95, Number(process.env.CRYPTO_ARBITRAGE_MAKER_CANARY_MIN_PROBABILITY || 0.80)))
+    : 0.60;
+  if (!Number.isFinite(assessment.monteCarlo.probabilityOfProfit) || assessment.monteCarlo.probabilityOfProfit < minimumProbability) {
     assessment.recommendation = 'reject';
     assessment.provenance = [...new Set([
       ...assessment.provenance,
-      'positive_profit_capture:mc_risk_gate_retained',
+      makerCanary ? 'positive_profit_capture:maker_canary_hyper_mc_rejected' : 'positive_profit_capture:mc_risk_gate_retained',
       'rank_non_authoritative_for_execution',
     ])];
     return assessment;
@@ -66,9 +75,10 @@ function normalizePositiveAssessment(
   assessment.recommendation = 'consider';
   assessment.provenance = [...new Set([
     ...assessment.provenance,
-    isStablecoinMakerPlan(plan)
-      ? 'positive_profit_capture:stablecoin_maker_hyper_mc_qualified'
+    makerCanary
+      ? 'positive_profit_capture:stablecoin_maker_canary_hyper_mc_qualified'
       : 'positive_profit_capture:any_verified_net_gt_zero',
+    ...(makerCanary ? ['maker_canary_bootstrap:post_only_cancel_only'] : []),
     'rank_diagnostic_only',
   ])];
   return assessment;
@@ -97,11 +107,6 @@ export function ensurePositiveProfitCaptureWiring(): void {
     const takerPlan = await originalEvaluateOnce(request);
     if (takerPlan) return normalizeCexExecutablePlan(takerPlan);
 
-    // Taker-negative stablecoin routes get one additional measured maker pass.
-    // This does not fabricate a fee or loosen execution gates: the candidate is
-    // admitted only from authenticated maker fees + live product constraints +
-    // live books, then still flows through Cryptara Hyper Monte Carlo and the
-    // canonical executor's inventory/governance/settlement authorities.
     const makerPlan = await evaluateStablecoinMakerCandidate({
       symbol: String(request?.symbol || ''),
       notionalUsd: Number(request?.notionalUsd || 0),
@@ -148,8 +153,10 @@ export function ensurePositiveProfitCaptureWiring(): void {
       venues: ['kraken', 'okx'],
       postOnly: true,
       takerFallback: false,
+      canaryMaxUsd: 5_000,
       maxTtlMs: 30_000,
       cryptaraHyperMonteCarloRequired: true,
+      coldStartCanaryMinimumProbability: Math.max(0.75, Math.min(0.95, Number(process.env.CRYPTO_ARBITRAGE_MAKER_CANARY_MIN_PROBABILITY || 0.80))),
     },
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedAuthorities: [
