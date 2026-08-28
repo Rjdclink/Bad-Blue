@@ -117,6 +117,7 @@ class RainbowProfitBridge {
           realized_profit_usd numeric NOT NULL CHECK (realized_profit_usd > 0),
           status text NOT NULL CHECK (status IN ('queued','submitted','confirmed','failed')),
           batch_id text,
+          client_id text,
           asset text,
           chain text,
           payout_amount numeric,
@@ -130,7 +131,9 @@ class RainbowProfitBridge {
           confirmed_at timestamptz
         )
       `);
+      await pool.query('ALTER TABLE private.cryptocrawler_rainbow_profit_events ADD COLUMN IF NOT EXISTS client_id text');
       await pool.query('CREATE INDEX IF NOT EXISTS idx_rainbow_profit_status ON private.cryptocrawler_rainbow_profit_events(status, created_at)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_rainbow_profit_client ON private.cryptocrawler_rainbow_profit_events(client_id) WHERE client_id IS NOT NULL');
     })().catch(error => {
       this.ready = null;
       throw error;
@@ -178,17 +181,13 @@ class RainbowProfitBridge {
 
     const claim = await pool.query(
       `UPDATE private.cryptocrawler_rainbow_profit_events
-       SET status='submitted', batch_id=$1, asset=$2, chain=$3, payout_amount=$4, payout_fee=$5, updated_at=now()
-       WHERE event_id = ANY($6::text[]) AND status='queued'
+       SET status='submitted', batch_id=$1, client_id=$2, asset=$3, chain=$4, payout_amount=$5, payout_fee=$6, updated_at=now()
+       WHERE event_id = ANY($7::text[]) AND status='queued'
        RETURNING event_id`,
-      [batchId, route.asset, route.chain, amount, route.fee, ids],
+      [batchId, clientId, route.asset, route.chain, amount, route.fee, ids],
     );
     if (claim.rowCount !== ids.length) {
-      await pool.query(
-        `UPDATE private.cryptocrawler_rainbow_profit_events SET status='queued', batch_id=NULL, asset=NULL, chain=NULL, payout_amount=NULL, payout_fee=NULL, updated_at=now()
-         WHERE batch_id=$1 AND withdrawal_id IS NULL`,
-        [batchId],
-      );
+      await releaseUnsentBatch(batchId, 'Concurrent payout claim changed before submission');
       return;
     }
 
@@ -204,35 +203,70 @@ class RainbowProfitBridge {
       }, { lane: 'account_read', timeoutMs: 20_000 });
       const withdrawalId = String(response.data[0]?.wdId || '');
       if (!withdrawalId) throw new Error('OKX withdrawal accepted without wdId');
-      await pool.query(
-        `UPDATE private.cryptocrawler_rainbow_profit_events
-         SET withdrawal_id=$1, updated_at=now(), last_error=NULL
-         WHERE batch_id=$2`,
-        [withdrawalId, batchId],
-      );
-      logger.info('[RainbowBridge] Realized-profit payout submitted', {
-        component: 'RainbowProfitBridge',
-        batchId,
-        asset: route.asset,
-        chain: route.chain,
-        amount,
-        fee: route.fee,
-        eventCount: ids.length,
-        destination: addressFingerprint(DESTINATION),
-        withdrawalId,
-      });
+      await this.bindWithdrawal(batchId, withdrawalId);
+      this.logSubmitted(batchId, withdrawalId, route, amount, ids.length);
     } catch (error) {
-      await pool.query(
-        `UPDATE private.cryptocrawler_rainbow_profit_events
-         SET status='queued', batch_id=NULL, asset=NULL, chain=NULL, payout_amount=NULL, payout_fee=NULL, withdrawal_id=NULL,
-             last_error=$1, updated_at=now()
-         WHERE batch_id=$2`,
-        [error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500), batchId],
-      );
+      // A timeout can occur after OKX accepted the withdrawal. Resolve by the
+      // client-supplied id before releasing the ledger claim; otherwise a retry
+      // could create a duplicate irreversible withdrawal.
+      const recovered = await this.recoverAmbiguousSubmission(clientId, batchId, route, amount, ids.length);
+      if (recovered) return;
+      await releaseUnsentBatch(batchId, error instanceof Error ? error.message : String(error));
       logger.warn('[RainbowBridge] Payout route unavailable; realized profit remains queued', {
         component: 'RainbowProfitBridge',
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  private async bindWithdrawal(batchId: string, withdrawalId: string): Promise<void> {
+    await pool.query(
+      `UPDATE private.cryptocrawler_rainbow_profit_events
+       SET withdrawal_id=$1, updated_at=now(), last_error=NULL
+       WHERE batch_id=$2`,
+      [withdrawalId, batchId],
+    );
+  }
+
+  private logSubmitted(batchId: string, withdrawalId: string, route: OkxWithdrawalRoute, amount: number, eventCount: number): void {
+    logger.info('[RainbowBridge] Realized-profit payout submitted', {
+      component: 'RainbowProfitBridge',
+      batchId,
+      asset: route.asset,
+      chain: route.chain,
+      amount,
+      fee: route.fee,
+      eventCount,
+      destination: addressFingerprint(DESTINATION),
+      withdrawalId,
+    });
+  }
+
+  private async recoverAmbiguousSubmission(
+    clientId: string,
+    batchId: string,
+    route: OkxWithdrawalRoute,
+    amount: number,
+    eventCount: number,
+  ): Promise<boolean> {
+    try {
+      const history = await okxPrivateRequest('/api/v5/asset/withdrawal-history', 'GET', { clientId }, { lane: 'account_read' });
+      const record = history.data.find(item => String(item?.clientId || '') === clientId);
+      const withdrawalId = String(record?.wdId || '');
+      if (!withdrawalId) return false;
+      await this.bindWithdrawal(batchId, withdrawalId);
+      this.logSubmitted(batchId, withdrawalId, route, amount, eventCount);
+      return true;
+    } catch {
+      // Unknown is not equivalent to unsent. Keep the claim submitted without a
+      // withdrawal id so a later reconciliation can resolve clientId first.
+      await pool.query(
+        `UPDATE private.cryptocrawler_rainbow_profit_events
+         SET last_error='Ambiguous OKX withdrawal response; awaiting clientId reconciliation', updated_at=now()
+         WHERE batch_id=$1`,
+        [batchId],
+      );
+      return true;
     }
   }
 
@@ -272,23 +306,32 @@ class RainbowProfitBridge {
 
   private async reconcileSubmitted(): Promise<void> {
     const submitted = await pool.query(
-      `SELECT DISTINCT withdrawal_id FROM private.cryptocrawler_rainbow_profit_events
-       WHERE status='submitted' AND withdrawal_id IS NOT NULL LIMIT 50`,
+      `SELECT DISTINCT withdrawal_id, client_id FROM private.cryptocrawler_rainbow_profit_events
+       WHERE status='submitted' AND (withdrawal_id IS NOT NULL OR client_id IS NOT NULL) LIMIT 50`,
     );
     for (const row of submitted.rows) {
-      const withdrawalId = String(row.withdrawal_id || '');
-      if (!withdrawalId) continue;
+      let withdrawalId = String(row.withdrawal_id || '');
+      const clientId = String(row.client_id || '');
       try {
-        const response = await okxPrivateRequest('/api/v5/asset/withdrawal-history', 'GET', { wdId: withdrawalId }, { lane: 'account_read' });
-        const record = response.data.find(item => String(item?.wdId || '') === withdrawalId);
+        const query = withdrawalId ? { wdId: withdrawalId } : { clientId };
+        const response = await okxPrivateRequest('/api/v5/asset/withdrawal-history', 'GET', query, { lane: 'account_read' });
+        const record = response.data.find(item => withdrawalId
+          ? String(item?.wdId || '') === withdrawalId
+          : String(item?.clientId || '') === clientId);
         if (!record) continue;
+        if (!withdrawalId) {
+          withdrawalId = String(record.wdId || '');
+          if (withdrawalId) await this.bindWithdrawal(String((await pool.query(
+            `SELECT batch_id FROM private.cryptocrawler_rainbow_profit_events WHERE client_id=$1 LIMIT 1`, [clientId],
+          )).rows[0]?.batch_id || ''), withdrawalId);
+        }
         const state = String(record.state ?? '');
         if (state === '2') {
           await pool.query(
             `UPDATE private.cryptocrawler_rainbow_profit_events
              SET status='confirmed', transaction_hash=$1, confirmed_at=now(), updated_at=now(), last_error=NULL
-             WHERE withdrawal_id=$2`,
-            [String(record.txId || ''), withdrawalId],
+             WHERE withdrawal_id=$2 OR (withdrawal_id IS NULL AND client_id=$3)`,
+            [String(record.txId || ''), withdrawalId, clientId],
           );
           logger.info('[RainbowBridge] Realized-profit payout confirmed', {
             component: 'RainbowProfitBridge',
@@ -301,21 +344,32 @@ class RainbowProfitBridge {
         } else if (state === '-1' || state === '-2') {
           await pool.query(
             `UPDATE private.cryptocrawler_rainbow_profit_events
-             SET status='queued', batch_id=NULL, asset=NULL, chain=NULL, payout_amount=NULL, payout_fee=NULL, withdrawal_id=NULL,
+             SET status='queued', batch_id=NULL, client_id=NULL, asset=NULL, chain=NULL, payout_amount=NULL, payout_fee=NULL, withdrawal_id=NULL,
                  last_error=$1, updated_at=now()
-             WHERE withdrawal_id=$2`,
-            [`OKX withdrawal terminal state ${state}`, withdrawalId],
+             WHERE withdrawal_id=$2 OR client_id=$3`,
+            [`OKX withdrawal terminal state ${state}`, withdrawalId, clientId],
           );
         }
       } catch (error) {
         logger.debug('[RainbowBridge] Withdrawal reconciliation deferred', {
           component: 'RainbowProfitBridge',
-          withdrawalId,
+          withdrawalId: withdrawalId || null,
+          clientId: clientId || null,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
   }
+}
+
+async function releaseUnsentBatch(batchId: string, error: string): Promise<void> {
+  await pool.query(
+    `UPDATE private.cryptocrawler_rainbow_profit_events
+     SET status='queued', batch_id=NULL, client_id=NULL, asset=NULL, chain=NULL, payout_amount=NULL, payout_fee=NULL, withdrawal_id=NULL,
+         last_error=$1, updated_at=now()
+     WHERE batch_id=$2 AND withdrawal_id IS NULL`,
+    [error.slice(0, 500), batchId],
+  );
 }
 
 export const rainbowProfitBridge = new RainbowProfitBridge();
