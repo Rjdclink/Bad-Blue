@@ -56,6 +56,12 @@ run(
 );
 
 run(
+  'CryptoCrawler Alchemy filtered hash-first mempool boundary',
+  process.execPath,
+  [path.join(root, 'scripts', 'cryptocrawl', 'verify-alchemy-filtered-mempool.cjs')],
+);
+
+run(
   'CryptoCrawler no-regression invariants v2',
   process.execPath,
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-no-regression-opportunity-pipeline-v2.cjs')],
@@ -91,4 +97,4 @@ run(
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-truthful-admin-diagnostics.cjs')],
 );
 
-console.log('[deployment-preflight] PASS — clean-house boundaries/extensions, solution implementation invariants, 0x price-only discovery, current CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade boundaries, and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
+console.log('[deployment-preflight] PASS — clean-house boundaries/extensions, solution implementation invariants, 0x price-only discovery, Alchemy filtered hash-first mempool evidence, current CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade boundaries, and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
