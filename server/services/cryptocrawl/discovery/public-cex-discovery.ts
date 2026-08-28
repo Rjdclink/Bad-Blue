@@ -85,8 +85,9 @@ function assertBbo(
   return { venue, symbol, bid, ask, observedAt, source: 'public_rest_bbo', executable: false };
 }
 
-function snapshotTtlMs(): number {
-  return Math.max(250, Math.min(10_000, Number(process.env.CRYPTOCRAWL_PUBLIC_BBO_CACHE_MS || 1_500)));
+function snapshotTtlMs(venue: PublicDiscoveryVenue): number {
+  const base = Math.max(250, Math.min(10_000, Number(process.env.CRYPTOCRAWL_PUBLIC_BBO_CACHE_MS || 1_500)));
+  return venue === 'bitfinex' ? Math.max(2_500, base) : base;
 }
 
 function addSnapshotRow(
@@ -219,7 +220,7 @@ async function getVenueSnapshot(venue: PublicDiscoveryVenue): Promise<VenueSnaps
 
   const promise = fetchVenueSnapshotUncached(venue)
     .then(value => {
-      snapshotCache.set(venue, { value, expiresAt: Date.now() + snapshotTtlMs() });
+      snapshotCache.set(venue, { value, expiresAt: Date.now() + snapshotTtlMs(venue) });
       return value;
     })
     .finally(() => snapshotInFlight.delete(venue));
