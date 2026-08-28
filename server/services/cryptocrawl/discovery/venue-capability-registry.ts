@@ -24,19 +24,19 @@ export interface VenueCapability {
  * Capability is not the same thing as configuration. A venue is granted only
  * the powers implemented and settlement-safe in the current codebase.
  * Discovery-only venues may help build the measured universe but cannot become
- * executable merely because a public endpoint responds.
+ * executable merely because a public endpoint responds or credentials are set.
  */
 const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = Object.freeze({
   coinbase: Object.freeze({
     venue: 'coinbase',
-    enabled: false,
-    publicDiscovery: false,
+    enabled: true,
+    publicDiscovery: true,
     executableQuotes: false,
-    measuredOrderBook: false,
+    measuredOrderBook: true,
     authenticatedFeeEvidence: false,
     liveExecution: false,
     settlementVerification: false,
-    reason: 'intentionally inactive; no settlement-safe Coinbase execution path is enabled',
+    reason: 'Advanced Trade public discovery and private-auth authority are installed; live routing stays fail-closed until authenticated fee and terminal settlement adapters are verified end-to-end',
   }),
   kraken: Object.freeze({
     venue: 'kraken',
