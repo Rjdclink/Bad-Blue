@@ -21,22 +21,22 @@ export interface VenueCapability {
 }
 
 /**
- * Capability is not the same thing as configuration. A venue is granted only
- * the powers implemented and settlement-safe in the current codebase.
- * Discovery-only venues may help build the measured universe but cannot become
- * executable merely because a public endpoint responds or credentials are set.
+ * Capability means the codebase has an end-to-end implementation, not that a
+ * particular runtime account is ready. Runtime permission, authenticated fee,
+ * exact-product market data, inventory, governance and settlement evidence still
+ * fail closed independently for every plan.
  */
 const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = Object.freeze({
   coinbase: Object.freeze({
     venue: 'coinbase',
     enabled: true,
     publicDiscovery: true,
-    executableQuotes: false,
+    executableQuotes: true,
     measuredOrderBook: true,
-    authenticatedFeeEvidence: false,
-    liveExecution: false,
-    settlementVerification: false,
-    reason: 'Advanced Trade public discovery and private-auth authority are installed; live routing stays fail-closed until authenticated fee and terminal settlement adapters are verified end-to-end',
+    authenticatedFeeEvidence: true,
+    liveExecution: true,
+    settlementVerification: true,
+    reason: 'Advanced Trade v3 product-book, authenticated permissions/fee tier, IOC order, fills, balances and terminal settlement are implemented; runtime evidence still gates every plan',
   }),
   kraken: Object.freeze({
     venue: 'kraken',
@@ -95,12 +95,13 @@ export function getVenueCapabilities(): ReadonlyArray<Readonly<VenueCapability>>
   return Object.values(CAPABILITIES).map(capability => ({ ...capability }));
 }
 
-export function getActiveExecutableQuoteVenues(): Array<'kraken' | 'okx'> {
-  return (['kraken', 'okx'] as const).filter(venue => {
+export function getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'> {
+  return (['coinbase', 'kraken', 'okx'] as const).filter(venue => {
     const capability = CAPABILITIES[venue];
     return capability.enabled
       && capability.executableQuotes
       && capability.measuredOrderBook
+      && capability.authenticatedFeeEvidence
       && capability.liveExecution
       && capability.settlementVerification;
   });
