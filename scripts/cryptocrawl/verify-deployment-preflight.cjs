@@ -56,6 +56,12 @@ run(
 );
 
 run(
+  'CryptoCrawler S-94 performance truth contract',
+  process.execPath,
+  [path.join(root, 'scripts', 'cryptocrawl', 'verify-performance-truth-contract.cjs')],
+);
+
+run(
   'CryptoCrawler no-regression invariants v2',
   process.execPath,
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-no-regression-opportunity-pipeline-v2.cjs')],
@@ -91,4 +97,4 @@ run(
   [path.join(root, 'scripts', 'cryptocrawl', 'verify-truthful-admin-diagnostics.cjs')],
 );
 
-console.log('[deployment-preflight] PASS — clean-house boundaries/extensions, solution implementation invariants, complete S-80 measured latency wiring, current CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade boundaries, and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
+console.log('[deployment-preflight] PASS — clean-house boundaries/extensions, solution implementation invariants, complete S-80 measured latency wiring, S-94 measured-performance truth contract, current CryptoCrawler invariants, topology lifecycle, competition evidence, profit blockers, Coinbase Advanced Trade boundaries, and truthful diagnostics are clean; normal production build continues with Vite/esbuild');
