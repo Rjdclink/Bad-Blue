@@ -13,8 +13,10 @@ export interface ZeroCapitalRoutePreselectionEvidence {
   attempts: number;
   positiveQuotes: number;
   lastAttemptAt: number | null;
+  lastMeasuredAt: number | null;
   lastPositiveAt: number | null;
   recentNetProfitBps: number | null;
+  recentMeasuredNotionalUsd: number | null;
   recentPositiveNotionalUsd: number | null;
   estimatedDeterministicPositiveProbability: number | null;
 }
@@ -58,8 +60,10 @@ interface MutableRouteEvidence {
   attempts: number;
   positiveQuotes: number;
   lastAttemptAt: number | null;
+  lastMeasuredAt: number | null;
   lastPositiveAt: number | null;
   recentNetProfitBps: number | null;
+  recentMeasuredNotionalUsd: number | null;
   recentPositiveNotionalUsd: number | null;
 }
 
@@ -107,6 +111,18 @@ function formationFields(routeId: string, consequence: number, cost: number) {
   };
 }
 
+function measuredEdgePotential(netProfitBps: number): number {
+  if (!Number.isFinite(netProfitBps)) return 0.000001;
+  if (netProfitBps > 0) return 1 + Math.min(10, netProfitBps / 100);
+  const nearBreakEvenScaleBps = boundedNumber(
+    process.env.ZERO_CAPITAL_NEAR_BREAK_EVEN_SCALE_BPS,
+    50,
+    1,
+    500,
+  );
+  return Math.max(0.000001, 1 / (1 + Math.abs(netProfitBps) / nearBreakEvenScaleBps));
+}
+
 function scoreRoute(
   route: ConfiguredZeroCapitalRoute,
   gasCostUsd: number,
@@ -116,7 +132,7 @@ function scoreRoute(
   const notionalUsd = routeNotionalUsd(route);
   const gasPressure = Math.max(0.000001, gasCostUsd / Math.max(0.01, notionalUsd));
   const cost = quoteCost(route);
-  if (!item || item.lastPositiveAt === null || item.recentNetProfitBps === null || item.recentPositiveNotionalUsd === null) {
+  if (!item || item.lastMeasuredAt === null || item.recentNetProfitBps === null || item.recentMeasuredNotionalUsd === null) {
     return {
       routeId: route.id,
       preScore: null,
@@ -140,15 +156,15 @@ function scoreRoute(
     5_000,
     60 * 60_000,
   );
-  const ageMs = Math.max(0, now - item.lastPositiveAt);
+  const ageMs = Math.max(0, now - item.lastMeasuredAt);
   const freshness = Math.pow(0.5, ageMs / freshnessHalfLifeMs);
-  const edgePotential = Math.max(0.000001, Math.min(100, item.recentNetProfitBps) / 100);
+  const edgePotential = measuredEdgePotential(item.recentNetProfitBps);
   const executableLiquidity = Math.max(
     0.000001,
-    Math.min(1, item.recentPositiveNotionalUsd / Math.max(0.01, notionalUsd)),
+    Math.min(1, item.recentMeasuredNotionalUsd / Math.max(0.01, notionalUsd)),
   );
   const probability = positiveProbability(item);
-  const formation = formationFields(route.id, item.recentNetProfitBps, cost);
+  const formation = formationFields(route.id, Math.max(0, item.recentNetProfitBps), cost);
   const baseScore = probability === null
     ? null
     : (edgePotential * executableLiquidity * freshness * probability) / (gasPressure * cost);
@@ -286,8 +302,10 @@ export function recordZeroCapitalRouteQuoteCycle(
       attempts: 0,
       positiveQuotes: 0,
       lastAttemptAt: null,
+      lastMeasuredAt: null,
       lastPositiveAt: null,
       recentNetProfitBps: null,
+      recentMeasuredNotionalUsd: null,
       recentPositiveNotionalUsd: null,
     };
     current.attempts += 1;
@@ -298,9 +316,11 @@ export function recordZeroCapitalRouteQuoteCycle(
     let observationNotionalUsd = routeNotionalUsd(route);
 
     if (quote && Number.isFinite(quote.netProfitBps)) {
+      current.lastMeasuredAt = observedAt;
       current.recentNetProfitBps = quote.netProfitBps;
       const notional = Number(quote.amountIn) / Math.pow(10, quote.inputTokenDecimals);
       if (Number.isFinite(notional) && notional > 0) observationNotionalUsd = notional;
+      current.recentMeasuredNotionalUsd = observationNotionalUsd;
     }
 
     if (deterministicPositive && quote) {
