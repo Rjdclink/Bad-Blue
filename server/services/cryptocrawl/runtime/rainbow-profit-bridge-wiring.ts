@@ -1,7 +1,7 @@
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { ensureRainbowMakerFuelReserve, stopRainbowMakerFuelReserve } from '../compensation/rainbow-maker-fuel-reserve.js';
-import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
+import { retainedProfitLedger } from '../compensation/retained-profit-ledger.js';
 import { rainbowProfitObservability } from '../compensation/rainbow-profit-observability.js';
 import { rainbowProfitSourceLedger } from '../compensation/rainbow-profit-source-ledger.js';
 import { stageManager } from '../governance/stage-management.js';
@@ -19,14 +19,14 @@ function latestTerminalFeedback(): CryptaraExecutionFeedback | null {
 async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
   try {
     await Promise.all([
-      rainbowProfitBridge.recordTerminalSettlement(feedback),
+      retainedProfitLedger.recordTerminalSettlement(feedback),
       rainbowProfitSourceLedger.recordTerminalSettlement(feedback),
     ]);
     void rainbowProfitObservability.refresh();
   } catch (error) {
-    // Payout persistence/venue egress is downstream of settlement. A payout
-    // failure must never rewrite or invalidate a correctly settled trade.
-    logger.warn('[RainbowBridge] Realized-profit capture deferred', {
+    // Treasury persistence is downstream of settlement. A persistence failure
+    // must never rewrite or invalidate a correctly settled trade.
+    logger.warn('[Treasury] Realized-profit capture deferred', {
       component: 'RainbowProfitBridgeWiring',
       opportunityId: feedback.opportunityId,
       error: error instanceof Error ? error.message : String(error),
@@ -38,15 +38,14 @@ export function ensureRainbowProfitBridgeWiring(): void {
   if (installed) return;
   installed = true;
 
-  // Maker fuel belongs to exchange inventory, not the external payout wallet.
-  // Install its dynamic reserve before the payout loop begins so Rainbow only
-  // sweeps capital above the currently proven maker-canary envelope.
+  // Retain realized profit inside trading inventory during normal operation.
+  // The independent Supabase terminal sweeper is the only component allowed to
+  // convert retained capital into an external wallet withdrawal.
   ensureRainbowMakerFuelReserve();
-  rainbowProfitBridge.start();
   rainbowProfitObservability.start();
 
   // Reconcile persisted terminal evidence after a restart. Both ledgers are
-  // event-idempotent, so replay cannot create duplicate payout authority.
+  // event-idempotent, so replay cannot create duplicate retained-profit credit.
   for (const evidence of stageManager.getState().cryptaraExecutionEvidence) {
     if (evidence.settlement?.terminal === true) {
       void capture(evidence as unknown as CryptaraExecutionFeedback);
@@ -59,17 +58,16 @@ export function ensureRainbowProfitBridgeWiring(): void {
   };
   stageManager.on('execution-evidence-recorded', listener);
 
-  logger.info('[RainbowBridge] Realized-profit wiring installed', {
+  logger.info('[Treasury] Realized-profit retention wiring installed', {
     component: 'RainbowProfitBridgeWiring',
     sourceAuthority: 'terminal_confirmed_settlement_only',
     persistentIdempotency: true,
     sourceAwareLedger: 'venue_chain_symbol_asset_execution_source',
+    normalRuntimePayouts: false,
+    terminalSweepAuthority: 'independent_supabase_worker_only',
     payoutDestination: 'CRYPTO_PROFIT_WALLET_ADDRESS',
-    preferredAssets: 'USDT/USDC dynamic',
-    routeSelection: 'lowest_fee_supported_evm_network',
     tradingInventoryReservePreserved: true,
-    makerFuelReserve: 'dynamic_canary_proof_ladder_before_wallet_sweep',
-    lifecycleObservability: 'queued_submitted_confirmed_fee_tx_proof',
+    restartBehavior: 'recover_and_continue_without_sweep',
   });
 }
 
@@ -79,6 +77,5 @@ export function stopRainbowProfitBridgeWiring(): void {
   listener = null;
   installed = false;
   rainbowProfitObservability.stop();
-  rainbowProfitBridge.stop();
   stopRainbowMakerFuelReserve();
 }
