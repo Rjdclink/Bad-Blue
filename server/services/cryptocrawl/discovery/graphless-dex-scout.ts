@@ -7,7 +7,21 @@ const UNISWAP_V3_FACTORY = '0x1F98431c8aD98523631AE4a59f267346ea31F984';
 const UNI_V3_POOL_CREATED = new ethers.utils.Interface([
   'event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)',
 ]);
+const V2_PAIR_CREATED = new ethers.utils.Interface([
+  'event PairCreated(address indexed token0,address indexed token1,address pair,uint256)',
+]);
 const POOL_CREATED_TOPIC = UNI_V3_POOL_CREATED.getEventTopic('PoolCreated');
+const PAIR_CREATED_TOPIC = V2_PAIR_CREATED.getEventTopic('PairCreated');
+
+const V2_FACTORIES: Partial<Record<SupportedExecutionChain, Array<{ name: string; address: string }>>> = {
+  polygon: [
+    { name: 'quickswap_v2', address: '0x5757371414417b8C6cAad45bAeF941aBc7d3Ab32' },
+    { name: 'sushiswap_v2', address: '0xc35DADB65012eC5796536bD9864eD8773aBc74C4' },
+  ],
+  arbitrum: [
+    { name: 'sushiswap_v2', address: '0xc35DADB65012eC5796536bD9864eD8773aBc74C4' },
+  ],
+};
 
 const GECKO_NETWORK: Partial<Record<SupportedExecutionChain, string>> = {
   polygon: 'polygon_pos',
@@ -21,7 +35,7 @@ const GECKO_NETWORK: Partial<Record<SupportedExecutionChain, string>> = {
 export interface GraphlessDexTokenCandidate {
   token: string;
   liquidityUsd: number | null;
-  source: 'geckoterminal_public' | 'uniswap_v3_factory_event';
+  source: 'geckoterminal_public' | 'uniswap_v3_factory_event' | 'uniswap_v2_factory_event';
   observedAt: number;
 }
 
@@ -110,6 +124,53 @@ async function fetchGeckoCandidates(
   return [...result.values()];
 }
 
+function rememberAnchoredCandidate(
+  candidates: Map<string, GraphlessDexTokenCandidate>,
+  token0: string,
+  token1: string,
+  anchors: Set<string>,
+  source: GraphlessDexTokenCandidate['source'],
+  observedAt: number,
+): void {
+  if (anchors.has(token0.toLowerCase()) && !anchors.has(token1.toLowerCase())) {
+    candidates.set(token1.toLowerCase(), { token: token1, liquidityUsd: null, source, observedAt });
+  }
+  if (anchors.has(token1.toLowerCase()) && !anchors.has(token0.toLowerCase())) {
+    candidates.set(token0.toLowerCase(), { token: token0, liquidityUsd: null, source, observedAt });
+  }
+}
+
+async function scanFactoryLogs(input: {
+  provider: providers.Provider;
+  currentBlock: number;
+  chainKey: string;
+  address: string;
+  topic: string;
+  parse: (log: providers.Log) => { token0: string; token1: string } | null;
+  source: GraphlessDexTokenCandidate['source'];
+  anchors: Set<string>;
+  observedAt: number;
+  output: Map<string, GraphlessDexTokenCandidate>;
+}): Promise<void> {
+  const bootstrapBlocks = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_BOOTSTRAP_BLOCKS, 20_000, 500, 100_000));
+  const fromBlock = Math.max(0, lastFactoryBlock.get(input.chainKey) ?? input.currentBlock - bootstrapBlocks);
+  const chunk = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_LOG_CHUNK, 2_000, 100, 10_000));
+  for (let start = fromBlock; start <= input.currentBlock; start += chunk) {
+    const end = Math.min(input.currentBlock, start + chunk - 1);
+    const logs = await input.provider.getLogs({ address: input.address, topics: [input.topic], fromBlock: start, toBlock: end });
+    for (const log of logs) {
+      try {
+        const parsed = input.parse(log);
+        if (!parsed) continue;
+        rememberAnchoredCandidate(input.output, parsed.token0, parsed.token1, input.anchors, input.source, input.observedAt);
+      } catch {
+        // Malformed logs never create candidates. Direct route quoting remains final authority.
+      }
+    }
+  }
+  lastFactoryBlock.set(input.chainKey, input.currentBlock + 1);
+}
+
 async function fetchRecentFactoryCandidates(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
@@ -119,42 +180,60 @@ async function fetchRecentFactoryCandidates(
   const network = await provider.getNetwork();
   if (!Number.isSafeInteger(network.chainId) || network.chainId <= 0) return [];
   const current = await provider.getBlockNumber();
-  const key = `${network.chainId}:uniswapV3`;
-  const bootstrapBlocks = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_BOOTSTRAP_BLOCKS, 20_000, 500, 100_000));
-  const fromBlock = Math.max(0, lastFactoryBlock.get(key) ?? current - bootstrapBlocks);
-  const chunk = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_LOG_CHUNK, 2_000, 100, 10_000));
   const candidates = new Map<string, GraphlessDexTokenCandidate>();
   const anchors = new Set(anchorTokens.map(token => token.toLowerCase()));
   const observedAt = Date.now();
 
-  for (let start = fromBlock; start <= current; start += chunk) {
-    const end = Math.min(current, start + chunk - 1);
-    const logs = await provider.getLogs({ address: UNISWAP_V3_FACTORY, topics: [POOL_CREATED_TOPIC], fromBlock: start, toBlock: end });
-    for (const log of logs) {
-      try {
-        const parsed = UNI_V3_POOL_CREATED.parseLog(log);
-        const token0 = ethers.utils.getAddress(parsed.args.token0);
-        const token1 = ethers.utils.getAddress(parsed.args.token1);
-        if (anchors.has(token0.toLowerCase()) && !anchors.has(token1.toLowerCase())) {
-          candidates.set(token1.toLowerCase(), { token: token1, liquidityUsd: null, source: 'uniswap_v3_factory_event', observedAt });
-        }
-        if (anchors.has(token1.toLowerCase()) && !anchors.has(token0.toLowerCase())) {
-          candidates.set(token0.toLowerCase(), { token: token0, liquidityUsd: null, source: 'uniswap_v3_factory_event', observedAt });
-        }
-      } catch {
-        // Ignore malformed/unexpected factory logs; direct route quoting is still final authority.
-      }
+  await scanFactoryLogs({
+    provider,
+    currentBlock: current,
+    chainKey: `${network.chainId}:uniswapV3`,
+    address: UNISWAP_V3_FACTORY,
+    topic: POOL_CREATED_TOPIC,
+    parse: log => {
+      const parsed = UNI_V3_POOL_CREATED.parseLog(log);
+      return {
+        token0: ethers.utils.getAddress(parsed.args.token0),
+        token1: ethers.utils.getAddress(parsed.args.token1),
+      };
+    },
+    source: 'uniswap_v3_factory_event',
+    anchors,
+    observedAt,
+    output: candidates,
+  });
+
+  if (process.env.ZERO_CAPITAL_V2_FORK_RPC_SCANNING !== 'false') {
+    for (const factory of V2_FACTORIES[chain] || []) {
+      await scanFactoryLogs({
+        provider,
+        currentBlock: current,
+        chainKey: `${network.chainId}:${factory.name}:${factory.address.toLowerCase()}`,
+        address: factory.address,
+        topic: PAIR_CREATED_TOPIC,
+        parse: log => {
+          const parsed = V2_PAIR_CREATED.parseLog(log);
+          return {
+            token0: ethers.utils.getAddress(parsed.args.token0),
+            token1: ethers.utils.getAddress(parsed.args.token1),
+          };
+        },
+        source: 'uniswap_v2_factory_event',
+        anchors,
+        observedAt,
+        output: candidates,
+      });
     }
   }
-  lastFactoryBlock.set(key, current + 1);
+
   return [...candidates.values()];
 }
 
 /**
  * No-key DEX discovery. Public analytics are optional scouts only. Direct RPC
- * factory events keep discovery alive when scouts are unavailable, and neither
- * source grants execution authority: every route must still receive fresh
- * router/quoter outputs plus all-in profitability checks downstream.
+ * V3 and compatible V2-fork factory events keep discovery alive when scouts are
+ * unavailable. Neither source grants execution authority: every route must still
+ * receive fresh router/quoter outputs plus all-in profitability checks downstream.
  */
 export async function discoverGraphlessDexTokens(
   chain: SupportedExecutionChain,
@@ -213,6 +292,8 @@ export async function discoverGraphlessDexTokens(
     sources: result.sources,
     publicScoutAvailable,
     directRpcAvailable,
+    v2ForkRpcScanning: process.env.ZERO_CAPITAL_V2_FORK_RPC_SCANNING !== 'false',
+    v2Factories: (V2_FACTORIES[chain] || []).map(factory => factory.name),
     errors,
     apiKeysRequired: false,
     executionAuthority: false,
