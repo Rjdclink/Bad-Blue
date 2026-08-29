@@ -73,6 +73,25 @@ const wiringSource = readFileSync(
 assert.match(wiringSource, /reconcileDiscoveryProfile/);
 assert.match(wiringSource, /measuredDensityProfile/);
 assert.match(wiringSource, /saturationDowngrade/);
+assert.match(wiringSource, /positiveOpportunityPressure/);
+assert.match(wiringSource, /queueBacklogPressure/);
+assert.match(wiringSource, /expectedProfitPressure/);
+assert.match(wiringSource, /profitabilityAuthority: 'terminal_confirmed_realized_only'/);
+assert.match(
+  wiringSource,
+  /const profitabilityPressure = clamp01\(\(realized \?\? 0\) \/ realizedProfitTarget\)/,
+  'profitability pressure must derive from terminal-confirmed realized profit only',
+);
+assert.doesNotMatch(
+  wiringSource,
+  /clamp01\(candidateBacklog \/ backlogTarget\) \* 0\.25/,
+  'candidate backlog must not be collapsed into search pressure',
+);
+assert.doesNotMatch(
+  wiringSource,
+  /canonicalMinute\.verifiedPositiveOpportunities \/ positiveTarget\) \* 0\.45[\s\S]*expected[\s\S]*realized/,
+  'positive density, expected profit, and realized profit must not collapse into one scaling metric',
+);
 assert.doesNotMatch(
   wiringSource,
   /const desired = profileForPressure\(pressure, fallback\)/,
