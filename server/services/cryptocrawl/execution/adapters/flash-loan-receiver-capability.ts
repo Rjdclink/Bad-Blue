@@ -5,7 +5,8 @@ import {
   type SupportedSwapProtocol,
 } from './onchain-payload-builder.js';
 import { resolveAaveV3Pool } from './flash-loan-provider-economics.js';
-import { resolveSponsoredReceiverVault, type SponsoredCall } from './sponsored-receiver-manager.js';
+import { resolveSponsoredReceiverVault } from './sponsored-receiver-manager.js';
+import type { SponsoredCall } from '../../strategies/gas-sponsorship.js';
 
 export type FlashLoanReceiverCapabilityKind = 'balancer_v1' | 'balancer_composite_v2' | 'aave_v3';
 
