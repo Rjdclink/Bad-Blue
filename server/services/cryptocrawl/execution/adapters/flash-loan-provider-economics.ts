@@ -22,7 +22,10 @@ export interface FlashLoanProviderEconomics {
 const ERC20_ABI = ['function balanceOf(address account) view returns (uint256)'];
 const BALANCER_VAULT_ABI = ['function getProtocolFeesCollector() view returns (address)'];
 const BALANCER_FEES_ABI = ['function getFlashLoanFeePercentage() view returns (uint256)'];
-const AAVE_POOL_ABI = ['function FLASHLOAN_PREMIUM_TOTAL() view returns (uint128)'];
+const AAVE_POOL_ABI = [
+  'function FLASHLOAN_PREMIUM_TOTAL() view returns (uint128)',
+  'function getReserveAToken(address asset) view returns (address)',
+];
 const BALANCER_FIXED_POINT_ONE = 10n ** 18n;
 const AAVE_BPS_DENOMINATOR = 10_000n;
 
@@ -125,33 +128,50 @@ export async function measureAaveV3FlashLoanEconomics(input: {
   if (!poolAddress) return null;
   const asset = requireAddress('flash-loan asset', input.asset);
   const pool = new Contract(poolAddress, AAVE_POOL_ABI, input.provider);
-  const premiumRaw = BigNumber.from(await pool.FLASHLOAN_PREMIUM_TOTAL());
-  const feeRateNumerator = premiumRaw.toBigInt();
-  const feeBps = Number(premiumRaw.toString());
-  const feeMeasured = feeRateNumerator >= 0n && Number.isFinite(feeBps) && feeBps >= 0;
 
-  // Aave liquidity resides behind reserve aTokens rather than at the Pool address.
-  // Until a reserve-liquidity authority is wired, fee evidence is useful for
-  // comparison but Aave remains non-executable rather than assuming capacity.
+  let aTokenAddress: string | null = null;
+  let availableLiquidity: bigint | null = null;
+  let liquidityMeasured = false;
+  try {
+    aTokenAddress = requireAddress('Aave V3 reserve aToken', await pool.getReserveAToken(asset) as string);
+    const token = new Contract(asset, ERC20_ABI, input.provider);
+    const liquidityRaw = await token.balanceOf(aTokenAddress) as BigNumber;
+    availableLiquidity = liquidityRaw.toBigInt();
+    liquidityMeasured = liquidityRaw.gt(0);
+  } catch {
+    // Aave market versions that do not expose getReserveAToken remain fail-closed.
+    // A data-provider fallback can be added without changing this authority boundary.
+  }
+
+  let premiumRaw: BigNumber | null = null;
+  try {
+    premiumRaw = BigNumber.from(await pool.FLASHLOAN_PREMIUM_TOTAL());
+  } catch {
+    premiumRaw = null;
+  }
+  const feeRateNumerator = premiumRaw?.toBigInt() ?? null;
+  const feeBps = premiumRaw ? Number(premiumRaw.toString()) : null;
+  const feeMeasured = feeRateNumerator !== null && feeRateNumerator >= 0n && feeBps !== null && Number.isFinite(feeBps) && feeBps >= 0;
+
   return {
     provider: 'aave_v3',
     chain: input.chain,
     infrastructure: poolAddress,
     asset,
-    availableLiquidity: null,
+    availableLiquidity,
     feeBps: feeMeasured ? feeBps : null,
     feeRateNumerator: feeMeasured ? feeRateNumerator : null,
     feeRateDenominator: feeMeasured ? AAVE_BPS_DENOMINATOR : null,
     observedAt: Date.now(),
-    executableEvidenceComplete: false,
+    executableEvidenceComplete: feeMeasured && liquidityMeasured,
     missingEvidence: [
       ...(!feeMeasured ? ['flash_loan_fee'] : []),
-      'flash_loan_liquidity',
-      'compiled_verified_receiver_artifact',
+      ...(!liquidityMeasured ? ['flash_loan_liquidity'] : []),
     ],
     provenance: [
       'aave_v3_pool_FLASHLOAN_PREMIUM_TOTAL',
-      'liquidity_not_assumed',
+      ...(aTokenAddress ? ['aave_v3_pool_getReserveAToken', 'aave_v3_underlying_balance_at_atoken'] : ['aave_v3_reserve_liquidity_unavailable']),
+      'receiver_readiness_separate_authority',
       'synthetic_evidence:false',
     ],
   };
