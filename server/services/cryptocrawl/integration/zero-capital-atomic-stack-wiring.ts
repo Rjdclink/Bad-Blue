@@ -33,6 +33,21 @@ function bpsFromSharedPrincipal(profit: bigint, principal: bigint): number {
   return Number((profit * 1_000_000n) / principal) / 100;
 }
 
+function baseUnitsToUsd(value: bigint, decimals: number): number {
+  const divisor = 10 ** Math.max(0, Math.min(18, decimals));
+  const result = Number(value) / divisor;
+  return Number.isFinite(result) ? result : 0;
+}
+
+function ceilMulDiv(value: bigint, numerator: bigint, denominator: bigint): bigint {
+  if (value <= 0n || numerator <= 0n || denominator <= 0n) return 0n;
+  return (value * numerator + denominator - 1n) / denominator;
+}
+
+function positiveDifference(left: bigint, right: bigint): bigint {
+  return left > right ? left - right : 0n;
+}
+
 function groupId(chain: SupportedChain, inputToken: string, ids: readonly string[]): string {
   return `atomic-stack:${chain}:${inputToken.toLowerCase()}:${[...ids].sort().join('|')}`;
 }
@@ -132,17 +147,48 @@ async function exactSimulateStack(input: {
   const allowedGas = BigInt(Math.floor(Number(blockGasLimit) * maxBlockFraction));
   if (estimatedGas > allowedGas) throw new Error(`composite gas ${estimatedGas} exceeds bounded block fraction ${allowedGas}`);
 
+  // Stacking is promoted only if current measured duplicate-cost reuse makes the
+  // combined economics strictly better than executing the same cycles separately.
+  const individualGasUnits = input.opportunities.reduce((sum, opportunity) => sum + opportunity.gasEstimate, 0n);
+  const individualGasCost = input.opportunities.reduce(
+    (sum, opportunity) => sum + (opportunity.estimatedGasCostInInputToken || 0n),
+    0n,
+  );
+  const combinedGasCost = individualGasUnits > 0n
+    ? ceilMulDiv(individualGasCost, estimatedGas, individualGasUnits)
+    : individualGasCost;
+  const individualFlashFees = input.opportunities.reduce(
+    (sum, opportunity) => sum + (opportunity.flashLoanFeeInInputToken || 0n),
+    0n,
+  );
+  const combinedFlashFee = input.opportunities.reduce((largest, opportunity) => {
+    const fee = opportunity.flashLoanFeeInInputToken || 0n;
+    return fee > largest ? fee : largest;
+  }, 0n);
+  const measuredGasSavings = positiveDifference(individualGasCost, combinedGasCost);
+  const measuredFlashFeeSavings = positiveDifference(individualFlashFees, combinedFlashFee);
+  const measuredCompositionGain = measuredGasSavings + measuredFlashFeeSavings;
+  if (measuredCompositionGain <= 0n) return;
+
+  const combinedExpectedProfit = expectedProfitSum + measuredCompositionGain;
+  if (combinedExpectedProfit <= expectedProfitSum) return;
+  const stackedBps = bpsFromSharedPrincipal(combinedExpectedProfit, sharedPrincipal);
+  const decimals = input.opportunities[0].inputTokenDecimals;
+  const compositionGainUsd = baseUnitsToUsd(measuredCompositionGain, decimals);
   const opportunityIds = input.opportunities.map(opportunity => opportunity.id);
-  const stackedBps = bpsFromSharedPrincipal(expectedProfitSum, sharedPrincipal);
   const evidenceId = groupId(input.chain, loanToken, opportunityIds);
+
   zeroCapitalCompositeEvidenceRegistry.record({
     evidenceId,
     opportunityIds,
     chain: input.chain,
     inputToken: loanToken,
-    inputTokenDecimals: input.opportunities[0].inputTokenDecimals,
+    inputTokenDecimals: decimals,
     sharedPrincipal,
-    expectedProfitSum,
+    individualExpectedProfitSum: expectedProfitSum,
+    measuredCompositionGain,
+    combinedExpectedProfit,
+    compositionGainUsd,
     minProfitSum,
     sharedPrincipalStackedBps: stackedBps,
     stepCount: steps.length,
@@ -153,6 +199,9 @@ async function exactSimulateStack(input: {
       'exact_receiver_composite_eth_call',
       'exact_receiver_composite_estimate_gas',
       'shared_flash_loan_principal',
+      'measured_duplicate_flash_fee_savings',
+      'measured_combined_gas_savings',
+      'combined_profit_strictly_exceeds_individual_profit_sum',
       'all_individual_legs_deterministic_positive',
       'synthetic_evidence:false',
     ],
@@ -168,18 +217,22 @@ async function exactSimulateStack(input: {
         `atomic_multileg_evidence:${evidenceId}`,
         `atomic_multileg_shared_principal_bps:${stackedBps.toFixed(4)}`,
         `atomic_multileg_estimated_gas:${estimatedGas.toString()}`,
+        `measured_composite_gain_usd:${compositionGainUsd.toFixed(8)}`,
       ],
     });
   }
 
-  logger.info('[ZeroCapitalStack] Exact-simulated shared-principal atomic stack', {
+  logger.info('[ZeroCapitalStack] Exact-simulated beneficial shared-principal atomic stack', {
     component: 'ZeroCapitalAtomicStackWiring',
     chain: input.chain,
     opportunityIds,
     cycles: input.opportunities.length,
     steps: steps.length,
     sharedPrincipal: sharedPrincipal.toString(),
-    expectedProfitSum: expectedProfitSum.toString(),
+    individualExpectedProfitSum: expectedProfitSum.toString(),
+    measuredCompositionGain: measuredCompositionGain.toString(),
+    combinedExpectedProfit: combinedExpectedProfit.toString(),
+    compositionGainUsd,
     minProfitSum: minProfitSum.toString(),
     sharedPrincipalStackedBps: stackedBps,
     estimatedGas: estimatedGas.toString(),
@@ -246,6 +299,8 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     adaptiveIncrementalBpsThreshold: true,
     exactCompositeSimulationRequired: true,
     exactCompositeGasEstimateRequired: true,
+    measuredCompositionBenefitRequired: true,
+    combinedProfitMustExceedIndividualProfitSum: true,
     realizedAttributionBeforeCompositeExecutionRequired: true,
     executionAuthority: false,
   });
