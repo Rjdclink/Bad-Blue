@@ -4,7 +4,7 @@ import { BigNumber, Contract, Wallet, ethers, providers } from 'ethers';
 import type { ConfiguredZeroCapitalRoute } from './onchain-route-quoter.js';
 import { buildSwapCallFromLeg, type SupportedExecutionChain } from './onchain-payload-builder.js';
 import { getGasSponsorManager, type SponsoredCall } from '../../strategies/gas-sponsorship.js';
-import { getCryptocrawlGovernance } from '../../governance/index.js';
+import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../../governance/zero-capital-infrastructure-policy.js';
 import { withEvmSignerLane } from '../evm-signer-lane.js';
 
 const DEFAULT_CREATE2_DEPLOYER = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
@@ -169,7 +169,10 @@ export class SponsoredReceiverManager {
 
       const deploymentData = ethers.utils.hexConcat([RECEIVER_SALT, initCode]);
       await input.provider.call({ from: owner, to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: 0 });
-      getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: input.chain, pair: 'zero_capital_receiver_deployment' });
+      requireZeroCapitalInfrastructureDeploymentAllowed({
+        chain: input.chain,
+        operation: 'receiver_deployment',
+      });
 
       if (input.fundingMode === 'sponsored') {
         const sponsorReadiness = this.sponsor.getReadiness();
