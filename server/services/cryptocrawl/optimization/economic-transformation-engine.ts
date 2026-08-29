@@ -26,6 +26,9 @@ export interface EconomicTransformationAdvice {
   dominantCostBps: number | null;
   netProfitBps: number | null;
   bpsToBreakEven: number | null;
+  requiredRecoveryBps: number | null;
+  dominantCostCoverageRatio: number | null;
+  dominantCostAloneCouldCoverGap: boolean;
   transformations: EconomicTransformation[];
   priorityScore: number;
   authority: 'optimization_advisory_only';
@@ -97,8 +100,16 @@ export function adviseEconomicTransformations(candidate: MeasuredCandidate): Eco
   const netProfitBps = finite(candidate.economics.netProfitBps);
   const bpsToBreakEven = nonNegative(candidate.economics.bpsToBreakEven)
     ?? (netProfitBps !== null && netProfitBps < 0 ? Math.abs(netProfitBps) : null);
+  const requiredRecoveryBps = bpsToBreakEven;
+  const dominantCostCoverageRatio = requiredRecoveryBps !== null && requiredRecoveryBps > 0 && cost.bps !== null
+    ? cost.bps / requiredRecoveryBps
+    : null;
+  const dominantCostAloneCouldCoverGap = dominantCostCoverageRatio !== null && dominantCostCoverageRatio >= 1;
   const proximity = bpsToBreakEven === null ? 0 : 1 / (1 + bpsToBreakEven / 50);
   const costSignal = cost.bps === null ? 0 : Math.log1p(Math.max(0, cost.bps));
+  const coverageSignal = dominantCostCoverageRatio === null
+    ? 1
+    : Math.max(0.25, Math.min(2, dominantCostCoverageRatio));
   return {
     opportunityId: candidate.opportunityId,
     topology: candidate.topology,
@@ -106,12 +117,17 @@ export function adviseEconomicTransformations(candidate: MeasuredCandidate): Eco
     dominantCostBps: cost.bps,
     netProfitBps,
     bpsToBreakEven,
+    requiredRecoveryBps,
+    dominantCostCoverageRatio,
+    dominantCostAloneCouldCoverGap,
     transformations: transformationsFor(cost.driver, candidate.topology),
-    priorityScore: Number((proximity * (1 + costSignal)).toFixed(8)),
+    priorityScore: Number((proximity * (1 + costSignal) * coverageSignal).toFixed(8)),
     authority: 'optimization_advisory_only',
     executionAuthority: false,
     provenance: [
       'measured_candidate_cost_decomposition',
+      'measured_break_even_gap',
+      'dominant_cost_coverage_scheduling_hint',
       'transformation_search_advisory_only',
       'exact_requote_required',
       'synthetic_profit:false',
