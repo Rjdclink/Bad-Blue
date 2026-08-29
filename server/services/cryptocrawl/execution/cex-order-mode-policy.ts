@@ -11,6 +11,10 @@ export interface CexOrderModeDecision {
   sellFeeBps: number | null;
   combinedFeeBps: number | null;
   projectedNetAfterExchangeFeesBps: number | null;
+  closestObservationMode: CexOrderModeCombination | null;
+  lowestAvailableCombinedFeeBps: number | null;
+  bpsToBreakEven: number | null;
+  economicallyPositive: boolean;
   stablecoinPair: boolean;
   reason: string;
   authority: 'authenticated_fee_mode_policy';
@@ -52,6 +56,10 @@ function emptyDecision(stablecoinPair: boolean, reason: string): CexOrderModeDec
     sellFeeBps: null,
     combinedFeeBps: null,
     projectedNetAfterExchangeFeesBps: null,
+    closestObservationMode: null,
+    lowestAvailableCombinedFeeBps: null,
+    bpsToBreakEven: null,
+    economicallyPositive: false,
     stablecoinPair,
     reason,
     authority: 'authenticated_fee_mode_policy',
@@ -64,6 +72,8 @@ function emptyDecision(stablecoinPair: boolean, reason: string): CexOrderModeDec
  * fabricate maker discounts and does not silently convert an unfilled maker leg
  * into a taker leg. Fixed costs, depth, queue/fill evidence, inventory,
  * slippage, freshness and settlement remain downstream execution authorities.
+ * When no mode is positive, the closest authenticated fee-only observation is
+ * retained explicitly for BPS recovery diagnostics without granting execution.
  */
 export function chooseCexOrderMode(input: {
   symbol: string;
@@ -97,31 +107,36 @@ export function chooseCexOrderMode(input: {
     { mode: 'taker_taker', buyMode: 'taker', sellMode: 'taker', buyFeeBps: takerBuy, sellFeeBps: takerSell },
   ];
 
-  const viable = candidates
+  const measured = candidates
     .filter(candidate => candidate.buyFeeBps !== null && candidate.sellFeeBps !== null)
     .map(candidate => {
       const combinedFeeBps = candidate.buyFeeBps! + candidate.sellFeeBps!;
       return { ...candidate, combinedFeeBps, netBps: gross - combinedFeeBps };
     })
-    .filter(candidate => Number.isFinite(candidate.netBps) && candidate.netBps > 0)
+    .filter(candidate => Number.isFinite(candidate.netBps))
     .sort((left, right) => {
       if (right.netBps !== left.netBps) return right.netBps - left.netBps;
-      // At equal economics, prefer fewer market-taking legs.
       const leftTakers = Number(left.buyMode === 'taker') + Number(left.sellMode === 'taker');
       const rightTakers = Number(right.buyMode === 'taker') + Number(right.sellMode === 'taker');
       return leftTakers - rightTakers;
     });
 
-  const best = viable[0];
+  const best = measured.find(candidate => candidate.netBps > 0);
+  const closest = measured[0] ?? null;
+  const lowestAvailableCombinedFeeBps = measured.length > 0
+    ? Math.min(...measured.map(candidate => candidate.combinedFeeBps))
+    : null;
+
   if (!best) {
-    const availableCosts = candidates
-      .filter(candidate => candidate.buyFeeBps !== null && candidate.sellFeeBps !== null)
-      .map(candidate => candidate.buyFeeBps! + candidate.sellFeeBps!);
-    const lowestCost = availableCosts.length > 0 ? Math.min(...availableCosts) : null;
+    const decision = emptyDecision(stablecoinPair, 'fees_consume_gross_spread');
     return {
-      ...emptyDecision(stablecoinPair, 'fees_consume_gross_spread'),
-      combinedFeeBps: lowestCost,
-      projectedNetAfterExchangeFeesBps: lowestCost === null ? null : gross - lowestCost,
+      ...decision,
+      combinedFeeBps: closest?.combinedFeeBps ?? lowestAvailableCombinedFeeBps,
+      projectedNetAfterExchangeFeesBps: closest?.netBps ?? null,
+      closestObservationMode: closest?.mode ?? null,
+      lowestAvailableCombinedFeeBps,
+      bpsToBreakEven: closest ? Math.max(0, -closest.netBps) : null,
+      economicallyPositive: false,
     };
   }
 
@@ -133,6 +148,10 @@ export function chooseCexOrderMode(input: {
     sellFeeBps: best.sellFeeBps,
     combinedFeeBps: best.combinedFeeBps,
     projectedNetAfterExchangeFeesBps: best.netBps,
+    closestObservationMode: best.mode,
+    lowestAvailableCombinedFeeBps,
+    bpsToBreakEven: 0,
+    economicallyPositive: true,
     stablecoinPair,
     reason: stablecoinPair ? `stablecoin_authenticated_${best.mode}_edge` : `authenticated_${best.mode}_edge`,
     authority: 'authenticated_fee_mode_policy',
