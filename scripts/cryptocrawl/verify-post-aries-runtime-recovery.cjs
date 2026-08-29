@@ -24,6 +24,20 @@ assert.match(coinbase, /candidates\.find\(value => value\.includes\('\/apiKeys\/
 assert.match(coinbase, /refusing to send a JWT with an ambiguous key identifier/);
 assert.match(coinbase, /Coinbase private authentication failed/);
 
+// A measured 401/403 must fail closed and open a bounded account-level cooldown,
+// preventing the same invalid authority from being hammered once per symbol.
+// The circuit must never introduce configured fee fallback or bypass permissions.
+assert.match(coinbase, /AUTH_FAILURE_COOLDOWN_MS/);
+assert.match(coinbase, /CoinbasePrivateAuthError/);
+assert.match(coinbase, /CoinbaseAuthCircuitOpenError/);
+assert.match(coinbase, /assertCoinbaseAuthCircuitClosed\(\)/);
+assert.match(coinbase, /recordCoinbaseAuthFailure\(response\.status\)/);
+assert.match(coinbase, /permissionsCache = null/);
+assert.match(coinbase, /authCircuitOpen/);
+assert.match(coinbase, /Private authentication circuit opened after authoritative rejection/);
+assert.match(coinbase, /assertCoinbaseSpotTradeReady/);
+assert.doesNotMatch(coinbase, /configuredFee|configured_override/);
+
 // OKX funding enrichment must share/cached account context rather than issuing
 // account instruments + config reads independently for every observation.
 assert.match(funding, /getOkxSwapAccountContext/);
@@ -46,6 +60,8 @@ console.log(JSON.stringify({
   staleStablecoinOnlyBarrierRemoved: true,
   coinbaseCanonicalKeyNamePreferred: true,
   coinbase401DiagnosticsImproved: true,
+  coinbaseAuthCircuitFailClosed: true,
+  coinbaseAuthStormSuppressed: true,
   okxFundingAccountReadsCoalesced: true,
   zeroXOfficialV2AllowanceHolderRetained: true,
   zeroXCredentialNormalizationHardened: true,
