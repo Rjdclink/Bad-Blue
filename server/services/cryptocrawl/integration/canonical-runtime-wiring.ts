@@ -20,6 +20,7 @@ import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wir
 import { ensureOrderBookEvolutionWiring } from './order-book-evolution-wiring.js';
 import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
+import { ensurePredictionMarketDiscoveryWiring } from './prediction-market-discovery-wiring.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 import { ensureZeroCapitalSizeRefinementWiring } from './zero-capital-size-refinement-wiring.js';
@@ -129,6 +130,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureFilteredMempoolObservability();
   ensureZeroXBudgetObservability();
   ensureAcrossBridgeObservability();
+  ensurePredictionMarketDiscoveryWiring();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
   ensureCryptoRuntimeObservability();
@@ -156,6 +158,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     filteredMempoolEvidence: paidAlchemyPendingEvidenceExplicitlyEnabled()
       ? 'alchemy_provider_filtered_hash_first_exact_chain_explicit_opt_in'
       : 'withheld_by_default_cost_policy',
+    predictionMarketDiscovery: 'public_no_auth_binary_parity_observation_only',
+    predictionMarketExecutionAuthority: false,
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
     zeroCapitalRuntimeLifecycle: 'cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
