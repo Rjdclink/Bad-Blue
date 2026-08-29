@@ -10,9 +10,12 @@ import {
   measureFlashLoanProviders,
   selectMeasuredFlashLoanProvider,
   type FlashLoanProviderEconomics,
+  type FlashLoanProviderKind,
 } from '../execution/adapters/flash-loan-provider-economics.js';
+import { verifyFlashLoanReceiverCapability } from '../execution/adapters/flash-loan-receiver-capability.js';
+import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
-import type { providers } from 'ethers';
+import type { Wallet, providers } from 'ethers';
 
 const installed = new WeakSet<object>();
 const evidenceCache = new Map<string, { observedAt: number; evidence: FlashLoanProviderEconomics[] }>();
@@ -71,6 +74,7 @@ function updateCandidate(
             `flash_loan_provider:${selected.provider}`,
             'measured_flash_loan_fee_exact_rate',
             'measured_flash_loan_liquidity',
+            'provider_selection_bound_to_verified_receiver',
           ]
         : ['flash_loan_provider_unavailable_fail_closed'],
     },
@@ -80,6 +84,8 @@ function updateCandidate(
 export function ensureZeroCapitalFlashProviderWiring(): void {
   const target = zeroCapitalEngine as unknown as {
     scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
+    executionWallets: Map<SupportedChain, Wallet>;
+    receiverManager: { getReceiver: (chain: string) => string | null };
   };
   if (installed.has(target)) return;
   installed.add(target);
@@ -89,13 +95,32 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
     const opportunities = await originalScanChain(chain, provider);
     if (chain === 'europa' || opportunities.length === 0) return opportunities;
 
+    const wallet = target.executionWallets.get(chain);
+    const balancerReceiver = target.receiverManager.getReceiver(chain);
+    const balancerCapability = wallet && balancerReceiver
+      ? await verifyFlashLoanReceiverCapability({
+          kind: 'balancer_v1',
+          chain: chain as any,
+          provider,
+          expectedOwner: wallet.address,
+          address: balancerReceiver,
+        }).catch(() => null)
+      : null;
+
+    // Aave market economics are measured in parallel, but it is not admitted to
+    // live provider selection until its provider-specific permission + submission
+    // lifecycle is authoritative. This prevents pricing with Aave and executing a
+    // Balancer payload by mistake.
+    const allowedProviders: FlashLoanProviderKind[] = balancerCapability ? ['balancer_v2'] : [];
+
     const repriced: ZeroCapitalOpportunity[] = [];
     for (const opportunity of opportunities) {
+      flashLoanProviderSelectionRegistry.remove(opportunity.id);
       try {
         const evidence = await providerEvidence(chain, provider, opportunity.inputToken);
-        const selected = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount);
-        if (!selected) {
-          updateCandidate(opportunity, null, 'No flash-loan provider has complete measured fee and liquidity evidence for this amount');
+        const selected = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount, allowedProviders);
+        if (!selected || !balancerCapability) {
+          updateCandidate(opportunity, null, 'No execution-ready flash-loan provider has complete measured fee, liquidity, and verified receiver evidence for this amount');
           continue;
         }
 
@@ -129,15 +154,35 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           observedAt: Date.now(),
         });
 
+        if (netProfit > 0n) {
+          flashLoanProviderSelectionRegistry.record({
+            opportunityId: opportunity.id,
+            provider: selected.provider,
+            receiver: balancerCapability.address,
+            economics: selected,
+            receiverCapability: balancerCapability,
+            selectedAt: Date.now(),
+            expiresAt: opportunity.expiresAt,
+            provenance: [
+              'measured_provider_economics',
+              'verified_receiver_capability',
+              'provider_receiver_binding',
+              'strict_positive_repriced_net',
+              'synthetic_evidence:false',
+            ],
+          });
+        }
+
         updateCandidate(
           opportunity,
           selected,
           netProfit > 0n
-            ? `Measured ${selected.provider} exact fee/liquidity keeps the route positive; downstream Cryptara/Monte Carlo/governance remain required`
+            ? `Measured ${selected.provider} exact fee/liquidity and verified receiver keep the route positive; downstream Cryptara/Monte Carlo/governance remain required`
             : `Measured ${selected.provider} exact fee/liquidity repriced the route to ${netProfitBps} BPS; observation only`,
         );
         if (netProfit > 0n) repriced.push(opportunity);
       } catch (error) {
+        flashLoanProviderSelectionRegistry.remove(opportunity.id);
         updateCandidate(
           opportunity,
           null,
@@ -158,8 +203,12 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
     component: 'ZeroCapitalFlashProviderWiring',
     feeAuthority: 'measured_provider_state_exact_rate',
     liquidityAuthority: 'measured_provider_state',
+    receiverAuthority: 'verified_provider_specific_receiver_capability',
+    providerSelectionRegistry: true,
     staticFlashLoanFeeAuthority: false,
-    providerSelection: 'lowest_measured_fee_with_sufficient_measured_liquidity',
+    providerSelection: 'lowest_measured_fee_with_sufficient_liquidity_and_execution_ready_receiver',
+    aaveMarketEvidenceMeasured: true,
+    aaveLiveExecutionEnabled: false,
     failClosedOnMissingProviderEvidence: true,
   });
 }
