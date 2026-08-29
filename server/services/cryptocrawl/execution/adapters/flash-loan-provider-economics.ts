@@ -194,9 +194,12 @@ export async function measureFlashLoanProviders(input: {
 export function selectMeasuredFlashLoanProvider(
   evidence: readonly FlashLoanProviderEconomics[],
   requestedAmount: bigint,
+  allowedProviders: readonly FlashLoanProviderKind[] = ['balancer_v2'],
 ): FlashLoanProviderEconomics | null {
+  const allowed = new Set<FlashLoanProviderKind>(allowedProviders);
   const eligible = evidence
     .filter(item =>
+      allowed.has(item.provider) &&
       item.executableEvidenceComplete &&
       item.availableLiquidity !== null &&
       item.availableLiquidity >= requestedAmount &&
