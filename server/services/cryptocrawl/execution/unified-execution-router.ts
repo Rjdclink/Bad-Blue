@@ -1,4 +1,7 @@
-import type { MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
+import {
+  measuredCandidateRegistry,
+  type MeasuredCandidate,
+} from '../discovery/measured-candidate-registry.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { computeProfitabilityScore, type ProfitabilityScoreResult } from '../optimization/profitability-score.js';
 
@@ -88,13 +91,10 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
 }
 
 export function routeRecentMeasuredOpportunities(limit = 512): UnifiedExecutionDecision[] {
-  return measuredCandidateDecisions(limit).sort((left, right) =>
-    Number(right.admitted) - Number(left.admitted)
-    || right.score.profitabilityScore - left.score.profitabilityScore,
-  );
-}
-
-function measuredCandidateDecisions(limit: number): UnifiedExecutionDecision[] {
-  const { measuredCandidateRegistry } = require('../discovery/measured-candidate-registry.js') as typeof import('../discovery/measured-candidate-registry.js');
-  return measuredCandidateRegistry.getRecent(limit).map(routeMeasuredOpportunity);
+  return measuredCandidateRegistry.getRecent(limit)
+    .map(routeMeasuredOpportunity)
+    .sort((left, right) =>
+      Number(right.admitted) - Number(left.admitted)
+      || right.score.profitabilityScore - left.score.profitabilityScore,
+    );
 }
