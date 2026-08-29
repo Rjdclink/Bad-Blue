@@ -147,6 +147,10 @@ requireText(providerWiring, 'fresh_quote_after_aave_receiver_permissions', 'fres
 requireText(providerExecution, "selection.provider !== 'aave_v3'", 'provider-specific execution branch');
 requireText(providerExecution, 'buildFlashLoanReceiverPayloadFromPlan', 'provider-specific final payload');
 requireText(providerExecution, 'FlashLoanExecuted', 'provider-specific positive-profit receipt verification');
+requireText(providerExecution, 'normalizeAaveSettlement', 'provider-specific normalized settlement');
+requireText(providerExecution, 'aave_v3_pool_flashLoanSimple', 'Aave settlement provenance');
+requireText(providerExecution, 'provider_receiver_binding_verified', 'Aave receiver binding provenance');
+forbid(providerExecution, /foundry_create2_receiver/, 'Balancer provenance on Aave settlement');
 requireText(deployment, "'balancer-composite-v2'", 'Composite V2 deploy support');
 requireText(deployment, "'aave-v3'", 'Aave V3 deploy support');
 requireText(deployment, 'DEPLOY_FLASHLOAN_RECEIVER', 'explicit deployment confirmation');
@@ -171,6 +175,7 @@ console.log(' - Stage 1 creates canonical live-validation proof from fresh eligi
 console.log(' - Stage 1 cannot submit trades or fabricate terminal settlement history');
 console.log(' - realized-profit ladder remains a Stage 2+ empirical scaling authority');
 console.log(' - Balancer/Aave provider economics are bound to verified provider-specific receivers');
+console.log(' - provider-specific terminal settlement preserves actual provider provenance');
 console.log(' - terminal outcomes adapt score/confidence thresholds, cost calibration, and topology attention');
 console.log(' - exact selected-set evidence is required for shared-principal stacked BPS');
 console.log(' - incomplete maker/cross-chain/liquidation/funding execution paths remain fail closed');
