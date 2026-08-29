@@ -7,6 +7,7 @@ const assembler = read('server/services/cryptocrawl/optimization/unified-multile
 const optimizer = read('server/services/cryptocrawl/optimization/adaptive-topology-optimizer.ts');
 const scorer = read('server/services/cryptocrawl/optimization/profitability-score.ts');
 const router = read('server/services/cryptocrawl/execution/unified-execution-router.ts');
+const compatibilitySelector = read('server/services/cryptocrawl/optimization/dynamic-execution-path-selector.ts');
 const admission = read('server/services/cryptocrawl/integration/dynamic-profitability-admission-wiring.ts');
 const discovery = read('server/services/cryptocrawl/discovery/multi-topology-discovery-controller.ts');
 const liquidation = read('server/services/cryptocrawl/discovery/liquidation-opportunity-generator.ts');
@@ -56,6 +57,11 @@ requireText(router, "'MEV_ATOMIC'", 'MEV route');
 requireText(router, "candidate.status === 'eligible'", 'eligible-only execution routing');
 requireText(router, 'candidate.missingInformation.length === 0', 'complete-evidence routing');
 requireText(router, 'deterministicPositive && completeCurrentEvidence && aboveAdaptiveThreshold', 'combined adaptive admission gate');
+requireText(compatibilitySelector, 'routeMeasuredOpportunity(candidate)', 'compatibility selector delegates to unified router');
+requireText(compatibilitySelector, 'score: routed.score.profitabilityScore', 'compatibility selector uses sole score authority');
+requireText(compatibilitySelector, 'scoring_authority=UnifiedExecutionRouter:ProfitabilityScore', 'explicit sole scoring authority');
+forbid(compatibilitySelector, /Math\.log1p/, 'legacy independent execution scoring');
+forbid(compatibilitySelector, /adaptiveTopologyOptimizer\.getPriority/, 'legacy independent topology-weight scoring');
 
 requireText(admission, 'originalExecute(plan)', 'CEX live admission wiring');
 requireText(admission, 'originalIsAllowedByCryptara(opportunity)', 'zero-capital live admission wiring');
@@ -105,6 +111,7 @@ if (failures.length) {
 
 console.log('Unified multi-leg adaptive engine verification PASSED');
 console.log(' - all measured discovery sources launch in parallel without a fixed source priority');
+console.log(' - UnifiedExecutionRouter is the sole ProfitabilityScore authority');
 console.log(' - ProfitabilityScore=(NetProfitUSD/ExecutionRisk)*ConfidenceLevel');
 console.log(' - cold start requires current evidence, not historical proof');
 console.log(' - terminal outcomes adapt score/confidence thresholds, cost calibration, and topology attention');
