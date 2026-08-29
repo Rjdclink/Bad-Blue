@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
 import { getLastOrderedMarketUniverseSymbols } from '../discovery/market-universe-controller.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
+import { recordAntennaProviderObservation } from '../intelligence/sovereign-antenna-quality.js';
 import { orderBookEvolutionStore } from '../validation/order-book-evolution-store.js';
 
 let timer: NodeJS.Timeout | null = null;
@@ -24,8 +25,27 @@ async function observeOnce(): Promise<void> {
     const symbols = getLastOrderedMarketUniverseSymbols().slice(0, warmSymbolLimit());
     const maxAgeMs = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
     await Promise.all(venues.flatMap(venue => symbols.map(async symbol => {
-      const quote = await cexOrderBookStreams.getQuote(venue, symbol, maxAgeMs).catch(() => null);
-      if (quote) orderBookEvolutionStore.record(quote);
+      const startedAt = Date.now();
+      try {
+        const quote = await cexOrderBookStreams.getQuote(venue, symbol, maxAgeMs);
+        recordAntennaProviderObservation({
+          venue,
+          latencyMs: Math.max(0, Date.now() - startedAt),
+          outcome: quote ? 'quote' : 'miss',
+        });
+        if (quote) orderBookEvolutionStore.record(quote);
+      } catch (error) {
+        recordAntennaProviderObservation({
+          venue,
+          latencyMs: Math.max(0, Date.now() - startedAt),
+          outcome: 'failure',
+        });
+        logger.debug('[OrderBookEvolution] antenna observation failed', {
+          venue,
+          symbol,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     })));
   } finally {
     running = false;
@@ -44,6 +64,7 @@ export function ensureOrderBookEvolutionWiring(): void {
     warmSymbolLimit: warmSymbolLimit(),
     authoritativeVenues: getActiveExecutableQuoteVenues(),
     connectionModel: 'persistent_venue_socket_multi_symbol',
+    providerQualityTelemetry: 'measured_latency_hit_rate_failure_rate_advisory_only',
     syntheticTransitions: false,
   });
 }
