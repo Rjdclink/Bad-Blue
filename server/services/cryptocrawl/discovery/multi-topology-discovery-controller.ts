@@ -4,6 +4,7 @@ import { unifiedMultiLegArbitrageEngine } from '../optimization/unified-multileg
 import { discoverMeasuredDexCandidates } from './dex-opportunity-generator.js';
 import { discoverMeasuredCrossChainCandidates } from './cross-chain-opportunity-generator.js';
 import { discoverMeasuredMempoolCandidates } from './mempool-opportunity-generator.js';
+import { discoverMeasuredLiquidationCandidates } from './liquidation-opportunity-generator.js';
 import { discoverMeasuredMakerCandidates } from './maker-opportunity-generator.js';
 import {
   measuredCandidateRegistry,
@@ -17,11 +18,13 @@ export interface MultiTopologyDiscoveryCycle {
   dexCandidates: number;
   crossChainCandidates: number;
   mempoolCandidates: number;
+  liquidationCandidates: number;
   makerCandidates: number;
   durationMsByTopology: {
     dex: number | null;
     crossChain: number | null;
     mempool: number | null;
+    liquidation: number | null;
     maker: number | null;
   };
   scannedThisCycle: MeasuredOpportunityTopology[];
@@ -59,11 +62,12 @@ class MultiTopologyDiscoveryController {
       component: 'MultiTopologyDiscoveryController',
       baseIntervalMs: this.baseIntervalMs,
       adaptivePerTopologyCadence: true,
-      topologies: ['DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'ZERO_CAPITAL_ATOMIC', 'MAKER_CEX'],
+      topologies: ['DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'ZERO_CAPITAL_ATOMIC', 'MAKER_CEX'],
       candidateAuthority: 'measured_candidate_registry',
       realizedBpsPriorityAuthority: 'terminal_settlement_only',
       minimumCoveragePreserved: true,
       makerOrdersAssumedFilled: false,
+      liquidationProfitAssumed: false,
       syntheticEvidenceAllowed: false,
       compositeAssemblyExecutionAuthority: false,
     });
@@ -78,8 +82,6 @@ class MultiTopologyDiscoveryController {
   private scheduleNext(): void {
     if (!this.running) return;
     if (this.timer) clearTimeout(this.timer);
-    // Priority is bounded [0.5,2.0], so half the base interval is sufficient to
-    // service the fastest learned cadence while preserving bounded provider load.
     const tickMs = Math.max(1_000, Math.floor(this.baseIntervalMs / 2));
     this.timer = setTimeout(() => {
       this.timer = null;
@@ -112,11 +114,13 @@ class MultiTopologyDiscoveryController {
       let dexCandidates = 0;
       let crossChainCandidates = 0;
       let mempoolCandidates = 0;
+      let liquidationCandidates = 0;
       let makerCandidates = 0;
       const durationMsByTopology: MultiTopologyDiscoveryCycle['durationMsByTopology'] = {
         dex: null,
         crossChain: null,
         mempool: null,
+        liquidation: null,
         maker: null,
       };
 
@@ -124,11 +128,13 @@ class MultiTopologyDiscoveryController {
       const crossDue = this.due('CROSS_CHAIN', startedAt);
       const makerDue = this.due('MAKER_CEX', startedAt);
       const mempoolDue = this.due('MEMPOOL_BACKRUN', startedAt);
+      const liquidationDue = this.due('LIQUIDATION', startedAt);
 
-      const [dex, cross, maker] = await Promise.allSettled([
+      const [dex, cross, maker, liquidation] = await Promise.allSettled([
         dexDue ? timed(() => discoverMeasuredDexCandidates()) : Promise.resolve(null),
         crossDue ? timed(() => discoverMeasuredCrossChainCandidates()) : Promise.resolve(null),
         makerDue ? timed(() => discoverMeasuredMakerCandidates()) : Promise.resolve(null),
+        liquidationDue ? timed(() => discoverMeasuredLiquidationCandidates()) : Promise.resolve(null),
       ]);
       if (dexDue) {
         this.markScanned('DEX_ATOMIC', startedAt);
@@ -154,6 +160,14 @@ class MultiTopologyDiscoveryController {
           durationMsByTopology.maker = maker.value.durationMs;
         } else if (maker.status === 'rejected') errors.push(`maker:${maker.reason instanceof Error ? maker.reason.message : String(maker.reason)}`);
       }
+      if (liquidationDue) {
+        this.markScanned('LIQUIDATION', startedAt);
+        scannedThisCycle.push('LIQUIDATION');
+        if (liquidation.status === 'fulfilled' && liquidation.value) {
+          liquidationCandidates = liquidation.value.value.length;
+          durationMsByTopology.liquidation = liquidation.value.durationMs;
+        } else if (liquidation.status === 'rejected') errors.push(`liquidation:${liquidation.reason instanceof Error ? liquidation.reason.message : String(liquidation.reason)}`);
+      }
 
       if (mempoolDue) {
         const mempoolStartedAt = process.hrtime.bigint();
@@ -177,6 +191,7 @@ class MultiTopologyDiscoveryController {
         dexCandidates,
         crossChainCandidates,
         mempoolCandidates,
+        liquidationCandidates,
         makerCandidates,
         durationMsByTopology,
         scannedThisCycle,
@@ -212,6 +227,7 @@ class MultiTopologyDiscoveryController {
         dexCandidates,
         crossChainCandidates,
         mempoolCandidates,
+        liquidationCandidates,
         makerCandidates,
         registry: cycle.registry,
         errors: errors.slice(0, 12),
