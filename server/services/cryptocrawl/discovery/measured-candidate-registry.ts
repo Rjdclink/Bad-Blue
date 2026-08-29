@@ -67,6 +67,16 @@ export interface MeasuredCandidate {
     discoveryFloorBps?: number | null;
     bpsToBreakEven?: number | null;
     realizedNetProfitBps?: number | null;
+    /** Net BPS of the same measured opportunity before execution-path transformations. */
+    baselineNetProfitBps?: number | null;
+    /** Net BPS after verified execution-path transformations and exact all-in repricing. */
+    optimizedNetProfitBps?: number | null;
+    /** optimizedNetProfitBps - baselineNetProfitBps. Telemetry only; never an execution floor. */
+    executionEfficiencyDeltaBps?: number | null;
+    /** Aspirational optimization target used for telemetry/learning only. */
+    executionEfficiencyTargetBps?: number | null;
+    /** Measured monetary gas avoided by a verified sponsored execution path, in BPS. */
+    sponsoredGasSavingsBps?: number | null;
   };
   quoteAgeMs: number | null;
   executableCapability: boolean;
@@ -220,84 +230,90 @@ class MeasuredCandidateRegistry {
   getRecent(limit = 256): MeasuredCandidate[] {
     const now = Date.now();
     return [...this.candidates.values()]
-      .map(candidate => candidate.expiresAt < now && !['blocked', 'expired'].includes(candidate.status)
-        ? { ...candidate, status: 'expired' as const }
-        : candidate)
+      .filter(candidate => candidate.expiresAt > now)
       .sort((left, right) => right.updatedAt - left.updatedAt)
-      .slice(0, Math.max(1, Math.min(limit, 4096)))
+      .slice(0, Math.max(1, Math.min(this.maxEntries, limit)))
       .map(clone);
   }
 
-  getMetrics(windowMs = 60_000): MeasuredCandidateMetrics {
+  metrics(windowMs = 15 * 60_000): MeasuredCandidateMetrics {
     const now = Date.now();
-    const cutoff = now - Math.max(1, windowMs);
-    const recent = [...this.candidates.values()].filter(candidate => candidate.observedAt >= cutoff);
+    const cutoff = now - Math.max(1_000, windowMs);
+    const candidates = [...this.candidates.values()].filter(candidate => candidate.updatedAt >= cutoff);
     const byTopology = emptyTopologyMetrics();
-    for (const candidate of recent) {
-      const metrics = byTopology[candidate.topology];
-      metrics.observed++;
-      if (candidate.status === 'deterministic_positive' || candidate.status === 'eligible') metrics.deterministicPositive++;
-      if (candidate.status === 'eligible') metrics.eligible++;
-      if (isNearBreakEven(candidate)) metrics.nearBreakEven++;
-      if (candidate.expiresAt >= now && ['observed', 'enriched', 'deterministic_positive', 'eligible'].includes(candidate.status)) metrics.activeBacklog++;
+    const blockedReasons: string[] = [];
+    const missingInformation: string[] = [];
+    const zeroCapitalNetBps: number[] = [];
+    const zeroCapitalBreakEven: number[] = [];
+    const zeroCapitalCosts: number[] = [];
+    let observed = 0;
+    let enriched = 0;
+    let deterministicPositive = 0;
+    let eligible = 0;
+    let blocked = 0;
+    let activeBacklog = 0;
+
+    for (const candidate of candidates) {
+      observed += 1;
+      byTopology[candidate.topology].observed += 1;
+      if (candidate.status === 'enriched') enriched += 1;
+      if (candidate.status === 'deterministic_positive' || candidate.status === 'eligible') {
+        deterministicPositive += 1;
+        byTopology[candidate.topology].deterministicPositive += 1;
+      }
+      if (candidate.status === 'eligible') {
+        eligible += 1;
+        byTopology[candidate.topology].eligible += 1;
+      }
+      if (candidate.status === 'blocked') blocked += 1;
+      if (candidate.expiresAt > now && candidate.status !== 'expired') {
+        activeBacklog += 1;
+        byTopology[candidate.topology].activeBacklog += 1;
+      }
+      if (isNearBreakEven(candidate)) byTopology[candidate.topology].nearBreakEven += 1;
+      if (candidate.status === 'blocked') blockedReasons.push(candidate.executionCapabilityReason);
+      missingInformation.push(...candidate.missingInformation);
+      if (candidate.topology === 'ZERO_CAPITAL_ATOMIC') {
+        const net = Number(candidate.economics.netProfitBps);
+        if (Number.isFinite(net)) zeroCapitalNetBps.push(net);
+        const breakEven = Number(candidate.economics.bpsToBreakEven);
+        if (Number.isFinite(breakEven)) zeroCapitalBreakEven.push(breakEven);
+        const cost = Number(candidate.economics.allInCostBps);
+        if (Number.isFinite(cost)) zeroCapitalCosts.push(cost);
+      }
     }
 
-    const blockedCandidates = recent.filter(candidate => candidate.status === 'blocked');
-    const blockedReasons = boundedFrequency(
-      blockedCandidates.map(candidate => candidate.executionCapabilityReason || 'unspecified_blocker'),
-      'reason',
-    ) as Array<{ reason: string; count: number }>;
-    const missingInformationFrequency = boundedFrequency(
-      recent.flatMap(candidate => candidate.missingInformation),
-      'item',
-    ) as Array<{ item: string; count: number }>;
-    const zeroCapitalWithBps = recent.filter(candidate =>
-      candidate.topology === 'ZERO_CAPITAL_ATOMIC' &&
-      candidate.economics.netProfitBps !== null &&
-      candidate.economics.netProfitBps !== undefined &&
-      Number.isFinite(candidate.economics.netProfitBps),
-    );
-    const nearBreakEven = zeroCapitalWithBps.filter(isNearBreakEven);
-    const positiveBps = zeroCapitalWithBps.filter(candidate => Number(candidate.economics.netProfitBps) > 0);
-    const bpsToBreakEven = nearBreakEven
-      .map(candidate => candidate.economics.bpsToBreakEven)
-      .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
-    const allInCostBps = zeroCapitalWithBps
-      .map(candidate => candidate.economics.allInCostBps)
-      .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
-
+    const blockedFrequency = boundedFrequency(blockedReasons, 'reason', 12) as Array<{ reason: string; count: number }>;
+    const missingFrequency = boundedFrequency(missingInformation, 'item', 12) as Array<{ item: string; count: number }>;
+    const positiveZeroCapital = zeroCapitalNetBps.filter(value => value > 0);
     return {
       windowMs,
-      observed: recent.length,
-      enriched: recent.filter(candidate => candidate.status === 'enriched').length,
-      deterministicPositive: recent.filter(candidate => candidate.status === 'deterministic_positive' || candidate.status === 'eligible').length,
-      eligible: recent.filter(candidate => candidate.status === 'eligible').length,
-      blocked: blockedCandidates.length,
-      activeBacklog: Object.values(byTopology).reduce((sum, metrics) => sum + metrics.activeBacklog, 0),
-      blockedReasons,
-      missingInformationFrequency,
+      observed,
+      enriched,
+      deterministicPositive,
+      eligible,
+      blocked,
+      activeBacklog,
+      blockedReasons: blockedFrequency,
+      missingInformationFrequency: missingFrequency,
       byTopology,
       zeroCapitalBps: {
-        observedWithBps: zeroCapitalWithBps.length,
-        nearBreakEven: nearBreakEven.length,
-        positive: positiveBps.length,
-        bestNetProfitBps: zeroCapitalWithBps.length > 0
-          ? Math.max(...zeroCapitalWithBps.map(candidate => Number(candidate.economics.netProfitBps)))
-          : null,
-        averageBpsToBreakEven: average(bpsToBreakEven),
-        averageAllInCostBps: average(allInCostBps),
+        observedWithBps: zeroCapitalNetBps.length,
+        nearBreakEven: byTopology.ZERO_CAPITAL_ATOMIC.nearBreakEven,
+        positive: positiveZeroCapital.length,
+        bestNetProfitBps: positiveZeroCapital.length > 0 ? Math.max(...positiveZeroCapital) : null,
+        averageBpsToBreakEven: average(zeroCapitalBreakEven),
+        averageAllInCostBps: average(zeroCapitalCosts),
       },
     };
   }
 
   private prune(): void {
-    const now = Date.now();
-    for (const [id, candidate] of this.candidates) {
-      if (candidate.expiresAt < now - 10 * 60_000) this.candidates.delete(id);
-    }
     if (this.candidates.size <= this.maxEntries) return;
-    const oldest = [...this.candidates.values()].sort((left, right) => left.updatedAt - right.updatedAt);
-    for (let index = 0; index < oldest.length - this.maxEntries; index++) this.candidates.delete(oldest[index].opportunityId);
+    const sorted = [...this.candidates.values()].sort((left, right) => left.updatedAt - right.updatedAt);
+    for (let index = 0; index < sorted.length - this.maxEntries; index += 1) {
+      this.candidates.delete(sorted[index].opportunityId);
+    }
   }
 }
 
