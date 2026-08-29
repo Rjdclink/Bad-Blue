@@ -8,6 +8,11 @@ export interface CexFeeModeObservation extends CexOrderModeDecision {
   sellVenue: string;
   observedAt: number;
   grossSpreadBps: number;
+  buyFeeSource: string | null;
+  sellFeeSource: string | null;
+  buyFeeAgeMs: number | null;
+  sellFeeAgeMs: number | null;
+  authenticatedFeeEvidenceComplete: boolean;
 }
 
 let latest: CexFeeModeObservation | null = null;
@@ -24,12 +29,20 @@ export function recordCexFeeModeObservation(
     latest = null;
     return null;
   }
+  const buyFeeEvidence = getCachedCexFeeEvidence(context.buyVenue, context.symbol);
+  const sellFeeEvidence = getCachedCexFeeEvidence(context.sellVenue, context.symbol);
   const decision = chooseCexOrderMode({
     symbol: context.symbol,
     grossSpreadBps: context.grossSpreadBps,
-    buyFeeEvidence: getCachedCexFeeEvidence(context.buyVenue, context.symbol),
-    sellFeeEvidence: getCachedCexFeeEvidence(context.sellVenue, context.symbol),
+    buyFeeEvidence,
+    sellFeeEvidence,
   });
+  const now = Date.now();
+  const authenticatedFeeEvidenceComplete = Boolean(
+    buyFeeEvidence && sellFeeEvidence &&
+    buyFeeEvidence.source !== 'configured_override' &&
+    sellFeeEvidence.source !== 'configured_override',
+  );
   latest = {
     ...decision,
     symbol: context.symbol,
@@ -37,6 +50,11 @@ export function recordCexFeeModeObservation(
     sellVenue: context.sellVenue,
     observedAt: context.observedAt,
     grossSpreadBps: context.grossSpreadBps,
+    buyFeeSource: buyFeeEvidence?.source ?? null,
+    sellFeeSource: sellFeeEvidence?.source ?? null,
+    buyFeeAgeMs: buyFeeEvidence ? Math.max(0, now - buyFeeEvidence.observedAt) : null,
+    sellFeeAgeMs: sellFeeEvidence ? Math.max(0, now - sellFeeEvidence.observedAt) : null,
+    authenticatedFeeEvidenceComplete,
   };
   return { ...latest };
 }
