@@ -6,6 +6,7 @@ import { getBoundTechnicalEvidence } from '../integration/technical-evidence-syn
 import { marketDataProviders, type MarketUniverseAsset } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { buildObservedCexCandidates } from './cex-observation-candidates.js';
+import { selectCexFormationSymbols, recordCexFormationOutcome } from './cex-edge-attention.js';
 import { recordCexEconomicBarrier } from './cex-economic-barrier.js';
 import { measuredCandidateRegistry } from './measured-candidate-registry.js';
 import { scanPublicCexUniverse } from './public-cex-discovery.js';
@@ -18,6 +19,8 @@ export interface MeasuredOpportunityGraphCycle {
   topology: 'CEX_CEX';
   universeAssets: number;
   selectedSymbols: number;
+  formationExplorationSymbols: number;
+  formationExploitationSymbols: number;
   evaluatedSymbols: number;
   publicDiscoveryObservations: number;
   publicDiscoveryVenues: number;
@@ -90,7 +93,7 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
     executableCapability: true,
     executionCapabilityReason: 'Verified CEX plan uses a settlement-safe centralized executor; MC, governance, inventory and resource locks still control admission',
     missingInformation: [],
-    provenance: ['measured_opportunity_graph', 'direct_exchange_quotes', 'authenticated_fee_evidence', 'depth_aware_notional_search', 'deterministic_positive_net'],
+    provenance: ['measured_opportunity_graph', 'formation_attention_scheduler', 'direct_exchange_quotes', 'authenticated_fee_evidence', 'depth_aware_notional_search', 'deterministic_positive_net'],
   });
 }
 
@@ -144,6 +147,8 @@ class MeasuredOpportunityGraph {
       initialIntervalMs,
       adaptiveCadence: true,
       topology: 'CEX_CEX',
+      scanAttention: 'formation_probability_plus_value_of_information',
+      scanAttentionAuthority: 'advisory_only',
       candidateAuthority: 'measured_candidate_registry',
       syntheticEvidenceAllowed: false,
       executionPausedDuringLowActivity: false,
@@ -199,7 +204,8 @@ class MeasuredOpportunityGraph {
     const universe = await marketDataProviders.discoverUniverse();
     const symbols = uniqueSymbols(configuredSymbol, universe);
     const capacity = getCexScanCapacity(symbols.length);
-    const selected = symbols.slice(0, capacity.symbolBudget);
+    const formationSelection = selectCexFormationSymbols(symbols, capacity.symbolBudget, configuredSymbol);
+    const selected = formationSelection.symbols;
 
     const publicDiscoveryPromise = scanPublicCexUniverse(selected).catch(error => {
       errors.push(`public_cex_discovery:${error instanceof Error ? error.message : String(error)}`);
@@ -220,6 +226,8 @@ class MeasuredOpportunityGraph {
         return null;
       }
     });
+    const formationObservedAt = Date.now();
+    evaluated.forEach((plan, index) => recordCexFormationOutcome(selected[index], plan, formationObservedAt));
     const publicDiscovery = await publicDiscoveryPromise;
 
     const economicBarrier = recordCexEconomicBarrier(
@@ -297,6 +305,7 @@ class MeasuredOpportunityGraph {
               ],
               provenance: [
                 'measured_opportunity_graph',
+                'formation_attention_scheduler',
                 'direct_exchange_quotes',
                 ...technicalEvidence.provenance,
                 ...[...new Set(universe.flatMap(asset => asset.sources || [asset.source]))],
@@ -329,6 +338,8 @@ class MeasuredOpportunityGraph {
       topology: 'CEX_CEX',
       universeAssets: universe.length,
       selectedSymbols: selected.length,
+      formationExplorationSymbols: formationSelection.exploration.length,
+      formationExploitationSymbols: formationSelection.exploitation.length,
       evaluatedSymbols: evaluated.length,
       publicDiscoveryObservations: publicDiscovery.observations.length,
       publicDiscoveryVenues: new Set(publicDiscovery.observations.map(observation => observation.venue)).size,
@@ -352,13 +363,27 @@ class MeasuredOpportunityGraph {
     this.latestCycle = cycle;
 
     const canonical = canonicalOpportunityState.getMetrics(60_000);
-    logger.info('[OpportunityGraph] Measured CEX cycle completed', {
+    const topAttentionScores = [...formationSelection.scores]
+      .filter(score => score.score !== null)
+      .sort((left, right) => (right.score ?? -1) - (left.score ?? -1))
+      .slice(0, 8)
+      .map(score => ({
+        symbol: score.symbol,
+        score: score.score,
+        positiveProbability: score.positiveProbability,
+        valueOfInformation: score.valueOfInformation,
+      }));
+    logger.info('[OpportunityGraph] Measured CEX edge-formation cycle completed', {
       component: 'MeasuredOpportunityGraph',
       cycleId,
       durationMs: completedAt - startedAt,
       nextScanIntervalMs: cycle.capacity.recommendedIntervalMs,
       universeAssets: cycle.universeAssets,
       selectedSymbols: cycle.selectedSymbols,
+      formationExplorationSymbols: cycle.formationExplorationSymbols,
+      formationExploitationSymbols: cycle.formationExploitationSymbols,
+      topAttentionScores,
+      attentionAuthority: formationSelection.authority,
       publicDiscoveryObservations: cycle.publicDiscoveryObservations,
       publicDiscoveryVenues: cycle.publicDiscoveryVenues,
       publicDiscoveryFailures: cycle.publicDiscoveryFailures,
