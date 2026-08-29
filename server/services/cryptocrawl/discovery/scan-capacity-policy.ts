@@ -45,15 +45,18 @@ function boundedFraction(value: unknown, fallback: number): number {
 }
 
 /**
- * The CEX hot path already searches eleven notional/depth points. With the two
- * currently usable no-new-key venues (Kraken/OKX), two ordered venue directions,
- * and two economically distinct execution forms (taker/taker + maker/maker), one
- * measured symbol can form 44 local execution variants without multiplying market
- * data requests. This is candidate-formation breadth, not a claim that every form
- * is executable or profitable.
+ * Conservative local-formation accounting for the no-new-key Kraken/OKX path.
+ * The taker verifier has eleven depth/notional points in two ordered directions
+ * (22 variants). Maker recovery independently evaluates both ordered directions
+ * (2 more). That gives 24 economically distinct forms per measured symbol without
+ * inventing maker size variants that the runtime does not actually evaluate.
+ *
+ * This is search breadth telemetry only. A formed variant is not represented as
+ * executable or profitable until its normal fee/depth/freshness/governance gates
+ * establish that independently.
  */
 function executionVariantsPerSymbol(): number {
-  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_VARIANTS_PER_SYMBOL, 44, 1, 256);
+  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_VARIANTS_PER_SYMBOL, 24, 1, 256);
 }
 
 function targetExecutionVariantRange(): { min: number; max: number; midpoint: number } {
@@ -96,15 +99,14 @@ export function recommendedCexScanIntervalMs(input: CexScanCadenceInput): number
 
 /**
  * Dynamic search capacity is independent from execution capacity. The breadth
- * objective is now expressed in economically distinct local execution variants,
- * not repeated RPC/API calls. A single measured book/fee snapshot is reused by
- * the Computational Beam/Aries/Cryptara path to form many candidate shapes.
+ * objective is expressed in economically distinct local execution formations,
+ * not repeated RPC/API calls. Shared measured books and cached authenticated fee
+ * evidence are reused by the Computational Beam/Aries/Cryptara path.
  *
- * The authenticated taker-fee barrier is no longer allowed to collapse discovery
- * to a tiny symbol set because maker/maker and other transformed execution forms
- * can have materially different economics. We keep enough symbols in each cycle
- * to form roughly 2,000-4,000 variants while retaining the same bounded worker
- * pool and adaptive cadence.
+ * A taker-fee barrier cannot collapse discovery to a tiny symbol set because the
+ * maker route has different economics. Capacity therefore preserves enough symbol
+ * breadth to target roughly 2,000-4,000 local execution forms while retaining the
+ * same bounded private worker pool and adaptive cadence.
  */
 export function getCexScanCapacity(universeSizeInput: number): ScanCapacityDecision {
   const universeSize = Math.max(1, Math.floor(Number.isFinite(universeSizeInput) ? universeSizeInput : 1));
@@ -137,7 +139,7 @@ export function getCexScanCapacity(universeSizeInput: number): ScanCapacityDecis
   let reason = 'execution-variant midpoint coverage using bounded measured inputs';
   if (positiveDensity === 0 && feeBlockedWithCoverage) {
     desired = configuredBase;
-    reason = `taker fee barrier observed, but transformed maker/size variants remain worth searching; preserve ~${variantTarget.midpoint} local execution forms (${feeBarrier!.feeReductionNeededBps?.toFixed(2) ?? 'unknown'} bps taker reduction needed)`;
+    reason = `taker fee barrier observed, but maker/size transformations remain worth searching; preserve ~${variantTarget.midpoint} local execution forms (${feeBarrier!.feeReductionNeededBps?.toFixed(2) ?? 'unknown'} bps taker reduction needed)`;
   } else if (positiveDensity === 0) {
     desired = configuredMaximum;
     reason = 'expand toward the configured 2k-4k execution-variant search envelope while verified-positive density is zero';
