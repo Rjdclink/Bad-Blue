@@ -6,6 +6,7 @@ import {
 } from '../discovery/measured-candidate-registry.js';
 import { adaptiveTopologyOptimizer } from './adaptive-topology-optimizer.js';
 import { selectCompositeExecutionPath, type DynamicExecutionPath } from './dynamic-execution-path-selector.js';
+import { zeroCapitalCompositeEvidenceRegistry } from './zero-capital-composite-evidence-registry.js';
 
 export type CompositeExecutionMode = 'single_domain_atomic' | 'coordinated_parallel';
 
@@ -37,12 +38,15 @@ export interface UnifiedCompositeArbitragePlan {
   totalDeterministicNetProfitUsd: number;
   totalNotionalUsd: number | null;
   notionalWeightedNetProfitBps: number | null;
-  sequentialCompoundedBps: number | null;
+  /** Capital-efficiency BPS when exact-simulated closed cycles reuse one flash-loan principal. */
+  sharedPrincipalStackedBps: number | null;
   arithmeticLegBpsSum: number | null;
   adaptiveMinIncrementalBps: number;
   adaptivePolicyEmpirical: boolean;
   requestedLegCount: number;
   selectedLegCount: number;
+  exactCompositeSimulation: boolean;
+  compositeEstimatedGas: string | null;
   compositionGainUsd: number | null;
   compositionGainVerified: boolean;
   executionAuthority: false;
@@ -101,10 +105,10 @@ function conflicts(left: CompositeArbitrageLeg, right: CompositeArbitrageLeg): b
 }
 
 function measuredCompositionGain(candidates: readonly MeasuredCandidate[]): number | null {
-  const values = candidates.flatMap(candidate => candidate.provenance
+  const values = [...new Set(candidates.flatMap(candidate => candidate.provenance
     .filter(item => item.startsWith('measured_composite_gain_usd:'))
     .map(item => Number(item.slice('measured_composite_gain_usd:'.length)))
-    .filter(value => Number.isFinite(value)));
+    .filter(value => Number.isFinite(value))))];
   if (values.length === 0) return null;
   return values.reduce((sum, value) => sum + value, 0);
 }
@@ -155,12 +159,6 @@ function arithmeticBps(legs: readonly CompositeArbitrageLeg[]): number | null {
   return legs.reduce((sum, leg) => sum + Number(leg.deterministicNetProfitBps), 0);
 }
 
-function compoundedBps(legs: readonly CompositeArbitrageLeg[]): number | null {
-  if (legs.some(leg => leg.deterministicNetProfitBps === null)) return null;
-  const multiplier = legs.reduce((value, leg) => value * (1 + Number(leg.deterministicNetProfitBps) / 10_000), 1);
-  return (multiplier - 1) * 10_000;
-}
-
 class UnifiedMultiLegArbitrageEngine {
   private latest: UnifiedCompositeArbitragePlan | null = null;
 
@@ -184,25 +182,34 @@ class UnifiedMultiLegArbitrageEngine {
     }
     if (selected.length < minLegs) return null;
 
-    const selectedCandidates = selected.map(leg => measuredCandidateRegistry.get(leg.opportunityId)).filter((value): value is MeasuredCandidate => value !== null);
+    const selectedIds = selected.map(leg => leg.opportunityId);
+    const selectedCandidates = selectedIds
+      .map(id => measuredCandidateRegistry.get(id))
+      .filter((value): value is MeasuredCandidate => value !== null);
     const pathDecisions = selectCompositeExecutionPath(selectedCandidates).filter(decision => decision.executableNow);
     const selectedExecutionPath: DynamicExecutionPath = pathDecisions.some(decision => decision.path === 'HYBRID')
       ? 'HYBRID'
       : pathDecisions[0]?.path ?? 'UNAVAILABLE';
     const domains = [...new Set(selected.map(leg => leg.atomicDomain))];
-    const singleDomainAtomic = domains.length === 1 && selected.every(leg => leg.atomicallyComposable);
+    const allZeroCapital = selected.every(leg => leg.topology === 'ZERO_CAPITAL_ATOMIC');
+    const exactZeroCapitalComposite = allZeroCapital ? zeroCapitalCompositeEvidenceRegistry.get(selectedIds) : null;
+    const singleDomainAtomic = domains.length === 1 &&
+      selected.every(leg => leg.atomicallyComposable) &&
+      (!allZeroCapital || exactZeroCapitalComposite !== null);
     const executionMode: CompositeExecutionMode = singleDomainAtomic ? 'single_domain_atomic' : 'coordinated_parallel';
     const expiresAt = Math.min(...selected.map(leg => leg.expiresAt));
     const totalNotionalUsd = selected.every(leg => leg.notionalUsd !== null)
       ? selected.reduce((sum, leg) => sum + Number(leg.notionalUsd), 0)
       : null;
     const arithmeticLegBpsSum = arithmeticBps(selected);
-    const sequentialCompoundedBps = singleDomainAtomic ? compoundedBps(selected) : null;
+    const sharedPrincipalStackedBps = singleDomainAtomic && exactZeroCapitalComposite
+      ? exactZeroCapitalComposite.sharedPrincipalStackedBps
+      : null;
     const compositionGainUsd = singleDomainAtomic ? measuredCompositionGain(selectedCandidates) : null;
     const compositionGainVerified = compositionGainUsd !== null && compositionGainUsd > 0;
 
     const plan: UnifiedCompositeArbitragePlan = {
-      planId: `composite:${now}:${selected.map(leg => leg.opportunityId).join('|')}`,
+      planId: `composite:${now}:${selectedIds.join('|')}`,
       createdAt: now,
       expiresAt,
       executionMode,
@@ -212,12 +219,14 @@ class UnifiedMultiLegArbitrageEngine {
       totalDeterministicNetProfitUsd: selected.reduce((sum, leg) => sum + leg.deterministicNetProfitUsd, 0),
       totalNotionalUsd,
       notionalWeightedNetProfitBps: weightedBps(selected),
-      sequentialCompoundedBps,
+      sharedPrincipalStackedBps,
       arithmeticLegBpsSum,
       adaptiveMinIncrementalBps: policy.minIncrementalBps,
       adaptivePolicyEmpirical: policy.empirical,
       requestedLegCount: maxLegs,
       selectedLegCount: selected.length,
+      exactCompositeSimulation: exactZeroCapitalComposite !== null,
+      compositeEstimatedGas: exactZeroCapitalComposite?.estimatedGas.toString() ?? null,
       compositionGainUsd,
       compositionGainVerified,
       executionAuthority: false,
@@ -226,12 +235,15 @@ class UnifiedMultiLegArbitrageEngine {
         'Every selected leg is independently deterministic-positive, executable-capable, and currently eligible',
         `Adaptive assembly threshold=${policy.minIncrementalBps.toFixed(4)} BPS from ${policy.terminalSamples} terminal samples`,
         executionMode === 'single_domain_atomic'
-          ? 'All legs provide explicit atomic multi-leg payload composability evidence in one settlement domain'
-          : 'Cross-domain legs are coordinated in parallel; they are not falsely represented as one atomic blockchain transaction',
+          ? 'The exact selected opportunity set passed combined receiver simulation in one settlement domain'
+          : 'Cross-domain or unmatched-composite legs are coordinated only; they are not falsely represented as one atomic blockchain transaction',
+        sharedPrincipalStackedBps !== null
+          ? `Shared-principal stacked BPS=${sharedPrincipalStackedBps.toFixed(4)} from exact-simulated zero-capital composite evidence`
+          : 'No shared-principal BPS is claimed without an exact composite-evidence match',
         compositionGainVerified
-          ? 'Composite gain is backed by explicit measured composite simulation evidence'
-          : 'No extra composition/synergy profit is claimed without measured composite simulation evidence',
-        'Arithmetic BPS sum is telemetry only; notional-weighted BPS is the portfolio comparison metric unless the same principal is genuinely reused sequentially',
+          ? 'Additional composition gain is backed by explicit measured gain evidence'
+          : 'No extra composition/synergy gain is claimed without measured gain evidence',
+        'Arithmetic leg-BPS sum is telemetry only; ordinary parallel portfolios use notional-weighted BPS',
         'Each leg must re-pass quote freshness, resources, governance, product/protocol constraints, and terminal settlement immediately before execution',
       ],
     };
@@ -245,7 +257,9 @@ class UnifiedMultiLegArbitrageEngine {
       topologies: plan.legs.map(leg => leg.topology),
       arithmeticLegBpsSum: plan.arithmeticLegBpsSum,
       notionalWeightedNetProfitBps: plan.notionalWeightedNetProfitBps,
-      sequentialCompoundedBps: plan.sequentialCompoundedBps,
+      sharedPrincipalStackedBps: plan.sharedPrincipalStackedBps,
+      exactCompositeSimulation: plan.exactCompositeSimulation,
+      compositeEstimatedGas: plan.compositeEstimatedGas,
       compositionGainUsd: plan.compositionGainUsd,
       compositionGainVerified: plan.compositionGainVerified,
       adaptiveMinIncrementalBps: plan.adaptiveMinIncrementalBps,
