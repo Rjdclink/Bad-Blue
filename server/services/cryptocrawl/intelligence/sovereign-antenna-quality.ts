@@ -13,7 +13,9 @@ export interface AntennaProviderQualitySnapshot {
   lastObservedAt: number | null;
   observationAgeMs: number | null;
   recencyScore: number;
+  sampleConfidence: number;
   qualityScore: number;
+  confidenceAdjustedQualityScore: number;
   executionAuthority: false;
 }
 
@@ -56,6 +58,11 @@ function recencyHalfLifeMs(): number {
   return Number.isFinite(parsed) ? Math.max(1_000, Math.min(5 * 60_000, parsed)) : 15_000;
 }
 
+function confidenceTargetSamples(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_ANTENNA_CONFIDENCE_SAMPLES || 32);
+  return Number.isFinite(parsed) ? Math.max(4, Math.min(512, Math.trunc(parsed))) : 32;
+}
+
 export function recordAntennaProviderObservation(input: {
   venue: CexStreamVenue;
   latencyMs: number;
@@ -91,13 +98,16 @@ function snapshot(venue: CexStreamVenue, state: MutableVenueQuality): AntennaPro
   const recencyScore = observationAgeMs === null
     ? 0
     : Math.pow(0.5, observationAgeMs / recencyHalfLifeMs());
+  const sampleConfidence = Math.max(0, Math.min(1, state.requests / confidenceTargetSamples()));
   const baseQuality = Math.max(0, Math.min(1,
     hitRate * 0.60 + latencyScore * 0.25 + (1 - failureRate) * 0.15,
   ));
-  // A provider with historically good data but stale observations must not stay
-  // artificially dominant. Recency only affects advisory ranking; it grants no
-  // quote, economic, or execution authority.
+  // Historical quality is still exposed separately, while the provider auction
+  // uses a confidence-adjusted score so a lucky one-sample provider cannot outrank
+  // a well-measured source. This remains advisory and never suppresses simultaneous
+  // observation of executable venues.
   const qualityScore = Number((baseQuality * recencyScore).toFixed(4));
+  const confidenceAdjustedQualityScore = Number((qualityScore * (0.25 + 0.75 * sampleConfidence)).toFixed(4));
   return {
     venue,
     requests: state.requests,
@@ -111,7 +121,9 @@ function snapshot(venue: CexStreamVenue, state: MutableVenueQuality): AntennaPro
     lastObservedAt: state.lastObservedAt,
     observationAgeMs,
     recencyScore: Number(recencyScore.toFixed(4)),
+    sampleConfidence: Number(sampleConfidence.toFixed(4)),
     qualityScore,
+    confidenceAdjustedQualityScore,
     executionAuthority: false,
   };
 }
@@ -123,5 +135,9 @@ export function getAntennaProviderQuality(venue: CexStreamVenue): AntennaProvide
 export function getAntennaProviderQualitySummary(): AntennaProviderQualitySnapshot[] {
   return [...states.entries()]
     .map(([venue, state]) => snapshot(venue, state))
-    .sort((left, right) => right.qualityScore - left.qualityScore || left.venue.localeCompare(right.venue));
+    .sort((left, right) =>
+      right.confidenceAdjustedQualityScore - left.confidenceAdjustedQualityScore
+      || right.qualityScore - left.qualityScore
+      || left.venue.localeCompare(right.venue),
+    );
 }
