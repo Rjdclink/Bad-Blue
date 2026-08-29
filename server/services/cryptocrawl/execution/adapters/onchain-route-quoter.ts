@@ -64,6 +64,12 @@ export interface QuotedZeroCapitalRoute {
   grossProfit: bigint;
   netProfit: bigint;
   netProfitBps: number;
+  grossProfitBps: number;
+  allInCostBps: number;
+  breakEvenBps: number;
+  bpsToBreakEven: number;
+  discoveryFloorBps: number;
+  executablePositive: boolean;
   estimatedGasCostInInputToken: bigint;
   flashLoanFeeInInputToken: bigint;
   relayFeeInInputToken: bigint;
@@ -107,6 +113,17 @@ function maxQuoteLatencyMs(): number {
   const configured = Number(process.env.ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS || 2500);
   if (!Number.isFinite(configured)) return 2500;
   return Math.max(250, Math.min(15000, Math.trunc(configured)));
+}
+
+/**
+ * Observation-only envelope for near-break-even zero-capital routes.
+ * A negative value broadens measured discovery; it never changes executable
+ * eligibility, which remains strict all-in netProfit > 0 downstream.
+ */
+export function zeroCapitalDiscoveryFloorBps(): number {
+  const configured = Number(process.env.ZERO_CAPITAL_DISCOVERY_FLOOR_BPS ?? -100);
+  if (!Number.isFinite(configured)) return -100;
+  return Math.max(-500, Math.min(0, Math.trunc(configured)));
 }
 
 function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapitalRoute {
@@ -316,16 +333,19 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
 
   const finalAmount = BigInt(currentAmount.toString());
   const initial = BigInt(initialAmount.toString());
-  if (finalAmount <= initial) return null;
+  if (initial <= 0n) return null;
 
   const grossProfit = finalAmount - initial;
   const flashLoanFee = (initial * BigInt(Math.round((route.flashLoanFeeBps || 0)))) / 10000n;
   const gasCost = toBigInt('estimatedGasCostInInputToken', route.estimatedGasCostInInputToken);
   const relayFee = toBigInt('relayFeeInInputToken', route.relayFeeInInputToken);
-  const netProfit = grossProfit - flashLoanFee - gasCost - relayFee;
-  if (netProfit <= 0n) return null;
-
+  const allInCost = flashLoanFee + gasCost + relayFee;
+  const netProfit = grossProfit - allInCost;
+  const grossProfitBps = Number((grossProfit * 10000n) / initial);
+  const allInCostBps = Number((allInCost * 10000n) / initial);
   const netProfitBps = Number((netProfit * 10000n) / initial);
+  const discoveryFloorBps = zeroCapitalDiscoveryFloorBps();
+  if (netProfitBps < discoveryFloorBps) return null;
 
   return {
     id: route.id,
@@ -337,6 +357,12 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
     grossProfit,
     netProfit,
     netProfitBps,
+    grossProfitBps,
+    allInCostBps,
+    breakEvenBps: allInCostBps,
+    bpsToBreakEven: netProfitBps >= 0 ? 0 : Math.abs(netProfitBps),
+    discoveryFloorBps,
+    executablePositive: netProfit > 0n,
     estimatedGasCostInInputToken: gasCost,
     flashLoanFeeInInputToken: flashLoanFee,
     relayFeeInInputToken: relayFee,
@@ -381,6 +407,7 @@ function routeNotionalCandidates(route: ConfiguredZeroCapitalRoute): number[] {
 
 function executionSizeApproved(route: ConfiguredZeroCapitalRoute, quote: QuotedZeroCapitalRoute): boolean {
   if (!stageManager.canExecuteTrades()) return true;
+  if (quote.netProfit <= 0n) return false;
   const expectedCostUsd = usdFromBaseUnits(
     quote.estimatedGasCostInInputToken + quote.flashLoanFeeInInputToken + quote.relayFeeInInputToken,
   );
@@ -407,23 +434,32 @@ async function quoteBestRouteSize(
   const settled = await Promise.allSettled(sizes.map(notionalUsd =>
     quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(notionalUsd) }, provider),
   ));
-  const positive = settled
+  const observed = settled
     .filter((result): result is PromiseFulfilledResult<QuotedZeroCapitalRoute | null> => result.status === 'fulfilled')
     .map(result => result.value)
-    .filter((quote): quote is QuotedZeroCapitalRoute => !!quote && quote.netProfit > 0n);
+    .filter((quote): quote is QuotedZeroCapitalRoute => !!quote);
+  if (observed.length === 0) return null;
+
+  const positive = observed.filter(quote => quote.netProfit > 0n);
   const admissible = stageManager.canExecuteTrades()
     ? positive.filter(quote => executionSizeApproved(route, quote))
     : positive;
-  return selectHighestNetProfit(admissible, quote => quote.netProfit);
+
+  // Preserve executable preference when one exists. Otherwise return the best
+  // measured near-miss inside the observation-only discovery envelope so BPS
+  // and cost telemetry remain visible. Downstream execution still rejects
+  // expectedProfit <= 0 and therefore cannot execute this fallback quote.
+  const selectionPool = admissible.length > 0 ? admissible : observed;
+  return selectHighestNetProfit(selectionPool, quote => quote.netProfit);
 }
 
 /**
  * Each configured atomic route is independently quoted across a bounded notional
  * curve and selected by the largest measured all-in net profit. Profit is never
- * extrapolated linearly from a smaller quote. When governance can execute, only
- * sizes that also pass canonical progressive position sizing participate in the
- * winner selection, preventing a profitable-but-oversized quote from hiding a
- * smaller executable one.
+ * extrapolated linearly from a smaller quote. When governance can execute, a
+ * positive size that passes canonical progressive sizing wins. If none exists,
+ * the best quote inside the bounded observation-only discovery envelope may be
+ * returned for truthful BPS telemetry; it remains non-executable downstream.
  */
 export async function quoteConfiguredZeroCapitalRoutesForChain(
   chain: SupportedExecutionChain,
