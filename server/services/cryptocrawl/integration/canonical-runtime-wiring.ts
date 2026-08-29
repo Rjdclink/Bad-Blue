@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
+import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
 import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
@@ -43,6 +44,10 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   // Installed after CEX/zero-capital correctness wiring so adaptive scoring can
   // only admit candidates that have already passed their current-evidence gates.
   ensureDynamicProfitabilityAdmissionWiring();
+  // Stage 1 validates the live system from fresh, economically eligible current
+  // evidence rather than waiting for realized profit history that cannot exist
+  // until Stage 2 permits the first governed execution.
+  ensureStageOneBootstrapAuthority();
   void canonicalIntelligenceRepository.hydrate();
   ensureCanonicalIntelligenceOutbox();
   ensureFilteredAlchemyPendingStream();
@@ -60,6 +65,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     fixedDiscoveryPriority: false,
     adaptiveAdmissionFormula: '(NetProfitUSD / ExecutionRisk) * ConfidenceLevel',
     historicalProofRequiredBeforeFirstExecution: false,
+    stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history',
     adaptiveThresholdAuthority: 'terminal_realized_outcomes',
     legacyMasterOrchestratorRequired: false,
     executionAuthorityGranted: false,
