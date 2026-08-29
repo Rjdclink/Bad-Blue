@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
+import { resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
 
 const SYSTEM_KEY = 'cryptocrawler';
 const HEARTBEAT_MS = 15_000;
@@ -7,7 +8,7 @@ const TERMINAL_GRACE_SECONDS = 180;
 const RAILWAY_DEPLOYMENT_ID = (process.env.RAILWAY_DEPLOYMENT_ID || '').trim();
 const RAILWAY_SERVICE_ID = (process.env.RAILWAY_SERVICE_ID || '').trim();
 const RAILWAY_ENVIRONMENT_ID = (process.env.RAILWAY_ENVIRONMENT_ID || '').trim();
-const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
+const DESTINATION = resolveTerminalPayoutAddress() || '';
 
 let timer: NodeJS.Timeout | null = null;
 let heartbeatInFlight: Promise<void> | null = null;
@@ -80,6 +81,12 @@ async function heartbeatOnce(): Promise<void> {
 
 export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
   if (!isDatabaseConfigured || timer) return;
+  if (!DESTINATION) {
+    logger.warn('[Treasury] Terminal payout wallet is not configured; runtime retention remains active and terminal sweep is fail-closed', {
+      component: 'TerminalTreasuryLifecycle',
+      destinationVariable: 'CRYPTO_PROFIT_WALLET_ADDRESS',
+    });
+  }
   await syncWorkerSecrets();
   await heartbeatOnce();
   if (!signalInstalled && RAILWAY_DEPLOYMENT_ID) {
@@ -98,6 +105,7 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     deploymentIdPresent: Boolean(RAILWAY_DEPLOYMENT_ID),
     serviceIdPresent: Boolean(RAILWAY_SERVICE_ID),
     environmentIdPresent: Boolean(RAILWAY_ENVIRONMENT_ID),
+    terminalPayoutConfigured: Boolean(DESTINATION),
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
     runtimePolicy: 'retain_and_compound',
   });
