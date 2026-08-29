@@ -12,6 +12,8 @@ export interface ReceiverArtifact {
 
 const SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlBalancerFlashLoanReceiver.sol';
 const CONTRACT_NAME = 'CryptocrawlBalancerFlashLoanReceiver';
+const AAVE_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlAaveV3FlashLoanReceiver.sol';
+const AAVE_CONTRACT_NAME = 'CryptocrawlAaveV3FlashLoanReceiver';
 
 function runProcess(command: string, args: string[], input: string): Promise<string> {
   return new Promise((resolvePromise, reject) => {
@@ -116,6 +118,10 @@ export async function compileFlashLoanReceiver(): Promise<ReceiverArtifact> {
   return compileReceiverContract(SOURCE_NAME, CONTRACT_NAME);
 }
 
+export async function compileAaveV3FlashLoanReceiver(): Promise<ReceiverArtifact> {
+  return compileReceiverContract(AAVE_SOURCE_NAME, AAVE_CONTRACT_NAME);
+}
+
 export async function compileSushiV3FlashReceiver(): Promise<ReceiverArtifact> {
   return compileReceiverContract(
     'contracts/cryptocrawl/CryptocrawlSushiV3FlashReceiver.sol',
@@ -135,6 +141,17 @@ export async function writeFlashLoanReceiverArtifact(outputPath?: string): Promi
   return destination;
 }
 
+export async function writeAaveV3FlashLoanReceiverArtifact(outputPath?: string): Promise<string> {
+  const artifact = await compileAaveV3FlashLoanReceiver();
+  const destination = resolve(
+    process.cwd(),
+    outputPath || 'artifacts/cryptocrawl/CryptocrawlAaveV3FlashLoanReceiver.json',
+  );
+  await mkdir(dirname(destination), { recursive: true });
+  await writeFile(destination, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+  return destination;
+}
+
 export async function writeSushiV3FlashReceiverArtifact(outputPath?: string): Promise<string> {
   const artifact = await compileSushiV3FlashReceiver();
   const destination = resolve(
@@ -148,9 +165,13 @@ export async function writeSushiV3FlashReceiverArtifact(outputPath?: string): Pr
 
 const isDirectInvocation = /(?:^|\/)compile-flashloan-receiver\.(?:ts|js)$/.test(process.argv[1] || '');
 if (isDirectInvocation) {
-  writeFlashLoanReceiverArtifact()
-    .then(outputPath => {
-      console.log(`Compiled ${CONTRACT_NAME} artifact: ${outputPath}`);
+  Promise.all([
+    writeFlashLoanReceiverArtifact(),
+    writeAaveV3FlashLoanReceiverArtifact(),
+  ])
+    .then(([balancerPath, aavePath]) => {
+      console.log(`Compiled ${CONTRACT_NAME} artifact: ${balancerPath}`);
+      console.log(`Compiled ${AAVE_CONTRACT_NAME} artifact: ${aavePath}`);
     })
     .catch(error => {
       console.error('[compile-flashloan-receiver] failed:', error instanceof Error ? error.message : String(error));
