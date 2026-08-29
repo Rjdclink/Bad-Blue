@@ -53,6 +53,8 @@ export interface MeasuredCandidate {
     bridgeUsd: number | null;
     expectedSlippageBps: number | null;
     expectedPriceImpactBps: number | null;
+    /** Measured or explicitly bounded notional used to convert realized P&L into realized BPS. */
+    notionalUsd?: number | null;
     /** Optional BPS decomposition. Populated where the topology has measured all-in economics. */
     grossProfitBps?: number | null;
     flashLoanFeeBps?: number | null;
