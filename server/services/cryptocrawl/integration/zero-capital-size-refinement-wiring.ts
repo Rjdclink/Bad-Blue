@@ -68,12 +68,33 @@ function blockTimestampFromOpportunity(opportunity: ZeroCapitalOpportunity): num
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1000);
 }
 
-function highestNetQuote(values: readonly QuotedZeroCapitalRoute[]): QuotedZeroCapitalRoute | null {
+/**
+ * Positive refinement points compete on absolute measured net profit. If every
+ * point is negative, the closest measured BPS to break-even wins instead. This
+ * prevents a larger-notional dollar loss from hiding a materially better BPS
+ * shape that downstream flash-provider repricing may be able to rescue.
+ */
+function bestRefinementQuote(values: readonly QuotedZeroCapitalRoute[]): QuotedZeroCapitalRoute | null {
+  const positives = values.filter(value => value.netProfit > 0n);
+  if (positives.length > 0) {
+    return positives.reduce((best, value) => value.netProfit > best.netProfit ? value : best);
+  }
   let best: QuotedZeroCapitalRoute | null = null;
   for (const value of values) {
-    if (!best || value.netProfit > best.netProfit) best = value;
+    if (!best || value.netProfitBps > best.netProfitBps || (value.netProfitBps === best.netProfitBps && value.netProfit > best.netProfit)) {
+      best = value;
+    }
   }
   return best;
+}
+
+function measuredImprovement(best: QuotedZeroCapitalRoute, opportunity: ZeroCapitalOpportunity): boolean {
+  if (best.netProfit > 0n) return best.netProfit > opportunity.expectedProfit;
+  if (opportunity.expectedProfit > 0n) return false;
+  if (Number.isFinite(best.netProfitBps) && Number.isFinite(opportunity.netProfitBps)) {
+    return best.netProfitBps > opportunity.netProfitBps;
+  }
+  return best.netProfit > opportunity.expectedProfit;
 }
 
 function refinementPriority(opportunity: ZeroCapitalOpportunity): number {
@@ -87,7 +108,7 @@ function refinementPriority(opportunity: ZeroCapitalOpportunity): number {
  * Every refinement point is independently quoted against current pool state; no
  * linear profit interpolation is used. Positive candidates remain first priority,
  * then the closest measured near-break-even candidates are refined. A strictly
- * better negative measurement may replace the coarse observation for learning,
+ * better negative BPS measurement may replace the coarse observation for learning,
  * but it remains non-executable until later measured provider economics make it
  * positive and all downstream gates pass.
  */
@@ -120,6 +141,7 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     let improved = 0;
     let rescuedPositive = 0;
     let improvedObservationOnly = 0;
+    let improvedNegativeBps = 0;
     let extraQuotes = 0;
 
     for (const opportunity of coarseOpportunities) {
@@ -153,8 +175,8 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
       const measured = settled.flatMap(result =>
         result.status === 'fulfilled' && result.value ? [result.value] : [],
       );
-      const best = highestNetQuote(measured);
-      if (!best || best.netProfit <= opportunity.expectedProfit) {
+      const best = bestRefinementQuote(measured);
+      if (!best || !measuredImprovement(best, opportunity)) {
         output.push(opportunity);
         continue;
       }
@@ -168,7 +190,12 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
       output.push(refined);
       improved += 1;
       if (opportunity.expectedProfit <= 0n && refined.expectedProfit > 0n) rescuedPositive += 1;
-      if (refined.expectedProfit <= 0n) improvedObservationOnly += 1;
+      if (refined.expectedProfit <= 0n) {
+        improvedObservationOnly += 1;
+        if (Number.isFinite(refined.netProfitBps) && Number.isFinite(opportunity.netProfitBps) && refined.netProfitBps > opportunity.netProfitBps) {
+          improvedNegativeBps += 1;
+        }
+      }
     }
 
     if (extraQuotes > 0) {
@@ -181,6 +208,9 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
         improvedNetProfitRoutes: improved,
         rescuedPositiveRoutes: rescuedPositive,
         improvedObservationOnlyRoutes: improvedObservationOnly,
+        improvedNegativeBpsRoutes: improvedNegativeBps,
+        positiveSelectionObjective: 'highest_measured_net_profit',
+        negativeSelectionObjective: 'closest_measured_bps_to_break_even',
         nearBreakEvenPriorityEnabled: true,
         negativeObservationExecutionAuthority: false,
         profitInterpolationUsed: false,
@@ -198,6 +228,8 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     maxRoutesPerScan: maxRefinedRoutesPerScan(),
     independentFreshQuotesRequired: true,
     strictMeasuredImprovementRequired: true,
+    positiveSelectionObjective: 'highest_measured_net_profit',
+    negativeSelectionObjective: 'closest_measured_bps_to_break_even',
     nearBreakEvenObservationRefinement: true,
     negativeObservationExecutionAuthority: false,
     cryptaraAuthorityPreserved: true,
