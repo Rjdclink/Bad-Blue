@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { adviseEconomicTransformations, type EconomicTransformationAdvice } from '../optimization/economic-transformation-engine.js';
 import { estimateOpportunityDecay } from '../optimization/opportunity-decay-model.js';
+import { getClosestCexNearMissesBySymbol } from './cex-four-mode-observability-wiring.js';
 
 let timer: NodeJS.Timeout | null = null;
 let latest: EconomicTransformationAdvice[] = [];
@@ -18,18 +19,11 @@ function refresh(): void {
     .map(candidate => {
       const advice = adviseEconomicTransformations(candidate);
       const decay = estimateOpportunityDecay(candidate, now);
-      return {
-        advice,
-        survivalProbability: decay.survivalProbability,
-        decayAdjustedPriority: advice.priorityScore * decay.survivalProbability,
-      };
+      return { advice, survivalProbability: decay.survivalProbability, decayAdjustedPriority: advice.priorityScore * decay.survivalProbability };
     })
     .filter(item => item.advice.netProfitBps !== null && item.advice.netProfitBps <= 0)
     .sort((left, right) => right.decayAdjustedPriority - left.decayAdjustedPriority || right.advice.priorityScore - left.advice.priorityScore);
 
-  // Prevent one topology/cost-driver family from monopolizing the rescue budget.
-  // This preserves high-value ranking while maintaining bounded search diversity
-  // across economically different failure modes.
   const bucketCounts = new Map<string, number>();
   const selected: typeof ranked = [];
   for (const item of ranked) {
@@ -42,6 +36,7 @@ function refresh(): void {
   }
 
   latest = selected.map(item => item.advice);
+  const cexNearMisses = getClosestCexNearMissesBySymbol(16);
   logger.info('[EconomicTransformation] Near-break-even rescue portfolio refreshed', {
     component: 'EconomicTransformationWiring',
     candidates: latest.length,
@@ -61,7 +56,19 @@ function refresh(): void {
       decayAdjustedPriority: item.decayAdjustedPriority,
       transformations: item.advice.transformations,
     })),
+    cexModeRescueAttention: cexNearMisses.map(item => ({
+      symbol: item.symbol,
+      mode: item.mode,
+      buyVenue: item.buyVenue,
+      sellVenue: item.sellVenue,
+      combinedFeeBps: item.combinedFeeBps,
+      grossSpreadBps: item.grossSpreadBps,
+      bpsToBreakEven: item.bpsToBreakEven,
+      recoveryEfficiency: item.recoveryEfficiency,
+    })),
+    cexRescueObjective: 'smallest_exact_bps_gap_per_symbol',
     portfolioDiversityAuthority: 'search_scheduling_only',
+    cexRescueAuthority: 'search_attention_only',
     decayAuthority: 'scheduling_only',
     exactRequoteRequired: true,
     executionAuthority: false,
