@@ -26,6 +26,7 @@ export interface CoinbaseKeyPermissions {
 
 export interface CoinbasePrivateAuthoritySnapshot {
   credentialsVisible: boolean;
+  credentialSource: string | null;
   permissionObservedAt: number | null;
   canView: boolean | null;
   canTrade: boolean | null;
@@ -36,6 +37,12 @@ export interface CoinbasePrivateAuthoritySnapshot {
   lastAuthFailureAt: number | null;
   authCooldownUntil: number | null;
   authCircuitOpen: boolean;
+}
+
+interface CoinbaseCredentialPair {
+  keyName: string;
+  keySecret: string;
+  source: string;
 }
 
 export class CoinbasePrivateAuthError extends Error {
@@ -73,43 +80,73 @@ function normalizeCredential(raw: string | undefined): string | null {
   return value || null;
 }
 
-function coinbaseKeyName(): string | null {
-  // Advanced Trade/CDP key names are the organizations/.../apiKeys/... value.
-  // Prefer explicit key-name variables over the historically overloaded
-  // COINBASE_API_KEY so a legacy UUID/API token cannot shadow a valid CDP name.
-  const candidates = [
-    normalizeCredential(process.env.COINBASE_KEY_NAME),
-    normalizeCredential(process.env.CDP_API_KEY_NAME),
-    normalizeCredential(process.env.KEY_NAME),
-    normalizeCredential(process.env.COINBASE_API_KEY),
-    normalizeCredential(process.env.CDP_API_KEY_ID),
-  ].filter((value): value is string => Boolean(value));
-  return candidates.find(value => value.includes('/apiKeys/')) || candidates[0] || null;
-}
-
-function coinbaseKeySecret(): string | null {
-  const value = normalizeCredential(process.env.COINBASE_API_SECRET)
-    || normalizeCredential(process.env.COINBASE_KEY_SECRET)
-    || normalizeCredential(process.env.CDP_API_KEY_SECRET)
-    || normalizeCredential(process.env.CDP_API_KEY_PRIVATE_KEY)
-    || normalizeCredential(process.env.KEY_SECRET);
+function normalizeCoinbaseSecret(raw: string | undefined): string | null {
+  const value = normalizeCredential(raw);
   return value ? value.replace(/\\n/g, '\n') : null;
 }
 
-export function hasCoinbaseAdvancedTradeCredentials(): boolean {
-  return Boolean(coinbaseKeyName() && coinbaseKeySecret());
+function coinbaseCredentialPairs(): CoinbaseCredentialPair[] {
+  const candidates: Array<{ source: string; keyName: string | null; keySecret: string | null }> = [
+    {
+      source: 'COINBASE_KEY_NAME/COINBASE_KEY_SECRET',
+      keyName: normalizeCredential(process.env.COINBASE_KEY_NAME),
+      keySecret: normalizeCoinbaseSecret(process.env.COINBASE_KEY_SECRET),
+    },
+    {
+      source: 'CDP_API_KEY_NAME/CDP_API_KEY_SECRET',
+      keyName: normalizeCredential(process.env.CDP_API_KEY_NAME),
+      keySecret: normalizeCoinbaseSecret(process.env.CDP_API_KEY_SECRET),
+    },
+    {
+      source: 'CDP_API_KEY_NAME/CDP_API_KEY_PRIVATE_KEY',
+      keyName: normalizeCredential(process.env.CDP_API_KEY_NAME),
+      keySecret: normalizeCoinbaseSecret(process.env.CDP_API_KEY_PRIVATE_KEY),
+    },
+    {
+      source: 'KEY_NAME/KEY_SECRET',
+      keyName: normalizeCredential(process.env.KEY_NAME),
+      keySecret: normalizeCoinbaseSecret(process.env.KEY_SECRET),
+    },
+    {
+      source: 'COINBASE_API_KEY/COINBASE_API_SECRET',
+      keyName: normalizeCredential(process.env.COINBASE_API_KEY),
+      keySecret: normalizeCoinbaseSecret(process.env.COINBASE_API_SECRET),
+    },
+    {
+      source: 'CDP_API_KEY_ID/CDP_API_KEY_SECRET',
+      keyName: normalizeCredential(process.env.CDP_API_KEY_ID),
+      keySecret: normalizeCoinbaseSecret(process.env.CDP_API_KEY_SECRET),
+    },
+    {
+      source: 'CDP_API_KEY_ID/CDP_API_KEY_PRIVATE_KEY',
+      keyName: normalizeCredential(process.env.CDP_API_KEY_ID),
+      keySecret: normalizeCoinbaseSecret(process.env.CDP_API_KEY_PRIVATE_KEY),
+    },
+  ];
+
+  return candidates
+    .filter((candidate): candidate is CoinbaseCredentialPair => Boolean(candidate.keyName && candidate.keySecret))
+    .map(candidate => ({ keyName: candidate.keyName, keySecret: candidate.keySecret, source: candidate.source }));
 }
 
-function requireCoinbaseCredentials(): { keyName: string; keySecret: string } {
-  const keyName = coinbaseKeyName();
-  const keySecret = coinbaseKeySecret();
-  if (!keyName || !keySecret) {
-    throw new Error('Coinbase Advanced Trade credentials are not visible; expected a supported Coinbase/CDP API key name and private key/secret');
+function selectedCoinbaseCredentials(): CoinbaseCredentialPair | null {
+  const completePairs = coinbaseCredentialPairs();
+  return completePairs.find(pair => pair.keyName.includes('/apiKeys/')) || null;
+}
+
+export function hasCoinbaseAdvancedTradeCredentials(): boolean {
+  return selectedCoinbaseCredentials() !== null;
+}
+
+function requireCoinbaseCredentials(): CoinbaseCredentialPair {
+  const selected = selectedCoinbaseCredentials();
+  if (selected) return selected;
+
+  const completePairs = coinbaseCredentialPairs();
+  if (completePairs.length > 0) {
+    throw new Error('Coinbase Advanced Trade credentials are paired but no Key Name has the documented organizations/{org_id}/apiKeys/{key_id} form; refusing ambiguous authentication');
   }
-  if (!keyName.includes('/apiKeys/')) {
-    throw new Error('Coinbase Advanced Trade key name is not the documented organizations/{org_id}/apiKeys/{key_id} value; refusing to send a JWT with an ambiguous key identifier');
-  }
-  return { keyName, keySecret };
+  throw new Error('Coinbase Advanced Trade credentials are not visible as a complete supported name/secret pair; do not mix a Key Name from one environment-variable family with a secret from another');
 }
 
 function base64Url(value: Buffer | string): string {
@@ -198,16 +235,18 @@ function recordCoinbaseAuthFailure(status: 401 | 403): CoinbasePrivateAuthError 
   lastAuthFailureAt = now;
   authCooldownUntil = now + AUTH_FAILURE_COOLDOWN_MS;
   permissionsCache = null;
+  const credentialSource = selectedCoinbaseCredentials()?.source || null;
   logger.warn('[Coinbase] Private authentication circuit opened after authoritative rejection', {
     component: 'CoinbaseAdvancedTradeAuthority',
     status,
+    credentialSource,
     authFailureCount,
     cooldownMs: AUTH_FAILURE_COOLDOWN_MS,
     retryAt: authCooldownUntil,
   });
   return new CoinbasePrivateAuthError(
     status,
-    `Coinbase private authentication failed (${status}); verify that the organizations/.../apiKeys/... Key Name is paired with its exact private key, required permissions, and any configured IP allowlist`,
+    `Coinbase private authentication failed (${status}); verify the exact paired credential source ${credentialSource || 'unknown'}, required permissions, and any configured IP allowlist`,
   );
 }
 
@@ -216,6 +255,7 @@ function recordCoinbaseAuthenticatedSuccess(): void {
     authRecoveryLoggedFailureCount = authFailureCount;
     logger.info('[Coinbase] Private authentication circuit recovered after authenticated success', {
       component: 'CoinbaseAdvancedTradeAuthority',
+      credentialSource: selectedCoinbaseCredentials()?.source || null,
       priorAuthFailures: authFailureCount,
     });
   }
@@ -289,6 +329,7 @@ export async function getCoinbaseKeyPermissions(forceRefresh = false): Promise<C
     permissionsCache = { value, expiresAt: Date.now() + PERMISSION_CACHE_MS };
     logger.info('[Coinbase] Advanced Trade API-key permissions verified', {
       component: 'CoinbaseAdvancedTradeAuthority',
+      credentialSource: selectedCoinbaseCredentials()?.source || null,
       canView: value.canView,
       canTrade: value.canTrade,
       canTransfer: value.canTransfer,
@@ -309,8 +350,10 @@ export async function assertCoinbaseSpotTradeReady(): Promise<CoinbaseKeyPermiss
 
 export function getCoinbasePrivateAuthoritySnapshot(): CoinbasePrivateAuthoritySnapshot {
   const now = Date.now();
+  const selected = selectedCoinbaseCredentials();
   return {
-    credentialsVisible: hasCoinbaseAdvancedTradeCredentials(),
+    credentialsVisible: selected !== null,
+    credentialSource: selected?.source || null,
     permissionObservedAt: permissionsCache?.value.observedAt || null,
     canView: permissionsCache?.value.canView ?? null,
     canTrade: permissionsCache?.value.canTrade ?? null,
