@@ -19,6 +19,7 @@ interface ProviderDefinition {
 }
 
 let installed = false;
+let installationPromise: Promise<void> | null = null;
 
 function validHttpUrl(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -38,6 +39,29 @@ function validWebSocketUrl(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Cost-safe public RPCs are ordinary blockchain evidence transports, not
+ * execution/economic authorities. They are intentionally ranked above paid RPC
+ * providers so local Computational Beam/Aries/Cryptara can do the expensive
+ * analysis while Alchemy remains a fallback and a gas-sponsorship provider.
+ */
+function costSafePublicDefinitions(): ProviderDefinition[] {
+  if (process.env.CRYPTOCRAWL_COST_SAFE_PUBLIC_RPC_ENABLED?.trim().toLowerCase() === 'false') return [];
+  const urls: Partial<Record<SupportedChain, string>> = {
+    ethereum: 'https://ethereum-rpc.publicnode.com',
+    polygon: 'https://polygon-bor-rpc.publicnode.com',
+    arbitrum: 'https://arbitrum-one-rpc.publicnode.com',
+    optimism: 'https://optimism-rpc.publicnode.com',
+    base: 'https://base-rpc.publicnode.com',
+    avalanche: 'https://avalanche-c-chain-rpc.publicnode.com',
+    bsc: 'https://bsc-rpc.publicnode.com',
+  };
+  return CHAINS.flatMap(chain => {
+    const httpUrl = validHttpUrl(urls[chain]);
+    return httpUrl ? [{ provider: 'CostSafePublicRPC', chain, httpUrl, priority: 100 }] : [];
+  });
 }
 
 function namedProviderDefinitions(): ProviderDefinition[] {
@@ -94,20 +118,24 @@ function genericProviderDefinitions(): ProviderDefinition[] {
       chain,
       httpUrl,
       websocketUrl: validWebSocketUrl(row.websocketUrl),
-      priority: Number.isFinite(priorityRaw) ? Math.max(1, Math.min(10, Math.round(priorityRaw))) : 7,
+      priority: Number.isFinite(priorityRaw) ? Math.max(1, Math.min(90, Math.round(priorityRaw))) : 7,
     });
   }
   return output;
 }
 
 async function registerConfiguredMesh(): Promise<void> {
-  const definitions = [...namedProviderDefinitions(), ...genericProviderDefinitions()];
+  const definitions = [
+    ...costSafePublicDefinitions(),
+    ...namedProviderDefinitions(),
+    ...genericProviderDefinitions(),
+  ];
   const unique = new Map<string, ProviderDefinition>();
   for (const definition of definitions) unique.set(`${definition.chain}:${definition.httpUrl}`, definition);
 
   const outcomes = await Promise.allSettled([...unique.values()].map(async definition => {
     await multiProviderRpcManager.registerProvider({
-      provider: definition.provider,
+      provider: `${definition.provider}:${definition.chain}`,
       chain: definition.chain,
       httpUrl: definition.httpUrl,
       websocketUrl: definition.websocketUrl,
@@ -117,7 +145,7 @@ async function registerConfiguredMesh(): Promise<void> {
         ...(definition.websocketUrl ? ['subscriptions' as RpcCapability] : []),
       ],
     });
-    return { provider: definition.provider, chain: definition.chain };
+    return { provider: definition.provider, chain: definition.chain, priority: definition.priority };
   }));
 
   const admitted = outcomes.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
@@ -129,16 +157,24 @@ async function registerConfiguredMesh(): Promise<void> {
     failed,
     endpointUrlsLogged: false,
     providerManagerAuthoritative: true,
+    costSafePublicRpcPreferred: true,
+    paidAlchemyRpcRole: 'fallback_only_when_cost_safe_provider_is_unavailable',
+    localComputeRole: 'ComputationalBeam_Aries_Cryptara_analysis_after_bounded_market_evidence',
   });
 }
 
-export function ensureDynamicRpcProviderWiring(): void {
-  if (installed) return;
+export function ensureDynamicRpcProviderWiring(): Promise<void> {
+  if (installationPromise) return installationPromise;
   installed = true;
-  void registerConfiguredMesh().catch(error => {
+  installationPromise = registerConfiguredMesh().catch(error => {
     logger.warn('[DynamicRpcProviderWiring] Provider admission degraded without blocking canonical core', {
       component: 'DynamicRpcProviderWiring',
       error: error instanceof Error ? error.message : String(error),
     });
   });
+  return installationPromise;
+}
+
+export function isDynamicRpcProviderWiringInstalled(): boolean {
+  return installed;
 }
