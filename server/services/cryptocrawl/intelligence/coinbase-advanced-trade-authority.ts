@@ -10,6 +10,10 @@ const COINBASE_HOST = 'api.coinbase.com';
 const COINBASE_ORIGIN = 'https://api.coinbase.com';
 const REQUEST_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_COINBASE_PRIVATE_TIMEOUT_MS || 12_000));
 const PERMISSION_CACHE_MS = Math.max(30_000, Number(process.env.CRYPTO_COINBASE_PERMISSION_CACHE_MS || 300_000));
+const AUTH_FAILURE_COOLDOWN_MS = Math.max(
+  5_000,
+  Math.min(300_000, Number(process.env.CRYPTO_COINBASE_AUTH_FAILURE_COOLDOWN_MS || 60_000)),
+);
 
 export interface CoinbaseKeyPermissions {
   canView: boolean;
@@ -28,6 +32,24 @@ export interface CoinbasePrivateAuthoritySnapshot {
   requestCount: number;
   lastRequestAt: number | null;
   authAlgorithm: 'ES256' | 'EdDSA' | null;
+  authFailureCount: number;
+  lastAuthFailureAt: number | null;
+  authCooldownUntil: number | null;
+  authCircuitOpen: boolean;
+}
+
+export class CoinbasePrivateAuthError extends Error {
+  constructor(readonly status: 401 | 403, message?: string) {
+    super(message || `Coinbase private authentication failed (${status})`);
+    this.name = 'CoinbasePrivateAuthError';
+  }
+}
+
+export class CoinbaseAuthCircuitOpenError extends Error {
+  constructor(readonly retryAt: number) {
+    super(`Coinbase private authentication circuit is temporarily open until ${new Date(retryAt).toISOString()}`);
+    this.name = 'CoinbaseAuthCircuitOpenError';
+  }
 }
 
 let permissionsCache: { expiresAt: number; value: CoinbaseKeyPermissions } | null = null;
@@ -35,6 +57,9 @@ let permissionsInFlight: Promise<CoinbaseKeyPermissions> | null = null;
 let requestCount = 0;
 let lastRequestAt: number | null = null;
 let lastAuthAlgorithm: 'ES256' | 'EdDSA' | null = null;
+let authFailureCount = 0;
+let lastAuthFailureAt: number | null = null;
+let authCooldownUntil: number | null = null;
 
 function normalizeCredential(raw: string | undefined): string | null {
   if (!raw) return null;
@@ -159,6 +184,42 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
+function assertCoinbaseAuthCircuitClosed(now = Date.now()): void {
+  if (authCooldownUntil !== null && authCooldownUntil > now) {
+    throw new CoinbaseAuthCircuitOpenError(authCooldownUntil);
+  }
+  if (authCooldownUntil !== null && authCooldownUntil <= now) authCooldownUntil = null;
+}
+
+function recordCoinbaseAuthFailure(status: 401 | 403): CoinbasePrivateAuthError {
+  const now = Date.now();
+  authFailureCount += 1;
+  lastAuthFailureAt = now;
+  authCooldownUntil = now + AUTH_FAILURE_COOLDOWN_MS;
+  permissionsCache = null;
+  logger.warn('[Coinbase] Private authentication circuit opened after authoritative rejection', {
+    component: 'CoinbaseAdvancedTradeAuthority',
+    status,
+    authFailureCount,
+    cooldownMs: AUTH_FAILURE_COOLDOWN_MS,
+    retryAt: authCooldownUntil,
+  });
+  return new CoinbasePrivateAuthError(
+    status,
+    `Coinbase private authentication failed (${status}); verify that the organizations/.../apiKeys/... Key Name is paired with its exact private key, required permissions, and any configured IP allowlist`,
+  );
+}
+
+function recordCoinbaseAuthenticatedSuccess(): void {
+  if (authCooldownUntil !== null || lastAuthFailureAt !== null) {
+    logger.info('[Coinbase] Private authentication circuit recovered after authenticated success', {
+      component: 'CoinbaseAdvancedTradeAuthority',
+      priorAuthFailures: authFailureCount,
+    });
+  }
+  authCooldownUntil = null;
+}
+
 export async function coinbasePrivateRequest(
   path: string,
   method: 'GET' | 'POST',
@@ -169,6 +230,7 @@ export async function coinbasePrivateRequest(
   } = {},
 ): Promise<any> {
   if (!path.startsWith('/api/v3/brokerage/')) throw new Error(`Unsupported Coinbase private path: ${path}`);
+  assertCoinbaseAuthCircuitClosed();
   const url = new URL(path, COINBASE_ORIGIN);
   appendQuery(url, options.query);
   const jwt = createCoinbaseRestJwt(method, path);
@@ -188,15 +250,19 @@ export async function coinbasePrivateRequest(
     payload = text ? JSON.parse(text) : {};
   } catch {
     if (response.status === 401 || response.status === 403) {
-      throw new Error(`Coinbase private authentication failed (${response.status}); verify that the organizations/.../apiKeys/... Key Name is paired with its exact private key, required permissions, and any configured IP allowlist`);
+      throw recordCoinbaseAuthFailure(response.status);
     }
     throw new Error(`Coinbase private endpoint returned non-JSON (${response.status})`);
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw recordCoinbaseAuthFailure(response.status);
   }
   if (!response.ok || payload?.error) {
     const code = payload?.error_response?.error || payload?.error || payload?.code || response.status;
     const message = payload?.error_response?.message || payload?.message || payload?.error_details || '';
     throw new Error(`Coinbase private endpoint failed (${response.status}) code=${String(code)}${message ? ` message=${String(message)}` : ''}`);
   }
+  recordCoinbaseAuthenticatedSuccess();
   requestCount += 1;
   lastRequestAt = Date.now();
   return payload;
@@ -240,6 +306,7 @@ export async function assertCoinbaseSpotTradeReady(): Promise<CoinbaseKeyPermiss
 }
 
 export function getCoinbasePrivateAuthoritySnapshot(): CoinbasePrivateAuthoritySnapshot {
+  const now = Date.now();
   return {
     credentialsVisible: hasCoinbaseAdvancedTradeCredentials(),
     permissionObservedAt: permissionsCache?.value.observedAt || null,
@@ -248,5 +315,9 @@ export function getCoinbasePrivateAuthoritySnapshot(): CoinbasePrivateAuthorityS
     requestCount,
     lastRequestAt,
     authAlgorithm: lastAuthAlgorithm,
+    authFailureCount,
+    lastAuthFailureAt,
+    authCooldownUntil: authCooldownUntil && authCooldownUntil > now ? authCooldownUntil : null,
+    authCircuitOpen: Boolean(authCooldownUntil && authCooldownUntil > now),
   };
 }
