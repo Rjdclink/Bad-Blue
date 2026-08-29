@@ -1,35 +1,40 @@
 import logger from '../../../logger.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { unifiedMultiLegArbitrageEngine } from '../optimization/unified-multileg-arbitrage-engine.js';
+import { routeRecentMeasuredOpportunities } from '../execution/unified-execution-router.js';
+import { measuredOpportunityGraph } from './opportunity-graph.js';
+import { fundingRateMonitor } from './funding-rate-monitor.js';
 import { discoverMeasuredDexCandidates } from './dex-opportunity-generator.js';
 import { discoverMeasuredCrossChainCandidates } from './cross-chain-opportunity-generator.js';
 import { discoverMeasuredMempoolCandidates } from './mempool-opportunity-generator.js';
 import { discoverMeasuredLiquidationCandidates } from './liquidation-opportunity-generator.js';
 import { discoverMeasuredMakerCandidates } from './maker-opportunity-generator.js';
-import {
-  measuredCandidateRegistry,
-  type MeasuredOpportunityTopology,
-} from './measured-candidate-registry.js';
+import { measuredCandidateRegistry } from './measured-candidate-registry.js';
 
 export interface MultiTopologyDiscoveryCycle {
   cycleId: string;
   startedAt: number;
   completedAt: number;
+  cexCandidates: number;
   dexCandidates: number;
   crossChainCandidates: number;
   mempoolCandidates: number;
   liquidationCandidates: number;
   makerCandidates: number;
+  fundingCandidates: number;
   durationMsByTopology: {
+    cex: number | null;
     dex: number | null;
     crossChain: number | null;
     mempool: number | null;
     liquidation: number | null;
     maker: number | null;
+    funding: number | null;
   };
-  scannedThisCycle: MeasuredOpportunityTopology[];
   scanPriorities: ReturnType<typeof adaptiveTopologyOptimizer.getSnapshot>;
+  admissionPolicy: ReturnType<typeof adaptiveTopologyOptimizer.getDynamicAdmissionPolicy>;
   assemblyPolicy: ReturnType<typeof adaptiveTopologyOptimizer.getAssemblyPolicy>;
+  routedOpportunities: ReturnType<typeof routeRecentMeasuredOpportunities>;
   compositePlan: ReturnType<typeof unifiedMultiLegArbitrageEngine.getLatestPlan>;
   registry: ReturnType<typeof measuredCandidateRegistry.getMetrics>;
   errors: string[];
@@ -39,7 +44,7 @@ function elapsedMs(startedAt: bigint): number {
   return Number(process.hrtime.bigint() - startedAt) / 1_000_000;
 }
 
-async function timed<T>(operation: () => Promise<T>): Promise<{ value: T; durationMs: number }> {
+async function timed<T>(operation: () => Promise<T> | T): Promise<{ value: T; durationMs: number }> {
   const startedAt = process.hrtime.bigint();
   const value = await operation();
   return { value, durationMs: elapsedMs(startedAt) };
@@ -51,25 +56,26 @@ class MultiTopologyDiscoveryController {
   private latest: MultiTopologyDiscoveryCycle | null = null;
   private running = false;
   private baseIntervalMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_MULTI_TOPOLOGY_SCAN_INTERVAL_MS || 15_000));
-  private readonly lastScanAt = new Map<MeasuredOpportunityTopology, number>();
 
   start(): void {
     if (this.running) return;
     this.running = true;
     this.baseIntervalMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_MULTI_TOPOLOGY_SCAN_INTERVAL_MS || 15_000));
     void this.scanOnce().finally(() => this.scheduleNext());
-    logger.info('[OpportunityGraph] Non-CEX measured topology producers started', {
+    logger.info('[OpportunityGraph] Unified parallel discovery controller started', {
       component: 'MultiTopologyDiscoveryController',
       baseIntervalMs: this.baseIntervalMs,
-      adaptivePerTopologyCadence: true,
-      topologies: ['DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'ZERO_CAPITAL_ATOMIC', 'MAKER_CEX'],
+      parallelEveryCycle: true,
+      fixedTopologyPriority: false,
+      topologies: ['CEX_CEX', 'DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE', 'ZERO_CAPITAL_ATOMIC'],
+      zeroCapitalDiscoveryAuthority: 'zero_capital_engine_parallel_runtime',
       candidateAuthority: 'measured_candidate_registry',
-      realizedBpsPriorityAuthority: 'terminal_settlement_only',
+      realizedPerformanceAdjustsAttention: true,
       minimumCoveragePreserved: true,
       makerOrdersAssumedFilled: false,
       liquidationProfitAssumed: false,
+      fundingCarryAssumedExecutable: false,
       syntheticEvidenceAllowed: false,
-      compositeAssemblyExecutionAuthority: false,
     });
   }
 
@@ -82,26 +88,11 @@ class MultiTopologyDiscoveryController {
   private scheduleNext(): void {
     if (!this.running) return;
     if (this.timer) clearTimeout(this.timer);
-    const tickMs = Math.max(1_000, Math.floor(this.baseIntervalMs / 2));
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.scanOnce().finally(() => this.scheduleNext());
-    }, tickMs);
+    }, this.baseIntervalMs);
     this.timer.unref?.();
-  }
-
-  private due(topology: MeasuredOpportunityTopology, now: number): boolean {
-    const weight = adaptiveTopologyOptimizer.getPriority(topology);
-    const interval = Math.max(
-      Math.floor(this.baseIntervalMs / 2),
-      Math.min(this.baseIntervalMs * 2, Math.floor(this.baseIntervalMs / Math.max(0.5, Math.min(2, weight)))),
-    );
-    const last = this.lastScanAt.get(topology) || 0;
-    return last === 0 || now - last >= interval;
-  }
-
-  private markScanned(topology: MeasuredOpportunityTopology, at: number): void {
-    this.lastScanAt.set(topology, at);
   }
 
   async scanOnce(): Promise<MultiTopologyDiscoveryCycle> {
@@ -110,111 +101,116 @@ class MultiTopologyDiscoveryController {
     const cycleId = `multi-topology:${startedAt}`;
     this.inFlight = (async () => {
       const errors: string[] = [];
-      const scannedThisCycle: MeasuredOpportunityTopology[] = [];
+      let cexCandidates = 0;
       let dexCandidates = 0;
       let crossChainCandidates = 0;
       let mempoolCandidates = 0;
       let liquidationCandidates = 0;
       let makerCandidates = 0;
+      let fundingCandidates = 0;
       const durationMsByTopology: MultiTopologyDiscoveryCycle['durationMsByTopology'] = {
+        cex: null,
         dex: null,
         crossChain: null,
         mempool: null,
         liquidation: null,
         maker: null,
+        funding: null,
       };
 
-      const dexDue = this.due('DEX_ATOMIC', startedAt);
-      const crossDue = this.due('CROSS_CHAIN', startedAt);
-      const makerDue = this.due('MAKER_CEX', startedAt);
-      const mempoolDue = this.due('MEMPOOL_BACKRUN', startedAt);
-      const liquidationDue = this.due('LIQUIDATION', startedAt);
+      const beforeFunding = measuredCandidateRegistry.getRecent(4096)
+        .filter(candidate => candidate.topology === 'FUNDING_ARBITRAGE').length;
 
-      const [dex, cross, maker, liquidation] = await Promise.allSettled([
-        dexDue ? timed(() => discoverMeasuredDexCandidates()) : Promise.resolve(null),
-        crossDue ? timed(() => discoverMeasuredCrossChainCandidates()) : Promise.resolve(null),
-        makerDue ? timed(() => discoverMeasuredMakerCandidates()) : Promise.resolve(null),
-        liquidationDue ? timed(() => discoverMeasuredLiquidationCandidates()) : Promise.resolve(null),
+      // No source has a fixed ordering or hard-coded preference. Each producer
+      // starts in the same event-loop turn and retains its own provider/rate safety.
+      const [cex, dex, cross, mempool, liquidation, maker, funding] = await Promise.allSettled([
+        timed(() => measuredOpportunityGraph.scanOnce()),
+        timed(() => discoverMeasuredDexCandidates()),
+        timed(() => discoverMeasuredCrossChainCandidates()),
+        timed(() => discoverMeasuredMempoolCandidates()),
+        timed(() => discoverMeasuredLiquidationCandidates()),
+        timed(() => discoverMeasuredMakerCandidates()),
+        timed(() => fundingRateMonitor.scanOnce()),
       ]);
-      if (dexDue) {
-        this.markScanned('DEX_ATOMIC', startedAt);
-        scannedThisCycle.push('DEX_ATOMIC');
-        if (dex.status === 'fulfilled' && dex.value) {
-          dexCandidates = dex.value.value.length;
-          durationMsByTopology.dex = dex.value.durationMs;
-        } else if (dex.status === 'rejected') errors.push(`dex:${dex.reason instanceof Error ? dex.reason.message : String(dex.reason)}`);
-      }
-      if (crossDue) {
-        this.markScanned('CROSS_CHAIN', startedAt);
-        scannedThisCycle.push('CROSS_CHAIN');
-        if (cross.status === 'fulfilled' && cross.value) {
-          crossChainCandidates = cross.value.value.length;
-          durationMsByTopology.crossChain = cross.value.durationMs;
-        } else if (cross.status === 'rejected') errors.push(`cross_chain:${cross.reason instanceof Error ? cross.reason.message : String(cross.reason)}`);
-      }
-      if (makerDue) {
-        this.markScanned('MAKER_CEX', startedAt);
-        scannedThisCycle.push('MAKER_CEX');
-        if (maker.status === 'fulfilled' && maker.value) {
-          makerCandidates = maker.value.value.length;
-          durationMsByTopology.maker = maker.value.durationMs;
-        } else if (maker.status === 'rejected') errors.push(`maker:${maker.reason instanceof Error ? maker.reason.message : String(maker.reason)}`);
-      }
-      if (liquidationDue) {
-        this.markScanned('LIQUIDATION', startedAt);
-        scannedThisCycle.push('LIQUIDATION');
-        if (liquidation.status === 'fulfilled' && liquidation.value) {
-          liquidationCandidates = liquidation.value.value.length;
-          durationMsByTopology.liquidation = liquidation.value.durationMs;
-        } else if (liquidation.status === 'rejected') errors.push(`liquidation:${liquidation.reason instanceof Error ? liquidation.reason.message : String(liquidation.reason)}`);
-      }
 
-      if (mempoolDue) {
-        const mempoolStartedAt = process.hrtime.bigint();
-        this.markScanned('MEMPOOL_BACKRUN', startedAt);
-        scannedThisCycle.push('MEMPOOL_BACKRUN');
-        try {
-          mempoolCandidates = discoverMeasuredMempoolCandidates().length;
-        } catch (error) {
-          errors.push(`mempool:${error instanceof Error ? error.message : String(error)}`);
-        } finally {
-          durationMsByTopology.mempool = elapsedMs(mempoolStartedAt);
-        }
-      }
+      if (cex.status === 'fulfilled') {
+        cexCandidates = cex.value.value.deterministicPositive;
+        durationMsByTopology.cex = cex.value.durationMs;
+      } else errors.push(`cex:${cex.reason instanceof Error ? cex.reason.message : String(cex.reason)}`);
+      if (dex.status === 'fulfilled') {
+        dexCandidates = dex.value.value.length;
+        durationMsByTopology.dex = dex.value.durationMs;
+      } else errors.push(`dex:${dex.reason instanceof Error ? dex.reason.message : String(dex.reason)}`);
+      if (cross.status === 'fulfilled') {
+        crossChainCandidates = cross.value.value.length;
+        durationMsByTopology.crossChain = cross.value.durationMs;
+      } else errors.push(`cross_chain:${cross.reason instanceof Error ? cross.reason.message : String(cross.reason)}`);
+      if (mempool.status === 'fulfilled') {
+        mempoolCandidates = mempool.value.value.length;
+        durationMsByTopology.mempool = mempool.value.durationMs;
+      } else errors.push(`mempool:${mempool.reason instanceof Error ? mempool.reason.message : String(mempool.reason)}`);
+      if (liquidation.status === 'fulfilled') {
+        liquidationCandidates = liquidation.value.value.length;
+        durationMsByTopology.liquidation = liquidation.value.durationMs;
+      } else errors.push(`liquidation:${liquidation.reason instanceof Error ? liquidation.reason.message : String(liquidation.reason)}`);
+      if (maker.status === 'fulfilled') {
+        makerCandidates = maker.value.value.length;
+        durationMsByTopology.maker = maker.value.durationMs;
+      } else errors.push(`maker:${maker.reason instanceof Error ? maker.reason.message : String(maker.reason)}`);
+      if (funding.status === 'fulfilled') {
+        durationMsByTopology.funding = funding.value.durationMs;
+        const afterFunding = measuredCandidateRegistry.getRecent(4096)
+          .filter(candidate => candidate.topology === 'FUNDING_ARBITRAGE').length;
+        fundingCandidates = Math.max(0, afterFunding - beforeFunding);
+      } else errors.push(`funding:${funding.reason instanceof Error ? funding.reason.message : String(funding.reason)}`);
 
+      const routedOpportunities = routeRecentMeasuredOpportunities(1024);
       const compositePlan = unifiedMultiLegArbitrageEngine.assemble();
       const completedAt = Date.now();
       const cycle: MultiTopologyDiscoveryCycle = {
         cycleId,
         startedAt,
         completedAt,
+        cexCandidates,
         dexCandidates,
         crossChainCandidates,
         mempoolCandidates,
         liquidationCandidates,
         makerCandidates,
+        fundingCandidates,
         durationMsByTopology,
-        scannedThisCycle,
         scanPriorities: adaptiveTopologyOptimizer.getSnapshot(),
+        admissionPolicy: adaptiveTopologyOptimizer.getDynamicAdmissionPolicy(),
         assemblyPolicy: adaptiveTopologyOptimizer.getAssemblyPolicy(),
+        routedOpportunities,
         compositePlan,
         registry: measuredCandidateRegistry.getMetrics(60_000),
         errors,
       };
       this.latest = cycle;
-      logger.info('[OpportunityGraph] Multi-topology measured discovery cycle completed', {
+      logger.info('[OpportunityGraph] Unified parallel discovery cycle completed', {
         component: 'MultiTopologyDiscoveryController',
         cycleId,
         durationMs: completedAt - startedAt,
         durationMsByTopology,
-        scannedThisCycle,
+        fixedTopologyPriority: false,
         scanPriorities: cycle.scanPriorities.map(state => ({
           topology: state.topology,
           priorityWeight: state.priorityWeight,
           realizedBpsEwma: state.realizedBpsEwma,
+          realizedCostMultiplierEwma: state.realizedCostMultiplierEwma,
           terminalSamples: state.terminalSamples,
         })),
+        admissionPolicy: cycle.admissionPolicy,
         assemblyPolicy: cycle.assemblyPolicy,
+        admittedRoutes: cycle.routedOpportunities.filter(decision => decision.admitted).slice(0, 12).map(decision => ({
+          opportunityId: decision.opportunityId,
+          topology: decision.topology,
+          path: decision.path,
+          profitabilityScore: decision.score.profitabilityScore,
+          executionRisk: decision.score.executionRisk,
+          confidenceLevel: decision.score.confidenceLevel,
+        })),
         compositePlan: cycle.compositePlan ? {
           planId: cycle.compositePlan.planId,
           selectedLegCount: cycle.compositePlan.selectedLegCount,
@@ -222,16 +218,15 @@ class MultiTopologyDiscoveryController {
           executionMode: cycle.compositePlan.executionMode,
           notionalWeightedNetProfitBps: cycle.compositePlan.notionalWeightedNetProfitBps,
           sharedPrincipalStackedBps: cycle.compositePlan.sharedPrincipalStackedBps,
-          arithmeticLegBpsSum: cycle.compositePlan.arithmeticLegBpsSum,
           exactCompositeSimulation: cycle.compositePlan.exactCompositeSimulation,
-          compositeEstimatedGas: cycle.compositePlan.compositeEstimatedGas,
-          compositionGainVerified: cycle.compositePlan.compositionGainVerified,
         } : null,
+        cexCandidates,
         dexCandidates,
         crossChainCandidates,
         mempoolCandidates,
         liquidationCandidates,
         makerCandidates,
+        fundingCandidates,
         registry: cycle.registry,
         errors: errors.slice(0, 12),
       });
@@ -246,9 +241,15 @@ class MultiTopologyDiscoveryController {
     return this.latest ? {
       ...this.latest,
       durationMsByTopology: { ...this.latest.durationMsByTopology },
-      scannedThisCycle: [...this.latest.scannedThisCycle],
       scanPriorities: this.latest.scanPriorities.map(state => ({ ...state })),
+      admissionPolicy: { ...this.latest.admissionPolicy },
       assemblyPolicy: { ...this.latest.assemblyPolicy },
+      routedOpportunities: this.latest.routedOpportunities.map(decision => ({
+        ...decision,
+        score: { ...decision.score, components: { ...decision.score.components } },
+        threshold: { ...decision.threshold },
+        reasons: [...decision.reasons],
+      })),
       compositePlan: this.latest.compositePlan ? {
         ...this.latest.compositePlan,
         legs: this.latest.compositePlan.legs.map(leg => ({
