@@ -13,7 +13,11 @@ import {
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
-import type { ConfiguredZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
+import {
+  zeroCapitalDiscoveryFloorBps,
+  type ConfiguredZeroCapitalRoute,
+  type QuotedZeroCapitalRoute,
+} from '../execution/adapters/onchain-route-quoter.js';
 import {
   supportsSponsoredReceiverChain,
   type ReceiverFundingMode,
@@ -60,7 +64,7 @@ type ZeroCapitalRuntime = {
   activeExecutionsByChain: Map<SupportedChain, number>;
   maxConcurrentExecutions: number;
   scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
-  fromQuotedRoute: (quote: any, blockTimestamp: number) => ZeroCapitalOpportunity;
+  fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
   isAllowedByCryptara: (opportunity: ZeroCapitalOpportunity) => Promise<boolean>;
   getGasFundingDecision: (chain: SupportedChain) => Promise<GasFundingDecision>;
   refreshGasFundingDecisions: () => Promise<GasFundingDecision[]>;
@@ -101,6 +105,95 @@ function baseUnitsToUsd(value: bigint, decimals: number): number {
   const divisor = 10 ** Math.max(0, Math.min(18, decimals));
   const result = Number(value) / divisor;
   return Number.isFinite(result) ? result : 0;
+}
+
+function bpsFromBaseUnits(value: bigint | undefined, notional: bigint): number | null {
+  if (value === undefined || notional <= 0n) return null;
+  return Number((value * 10_000n) / notional);
+}
+
+function zeroCapitalEconomics(
+  opportunity: ZeroCapitalOpportunity,
+  quote?: QuotedZeroCapitalRoute,
+) {
+  const notional = opportunity.flashLoanAmount;
+  const grossProfitBps = quote?.grossProfitBps ?? bpsFromBaseUnits(opportunity.grossProfit, notional);
+  const flashLoanFeeBps = bpsFromBaseUnits(opportunity.flashLoanFeeInInputToken, notional);
+  const gasCostBps = bpsFromBaseUnits(opportunity.estimatedGasCostInInputToken, notional);
+  const relayCostBps = bpsFromBaseUnits(opportunity.relayFeeInInputToken, notional);
+  const allInCostBps = quote?.allInCostBps ?? bpsFromBaseUnits(opportunity.estimatedExecutionCostInInputToken, notional);
+  const netProfitBps = quote?.netProfitBps ?? opportunity.netProfitBps;
+  return {
+    grossProfitUsd: baseUnitsToUsd(opportunity.grossProfit || 0n, opportunity.inputTokenDecimals),
+    deterministicNetProfitUsd: baseUnitsToUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals),
+    feeUsd: baseUnitsToUsd(opportunity.flashLoanFeeInInputToken || 0n, opportunity.inputTokenDecimals),
+    gasUsd: baseUnitsToUsd(opportunity.estimatedGasCostInInputToken || 0n, opportunity.inputTokenDecimals),
+    bridgeUsd: 0,
+    expectedSlippageBps: opportunity.expectedSlippageBps,
+    expectedPriceImpactBps: null,
+    grossProfitBps,
+    flashLoanFeeBps,
+    gasCostBps,
+    relayCostBps,
+    allInCostBps,
+    breakEvenBps: quote?.breakEvenBps ?? allInCostBps,
+    netProfitBps,
+    discoveryFloorBps: quote?.discoveryFloorBps ?? zeroCapitalDiscoveryFloorBps(),
+    bpsToBreakEven: quote?.bpsToBreakEven ?? (netProfitBps >= 0 ? 0 : Math.abs(netProfitBps)),
+    realizedNetProfitBps: null,
+  };
+}
+
+function recordZeroCapitalCandidate(input: {
+  opportunity: ZeroCapitalOpportunity;
+  chain: SupportedChain;
+  source: 'configured' | 'dynamic';
+  quote?: QuotedZeroCapitalRoute;
+  executableCapability: boolean;
+  executionCapabilityReason: string;
+  missingInformation?: string[];
+  simulationReady?: boolean;
+}): void {
+  const { opportunity, chain, source, quote } = input;
+  const positive = opportunity.expectedProfit > 0n && (quote?.executablePositive ?? true);
+  measuredCandidateRegistry.record({
+    opportunityId: opportunity.id,
+    topology: 'ZERO_CAPITAL_ATOMIC',
+    observedAt: opportunity.timestamp,
+    expiresAt: opportunity.expiresAt,
+    status: positive ? 'deterministic_positive' : 'enriched',
+    assets: [opportunity.inputAssetSymbol],
+    venues: [...new Set(opportunity.route.map(step => step.protocol))],
+    chains: [chain],
+    rawQuotes: opportunity.route.map(step => ({
+      source: step.protocol,
+      venue: step.protocol,
+      chain,
+      observedAt: opportunity.timestamp,
+      amountIn: step.amountIn.toString(),
+      amountOut: step.expectedAmountOut.toString(),
+      executable: positive && input.executableCapability,
+      provenance: ['direct_contract_quote'],
+    })),
+    depth: {
+      status: 'measured',
+      detail: 'Each route leg was retained only after a live contract/router quote returned a usable output amount',
+    },
+    economics: zeroCapitalEconomics(opportunity, quote),
+    quoteAgeMs: opportunity.quoteLatencyMs,
+    executableCapability: positive && input.executableCapability,
+    executionCapabilityReason: input.executionCapabilityReason,
+    missingInformation: input.missingInformation || [],
+    provenance: [
+      source === 'dynamic' ? 'dynamic_zero_capital_route' : 'configured_zero_capital_route',
+      opportunity.id.startsWith('graphless-') ? 'graphless_no_key_discovery' : 'stable_seed_discovery',
+      'direct_contract_quotes',
+      'measured_all_in_economics',
+      ...(input.simulationReady && opportunity.id.startsWith('graphless-') ? ['exact_receiver_call_simulation'] : []),
+      positive ? 'deterministic_positive_net' : 'near_break_even_observation_only',
+      'synthetic_evidence:false',
+    ],
+  });
 }
 
 /**
@@ -214,12 +307,30 @@ export function ensureZeroCapitalResourceWiring(): void {
     });
     if (chain === 'europa') return configured;
 
+    const receiverReady = !!target.receiverManager.getReceiver(chain);
+    for (const opportunity of configured) {
+      const positive = opportunity.expectedProfit > 0n;
+      recordZeroCapitalCandidate({
+        opportunity,
+        chain,
+        source: 'configured',
+        executableCapability: positive && receiverReady,
+        executionCapabilityReason: positive
+          ? receiverReady
+            ? 'Measured configured atomic route is deterministic-positive; Cryptara/Monte Carlo/governance remain required before execution'
+            : 'Measured configured atomic route is deterministic-positive, but no verified funded receiver is registered on the chain'
+          : `Measured configured route is ${opportunity.netProfitBps} BPS net and retained inside the observation envelope for optimization only`,
+        missingInformation: positive && !receiverReady ? ['verified_funded_receiver'] : [],
+      });
+    }
+
     const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider);
     if (dynamicQuotes.length === 0) return configured;
-    const positiveRouteIds = new Set(dynamicQuotes.map(quote => quote.id));
+    const positiveRouteIds = new Set(dynamicQuotes
+      .filter(quote => quote.executablePositive && quote.netProfit > 0n)
+      .map(quote => quote.id));
     const permissionEligibleIds = await prepareGraphlessPermissions(target, chain, provider, positiveRouteIds);
     const block = await provider.getBlock('latest');
-    const receiverReady = !!target.receiverManager.getReceiver(chain);
     const dynamic: ZeroCapitalOpportunity[] = [];
     for (const quote of dynamicQuotes) {
       const opportunity = target.fromQuotedRoute(quote, block.timestamp);
@@ -227,68 +338,39 @@ export function ensureZeroCapitalResourceWiring(): void {
         const graphlessTtlMs = Math.max(500, Math.min(3_000, Number(process.env.ZERO_CAPITAL_GRAPHLESS_ROUTE_TTL_MS || 1_500)));
         opportunity.expiresAt = Math.min(opportunity.expiresAt, Date.now() + graphlessTtlMs);
       }
-      const observedAt = opportunity.timestamp;
-      const permissionReady = permissionEligibleIds.has(quote.id);
-      const simulation = permissionReady
+      const positive = quote.executablePositive && opportunity.expectedProfit > 0n;
+      const permissionReady = positive && permissionEligibleIds.has(quote.id);
+      const simulation = positive && permissionReady
         ? await simulateGraphlessAtomicOpportunity(target, chain, provider, opportunity)
-        : { ready: false, reason: 'dynamic_route_permissions_require_fresh_requote' };
-      const exactSimulationRequired = quote.id.startsWith('graphless-') && target.executionEligible;
+        : { ready: false, reason: positive ? 'dynamic_route_permissions_require_fresh_requote' : 'near_break_even_observation_only' };
+      const exactSimulationRequired = positive && quote.id.startsWith('graphless-') && target.executionEligible;
       const simulationReady = !exactSimulationRequired || simulation.ready;
-      const executableCapability = receiverReady && permissionReady && simulationReady;
-      measuredCandidateRegistry.record({
-        opportunityId: opportunity.id,
-        topology: 'ZERO_CAPITAL_ATOMIC',
-        observedAt,
-        expiresAt: opportunity.expiresAt,
-        status: 'deterministic_positive',
-        assets: [opportunity.inputAssetSymbol],
-        venues: [...new Set(opportunity.route.map(step => step.protocol))],
-        chains: [chain],
-        rawQuotes: opportunity.route.map(step => ({
-          source: step.protocol,
-          venue: step.protocol,
-          chain,
-          observedAt,
-          amountIn: step.amountIn.toString(),
-          amountOut: step.expectedAmountOut.toString(),
-          executable: executableCapability,
-          provenance: ['direct_contract_quote'],
-        })),
-        depth: {
-          status: 'measured',
-          detail: 'Each route leg was accepted only after a live contract/router quote returned a positive output amount',
-        },
-        economics: {
-          grossProfitUsd: baseUnitsToUsd(opportunity.grossProfit || 0n, opportunity.inputTokenDecimals),
-          deterministicNetProfitUsd: baseUnitsToUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals),
-          feeUsd: baseUnitsToUsd(opportunity.flashLoanFeeInInputToken || 0n, opportunity.inputTokenDecimals),
-          gasUsd: baseUnitsToUsd(opportunity.estimatedGasCostInInputToken || 0n, opportunity.inputTokenDecimals),
-          bridgeUsd: 0,
-          expectedSlippageBps: opportunity.expectedSlippageBps,
-          expectedPriceImpactBps: null,
-        },
-        quoteAgeMs: opportunity.quoteLatencyMs,
+      const executableCapability = positive && receiverReady && permissionReady && simulationReady;
+      recordZeroCapitalCandidate({
+        opportunity,
+        chain,
+        source: 'dynamic',
+        quote,
         executableCapability,
-        executionCapabilityReason: executableCapability
-          ? 'Measured atomic route has receiver, route permissions and required exact simulation; Cryptara/Monte Carlo/governance remain required before execution'
-          : !receiverReady
-            ? 'Measured deterministic route is positive, but no verified funded receiver is currently registered on the chain'
-            : !permissionReady
-              ? 'Measured deterministic route is positive, but dynamic receiver permissions require a fresh quote'
-              : `Measured deterministic route is positive, but exact atomic simulation is not ready: ${simulation.reason}`,
-        missingInformation: executableCapability ? [] : [
+        executionCapabilityReason: !positive
+          ? `Measured near-break-even route retained for optimization only; ${quote.bpsToBreakEven} BPS remains to strict positive break-even`
+          : executableCapability
+            ? 'Measured atomic route has receiver, route permissions and required exact simulation; Cryptara/Monte Carlo/governance remain required before execution'
+            : !receiverReady
+              ? 'Measured deterministic-positive route has no verified funded receiver on the chain'
+              : !permissionReady
+                ? 'Measured deterministic-positive route requires fresh quoting after dynamic receiver permissions'
+                : `Measured deterministic-positive route exact atomic simulation is not ready: ${simulation.reason}`,
+        missingInformation: !positive || executableCapability ? [] : [
           !receiverReady ? 'verified_funded_receiver' : !permissionReady ? 'fresh_quote_after_dynamic_route_permissions' : 'exact_atomic_simulation',
         ],
-        provenance: [
-          'dynamic_zero_capital_route',
-          quote.id.startsWith('graphless-') ? 'graphless_no_key_discovery' : 'stable_seed_discovery',
-          'direct_contract_quotes',
-          'measured_gas_cost',
-          ...(simulation.ready && quote.id.startsWith('graphless-') ? ['exact_receiver_call_simulation'] : []),
-          'deterministic_positive_net',
-          'synthetic_evidence:false',
-        ],
+        simulationReady: simulation.ready,
       });
+
+      // The observation envelope deliberately stops here for non-positive routes.
+      // They may influence search/optimization telemetry, but never Cryptara,
+      // execution resources, simulation admission, or the executable queue.
+      if (!positive) continue;
       if (target.executionEligible && !executableCapability) continue;
       if (target.executionEnabled && !await target.isAllowedByCryptara(opportunity)) continue;
       dynamic.push(opportunity);
@@ -421,6 +503,8 @@ export function ensureZeroCapitalResourceWiring(): void {
     configuredRoutesRemainSupported: true,
     executionAdmission: 'resource_leases',
     globalValueSemantics: 'emergency_ceiling_only',
+    nearBreakEvenObservation: true,
+    bpsEvidencePropagated: true,
     scheduler: zeroCapitalResourceScheduler.getTelemetry(),
     safety: ['governance', 'positive_net', 'receiver', 'dynamic_route_permissions', 'fresh_requote_after_permission_change', 'exact_atomic_simulation', 'wallet_nonce', 'chain', 'provider', 'protocol', 'gas_sponsor'],
   });
