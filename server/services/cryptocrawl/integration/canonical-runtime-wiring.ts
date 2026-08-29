@@ -7,6 +7,7 @@ import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-r
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
+import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
@@ -90,7 +91,13 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
-  startCanonicalZeroCapitalRuntime();
+
+  // Cost-safe RPCs must be admitted before the zero-capital engine asks the
+  // provider manager for its first chain provider. This keeps paid Alchemy RPC
+  // as failover while the local Computational Beam/Aries/Cryptara stack performs
+  // the expensive analysis after bounded market-evidence acquisition.
+  void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
+
   ensureOrderBookEvolutionWiring();
   ensureCryptaraCexEvidenceWiring();
   ensureInventoryConstrainedCexExecutionWiring();
@@ -142,13 +149,15 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
       : 'withheld_by_default_cost_policy',
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
-    zeroCapitalRuntimeLifecycle: 'started_after_all_canonical_wrappers_with_fail_closed_retry',
+    zeroCapitalRuntimeLifecycle: 'cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
     zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
     zeroCapitalAtomicStackExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
     alchemyPaidPendingStreamDefault: false,
+    paidAlchemyRpcRole: 'fallback_only_after_cost_safe_provider_failure',
+    localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
   });
 }
