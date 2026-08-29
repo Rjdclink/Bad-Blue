@@ -15,7 +15,23 @@ function fromBase64Url(value: string): Buffer {
   return Buffer.from(normalized + padding, 'base64');
 }
 
+function clearCoinbaseCredentialEnvironment(): void {
+  for (const name of [
+    'COINBASE_KEY_NAME',
+    'COINBASE_KEY_SECRET',
+    'CDP_API_KEY_NAME',
+    'CDP_API_KEY_SECRET',
+    'CDP_API_KEY_PRIVATE_KEY',
+    'KEY_NAME',
+    'KEY_SECRET',
+    'COINBASE_API_KEY',
+    'COINBASE_API_SECRET',
+    'CDP_API_KEY_ID',
+  ]) delete process.env[name];
+}
+
 const nowMs = 1_800_000_000_000;
+clearCoinbaseCredentialEnvironment();
 process.env.COINBASE_API_KEY = 'organizations/test-org/apiKeys/test-key';
 
 // Legacy ECDSA compatibility path.
@@ -42,7 +58,43 @@ assert.equal(cryptoVerify(
   fromBase64Url(signaturePart),
 ), true, 'ES256 JWT signature must verify against the generated public key');
 
-// Current Coinbase-recommended Ed25519 path: base64(seed || publicKey), 64 bytes.
+// A modern name must never be cross-paired with an unrelated legacy secret.
+const modernKeys = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+const modernPem = modernKeys.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
+clearCoinbaseCredentialEnvironment();
+process.env.COINBASE_KEY_NAME = 'organizations/modern-org/apiKeys/modern-key';
+process.env.COINBASE_KEY_SECRET = modernPem.replace(/\n/g, '\\n');
+process.env.COINBASE_API_KEY = 'organizations/legacy-org/apiKeys/legacy-key';
+process.env.COINBASE_API_SECRET = pem.replace(/\n/g, '\\n');
+const modernJwt = createCoinbaseRestJwt('GET', '/api/v3/brokerage/key_permissions', nowMs);
+const [modernHeaderPart, modernPayloadPart, modernSignaturePart] = modernJwt.split('.');
+const modernHeader = JSON.parse(fromBase64Url(modernHeaderPart).toString('utf8'));
+assert.equal(modernHeader.kid, process.env.COINBASE_KEY_NAME, 'explicit modern key-name pair must win as one atomic credential pair');
+assert.equal(cryptoVerify(
+  'sha256',
+  Buffer.from(`${modernHeaderPart}.${modernPayloadPart}`),
+  { key: modernKeys.publicKey, dsaEncoding: 'ieee-p1363' },
+  fromBase64Url(modernSignaturePart),
+), true, 'selected modern Key Name must be signed by its paired modern secret');
+assert.equal(cryptoVerify(
+  'sha256',
+  Buffer.from(`${modernHeaderPart}.${modernPayloadPart}`),
+  { key: publicKey, dsaEncoding: 'ieee-p1363' },
+  fromBase64Url(modernSignaturePart),
+), false, 'legacy secret must not shadow the secret paired with a modern Key Name');
+
+// An incomplete modern family must not steal a secret from a complete legacy pair.
+clearCoinbaseCredentialEnvironment();
+process.env.COINBASE_KEY_NAME = 'organizations/incomplete-org/apiKeys/incomplete-key';
+process.env.COINBASE_API_KEY = 'organizations/test-org/apiKeys/test-key';
+process.env.COINBASE_API_SECRET = pem.replace(/\n/g, '\\n');
+const fallbackPairJwt = createCoinbaseRestJwt('GET', '/api/v3/brokerage/key_permissions', nowMs);
+const fallbackPairHeader = JSON.parse(fromBase64Url(fallbackPairJwt.split('.')[0]).toString('utf8'));
+assert.equal(fallbackPairHeader.kid, process.env.COINBASE_API_KEY, 'only a complete supported credential pair may be selected');
+
+// Current Ed25519 compatibility path: base64(seed || publicKey), 64 bytes.
+clearCoinbaseCredentialEnvironment();
+process.env.COINBASE_API_KEY = 'organizations/test-org/apiKeys/test-key';
 const seed = randomBytes(32);
 const pkcs8Prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
 const edPrivate = createPrivateKey({ key: Buffer.concat([pkcs8Prefix, seed]), format: 'der', type: 'pkcs8' });
