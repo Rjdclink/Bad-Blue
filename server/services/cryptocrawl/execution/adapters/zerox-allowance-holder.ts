@@ -35,6 +35,7 @@ export interface ZeroXFirmQuote {
   simulationIncomplete: boolean;
   balanceIssue: boolean;
   taxEvidenceComplete: boolean;
+  rfqExcluded: boolean;
   observedAt: number;
   zid: string | null;
 }
@@ -110,6 +111,7 @@ export async function fetchZeroXAllowanceHolderFirmQuote(input: {
   recipient?: string;
   sellEntireBalance?: boolean;
   slippagePpm?: number;
+  excludeRfqs?: boolean;
 }): Promise<ZeroXFirmQuote> {
   const apiKey = process.env.ZEROX_API_KEY?.trim();
   if (!apiKey) throw new Error('ZEROX_API_KEY is not configured');
@@ -123,6 +125,7 @@ export async function fetchZeroXAllowanceHolderFirmQuote(input: {
   const recipient = requireAddress('0x recipient', input.recipient || taker);
   const sellAmount = requireInteger('0x sellAmount', input.sellAmount);
   const slippagePpm = boundedPpm(input.slippagePpm ?? process.env.ZEROX_ATOMIC_SLIPPAGE_PPM);
+  const excludeRfqs = input.excludeRfqs === true;
 
   const admission = zeroXRequestBudget.tryAcquire('execution');
   if (!admission.allowed) throw new Error(admission.reason);
@@ -137,6 +140,7 @@ export async function fetchZeroXAllowanceHolderFirmQuote(input: {
       recipient,
       slippagePpm: String(slippagePpm),
       ...(input.sellEntireBalance ? { sellEntireBalance: 'true' } : {}),
+      ...(excludeRfqs ? { excludedSources: '0x_RFQ' } : {}),
     });
     const payload = await fetchJsonWithRetry<any>(
       `https://api.0x.org/swap/allowance-holder/quote?${params.toString()}`,
@@ -193,6 +197,7 @@ export async function fetchZeroXAllowanceHolderFirmQuote(input: {
       simulationIncomplete: payload?.issues?.simulationIncomplete === true,
       balanceIssue: payload?.issues?.balance != null,
       taxEvidenceComplete: taxEvidenceComplete(payload),
+      rfqExcluded: excludeRfqs,
       observedAt: Date.now(),
       zid: typeof payload?.zid === 'string' ? payload.zid : null,
     };
