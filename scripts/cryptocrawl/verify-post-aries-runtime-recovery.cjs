@@ -38,6 +38,18 @@ assert.match(coinbase, /Private authentication circuit opened after authoritativ
 assert.match(coinbase, /assertCoinbaseSpotTradeReady/);
 assert.doesNotMatch(coinbase, /configuredFee|configured_override/);
 
+// Recovery logging is transition-based rather than success-request-based. One
+// failure epoch must produce at most one recovery message while preserving the
+// historical failure counter/timestamp for diagnostics.
+assert.match(coinbase, /let authRecoveryLoggedFailureCount = 0/);
+assert.match(coinbase, /authFailureCount > authRecoveryLoggedFailureCount/);
+assert.match(coinbase, /authRecoveryLoggedFailureCount = authFailureCount/);
+assert.doesNotMatch(
+  coinbase,
+  /if \(authCooldownUntil !== null \|\| lastAuthFailureAt !== null\)/,
+  'historical failure state must not emit recovery on every successful request',
+);
+
 // OKX funding enrichment must share/cached account context rather than issuing
 // account instruments + config reads independently for every observation.
 assert.match(funding, /getOkxSwapAccountContext/);
@@ -62,6 +74,7 @@ console.log(JSON.stringify({
   coinbase401DiagnosticsImproved: true,
   coinbaseAuthCircuitFailClosed: true,
   coinbaseAuthStormSuppressed: true,
+  coinbaseRecoveryTransitionLogBounded: true,
   okxFundingAccountReadsCoalesced: true,
   zeroXOfficialV2AllowanceHolderRetained: true,
   zeroXCredentialNormalizationHardened: true,
