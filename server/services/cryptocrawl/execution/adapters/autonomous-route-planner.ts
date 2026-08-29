@@ -1,6 +1,7 @@
 import type { FlashLoanReceiverExecutionPlan } from './flashloan-receiver-builder.js';
 import type { FlashLoanProviderKind } from './flash-loan-provider-economics.js';
 import type { OnchainSwapLeg, SupportedExecutionChain, SupportedSwapProtocol } from './onchain-payload-builder.js';
+import { resolveOperationalProfitRecipient } from '../../core/wallet-identity.js';
 
 export interface RoutePlanningSwapStep {
   protocol: string;
@@ -90,6 +91,7 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
   options?: {
     receiver?: string;
     provider?: FlashLoanProviderKind;
+    /** Offline/test override only when WALLET_PRIVATE_KEY is absent. */
     profitRecipient?: string;
     minOutputBps?: number;
     minProfitBps?: number;
@@ -122,9 +124,12 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     'ZERO_CAPITAL_FLASHLOAN_RECEIVER',
     options?.receiver || process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER,
   );
+  // Runtime profit must remain in the operational signer wallet so it can be
+  // redeployed/compounded. CRYPTO_PROFIT_WALLET_ADDRESS is reserved exclusively
+  // for the independent terminal treasury sweep.
   const profitRecipient = requireAddress(
-    'CRYPTO_PROFIT_WALLET_ADDRESS',
-    options?.profitRecipient || process.env.CRYPTO_PROFIT_WALLET_ADDRESS || process.env.BRIDGE_WALLET_ADDRESS,
+    'operational CryptoCrawler profit recipient',
+    resolveOperationalProfitRecipient(options?.profitRecipient),
   );
 
   const flashLoanAmount = BigInt(bigintishToString(opportunity.flashLoanAmount));
