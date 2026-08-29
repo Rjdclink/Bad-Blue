@@ -23,9 +23,12 @@ function finiteBps(candidate: MeasuredCandidate): number | null {
 }
 
 function basePath(candidate: MeasuredCandidate): DynamicExecutionPath {
-  if (candidate.topology === 'ZERO_CAPITAL_ATOMIC' || candidate.topology === 'DEX_ATOMIC' || candidate.topology === 'MEMPOOL_BACKRUN') {
-    return 'FLASH_LOAN';
-  }
+  if (
+    candidate.topology === 'ZERO_CAPITAL_ATOMIC' ||
+    candidate.topology === 'DEX_ATOMIC' ||
+    candidate.topology === 'MEMPOOL_BACKRUN' ||
+    candidate.topology === 'LIQUIDATION'
+  ) return 'FLASH_LOAN';
   if (candidate.topology === 'MAKER_CEX') return 'MAKER';
   if (candidate.topology === 'CEX_CEX') return 'TAKER_IOC';
   return 'UNAVAILABLE';
@@ -58,6 +61,9 @@ export function selectDynamicExecutionPath(candidate: MeasuredCandidate): Execut
   }
   if (candidate.topology === 'FUNDING_ARBITRAGE') {
     reasons.push('funding path requires a dedicated terminal executor before autonomous selection');
+  }
+  if (candidate.topology === 'LIQUIDATION' && !candidate.executableCapability) {
+    reasons.push('liquidation path is measured-discovery only until reserve economics, unwind, flash liquidity, gas, and exact atomic simulation are authoritative');
   }
 
   return {
