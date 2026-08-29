@@ -88,6 +88,10 @@ function updateCandidate(
   );
 }
 
+function setupCallIdentity(call: any): string {
+  return [String(call?.to || '').toLowerCase(), String(call?.data || '').toLowerCase(), String(call?.value || '0')].join(':');
+}
+
 export function ensureZeroCapitalFlashProviderWiring(): void {
   const target = zeroCapitalEngine as unknown as {
     scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
@@ -107,7 +111,7 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
 
   const originalScanChain = target.scanChain.bind(target);
   target.scanChain = async (chain, provider): Promise<ZeroCapitalOpportunity[]> => {
-    const opportunities = await originalScanChain(chain, provider);
+    let opportunities = await originalScanChain(chain, provider);
     if (chain === 'europa' || opportunities.length === 0) return opportunities;
 
     const wallet = target.executionWallets.get(chain);
@@ -130,6 +134,57 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
         }).catch(() => null)
       : null;
 
+    // Permission setup is controllable infrastructure, not market risk. Warm all
+    // currently required Aave receiver permissions once before provider repricing,
+    // then immediately obtain one fresh market scan. This removes the old full-cycle
+    // delay while retaining the strict rule that a pre-mutation quote can never be
+    // executed after state-changing setup.
+    if (aaveCapability && wallet && opportunities.length > 0) {
+      const missingByIdentity = new Map<string, any>();
+      for (const opportunity of opportunities) {
+        const missing = await buildMissingReceiverPermissionCalls({
+          chain: chain as any,
+          provider,
+          receiver: aaveCapability.address,
+          route: opportunity.route,
+        }).catch(() => [] as any[]);
+        for (const call of missing) missingByIdentity.set(setupCallIdentity(call), call);
+      }
+
+      if (missingByIdentity.size > 0) {
+        const funding = await target.getGasFundingDecision(chain);
+        if (funding.mode !== 'unavailable') {
+          const preMutation = opportunities;
+          await target.executeSetupCalls(
+            chain as any,
+            provider,
+            wallet,
+            funding.mode as ReceiverFundingMode,
+            [...missingByIdentity.values()],
+          );
+          for (const opportunity of preMutation) {
+            updateCandidate(
+              opportunity,
+              null,
+              'Aave V3 receiver permissions changed; pre-mutation quote invalidated before immediate fresh re-quote',
+              ['fresh_quote_after_aave_receiver_permissions'],
+            );
+          }
+          opportunities = await originalScanChain(chain, provider);
+          logger.info('[ZeroCapitalFlashProvider] Receiver permissions warmed and market evidence immediately refreshed', {
+            component: 'ZeroCapitalFlashProviderWiring',
+            chain,
+            setupCalls: missingByIdentity.size,
+            invalidatedQuotes: preMutation.length,
+            freshQuotes: opportunities.length,
+            staleQuoteExecutionAllowed: false,
+            extraFullScanCycleRequired: false,
+          });
+          if (opportunities.length === 0) return [];
+        }
+      }
+    }
+
     const repriced: ZeroCapitalOpportunity[] = [];
     for (const opportunity of opportunities) {
       flashLoanProviderSelectionRegistry.remove(opportunity.id);
@@ -138,33 +193,16 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
         if (balancerCapability) capabilities.set('balancer_v2', balancerCapability);
 
         if (aaveCapability && wallet) {
-          const missingAavePermissions = await buildMissingReceiverPermissionCalls({
+          // Re-verify route-specific permissions after any warm-up. If a setup did
+          // not stick, Aave remains unavailable for this opportunity rather than
+          // weakening the receiver authority or using stale assumptions.
+          const remainingAavePermissions = await buildMissingReceiverPermissionCalls({
             chain: chain as any,
             provider,
             receiver: aaveCapability.address,
             route: opportunity.route,
           });
-          if (missingAavePermissions.length > 0) {
-            const funding = await target.getGasFundingDecision(chain);
-            if (funding.mode !== 'unavailable') {
-              await target.executeSetupCalls(
-                chain as any,
-                provider,
-                wallet,
-                funding.mode as ReceiverFundingMode,
-                missingAavePermissions,
-              );
-              updateCandidate(
-                opportunity,
-                null,
-                'Aave V3 receiver permissions changed; the pre-mutation quote is invalidated and a fresh quote is required',
-                ['fresh_quote_after_aave_receiver_permissions'],
-              );
-              continue;
-            }
-          } else {
-            capabilities.set('aave_v3', aaveCapability);
-          }
+          if (remainingAavePermissions.length === 0) capabilities.set('aave_v3', aaveCapability);
         }
 
         const evidence = await providerEvidence(chain, provider, opportunity.inputToken);
@@ -257,12 +295,14 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
     feeAuthority: 'measured_provider_state_exact_rate',
     liquidityAuthority: 'measured_provider_state',
     receiverAuthority: 'verified_provider_specific_receiver_capability',
-    permissionAuthority: 'provider_specific_receiver_allowlist_with_fresh_requote_after_mutation',
+    permissionAuthority: 'provider_specific_receiver_allowlist_with_immediate_fresh_requote_after_mutation',
     providerSelectionRegistry: true,
     staticFlashLoanFeeAuthority: false,
     providerSelection: 'lowest_measured_fee_with_sufficient_liquidity_and_execution_ready_receiver',
     aaveMarketEvidenceMeasured: true,
     aaveLiveExecutionEnabledWhenVerified: true,
+    permissionWarmupRemovesFullCycleDelay: true,
+    staleQuoteExecutionAllowed: false,
     failClosedOnMissingProviderEvidence: true,
   });
 }
