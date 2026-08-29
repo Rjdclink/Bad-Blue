@@ -3,6 +3,8 @@ import { measuredCandidateRegistry } from '../discovery/measured-candidate-regis
 import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
 import { routeMeasuredOpportunity } from '../execution/unified-execution-router.js';
 import { zeroCapitalEngine, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { ensureBpsDecompositionObservability } from './bps-decomposition-observability.js';
+import { ensureEconomicTransformationWiring } from './economic-transformation-wiring.js';
 
 const installed = new WeakSet<object>();
 
@@ -19,6 +21,11 @@ function cexOpportunityId(plan: { buyVenue: string; sellVenue: string; symbol: s
 }
 
 export function ensureDynamicProfitabilityAdmissionWiring(): void {
+  // Profitability admission is also the canonical bootstrap point for advisory
+  // BPS rescue and exact decomposition. Neither subsystem can grant execution.
+  ensureEconomicTransformationWiring();
+  ensureBpsDecompositionObservability();
+
   const cex = centralizedExchangeExecutor as unknown as CexRuntime;
   if (!installed.has(cex)) {
     installed.add(cex);
@@ -96,6 +103,9 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     formula: '(NetProfitUSD / ExecutionRisk) * ConfidenceLevel',
     coldStartHistoricalProofRequired: false,
     thresholdAuthority: 'adaptive_terminal_outcomes',
+    bpsRescuePortfolio: 'measured_cost_decomposition_plus_decay_scheduling',
+    bpsDecomposition: 'exact_measured_cross_topology_telemetry',
+    bpsSubsystemExecutionAuthority: false,
     terminalSettlementStillRequiredAfterExecution: true,
     livePaths: ['CEX_TAKER_IOC', 'FLASH_LOAN'],
     incompletePathsRemainFailClosed: ['CEX_MAKER', 'BRIDGE_FLASH_LOAN', 'FLASH_LOAN_LIQUIDATION', 'SPOT_PERP_FUNDING'],
