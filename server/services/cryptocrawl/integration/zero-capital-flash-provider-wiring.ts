@@ -97,6 +97,8 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
     scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
     executionWallets: Map<SupportedChain, Wallet>;
     receiverManager: { getReceiver: (chain: string) => string | null };
+    executionEnabled: boolean;
+    isAllowedByCryptara: (opportunity: ZeroCapitalOpportunity) => Promise<boolean>;
     getGasFundingDecision: (chain: SupportedChain) => Promise<GasFundingDecision>;
     executeSetupCalls: (
       chain: any,
@@ -108,6 +110,19 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
   };
   if (installed.has(target)) return;
   installed.add(target);
+
+  const originalCryptaraAdmission = target.isAllowedByCryptara.bind(target);
+
+  // The base scanner historically applied Cryptara before this wrapper had a chance
+  // to replace provisional/static flash-loan costs with current measured provider
+  // economics. A non-positive observation can therefore be retained through the
+  // measurement pipeline without becoming executable. Any candidate that becomes
+  // positive after provider repricing is re-checked by the original Cryptara gate
+  // below, and execution-time Cryptara/governance checks remain unchanged.
+  target.isAllowedByCryptara = async (opportunity): Promise<boolean> => {
+    if (opportunity.expectedProfit <= 0n) return true;
+    return originalCryptaraAdmission(opportunity);
+  };
 
   const originalScanChain = target.scanChain.bind(target);
   target.scanChain = async (chain, provider): Promise<ZeroCapitalOpportunity[]> => {
@@ -244,34 +259,51 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           observedAt: Date.now(),
         });
 
-        if (netProfit > 0n) {
-          flashLoanProviderSelectionRegistry.record({
-            opportunityId: opportunity.id,
-            provider: selected.provider,
-            receiver: selectedCapability.address,
-            economics: selected,
-            receiverCapability: selectedCapability,
-            selectedAt: Date.now(),
-            expiresAt: opportunity.expiresAt,
-            provenance: [
-              'measured_provider_economics',
-              'verified_receiver_capability',
-              'verified_receiver_route_permissions',
-              'provider_receiver_binding',
-              'strict_positive_repriced_net',
-              'synthetic_evidence:false',
-            ],
-          });
+        if (netProfit <= 0n) {
+          updateCandidate(
+            opportunity,
+            selected,
+            `Measured ${selected.provider} exact fee/liquidity repriced the route to ${netProfitBps} BPS; observation only`,
+          );
+          continue;
         }
+
+        const cryptaraAllowed = !target.executionEnabled || await originalCryptaraAdmission(opportunity);
+        if (!cryptaraAllowed) {
+          updateCandidate(
+            opportunity,
+            selected,
+            `Measured ${selected.provider} repricing produced positive economics but Cryptara rejected the fresh positive candidate`,
+            ['cryptara_positive_provider_reprice_rejected'],
+          );
+          continue;
+        }
+
+        flashLoanProviderSelectionRegistry.record({
+          opportunityId: opportunity.id,
+          provider: selected.provider,
+          receiver: selectedCapability.address,
+          economics: selected,
+          receiverCapability: selectedCapability,
+          selectedAt: Date.now(),
+          expiresAt: opportunity.expiresAt,
+          provenance: [
+            'measured_provider_economics',
+            'verified_receiver_capability',
+            'verified_receiver_route_permissions',
+            'provider_receiver_binding',
+            'strict_positive_repriced_net',
+            'cryptara_rechecked_after_positive_provider_reprice',
+            'synthetic_evidence:false',
+          ],
+        });
 
         updateCandidate(
           opportunity,
           selected,
-          netProfit > 0n
-            ? `Measured ${selected.provider} exact fee/liquidity plus verified receiver/permissions keep the route positive; downstream Cryptara/Monte Carlo/governance remain required`
-            : `Measured ${selected.provider} exact fee/liquidity repriced the route to ${netProfitBps} BPS; observation only`,
+          `Measured ${selected.provider} exact fee/liquidity plus verified receiver/permissions keep the route positive; downstream Cryptara/Monte Carlo/governance remain required`,
         );
-        if (netProfit > 0n) repriced.push(opportunity);
+        repriced.push(opportunity);
       } catch (error) {
         flashLoanProviderSelectionRegistry.remove(opportunity.id);
         updateCandidate(
@@ -299,6 +331,9 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
     providerSelectionRegistry: true,
     staticFlashLoanFeeAuthority: false,
     providerSelection: 'lowest_measured_fee_with_sufficient_liquidity_and_execution_ready_receiver',
+    nearBreakEvenObservationCanReachProviderRepricing: true,
+    positiveProviderRescueRechecksCryptara: true,
+    nonPositiveProviderRepriceExecutable: false,
     aaveMarketEvidenceMeasured: true,
     aaveLiveExecutionEnabledWhenVerified: true,
     permissionWarmupRemovesFullCycleDelay: true,
