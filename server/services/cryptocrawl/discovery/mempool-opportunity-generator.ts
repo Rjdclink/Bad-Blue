@@ -1,5 +1,6 @@
 import { filteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
+import { decodePendingSwapRoute } from '../capital-free/pending-swap-route-decoder.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
 import { getMempoolCapabilities } from './mempool-capability-registry.js';
 
@@ -10,17 +11,27 @@ export function discoverMeasuredMempoolCandidates(): MeasuredCandidate[] {
   const observed: MeasuredCandidate[] = [];
 
   // Prefer provider-filtered, hash-first observations because they carry exact
-  // chain identity before full transaction detail is fetched. They remain rescan
-  // triggers only; no profit or execution authority is inferred from mempool data.
+  // chain identity before full transaction detail is fetched. Calldata decoding
+  // may remove the route-state information gap, but these rows remain observation
+  // only until exact post-transaction state and deterministic economics are measured.
   for (const transaction of filtered) {
     if (!transaction.potentialArbitrage) continue;
+    const decodedRoute = decodePendingSwapRoute(transaction.input);
+    const routeComplete = decodedRoute?.routeComplete === true;
+    const assets = routeComplete ? [...new Set(decodedRoute!.tokenPath.map(token => token.toLowerCase()))] : [];
+    const missingInformation = [
+      ...(routeComplete ? [] : ['decoded_swap_route']),
+      'post_transaction_pool_state',
+      'deterministic_backrun_economics',
+      'relay_inclusion_probability',
+    ];
     observed.push(measuredCandidateRegistry.record({
       opportunityId: `mempool:${transaction.chain}:${transaction.hash}`,
       topology: 'MEMPOOL_BACKRUN',
       observedAt: transaction.timestamp,
       expiresAt: transaction.timestamp + ttlMs,
       status: 'observed',
-      assets: [],
+      assets,
       venues: [transaction.to].filter(Boolean),
       chains: [transaction.chain],
       rawQuotes: [],
@@ -36,20 +47,23 @@ export function discoverMeasuredMempoolCandidates(): MeasuredCandidate[] {
       },
       quoteAgeMs: Math.max(0, Date.now() - transaction.timestamp),
       executableCapability: false,
-      executionCapabilityReason: 'Provider-filtered pending swap is a measured rescan trigger only; decoded route state, post-trade pool state, relay inclusion, and deterministic backrun economics remain incomplete',
-      missingInformation: [
-        'decoded_swap_route',
-        'post_transaction_pool_state',
-        'deterministic_backrun_economics',
-        'relay_inclusion_probability',
-      ],
+      executionCapabilityReason: routeComplete
+        ? 'Pending swap route is decoded and chain-bound, but exact post-transaction pool state, relay inclusion, and deterministic backrun economics remain incomplete'
+        : 'Provider-filtered pending swap is a measured rescan trigger only; decoded route state, post-trade pool state, relay inclusion, and deterministic backrun economics remain incomplete',
+      missingInformation,
       provenance: [
         ...transaction.provenance,
         ...capabilities
           .filter(capability => capability.chain === transaction.chain)
           .map(capability => `mempool_capability:${capability.chain}:${capability.capability}`),
         `pending_tx:${transaction.hash}`,
-        `decoded_method:${transaction.decodedMethod || 'unknown'}`,
+        `decoded_method:${decodedRoute?.method || transaction.decodedMethod || 'unknown'}`,
+        `decoded_route_complete:${routeComplete}`,
+        ...(decodedRoute?.provenance || []),
+        ...(routeComplete ? [
+          `decoded_token_path:${decodedRoute!.tokenPath.join('>')}`,
+          `decoded_fee_tiers:${decodedRoute!.feeTiers.join(',') || 'none'}`,
+        ] : []),
         `chain_binding:${transaction.chain}`,
         'provider_filter_before_detail:true',
         'profit_estimate:none',

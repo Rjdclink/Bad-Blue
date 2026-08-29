@@ -76,12 +76,20 @@ function highestNetQuote(values: readonly QuotedZeroCapitalRoute[]): QuotedZeroC
   return best;
 }
 
+function refinementPriority(opportunity: ZeroCapitalOpportunity): number {
+  if (opportunity.expectedProfit > 0n) return Number.POSITIVE_INFINITY;
+  if (Number.isFinite(opportunity.netProfitBps)) return opportunity.netProfitBps;
+  return Number.NEGATIVE_INFINITY;
+}
+
 /**
  * Adds a bounded second-stage search around the best coarse zero-capital size.
  * Every refinement point is independently quoted against current pool state; no
- * linear profit interpolation is used. The wrapper installs before flash-provider
- * repricing, so provider fees/liquidity, Cryptara, Monte Carlo, permissions,
- * governance and terminal settlement still execute after the refined candidate.
+ * linear profit interpolation is used. Positive candidates remain first priority,
+ * then the closest measured near-break-even candidates are refined. A strictly
+ * better negative measurement may replace the coarse observation for learning,
+ * but it remains non-executable until later measured provider economics make it
+ * positive and all downstream gates pass.
  */
 export function ensureZeroCapitalSizeRefinementWiring(): void {
   const target = zeroCapitalEngine as unknown as {
@@ -100,10 +108,18 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     if (chain === 'europa' || coarseOpportunities.length === 0) return coarseOpportunities;
 
     const ordered = [...coarseOpportunities]
-      .sort((left, right) => left.expectedProfit === right.expectedProfit ? 0 : left.expectedProfit > right.expectedProfit ? -1 : 1);
+      .sort((left, right) => {
+        const leftPriority = refinementPriority(left);
+        const rightPriority = refinementPriority(right);
+        if (rightPriority !== leftPriority) return rightPriority - leftPriority;
+        if (left.expectedProfit === right.expectedProfit) return 0;
+        return left.expectedProfit > right.expectedProfit ? -1 : 1;
+      });
     const refinableIds = new Set(ordered.slice(0, maxRefinedRoutesPerScan()).map(item => item.id));
     const output: ZeroCapitalOpportunity[] = [];
     let improved = 0;
+    let rescuedPositive = 0;
+    let improvedObservationOnly = 0;
     let extraQuotes = 0;
 
     for (const opportunity of coarseOpportunities) {
@@ -138,7 +154,7 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
         result.status === 'fulfilled' && result.value ? [result.value] : [],
       );
       const best = highestNetQuote(measured);
-      if (!best || best.netProfit <= opportunity.expectedProfit || best.netProfit <= 0n) {
+      if (!best || best.netProfit <= opportunity.expectedProfit) {
         output.push(opportunity);
         continue;
       }
@@ -151,6 +167,8 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
       }
       output.push(refined);
       improved += 1;
+      if (opportunity.expectedProfit <= 0n && refined.expectedProfit > 0n) rescuedPositive += 1;
+      if (refined.expectedProfit <= 0n) improvedObservationOnly += 1;
     }
 
     if (extraQuotes > 0) {
@@ -161,6 +179,10 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
         refinedRouteBudget: Math.min(coarseOpportunities.length, maxRefinedRoutesPerScan()),
         extraIndependentQuotes: extraQuotes,
         improvedNetProfitRoutes: improved,
+        rescuedPositiveRoutes: rescuedPositive,
+        improvedObservationOnlyRoutes: improvedObservationOnly,
+        nearBreakEvenPriorityEnabled: true,
+        negativeObservationExecutionAuthority: false,
         profitInterpolationUsed: false,
         downstreamFlashProviderRepricingPreserved: true,
         cryptaraRecheckedAfterSizeChange: true,
@@ -175,7 +197,9 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     refinementCandidatesPerRoute: refinementBudget(),
     maxRoutesPerScan: maxRefinedRoutesPerScan(),
     independentFreshQuotesRequired: true,
-    strictPositiveImprovementRequired: true,
+    strictMeasuredImprovementRequired: true,
+    nearBreakEvenObservationRefinement: true,
+    negativeObservationExecutionAuthority: false,
     cryptaraAuthorityPreserved: true,
     providerEconomicsAuthorityPreserved: true,
   });
