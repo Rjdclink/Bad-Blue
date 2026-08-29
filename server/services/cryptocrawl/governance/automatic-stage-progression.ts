@@ -15,6 +15,7 @@ import {
 } from './stage-management.js';
 import { profitLadder } from './profit-ladder.js';
 import { riskGovernor } from './risk-governor.js';
+import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
@@ -114,22 +115,44 @@ function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReas
   const candidateGateReasons = gate?.blockReasons || recordedGate?.reasons || ['No Cryptara market-gate authorization was recorded for this lifecycle evaluation'];
   const readinessGate = stageOneReadinessGate(candidateGateDecision, candidateGateReasons);
   const recentSignals = canonicalOpportunityState.getMetrics(STAGE_ONE_SIGNAL_WINDOW_MS);
+  const recentCandidates = measuredCandidateRegistry.getMetrics(STAGE_ONE_SIGNAL_WINDOW_MS);
   const stageOneVerifiedSignalReady = stageState.currentStage !== 1 || recentSignals.verifiedPositiveOpportunities > 0;
-  const advancementMarketGateReady = initialGasReady
-    && readinessGate.decision === 'ALLOW'
-    && stageOneVerifiedSignalReady;
+
+  // Stage 1 must be able to create its first realized history. Do not require a
+  // prior terminal settlement, and do not couple a settlement-safe CEX candidate
+  // to zero-capital native-gas/receiver readiness. Resource readiness is scoped
+  // to the topology that would actually execute the first trade.
+  const eligibleCexCandidate = recentCandidates.byTopology.CEX_CEX.eligible > 0;
+  const eligibleZeroCapitalCandidate = recentCandidates.byTopology.ZERO_CAPITAL_ATOMIC.eligible > 0;
+  const stageOneTopologyResourceReady = stageState.currentStage !== 1 ||
+    eligibleCexCandidate ||
+    (eligibleZeroCapitalCandidate && initialGasReady);
+  const advancementMarketGateReady = readinessGate.decision === 'ALLOW'
+    && stageOneVerifiedSignalReady
+    && stageOneTopologyResourceReady;
 
   let advancementReasons: string[];
-  if (!initialGasReady) {
-    advancementReasons = ['Initial native-gas readiness is not verified', ...candidateGateReasons];
-  } else if (!stageOneVerifiedSignalReady) {
+  if (!stageOneVerifiedSignalReady) {
     advancementReasons = [
       `Stage 1 proof-of-signal requires at least one fresh verified-positive canonical opportunity within ${STAGE_ONE_SIGNAL_WINDOW_MS}ms`,
       `verifiedPositiveOpportunities=${recentSignals.verifiedPositiveOpportunities}`,
       ...readinessGate.reasons,
     ];
+  } else if (!stageOneTopologyResourceReady) {
+    advancementReasons = [
+      'Stage 1 has a verified-positive signal but no eligible settlement-safe bootstrap topology is currently resource-ready',
+      `eligibleCexCandidates=${recentCandidates.byTopology.CEX_CEX.eligible}`,
+      `eligibleZeroCapitalCandidates=${recentCandidates.byTopology.ZERO_CAPITAL_ATOMIC.eligible}`,
+      `zeroCapitalInitialGasReady=${initialGasReady}`,
+      ...readinessGate.reasons,
+    ];
   } else {
-    advancementReasons = readinessGate.reasons;
+    advancementReasons = [
+      ...readinessGate.reasons,
+      eligibleCexCandidate
+        ? 'Stage 1 bootstrap evidence includes a fresh eligible CEX candidate; prior realized settlement history is not required to enter Stage 2'
+        : 'Stage 1 bootstrap evidence includes a fresh eligible zero-capital candidate with topology-specific funding/receiver readiness',
+    ];
   }
 
   return {
