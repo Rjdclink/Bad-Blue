@@ -18,6 +18,9 @@ export interface ZeroCapitalResourcePriority {
   expectedNetProfitUsd: number;
   timeRemainingMs: number;
   scarcityPressure: number;
+  peakScarcityPressure: number;
+  bottleneckResource: string | null;
+  resourceCount: number;
   expectedProfitPerScarcityUnit: number;
   priorityScore: number;
   authority: 'scheduling_only';
@@ -105,19 +108,28 @@ class ZeroCapitalResourceScheduler {
 
   scoreOpportunity(opportunity: ZeroCapitalOpportunity, fundingMode: string, now = Date.now()): ZeroCapitalResourcePriority {
     const specs = this.specs(opportunity, fundingMode);
-    const scarcityPressure = specs.reduce((sum, spec) => {
-      const usage = this.localUsage.get(spec.prefix) || 0;
-      return sum + (usage + 1) / Math.max(1, spec.capacity);
-    }, 0) / Math.max(1, specs.length);
+    const pressures = specs.map(spec => ({
+      resource: spec.prefix,
+      pressure: ((this.localUsage.get(spec.prefix) || 0) + 1) / Math.max(1, spec.capacity),
+    }));
+    const scarcityPressure = pressures.reduce((sum, item) => sum + item.pressure, 0) / Math.max(1, pressures.length);
+    const bottleneck = pressures.reduce<{ resource: string; pressure: number } | null>((best, item) =>
+      !best || item.pressure > best.pressure ? item : best,
+    null);
+    const peakScarcityPressure = bottleneck?.pressure ?? 0;
+    const compositeScarcityPressure = (scarcityPressure + peakScarcityPressure) / 2;
     const expectedNetProfitUsd = expectedNetUsd(opportunity);
     const timeRemainingMs = Math.max(0, opportunity.expiresAt - now);
     const urgency = 1 + 1 / Math.max(0.05, timeRemainingMs / 1000);
-    const expectedProfitPerScarcityUnit = expectedNetProfitUsd / Math.max(0.05, scarcityPressure);
+    const expectedProfitPerScarcityUnit = expectedNetProfitUsd / Math.max(0.05, compositeScarcityPressure);
     return {
       opportunityId: opportunity.id,
       expectedNetProfitUsd,
       timeRemainingMs,
       scarcityPressure,
+      peakScarcityPressure,
+      bottleneckResource: bottleneck?.resource ?? null,
+      resourceCount: specs.length,
       expectedProfitPerScarcityUnit,
       priorityScore: expectedProfitPerScarcityUnit * urgency,
       authority: 'scheduling_only',
