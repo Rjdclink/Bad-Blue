@@ -4,6 +4,7 @@ export type MeasuredOpportunityTopology =
   | 'ZERO_CAPITAL_ATOMIC'
   | 'CROSS_CHAIN'
   | 'MEMPOOL_BACKRUN'
+  | 'LIQUIDATION'
   | 'MAKER_CEX'
   | 'FUNDING_ARBITRAGE';
 
@@ -126,6 +127,7 @@ function emptyTopologyMetrics() {
     ZERO_CAPITAL_ATOMIC: topologyMetric(),
     CROSS_CHAIN: topologyMetric(),
     MEMPOOL_BACKRUN: topologyMetric(),
+    LIQUIDATION: topologyMetric(),
     MAKER_CEX: topologyMetric(),
     FUNDING_ARBITRAGE: topologyMetric(),
   } satisfies MeasuredCandidateMetrics['byTopology'];
