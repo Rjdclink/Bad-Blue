@@ -21,13 +21,40 @@ function paperProbeNotionalUsd(): number {
   return Math.max(10, Math.min(5_000, Number.isFinite(parsed) ? parsed : 1_000));
 }
 
+function makerDiscoverySymbolBudget(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_MAKER_DISCOVERY_SYMBOLS || 72);
+  return Math.max(12, Math.min(96, Number.isFinite(parsed) ? Math.floor(parsed) : 72));
+}
+
+function makerBookConcurrency(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_MAKER_BOOK_CONCURRENCY || 12);
+  return Math.max(2, Math.min(24, Number.isFinite(parsed) ? Math.floor(parsed) : 12));
+}
+
+async function runBounded<T, R>(items: readonly T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const count = Math.max(1, Math.min(items.length, concurrency));
+  await Promise.all(Array.from({ length: count }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  }));
+  return results;
+}
+
 /**
  * Maker topology remains non-executable here. It performs a parallel shadow
  * proof pass using live WebSocket books: queue depletion, microprice, imbalance,
- * adaptive TTL, paired paper fills and adverse-selection evidence. Fee authority
- * is requested only after both measured venue books exist for the symbol, so an
- * absent regional product cannot create private fee traffic merely because the
- * asset exists in the global discovery universe.
+ * adaptive TTL, paired paper fills and adverse-selection evidence.
+ *
+ * Efficiency rule: market books are read from the already-running shared sockets,
+ * then authenticated Kraken/OKX fee evidence is primed once per venue batch for
+ * the entire measured symbol set. We do not issue one private fee request per
+ * symbol and we never involve Coinbase in this no-new-key maker path.
  *
  * Paper results are never promoted to realized P&L and never grant execution
  * authority.
@@ -35,29 +62,40 @@ function paperProbeNotionalUsd(): number {
 export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandidate[]> {
   const venues = getActiveExecutableQuoteVenues().filter((venue): venue is 'kraken' | 'okx' => venue !== 'coinbase');
   if (venues.length < 2) return [];
-  const symbols = getLastOrderedMarketUniverseSymbols().slice(0, Math.max(1, Math.min(24,
-    Number(process.env.CRYPTOCRAWL_MAKER_DISCOVERY_SYMBOLS || 12),
-  )));
+  const symbols = getLastOrderedMarketUniverseSymbols().slice(0, makerDiscoverySymbolBudget());
   if (symbols.length === 0) return [];
 
   const ttlMs = Math.max(1_000, Number(process.env.CRYPTOCRAWL_MAKER_CANDIDATE_TTL_MS || 5_000));
   const maxQuoteAgeMs = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
   const output: MeasuredCandidate[] = [];
 
-  for (const symbol of symbols) {
+  const measured = await runBounded(symbols, makerBookConcurrency(), async symbol => {
     const measuredBooks = await Promise.all(venues.map(async venue => ({
       venue,
       quote: await cexOrderBookStreams.getQuote(venue, symbol, maxQuoteAgeMs).catch(() => null),
     })));
-    const usableBooks = measuredBooks.filter(entry => entry.quote !== null);
-    if (usableBooks.length < 2) continue;
-
-    const venueSymbols = {
-      kraken: usableBooks.some(entry => entry.venue === 'kraken') ? [symbol] : [],
-      okx: usableBooks.some(entry => entry.venue === 'okx') ? [symbol] : [],
+    return {
+      symbol,
+      usableBooks: measuredBooks.filter(entry => entry.quote !== null),
     };
-    await primeCexFeeEvidenceForVenueSymbols(venueSymbols).catch(() => null);
+  });
 
+  const viable = measured.filter(entry => entry.usableBooks.length >= 2);
+  if (viable.length === 0) return [];
+
+  const krakenSymbols = viable
+    .filter(entry => entry.usableBooks.some(book => book.venue === 'kraken'))
+    .map(entry => entry.symbol);
+  const okxSymbols = viable
+    .filter(entry => entry.usableBooks.some(book => book.venue === 'okx'))
+    .map(entry => entry.symbol);
+
+  await primeCexFeeEvidenceForVenueSymbols({
+    kraken: krakenSymbols,
+    okx: okxSymbols,
+  }).catch(() => null);
+
+  for (const { symbol, usableBooks } of viable) {
     const quotes = usableBooks.map(entry => ({
       ...entry,
       fee: getCachedCexFeeEvidence(entry.venue, symbol),
@@ -131,6 +169,8 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
             'conditional_topology_only',
             'microprice_queue_imbalance_shadow_model',
             'adaptive_maker_ttl_shadow_model',
+            'maker_fee_prime:single_batched_cycle',
+            'coinbase_dependency:false',
             ...(paperProof ? [`paper_probe:${paperProof.state}`, `paper_probe_ttl_ms:${paperProof.adaptiveTtlMs}`] : []),
             ...(paperProof?.paperNetProfitUsd !== null && paperProof?.paperNetProfitUsd !== undefined
               ? [`paper_net_profit_usd:${paperProof.paperNetProfitUsd.toFixed(6)}`]
