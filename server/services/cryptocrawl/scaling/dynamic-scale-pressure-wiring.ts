@@ -12,7 +12,10 @@ import {
 export interface DynamicScalePressureSnapshot {
   observedAt: number;
   searchPressure: number;
+  positiveOpportunityPressure: number;
+  queueBacklogPressure: number;
   profitabilityPressure: number;
+  expectedProfitPressure: number;
   resourceSaturation: number;
   candidateBacklog: number;
   mcBacklog: number;
@@ -54,31 +57,48 @@ export function getDynamicScalePressureSnapshot(): DynamicScalePressureSnapshot 
   const backlogTarget = Math.max(5, Number(process.env.CRYPTOCRAWL_SEARCH_PRESSURE_BACKLOG_TARGET || 50));
   const positiveTarget = Math.max(1, Number(process.env.CRYPTOCRAWL_PROFIT_PRESSURE_POSITIVE_TARGET || 10));
   const expectedProfitTarget = Math.max(1, Number(process.env.CRYPTOCRAWL_PROFIT_PRESSURE_USD_HOUR_TARGET || 100));
+  const realizedProfitTarget = Math.max(1, Number(process.env.CRYPTOCRAWL_REALIZED_PROFIT_USD_HOUR_TARGET || expectedProfitTarget));
   const beamCapacity = Math.max(1, beam.activeNodes || Number(process.env.CRYPTOCRAWL_BEAM_ASSUMED_CAPACITY || 4));
 
   const resourceSaturation = clamp01((beam.queued + beam.executing) / Math.max(1, beamCapacity * 4));
+
+  // Search pressure is intentionally limited to discovery breadth/freshness demand.
+  // Queue pressure is exposed independently below so backlog cannot masquerade as
+  // a need for broader market search.
   const searchDemand = clamp01(
-    clamp01(candidate.observed / observedTarget) * 0.30 +
-    clamp01(candidateBacklog / backlogTarget) * 0.25 +
-    unexploredFraction * 0.35 +
+    clamp01(candidate.observed / observedTarget) * 0.45 +
+    unexploredFraction * 0.45 +
     (candidate.deterministicPositive === 0 ? 0.10 : 0),
   );
   // Saturation is surfaced independently and only modestly dampens new heavy
   // enrichment. It never collapses discovery merely because profit density is 0.
   const searchPressure = clamp01(searchDemand * (1 - resourceSaturation * 0.35));
 
+  const queueBacklogPressure = clamp01(
+    clamp01(candidateBacklog / backlogTarget) * 0.65 +
+    clamp01(mcBacklog / Math.max(1, beamCapacity * 2)) * 0.35,
+  );
+
+  const positiveOpportunityPressure = clamp01(
+    canonicalMinute.verifiedPositiveOpportunities / positiveTarget,
+  );
+
   const realized = canonicalHour.realizedSettlementCount > 0 ? canonicalHour.realizedNetProfitUsd : null;
   const expected = canonicalHour.verifiedPositiveOpportunities > 0 ? canonicalHour.expectedNetProfitUsd : null;
-  const profitabilityPressure = clamp01(
-    clamp01(canonicalMinute.verifiedPositiveOpportunities / positiveTarget) * 0.45 +
-    clamp01((expected ?? 0) / expectedProfitTarget) * 0.35 +
-    clamp01((realized ?? 0) / expectedProfitTarget) * 0.20,
-  );
+  const expectedProfitPressure = clamp01((expected ?? 0) / expectedProfitTarget);
+
+  // profitabilityPressure is retained for compatibility, but now means only
+  // authoritative realized profitability. It is no longer a composite of
+  // discovery density, expected profit, and realized profit.
+  const profitabilityPressure = clamp01((realized ?? 0) / realizedProfitTarget);
 
   latest = {
     observedAt: Date.now(),
     searchPressure,
+    positiveOpportunityPressure,
+    queueBacklogPressure,
     profitabilityPressure,
+    expectedProfitPressure,
     resourceSaturation,
     candidateBacklog,
     mcBacklog,
@@ -133,7 +153,7 @@ export function ensureDynamicScalePressureWiring(): void {
     const pressureProfile = profileForDiscoveryPressure(pressure, current);
     const desired = reconcileDiscoveryProfile(current, pressureProfile, pressure.resourceSaturation);
     const pressureIsActionable = pressure.searchPressure >= 0.20 ||
-      pressure.candidateBacklog > 0 ||
+      pressure.queueBacklogPressure > 0 ||
       pressure.resourceSaturation >= 0.95;
     if (pressureIsActionable && desired !== current) this.setProfile(desired);
   };
@@ -143,9 +163,17 @@ export function ensureDynamicScalePressureWiring(): void {
     return { ...originalMetrics.call(this), ...getDynamicScalePressureSnapshot() };
   };
 
-  logger.info('[DynamicScale] Dual-axis pressure wiring installed', {
+  logger.info('[DynamicScale] Multi-axis pressure wiring installed', {
     component: 'DynamicScalePressure',
-    axes: ['searchPressure', 'profitabilityPressure'],
+    axes: [
+      'searchPressure',
+      'positiveOpportunityPressure',
+      'queueBacklogPressure',
+      'profitabilityPressure',
+      'expectedProfitPressure',
+    ],
+    profitabilityAuthority: 'terminal_confirmed_realized_only',
+    expectedProfitAuthority: 'advisory_telemetry_only',
     backlogSignals: ['candidateBacklog', 'mcBacklog'],
     resourceSaturation: true,
     zeroPositiveDoesNotSuppressDiscovery: true,
