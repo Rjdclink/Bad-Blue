@@ -6,6 +6,7 @@ import {
 } from './onchain-payload-builder.js';
 import { resolveAaveV3Pool } from './flash-loan-provider-economics.js';
 import { resolveSponsoredReceiverVault } from './sponsored-receiver-manager.js';
+import { resolveZeroXAllowanceHolder } from './zerox-allowance-holder.js';
 import type { SponsoredCall } from '../../strategies/gas-sponsorship.js';
 
 export type FlashLoanReceiverCapabilityKind = 'balancer_v1' | 'balancer_composite_v2' | 'aave_v3';
@@ -28,6 +29,8 @@ export interface ReceiverPermissionRouteStep {
   fee: number;
 }
 
+type ReceiverPermissionProtocol = SupportedSwapProtocol | 'zeroxAllowanceHolder';
+
 const RECEIVER_ADMIN_ABI = [
   'function allowedTargets(address) view returns (bool)',
   'function allowedApprovalTokens(address) view returns (bool)',
@@ -40,11 +43,12 @@ function requireAddress(label: string, value: string): string {
   return ethers.utils.getAddress(value);
 }
 
-function normalizeProtocol(protocol: string): SupportedSwapProtocol {
+function normalizeProtocol(protocol: string): ReceiverPermissionProtocol {
   const normalized = protocol.trim().toLowerCase();
   if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') return 'uniswapV3';
   if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
-  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushiswap-v3') return 'sushiswapV3';
+  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushi-v3') return 'sushiswapV3';
+  if (normalized === 'zeroxallowanceholder' || normalized === 'zerox_allowance_holder' || normalized === '0x' || normalized === 'zerox') return 'zeroxAllowanceHolder';
   throw new Error(`Unsupported receiver permission protocol: ${protocol}`);
 }
 
@@ -161,10 +165,20 @@ export async function buildMissingReceiverPermissionCalls(input: {
   const approvalTokens = new Set<string>();
 
   for (const step of input.route) {
+    const tokenIn = requireAddress('permission tokenIn', step.tokenIn);
+    const protocol = normalizeProtocol(step.protocol);
+    if (protocol === 'zeroxAllowanceHolder') {
+      const allowanceHolder = resolveZeroXAllowanceHolder(input.chain);
+      if (!allowanceHolder) throw new Error(`0x AllowanceHolder is not approved for ${input.chain}`);
+      targets.add(requireAddress('0x AllowanceHolder target', allowanceHolder));
+      approvalTokens.add(tokenIn);
+      continue;
+    }
+
     const built = buildSwapCallFromLeg(input.chain, receiverAddress, {
-      protocol: normalizeProtocol(step.protocol),
+      protocol,
       chain: input.chain,
-      tokenIn: requireAddress('permission tokenIn', step.tokenIn),
+      tokenIn,
       tokenOut: requireAddress('permission tokenOut', step.tokenOut),
       amountIn: '1',
       minAmountOut: '1',
