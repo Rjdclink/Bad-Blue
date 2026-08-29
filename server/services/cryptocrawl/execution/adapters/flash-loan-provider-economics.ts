@@ -11,6 +11,8 @@ export interface FlashLoanProviderEconomics {
   asset: string;
   availableLiquidity: bigint | null;
   feeBps: number | null;
+  feeRateNumerator: bigint | null;
+  feeRateDenominator: bigint | null;
   observedAt: number;
   executableEvidenceComplete: boolean;
   missingEvidence: string[];
@@ -21,6 +23,8 @@ const ERC20_ABI = ['function balanceOf(address account) view returns (uint256)']
 const BALANCER_VAULT_ABI = ['function getProtocolFeesCollector() view returns (address)'];
 const BALANCER_FEES_ABI = ['function getFlashLoanFeePercentage() view returns (uint256)'];
 const AAVE_POOL_ABI = ['function FLASHLOAN_PREMIUM_TOTAL() view returns (uint128)'];
+const BALANCER_FIXED_POINT_ONE = 10n ** 18n;
+const AAVE_BPS_DENOMINATOR = 10_000n;
 
 function requireAddress(label: string, value: string): string {
   if (!ethers.utils.isAddress(value)) throw new Error(`${label} must be a valid EVM address`);
@@ -54,6 +58,19 @@ export function resolveAaveV3Pool(
   return candidate ? requireAddress(`Aave V3 pool for ${chain}`, candidate) : null;
 }
 
+export function calculateMeasuredFlashLoanFee(
+  evidence: FlashLoanProviderEconomics,
+  amount: bigint,
+): bigint | null {
+  if (amount < 0n || evidence.feeRateNumerator === null || evidence.feeRateDenominator === null || evidence.feeRateDenominator <= 0n) return null;
+  if (evidence.feeRateNumerator < 0n) return null;
+  if (amount === 0n || evidence.feeRateNumerator === 0n) return 0n;
+  // Conservative integer rounding: never understate a measured provider fee by
+  // truncating fractional base units. This is especially important for Balancer's
+  // 18-decimal fixed-point fee percentage.
+  return (amount * evidence.feeRateNumerator + evidence.feeRateDenominator - 1n) / evidence.feeRateDenominator;
+}
+
 export async function measureBalancerFlashLoanEconomics(input: {
   chain: SupportedExecutionChain;
   provider: providers.Provider;
@@ -73,8 +90,9 @@ export async function measureBalancerFlashLoanEconomics(input: {
     token.balanceOf(vault) as Promise<BigNumber>,
     feeCollector.getFlashLoanFeePercentage() as Promise<BigNumber>,
   ]);
+  const feeRateNumerator = feePercentageRaw.toBigInt();
   const feeBps = Number(feePercentageRaw.toString()) / 1e14;
-  const feeMeasured = Number.isFinite(feeBps) && feeBps >= 0;
+  const feeMeasured = feeRateNumerator >= 0n && Number.isFinite(feeBps) && feeBps >= 0;
   return {
     provider: 'balancer_v2',
     chain: input.chain,
@@ -82,6 +100,8 @@ export async function measureBalancerFlashLoanEconomics(input: {
     asset,
     availableLiquidity: liquidityRaw.toBigInt(),
     feeBps: feeMeasured ? feeBps : null,
+    feeRateNumerator: feeMeasured ? feeRateNumerator : null,
+    feeRateDenominator: feeMeasured ? BALANCER_FIXED_POINT_ONE : null,
     observedAt: Date.now(),
     executableEvidenceComplete: feeMeasured && liquidityRaw.gt(0),
     missingEvidence: [
@@ -90,7 +110,7 @@ export async function measureBalancerFlashLoanEconomics(input: {
     ],
     provenance: [
       'balancer_v2_vault_token_balance',
-      'balancer_protocol_fees_collector_flash_loan_fee',
+      'balancer_protocol_fees_collector_flash_loan_fee_exact_fixed_point',
       'synthetic_evidence:false',
     ],
   };
@@ -106,8 +126,9 @@ export async function measureAaveV3FlashLoanEconomics(input: {
   const asset = requireAddress('flash-loan asset', input.asset);
   const pool = new Contract(poolAddress, AAVE_POOL_ABI, input.provider);
   const premiumRaw = BigNumber.from(await pool.FLASHLOAN_PREMIUM_TOTAL());
+  const feeRateNumerator = premiumRaw.toBigInt();
   const feeBps = Number(premiumRaw.toString());
-  const feeMeasured = Number.isFinite(feeBps) && feeBps >= 0;
+  const feeMeasured = feeRateNumerator >= 0n && Number.isFinite(feeBps) && feeBps >= 0;
 
   // Aave liquidity resides behind reserve aTokens rather than at the Pool address.
   // Until a reserve-liquidity authority is wired, fee evidence is useful for
@@ -119,6 +140,8 @@ export async function measureAaveV3FlashLoanEconomics(input: {
     asset,
     availableLiquidity: null,
     feeBps: feeMeasured ? feeBps : null,
+    feeRateNumerator: feeMeasured ? feeRateNumerator : null,
+    feeRateDenominator: feeMeasured ? AAVE_BPS_DENOMINATOR : null,
     observedAt: Date.now(),
     executableEvidenceComplete: false,
     missingEvidence: [
@@ -157,7 +180,9 @@ export function selectMeasuredFlashLoanProvider(
       item.executableEvidenceComplete &&
       item.availableLiquidity !== null &&
       item.availableLiquidity >= requestedAmount &&
-      item.feeBps !== null,
+      item.feeBps !== null &&
+      item.feeRateNumerator !== null &&
+      item.feeRateDenominator !== null,
     )
     .sort((left, right) => {
       const feeDelta = (left.feeBps ?? Number.POSITIVE_INFINITY) - (right.feeBps ?? Number.POSITIVE_INFINITY);
