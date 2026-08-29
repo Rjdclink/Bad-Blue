@@ -3,6 +3,7 @@ import {
   measuredCandidateRegistry,
   type MeasuredOpportunityTopology,
 } from '../discovery/measured-candidate-registry.js';
+import { computeProfitabilityScore } from './profitability-score.js';
 
 export interface TopologyPerformanceState {
   topology: MeasuredOpportunityTopology;
@@ -10,6 +11,7 @@ export interface TopologyPerformanceState {
   successfulSamples: number;
   realizedBpsEwma: number | null;
   successRateEwma: number | null;
+  realizedCostMultiplierEwma: number | null;
   lastRealizedBps: number | null;
   lastObservedAt: number | null;
   priorityWeight: number;
@@ -23,6 +25,20 @@ export interface AdaptiveAssemblyPolicy {
   minIncrementalBps: number;
   minLegs: number;
   maxLegs: number;
+}
+
+export interface DynamicAdmissionPolicy {
+  empirical: boolean;
+  terminalSamples: number;
+  profitableRate: number | null;
+  profitabilityScoreThreshold: number;
+  confidenceThreshold: number;
+}
+
+interface AdmissionOutcome {
+  profitabilityScore: number;
+  confidenceLevel: number;
+  profitable: boolean;
 }
 
 const TOPOLOGIES: MeasuredOpportunityTopology[] = [
@@ -42,6 +58,13 @@ function clamp(value: number, min: number, max: number): number {
 
 function ewma(previous: number | null, next: number, alpha: number): number {
   return previous === null ? next : previous * (1 - alpha) + next * alpha;
+}
+
+function quantile(values: number[], probability: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * clamp(probability, 0, 1))));
+  return sorted[index];
 }
 
 function inferredNotionalUsd(opportunityId: string): number | null {
@@ -89,6 +112,8 @@ function inferredNotionalUsd(opportunityId: string): number | null {
 class AdaptiveTopologyOptimizer {
   private readonly performance = new Map<MeasuredOpportunityTopology, TopologyPerformanceState>();
   private readonly alpha = clamp(Number(process.env.CRYPTOCRAWL_ADAPTIVE_BPS_EWMA_ALPHA || 0.25), 0.01, 1);
+  private readonly admissionOutcomes: AdmissionOutcome[] = [];
+  private readonly admissionWindow = Math.max(16, Math.min(512, Number(process.env.CRYPTOCRAWL_ADMISSION_HISTORY_WINDOW || 128)));
 
   constructor() {
     for (const topology of TOPOLOGIES) {
@@ -98,6 +123,7 @@ class AdaptiveTopologyOptimizer {
         successfulSamples: 0,
         realizedBpsEwma: null,
         successRateEwma: null,
+        realizedCostMultiplierEwma: null,
         lastRealizedBps: null,
         lastObservedAt: null,
         priorityWeight: 1,
@@ -109,30 +135,51 @@ class AdaptiveTopologyOptimizer {
     if (!outcome.opportunityId || outcome.settlement?.terminal !== true) return;
     const candidate = measuredCandidateRegistry.get(outcome.opportunityId);
     if (!candidate) return;
-    const notionalUsd = inferredNotionalUsd(outcome.opportunityId);
-    if (notionalUsd === null || outcome.realizedProfitUsd === null || !Number.isFinite(outcome.realizedProfitUsd)) return;
-
-    const realizedBps = outcome.realizedProfitUsd / notionalUsd * 10_000;
-    if (!Number.isFinite(realizedBps)) return;
     const state = this.performance.get(candidate.topology);
     if (!state) return;
 
-    state.terminalSamples += 1;
-    if (outcome.success && realizedBps > 0) state.successfulSamples += 1;
-    state.realizedBpsEwma = ewma(state.realizedBpsEwma, realizedBps, this.alpha);
-    state.successRateEwma = ewma(state.successRateEwma, outcome.success ? 1 : 0, this.alpha);
-    state.lastRealizedBps = realizedBps;
-    state.lastObservedAt = outcome.timestamp;
-    this.recomputeWeights();
-
-    measuredCandidateRegistry.updateStatus(outcome.opportunityId, candidate.status, {
-      economics: {
-        ...candidate.economics,
-        notionalUsd,
-        realizedNetProfitBps: realizedBps,
-      },
-      provenance: ['adaptive_optimizer:terminal_realized_bps'],
+    const admission = computeProfitabilityScore(candidate, state, outcome.timestamp);
+    this.admissionOutcomes.push({
+      profitabilityScore: admission.profitabilityScore,
+      confidenceLevel: admission.confidenceLevel,
+      profitable: outcome.success && outcome.realizedProfitUsd !== null && outcome.realizedProfitUsd > 0,
     });
+    if (this.admissionOutcomes.length > this.admissionWindow) {
+      this.admissionOutcomes.splice(0, this.admissionOutcomes.length - this.admissionWindow);
+    }
+
+    const notionalUsd = inferredNotionalUsd(outcome.opportunityId);
+    if (notionalUsd !== null && outcome.realizedProfitUsd !== null && Number.isFinite(outcome.realizedProfitUsd)) {
+      const realizedBps = outcome.realizedProfitUsd / notionalUsd * 10_000;
+      if (Number.isFinite(realizedBps)) {
+        state.terminalSamples += 1;
+        if (outcome.success && realizedBps > 0) state.successfulSamples += 1;
+        state.realizedBpsEwma = ewma(state.realizedBpsEwma, realizedBps, this.alpha);
+        state.successRateEwma = ewma(state.successRateEwma, outcome.success ? 1 : 0, this.alpha);
+        state.lastRealizedBps = realizedBps;
+        state.lastObservedAt = outcome.timestamp;
+
+        const estimatedCostUsd = Math.max(0,
+          Number(candidate.economics.feeUsd || 0) +
+          Number(candidate.economics.gasUsd || 0) +
+          Number(candidate.economics.bridgeUsd || 0),
+        );
+        if (estimatedCostUsd > 0 && outcome.feeUsd !== null && Number.isFinite(outcome.feeUsd) && outcome.feeUsd >= 0) {
+          const realizedCostMultiplier = clamp(outcome.feeUsd / estimatedCostUsd, 0.1, 10);
+          state.realizedCostMultiplierEwma = ewma(state.realizedCostMultiplierEwma, realizedCostMultiplier, this.alpha);
+        }
+
+        measuredCandidateRegistry.updateStatus(outcome.opportunityId, candidate.status, {
+          economics: {
+            ...candidate.economics,
+            notionalUsd,
+            realizedNetProfitBps: realizedBps,
+          },
+          provenance: ['adaptive_optimizer:terminal_realized_bps', 'adaptive_optimizer:dynamic_admission_feedback'],
+        });
+      }
+    }
+    this.recomputeWeights();
   }
 
   private recomputeWeights(): void {
@@ -147,6 +194,39 @@ class AdaptiveTopologyOptimizer {
     for (const item of scored) {
       item.state.priorityWeight = clamp(item.score / Math.max(0.01, averageScore), 0.50, 2.00);
     }
+  }
+
+  getDynamicAdmissionPolicy(): DynamicAdmissionPolicy {
+    if (this.admissionOutcomes.length === 0) {
+      return {
+        empirical: false,
+        terminalSamples: 0,
+        profitableRate: null,
+        profitabilityScoreThreshold: 0,
+        confidenceThreshold: 0,
+      };
+    }
+
+    const profitable = this.admissionOutcomes.filter(item => item.profitable);
+    const profitableRate = profitable.length / this.admissionOutcomes.length;
+    const profitableScores = profitable.map(item => item.profitabilityScore).filter(value => Number.isFinite(value) && value > 0);
+    const profitableConfidence = profitable.map(item => item.confidenceLevel).filter(value => Number.isFinite(value) && value > 0);
+    const failurePressure = 1 - profitableRate;
+
+    const baselineScore = profitableScores.length > 0
+      ? quantile(profitableScores, 0.25)
+      : quantile(this.admissionOutcomes.map(item => item.profitabilityScore), 0.50);
+    const baselineConfidence = profitableConfidence.length > 0
+      ? quantile(profitableConfidence, 0.25)
+      : quantile(this.admissionOutcomes.map(item => item.confidenceLevel), 0.50);
+
+    return {
+      empirical: true,
+      terminalSamples: this.admissionOutcomes.length,
+      profitableRate,
+      profitabilityScoreThreshold: Math.max(0, baselineScore * (0.75 + 0.50 * failurePressure)),
+      confidenceThreshold: clamp(baselineConfidence * (0.75 + 0.25 * failurePressure), 0, 1),
+    };
   }
 
   getAssemblyPolicy(): AdaptiveAssemblyPolicy {
@@ -187,6 +267,10 @@ class AdaptiveTopologyOptimizer {
       minLegs: 2,
       maxLegs,
     };
+  }
+
+  getPerformanceState(topology: MeasuredOpportunityTopology): TopologyPerformanceState {
+    return { ...this.performance.get(topology)! };
   }
 
   getPriority(topology: MeasuredOpportunityTopology): number {
