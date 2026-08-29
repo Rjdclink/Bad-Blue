@@ -7,7 +7,10 @@ export interface ZeroCapitalCompositeEvidence {
   inputToken: string;
   inputTokenDecimals: number;
   sharedPrincipal: bigint;
-  expectedProfitSum: bigint;
+  individualExpectedProfitSum: bigint;
+  measuredCompositionGain: bigint;
+  combinedExpectedProfit: bigint;
+  compositionGainUsd: number;
   minProfitSum: bigint;
   sharedPrincipalStackedBps: number;
   stepCount: number;
@@ -34,7 +37,7 @@ class ZeroCapitalCompositeEvidenceRegistry {
   private readonly maxEntries = Math.max(32, Math.min(1024, Number(process.env.CRYPTOCRAWL_MULTILEG_COMPOSITE_EVIDENCE_MAX || 256)));
 
   record(input: ZeroCapitalCompositeEvidence): void {
-    if (input.opportunityIds.length < 2) return;
+    if (input.opportunityIds.length < 2 || input.measuredCompositionGain <= 0n || input.combinedExpectedProfit <= input.individualExpectedProfitSum) return;
     this.entries.set(key(input.opportunityIds), clone(input));
     this.prune();
   }
