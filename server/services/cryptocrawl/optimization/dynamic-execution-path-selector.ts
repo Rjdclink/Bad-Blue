@@ -1,5 +1,5 @@
 import type { MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
-import { adaptiveTopologyOptimizer } from './adaptive-topology-optimizer.js';
+import { routeMeasuredOpportunity, type UnifiedExecutionPath } from '../execution/unified-execution-router.js';
 
 export type DynamicExecutionPath = 'FLASH_LOAN' | 'TAKER_IOC' | 'MAKER' | 'HYBRID' | 'UNAVAILABLE';
 
@@ -13,8 +13,8 @@ export interface ExecutionPathDecision {
 }
 
 function finiteBps(candidate: MeasuredCandidate): number | null {
-  const value = Number(candidate.economics.netProfitBps);
-  if (Number.isFinite(value)) return value;
+  const explicit = Number(candidate.economics.netProfitBps);
+  if (Number.isFinite(explicit)) return explicit;
   const notional = Number(candidate.economics.notionalUsd);
   const net = Number(candidate.economics.deterministicNetProfitUsd);
   return Number.isFinite(notional) && notional > 0 && Number.isFinite(net)
@@ -22,57 +22,29 @@ function finiteBps(candidate: MeasuredCandidate): number | null {
     : null;
 }
 
-function basePath(candidate: MeasuredCandidate): DynamicExecutionPath {
-  if (
-    candidate.topology === 'ZERO_CAPITAL_ATOMIC' ||
-    candidate.topology === 'DEX_ATOMIC' ||
-    candidate.topology === 'MEMPOOL_BACKRUN' ||
-    candidate.topology === 'LIQUIDATION'
-  ) return 'FLASH_LOAN';
-  if (candidate.topology === 'MAKER_CEX') return 'MAKER';
-  if (candidate.topology === 'CEX_CEX') return 'TAKER_IOC';
+function compatibilityPath(path: UnifiedExecutionPath): DynamicExecutionPath {
+  if (path === 'FLASH_LOAN' || path === 'MEV_ATOMIC' || path === 'FLASH_LOAN_LIQUIDATION') return 'FLASH_LOAN';
+  if (path === 'CEX_TAKER_IOC') return 'TAKER_IOC';
+  if (path === 'CEX_MAKER') return 'MAKER';
   return 'UNAVAILABLE';
 }
 
+/**
+ * Compatibility facade for older multi-leg callers. UnifiedExecutionRouter is
+ * the sole path/scoring authority; no second scoring function exists here.
+ */
 export function selectDynamicExecutionPath(candidate: MeasuredCandidate): ExecutionPathDecision {
-  const measuredNetBps = finiteBps(candidate);
-  const topologyWeight = adaptiveTopologyOptimizer.getPriority(candidate.topology);
-  const path = basePath(candidate);
-  const positive = measuredNetBps !== null
-    ? measuredNetBps > 0
-    : Number(candidate.economics.deterministicNetProfitUsd) > 0;
-  const executableNow = candidate.status === 'eligible' && candidate.executableCapability &&
-    candidate.missingInformation.length === 0 && candidate.depth.status !== 'unavailable' && positive;
-  const rawScoreBasis = measuredNetBps !== null
-    ? measuredNetBps
-    : (Number(candidate.economics.deterministicNetProfitUsd) || 0);
-  const score = topologyWeight * Math.log1p(Math.max(0, rawScoreBasis));
-  const reasons = [
-    `topology=${candidate.topology}`,
-    `adaptive_priority=${topologyWeight.toFixed(4)}`,
-    measuredNetBps === null ? 'measured_net_bps=unavailable' : `measured_net_bps=${measuredNetBps.toFixed(4)}`,
-  ];
-
-  if (path === 'MAKER' && !candidate.executableCapability) {
-    reasons.push('maker path remains advisory until live post-only execution and terminal fill calibration are authoritative');
-  }
-  if (candidate.topology === 'CROSS_CHAIN') {
-    reasons.push('cross-chain path remains unavailable until builder, drift, failure-recovery, and terminal settlement wiring are complete');
-  }
-  if (candidate.topology === 'FUNDING_ARBITRAGE') {
-    reasons.push('funding path requires a dedicated terminal executor before autonomous selection');
-  }
-  if (candidate.topology === 'LIQUIDATION' && !candidate.executableCapability) {
-    reasons.push('liquidation path is measured-discovery only until reserve economics, unwind, flash liquidity, gas, and exact atomic simulation are authoritative');
-  }
-
+  const routed = routeMeasuredOpportunity(candidate);
   return {
-    path: executableNow ? path : 'UNAVAILABLE',
-    score,
+    path: routed.admitted ? compatibilityPath(routed.path) : 'UNAVAILABLE',
+    score: routed.score.profitabilityScore,
     candidateId: candidate.opportunityId,
-    measuredNetBps,
-    executableNow,
-    reasons,
+    measuredNetBps: finiteBps(candidate),
+    executableNow: routed.admitted,
+    reasons: [
+      ...routed.reasons,
+      'scoring_authority=UnifiedExecutionRouter:ProfitabilityScore',
+    ],
   };
 }
 
