@@ -10,6 +10,7 @@ import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-press
 import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard-rpc-first-wiring.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
+import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
 import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
@@ -109,6 +110,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
 
   ensureOrderBookEvolutionWiring();
+  ensureCexFourModeObservabilityWiring();
   ensureCryptaraCexEvidenceWiring();
   ensureInventoryConstrainedCexExecutionWiring();
   ensureDynamicProfitabilityAdmissionWiring();
@@ -147,6 +149,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     bpsExecutionFloor: null,
     executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
+    cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
+    cexHybridExecutionAuthority: false,
     legacyMasterOrchestratorRequired: false,
     executionAuthorityGranted: false,
     executionMetrics: 'terminal_settlement_only',
