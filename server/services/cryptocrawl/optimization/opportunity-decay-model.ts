@@ -5,6 +5,8 @@ export interface OpportunityDecayEstimate {
   topology: MeasuredOpportunityTopology;
   ageMs: number;
   halfLifeMs: number;
+  timeRemainingMs: number;
+  expired: boolean;
   survivalProbability: number;
   measuredNetProfitUsd: number | null;
   decayAdjustedSchedulingValueUsd: number | null;
@@ -38,6 +40,8 @@ function topologyHalfLife(topology: MeasuredOpportunityTopology): number {
  * Scheduling-only opportunity aging model. It discounts attention value as
  * evidence ages but never alters measured economics, deterministic positivity,
  * eligibility, governance, Cryptara, settlement truth or execution authority.
+ * Explicit candidate expiry is a hard scheduling horizon: an expired observation
+ * has zero survival value even if its topology half-life would otherwise be long.
  */
 export function estimateOpportunityDecay(
   candidate: MeasuredCandidate,
@@ -49,7 +53,10 @@ export function estimateOpportunityDecay(
     ? Math.max(0, Number(explicitQuoteAge))
     : derivedAge;
   const halfLifeMs = topologyHalfLife(candidate.topology);
-  const survivalProbability = Math.pow(0.5, ageMs / Math.max(1, halfLifeMs));
+  const timeRemainingMs = Math.max(0, candidate.expiresAt - now);
+  const expired = candidate.expiresAt <= now;
+  const baseSurvivalProbability = Math.pow(0.5, ageMs / Math.max(1, halfLifeMs));
+  const survivalProbability = expired ? 0 : baseSurvivalProbability;
   const measuredNetProfitUsd = candidate.economics.deterministicNetProfitUsd !== null
     && Number.isFinite(candidate.economics.deterministicNetProfitUsd)
     ? Number(candidate.economics.deterministicNetProfitUsd)
@@ -62,6 +69,8 @@ export function estimateOpportunityDecay(
     topology: candidate.topology,
     ageMs,
     halfLifeMs,
+    timeRemainingMs,
+    expired,
     survivalProbability,
     measuredNetProfitUsd,
     decayAdjustedSchedulingValueUsd,
