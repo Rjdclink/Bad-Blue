@@ -40,7 +40,10 @@ export function selectDynamicExecutionPath(candidate: MeasuredCandidate): Execut
     : Number(candidate.economics.deterministicNetProfitUsd) > 0;
   const executableNow = candidate.status === 'eligible' && candidate.executableCapability &&
     candidate.missingInformation.length === 0 && candidate.depth.status !== 'unavailable' && positive;
-  const score = topologyWeight * Math.log1p(Math.max(0, measuredNetBps ?? Number(candidate.economics.deterministicNetProfitUsd) || 0));
+  const rawScoreBasis = measuredNetBps !== null
+    ? measuredNetBps
+    : (Number(candidate.economics.deterministicNetProfitUsd) || 0);
+  const score = topologyWeight * Math.log1p(Math.max(0, rawScoreBasis));
   const reasons = [
     `topology=${candidate.topology}`,
     `adaptive_priority=${topologyWeight.toFixed(4)}`,
