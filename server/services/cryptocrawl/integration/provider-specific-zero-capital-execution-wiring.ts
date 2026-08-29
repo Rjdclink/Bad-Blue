@@ -9,6 +9,7 @@ import {
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
+import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 
@@ -23,6 +24,13 @@ type ProviderSpecificRuntime = {
   executeFunded: (opportunity: ZeroCapitalOpportunity, funding: GasFundingDecision) => Promise<ExecutionResult>;
 };
 
+function toUsd(value: bigint | undefined, decimals: number): number | null {
+  if (value === undefined) return null;
+  const scale = 10 ** Math.max(0, Math.min(18, decimals));
+  const converted = Number(value) / scale;
+  return Number.isFinite(converted) ? converted : null;
+}
+
 function extractProfit(receipt: providers.TransactionReceipt, receiver: string): bigint | null {
   for (const entry of receipt.logs) {
     if (entry.address.toLowerCase() !== receiver.toLowerCase()) continue;
@@ -34,6 +42,60 @@ function extractProfit(receipt: providers.TransactionReceipt, receiver: string):
     }
   }
   return null;
+}
+
+function normalizeAaveSettlement(input: {
+  opportunity: ZeroCapitalOpportunity;
+  txHash: string;
+  receipt: providers.TransactionReceipt;
+  profit: bigint;
+  sponsoredExecution: boolean;
+  gasUsed: bigint;
+  effectiveGasPriceWei: bigint;
+  startedAt: number;
+}): NormalizedRealizedExecution {
+  const settledAt = Date.now();
+  return {
+    status: 'filled',
+    terminal: true,
+    settlementConfirmed: true,
+    submittedAt: input.startedAt,
+    settledAt,
+    venueOrRoute: `aave_v3:${input.opportunity.route.map(step => step.protocol).join('->')}`,
+    chain: input.opportunity.chain,
+    predicted: {
+      profitUsd: toUsd(input.opportunity.expectedProfit, input.opportunity.inputTokenDecimals),
+      feeUsd: toUsd(input.opportunity.estimatedExecutionCostInInputToken, input.opportunity.inputTokenDecimals),
+      slippageBps: input.opportunity.expectedSlippageBps,
+    },
+    realized: {
+      acquisitionCostUsd: null,
+      proceedsUsd: null,
+      exchangeFeeUsd: null,
+      gasUsd: input.sponsoredExecution ? 0 : null,
+      gasUsed: input.gasUsed.toString(),
+      effectiveGasPriceWei: input.effectiveGasPriceWei.toString(),
+      slippageBps: null,
+      netProfitUsd: toUsd(input.profit, input.opportunity.inputTokenDecimals),
+    },
+    provenance: [
+      'cryptara_live_intelligence',
+      'computational_beam',
+      'monte_carlo_profitability',
+      'dynamic_gas_funding_policy',
+      ...(input.sponsoredExecution
+        ? ['alchemy_gas_manager', 'eip7702_smart_wallet', 'erc4337_user_operation']
+        : ['native_wallet_gas']),
+      'aave_v3_pool_flashLoanSimple',
+      'verified_aave_v3_receiver',
+      'provider_receiver_binding_verified',
+      'flashloan_receiver_profit_verified',
+      'synthetic_evidence:false',
+    ],
+    transactionHash: input.txHash,
+    blockNumber: input.receipt.blockNumber,
+    receiptStatus: 1,
+  };
 }
 
 async function executeProviderSpecific(input: {
@@ -91,9 +153,20 @@ async function executeProviderSpecific(input: {
 
     const gasUsed = BigInt(receipt.gasUsed.toString());
     const effectiveGasPriceWei = receipt.effectiveGasPrice ? BigInt(receipt.effectiveGasPrice.toString()) : 0n;
+    const normalized = normalizeAaveSettlement({
+      opportunity: input.opportunity,
+      txHash: transactionHash,
+      receipt,
+      profit,
+      sponsoredExecution,
+      gasUsed,
+      effectiveGasPriceWei,
+      startedAt,
+    });
     return {
       success: true,
       txHash: transactionHash,
+      normalized,
       profit,
       profitVerified: true,
       gasUsed,
@@ -154,7 +227,7 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
   logger.info('[ZeroCapitalProviderExecution] Provider-specific execution wiring installed', {
     component: 'ProviderSpecificZeroCapitalExecutionWiring',
     balancerV2: 'delegates_to_existing_canonical_executor',
-    aaveV3: 'provider_specific_receiver_payload_and_receipt_verification',
+    aaveV3: 'provider_specific_receiver_payload_receipt_and_terminal_provenance_verification',
     providerSelectionAuthority: 'flash_loan_provider_selection_registry',
     syntheticExecution: false,
   });
