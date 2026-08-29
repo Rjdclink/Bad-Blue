@@ -19,9 +19,12 @@ export interface CexModeEconomics {
   netAfterExchangeFeesBps: number;
   bpsToBreakEven: number;
   recoveryEfficiency: number;
+  makerLegCount: number;
+  makerFillProbability: number | null;
+  queueRiskPenaltyBps: number;
+  riskAdjustedBpsToBreakEven: number;
   economicallyPositive: boolean;
   observationOnly: boolean;
-  makerFillProbability: number | null;
   expectedFeeAdjustedBps: number;
   observedAt: number;
   authority: 'measured_advisory';
@@ -61,18 +64,23 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
   if (positiveDelta !== 0) return positiveDelta;
   if (left.economicallyPositive && right.economicallyPositive) {
     return right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps
-      || right.netAfterExchangeFeesBps - left.netAfterExchangeFeesBps;
+      || right.netAfterExchangeFeesBps - left.netAfterExchangeFeesBps
+      || left.makerLegCount - right.makerLegCount;
   }
   return left.bpsToBreakEven - right.bpsToBreakEven
+    || left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven
     || right.recoveryEfficiency - left.recoveryEfficiency
-    || right.makerFillProbability! - left.makerFillProbability!;
+    || (right.makerFillProbability ?? 1) - (left.makerFillProbability ?? 1)
+    || left.makerLegCount - right.makerLegCount;
 }
 
 /**
  * Measures all TT/MT/TM/MM price-and-fee topologies on the same fresh books.
  * Negative modes inside a bounded observation envelope are retained so the BPS
  * optimizer can learn the exact recovery gap instead of seeing only winners.
- * Hybrid modes remain advisory until a sequential partial-fill-safe executor exists.
+ * Maker modes additionally expose a queue-risk penalty derived from measured
+ * fill probability. The penalty is advisory and never changes measured fees or
+ * grants hybrid execution authority.
  */
 export async function evaluateCexFourModeMatrix(input: {
   symbol: string;
@@ -118,16 +126,44 @@ export async function evaluateCexFourModeMatrix(input: {
         const makerProbabilities: number[] = [];
         if (candidate.buyMode === 'maker') makerProbabilities.push(observeAriesQueueEcho(buyBook, 'buy', ttlMs, 0.02).fillProbabilityWithinTtl);
         if (candidate.sellMode === 'maker') makerProbabilities.push(observeAriesQueueEcho(sellBook, 'sell', ttlMs, 0.02).fillProbabilityWithinTtl);
-        const makerFillProbability = makerProbabilities.length > 0
+        const makerLegCount = makerProbabilities.length;
+        const makerFillProbability = makerLegCount > 0
           ? makerProbabilities.reduce((product, value) => product * Math.max(0, Math.min(1, value)), 1)
           : null;
-        const expectedFeeAdjustedBps = makerFillProbability === null ? netAfterExchangeFeesBps : netAfterExchangeFeesBps * makerFillProbability;
+        const expectedFeeAdjustedBps = makerFillProbability === null
+          ? netAfterExchangeFeesBps
+          : netAfterExchangeFeesBps * makerFillProbability;
+        const queueRiskPenaltyBps = makerFillProbability === null
+          ? 0
+          : Math.max(0, grossSpreadBps) * (1 - makerFillProbability);
+        const riskAdjustedBpsToBreakEven = economicallyPositive
+          ? queueRiskPenaltyBps
+          : bpsToBreakEven + queueRiskPenaltyBps;
         const hybrid = candidate.mode === 'MT' || candidate.mode === 'TM';
         output.push({
-          symbol, buyVenue, sellVenue, mode: candidate.mode, buyMode: candidate.buyMode, sellMode: candidate.sellMode,
-          buyPrice, sellPrice, grossSpreadBps, combinedFeeBps, netAfterExchangeFeesBps, bpsToBreakEven, recoveryEfficiency,
-          economicallyPositive, observationOnly: !economicallyPositive || hybrid, makerFillProbability, expectedFeeAdjustedBps,
-          observedAt: Math.min(buyBook.timestamp, sellBook.timestamp), authority: 'measured_advisory', executionAuthority: false,
+          symbol,
+          buyVenue,
+          sellVenue,
+          mode: candidate.mode,
+          buyMode: candidate.buyMode,
+          sellMode: candidate.sellMode,
+          buyPrice,
+          sellPrice,
+          grossSpreadBps,
+          combinedFeeBps,
+          netAfterExchangeFeesBps,
+          bpsToBreakEven,
+          recoveryEfficiency,
+          makerLegCount,
+          makerFillProbability,
+          queueRiskPenaltyBps,
+          riskAdjustedBpsToBreakEven,
+          economicallyPositive,
+          observationOnly: !economicallyPositive || hybrid,
+          expectedFeeAdjustedBps,
+          observedAt: Math.min(buyBook.timestamp, sellBook.timestamp),
+          authority: 'measured_advisory',
+          executionAuthority: false,
           missingExecutionInformation: [
             ...(!economicallyPositive ? ['positive_all_in_economics_required'] : []),
             ...(hybrid ? ['sequential_partial_fill_safe_hybrid_executor', 'fresh_taker_requote_after_maker_fill'] : []),
