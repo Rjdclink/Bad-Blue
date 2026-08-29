@@ -17,14 +17,19 @@ export interface CanonicalWalletBootstrap {
   deprecatedVariablesPresent: string[];
 }
 
-function normalizeAddress(name: string, value: string | undefined): string | null {
+/**
+ * Accept any structurally valid 20-byte EVM address regardless of input casing,
+ * then return the canonical EIP-55 checksum form. This deliberately avoids
+ * rejecting a valid address merely because a user pasted mixed-case text whose
+ * capitalization is not itself a valid checksum.
+ */
+export function normalizeEvmAddress(name: string, value: string | undefined): string | null {
   const normalized = value?.trim();
   if (!normalized) return null;
-  try {
-    return utils.getAddress(normalized);
-  } catch {
-    throw new Error(`${name} must be a valid EVM address`);
+  if (!/^0x[0-9a-fA-F]{40}$/.test(normalized)) {
+    throw new Error(`${name} must be a 20-byte EVM address (0x plus 40 hexadecimal characters)`);
   }
+  return utils.getAddress(normalized.toLowerCase());
 }
 
 export function normalizePrivateKey(value: string | undefined): string | null {
@@ -59,7 +64,7 @@ export function resolveExecutionWalletAddress(environment: NodeJS.ProcessEnv = p
   }
 
   try {
-    return { address: utils.getAddress(configuredBridgeAddress), source: 'bridge_wallet', reason: 'Legacy bridge-address-only observation mode; no signing authority is available' };
+    return { address: normalizeEvmAddress('BRIDGE_WALLET_ADDRESS', configuredBridgeAddress), source: 'bridge_wallet', reason: 'Legacy bridge-address-only observation mode; no signing authority is available' };
   } catch {
     return { address: null, source: null, reason: 'Legacy BRIDGE_WALLET_ADDRESS is invalid and no canonical signer is configured' };
   }
@@ -72,7 +77,7 @@ export function resolveConfiguredWalletAddress(environment: NodeJS.ProcessEnv = 
 
 export function resolveTerminalPayoutAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
   try {
-    return normalizeAddress('CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS);
+    return normalizeEvmAddress('CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS);
   } catch {
     return null;
   }
@@ -86,7 +91,7 @@ export function resolveOperationalProfitRecipient(
   if (privateKey) return walletFromPrivateKey(privateKey).address;
 
   // Test/offline builders may supply an explicit recipient without a live signer.
-  const explicit = normalizeAddress('operational profit recipient', explicitRecipient);
+  const explicit = normalizeEvmAddress('operational profit recipient', explicitRecipient);
   if (explicit) return explicit;
 
   const configured = resolveExecutionWalletAddress(environment);
@@ -100,7 +105,7 @@ export function resolveOperationalProfitRecipient(
  */
 export function assertConfiguredWalletAddress(privateKey: string, configuredAddress?: string): string {
   const wallet = walletFromPrivateKey(privateKey);
-  const expectedAddress = normalizeAddress('configured wallet address', configuredAddress);
+  const expectedAddress = normalizeEvmAddress('configured wallet address', configuredAddress);
   if (expectedAddress && wallet.address !== expectedAddress) {
     throw new Error('Configured wallet address does not match WALLET_PRIVATE_KEY');
   }
@@ -130,7 +135,7 @@ export function installCanonicalWalletConfiguration(
   const rawTerminalPayout = environment.CRYPTO_PROFIT_WALLET_ADDRESS?.trim();
   const terminalPayoutAddress = resolveTerminalPayoutAddress(environment);
   const terminalPayoutReason = rawTerminalPayout && !terminalPayoutAddress
-    ? 'CRYPTO_PROFIT_WALLET_ADDRESS is not a valid EVM address; terminal sweep remains disabled while trading can continue'
+    ? 'CRYPTO_PROFIT_WALLET_ADDRESS is not a valid 20-byte EVM address; terminal sweep remains disabled while trading can continue'
     : undefined;
 
   if (!privateKey) {

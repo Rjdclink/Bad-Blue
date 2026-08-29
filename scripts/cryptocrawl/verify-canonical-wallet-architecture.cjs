@@ -25,6 +25,9 @@ requireText(identity, "['BRIDGE_WALLET_ADDRESS', 'BRIDGE_SIGNER_PRIVATE_KEY', 'W
 rejectText(identity, 'walletFromPrivateKey(legacyBridgeSigner)', 'duplicate bridge signer authority');
 requireText(identity, 'resolveTerminalPayoutAddress', 'terminal payout resolver');
 requireText(identity, 'resolveOperationalProfitRecipient', 'runtime profit recipient resolver');
+requireText(identity, 'export function normalizeEvmAddress', 'canonical EVM address normalizer');
+requireText(identity, '/^0x[0-9a-fA-F]{40}$/', '20-byte EVM address structural validation');
+requireText(identity, 'utils.getAddress(normalized.toLowerCase())', 'mixed-case input checksum normalization');
 
 requireText(planner, 'resolveOperationalProfitRecipient', 'zero-capital runtime retention');
 rejectText(planner, 'process.env.CRYPTO_PROFIT_WALLET_ADDRESS', 'terminal payout address in active route planning');
@@ -46,6 +49,8 @@ console.log(JSON.stringify({
   operationalProfitRecipient: 'WALLET_PRIVATE_KEY-derived execution address',
   bridgeIdentity: 'same execution address via repaired compatibility alias',
   terminalPayoutOnly: 'CRYPTO_PROFIT_WALLET_ADDRESS',
+  mixedCaseEvmPayoutAccepted: true,
+  payoutNormalization: 'structural 20-byte validation then EIP-55 normalization',
   duplicateSignerAuthority: false,
   runtimeProfitExternalSweep: false,
 }, null, 2));
