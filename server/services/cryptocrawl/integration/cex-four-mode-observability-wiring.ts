@@ -18,22 +18,35 @@ async function observe(): Promise<void> {
     const symbols = getLastOrderedMarketUniverseSymbols().slice(0, symbolLimit());
     const settled = await Promise.allSettled(symbols.map(symbol => evaluateCexFourModeMatrix({ symbol })));
     latest = settled.flatMap(result => result.status === 'fulfilled' ? result.value : [])
-      .sort((left, right) => right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps)
+      .sort((left, right) =>
+        Number(right.economicallyPositive) - Number(left.economicallyPositive)
+        || right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps
+        || left.bpsToBreakEven - right.bpsToBreakEven,
+      )
       .slice(0, 128);
+    const positive = latest.filter(item => item.economicallyPositive);
+    const nearMiss = latest.filter(item => !item.economicallyPositive);
     logger.info('[CexFourMode] TT/MT/TM/MM measured economic matrix refreshed', {
       component: 'CexFourModeObservabilityWiring',
       symbols: symbols.length,
-      viableModes: latest.length,
-      best: latest[0] ? {
-        symbol: latest[0].symbol,
-        mode: latest[0].mode,
-        buyVenue: latest[0].buyVenue,
-        sellVenue: latest[0].sellVenue,
-        netAfterExchangeFeesBps: latest[0].netAfterExchangeFeesBps,
-        expectedFeeAdjustedBps: latest[0].expectedFeeAdjustedBps,
-        executionAuthority: latest[0].executionAuthority,
+      observedModes: latest.length,
+      positiveModes: positive.length,
+      nearBreakEvenObservationModes: nearMiss.length,
+      closestNearMiss: nearMiss.length > 0
+        ? nearMiss.reduce((best, item) => item.bpsToBreakEven < best.bpsToBreakEven ? item : best)
+        : null,
+      bestPositive: positive[0] ? {
+        symbol: positive[0].symbol,
+        mode: positive[0].mode,
+        buyVenue: positive[0].buyVenue,
+        sellVenue: positive[0].sellVenue,
+        netAfterExchangeFeesBps: positive[0].netAfterExchangeFeesBps,
+        expectedFeeAdjustedBps: positive[0].expectedFeeAdjustedBps,
+        executionAuthority: positive[0].executionAuthority,
       } : null,
+      observationFloorBps: Number(process.env.CRYPTOCRAWL_CEX_FOUR_MODE_OBSERVATION_FLOOR_BPS ?? -200),
       hybridExecutionAuthority: false,
+      negativeObservationExecutionAuthority: false,
       existingTtMmExecutorsChanged: false,
     });
   } finally {
