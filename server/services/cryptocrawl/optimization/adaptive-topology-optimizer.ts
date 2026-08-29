@@ -31,6 +31,7 @@ const TOPOLOGIES: MeasuredOpportunityTopology[] = [
   'ZERO_CAPITAL_ATOMIC',
   'CROSS_CHAIN',
   'MEMPOOL_BACKRUN',
+  'LIQUIDATION',
   'MAKER_CEX',
   'FUNDING_ARBITRAGE',
 ];
@@ -175,8 +176,6 @@ class AdaptiveTopologyOptimizer {
       0,
     ) / Math.max(1, sampleWeight);
 
-    // Assembly becomes more selective when realized yield is strong but reliability
-    // is weak. This is an optimization threshold only; it never turns a negative leg positive.
     const minIncrementalBps = Math.max(0, realizedBpsEwma * (0.05 + (1 - reliabilityEwma) * 0.20));
     const maxLegs = Math.max(2, Math.min(5, 2 + Math.round(reliabilityEwma * 3)));
     return {
