@@ -6,6 +6,7 @@ import {
 } from '../../cryptara/index.js';
 import { createLogger } from '../../../logger.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { ensureCryptaraProviderConsensusWiring } from './cryptara-provider-consensus-wiring.js';
 
 const log = createLogger('CryptaraCexEvidenceWiring');
 const installed = new WeakSet<object>();
@@ -117,6 +118,11 @@ export function ensureCryptaraCexEvidenceWiring(): Cryptara {
     return correctCexMempoolApplicability(context, assessment);
   };
 
+  // Install the advisory consensus wrapper only after topology-specific evidence
+  // corrections so it observes the final Cryptara assessment without changing
+  // economics, Monte Carlo, governance, or execution authority.
+  ensureCryptaraProviderConsensusWiring();
+
   log.info('Cryptara CEX topology evidence wiring installed', {
     cexVenues: [...CEX_EXECUTION_VENUES],
     mempoolEvidenceApplicability: 'not_applicable_for_CEX_CEX',
@@ -124,6 +130,7 @@ export function ensureCryptaraCexEvidenceWiring(): Cryptara {
     canonicalMonteCarloPreserved: true,
     monteCarloChanged: false,
     economicsChanged: false,
+    providerConsensusFoundation: 'measured_advisory_only',
   });
 
   return instance;
