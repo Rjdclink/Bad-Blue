@@ -19,6 +19,7 @@ import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
+import { ensureProviderSpecificZeroCapitalExecutionWiring } from './provider-specific-zero-capital-execution-wiring.js';
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
@@ -35,6 +36,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
   ensureZeroCapitalFlashProviderWiring();
+  ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
   ensureOrderBookEvolutionWiring();
   ensureCryptaraCexEvidenceWiring();
@@ -71,7 +73,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
-    zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal',
+    zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
+    zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
     zeroCapitalAtomicStackExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
     runtimeHeartbeat: true,
