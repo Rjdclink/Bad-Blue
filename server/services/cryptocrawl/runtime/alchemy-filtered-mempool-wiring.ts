@@ -5,16 +5,16 @@ import { alchemyIntegration, type MempoolAnalysis } from '../capital-free/alchem
 let installed = false;
 
 function shouldStartFilteredMempool(): boolean {
-  return process.env.ALCHEMY_FILTERED_MEMPOOL_ENABLED?.trim().toLowerCase() !== 'false'
+  return process.env.ALCHEMY_FILTERED_MEMPOOL_ENABLED?.trim().toLowerCase() === 'true'
     && !!process.env.ALCHEMY_API_KEY?.trim();
 }
 
 /**
- * Replaces the expensive broad-hash->detail-RPC evidence path with Alchemy's
- * server-side filtered full-transaction subscription. The filtered path is an
- * independent low-cost capability and therefore does not require enabling the
- * legacy broad pending-transaction firehose. Set ALCHEMY_FILTERED_MEMPOOL_ENABLED=false
- * to opt out explicitly; the legacy unfiltered path remains separately fail-closed.
+ * Optional Alchemy server-side filtered pending-transaction evidence.
+ * This is deliberately opt-in because subscription traffic is billable and can
+ * become high-volume even when the application itself is restarted quickly.
+ * Set ALCHEMY_FILTERED_MEMPOOL_ENABLED=true only when a bounded paid-provider
+ * observation budget has been intentionally approved.
  */
 export function ensureAlchemyFilteredMempoolWiring(): void {
   if (installed) return;
@@ -56,7 +56,9 @@ export function ensureAlchemyFilteredMempoolWiring(): void {
 
   logger.info('[AlchemyFilteredMempool] Filtered mempool compatibility wiring installed', {
     component: 'AlchemyFilteredMempool',
-    enabledByDefaultWhenConfigured: true,
+    enabledByDefaultWhenConfigured: false,
+    explicitOptInRequired: true,
+    optInVariable: 'ALCHEMY_FILTERED_MEMPOOL_ENABLED=true',
     serverSideToAddressFiltering: true,
     fullTransactionPayload: true,
     perHashDetailRpcRequired: false,

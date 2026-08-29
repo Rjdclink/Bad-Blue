@@ -7,6 +7,7 @@ import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-r
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
+import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
@@ -35,6 +36,10 @@ function zeroCapitalRetryDelayMs(): number {
   return Number.isFinite(configured) ? Math.max(2_500, Math.min(120_000, Math.trunc(configured))) : 15_000;
 }
 
+function paidAlchemyPendingEvidenceExplicitlyEnabled(): boolean {
+  return process.env.ALCHEMY_FILTERED_PENDING_ENABLED?.trim().toLowerCase() === 'true';
+}
+
 function startCanonicalZeroCapitalRuntime(): void {
   if (zeroCapitalStartPromise || zeroCapitalEngine.getState().isRunning) return;
   if (zeroCapitalRetryTimer) {
@@ -56,9 +61,6 @@ function startCanonicalZeroCapitalRuntime(): void {
       });
     })
     .catch(error => {
-      // Core CEX discovery/execution remains independent. A zero-capital startup
-      // failure is visible and fail-closed for that topology, then retried because
-      // RPC/gas-sponsor/receiver initialization failures may be transient.
       const retryMs = zeroCapitalRetryDelayMs();
       logger.error('[ZeroCapitalRuntime] Canonical zero-capital lifecycle failed to start', {
         component: 'CanonicalCryptoCrawlerRuntimeWiring',
@@ -85,30 +87,36 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureMonteCarloCalibrationWiring();
   ensureOracleEvidenceWiring();
   ensureDynamicScalePressureWiring();
-  // Install every zero-capital wrapper before starting the lifecycle. The engine
-  // must initialize/deploy/verify receivers and scan through the canonical
-  // wrapped methods, never through its un-wired base implementation.
   ensureZeroCapitalResourceWiring();
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
-  startCanonicalZeroCapitalRuntime();
+
+  // Cost-safe RPCs must be admitted before the zero-capital engine asks the
+  // provider manager for its first chain provider. This keeps paid Alchemy RPC
+  // as failover while the local Computational Beam/Aries/Cryptara stack performs
+  // the expensive analysis after bounded market-evidence acquisition.
+  void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
+
   ensureOrderBookEvolutionWiring();
   ensureCryptaraCexEvidenceWiring();
-  // Authenticated partial CEX inventory can reduce trade size, but only after
-  // the authoritative verifier re-prices that smaller trade from fresh books
-  // and current fee evidence. Zero inventory still remains a hard blocker.
   ensureInventoryConstrainedCexExecutionWiring();
-  // Installed after CEX/zero-capital correctness wiring so adaptive scoring can
-  // only admit candidates that have already passed their current-evidence gates.
   ensureDynamicProfitabilityAdmissionWiring();
-  // Stage 1 validates the live system from fresh, economically eligible current
-  // evidence rather than waiting for realized profit history that cannot exist
-  // until Stage 2 permits the first governed execution.
   ensureStageOneBootstrapAuthority();
   void canonicalIntelligenceRepository.hydrate();
   ensureCanonicalIntelligenceOutbox();
-  ensureFilteredAlchemyPendingStream();
+
+  if (paidAlchemyPendingEvidenceExplicitlyEnabled()) {
+    ensureFilteredAlchemyPendingStream();
+  } else {
+    logger.info('[AlchemyCostContainment] Paid filtered pending stream withheld', {
+      component: 'CanonicalCryptoCrawlerRuntimeWiring',
+      explicitOptInRequired: true,
+      optInVariable: 'ALCHEMY_FILTERED_PENDING_ENABLED=true',
+      alchemyApiKeyPresenceDoesNotStartPaidStream: true,
+    });
+  }
+
   ensureFilteredMempoolObservability();
   ensureZeroXBudgetObservability();
   ensureAcrossBridgeObservability();
@@ -136,15 +144,20 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     dynamicScale: 'multi_axis_search_formation_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
-    filteredMempoolEvidence: 'alchemy_provider_filtered_hash_first_exact_chain',
+    filteredMempoolEvidence: paidAlchemyPendingEvidenceExplicitlyEnabled()
+      ? 'alchemy_provider_filtered_hash_first_exact_chain_explicit_opt_in'
+      : 'withheld_by_default_cost_policy',
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
-    zeroCapitalRuntimeLifecycle: 'started_after_all_canonical_wrappers_with_fail_closed_retry',
+    zeroCapitalRuntimeLifecycle: 'cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
     zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
     zeroCapitalAtomicStackExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
+    alchemyPaidPendingStreamDefault: false,
+    paidAlchemyRpcRole: 'fallback_only_after_cost_safe_provider_failure',
+    localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
   });
 }
