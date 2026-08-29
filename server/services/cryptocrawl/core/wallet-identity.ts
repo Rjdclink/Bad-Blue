@@ -47,24 +47,13 @@ export function walletFromPrivateKey(value: string | undefined): Wallet {
 
 export function resolveExecutionWalletAddress(environment: NodeJS.ProcessEnv = process.env): ConfiguredWalletAddress {
   const configuredPrivateKey = normalizePrivateKey(environment.WALLET_PRIVATE_KEY);
-  const configuredBridgeAddress = environment.BRIDGE_WALLET_ADDRESS?.trim();
-
   if (configuredPrivateKey) {
-    const executionAddress = walletFromPrivateKey(configuredPrivateKey).address;
-    if (configuredBridgeAddress) {
-      try {
-        if (executionAddress !== utils.getAddress(configuredBridgeAddress)) {
-          return { address: null, source: null, reason: 'Legacy BRIDGE_WALLET_ADDRESS does not match the WALLET_PRIVATE_KEY-derived execution wallet' };
-        }
-      } catch {
-        return { address: null, source: null, reason: 'BRIDGE_WALLET_ADDRESS must be a valid EVM address when retained as a legacy alias' };
-      }
-    }
-    return { address: executionAddress, source: 'execution_wallet' };
+    return { address: walletFromPrivateKey(configuredPrivateKey).address, source: 'execution_wallet' };
   }
 
   // Preserve observation-only compatibility for installations that historically
   // configured only a bridge address. Live execution still requires WALLET_PRIVATE_KEY.
+  const configuredBridgeAddress = environment.BRIDGE_WALLET_ADDRESS?.trim();
   if (!configuredBridgeAddress) {
     return { address: null, source: null, reason: 'WALLET_PRIVATE_KEY is not configured' };
   }
@@ -72,7 +61,7 @@ export function resolveExecutionWalletAddress(environment: NodeJS.ProcessEnv = p
   try {
     return { address: utils.getAddress(configuredBridgeAddress), source: 'bridge_wallet', reason: 'Legacy bridge-address-only observation mode; no signing authority is available' };
   } catch {
-    return { address: null, source: null, reason: 'BRIDGE_WALLET_ADDRESS must be a valid EVM address' };
+    return { address: null, source: null, reason: 'Legacy BRIDGE_WALLET_ADDRESS is invalid and no canonical signer is configured' };
   }
 }
 
@@ -105,36 +94,27 @@ export function resolveOperationalProfitRecipient(
   return configured.address;
 }
 
-export function assertConfiguredWalletAddress(
-  privateKey: string,
-  configuredAddress = process.env.BRIDGE_WALLET_ADDRESS,
-): string {
+/**
+ * Validate an explicitly supplied address against the canonical signer. Legacy
+ * environment aliases are not authority and are deliberately not consulted.
+ */
+export function assertConfiguredWalletAddress(privateKey: string, configuredAddress?: string): string {
   const wallet = walletFromPrivateKey(privateKey);
-  const expectedAddress = normalizeAddress('BRIDGE_WALLET_ADDRESS', configuredAddress);
+  const expectedAddress = normalizeAddress('configured wallet address', configuredAddress);
   if (expectedAddress && wallet.address !== expectedAddress) {
-    throw new Error('Legacy BRIDGE_WALLET_ADDRESS does not match WALLET_PRIVATE_KEY');
-  }
-
-  const acrossDepositor = normalizeAddress('CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS', process.env.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS);
-  if (acrossDepositor && wallet.address !== acrossDepositor) {
-    throw new Error('CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS does not match WALLET_PRIVATE_KEY');
-  }
-
-  const legacyBridgeSigner = normalizePrivateKey(process.env.BRIDGE_SIGNER_PRIVATE_KEY);
-  if (process.env.BRIDGE_SIGNER_PRIVATE_KEY && !legacyBridgeSigner) {
-    throw new Error('Deprecated BRIDGE_SIGNER_PRIVATE_KEY is present but invalid');
-  }
-  if (legacyBridgeSigner && walletFromPrivateKey(legacyBridgeSigner).address !== wallet.address) {
-    throw new Error('Deprecated BRIDGE_SIGNER_PRIVATE_KEY conflicts with WALLET_PRIVATE_KEY');
+    throw new Error('Configured wallet address does not match WALLET_PRIVATE_KEY');
   }
   return wallet.address;
 }
 
 /**
  * Establish one operational signer/wallet identity while preserving legacy env
- * names only as aliases for older bridge code. CRYPTO_PROFIT_WALLET_ADDRESS is
- * deliberately excluded: it is the terminal cash-out destination, never an
- * operational trading/bridge signer identity.
+ * names only as in-process aliases for older bridge code. Any historical alias
+ * value is repaired to the WALLET_PRIVATE_KEY-derived address. The deprecated
+ * duplicate signer/public-key variables are never read as authority.
+ *
+ * CRYPTO_PROFIT_WALLET_ADDRESS is deliberately excluded: it is the terminal
+ * cash-out destination, never an operational trading/bridge signer identity.
  */
 export function installCanonicalWalletConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
@@ -164,18 +144,14 @@ export function installCanonicalWalletConfiguration(
     };
   }
 
-  const executionAddress = assertConfiguredWalletAddress(privateKey);
-  let bridgeAliasInstalled = false;
-  let acrossAliasInstalled = false;
+  const executionAddress = walletFromPrivateKey(privateKey).address;
+  const bridgeAliasInstalled = environment.BRIDGE_WALLET_ADDRESS?.trim() !== executionAddress;
+  const acrossAliasInstalled = environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS?.trim() !== executionAddress;
 
-  if (!environment.BRIDGE_WALLET_ADDRESS?.trim()) {
-    environment.BRIDGE_WALLET_ADDRESS = executionAddress;
-    bridgeAliasInstalled = true;
-  }
-  if (!environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS?.trim()) {
-    environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS = executionAddress;
-    acrossAliasInstalled = true;
-  }
+  // Compatibility only: existing bridge code still reads these names, but they
+  // can no longer represent a second wallet or signer identity.
+  environment.BRIDGE_WALLET_ADDRESS = executionAddress;
+  environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS = executionAddress;
 
   return {
     executionAddress,
