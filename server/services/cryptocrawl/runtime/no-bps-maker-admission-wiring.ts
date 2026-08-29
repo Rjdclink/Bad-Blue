@@ -18,6 +18,7 @@ import {
   type CexFeeEvidence,
 } from '../intelligence/cex-fee-resolver.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
 
 let installed = false;
@@ -235,14 +236,21 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
     capacity?: ScanCapacityDecision,
   ): Promise<Map<string, VerifiedArbitragePlan | null>> => {
     const plans = await originalEvaluateMany(request, symbols, capacity);
+    const governance = getCryptocrawlGovernance();
     const unresolved = symbols
       .map(symbol => symbol.trim().toUpperCase())
       .filter(Boolean)
-      .filter(symbol => !plans.get(symbol));
+      .filter(symbol => !plans.get(symbol))
+      .filter(symbol => {
+        try {
+          governance.requireAllowed('ADVISE', { chain: request.gas?.chain, pair: symbol });
+          return true;
+        } catch {
+          return false;
+        }
+      });
     if (unresolved.length === 0) return plans;
 
-    // One Kraken batch and grouped OKX fee prime for the entire maker fallback set.
-    // Coinbase is intentionally absent: this path requires no additional API key.
     await primeCexFeeEvidenceForVenueSymbols({
       kraken: unresolved,
       okx: unresolved,
@@ -274,6 +282,7 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
       makerRecoveredPositive: makerRecovered,
       feePrimeMode: 'kraken_single_batch_plus_okx_grouped_batch',
       coinbaseDependency: false,
+      governanceRechecked: true,
       bpsExecutionFloor: null,
       executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
     });
@@ -296,5 +305,6 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
     batchOpportunityGraphMakerFallback: true,
     batchFeePrime: 'kraken_single_batch_plus_okx_grouped_batch',
     coinbaseDependency: false,
+    governanceRecheckedBeforeFallback: true,
   });
 }
