@@ -25,6 +25,14 @@ const BALANCER_FEES_ABI = ['function getFlashLoanFeePercentage() view returns (u
 const AAVE_POOL_ABI = [
   'function FLASHLOAN_PREMIUM_TOTAL() view returns (uint128)',
   'function getReserveAToken(address asset) view returns (address)',
+  'function ADDRESSES_PROVIDER() view returns (address)',
+];
+const AAVE_ADDRESSES_PROVIDER_ABI = [
+  'function getPoolDataProvider() view returns (address)',
+];
+const AAVE_DATA_PROVIDER_ABI = [
+  'function getReserveTokensAddresses(address asset) view returns (address aTokenAddress,address stableDebtTokenAddress,address variableDebtTokenAddress)',
+  'function getFlashLoanEnabled(address asset) view returns (bool)',
 ];
 const BALANCER_FIXED_POINT_ONE = 10n ** 18n;
 const AAVE_BPS_DENOMINATOR = 10_000n;
@@ -32,6 +40,12 @@ const AAVE_BPS_DENOMINATOR = 10_000n;
 function requireAddress(label: string, value: string): string {
   if (!ethers.utils.isAddress(value)) throw new Error(`${label} must be a valid EVM address`);
   return ethers.utils.getAddress(value);
+}
+
+function requireNonZeroAddress(label: string, value: string): string {
+  const address = requireAddress(label, value);
+  if (address === ethers.constants.AddressZero) throw new Error(`${label} must not be the zero address`);
+  return address;
 }
 
 function parseAddressMap(raw: string | undefined, label: string): Partial<Record<SupportedExecutionChain, string>> {
@@ -46,7 +60,7 @@ function parseAddressMap(raw: string | undefined, label: string): Partial<Record
   const result: Partial<Record<SupportedExecutionChain, string>> = {};
   for (const [chain, address] of Object.entries(value as Record<string, unknown>)) {
     if (typeof address !== 'string' || !address.trim()) continue;
-    result[chain as SupportedExecutionChain] = requireAddress(`${label}.${chain}`, address);
+    result[chain as SupportedExecutionChain] = requireNonZeroAddress(`${label}.${chain}`, address);
   }
   return result;
 }
@@ -58,7 +72,7 @@ export function resolveAaveV3Pool(
   const mapped = parseAddressMap(environment.ZERO_CAPITAL_AAVE_V3_POOLS, 'ZERO_CAPITAL_AAVE_V3_POOLS');
   const chainSpecific = environment[`ZERO_CAPITAL_AAVE_V3_POOL_${chain.toUpperCase()}`]?.trim();
   const candidate = chainSpecific || mapped[chain];
-  return candidate ? requireAddress(`Aave V3 pool for ${chain}`, candidate) : null;
+  return candidate ? requireNonZeroAddress(`Aave V3 pool for ${chain}`, candidate) : null;
 }
 
 export function calculateMeasuredFlashLoanFee(
@@ -81,10 +95,10 @@ export async function measureBalancerFlashLoanEconomics(input: {
 }): Promise<FlashLoanProviderEconomics | null> {
   const vault = resolveSponsoredReceiverVault(input.chain);
   if (!vault) return null;
-  const asset = requireAddress('flash-loan asset', input.asset);
+  const asset = requireNonZeroAddress('flash-loan asset', input.asset);
   const vaultContract = new Contract(vault, BALANCER_VAULT_ABI, input.provider);
   const token = new Contract(asset, ERC20_ABI, input.provider);
-  const feeCollectorAddress = requireAddress(
+  const feeCollectorAddress = requireNonZeroAddress(
     'Balancer ProtocolFeesCollector',
     await vaultContract.getProtocolFeesCollector() as string,
   );
@@ -119,6 +133,67 @@ export async function measureBalancerFlashLoanEconomics(input: {
   };
 }
 
+async function resolveAaveReserveEvidence(input: {
+  pool: Contract;
+  provider: providers.Provider;
+  asset: string;
+}): Promise<{
+  aTokenAddress: string | null;
+  flashLoanEnabled: boolean | null;
+  provenance: string[];
+}> {
+  let aTokenAddress: string | null = null;
+  const provenance: string[] = [];
+
+  // Newer Aave V3 Pool implementations expose a direct reserve-token getter.
+  try {
+    aTokenAddress = requireNonZeroAddress('Aave V3 reserve aToken', await input.pool.getReserveAToken(input.asset) as string);
+    provenance.push('aave_v3_pool_getReserveAToken');
+  } catch {
+    // Older V3 deployments are handled below through the canonical market
+    // AddressesProvider -> PoolDataProvider path rather than by a static address.
+  }
+
+  let dataProvider: Contract | null = null;
+  try {
+    const addressesProviderAddress = requireNonZeroAddress(
+      'Aave V3 PoolAddressesProvider',
+      await input.pool.ADDRESSES_PROVIDER() as string,
+    );
+    const addressesProvider = new Contract(addressesProviderAddress, AAVE_ADDRESSES_PROVIDER_ABI, input.provider);
+    const dataProviderAddress = requireNonZeroAddress(
+      'Aave V3 PoolDataProvider',
+      await addressesProvider.getPoolDataProvider() as string,
+    );
+    dataProvider = new Contract(dataProviderAddress, AAVE_DATA_PROVIDER_ABI, input.provider);
+    provenance.push('aave_v3_pool_ADDRESSES_PROVIDER', 'aave_v3_addresses_provider_getPoolDataProvider');
+  } catch {
+    dataProvider = null;
+  }
+
+  if (!aTokenAddress && dataProvider) {
+    try {
+      const reserveTokens = await dataProvider.getReserveTokensAddresses(input.asset) as [string, string, string];
+      aTokenAddress = requireNonZeroAddress('Aave V3 reserve aToken', reserveTokens[0]);
+      provenance.push('aave_v3_data_provider_getReserveTokensAddresses');
+    } catch {
+      aTokenAddress = null;
+    }
+  }
+
+  let flashLoanEnabled: boolean | null = null;
+  if (dataProvider) {
+    try {
+      flashLoanEnabled = await dataProvider.getFlashLoanEnabled(input.asset) as boolean;
+      provenance.push('aave_v3_data_provider_getFlashLoanEnabled');
+    } catch {
+      flashLoanEnabled = null;
+    }
+  }
+
+  return { aTokenAddress, flashLoanEnabled, provenance };
+}
+
 export async function measureAaveV3FlashLoanEconomics(input: {
   chain: SupportedExecutionChain;
   provider: providers.Provider;
@@ -126,21 +201,22 @@ export async function measureAaveV3FlashLoanEconomics(input: {
 }): Promise<FlashLoanProviderEconomics | null> {
   const poolAddress = resolveAaveV3Pool(input.chain);
   if (!poolAddress) return null;
-  const asset = requireAddress('flash-loan asset', input.asset);
+  const asset = requireNonZeroAddress('flash-loan asset', input.asset);
   const pool = new Contract(poolAddress, AAVE_POOL_ABI, input.provider);
 
-  let aTokenAddress: string | null = null;
+  const reserveEvidence = await resolveAaveReserveEvidence({ pool, provider: input.provider, asset });
   let availableLiquidity: bigint | null = null;
   let liquidityMeasured = false;
-  try {
-    aTokenAddress = requireAddress('Aave V3 reserve aToken', await pool.getReserveAToken(asset) as string);
-    const token = new Contract(asset, ERC20_ABI, input.provider);
-    const liquidityRaw = await token.balanceOf(aTokenAddress) as BigNumber;
-    availableLiquidity = liquidityRaw.toBigInt();
-    liquidityMeasured = liquidityRaw.gt(0);
-  } catch {
-    // Aave market versions that do not expose getReserveAToken remain fail-closed.
-    // A data-provider fallback can be added without changing this authority boundary.
+  if (reserveEvidence.aTokenAddress) {
+    try {
+      const token = new Contract(asset, ERC20_ABI, input.provider);
+      const liquidityRaw = await token.balanceOf(reserveEvidence.aTokenAddress) as BigNumber;
+      availableLiquidity = liquidityRaw.toBigInt();
+      liquidityMeasured = liquidityRaw.gt(0);
+    } catch {
+      availableLiquidity = null;
+      liquidityMeasured = false;
+    }
   }
 
   let premiumRaw: BigNumber | null = null;
@@ -152,6 +228,8 @@ export async function measureAaveV3FlashLoanEconomics(input: {
   const feeRateNumerator = premiumRaw?.toBigInt() ?? null;
   const feeBps = premiumRaw ? Number(premiumRaw.toString()) : null;
   const feeMeasured = feeRateNumerator !== null && feeRateNumerator >= 0n && feeBps !== null && Number.isFinite(feeBps) && feeBps >= 0;
+  const flashLoanEnablementMeasured = reserveEvidence.flashLoanEnabled !== null;
+  const flashLoanEnabled = reserveEvidence.flashLoanEnabled === true;
 
   return {
     provider: 'aave_v3',
@@ -163,14 +241,22 @@ export async function measureAaveV3FlashLoanEconomics(input: {
     feeRateNumerator: feeMeasured ? feeRateNumerator : null,
     feeRateDenominator: feeMeasured ? AAVE_BPS_DENOMINATOR : null,
     observedAt: Date.now(),
-    executableEvidenceComplete: feeMeasured && liquidityMeasured,
+    executableEvidenceComplete: feeMeasured && liquidityMeasured && flashLoanEnablementMeasured && flashLoanEnabled,
     missingEvidence: [
       ...(!feeMeasured ? ['flash_loan_fee'] : []),
       ...(!liquidityMeasured ? ['flash_loan_liquidity'] : []),
+      ...(!flashLoanEnablementMeasured ? ['flash_loan_enablement'] : []),
+      ...(flashLoanEnablementMeasured && !flashLoanEnabled ? ['flash_loan_disabled_for_reserve'] : []),
     ],
     provenance: [
       'aave_v3_pool_FLASHLOAN_PREMIUM_TOTAL',
-      ...(aTokenAddress ? ['aave_v3_pool_getReserveAToken', 'aave_v3_underlying_balance_at_atoken'] : ['aave_v3_reserve_liquidity_unavailable']),
+      ...reserveEvidence.provenance,
+      ...(reserveEvidence.aTokenAddress
+        ? ['aave_v3_underlying_balance_at_atoken']
+        : ['aave_v3_reserve_liquidity_unavailable']),
+      ...(flashLoanEnablementMeasured
+        ? [`aave_v3_flash_loan_enabled:${flashLoanEnabled}`]
+        : ['aave_v3_flash_loan_enablement_unavailable']),
       'receiver_readiness_separate_authority',
       'synthetic_evidence:false',
     ],
