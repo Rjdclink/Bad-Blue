@@ -42,14 +42,15 @@ function validWebSocketUrl(value: unknown): string | undefined {
 }
 
 /**
- * Cost-safe public RPCs are ordinary blockchain evidence transports, not
- * execution/economic authorities. They are intentionally ranked above paid RPC
- * providers so local Computational Beam/Aries/Cryptara can do the expensive
- * analysis while Alchemy remains a fallback and a gas-sponsorship provider.
+ * No-key RPC mesh for ordinary chain reads. Two independent public transports are
+ * admitted where practical so a single free endpoint outage does not immediately
+ * spill ordinary reads into paid Alchemy. Alchemy remains available to the
+ * provider manager as a fallback and is still untouched for gas sponsorship.
  */
 function costSafePublicDefinitions(): ProviderDefinition[] {
   if (process.env.CRYPTOCRAWL_COST_SAFE_PUBLIC_RPC_ENABLED?.trim().toLowerCase() === 'false') return [];
-  const urls: Partial<Record<SupportedChain, string>> = {
+
+  const primary: Partial<Record<SupportedChain, string>> = {
     ethereum: 'https://ethereum-rpc.publicnode.com',
     polygon: 'https://polygon-bor-rpc.publicnode.com',
     arbitrum: 'https://arbitrum-one-rpc.publicnode.com',
@@ -58,10 +59,34 @@ function costSafePublicDefinitions(): ProviderDefinition[] {
     avalanche: 'https://avalanche-c-chain-rpc.publicnode.com',
     bsc: 'https://bsc-rpc.publicnode.com',
   };
-  return CHAINS.flatMap(chain => {
-    const httpUrl = validHttpUrl(urls[chain]);
-    return httpUrl ? [{ provider: 'CostSafePublicRPC', chain, httpUrl, priority: 100 }] : [];
-  });
+  const secondary: Partial<Record<SupportedChain, string>> = {
+    ethereum: 'https://cloudflare-eth.com',
+    polygon: 'https://polygon-rpc.com',
+    arbitrum: 'https://arb1.arbitrum.io/rpc',
+    optimism: 'https://mainnet.optimism.io',
+    base: 'https://mainnet.base.org',
+    avalanche: 'https://api.avax.network/ext/bc/C/rpc',
+    bsc: 'https://bsc-dataseed.binance.org',
+  };
+
+  const definitions: ProviderDefinition[] = [];
+  for (const chain of CHAINS) {
+    const primaryUrl = validHttpUrl(primary[chain]);
+    const secondaryUrl = validHttpUrl(secondary[chain]);
+    if (primaryUrl) definitions.push({
+      provider: 'CostSafePublicRPCPrimary',
+      chain,
+      httpUrl: primaryUrl,
+      priority: 100,
+    });
+    if (secondaryUrl && secondaryUrl !== primaryUrl) definitions.push({
+      provider: 'CostSafePublicRPCSecondary',
+      chain,
+      httpUrl: secondaryUrl,
+      priority: 95,
+    });
+  }
+  return definitions;
 }
 
 function namedProviderDefinitions(): ProviderDefinition[] {
@@ -150,15 +175,19 @@ async function registerConfiguredMesh(): Promise<void> {
 
   const admitted = outcomes.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
   const failed = outcomes.filter(result => result.status === 'rejected').length;
+  const publicAdmitted = admitted.filter(result => result.provider.startsWith('CostSafePublicRPC')).length;
   logger.info('[DynamicRpcProviderWiring] Configured provider mesh admission completed', {
     component: 'DynamicRpcProviderWiring',
     configuredCandidates: unique.size,
     admitted,
     failed,
+    publicAdmitted,
     endpointUrlsLogged: false,
     providerManagerAuthoritative: true,
     costSafePublicRpcPreferred: true,
-    paidAlchemyRpcRole: 'fallback_only_when_cost_safe_provider_is_unavailable',
+    independentNoKeyPublicFailover: true,
+    paidAlchemyRpcRole: 'last_resort_fallback_after_two_no_key_public_transports_when_available',
+    alchemyGasSponsorshipUntouched: true,
     localComputeRole: 'ComputationalBeam_Aries_Cryptara_analysis_after_bounded_market_evidence',
   });
 }
