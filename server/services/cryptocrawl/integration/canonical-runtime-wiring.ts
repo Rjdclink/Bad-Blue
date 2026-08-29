@@ -24,6 +24,7 @@ import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantin
 import { ensurePredictionMarketDiscoveryWiring } from './prediction-market-discovery-wiring.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
+import { ensureZeroCapitalShadowPriorityWiring } from './zero-capital-shadow-priority-wiring.js';
 import { ensureZeroCapitalSizeRefinementWiring } from './zero-capital-size-refinement-wiring.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
@@ -92,6 +93,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureOracleEvidenceWiring();
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
+  ensureZeroCapitalShadowPriorityWiring();
   // Wrapper order matters: size refinement must happen before flash-provider
   // repricing so the winning notional is subsequently charged the exact measured
   // provider fee/liquidity and bound to the verified receiver.
@@ -173,6 +175,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
     zeroCapitalAtomicStackExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
+    zeroCapitalWorkOrdering: 'expected_net_profit_per_scarcity_unit_with_expiry_urgency_scheduling_only',
     alchemyPaidPendingStreamDefault: false,
     paidAlchemyRpcRole: 'fallback_only_after_two_cost_safe_provider_failures_when_available',
     alchemyStandardTokenReads: 'public_rpc_first_then_enhanced_api_fallback',
