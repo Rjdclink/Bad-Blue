@@ -3,6 +3,7 @@ import { getCryptocrawlGovernance } from '../governance/index.js';
 import { deepLearningStore } from '../learning/deep-learning-store.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
+import { recordSettlementProfitCalibration } from '../learning/settlement-profit-calibrator.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { hydratePrimaryLearningState, persistPrimaryLearningState } from './primary-learning-persistence.js';
 
@@ -57,10 +58,11 @@ export function ensureLearningLifecycleWiring(): void {
 
   instant.recordExecutionOutcome = async (outcome: ExecutionOutcomeObservation): Promise<unknown> => {
     const result = await instantRecordExecutionOutcome(outcome);
-    // Optimization consumes only terminal realized outcomes. It is intentionally
-    // downstream of the canonical learning write so it can never authorize or
-    // rewrite an execution result.
+    // Optimization and calibration consume only terminal realized outcomes. Both
+    // are downstream of the canonical learning write and cannot rewrite or grant
+    // execution authority.
     adaptiveTopologyOptimizer.recordTerminalOutcome(outcome);
+    recordSettlementProfitCalibration(outcome);
     if (getCryptocrawlGovernance().isLongTermMemoryAllowed()) {
       await persistPrimaryLearningState();
     }
@@ -73,6 +75,8 @@ export function ensureLearningLifecycleWiring(): void {
     stageFourPlus: 'primary_postgresql_hydration_plus_legacy_optional_store',
     measuredOutcomePersistence: 'primary_postgresql',
     adaptiveTopologyFeedback: 'terminal_realized_bps_only',
+    settlementProfitCalibration: 'terminal_confirmed_expected_vs_realized_only',
+    settlementCalibrationExecutionAuthority: false,
     adaptiveTopologyExecutionAuthority: false,
   });
 }
