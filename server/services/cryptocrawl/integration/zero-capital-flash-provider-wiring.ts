@@ -6,6 +6,7 @@ import {
 } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import {
+  calculateMeasuredFlashLoanFee,
   measureFlashLoanProviders,
   selectMeasuredFlashLoanProvider,
   type FlashLoanProviderEconomics,
@@ -68,7 +69,7 @@ function updateCandidate(
       provenance: selected
         ? [
             `flash_loan_provider:${selected.provider}`,
-            'measured_flash_loan_fee',
+            'measured_flash_loan_fee_exact_rate',
             'measured_flash_loan_liquidity',
           ]
         : ['flash_loan_provider_unavailable_fail_closed'],
@@ -93,12 +94,16 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
       try {
         const evidence = await providerEvidence(chain, provider, opportunity.inputToken);
         const selected = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount);
-        if (!selected || selected.feeBps === null) {
+        if (!selected) {
           updateCandidate(opportunity, null, 'No flash-loan provider has complete measured fee and liquidity evidence for this amount');
           continue;
         }
 
-        const measuredFlashFee = (opportunity.flashLoanAmount * BigInt(Math.round(selected.feeBps))) / 10_000n;
+        const measuredFlashFee = calculateMeasuredFlashLoanFee(selected, opportunity.flashLoanAmount);
+        if (measuredFlashFee === null) {
+          updateCandidate(opportunity, null, 'Selected flash-loan provider is missing an exact measured fee rate');
+          continue;
+        }
         const gas = opportunity.estimatedGasCostInInputToken || 0n;
         const relay = opportunity.relayFeeInInputToken || 0n;
         const allInCost = measuredFlashFee + gas + relay;
@@ -128,8 +133,8 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           opportunity,
           selected,
           netProfit > 0n
-            ? `Measured ${selected.provider} fee/liquidity keeps the route positive; downstream Cryptara/Monte Carlo/governance remain required`
-            : `Measured ${selected.provider} fee/liquidity repriced the route to ${netProfitBps} BPS; observation only`,
+            ? `Measured ${selected.provider} exact fee/liquidity keeps the route positive; downstream Cryptara/Monte Carlo/governance remain required`
+            : `Measured ${selected.provider} exact fee/liquidity repriced the route to ${netProfitBps} BPS; observation only`,
         );
         if (netProfit > 0n) repriced.push(opportunity);
       } catch (error) {
@@ -151,7 +156,7 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
 
   logger.info('[ZeroCapitalFlashProvider] Live provider economics authority installed', {
     component: 'ZeroCapitalFlashProviderWiring',
-    feeAuthority: 'measured_provider_state',
+    feeAuthority: 'measured_provider_state_exact_rate',
     liquidityAuthority: 'measured_provider_state',
     staticFlashLoanFeeAuthority: false,
     providerSelection: 'lowest_measured_fee_with_sufficient_measured_liquidity',
