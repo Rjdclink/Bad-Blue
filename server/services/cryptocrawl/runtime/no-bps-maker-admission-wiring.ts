@@ -1,5 +1,5 @@
 import logger from '../../../logger.js';
-import { arbitrageVerifier, type QuoteVenue, type VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { arbitrageVerifier, type QuoteVenue, type VerifiedArbitragePlan, type VerifyManyRequest } from '../arbitrage/arbitrage-verifier.js';
 import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 import { floorToIncrement } from '../execution/coinbase-product-policy.js';
 import {
@@ -11,8 +11,14 @@ import {
   observeAriesQueueEcho,
   stressTestAriesSpread,
 } from '../intelligence/aries-microstructure.js';
-import { resolveCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
+import {
+  getCachedCexFeeEvidence,
+  primeCexFeeEvidenceForVenueSymbols,
+  resolveCexFeeEvidence,
+  type CexFeeEvidence,
+} from '../intelligence/cex-fee-resolver.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
+import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
 
 let installed = false;
 
@@ -21,6 +27,29 @@ function authenticatedMakerFeeBps(evidence: CexFeeEvidence | null): number | nul
   if (evidence.makerFeeBps !== null && Number.isFinite(evidence.makerFeeBps)) return evidence.makerFeeBps;
   if (evidence.makerRebateBps !== null && Number.isFinite(evidence.makerRebateBps)) return -Math.abs(evidence.makerRebateBps);
   return null;
+}
+
+function makerBatchConcurrency(): number {
+  const parsed = Number(process.env.CRYPTO_ARBITRAGE_MAKER_BATCH_CONCURRENCY || 8);
+  return Math.max(1, Math.min(16, Number.isFinite(parsed) ? Math.floor(parsed) : 8));
+}
+
+async function runBounded<T>(items: readonly T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
+  if (items.length === 0) return;
+  let cursor = 0;
+  const count = Math.max(1, Math.min(items.length, concurrency));
+  await Promise.all(Array.from({ length: count }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      await worker(items[index]);
+    }
+  }));
+}
+
+async function makerFeeEvidence(venue: 'kraken' | 'okx', symbol: string): Promise<CexFeeEvidence | null> {
+  return getCachedCexFeeEvidence(venue, symbol)
+    || await resolveCexFeeEvidence(venue, symbol).catch(() => null);
 }
 
 async function evaluateNoBpsFloorMaker(input: {
@@ -34,8 +63,8 @@ async function evaluateNoBpsFloorMaker(input: {
   const [krakenBook, okxBook, krakenFee, okxFee] = await Promise.all([
     cexOrderBookStreams.getQuote('kraken', symbol, input.maxQuoteAgeMs).catch(() => null),
     cexOrderBookStreams.getQuote('okx', symbol, input.maxQuoteAgeMs).catch(() => null),
-    resolveCexFeeEvidence('kraken', symbol).catch(() => null),
-    resolveCexFeeEvidence('okx', symbol).catch(() => null),
+    makerFeeEvidence('kraken', symbol),
+    makerFeeEvidence('okx', symbol),
   ]);
   if (!krakenBook || !okxBook) return null;
 
@@ -59,14 +88,11 @@ async function evaluateNoBpsFloorMaker(input: {
       const sellFeeBps = authenticatedMakerFeeBps(feeEvidence[sell.venue]);
       if (buyFeeBps === null || sellFeeBps === null) continue;
 
-      // Post-only maker orders rest on the book: buy at current bid, sell at current ask.
       const buyPrice = buy.quote.bid;
       const sellPrice = sell.quote.ask;
       if (!(buyPrice > 0) || !(sellPrice > buyPrice)) continue;
       const grossSpreadBps = ((sellPrice - buyPrice) / buyPrice) * 10_000;
       const combinedMakerFeeBps = buyFeeBps + sellFeeBps;
-      // No static BPS admission floor. The only economic floor is actual positive
-      // all-in dollar profit after the authenticated maker fees below.
       if (!(grossSpreadBps > combinedMakerFeeBps)) continue;
 
       const [buyConstraints, sellConstraints] = await Promise.all([
@@ -184,8 +210,14 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
     evaluateOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
     verifyOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
+    evaluateMany: (
+      request: VerifyManyRequest,
+      symbols: readonly string[],
+      capacity?: ScanCapacityDecision,
+    ) => Promise<Map<string, VerifiedArbitragePlan | null>>;
   };
   const originalEvaluateOnce = verifier.evaluateOnce.bind(verifier);
+  const originalEvaluateMany = verifier.evaluateMany.bind(verifier);
 
   verifier.evaluateOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
     const existing = await originalEvaluateOnce(request);
@@ -196,6 +228,58 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
       maxQuoteAgeMs: Math.max(250, Number(request?.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000)),
     });
   };
+
+  verifier.evaluateMany = async (
+    request: VerifyManyRequest,
+    symbols: readonly string[],
+    capacity?: ScanCapacityDecision,
+  ): Promise<Map<string, VerifiedArbitragePlan | null>> => {
+    const plans = await originalEvaluateMany(request, symbols, capacity);
+    const unresolved = symbols
+      .map(symbol => symbol.trim().toUpperCase())
+      .filter(Boolean)
+      .filter(symbol => !plans.get(symbol));
+    if (unresolved.length === 0) return plans;
+
+    // One Kraken batch and grouped OKX fee prime for the entire maker fallback set.
+    // Coinbase is intentionally absent: this path requires no additional API key.
+    await primeCexFeeEvidenceForVenueSymbols({
+      kraken: unresolved,
+      okx: unresolved,
+    }).catch(error => {
+      logger.debug('[NoBpsMakerAdmission] Batch maker fee prime degraded', {
+        component: 'NoBpsMakerAdmissionWiring',
+        symbols: unresolved.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    let makerRecovered = 0;
+    await runBounded(unresolved, makerBatchConcurrency(), async symbol => {
+      const makerPlan = await evaluateNoBpsFloorMaker({
+        symbol,
+        notionalUsd: Number(request.notionalUsd || 0),
+        maxQuoteAgeMs: Math.max(250, Number(request.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000)),
+      });
+      if (!makerPlan) return;
+      plans.set(symbol, makerPlan);
+      makerRecovered += 1;
+    });
+
+    logger.info('[NoBpsMakerAdmission] Batch maker recovery completed', {
+      component: 'NoBpsMakerAdmissionWiring',
+      symbolsRequested: symbols.length,
+      takerPlansAlreadyPositive: symbols.length - unresolved.length,
+      makerFallbackEvaluated: unresolved.length,
+      makerRecoveredPositive: makerRecovered,
+      feePrimeMode: 'kraken_single_batch_plus_okx_grouped_batch',
+      coinbaseDependency: false,
+      bpsExecutionFloor: null,
+      executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
+    });
+    return plans;
+  };
+
   verifier.verifyOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
     const plan = await verifier.evaluateOnce(request);
     return plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0 ? plan : null;
@@ -209,5 +293,8 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
     measuredProductConstraintsRequired: true,
     freshWebsocketBooksRequired: true,
     postOnlyExecution: true,
+    batchOpportunityGraphMakerFallback: true,
+    batchFeePrime: 'kraken_single_batch_plus_okx_grouped_batch',
+    coinbaseDependency: false,
   });
 }
