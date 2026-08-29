@@ -12,7 +12,10 @@ export interface CexFeeModeObservation extends CexOrderModeDecision {
   sellFeeSource: string | null;
   buyFeeAgeMs: number | null;
   sellFeeAgeMs: number | null;
+  maxFeeAgeMs: number | null;
+  feeEvidenceFreshnessScore: number | null;
   authenticatedFeeEvidenceComplete: boolean;
+  feeEvidenceCompletenessReason: string;
 }
 
 let latest: CexFeeModeObservation | null = null;
@@ -38,11 +41,21 @@ export function recordCexFeeModeObservation(
     sellFeeEvidence,
   });
   const now = Date.now();
+  const buyFeeAgeMs = buyFeeEvidence ? Math.max(0, now - buyFeeEvidence.observedAt) : null;
+  const sellFeeAgeMs = sellFeeEvidence ? Math.max(0, now - sellFeeEvidence.observedAt) : null;
+  const maxFeeAgeMs = buyFeeAgeMs === null || sellFeeAgeMs === null ? null : Math.max(buyFeeAgeMs, sellFeeAgeMs);
+  const freshnessHalfLifeMs = Math.max(5_000, Math.min(30 * 60_000, Number(process.env.CRYPTOCRAWL_CEX_FEE_FRESHNESS_HALF_LIFE_MS || 300_000)));
+  const feeEvidenceFreshnessScore = maxFeeAgeMs === null ? null : Math.pow(0.5, maxFeeAgeMs / freshnessHalfLifeMs);
   const authenticatedFeeEvidenceComplete = Boolean(
     buyFeeEvidence && sellFeeEvidence &&
     buyFeeEvidence.source !== 'configured_override' &&
     sellFeeEvidence.source !== 'configured_override',
   );
+  const feeEvidenceCompletenessReason = !buyFeeEvidence || !sellFeeEvidence
+    ? 'missing_fee_evidence'
+    : buyFeeEvidence.source === 'configured_override' || sellFeeEvidence.source === 'configured_override'
+      ? 'configured_override_is_not_authenticated_execution_evidence'
+      : 'authenticated_fee_evidence_complete';
   latest = {
     ...decision,
     symbol: context.symbol,
@@ -52,9 +65,12 @@ export function recordCexFeeModeObservation(
     grossSpreadBps: context.grossSpreadBps,
     buyFeeSource: buyFeeEvidence?.source ?? null,
     sellFeeSource: sellFeeEvidence?.source ?? null,
-    buyFeeAgeMs: buyFeeEvidence ? Math.max(0, now - buyFeeEvidence.observedAt) : null,
-    sellFeeAgeMs: sellFeeEvidence ? Math.max(0, now - sellFeeEvidence.observedAt) : null,
+    buyFeeAgeMs,
+    sellFeeAgeMs,
+    maxFeeAgeMs,
+    feeEvidenceFreshnessScore,
     authenticatedFeeEvidenceComplete,
+    feeEvidenceCompletenessReason,
   };
   return { ...latest };
 }
