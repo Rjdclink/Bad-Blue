@@ -129,8 +129,11 @@ async function attemptStageOneBootstrap(): Promise<AutomaticAdvancementResult | 
 }
 
 async function cycle(): Promise<void> {
-  if (cycleInFlight) return cycleInFlight;
-  cycleInFlight = (async () => {
+  if (cycleInFlight) {
+    await cycleInFlight;
+    return;
+  }
+  const work = (async (): Promise<void> => {
     if (stageManager.getState().currentStage !== 1) return;
     const recorded = await recordFreshStageOneValidations();
     if (recorded > 0 || stageManager.getState().proofMetrics.meetsAdvancementCriteria) {
@@ -141,10 +144,13 @@ async function cycle(): Promise<void> {
       component: 'StageOneBootstrapAuthority',
       error: error instanceof Error ? error.message : String(error),
     });
-  }).finally(() => {
-    cycleInFlight = null;
   });
-  return cycleInFlight;
+  cycleInFlight = work;
+  try {
+    await work;
+  } finally {
+    if (cycleInFlight === work) cycleInFlight = null;
+  }
 }
 
 export function ensureStageOneBootstrapAuthority(): void {
