@@ -1,8 +1,5 @@
 import logger from '../../../logger.js';
-import {
-  measuredCandidateRegistry,
-  type MeasuredOpportunityTopology,
-} from '../discovery/measured-candidate-registry.js';
+import { measuredCandidateRegistry, type MeasuredOpportunityTopology } from '../discovery/measured-candidate-registry.js';
 import { getCexFourModeSnapshot } from './cex-four-mode-observability-wiring.js';
 import { getEconomicTransformationSnapshot } from './economic-transformation-wiring.js';
 
@@ -25,57 +22,38 @@ export interface BpsDecompositionSnapshot {
     observationOnlyModes: number;
     bestNetAfterExchangeFeesBps: number | null;
     closestBpsToBreakEven: number | null;
+    medianBpsToBreakEven: number | null;
+    p90BpsToBreakEven: number | null;
+    closestMode: { symbol: string; mode: string; buyVenue: string; sellVenue: string; recoveryEfficiency: number } | null;
   };
-  rescuePortfolio: {
-    candidates: number;
-    dominantCostCouldCoverGap: number;
-    closestBpsToBreakEven: number | null;
-  };
+  rescuePortfolio: { candidates: number; dominantCostCouldCoverGap: number; closestBpsToBreakEven: number | null; };
   authority: 'telemetry_only';
   executionAuthority: false;
 }
 
-const TOPOLOGIES: MeasuredOpportunityTopology[] = [
-  'CEX_CEX',
-  'DEX_ATOMIC',
-  'ZERO_CAPITAL_ATOMIC',
-  'CROSS_CHAIN',
-  'MEMPOOL_BACKRUN',
-  'LIQUIDATION',
-  'MAKER_CEX',
-  'FUNDING_ARBITRAGE',
-];
-
+const TOPOLOGIES: MeasuredOpportunityTopology[] = ['CEX_CEX','DEX_ATOMIC','ZERO_CAPITAL_ATOMIC','CROSS_CHAIN','MEMPOOL_BACKRUN','LIQUIDATION','MAKER_CEX','FUNDING_ARBITRAGE'];
 let timer: NodeJS.Timeout | null = null;
 let latest: BpsDecompositionSnapshot | null = null;
 
-function finite(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-function average(values: number[]): number | null {
+function finite(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value); }
+function average(values: number[]): number | null { return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length; }
+function percentile(values: number[], fraction: number): number | null {
   if (values.length === 0) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * fraction)))];
 }
 
 function topologySnapshot(topology: MeasuredOpportunityTopology): TopologyBpsSnapshot {
   const candidates = measuredCandidateRegistry.getRecent(2048).filter(candidate => candidate.topology === topology);
   const withBps = candidates.filter(candidate => finite(candidate.economics.netProfitBps));
-  const bpsToBreakEven = withBps
-    .map(candidate => candidate.economics.bpsToBreakEven)
-    .filter(finite);
-  const allIn = withBps
-    .map(candidate => candidate.economics.allInCostBps)
-    .filter(finite);
-  const nearBreakEven = withBps.filter(candidate => Number(candidate.economics.netProfitBps) <= 0);
+  const bpsToBreakEven = withBps.map(candidate => candidate.economics.bpsToBreakEven).filter(finite);
+  const allIn = withBps.map(candidate => candidate.economics.allInCostBps).filter(finite);
   return {
     observed: candidates.length,
     observedWithNetBps: withBps.length,
     positive: withBps.filter(candidate => Number(candidate.economics.netProfitBps) > 0).length,
-    nearBreakEven: nearBreakEven.length,
-    bestNetProfitBps: withBps.length > 0
-      ? Math.max(...withBps.map(candidate => Number(candidate.economics.netProfitBps)))
-      : null,
+    nearBreakEven: withBps.filter(candidate => Number(candidate.economics.netProfitBps) <= 0).length,
+    bestNetProfitBps: withBps.length > 0 ? Math.max(...withBps.map(candidate => Number(candidate.economics.netProfitBps))) : null,
     averageBpsToBreakEven: average(bpsToBreakEven),
     averageAllInCostBps: average(allIn),
   };
@@ -85,46 +63,40 @@ function refresh(): void {
   const byTopology = Object.fromEntries(TOPOLOGIES.map(topology => [topology, topologySnapshot(topology)])) as Record<MeasuredOpportunityTopology, TopologyBpsSnapshot>;
   const cexModes = getCexFourModeSnapshot();
   const rescue = getEconomicTransformationSnapshot();
-  const cexBreakEven = cexModes.map(item => item.bpsToBreakEven).filter(finite);
+  const cexNegative = cexModes.filter(item => !item.economicallyPositive).sort((a, b) => a.bpsToBreakEven - b.bpsToBreakEven);
+  const cexBreakEven = cexNegative.map(item => item.bpsToBreakEven).filter(finite);
   const rescueBreakEven = rescue.map(item => item.bpsToBreakEven).filter(finite);
+  const closest = cexNegative[0] ?? null;
 
   latest = {
-    observedAt: Date.now(),
-    byTopology,
+    observedAt: Date.now(), byTopology,
     cexFourMode: {
       observedModes: cexModes.length,
       positiveModes: cexModes.filter(item => item.economicallyPositive).length,
       observationOnlyModes: cexModes.filter(item => item.observationOnly).length,
-      bestNetAfterExchangeFeesBps: cexModes.length > 0
-        ? Math.max(...cexModes.map(item => item.netAfterExchangeFeesBps))
-        : null,
+      bestNetAfterExchangeFeesBps: cexModes.length > 0 ? Math.max(...cexModes.map(item => item.netAfterExchangeFeesBps)) : null,
       closestBpsToBreakEven: cexBreakEven.length > 0 ? Math.min(...cexBreakEven) : null,
+      medianBpsToBreakEven: percentile(cexBreakEven, 0.5),
+      p90BpsToBreakEven: percentile(cexBreakEven, 0.9),
+      closestMode: closest ? { symbol: closest.symbol, mode: closest.mode, buyVenue: closest.buyVenue, sellVenue: closest.sellVenue, recoveryEfficiency: closest.recoveryEfficiency } : null,
     },
     rescuePortfolio: {
       candidates: rescue.length,
       dominantCostCouldCoverGap: rescue.filter(item => item.dominantCostAloneCouldCoverGap).length,
       closestBpsToBreakEven: rescueBreakEven.length > 0 ? Math.min(...rescueBreakEven) : null,
     },
-    authority: 'telemetry_only',
-    executionAuthority: false,
+    authority: 'telemetry_only', executionAuthority: false,
   };
 
   logger.info('[BpsDecomposition] Exact measured BPS telemetry refreshed', {
-    component: 'BpsDecompositionObservability',
-    ...latest,
-    syntheticProfitAllowed: false,
-    profitabilityClaimsRequireMeasuredEconomics: true,
+    component: 'BpsDecompositionObservability', ...latest,
+    gapDistributionAuthority: 'measured_telemetry_only', syntheticProfitAllowed: false, profitabilityClaimsRequireMeasuredEconomics: true,
   });
 }
 
 export function getBpsDecompositionSnapshot(): BpsDecompositionSnapshot | null {
   if (!latest) return null;
-  return {
-    ...latest,
-    byTopology: Object.fromEntries(Object.entries(latest.byTopology).map(([key, value]) => [key, { ...value }])) as Record<MeasuredOpportunityTopology, TopologyBpsSnapshot>,
-    cexFourMode: { ...latest.cexFourMode },
-    rescuePortfolio: { ...latest.rescuePortfolio },
-  };
+  return { ...latest, byTopology: Object.fromEntries(Object.entries(latest.byTopology).map(([key, value]) => [key, { ...value }])) as Record<MeasuredOpportunityTopology, TopologyBpsSnapshot>, cexFourMode: { ...latest.cexFourMode }, rescuePortfolio: { ...latest.rescuePortfolio } };
 }
 
 export function ensureBpsDecompositionObservability(): void {
@@ -132,7 +104,6 @@ export function ensureBpsDecompositionObservability(): void {
   refresh();
   if (process.env.NO_INTERVALS !== 'true') {
     const intervalMs = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTOCRAWL_BPS_DECOMPOSITION_INTERVAL_MS || 15_000)));
-    timer = setInterval(refresh, intervalMs);
-    timer.unref?.();
+    timer = setInterval(refresh, intervalMs); timer.unref?.();
   }
 }
