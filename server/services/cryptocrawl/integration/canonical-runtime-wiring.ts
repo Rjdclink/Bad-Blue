@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
+import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
 import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
@@ -25,6 +26,34 @@ import { ensureProviderSpecificZeroCapitalExecutionWiring } from './provider-spe
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
+let zeroCapitalStartPromise: Promise<void> | null = null;
+
+function startCanonicalZeroCapitalRuntime(): void {
+  if (zeroCapitalStartPromise) return;
+  zeroCapitalStartPromise = zeroCapitalEngine.start()
+    .then(() => {
+      logger.info('[ZeroCapitalRuntime] Canonical zero-capital lifecycle started', {
+        component: 'CanonicalCryptoCrawlerRuntimeWiring',
+        lifecycleOwner: 'AutonomousZeroCapitalEngine',
+        receiverFleetInitialization: true,
+        dynamicGraphlessScanning: true,
+        liveExecutionRequested: process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true',
+        syntheticExecution: false,
+      });
+    })
+    .catch(error => {
+      // Core CEX discovery/execution remains independent. A zero-capital startup
+      // failure must be visible and fail closed for that topology without taking
+      // down LegalWhat or silently presenting zero-capital as runtime-ready.
+      zeroCapitalStartPromise = null;
+      logger.error('[ZeroCapitalRuntime] Canonical zero-capital lifecycle failed to start', {
+        component: 'CanonicalCryptoCrawlerRuntimeWiring',
+        error: error instanceof Error ? error.message : String(error),
+        retryOnNextCanonicalWiringCall: true,
+        executionAuthorityGranted: false,
+      });
+    });
+}
 
 export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   if (installed) return;
@@ -36,10 +65,14 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureMonteCarloCalibrationWiring();
   ensureOracleEvidenceWiring();
   ensureDynamicScalePressureWiring();
+  // Install every zero-capital wrapper before starting the lifecycle. The engine
+  // must initialize/deploy/verify receivers and scan through the canonical
+  // wrapped methods, never through its un-wired base implementation.
   ensureZeroCapitalResourceWiring();
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
+  startCanonicalZeroCapitalRuntime();
   ensureOrderBookEvolutionWiring();
   ensureCryptaraCexEvidenceWiring();
   // Authenticated partial CEX inventory can reduce trade size, but only after
@@ -86,6 +119,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     filteredMempoolEvidence: 'alchemy_provider_filtered_hash_first_exact_chain',
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
+    zeroCapitalRuntimeLifecycle: 'started_after_all_canonical_wrappers',
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
     zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
