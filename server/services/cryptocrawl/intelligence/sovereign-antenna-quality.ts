@@ -11,6 +11,8 @@ export interface AntennaProviderQualitySnapshot {
   hitRate: number;
   failureRate: number;
   lastObservedAt: number | null;
+  observationAgeMs: number | null;
+  recencyScore: number;
   qualityScore: number;
   executionAuthority: false;
 }
@@ -49,6 +51,11 @@ function percentile(values: readonly number[], fraction: number): number | null 
   return sorted[index];
 }
 
+function recencyHalfLifeMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_ANTENNA_RECENCY_HALF_LIFE_MS || 15_000);
+  return Number.isFinite(parsed) ? Math.max(1_000, Math.min(5 * 60_000, parsed)) : 15_000;
+}
+
 export function recordAntennaProviderObservation(input: {
   venue: CexStreamVenue;
   latencyMs: number;
@@ -73,14 +80,24 @@ function snapshot(venue: CexStreamVenue, state: MutableVenueQuality): AntennaPro
   const averageLatencyMs = state.latenciesMs.length > 0
     ? state.latenciesMs.reduce((sum, value) => sum + value, 0) / state.latenciesMs.length
     : 0;
+  const p95LatencyMs = percentile(state.latenciesMs, 0.95);
   const hitRate = state.requests > 0 ? state.usableQuotes / state.requests : 0;
   const failureRate = state.requests > 0 ? state.failures / state.requests : 0;
+  const latencyBasis = p95LatencyMs ?? averageLatencyMs;
   const latencyScore = state.latenciesMs.length === 0
     ? 0
-    : 1 / (1 + averageLatencyMs / 100);
-  const qualityScore = Number(Math.max(0, Math.min(1,
-    hitRate * 0.65 + latencyScore * 0.25 + (1 - failureRate) * 0.10,
-  )).toFixed(4));
+    : 1 / (1 + latencyBasis / 100);
+  const observationAgeMs = state.lastObservedAt === null ? null : Math.max(0, Date.now() - state.lastObservedAt);
+  const recencyScore = observationAgeMs === null
+    ? 0
+    : Math.pow(0.5, observationAgeMs / recencyHalfLifeMs());
+  const baseQuality = Math.max(0, Math.min(1,
+    hitRate * 0.60 + latencyScore * 0.25 + (1 - failureRate) * 0.15,
+  ));
+  // A provider with historically good data but stale observations must not stay
+  // artificially dominant. Recency only affects advisory ranking; it grants no
+  // quote, economic, or execution authority.
+  const qualityScore = Number((baseQuality * recencyScore).toFixed(4));
   return {
     venue,
     requests: state.requests,
@@ -88,10 +105,12 @@ function snapshot(venue: CexStreamVenue, state: MutableVenueQuality): AntennaPro
     misses: state.misses,
     failures: state.failures,
     averageLatencyMs: Number(averageLatencyMs.toFixed(2)),
-    p95LatencyMs: percentile(state.latenciesMs, 0.95),
+    p95LatencyMs,
     hitRate: Number(hitRate.toFixed(4)),
     failureRate: Number(failureRate.toFixed(4)),
     lastObservedAt: state.lastObservedAt,
+    observationAgeMs,
+    recencyScore: Number(recencyScore.toFixed(4)),
     qualityScore,
     executionAuthority: false,
   };

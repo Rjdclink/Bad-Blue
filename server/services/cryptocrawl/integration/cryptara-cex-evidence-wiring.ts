@@ -10,7 +10,10 @@ import { ensureCryptaraProviderConsensusWiring } from './cryptara-provider-conse
 
 const log = createLogger('CryptaraCexEvidenceWiring');
 const installed = new WeakSet<object>();
-const CEX_EXECUTION_VENUES = new Set(['coinbase', 'kraken', 'okx']);
+// Keep the active CEX governance surface aligned with the implemented execution
+// venues. Unsupported venues must not receive topology-specific completeness
+// corrections that could make them look more executable than they are.
+const CEX_EXECUTION_VENUES = new Set(['kraken', 'okx']);
 
 type CryptaraAssessmentTarget = {
   assessOpportunity: (context: CryptaraOpportunityContext) => Promise<CryptaraOpportunityAssessment>;
@@ -118,14 +121,12 @@ export function ensureCryptaraCexEvidenceWiring(): Cryptara {
     return correctCexMempoolApplicability(context, assessment);
   };
 
-  // Install the advisory consensus wrapper only after topology-specific evidence
-  // corrections so it observes the final Cryptara assessment without changing
-  // economics, Monte Carlo, governance, or execution authority.
   ensureCryptaraProviderConsensusWiring();
 
   log.info('Cryptara CEX topology evidence wiring installed', {
     cexVenues: [...CEX_EXECUTION_VENUES],
     mempoolEvidenceApplicability: 'not_applicable_for_CEX_CEX',
+    unsupportedVenueCompletenessCorrectionAllowed: false,
     syntheticMempoolEvidenceCreated: false,
     canonicalMonteCarloPreserved: true,
     monteCarloChanged: false,
