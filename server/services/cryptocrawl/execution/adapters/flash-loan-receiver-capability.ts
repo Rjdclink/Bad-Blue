@@ -1,7 +1,11 @@
 import { Contract, ethers, providers } from 'ethers';
-import type { SupportedExecutionChain } from './onchain-payload-builder.js';
+import {
+  buildSwapCallFromLeg,
+  type SupportedExecutionChain,
+  type SupportedSwapProtocol,
+} from './onchain-payload-builder.js';
 import { resolveAaveV3Pool } from './flash-loan-provider-economics.js';
-import { resolveSponsoredReceiverVault } from './sponsored-receiver-manager.js';
+import { resolveSponsoredReceiverVault, type SponsoredCall } from './sponsored-receiver-manager.js';
 
 export type FlashLoanReceiverCapabilityKind = 'balancer_v1' | 'balancer_composite_v2' | 'aave_v3';
 
@@ -16,9 +20,38 @@ export interface VerifiedFlashLoanReceiverCapability {
   provenance: string[];
 }
 
+export interface ReceiverPermissionRouteStep {
+  protocol: string;
+  tokenIn: string;
+  tokenOut: string;
+  fee: number;
+}
+
+const RECEIVER_ADMIN_ABI = [
+  'function allowedTargets(address) view returns (bool)',
+  'function allowedApprovalTokens(address) view returns (bool)',
+  'function setAllowedTarget(address target,bool allowed)',
+  'function setAllowedApprovalToken(address token,bool allowed)',
+];
+
 function requireAddress(label: string, value: string): string {
   if (!ethers.utils.isAddress(value)) throw new Error(`${label} must be a valid EVM address`);
   return ethers.utils.getAddress(value);
+}
+
+function normalizeProtocol(protocol: string): SupportedSwapProtocol {
+  const normalized = protocol.trim().toLowerCase();
+  if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') return 'uniswapV3';
+  if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
+  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushiswap-v3') return 'sushiswapV3';
+  throw new Error(`Unsupported receiver permission protocol: ${protocol}`);
+}
+
+function feeTier(fee: number): 500 | 3000 | 10000 {
+  if (!Number.isFinite(fee) || fee < 0 || fee > 0.1) throw new Error('Receiver permission route fee is invalid');
+  if (fee <= 0.0005) return 500;
+  if (fee <= 0.003) return 3000;
+  return 10000;
 }
 
 function parseAddressMap(raw: string | undefined, label: string): Partial<Record<SupportedExecutionChain, string>> {
@@ -111,4 +144,45 @@ export async function verifyFlashLoanReceiverCapability(input: {
       'synthetic_evidence:false',
     ],
   };
+}
+
+export async function buildMissingReceiverPermissionCalls(input: {
+  chain: SupportedExecutionChain;
+  provider: providers.Provider;
+  receiver: string;
+  route: readonly ReceiverPermissionRouteStep[];
+}): Promise<SponsoredCall[]> {
+  const receiverAddress = requireAddress('receiver', input.receiver);
+  if (input.route.length < 2) return [];
+  const contract = new Contract(receiverAddress, RECEIVER_ADMIN_ABI, input.provider);
+  const iface = new ethers.utils.Interface(RECEIVER_ADMIN_ABI);
+  const targets = new Set<string>();
+  const approvalTokens = new Set<string>();
+
+  for (const step of input.route) {
+    const built = buildSwapCallFromLeg(input.chain, receiverAddress, {
+      protocol: normalizeProtocol(step.protocol),
+      chain: input.chain,
+      tokenIn: requireAddress('permission tokenIn', step.tokenIn),
+      tokenOut: requireAddress('permission tokenOut', step.tokenOut),
+      amountIn: '1',
+      minAmountOut: '1',
+      feeTier: feeTier(step.fee),
+      recipient: receiverAddress,
+      deadlineBufferSeconds: 90,
+    });
+    targets.add(requireAddress('permission target', built.target));
+    approvalTokens.add(requireAddress('permission approval token', built.approvalToken));
+  }
+
+  const calls: SponsoredCall[] = [];
+  for (const target of targets) {
+    const allowed = await contract.allowedTargets(target) as boolean;
+    if (!allowed) calls.push({ to: receiverAddress, data: iface.encodeFunctionData('setAllowedTarget', [target, true]) });
+  }
+  for (const token of approvalTokens) {
+    const allowed = await contract.allowedApprovalTokens(token) as boolean;
+    if (!allowed) calls.push({ to: receiverAddress, data: iface.encodeFunctionData('setAllowedApprovalToken', [token, true]) });
+  }
+  return calls;
 }
