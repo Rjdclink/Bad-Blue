@@ -18,6 +18,7 @@ import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantin
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
+import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
@@ -44,26 +45,17 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   // Install after resource wiring so provider fee/liquidity evidence reprices the
   // complete configured + dynamic route surface before opportunities reach the queue.
   ensureZeroCapitalFlashProviderWiring();
+  // Install after provider repricing. This layer records the final measured route
+  // structure and exact-simulates compatible same-chain/same-token composites; it
+  // grants no execution authority by itself.
+  ensureZeroCapitalAtomicStackWiring();
   ensureOrderBookEvolutionWiring();
-  // CEX_CEX assessment topology is corrected before discovery starts so absent
-  // on-chain mempool evidence cannot become a synthetic completeness penalty for
-  // Coinbase/Kraken/OKX plans. This adapter changes no economics or execution authority.
   ensureCryptaraCexEvidenceWiring();
-  // Durable learning memory rehydrates independently of market discovery and
-  // execution. A database outage therefore degrades historical intelligence only.
   void canonicalIntelligenceRepository.hydrate();
-  // Durable retry/restart recovery is also isolated from the trading hot path.
   ensureCanonicalIntelligenceOutbox();
-  // Mempool evidence is optional and cost-governed. When explicitly enabled,
-  // provider-side router filters emit hashes first and exact-chain detail is
-  // fetched only after relevance has already been established.
   ensureFilteredAlchemyPendingStream();
   ensureFilteredMempoolObservability();
-  // 0x request-budget telemetry is local process admission truth only. It does
-  // not claim provider quotas and cannot authorize execution.
   ensureZeroXBudgetObservability();
-  // Across remains optional bridge evidence. Its health is observable but it
-  // cannot become global readiness, profitability, settlement, or execution authority.
   ensureAcrossBridgeObservability();
   measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
@@ -99,6 +91,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     acrossBridgeGlobalReadinessAuthority: false,
     acrossBridgeExecutionAuthority: false,
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
+    zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal',
+    zeroCapitalAtomicStackExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
