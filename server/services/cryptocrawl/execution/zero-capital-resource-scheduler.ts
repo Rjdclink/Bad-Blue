@@ -13,6 +13,17 @@ export interface ZeroCapitalResourceLease {
   release: () => Promise<void>;
 }
 
+export interface ZeroCapitalResourcePriority {
+  opportunityId: string;
+  expectedNetProfitUsd: number;
+  timeRemainingMs: number;
+  scarcityPressure: number;
+  expectedProfitPerScarcityUnit: number;
+  priorityScore: number;
+  authority: 'scheduling_only';
+  settlementEconomicsChanged: false;
+}
+
 type ResourcePoolSpec = { prefix: string; capacity: number };
 
 const TABLE = 'cryptocrawler_zero_capital_resource_leases';
@@ -25,6 +36,12 @@ function boundedInt(value: unknown, fallback: number, minimum: number, maximum: 
 
 function protocolNames(opportunity: ZeroCapitalOpportunity): string[] {
   return [...new Set(opportunity.route.map(step => step.protocol.trim().toLowerCase()).filter(Boolean))];
+}
+
+function expectedNetUsd(opportunity: ZeroCapitalOpportunity): number {
+  const divisor = 10 ** Math.max(0, Math.min(18, opportunity.inputTokenDecimals));
+  const converted = Number(opportunity.expectedProfit) / divisor;
+  return Number.isFinite(converted) ? Math.max(0, converted) : 0;
 }
 
 class ZeroCapitalResourceScheduler {
@@ -66,9 +83,6 @@ class ZeroCapitalResourceScheduler {
     const chain = opportunity.chain.toUpperCase();
     const emergencyCeiling = boundedInt(process.env.ZERO_CAPITAL_EXECUTION_EMERGENCY_CEILING, 64, 1, 128);
     const chainCapacity = boundedInt(process.env[`ZERO_CAPITAL_MAX_CONCURRENT_${chain}`], 2, 1, 32);
-    // A single externally-owned wallet nonce stream is the conservative default.
-    // Capacity may be raised only when the configured signing transport proves it
-    // can safely allocate independent nonces for that chain.
     const walletNonceCapacity = boundedInt(process.env[`ZERO_CAPITAL_WALLET_NONCE_CAPACITY_${chain}`], 1, 1, 16);
     const receiverCapacity = boundedInt(process.env[`ZERO_CAPITAL_RECEIVER_CAPACITY_${chain}`], 2, 1, 32);
     const providerCapacity = boundedInt(process.env[`ZERO_CAPITAL_PROVIDER_CAPACITY_${chain}`], 4, 1, 32);
@@ -87,6 +101,28 @@ class ZeroCapitalResourceScheduler {
       specs.push({ prefix: `zero:protocol:${opportunity.chain}:${protocol}`, capacity: protocolCapacity });
     }
     return specs;
+  }
+
+  scoreOpportunity(opportunity: ZeroCapitalOpportunity, fundingMode: string, now = Date.now()): ZeroCapitalResourcePriority {
+    const specs = this.specs(opportunity, fundingMode);
+    const scarcityPressure = specs.reduce((sum, spec) => {
+      const usage = this.localUsage.get(spec.prefix) || 0;
+      return sum + (usage + 1) / Math.max(1, spec.capacity);
+    }, 0) / Math.max(1, specs.length);
+    const expectedNetProfitUsd = expectedNetUsd(opportunity);
+    const timeRemainingMs = Math.max(0, opportunity.expiresAt - now);
+    const urgency = 1 + 1 / Math.max(0.05, timeRemainingMs / 1000);
+    const expectedProfitPerScarcityUnit = expectedNetProfitUsd / Math.max(0.05, scarcityPressure);
+    return {
+      opportunityId: opportunity.id,
+      expectedNetProfitUsd,
+      timeRemainingMs,
+      scarcityPressure,
+      expectedProfitPerScarcityUnit,
+      priorityScore: expectedProfitPerScarcityUnit * urgency,
+      authority: 'scheduling_only',
+      settlementEconomicsChanged: false,
+    };
   }
 
   private reserveLocal(specs: readonly ResourcePoolSpec[]): boolean {
