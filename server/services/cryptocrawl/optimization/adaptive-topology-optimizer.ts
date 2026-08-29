@@ -15,6 +15,16 @@ export interface TopologyPerformanceState {
   priorityWeight: number;
 }
 
+export interface AdaptiveAssemblyPolicy {
+  empirical: boolean;
+  terminalSamples: number;
+  realizedBpsEwma: number | null;
+  reliabilityEwma: number | null;
+  minIncrementalBps: number;
+  minLegs: number;
+  maxLegs: number;
+}
+
 const TOPOLOGIES: MeasuredOpportunityTopology[] = [
   'CEX_CEX',
   'DEX_ATOMIC',
@@ -55,9 +65,6 @@ function inferredNotionalUsd(opportunityId: string): number | null {
     if (Number.isFinite(inferred) && inferred > 0) return inferred;
   }
 
-  // CEX candidates already carry measured buy/sell prices and gross P&L. Rebuild
-  // the executed notional from baseQty = grossProfit / spread rather than asking
-  // CEX producers to duplicate plan state into learning.
   if ((candidate.topology === 'CEX_CEX' || candidate.topology === 'MAKER_CEX') && grossUsd !== null && grossUsd > 0) {
     const ask = candidate.rawQuotes.find(quote => Number.isFinite(quote.ask))?.ask;
     const bid = candidate.rawQuotes.find(quote => Number.isFinite(quote.bid))?.bid;
@@ -68,8 +75,6 @@ function inferredNotionalUsd(opportunityId: string): number | null {
     }
   }
 
-  // Stablecoin DEX discovery stores amountIn in 6-decimal base units. This is
-  // measured quote evidence, not a nominal/synthetic notional assumption.
   if (candidate.topology === 'DEX_ATOMIC') {
     const amountIn = candidate.rawQuotes.find(quote => quote.amountIn && /^\d+$/.test(quote.amountIn))?.amountIn;
     if (amountIn) {
@@ -139,9 +144,50 @@ class AdaptiveTopologyOptimizer {
     });
     const averageScore = scored.reduce((sum, item) => sum + item.score, 0) / Math.max(1, scored.length);
     for (const item of scored) {
-      // Bounded weights change attention, never execution authority or base coverage.
       item.state.priorityWeight = clamp(item.score / Math.max(0.01, averageScore), 0.50, 2.00);
     }
+  }
+
+  getAssemblyPolicy(): AdaptiveAssemblyPolicy {
+    const empiricalStates = [...this.performance.values()].filter(state =>
+      state.terminalSamples > 0 && state.realizedBpsEwma !== null && state.successRateEwma !== null,
+    );
+    const terminalSamples = empiricalStates.reduce((sum, state) => sum + state.terminalSamples, 0);
+    if (terminalSamples === 0) {
+      return {
+        empirical: false,
+        terminalSamples: 0,
+        realizedBpsEwma: null,
+        reliabilityEwma: null,
+        minIncrementalBps: 0,
+        minLegs: 2,
+        maxLegs: 5,
+      };
+    }
+
+    const sampleWeight = empiricalStates.reduce((sum, state) => sum + state.terminalSamples, 0);
+    const realizedBpsEwma = empiricalStates.reduce(
+      (sum, state) => sum + Math.max(0, state.realizedBpsEwma ?? 0) * state.terminalSamples,
+      0,
+    ) / Math.max(1, sampleWeight);
+    const reliabilityEwma = empiricalStates.reduce(
+      (sum, state) => sum + clamp(state.successRateEwma ?? 0, 0, 1) * state.terminalSamples,
+      0,
+    ) / Math.max(1, sampleWeight);
+
+    // Assembly becomes more selective when realized yield is strong but reliability
+    // is weak. This is an optimization threshold only; it never turns a negative leg positive.
+    const minIncrementalBps = Math.max(0, realizedBpsEwma * (0.05 + (1 - reliabilityEwma) * 0.20));
+    const maxLegs = Math.max(2, Math.min(5, 2 + Math.round(reliabilityEwma * 3)));
+    return {
+      empirical: true,
+      terminalSamples,
+      realizedBpsEwma,
+      reliabilityEwma,
+      minIncrementalBps,
+      minLegs: 2,
+      maxLegs,
+    };
   }
 
   getPriority(topology: MeasuredOpportunityTopology): number {
