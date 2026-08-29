@@ -10,6 +10,7 @@ import { ensureAcrossBridgeObservability } from './across-bridge-observability.j
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
 import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
+import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constrained-cex-execution-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
@@ -41,6 +42,10 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureZeroCapitalAtomicStackWiring();
   ensureOrderBookEvolutionWiring();
   ensureCryptaraCexEvidenceWiring();
+  // Authenticated partial CEX inventory can reduce trade size, but only after
+  // the authoritative verifier re-prices that smaller trade from fresh books
+  // and current fee evidence. Zero inventory still remains a hard blocker.
+  ensureInventoryConstrainedCexExecutionWiring();
   // Installed after CEX/zero-capital correctness wiring so adaptive scoring can
   // only admit candidates that have already passed their current-evidence gates.
   ensureDynamicProfitabilityAdmissionWiring();
@@ -67,6 +72,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     historicalProofRequiredBeforeFirstExecution: false,
     stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history',
     adaptiveThresholdAuthority: 'terminal_realized_outcomes',
+    bpsExecutionFloor: null,
+    executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
+    cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
     legacyMasterOrchestratorRequired: false,
     executionAuthorityGranted: false,
     executionMetrics: 'terminal_settlement_only',
