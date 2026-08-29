@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { installCanonicalWalletConfiguration } from '../core/wallet-identity.js';
 import {
   createCryptoCrawlerCoreLifecycle,
   type CryptoCrawlerCoreLifecycle,
@@ -8,7 +9,24 @@ let lifecyclePromise: Promise<CryptoCrawlerCoreLifecycle> | null = null;
 let zeroCapitalProfitWiringScheduled = false;
 let coinbaseReadinessScheduled = false;
 let rainbowProfitBridgeScheduled = false;
+let walletConfigurationInstalled = false;
 let started = false;
+
+function ensureCanonicalWalletConfiguration(): void {
+  if (walletConfigurationInstalled) return;
+  const wallet = installCanonicalWalletConfiguration();
+  walletConfigurationInstalled = true;
+  logger.info('[CryptoCoreRuntime] Canonical wallet architecture installed', {
+    component: 'CryptoCoreRuntime',
+    executionWalletConfigured: Boolean(wallet.executionAddress),
+    terminalPayoutConfigured: Boolean(wallet.terminalPayoutAddress),
+    bridgeAliasInstalled: wallet.bridgeAliasInstalled,
+    acrossAliasInstalled: wallet.acrossAliasInstalled,
+    deprecatedVariablesPresent: wallet.deprecatedVariablesPresent,
+    operationalProfitDestination: 'WALLET_PRIVATE_KEY-derived execution wallet',
+    terminalPayoutDestination: 'CRYPTO_PROFIT_WALLET_ADDRESS',
+  });
+}
 
 function scheduleZeroCapitalProfitWiring(): void {
   if (zeroCapitalProfitWiringScheduled) return;
@@ -50,7 +68,7 @@ function scheduleRainbowProfitBridge(): void {
       .then(module => module.ensureRainbowProfitBridgeWiring())
       .catch(error => {
         rainbowProfitBridgeScheduled = false;
-        logger.warn('[CryptoCoreRuntime] Rainbow Bridge unavailable; realized profits remain at source', {
+        logger.warn('[CryptoCoreRuntime] Treasury retention wiring unavailable; realized profits remain at source', {
           component: 'CryptoCoreRuntime',
           error: error instanceof Error ? error.message : String(error),
         });
@@ -60,6 +78,7 @@ function scheduleRainbowProfitBridge(): void {
 
 async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
   if (!lifecyclePromise) {
+    ensureCanonicalWalletConfiguration();
     lifecyclePromise = Promise.all([
       import('./positive-profit-capture-wiring.js'),
       import('./no-bps-maker-admission-wiring.js'),
@@ -112,6 +131,7 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
  * Producer-specific provider/rate failures degrade only their own topology.
  */
 export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
+  ensureCanonicalWalletConfiguration();
   const lifecycle = await getLifecycle();
   const changed = lifecycle.start();
   started = lifecycle.isStarted();
@@ -138,6 +158,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     zeroCapitalRealizedProfitPolicyScheduled: true,
     coinbaseReadinessProbeScheduled: true,
     rainbowProfitBridgeScheduled: true,
+    canonicalWalletArchitectureInstalled: true,
     fundingRateDiscovery: 'owned_by_unified_parallel_controller',
   });
 }

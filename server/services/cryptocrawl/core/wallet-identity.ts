@@ -8,6 +8,25 @@ export interface ConfiguredWalletAddress {
   reason?: string;
 }
 
+export interface CanonicalWalletBootstrap {
+  executionAddress: string | null;
+  terminalPayoutAddress: string | null;
+  terminalPayoutReason?: string;
+  bridgeAliasInstalled: boolean;
+  acrossAliasInstalled: boolean;
+  deprecatedVariablesPresent: string[];
+}
+
+function normalizeAddress(name: string, value: string | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+  try {
+    return utils.getAddress(normalized);
+  } catch {
+    throw new Error(`${name} must be a valid EVM address`);
+  }
+}
+
 export function normalizePrivateKey(value: string | undefined): string | null {
   if (typeof value !== 'string') return null;
 
@@ -26,48 +45,120 @@ export function walletFromPrivateKey(value: string | undefined): Wallet {
   return new Wallet(privateKey);
 }
 
-export function resolveConfiguredWalletAddress(environment: NodeJS.ProcessEnv = process.env): ConfiguredWalletAddress {
+export function resolveExecutionWalletAddress(environment: NodeJS.ProcessEnv = process.env): ConfiguredWalletAddress {
   const configuredPrivateKey = normalizePrivateKey(environment.WALLET_PRIVATE_KEY);
-  const configuredBridgeAddress = environment.BRIDGE_WALLET_ADDRESS?.trim();
-
   if (configuredPrivateKey) {
-    const executionAddress = walletFromPrivateKey(configuredPrivateKey).address;
-    if (configuredBridgeAddress) {
-      try {
-        if (executionAddress !== utils.getAddress(configuredBridgeAddress)) {
-          return { address: null, source: null, reason: 'WALLET_PRIVATE_KEY does not match BRIDGE_WALLET_ADDRESS' };
-        }
-      } catch {
-        return { address: null, source: null, reason: 'BRIDGE_WALLET_ADDRESS must be a valid EVM address' };
-      }
-    }
-    return { address: executionAddress, source: 'execution_wallet' };
+    return { address: walletFromPrivateKey(configuredPrivateKey).address, source: 'execution_wallet' };
   }
 
+  // Preserve observation-only compatibility for installations that historically
+  // configured only a bridge address. Live execution still requires WALLET_PRIVATE_KEY.
+  const configuredBridgeAddress = environment.BRIDGE_WALLET_ADDRESS?.trim();
   if (!configuredBridgeAddress) {
-    return { address: null, source: null, reason: 'Neither WALLET_PRIVATE_KEY nor BRIDGE_WALLET_ADDRESS is configured' };
+    return { address: null, source: null, reason: 'WALLET_PRIVATE_KEY is not configured' };
   }
 
   try {
-    return { address: utils.getAddress(configuredBridgeAddress), source: 'bridge_wallet' };
+    return { address: utils.getAddress(configuredBridgeAddress), source: 'bridge_wallet', reason: 'Legacy bridge-address-only observation mode; no signing authority is available' };
   } catch {
-    return { address: null, source: null, reason: 'BRIDGE_WALLET_ADDRESS must be a valid EVM address' };
+    return { address: null, source: null, reason: 'Legacy BRIDGE_WALLET_ADDRESS is invalid and no canonical signer is configured' };
   }
 }
 
-export function assertConfiguredWalletAddress(privateKey: string, configuredAddress = process.env.BRIDGE_WALLET_ADDRESS): string {
-  const wallet = walletFromPrivateKey(privateKey);
-  const expectedAddress = configuredAddress?.trim();
-  if (!expectedAddress) return wallet.address;
+/** Backward-compatible name retained for existing callers. */
+export function resolveConfiguredWalletAddress(environment: NodeJS.ProcessEnv = process.env): ConfiguredWalletAddress {
+  return resolveExecutionWalletAddress(environment);
+}
 
-  let normalizedExpected: string;
+export function resolveTerminalPayoutAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
   try {
-    normalizedExpected = utils.getAddress(expectedAddress);
+    return normalizeAddress('CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS);
   } catch {
-    throw new Error('BRIDGE_WALLET_ADDRESS must be a valid EVM address');
+    return null;
   }
-  if (wallet.address !== normalizedExpected) {
-    throw new Error('WALLET_PRIVATE_KEY does not match BRIDGE_WALLET_ADDRESS');
+}
+
+export function resolveOperationalProfitRecipient(
+  explicitRecipient?: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const privateKey = normalizePrivateKey(environment.WALLET_PRIVATE_KEY);
+  if (privateKey) return walletFromPrivateKey(privateKey).address;
+
+  // Test/offline builders may supply an explicit recipient without a live signer.
+  const explicit = normalizeAddress('operational profit recipient', explicitRecipient);
+  if (explicit) return explicit;
+
+  const configured = resolveExecutionWalletAddress(environment);
+  if (!configured.address) throw new Error(configured.reason || 'No operational CryptoCrawler wallet is configured');
+  return configured.address;
+}
+
+/**
+ * Validate an explicitly supplied address against the canonical signer. Legacy
+ * environment aliases are not authority and are deliberately not consulted.
+ */
+export function assertConfiguredWalletAddress(privateKey: string, configuredAddress?: string): string {
+  const wallet = walletFromPrivateKey(privateKey);
+  const expectedAddress = normalizeAddress('configured wallet address', configuredAddress);
+  if (expectedAddress && wallet.address !== expectedAddress) {
+    throw new Error('Configured wallet address does not match WALLET_PRIVATE_KEY');
   }
   return wallet.address;
+}
+
+/**
+ * Establish one operational signer/wallet identity while preserving legacy env
+ * names only as in-process aliases for older bridge code. Any historical alias
+ * value is repaired to the WALLET_PRIVATE_KEY-derived address. The deprecated
+ * duplicate signer/public-key variables are never read as authority.
+ *
+ * CRYPTO_PROFIT_WALLET_ADDRESS is deliberately excluded: it is the terminal
+ * cash-out destination, never an operational trading/bridge signer identity.
+ */
+export function installCanonicalWalletConfiguration(
+  environment: NodeJS.ProcessEnv = process.env,
+): CanonicalWalletBootstrap {
+  const deprecatedVariablesPresent = ['BRIDGE_WALLET_ADDRESS', 'BRIDGE_SIGNER_PRIVATE_KEY', 'WALLET_PUBLIC_KEY']
+    .filter(name => Boolean(environment[name]?.trim()));
+
+  const privateKey = normalizePrivateKey(environment.WALLET_PRIVATE_KEY);
+  if (environment.WALLET_PRIVATE_KEY && !privateKey) {
+    throw new Error('WALLET_PRIVATE_KEY is not a valid 32-byte EVM private key');
+  }
+
+  const rawTerminalPayout = environment.CRYPTO_PROFIT_WALLET_ADDRESS?.trim();
+  const terminalPayoutAddress = resolveTerminalPayoutAddress(environment);
+  const terminalPayoutReason = rawTerminalPayout && !terminalPayoutAddress
+    ? 'CRYPTO_PROFIT_WALLET_ADDRESS is not a valid EVM address; terminal sweep remains disabled while trading can continue'
+    : undefined;
+
+  if (!privateKey) {
+    return {
+      executionAddress: resolveExecutionWalletAddress(environment).address,
+      terminalPayoutAddress,
+      terminalPayoutReason,
+      bridgeAliasInstalled: false,
+      acrossAliasInstalled: false,
+      deprecatedVariablesPresent,
+    };
+  }
+
+  const executionAddress = walletFromPrivateKey(privateKey).address;
+  const bridgeAliasInstalled = environment.BRIDGE_WALLET_ADDRESS?.trim() !== executionAddress;
+  const acrossAliasInstalled = environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS?.trim() !== executionAddress;
+
+  // Compatibility only: existing bridge code still reads these names, but they
+  // can no longer represent a second wallet or signer identity.
+  environment.BRIDGE_WALLET_ADDRESS = executionAddress;
+  environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS = executionAddress;
+
+  return {
+    executionAddress,
+    terminalPayoutAddress,
+    terminalPayoutReason,
+    bridgeAliasInstalled,
+    acrossAliasInstalled,
+    deprecatedVariablesPresent,
+  };
 }
