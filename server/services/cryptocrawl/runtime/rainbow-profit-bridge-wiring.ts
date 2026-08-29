@@ -5,6 +5,7 @@ import { retainedProfitLedger } from '../compensation/retained-profit-ledger.js'
 import { rainbowProfitObservability } from '../compensation/rainbow-profit-observability.js';
 import { rainbowProfitSourceLedger } from '../compensation/rainbow-profit-source-ledger.js';
 import { stageManager } from '../governance/stage-management.js';
+import { ensureTerminalTreasuryLifecycle, stopTerminalTreasuryLifecycle } from './terminal-treasury-lifecycle.js';
 
 let installed = false;
 let listener: (() => void) | null = null;
@@ -24,8 +25,6 @@ async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
     ]);
     void rainbowProfitObservability.refresh();
   } catch (error) {
-    // Treasury persistence is downstream of settlement. A persistence failure
-    // must never rewrite or invalidate a correctly settled trade.
     logger.warn('[Treasury] Realized-profit capture deferred', {
       component: 'RainbowProfitBridgeWiring',
       opportunityId: feedback.opportunityId,
@@ -38,14 +37,15 @@ export function ensureRainbowProfitBridgeWiring(): void {
   if (installed) return;
   installed = true;
 
-  // Retain realized profit inside trading inventory during normal operation.
-  // The independent Supabase terminal sweeper is the only component allowed to
-  // convert retained capital into an external wallet withdrawal.
   ensureRainbowMakerFuelReserve();
   rainbowProfitObservability.start();
+  void ensureTerminalTreasuryLifecycle().catch(error => {
+    logger.warn('[Treasury] Persistent lifecycle unavailable; terminal sweep remains fail-closed', {
+      component: 'RainbowProfitBridgeWiring',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 
-  // Reconcile persisted terminal evidence after a restart. Both ledgers are
-  // event-idempotent, so replay cannot create duplicate retained-profit credit.
   for (const evidence of stageManager.getState().cryptaraExecutionEvidence) {
     if (evidence.settlement?.terminal === true) {
       void capture(evidence as unknown as CryptaraExecutionFeedback);
@@ -76,6 +76,7 @@ export function stopRainbowProfitBridgeWiring(): void {
   if (listener) stageManager.off('execution-evidence-recorded', listener);
   listener = null;
   installed = false;
+  stopTerminalTreasuryLifecycle();
   rainbowProfitObservability.stop();
   stopRainbowMakerFuelReserve();
 }
