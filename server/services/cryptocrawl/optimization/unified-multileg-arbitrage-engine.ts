@@ -5,6 +5,7 @@ import {
   type MeasuredOpportunityTopology,
 } from '../discovery/measured-candidate-registry.js';
 import { adaptiveTopologyOptimizer } from './adaptive-topology-optimizer.js';
+import { selectCompositeExecutionPath, type DynamicExecutionPath } from './dynamic-execution-path-selector.js';
 
 export type CompositeExecutionMode = 'single_domain_atomic' | 'coordinated_parallel';
 
@@ -22,6 +23,7 @@ export interface CompositeArbitrageLeg {
   expiresAt: number;
   atomicDomain: string;
   atomicallyComposable: boolean;
+  selectedExecutionPath: DynamicExecutionPath;
 }
 
 export interface UnifiedCompositeArbitragePlan {
@@ -29,6 +31,7 @@ export interface UnifiedCompositeArbitragePlan {
   createdAt: number;
   expiresAt: number;
   executionMode: CompositeExecutionMode;
+  selectedExecutionPath: DynamicExecutionPath;
   atomicDomain: string | null;
   legs: CompositeArbitrageLeg[];
   totalDeterministicNetProfitUsd: number;
@@ -36,8 +39,12 @@ export interface UnifiedCompositeArbitragePlan {
   notionalWeightedNetProfitBps: number | null;
   sequentialCompoundedBps: number | null;
   arithmeticLegBpsSum: number | null;
+  adaptiveMinIncrementalBps: number;
+  adaptivePolicyEmpirical: boolean;
   requestedLegCount: number;
   selectedLegCount: number;
+  compositionGainUsd: number | null;
+  compositionGainVerified: boolean;
   executionAuthority: false;
   requiresIndependentFinalAdmission: true;
   reasons: string[];
@@ -53,16 +60,10 @@ function legNotional(candidate: MeasuredCandidate): number | null {
   if (direct !== null) return direct;
   const netUsd = finitePositive(candidate.economics.deterministicNetProfitUsd);
   const netBps = Number(candidate.economics.netProfitBps);
-  if (netUsd !== null && Number.isFinite(netBps) && netBps > 0) {
-    const inferred = netUsd * 10_000 / netBps;
-    return finitePositive(inferred);
-  }
+  if (netUsd !== null && Number.isFinite(netBps) && netBps > 0) return finitePositive(netUsd * 10_000 / netBps);
   const grossUsd = finitePositive(candidate.economics.grossProfitUsd);
   const grossBps = Number(candidate.economics.grossProfitBps);
-  if (grossUsd !== null && Number.isFinite(grossBps) && grossBps > 0) {
-    const inferred = grossUsd * 10_000 / grossBps;
-    return finitePositive(inferred);
-  }
+  if (grossUsd !== null && Number.isFinite(grossBps) && grossBps > 0) return finitePositive(grossUsd * 10_000 / grossBps);
   return null;
 }
 
@@ -83,20 +84,13 @@ function atomicDomain(candidate: MeasuredCandidate): string {
 }
 
 function atomicallyComposable(candidate: MeasuredCandidate): boolean {
-  if (candidate.status !== 'eligible' || !candidate.executableCapability) return false;
-  if (candidate.chains.length !== 1) return false;
+  if (candidate.status !== 'eligible' || !candidate.executableCapability || candidate.chains.length !== 1) return false;
   if (!['DEX_ATOMIC', 'ZERO_CAPITAL_ATOMIC', 'MEMPOOL_BACKRUN'].includes(candidate.topology)) return false;
-  // A topology name containing ATOMIC is not sufficient proof that multiple
-  // independently formed candidates can be encoded into one transaction.
-  // Explicit payload-composition evidence is required to avoid false atomicity.
   return candidate.provenance.includes('atomic_multileg_payload_composable');
 }
 
 function conflicts(left: CompositeArbitrageLeg, right: CompositeArbitrageLeg): boolean {
   if (left.opportunityId === right.opportunityId) return true;
-  // Avoid double-consuming identical CEX venue+asset inventory or the exact same
-  // on-chain asset route inside one composite unless a future resource authority
-  // provides quantity-aware overlap proofs.
   const leftVenueAssets = new Set(left.venues.flatMap(venue => left.assets.map(asset => `${venue}:${asset}`)));
   if (right.venues.some(venue => right.assets.some(asset => leftVenueAssets.has(`${venue}:${asset}`)))) return true;
   if (left.atomicDomain.startsWith('evm:') && right.atomicDomain === left.atomicDomain) {
@@ -106,7 +100,16 @@ function conflicts(left: CompositeArbitrageLeg, right: CompositeArbitrageLeg): b
   return false;
 }
 
-function toLeg(candidate: MeasuredCandidate, now: number): CompositeArbitrageLeg | null {
+function measuredCompositionGain(candidates: readonly MeasuredCandidate[]): number | null {
+  const values = candidates.flatMap(candidate => candidate.provenance
+    .filter(item => item.startsWith('measured_composite_gain_usd:'))
+    .map(item => Number(item.slice('measured_composite_gain_usd:'.length)))
+    .filter(value => Number.isFinite(value)));
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
+function toLeg(candidate: MeasuredCandidate, now: number, minIncrementalBps: number): CompositeArbitrageLeg | null {
   if (candidate.expiresAt <= now || candidate.status !== 'eligible' || !candidate.executableCapability) return null;
   const netProfitUsd = Number(candidate.economics.deterministicNetProfitUsd);
   if (!Number.isFinite(netProfitUsd) || netProfitUsd <= 0) return null;
@@ -114,7 +117,9 @@ function toLeg(candidate: MeasuredCandidate, now: number): CompositeArbitrageLeg
 
   const notionalUsd = legNotional(candidate);
   const netProfitBps = legBps(candidate, notionalUsd);
-  if (netProfitBps !== null && netProfitBps <= 0) return null;
+  if (netProfitBps !== null && (netProfitBps <= 0 || netProfitBps < minIncrementalBps)) return null;
+  const pathDecision = selectCompositeExecutionPath([candidate])[0];
+  if (!pathDecision?.executableNow) return null;
   const priorityWeight = adaptiveTopologyOptimizer.getPriority(candidate.topology);
   const freshness = Math.max(0, Math.min(1, (candidate.expiresAt - now) / Math.max(1, candidate.expiresAt - candidate.observedAt)));
   const bpsScore = netProfitBps !== null ? Math.log1p(Math.max(0, netProfitBps)) : Math.log1p(netProfitUsd);
@@ -133,6 +138,7 @@ function toLeg(candidate: MeasuredCandidate, now: number): CompositeArbitrageLeg
     expiresAt: candidate.expiresAt,
     atomicDomain: atomicDomain(candidate),
     atomicallyComposable: atomicallyComposable(candidate),
+    selectedExecutionPath: pathDecision.path,
   };
 }
 
@@ -160,10 +166,12 @@ class UnifiedMultiLegArbitrageEngine {
 
   assemble(options?: { minLegs?: number; maxLegs?: number; atomicOnly?: boolean }): UnifiedCompositeArbitragePlan | null {
     const now = Date.now();
-    const minLegs = Math.max(1, Math.min(8, Math.trunc(options?.minLegs ?? Number(process.env.CRYPTOCRAWL_MULTILEG_MIN_LEGS || 3))));
-    const maxLegs = Math.max(minLegs, Math.min(8, Math.trunc(options?.maxLegs ?? Number(process.env.CRYPTOCRAWL_MULTILEG_MAX_LEGS || 5))));
-    const candidates = measuredCandidateRegistry.getRecent(1024)
-      .map(candidate => toLeg(candidate, now))
+    const policy = adaptiveTopologyOptimizer.getAssemblyPolicy();
+    const minLegs = Math.max(1, Math.min(8, Math.trunc(options?.minLegs ?? policy.minLegs)));
+    const maxLegs = Math.max(minLegs, Math.min(8, Math.trunc(options?.maxLegs ?? policy.maxLegs)));
+    const sourceCandidates = measuredCandidateRegistry.getRecent(1024);
+    const candidates = sourceCandidates
+      .map(candidate => toLeg(candidate, now, policy.minIncrementalBps))
       .filter((leg): leg is CompositeArbitrageLeg => leg !== null)
       .sort((left, right) => right.score - left.score || right.deterministicNetProfitUsd - left.deterministicNetProfitUsd);
 
@@ -176,6 +184,11 @@ class UnifiedMultiLegArbitrageEngine {
     }
     if (selected.length < minLegs) return null;
 
+    const selectedCandidates = selected.map(leg => measuredCandidateRegistry.get(leg.opportunityId)).filter((value): value is MeasuredCandidate => value !== null);
+    const pathDecisions = selectCompositeExecutionPath(selectedCandidates).filter(decision => decision.executableNow);
+    const selectedExecutionPath: DynamicExecutionPath = pathDecisions.some(decision => decision.path === 'HYBRID')
+      ? 'HYBRID'
+      : pathDecisions[0]?.path ?? 'UNAVAILABLE';
     const domains = [...new Set(selected.map(leg => leg.atomicDomain))];
     const singleDomainAtomic = domains.length === 1 && selected.every(leg => leg.atomicallyComposable);
     const executionMode: CompositeExecutionMode = singleDomainAtomic ? 'single_domain_atomic' : 'coordinated_parallel';
@@ -185,11 +198,15 @@ class UnifiedMultiLegArbitrageEngine {
       : null;
     const arithmeticLegBpsSum = arithmeticBps(selected);
     const sequentialCompoundedBps = singleDomainAtomic ? compoundedBps(selected) : null;
+    const compositionGainUsd = singleDomainAtomic ? measuredCompositionGain(selectedCandidates) : null;
+    const compositionGainVerified = compositionGainUsd !== null && compositionGainUsd > 0;
+
     const plan: UnifiedCompositeArbitragePlan = {
       planId: `composite:${now}:${selected.map(leg => leg.opportunityId).join('|')}`,
       createdAt: now,
       expiresAt,
       executionMode,
+      selectedExecutionPath,
       atomicDomain: singleDomainAtomic ? domains[0] : null,
       legs: selected.map(leg => ({ ...leg, chains: [...leg.chains], venues: [...leg.venues], assets: [...leg.assets] })),
       totalDeterministicNetProfitUsd: selected.reduce((sum, leg) => sum + leg.deterministicNetProfitUsd, 0),
@@ -197,15 +214,23 @@ class UnifiedMultiLegArbitrageEngine {
       notionalWeightedNetProfitBps: weightedBps(selected),
       sequentialCompoundedBps,
       arithmeticLegBpsSum,
+      adaptiveMinIncrementalBps: policy.minIncrementalBps,
+      adaptivePolicyEmpirical: policy.empirical,
       requestedLegCount: maxLegs,
       selectedLegCount: selected.length,
+      compositionGainUsd,
+      compositionGainVerified,
       executionAuthority: false,
       requiresIndependentFinalAdmission: true,
       reasons: [
-        'Every selected leg is independently deterministic-positive and currently eligible',
+        'Every selected leg is independently deterministic-positive, executable-capable, and currently eligible',
+        `Adaptive assembly threshold=${policy.minIncrementalBps.toFixed(4)} BPS from ${policy.terminalSamples} terminal samples`,
         executionMode === 'single_domain_atomic'
           ? 'All legs provide explicit atomic multi-leg payload composability evidence in one settlement domain'
           : 'Cross-domain legs are coordinated in parallel; they are not falsely represented as one atomic blockchain transaction',
+        compositionGainVerified
+          ? 'Composite gain is backed by explicit measured composite simulation evidence'
+          : 'No extra composition/synergy profit is claimed without measured composite simulation evidence',
         'Arithmetic BPS sum is telemetry only; notional-weighted BPS is the portfolio comparison metric unless the same principal is genuinely reused sequentially',
         'Each leg must re-pass quote freshness, resources, governance, product/protocol constraints, and terminal settlement immediately before execution',
       ],
@@ -215,11 +240,15 @@ class UnifiedMultiLegArbitrageEngine {
       component: 'UnifiedMultiLegArbitrageEngine',
       planId: plan.planId,
       executionMode: plan.executionMode,
+      selectedExecutionPath: plan.selectedExecutionPath,
       selectedLegCount: plan.selectedLegCount,
       topologies: plan.legs.map(leg => leg.topology),
       arithmeticLegBpsSum: plan.arithmeticLegBpsSum,
       notionalWeightedNetProfitBps: plan.notionalWeightedNetProfitBps,
       sequentialCompoundedBps: plan.sequentialCompoundedBps,
+      compositionGainUsd: plan.compositionGainUsd,
+      compositionGainVerified: plan.compositionGainVerified,
+      adaptiveMinIncrementalBps: plan.adaptiveMinIncrementalBps,
       totalDeterministicNetProfitUsd: plan.totalDeterministicNetProfitUsd,
       executionAuthority: false,
     });
