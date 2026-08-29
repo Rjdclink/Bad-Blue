@@ -62,16 +62,32 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
   if (!lifecyclePromise) {
     lifecyclePromise = Promise.all([
       import('./positive-profit-capture-wiring.js'),
+      import('./no-bps-maker-admission-wiring.js'),
       import('./expanded-market-universe-wiring.js'),
       import('./alchemy-filtered-mempool-wiring.js'),
       import('./low-latency-execution-wiring.js'),
       import('./market-focus-wiring.js'),
-    ]).then(([profitPolicy, universePolicy, mempoolPolicy, executionPolicy, marketFocusPolicy]) => {
+      import('../integration/inventory-constrained-cex-execution-wiring.js'),
+    ]).then(([
+      profitPolicy,
+      noBpsMakerPolicy,
+      universePolicy,
+      mempoolPolicy,
+      executionPolicy,
+      marketFocusPolicy,
+      inventoryPolicy,
+    ]) => {
+      // Preserve authority order: canonical profitability/maker settlement wiring
+      // installs first; the no-BPS evaluator then removes only the artificial
+      // spread floor, and inventory re-optimization remains a final pre-execution
+      // feasibility refinement rather than a discovery authority.
       profitPolicy.ensurePositiveProfitCaptureWiring();
+      noBpsMakerPolicy.ensureNoBpsMakerAdmissionWiring();
       universePolicy.ensureExpandedMarketUniverseWiring();
       mempoolPolicy.ensureAlchemyFilteredMempoolWiring();
       executionPolicy.ensureLowLatencyExecutionWiring();
       marketFocusPolicy.ensureMarketFocusWiring();
+      inventoryPolicy.ensureInventoryConstrainedCexExecutionWiring();
       return Promise.all([
         import('../discovery/multi-topology-discovery-controller.js'),
         import('../execution/canonical-execution-scheduler.js'),
@@ -112,6 +128,9 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     adaptiveDiscoveryAttention: 'terminal_realized_performance',
     optionalProviderFailureBlocksCore: false,
     positiveProfitCapturePolicy: 'strict_all_in_net_gt_zero',
+    arbitraryBpsExecutionFloor: false,
+    makerRecoveryEconomics: 'authenticated_fees_plus_fresh_books',
+    inventoryConstrainedCexReoptimization: true,
     expandedMarketUniverse: true,
     filteredMempoolPolicyInstalled: true,
     lowLatencyExecutionCorrectnessPolicyInstalled: true,
