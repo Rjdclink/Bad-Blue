@@ -101,6 +101,8 @@ export function computeProfitabilityScore(
   const freshnessRisk = 1 - freshness;
   const empiricalFailurePressure = empiricalReliability === null ? 0 : 1 - empiricalReliability;
 
+  // No topology-specific static penalty exists. Risk is measured from this
+  // opportunity plus terminally observed reliability/cost calibration.
   const executionRisk = Math.max(
     Number.EPSILON,
     1 + costPressure + slippagePressure + impactPressure + freshnessRisk + empiricalFailurePressure,
