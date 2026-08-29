@@ -2,6 +2,10 @@ import type {
   ConfiguredZeroCapitalRoute,
   QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import {
+  getAriesRouteFormationScore,
+  recordAriesRouteFormationObservation,
+} from '../intelligence/aries-edge-formation-reactor.js';
 
 export interface ZeroCapitalRoutePreselectionEvidence {
   routeId: string;
@@ -25,6 +29,11 @@ export interface ZeroCapitalRoutePreScore {
   gasPressure: number;
   quoteCost: number;
   estimatedDeterministicPositiveProbability: number | null;
+  survivalProbability: number;
+  estimatedHalfLifeMs: number;
+  valueOfInformation: number;
+  formationPriority: number;
+  formationPriorityMultiplier: number;
   authority: 'quote_budget_advisory_only';
   deterministicProfitAuthority: false;
   executionAuthority: false;
@@ -85,6 +94,21 @@ function quoteCost(route: ConfiguredZeroCapitalRoute): number {
   return Math.max(1, route.legs.length * configuredSizes);
 }
 
+function formationFields(routeId: string, consequence: number, cost: number) {
+  const formation = getAriesRouteFormationScore(routeId, {
+    horizonMs: boundedInteger(process.env.ZERO_CAPITAL_FORMATION_HORIZON_MS, 2_000, 100, 60_000),
+    economicConsequence: consequence,
+    quoteCost: cost,
+  });
+  return {
+    survivalProbability: formation.survivalProbability,
+    estimatedHalfLifeMs: formation.estimatedHalfLifeMs,
+    valueOfInformation: formation.valueOfInformation,
+    formationPriority: formation.formationPriority,
+    formationPriorityMultiplier: formation.priorityMultiplier,
+  };
+}
+
 function scoreRoute(
   route: ConfiguredZeroCapitalRoute,
   gasCostUsd: number,
@@ -105,6 +129,7 @@ function scoreRoute(
       gasPressure,
       quoteCost: cost,
       estimatedDeterministicPositiveProbability: item ? positiveProbability(item) : null,
+      ...formationFields(route.id, 0, cost),
       authority: 'quote_budget_advisory_only',
       deterministicProfitAuthority: false,
       executionAuthority: false,
@@ -125,9 +150,11 @@ function scoreRoute(
     Math.min(1, item.recentPositiveNotionalUsd / Math.max(0.01, notionalUsd)),
   );
   const probability = positiveProbability(item);
-  const preScore = probability === null
+  const formation = formationFields(route.id, item.recentNetProfitBps, cost);
+  const baseScore = probability === null
     ? null
     : (edgePotential * executableLiquidity * freshness * probability) / (gasPressure * cost);
+  const preScore = baseScore === null ? null : baseScore * formation.formationPriorityMultiplier;
 
   return {
     routeId: route.id,
@@ -139,6 +166,7 @@ function scoreRoute(
     gasPressure,
     quoteCost: cost,
     estimatedDeterministicPositiveProbability: probability,
+    ...formation,
     authority: 'quote_budget_advisory_only',
     deterministicProfitAuthority: false,
     executionAuthority: false,
@@ -171,7 +199,8 @@ function deterministicExploration(
  * Allocate expensive route-quote work using measured historical evidence only.
  * Structural routes are never deleted. A deterministic exploration slice rotates
  * through stale/unobserved routes so no fixed pair/protocol/notional can hold
- * permanent priority. Pre-score never enters deterministic economics or execution.
+ * permanent priority. Historical edge survival and value-of-information only
+ * multiply the advisory exploitation score; they never become profit evidence.
  */
 export function selectZeroCapitalRoutesForQuote(
   routes: ConfiguredZeroCapitalRoute[],
@@ -245,8 +274,6 @@ export function selectZeroCapitalRoutesForQuote(
   }
 
   return {
-    // Exploitation appears first for deterministic telemetry/readability. The
-    // underlying quoter may still execute admitted independent requests in parallel.
     selectedRoutes: [...exploitation, ...exploration],
     structuralCandidates: routes.length,
     quoteBudget,
@@ -279,15 +306,25 @@ export function recordZeroCapitalRouteQuoteCycle(
     };
     current.attempts += 1;
     current.lastAttemptAt = observedAt;
-    const positive = positiveById.get(route.id);
-    if (positive) {
+    const positiveQuote = positiveById.get(route.id);
+    let observationNotionalUsd = routeNotionalUsd(route);
+    if (positiveQuote) {
       current.positiveQuotes += 1;
       current.lastPositiveAt = observedAt;
-      current.recentNetProfitBps = Number.isFinite(positive.netProfitBps) ? positive.netProfitBps : current.recentNetProfitBps;
-      const notional = Number(positive.amountIn) / Math.pow(10, positive.inputTokenDecimals);
-      if (Number.isFinite(notional) && notional > 0) current.recentPositiveNotionalUsd = notional;
+      current.recentNetProfitBps = Number.isFinite(positiveQuote.netProfitBps) ? positiveQuote.netProfitBps : current.recentNetProfitBps;
+      const notional = Number(positiveQuote.amountIn) / Math.pow(10, positiveQuote.inputTokenDecimals);
+      if (Number.isFinite(notional) && notional > 0) {
+        current.recentPositiveNotionalUsd = notional;
+        observationNotionalUsd = notional;
+      }
     }
     evidence.set(route.id, current);
+    recordAriesRouteFormationObservation({
+      routeId: route.id,
+      observedAt,
+      netProfitBps: positiveQuote && Number.isFinite(positiveQuote.netProfitBps) ? positiveQuote.netProfitBps : null,
+      notionalUsd: observationNotionalUsd,
+    });
   }
 }
 
