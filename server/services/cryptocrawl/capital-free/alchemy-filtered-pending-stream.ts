@@ -76,17 +76,24 @@ const MAX_CACHE = Math.max(100, Math.min(10_000, Number(process.env.ALCHEMY_FILT
 const MAX_DETAILS_PER_MINUTE = Math.max(1, Math.min(5_000, Number(process.env.ALCHEMY_FILTERED_PENDING_MAX_DETAILS_PER_MINUTE || 120)));
 const RECONNECT_MS = Math.max(1_000, Number(process.env.ALCHEMY_FILTERED_PENDING_RECONNECT_MS || 5_000));
 
+function hasLiveAlchemyKey(): boolean {
+  const key = process.env.ALCHEMY_API_KEY?.trim();
+  return !!key && key.toLowerCase() !== 'demo';
+}
+
 function configuredNetworks(): FilteredAlchemyNetwork[] {
   const raw = process.env.ALCHEMY_MEMPOOL_NETWORKS?.trim();
-  if (!raw) return [];
   const supported = new Set<FilteredAlchemyNetwork>(['ethereum', 'polygon']);
+  if (!raw) return hasLiveAlchemyKey() ? ['ethereum', 'polygon'] : [];
   return [...new Set(raw.split(',')
     .map(value => value.trim().toLowerCase())
     .filter((value): value is FilteredAlchemyNetwork => supported.has(value as FilteredAlchemyNetwork)))];
 }
 
 function monitoringEnabled(): boolean {
-  return process.env.ALCHEMY_MEMPOOL_MONITORING_ENABLED === 'true' && process.env.NO_INTERVALS !== 'true';
+  if (process.env.NO_INTERVALS === 'true') return false;
+  if (process.env.ALCHEMY_MEMPOOL_MONITORING_ENABLED === 'false') return false;
+  return hasLiveAlchemyKey();
 }
 
 function validHash(value: unknown): value is string {
@@ -151,6 +158,8 @@ class FilteredAlchemyPendingStream {
       providerSideAddressFilter: true,
       exactChainBinding: true,
       maxDetailFetchesPerMinute: MAX_DETAILS_PER_MINUTE,
+      enabledByDefaultWhenConfigured: process.env.ALCHEMY_MEMPOOL_MONITORING_ENABLED === undefined,
+      explicitDisableSupported: true,
       executionAuthority: false,
     });
   }
