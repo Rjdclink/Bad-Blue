@@ -53,6 +53,7 @@ export class DirectionalBeamLayer extends EventEmitter {
   private activeControllers: Map<string, AbortController> = new Map();
   private maxConcurrency = MAX_LOCAL_CONCURRENCY;
   private monitoringInterval: NodeJS.Timeout | null = null;
+  private cancelledTasks = 0;
 
   constructor() {
     super();
@@ -110,6 +111,18 @@ export class DirectionalBeamLayer extends EventEmitter {
   private async processQueue(): Promise<void> {
     while (this.executionQueue.length > 0) {
       const task = this.executionQueue[0];
+      const deadlineAt = numericPayloadHint(task, 'quantiDeadlineAt');
+      if (deadlineAt !== undefined && Date.now() >= deadlineAt) {
+        this.executionQueue.shift();
+        this.emit('task-failed', {
+          taskId: task.id,
+          error: 'DEADLINE_EXPIRED: Beam task deadline expired while queued',
+          computeAuthority: 'quanti-comp',
+          queueState: 'expired_before_execution',
+        });
+        continue;
+      }
+
       const node = this.selectOptimalNode(task);
       if (node) {
         this.executionQueue.shift();
@@ -246,9 +259,30 @@ export class DirectionalBeamLayer extends EventEmitter {
     }
   }
 
+  /**
+   * Cancel queued work before it reaches Quanti Comp, or propagate cancellation
+   * to Quanti Comp for running work. A queued cancellation emits the same
+   * task-failed contract used by running aborts so the router records one terminal
+   * non-retryable outcome.
+   */
   public cancelTask(taskId: string): boolean {
+    const queuedIndex = this.executionQueue.findIndex(task => task.id === taskId);
+    if (queuedIndex >= 0) {
+      this.executionQueue.splice(queuedIndex, 1);
+      this.cancelledTasks += 1;
+      this.emit('task-failed', {
+        taskId,
+        error: 'TASK_CANCELLED: Beam task cancelled while queued',
+        computeAuthority: 'quanti-comp',
+        queueState: 'cancelled_before_execution',
+      });
+      void this.processQueue();
+      return true;
+    }
+
     const controller = this.activeControllers.get(taskId);
     if (!controller) return false;
+    this.cancelledTasks += 1;
     controller.abort();
     return true;
   }
@@ -316,6 +350,7 @@ export class DirectionalBeamLayer extends EventEmitter {
       activeNodes: Array.from(this.beamNodes.values()).filter(n => n.status === 'active').length,
       queuedTasks: this.executionQueue.length,
       executingTasks: this.activeExecutions.size,
+      cancelledTasks: this.cancelledTasks,
       computeAuthority: 'quanti-comp',
       quantiComp: quantiStatus,
       quantiParallelism: quantiParallelismGovernor.getStatus(),
