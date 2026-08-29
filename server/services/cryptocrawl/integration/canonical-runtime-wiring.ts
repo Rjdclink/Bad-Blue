@@ -17,6 +17,7 @@ import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
+import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
@@ -40,6 +41,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureOracleEvidenceWiring();
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
+  // Install after resource wiring so provider fee/liquidity evidence reprices the
+  // complete configured + dynamic route surface before opportunities reach the queue.
+  ensureZeroCapitalFlashProviderWiring();
   ensureOrderBookEvolutionWiring();
   // CEX_CEX assessment topology is corrected before discovery starts so absent
   // on-chain mempool evidence cannot become a synthetic completeness penalty for
@@ -78,7 +82,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     cexCompetitionEvidenceExecutionAuthority: false,
     measuredOpportunityGraph: 'continuous_multi_topology',
     orderBookEvolution: 'measured_short_horizon_transitions',
-    dynamicScale: 'dual_axis_search_and_profitability_pressure',
+    dynamicScale: 'multi_axis_search_formation_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
     intelligenceMemoryExecutionDependency: false,
@@ -94,6 +98,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     acrossBridgeTelemetry: 'configuration_catalog_quote_freshness_and_failure_health',
     acrossBridgeGlobalReadinessAuthority: false,
     acrossBridgeExecutionAuthority: false,
+    zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
     zeroCapitalExecutionAdmission: 'resource_leases',
     runtimeHeartbeat: true,
   });
