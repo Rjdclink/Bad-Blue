@@ -27,7 +27,7 @@ async function observeOnce(): Promise<void> {
     await Promise.all(venues.flatMap(venue => symbols.map(async symbol => {
       const startedAt = Date.now();
       try {
-        const quote = await cexOrderBookStreams.getQuote(venue, symbol, maxAgeMs).catch(() => null);
+        const quote = await cexOrderBookStreams.getQuote(venue, symbol, maxAgeMs);
         recordAntennaProviderObservation({
           venue,
           latencyMs: Math.max(0, Date.now() - startedAt),
