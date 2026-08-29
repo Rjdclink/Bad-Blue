@@ -22,10 +22,19 @@ export interface CexFeeEvidence {
 
 export interface CexFeePrimeResult {
   requestedSymbols: number;
+  requestedByVenue: Record<CexFeeVenue, number>;
   coinbaseResolved: number;
   krakenResolved: number;
   okxResolved: number;
   unresolved: Array<{ venue: CexFeeVenue; symbol: string }>;
+}
+
+export interface CexSpotProductSupport {
+  venue: CexFeeVenue;
+  symbol: string;
+  supported: boolean;
+  reason: 'quote_time_product_validation' | 'live_spot_pair_directory' | 'not_in_live_spot_pair_directory' | 'live_spot_instrument_directory' | 'not_in_live_spot_instrument_directory';
+  baseUrl?: string;
 }
 
 interface KrakenPairIdentity {
@@ -44,6 +53,13 @@ interface OkxInstrumentDirectorySnapshot {
   expiresAt: number;
   baseUrl: string;
   byCanonical: Map<string, OkxInstrumentIdentity>;
+}
+
+class KrakenUnsupportedPairError extends Error {
+  constructor(readonly symbol: string) {
+    super(`Kraken symbol ${symbol} is not a live spot pair in AssetPairs`);
+    this.name = 'KrakenUnsupportedPairError';
+  }
 }
 
 class OkxUnsupportedInstrumentError extends Error {
@@ -149,17 +165,13 @@ function storeFeeEvidence(evidence: CexFeeEvidence): void {
 }
 
 /**
- * Configured fee numbers are never sufficient for Coinbase or unsupported OKX
- * instruments. Coinbase requires authenticated key permission + account fee tier;
- * OKX requires a live regional instrument check before configured evidence can be
- * considered. Kraken keeps its historical explicit override compatibility.
+ * Cached evidence means evidence that has already passed the venue's product
+ * support authority. A configured number is not returned synchronously here:
+ * Kraken/OKX overrides are accepted only after their live product directory has
+ * established that the exact symbol is executable on that venue.
  */
 export function getCachedCexFeeEvidence(venue: CexFeeVenue, symbolInput: string): CexFeeEvidence | null {
-  const symbol = normalizeSymbolInput(symbolInput);
-  const cached = readFreshCache(venue, symbol);
-  if (cached) return cached;
-  if (venue === 'okx' || venue === 'coinbase') return null;
-  return configuredFee(venue, symbol);
+  return readFreshCache(venue, normalizeSymbolInput(symbolInput));
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
@@ -242,6 +254,14 @@ async function getKrakenPairDirectory(): Promise<Map<string, KrakenPairIdentity>
   return krakenPairDirectoryInFlight;
 }
 
+async function requireKrakenPair(symbol: string): Promise<KrakenPairIdentity> {
+  const directory = await getKrakenPairDirectory();
+  const canonical = canonicalKrakenPairSymbol(symbol);
+  const identity = canonical ? directory.get(canonical) : undefined;
+  if (!identity) throw new KrakenUnsupportedPairError(symbol);
+  return identity;
+}
+
 async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Promise<Map<string, CexFeeEvidence>> {
   const symbols = [...new Set(symbolInputs.map(normalizeSymbolInput).filter(Boolean))];
   const output = new Map<string, CexFeeEvidence>();
@@ -260,12 +280,22 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
   }
 
   const directory = await getKrakenPairDirectory();
+  const unsupportedSymbols: string[] = [];
   const resolved = symbols.map(symbol => {
     const canonical = canonicalKrakenPairSymbol(symbol);
     const identity = canonical ? directory.get(canonical) : undefined;
+    if (!identity) unsupportedSymbols.push(symbol);
     return identity ? { symbol, identity } : null;
   }).filter((value): value is { symbol: string; identity: KrakenPairIdentity } => Boolean(value));
-  if (resolved.length === 0) return output;
+  if (resolved.length === 0) {
+    logger.debug('[CEX Fees] Kraken fee batch skipped because no requested symbols are live spot pairs', {
+      component: 'CexFeeResolver',
+      requestedSymbols: symbols.length,
+      unsupportedSymbols: unsupportedSymbols.length,
+      unsupportedSample: unsupportedSymbols.slice(0, 5),
+    });
+    return output;
+  }
 
   const requestPairs = [...new Set(resolved.map(entry => entry.identity.requestPair))];
   const result = await krakenPrivateRequest('/0/private/TradeVolume', {
@@ -275,12 +305,19 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
   const fees = result.fees && typeof result.fees === 'object' ? result.fees : {};
   const makerFees = result.fees_maker && typeof result.fees_maker === 'object' ? result.fees_maker : {};
   const observedAt = Date.now();
+  const missingAuthenticatedRows: Array<{ symbol: string; responseKey: string }> = [];
 
   for (const { symbol, identity } of resolved) {
     const takerRow = fees[identity.responseKey] as Record<string, unknown> | undefined;
-    if (!takerRow) continue;
+    if (!takerRow) {
+      missingAuthenticatedRows.push({ symbol, responseKey: identity.responseKey });
+      continue;
+    }
     const takerPct = finiteNumber(takerRow.fee);
-    if (takerPct === null) continue;
+    if (takerPct === null) {
+      missingAuthenticatedRows.push({ symbol, responseKey: identity.responseKey });
+      continue;
+    }
     const makerRow = makerFees[identity.responseKey] as Record<string, unknown> | undefined;
     const makerPct = finiteNumber(makerRow?.fee);
     output.set(symbol, {
@@ -298,12 +335,17 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
     component: 'CexFeeResolver',
     requestedSymbols: symbols.length,
     translatedSymbols: resolved.length,
+    unsupportedSymbols: unsupportedSymbols.length,
+    unsupportedSample: unsupportedSymbols.slice(0, 5),
+    authenticatedRowsMissing: missingAuthenticatedRows.length,
+    authenticatedRowsMissingSample: missingAuthenticatedRows.slice(0, 5),
     resolvedSymbols: output.size,
   });
   return output;
 }
 
 async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | null> {
+  await requireKrakenPair(symbol);
   const batched = await fetchKrakenFeeEvidenceBatch([symbol]);
   return batched.get(normalizeSymbolInput(symbol)) || null;
 }
@@ -378,6 +420,33 @@ async function requireOkxInstrument(symbol: string): Promise<{ identity: OkxInst
   return { identity, directory };
 }
 
+export async function getCexSpotProductSupport(venue: CexFeeVenue, symbolInput: string): Promise<CexSpotProductSupport> {
+  const symbol = normalizeSymbolInput(symbolInput);
+  if (venue === 'coinbase') {
+    return { venue, symbol, supported: true, reason: 'quote_time_product_validation' };
+  }
+  if (venue === 'kraken') {
+    const directory = await getKrakenPairDirectory();
+    const canonical = canonicalKrakenPairSymbol(symbol);
+    const supported = Boolean(canonical && directory.has(canonical));
+    return {
+      venue,
+      symbol,
+      supported,
+      reason: supported ? 'live_spot_pair_directory' : 'not_in_live_spot_pair_directory',
+    };
+  }
+  const directory = await getOkxInstrumentDirectory();
+  const supported = directory.byCanonical.has(symbol);
+  return {
+    venue,
+    symbol,
+    supported,
+    reason: supported ? 'live_spot_instrument_directory' : 'not_in_live_spot_instrument_directory',
+    baseUrl: directory.baseUrl,
+  };
+}
+
 function selectOkxFeeRates(row: any, groupId: string | null): { taker: number; maker: number | null } | null {
   const groups = Array.isArray(row?.feeGroup) ? row.feeGroup : [];
   const group = groupId
@@ -433,9 +502,6 @@ async function fetchOkxFeeEvidence(symbol: string): Promise<CexFeeEvidence | nul
   }
 
   const normalizedSymbol = normalizeSymbolInput(symbol);
-  // Fail closed if the regional public instrument directory is unavailable.
-  // We never spend a private fee request merely to discover that a symbol does
-  // not exist on the authenticated account region.
   const { identity, directory } = await requireOkxInstrument(normalizedSymbol);
   const groupId = identity.groupId;
   const query = groupId ? { groupId } : { instId: identity.instId };
@@ -504,8 +570,6 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
     }
   }
 
-  // Shared private authority serializes the trade-fee lane; callers may remain
-  // concurrent without violating the account endpoint's rate limit.
   if (ungrouped.length > 0) {
     await Promise.all(ungrouped.map(async symbol => {
       const evidence = await fetchOkxFeeEvidence(symbol);
@@ -532,6 +596,15 @@ async function fetchLiveFeeEvidence(venue: CexFeeVenue, symbol: string): Promise
   return fetchOkxFeeEvidence(symbol);
 }
 
+async function supportedKrakenConfiguredFallback(symbol: string): Promise<CexFeeEvidence | null> {
+  try {
+    await requireKrakenPair(symbol);
+    return configuredFee('kraken', symbol);
+  } catch {
+    return null;
+  }
+}
+
 async function supportedOkxConfiguredFallback(symbol: string): Promise<CexFeeEvidence | null> {
   try {
     await requireOkxInstrument(symbol);
@@ -541,10 +614,9 @@ async function supportedOkxConfiguredFallback(symbol: string): Promise<CexFeeEvi
   }
 }
 
-function configuredFallbackForVenue(venue: CexFeeVenue, symbol: string): CexFeeEvidence | null {
-  // Coinbase configuration can never substitute for authenticated account fees.
+async function configuredFallbackForVenue(venue: CexFeeVenue, symbol: string): Promise<CexFeeEvidence | null> {
   if (venue === 'coinbase') return null;
-  return venue === 'kraken' ? configuredFee('kraken', symbol) : null;
+  return venue === 'kraken' ? supportedKrakenConfiguredFallback(symbol) : supportedOkxConfiguredFallback(symbol);
 }
 
 export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: string): Promise<CexFeeEvidence | null> {
@@ -558,7 +630,7 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
   const promise = (async () => {
     try {
       const live = await fetchLiveFeeEvidence(venue, symbol);
-      const evidence = live || (venue === 'okx' ? await supportedOkxConfiguredFallback(symbol) : configuredFallbackForVenue(venue, symbol));
+      const evidence = live || await configuredFallbackForVenue(venue, symbol);
       if (evidence) {
         storeFeeEvidence(evidence);
         logger.info('[CEX Fees] Fee evidence resolved', {
@@ -571,14 +643,24 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
           makerRebateBps: evidence.makerRebateBps,
         });
       } else {
-        logger.warn('[CEX Fees] Venue excluded from executable routing: no supported fee evidence', {
+        logger.warn('[CEX Fees] Live venue product has no supported authenticated fee evidence', {
           component: 'CexFeeResolver',
           venue,
           symbol,
+          reason: venue === 'kraken' ? 'live_pair_missing_authenticated_trade_volume_fee_row' : 'authenticated_fee_evidence_unavailable',
         });
       }
       return evidence ? { ...evidence } : null;
     } catch (error) {
+      if (venue === 'kraken' && error instanceof KrakenUnsupportedPairError) {
+        logger.info('[CEX Fees] Kraken symbol excluded before authenticated fee routing', {
+          component: 'CexFeeResolver',
+          venue,
+          symbol,
+          reason: 'not_in_live_spot_pair_directory',
+        });
+        return null;
+      }
       if (venue === 'okx' && error instanceof OkxUnsupportedInstrumentError) {
         logger.info('[CEX Fees] OKX symbol excluded before authenticated fee routing', {
           component: 'CexFeeResolver',
@@ -595,10 +677,10 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
         symbol,
         error: error instanceof Error ? error.message : String(error),
       });
-      const fallback = venue === 'okx' ? await supportedOkxConfiguredFallback(symbol) : configuredFallbackForVenue(venue, symbol);
+      const fallback = await configuredFallbackForVenue(venue, symbol);
       if (fallback) {
         storeFeeEvidence(fallback);
-        logger.info('[CEX Fees] Configured fee fallback resolved', {
+        logger.info('[CEX Fees] Configured fee fallback resolved for verified live product', {
           component: 'CexFeeResolver',
           venue,
           symbol,
@@ -613,18 +695,28 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
   return promise;
 }
 
+function normalizedVenueSymbols(input: Partial<Record<CexFeeVenue, readonly string[]>>): Record<CexFeeVenue, string[]> {
+  const normalize = (values: readonly string[] | undefined) => [...new Set((values || []).map(normalizeSymbolInput).filter(Boolean))];
+  return {
+    coinbase: normalize(input.coinbase),
+    kraken: normalize(input.kraken),
+    okx: normalize(input.okx),
+  };
+}
+
 /**
- * Prime measured fee evidence before parallel economics evaluation. Kraken uses
- * one authenticated TradeVolume request through the shared nonce queue. OKX
- * authenticates its regional origin and reuses live SPOT fee groups. Coinbase
- * has one account-level Advanced Trade SPOT tier and shares it across survivors
- * only after key permissions are authenticated.
+ * Prime only the exact measured venue/symbol combinations that can participate
+ * in the current candidate topology. This retains one authenticated Kraken batch,
+ * one account-level Coinbase tier request, and grouped regional OKX fee requests,
+ * while avoiding private traffic for venues that did not produce a usable quote.
  */
-export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Promise<CexFeePrimeResult> {
-  const symbols = [...new Set(symbolInputs.map(normalizeSymbolInput).filter(Boolean))];
+export async function primeCexFeeEvidenceForVenueSymbols(
+  input: Partial<Record<CexFeeVenue, readonly string[]>>,
+): Promise<CexFeePrimeResult> {
+  const requested = normalizedVenueSymbols(input);
   const unresolved: CexFeePrimeResult['unresolved'] = [];
 
-  const missingCoinbase = symbols.filter(symbol => !readFreshCache('coinbase', symbol));
+  const missingCoinbase = requested.coinbase.filter(symbol => !readFreshCache('coinbase', symbol));
   if (missingCoinbase.length > 0) {
     try {
       const baseEvidence = await fetchCoinbaseFeeEvidence(missingCoinbase[0]);
@@ -640,11 +732,16 @@ export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Prom
     }
   }
 
-  const missingKraken = symbols.filter(symbol => !getCachedCexFeeEvidence('kraken', symbol));
+  const missingKraken = requested.kraken.filter(symbol => !readFreshCache('kraken', symbol));
   if (missingKraken.length > 0) {
     try {
       const batch = await fetchKrakenFeeEvidenceBatch(missingKraken);
       for (const evidence of batch.values()) storeFeeEvidence(evidence);
+      for (const symbol of missingKraken) {
+        if (readFreshCache('kraken', symbol)) continue;
+        const fallback = await supportedKrakenConfiguredFallback(symbol);
+        if (fallback) storeFeeEvidence(fallback);
+      }
     } catch (error) {
       logger.warn('[CEX Fees] Kraken batch prefetch degraded; final per-symbol verification remains available', {
         component: 'CexFeeResolver',
@@ -654,11 +751,16 @@ export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Prom
     }
   }
 
-  const missingOkx = symbols.filter(symbol => !readFreshCache('okx', symbol));
+  const missingOkx = requested.okx.filter(symbol => !readFreshCache('okx', symbol));
   if (missingOkx.length > 0) {
     try {
       const batch = await fetchOkxFeeEvidenceBatch(missingOkx);
       for (const evidence of batch.values()) storeFeeEvidence(evidence);
+      for (const symbol of missingOkx) {
+        if (readFreshCache('okx', symbol)) continue;
+        const fallback = await supportedOkxConfiguredFallback(symbol);
+        if (fallback) storeFeeEvidence(fallback);
+      }
     } catch (error) {
       logger.warn('[CEX Fees] OKX grouped batch prefetch degraded; final supported per-symbol verification remains available', {
         component: 'CexFeeResolver',
@@ -668,17 +770,33 @@ export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Prom
     }
   }
 
-  for (const symbol of symbols) {
-    if (!readFreshCache('coinbase', symbol)) unresolved.push({ venue: 'coinbase', symbol });
-    if (!getCachedCexFeeEvidence('kraken', symbol)) unresolved.push({ venue: 'kraken', symbol });
-    if (!getCachedCexFeeEvidence('okx', symbol)) unresolved.push({ venue: 'okx', symbol });
+  for (const venue of ['coinbase', 'kraken', 'okx'] as const) {
+    for (const symbol of requested[venue]) {
+      if (!readFreshCache(venue, symbol)) unresolved.push({ venue, symbol });
+    }
   }
 
+  const allRequestedSymbols = new Set([...requested.coinbase, ...requested.kraken, ...requested.okx]);
   return {
-    requestedSymbols: symbols.length,
-    coinbaseResolved: symbols.filter(symbol => Boolean(readFreshCache('coinbase', symbol))).length,
-    krakenResolved: symbols.filter(symbol => Boolean(getCachedCexFeeEvidence('kraken', symbol))).length,
-    okxResolved: symbols.filter(symbol => Boolean(getCachedCexFeeEvidence('okx', symbol))).length,
+    requestedSymbols: allRequestedSymbols.size,
+    requestedByVenue: {
+      coinbase: requested.coinbase.length,
+      kraken: requested.kraken.length,
+      okx: requested.okx.length,
+    },
+    coinbaseResolved: requested.coinbase.filter(symbol => Boolean(readFreshCache('coinbase', symbol))).length,
+    krakenResolved: requested.kraken.filter(symbol => Boolean(readFreshCache('kraken', symbol))).length,
+    okxResolved: requested.okx.filter(symbol => Boolean(readFreshCache('okx', symbol))).length,
     unresolved,
   };
+}
+
+/** Backward-compatible all-venue prime for callers that truly need every venue. */
+export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Promise<CexFeePrimeResult> {
+  const symbols = [...new Set(symbolInputs.map(normalizeSymbolInput).filter(Boolean))];
+  return primeCexFeeEvidenceForVenueSymbols({
+    coinbase: symbols,
+    kraken: symbols,
+    okx: symbols,
+  });
 }

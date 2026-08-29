@@ -50,10 +50,27 @@ assert.ok(candidate.missingInformation.includes('authenticated_fee_evidence_requ
 assert.ok(candidate.missingInformation.includes('deterministic_all_in_economics_required'));
 
 measuredCandidateRegistry.record(candidate);
-const metrics = measuredCandidateRegistry.getMetrics(60_000);
+let metrics = measuredCandidateRegistry.getMetrics(60_000);
 assert.equal(metrics.byTopology.CEX_CEX.observed, 1);
 assert.equal(metrics.byTopology.CEX_CEX.deterministicPositive, 0);
 assert.equal(metrics.byTopology.CEX_CEX.eligible, 0);
+assert.equal(metrics.deterministicPositive, 0);
+assert.equal(metrics.eligible, 0);
+assert.ok(
+  metrics.missingInformationFrequency.some(entry => entry.item === 'authenticated_fee_evidence_required' && entry.count === 1),
+  'missing-information telemetry must expose the dominant unresolved evidence without changing admission',
+);
+
+measuredCandidateRegistry.updateStatus(candidate.opportunityId, 'blocked', {
+  executionCapabilityReason: 'authenticated_fee_evidence_unavailable',
+  missingInformation: ['authenticated_fee_evidence_required'],
+});
+metrics = measuredCandidateRegistry.getMetrics(60_000);
+assert.equal(metrics.blocked, 1);
+assert.deepEqual(metrics.blockedReasons[0], {
+  reason: 'authenticated_fee_evidence_unavailable',
+  count: 1,
+});
 assert.equal(metrics.deterministicPositive, 0);
 assert.equal(metrics.eligible, 0);
 

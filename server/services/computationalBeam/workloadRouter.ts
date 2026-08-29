@@ -23,6 +23,16 @@ import { superBatteryLayer } from './superBatteryLayer';
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1000;
 
+function isNonRetryableTaskFailure(error?: string): boolean {
+  const message = String(error || '').toLowerCase();
+  return message.includes('task_cancelled') ||
+    message.includes('cancelled') ||
+    message.includes('canceled') ||
+    message.includes('aborted') ||
+    message.includes('deadline expired') ||
+    message.includes('deadline_expired');
+}
+
 export class WorkloadRouter extends EventEmitter {
   private taskHistory: Map<string, RoutingDecision> = new Map();
   private routedTasks: Map<string, Task> = new Map();
@@ -205,14 +215,27 @@ export class WorkloadRouter extends EventEmitter {
   }
 
   /**
-   * Handle task failure with retry logic
+   * Cancel a queued or running heavy task. Beam owns compatibility routing while
+   * Quanti Comp owns execution cancellation once work has started.
+   */
+  public cancelTask(taskId: string): boolean {
+    const decision = this.taskHistory.get(taskId);
+    if (!decision || decision.selectedNode.layer !== ComputeLayer.BEAM) return false;
+    return directionalBeamLayer.cancelTask(taskId);
+  }
+
+  /**
+   * Handle task failure with retry logic. Cancellation and deadline expiry are
+   * terminal for that task identity: retrying them can resurrect stale market
+   * evidence after the caller explicitly revoked it.
    */
   private async handleTaskFailure(taskId: string, layer: string, error?: string): Promise<void> {
     const attempts = this.retryAttempts.get(taskId) || 0;
     const task = this.routedTasks.get(taskId);
     const maxRetries = Math.min(task?.metadata.maxRetries ?? 0, this.MAX_RETRIES);
+    const nonRetryable = isNonRetryableTaskFailure(error);
 
-    if (task && attempts < maxRetries) {
+    if (task && !nonRetryable && attempts < maxRetries) {
       this.retryAttempts.set(taskId, attempts + 1);
       task.metadata.retries = attempts + 1;
       
@@ -234,7 +257,7 @@ export class WorkloadRouter extends EventEmitter {
       this.retryAttempts.delete(taskId);
       this.routedTasks.delete(taskId);
       this.taskOutcomes.set(taskId, { error });
-      this.emit('task-failed', { taskId, layer, attempts, error });
+      this.emit('task-failed', { taskId, layer, attempts, error, nonRetryable });
     }
   }
 

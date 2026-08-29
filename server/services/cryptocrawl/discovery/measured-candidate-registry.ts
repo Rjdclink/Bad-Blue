@@ -69,6 +69,8 @@ export interface MeasuredCandidateMetrics {
   eligible: number;
   blocked: number;
   activeBacklog: number;
+  blockedReasons: Array<{ reason: string; count: number }>;
+  missingInformationFrequency: Array<{ item: string; count: number }>;
   byTopology: Record<MeasuredOpportunityTopology, {
     observed: number;
     deterministicPositive: number;
@@ -101,6 +103,25 @@ function emptyTopologyMetrics() {
     MAKER_CEX: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
     FUNDING_ARBITRAGE: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
   } satisfies MeasuredCandidateMetrics['byTopology'];
+}
+
+function boundedFrequency(
+  values: readonly string[],
+  keyName: 'reason' | 'item',
+  limit = 12,
+): Array<{ reason: string; count: number }> | Array<{ item: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const raw of values) {
+    const value = raw.trim();
+    if (!value) continue;
+    counts.set(value, (counts.get(value) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, Math.max(1, Math.min(50, limit)))
+    .map(([value, count]) => keyName === 'reason'
+      ? { reason: value, count }
+      : { item: value, count }) as Array<{ reason: string; count: number }> | Array<{ item: string; count: number }>;
 }
 
 class MeasuredCandidateRegistry {
@@ -179,14 +200,27 @@ class MeasuredCandidateRegistry {
       if (candidate.status === 'eligible') metrics.eligible++;
       if (candidate.expiresAt >= now && ['observed', 'enriched', 'deterministic_positive', 'eligible'].includes(candidate.status)) metrics.activeBacklog++;
     }
+
+    const blockedCandidates = recent.filter(candidate => candidate.status === 'blocked');
+    const blockedReasons = boundedFrequency(
+      blockedCandidates.map(candidate => candidate.executionCapabilityReason || 'unspecified_blocker'),
+      'reason',
+    ) as Array<{ reason: string; count: number }>;
+    const missingInformationFrequency = boundedFrequency(
+      recent.flatMap(candidate => candidate.missingInformation),
+      'item',
+    ) as Array<{ item: string; count: number }>;
+
     return {
       windowMs,
       observed: recent.length,
       enriched: recent.filter(candidate => candidate.status === 'enriched').length,
       deterministicPositive: recent.filter(candidate => candidate.status === 'deterministic_positive' || candidate.status === 'eligible').length,
       eligible: recent.filter(candidate => candidate.status === 'eligible').length,
-      blocked: recent.filter(candidate => candidate.status === 'blocked').length,
+      blocked: blockedCandidates.length,
       activeBacklog: Object.values(byTopology).reduce((sum, metrics) => sum + metrics.activeBacklog, 0),
+      blockedReasons,
+      missingInformationFrequency,
       byTopology,
     };
   }

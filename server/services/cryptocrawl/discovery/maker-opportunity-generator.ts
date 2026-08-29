@@ -1,7 +1,11 @@
 import { getActiveExecutableQuoteVenues } from './venue-capability-registry.js';
 import { getLastOrderedMarketUniverseSymbols } from './market-universe-controller.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
-import { primeCexFeeEvidence, getCachedCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
+import {
+  primeCexFeeEvidenceForVenueSymbols,
+  getCachedCexFeeEvidence,
+  type CexFeeEvidence,
+} from '../intelligence/cex-fee-resolver.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
 import { observeMakerPaperProof } from '../intelligence/maker-microstructure-proof.js';
 
@@ -18,10 +22,15 @@ function paperProbeNotionalUsd(): number {
 }
 
 /**
- * Maker topology remains non-executable here. It now performs a parallel shadow
+ * Maker topology remains non-executable here. It performs a parallel shadow
  * proof pass using live WebSocket books: queue depletion, microprice, imbalance,
- * adaptive TTL, paired paper fills and adverse-selection evidence. Paper results
- * are never promoted to realized P&L and never grant execution authority.
+ * adaptive TTL, paired paper fills and adverse-selection evidence. Fee authority
+ * is requested only after both measured venue books exist for the symbol, so an
+ * absent regional product cannot create private fee traffic merely because the
+ * asset exists in the global discovery universe.
+ *
+ * Paper results are never promoted to realized P&L and never grant execution
+ * authority.
  */
 export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandidate[]> {
   const venues = getActiveExecutableQuoteVenues().filter((venue): venue is 'kraken' | 'okx' => venue !== 'coinbase');
@@ -30,23 +39,32 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
     Number(process.env.CRYPTOCRAWL_MAKER_DISCOVERY_SYMBOLS || 12),
   )));
   if (symbols.length === 0) return [];
-  await primeCexFeeEvidence(symbols).catch(() => null);
 
   const ttlMs = Math.max(1_000, Number(process.env.CRYPTOCRAWL_MAKER_CANDIDATE_TTL_MS || 5_000));
   const maxQuoteAgeMs = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
   const output: MeasuredCandidate[] = [];
 
   for (const symbol of symbols) {
-    const quotes = await Promise.all(venues.map(async venue => ({
+    const measuredBooks = await Promise.all(venues.map(async venue => ({
       venue,
       quote: await cexOrderBookStreams.getQuote(venue, symbol, maxQuoteAgeMs).catch(() => null),
-      fee: getCachedCexFeeEvidence(venue, symbol),
     })));
-    const usable = quotes.filter(entry => entry.quote);
-    if (usable.length < 2) continue;
+    const usableBooks = measuredBooks.filter(entry => entry.quote !== null);
+    if (usableBooks.length < 2) continue;
 
-    for (const buy of usable) {
-      for (const sell of usable) {
+    const venueSymbols = {
+      kraken: usableBooks.some(entry => entry.venue === 'kraken') ? [symbol] : [],
+      okx: usableBooks.some(entry => entry.venue === 'okx') ? [symbol] : [],
+    };
+    await primeCexFeeEvidenceForVenueSymbols(venueSymbols).catch(() => null);
+
+    const quotes = usableBooks.map(entry => ({
+      ...entry,
+      fee: getCachedCexFeeEvidence(entry.venue, symbol),
+    }));
+
+    for (const buy of quotes) {
+      for (const sell of quotes) {
         if (buy.venue === sell.venue || !buy.quote || !sell.quote) continue;
         const observedAt = Math.min(buy.quote.timestamp, sell.quote.timestamp);
         const buyMakerFeeBps = effectiveMakerFeeBps(buy.fee);

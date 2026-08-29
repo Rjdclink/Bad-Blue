@@ -146,6 +146,8 @@ export interface VerifyRequest {
   };
 }
 
+export type VerifyManyRequest = Omit<VerifyRequest, 'symbol' | 'minNetProfitUsd'>;
+
 const QUOTE_REQUEST_CACHE_TTL_MS = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_QUOTE_CACHE_MS || 2000));
 const quoteRequestCache = new Map<string, { payload: any; expiresAt: number }>();
 const quoteRequestInFlight = new Map<string, Promise<any>>();
@@ -444,6 +446,57 @@ export class ArbitrageVerifier {
       return this.evaluateSymbolOnce({ ...req, symbol });
     } finally {
       governance.completeAdvisoryCycle('system', 'arb_verifier_cycle_complete');
+    }
+  }
+
+  /**
+   * Evaluate one explicit graph-selected symbol set through exactly one existing
+   * verifier batch. This is the canonical graph handoff: it preserves all quote,
+   * fee, depth, sizing and deterministic economics gates while preventing the
+   * opportunity graph from recursively launching a broad batch for every seed.
+   */
+  async evaluateMany(
+    req: VerifyManyRequest,
+    symbolsInput: readonly string[],
+    capacityInput?: ScanCapacityDecision,
+  ): Promise<Map<string, VerifiedArbitragePlan | null>> {
+    const governance = getCryptocrawlGovernance();
+    if (!Number.isFinite(req.notionalUsd) || req.notionalUsd <= 0) throw new Error('notionalUsd must be > 0');
+    const symbols = [...new Set(symbolsInput.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))];
+    if (symbols.length === 0) return new Map();
+
+    const allowedSymbols: string[] = [];
+    const deniedSymbols: string[] = [];
+    for (const symbol of symbols) {
+      try {
+        governance.requireAllowed('ADVISE', { chain: req.gas?.chain, pair: symbol });
+        allowedSymbols.push(symbol);
+      } catch (error) {
+        deniedSymbols.push(symbol);
+        logger.debug('[ArbVerifier] Batch symbol excluded by governance envelope', {
+          component: 'ArbitrageVerifier',
+          symbol,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const output = new Map<string, VerifiedArbitragePlan | null>();
+    for (const symbol of deniedSymbols) output.set(symbol, null);
+    if (allowedSymbols.length === 0) return output;
+
+    const capacity = capacityInput || getCexScanCapacity(allowedSymbols.length);
+    const batchRequest: Omit<VerifyRequest, 'minNetProfitUsd'> = {
+      ...req,
+      symbol: allowedSymbols[0],
+    };
+
+    try {
+      const plans = await this.evaluateBatch(batchRequest, allowedSymbols, capacity);
+      for (const symbol of allowedSymbols) output.set(symbol, plans.get(symbol) ?? null);
+      return output;
+    } finally {
+      governance.completeAdvisoryCycle('system', 'arb_verifier_batch_cycle_complete');
     }
   }
 

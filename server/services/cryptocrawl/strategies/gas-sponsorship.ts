@@ -3,7 +3,13 @@ import { BigNumber, Wallet, ethers } from 'ethers';
 const ALCHEMY_WALLET_API_BASE = 'https://api.g.alchemy.com/v2';
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_POLL_MS = 1_000;
-const ALCHEMY_MODULAR_ACCOUNT_V2 = '0x69007702764179f14F51cdce752f4f775d74E139';
+// Alchemy Wallet APIs currently support both SemiModularAccount7702 deployments.
+// v1.1.0 became the default for new EIP-7702 delegations on 2026-08-20, while
+// existing v1.0.0 delegations remain valid and are not upgraded in place.
+const ALCHEMY_MODULAR_ACCOUNT_7702_ALLOWLIST = new Set([
+  '0x69007702764179f14f51cdce752f4f775d74e139', // SemiModularAccount7702 v1.0.0
+  '0x77021100bd87b7008e5e1989d0eb38555d0d0000', // SemiModularAccount7702 v1.1.0
+]);
 
 export interface SponsoredCall {
   to: string;
@@ -114,7 +120,7 @@ export class AlchemyGasSponsorshipManager {
     } else if (item?.type === 'authorization' || request.type === 'eth_sign') {
       if (item?.type === 'authorization') {
         const delegationAddress = String(item?.data?.address || '').toLowerCase();
-        if (delegationAddress !== ALCHEMY_MODULAR_ACCOUNT_V2.toLowerCase()) {
+        if (!ALCHEMY_MODULAR_ACCOUNT_7702_ALLOWLIST.has(delegationAddress)) {
           throw new Error(`Refusing unexpected EIP-7702 delegation target: ${delegationAddress || 'missing'}`);
         }
         if (item?.chainId !== undefined && Number(BigInt(item.chainId)) !== expectedChainId) {

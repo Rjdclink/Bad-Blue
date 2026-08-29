@@ -31,6 +31,12 @@ export interface FundingDiscoveryBatch {
 }
 
 const REQUEST_OPTIONS = { maxRetries: 1, baseDelayMs: 200, maxDelayMs: 800, timeoutMs: 3_000 };
+const BINANCE_JURISDICTION_COOLDOWN_MS = Math.max(
+  60_000,
+  Math.min(24 * 60 * 60_000, Number(process.env.CRYPTOCRAWL_BINANCE_JURISDICTION_COOLDOWN_MS || 60 * 60_000)),
+);
+let binanceJurisdictionUnavailableUntil: number | null = null;
+let binanceJurisdictionFailureCount = 0;
 
 function finite(value: unknown): number | null {
   const parsed = Number(value);
@@ -72,8 +78,38 @@ function nextUtcHour(now: number): number {
   return (Math.floor(now / 3_600_000) + 1) * 3_600_000;
 }
 
+function isBinanceJurisdictionFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /HTTP\s*451\b|restricted location|eligibility/i.test(message);
+}
+
 async function fetchBinanceFunding(symbols: Set<string>): Promise<FundingRateObservation[]> {
-  const payload = await fetchJsonWithRetry<any[]>('https://fapi.binance.com/fapi/v1/premiumIndex', REQUEST_OPTIONS);
+  const now = Date.now();
+  if (binanceJurisdictionUnavailableUntil !== null && binanceJurisdictionUnavailableUntil > now) {
+    return [];
+  }
+  if (binanceJurisdictionUnavailableUntil !== null && binanceJurisdictionUnavailableUntil <= now) {
+    binanceJurisdictionUnavailableUntil = null;
+  }
+
+  let payload: any[];
+  try {
+    payload = await fetchJsonWithRetry<any[]>('https://fapi.binance.com/fapi/v1/premiumIndex', REQUEST_OPTIONS);
+  } catch (error) {
+    if (!isBinanceJurisdictionFailure(error)) throw error;
+    binanceJurisdictionFailureCount += 1;
+    binanceJurisdictionUnavailableUntil = Date.now() + BINANCE_JURISDICTION_COOLDOWN_MS;
+    logger.warn('[FundingDiscovery] Binance Futures jurisdiction circuit opened after HTTP 451/eligibility rejection', {
+      component: 'FundingRateDiscovery',
+      executionAuthority: false,
+      failureCount: binanceJurisdictionFailureCount,
+      cooldownMs: BINANCE_JURISDICTION_COOLDOWN_MS,
+      retryAt: binanceJurisdictionUnavailableUntil,
+      reason: 'jurisdiction_or_eligibility_unavailable',
+    });
+    throw error;
+  }
+
   if (!Array.isArray(payload)) throw new Error('Binance USD-M premium index response was not an array');
   const observedAt = Date.now();
   return payload.flatMap(row => {
@@ -97,7 +133,6 @@ async function fetchBinanceFunding(symbols: Set<string>): Promise<FundingRateObs
       perpReferencePrice,
       entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice),
       observedAt,
-      // Binance remains discovery-only in the authoritative venue registry.
       executableWithCurrentSpotCredentials: false,
       provenance: ['binance_usdm_public_premium_index', 'public_no_auth', 'last_funding_rate_not_execution_guarantee'],
     }];
@@ -131,8 +166,6 @@ async function fetchKrakenFunding(symbols: Set<string>): Promise<FundingRateObse
       perpReferencePrice,
       entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice),
       observedAt,
-      // Kraken Spot and Derivatives use separate API key pairs. Public discovery
-      // is no-auth, but the current spot credentials cannot authorize futures.
       executableWithCurrentSpotCredentials: false,
       provenance: ['kraken_futures_public_tickers', 'public_no_auth', 'separate_derivatives_credentials_required_for_execution'],
     }];
@@ -202,8 +235,6 @@ async function fetchOkxFunding(symbols: Set<string>): Promise<FundingRateObserva
           perpReferencePrice,
           entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice),
           observedAt,
-          // The same OKX credential set can address SPOT and SWAP only when the
-          // account/instrument permissions and margin mode prove it at runtime.
           executableWithCurrentSpotCredentials: true,
           provenance: [
             'okx_regional_public_funding_rate',

@@ -212,20 +212,20 @@ class MeasuredOpportunityGraph {
       return { startedAt, completedAt: Date.now(), symbols: selected.length, observations: [], failures: [] };
     });
 
-    const evaluated = await runBounded(selected, capacity.workerConcurrency, async symbol => {
-      try {
-        return await arbitrageVerifier.evaluateOnce({
-          symbol,
-          notionalUsd: maxNotionalUsd,
-          maxQuoteAgeMs,
-          gas: { enabled: false, chain: 'polygon' },
-          bridge: { enabled: false, fromChain: 'polygon', toChain: 'polygon', token: 'USDC' },
-        });
-      } catch (error) {
-        errors.push(`${symbol}:${error instanceof Error ? error.message : String(error)}`);
-        return null;
-      }
-    });
+    let evaluated: Array<VerifiedArbitragePlan | null>;
+    try {
+      const evaluatedBySymbol = await arbitrageVerifier.evaluateMany({
+        notionalUsd: maxNotionalUsd,
+        maxQuoteAgeMs,
+        gas: { enabled: false, chain: 'polygon' },
+        bridge: { enabled: false, fromChain: 'polygon', toChain: 'polygon', token: 'USDC' },
+      }, selected, capacity);
+      evaluated = selected.map(symbol => evaluatedBySymbol.get(symbol) ?? null);
+    } catch (error) {
+      errors.push(`cex_batch:${error instanceof Error ? error.message : String(error)}`);
+      evaluated = selected.map(() => null);
+    }
+
     const formationObservedAt = Date.now();
     evaluated.forEach((plan, index) => recordCexFormationOutcome(selected[index], plan, formationObservedAt));
     const publicDiscovery = await publicDiscoveryPromise;
@@ -384,6 +384,7 @@ class MeasuredOpportunityGraph {
       formationExploitationSymbols: cycle.formationExploitationSymbols,
       topAttentionScores,
       attentionAuthority: formationSelection.authority,
+      economicEvaluationMode: 'single_authoritative_batch',
       publicDiscoveryObservations: cycle.publicDiscoveryObservations,
       publicDiscoveryVenues: cycle.publicDiscoveryVenues,
       publicDiscoveryFailures: cycle.publicDiscoveryFailures,
