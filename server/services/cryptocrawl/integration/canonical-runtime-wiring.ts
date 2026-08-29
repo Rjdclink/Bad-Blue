@@ -7,6 +7,7 @@ import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-r
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
+import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard-rpc-first-wiring.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
@@ -21,6 +22,7 @@ import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
+import { ensureZeroCapitalSizeRefinementWiring } from './zero-capital-size-refinement-wiring.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
 import { ensureProviderSpecificZeroCapitalExecutionWiring } from './provider-specific-zero-capital-execution-wiring.js';
@@ -88,14 +90,21 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureOracleEvidenceWiring();
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
+  // Wrapper order matters: size refinement must happen before flash-provider
+  // repricing so the winning notional is subsequently charged the exact measured
+  // provider fee/liquidity and bound to the verified receiver.
+  ensureZeroCapitalSizeRefinementWiring();
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
+  ensureAlchemyStandardRpcFirstWiring();
 
   // Cost-safe RPCs must be admitted before the zero-capital engine asks the
   // provider manager for its first chain provider. This keeps paid Alchemy RPC
   // as failover while the local Computational Beam/Aries/Cryptara stack performs
-  // the expensive analysis after bounded market-evidence acquisition.
+  // the expensive analysis after bounded market-evidence acquisition. The
+  // standard-token wrapper is already installed, so any later token reads also
+  // inherit this public-first provider order automatically.
   void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
 
   ensureOrderBookEvolutionWiring();
@@ -150,13 +159,15 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
     zeroCapitalRuntimeLifecycle: 'cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
+    zeroCapitalSizeOptimization: 'coarse_independent_quotes_plus_bounded_fresh_local_refinement',
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
     zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
     zeroCapitalAtomicStackExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
     alchemyPaidPendingStreamDefault: false,
-    paidAlchemyRpcRole: 'fallback_only_after_cost_safe_provider_failure',
+    paidAlchemyRpcRole: 'fallback_only_after_two_cost_safe_provider_failures_when_available',
+    alchemyStandardTokenReads: 'public_rpc_first_then_enhanced_api_fallback',
     localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
   });
