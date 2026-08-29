@@ -45,6 +45,8 @@ export interface ZeroCapitalRoutePreselection {
   selectedRoutes: ConfiguredZeroCapitalRoute[];
   structuralCandidates: number;
   quoteBudget: number;
+  baseQuoteBudget: number;
+  adaptiveBudgetDelta: number;
   scoredCandidates: number;
   explorationSelected: number;
   exploitationSelected: number;
@@ -206,6 +208,36 @@ function deterministicExploration(
   return oldestFirst(routes).slice(0, Math.min(count, routes.length));
 }
 
+function adaptiveQuoteBudget(routes: readonly ConfiguredZeroCapitalRoute[]): { base: number; budget: number; delta: number } {
+  const base = boundedInteger(process.env.ZERO_CAPITAL_DYNAMIC_QUOTE_BUDGET, 16, 1, 256);
+  const cap = Math.max(base, boundedInteger(process.env.ZERO_CAPITAL_ADAPTIVE_QUOTE_BUDGET_MAX, 64, base, 256));
+  if (process.env.ZERO_CAPITAL_ADAPTIVE_QUOTE_BUDGET === 'false' || routes.length <= base) {
+    const budget = Math.min(routes.length, base);
+    return { base: Math.min(routes.length, base), budget, delta: 0 };
+  }
+
+  const scaleBps = boundedNumber(process.env.ZERO_CAPITAL_NEAR_BREAK_EVEN_SCALE_BPS, 50, 1, 500);
+  let measured = 0;
+  let promising = 0;
+  let positive = 0;
+  for (const route of routes) {
+    const item = evidence.get(route.id);
+    if (!item || item.lastMeasuredAt === null || item.recentNetProfitBps === null) continue;
+    measured += 1;
+    if (item.recentNetProfitBps > 0) positive += 1;
+    if (item.recentNetProfitBps >= -scaleBps) promising += 1;
+  }
+
+  // Expand expensive exact quoting only when measured evidence says the search
+  // surface is producing near-break-even/positive routes. Cold-start exploration
+  // stays at the existing base budget, preventing an RPC-cost regression.
+  const signal = measured > 0 ? (promising + positive * 2) / measured : 0;
+  const structuralPressure = Math.min(1, routes.length / Math.max(base * 8, 1));
+  const expansion = Math.floor((cap - base) * Math.min(1, signal) * (0.5 + 0.5 * structuralPressure));
+  const budget = Math.min(routes.length, cap, base + Math.max(0, expansion));
+  return { base: Math.min(routes.length, base), budget, delta: Math.max(0, budget - Math.min(routes.length, base)) };
+}
+
 export function selectZeroCapitalRoutesForQuote(
   routes: ConfiguredZeroCapitalRoute[],
   gasCostUsd: number,
@@ -215,6 +247,8 @@ export function selectZeroCapitalRoutesForQuote(
       selectedRoutes: [],
       structuralCandidates: 0,
       quoteBudget: 0,
+      baseQuoteBudget: 0,
+      adaptiveBudgetDelta: 0,
       scoredCandidates: 0,
       explorationSelected: 0,
       exploitationSelected: 0,
@@ -225,14 +259,16 @@ export function selectZeroCapitalRoutesForQuote(
     };
   }
 
-  const maximumBudget = boundedInteger(process.env.ZERO_CAPITAL_DYNAMIC_QUOTE_BUDGET, 16, 1, 256);
-  const quoteBudget = Math.min(routes.length, maximumBudget);
+  const budgetDecision = adaptiveQuoteBudget(routes);
+  const quoteBudget = budgetDecision.budget;
   if (quoteBudget >= routes.length) {
     const scores = routes.map(route => scoreRoute(route, gasCostUsd, Date.now()));
     return {
       selectedRoutes: [...routes],
       structuralCandidates: routes.length,
       quoteBudget,
+      baseQuoteBudget: budgetDecision.base,
+      adaptiveBudgetDelta: budgetDecision.delta,
       scoredCandidates: scores.filter(score => score.evidenceSufficient).length,
       explorationSelected: routes.length,
       exploitationSelected: 0,
@@ -279,6 +315,8 @@ export function selectZeroCapitalRoutesForQuote(
     selectedRoutes: [...exploitation, ...exploration],
     structuralCandidates: routes.length,
     quoteBudget,
+    baseQuoteBudget: budgetDecision.base,
+    adaptiveBudgetDelta: budgetDecision.delta,
     scoredCandidates: scores.filter(score => score.evidenceSufficient).length,
     explorationSelected: exploration.length,
     exploitationSelected: exploitation.length,
