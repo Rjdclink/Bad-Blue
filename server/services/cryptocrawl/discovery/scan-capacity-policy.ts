@@ -12,6 +12,10 @@ export interface ScanCapacityDecision {
   unexploredFraction: number;
   feeBarrierStatus: 'unknown' | 'fee_blocked' | 'fee_clear';
   feeBarrierCoverage: number;
+  executionVariantsPerSymbol: number;
+  estimatedExecutionVariantsPerCycle: number;
+  targetExecutionVariantsMin: number;
+  targetExecutionVariantsMax: number;
   reason: string;
 }
 
@@ -41,6 +45,24 @@ function boundedFraction(value: unknown, fallback: number): number {
 }
 
 /**
+ * The CEX hot path already searches eleven notional/depth points. With the two
+ * currently usable no-new-key venues (Kraken/OKX), two ordered venue directions,
+ * and two economically distinct execution forms (taker/taker + maker/maker), one
+ * measured symbol can form 44 local execution variants without multiplying market
+ * data requests. This is candidate-formation breadth, not a claim that every form
+ * is executable or profitable.
+ */
+function executionVariantsPerSymbol(): number {
+  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_VARIANTS_PER_SYMBOL, 44, 1, 256);
+}
+
+function targetExecutionVariantRange(): { min: number; max: number; midpoint: number } {
+  const min = boundedInt(process.env.CRYPTOCRAWL_EXECUTION_VARIANTS_MIN, 2_000, 256, 20_000);
+  const max = boundedInt(process.env.CRYPTOCRAWL_EXECUTION_VARIANTS_MAX, 4_000, min, 40_000);
+  return { min, max, midpoint: Math.floor((min + max) / 2) };
+}
+
+/**
  * Pure cadence decision used by the live capacity policy and regression tests.
  * Execution is deliberately absent from the output: this function can only tune
  * how soon discovery runs again, never pause an eligible profitable trade.
@@ -65,10 +87,6 @@ export function recommendedCexScanIntervalMs(input: CexScanCadenceInput): number
     60_000,
   );
 
-  // Activity is measured from real candidate flow rather than fixed wall-clock
-  // "high volume" hours. Crypto is global and regime changes do not respect a
-  // local schedule. Execution continues independently at all times; only search
-  // cadence is adjusted here.
   if (input.eligibleDensity > 0 || input.positiveDensity > 0) return minimumMs;
   if (input.searchDensity < input.configuredMinimum) return Math.max(minimumMs, Math.floor(baseMs * 0.6));
   if (input.feeBlockedWithCoverage) return Math.min(maximumMs, Math.max(baseMs, Math.floor(baseMs * 2)));
@@ -77,24 +95,16 @@ export function recommendedCexScanIntervalMs(input: CexScanCadenceInput): number
 }
 
 /**
- * Dynamic search capacity is intentionally independent from execution capacity.
- * A zero-positive market must not starve the scanner that is needed to find the
- * next positive route. Workers remain tightly bounded; breadth expands by feeding
- * more measured symbols through the same worker pool rather than multiplying
- * sockets/private-account operations without limit.
+ * Dynamic search capacity is independent from execution capacity. The breadth
+ * objective is now expressed in economically distinct local execution variants,
+ * not repeated RPC/API calls. A single measured book/fee snapshot is reused by
+ * the Computational Beam/Aries/Cryptara path to form many candidate shapes.
  *
- * Public CEX discovery is now batched per venue, so the breadth ceiling can be
- * widened substantially without linearly multiplying public HTTP requests. The
- * executable private-account worker pool remains capped at eight to protect
- * account, nonce, order-book and authenticated fee authorities.
- *
- * Once a fresh authenticated taker-fee barrier is repeatedly observed across a
- * meaningful fraction of the configured universe, the scanner retains base
- * discovery breadth and slows only the discovery cadence instead of spending
- * maximum compute rediscovering the same fee-negative condition. It never stops
- * discovery: a market move or fee-tier change is still detected on a bounded
- * future cycle, and execution is never paused merely because market activity is
- * low.
+ * The authenticated taker-fee barrier is no longer allowed to collapse discovery
+ * to a tiny symbol set because maker/maker and other transformed execution forms
+ * can have materially different economics. We keep enough symbols in each cycle
+ * to form roughly 2,000-4,000 variants while retaining the same bounded worker
+ * pool and adaptive cadence.
  */
 export function getCexScanCapacity(universeSizeInput: number): ScanCapacityDecision {
   const universeSize = Math.max(1, Math.floor(Number.isFinite(universeSizeInput) ? universeSizeInput : 1));
@@ -103,9 +113,15 @@ export function getCexScanCapacity(universeSizeInput: number): ScanCapacityDecis
     return { ...heldDecision.decision, reason: `${heldDecision.decision.reason}; held to prevent intra-cycle capacity oscillation` };
   }
 
-  const configuredMinimum = boundedInt(process.env.CRYPTO_ARBITRAGE_MIN_SYMBOLS, 12, 1, 128);
-  const configuredBase = boundedInt(process.env.CRYPTO_ARBITRAGE_BASE_SYMBOLS, 24, configuredMinimum, 128);
-  const configuredMaximum = boundedInt(process.env.CRYPTO_ARBITRAGE_MAX_SYMBOLS, 96, configuredBase, 128);
+  const variantsPerSymbol = executionVariantsPerSymbol();
+  const variantTarget = targetExecutionVariantRange();
+  const derivedMinimumSymbols = Math.max(1, Math.ceil(variantTarget.min / variantsPerSymbol));
+  const derivedBaseSymbols = Math.max(derivedMinimumSymbols, Math.ceil(variantTarget.midpoint / variantsPerSymbol));
+  const derivedMaximumSymbols = Math.max(derivedBaseSymbols, Math.ceil(variantTarget.max / variantsPerSymbol));
+
+  const configuredMinimum = boundedInt(process.env.CRYPTO_ARBITRAGE_MIN_SYMBOLS, derivedMinimumSymbols, 1, 256);
+  const configuredBase = boundedInt(process.env.CRYPTO_ARBITRAGE_BASE_SYMBOLS, derivedBaseSymbols, configuredMinimum, 256);
+  const configuredMaximum = boundedInt(process.env.CRYPTO_ARBITRAGE_MAX_SYMBOLS, derivedMaximumSymbols, configuredBase, 256);
   const workerMaximum = boundedInt(process.env.CRYPTO_ARBITRAGE_SCAN_CONCURRENCY, 6, 1, 8);
   const feeBarrierCoverageRequired = boundedFraction(process.env.CRYPTO_ARBITRAGE_FEE_BARRIER_COVERAGE, 0.25);
   const metrics = canonicalOpportunityState.getMetrics(60_000);
@@ -118,22 +134,22 @@ export function getCexScanCapacity(universeSizeInput: number): ScanCapacityDecis
     && searchDensity >= configuredMinimum;
 
   let desired = configuredBase;
-  let reason = 'base measured-universe coverage';
+  let reason = 'execution-variant midpoint coverage using bounded measured inputs';
   if (positiveDensity === 0 && feeBlockedWithCoverage) {
     desired = configuredBase;
-    reason = `authenticated taker-fee floor exceeds the best sampled gross spread; retain bounded base discovery while waiting for market or fee-tier change (${feeBarrier!.feeReductionNeededBps?.toFixed(2) ?? 'unknown'} bps fee reduction needed before other costs)`;
+    reason = `taker fee barrier observed, but transformed maker/size variants remain worth searching; preserve ~${variantTarget.midpoint} local execution forms (${feeBarrier!.feeReductionNeededBps?.toFixed(2) ?? 'unknown'} bps taker reduction needed)`;
   } else if (positiveDensity === 0) {
     desired = configuredMaximum;
-    reason = 'maximize bounded discovery breadth while verified-positive density is zero and no sufficiently covered fee barrier has been established';
+    reason = 'expand toward the configured 2k-4k execution-variant search envelope while verified-positive density is zero';
   } else if (searchDensity < configuredMinimum) {
     desired = Math.min(configuredMaximum, Math.max(configuredBase, configuredMinimum * 2));
-    reason = 'expand discovery because measured candidate flow is below minimum coverage';
+    reason = 'expand discovery because measured candidate flow is below minimum variant coverage';
   } else if (searchDensity >= configuredMaximum * 2) {
     desired = configuredBase;
-    reason = 'retain bounded base breadth because current measured search throughput is already high';
+    reason = 'retain midpoint variant breadth because current measured search throughput is already high';
   } else {
     desired = Math.min(configuredMaximum, configuredBase + Math.ceil((configuredMaximum - configuredBase) / 2));
-    reason = 'moderate expansion within configured provider-safe ceiling';
+    reason = 'moderate expansion inside the provider-safe execution-variant envelope';
   }
 
   const symbolBudget = Math.max(1, Math.min(universeSize, desired));
@@ -158,6 +174,10 @@ export function getCexScanCapacity(universeSizeInput: number): ScanCapacityDecis
     unexploredFraction,
     feeBarrierStatus: feeBarrier?.status ?? 'unknown',
     feeBarrierCoverage: feeBarrier?.coverageFraction ?? 0,
+    executionVariantsPerSymbol: variantsPerSymbol,
+    estimatedExecutionVariantsPerCycle: symbolBudget * variantsPerSymbol,
+    targetExecutionVariantsMin: variantTarget.min,
+    targetExecutionVariantsMax: variantTarget.max,
     reason,
   };
   heldDecision = { observedAt: Date.now(), decision };
