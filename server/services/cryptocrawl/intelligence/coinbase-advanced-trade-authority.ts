@@ -58,6 +58,7 @@ let requestCount = 0;
 let lastRequestAt: number | null = null;
 let lastAuthAlgorithm: 'ES256' | 'EdDSA' | null = null;
 let authFailureCount = 0;
+let authRecoveryLoggedFailureCount = 0;
 let lastAuthFailureAt: number | null = null;
 let authCooldownUntil: number | null = null;
 
@@ -211,7 +212,8 @@ function recordCoinbaseAuthFailure(status: 401 | 403): CoinbasePrivateAuthError 
 }
 
 function recordCoinbaseAuthenticatedSuccess(): void {
-  if (authCooldownUntil !== null || lastAuthFailureAt !== null) {
+  if (authFailureCount > authRecoveryLoggedFailureCount) {
+    authRecoveryLoggedFailureCount = authFailureCount;
     logger.info('[Coinbase] Private authentication circuit recovered after authenticated success', {
       component: 'CoinbaseAdvancedTradeAuthority',
       priorAuthFailures: authFailureCount,
