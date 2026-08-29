@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "dev:worker": "NODE_ENV=development tsx workers/peopleSearchWorker/index.ts",
-    "prebuild": "node scripts/cryptocrawl/verify-deployment-preflight.cjs",
+    "prebuild": "node scripts/cryptocrawl/verify-deployment-preflight.cjs && node scripts/cryptocrawl/verify-zero-capital-bps-propagation.cjs && node scripts/cryptocrawl/verify-bootstrap-execution-history.cjs && node scripts/cryptocrawl/verify-unified-multileg-adaptive-engine.cjs",
     "build": "vite build && npm run build:server && npm run build:worker && npm run build:skale-pow-worker",
     "build:server": "esbuild server/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --format=esm --packages=external --define:process.env.NODE_ENV=\"'production'\"",
     "build:worker": "esbuild workers/peopleSearchWorker/index.ts --bundle --platform=node --target=node20 --outfile=dist/peopleSearchWorker.js --format=esm --packages=external --define:process.env.NODE_ENV=\"'production'\"",

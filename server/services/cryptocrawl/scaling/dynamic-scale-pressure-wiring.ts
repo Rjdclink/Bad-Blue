@@ -16,12 +16,16 @@ export interface DynamicScalePressureSnapshot {
   queueBacklogPressure: number;
   profitabilityPressure: number;
   expectedProfitPressure: number;
+  zeroCapitalNearBreakEvenPressure: number;
   resourceSaturation: number;
   candidateBacklog: number;
   mcBacklog: number;
   observedCandidatesPerMinute: number;
   verifiedPositivePerMinute: number;
   eligiblePerMinute: number;
+  zeroCapitalNearBreakEvenPerMinute: number;
+  zeroCapitalBestNetProfitBps: number | null;
+  zeroCapitalAverageBpsToBreakEven: number | null;
   unexploredFraction: number;
   expectedNetProfitPerHourUsd: number | null;
   realizedNetProfitPerHourUsd: number | null;
@@ -58,17 +62,23 @@ export function getDynamicScalePressureSnapshot(): DynamicScalePressureSnapshot 
   const positiveTarget = Math.max(1, Number(process.env.CRYPTOCRAWL_PROFIT_PRESSURE_POSITIVE_TARGET || 10));
   const expectedProfitTarget = Math.max(1, Number(process.env.CRYPTOCRAWL_PROFIT_PRESSURE_USD_HOUR_TARGET || 100));
   const realizedProfitTarget = Math.max(1, Number(process.env.CRYPTOCRAWL_REALIZED_PROFIT_USD_HOUR_TARGET || expectedProfitTarget));
+  const nearBreakEvenTarget = Math.max(1, Number(process.env.CRYPTOCRAWL_ZERO_CAPITAL_NEAR_BREAK_EVEN_TARGET || 10));
   const beamCapacity = Math.max(1, beam.activeNodes || Number(process.env.CRYPTOCRAWL_BEAM_ASSUMED_CAPACITY || 4));
 
   const resourceSaturation = clamp01((beam.queued + beam.executing) / Math.max(1, beamCapacity * 4));
+  const zeroCapitalNearBreakEvenPressure = clamp01(
+    candidate.zeroCapitalBps.nearBreakEven / nearBreakEvenTarget,
+  );
 
   // Search pressure is intentionally limited to discovery breadth/freshness demand.
-  // Queue pressure is exposed independently below so backlog cannot masquerade as
-  // a need for broader market search.
+  // Near-break-even density may modestly increase search/formation effort because
+  // it is evidence that routes are close to viability. It is never treated as
+  // profitability, deterministic-positive density, or execution authority.
   const searchDemand = clamp01(
-    clamp01(candidate.observed / observedTarget) * 0.45 +
-    unexploredFraction * 0.45 +
-    (candidate.deterministicPositive === 0 ? 0.10 : 0),
+    clamp01(candidate.observed / observedTarget) * 0.40 +
+    unexploredFraction * 0.40 +
+    (candidate.deterministicPositive === 0 ? 0.10 : 0) +
+    zeroCapitalNearBreakEvenPressure * 0.10,
   );
   // Saturation is surfaced independently and only modestly dampens new heavy
   // enrichment. It never collapses discovery merely because profit density is 0.
@@ -89,7 +99,7 @@ export function getDynamicScalePressureSnapshot(): DynamicScalePressureSnapshot 
 
   // profitabilityPressure is retained for compatibility, but now means only
   // authoritative realized profitability. It is no longer a composite of
-  // discovery density, expected profit, and realized profit.
+  // discovery density, expected profit, near-miss density, and realized profit.
   const profitabilityPressure = clamp01((realized ?? 0) / realizedProfitTarget);
 
   latest = {
@@ -99,12 +109,16 @@ export function getDynamicScalePressureSnapshot(): DynamicScalePressureSnapshot 
     queueBacklogPressure,
     profitabilityPressure,
     expectedProfitPressure,
+    zeroCapitalNearBreakEvenPressure,
     resourceSaturation,
     candidateBacklog,
     mcBacklog,
     observedCandidatesPerMinute: candidate.observed,
     verifiedPositivePerMinute: canonicalMinute.verifiedPositiveOpportunities,
     eligiblePerMinute: canonicalMinute.eligibleOpportunities,
+    zeroCapitalNearBreakEvenPerMinute: candidate.zeroCapitalBps.nearBreakEven,
+    zeroCapitalBestNetProfitBps: candidate.zeroCapitalBps.bestNetProfitBps,
+    zeroCapitalAverageBpsToBreakEven: candidate.zeroCapitalBps.averageBpsToBreakEven,
     unexploredFraction,
     expectedNetProfitPerHourUsd: expected,
     realizedNetProfitPerHourUsd: realized,
@@ -171,9 +185,11 @@ export function ensureDynamicScalePressureWiring(): void {
       'queueBacklogPressure',
       'profitabilityPressure',
       'expectedProfitPressure',
+      'zeroCapitalNearBreakEvenPressure',
     ],
     profitabilityAuthority: 'terminal_confirmed_realized_only',
     expectedProfitAuthority: 'advisory_telemetry_only',
+    nearBreakEvenAuthority: 'search_formation_pressure_only',
     backlogSignals: ['candidateBacklog', 'mcBacklog'],
     resourceSaturation: true,
     zeroPositiveDoesNotSuppressDiscovery: true,

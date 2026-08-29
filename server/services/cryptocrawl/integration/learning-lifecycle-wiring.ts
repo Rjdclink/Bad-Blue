@@ -3,6 +3,7 @@ import { getCryptocrawlGovernance } from '../governance/index.js';
 import { deepLearningStore } from '../learning/deep-learning-store.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
+import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { hydratePrimaryLearningState, persistPrimaryLearningState } from './primary-learning-persistence.js';
 
 const installed = new WeakSet<object>();
@@ -56,6 +57,10 @@ export function ensureLearningLifecycleWiring(): void {
 
   instant.recordExecutionOutcome = async (outcome: ExecutionOutcomeObservation): Promise<unknown> => {
     const result = await instantRecordExecutionOutcome(outcome);
+    // Optimization consumes only terminal realized outcomes. It is intentionally
+    // downstream of the canonical learning write so it can never authorize or
+    // rewrite an execution result.
+    adaptiveTopologyOptimizer.recordTerminalOutcome(outcome);
     if (getCryptocrawlGovernance().isLongTermMemoryAllowed()) {
       await persistPrimaryLearningState();
     }
@@ -67,5 +72,7 @@ export function ensureLearningLifecycleWiring(): void {
     stagesOneToThree: 'bounded_runtime_feedback_only',
     stageFourPlus: 'primary_postgresql_hydration_plus_legacy_optional_store',
     measuredOutcomePersistence: 'primary_postgresql',
+    adaptiveTopologyFeedback: 'terminal_realized_bps_only',
+    adaptiveTopologyExecutionAuthority: false,
   });
 }

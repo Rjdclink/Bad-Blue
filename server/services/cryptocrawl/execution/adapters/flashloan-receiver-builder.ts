@@ -21,7 +21,10 @@ const FLASHLOAN_RECEIVER_ABI = [
   'function executeBalancerFlashLoan(address loanToken, uint256 loanAmount, (address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps, uint256 minProfit, address profitRecipient) external',
 ];
 
-const MAX_ATOMIC_SWAP_STEPS = 8;
+// Solidity receiver has no static step cap; this application-side envelope keeps
+// calldata/gas bounded while allowing five ordinary two-leg cycles plus room for
+// route-specific extra hops. Exact simulation and estimateGas still gate execution.
+const MAX_ATOMIC_SWAP_STEPS = 16;
 
 function isAddress(value: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(value);

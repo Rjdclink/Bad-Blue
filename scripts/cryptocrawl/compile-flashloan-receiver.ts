@@ -12,6 +12,10 @@ export interface ReceiverArtifact {
 
 const SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlBalancerFlashLoanReceiver.sol';
 const CONTRACT_NAME = 'CryptocrawlBalancerFlashLoanReceiver';
+const COMPOSITE_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlBalancerCompositeFlashLoanReceiver.sol';
+const COMPOSITE_CONTRACT_NAME = 'CryptocrawlBalancerCompositeFlashLoanReceiver';
+const AAVE_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlAaveV3FlashLoanReceiver.sol';
+const AAVE_CONTRACT_NAME = 'CryptocrawlAaveV3FlashLoanReceiver';
 
 function runProcess(command: string, args: string[], input: string): Promise<string> {
   return new Promise((resolvePromise, reject) => {
@@ -22,12 +26,8 @@ function runProcess(command: string, args: string[], input: string): Promise<str
     let stdout = '';
     let stderr = '';
 
-    child.stdout.on('data', chunk => {
-      stdout += String(chunk);
-    });
-    child.stderr.on('data', chunk => {
-      stderr += String(chunk);
-    });
+    child.stdout.on('data', chunk => { stdout += String(chunk); });
+    child.stderr.on('data', chunk => { stderr += String(chunk); });
     child.on('error', error => reject(error));
     child.on('close', code => {
       if (code !== 0) {
@@ -69,39 +69,27 @@ export async function compileReceiverContract(sourceName: string, contractName: 
   const compiler = resolveCompiler();
   const input = {
     language: 'Solidity',
-    sources: {
-      [sourceName]: { content: source },
-    },
+    sources: { [sourceName]: { content: source } },
     settings: {
       optimizer: { enabled: true, runs: 200 },
       ...(options?.viaIR ? { viaIR: true } : {}),
-      outputSelection: {
-        '*': {
-          '*': ['abi', 'evm.bytecode.object'],
-        },
-      },
+      outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object'] } },
     },
   };
 
   const stdout = await runProcess(compiler.command, compiler.args, JSON.stringify(input));
   const jsonStart = stdout.indexOf('{');
-  if (jsonStart === -1) {
-    throw new Error(`Solidity compiler returned no standard JSON output: ${stdout.trim()}`);
-  }
+  if (jsonStart === -1) throw new Error(`Solidity compiler returned no standard JSON output: ${stdout.trim()}`);
   const output = JSON.parse(stdout.slice(jsonStart)) as {
     errors?: Array<{ severity?: string; formattedMessage?: string; message?: string }>;
     contracts?: Record<string, Record<string, { abi: unknown[]; evm?: { bytecode?: { object?: string } } }>>;
   };
   const errors = output.errors?.filter(error => error.severity === 'error') || [];
-  if (errors.length > 0) {
-    throw new Error(errors.map(error => error.formattedMessage || error.message || 'Unknown Solidity compile error').join('\n'));
-  }
+  if (errors.length > 0) throw new Error(errors.map(error => error.formattedMessage || error.message || 'Unknown Solidity compile error').join('\n'));
 
   const compiled = output.contracts?.[sourceName]?.[contractName];
   const bytecode = compiled?.evm?.bytecode?.object;
-  if (!compiled || !bytecode) {
-    throw new Error(`Compiler did not produce ${contractName} bytecode`);
-  }
+  if (!compiled || !bytecode) throw new Error(`Compiler did not produce ${contractName} bytecode`);
 
   return {
     contractName,
@@ -116,6 +104,14 @@ export async function compileFlashLoanReceiver(): Promise<ReceiverArtifact> {
   return compileReceiverContract(SOURCE_NAME, CONTRACT_NAME);
 }
 
+export async function compileCompositeFlashLoanReceiver(): Promise<ReceiverArtifact> {
+  return compileReceiverContract(COMPOSITE_SOURCE_NAME, COMPOSITE_CONTRACT_NAME);
+}
+
+export async function compileAaveV3FlashLoanReceiver(): Promise<ReceiverArtifact> {
+  return compileReceiverContract(AAVE_SOURCE_NAME, AAVE_CONTRACT_NAME);
+}
+
 export async function compileSushiV3FlashReceiver(): Promise<ReceiverArtifact> {
   return compileReceiverContract(
     'contracts/cryptocrawl/CryptocrawlSushiV3FlashReceiver.sol',
@@ -124,33 +120,52 @@ export async function compileSushiV3FlashReceiver(): Promise<ReceiverArtifact> {
   );
 }
 
-export async function writeFlashLoanReceiverArtifact(outputPath?: string): Promise<string> {
-  const artifact = await compileFlashLoanReceiver();
-  const destination = resolve(
-    process.cwd(),
-    outputPath || 'artifacts/cryptocrawl/CryptocrawlBalancerFlashLoanReceiver.json',
-  );
+async function writeArtifact(artifact: ReceiverArtifact, outputPath: string): Promise<string> {
+  const destination = resolve(process.cwd(), outputPath);
   await mkdir(dirname(destination), { recursive: true });
   await writeFile(destination, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
   return destination;
 }
 
+export async function writeFlashLoanReceiverArtifact(outputPath?: string): Promise<string> {
+  return writeArtifact(
+    await compileFlashLoanReceiver(),
+    outputPath || 'artifacts/cryptocrawl/CryptocrawlBalancerFlashLoanReceiver.json',
+  );
+}
+
+export async function writeCompositeFlashLoanReceiverArtifact(outputPath?: string): Promise<string> {
+  return writeArtifact(
+    await compileCompositeFlashLoanReceiver(),
+    outputPath || 'artifacts/cryptocrawl/CryptocrawlBalancerCompositeFlashLoanReceiver.json',
+  );
+}
+
+export async function writeAaveV3FlashLoanReceiverArtifact(outputPath?: string): Promise<string> {
+  return writeArtifact(
+    await compileAaveV3FlashLoanReceiver(),
+    outputPath || 'artifacts/cryptocrawl/CryptocrawlAaveV3FlashLoanReceiver.json',
+  );
+}
+
 export async function writeSushiV3FlashReceiverArtifact(outputPath?: string): Promise<string> {
-  const artifact = await compileSushiV3FlashReceiver();
-  const destination = resolve(
-    process.cwd(),
+  return writeArtifact(
+    await compileSushiV3FlashReceiver(),
     outputPath || 'artifacts/cryptocrawl/CryptocrawlSushiV3FlashReceiver.json',
   );
-  await mkdir(dirname(destination), { recursive: true });
-  await writeFile(destination, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
-  return destination;
 }
 
 const isDirectInvocation = /(?:^|\/)compile-flashloan-receiver\.(?:ts|js)$/.test(process.argv[1] || '');
 if (isDirectInvocation) {
-  writeFlashLoanReceiverArtifact()
-    .then(outputPath => {
-      console.log(`Compiled ${CONTRACT_NAME} artifact: ${outputPath}`);
+  Promise.all([
+    writeFlashLoanReceiverArtifact(),
+    writeCompositeFlashLoanReceiverArtifact(),
+    writeAaveV3FlashLoanReceiverArtifact(),
+  ])
+    .then(([balancerPath, compositePath, aavePath]) => {
+      console.log(`Compiled ${CONTRACT_NAME} artifact: ${balancerPath}`);
+      console.log(`Compiled ${COMPOSITE_CONTRACT_NAME} artifact: ${compositePath}`);
+      console.log(`Compiled ${AAVE_CONTRACT_NAME} artifact: ${aavePath}`);
     })
     .catch(error => {
       console.error('[compile-flashloan-receiver] failed:', error instanceof Error ? error.message : String(error));

@@ -4,6 +4,7 @@ export type MeasuredOpportunityTopology =
   | 'ZERO_CAPITAL_ATOMIC'
   | 'CROSS_CHAIN'
   | 'MEMPOOL_BACKRUN'
+  | 'LIQUIDATION'
   | 'MAKER_CEX'
   | 'FUNDING_ARBITRAGE';
 
@@ -53,6 +54,19 @@ export interface MeasuredCandidate {
     bridgeUsd: number | null;
     expectedSlippageBps: number | null;
     expectedPriceImpactBps: number | null;
+    /** Measured or explicitly bounded notional used to convert realized P&L into realized BPS. */
+    notionalUsd?: number | null;
+    /** Optional BPS decomposition. Populated where the topology has measured all-in economics. */
+    grossProfitBps?: number | null;
+    flashLoanFeeBps?: number | null;
+    gasCostBps?: number | null;
+    relayCostBps?: number | null;
+    allInCostBps?: number | null;
+    breakEvenBps?: number | null;
+    netProfitBps?: number | null;
+    discoveryFloorBps?: number | null;
+    bpsToBreakEven?: number | null;
+    realizedNetProfitBps?: number | null;
   };
   quoteAgeMs: number | null;
   executableCapability: boolean;
@@ -76,7 +90,16 @@ export interface MeasuredCandidateMetrics {
     deterministicPositive: number;
     eligible: number;
     activeBacklog: number;
+    nearBreakEven: number;
   }>;
+  zeroCapitalBps: {
+    observedWithBps: number;
+    nearBreakEven: number;
+    positive: number;
+    bestNetProfitBps: number | null;
+    averageBpsToBreakEven: number | null;
+    averageAllInCostBps: number | null;
+  };
 }
 
 function clone(candidate: MeasuredCandidate): MeasuredCandidate {
@@ -93,15 +116,20 @@ function clone(candidate: MeasuredCandidate): MeasuredCandidate {
   };
 }
 
+function topologyMetric() {
+  return { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0, nearBreakEven: 0 };
+}
+
 function emptyTopologyMetrics() {
   return {
-    CEX_CEX: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
-    DEX_ATOMIC: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
-    ZERO_CAPITAL_ATOMIC: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
-    CROSS_CHAIN: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
-    MEMPOOL_BACKRUN: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
-    MAKER_CEX: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
-    FUNDING_ARBITRAGE: { observed: 0, deterministicPositive: 0, eligible: 0, activeBacklog: 0 },
+    CEX_CEX: topologyMetric(),
+    DEX_ATOMIC: topologyMetric(),
+    ZERO_CAPITAL_ATOMIC: topologyMetric(),
+    CROSS_CHAIN: topologyMetric(),
+    MEMPOOL_BACKRUN: topologyMetric(),
+    LIQUIDATION: topologyMetric(),
+    MAKER_CEX: topologyMetric(),
+    FUNDING_ARBITRAGE: topologyMetric(),
   } satisfies MeasuredCandidateMetrics['byTopology'];
 }
 
@@ -122,6 +150,18 @@ function boundedFrequency(
     .map(([value, count]) => keyName === 'reason'
       ? { reason: value, count }
       : { item: value, count }) as Array<{ reason: string; count: number }> | Array<{ item: string; count: number }>;
+}
+
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function isNearBreakEven(candidate: MeasuredCandidate): boolean {
+  const net = candidate.economics.netProfitBps;
+  if (candidate.topology !== 'ZERO_CAPITAL_ATOMIC' || net === null || net === undefined || !Number.isFinite(net) || net > 0) return false;
+  const floor = candidate.economics.discoveryFloorBps;
+  return floor === null || floor === undefined || !Number.isFinite(floor) || net >= floor;
 }
 
 class MeasuredCandidateRegistry {
@@ -198,6 +238,7 @@ class MeasuredCandidateRegistry {
       metrics.observed++;
       if (candidate.status === 'deterministic_positive' || candidate.status === 'eligible') metrics.deterministicPositive++;
       if (candidate.status === 'eligible') metrics.eligible++;
+      if (isNearBreakEven(candidate)) metrics.nearBreakEven++;
       if (candidate.expiresAt >= now && ['observed', 'enriched', 'deterministic_positive', 'eligible'].includes(candidate.status)) metrics.activeBacklog++;
     }
 
@@ -210,6 +251,20 @@ class MeasuredCandidateRegistry {
       recent.flatMap(candidate => candidate.missingInformation),
       'item',
     ) as Array<{ item: string; count: number }>;
+    const zeroCapitalWithBps = recent.filter(candidate =>
+      candidate.topology === 'ZERO_CAPITAL_ATOMIC' &&
+      candidate.economics.netProfitBps !== null &&
+      candidate.economics.netProfitBps !== undefined &&
+      Number.isFinite(candidate.economics.netProfitBps),
+    );
+    const nearBreakEven = zeroCapitalWithBps.filter(isNearBreakEven);
+    const positiveBps = zeroCapitalWithBps.filter(candidate => Number(candidate.economics.netProfitBps) > 0);
+    const bpsToBreakEven = nearBreakEven
+      .map(candidate => candidate.economics.bpsToBreakEven)
+      .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
+    const allInCostBps = zeroCapitalWithBps
+      .map(candidate => candidate.economics.allInCostBps)
+      .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
 
     return {
       windowMs,
@@ -222,6 +277,16 @@ class MeasuredCandidateRegistry {
       blockedReasons,
       missingInformationFrequency,
       byTopology,
+      zeroCapitalBps: {
+        observedWithBps: zeroCapitalWithBps.length,
+        nearBreakEven: nearBreakEven.length,
+        positive: positiveBps.length,
+        bestNetProfitBps: zeroCapitalWithBps.length > 0
+          ? Math.max(...zeroCapitalWithBps.map(candidate => Number(candidate.economics.netProfitBps)))
+          : null,
+        averageBpsToBreakEven: average(bpsToBreakEven),
+        averageAllInCostBps: average(allInCostBps),
+      },
     };
   }
 

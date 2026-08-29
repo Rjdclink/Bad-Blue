@@ -84,8 +84,6 @@ function routeNotionalUsd(route: ConfiguredZeroCapitalRoute): number {
 
 function positiveProbability(item: MutableRouteEvidence): number | null {
   if (item.attempts <= 0) return null;
-  // Laplace smoothing keeps one early observation from becoming permanent
-  // priority. This is quote-yield telemetry only, never profitability truth.
   return (item.positiveQuotes + 1) / (item.attempts + 2);
 }
 
@@ -129,7 +127,7 @@ function scoreRoute(
       gasPressure,
       quoteCost: cost,
       estimatedDeterministicPositiveProbability: item ? positiveProbability(item) : null,
-      ...formationFields(route.id, 0, cost),
+      ...formationFields(route.id, item?.recentNetProfitBps ?? 0, cost),
       authority: 'quote_budget_advisory_only',
       deterministicProfitAuthority: false,
       executionAuthority: false,
@@ -189,19 +187,9 @@ function deterministicExploration(
   count: number,
 ): ConfiguredZeroCapitalRoute[] {
   if (count <= 0 || routes.length === 0) return [];
-  // Oldest evidence always wins exploration. Once selected, recordQuoteCycle moves
-  // that route's lastAttemptAt forward, naturally rotating priority across every
-  // structural route without randomness or a permanently favored fixed pair.
   return oldestFirst(routes).slice(0, Math.min(count, routes.length));
 }
 
-/**
- * Allocate expensive route-quote work using measured historical evidence only.
- * Structural routes are never deleted. A deterministic exploration slice rotates
- * through stale/unobserved routes so no fixed pair/protocol/notional can hold
- * permanent priority. Historical edge survival and value-of-information only
- * multiply the advisory exploitation score; they never become profit evidence.
- */
 export function selectZeroCapitalRoutesForQuote(
   routes: ConfiguredZeroCapitalRoute[],
   gasCostUsd: number,
@@ -262,8 +250,6 @@ export function selectZeroCapitalRoutesForQuote(
     selectedIds.add(route.id);
   }
 
-  // When measured history is sparse, the unused budget remains exploration. No
-  // synthetic score is assigned just to fill the quota.
   if (exploration.length + exploitation.length < quoteBudget) {
     const remaining = routes.filter(route => !selectedIds.has(route.id));
     const fill = deterministicExploration(remaining, quoteBudget - exploration.length - exploitation.length);
@@ -289,10 +275,10 @@ export function selectZeroCapitalRoutesForQuote(
 
 export function recordZeroCapitalRouteQuoteCycle(
   attemptedRoutes: readonly ConfiguredZeroCapitalRoute[],
-  positiveQuotes: readonly QuotedZeroCapitalRoute[],
+  measuredQuotes: readonly QuotedZeroCapitalRoute[],
   observedAt = Date.now(),
 ): void {
-  const positiveById = new Map(positiveQuotes.map(quote => [quote.id, quote]));
+  const quoteById = new Map(measuredQuotes.map(quote => [quote.id, quote]));
   for (const route of attemptedRoutes) {
     const current = evidence.get(route.id) ?? {
       routeId: route.id,
@@ -306,23 +292,29 @@ export function recordZeroCapitalRouteQuoteCycle(
     };
     current.attempts += 1;
     current.lastAttemptAt = observedAt;
-    const positiveQuote = positiveById.get(route.id);
+
+    const quote = quoteById.get(route.id);
+    const deterministicPositive = !!quote && quote.executablePositive && quote.netProfit > 0n;
     let observationNotionalUsd = routeNotionalUsd(route);
-    if (positiveQuote) {
+
+    if (quote && Number.isFinite(quote.netProfitBps)) {
+      current.recentNetProfitBps = quote.netProfitBps;
+      const notional = Number(quote.amountIn) / Math.pow(10, quote.inputTokenDecimals);
+      if (Number.isFinite(notional) && notional > 0) observationNotionalUsd = notional;
+    }
+
+    if (deterministicPositive && quote) {
       current.positiveQuotes += 1;
       current.lastPositiveAt = observedAt;
-      current.recentNetProfitBps = Number.isFinite(positiveQuote.netProfitBps) ? positiveQuote.netProfitBps : current.recentNetProfitBps;
-      const notional = Number(positiveQuote.amountIn) / Math.pow(10, positiveQuote.inputTokenDecimals);
-      if (Number.isFinite(notional) && notional > 0) {
-        current.recentPositiveNotionalUsd = notional;
-        observationNotionalUsd = notional;
-      }
+      const notional = Number(quote.amountIn) / Math.pow(10, quote.inputTokenDecimals);
+      if (Number.isFinite(notional) && notional > 0) current.recentPositiveNotionalUsd = notional;
     }
+
     evidence.set(route.id, current);
     recordAriesRouteFormationObservation({
       routeId: route.id,
       observedAt,
-      netProfitBps: positiveQuote && Number.isFinite(positiveQuote.netProfitBps) ? positiveQuote.netProfitBps : null,
+      netProfitBps: quote && Number.isFinite(quote.netProfitBps) ? quote.netProfitBps : null,
       notionalUsd: observationNotionalUsd,
     });
   }
