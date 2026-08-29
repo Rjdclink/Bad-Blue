@@ -27,31 +27,51 @@ import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js'
 
 let installed = false;
 let zeroCapitalStartPromise: Promise<void> | null = null;
+let zeroCapitalRetryTimer: NodeJS.Timeout | null = null;
+let zeroCapitalStartAttempts = 0;
+
+function zeroCapitalRetryDelayMs(): number {
+  const configured = Number(process.env.ZERO_CAPITAL_RUNTIME_START_RETRY_MS || 15_000);
+  return Number.isFinite(configured) ? Math.max(2_500, Math.min(120_000, Math.trunc(configured))) : 15_000;
+}
 
 function startCanonicalZeroCapitalRuntime(): void {
-  if (zeroCapitalStartPromise) return;
+  if (zeroCapitalStartPromise || zeroCapitalEngine.getState().isRunning) return;
+  if (zeroCapitalRetryTimer) {
+    clearTimeout(zeroCapitalRetryTimer);
+    zeroCapitalRetryTimer = null;
+  }
+  zeroCapitalStartAttempts += 1;
   zeroCapitalStartPromise = zeroCapitalEngine.start()
     .then(() => {
+      zeroCapitalRetryTimer = null;
       logger.info('[ZeroCapitalRuntime] Canonical zero-capital lifecycle started', {
         component: 'CanonicalCryptoCrawlerRuntimeWiring',
         lifecycleOwner: 'AutonomousZeroCapitalEngine',
         receiverFleetInitialization: true,
         dynamicGraphlessScanning: true,
         liveExecutionRequested: process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true',
+        startAttempts: zeroCapitalStartAttempts,
         syntheticExecution: false,
       });
     })
     .catch(error => {
       // Core CEX discovery/execution remains independent. A zero-capital startup
-      // failure must be visible and fail closed for that topology without taking
-      // down LegalWhat or silently presenting zero-capital as runtime-ready.
-      zeroCapitalStartPromise = null;
+      // failure is visible and fail-closed for that topology, then retried because
+      // RPC/gas-sponsor/receiver initialization failures may be transient.
+      const retryMs = zeroCapitalRetryDelayMs();
       logger.error('[ZeroCapitalRuntime] Canonical zero-capital lifecycle failed to start', {
         component: 'CanonicalCryptoCrawlerRuntimeWiring',
         error: error instanceof Error ? error.message : String(error),
-        retryOnNextCanonicalWiringCall: true,
+        startAttempts: zeroCapitalStartAttempts,
+        retryMs,
         executionAuthorityGranted: false,
       });
+      zeroCapitalRetryTimer = setTimeout(() => startCanonicalZeroCapitalRuntime(), retryMs);
+      zeroCapitalRetryTimer.unref?.();
+    })
+    .finally(() => {
+      zeroCapitalStartPromise = null;
     });
 }
 
@@ -119,7 +139,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     filteredMempoolEvidence: 'alchemy_provider_filtered_hash_first_exact_chain',
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
-    zeroCapitalRuntimeLifecycle: 'started_after_all_canonical_wrappers',
+    zeroCapitalRuntimeLifecycle: 'started_after_all_canonical_wrappers_with_fail_closed_retry',
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
     zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
