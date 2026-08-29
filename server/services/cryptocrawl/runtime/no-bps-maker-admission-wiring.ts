@@ -53,6 +53,15 @@ async function makerFeeEvidence(venue: 'kraken' | 'okx', symbol: string): Promis
     || await resolveCexFeeEvidence(venue, symbol).catch(() => null);
 }
 
+function betterPlan(
+  current: VerifiedArbitragePlan | null | undefined,
+  candidate: VerifiedArbitragePlan | null | undefined,
+): VerifiedArbitragePlan | null {
+  if (!candidate || !Number.isFinite(candidate.netProfitUsd) || candidate.netProfitUsd <= 0) return current ?? null;
+  if (!current || !Number.isFinite(current.netProfitUsd) || current.netProfitUsd <= 0) return candidate;
+  return candidate.netProfitUsd > current.netProfitUsd ? candidate : current;
+}
+
 async function evaluateNoBpsFloorMaker(input: {
   symbol: string;
   notionalUsd: number;
@@ -222,12 +231,12 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
 
   verifier.evaluateOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
     const existing = await originalEvaluateOnce(request);
-    if (existing) return existing;
-    return evaluateNoBpsFloorMaker({
+    const maker = await evaluateNoBpsFloorMaker({
       symbol: String(request?.symbol || ''),
       notionalUsd: Number(request?.notionalUsd || 0),
       maxQuoteAgeMs: Math.max(250, Number(request?.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000)),
     });
+    return betterPlan(existing, maker);
   };
 
   verifier.evaluateMany = async (
@@ -237,10 +246,9 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
   ): Promise<Map<string, VerifiedArbitragePlan | null>> => {
     const plans = await originalEvaluateMany(request, symbols, capacity);
     const governance = getCryptocrawlGovernance();
-    const unresolved = symbols
+    const governedSymbols = [...new Set(symbols
       .map(symbol => symbol.trim().toUpperCase())
       .filter(Boolean)
-      .filter(symbol => !plans.get(symbol))
       .filter(symbol => {
         try {
           governance.requireAllowed('ADVISE', { chain: request.gas?.chain, pair: symbol });
@@ -248,38 +256,49 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
         } catch {
           return false;
         }
-      });
-    if (unresolved.length === 0) return plans;
+      }))];
+    if (governedSymbols.length === 0) return plans;
 
     await primeCexFeeEvidenceForVenueSymbols({
-      kraken: unresolved,
-      okx: unresolved,
+      kraken: governedSymbols,
+      okx: governedSymbols,
     }).catch(error => {
       logger.debug('[NoBpsMakerAdmission] Batch maker fee prime degraded', {
         component: 'NoBpsMakerAdmissionWiring',
-        symbols: unresolved.length,
+        symbols: governedSymbols.length,
         error: error instanceof Error ? error.message : String(error),
       });
     });
 
+    let makerPositive = 0;
     let makerRecovered = 0;
-    await runBounded(unresolved, makerBatchConcurrency(), async symbol => {
+    let makerImprovedExisting = 0;
+    await runBounded(governedSymbols, makerBatchConcurrency(), async symbol => {
+      const before = plans.get(symbol) ?? null;
       const makerPlan = await evaluateNoBpsFloorMaker({
         symbol,
         notionalUsd: Number(request.notionalUsd || 0),
         maxQuoteAgeMs: Math.max(250, Number(request.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000)),
       });
       if (!makerPlan) return;
-      plans.set(symbol, makerPlan);
-      makerRecovered += 1;
+      makerPositive += 1;
+      const selected = betterPlan(before, makerPlan);
+      if (selected === makerPlan) {
+        plans.set(symbol, makerPlan);
+        if (before) makerImprovedExisting += 1;
+        else makerRecovered += 1;
+      }
     });
 
-    logger.info('[NoBpsMakerAdmission] Batch maker recovery completed', {
+    logger.info('[NoBpsMakerAdmission] Batch maker comparison completed', {
       component: 'NoBpsMakerAdmissionWiring',
       symbolsRequested: symbols.length,
-      takerPlansAlreadyPositive: symbols.length - unresolved.length,
-      makerFallbackEvaluated: unresolved.length,
+      governedSymbols: governedSymbols.length,
+      makerEvaluatedAgainstPositiveTakerToo: true,
+      makerPositive,
       makerRecoveredPositive: makerRecovered,
+      makerImprovedExistingPositive: makerImprovedExisting,
+      selectionAuthority: 'highest_verified_positive_net_profit_usd_then_existing_downstream_cryptara_governance',
       feePrimeMode: 'kraken_single_batch_plus_okx_grouped_batch',
       coinbaseDependency: false,
       governanceRechecked: true,
@@ -294,7 +313,7 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
     return plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0 ? plan : null;
   };
 
-  logger.info('[NoBpsMakerAdmission] Maker recovery now uses measured economics without an arbitrary BPS floor', {
+  logger.info('[NoBpsMakerAdmission] Maker recovery compares against positive taker economics without an arbitrary BPS floor', {
     component: 'NoBpsMakerAdmissionWiring',
     bpsExecutionFloor: null,
     executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
@@ -302,9 +321,11 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
     measuredProductConstraintsRequired: true,
     freshWebsocketBooksRequired: true,
     postOnlyExecution: true,
-    batchOpportunityGraphMakerFallback: true,
+    batchOpportunityGraphMakerComparison: true,
+    positiveTakerPlansCanBeImprovedByMaker: true,
     batchFeePrime: 'kraken_single_batch_plus_okx_grouped_batch',
     coinbaseDependency: false,
-    governanceRecheckedBeforeFallback: true,
+    governanceRecheckedBeforeComparison: true,
+    downstreamCryptaraAndSettlementAuthoritiesPreserved: true,
   });
 }
