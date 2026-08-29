@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
+import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
 import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
@@ -19,6 +20,7 @@ import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
+import { ensureProviderSpecificZeroCapitalExecutionWiring } from './provider-specific-zero-capital-execution-wiring.js';
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
@@ -35,12 +37,17 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
   ensureZeroCapitalFlashProviderWiring();
+  ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
   ensureOrderBookEvolutionWiring();
   ensureCryptaraCexEvidenceWiring();
   // Installed after CEX/zero-capital correctness wiring so adaptive scoring can
   // only admit candidates that have already passed their current-evidence gates.
   ensureDynamicProfitabilityAdmissionWiring();
+  // Stage 1 validates the live system from fresh, economically eligible current
+  // evidence rather than waiting for realized profit history that cannot exist
+  // until Stage 2 permits the first governed execution.
+  ensureStageOneBootstrapAuthority();
   void canonicalIntelligenceRepository.hydrate();
   ensureCanonicalIntelligenceOutbox();
   ensureFilteredAlchemyPendingStream();
@@ -58,6 +65,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     fixedDiscoveryPriority: false,
     adaptiveAdmissionFormula: '(NetProfitUSD / ExecutionRisk) * ConfidenceLevel',
     historicalProofRequiredBeforeFirstExecution: false,
+    stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history',
     adaptiveThresholdAuthority: 'terminal_realized_outcomes',
     legacyMasterOrchestratorRequired: false,
     executionAuthorityGranted: false,
@@ -71,7 +79,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
-    zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal',
+    zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
+    zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
     zeroCapitalAtomicStackExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
     runtimeHeartbeat: true,

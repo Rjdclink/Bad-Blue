@@ -5,10 +5,12 @@ import {
   type OnchainSwapLeg,
   type SupportedExecutionChain,
 } from './onchain-payload-builder.js';
+import type { FlashLoanProviderKind } from './flash-loan-provider-economics.js';
 
 export interface FlashLoanReceiverExecutionPlan {
   chain: SupportedExecutionChain;
   receiver: string;
+  provider?: FlashLoanProviderKind;
   loanToken: string;
   loanAmount: string;
   minProfit: string;
@@ -17,8 +19,11 @@ export interface FlashLoanReceiverExecutionPlan {
   gasLimit?: number;
 }
 
-const FLASHLOAN_RECEIVER_ABI = [
+const BALANCER_FLASHLOAN_RECEIVER_ABI = [
   'function executeBalancerFlashLoan(address loanToken, uint256 loanAmount, (address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps, uint256 minProfit, address profitRecipient) external',
+];
+const AAVE_FLASHLOAN_RECEIVER_ABI = [
+  'function executeAaveFlashLoan(address loanToken, uint256 loanAmount, (address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps, uint256 minProfit, address profitRecipient) external',
 ];
 
 // Solidity receiver has no static step cap; this application-side envelope keeps
@@ -97,7 +102,11 @@ export function buildFlashLoanReceiverPayloadFromPlan(
 
   validateAtomicRouteBalance(plan);
 
-  const iface = new ethers.utils.Interface(FLASHLOAN_RECEIVER_ABI);
+  const provider = plan.provider || 'balancer_v2';
+  const iface = new ethers.utils.Interface(
+    provider === 'aave_v3' ? AAVE_FLASHLOAN_RECEIVER_ABI : BALANCER_FLASHLOAN_RECEIVER_ABI,
+  );
+  const functionName = provider === 'aave_v3' ? 'executeAaveFlashLoan' : 'executeBalancerFlashLoan';
   const loanAmount = parseIntegerString('loanAmount', plan.loanAmount);
   const minProfit = parseIntegerString('minProfit', plan.minProfit);
 
@@ -128,7 +137,7 @@ export function buildFlashLoanReceiverPayloadFromPlan(
 
   return {
     to: plan.receiver,
-    data: iface.encodeFunctionData('executeBalancerFlashLoan', [
+    data: iface.encodeFunctionData(functionName, [
       plan.loanToken,
       loanAmount,
       encodedSteps,

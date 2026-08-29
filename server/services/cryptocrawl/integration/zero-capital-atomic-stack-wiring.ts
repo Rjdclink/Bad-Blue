@@ -8,9 +8,10 @@ import {
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import {
-  buildFlashLoanReceiverPayloadFromPlan,
-  type FlashLoanReceiverExecutionPlan,
-} from '../execution/adapters/flashloan-receiver-builder.js';
+  buildCompositeFlashLoanReceiverPayload,
+  type CompositeFlashLoanExecutionPlan,
+} from '../execution/adapters/composite-flashloan-receiver-builder.js';
+import { verifyFlashLoanReceiverCapability } from '../execution/adapters/flash-loan-receiver-capability.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { zeroCapitalCompositeEvidenceRegistry } from '../optimization/zero-capital-composite-evidence-registry.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
@@ -97,12 +98,20 @@ async function exactSimulateStack(input: {
   const profitRecipient = process.env.CRYPTO_PROFIT_WALLET_ADDRESS || process.env.BRIDGE_WALLET_ADDRESS || input.wallet.address;
   const individualPlans = input.opportunities.map(opportunity => buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
     receiver: input.receiver,
+    provider: 'balancer_v2',
     profitRecipient,
     maxRouteHops: 8,
     nowMs: Date.now(),
   }));
   const steps = individualPlans.flatMap(plan => plan.steps);
   if (steps.length > 16) return;
+
+  const cycleEndStepIndexes: number[] = [];
+  let cumulativeSteps = 0;
+  for (const plan of individualPlans) {
+    cumulativeSteps += plan.steps.length;
+    cycleEndStepIndexes.push(cumulativeSteps - 1);
+  }
 
   const loanToken = individualPlans[0].loanToken;
   if (individualPlans.some(plan => !sameAddress(plan.loanToken, loanToken))) return;
@@ -115,7 +124,7 @@ async function exactSimulateStack(input: {
   const expiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt));
   if (Date.now() >= expiresAt) return;
 
-  const composite: FlashLoanReceiverExecutionPlan = {
+  const composite: CompositeFlashLoanExecutionPlan = {
     chain: input.chain,
     receiver: input.receiver,
     loanToken,
@@ -123,9 +132,10 @@ async function exactSimulateStack(input: {
     minProfit: minProfitSum.toString(),
     profitRecipient,
     steps,
+    cycleEndStepIndexes,
     gasLimit: 5_000_000,
   };
-  const payload = buildFlashLoanReceiverPayloadFromPlan(composite);
+  const payload = buildCompositeFlashLoanReceiverPayload(composite);
   await input.provider.call({
     from: input.wallet.address,
     to: payload.to,
@@ -196,6 +206,8 @@ async function exactSimulateStack(input: {
     simulatedAt: Date.now(),
     expiresAt,
     provenance: [
+      'verified_balancer_composite_v2_receiver',
+      'composite_cycle_checkpoint_capable',
       'exact_receiver_composite_eth_call',
       'exact_receiver_composite_estimate_gas',
       'shared_flash_loan_principal',
@@ -214,6 +226,7 @@ async function exactSimulateStack(input: {
       provenance: [
         'atomic_multileg_payload_composable',
         'atomic_multileg_exact_simulation',
+        'atomic_multileg_composite_v2',
         `atomic_multileg_evidence:${evidenceId}`,
         `atomic_multileg_shared_principal_bps:${stackedBps.toFixed(4)}`,
         `atomic_multileg_estimated_gas:${estimatedGas.toString()}`,
@@ -224,9 +237,11 @@ async function exactSimulateStack(input: {
 
   logger.info('[ZeroCapitalStack] Exact-simulated beneficial shared-principal atomic stack', {
     component: 'ZeroCapitalAtomicStackWiring',
+    receiverKind: 'balancer_composite_v2',
     chain: input.chain,
     opportunityIds,
     cycles: input.opportunities.length,
+    cycleEndStepIndexes,
     steps: steps.length,
     sharedPrincipal: sharedPrincipal.toString(),
     individualExpectedProfitSum: expectedProfitSum.toString(),
@@ -264,9 +279,15 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     for (const opportunity of opportunities) zeroCapitalRouteEvidenceRegistry.record(opportunity);
     if (chain === 'europa' || opportunities.length < 2) return opportunities;
 
-    const receiver = target.receiverManager.getReceiver(chain);
     const wallet = target.executionWallets.get(chain);
-    if (!receiver || !wallet) return opportunities;
+    if (!wallet) return opportunities;
+    const compositeCapability = await verifyFlashLoanReceiverCapability({
+      kind: 'balancer_composite_v2',
+      chain,
+      provider,
+      expectedOwner: wallet.address,
+    }).catch(() => null);
+    if (!compositeCapability) return opportunities;
 
     const byInputToken = new Map<string, ZeroCapitalOpportunity[]>();
     for (const opportunity of opportunities) {
@@ -280,8 +301,14 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     for (const group of byInputToken.values()) {
       const stack = chooseStack(group);
       if (stack.length < 2) continue;
-      await exactSimulateStack({ chain, provider, wallet, receiver, opportunities: stack }).catch(error => {
-        logger.debug('[ZeroCapitalStack] Composite exact simulation rejected', {
+      await exactSimulateStack({
+        chain,
+        provider,
+        wallet,
+        receiver: compositeCapability.address,
+        opportunities: stack,
+      }).catch(error => {
+        logger.debug('[ZeroCapitalStack] Composite V2 exact simulation rejected', {
           component: 'ZeroCapitalAtomicStackWiring',
           chain,
           opportunityIds: stack.map(opportunity => opportunity.id),
@@ -294,6 +321,8 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
 
   logger.info('[ZeroCapitalStack] Shared-principal atomic stacking wiring installed', {
     component: 'ZeroCapitalAtomicStackWiring',
+    receiverKind: 'balancer_composite_v2',
+    verifiedCompositeReceiverRequired: true,
     maxAtomicSteps: 16,
     adaptiveLegCount: true,
     adaptiveIncrementalBpsThreshold: true,

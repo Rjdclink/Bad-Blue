@@ -17,6 +17,16 @@ const receiverBuilder = read('server/services/cryptocrawl/execution/adapters/fla
 const compositeReceiver = read('contracts/cryptocrawl/CryptocrawlBalancerCompositeFlashLoanReceiver.sol');
 const learning = read('server/services/cryptocrawl/integration/learning-lifecycle-wiring.ts');
 const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
+const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const stageOneBootstrap = read('server/services/cryptocrawl/governance/stage-one-bootstrap-authority.ts');
+const stageManager = read('server/services/cryptocrawl/governance/stage-management.ts');
+const profitLadder = read('server/services/cryptocrawl/governance/profit-ladder.ts');
+const providerEconomics = read('server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.ts');
+const receiverCapability = read('server/services/cryptocrawl/execution/adapters/flash-loan-receiver-capability.ts');
+const providerSelection = read('server/services/cryptocrawl/execution/adapters/flash-loan-provider-selection-registry.ts');
+const providerWiring = read('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts');
+const providerExecution = read('server/services/cryptocrawl/integration/provider-specific-zero-capital-execution-wiring.ts');
+const deployment = read('scripts/cryptocrawl/deploy-flashloan-receiver.ts');
 
 const failures = [];
 const requireText = (source, text, label) => {
@@ -99,9 +109,67 @@ requireText(receiverBuilder, 'MAX_ATOMIC_SWAP_STEPS = 16', 'bounded 16-step enve
 requireText(compositeReceiver, 'CompositeCycleCheckpoint', 'per-cycle balance checkpoint event');
 requireText(compositeReceiver, 'FlashLoanExecuted', 'aggregate terminal profit event');
 
+// Stage 1 bootstrap proves the live system from fresh current evidence and feeds
+// the existing Foundation/Tier-0 ladder rule. It does not bypass the ladder or
+// fabricate realized-profit history.
+requireText(stageOneBootstrap, "candidate.status !== 'eligible'", 'Stage 1 eligible-only validation');
+requireText(stageOneBootstrap, '!candidate.executableCapability', 'Stage 1 execution-capability requirement');
+requireText(stageOneBootstrap, 'candidate.missingInformation.length > 0', 'Stage 1 complete-evidence requirement');
+requireText(stageOneBootstrap, "candidate.topology !== 'CEX_CEX' && candidate.topology !== 'ZERO_CAPITAL_ATOMIC'", 'Stage 1 bounded bootstrap topologies');
+requireText(stageOneBootstrap, 'candidate.economics.deterministicNetProfitUsd', 'Stage 1 positive economics');
+requireText(stageOneBootstrap, 'stageManager.recordLiveValidation', 'Stage 1 uses canonical live-validation API');
+requireText(stageOneBootstrap, 'stageOneFoundationLadderEvidence', 'Stage 1 foundation ladder evidence');
+requireText(stageOneBootstrap, 'currentTierId: 0', 'Stage 1 tier alignment');
+requireText(stageOneBootstrap, 'readyForNextTier: true', 'Stage 1 foundation evidence alignment');
+requireText(stageOneBootstrap, 'foundationProfitLadderStillAdvances: true', 'Stage 1 keeps actual ladder advancement');
+requireText(stageOneBootstrap, 'state.currentStage !== 1', 'Stage 1-only authority boundary');
+requireText(stageOneBootstrap, 'terminalSettlementStillRequiredAfterExecution: true', 'Stage 1 post-execution settlement invariant');
+requireText(stageManager, 'm.liveValidationSamples >= 3', 'StageManager still requires multiple live validations');
+requireText(stageManager, 'm.liveValidationPassRate >= 0.8', 'StageManager still requires validation pass rate');
+requireText(profitLadder, "previousTier.id === 0 ? 'stage_manager_foundation_proof' : 'terminal_realized_performance'", 'Tier 0 foundation proof authority');
+requireText(profitLadder, 'StageManager foundation proof metrics are not complete', 'Tier 0 checks StageManager proof');
+requireText(canonicalRuntime, 'ensureStageOneBootstrapAuthority()', 'Stage 1 bootstrap installed in canonical runtime');
+forbid(stageOneBootstrap, /sendTransaction\s*\(/, 'Stage 1 direct transaction submission');
+forbid(stageOneBootstrap, /executeVerifiedArbitragePlan\s*\(/, 'Stage 1 direct CEX execution');
+forbid(stageOneBootstrap, /executeFunded\s*\(/, 'Stage 1 direct zero-capital execution');
+forbid(stageOneBootstrap, /recordExecutionEvidence\s*\(/, 'Stage 1 synthetic terminal evidence');
+
+// Provider economics, receiver readiness and final submission remain separate
+// authorities and are explicitly bound per opportunity by the provider wiring.
+requireText(providerEconomics, 'getReserveAToken(address asset)', 'Aave newer-pool reserve liquidity authority');
+requireText(providerEconomics, 'ADDRESSES_PROVIDER() view returns (address)', 'Aave addresses-provider discovery');
+requireText(providerEconomics, 'getPoolDataProvider() view returns (address)', 'Aave data-provider discovery');
+requireText(providerEconomics, 'getReserveTokensAddresses(address asset)', 'Aave older-V3 reserve-token fallback');
+requireText(providerEconomics, 'getFlashLoanEnabled(address asset)', 'Aave reserve flash-loan enablement');
+requireText(providerEconomics, 'aave_v3_underlying_balance_at_atoken', 'Aave measured underlying liquidity');
+requireText(providerEconomics, 'flash_loan_disabled_for_reserve', 'Aave disabled-reserve fail closed');
+requireText(providerEconomics, 'feeMeasured && liquidityMeasured && flashLoanEnablementMeasured && flashLoanEnabled', 'Aave complete executable evidence');
+requireText(providerEconomics, 'allowedProviders', 'execution-ready provider filter');
+requireText(receiverCapability, "'balancer_v1' | 'balancer_composite_v2' | 'aave_v3'", 'receiver capability kinds');
+requireText(receiverCapability, 'receiver_bytecode_present', 'receiver bytecode verification');
+requireText(receiverCapability, 'receiver_owner_verified', 'receiver owner verification');
+requireText(receiverCapability, 'buildMissingReceiverPermissionCalls', 'provider-neutral permission authority');
+requireText(providerSelection, 'receiverCapability: VerifiedFlashLoanReceiverCapability', 'selection stores verified receiver capability');
+requireText(providerSelection, 'expiresAt: number', 'selection is expiration-bound');
+requireText(providerWiring, 'provider_receiver_binding', 'provider/receiver binding provenance');
+requireText(providerWiring, 'verifyFlashLoanReceiverCapability', 'provider selection verifies receiver');
+requireText(providerWiring, 'buildMissingReceiverPermissionCalls', 'Aave route permission check');
+requireText(providerWiring, 'fresh_quote_after_aave_receiver_permissions', 'fresh quote after permission change');
+requireText(providerExecution, "selection.provider !== 'aave_v3'", 'provider-specific execution branch');
+requireText(providerExecution, 'buildFlashLoanReceiverPayloadFromPlan', 'provider-specific final payload');
+requireText(providerExecution, 'FlashLoanExecuted', 'provider-specific positive-profit receipt verification');
+requireText(providerExecution, 'normalizeAaveSettlement', 'provider-specific normalized settlement');
+requireText(providerExecution, 'aave_v3_pool_flashLoanSimple', 'Aave settlement provenance');
+requireText(providerExecution, 'provider_receiver_binding_verified', 'Aave receiver binding provenance');
+forbid(providerExecution, /foundry_create2_receiver/, 'Balancer provenance on Aave settlement');
+requireText(deployment, "'balancer-composite-v2'", 'Composite V2 deploy support');
+requireText(deployment, "'aave-v3'", 'Aave V3 deploy support');
+requireText(deployment, 'DEPLOY_FLASHLOAN_RECEIVER', 'explicit deployment confirmation');
+
 forbid(assembler, /executionAuthority:\s*true/, 'composite direct execution authority');
 forbid(assembler, /sharedPrincipalStackedBps:\s*arithmeticLegBpsSum/, 'arithmetic BPS promoted as shared-principal BPS');
 forbid(liquidation, /deterministicNetProfitUsd:\s*[1-9]/, 'invented liquidation profit');
+forbid(providerEconomics, /availableLiquidity:\s*Number\.POSITIVE_INFINITY/, 'assumed infinite provider liquidity');
 
 if (failures.length) {
   console.error('Unified multi-leg adaptive engine verification FAILED');
@@ -113,7 +181,14 @@ console.log('Unified multi-leg adaptive engine verification PASSED');
 console.log(' - all measured discovery sources launch in parallel without a fixed source priority');
 console.log(' - UnifiedExecutionRouter is the sole ProfitabilityScore authority');
 console.log(' - ProfitabilityScore=(NetProfitUSD/ExecutionRisk)*ConfidenceLevel');
-console.log(' - cold start requires current evidence, not historical proof');
+console.log(' - cold start requires current evidence, not historical profit history');
+console.log(' - Stage 1 creates canonical live-validation proof from fresh eligible current evidence');
+console.log(' - Tier 0 still advances through the real ProfitLadder foundation-proof rule');
+console.log(' - Stage 1 cannot submit trades or fabricate terminal settlement history');
+console.log(' - realized-profit scaling criteria begin after foundation exit');
+console.log(' - Balancer/Aave provider economics are bound to verified provider-specific receivers');
+console.log(' - Aave executable evidence requires measured fee, liquidity, and reserve flash-loan enablement');
+console.log(' - provider-specific terminal settlement preserves actual provider provenance');
 console.log(' - terminal outcomes adapt score/confidence thresholds, cost calibration, and topology attention');
 console.log(' - exact selected-set evidence is required for shared-principal stacked BPS');
 console.log(' - incomplete maker/cross-chain/liquidation/funding execution paths remain fail closed');

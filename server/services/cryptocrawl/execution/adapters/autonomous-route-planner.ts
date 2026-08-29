@@ -1,4 +1,5 @@
 import type { FlashLoanReceiverExecutionPlan } from './flashloan-receiver-builder.js';
+import type { FlashLoanProviderKind } from './flash-loan-provider-economics.js';
 import type { OnchainSwapLeg, SupportedExecutionChain, SupportedSwapProtocol } from './onchain-payload-builder.js';
 
 export interface RoutePlanningSwapStep {
@@ -88,6 +89,7 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
   opportunity: RoutePlanningOpportunity,
   options?: {
     receiver?: string;
+    provider?: FlashLoanProviderKind;
     profitRecipient?: string;
     minOutputBps?: number;
     minProfitBps?: number;
@@ -196,6 +198,7 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
   return {
     chain: opportunity.chain,
     receiver,
+    provider: options?.provider || 'balancer_v2',
     loanToken: inputToken,
     loanAmount: flashLoanAmount.toString(),
     minProfit: applyHaircut(expectedProfit, minProfitBps),
