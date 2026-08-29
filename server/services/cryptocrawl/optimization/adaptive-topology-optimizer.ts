@@ -54,6 +54,29 @@ function inferredNotionalUsd(opportunityId: string): number | null {
     const inferred = Math.abs(grossUsd * 10_000 / grossBps);
     if (Number.isFinite(inferred) && inferred > 0) return inferred;
   }
+
+  // CEX candidates already carry measured buy/sell prices and gross P&L. Rebuild
+  // the executed notional from baseQty = grossProfit / spread rather than asking
+  // CEX producers to duplicate plan state into learning.
+  if ((candidate.topology === 'CEX_CEX' || candidate.topology === 'MAKER_CEX') && grossUsd !== null && grossUsd > 0) {
+    const ask = candidate.rawQuotes.find(quote => Number.isFinite(quote.ask))?.ask;
+    const bid = candidate.rawQuotes.find(quote => Number.isFinite(quote.bid))?.bid;
+    if (ask !== null && ask !== undefined && bid !== null && bid !== undefined && bid > ask && ask > 0) {
+      const baseQty = grossUsd / (bid - ask);
+      const inferred = baseQty * ask;
+      if (Number.isFinite(inferred) && inferred > 0) return inferred;
+    }
+  }
+
+  // Stablecoin DEX discovery stores amountIn in 6-decimal base units. This is
+  // measured quote evidence, not a nominal/synthetic notional assumption.
+  if (candidate.topology === 'DEX_ATOMIC') {
+    const amountIn = candidate.rawQuotes.find(quote => quote.amountIn && /^\d+$/.test(quote.amountIn))?.amountIn;
+    if (amountIn) {
+      const inferred = Number(amountIn) / 1_000_000;
+      if (Number.isFinite(inferred) && inferred > 0) return inferred;
+    }
+  }
   return null;
 }
 
@@ -99,6 +122,7 @@ class AdaptiveTopologyOptimizer {
     measuredCandidateRegistry.updateStatus(outcome.opportunityId, candidate.status, {
       economics: {
         ...candidate.economics,
+        notionalUsd,
         realizedNetProfitBps: realizedBps,
       },
       provenance: ['adaptive_optimizer:terminal_realized_bps'],
