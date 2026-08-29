@@ -7,9 +7,11 @@ export interface OpportunityDecayEstimate {
   halfLifeMs: number;
   timeRemainingMs: number;
   expired: boolean;
+  expiryPressure: number;
   survivalProbability: number;
   measuredNetProfitUsd: number | null;
   decayAdjustedSchedulingValueUsd: number | null;
+  urgencyAdjustedSchedulingValueUsd: number | null;
   authority: 'scheduling_only';
   deterministicProfitAuthority: false;
   executionAuthority: false;
@@ -56,7 +58,8 @@ export function estimateOpportunityDecay(
   const timeRemainingMs = Math.max(0, candidate.expiresAt - now);
   const expired = candidate.expiresAt <= now;
   const baseSurvivalProbability = Math.pow(0.5, ageMs / Math.max(1, halfLifeMs));
-  const survivalProbability = expired ? 0 : baseSurvivalProbability;
+  const expiryPressure = expired ? 1 : 1 - Math.min(1, timeRemainingMs / Math.max(1, halfLifeMs));
+  const survivalProbability = expired ? 0 : baseSurvivalProbability * Math.max(0.05, 1 - expiryPressure * 0.5);
   const measuredNetProfitUsd = candidate.economics.deterministicNetProfitUsd !== null
     && Number.isFinite(candidate.economics.deterministicNetProfitUsd)
     ? Number(candidate.economics.deterministicNetProfitUsd)
@@ -64,6 +67,10 @@ export function estimateOpportunityDecay(
   const decayAdjustedSchedulingValueUsd = measuredNetProfitUsd === null
     ? null
     : measuredNetProfitUsd * survivalProbability;
+  const urgencyMultiplier = expired ? 0 : 1 + expiryPressure;
+  const urgencyAdjustedSchedulingValueUsd = decayAdjustedSchedulingValueUsd === null
+    ? null
+    : decayAdjustedSchedulingValueUsd * urgencyMultiplier;
   return {
     opportunityId: candidate.opportunityId,
     topology: candidate.topology,
@@ -71,9 +78,11 @@ export function estimateOpportunityDecay(
     halfLifeMs,
     timeRemainingMs,
     expired,
+    expiryPressure,
     survivalProbability,
     measuredNetProfitUsd,
     decayAdjustedSchedulingValueUsd,
+    urgencyAdjustedSchedulingValueUsd,
     authority: 'scheduling_only',
     deterministicProfitAuthority: false,
     executionAuthority: false,
