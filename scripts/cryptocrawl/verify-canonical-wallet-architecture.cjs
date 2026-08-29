@@ -18,9 +18,11 @@ const across = read('server/services/cryptocrawl/bridge/across-bridge-provider.t
 const railway = read('.env.railway.example');
 
 requireText(identity, 'installCanonicalWalletConfiguration', 'canonical wallet bootstrap');
-requireText(identity, "environment.BRIDGE_WALLET_ADDRESS = executionAddress", 'legacy bridge address aliasing');
-requireText(identity, "environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS = executionAddress", 'Across depositor aliasing');
-requireText(identity, 'Deprecated BRIDGE_SIGNER_PRIVATE_KEY conflicts with WALLET_PRIVATE_KEY', 'duplicate signer mismatch guard');
+requireText(identity, 'const executionAddress = walletFromPrivateKey(privateKey).address', 'single signer authority');
+requireText(identity, 'environment.BRIDGE_WALLET_ADDRESS = executionAddress', 'legacy bridge address repair');
+requireText(identity, 'environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS = executionAddress', 'Across depositor repair');
+requireText(identity, "['BRIDGE_WALLET_ADDRESS', 'BRIDGE_SIGNER_PRIVATE_KEY', 'WALLET_PUBLIC_KEY']", 'deprecated variable inventory');
+rejectText(identity, 'walletFromPrivateKey(legacyBridgeSigner)', 'duplicate bridge signer authority');
 requireText(identity, 'resolveTerminalPayoutAddress', 'terminal payout resolver');
 requireText(identity, 'resolveOperationalProfitRecipient', 'runtime profit recipient resolver');
 
@@ -42,8 +44,8 @@ console.log(JSON.stringify({
   ok: true,
   canonicalOperationalSigner: 'WALLET_PRIVATE_KEY',
   operationalProfitRecipient: 'WALLET_PRIVATE_KEY-derived execution address',
-  bridgeIdentity: 'same execution address via compatibility alias',
+  bridgeIdentity: 'same execution address via repaired compatibility alias',
   terminalPayoutOnly: 'CRYPTO_PROFIT_WALLET_ADDRESS',
-  duplicateSignerGuard: true,
+  duplicateSignerAuthority: false,
   runtimeProfitExternalSweep: false,
 }, null, 2));
