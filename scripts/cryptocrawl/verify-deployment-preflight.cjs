@@ -1,7 +1,8 @@
-// Deployment-time verifier fan-out intentionally retired.
-//
-// Runtime safety and trading admission remain enforced by production code.
-// Standalone verification scripts remain available for explicit/manual use,
-// but they no longer veto Railway production builds through npm prebuild.
+// Railway is the production build path, so keep this preflight intentionally
+// narrow and deterministic: validate only core trading-safety invariants that
+// must never regress, then allow the normal Vite/esbuild production build to
+// provide whole-application syntax/module bundling validation.
 
-console.log('[deployment-preflight] verifier fan-out retired; continuing to normal Vite/esbuild production build');
+require('./verify-runtime-safety-invariants.cjs');
+
+console.log('[deployment-preflight] targeted runtime safety invariants passed; continuing to normal Vite/esbuild production build');
