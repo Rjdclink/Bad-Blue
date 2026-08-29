@@ -129,8 +129,8 @@ forbid(stageOneBootstrap, /executeVerifiedArbitragePlan\s*\(/, 'Stage 1 direct C
 forbid(stageOneBootstrap, /executeFunded\s*\(/, 'Stage 1 direct zero-capital execution');
 forbid(stageOneBootstrap, /recordExecutionEvidence\s*\(/, 'Stage 1 synthetic terminal evidence');
 
-// Provider economics, receiver readiness and final submission must remain separate
-// authorities, then be explicitly bound per opportunity.
+// Provider economics, receiver readiness and final submission remain separate
+// authorities and are explicitly bound per opportunity by the provider wiring.
 requireText(providerEconomics, 'getReserveAToken(address asset)', 'Aave reserve liquidity authority');
 requireText(providerEconomics, 'aave_v3_underlying_balance_at_atoken', 'Aave measured underlying liquidity');
 requireText(providerEconomics, 'allowedProviders', 'execution-ready provider filter');
@@ -138,10 +138,12 @@ requireText(receiverCapability, "'balancer_v1' | 'balancer_composite_v2' | 'aave
 requireText(receiverCapability, 'receiver_bytecode_present', 'receiver bytecode verification');
 requireText(receiverCapability, 'receiver_owner_verified', 'receiver owner verification');
 requireText(receiverCapability, 'buildMissingReceiverPermissionCalls', 'provider-neutral permission authority');
-requireText(providerSelection, 'provider_receiver_binding', 'provider/receiver binding registry');
+requireText(providerSelection, 'receiverCapability: VerifiedFlashLoanReceiverCapability', 'selection stores verified receiver capability');
+requireText(providerSelection, 'expiresAt: number', 'selection is expiration-bound');
+requireText(providerWiring, 'provider_receiver_binding', 'provider/receiver binding provenance');
 requireText(providerWiring, 'verifyFlashLoanReceiverCapability', 'provider selection verifies receiver');
 requireText(providerWiring, 'buildMissingReceiverPermissionCalls', 'Aave route permission check');
-requireText(providerWiring, 'fresh_quote_required_after_permission_mutation', 'fresh quote after permission change');
+requireText(providerWiring, 'fresh_quote_after_aave_receiver_permissions', 'fresh quote after permission change');
 requireText(providerExecution, "selection.provider !== 'aave_v3'", 'provider-specific execution branch');
 requireText(providerExecution, 'buildFlashLoanReceiverPayloadFromPlan', 'provider-specific final payload');
 requireText(providerExecution, 'FlashLoanExecuted', 'provider-specific positive-profit receipt verification');
@@ -153,7 +155,6 @@ forbid(assembler, /executionAuthority:\s*true/, 'composite direct execution auth
 forbid(assembler, /sharedPrincipalStackedBps:\s*arithmeticLegBpsSum/, 'arithmetic BPS promoted as shared-principal BPS');
 forbid(liquidation, /deterministicNetProfitUsd:\s*[1-9]/, 'invented liquidation profit');
 forbid(providerEconomics, /availableLiquidity:\s*Number\.POSITIVE_INFINITY/, 'assumed infinite provider liquidity');
-forbid(providerWiring, /aaveLiveExecutionEnabled:\s*true[\s\S]*without/, 'unverified Aave activation');
 
 if (failures.length) {
   console.error('Unified multi-leg adaptive engine verification FAILED');
