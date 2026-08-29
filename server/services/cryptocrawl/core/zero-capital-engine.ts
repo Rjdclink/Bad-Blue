@@ -713,20 +713,10 @@ export class AutonomousZeroCapitalEngine {
 
   private async validateUnifiedControl(
     opportunity: ZeroCapitalOpportunity,
-  ): Promise<{ approved: boolean; reason: string; monteCarlo: MonteCarloProfitabilityResult }> {
+  ): Promise<{ approved: boolean; reason: string; monteCarlo?: MonteCarloProfitabilityResult }> {
     const notionalUsd = this.toUsd(opportunity.flashLoanAmount, opportunity.inputTokenDecimals);
     const expectedNetProfitUsd = this.toUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals);
     const executionCostUsd = this.toUsd(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals);
-    const monteCarlo = runProfitabilityMonteCarlo({
-      seed: opportunity.id,
-      notionalUsd,
-      expectedNetProfitUsd,
-      estimatedExecutionCostUsd: executionCostUsd,
-      expectedSlippageBps: opportunity.expectedSlippageBps,
-      quoteLatencyMs: opportunity.quoteLatencyMs,
-      confidence: opportunity.confidence,
-    });
-
     const funding = await this.getGasFundingDecision(opportunity.chain);
 
     const sizing = calculateProgressivePositionSize({
@@ -743,13 +733,34 @@ export class AutonomousZeroCapitalEngine {
 
     if (!computationalBeam.isOperational()) await computationalBeam.initialize();
     const workload: ComputeWorkload<
-      { monteCarlo: MonteCarloProfitabilityResult; positionApproved: boolean; fundingReady: boolean; receiverReady: boolean },
-      { approved: boolean; reason: string }
+      {
+        monteCarloInput: {
+          seed: string;
+          notionalUsd: number;
+          expectedNetProfitUsd: number;
+          estimatedExecutionCostUsd: number;
+          expectedSlippageBps: number;
+          quoteLatencyMs: number;
+          confidence: number;
+        };
+        positionApproved: boolean;
+        fundingReady: boolean;
+        receiverReady: boolean;
+      },
+      { approved: boolean; reason: string; monteCarlo?: MonteCarloProfitabilityResult }
     > = {
       id: `beam-tara-monte-carlo:${opportunity.id}`,
       type: 'MONTE_CARLO_EXECUTION_VALIDATION',
       input: {
-        monteCarlo,
+        monteCarloInput: {
+          seed: opportunity.id,
+          notionalUsd,
+          expectedNetProfitUsd,
+          estimatedExecutionCostUsd: executionCostUsd,
+          expectedSlippageBps: opportunity.expectedSlippageBps,
+          quoteLatencyMs: opportunity.quoteLatencyMs,
+          confidence: opportunity.confidence,
+        },
         positionApproved: sizing.approved && sizing.proposedNotionalUsd > 0,
         fundingReady: funding.mode !== 'unavailable',
         receiverReady: !!this.receiverManager.getReceiver(opportunity.chain),
@@ -759,10 +770,15 @@ export class AutonomousZeroCapitalEngine {
         if (!input.fundingReady) return { approved: false, reason: funding.reason };
         if (!input.receiverReady) return { approved: false, reason: 'No verified sponsored receiver is registered on the route chain' };
         if (!input.positionApproved) return { approved: false, reason: 'Progressive position sizing rejected the trade' };
-        if (!input.monteCarlo.approved) return { approved: false, reason: input.monteCarlo.reason };
-        return { approved: true, reason: `Beam approved Tara/Monte Carlo execution: ${input.monteCarlo.reason}` };
+
+        const monteCarlo = runProfitabilityMonteCarlo(input.monteCarloInput);
+        if (!monteCarlo.approved) return { approved: false, reason: monteCarlo.reason, monteCarlo };
+        return { approved: true, reason: `Beam approved Tara/Monte Carlo execution: ${monteCarlo.reason}`, monteCarlo };
       },
-      validate: result => typeof result.approved === 'boolean' && typeof result.reason === 'string',
+      validate: result =>
+        typeof result.approved === 'boolean' &&
+        typeof result.reason === 'string' &&
+        (result.monteCarlo === undefined || typeof result.monteCarlo.profitableProbability === 'number'),
     };
 
     const beam = await computationalBeam.executeCrawlerTask(
@@ -771,11 +787,11 @@ export class AutonomousZeroCapitalEngine {
         opportunityId: opportunity.id,
         expectedNetProfitUsd,
         expectedSlippageBps: opportunity.expectedSlippageBps,
-        profitableProbability: monteCarlo.profitableProbability,
+        confidence: opportunity.confidence,
       },
       { timeout: workload.timeoutMs, workload },
     );
-    return { ...(beam.result as { approved: boolean; reason: string }), monteCarlo };
+    return beam.result as { approved: boolean; reason: string; monteCarlo?: MonteCarloProfitabilityResult };
   }
 
   private startExecutionLoop(): void {
