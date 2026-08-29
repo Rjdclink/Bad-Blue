@@ -262,6 +262,20 @@ export class CentralizedExchangeExecutor {
         })),
       });
 
+      const empiricalCalibrationAvailable = calibration.samples > 0;
+      const coldStartMeasuredBootstrap = !empiricalCalibrationAvailable &&
+        plan.netProfitUsd > 0 &&
+        plan.liquidity.status === 'measured' &&
+        liquidityCoverage >= 1 &&
+        quoteFreshness > 0 &&
+        Number.isFinite(plan.costs.totalCostsUsd) &&
+        Number.isFinite(plan.expectedSlippageBps ?? 0);
+      const admissionMode = empiricalCalibrationAvailable
+        ? 'empirical_monte_carlo'
+        : coldStartMeasuredBootstrap
+          ? 'first_terminal_sample_bootstrap'
+          : 'cold_start_evidence_incomplete';
+
       logger.info('Measured CEX profitability forecast evaluated', {
         component: 'CentralizedExchangeExecutor', symbol: plan.symbol,
         buyVenue: plan.buyVenue, sellVenue: plan.sellVenue, topology: 'CEX_CEX',
@@ -269,6 +283,8 @@ export class CentralizedExchangeExecutor {
         inventoryReservationId: inventory.reservation.reservationId,
         inventoryRequirements: inventory.reservation.requirements,
         calibrationSamples: calibration.samples,
+        empiricalCalibrationAvailable,
+        admissionMode,
         empiricalBothLegsFillRate: calibration.bothLegsFillRate,
         empiricalPartialFillRate: calibration.partialFillRate,
         empiricalProviderFailureRate: calibration.providerFailureRate,
@@ -294,8 +310,26 @@ export class CentralizedExchangeExecutor {
         policyVersion: monteCarlo.policyVersion, approved: monteCarlo.approved, reason: monteCarlo.reason,
       });
 
-      if (!monteCarlo.approved) {
-        return rejectPlan(`REJECT_MC: measured profitability forecast rejected execution: ${monteCarlo.reason}`);
+      if (!monteCarlo.approved && empiricalCalibrationAvailable) {
+        return rejectPlan(`REJECT_MC: empirical profitability forecast rejected execution: ${monteCarlo.reason}`);
+      }
+      if (!monteCarlo.approved && !coldStartMeasuredBootstrap) {
+        return rejectPlan(`REJECT_MC_COLD_START_EVIDENCE: no empirical settlement history exists and current measured execution evidence is incomplete: ${monteCarlo.reason}`);
+      }
+      if (!monteCarlo.approved && coldStartMeasuredBootstrap) {
+        logger.warn('Cold-start Monte Carlo retained as advisory evidence for first terminal sample', {
+          component: 'CentralizedExchangeExecutor',
+          symbol: plan.symbol,
+          buyVenue: plan.buyVenue,
+          sellVenue: plan.sellVenue,
+          calibrationSamples: calibration.samples,
+          verifiedNetProfitUsd: plan.netProfitUsd,
+          liquidityCoverage,
+          quoteFreshness,
+          monteCarloApproved: false,
+          admissionAuthority: 'measured_current_execution_evidence',
+          historyAuthorityAfterExecution: 'terminal_normalized_settlement',
+        });
       }
 
       const effectiveQuoteAgeMs = Math.max(0, plan.quoteAgeMs) + (Date.now() - executionAdmissionStartedAt);
