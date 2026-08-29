@@ -18,6 +18,7 @@ export interface CexModeEconomics {
   combinedFeeBps: number;
   netAfterExchangeFeesBps: number;
   bpsToBreakEven: number;
+  recoveryEfficiency: number;
   economicallyPositive: boolean;
   observationOnly: boolean;
   makerFillProbability: number | null;
@@ -53,6 +54,18 @@ function observationFloorBps(): number {
   const configured = Number(process.env.CRYPTOCRAWL_CEX_FOUR_MODE_OBSERVATION_FLOOR_BPS ?? -200);
   if (!Number.isFinite(configured)) return -200;
   return Math.max(-1_000, Math.min(0, configured));
+}
+
+function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
+  const positiveDelta = Number(right.economicallyPositive) - Number(left.economicallyPositive);
+  if (positiveDelta !== 0) return positiveDelta;
+  if (left.economicallyPositive && right.economicallyPositive) {
+    return right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps
+      || right.netAfterExchangeFeesBps - left.netAfterExchangeFeesBps;
+  }
+  return left.bpsToBreakEven - right.bpsToBreakEven
+    || right.recoveryEfficiency - left.recoveryEfficiency
+    || right.makerFillProbability! - left.makerFillProbability!;
 }
 
 /**
@@ -98,41 +111,23 @@ export async function evaluateCexFourModeMatrix(input: {
         if (netAfterExchangeFeesBps < floorBps) continue;
         const economicallyPositive = netAfterExchangeFeesBps > 0;
         const bpsToBreakEven = economicallyPositive ? 0 : Math.abs(netAfterExchangeFeesBps);
+        const recoveryEfficiency = combinedFeeBps > 0
+          ? Math.max(0, Math.min(2, grossSpreadBps / combinedFeeBps))
+          : grossSpreadBps > 0 ? 2 : 0;
 
         const makerProbabilities: number[] = [];
-        if (candidate.buyMode === 'maker') {
-          makerProbabilities.push(observeAriesQueueEcho(buyBook, 'buy', ttlMs, 0.02).fillProbabilityWithinTtl);
-        }
-        if (candidate.sellMode === 'maker') {
-          makerProbabilities.push(observeAriesQueueEcho(sellBook, 'sell', ttlMs, 0.02).fillProbabilityWithinTtl);
-        }
+        if (candidate.buyMode === 'maker') makerProbabilities.push(observeAriesQueueEcho(buyBook, 'buy', ttlMs, 0.02).fillProbabilityWithinTtl);
+        if (candidate.sellMode === 'maker') makerProbabilities.push(observeAriesQueueEcho(sellBook, 'sell', ttlMs, 0.02).fillProbabilityWithinTtl);
         const makerFillProbability = makerProbabilities.length > 0
           ? makerProbabilities.reduce((product, value) => product * Math.max(0, Math.min(1, value)), 1)
           : null;
-        const expectedFeeAdjustedBps = makerFillProbability === null
-          ? netAfterExchangeFeesBps
-          : netAfterExchangeFeesBps * makerFillProbability;
+        const expectedFeeAdjustedBps = makerFillProbability === null ? netAfterExchangeFeesBps : netAfterExchangeFeesBps * makerFillProbability;
         const hybrid = candidate.mode === 'MT' || candidate.mode === 'TM';
         output.push({
-          symbol,
-          buyVenue,
-          sellVenue,
-          mode: candidate.mode,
-          buyMode: candidate.buyMode,
-          sellMode: candidate.sellMode,
-          buyPrice,
-          sellPrice,
-          grossSpreadBps,
-          combinedFeeBps,
-          netAfterExchangeFeesBps,
-          bpsToBreakEven,
-          economicallyPositive,
-          observationOnly: !economicallyPositive || hybrid,
-          makerFillProbability,
-          expectedFeeAdjustedBps,
-          observedAt: Math.min(buyBook.timestamp, sellBook.timestamp),
-          authority: 'measured_advisory',
-          executionAuthority: false,
+          symbol, buyVenue, sellVenue, mode: candidate.mode, buyMode: candidate.buyMode, sellMode: candidate.sellMode,
+          buyPrice, sellPrice, grossSpreadBps, combinedFeeBps, netAfterExchangeFeesBps, bpsToBreakEven, recoveryEfficiency,
+          economicallyPositive, observationOnly: !economicallyPositive || hybrid, makerFillProbability, expectedFeeAdjustedBps,
+          observedAt: Math.min(buyBook.timestamp, sellBook.timestamp), authority: 'measured_advisory', executionAuthority: false,
           missingExecutionInformation: [
             ...(!economicallyPositive ? ['positive_all_in_economics_required'] : []),
             ...(hybrid ? ['sequential_partial_fill_safe_hybrid_executor', 'fresh_taker_requote_after_maker_fill'] : []),
@@ -141,9 +136,5 @@ export async function evaluateCexFourModeMatrix(input: {
       }
     }
   }
-  return output.sort((left, right) =>
-    Number(right.economicallyPositive) - Number(left.economicallyPositive)
-    || right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps
-    || left.bpsToBreakEven - right.bpsToBreakEven,
-  );
+  return output.sort(compareModes);
 }
