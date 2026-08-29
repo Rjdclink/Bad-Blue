@@ -1,6 +1,5 @@
 import logger from '../../../logger.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
-import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
@@ -25,11 +24,9 @@ let installed = false;
 
 /**
  * Canonical CryptoCrawler runtime lifecycle wiring.
- *
- * This module is intentionally independent of the historical MasterOrchestrator.
- * It starts only measured/current runtime services and does not grant execution
- * authority. Execution remains governed by the existing stage, economics, risk,
- * resource, settlement, and NO_EXECUTION boundaries.
+ * Discovery is owned by MultiTopologyDiscoveryController, which invokes every
+ * measured producer concurrently without a fixed source priority. This module
+ * installs supporting authorities but grants no execution authority itself.
  */
 export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   if (installed) return;
@@ -42,12 +39,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureOracleEvidenceWiring();
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
-  // Install after resource wiring so provider fee/liquidity evidence reprices the
-  // complete configured + dynamic route surface before opportunities reach the queue.
   ensureZeroCapitalFlashProviderWiring();
-  // Install after provider repricing. This layer records the final measured route
-  // structure and exact-simulates compatible same-chain/same-token composites; it
-  // grants no execution authority by itself.
   ensureZeroCapitalAtomicStackWiring();
   ensureOrderBookEvolutionWiring();
   ensureCryptaraCexEvidenceWiring();
@@ -57,7 +49,6 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureFilteredMempoolObservability();
   ensureZeroXBudgetObservability();
   ensureAcrossBridgeObservability();
-  measuredOpportunityGraph.start();
   multiTopologyDiscoveryController.start();
   logLegacyIntelligenceQuarantine();
   ensureCryptoRuntimeObservability();
@@ -65,14 +56,13 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   logger.info('Canonical CryptoCrawler runtime wiring installed', {
     component: 'CanonicalCryptoCrawlerRuntimeWiring',
     lifecycleAuthority: 'canonical_measured_runtime',
+    discoveryAuthority: 'unified_multi_topology_parallel_controller',
+    fixedDiscoveryPriority: false,
     legacyMasterOrchestratorRequired: false,
     executionAuthorityGranted: false,
     executionMetrics: 'terminal_settlement_only',
     opportunityMetrics: 'canonical_verified_stream',
     profitCeilingAuthority: false,
-    cexCompetitionEvidence: 'topology_not_applicable_without_synthetic_zero',
-    cexCompetitionEvidenceExecutionAuthority: false,
-    measuredOpportunityGraph: 'continuous_multi_topology',
     orderBookEvolution: 'measured_short_horizon_transitions',
     dynamicScale: 'multi_axis_search_formation_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
@@ -81,19 +71,15 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     durableLearningOutbox: 'private_postgres_deduped_retry_recovery',
     durableLearningOutboxExecutionDependency: false,
     filteredMempoolEvidence: 'alchemy_provider_filtered_hash_first_exact_chain',
-    filteredMempoolTelemetry: 'hash_to_detail_efficiency_and_budget_pressure',
     filteredMempoolExecutionAuthority: false,
     zeroXRequestAdmission: 'purpose_aware_local_budget_with_execution_reserve',
     zeroXProviderRateLimitClaim: false,
-    zeroXRequestAdmissionExecutionAuthority: false,
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
-    acrossBridgeTelemetry: 'configuration_catalog_quote_freshness_and_failure_health',
-    acrossBridgeGlobalReadinessAuthority: false,
     acrossBridgeExecutionAuthority: false,
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal',
     zeroCapitalAtomicStackExecutionAuthority: false,
-    zeroCapitalExecutionAdmission: 'resource_leases',
+    zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
     runtimeHeartbeat: true,
   });
 }
