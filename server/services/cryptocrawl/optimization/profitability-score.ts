@@ -37,9 +37,15 @@ function finiteNonNegative(value: unknown): number {
 }
 
 function candidateFreshness(candidate: MeasuredCandidate, now: number): number {
-  if (candidate.expiresAt <= now) return 0;
+  // Terminal learning may occur after the quote itself expired. In that case use
+  // the last candidate update as the admission-time observation instead of
+  // teaching a zero score merely because settlement happened later.
+  const effectiveNow = now >= candidate.expiresAt
+    ? Math.max(candidate.observedAt, Math.min(candidate.updatedAt, candidate.expiresAt - 1))
+    : now;
+  if (candidate.expiresAt <= effectiveNow) return 0;
   const lifetime = Math.max(1, candidate.expiresAt - candidate.observedAt);
-  return clamp((candidate.expiresAt - now) / lifetime, 0, 1);
+  return clamp((candidate.expiresAt - effectiveNow) / lifetime, 0, 1);
 }
 
 function evidenceCompleteness(candidate: MeasuredCandidate): number {
@@ -72,8 +78,6 @@ export function computeProfitabilityScore(
     ? clamp(state.realizedCostMultiplierEwma, 0.1, 10)
     : null;
 
-  // History refines confidence after terminal samples exist, but history absence is
-  // never itself a cold-start rejection. Current measured evidence remains primary.
   const reliabilityFactor = empiricalReliability ?? 1;
   const capabilityFactor = candidate.executableCapability ? 1 : 0;
   const confidenceLevel = clamp(
@@ -97,8 +101,6 @@ export function computeProfitabilityScore(
   const freshnessRisk = 1 - freshness;
   const empiricalFailurePressure = empiricalReliability === null ? 0 : 1 - empiricalReliability;
 
-  // No topology-specific static penalty exists. Risk is driven by measured costs,
-  // price impact/slippage, freshness, and terminally observed execution reliability.
   const executionRisk = Math.max(
     Number.EPSILON,
     1 + costPressure + slippagePressure + impactPressure + freshnessRisk + empiricalFailurePressure,
