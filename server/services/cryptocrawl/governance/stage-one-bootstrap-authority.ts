@@ -75,7 +75,7 @@ async function recordFreshStageOneValidations(): Promise<number> {
   return recorded;
 }
 
-function stageOneProfitLadderNotApplicable(evidence: AutomaticAdvancementEvidence): AutomaticAdvancementEvidence {
+function stageOneFoundationLadderEvidence(evidence: AutomaticAdvancementEvidence): AutomaticAdvancementEvidence {
   return {
     ...evidence,
     evaluatedAt: Date.now(),
@@ -83,9 +83,13 @@ function stageOneProfitLadderNotApplicable(evidence: AutomaticAdvancementEvidenc
       ...evidence.marketGate,
       reasons: [
         ...evidence.marketGate.reasons,
-        'stage_one_bootstrap: realized-profit ladder begins after the first governed terminal execution',
+        'stage_one_bootstrap: foundation tier advances from verified live-system proof; realized-profit criteria begin after the first governed terminal execution',
       ],
     },
+    // Tier 0 is the foundation tier. Its own ProfitLadder implementation advances
+    // from StageManager proof metrics rather than realized-profit thresholds. This
+    // evidence only aligns the automatic advancement snapshot with that existing
+    // Tier-0 rule; the actual ProfitLadder.advanceToNextTier() still executes.
     profitLadder: {
       currentTierId: 0,
       readyForNextTier: true,
@@ -97,9 +101,10 @@ function stageOneProfitLadderNotApplicable(evidence: AutomaticAdvancementEvidenc
 async function attemptStageOneBootstrap(): Promise<AutomaticAdvancementResult | null> {
   if (stageManager.getState().currentStage !== 1) return null;
 
-  // Refresh the normal market/risk/ranking evidence first. This call is allowed
-  // to remain blocked by the historical profit ladder; the Stage-1 bootstrap
-  // authority below changes only that one inapplicable first-history dependency.
+  // Refresh the normal market/risk/ranking evidence first. The initial automatic
+  // evidence may still report Tier-0 not-ready before the new live validations
+  // are reflected; the foundation snapshot below aligns that evidence with the
+  // ProfitLadder's existing StageManager-proof Tier-0 rule.
   await evaluateAutomaticStageProgression().catch(error => {
     logger.debug('[StageOneBootstrap] Normal progression refresh remained blocked', {
       component: 'StageOneBootstrapAuthority',
@@ -113,15 +118,16 @@ async function attemptStageOneBootstrap(): Promise<AutomaticAdvancementResult | 
   const evidence = state.automaticAdvancementEvidence;
   if (!evidence || evidence.marketGate.decision !== 'ALLOW' || !evidence.risk.circuitBreakersClear) return null;
 
-  const result = await stageManager.evaluateAutomaticAdvancement(stageOneProfitLadderNotApplicable(evidence));
+  const result = await stageManager.evaluateAutomaticAdvancement(stageOneFoundationLadderEvidence(evidence));
   canonicalOpportunityState.refreshGovernance();
-  logger.info('[StageOneBootstrap] Stage-1 bootstrap advancement evaluated from current evidence', {
+  logger.info('[StageOneBootstrap] Stage-1 foundation advancement evaluated from current evidence', {
     component: 'StageOneBootstrapAuthority',
     advanced: result.advanced,
     fromStage: result.fromStage,
     toStage: result.toStage,
     blockers: result.blockers,
-    historicalProfitLadderRequired: false,
+    priorRealizedProfitRequired: false,
+    foundationProfitLadderStillAdvances: true,
     terminalSettlementRequiredAfterExecution: true,
     empiricalScalingHistoryStartsAtStage2: true,
   });
@@ -159,13 +165,14 @@ export function ensureStageOneBootstrapAuthority(): void {
   timer = setInterval(() => void cycle(), intervalMs);
   timer.unref?.();
   void cycle();
-  logger.info('[StageOneBootstrap] Current-evidence bootstrap authority installed', {
+  logger.info('[StageOneBootstrap] Current-evidence foundation authority installed', {
     component: 'StageOneBootstrapAuthority',
     intervalMs,
     validationSource: 'fresh_eligible_executable_candidates',
     supportedBootstrapTopologies: ['CEX_CEX', 'ZERO_CAPITAL_ATOMIC'],
     priorTerminalHistoryRequired: false,
-    profitLadderRequiredBeforeFirstExecution: false,
+    tierZeroAuthority: 'stage_manager_live_validation_proof',
+    realizedProfitCriteriaBeginAtStage2: true,
     pauseKillRiskMarketGatesPreserved: true,
     terminalSettlementStillRequiredAfterExecution: true,
   });
