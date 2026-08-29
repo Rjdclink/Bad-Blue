@@ -11,6 +11,16 @@ const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
 
 let timer: NodeJS.Timeout | null = null;
 let heartbeatInFlight: Promise<void> | null = null;
+let signalInstalled = false;
+
+const sigtermCandidateListener = (): void => {
+  void markTerminalSweepCandidate('SIGTERM').catch(error => {
+    logger.warn('[Treasury] Terminal candidate persistence deferred', {
+      component: 'TerminalTreasuryLifecycle',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+};
 
 async function upsertVaultSecret(name: string, value: string): Promise<void> {
   if (!value) return;
@@ -50,10 +60,7 @@ async function heartbeatOnce(): Promise<void> {
   heartbeatInFlight = (async () => {
     await pool.query(
       `UPDATE public.cryptocrawler_terminal_sweep_control
-       SET desired_state = CASE
-             WHEN desired_state='TERMINATE_AND_SWEEP' THEN 'RUNNING'
-             ELSE desired_state
-           END,
+       SET desired_state = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN 'RUNNING' ELSE desired_state END,
            terminal_epoch = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE terminal_epoch END,
            intent_source = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN 'successor_runtime_recovered' ELSE intent_source END,
            active_successor_deployment_id = NULLIF($2,''),
@@ -75,6 +82,10 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
   if (!isDatabaseConfigured || timer) return;
   await syncWorkerSecrets();
   await heartbeatOnce();
+  if (!signalInstalled && RAILWAY_DEPLOYMENT_ID) {
+    process.prependListener('SIGTERM', sigtermCandidateListener);
+    signalInstalled = true;
+  }
   timer = setInterval(() => void heartbeatOnce().catch(error => {
     logger.warn('[Treasury] Lifecycle heartbeat deferred', {
       component: 'TerminalTreasuryLifecycle',
@@ -115,4 +126,8 @@ export async function markTerminalSweepCandidate(signal: string): Promise<void> 
 export function stopTerminalTreasuryLifecycle(): void {
   if (timer) clearInterval(timer);
   timer = null;
+  if (signalInstalled) {
+    process.removeListener('SIGTERM', sigtermCandidateListener);
+    signalInstalled = false;
+  }
 }
