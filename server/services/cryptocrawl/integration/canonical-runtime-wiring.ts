@@ -7,6 +7,7 @@ import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-r
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
+import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard-rpc-first-wiring.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
@@ -91,11 +92,14 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
+  ensureAlchemyStandardRpcFirstWiring();
 
   // Cost-safe RPCs must be admitted before the zero-capital engine asks the
   // provider manager for its first chain provider. This keeps paid Alchemy RPC
   // as failover while the local Computational Beam/Aries/Cryptara stack performs
-  // the expensive analysis after bounded market-evidence acquisition.
+  // the expensive analysis after bounded market-evidence acquisition. The
+  // standard-token wrapper is already installed, so any later token reads also
+  // inherit this public-first provider order automatically.
   void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
 
   ensureOrderBookEvolutionWiring();
@@ -156,7 +160,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     zeroCapitalAtomicStackExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
     alchemyPaidPendingStreamDefault: false,
-    paidAlchemyRpcRole: 'fallback_only_after_cost_safe_provider_failure',
+    paidAlchemyRpcRole: 'fallback_only_after_two_cost_safe_provider_failures_when_available',
+    alchemyStandardTokenReads: 'public_rpc_first_then_enhanced_api_fallback',
     localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
   });
