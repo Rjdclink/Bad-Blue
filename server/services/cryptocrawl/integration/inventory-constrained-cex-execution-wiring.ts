@@ -107,6 +107,7 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Veri
     symbol: plan.symbol,
     notionalUsd: capacity.maxFundableNotionalUsd,
     maxQuoteAgeMs,
+    minNetProfitUsd: 0,
   }).catch(error => {
     logger.warn('[InventoryConstrainedCex] Fresh inventory-bounded economics evaluation failed closed', {
       component: 'InventoryConstrainedCexExecutionWiring',
@@ -146,6 +147,8 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Veri
     sellBaseSpendable: capacity.sellBaseSpendable,
     economicsAuthority: 'fresh_order_books_plus_authenticated_fees',
     inventoryAuthority: 'authenticated_spendable_balance_after_reserves',
+    bpsExecutionFloor: null,
+    executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
     syntheticScaling: false,
   });
   return refreshed;
@@ -162,9 +165,9 @@ export function ensureInventoryConstrainedCexExecutionWiring(): void {
   target.execute = async (plan: VerifiedArbitragePlan): Promise<ArbitrageExecutionResult> => {
     const resized = await reoptimizeForInventory(plan);
     if (resized) return originalExecute(resized);
-    // Preserve the canonical executor as the final fail-closed authority. This
-    // also ensures zero inventory remains a hard rejection rather than being
-    // converted into synthetic or zero-capital CEX inventory.
+    // Zero inventory remains a hard resource rejection. A positive but smaller
+    // authenticated inventory position may only execute after fresh economics
+    // prove that the resized trade still earns more dollars than it costs.
     return originalExecute(plan);
   };
 
@@ -175,6 +178,8 @@ export function ensureInventoryConstrainedCexExecutionWiring(): void {
     zeroInventoryBypass: false,
     freshEconomicsRequiredAfterResize: true,
     sameVenuePairRequired: true,
+    bpsExecutionFloor: null,
+    executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
     terminalSettlementAuthorityUnchanged: true,
   });
 }
