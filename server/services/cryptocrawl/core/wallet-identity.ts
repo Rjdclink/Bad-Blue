@@ -11,6 +11,7 @@ export interface ConfiguredWalletAddress {
 export interface CanonicalWalletBootstrap {
   executionAddress: string | null;
   terminalPayoutAddress: string | null;
+  terminalPayoutReason?: string;
   bridgeAliasInstalled: boolean;
   acrossAliasInstalled: boolean;
   deprecatedVariablesPresent: string[];
@@ -81,7 +82,11 @@ export function resolveConfiguredWalletAddress(environment: NodeJS.ProcessEnv = 
 }
 
 export function resolveTerminalPayoutAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
-  return normalizeAddress('CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS);
+  try {
+    return normalizeAddress('CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS);
+  } catch {
+    return null;
+  }
 }
 
 export function resolveOperationalProfitRecipient(
@@ -142,11 +147,17 @@ export function installCanonicalWalletConfiguration(
     throw new Error('WALLET_PRIVATE_KEY is not a valid 32-byte EVM private key');
   }
 
+  const rawTerminalPayout = environment.CRYPTO_PROFIT_WALLET_ADDRESS?.trim();
   const terminalPayoutAddress = resolveTerminalPayoutAddress(environment);
+  const terminalPayoutReason = rawTerminalPayout && !terminalPayoutAddress
+    ? 'CRYPTO_PROFIT_WALLET_ADDRESS is not a valid EVM address; terminal sweep remains disabled while trading can continue'
+    : undefined;
+
   if (!privateKey) {
     return {
       executionAddress: resolveExecutionWalletAddress(environment).address,
       terminalPayoutAddress,
+      terminalPayoutReason,
       bridgeAliasInstalled: false,
       acrossAliasInstalled: false,
       deprecatedVariablesPresent,
@@ -169,6 +180,7 @@ export function installCanonicalWalletConfiguration(
   return {
     executionAddress,
     terminalPayoutAddress,
+    terminalPayoutReason,
     bridgeAliasInstalled,
     acrossAliasInstalled,
     deprecatedVariablesPresent,
