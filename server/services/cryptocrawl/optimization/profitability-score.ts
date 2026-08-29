@@ -3,6 +3,7 @@ import type { MeasuredCandidate, MeasuredOpportunityTopology } from '../discover
 export interface ProfitabilityScoreInputState {
   terminalSamples: number;
   successRateEwma: number | null;
+  realizedCostMultiplierEwma?: number | null;
 }
 
 export interface ProfitabilityScoreResult {
@@ -17,6 +18,7 @@ export interface ProfitabilityScoreResult {
     evidenceCompleteness: number;
     depthConfidence: number;
     empiricalReliability: number | null;
+    empiricalCostMultiplier: number | null;
     costPressure: number;
     slippagePressure: number;
     impactPressure: number;
@@ -47,8 +49,7 @@ function evidenceCompleteness(candidate: MeasuredCandidate): number {
 }
 
 function depthConfidence(candidate: MeasuredCandidate): number {
-  if (candidate.depth.status === 'measured') return 1;
-  if (candidate.depth.status === 'not_applicable') return 1;
+  if (candidate.depth.status === 'measured' || candidate.depth.status === 'not_applicable') return 1;
   return 0;
 }
 
@@ -65,9 +66,14 @@ export function computeProfitabilityScore(
   const empiricalReliability = state && state.terminalSamples > 0 && state.successRateEwma !== null
     ? clamp(state.successRateEwma, 0, 1)
     : null;
+  const empiricalCostMultiplier = state && state.terminalSamples > 0 &&
+    state.realizedCostMultiplierEwma !== null && state.realizedCostMultiplierEwma !== undefined &&
+    Number.isFinite(state.realizedCostMultiplierEwma)
+    ? clamp(state.realizedCostMultiplierEwma, 0.1, 10)
+    : null;
 
-  // History can refine confidence after terminal samples exist, but cold start
-  // never receives a zero-confidence penalty merely because history is absent.
+  // History refines confidence after terminal samples exist, but history absence is
+  // never itself a cold-start rejection. Current measured evidence remains primary.
   const reliabilityFactor = empiricalReliability ?? 1;
   const capabilityFactor = candidate.executableCapability ? 1 : 0;
   const confidenceLevel = clamp(
@@ -80,18 +86,19 @@ export function computeProfitabilityScore(
   const allInCostUsd = finiteNonNegative(candidate.economics.feeUsd)
     + finiteNonNegative(candidate.economics.gasUsd)
     + finiteNonNegative(candidate.economics.bridgeUsd);
+  const calibratedCostUsd = allInCostUsd * (empiricalCostMultiplier ?? 1);
   const costPressure = notionalUsd > 0
-    ? clamp(allInCostUsd / notionalUsd, 0, 10)
+    ? clamp(calibratedCostUsd / notionalUsd, 0, 10)
     : positiveNetProfitUsd > 0
-      ? clamp(allInCostUsd / positiveNetProfitUsd, 0, 10)
+      ? clamp(calibratedCostUsd / positiveNetProfitUsd, 0, 10)
       : 0;
   const slippagePressure = finiteNonNegative(candidate.economics.expectedSlippageBps) / 10_000;
   const impactPressure = finiteNonNegative(candidate.economics.expectedPriceImpactBps) / 10_000;
   const freshnessRisk = 1 - freshness;
   const empiricalFailurePressure = empiricalReliability === null ? 0 : 1 - empiricalReliability;
 
-  // Dimensionless current execution risk. There are no fixed topology penalties:
-  // risk is driven by the measured candidate and terminal reliability evidence.
+  // No topology-specific static penalty exists. Risk is driven by measured costs,
+  // price impact/slippage, freshness, and terminally observed execution reliability.
   const executionRisk = Math.max(
     Number.EPSILON,
     1 + costPressure + slippagePressure + impactPressure + freshnessRisk + empiricalFailurePressure,
@@ -112,6 +119,7 @@ export function computeProfitabilityScore(
       evidenceCompleteness: completeness,
       depthConfidence: depth,
       empiricalReliability,
+      empiricalCostMultiplier,
       costPressure,
       slippagePressure,
       impactPressure,
