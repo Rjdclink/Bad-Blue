@@ -17,6 +17,9 @@ export interface CexModeEconomics {
   grossSpreadBps: number;
   combinedFeeBps: number;
   netAfterExchangeFeesBps: number;
+  bpsToBreakEven: number;
+  economicallyPositive: boolean;
+  observationOnly: boolean;
   makerFillProbability: number | null;
   expectedFeeAdjustedBps: number;
   observedAt: number;
@@ -46,10 +49,17 @@ function modes(): Array<{ mode: CexFourMode; buyMode: CexLegMode; sellMode: CexL
   ];
 }
 
+function observationFloorBps(): number {
+  const configured = Number(process.env.CRYPTOCRAWL_CEX_FOUR_MODE_OBSERVATION_FLOOR_BPS ?? -200);
+  if (!Number.isFinite(configured)) return -200;
+  return Math.max(-1_000, Math.min(0, configured));
+}
+
 /**
  * Measures all TT/MT/TM/MM price-and-fee topologies on the same fresh books.
- * Hybrid modes are advisory until a sequential partial-fill-safe executor exists.
- * MM and TT continue through their existing authoritative executors.
+ * Negative modes inside a bounded observation envelope are retained so the BPS
+ * optimizer can learn the exact recovery gap instead of seeing only winners.
+ * Hybrid modes remain advisory until a sequential partial-fill-safe executor exists.
  */
 export async function evaluateCexFourModeMatrix(input: {
   symbol: string;
@@ -67,6 +77,7 @@ export async function evaluateCexFourModeMatrix(input: {
   const books = { kraken, okx } as const;
   const fees = { kraken: krakenFee, okx: okxFee } as const;
   const ttlMs = Math.max(2_000, Math.min(30_000, Number(process.env.CRYPTO_ARBITRAGE_MAKER_TTL_MS || 30_000)));
+  const floorBps = observationFloorBps();
   const output: CexModeEconomics[] = [];
 
   for (const buyVenue of ['kraken', 'okx'] as const) {
@@ -84,7 +95,9 @@ export async function evaluateCexFourModeMatrix(input: {
         const grossSpreadBps = (sellPrice - buyPrice) / buyPrice * 10_000;
         const combinedFeeBps = buyFeeBps + sellFeeBps;
         const netAfterExchangeFeesBps = grossSpreadBps - combinedFeeBps;
-        if (!(netAfterExchangeFeesBps > 0)) continue;
+        if (netAfterExchangeFeesBps < floorBps) continue;
+        const economicallyPositive = netAfterExchangeFeesBps > 0;
+        const bpsToBreakEven = economicallyPositive ? 0 : Math.abs(netAfterExchangeFeesBps);
 
         const makerProbabilities: number[] = [];
         if (candidate.buyMode === 'maker') {
@@ -112,17 +125,25 @@ export async function evaluateCexFourModeMatrix(input: {
           grossSpreadBps,
           combinedFeeBps,
           netAfterExchangeFeesBps,
+          bpsToBreakEven,
+          economicallyPositive,
+          observationOnly: !economicallyPositive || hybrid,
           makerFillProbability,
           expectedFeeAdjustedBps,
           observedAt: Math.min(buyBook.timestamp, sellBook.timestamp),
           authority: 'measured_advisory',
           executionAuthority: false,
-          missingExecutionInformation: hybrid
-            ? ['sequential_partial_fill_safe_hybrid_executor', 'fresh_taker_requote_after_maker_fill']
-            : [],
+          missingExecutionInformation: [
+            ...(!economicallyPositive ? ['positive_all_in_economics_required'] : []),
+            ...(hybrid ? ['sequential_partial_fill_safe_hybrid_executor', 'fresh_taker_requote_after_maker_fill'] : []),
+          ],
         });
       }
     }
   }
-  return output.sort((left, right) => right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps || right.netAfterExchangeFeesBps - left.netAfterExchangeFeesBps);
+  return output.sort((left, right) =>
+    Number(right.economicallyPositive) - Number(left.economicallyPositive)
+    || right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps
+    || left.bpsToBreakEven - right.bpsToBreakEven,
+  );
 }
