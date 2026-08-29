@@ -5,9 +5,7 @@ import {
   type ZeroCapitalOpportunity,
 } from '../core/zero-capital-engine.js';
 import {
-  calculateMeasuredFlashLoanFee,
   measureFlashLoanProviders,
-  selectMeasuredFlashLoanProvider,
   type FlashLoanProviderEconomics,
 } from '../execution/adapters/flash-loan-provider-economics.js';
 import {
@@ -15,6 +13,7 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import { selectLowestExactProviderCost } from '../optimization/zero-capital-provider-cost-curve.js';
 import type { providers } from 'ethers';
 
 const installed = new WeakSet<object>();
@@ -42,6 +41,12 @@ function routeForOpportunity(
     .sort((left, right) => right.id.length - left.id.length)[0] ?? null;
 }
 
+function routeFamily(route: ConfiguredZeroCapitalRoute): string {
+  const protocols = route.legs.map(leg => leg.protocol).join('>');
+  const middle = route.legs.slice(0, -1).map(leg => leg.tokenOut.toLowerCase()).join('>');
+  return `${route.chain}:${route.inputAssetSymbol}:${protocols}:${middle}`;
+}
+
 function baseUnitsFromUsd(value: number): string {
   return BigInt(Math.max(1, Math.round(value * 1_000_000))).toString();
 }
@@ -51,10 +56,15 @@ function usdFromBaseUnits(value: bigint): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function candidateSizes(opportunity: ZeroCapitalOpportunity): number[] {
+function candidateSizes(opportunity: ZeroCapitalOpportunity, route: ConfiguredZeroCapitalRoute): number[] {
   const current = Math.max(0.01, usdFromBaseUnits(opportunity.flashLoanAmount));
   const ceiling = boundedNumber(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD, 1_000, current, 10_000);
-  const factors = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 5];
+  const gasUsd = Math.max(0, Number(route.estimatedGasCostInInputToken) / 1_000_000);
+  const gasPressureBps = current > 0 ? gasUsd / current * 10_000 : 0;
+  const gasPressureTriggerBps = boundedNumber(process.env.ZERO_CAPITAL_JOINT_GAS_PRESSURE_BPS, 10, 0, 500);
+  const factors = gasPressureBps >= gasPressureTriggerBps
+    ? [0.75, 1, 1.5, 2, 3, 4, 5, 6, 8]
+    : [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4];
   return [...new Set(factors
     .slice(0, maxSizesPerRoute())
     .map(factor => Math.max(0.01, Math.min(ceiling, current * factor))))]
@@ -65,24 +75,17 @@ function providerAdjustedQuote(
   quote: QuotedZeroCapitalRoute,
   evidence: readonly FlashLoanProviderEconomics[],
 ): { quote: QuotedZeroCapitalRoute; provider: FlashLoanProviderEconomics } | null {
-  const selected = selectMeasuredFlashLoanProvider(
-    evidence,
-    quote.amountIn,
-    ['balancer_v2', 'aave_v3'],
-  );
-  if (!selected) return null;
-  const flashFee = calculateMeasuredFlashLoanFee(selected, quote.amountIn);
-  if (flashFee === null) return null;
-
-  const allInCost = flashFee + quote.estimatedGasCostInInputToken + quote.relayFeeInInputToken;
+  const point = selectLowestExactProviderCost(evidence, quote.amountIn, ['balancer_v2', 'aave_v3']);
+  if (!point) return null;
+  const allInCost = point.exactFee + quote.estimatedGasCostInInputToken + quote.relayFeeInInputToken;
   const netProfit = quote.grossProfit - allInCost;
   const allInCostBps = quote.amountIn > 0n ? Number((allInCost * 10_000n) / quote.amountIn) : Number.POSITIVE_INFINITY;
   const netProfitBps = quote.amountIn > 0n ? Number((netProfit * 10_000n) / quote.amountIn) : Number.NEGATIVE_INFINITY;
   return {
-    provider: selected,
+    provider: point.evidence,
     quote: {
       ...quote,
-      flashLoanFeeInInputToken: flashFee,
+      flashLoanFeeInInputToken: point.exactFee,
       netProfit,
       netProfitBps,
       allInCostBps,
@@ -112,6 +115,32 @@ function rescuePriority(opportunity: ZeroCapitalOpportunity): number {
   return Number.isFinite(opportunity.netProfitBps) ? opportunity.netProfitBps : Number.NEGATIVE_INFINITY;
 }
 
+function selectDiversifiedRescueIds(
+  opportunities: readonly ZeroCapitalOpportunity[],
+  configuredRoutes: readonly ConfiguredZeroCapitalRoute[],
+): Set<string> {
+  const ranked = [...opportunities]
+    .filter(item => item.expectedProfit <= 0n)
+    .sort((left, right) => rescuePriority(right) - rescuePriority(left));
+  const selected: string[] = [];
+  const families = new Set<string>();
+
+  for (const opportunity of ranked) {
+    if (selected.length >= maxRoutesPerScan()) break;
+    const route = routeForOpportunity(configuredRoutes, opportunity);
+    if (!route) continue;
+    const family = routeFamily(route);
+    if (families.has(family)) continue;
+    families.add(family);
+    selected.push(opportunity.id);
+  }
+  for (const opportunity of ranked) {
+    if (selected.length >= maxRoutesPerScan()) break;
+    if (!selected.includes(opportunity.id)) selected.push(opportunity.id);
+  }
+  return new Set(selected);
+}
+
 function blockTimestampFromOpportunity(opportunity: ZeroCapitalOpportunity): number {
   const suffix = opportunity.id.match(/-(\d{8,})$/)?.[1];
   const parsed = Number(suffix);
@@ -139,16 +168,14 @@ export function ensureZeroCapitalJointProviderSizeWiring(): void {
     const opportunities = await originalScanChain(chain, provider);
     if (chain === 'europa' || opportunities.length === 0) return opportunities;
 
-    const rescueIds = new Set([...opportunities]
-      .filter(item => item.expectedProfit <= 0n)
-      .sort((left, right) => rescuePriority(right) - rescuePriority(left))
-      .slice(0, maxRoutesPerScan())
-      .map(item => item.id));
+    const rescueIds = selectDiversifiedRescueIds(opportunities, target.configuredRoutes);
     if (rescueIds.size === 0) return opportunities;
 
     let extraIndependentQuotes = 0;
     let improvedBpsRoutes = 0;
     let providerAdjustedPositive = 0;
+    let routeFamiliesSearched = 0;
+    const searchedFamilies = new Set<string>();
     const output: ZeroCapitalOpportunity[] = [];
 
     for (const opportunity of opportunities) {
@@ -161,6 +188,7 @@ export function ensureZeroCapitalJointProviderSizeWiring(): void {
         output.push(opportunity);
         continue;
       }
+      searchedFamilies.add(routeFamily(route));
 
       try {
         const evidence = await measureFlashLoanProviders({
@@ -168,7 +196,7 @@ export function ensureZeroCapitalJointProviderSizeWiring(): void {
           provider,
           asset: opportunity.inputToken,
         });
-        const sizes = candidateSizes(opportunity);
+        const sizes = candidateSizes(opportunity, route);
         extraIndependentQuotes += sizes.length;
         const settled = await Promise.allSettled(sizes.map(notionalUsd =>
           quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(notionalUsd) }, provider),
@@ -201,16 +229,21 @@ export function ensureZeroCapitalJointProviderSizeWiring(): void {
         });
       }
     }
+    routeFamiliesSearched = searchedFamilies.size;
 
     if (extraIndependentQuotes > 0) {
       logger.info('[ZeroCapitalJointProviderSize] Exact provider-size rescue search completed', {
         component: 'ZeroCapitalJointProviderSizeWiring',
         chain,
         rescueRouteBudget: rescueIds.size,
+        routeFamiliesSearched,
         extraIndependentQuotes,
         improvedBpsRoutes,
         providerAdjustedPositive,
         objective: 'positive_net_then_closest_measured_bps_to_break_even',
+        providerSelection: 'lowest_exact_fee_then_liquidity_headroom',
+        gasPressureSizing: true,
+        routeFamilyDiversity: true,
         providerFeeAuthority: 'measured_exact_rate',
         providerLiquidityAuthority: 'measured',
         positiveCandidatesStillRequireDownstreamReceiverCryptaraGovernance: true,
@@ -229,6 +262,9 @@ export function ensureZeroCapitalJointProviderSizeWiring(): void {
     independentFreshQuotesRequired: true,
     exactMeasuredProviderFeesRequired: true,
     measuredProviderLiquidityRequired: true,
+    providerSelection: 'lowest_exact_fee_then_liquidity_headroom',
+    gasPressureSizing: true,
+    routeFamilyDiversity: true,
     existingPositiveCandidatesReplaced: false,
     downstreamReceiverCryptaraGovernancePreserved: true,
     executionAuthority: false,
