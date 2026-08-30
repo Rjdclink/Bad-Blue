@@ -15,6 +15,7 @@ export interface InventorySnapshot {
   asset: string;
   available: number;
   reserved: number;
+  payoutReserved: number;
   pendingOrder: number;
   pendingTransfer: number;
   target: number | null;
@@ -45,6 +46,7 @@ export interface InventoryRebalanceRecommendation {
 
 const STATE_TABLE = 'cryptocrawler_cex_inventory_state_v1';
 const RESERVATION_TABLE = 'cryptocrawler_cex_inventory_reservations_v1';
+const PAYOUT_RESERVE_TABLE = 'cryptocrawler_payout_asset_reservations';
 
 function finiteNonNegative(value: unknown, fallback = 0): number {
   const parsed = Number(value);
@@ -98,6 +100,7 @@ class CexInventoryLedger {
             venue text NOT NULL,
             asset text NOT NULL,
             available numeric NOT NULL,
+            payout_reserved numeric NOT NULL DEFAULT 0,
             pending_order numeric NOT NULL DEFAULT 0,
             pending_transfer numeric NOT NULL DEFAULT 0,
             target numeric NULL,
@@ -107,6 +110,7 @@ class CexInventoryLedger {
             PRIMARY KEY (venue, asset)
           )
         `);
+        await pool.query(`ALTER TABLE ${STATE_TABLE} ADD COLUMN IF NOT EXISTS payout_reserved numeric NOT NULL DEFAULT 0`);
         await pool.query(`
           CREATE TABLE IF NOT EXISTS ${RESERVATION_TABLE} (
             reservation_id text NOT NULL,
@@ -132,6 +136,26 @@ class CexInventoryLedger {
     return this.tableReady;
   }
 
+  private async payoutReserves(venue: InventoryVenue): Promise<Map<string, number>> {
+    const values = new Map<string, number>();
+    if (!isDatabaseConfigured) return values;
+    const exists = await pool.query(`SELECT to_regclass('public.${PAYOUT_RESERVE_TABLE}') IS NOT NULL AS present`);
+    if (exists.rows[0]?.present !== true) return values;
+    const result = await pool.query(
+      `SELECT asset, COALESCE(SUM(remaining_asset_amount),0) AS reserved
+       FROM ${PAYOUT_RESERVE_TABLE}
+       WHERE venue=$1 AND status IN ('HELD','IN_FLIGHT') AND remaining_asset_amount > 0
+       GROUP BY asset`,
+      [venue],
+    );
+    for (const row of result.rows) {
+      const asset = canonicalAsset(String(row.asset || ''));
+      const amount = Number(row.reserved || 0);
+      if (asset && Number.isFinite(amount) && amount > 0) values.set(asset, amount);
+    }
+    return values;
+  }
+
   async reconcile(venue: InventoryVenue, rawBalances: Record<string, string | number>): Promise<InventorySnapshot[]> {
     const now = Date.now();
     const merged = new Map<string, number>();
@@ -143,6 +167,7 @@ class CexInventoryLedger {
       merged.set(asset, (merged.get(asset) || 0) + amount);
     }
 
+    const payoutReservedByAsset = await this.payoutReserves(venue);
     for (const [asset, available] of merged) {
       const policy = this.policy(venue, asset);
       const key = this.key(venue, asset);
@@ -152,6 +177,7 @@ class CexInventoryLedger {
         asset,
         available,
         reserved: previous?.reserved || 0,
+        payoutReserved: payoutReservedByAsset.get(asset) || 0,
         pendingOrder: previous?.pendingOrder || 0,
         pendingTransfer: previous?.pendingTransfer || 0,
         target: policy.target,
@@ -168,17 +194,19 @@ class CexInventoryLedger {
         await client.query(`DELETE FROM ${RESERVATION_TABLE} WHERE expires_at <= now()`);
         for (const [asset, available] of merged) {
           const policy = this.policy(venue, asset);
+          const payoutReserved = payoutReservedByAsset.get(asset) || 0;
           await client.query(
             `INSERT INTO ${STATE_TABLE}
-              (venue, asset, available, target, minimum_reserve, maximum_venue_exposure, reconciled_at)
-             VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7/1000.0))
+              (venue, asset, available, payout_reserved, target, minimum_reserve, maximum_venue_exposure, reconciled_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,to_timestamp($8/1000.0))
              ON CONFLICT (venue, asset) DO UPDATE SET
                available=EXCLUDED.available,
+               payout_reserved=EXCLUDED.payout_reserved,
                target=EXCLUDED.target,
                minimum_reserve=EXCLUDED.minimum_reserve,
                maximum_venue_exposure=EXCLUDED.maximum_venue_exposure,
                reconciled_at=EXCLUDED.reconciled_at`,
-            [venue, asset, available, policy.target, policy.minimumReserve, policy.maximumVenueExposure, now],
+            [venue, asset, available, payoutReserved, policy.target, policy.minimumReserve, policy.maximumVenueExposure, now],
           );
         }
         await client.query('COMMIT');
@@ -201,7 +229,7 @@ class CexInventoryLedger {
       const key = this.key(requirement.venue, requirement.asset);
       const snapshot = this.local.get(key);
       if (!snapshot) return false;
-      const spendable = snapshot.available - snapshot.reserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve;
+      const spendable = snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve;
       if (spendable + 1e-12 < requirement.amount) return false;
       if (snapshot.maximumVenueExposure !== null && snapshot.available > snapshot.maximumVenueExposure + 1e-12) return false;
     }
@@ -250,7 +278,7 @@ class CexInventoryLedger {
         await client.query(`DELETE FROM ${RESERVATION_TABLE} WHERE expires_at <= now()`);
         for (const requirement of requirements) {
           const state = await client.query(
-            `SELECT available, pending_order, pending_transfer, minimum_reserve, maximum_venue_exposure
+            `SELECT available, payout_reserved, pending_order, pending_transfer, minimum_reserve, maximum_venue_exposure
              FROM ${STATE_TABLE} WHERE venue=$1 AND asset=$2 FOR UPDATE`,
             [requirement.venue, requirement.asset],
           );
@@ -263,10 +291,11 @@ class CexInventoryLedger {
           );
           const available = Number(row.available);
           const alreadyReserved = Number(reserved.rows[0]?.reserved || 0);
+          const payoutReserved = Number(row.payout_reserved || 0);
           const pending = Number(row.pending_order || 0) + Number(row.pending_transfer || 0);
           const minimumReserve = Number(row.minimum_reserve || 0);
           const maximumExposure = row.maximum_venue_exposure === null ? null : Number(row.maximum_venue_exposure);
-          const spendable = available - alreadyReserved - pending - minimumReserve;
+          const spendable = available - alreadyReserved - payoutReserved - pending - minimumReserve;
           if (!Number.isFinite(spendable) || spendable + 1e-12 < requirement.amount) {
             throw new Error(`inventory_insufficient:${requirement.venue}:${requirement.asset}`);
           }
@@ -329,7 +358,7 @@ class CexInventoryLedger {
     for (const snapshot of this.local.values()) {
       if (snapshot.target === null) continue;
       const currentSpendable = Math.max(0,
-        snapshot.available - snapshot.reserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve,
+        snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve,
       );
       const delta = snapshot.target - currentSpendable;
       const tolerance = Math.max(1e-12, snapshot.target * 0.02);
