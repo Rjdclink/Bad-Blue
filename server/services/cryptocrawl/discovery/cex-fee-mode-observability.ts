@@ -45,7 +45,9 @@ export function recordCexFeeModeObservation(
   const sellFeeAgeMs = sellFeeEvidence ? Math.max(0, now - sellFeeEvidence.observedAt) : null;
   const maxFeeAgeMs = buyFeeAgeMs === null || sellFeeAgeMs === null ? null : Math.max(buyFeeAgeMs, sellFeeAgeMs);
   const freshnessHalfLifeMs = Math.max(5_000, Math.min(30 * 60_000, Number(process.env.CRYPTOCRAWL_CEX_FEE_FRESHNESS_HALF_LIFE_MS || 300_000)));
-  const feeEvidenceFreshnessScore = maxFeeAgeMs === null ? null : Math.pow(0.5, maxFeeAgeMs / freshnessHalfLifeMs);
+  const feeEvidenceFreshnessScore = maxFeeAgeMs === null
+    ? null
+    : Number(Math.pow(0.5, maxFeeAgeMs / freshnessHalfLifeMs).toFixed(6));
   const authenticatedFeeEvidenceComplete = Boolean(
     buyFeeEvidence && sellFeeEvidence &&
     buyFeeEvidence.source !== 'configured_override' &&
