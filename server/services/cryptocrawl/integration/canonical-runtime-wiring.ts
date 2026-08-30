@@ -12,6 +12,7 @@ import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
 import { ensureComputationalReactorWiring } from './computational-reactor-wiring.js';
+import { ensureCrossVenueTimingGuardWiring } from './cross-venue-timing-guard-wiring.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureCryptaraSovereignCortexWiring } from './cryptara-sovereign-cortex-wiring.js';
 import { ensureCryptaraPredictivePrefetchWiring } from './cryptara-predictive-prefetch-wiring.js';
@@ -117,6 +118,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureCryptaraSovereignCortexWiring();
   ensureCryptaraPredictivePrefetchWiring();
   ensureInventoryConstrainedCexExecutionWiring();
+  ensureCrossVenueTimingGuardWiring();
   ensureMeasuredCandidateExpiryGuardWiring();
   ensureDynamicProfitabilityAdmissionWiring();
   ensureStageOneBootstrapAuthority();
@@ -152,6 +154,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history',
     adaptiveThresholdAuthority: 'terminal_realized_outcomes',
     measuredCandidateFreshnessPromotionGuard: true,
+    crossVenueTimingGuard: 'fresh_synchronized_kraken_okx_books_then_existing_exact_economic_requote',
     bpsExecutionFloor: null,
     executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
