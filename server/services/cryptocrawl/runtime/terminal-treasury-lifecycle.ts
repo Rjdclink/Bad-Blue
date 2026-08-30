@@ -5,6 +5,7 @@ import { resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
 const SYSTEM_KEY = 'cryptocrawler';
 const HEARTBEAT_MS = 15_000;
 const TERMINAL_GRACE_SECONDS = 180;
+const TREASURY_WAKE_TIMEOUT_MS = 10_000;
 const RAILWAY_DEPLOYMENT_ID = (process.env.RAILWAY_DEPLOYMENT_ID || '').trim();
 const RAILWAY_SERVICE_ID = (process.env.RAILWAY_SERVICE_ID || '').trim();
 const RAILWAY_ENVIRONMENT_ID = (process.env.RAILWAY_ENVIRONMENT_ID || '').trim();
@@ -12,6 +13,7 @@ const DESTINATION = resolveTerminalPayoutAddress() || '';
 
 let timer: NodeJS.Timeout | null = null;
 let heartbeatInFlight: Promise<void> | null = null;
+let treasuryWakeInFlight: Promise<boolean> | null = null;
 let signalInstalled = false;
 let consecutiveHeartbeatFailures = 0;
 let heartbeatDegradedUntil = 0;
@@ -65,6 +67,59 @@ async function syncWorkerSecrets(): Promise<void> {
   for (const [name, value] of secrets) await upsertVaultSecret(name, value);
 }
 
+/**
+ * Wake the one persistent treasury worker immediately after a terminal profitable
+ * settlement. This does not create a second withdrawal authority: the Railway
+ * runtime only records the 60/40 allocation and asks the existing Supabase worker
+ * to act. The minute cron remains recovery/reconciliation if this wake fails.
+ */
+export async function requestImmediateTreasuryWorkerRun(trigger = 'terminal_profit'): Promise<boolean> {
+  const supabaseUrl = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
+  const serviceKey = (process.env.SUPABASE_SERVICE_KEY || '').trim();
+  if (!supabaseUrl || !serviceKey) {
+    logger.warn('[Treasury] Immediate payout wake unavailable; durable queue remains for cron recovery', {
+      component: 'TerminalTreasuryLifecycle',
+      trigger,
+      supabaseUrlConfigured: Boolean(supabaseUrl),
+      serviceKeyConfigured: Boolean(serviceKey),
+    });
+    return false;
+  }
+  if (treasuryWakeInFlight) return treasuryWakeInFlight;
+
+  treasuryWakeInFlight = (async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TREASURY_WAKE_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${supabaseUrl}/functions/v1/cryptocrawler-terminal-sweeper`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${serviceKey}`,
+          apikey: serviceKey,
+        },
+        body: JSON.stringify({ trigger }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`treasury worker wake returned HTTP ${response.status}`);
+      }
+      return true;
+    } catch (error) {
+      logger.warn('[Treasury] Immediate payout wake deferred; durable queue remains for cron recovery', {
+        component: 'TerminalTreasuryLifecycle',
+        trigger,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    } finally {
+      clearTimeout(timeout);
+    }
+  })().finally(() => { treasuryWakeInFlight = null; });
+
+  return treasuryWakeInFlight;
+}
+
 async function heartbeatOnce(): Promise<void> {
   if (!isDatabaseConfigured) return;
   if (Date.now() < heartbeatDegradedUntil) return;
@@ -101,7 +156,7 @@ async function heartbeatOnce(): Promise<void> {
 export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
   if (!isDatabaseConfigured || timer) return;
   if (!DESTINATION) {
-    logger.warn('[Treasury] Terminal payout wallet is not configured; runtime retention remains active and terminal sweep is fail-closed', {
+    logger.warn('[Treasury] Terminal payout wallet is not configured; runtime retention remains active and payouts fail closed', {
       component: 'TerminalTreasuryLifecycle',
       destinationVariable: 'CRYPTO_PROFIT_WALLET_ADDRESS',
     });
@@ -121,14 +176,16 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     });
   }), HEARTBEAT_MS);
   timer.unref?.();
-  logger.info('[Treasury] Persistent terminal-sweep lifecycle online', {
+  logger.info('[Treasury] Persistent treasury lifecycle online', {
     component: 'TerminalTreasuryLifecycle',
     deploymentIdPresent: Boolean(RAILWAY_DEPLOYMENT_ID),
     serviceIdPresent: Boolean(RAILWAY_SERVICE_ID),
     environmentIdPresent: Boolean(RAILWAY_ENVIRONMENT_ID),
     terminalPayoutConfigured: Boolean(DESTINATION),
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
-    runtimePolicy: 'retain_and_compound',
+    runtimePolicy: 'per_trade_60_percent_eth_payout_40_percent_retain_plus_terminal_drain',
+    immediateWorkerWake: true,
+    cronRecoveryStillAuthoritative: true,
     routineDatabaseFailureBackoff: 'bounded_exponential',
     sigtermIntentWriteBackoffBypass: true,
   });
@@ -152,6 +209,7 @@ export async function markTerminalSweepCandidate(signal: string): Promise<void> 
      WHERE system_key=$1 AND desired_state='RUNNING'`,
     [SYSTEM_KEY, RAILWAY_DEPLOYMENT_ID, TERMINAL_GRACE_SECONDS],
   );
+  void requestImmediateTreasuryWorkerRun('terminal_candidate');
 }
 
 export function stopTerminalTreasuryLifecycle(): void {
