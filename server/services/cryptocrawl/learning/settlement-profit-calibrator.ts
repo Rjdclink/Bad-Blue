@@ -21,9 +21,23 @@ export interface SettlementProfitCalibrationSnapshot {
   executionAuthority: false;
 }
 
+export interface SettlementProfitCalibrationFilter {
+  chain?: string;
+  symbol?: string;
+  strategy?: string;
+}
+
+type CalibrationSample = {
+  at: number;
+  errorUsd: number;
+  chain: string;
+  symbol: string;
+  strategy: string;
+};
+
 const MAX_SAMPLES = Math.max(32, Math.min(4096, Number(process.env.CRYPTOCRAWL_SETTLEMENT_CALIBRATION_SAMPLES || 512)));
 const STABLE_SAMPLE_TARGET = Math.max(8, Math.min(256, Number(process.env.CRYPTOCRAWL_SETTLEMENT_CALIBRATION_STABLE_SAMPLES || 32)));
-const samples: Array<{ at: number; errorUsd: number }> = [];
+const samples: CalibrationSample[] = [];
 
 function percentile(values: number[], fraction: number): number | null {
   if (values.length === 0) return null;
@@ -37,16 +51,41 @@ function terminalRealized(outcome: ExecutionOutcomeObservation): number | null {
   return realized !== null && Number.isFinite(realized) ? Number(realized) : null;
 }
 
+function normalize(value: string | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || null;
+}
+
+function selectSamples(filter: SettlementProfitCalibrationFilter = {}): CalibrationSample[] {
+  const chain = normalize(filter.chain);
+  const symbol = normalize(filter.symbol);
+  const strategy = normalize(filter.strategy);
+  return samples.filter(sample =>
+    (!chain || sample.chain === chain)
+    && (!symbol || sample.symbol === symbol)
+    && (!strategy || sample.strategy === strategy),
+  );
+}
+
 export function recordSettlementProfitCalibration(outcome: ExecutionOutcomeObservation): void {
   const realized = terminalRealized(outcome);
   if (realized === null || !Number.isFinite(outcome.expectedProfitUsd)) return;
-  samples.push({ at: outcome.timestamp, errorUsd: realized - outcome.expectedProfitUsd });
+  samples.push({
+    at: outcome.timestamp,
+    errorUsd: realized - outcome.expectedProfitUsd,
+    chain: normalize(outcome.chain) || 'unknown',
+    symbol: normalize(outcome.symbol) || 'unknown',
+    strategy: normalize(outcome.strategy) || 'unknown',
+  });
   if (samples.length > MAX_SAMPLES) samples.splice(0, samples.length - MAX_SAMPLES);
 }
 
-export function getSettlementProfitCalibrationSnapshot(): SettlementProfitCalibrationSnapshot {
-  const calibrationConfidence = Math.max(0, Math.min(1, samples.length / STABLE_SAMPLE_TARGET));
-  if (samples.length === 0) {
+export function getSettlementProfitCalibrationSnapshot(
+  filter: SettlementProfitCalibrationFilter = {},
+): SettlementProfitCalibrationSnapshot {
+  const selected = selectSamples(filter);
+  const calibrationConfidence = Math.max(0, Math.min(1, selected.length / STABLE_SAMPLE_TARGET));
+  if (selected.length === 0) {
     return {
       terminalSamples: 0,
       meanAbsoluteProfitErrorUsd: null,
@@ -68,19 +107,19 @@ export function getSettlementProfitCalibrationSnapshot(): SettlementProfitCalibr
       executionAuthority: false,
     };
   }
-  const signed = samples.reduce((sum, sample) => sum + sample.errorUsd, 0) / samples.length;
-  const absoluteErrors = samples.map(sample => Math.abs(sample.errorUsd));
+  const signed = selected.reduce((sum, sample) => sum + sample.errorUsd, 0) / selected.length;
+  const absoluteErrors = selected.map(sample => Math.abs(sample.errorUsd));
   const absolute = absoluteErrors.reduce((sum, value) => sum + value, 0) / absoluteErrors.length;
-  const overestimateMagnitudes = samples.filter(sample => sample.errorUsd < 0).map(sample => Math.abs(sample.errorUsd));
+  const overestimateMagnitudes = selected.filter(sample => sample.errorUsd < 0).map(sample => Math.abs(sample.errorUsd));
   const p90OverestimateUsd = percentile(overestimateMagnitudes, 0.9);
   const p95OverestimateUsd = percentile(overestimateMagnitudes, 0.95);
   const p90AbsoluteProfitErrorUsd = percentile(absoluteErrors, 0.9);
   const p95AbsoluteProfitErrorUsd = percentile(absoluteErrors, 0.95);
   const reserve = Math.max(0, p95OverestimateUsd ?? 0, p90AbsoluteProfitErrorUsd ?? 0, signed < 0 ? Math.abs(signed) : 0);
   const confidenceWeightedReserve = reserve * Math.max(0.25, calibrationConfidence);
-  const downsideTailSampleFraction = overestimateMagnitudes.length / samples.length;
+  const downsideTailSampleFraction = overestimateMagnitudes.length / selected.length;
   return {
-    terminalSamples: samples.length,
+    terminalSamples: selected.length,
     meanAbsoluteProfitErrorUsd: Number(absolute.toFixed(8)),
     meanSignedProfitErrorUsd: Number(signed.toFixed(8)),
     medianAbsoluteProfitErrorUsd: percentile(absoluteErrors, 0.5),
@@ -95,7 +134,7 @@ export function getSettlementProfitCalibrationSnapshot(): SettlementProfitCalibr
     overestimateRate: Number(downsideTailSampleFraction.toFixed(6)),
     downsideTailSampleFraction: Number(downsideTailSampleFraction.toFixed(6)),
     downsideTailSamples: overestimateMagnitudes.length,
-    lastObservedAt: samples[samples.length - 1]?.at ?? null,
+    lastObservedAt: selected[selected.length - 1]?.at ?? null,
     authority: 'learning_only',
     executionAuthority: false,
   };

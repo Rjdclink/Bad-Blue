@@ -97,7 +97,6 @@ export function buildAtomicNotionalRefinementCandidates(input: AtomicSizeRefinem
   const upper = bestIndex < coarse.length - 1 ? coarse[bestIndex + 1] : maximum;
   const candidates = new Set<number>();
 
-  // Concentrate the limited extra quote budget close to the measured winner.
   for (const fraction of [0.5, 0.25, 0.75]) {
     if (lower < best) candidates.add(normalizedUsd(lower + (best - lower) * fraction));
     if (best < upper) candidates.add(normalizedUsd(best + (upper - best) * fraction));
@@ -110,21 +109,50 @@ export function buildAtomicNotionalRefinementCandidates(input: AtomicSizeRefinem
     .sort((left, right) => left - right);
 }
 
+/**
+ * Select the largest strictly positive measured dollar profit when one exists.
+ * For observation-only all-negative sets, preserve the caller's near-miss by
+ * choosing the smallest exact BPS-to-break-even when that field is available.
+ * This fallback never changes executable eligibility; it prevents a large-dollar
+ * notional from hiding a mechanically closer percentage edge.
+ */
 export function selectHighestNetProfit<T>(
   values: readonly T[],
   netProfit: (value: T) => number | bigint,
 ): T | null {
-  let best: T | null = null;
+  let bestPositive: T | null = null;
   for (const value of values) {
     const profit = netProfit(value);
     const positive = typeof profit === 'bigint' ? profit > 0n : Number.isFinite(profit) && profit > 0;
     if (!positive) continue;
-    if (best === null) {
-      best = value;
+    if (bestPositive === null) {
+      bestPositive = value;
       continue;
     }
-    const current = netProfit(best);
-    if (typeof profit === 'bigint' && typeof current === 'bigint' ? profit > current : Number(profit) > Number(current)) best = value;
+    const current = netProfit(bestPositive);
+    if (typeof profit === 'bigint' && typeof current === 'bigint' ? profit > current : Number(profit) > Number(current)) bestPositive = value;
   }
-  return best;
+  if (bestPositive !== null) return bestPositive;
+
+  let bestNearMiss: T | null = null;
+  let bestGap = Number.POSITIVE_INFINITY;
+  for (const value of values) {
+    const candidate = value as T & { bpsToBreakEven?: unknown; netProfitBps?: unknown };
+    const explicitGap = Number(candidate.bpsToBreakEven);
+    const netBps = Number(candidate.netProfitBps);
+    const gap = Number.isFinite(explicitGap)
+      ? Math.max(0, explicitGap)
+      : Number.isFinite(netBps) ? Math.max(0, -netBps) : Number.POSITIVE_INFINITY;
+    if (gap < bestGap) {
+      bestGap = gap;
+      bestNearMiss = value;
+      continue;
+    }
+    if (gap === bestGap && bestNearMiss !== null) {
+      const profit = netProfit(value);
+      const current = netProfit(bestNearMiss);
+      if (typeof profit === 'bigint' && typeof current === 'bigint' ? profit > current : Number(profit) > Number(current)) bestNearMiss = value;
+    }
+  }
+  return bestNearMiss;
 }

@@ -39,13 +39,15 @@ requireAll('server/services/cryptocrawl/execution/unified-execution-router.ts', 
 
 // 2) Cryptara CEX topology correction is limited to implemented execution venues.
 requireAll('server/services/cryptocrawl/integration/cryptara-cex-evidence-wiring.ts', [
-  "const CEX_EXECUTION_VENUES = new Set(['kraken', 'okx']);",
+  "const CEX_EXECUTION_VENUES = new Set(['coinbase', 'kraken', 'okx']);",
   "'not_applicable:mempool_evidence'",
   'canonicalMonteCarloPreserved: true',
   'economicsChanged: false',
 ]);
 forbid('server/services/cryptocrawl/integration/cryptara-cex-evidence-wiring.ts', [
-  "new Set(['coinbase', 'kraken', 'okx'])",
+  "new Set(['binance'",
+  "new Set(['kucoin'",
+  "new Set(['bybit'",
 ]);
 
 // 3) Antenna/provider auction remains measured advisory intelligence, not execution authority.
@@ -110,4 +112,4 @@ requireAll('server/services/cryptocrawl/integration/zero-capital-flash-provider-
   'nonPositiveProviderRepriceExecutable: false',
 ]);
 
-console.log('[runtime-safety-invariants] PASS: strict positive economics, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, and zero-capital repricing invariants preserved');
+console.log('[runtime-safety-invariants] PASS: strict positive economics, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, and zero-capital repricing invariants preserved');

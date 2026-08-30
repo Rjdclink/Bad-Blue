@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
+import { getSettlementProfitCalibrationSnapshot } from '../learning/settlement-profit-calibrator.js';
 import { endToEndLatencyHarness, type LatencyOutcome } from '../runtime/end-to-end-latency-harness.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
@@ -34,10 +35,46 @@ export interface CanonicalExecutionSchedulerStats {
 
 type Candidate = CanonicalOpportunitySnapshot & { plan: NonNullable<CanonicalOpportunitySnapshot['plan']> };
 
+function boundedInt(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
+}
+
+function dispatchBatchLimit(): number {
+  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_BATCH, 8, 1, 32);
+}
+
 function isLiveExecutionPosture(): boolean {
   return process.env.NO_EXECUTION !== 'true'
     && process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
     && process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
+}
+
+function terminalCalibrationFactor(candidate: Candidate): number {
+  const calibration = getSettlementProfitCalibrationSnapshot({
+    chain: 'cex',
+    symbol: candidate.symbol,
+    strategy: 'verified_cex_arbitrage',
+  });
+  if (calibration.terminalSamples === 0) return 1;
+  const expected = Math.max(1e-9, candidate.plan.netProfitUsd);
+  const reserve = Math.max(0, calibration.confidenceWeightedProfitReserveUsd ?? 0);
+  const reserveBurden = Math.min(0.8, reserve / expected);
+  const confidence = Math.max(0, Math.min(1, calibration.calibrationConfidence));
+  const overestimateRate = Math.max(0, Math.min(1, calibration.overestimateRate ?? 0));
+  return Math.max(0.2, 1 - reserveBurden * confidence - 0.25 * overestimateRate * confidence);
+}
+
+function candidatePriority(candidate: Candidate, maxQuoteAgeMs: number): number {
+  const probability = Math.max(0, Math.min(1, candidate.assessment?.probabilityOfProfitableExecution ?? 0));
+  const expectedProfit = Math.max(0, candidate.plan.netProfitUsd) * probability;
+  const freshness = Math.max(0.05, Math.min(1, 1 - candidate.plan.quoteAgeMs / Math.max(1, maxQuoteAgeMs)));
+  const notional = Math.max(1, candidate.plan.notionalUsd);
+  const costBurden = Math.max(0, candidate.plan.costs.totalCostsUsd) / notional;
+  const costEfficiency = 1 / (1 + costBurden);
+  const rankSignal = Math.max(0.25, 1 + Math.max(-0.75, Math.min(0.75, Number(candidate.assessment?.rankScore ?? 0) / 100)));
+  const calibration = terminalCalibrationFactor(candidate);
+  return expectedProfit * freshness * costEfficiency * rankSignal * calibration;
 }
 
 function currentCandidates(): Candidate[] {
@@ -54,6 +91,8 @@ function currentCandidates(): Candidate[] {
     .filter(snapshot => snapshot.governance.killSwitchActive === false)
     .filter(snapshot => snapshot.governance.paused === false)
     .sort((left, right) => {
+      const priorityDelta = candidatePriority(right, maxQuoteAgeMs) - candidatePriority(left, maxQuoteAgeMs);
+      if (priorityDelta !== 0) return priorityDelta;
       const leftProbability = left.assessment?.probabilityOfProfitableExecution ?? 0;
       const rightProbability = right.assessment?.probabilityOfProfitableExecution ?? 0;
       const leftValue = left.plan.netProfitUsd * leftProbability;
@@ -100,8 +139,11 @@ class CanonicalExecutionScheduler {
     logger.info('[ExecutionScheduler] Canonical execution scheduler started', {
       component: 'CanonicalExecutionScheduler',
       intervalMs,
+      dispatchBatchLimit: dispatchBatchLimit(),
       ownerId: executionResourceScheduler.getOwnerId(),
       authority: 'canonical_eligible_opportunities',
+      schedulingObjective: 'expected_profit_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration',
+      terminalCalibrationAuthority: 'scheduling_only_confirmed_settlement_evidence',
       legacyBusinessCapsAuthoritative: false,
       distributedResourceLeases: true,
       runtimeInvariantQuarantine: true,
@@ -191,7 +233,7 @@ class CanonicalExecutionScheduler {
     const candidates = eligibleCandidates.filter(candidate =>
       !this.activeOpportunityIds.has(candidate.opportunityId)
       && now - (this.lastAttemptAt.get(candidate.opportunityId) || 0) >= retryWindowMs,
-    );
+    ).slice(0, dispatchBatchLimit());
     this.lastDispatchCandidateCount = candidates.length;
     if (candidates.length === 0) {
       this.setIdle('candidate_retry_window', eligibleCandidates.length, 0, 0);
@@ -235,6 +277,7 @@ class CanonicalExecutionScheduler {
         sellVenue: candidate.plan.sellVenue,
         netProfitUsd: candidate.plan.netProfitUsd,
         probabilityOfProfitableExecution: candidate.assessment?.probabilityOfProfitableExecution,
+        terminalCalibrationFactor: terminalCalibrationFactor(candidate),
         leaseId: lease.leaseId,
         resources: lease.resources,
       })),

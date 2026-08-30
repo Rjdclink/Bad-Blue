@@ -12,12 +12,14 @@ import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
 import { ensureComputationalReactorWiring } from './computational-reactor-wiring.js';
+import { ensureCrossVenueTimingGuardWiring } from './cross-venue-timing-guard-wiring.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureCryptaraSovereignCortexWiring } from './cryptara-sovereign-cortex-wiring.js';
 import { ensureCryptaraPredictivePrefetchWiring } from './cryptara-predictive-prefetch-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
 import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constrained-cex-execution-wiring.js';
+import { ensureMeasuredCandidateExpiryGuardWiring } from './measured-candidate-expiry-guard-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
 import { ensureMonteCarloCalibrationWiring } from './monte-carlo-calibration-wiring.js';
@@ -100,11 +102,6 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
   ensureZeroCapitalShadowPriorityWiring();
-  // Wrapper order matters: independent size refinement runs first, the legacy
-  // joint provider-size rescue runs second, and profitability rescue v2 then
-  // corrects denomination/freshness/liquidity/expiry handling before the
-  // canonical flash-provider layer owns receiver/permission binding and final
-  // fresh repricing.
   ensureZeroCapitalSizeRefinementWiring();
   ensureZeroCapitalJointProviderSizeWiring();
   ensureZeroCapitalProfitabilityRescueV2();
@@ -113,23 +110,16 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureZeroCapitalAtomicStackWiring();
   ensureAlchemyStandardRpcFirstWiring();
 
-  // Cost-safe RPCs must be admitted before the zero-capital engine asks the
-  // provider manager for its first chain provider. This keeps paid Alchemy RPC
-  // as failover while the local Computational Beam/Aries/Cryptara stack performs
-  // the expensive analysis after bounded market-evidence acquisition. The
-  // standard-token wrapper is already installed, so any later token reads also
-  // inherit this public-first provider order automatically.
   void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
 
   ensureOrderBookEvolutionWiring();
   ensureCexFourModeObservabilityWiring();
   ensureCryptaraCexEvidenceWiring();
-  // Cryptara's evidence adapters run first. The sovereign cortex consumes their
-  // measured outputs, then predictive prefetch uses the cortex priority to warm
-  // only high-value market evidence. Neither layer can authorize execution.
   ensureCryptaraSovereignCortexWiring();
   ensureCryptaraPredictivePrefetchWiring();
   ensureInventoryConstrainedCexExecutionWiring();
+  ensureCrossVenueTimingGuardWiring();
+  ensureMeasuredCandidateExpiryGuardWiring();
   ensureDynamicProfitabilityAdmissionWiring();
   ensureStageOneBootstrapAuthority();
   void canonicalIntelligenceRepository.hydrate();
@@ -163,6 +153,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     historicalProofRequiredBeforeFirstExecution: false,
     stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history',
     adaptiveThresholdAuthority: 'terminal_realized_outcomes',
+    measuredCandidateFreshnessPromotionGuard: true,
+    crossVenueTimingGuard: 'fresh_synchronized_kraken_okx_books_then_existing_exact_economic_requote',
     bpsExecutionFloor: null,
     executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
@@ -180,7 +172,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     orderBookEvolution: 'adaptive_measured_short_horizon_transitions',
     dynamicScale: 'multi_axis_search_formation_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
-    intelligenceMemory: 'bounded_hot_plus_private_postgres_async',
+    intelligenceMemory: 'bounded_hot_plus_private_postgres_async_retry',
     filteredMempoolEvidence: paidAlchemyPendingEvidenceExplicitlyEnabled()
       ? 'alchemy_provider_filtered_hash_first_exact_chain_explicit_opt_in'
       : 'withheld_by_default_cost_policy',

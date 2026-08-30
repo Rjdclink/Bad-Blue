@@ -45,9 +45,9 @@ function shouldPrefetch(assessment: CryptaraOpportunityAssessment): boolean {
 function rankedVenues(): CexStreamVenue[] {
   const auction = getProviderQualityAuctionSnapshot();
   const active = auction.bids
-    .filter(bid => !bid.temporarilyDeprioritized && (bid.venue === 'kraken' || bid.venue === 'okx'))
-    .map(bid => bid.venue);
-  const fallback: CexStreamVenue[] = ['kraken', 'okx'];
+    .filter(bid => !bid.temporarilyDeprioritized && (bid.venue === 'coinbase' || bid.venue === 'kraken' || bid.venue === 'okx'))
+    .map(bid => bid.venue as CexStreamVenue);
+  const fallback: CexStreamVenue[] = ['coinbase', 'kraken', 'okx'];
   return [...new Set([...active, ...fallback])];
 }
 
@@ -115,7 +115,7 @@ export function ensureCryptaraPredictivePrefetchWiring(): Cryptara {
 
   log.info('Cryptara predictive prefetch wiring installed', {
     trigger: 'positive_non_rejected_high_priority_assessment',
-    warmedEvidence: ['bounded_market_universe', 'provider_ranked_kraken_okx_books'],
+    warmedEvidence: ['bounded_market_universe', 'provider_ranked_coinbase_kraken_okx_books'],
     providerQualityAware: true,
     computePressureAware: true,
     boundedPerSymbolIntervalMs: minIntervalMs(),

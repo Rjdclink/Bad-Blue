@@ -5,6 +5,10 @@ import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 
 const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
+const retryAttemptsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRIES || 4);
+const retryBaseMsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRY_BASE_MS || 250);
+const RETRY_ATTEMPTS = Number.isFinite(retryAttemptsRaw) ? Math.max(1, Math.min(8, Math.trunc(retryAttemptsRaw))) : 4;
+const RETRY_BASE_MS = Number.isFinite(retryBaseMsRaw) ? Math.max(50, Math.min(5_000, Math.trunc(retryBaseMsRaw))) : 250;
 
 function destinationFingerprint(): string {
   return DESTINATION
@@ -17,11 +21,15 @@ function realizedProfit(feedback: CryptaraExecutionFeedback): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /**
  * Records terminally-settled profit without authorizing an external payout.
- * The existing Rainbow event table remains the canonical per-settlement ledger,
- * but rows stay queued while the treasury lifecycle is RUNNING. Only the
- * independent terminal sweeper may convert retained capital into a withdrawal.
+ * The event id is deterministic, so bounded retries are safe: the insert is
+ * idempotent and retained_profit_usd is incremented only when a new event row is
+ * inserted in the same transaction.
  */
 class RetainedProfitLedger {
   private ready: Promise<void> | null = null;
@@ -34,34 +42,52 @@ class RetainedProfitLedger {
 
     await this.ensureStore();
     const eventId = terminalFeedbackIdentity(feedback);
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const inserted = await client.query(
-        `INSERT INTO private.cryptocrawler_rainbow_profit_events
-          (event_id, opportunity_id, realized_profit_usd, status, destination_hash, created_at, updated_at)
-         VALUES ($1, $2, $3, 'queued', $4, now(), now())
-         ON CONFLICT (event_id) DO NOTHING
-         RETURNING event_id`,
-        [eventId, feedback.opportunityId || null, realized, destinationFingerprint()],
-      );
-      if (inserted.rowCount === 1) {
-        await client.query(
-          `UPDATE public.cryptocrawler_terminal_sweep_control
-           SET retained_profit_usd = retained_profit_usd + $1,
-               destination_address = COALESCE(NULLIF($2, ''), destination_address),
-               updated_at = now()
-           WHERE system_key='cryptocrawler'`,
-          [realized, DESTINATION],
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const inserted = await client.query(
+          `INSERT INTO private.cryptocrawler_rainbow_profit_events
+            (event_id, opportunity_id, realized_profit_usd, status, destination_hash, created_at, updated_at)
+           VALUES ($1, $2, $3, 'queued', $4, now(), now())
+           ON CONFLICT (event_id) DO NOTHING
+           RETURNING event_id`,
+          [eventId, feedback.opportunityId || null, realized, destinationFingerprint()],
         );
+        if (inserted.rowCount === 1) {
+          await client.query(
+            `UPDATE public.cryptocrawler_terminal_sweep_control
+             SET retained_profit_usd = retained_profit_usd + $1,
+                 destination_address = COALESCE(NULLIF($2, ''), destination_address),
+                 updated_at = now()
+             WHERE system_key='cryptocrawler'`,
+            [realized, DESTINATION],
+          );
+        }
+        await client.query('COMMIT');
+        return;
+      } catch (error) {
+        lastError = error;
+        try { await client.query('ROLLBACK'); } catch { /* transaction may already be gone */ }
+        if (attempt < RETRY_ATTEMPTS) {
+          const delayMs = Math.min(10_000, RETRY_BASE_MS * (2 ** (attempt - 1)));
+          logger.warn('[Treasury] Retained-profit persistence retry scheduled', {
+            component: 'RetainedProfitLedger',
+            eventId,
+            attempt,
+            maxAttempts: RETRY_ATTEMPTS,
+            delayMs,
+            idempotentEvent: true,
+            externalPayoutAuthorized: false,
+          });
+          await sleep(delayMs);
+        }
+      } finally {
+        client.release();
       }
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
     }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError || 'retained-profit persistence failed'));
   }
 
   private async ensureStore(): Promise<void> {
