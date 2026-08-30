@@ -25,7 +25,7 @@ function retryablePersistenceError(error: unknown): boolean {
   const code = String((error as any)?.code || '');
   const message = error instanceof Error ? error.message : String(error);
   return code === '55P03' || code === '57014' || code === '40001' || code === '40P01' ||
-    /timeout|connection terminated|connection reset|server closed|too many clients|max clients/i.test(message);
+    /timeout|connection terminated|connection reset|server closed|too many clients|max clients|check out connection/i.test(message);
 }
 
 function delay(ms: number): Promise<void> {
@@ -70,9 +70,10 @@ export class PostgresStageManagerStateStore implements StageManagerStateStore {
 
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= SAVE_RETRIES; attempt += 1) {
-      const { pool } = await import('../../../db.js');
-      const client = await pool.connect();
+      let client: any = null;
       try {
+        const { pool } = await import('../../../db.js');
+        client = await pool.connect();
         await client.query('BEGIN');
         await client.query(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
         await client.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT_MS}ms'`);
@@ -97,11 +98,13 @@ export class PostgresStageManagerStateStore implements StageManagerStateStore {
         return;
       } catch (error) {
         lastError = error;
-        try { await client.query('ROLLBACK'); } catch { /* connection release follows */ }
+        if (client) {
+          try { await client.query('ROLLBACK'); } catch { /* connection release follows */ }
+        }
         if (attempt >= SAVE_RETRIES || !retryablePersistenceError(error)) throw error;
         await delay(Math.min(1_500, 200 * Math.pow(2, attempt - 1)));
       } finally {
-        client.release();
+        client?.release();
       }
     }
 
