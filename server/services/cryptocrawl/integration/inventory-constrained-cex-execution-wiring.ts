@@ -44,7 +44,7 @@ function snapshot(venue: InventoryVenue, asset: string): InventorySnapshot | nul
 function spendable(value: InventorySnapshot | null): number {
   if (!value) return 0;
   return Math.max(0,
-    value.available - value.reserved - value.pendingOrder - value.pendingTransfer - value.minimumReserve,
+    value.available - value.reserved - value.payoutReserved - value.pendingOrder - value.pendingTransfer - value.minimumReserve,
   );
 }
 
@@ -265,10 +265,12 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     buyQuoteSpendable: capacity.buyQuoteSpendable,
     sellBaseSpendable: capacity.sellBaseSpendable,
     economicsAuthority: 'fresh_order_books_plus_bounded_current_fee_evidence_after_balance_io',
-    inventoryAuthority: 'authenticated_spendable_balance_after_reserves',
+    inventoryAuthority: 'authenticated_spendable_balance_after_trade_and_payout_reserves',
     balanceCacheMs: balanceCacheMs(),
     retryDelaysMs: inventoryRetryDelaysMs(),
     staleFallbackExecutionAuthority: false,
+    payoutShareRecycledIntoNewTrades: false,
+    retainedShareSpendable: true,
     bpsExecutionFloor: null,
     executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
     syntheticScaling: false,
@@ -313,6 +315,8 @@ export function ensureInventoryConstrainedCexExecutionWiring(): void {
     inactiveVenueExecutionRejectedUpstream: true,
     unverifiedBalanceExecutionRejectedUpstream: true,
     staleLastKnownBalanceExecutionAuthority: false,
+    payoutReservationsReduceOnlyNewSpendableInventory: true,
+    retainedFortyPercentRemainsSpendable: true,
     duplicateDownstreamAdmissionAvoidedOnKnownResourceFailure: true,
     bpsExecutionFloor: null,
     executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
