@@ -8,6 +8,7 @@ import {
   type ReactorJob,
 } from '../../../reactor/computationalReactor.js';
 import { getProviderQualityAuctionSnapshot } from '../intelligence/provider-quality-auction.js';
+import { ensureBpsCompressionMesh, getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import { getCexFourModeSnapshot } from './cex-four-mode-observability-wiring.js';
 import { getCryptaraSovereignCortexSnapshot } from './cryptara-sovereign-cortex-wiring.js';
 
@@ -23,6 +24,9 @@ export interface ComputationalSearchPlan {
   sourceModes: number;
   providerQuality: number;
   cryptaraPriority: 'critical' | 'high' | 'normal' | 'low' | null;
+  cexAttentionShare: number | null;
+  zeroCapitalAttentionShare: number | null;
+  explorationShare: number | null;
   authority: 'measured_compute_search_scheduling_only';
   executionAuthority: false;
 }
@@ -34,6 +38,9 @@ let latestSearchPlan: ComputationalSearchPlan = {
   sourceModes: 0,
   providerQuality: 0,
   cryptaraPriority: null,
+  cexAttentionShare: null,
+  zeroCapitalAttentionShare: null,
+  explorationShare: null,
   authority: 'measured_compute_search_scheduling_only',
   executionAuthority: false,
 };
@@ -66,6 +73,15 @@ function priorityMultiplier(priority: ComputationalSearchPlan['cryptaraPriority'
   return 1;
 }
 
+function meshShares(): Pick<ComputationalSearchPlan, 'cexAttentionShare' | 'zeroCapitalAttentionShare' | 'explorationShare'> {
+  const mesh = getBpsCompressionMeshSnapshot();
+  return {
+    cexAttentionShare: mesh?.cex.attentionShare ?? null,
+    zeroCapitalAttentionShare: mesh?.zeroCapital.attentionShare ?? null,
+    explorationShare: mesh?.exploration.attentionShare ?? null,
+  };
+}
+
 function neutralSearchPlan(sourceModes: number, observedAt = Date.now()): ComputationalSearchPlan {
   return {
     observedAt,
@@ -74,6 +90,7 @@ function neutralSearchPlan(sourceModes: number, observedAt = Date.now()): Comput
     sourceModes: Math.max(0, sourceModes),
     providerQuality: averageProviderQuality(),
     cryptaraPriority: getCryptaraSovereignCortexSnapshot()?.requestPriority ?? null,
+    ...meshShares(),
     authority: 'measured_compute_search_scheduling_only',
     executionAuthority: false,
   };
@@ -99,6 +116,8 @@ function buildMeasuredSearchScorer() {
   const cryptaraPriority = cortex?.requestPriority ?? null;
   const heat = getHeatMonitor();
   const uniqueSymbols = new Set(modes.map(mode => mode.symbol)).size;
+  const mesh = getBpsCompressionMeshSnapshot();
+  const cexAttention = mesh?.cex.attentionShare ?? 0.5;
 
   const scorer = (params: Record<string, number>): number => {
     const breadthFactor = Math.max(0.25, Math.min(1, params.breadthFactor));
@@ -131,7 +150,9 @@ function buildMeasuredSearchScorer() {
     const coverage = selected.length / Math.max(1, uniqueSymbols);
     const heatCost = heat.throttleLevel === 'heavy' ? 1 : heat.throttleLevel === 'moderate' ? 0.6 : heat.throttleLevel === 'light' ? 0.3 : 0.1;
     const requestCost = breadthFactor / intervalFactor;
+    const meshOpportunityMultiplier = 0.75 + 0.50 * Math.max(0, Math.min(1, cexAttention));
     return (opportunityValue
+      * meshOpportunityMultiplier
       * (1 + positiveCoverage * 0.50)
       * (0.75 + 0.25 * providerQuality)
       * priorityMultiplier(cryptaraPriority)
@@ -152,13 +173,17 @@ function applyCompletedCalibration(event: unknown): void {
   const best = payload.result?.result?.bestParameters;
   if (!best) return;
   const modes = getCexFourModeSnapshot();
+  const mesh = getBpsCompressionMeshSnapshot();
+  const meshBreadth = mesh?.cexBreadthBias ?? 1;
+  const meshCadence = mesh?.cexCadenceBias ?? 1;
   latestSearchPlan = {
     observedAt: Date.now(),
-    breadthFactor: Math.max(0.25, Math.min(1, Number(best.breadthFactor) || 1)),
-    intervalFactor: Math.max(0.5, Math.min(2.5, Number(best.intervalFactor) || 1)),
+    breadthFactor: Math.max(0.25, Math.min(1, (Number(best.breadthFactor) || 1) * meshBreadth)),
+    intervalFactor: Math.max(0.5, Math.min(2.5, (Number(best.intervalFactor) || 1) * meshCadence)),
     sourceModes: modes.length,
     providerQuality: averageProviderQuality(),
     cryptaraPriority: getCryptaraSovereignCortexSnapshot()?.requestPriority ?? null,
+    ...meshShares(),
     authority: 'measured_compute_search_scheduling_only',
     executionAuthority: false,
   };
@@ -205,6 +230,7 @@ function scheduleCalibration(): void {
 export function ensureComputationalReactorWiring(): void {
   if (installed) return;
   installed = true;
+  ensureBpsCompressionMesh();
 
   const maxConcurrentJobs = boundedInteger(process.env.REACTOR_MAX_CONCURRENT_JOBS, 3, 1, 16);
   const maxJobsPerHour = boundedInteger(process.env.REACTOR_MAX_JOBS_PER_HOUR, 100, 10, 10_000);
@@ -223,7 +249,8 @@ export function ensureComputationalReactorWiring(): void {
       component: 'ComputationalReactorWiring',
       scheduler: 'priority_plus_age_with_measured_resource_pressure',
       monteCarlo: 'caller_supplied_measured_scorer_only',
-      searchAllocationCalibration: 'profit_positive_first_then_measured_cex_gap_freshness_provider_quality_compute_cost',
+      searchAllocationCalibration: 'profit_positive_first_then_cross_topology_bps_gap_freshness_provider_quality_compute_cost',
+      bpsCompressionMesh: getBpsCompressionMeshSnapshot(),
       searchPlanMaxAgeMs: searchPlanMaxAgeMs(),
       insufficientEvidenceFallback: 'neutral_full_breadth_base_cadence',
       syntheticOptimizationScores: false,
