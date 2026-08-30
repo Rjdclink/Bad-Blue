@@ -34,3 +34,7 @@ COMMENT ON COLUMN public.cryptocrawler_profit_payout_batches.primary_failure_wit
   'Preserves the failed primary OKX withdrawal id when a batch switches to the fallback destination.';
 COMMENT ON COLUMN public.cryptocrawler_terminal_sweep_legs.primary_failure_withdrawal_id IS
   'Preserves the failed primary OKX withdrawal id when a restart-drain leg switches to the fallback destination.';
+COMMENT ON TABLE public.cryptocrawler_profit_payout_jobs IS
+  'Durable terminal-profit allocation. The first three profitable settlements use a fixed 60% payout/40% retained split; later settlements persist one bounded 55-65% payout decision with the complementary 45-35% retained for operating capital.';
+COMMENT ON TABLE public.cryptocrawler_profit_payout_batches IS
+  'Idempotent OKX ETH/Ethereum payout batches. Small due obligations may aggregate to the authenticated minimum; large obligations may span batches up to the authenticated maximum; primary destination failure may fail over once to the Railway-derived public Ethereum address.';
