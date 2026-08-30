@@ -15,6 +15,7 @@ export interface SettlementProfitCalibrationSnapshot {
   confidenceWeightedProfitReserveUsd: number | null;
   overestimateRate: number | null;
   downsideTailSampleFraction: number | null;
+  downsideTailSamples: number;
   lastObservedAt: number | null;
   authority: 'learning_only';
   executionAuthority: false;
@@ -61,6 +62,7 @@ export function getSettlementProfitCalibrationSnapshot(): SettlementProfitCalibr
       confidenceWeightedProfitReserveUsd: null,
       overestimateRate: null,
       downsideTailSampleFraction: null,
+      downsideTailSamples: 0,
       lastObservedAt: null,
       authority: 'learning_only',
       executionAuthority: false,
@@ -76,6 +78,7 @@ export function getSettlementProfitCalibrationSnapshot(): SettlementProfitCalibr
   const p95AbsoluteProfitErrorUsd = percentile(absoluteErrors, 0.95);
   const reserve = Math.max(0, p95OverestimateUsd ?? 0, p90AbsoluteProfitErrorUsd ?? 0, signed < 0 ? Math.abs(signed) : 0);
   const confidenceWeightedReserve = reserve * Math.max(0.25, calibrationConfidence);
+  const downsideTailSampleFraction = overestimateMagnitudes.length / samples.length;
   return {
     terminalSamples: samples.length,
     meanAbsoluteProfitErrorUsd: Number(absolute.toFixed(8)),
@@ -89,8 +92,9 @@ export function getSettlementProfitCalibrationSnapshot(): SettlementProfitCalibr
     stableCalibrationSampleTarget: STABLE_SAMPLE_TARGET,
     recommendedConservativeProfitReserveUsd: Number(reserve.toFixed(8)),
     confidenceWeightedProfitReserveUsd: Number(confidenceWeightedReserve.toFixed(8)),
-    overestimateRate: Number((overestimateMagnitudes.length / samples.length).toFixed(6)),
-    downsideTailSampleFraction: Number((overestimateMagnitudes.length / samples.length).toFixed(6)),
+    overestimateRate: Number(downsideTailSampleFraction.toFixed(6)),
+    downsideTailSampleFraction: Number(downsideTailSampleFraction.toFixed(6)),
+    downsideTailSamples: overestimateMagnitudes.length,
     lastObservedAt: samples[samples.length - 1]?.at ?? null,
     authority: 'learning_only',
     executionAuthority: false,
