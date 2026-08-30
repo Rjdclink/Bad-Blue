@@ -35,17 +35,22 @@ async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
     }
 
     if (allocation?.recorded) {
-      logger.info('[Treasury] Terminal profit split allocated', {
+      logger.info('[Treasury] Terminal profit payout allocation persisted', {
         component: 'RainbowProfitBridgeWiring',
         eventId: allocation.eventId,
+        payoutSequence: allocation.payoutSequence,
         realizedProfitUsd: allocation.realizedProfitUsd,
         payoutTargetUsd: allocation.payoutTargetUsd,
         retainedTargetUsd: allocation.retainedTargetUsd,
-        payoutFraction: 0.60,
-        retainedFraction: 0.40,
+        payoutFraction: allocation.payoutFraction,
+        retainedFraction: allocation.retainedFraction,
+        scheduledNotBefore: new Date(allocation.scheduledNotBefore).toISOString(),
+        payoutSourceVenue: allocation.payoutSourceVenue,
+        payoutSourceAsset: allocation.payoutSourceAsset,
         payoutAsset: 'ETH',
         payoutNetwork: 'ethereum',
         retainedCapitalInventoryReserved: false,
+        payoutCapitalProtectedFromNewTrades: Boolean(allocation.payoutSourceVenue && allocation.payoutSourceAsset),
       });
       void rainbowProfitBridge.wake('terminal_profit_recorded');
     }
@@ -88,20 +93,24 @@ export function ensureRainbowProfitBridgeWiring(): void {
   };
   stageManager.on('execution-evidence-recorded', listener);
 
-  logger.info('[Treasury] Per-trade 60/40 Rainbow wiring installed', {
+  logger.info('[Treasury] Dynamic per-profitable-trade Rainbow wiring installed', {
     component: 'RainbowProfitBridgeWiring',
     sourceAuthority: 'terminal_confirmed_settlement_only',
     persistentIdempotency: true,
     sourceAwareLedger: 'venue_chain_symbol_asset_execution_source',
     normalRuntimePayouts: true,
-    allocationPolicy: '60_percent_eth_payout_40_percent_operating_capital',
-    payoutAuthority: 'single_independent_supabase_worker',
+    allocationPolicy: 'first_three_fixed_60_40_hourly_then_persisted_bounded_55_65_payout',
+    dynamicDelayPolicyMinutes: [30, 90],
+    payoutAuthority: 'single_independent_supabase_worker_okx_to_metamask',
     immediateWakePlusCronFallback: true,
     payoutDestination: 'CRYPTO_PROFIT_WALLET_ADDRESS',
     payoutAsset: 'ETH',
     payoutNetwork: 'ethereum_mainnet_only',
     retainedTradingCapitalSpendabilityAuthority: 'canonical_inventory_ledger',
     retainedCapitalInventoryReserved: false,
+    payoutCapitalProtectedFromNewTradeSpendability: true,
+    activeTradePreemptionAllowed: false,
+    ethConversionTiming: 'only_when_due_and_withdrawal_executable',
   });
 }
 
