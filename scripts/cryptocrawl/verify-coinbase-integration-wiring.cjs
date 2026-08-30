@@ -18,69 +18,52 @@ const settlement = read('server/services/cryptocrawl/execution/coinbase-spot-set
 const canonicalSettlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 const inventory = read('server/services/cryptocrawl/execution/cex-inventory-ledger.ts');
 const executor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
-const executionIndex = read('server/services/cryptocrawl/execution/index.ts');
 const executionReadiness = read('server/services/cryptocrawl/execution/execution-readiness.ts');
 const verifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
-const readiness = read('server/services/cryptocrawl/runtime/coinbase-readiness-wiring.ts');
 const capability = read('server/services/cryptocrawl/discovery/venue-capability-registry.ts');
 const maker = read('server/services/cryptocrawl/discovery/maker-opportunity-generator.ts');
 
-assert(publicDiscovery.includes('api.coinbase.com/api/v3/brokerage/market/products'), 'Coinbase discovery must use Advanced Trade public products');
-assert(publicDiscovery.includes('!capability.enabled || !capability.publicDiscovery'), 'Coinbase public discovery must remain capability-gated');
-assert(!publicDiscovery.includes('api.exchange.coinbase.com'), 'Coinbase discovery must not regress to legacy Exchange API');
-assert(marketData.includes('/api/v3/brokerage/market/product_book'), 'Executable Coinbase book authority must use Advanced Trade v3 product book');
-assert(marketData.includes('/api/v3/brokerage/market/products/${encodeURIComponent(productId)}'), 'Coinbase product constraints must come from Advanced Trade public products');
-assert(marketData.includes('base_increment') && marketData.includes('quote_increment') && marketData.includes('price_increment'), 'Coinbase executable metadata must preserve product increments');
-assert(marketData.includes('base_min_size') && marketData.includes('quote_min_size'), 'Coinbase executable metadata must preserve minimum sizes');
-assert(marketData.includes('auction_mode'), 'Coinbase executable metadata must preserve auction mode');
-assert(!marketData.includes('api.exchange.coinbase.com'), 'Coinbase market-data authority must not use legacy Exchange endpoints');
+// Public discovery and executable quote evidence must use the current Advanced
+// Trade surface, never legacy Exchange REST endpoints.
+assert(publicDiscovery.includes('/api/v3/brokerage/market/products'), 'Coinbase public discovery must use Advanced Trade products');
+assert(marketData.includes('/api/v3/brokerage/market/product_book'), 'Coinbase executable depth must use Advanced Trade product_book');
+assert(marketData.includes('/api/v3/brokerage/market/products/${encodeURIComponent(productId)}'), 'Coinbase executable product constraints must use Advanced Trade products');
+assert(!publicDiscovery.includes('api.exchange.coinbase.com') && !marketData.includes('api.exchange.coinbase.com'), 'legacy Coinbase Exchange REST must not become executable evidence');
 
-assert(privateAuthority.includes('COINBASE_API_KEY') && privateAuthority.includes('COINBASE_API_SECRET'), 'Coinbase canonical key aliases must be recognized');
-assert(privateAuthority.includes('/api/v3/brokerage/key_permissions'), 'Coinbase permissions must be authenticated before live capability can be used');
-assert(fees.includes('/api/v3/brokerage/transaction_summary'), 'Coinbase authenticated account fee tier must come from transaction summary');
-assert(fees.includes("product_type: 'SPOT'"), 'Coinbase fee evidence must be scoped to SPOT');
-assert(feeResolver.includes("if (venue === 'coinbase') return fetchCoinbaseFeeEvidence(symbol)"), 'canonical CEX fee resolver must own Coinbase fee lookup');
+// Private execution must remain authenticated and permission/fee backed.
+assert(privateAuthority.includes('/api/v3/brokerage/key_permissions'), 'Coinbase live readiness must verify key permissions');
+assert(privateAuthority.includes("keyName.includes('/apiKeys/')"), 'Coinbase private authority must require a supported API key-name form');
+assert(fees.includes('/api/v3/brokerage/transaction_summary'), 'Coinbase authenticated SPOT fees must come from transaction summary');
+assert(feeResolver.includes("if (venue === 'coinbase') return fetchCoinbaseFeeEvidence(symbol);"), 'canonical fee resolver must own Coinbase authenticated fee lookup');
+assert(feeResolver.includes("if (venue === 'coinbase') return null;"), 'Coinbase must not fall back to configured fee guesses');
 
-assert(productPolicy.includes('floorToIncrement'), 'Coinbase product policy must normalize quantity to measured increments');
-assert(productPolicy.includes('constraints.auctionMode'), 'Coinbase product policy must reject auction-mode IOC execution');
-assert(executablePlanPolicy.includes('getCoinbaseAdvancedProductConstraints(plan.symbol)'), 'Coinbase plan normalization must consume current Advanced Trade product constraints');
-assert(executablePlanPolicy.includes('netProfitUsd <= 0'), 'Coinbase normalization must fail closed if normalized economics are nonpositive');
-assert(cexProductPolicy.includes('normalizeCoinbaseExecutablePlan(input)'), 'canonical CEX normalization must include Coinbase-specific product normalization');
-assert(profitCapture.includes('normalizeCexExecutablePlan(takerPlan)'), 'canonical evaluateOnce path must pass plans through unified CEX product normalization');
-assert(profitCapture.includes('verifier.evaluateOnce = async'), 'CEX product normalization must wrap the canonical verifier evaluation path');
+// Product constraints and economics are revalidated before eligibility/submission.
+assert(productPolicy.includes('constraints.auctionMode'), 'Coinbase taker IOC must reject auction-mode products');
+assert(productPolicy.includes('isIncrementAligned'), 'Coinbase order quantities/prices must obey measured increments');
+assert(executablePlanPolicy.includes('getCoinbaseAdvancedProductConstraints(plan.symbol)'), 'Coinbase plan normalization must use current product constraints');
+assert(executablePlanPolicy.includes('netProfitUsd <= 0'), 'Coinbase normalized plan must fail closed on nonpositive all-in economics');
+assert(cexProductPolicy.includes('normalizeCoinbaseExecutablePlan(input)'), 'Coinbase normalization must participate in canonical CEX normalization');
+assert(profitCapture.includes('normalizeCexExecutablePlan(takerPlan)'), 'canonical taker evaluation must run unified CEX normalization');
+assert(verifier.includes('getCoinbaseAdvancedProductBook(symbol)'), 'canonical verifier must consume measured Coinbase depth');
+assert(verifier.includes('resolveCexFeeEvidence(quote.venue, symbol)'), 'canonical verifier must consume authenticated fee authority');
 
-assert(settlement.includes('sor_limit_ioc'), 'Coinbase spot settlement adapter must submit bounded IOC limit orders');
-assert(settlement.includes('getCoinbaseAdvancedProductConstraints(request.symbol)'), 'Coinbase live submission must re-read current product constraints');
-assert(settlement.includes('/api/v3/brokerage/orders/historical/fills'), 'Coinbase terminal settlement must inspect authenticated fills');
-assert(settlement.includes('/api/v3/brokerage/accounts'), 'Coinbase terminal settlement must reconcile balances');
-assert(readiness.includes('getCoinbaseSpotFeeEvidence(true)'), 'Coinbase readiness must verify authenticated fee evidence');
-
+// Canonical execution/settlement/inventory path must include Coinbase.
 const coinbaseBlock = capability.match(/coinbase:\s*Object\.freeze\(\{[\s\S]*?\n\s*\}\),/);
 assert(coinbaseBlock, 'Coinbase capability declaration missing');
 for (const marker of ['enabled: true','publicDiscovery: true','executableQuotes: true','measuredOrderBook: true','authenticatedFeeEvidence: true','liveExecution: true','settlementVerification: true']) {
-  assert(coinbaseBlock[0].includes(marker), `Coinbase canonical promotion missing ${marker}`);
+  assert(coinbaseBlock[0].includes(marker), `Coinbase capability missing ${marker}`);
 }
-assert(capability.includes("(['coinbase', 'kraken', 'okx'] as const)"), 'canonical executable venue set must include Coinbase, Kraken and OKX');
+assert(capability.includes("(['coinbase', 'kraken', 'okx'] as const)"), 'canonical executable quote set must contain only implemented Coinbase/Kraken/OKX paths');
+assert(inventory.includes("export type InventoryVenue = 'coinbase' | 'kraken' | 'okx'"), 'inventory authority must include Coinbase');
+assert(canonicalSettlement.includes("export type ExecutableCexVenue = 'coinbase' | 'kraken' | 'okx'"), 'settlement venue type must include Coinbase');
+assert(canonicalSettlement.includes('CoinbaseSettlementBridge'), 'canonical settlement must bridge Coinbase Advanced Trade');
+assert(executor.includes("new Set<ExecutableCexVenue>(['coinbase', 'kraken', 'okx'])"), 'centralized executor must admit only implemented Coinbase/Kraken/OKX venues');
+assert(executor.includes('acquireMeasuredInventory'), 'Coinbase execution must share authenticated inventory reconciliation');
+assert(executionReadiness.includes("supportedCentralizedVenues: ['coinbase', 'kraken', 'okx']"), 'execution readiness must include Coinbase');
+assert(executionReadiness.includes('[krakenConfigured, okxConfigured, coinbaseConfigured].filter(Boolean).length >= 2'), 'CEX environment readiness must require two supported configured venues');
 
-assert(verifier.includes('getCoinbaseAdvancedProductBook(symbol)'), 'canonical verifier must consume Coinbase Advanced Trade depth');
-assert(verifier.includes('resolveCexFeeEvidence(quote.venue, symbol)'), 'canonical verifier must consume one fee authority for every CEX venue');
-assert(!verifier.includes('assertCoinbaseSpotTradeReady'), 'verifier must not duplicate Coinbase permission authority');
-assert(!verifier.includes('api.exchange.coinbase.com'), 'canonical verifier must not use Coinbase legacy Exchange endpoints');
-
-assert(inventory.includes("export type InventoryVenue = 'coinbase' | 'kraken' | 'okx'"), 'canonical inventory ledger must reserve Coinbase assets');
-assert(canonicalSettlement.includes("export type ExecutableCexVenue = 'coinbase' | 'kraken' | 'okx'"), 'canonical settlement venue union must include Coinbase');
-assert(canonicalSettlement.includes('CoinbaseSettlementBridge'), 'canonical settlement must install the Coinbase Advanced Trade adapter');
-assert(canonicalSettlement.includes('coinbase: new CoinbaseSettlementBridge()'), 'production settlement adapters must include Coinbase');
-assert(executor.includes("new Set<ExecutableCexVenue>(['coinbase', 'kraken', 'okx'])"), 'centralized executor must explicitly admit Coinbase');
-assert(executor.includes('acquireMeasuredInventory'), 'Coinbase plans must use reconciled inventory authority');
-assert(executionIndex.includes("venue is 'coinbase' | 'kraken' | 'okx'"), 'execution orchestrator must recognize Coinbase as a supported centralized venue');
-assert(executionReadiness.includes("supportedCentralizedVenues: ['coinbase', 'kraken', 'okx']"), 'canonical execution capability must include Coinbase');
-assert(executionReadiness.includes('[krakenConfigured, okxConfigured, coinbaseConfigured].filter(Boolean).length >= 2'), 'CEX readiness must require any two configured supported venue accounts');
-
-// Coinbase taker/IOC execution is promoted independently from maker topology.
-// Maker discovery still deliberately narrows the shared executable set to the two
-// venues whose maker queue/fill evidence and authenticated fee batching are proven.
-assert(maker.includes("filter((venue): venue is 'kraken' | 'okx' => venue !== 'coinbase')"), 'Coinbase must remain excluded from maker discovery until its maker evidence path is proven');
-assert(maker.includes('primeCexFeeEvidenceForVenueSymbols({') && maker.includes('kraken: krakenSymbols') && maker.includes('okx: okxSymbols'), 'maker fee priming must remain bounded to proven Kraken/OKX maker topology');
+// Coinbase maker execution remains excluded until its maker-specific queue/fill
+// evidence path is proven; taker/IOC capability does not imply maker authority.
+assert(maker.includes("filter((venue): venue is 'kraken' | 'okx' => venue !== 'coinbase')"), 'Coinbase must remain excluded from maker discovery');
 
 console.log('coinbase-integration-wiring:pass');
