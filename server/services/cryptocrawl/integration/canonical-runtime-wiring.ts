@@ -27,6 +27,7 @@ import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.
 import { ensureZeroCapitalShadowPriorityWiring } from './zero-capital-shadow-priority-wiring.js';
 import { ensureZeroCapitalSizeRefinementWiring } from './zero-capital-size-refinement-wiring.js';
 import { ensureZeroCapitalJointProviderSizeWiring } from './zero-capital-joint-provider-size-wiring.js';
+import { ensureZeroCapitalProfitabilityRescueV2 } from './zero-capital-profitability-rescue-v2.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
 import { ensureProviderSpecificZeroCapitalExecutionWiring } from './provider-specific-zero-capital-execution-wiring.js';
@@ -95,12 +96,14 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
   ensureZeroCapitalShadowPriorityWiring();
-  // Wrapper order matters: independent size refinement runs first, then the
-  // observation-only joint provider-size rescue can use exact measured provider
-  // fees to improve non-positive candidates. The canonical flash-provider layer
-  // runs last and still owns receiver/permission binding plus final fresh repricing.
+  // Wrapper order matters: independent size refinement runs first, the legacy
+  // joint provider-size rescue runs second, and profitability rescue v2 then
+  // corrects denomination/freshness/liquidity/expiry handling before the
+  // canonical flash-provider layer owns receiver/permission binding and final
+  // fresh repricing.
   ensureZeroCapitalSizeRefinementWiring();
   ensureZeroCapitalJointProviderSizeWiring();
+  ensureZeroCapitalProfitabilityRescueV2();
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
@@ -172,7 +175,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
     zeroCapitalRuntimeLifecycle: 'cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
-    zeroCapitalSizeOptimization: 'coarse_independent_quotes_plus_bounded_fresh_local_refinement_plus_exact_provider_size_rescue',
+    zeroCapitalSizeOptimization: 'coarse_independent_quotes_plus_bounded_fresh_local_refinement_plus_exact_provider_size_rescue_plus_profitability_rescue_v2',
+    zeroCapitalProfitabilityRescue: 'decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
     zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
     zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
