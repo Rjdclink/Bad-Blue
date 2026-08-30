@@ -9,6 +9,8 @@ function finiteEnvNumber(name: string, fallback: number, min: number, max: numbe
 }
 
 const KRAKEN_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_KRAKEN_PRIVATE_TIMEOUT_MS || 12_000));
+const KRAKEN_DB_BREAKER_BASE_MS = finiteEnvNumber('CRYPTO_KRAKEN_DB_BREAKER_BASE_MS', 5_000, 1_000, 60_000);
+const KRAKEN_DB_BREAKER_MAX_MS = finiteEnvNumber('CRYPTO_KRAKEN_DB_BREAKER_MAX_MS', 60_000, 5_000, 300_000);
 const OKX_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_OKX_PRIVATE_TIMEOUT_MS || 12_000));
 const OKX_REGION_CACHE_MS = Math.max(60_000, Number(process.env.CRYPTO_OKX_REGION_CACHE_MS || 3_600_000));
 const OKX_FEE_MIN_INTERVAL_MS = Math.max(425, Number(process.env.CRYPTO_OKX_FEE_MIN_INTERVAL_MS || 450));
@@ -71,6 +73,9 @@ let krakenLastNonce = 0;
 let krakenPrivateTail: Promise<void> = Promise.resolve();
 let krakenRequestCount = 0;
 let krakenDistributedStateReady: Promise<void> | null = null;
+let krakenDbFailureCount = 0;
+let krakenDbBreakerOpenUntil = 0;
+let krakenDbLastError: string | null = null;
 
 function nextKrakenNonce(): string {
   const nonce = Math.max(Date.now(), krakenLastNonce + 1);
@@ -95,18 +100,59 @@ function krakenKeyFingerprint(apiKey: string): string {
   return createHash('sha256').update(apiKey).digest('hex');
 }
 
+function krakenDatabaseBackoffMs(): number {
+  return Math.min(
+    KRAKEN_DB_BREAKER_MAX_MS,
+    KRAKEN_DB_BREAKER_BASE_MS * Math.pow(2, Math.max(0, krakenDbFailureCount - 1)),
+  );
+}
+
+function recordKrakenDatabaseFailure(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  krakenDbFailureCount += 1;
+  krakenDbLastError = message;
+  krakenDbBreakerOpenUntil = Date.now() + krakenDatabaseBackoffMs();
+  logger.warn('[CEX Private] Kraken distributed nonce database lane degraded; private requests fail closed until retry window', {
+    component: 'CexPrivateAuthority',
+    consecutiveDatabaseFailures: krakenDbFailureCount,
+    breakerOpenUntil: krakenDbBreakerOpenUntil,
+    retryInMs: Math.max(0, krakenDbBreakerOpenUntil - Date.now()),
+    error: message,
+    localNonceFallbackAllowed: false,
+  });
+}
+
+function recordKrakenDatabaseSuccess(): void {
+  krakenDbFailureCount = 0;
+  krakenDbBreakerOpenUntil = 0;
+  krakenDbLastError = null;
+}
+
+function assertKrakenDatabaseLaneAvailable(): void {
+  const retryInMs = Math.max(0, krakenDbBreakerOpenUntil - Date.now());
+  if (retryInMs <= 0) return;
+  throw new Error(`Kraken distributed nonce database circuit open; fail-closed retry in ${retryInMs}ms`);
+}
+
 async function ensureKrakenDistributedState(): Promise<void> {
   if (!isDatabaseConfigured) return;
+  assertKrakenDatabaseLaneAvailable();
   if (krakenDistributedStateReady) return krakenDistributedStateReady;
   krakenDistributedStateReady = (async () => {
-    await pool.query('CREATE SCHEMA IF NOT EXISTS private');
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS private.cryptocrawler_kraken_nonce_state (
-        key_hash text PRIMARY KEY,
-        last_nonce bigint NOT NULL,
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
+    try {
+      await pool.query('CREATE SCHEMA IF NOT EXISTS private');
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS private.cryptocrawler_kraken_nonce_state (
+          key_hash text PRIMARY KEY,
+          last_nonce bigint NOT NULL,
+          updated_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+      recordKrakenDatabaseSuccess();
+    } catch (error) {
+      recordKrakenDatabaseFailure(error);
+      throw error;
+    }
   })().catch(error => {
     krakenDistributedStateReady = null;
     throw error;
@@ -127,29 +173,47 @@ async function withKrakenDistributedLane<T>(
   operation: (nonce: string) => Promise<T>,
 ): Promise<T> {
   if (!isDatabaseConfigured) return operation(nextKrakenNonce());
+  assertKrakenDatabaseLaneAvailable();
   await ensureKrakenDistributedState();
+  assertKrakenDatabaseLaneAvailable();
 
   const keyHash = krakenKeyFingerprint(apiKey);
   const lockName = `cryptocrawl:kraken-private:${keyHash}`;
-  const client = await pool.connect();
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (error) {
+    recordKrakenDatabaseFailure(error);
+    throw error;
+  }
   let locked = false;
   try {
-    await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockName]);
-    locked = true;
-    const proposed = String(Math.max(Date.now(), krakenLastNonce + 1));
-    const allocated = await client.query(
-      `INSERT INTO private.cryptocrawler_kraken_nonce_state (key_hash, last_nonce, updated_at)
-       VALUES ($1, $2::bigint, now())
-       ON CONFLICT (key_hash) DO UPDATE
-       SET last_nonce = GREATEST(private.cryptocrawler_kraken_nonce_state.last_nonce + 1, EXCLUDED.last_nonce),
-           updated_at = now()
-       RETURNING last_nonce`,
-      [keyHash, proposed],
-    );
-    const nonce = String(allocated.rows[0]?.last_nonce || '');
-    if (!/^\d+$/.test(nonce)) throw new Error('Distributed Kraken nonce allocation failed');
-    const numericNonce = Number(nonce);
-    if (Number.isSafeInteger(numericNonce)) krakenLastNonce = Math.max(krakenLastNonce, numericNonce);
+    let nonce: string;
+    try {
+      await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockName]);
+      locked = true;
+      const proposed = String(Math.max(Date.now(), krakenLastNonce + 1));
+      const allocated = await client.query(
+        `INSERT INTO private.cryptocrawler_kraken_nonce_state (key_hash, last_nonce, updated_at)
+         VALUES ($1, $2::bigint, now())
+         ON CONFLICT (key_hash) DO UPDATE
+         SET last_nonce = GREATEST(private.cryptocrawler_kraken_nonce_state.last_nonce + 1, EXCLUDED.last_nonce),
+             updated_at = now()
+         RETURNING last_nonce`,
+        [keyHash, proposed],
+      );
+      nonce = String(allocated.rows[0]?.last_nonce || '');
+      if (!/^\d+$/.test(nonce)) throw new Error('Distributed Kraken nonce allocation failed');
+      const numericNonce = Number(nonce);
+      if (Number.isSafeInteger(numericNonce)) krakenLastNonce = Math.max(krakenLastNonce, numericNonce);
+      recordKrakenDatabaseSuccess();
+    } catch (error) {
+      recordKrakenDatabaseFailure(error);
+      throw error;
+    }
+
+    // Database safety has succeeded. Kraken/network errors from this point must
+    // not poison the database circuit breaker.
     return await operation(nonce);
   } finally {
     if (locked) {
@@ -194,8 +258,17 @@ export async function krakenPrivateRequest(
 export function getKrakenPrivateAuthoritySnapshot(): {
   lastNonce: number;
   requestCount: number;
+  databaseBreakerOpenUntil: number;
+  databaseConsecutiveFailures: number;
+  databaseLastError: string | null;
 } {
-  return { lastNonce: krakenLastNonce, requestCount: krakenRequestCount };
+  return {
+    lastNonce: krakenLastNonce,
+    requestCount: krakenRequestCount,
+    databaseBreakerOpenUntil: krakenDbBreakerOpenUntil,
+    databaseConsecutiveFailures: krakenDbFailureCount,
+    databaseLastError: krakenDbLastError,
+  };
 }
 
 // ============================================================================
