@@ -27,6 +27,9 @@ export interface ComputationalSearchPlan {
   cexAttentionShare: number | null;
   zeroCapitalAttentionShare: number | null;
   explorationShare: number | null;
+  hyperdynamicActiveSolutions: number;
+  mcSearchMultiplier: number;
+  feeRefreshMaxAgeMs: number | null;
   authority: 'measured_compute_search_scheduling_only';
   executionAuthority: false;
 }
@@ -41,6 +44,9 @@ let latestSearchPlan: ComputationalSearchPlan = {
   cexAttentionShare: null,
   zeroCapitalAttentionShare: null,
   explorationShare: null,
+  hyperdynamicActiveSolutions: 0,
+  mcSearchMultiplier: 1,
+  feeRefreshMaxAgeMs: null,
   authority: 'measured_compute_search_scheduling_only',
   executionAuthority: false,
 };
@@ -53,6 +59,13 @@ function boundedInteger(raw: unknown, fallback: number, min: number, max: number
 function calibrationIntervalMs(): number {
   const parsed = Number(process.env.REACTOR_SEARCH_CALIBRATION_INTERVAL_MS || 15_000);
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(120_000, Math.trunc(parsed))) : 15_000;
+}
+
+function dynamicCalibrationIntervalMs(): number {
+  const base = calibrationIntervalMs();
+  const mesh = getBpsCompressionMeshSnapshot();
+  const mcSearchMultiplier = mesh?.hyperdynamic.mcSearchMultiplier ?? 1;
+  return Math.max(5_000, Math.min(120_000, Math.round(base / Math.max(0.70, mcSearchMultiplier))));
 }
 
 function searchPlanMaxAgeMs(): number {
@@ -73,12 +86,17 @@ function priorityMultiplier(priority: ComputationalSearchPlan['cryptaraPriority'
   return 1;
 }
 
-function meshShares(): Pick<ComputationalSearchPlan, 'cexAttentionShare' | 'zeroCapitalAttentionShare' | 'explorationShare'> {
+function meshFields(): Pick<ComputationalSearchPlan,
+  'cexAttentionShare' | 'zeroCapitalAttentionShare' | 'explorationShare' |
+  'hyperdynamicActiveSolutions' | 'mcSearchMultiplier' | 'feeRefreshMaxAgeMs'> {
   const mesh = getBpsCompressionMeshSnapshot();
   return {
     cexAttentionShare: mesh?.cex.attentionShare ?? null,
     zeroCapitalAttentionShare: mesh?.zeroCapital.attentionShare ?? null,
     explorationShare: mesh?.exploration.attentionShare ?? null,
+    hyperdynamicActiveSolutions: mesh?.hyperdynamic.activeSolutionCount ?? 0,
+    mcSearchMultiplier: mesh?.hyperdynamic.mcSearchMultiplier ?? 1,
+    feeRefreshMaxAgeMs: mesh?.hyperdynamic.feeRefreshMaxAgeMs ?? null,
   };
 }
 
@@ -90,7 +108,7 @@ function neutralSearchPlan(sourceModes: number, observedAt = Date.now()): Comput
     sourceModes: Math.max(0, sourceModes),
     providerQuality: averageProviderQuality(),
     cryptaraPriority: getCryptaraSovereignCortexSnapshot()?.requestPriority ?? null,
-    ...meshShares(),
+    ...meshFields(),
     authority: 'measured_compute_search_scheduling_only',
     executionAuthority: false,
   };
@@ -118,6 +136,7 @@ function buildMeasuredSearchScorer() {
   const uniqueSymbols = new Set(modes.map(mode => mode.symbol)).size;
   const mesh = getBpsCompressionMeshSnapshot();
   const cexAttention = mesh?.cex.attentionShare ?? 0.5;
+  const hyper = mesh?.hyperdynamic;
 
   const scorer = (params: Record<string, number>): number => {
     const breadthFactor = Math.max(0.25, Math.min(1, params.breadthFactor));
@@ -151,8 +170,12 @@ function buildMeasuredSearchScorer() {
     const heatCost = heat.throttleLevel === 'heavy' ? 1 : heat.throttleLevel === 'moderate' ? 0.6 : heat.throttleLevel === 'light' ? 0.3 : 0.1;
     const requestCost = breadthFactor / intervalFactor;
     const meshOpportunityMultiplier = 0.75 + 0.50 * Math.max(0, Math.min(1, cexAttention));
+    const hyperdynamicValue = (hyper?.mcSearchMultiplier ?? 1)
+      * (0.90 + 0.10 * (hyper?.liquidityFocusMultiplier ?? 1))
+      * (0.90 + 0.10 * (hyper?.latencyFocusMultiplier ?? 1));
     return (opportunityValue
       * meshOpportunityMultiplier
+      * hyperdynamicValue
       * (1 + positiveCoverage * 0.50)
       * (0.75 + 0.25 * providerQuality)
       * priorityMultiplier(cryptaraPriority)
@@ -183,7 +206,7 @@ function applyCompletedCalibration(event: unknown): void {
     sourceModes: modes.length,
     providerQuality: averageProviderQuality(),
     cryptaraPriority: getCryptaraSovereignCortexSnapshot()?.requestPriority ?? null,
-    ...meshShares(),
+    ...meshFields(),
     authority: 'measured_compute_search_scheduling_only',
     executionAuthority: false,
   };
@@ -194,9 +217,6 @@ async function calibrateSearchAllocation(): Promise<void> {
   if (heat.throttleLevel === 'heavy') return;
   const { modes, scorer } = buildMeasuredSearchScorer();
   if (modes.length < 4) {
-    // A prior optimized plan must never keep shrinking Antenna breadth/cadence
-    // after its measured CEX evidence disappears. Loss of evidence is not proof
-    // that a narrow/slow search is still optimal, so fail neutral for discovery.
     latestSearchPlan = neutralSearchPlan(modes.length);
     return;
   }
@@ -223,7 +243,7 @@ function scheduleCalibration(): void {
     calibrationTimer = null;
     await calibrateSearchAllocation();
     scheduleCalibration();
-  }, calibrationIntervalMs());
+  }, dynamicCalibrationIntervalMs());
   calibrationTimer.unref?.();
 }
 
@@ -249,8 +269,9 @@ export function ensureComputationalReactorWiring(): void {
       component: 'ComputationalReactorWiring',
       scheduler: 'priority_plus_age_with_measured_resource_pressure',
       monteCarlo: 'caller_supplied_measured_scorer_only',
-      searchAllocationCalibration: 'profit_positive_first_then_cross_topology_bps_gap_freshness_provider_quality_compute_cost',
+      searchAllocationCalibration: '100_solution_hyperdynamic_profit_positive_first_then_cross_topology_bps_gap_freshness_provider_quality_compute_cost',
       bpsCompressionMesh: getBpsCompressionMeshSnapshot(),
+      dynamicCalibrationIntervalMs: dynamicCalibrationIntervalMs(),
       searchPlanMaxAgeMs: searchPlanMaxAgeMs(),
       insufficientEvidenceFallback: 'neutral_full_breadth_base_cadence',
       syntheticOptimizationScores: false,
@@ -279,9 +300,6 @@ export function ensureComputationalReactorWiring(): void {
 export function getComputationalSearchPlan(): ComputationalSearchPlan {
   const modes = getCexFourModeSnapshot();
   if (latestSearchPlan.observedAt > 0 && Date.now() - latestSearchPlan.observedAt > searchPlanMaxAgeMs()) {
-    // Consumers such as Antenna must not obey a stale Monte-Carlo allocation.
-    // Return a neutral scheduling plan; this changes search attention only and
-    // never grants execution authority or substitutes for measured economics.
     return neutralSearchPlan(modes.length, 0);
   }
   return { ...latestSearchPlan };
