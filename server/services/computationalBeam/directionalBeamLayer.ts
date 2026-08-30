@@ -18,12 +18,7 @@ import {
 } from './types.js';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
-import {
-  quantiComp,
-  quantiParallelismGovernor,
-  type QuantiLane,
-  type QuantiParallelismLease,
-} from '../quantiComp/index.js';
+import { quantiComp, quantiParallelismGovernor, type QuantiLane } from '../quantiComp/index.js';
 
 const MAX_LOCAL_CONCURRENCY = Math.max(1, Math.min(
   os.availableParallelism?.() || os.cpus().length,
@@ -180,7 +175,6 @@ export class DirectionalBeamLayer extends EventEmitter {
 
     const controller = new AbortController();
     this.activeControllers.set(task.id, controller);
-    let parallelismLease: QuantiParallelismLease | null = null;
 
     try {
       if (!task.workload) throw new Error(`Task ${task.id} has no executable workload`);
@@ -189,26 +183,10 @@ export class DirectionalBeamLayer extends EventEmitter {
       const parallelismHint = Math.max(1, Math.floor(numericPayloadHint(task, 'quantiParallelismHint') ?? 1));
       const deadlineAt = numericPayloadHint(task, 'quantiDeadlineAt');
       const usefulWorkUnits = Math.max(1, numericPayloadHint(task, 'quantiUsefulWorkUnits') ?? 1);
-      const lane = toQuantiLane(task);
-
-      parallelismLease = await quantiParallelismGovernor.acquire({
-        id: `beam:${task.id}`,
-        units: parallelismHint,
-        lane,
-        priority: task.metadata.priority,
-        deadlineAt,
-        signal: controller.signal,
-        metadata: {
-          source: 'computational_beam',
-          kind: workload.type || task.type,
-          worker: node.id,
-        },
-      });
-
       const quantiResult = await quantiComp.submit({
         id: task.id,
         kind: workload.type || task.type,
-        lane,
+        lane: toQuantiLane(task),
         priority: task.metadata.priority,
         createdAt: task.metadata.created.getTime(),
         input: workload.input,
@@ -219,8 +197,6 @@ export class DirectionalBeamLayer extends EventEmitter {
           memoryIntensive: task.routing?.memoryIntensive ? 1 : 0,
           ioIntensive: task.routing?.ioIntensive ? 1 : 0,
           nestedParallelismHint: parallelismHint,
-          reservedParallelismUnits: parallelismLease.units,
-          parallelismWaitMs: parallelismLease.waitedMs,
         },
         resourceHints: {
           cpuWeight: task.routing?.cpuIntensive ? 1 : 0.5,
@@ -264,10 +240,6 @@ export class DirectionalBeamLayer extends EventEmitter {
         result: quantiResult.result,
         metrics: execution.metrics,
         quantiMetrics: quantiResult.metrics,
-        parallelism: {
-          units: parallelismLease.units,
-          waitedMs: parallelismLease.waitedMs,
-        },
         computeAuthority: 'quanti-comp',
       });
     } catch (error) {
@@ -281,7 +253,6 @@ export class DirectionalBeamLayer extends EventEmitter {
         computeAuthority: 'quanti-comp',
       });
     } finally {
-      parallelismLease?.release();
       this.activeControllers.delete(task.id);
       node.metrics.currentLoad = Math.max(0, node.metrics.currentLoad - 1);
       this.activeExecutions.delete(task.id);
