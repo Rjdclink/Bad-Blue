@@ -17,6 +17,7 @@ export interface CexInventoryReadinessSnapshot {
   failedVenues: Array<{ venue: ExecutableCexVenue; error: string }>;
   inventoryAssets: number;
   spendableAssets: number;
+  payoutReservedAssets: number;
   inventoryFreshnessShare: number | null;
   nextRefreshMs: number;
   activeReadinessRules: number;
@@ -35,6 +36,7 @@ let latest: CexInventoryReadinessSnapshot = {
   failedVenues: [],
   inventoryAssets: 0,
   spendableAssets: 0,
+  payoutReservedAssets: 0,
   inventoryFreshnessShare: null,
   nextRefreshMs: 60_000,
   activeReadinessRules: 0,
@@ -54,7 +56,9 @@ function freshnessWindowMs(): number {
 }
 
 function spendable(snapshot: ReturnType<typeof cexInventoryLedger.getSnapshots>[number]): number {
-  return Math.max(0, snapshot.available - snapshot.reserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve);
+  return Math.max(0,
+    snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve,
+  );
 }
 
 function currentMetrics(now = Date.now()) {
@@ -67,6 +71,7 @@ function currentMetrics(now = Date.now()) {
     inventoryVenueCount: venues.size,
     inventoryFreshnessShare: snapshots.length > 0 ? fresh.length / snapshots.length : 0,
     spendableAssets: snapshots.filter(item => spendable(item) > 0).length,
+    payoutReservedAssets: snapshots.filter(item => item.payoutReserved > 0).length,
   };
 }
 
@@ -117,6 +122,7 @@ async function refreshOnce(): Promise<void> {
     failedVenues: [...failedVenues],
     inventoryAssets: metrics.inventoryAssetCount,
     spendableAssets: metrics.spendableAssets,
+    payoutReservedAssets: metrics.payoutReservedAssets,
     inventoryFreshnessShare: metrics.inventoryAssetCount > 0 ? metrics.inventoryFreshnessShare : null,
     nextRefreshMs: next.intervalMs,
     activeReadinessRules: next.activeRules,
@@ -132,6 +138,9 @@ async function refreshOnce(): Promise<void> {
     failedVenues: failedVenues.map(item => ({ venue: item.venue, error: item.error })),
     inventoryAssets: metrics.inventoryAssetCount,
     spendableAssets: metrics.spendableAssets,
+    payoutReservedAssets: metrics.payoutReservedAssets,
+    payoutShareExcludedFromNewTradeSpendability: true,
+    retainedShareRemainsSpendable: true,
     inventoryFreshnessShare: latest.inventoryFreshnessShare,
     nextRefreshMs: latest.nextRefreshMs,
     proactiveHydration: true,
@@ -177,6 +186,8 @@ export function ensureCexInventoryReadinessWiring(): void {
     freshnessWindowMs: freshnessWindowMs(),
     privateRequestDeduplication: 'one_in_flight_cycle',
     liveExecutionPreparation: true,
+    payoutReservationsProtectedFromNewOrders: true,
+    retainedFortyPercentAvailableToStrategies: true,
     stageManagerAuthorityPreserved: true,
     strictPositiveNetAuthorityPreserved: true,
     executionAuthority: false,
