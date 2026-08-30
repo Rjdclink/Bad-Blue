@@ -27,18 +27,21 @@ const required = [
   [readiness, 'canonicalRevalidation: true', 'near-edge canonical revalidation enabled'],
   [readiness, 'stageOneExecutionBypass: false', 'stage one bypass forbidden'],
   [readiness, 'positiveNetBypass: false', 'positive-net bypass forbidden'],
-  [policy100, 'HYPERDYNAMIC_BPS_SOLUTIONS.length !== 100', 'original 100-control catalog intact'],
   [policy200, 'EXECUTION_READINESS_PROFITABILITY_RULES.length !== 200', 'additional 200-control catalog intact'],
   [policy200, 'bypassGovernanceAllowed: false', 'new policy cannot bypass governance'],
   [policy200, 'bypassInventoryAllowed: false', 'new policy cannot bypass inventory'],
   [policy200, 'bypassPositiveNetAllowed: false', 'new policy cannot bypass positive economics'],
   [canonical, 'ensureCexInventoryReadinessWiring();', 'inventory readiness canonical installation'],
+  [canonical, 'ensureExecutionReadinessProfitabilityWiring();', 'execution-readiness optimizer canonical installation'],
   [canonical, "executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'", 'canonical positive floor'],
   [centralized, 'executeCexPlan', 'centralized execution reaches settlement-safe order submission'],
 ];
 for (const [source, token, name] of required) {
   if (!source.includes(token)) throw new Error(`[300-profitability-live-execution] missing invariant: ${name}`);
 }
+
+const originalRules = policy100.split('\n').filter(line => line.trim().startsWith('s('));
+if (originalRules.length !== 100) throw new Error(`[300-profitability-live-execution] expected 100 original bounded controls, found ${originalRules.length}`);
 
 const stage1 = stage.slice(stage.indexOf('[Stage.STAGE_1_CONSTRAINED_PILOT]'), stage.indexOf('[Stage.STAGE_2_PROOF_OF_SIGNAL]'));
 const stage2 = stage.slice(stage.indexOf('[Stage.STAGE_2_PROOF_OF_SIGNAL]'), stage.indexOf('[Stage.STAGE_3_MEASURED_DRYRUN]'));
