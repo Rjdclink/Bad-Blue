@@ -5,5 +5,6 @@
 
 require('./verify-runtime-safety-invariants.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
+require('./verify-profitability-recovery-batch9.cjs');
 
 console.log('[deployment-preflight] targeted runtime safety and profitability-recovery invariants passed; continuing to normal Vite/esbuild production build');
