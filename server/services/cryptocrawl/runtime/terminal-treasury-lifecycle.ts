@@ -13,8 +13,18 @@ const DESTINATION = resolveTerminalPayoutAddress() || '';
 let timer: NodeJS.Timeout | null = null;
 let heartbeatInFlight: Promise<void> | null = null;
 let signalInstalled = false;
+let consecutiveHeartbeatFailures = 0;
+let heartbeatDegradedUntil = 0;
+
+function databaseBackoffMs(): number {
+  const baseMs = Math.max(HEARTBEAT_MS, Number(process.env.CRYPTOCRAWL_TREASURY_DB_BACKOFF_BASE_MS || HEARTBEAT_MS));
+  const maxMs = Math.max(baseMs, Number(process.env.CRYPTOCRAWL_TREASURY_DB_BACKOFF_MAX_MS || 120_000));
+  return Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, consecutiveHeartbeatFailures - 1)));
+}
 
 const sigtermCandidateListener = (): void => {
+  // SIGTERM intent remains a direct best-effort safety write and is never
+  // suppressed by routine-heartbeat backoff.
   void markTerminalSweepCandidate('SIGTERM').catch(error => {
     logger.warn('[Treasury] Terminal candidate persistence deferred', {
       component: 'TerminalTreasuryLifecycle',
@@ -57,24 +67,33 @@ async function syncWorkerSecrets(): Promise<void> {
 
 async function heartbeatOnce(): Promise<void> {
   if (!isDatabaseConfigured) return;
+  if (Date.now() < heartbeatDegradedUntil) return;
   if (heartbeatInFlight) return heartbeatInFlight;
   heartbeatInFlight = (async () => {
-    await pool.query(
-      `UPDATE public.cryptocrawler_terminal_sweep_control
-       SET desired_state = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN 'RUNNING' ELSE desired_state END,
-           terminal_epoch = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE terminal_epoch END,
-           intent_source = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN 'successor_runtime_recovered' ELSE intent_source END,
-           active_successor_deployment_id = NULLIF($2,''),
-           last_observed_deployment_id = NULLIF($2,''),
-           last_observed_deployment_status = 'SUCCESS',
-           last_seen_active_at = now(),
-           terminal_detection_not_before = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE terminal_detection_not_before END,
-           destination_address = COALESCE(NULLIF($3,''), destination_address),
-           last_error = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE last_error END,
-           updated_at = now()
-       WHERE system_key=$1 AND desired_state IN ('RUNNING','TERMINATE_AND_SWEEP')`,
-      [SYSTEM_KEY, RAILWAY_DEPLOYMENT_ID, DESTINATION],
-    );
+    try {
+      await pool.query(
+        `UPDATE public.cryptocrawler_terminal_sweep_control
+         SET desired_state = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN 'RUNNING' ELSE desired_state END,
+             terminal_epoch = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE terminal_epoch END,
+             intent_source = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN 'successor_runtime_recovered' ELSE intent_source END,
+             active_successor_deployment_id = NULLIF($2,''),
+             last_observed_deployment_id = NULLIF($2,''),
+             last_observed_deployment_status = 'SUCCESS',
+             last_seen_active_at = now(),
+             terminal_detection_not_before = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE terminal_detection_not_before END,
+             destination_address = COALESCE(NULLIF($3,''), destination_address),
+             last_error = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE last_error END,
+             updated_at = now()
+         WHERE system_key=$1 AND desired_state IN ('RUNNING','TERMINATE_AND_SWEEP')`,
+        [SYSTEM_KEY, RAILWAY_DEPLOYMENT_ID, DESTINATION],
+      );
+      consecutiveHeartbeatFailures = 0;
+      heartbeatDegradedUntil = 0;
+    } catch (error) {
+      consecutiveHeartbeatFailures += 1;
+      heartbeatDegradedUntil = Date.now() + databaseBackoffMs();
+      throw error;
+    }
   })().finally(() => { heartbeatInFlight = null; });
   return heartbeatInFlight;
 }
@@ -97,6 +116,8 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     logger.warn('[Treasury] Lifecycle heartbeat deferred', {
       component: 'TerminalTreasuryLifecycle',
       error: error instanceof Error ? error.message : String(error),
+      consecutiveHeartbeatFailures,
+      databaseRetryNotBeforeMs: Math.max(0, heartbeatDegradedUntil - Date.now()),
     });
   }), HEARTBEAT_MS);
   timer.unref?.();
@@ -108,6 +129,8 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     terminalPayoutConfigured: Boolean(DESTINATION),
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
     runtimePolicy: 'retain_and_compound',
+    routineDatabaseFailureBackoff: 'bounded_exponential',
+    sigtermIntentWriteBackoffBypass: true,
   });
 }
 
