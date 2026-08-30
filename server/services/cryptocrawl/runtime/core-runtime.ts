@@ -106,9 +106,10 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
     ]) => {
       // Preserve authority order: canonical profitability/maker settlement wiring
       // installs first; the no-BPS evaluator removes only the artificial spread
-      // floor; MT/TM then reuse canonical execution; authenticated fee-tier data
-      // reprices those plans; the realized-profit envelope applies last to new
-      // exposure; inventory remains the final resource/fresh-requote authority.
+      // floor; MT/TM then reuse canonical execution. Fee/rebate observation uses
+      // the existing CEX fee resolver as the sole fee authority. The realized-
+      // profit envelope applies to new exposure and inventory remains the final
+      // resource/fresh-requote authority.
       profitPolicy.ensurePositiveProfitCaptureWiring();
       noBpsMakerPolicy.ensureNoBpsMakerAdmissionWiring();
       hybridCexPolicy.ensureHybridCexExecutionWiring();
@@ -164,7 +165,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     arbitraryBpsExecutionFloor: false,
     makerRecoveryEconomics: 'authenticated_fees_plus_fresh_books',
     hybridCexExecution: 'maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
-    authenticatedFeeTierOptimization: 'sixty_second_signed_maker_taker_overlay',
+    authenticatedFeeObservation: 'canonical_cex_fee_resolver_only_with_batched_cached_rate_governed_telemetry',
     adaptiveProfitOperatingEnvelope: 'terminal_realized_daily_cap_plus_depth_slippage_safe_sizing',
     exchangeSurveillanceThresholdAssumed: false,
     stageProofMetrics: 'terminal_realized_sharpe_drawdown_plus_mc_outcome_validation',
