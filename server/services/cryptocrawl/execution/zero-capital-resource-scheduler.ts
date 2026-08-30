@@ -18,6 +18,11 @@ export interface ZeroCapitalResourcePriority {
   expectedNetProfitUsd: number;
   timeRemainingMs: number;
   scarcityPressure: number;
+  peakScarcityPressure: number;
+  bottleneckResource: string | null;
+  resourceCount: number;
+  maxUtilizationRatio: number;
+  leaseFeasibility: number;
   expectedProfitPerScarcityUnit: number;
   priorityScore: number;
   authority: 'scheduling_only';
@@ -105,21 +110,36 @@ class ZeroCapitalResourceScheduler {
 
   scoreOpportunity(opportunity: ZeroCapitalOpportunity, fundingMode: string, now = Date.now()): ZeroCapitalResourcePriority {
     const specs = this.specs(opportunity, fundingMode);
-    const scarcityPressure = specs.reduce((sum, spec) => {
-      const usage = this.localUsage.get(spec.prefix) || 0;
-      return sum + (usage + 1) / Math.max(1, spec.capacity);
-    }, 0) / Math.max(1, specs.length);
+    const pressures = specs.map(spec => ({
+      resource: spec.prefix,
+      pressure: ((this.localUsage.get(spec.prefix) || 0) + 1) / Math.max(1, spec.capacity),
+      utilization: (this.localUsage.get(spec.prefix) || 0) / Math.max(1, spec.capacity),
+    }));
+    const scarcityPressure = pressures.reduce((sum, item) => sum + item.pressure, 0) / Math.max(1, pressures.length);
+    const bottleneck = pressures.reduce<{ resource: string; pressure: number } | null>((best, item) =>
+      !best || item.pressure > best.pressure ? item : best,
+    null);
+    const peakScarcityPressure = bottleneck?.pressure ?? 0;
+    const maxUtilizationRatio = pressures.reduce((max, item) => Math.max(max, item.utilization), 0);
+    const compositeScarcityPressure = (scarcityPressure + peakScarcityPressure) / 2;
     const expectedNetProfitUsd = expectedNetUsd(opportunity);
     const timeRemainingMs = Math.max(0, opportunity.expiresAt - now);
+    const ttlMs = boundedInt(process.env.ZERO_CAPITAL_EXECUTION_LEASE_TTL_MS, 90_000, 10_000, 300_000);
+    const leaseFeasibility = Math.max(0, Math.min(1, timeRemainingMs / Math.max(1, ttlMs)));
     const urgency = 1 + 1 / Math.max(0.05, timeRemainingMs / 1000);
-    const expectedProfitPerScarcityUnit = expectedNetProfitUsd / Math.max(0.05, scarcityPressure);
+    const expectedProfitPerScarcityUnit = expectedNetProfitUsd / Math.max(0.05, compositeScarcityPressure);
     return {
       opportunityId: opportunity.id,
       expectedNetProfitUsd,
       timeRemainingMs,
       scarcityPressure,
+      peakScarcityPressure,
+      bottleneckResource: bottleneck?.resource ?? null,
+      resourceCount: specs.length,
+      maxUtilizationRatio,
+      leaseFeasibility,
       expectedProfitPerScarcityUnit,
-      priorityScore: expectedProfitPerScarcityUnit * urgency,
+      priorityScore: expectedProfitPerScarcityUnit * urgency * Math.max(0.05, leaseFeasibility),
       authority: 'scheduling_only',
       settlementEconomicsChanged: false,
     };
@@ -211,7 +231,11 @@ class ZeroCapitalResourceScheduler {
     const leaseId = randomUUID();
     const acquiredAt = Date.now();
     const ttlMs = boundedInt(process.env.ZERO_CAPITAL_EXECUTION_LEASE_TTL_MS, 90_000, 10_000, 300_000);
-    const expiresAt = acquiredAt + ttlMs;
+    const expiresAt = Math.min(acquiredAt + ttlMs, opportunity.expiresAt);
+    if (expiresAt <= acquiredAt) {
+      this.releaseLocal(specs);
+      return null;
+    }
     const resources = await this.acquireDistributed(leaseId, opportunity.id, specs, expiresAt);
     if (resources === null) {
       this.releaseLocal(specs);

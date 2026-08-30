@@ -33,11 +33,14 @@ export interface CexEconomicBarrierSnapshot {
     available: boolean;
     combinedEffectiveMakerFeeBps: number | null;
     grossMinusMakerFeesBps: number | null;
+    makerFeeSavingsVsTakerBps: number | null;
+    makerBpsToBreakEven: number | null;
     economicallyPositive: boolean;
     candidatePathAvailable: boolean;
     executable: false;
     reason: string;
   };
+  bestObservedFeeModeGapBps: number | null;
   reason: string;
 }
 
@@ -63,11 +66,14 @@ export function unknownCexEconomicBarrier(coverageFraction: number, observedAt =
       available: false,
       combinedEffectiveMakerFeeBps: null,
       grossMinusMakerFeesBps: null,
+      makerFeeSavingsVsTakerBps: null,
+      makerBpsToBreakEven: null,
       economicallyPositive: false,
       candidatePathAvailable: false,
       executable: false,
       reason: 'No complete authenticated maker-fee context is available for this sampled route',
     },
+    bestObservedFeeModeGapBps: null,
     reason: 'No fresh authenticated cross-venue taker-fee/spread context is available',
   };
 }
@@ -105,8 +111,17 @@ export function computeCexEconomicBarrier(input: CexEconomicBarrierPolicyInput):
     ? input.buyEffectiveMakerFeeBps! + input.sellEffectiveMakerFeeBps!
     : null;
   const grossMinusMakerFeesBps = makerAvailable ? grossSpreadBps - combinedEffectiveMakerFeeBps! : null;
+  const makerFeeSavingsVsTakerBps = combinedEffectiveMakerFeeBps === null
+    ? null
+    : combinedTakerFeeBps - combinedEffectiveMakerFeeBps;
+  const makerBpsToBreakEven = grossMinusMakerFeesBps === null
+    ? null
+    : Math.max(0, -grossMinusMakerFeesBps);
   const economicallyPositive = grossMinusMakerFeesBps !== null && grossMinusMakerFeesBps > 0;
   const candidatePathAvailable = isAriesMakerRecoveryPath(input.symbol, input.buyVenue, input.sellVenue);
+  const bestObservedFeeModeGapBps = makerBpsToBreakEven === null
+    ? feeReductionNeededBps
+    : Math.min(feeReductionNeededBps, makerBpsToBreakEven);
 
   let makerReason: string;
   if (!makerAvailable) {
@@ -116,7 +131,7 @@ export function computeCexEconomicBarrier(input: CexEconomicBarrierPolicyInput):
       ? 'Maker economics are positive, but this sampled route is outside the installed Kraken/OKX maker-recovery path'
       : 'Authenticated maker fees are known, but the sampled maker economics are not positive';
   } else if (!economicallyPositive) {
-    makerReason = 'The Kraken/OKX maker-recovery path is installed, but this sampled spread does not clear authenticated maker fees';
+    makerReason = `The Kraken/OKX maker-recovery path is installed, but this sampled spread remains ${makerBpsToBreakEven?.toFixed(2) ?? 'unknown'} bps from maker fee-only break-even`;
   } else {
     makerReason = 'Maker economics are positive and the Kraken/OKX maker-recovery candidate path is installed; execution still requires measured depth/product constraints, Aries/Cryptara assessment, reconciled inventory, governance, and terminal settlement';
   }
@@ -138,11 +153,14 @@ export function computeCexEconomicBarrier(input: CexEconomicBarrierPolicyInput):
       available: makerAvailable,
       combinedEffectiveMakerFeeBps,
       grossMinusMakerFeesBps,
+      makerFeeSavingsVsTakerBps,
+      makerBpsToBreakEven,
       economicallyPositive,
       candidatePathAvailable,
       executable: false,
       reason: makerReason,
     },
+    bestObservedFeeModeGapBps,
     reason: netSpreadAfterTakerFeesBps > 0
       ? 'Best sampled gross spread clears authenticated taker fees before remaining execution costs'
       : `Authenticated taker fees exceed the best sampled gross spread by ${feeReductionNeededBps.toFixed(2)} bps before remaining execution costs`,
