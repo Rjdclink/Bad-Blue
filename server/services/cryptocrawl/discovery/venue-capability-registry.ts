@@ -32,14 +32,14 @@ export interface VenueCapability {
 const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = Object.freeze({
   coinbase: Object.freeze({
     venue: 'coinbase',
-    enabled: false,
-    publicDiscovery: false,
-    executableQuotes: false,
-    measuredOrderBook: false,
-    authenticatedFeeEvidence: false,
-    liveExecution: false,
-    settlementVerification: false,
-    reason: 'retired from the active canonical CEX topology; historical adapters remain non-authoritative compatibility code',
+    enabled: true,
+    publicDiscovery: true,
+    executableQuotes: true,
+    measuredOrderBook: true,
+    authenticatedFeeEvidence: true,
+    liveExecution: true,
+    settlementVerification: true,
+    reason: 'Advanced Trade quote, authenticated fee, IOC execution, inventory reconciliation, and terminal settlement path; runtime credentials and permissions remain fail-closed',
   }),
   kraken: Object.freeze({
     venue: 'kraken',
@@ -113,8 +113,8 @@ export function getVenueCapabilities(): ReadonlyArray<Readonly<VenueCapability>>
   return Object.values(CAPABILITIES).map(capability => ({ ...capability }));
 }
 
-export function getActiveExecutableQuoteVenues(): Array<'kraken' | 'okx'> {
-  return (['kraken', 'okx'] as const).filter(venue => {
+export function getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'> {
+  return (['coinbase', 'kraken', 'okx'] as const).filter(venue => {
     const capability = CAPABILITIES[venue];
     return capability.enabled
       && capability.executableQuotes
@@ -126,7 +126,6 @@ export function getActiveExecutableQuoteVenues(): Array<'kraken' | 'okx'> {
 }
 
 export function isVenueLiveExecutable(venue: CryptoCrawlerCexVenue): boolean {
-  if (venue === 'coinbase') return false;
   const capability = CAPABILITIES[venue];
   return capability.enabled && capability.liveExecution && capability.settlementVerification;
 }
