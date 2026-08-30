@@ -41,13 +41,13 @@ const required = [
   ['antenna', 'getComputationalSearchPlan()', 'Antenna consumes compute plan'],
   ['antenna', 'computeBreadth', 'compute plan changes bounded scan breadth'],
   ['antenna', 'computeInterval', 'compute plan changes bounded scan cadence'],
-  ['antenna', 'symbols.flatMap(symbol => venues.map', 'Kraken/OKX work interleaved per symbol'],
+  ['antenna', 'symbols.flatMap(symbol => venues.map', 'executable-venue work interleaved per symbol'],
   ['antenna', 'Promise.allSettled', 'bounded simultaneous provider work'],
   ['antenna', 'getProviderQualityAuctionSnapshot()', 'provider quality remains measured'],
   ['antenna', 'allExecutableVenuesStillObservedSimultaneously: true', 'provider auction cannot suppress executable venue observation'],
   ['antenna', 'executionAuthority: false', 'Antenna remains advisory'],
-  ['prefetch', "bid.venue === 'kraken' || bid.venue === 'okx'", 'prefetch active venue containment'],
-  ['prefetch', "const fallback: CexStreamVenue[] = ['kraken', 'okx']", 'both active venues preserved under provider ranking'],
+  ['prefetch', "bid.venue === 'kraken' || bid.venue === 'okx'", 'stream-backed prefetch venue containment'],
+  ['prefetch', "const fallback: CexStreamVenue[] = ['kraken', 'okx']", 'both stream-backed venues preserved under provider ranking'],
   ['prefetch', "getHeatMonitor().throttleLevel === 'heavy'", 'prefetch stops under heavy compute pressure'],
   ['prefetch', 'universeIntervalMs()', 'market-universe prefetch bounded'],
   ['prefetch', 'inFlight.has(normalized)', 'per-symbol prefetch duplicate collapse'],
@@ -58,8 +58,8 @@ const required = [
   ['canonical', 'cexHybridExecutionAuthority: false', 'hybrid execution remains disabled'],
   ['canonical', 'computationalReactorExecutionAuthority: false', 'canonical reactor authority boundary'],
   ['canonical', 'alchemyPaidPendingStreamDefault: false', 'paid Alchemy pending stream remains off by default'],
-  ['venue', "getActiveExecutableQuoteVenues(): Array<'kraken' | 'okx'>", 'active executable CEX topology remains Kraken/OKX'],
-  ['venue', "if (venue === 'coinbase') return false", 'Coinbase remains non-executable'],
+  ['venue', "getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>", 'active executable CEX topology remains limited to implemented Coinbase/Kraken/OKX paths'],
+  ['venue', 'settlementVerification: true', 'active executable venues retain settlement verification capability'],
 ];
 
 for (const [fileKey, token, name] of required) {
@@ -76,4 +76,4 @@ for (const [fileKey, token, name] of forbidden) {
   if (source[fileKey].includes(token)) throw new Error(`[compute-antenna-monte-carlo-batch11] forbidden regression: ${name}`);
 }
 
-console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, real scorer Monte Carlo, adaptive Antenna scheduling, bounded prefetch, venue containment, and execution-authority boundaries preserved');
+console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, real scorer Monte Carlo, adaptive Antenna scheduling, bounded stream prefetch, implemented venue containment, and execution-authority boundaries preserved');
