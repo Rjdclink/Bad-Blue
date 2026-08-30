@@ -40,6 +40,40 @@ export interface ProfitabilityRecoverySnapshot {
     freshnessScore: number;
     score: number;
   }>;
+
+  // Second recovery pack: thirty additional measured signals. These remain
+  // advisory-only and cannot authorize execution or manufacture economics.
+  medianFeeOnlyGapBps: number | null;
+  p25FeeOnlyGapBps: number | null;
+  p75FeeOnlyGapBps: number | null;
+  p90FeeOnlyGapBps: number | null;
+  medianRiskAdjustedGapBps: number | null;
+  p90RiskAdjustedGapBps: number | null;
+  meanRecoveryEfficiency: number | null;
+  medianRecoveryEfficiency: number | null;
+  positiveModeShare: number | null;
+  hybridNearMissShare: number | null;
+  freshFeeEvidenceShare: number | null;
+  withinTwoBps: number;
+  withinFiftyBps: number;
+  uniqueNearMissSymbols: number;
+  meanNearMissesPerSymbol: number | null;
+  bestExpectedFeeAdjustedBps: number | null;
+  closestExpectedFeeAdjustedGapBps: number | null;
+  meanGrossSpreadBps: number | null;
+  medianCombinedFeeBps: number | null;
+  lowestCombinedFeeBps: number | null;
+  bestGrossSpreadBps: number | null;
+  symbolsWithinFiveBps: number;
+  symbolsWithinTenBps: number;
+  bestGapBySymbol: Record<string, number>;
+  modeNearMissCounts: Partial<Record<ModeName, number>>;
+  modeMeanRecoveryEfficiency: Partial<Record<ModeName, number>>;
+  chainPositiveYield: Record<string, number | null>;
+  chainMeasuredQuoteCount: Record<string, number>;
+  zeroCapitalSelectedToMeasuredRatio: number | null;
+  zeroCapitalQuoteBudgetSelections: number;
+
   authority: 'advisory_recovery_intelligence_only';
   executionAuthority: false;
   syntheticEvidenceAllowed: false;
@@ -55,6 +89,23 @@ function finite(value: unknown): number | null {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function mean(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function quantile(values: readonly number[], q: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].filter(Number.isFinite).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const position = Math.max(0, Math.min(sorted.length - 1, (sorted.length - 1) * clamp01(q)));
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  const weight = position - lower;
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
 }
 
 function observe(): void {
@@ -74,17 +125,40 @@ function observe(): void {
   for (const item of modes) symbols.set(item.symbol, (symbols.get(item.symbol) || 0) + 1);
 
   const bestGapByMode: Partial<Record<ModeName, number>> = {};
+  const modeNearMissCounts: Partial<Record<ModeName, number>> = {};
+  const modeMeanRecoveryEfficiency: Partial<Record<ModeName, number>> = {};
   for (const mode of ['TT', 'MT', 'TM', 'MM'] as const) {
-    const gaps = negatives.filter(item => item.mode === mode).map(item => item.bpsToBreakEven).filter(Number.isFinite);
+    const modeNegatives = negatives.filter(item => item.mode === mode);
+    const gaps = modeNegatives.map(item => item.bpsToBreakEven).filter(Number.isFinite);
     if (gaps.length > 0) bestGapByMode[mode] = Math.min(...gaps);
+    modeNearMissCounts[mode] = modeNegatives.length;
+    const efficiencies = modeNegatives.map(item => finite(item.recoveryEfficiency)).filter((value): value is number => value !== null);
+    const efficiencyMean = mean(efficiencies);
+    if (efficiencyMean !== null) modeMeanRecoveryEfficiency[mode] = efficiencyMean;
   }
+
+  const nearMissSymbols = new Set(negatives.map(item => item.symbol));
+  const bestGapPerSymbol = new Map<string, number>();
+  for (const item of negatives) {
+    const current = bestGapPerSymbol.get(item.symbol);
+    if (current === undefined || item.bpsToBreakEven < current) bestGapPerSymbol.set(item.symbol, item.bpsToBreakEven);
+  }
+  const bestGapBySymbol = Object.fromEntries(
+    [...bestGapPerSymbol.entries()]
+      .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))
+      .slice(0, 16),
+  );
 
   const topSymbolCount = symbols.size > 0 ? Math.max(...symbols.values()) : 0;
   const nearMissConcentrationTopSymbol = modes.length > 0 ? topSymbolCount / modes.length : null;
   const dynamic = getDynamicZeroCapitalDiscoveryState();
   const chainQuoteUtilization: Record<string, number | null> = {};
+  const chainPositiveYield: Record<string, number | null> = {};
+  const chainMeasuredQuoteCount: Record<string, number> = {};
   for (const [chain, chainState] of Object.entries(dynamic.chains)) {
     chainQuoteUtilization[chain] = chainState.candidates > 0 ? chainState.measuredQuotes / chainState.candidates : null;
+    chainPositiveYield[chain] = chainState.measuredQuotes > 0 ? chainState.positiveQuotes / chainState.measuredQuotes : null;
+    chainMeasuredQuoteCount[chain] = chainState.measuredQuotes;
   }
 
   const recoveryPriority = negatives
@@ -110,10 +184,29 @@ function observe(): void {
   const makerSavings = modes
     .map(item => finite((item as any).makerFeeSavingsVsTakerBps))
     .filter((value): value is number => value !== null);
-  const staleFeeEvidenceModes = modes.filter(item => {
-    const freshness = finite((item as any).feeFreshnessScore);
-    return freshness !== null && freshness < 0.75;
-  }).length;
+  const freshnessScores = modes
+    .map(item => finite((item as any).feeFreshnessScore))
+    .filter((value): value is number => value !== null);
+  const staleFeeEvidenceModes = freshnessScores.filter(value => value < 0.75).length;
+  const feeOnlyGaps = negatives.map(item => item.bpsToBreakEven).filter(Number.isFinite);
+  const riskAdjustedGaps = negatives
+    .map(item => finite((item as any).riskAdjustedBpsToBreakEven) ?? item.bpsToBreakEven)
+    .filter(Number.isFinite);
+  const recoveryEfficiencies = negatives
+    .map(item => finite(item.recoveryEfficiency))
+    .filter((value): value is number => value !== null);
+  const expectedFeeAdjusted = modes
+    .map(item => finite((item as any).expectedFeeAdjustedBps))
+    .filter((value): value is number => value !== null);
+  const negativeExpectedFeeAdjusted = negatives
+    .map(item => finite((item as any).expectedFeeAdjustedBps))
+    .filter((value): value is number => value !== null && value < 0);
+  const grossSpreads = modes
+    .map(item => finite((item as any).grossSpreadBps))
+    .filter((value): value is number => value !== null);
+  const combinedFees = modes
+    .map(item => finite((item as any).combinedFeeBps))
+    .filter((value): value is number => value !== null);
 
   latest = {
     observedAt: Date.now(),
@@ -143,6 +236,38 @@ function observe(): void {
     zeroCapitalPositiveYield: dynamic.measuredQuotes > 0 ? dynamic.positiveQuotes / dynamic.measuredQuotes : null,
     chainQuoteUtilization,
     recoveryPriority,
+
+    medianFeeOnlyGapBps: quantile(feeOnlyGaps, 0.5),
+    p25FeeOnlyGapBps: quantile(feeOnlyGaps, 0.25),
+    p75FeeOnlyGapBps: quantile(feeOnlyGaps, 0.75),
+    p90FeeOnlyGapBps: quantile(feeOnlyGaps, 0.9),
+    medianRiskAdjustedGapBps: quantile(riskAdjustedGaps, 0.5),
+    p90RiskAdjustedGapBps: quantile(riskAdjustedGaps, 0.9),
+    meanRecoveryEfficiency: mean(recoveryEfficiencies),
+    medianRecoveryEfficiency: quantile(recoveryEfficiencies, 0.5),
+    positiveModeShare: modes.length > 0 ? positives.length / modes.length : null,
+    hybridNearMissShare: negatives.length > 0 ? hybrids.length / negatives.length : null,
+    freshFeeEvidenceShare: freshnessScores.length > 0 ? freshnessScores.filter(value => value >= 0.75).length / freshnessScores.length : null,
+    withinTwoBps: negatives.filter(item => item.bpsToBreakEven <= 2).length,
+    withinFiftyBps: negatives.filter(item => item.bpsToBreakEven <= 50).length,
+    uniqueNearMissSymbols: nearMissSymbols.size,
+    meanNearMissesPerSymbol: nearMissSymbols.size > 0 ? negatives.length / nearMissSymbols.size : null,
+    bestExpectedFeeAdjustedBps: expectedFeeAdjusted.length > 0 ? Math.max(...expectedFeeAdjusted) : null,
+    closestExpectedFeeAdjustedGapBps: negativeExpectedFeeAdjusted.length > 0 ? Math.abs(Math.max(...negativeExpectedFeeAdjusted)) : null,
+    meanGrossSpreadBps: mean(grossSpreads),
+    medianCombinedFeeBps: quantile(combinedFees, 0.5),
+    lowestCombinedFeeBps: combinedFees.length > 0 ? Math.min(...combinedFees) : null,
+    bestGrossSpreadBps: grossSpreads.length > 0 ? Math.max(...grossSpreads) : null,
+    symbolsWithinFiveBps: [...bestGapPerSymbol.values()].filter(gap => gap <= 5).length,
+    symbolsWithinTenBps: [...bestGapPerSymbol.values()].filter(gap => gap <= 10).length,
+    bestGapBySymbol,
+    modeNearMissCounts,
+    modeMeanRecoveryEfficiency,
+    chainPositiveYield,
+    chainMeasuredQuoteCount,
+    zeroCapitalSelectedToMeasuredRatio: dynamic.quoteBudgetSelections > 0 ? dynamic.measuredQuotes / dynamic.quoteBudgetSelections : null,
+    zeroCapitalQuoteBudgetSelections: dynamic.quoteBudgetSelections,
+
     authority: 'advisory_recovery_intelligence_only',
     executionAuthority: false,
     syntheticEvidenceAllowed: false,
@@ -161,6 +286,11 @@ export function getProfitabilityRecoverySnapshot(): ProfitabilityRecoverySnapsho
     bestGapByMode: { ...latest.bestGapByMode },
     chainQuoteUtilization: { ...latest.chainQuoteUtilization },
     recoveryPriority: latest.recoveryPriority.map(item => ({ ...item })),
+    bestGapBySymbol: { ...latest.bestGapBySymbol },
+    modeNearMissCounts: { ...latest.modeNearMissCounts },
+    modeMeanRecoveryEfficiency: { ...latest.modeMeanRecoveryEfficiency },
+    chainPositiveYield: { ...latest.chainPositiveYield },
+    chainMeasuredQuoteCount: { ...latest.chainMeasuredQuoteCount },
   };
 }
 
