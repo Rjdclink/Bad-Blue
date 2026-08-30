@@ -97,6 +97,42 @@ function setupCallIdentity(call: any): string {
   return [String(call?.to || '').toLowerCase(), String(call?.data || '').toLowerCase(), String(call?.value || '0')].join(':');
 }
 
+function repriceOpportunity(
+  opportunity: ZeroCapitalOpportunity,
+  flashFee: bigint,
+): { grossProfit: bigint; allInCost: bigint; netProfit: bigint; netProfitBps: number } {
+  const gas = opportunity.estimatedGasCostInInputToken || 0n;
+  const relay = opportunity.relayFeeInInputToken || 0n;
+  const allInCost = flashFee + gas + relay;
+  const grossProfit = opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
+  const netProfit = grossProfit - allInCost;
+  const netProfitBps = opportunity.flashLoanAmount > 0n
+    ? Number((netProfit * 10_000n) / opportunity.flashLoanAmount)
+    : Number.NEGATIVE_INFINITY;
+  opportunity.flashLoanFeeInInputToken = flashFee;
+  opportunity.estimatedExecutionCostInInputToken = allInCost;
+  opportunity.expectedProfit = netProfit;
+  opportunity.netProfitBps = netProfitBps;
+  return { grossProfit, allInCost, netProfit, netProfitBps };
+}
+
+function recordReprice(
+  opportunity: ZeroCapitalOpportunity,
+  chain: SupportedChain,
+  values: { grossProfit: bigint; allInCost: bigint; netProfit: bigint; netProfitBps: number },
+): void {
+  recordProfitEstimate({
+    opportunityId: opportunity.id,
+    chain,
+    grossProfitUsd: Number(values.grossProfit) / (10 ** opportunity.inputTokenDecimals),
+    estimatedCostsUsd: Number(values.allInCost) / (10 ** opportunity.inputTokenDecimals),
+    estimatedNetProfitUsd: Number(values.netProfit) / (10 ** opportunity.inputTokenDecimals),
+    netProfitBps: values.netProfitBps,
+    confidence: opportunity.confidence,
+    observedAt: Date.now(),
+  });
+}
+
 export function ensureZeroCapitalFlashProviderWiring(): void {
   const target = zeroCapitalEngine as unknown as {
     scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
@@ -117,7 +153,6 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
   installed.add(target);
 
   const originalCryptaraAdmission = target.isAllowedByCryptara.bind(target);
-
   target.isAllowedByCryptara = async (opportunity): Promise<boolean> => {
     if (opportunity.expectedProfit <= 0n) return true;
     return originalCryptaraAdmission(opportunity);
@@ -155,11 +190,12 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
         }).catch(() => null)
       : null;
 
-    // Warm route permissions for both Aave-only and dual-provider receivers.
-    // Any state mutation invalidates the old quote and forces an immediate fresh scan.
+    // Permission setup is infrastructure mutation, so every affected quote is
+    // invalidated and immediately remeasured before provider economics are used.
     if ((aaveCapability || dualCapability) && wallet && opportunities.length > 0) {
       const missingByIdentity = new Map<string, any>();
-      const permissionReceivers = [aaveCapability?.address, dualCapability?.address].filter((value): value is string => Boolean(value));
+      const permissionReceivers = [aaveCapability?.address, dualCapability?.address]
+        .filter((value): value is string => Boolean(value));
       for (const receiver of permissionReceivers) {
         for (const opportunity of opportunities) {
           const missing = await buildMissingReceiverPermissionCalls({
@@ -237,62 +273,34 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
 
         const evidence = await providerEvidence(chain, provider, opportunity.inputToken);
         const allowedProviders = [...capabilities.keys()];
-        const selected = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount, allowedProviders);
-        const selectedCapability = selected ? capabilities.get(selected.provider) ?? null : null;
+        const selectedSingle = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount, allowedProviders);
+        const selectedCapability = selectedSingle ? capabilities.get(selectedSingle.provider) ?? null : null;
+        const selectedDual = dualPermissionReady && dualCapability
+          ? selectMeasuredDualFlashLoanAllocation(evidence, opportunity.flashLoanAmount, allowedProviders)
+          : null;
 
-        if (!selected || !selectedCapability) {
-          const dual = dualPermissionReady
-            ? selectMeasuredDualFlashLoanAllocation(evidence, opportunity.flashLoanAmount)
-            : null;
-          if (!dual || !dualCapability) {
-            updateCandidate(
-              opportunity,
-              null,
-              'No execution-ready single or combined Aave+Balancer provider path has complete measured fee, liquidity, permission, and verified receiver evidence for this exact amount',
-              ['measured_flash_loan_provider_liquidity_and_fee'],
-              ['provider_mesh_checked:true'],
-            );
-            continue;
-          }
-
-          const gas = opportunity.estimatedGasCostInInputToken || 0n;
-          const relay = opportunity.relayFeeInInputToken || 0n;
-          const allInCost = dual.totalFee + gas + relay;
-          const grossProfit = opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
-          const netProfit = grossProfit - allInCost;
-          const netProfitBps = opportunity.flashLoanAmount > 0n
-            ? Number((netProfit * 10_000n) / opportunity.flashLoanAmount)
-            : Number.NEGATIVE_INFINITY;
-
-          opportunity.flashLoanFeeInInputToken = dual.totalFee;
-          opportunity.estimatedExecutionCostInInputToken = allInCost;
-          opportunity.expectedProfit = netProfit;
-          opportunity.netProfitBps = netProfitBps;
-
-          recordProfitEstimate({
-            opportunityId: opportunity.id,
-            chain,
-            grossProfitUsd: Number(grossProfit) / (10 ** opportunity.inputTokenDecimals),
-            estimatedCostsUsd: Number(allInCost) / (10 ** opportunity.inputTokenDecimals),
-            estimatedNetProfitUsd: Number(netProfit) / (10 ** opportunity.inputTokenDecimals),
-            netProfitBps,
-            confidence: opportunity.confidence,
-            observedAt: Date.now(),
-          });
-
+        // Dual selection has already proven its measured split fee is strictly
+        // better than the best executable sufficient single-provider fee, or that
+        // no execution-ready single provider can fund the exact size.
+        if (selectedDual && dualCapability) {
+          const values = repriceOpportunity(opportunity, selectedDual.totalFee);
+          recordReprice(opportunity, chain, values);
+          const feeSavings = selectedDual.measuredFeeSavingsVsBestSingle;
           const dualProvenance = [
             'flash_loan_provider:aave_balancer_dual',
-            `dual_balancer_amount:${dual.balancerAmount.toString()}`,
-            `dual_aave_amount:${dual.aaveAmount.toString()}`,
-            `dual_total_fee:${dual.totalFee.toString()}`,
-            'combined_liquidity_unlocks_exact_size',
+            `dual_selection_reason:${selectedDual.reason}`,
+            `dual_balancer_amount:${selectedDual.balancerAmount.toString()}`,
+            `dual_aave_amount:${selectedDual.aaveAmount.toString()}`,
+            `dual_total_fee:${selectedDual.totalFee.toString()}`,
+            ...(feeSavings !== null ? [`dual_fee_savings_vs_best_single:${feeSavings.toString()}`] : []),
             'same_asset_nested_atomicity_required',
           ];
-          if (netProfit <= 0n) {
+
+          if (values.netProfit <= 0n) {
             updateCandidate(
               opportunity,
-              dual.balancer,
-              `Measured Aave+Balancer combined liquidity repriced the exact route to ${netProfitBps} BPS; observation only`,
+              selectedDual.balancer,
+              `Measured Aave+Balancer provider mesh repriced the exact route to ${values.netProfitBps} BPS; observation only`,
               undefined,
               dualProvenance,
             );
@@ -303,8 +311,8 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           if (!cryptaraAllowed) {
             updateCandidate(
               opportunity,
-              dual.balancer,
-              'Measured Aave+Balancer combined-liquidity rescue produced positive economics but Cryptara rejected the fresh positive candidate',
+              selectedDual.balancer,
+              'Measured Aave+Balancer provider mesh produced positive economics but Cryptara rejected the fresh positive candidate',
               ['cryptara_positive_provider_mesh_reprice_rejected'],
               dualProvenance,
             );
@@ -315,12 +323,12 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
             opportunityId: opportunity.id,
             provider: 'aave_balancer_dual',
             receiver: dualCapability.address,
-            balancerAmount: dual.balancerAmount,
-            aaveAmount: dual.aaveAmount,
-            balancerEconomics: dual.balancer,
-            aaveEconomics: dual.aave,
+            balancerAmount: selectedDual.balancerAmount,
+            aaveAmount: selectedDual.aaveAmount,
+            balancerEconomics: selectedDual.balancer,
+            aaveEconomics: selectedDual.aave,
             receiverCapability: dualCapability,
-            totalMeasuredFlashFee: dual.totalFee,
+            totalMeasuredFlashFee: selectedDual.totalFee,
             selectedAt: Date.now(),
             expiresAt: opportunity.expiresAt,
             provenance: [
@@ -328,6 +336,8 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
               'verified_dual_receiver_capability',
               'verified_dual_receiver_route_permissions',
               'balancer_outer_aave_nested',
+              selectedDual.reason,
+              ...(feeSavings !== null ? ['dual_fee_split_strictly_beats_best_single'] : []),
               'strict_positive_repriced_net',
               'cryptara_rechecked_after_positive_provider_mesh_reprice',
               'synthetic_evidence:false',
@@ -335,8 +345,10 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           });
           updateCandidate(
             opportunity,
-            dual.balancer,
-            'Measured Aave+Balancer combined liquidity unlocks the exact profitable size; exact dual payload simulation, Monte Carlo, governance, and terminal settlement remain required',
+            selectedDual.balancer,
+            selectedDual.reason === 'fee_split_beats_single_provider'
+              ? 'Measured Aave+Balancer fee split beats the best executable single-provider flash fee; exact dual payload simulation, Monte Carlo, governance, and terminal settlement remain required'
+              : 'Measured Aave+Balancer combined liquidity unlocks the exact profitable size; exact dual payload simulation, Monte Carlo, governance, and terminal settlement remain required',
             undefined,
             dualProvenance,
           );
@@ -344,41 +356,30 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           continue;
         }
 
-        const measuredFlashFee = calculateMeasuredFlashLoanFee(selected, opportunity.flashLoanAmount);
+        if (!selectedSingle || !selectedCapability) {
+          updateCandidate(
+            opportunity,
+            null,
+            'No execution-ready single or combined Aave+Balancer provider path has complete measured fee, liquidity, permission, and verified receiver evidence for this exact amount',
+            ['measured_flash_loan_provider_liquidity_and_fee'],
+            ['provider_mesh_checked:true'],
+          );
+          continue;
+        }
+
+        const measuredFlashFee = calculateMeasuredFlashLoanFee(selectedSingle, opportunity.flashLoanAmount);
         if (measuredFlashFee === null) {
           updateCandidate(opportunity, null, 'Selected flash-loan provider is missing an exact measured fee rate');
           continue;
         }
-        const gas = opportunity.estimatedGasCostInInputToken || 0n;
-        const relay = opportunity.relayFeeInInputToken || 0n;
-        const allInCost = measuredFlashFee + gas + relay;
-        const grossProfit = opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
-        const netProfit = grossProfit - allInCost;
-        const netProfitBps = opportunity.flashLoanAmount > 0n
-          ? Number((netProfit * 10_000n) / opportunity.flashLoanAmount)
-          : Number.NEGATIVE_INFINITY;
+        const values = repriceOpportunity(opportunity, measuredFlashFee);
+        recordReprice(opportunity, chain, values);
 
-        opportunity.flashLoanFeeInInputToken = measuredFlashFee;
-        opportunity.estimatedExecutionCostInInputToken = allInCost;
-        opportunity.expectedProfit = netProfit;
-        opportunity.netProfitBps = netProfitBps;
-
-        recordProfitEstimate({
-          opportunityId: opportunity.id,
-          chain,
-          grossProfitUsd: Number(grossProfit) / (10 ** opportunity.inputTokenDecimals),
-          estimatedCostsUsd: Number(allInCost) / (10 ** opportunity.inputTokenDecimals),
-          estimatedNetProfitUsd: Number(netProfit) / (10 ** opportunity.inputTokenDecimals),
-          netProfitBps,
-          confidence: opportunity.confidence,
-          observedAt: Date.now(),
-        });
-
-        if (netProfit <= 0n) {
+        if (values.netProfit <= 0n) {
           updateCandidate(
             opportunity,
-            selected,
-            `Measured ${selected.provider} exact fee/liquidity repriced the route to ${netProfitBps} BPS; observation only`,
+            selectedSingle,
+            `Measured ${selectedSingle.provider} exact fee/liquidity repriced the route to ${values.netProfitBps} BPS; observation only`,
           );
           continue;
         }
@@ -387,8 +388,8 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
         if (!cryptaraAllowed) {
           updateCandidate(
             opportunity,
-            selected,
-            `Measured ${selected.provider} repricing produced positive economics but Cryptara rejected the fresh positive candidate`,
+            selectedSingle,
+            `Measured ${selectedSingle.provider} repricing produced positive economics but Cryptara rejected the fresh positive candidate`,
             ['cryptara_positive_provider_reprice_rejected'],
           );
           continue;
@@ -396,9 +397,9 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
 
         flashLoanProviderSelectionRegistry.record({
           opportunityId: opportunity.id,
-          provider: selected.provider,
+          provider: selectedSingle.provider,
           receiver: selectedCapability.address,
-          economics: selected,
+          economics: selectedSingle,
           receiverCapability: selectedCapability,
           selectedAt: Date.now(),
           expiresAt: opportunity.expiresAt,
@@ -415,8 +416,8 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
 
         updateCandidate(
           opportunity,
-          selected,
-          `Measured ${selected.provider} exact fee/liquidity plus verified receiver/permissions keep the route positive; downstream Cryptara/Monte Carlo/governance remain required`,
+          selectedSingle,
+          `Measured ${selectedSingle.provider} exact fee/liquidity plus verified receiver/permissions keep the route positive; downstream Cryptara/Monte Carlo/governance remain required`,
         );
         repriced.push(opportunity);
       } catch (error) {
@@ -447,9 +448,9 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
     providerSelectionRegistry: true,
     dualProviderSelectionRegistry: true,
     staticFlashLoanFeeAuthority: false,
-    providerSelection: 'single_provider_lowest_fee_when_sufficient_else_measured_combined_liquidity_rescue',
+    providerSelection: 'evaluate_single_and_dual_then_choose_strictly_better_measured_fee_or_combined_liquidity_rescue',
     providerMesh: ['balancer_v2', 'aave_v3', 'aave_balancer_dual'],
-    dualProviderRule: 'only_when_neither_single_provider_can_fund_exact_size_and_combined_liquidity_can',
+    dualProviderRule: 'combined_liquidity_or_strict_fee_split_improvement_only',
     nearBreakEvenObservationCanReachProviderRepricing: true,
     positiveProviderRescueRechecksCryptara: true,
     nonPositiveProviderRepriceExecutable: false,
