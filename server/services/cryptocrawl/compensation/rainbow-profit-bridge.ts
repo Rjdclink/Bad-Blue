@@ -4,6 +4,8 @@ const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
 const SUPABASE_SERVICE_KEY = (process.env.SUPABASE_SERVICE_KEY || '').trim();
 const WAKE_TIMEOUT_MS = Math.max(2_000, Math.min(30_000, Number(process.env.CRYPTO_RAINBOW_WORKER_WAKE_TIMEOUT_MS || 8_000)));
 
+type TreasuryWakeReason = 'terminal_profit_recorded' | 'startup_reconcile' | 'terminal_candidate';
+
 /**
  * Rainbow Bridge is deliberately a wake-up client, not an exchange-withdrawal
  * authority. The single durable payout/terminal-sweep authority lives in the
@@ -11,13 +13,13 @@ const WAKE_TIMEOUT_MS = Math.max(2_000, Math.min(30_000, Number(process.env.CRYP
  * converter, transfer agent, or withdrawal signer.
  *
  * pg_cron remains the independent fallback. A wake merely asks the same worker
- * to process the already-persisted per-trade job sooner.
+ * to process already-persisted treasury state sooner.
  */
 class RainbowProfitBridge {
   private inFlight: Promise<boolean> | null = null;
   private wakeAgain = false;
 
-  async wake(reason: 'terminal_profit_recorded' | 'startup_reconcile' = 'terminal_profit_recorded'): Promise<boolean> {
+  async wake(reason: TreasuryWakeReason = 'terminal_profit_recorded'): Promise<boolean> {
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
       logger.warn('[RainbowBridge] Immediate payout-worker wake unavailable; durable cron fallback remains authoritative', {
         component: 'RainbowProfitBridge',
@@ -58,14 +60,12 @@ class RainbowProfitBridge {
         body: JSON.stringify({ reason }),
         signal: controller.signal,
       });
-      if (!response.ok) {
-        throw new Error(`treasury worker wake failed with HTTP ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`treasury worker wake failed with HTTP ${response.status}`);
       const payload = await response.json().catch(() => ({}));
       if (payload?.ok === false) throw new Error(String(payload?.error || payload?.reason || 'treasury worker rejected wake'));
       return true;
     } catch (error) {
-      logger.warn('[RainbowBridge] Immediate worker wake deferred; persistent job remains queued for cron retry', {
+      logger.warn('[RainbowBridge] Immediate worker wake deferred; persistent treasury state remains for cron retry', {
         component: 'RainbowProfitBridge',
         reason,
         error: error instanceof Error ? error.message : String(error),
