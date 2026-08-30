@@ -41,11 +41,25 @@ function missingFromError(error: unknown): string[] {
   return ['monte_carlo_execution'];
 }
 
-function classifyMissingInformation(items: readonly string[]): MissingInformationClassification {
+function isTopologyOptionalProvider(item: string, context: CryptaraOpportunityContext): boolean {
+  if (item.startsWith('provider_coinstats_')) return true;
+  if (context.chain !== 'cex') return false;
+
+  // Core CEX execution is independently grounded in direct exchange books,
+  // authenticated exchange fee evidence, measured depth and settlement-safe
+  // venue adapters. CoinCap and 0x are enrichment/discovery providers only for
+  // this topology; their outage must not veto an otherwise complete CEX plan.
+  return item.startsWith('provider_coincap_') || item.startsWith('provider_0x_');
+}
+
+function classifyMissingInformation(
+  items: readonly string[],
+  context: CryptaraOpportunityContext,
+): MissingInformationClassification {
   const critical: string[] = [];
   const optional: string[] = [];
   for (const item of [...new Set(items)]) {
-    if (item.startsWith('provider_coinstats_')) optional.push(item);
+    if (isTopologyOptionalProvider(item, context)) optional.push(item);
     else critical.push(item);
   }
   return { critical, optional };
@@ -148,7 +162,7 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
     target.latestMonteCarloEvidence = null;
     target.latestOpportunityContext = structuredClone(context);
     let monteCarloMissingInformation: string[] = [];
-    const missing = classifyMissingInformation(context.missingInformation);
+    const missing = classifyMissingInformation(context.missingInformation, context);
 
     // Deterministic all-in economics are authoritative and must run before stochastic
     // execution-uncertainty analysis. Monte Carlo may estimate realization probability
@@ -208,7 +222,7 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
     monteCarloCompute: 'computational_beam_hyper_worker_pool',
     deterministicPositiveGateBeforeMonteCarlo: true,
     deterministicNonPositiveRecommendation: 'reject',
-    optionalProviderMissingDoesNotReduceRank: ['coinstats'],
+    optionalProviderMissingDoesNotReduceRank: ['coinstats', 'cex:coincap', 'cex:0x'],
     immutableOpportunityInput: true,
     staleEvidenceIsolation: true,
   });
