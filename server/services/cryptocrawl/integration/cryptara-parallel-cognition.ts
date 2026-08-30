@@ -178,7 +178,10 @@ function ensureHelperEventBridge(): void {
     const pending = pendingHelpers.get(event.taskId);
     if (!pending) return;
     pendingHelpers.delete(event.taskId);
-    const outcome = event.result ?? workloadRouter.consumeTaskOutcome(event.taskId)?.result;
+    // Always consume the router copy, even when the event already carries the
+    // result, so high-frequency helper completion cannot accumulate outcomes.
+    const stored = workloadRouter.consumeTaskOutcome(event.taskId);
+    const outcome = event.result ?? stored?.result;
     if (outcome === null || outcome === undefined) {
       pending.reject(new Error(`CRYPTARA_HELPER_INVALID_RESULT:${event.taskId}`));
       return;
@@ -189,7 +192,8 @@ function ensureHelperEventBridge(): void {
     const pending = pendingHelpers.get(event.taskId);
     if (!pending) return;
     pendingHelpers.delete(event.taskId);
-    pending.reject(new Error(event.error || `CRYPTARA_HELPER_FAILED:${event.taskId}`));
+    const stored = workloadRouter.consumeTaskOutcome(event.taskId);
+    pending.reject(new Error(event.error || stored?.error || `CRYPTARA_HELPER_FAILED:${event.taskId}`));
   });
 }
 
@@ -216,6 +220,7 @@ async function runBeamHelper<Input, Output>(
       const pending = pendingHelpers.get(task.id);
       if (!pending) return;
       pendingHelpers.delete(task.id);
+      workloadRouter.consumeTaskOutcome(task.id);
       pending.reject(error instanceof Error ? error : new Error(String(error)));
     });
   });
@@ -287,8 +292,6 @@ async function calculateFrame(context: CryptaraOpportunityContext): Promise<void
     requiredLayer: ComputeLayer.BEAM,
   });
 
-  // Quote-bound helper work is never retried. If it misses its first deadline,
-  // the evidence is stale and a retry would only waste compute or resurrect old truth.
   marketTask.metadata.maxRetries = 0;
   optimizationTask.metadata.maxRetries = 0;
 
@@ -350,6 +353,7 @@ export function getCryptaraParallelCognitionStatus() {
     helperEventListeners: 2,
     helperComputeLane: 'quanti_warm_below_authoritative_monte_carlo',
     helperRetries: 0,
+    routerOutcomesConsumed: true,
     executionAuthority: false,
     writeAuthority: false,
     staleFrameSubstitutionAllowed: false,
