@@ -38,6 +38,7 @@ import { ensureZeroCapitalJointProviderSizeWiring } from './zero-capital-joint-p
 import { ensureZeroCapitalProfitabilityRescueV2 } from './zero-capital-profitability-rescue-v2.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
+import { ensureZeroCapitalDynamicAttemptBarrierWiring } from './zero-capital-dynamic-attempt-barrier-wiring.js';
 import { ensureProviderSpecificZeroCapitalExecutionWiring } from './provider-specific-zero-capital-execution-wiring.js';
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
@@ -111,6 +112,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
+  ensureZeroCapitalDynamicAttemptBarrierWiring();
   ensureAlchemyStandardRpcFirstWiring();
 
   void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
@@ -197,6 +199,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
     zeroCapitalAtomicStackExecutionAuthority: false,
+    zeroCapitalDynamicAttemptBarrier: 'exact_eth_call_plus_exact_gas_estimate_then_dynamic_profit_cushion_vs_failed_attempt_exposure_defer_and_requote',
+    zeroCapitalDynamicAttemptBarrierExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
     zeroCapitalWorkOrdering: 'expected_net_profit_per_scarcity_unit_with_expiry_urgency_scheduling_only',
     alchemyPaidPendingStreamDefault: false,
