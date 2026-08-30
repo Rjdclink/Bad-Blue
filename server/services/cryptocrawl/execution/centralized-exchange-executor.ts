@@ -1,21 +1,23 @@
-import type { QuoteVenue, VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import logger from '../../../logger.js';
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { cexInventoryLedger, type InventoryRequirement, type InventoryVenue } from './cex-inventory-ledger.js';
-import { assertFreshCexProductConstraints } from './cex-submit-time-product-guard.js';
 import { parallelMonteCarloPool } from './adapters/parallel-monte-carlo-pool.js';
 import {
   createProductionCexSettlementAdapters,
-  executeCexPlan,
   type CexExecutorOptions,
   type CexExecutionResult,
   type CexSettlementAdapter,
   type ExecutableCexVenue,
 } from './cex-settlement.js';
+import {
+  executeHyperHybridCexPlan,
+  type HyperHybridCexExecutionResult,
+} from './hyper-hybrid-cex-execution.js';
 
 export type ExchangeOrderReceipt = NonNullable<CexExecutionResult['buyOrder']>;
-export type ArbitrageExecutionResult = CexExecutionResult;
+export type ArbitrageExecutionResult = HyperHybridCexExecutionResult;
 
 type BalanceCapableAdapter = CexSettlementAdapter & {
   getBalances: () => Promise<Record<string, string>>;
@@ -81,14 +83,13 @@ function hasFreshAuthenticatedPairInventory(
 }
 
 /**
- * A pair can be terminal even when both order submissions did not succeed. If
- * one IOC leg was accepted and reaches a terminal state while its counterpart
- * was never submitted, that one-sided exposure is a completed (failed) pair
- * lifecycle and must be learned exactly once, never retried as settlement-unknown.
+ * Preserve the historic terminalization behavior for non-split/injected adapter
+ * paths. Split production children apply the same rule inside the hyper-hybrid
+ * executor before their outcomes are aggregated.
  */
 function finalizeKnownSubmissionFailure(result: ArbitrageExecutionResult): ArbitrageExecutionResult {
   const normalized = result.normalized;
-  if (!normalized || normalized.terminal) return result;
+  if (!normalized || normalized.terminal || result.childExecutions?.length) return result;
 
   const submittedCount = Number(Boolean(result.buyOrder)) + Number(Boolean(result.sellOrder));
   const settledOrders = result.orders || [];
@@ -156,11 +157,9 @@ async function acquireMeasuredInventory(
     return { reservation: null, rejection: 'REJECT_BALANCE_INSUFFICIENT: live adapter does not expose authenticated balance reconciliation' };
   }
 
-  // The inventory-constrained execution wrapper already performs authenticated
-  // balance reconciliation and then re-quotes the opportunity. Re-querying the
-  // same private balance endpoints immediately afterward adds latency and CEX
-  // traffic without adding truth. Reuse only a very recent authenticated ledger
-  // snapshot; otherwise fall back to a fresh concurrent reconciliation here.
+  // Reuse only a very recent authenticated ledger snapshot; otherwise reconcile
+  // both venues concurrently. The FULL parent requirement is reserved before any
+  // child is submitted, so splitting can never overcommit capital.
   if (!hasFreshAuthenticatedPairInventory(buyVenue, sellVenue, pair)) {
     let buyBalances: Record<string, string>;
     let sellBalances: Record<string, string>;
@@ -383,14 +382,17 @@ export class CentralizedExchangeExecutor {
         return rejectPlan(`REJECT_STALE_QUOTE: effective quote age ${effectiveQuoteAgeMs}ms exceeds ${maxQuoteAgeMs}ms before order submission`);
       }
 
-      try {
-        await assertFreshCexProductConstraints(plan);
-      } catch (error) {
-        return rejectPlan(error instanceof Error ? error.message : `REJECT_PRODUCT_DRIFT: ${String(error)}`);
-      }
-
       getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { pair: plan.symbol });
-      const result = finalizeKnownSubmissionFailure(await executeCexPlan(plan, { ...this.options, adapters }));
+      const result = finalizeKnownSubmissionFailure(await executeHyperHybridCexPlan({
+        parent: plan,
+        adapters,
+        executorOptions: this.options,
+        maxQuoteAgeMs,
+        executionAdmissionStartedAt,
+        // Production uses venue-native FOK for split children. Injected adapters
+        // retain their own deterministic semantics for isolated tests.
+        useProductionFok: !this.options.adapters,
+      }));
       await reconcileTerminalBalances(result);
       return result;
     } finally {
@@ -400,4 +402,7 @@ export class CentralizedExchangeExecutor {
 }
 
 const productionCexAdapters = createProductionCexSettlementAdapters();
-export const centralizedExchangeExecutor = new CentralizedExchangeExecutor({ adapters: productionCexAdapters });
+// Production adapters are already merged inside execute(). Leaving options empty
+// lets the hyper-hybrid layer distinguish production FOK submission from injected
+// deterministic test adapters without changing the public constructor contract.
+export const centralizedExchangeExecutor = new CentralizedExchangeExecutor();
