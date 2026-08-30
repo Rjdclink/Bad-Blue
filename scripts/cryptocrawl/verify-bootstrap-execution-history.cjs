@@ -14,6 +14,7 @@ function mustNot(source, pattern, label) {
 
 const progression = read('server/services/cryptocrawl/governance/automatic-stage-progression.ts');
 const executor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
+const hyperHybrid = read('server/services/cryptocrawl/execution/hyper-hybrid-cex-execution.ts');
 
 must(progression, /measuredCandidateRegistry\.getMetrics\(STAGE_ONE_SIGNAL_WINDOW_MS\)/, 'Stage 1 uses recent measured candidate evidence');
 must(progression, /eligibleCexCandidate\s*=\s*recentCandidates\.byTopology\.CEX_CEX\.eligible\s*>\s*0/, 'CEX bootstrap candidate is topology-specific');
@@ -30,9 +31,12 @@ must(executor, /plan\.liquidity\.status === 'measured'/, 'cold-start requires me
 must(executor, /liquidityCoverage >= 1/, 'cold-start requires full measured quantity coverage');
 must(executor, /if \(!monteCarlo\.approved && empiricalCalibrationAvailable\)/, 'empirical Monte Carlo retains veto authority');
 must(executor, /if \(!monteCarlo\.approved && !coldStartMeasuredBootstrap\)/, 'incomplete cold-start evidence still fails closed');
-must(executor, /assertFreshCexProductConstraints\(plan\)/, 'submit-time product constraints remain required');
-must(executor, /requireAllowed\('SUBMIT_TX'/, 'governance still controls order submission');
-must(executor, /finalizeKnownSubmissionFailure\(await executeCexPlan/, 'execution still enters terminal settlement lifecycle');
+must(executor, /requireAllowed\('SUBMIT_TX'/, 'governance still controls parent execution admission');
+must(executor, /executeHyperHybridCexPlan\(\{/, 'parent execution hands off to hyper-hybrid child planning');
+must(executor, /finalizeKnownSubmissionFailure\(await executeHyperHybridCexPlan/, 'parent result remains inside terminalization lifecycle');
+must(hyperHybrid, /assertFreshCexProductConstraints\(child\)/, 'every split child receives submit-time product revalidation');
+must(hyperHybrid, /executeCexPlan\(child/, 'every admitted child enters canonical terminal settlement lifecycle');
+must(hyperHybrid, /await Promise\.all\(admittedChildren\.map/, 'admitted children execute in the bounded parallel batch');
 mustNot(executor, /calibration\.samples\s*===\s*0[^\n]*return rejectPlan/, 'zero history alone cannot reject the first measured trade');
 
-console.log('[verify-bootstrap-execution-history] PASS');
+console.log('[verify-bootstrap-execution-history] PASS: Stage-1 bootstrap remains measured and non-executable; Stage-2+ parent execution reaches product-revalidated hyper-hybrid children and canonical terminal settlement');
