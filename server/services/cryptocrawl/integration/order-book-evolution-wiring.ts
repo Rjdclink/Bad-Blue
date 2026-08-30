@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { getHeatMonitor } from '../../../reactor/computationalReactor.js';
 import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
 import { getLastOrderedMarketUniverseSymbols } from '../discovery/market-universe-controller.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
@@ -10,13 +11,9 @@ let timer: NodeJS.Timeout | null = null;
 let running = false;
 let lastAuctionLogAt = 0;
 
-function warmSymbolLimit(): number {
-  const configured = Number(
-    process.env.CRYPTOCRAWL_ANTENNA_SYMBOLS
-      || process.env.CRYPTOCRAWL_BOOK_EVOLUTION_SYMBOLS
-      || 32,
-  );
-  return Math.max(8, Math.min(64, Number.isFinite(configured) ? configured : 32));
+function baseSymbolLimit(): number {
+  const configured = Number(process.env.CRYPTOCRAWL_ANTENNA_SYMBOLS || process.env.CRYPTOCRAWL_BOOK_EVOLUTION_SYMBOLS || 32);
+  return Math.max(8, Math.min(64, Number.isFinite(configured) ? Math.trunc(configured) : 32));
 }
 
 function providerAuctionLogIntervalMs(): number {
@@ -24,36 +21,66 @@ function providerAuctionLogIntervalMs(): number {
   return Number.isFinite(configured) ? Math.max(5_000, Math.min(120_000, configured)) : 15_000;
 }
 
+function requestBatchSize(): number {
+  const configured = Number(process.env.CRYPTOCRAWL_ANTENNA_REQUEST_BATCH || 16);
+  return Number.isFinite(configured) ? Math.max(2, Math.min(64, Math.trunc(configured))) : 16;
+}
+
+function adaptivePlan(): { symbolLimit: number; intervalMs: number; maxAgeMs: number } {
+  const heat = getHeatMonitor();
+  const auction = getProviderQualityAuctionSnapshot();
+  const activeBids = auction.bids.filter(bid => !bid.temporarilyDeprioritized);
+  const failurePressure = activeBids.length
+    ? activeBids.reduce((sum, bid) => sum + bid.failureRate, 0) / activeBids.length
+    : 0;
+  const p95Latency = activeBids
+    .map(bid => bid.p95LatencyMs)
+    .filter((value): value is number => value !== null && Number.isFinite(value))
+    .reduce((max, value) => Math.max(max, value), 0);
+
+  const heatFactor = heat.throttleLevel === 'heavy' ? 0.25 : heat.throttleLevel === 'moderate' ? 0.5 : heat.throttleLevel === 'light' ? 0.75 : 1;
+  const providerFactor = failurePressure >= 0.5 ? 0.5 : failurePressure >= 0.25 ? 0.75 : 1;
+  const symbolLimit = Math.max(4, Math.min(baseSymbolLimit(), Math.floor(baseSymbolLimit() * heatFactor * providerFactor)));
+
+  const baseInterval = Math.max(250, Number(process.env.CRYPTOCRAWL_BOOK_EVOLUTION_INTERVAL_MS || 1_000));
+  const latencyFactor = p95Latency > 2_000 ? 2 : p95Latency > 750 ? 1.5 : 1;
+  const pressureFactor = heat.throttleLevel === 'heavy' ? 4 : heat.throttleLevel === 'moderate' ? 2 : heat.throttleLevel === 'light' ? 1.25 : 1;
+  const failureFactor = failurePressure >= 0.5 ? 2 : failurePressure >= 0.25 ? 1.5 : 1;
+  const intervalMs = Math.max(250, Math.min(15_000, Math.round(baseInterval * Math.max(latencyFactor, pressureFactor, failureFactor))));
+
+  const configuredMaxAge = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
+  const maxAgeMs = Math.max(500, Math.min(configuredMaxAge, Math.max(500, intervalMs * 2)));
+  return { symbolLimit, intervalMs, maxAgeMs };
+}
+
 async function observeOnce(): Promise<void> {
   if (running) return;
   running = true;
   try {
     const venues = getActiveExecutableQuoteVenues();
-    const symbols = getLastOrderedMarketUniverseSymbols().slice(0, warmSymbolLimit());
-    const maxAgeMs = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
-    await Promise.all(venues.flatMap(venue => symbols.map(async symbol => {
+    const plan = adaptivePlan();
+    const symbols = getLastOrderedMarketUniverseSymbols().slice(0, plan.symbolLimit);
+    const tasks = venues.flatMap(venue => symbols.map(symbol => async () => {
       const startedAt = Date.now();
       try {
-        const quote = await cexOrderBookStreams.getQuote(venue, symbol, maxAgeMs);
-        recordAntennaProviderObservation({
-          venue,
-          latencyMs: Math.max(0, Date.now() - startedAt),
-          outcome: quote ? 'quote' : 'miss',
-        });
+        const quote = await cexOrderBookStreams.getQuote(venue, symbol, plan.maxAgeMs);
+        recordAntennaProviderObservation({ venue, latencyMs: Math.max(0, Date.now() - startedAt), outcome: quote ? 'quote' : 'miss' });
         if (quote) orderBookEvolutionStore.record(quote);
       } catch (error) {
-        recordAntennaProviderObservation({
-          venue,
-          latencyMs: Math.max(0, Date.now() - startedAt),
-          outcome: 'failure',
-        });
+        recordAntennaProviderObservation({ venue, latencyMs: Math.max(0, Date.now() - startedAt), outcome: 'failure' });
         logger.debug('[OrderBookEvolution] antenna observation failed', {
           venue,
           symbol,
           error: error instanceof Error ? error.message : String(error),
         });
       }
-    })));
+    }));
+
+    const batchSize = requestBatchSize();
+    for (let offset = 0; offset < tasks.length; offset += batchSize) {
+      await Promise.allSettled(tasks.slice(offset, offset + batchSize).map(task => task()));
+      if (getHeatMonitor().throttleLevel === 'heavy') break;
+    }
 
     const now = Date.now();
     if (now - lastAuctionLogAt >= providerAuctionLogIntervalMs()) {
@@ -75,6 +102,7 @@ async function observeOnce(): Promise<void> {
           temporarilyDeprioritized: bid.temporarilyDeprioritized,
           reasons: bid.reasons,
         })),
+        adaptivePlan: plan,
         allExecutableVenuesStillObservedSimultaneously: true,
         providerAuctionAuthority: auction.authority,
         executionAuthority: false,
@@ -85,21 +113,31 @@ async function observeOnce(): Promise<void> {
   }
 }
 
+function scheduleNext(): void {
+  const plan = adaptivePlan();
+  timer = setTimeout(async () => {
+    await observeOnce();
+    scheduleNext();
+  }, plan.intervalMs);
+  timer.unref?.();
+}
+
 export function ensureOrderBookEvolutionWiring(): void {
   if (timer) return;
-  const intervalMs = Math.max(500, Number(process.env.CRYPTOCRAWL_BOOK_EVOLUTION_INTERVAL_MS || 1_000));
-  void observeOnce();
-  timer = setInterval(() => void observeOnce(), intervalMs);
-  timer.unref?.();
-  logger.info('[OrderBookEvolution] Measured short-horizon book observer installed', {
+  void observeOnce().finally(() => scheduleNext());
+  logger.info('[OrderBookEvolution] Adaptive measured short-horizon book observer installed', {
     component: 'OrderBookEvolutionWiring',
-    intervalMs,
-    warmSymbolLimit: warmSymbolLimit(),
+    initialPlan: adaptivePlan(),
+    baseSymbolLimit: baseSymbolLimit(),
     authoritativeVenues: getActiveExecutableQuoteVenues(),
     connectionModel: 'persistent_venue_socket_multi_symbol',
+    computePressureAware: true,
+    providerFailureLatencyAware: true,
+    boundedRequestBatches: requestBatchSize(),
     providerQualityTelemetry: 'measured_latency_hit_rate_failure_rate_recency',
     providerAuction: 'measured_quality_weighted_attention_advisory_only',
     allExecutableVenuesStillObservedSimultaneously: true,
     syntheticTransitions: false,
+    executionAuthority: false,
   });
 }
