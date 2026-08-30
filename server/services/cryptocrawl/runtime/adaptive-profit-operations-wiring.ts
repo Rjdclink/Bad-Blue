@@ -7,6 +7,7 @@ import {
 import { getCryptocrawlGovernance } from '../governance/governance.js';
 import { getAdaptiveProfitOperatingEnvelope } from '../governance/adaptive-profit-operating-envelope.js';
 import { stageManager } from '../governance/stage-management.js';
+import { getTreasuryExecutionBarrier } from '../governance/treasury-execution-barrier.js';
 import { GovernanceError, type GovernanceAction } from '../governance/types.js';
 import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
 
@@ -147,9 +148,19 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     const underlyingRequireAllowed = governance.requireAllowed.bind(governance);
     governance.requireAllowed = mark((action: GovernanceAction, context?: { chain?: string; pair?: string; venue?: string }): void => {
       underlyingRequireAllowed(action, context);
-      // This gate blocks only NEW exposure. SUBMIT_TX remains available so an
-      // already-open position can always be cancelled, hedged, settled or flattened.
+      // Both the profit ceiling and restart treasury barrier block NEW exposure
+      // only. SUBMIT_TX remains available so already-open exposure can always be
+      // cancelled, hedged, settled, or flattened.
       if (action !== 'EXECUTE_OPPORTUNITY') return;
+
+      const treasuryBarrier = getTreasuryExecutionBarrier();
+      if (treasuryBarrier.restartSweepPending) {
+        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Restart treasury sweep is pending; new exposure is blocked until the previous deployment treasury is resolved', {
+          reason: treasuryBarrier.reason,
+          settlementAndFlatteningStillAllowed: true,
+        });
+      }
+
       const envelope = getAdaptiveProfitOperatingEnvelope();
       if (!envelope.newExposureAllowed) {
         throw new GovernanceError('CONSTRAINT_VIOLATION', 'Adaptive daily realized-profit envelope reached; new exposure is paused until rolling capacity returns', {
@@ -177,6 +188,7 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     performanceDegraded: envelope.performanceDegraded,
     wrapperOrderResilient: true,
     newExposureGateOnly: true,
+    restartTreasuryBarrierIntegrated: true,
     settlementHedgeFlatteningExemptFromProfitCap: true,
     stagePositionCeilingsPreserved: true,
     strictPositiveNetAuthorityPreserved: true,
