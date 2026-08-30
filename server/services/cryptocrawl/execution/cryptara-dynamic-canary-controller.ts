@@ -1,9 +1,11 @@
+import { getProfitLadderNotionalAuthority, SYSTEM_MAX_NOTIONAL_USD } from '../governance/profit-ladder-notional-authority.js';
 import { stageManager } from '../governance/stage-management.js';
 
 export interface DynamicMakerCanaryDecision {
   bootstrapUsd: number;
   ceilingUsd: number;
   hardMaxUsd: number;
+  ladderMaxUsd: number;
   samples: number;
   wins: number;
   losses: number;
@@ -21,6 +23,12 @@ function boundedEnv(name: string, fallback: number, min: number, max: number): n
   const parsed = Number(process.env[name]);
   const value = Number.isFinite(parsed) ? parsed : fallback;
   return Math.max(min, Math.min(max, value));
+}
+
+function optionalTighteningLimit(name: string, maximum: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed) || parsed <= 0) return maximum;
+  return Math.max(1, Math.min(maximum, parsed));
 }
 
 function isMakerEvidence(item: ReturnType<typeof stageManager.getState>['cryptaraExecutionEvidence'][number]): boolean {
@@ -52,8 +60,14 @@ function continuousEvidenceMultiplier(input: {
 
 export function getCryptaraDynamicMakerCanaryDecision(): DynamicMakerCanaryDecision {
   const bootstrapUsd = boundedEnv('CRYPTO_ARBITRAGE_MAKER_CANARY_BOOTSTRAP_USD', 1, 1, 100);
-  const hardMaxUsd = boundedEnv('CRYPTO_ARBITRAGE_MAKER_CANARY_MAX_USD', 1_000_000, bootstrapUsd, 1_000_000);
-  const historyLimit = Math.floor(boundedEnv('CRYPTO_ARBITRAGE_MAKER_CANARY_EVIDENCE_WINDOW', 100, 10, 500));
+  const ladderAuthority = getProfitLadderNotionalAuthority();
+  // The maker strategy may learn a smaller safe size, but it cannot create a
+  // competing capital ceiling. The Profit Ladder is the maximum authority; an
+  // operator setting may only tighten that active rung, never raise it.
+  const ladderMaxUsd = Math.max(0, Math.min(SYSTEM_MAX_NOTIONAL_USD, ladderAuthority.maxNotionalUsd));
+  const activeLadderCeiling = ladderMaxUsd > 0 ? ladderMaxUsd : bootstrapUsd;
+  const hardMaxUsd = optionalTighteningLimit('CRYPTO_ARBITRAGE_MAKER_CANARY_MAX_USD', activeLadderCeiling);
+  const historyLimit = Math.floor(boundedEnv('CRYPTO_ARBITRAGE_MAKER_CANARY_EVIDENCE_WINDOW', 500, 10, 5_000));
   const evidence = stageManager.getState().cryptaraExecutionEvidence
     .filter(item => item.settlementConfirmed === true && isMakerEvidence(item))
     .slice(-historyLimit);
@@ -92,6 +106,7 @@ export function getCryptaraDynamicMakerCanaryDecision(): DynamicMakerCanaryDecis
     bootstrapUsd,
     ceilingUsd,
     hardMaxUsd,
+    ladderMaxUsd,
     samples: evidence.length,
     wins: wins.length,
     losses: losses.length,
