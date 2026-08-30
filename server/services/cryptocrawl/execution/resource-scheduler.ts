@@ -98,16 +98,10 @@ class ExecutionResourceScheduler {
       { prefix: `cex:venue:${plan.sellVenue}`, capacity: configuredVenueCapacity(plan.sellVenue) },
     ];
 
-    // Kraken private API nonce ordering is a process/account safety domain. Until
-    // every private settlement request is serialized at the transport boundary,
-    // a single resource lease prevents cross-replica nonce reordering.
     if (plan.buyVenue === 'kraken' || plan.sellVenue === 'kraken') {
       specs.push({ prefix: 'cex:nonce:kraken-account', capacity: 1 });
     }
 
-    // Coarse inventory reservations prevent two concurrent opportunities from
-    // spending the same venue/asset inventory. Quantity-aware balance accounting
-    // can refine these resources without weakening this exclusion invariant.
     const pair = splitSpotSymbol(plan.symbol);
     if (pair) {
       specs.push({ prefix: `cex:inventory:${plan.buyVenue}:${pair.quote}`, capacity: 1 });
@@ -191,6 +185,18 @@ class ExecutionResourceScheduler {
 
   async acquireCexPlan(plan: VerifiedArbitragePlan, opportunityId: string): Promise<ExecutionResourceLease | null> {
     if (!Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) return null;
+    const maxQuoteAgeMs = boundedInt(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS, 5_000, 250, 15_000);
+    if (!Number.isFinite(plan.quoteAgeMs) || plan.quoteAgeMs < 0 || plan.quoteAgeMs >= maxQuoteAgeMs) {
+      logger.info('[ResourceScheduler] Stale CEX opportunity rejected before scarce resource leasing', {
+        component: 'ExecutionResourceScheduler',
+        opportunityId,
+        quoteAgeMs: plan.quoteAgeMs,
+        maxQuoteAgeMs,
+        resourceLeaseCreated: false,
+      });
+      return null;
+    }
+
     const specs = this.resourceSpecs(plan);
     if (!this.reserveLocal(specs)) return null;
 
