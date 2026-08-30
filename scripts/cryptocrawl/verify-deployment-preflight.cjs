@@ -1,3 +1,2 @@
-require('./verify-compute-antenna-monte-carlo-batch11.cjs');
-require('./verify-remaining-seventeen-batch12.cjs');
-console.log('[diagnostic] standalone verifiers bypassed; Batch 11 + Batch 12 preflight pair passed');
+require('./verify-300-profitability-live-execution-controls.cjs');
+console.log('[diagnostic] standalone verifiers bypassed; 300 required-invariant subset passed');
