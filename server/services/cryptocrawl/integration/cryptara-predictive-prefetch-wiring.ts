@@ -9,6 +9,10 @@ import { getHeatMonitor } from '../../../reactor/computationalReactor.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { cexOrderBookStreams, type CexStreamVenue } from '../intelligence/cex-order-book-stream.js';
 import { getProviderQualityAuctionSnapshot } from '../intelligence/provider-quality-auction.js';
+import {
+  ensureCryptaraAdaptiveStrategyHydrated,
+  getCryptaraAdaptiveStrategySnapshot,
+} from '../optimization/cryptara-adaptive-strategy-state.js';
 import { getCryptaraSovereignCortexSnapshot } from './cryptara-sovereign-cortex-wiring.js';
 
 const log = createLogger('CryptaraPredictivePrefetchWiring');
@@ -18,14 +22,33 @@ const lastPrefetchAt = new Map<string, number>();
 let universeInFlight: Promise<unknown> | null = null;
 let lastUniversePrefetchAt = 0;
 
-function minIntervalMs(): number {
+function baseMinIntervalMs(): number {
   const value = Number(process.env.CRYPTARA_PREFETCH_MIN_INTERVAL_MS || 2_000);
   return Number.isFinite(value) ? Math.max(250, Math.min(30_000, Math.trunc(value))) : 2_000;
 }
 
-function universeIntervalMs(): number {
+function baseUniverseIntervalMs(): number {
   const value = Number(process.env.CRYPTARA_PREFETCH_UNIVERSE_INTERVAL_MS || 15_000);
   return Number.isFinite(value) ? Math.max(2_000, Math.min(120_000, Math.trunc(value))) : 15_000;
+}
+
+function prefetchAggression(): number {
+  const value = getCryptaraAdaptiveStrategySnapshot().prefetchAggression;
+  return Math.max(0.25, Math.min(1, Number.isFinite(value) ? value : 0.5));
+}
+
+function minIntervalMs(): number {
+  const aggression = prefetchAggression();
+  // Default aggression=0.5 preserves the historical interval. Rank-authorized
+  // micro-edits can shorten it by at most 20%; low values can lengthen it.
+  const multiplier = 0.75 + aggression * 0.50;
+  return Math.max(250, Math.min(30_000, Math.round(baseMinIntervalMs() / multiplier)));
+}
+
+function universeIntervalMs(): number {
+  const aggression = prefetchAggression();
+  const multiplier = 0.85 + aggression * 0.30;
+  return Math.max(2_000, Math.min(120_000, Math.round(baseUniverseIntervalMs() / multiplier)));
 }
 
 function maxQuoteAgeMs(): number {
@@ -90,6 +113,8 @@ function prefetch(symbol: string): void {
       providerOrder: venues,
       universeRefreshAttempted: !!universeTask,
       computeThrottleLevel: heat.throttleLevel,
+      adaptivePrefetchAggression: prefetchAggression(),
+      adaptivePerSymbolIntervalMs: minIntervalMs(),
       requestPriorityAuthority: 'cryptara_sovereign_cortex_advisory',
       executionAuthority: false,
     });
@@ -103,6 +128,7 @@ export function ensureCryptaraPredictivePrefetchWiring(): Cryptara {
   const instance = getCryptara();
   if (installed.has(instance)) return instance;
   installed.add(instance);
+  void ensureCryptaraAdaptiveStrategyHydrated();
   const target = instance as unknown as {
     assessOpportunity: (context: CryptaraOpportunityContext) => Promise<CryptaraOpportunityAssessment>;
   };
@@ -118,6 +144,7 @@ export function ensureCryptaraPredictivePrefetchWiring(): Cryptara {
     warmedEvidence: ['bounded_market_universe', 'provider_ranked_coinbase_kraken_okx_books'],
     providerQualityAware: true,
     computePressureAware: true,
+    boundedAdaptiveLearningAware: true,
     boundedPerSymbolIntervalMs: minIntervalMs(),
     boundedUniverseIntervalMs: universeIntervalMs(),
     duplicateInFlightCollapsed: true,
