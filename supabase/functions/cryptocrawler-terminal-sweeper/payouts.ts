@@ -64,6 +64,17 @@ async function treasuryTradingSpendable(asset: string, liveAvailable: number): P
   return Math.max(0, Math.min(liveAvailable, measured));
 }
 
+async function claimTreasuryLiquidity(batchId: string, asset: string, amount: number, liveAvailable: number): Promise<boolean> {
+  if (!(amount > 0) || liveAvailable + 1e-12 < amount) return false;
+  const { data, error } = await supabase.rpc('cryptocrawler_treasury_claim_okx_liquidity', {
+    p_batch_id: batchId,
+    p_asset: asset,
+    p_amount: amount,
+  });
+  if (error) throw new Error(`OKX payout-liquidity claim failed for ${asset}: ${error.message}`);
+  return data === true;
+}
+
 async function loadDueJobs(): Promise<PayoutJob[]> {
   const { data, error } = await supabase.from('cryptocrawler_profit_payout_jobs')
     .select('*')
@@ -184,7 +195,7 @@ async function createOrLoadPreparedBatch(secrets: Secrets, dueJobs: PayoutJob[])
   return { batch, waitingForMinimum: false };
 }
 
-async function chooseConversionPlan(secrets: Secrets, currentQuote: string | null, ethShortage: number): Promise<ConversionPlan> {
+async function chooseConversionPlan(secrets: Secrets, batchId: string, currentQuote: string | null, ethShortage: number): Promise<ConversionPlan> {
   const liveBalances = await getTradingBalances(secrets, [...PAYOUT_QUOTES]);
   const candidates: ConversionPlan[] = [];
   for (const quote of quotePreference(currentQuote)) {
@@ -202,17 +213,19 @@ async function chooseConversionPlan(secrets: Secrets, currentQuote: string | nul
       }
     } catch { /* another authenticated quote may be usable */ }
   }
-  if (candidates.length === 0) {
-    throw new Error('OKX has no currently trade-safe unreserved quote liquidity for the due payout batch');
-  }
   candidates.sort((a, b) => a.requiredQuote - b.requiredQuote);
-  return candidates[0];
+  for (const candidate of candidates) {
+    if (await claimTreasuryLiquidity(batchId, candidate.quote, candidate.requiredQuote, liveBalances[candidate.quote] || 0)) {
+      return candidate;
+    }
+  }
+  throw new Error('OKX has no currently claimable unreserved quote liquidity for the due payout batch');
 }
 
 async function recoverOrPlaceBatchConversion(secrets: Secrets, input: PayoutBatch, plan: ConversionPlan): Promise<PayoutBatch> {
   let batch = input;
   const instId = `ETH-${plan.quote}`;
-  const clientId = batch.conversion_client_id || await deterministicId(`payout-batch:${batch.batch_id}:convert:${plan.quote}`);
+  const clientId = batch.conversion_client_id || await deterministicId(`payout-batch:${batch.batch_id}:convert:${plan.quote}:${plan.requiredQuote.toFixed(8)}`);
   let order = await findOrder(secrets, instId, batch.conversion_trade_id, clientId);
   let orderId = String(order?.ordId || batch.conversion_trade_id || '');
 
@@ -252,9 +265,12 @@ async function ensureBatchEthInFunding(secrets: Secrets, input: PayoutBatch, req
   const liveTrading = await getTradingBalances(secrets, ['ETH']);
   const spendableTradingEth = await treasuryTradingSpendable('ETH', liveTrading.ETH || 0);
   if (spendableTradingEth + 1e-12 < shortage) throw new Error('Trade-safe converted ETH is not yet available in the OKX trading account');
+  if (!await claimTreasuryLiquidity(batch.batch_id, 'ETH', shortage, liveTrading.ETH || 0)) {
+    throw new Error('OKX ETH liquidity changed before the treasury could claim it; payout will retry without preempting the live trade');
+  }
 
   const transfer = await ensureTransfer(
-    secrets, `payout-batch:${batch.batch_id}:transfer:eth:18:6`, 'ETH', shortage, '18', '6', batch.transfer_id,
+    secrets, `payout-batch:${batch.batch_id}:transfer:eth:18:6:${shortage.toFixed(12)}`, 'ETH', shortage, '18', '6', batch.transfer_id,
   );
   batch = await updateBatch(batch.batch_id, {
     status: 'WITHDRAWING', transfer_client_id: transfer.clientId,
@@ -318,7 +334,7 @@ async function submitBatchWithdrawal(secrets: Secrets, input: PayoutBatch): Prom
     throw new Error('Prepared payout batch exceeds the current authenticated OKX Ethereum maximum');
   }
 
-  const clientId = batch.withdrawal_client_id || await deterministicId(`payout-batch:${batch.batch_id}:withdraw:ETH:${route.chain}`);
+  const clientId = batch.withdrawal_client_id || await deterministicId(`payout-batch:${batch.batch_id}:withdraw:ETH:${route.chain}:${amountEth.toFixed(12)}`);
   const recovered = await findWithdrawal(secrets, batch.withdrawal_id, clientId);
   if (recovered?.wdId) {
     batch = await updateBatch(batch.batch_id, {
@@ -371,11 +387,16 @@ async function processBatch(secrets: Secrets, control: Control, input: PayoutBat
     let funding = await getFundingBalances(secrets, ['ETH']);
     let liveTrading = await getTradingBalances(secrets, ['ETH']);
     let safeTradingEth = await treasuryTradingSpendable('ETH', liveTrading.ETH || 0);
+    const neededFromTradingNow = Math.min(safeTradingEth, Math.max(0, requiredFundingEth - (funding.ETH || 0)));
+    if (neededFromTradingNow > 0 && !await claimTreasuryLiquidity(batch.batch_id, 'ETH', neededFromTradingNow, liveTrading.ETH || 0)) {
+      throw new Error('OKX ETH liquidity changed before payout reservation; retrying without interrupting the live trade');
+    }
+    safeTradingEth = neededFromTradingNow;
     const totalTradeSafeEth = (funding.ETH || 0) + safeTradingEth;
 
     if (totalTradeSafeEth + 1e-12 < requiredFundingEth) {
       const shortage = requiredFundingEth - totalTradeSafeEth;
-      const plan = await chooseConversionPlan(secrets, batch.quote_asset, shortage);
+      const plan = await chooseConversionPlan(secrets, batch.batch_id, batch.quote_asset, shortage);
       const estimatedConversionCostUsd = Math.max(0, plan.requiredQuote - shortage * plan.priceUsd);
       if (networkCostUsd + estimatedConversionCostUsd > retainedPoolUsd + 1e-8) {
         throw new Error('Retained operating pool is insufficient for conversion plus Ethereum withdrawal costs');
@@ -424,8 +445,8 @@ export async function processPerTradePayouts(secrets: Secrets, control: Control)
   }
 
   dueJobs = await loadDueJobs();
-  const { data: confirmedData, error: confirmedError } = await supabase.from('cryptocrawler_profit_payout_jobs')
-    .select('event_id').eq('status', 'CONFIRMED').limit(MAX_PAYOUT_JOBS_PER_RUN);
+  const { count: confirmedJobs, error: confirmedError } = await supabase.from('cryptocrawler_profit_payout_jobs')
+    .select('event_id', { head: true, count: 'exact' }).eq('status', 'CONFIRMED');
   if (confirmedError) throw confirmedError;
   const { count: inFlightBatches, error: countError } = await supabase.from('cryptocrawler_profit_payout_batches')
     .select('batch_id', { head: true, count: 'exact' }).in('status', ['PREPARED', 'CONVERTING', 'WITHDRAWING', 'SUBMITTED', 'RETRYABLE']);
@@ -434,7 +455,7 @@ export async function processPerTradePayouts(secrets: Secrets, control: Control)
   return {
     dueJobs: dueJobs.length,
     processedBatches,
-    confirmedJobs: (confirmedData || []).length,
+    confirmedJobs: confirmedJobs || 0,
     inFlightBatches: inFlightBatches || 0,
     manualBatches,
     waitingForMinimum,
