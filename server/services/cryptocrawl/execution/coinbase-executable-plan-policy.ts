@@ -13,12 +13,16 @@ function feeUsd(notionalUsd: number, bps: number): number {
 }
 
 /**
- * Coinbase product constraints are part of deterministic execution economics.
- * The plan is allowed to shrink to the nearest valid base increment because the
- * original depth-derived average prices are conservative for a smaller quantity:
- * consuming fewer asks cannot worsen the buy average and consuming fewer bids
- * cannot worsen the sell average. Price is never silently rounded; if the book
- * limit price is not a valid Coinbase price increment the plan fails closed.
+ * Normalize a Coinbase-participating PARENT plan without allowing a single-order
+ * product maximum to truncate the parent target. Per-order base_max_size and
+ * quote_max_size are execution constraints for the child-order planner. The
+ * parent remains the already-measured depth/profit target and may later be split
+ * into FOK child pairs whose individual sizes satisfy current Coinbase limits.
+ *
+ * We still align the parent quantity to the live base increment and verify the
+ * product/trading state by validating one legal child-sized quantity. Price is
+ * never rounded. Smaller increment normalization receives a fresh deterministic
+ * economics calculation; no better price or liquidity is invented.
  */
 export async function normalizeCoinbaseExecutablePlan(
   plan: VerifiedArbitragePlan,
@@ -34,14 +38,21 @@ export async function normalizeCoinbaseExecutablePlan(
     : plan.sellLimitPrice ?? plan.sellBid;
   if (!Number.isFinite(coinbasePrice) || coinbasePrice <= 0) return null;
 
-  let quantityUpperBound = plan.baseQty;
-  if (constraints.baseMaxSize !== null) quantityUpperBound = Math.min(quantityUpperBound, constraints.baseMaxSize);
-  if (constraints.quoteMaxSize !== null) quantityUpperBound = Math.min(quantityUpperBound, constraints.quoteMaxSize / coinbasePrice);
-  const normalizedQuantity = floorToIncrement(quantityUpperBound, constraints.baseIncrement);
+  const normalizedQuantity = floorToIncrement(plan.baseQty, constraints.baseIncrement);
   if (!Number.isFinite(normalizedQuantity) || normalizedQuantity <= 0) return null;
 
+  // Validate current product state with the largest legal single child that could
+  // be submitted. Parent oversize is intentionally NOT rejected here; it is split
+  // downstream. This preserves Coinbase's live maximum as a per-order authority,
+  // not a competing strategy/notional authority.
+  let legalChildQuantity = normalizedQuantity;
+  if (constraints.baseMaxSize !== null) legalChildQuantity = Math.min(legalChildQuantity, constraints.baseMaxSize);
+  if (constraints.quoteMaxSize !== null) legalChildQuantity = Math.min(legalChildQuantity, constraints.quoteMaxSize / coinbasePrice);
+  legalChildQuantity = floorToIncrement(legalChildQuantity, constraints.baseIncrement);
+  if (!(legalChildQuantity > 0)) return null;
+
   const constraintCheck = validateCoinbaseOrderAgainstProduct(
-    { quantity: normalizedQuantity, price: coinbasePrice },
+    { quantity: legalChildQuantity, price: coinbasePrice },
     constraints,
   );
   if (!constraintCheck.valid) return null;
