@@ -21,6 +21,7 @@ type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 
 let timer: NodeJS.Timeout | null = null;
 let heartbeatInFlight: Promise<void> | null = null;
 let signalInstalled = false;
+let workerSecretsSynchronized = false;
 let consecutiveHeartbeatFailures = 0;
 let heartbeatDegradedUntil = 0;
 
@@ -96,6 +97,15 @@ async function heartbeatOnce(): Promise<void> {
 
   heartbeatInFlight = (async () => {
     try {
+      // Secret synchronization is part of the durable heartbeat rather than a
+      // one-shot startup precondition. A transient Supabase timeout therefore
+      // cannot permanently leave the independent worker without current Railway
+      // credentials or the WALLET_PRIVATE_KEY-derived public fallback address.
+      if (!workerSecretsSynchronized) {
+        await syncWorkerSecrets();
+        workerSecretsSynchronized = true;
+      }
+
       const state = await readTreasuryState();
 
       if (state === 'TERMINATE_AND_SWEEP' || state === 'SWEEPING') {
@@ -156,6 +166,7 @@ async function heartbeatOnce(): Promise<void> {
       consecutiveHeartbeatFailures = 0;
       heartbeatDegradedUntil = 0;
     } catch (error) {
+      workerSecretsSynchronized = false;
       consecutiveHeartbeatFailures += 1;
       heartbeatDegradedUntil = Date.now() + databaseBackoffMs();
       throw error;
@@ -163,6 +174,16 @@ async function heartbeatOnce(): Promise<void> {
   })().finally(() => { heartbeatInFlight = null; });
 
   return heartbeatInFlight;
+}
+
+function logHeartbeatFailure(error: unknown): void {
+  logger.warn('[Treasury] Lifecycle heartbeat deferred', {
+    component: 'TerminalTreasuryLifecycle',
+    error: error instanceof Error ? error.message : String(error),
+    consecutiveHeartbeatFailures,
+    databaseRetryNotBeforeMs: Math.max(0, heartbeatDegradedUntil - Date.now()),
+    workerSecretsSynchronized,
+  });
 }
 
 export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
@@ -173,21 +194,17 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     });
   }
 
-  await syncWorkerSecrets();
-  await heartbeatOnce();
   if (!signalInstalled && RAILWAY_DEPLOYMENT_ID) {
     process.prependListener('SIGTERM', sigtermCandidateListener);
     signalInstalled = true;
   }
-  timer = setInterval(() => void heartbeatOnce().catch(error => {
-    logger.warn('[Treasury] Lifecycle heartbeat deferred', {
-      component: 'TerminalTreasuryLifecycle',
-      error: error instanceof Error ? error.message : String(error),
-      consecutiveHeartbeatFailures,
-      databaseRetryNotBeforeMs: Math.max(0, heartbeatDegradedUntil - Date.now()),
-    });
-  }), HEARTBEAT_MS);
+
+  // Install the retry heartbeat before the first database attempt. A transient
+  // startup outage must not permanently disable secret synchronization or the
+  // restart-drain lifecycle for this otherwise healthy Railway process.
+  timer = setInterval(() => void heartbeatOnce().catch(logHeartbeatFailure), HEARTBEAT_MS);
   timer.unref?.();
+  await heartbeatOnce().catch(logHeartbeatFailure);
 
   logger.info('[Treasury] Persistent treasury lifecycle online', {
     component: 'TerminalTreasuryLifecycle',
@@ -197,6 +214,8 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     terminalPayoutConfigured: Boolean(DESTINATION),
     fallbackPayoutConfigured: Boolean(FALLBACK_DESTINATION),
     fallbackDerivedFromCanonicalExecutionWallet: Boolean(FALLBACK_DESTINATION),
+    workerSecretSynchronizationRetryable: true,
+    workerSecretsSynchronized,
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
     runtimePolicy: 'first_three_fixed_60_percent_then_persisted_dynamic_55_to_65_percent_eth_payout_remainder_retained_restart_drains_remaining_treasury',
     successorCancelsRestartSweep: false,
@@ -231,6 +250,7 @@ export async function markTerminalSweepCandidate(signal: string): Promise<void> 
 export function stopTerminalTreasuryLifecycle(): void {
   if (timer) clearInterval(timer);
   timer = null;
+  workerSecretsSynchronized = false;
   if (signalInstalled) {
     process.removeListener('SIGTERM', sigtermCandidateListener);
     signalInstalled = false;
