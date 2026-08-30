@@ -1,6 +1,8 @@
 import logger from '../../../logger.js';
 import { getDynamicZeroCapitalDiscoveryState } from '../discovery/dynamic-zero-capital-routes.js';
+import { getCachedCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 import { ensureOkxRpiFeeAdvisory, getOkxRpiFeeOpportunities } from '../intelligence/okx-rpi-fee-advisory.js';
+import { buildFeeSurfaceHyperdynamicStrategyPlan, type FeeSurfaceHyperdynamicStrategyPlan } from '../optimization/fee-surface-hyperdynamic-strategy-engine.js';
 import { buildHyperdynamicBpsPlan, type HyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
 import { getCexFourModeSnapshot } from './cex-four-mode-observability-wiring.js';
 import { getZeroCapitalRecoverySnapshot } from './zero-capital-recovery-observability.js';
@@ -31,6 +33,7 @@ export interface BpsCompressionMeshSnapshot {
   cexBreadthBias: number;
   cexCadenceBias: number;
   hyperdynamic: HyperdynamicBpsPlan;
+  feeSurfaceStrategies: FeeSurfaceHyperdynamicStrategyPlan;
   objective: 'measured_distance_to_positive_bps_per_scarcity_unit';
   authority: 'search_and_compute_scheduling_only';
   executionAuthority: false;
@@ -64,6 +67,18 @@ function positivePriority(bestPositiveBps: number): number {
 function gapPriority(gapBps: number | null, scaleBps: number): number {
   if (gapBps === null || !Number.isFinite(gapBps)) return 0.15;
   return 1 / (1 + Math.max(0, gapBps) / scaleBps);
+}
+
+function authenticatedMakerCostBps(fee: CexFeeEvidence | null): number | null {
+  if (!fee || fee.source === 'configured_override') return null;
+  if (fee.makerFeeBps !== null && Number.isFinite(fee.makerFeeBps)) return Math.max(0, fee.makerFeeBps);
+  if (fee.makerRebateBps !== null && Number.isFinite(fee.makerRebateBps)) return -Math.max(0, fee.makerRebateBps);
+  return null;
+}
+
+function authenticatedTakerCostBps(fee: CexFeeEvidence | null): number | null {
+  if (!fee || fee.source === 'configured_override' || !Number.isFinite(fee.takerFeeBps)) return null;
+  return Math.max(0, fee.takerFeeBps);
 }
 
 function normalizeShares(
@@ -143,6 +158,37 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
     relativeCexAdvantageBps,
   });
 
+  const feeSurfaceStrategies = buildFeeSurfaceHyperdynamicStrategyPlan({
+    modes: modes.map(mode => {
+      const buyFee = getCachedCexFeeEvidence(mode.buyVenue, mode.symbol);
+      const sellFee = getCachedCexFeeEvidence(mode.sellVenue, mode.symbol);
+      return {
+        symbol: mode.symbol,
+        buyVenue: mode.buyVenue,
+        sellVenue: mode.sellVenue,
+        mode: mode.mode,
+        netAfterExchangeFeesBps: mode.netAfterExchangeFeesBps,
+        expectedFeeAdjustedBps: mode.expectedFeeAdjustedBps,
+        bpsToBreakEven: mode.bpsToBreakEven,
+        combinedFeeBps: mode.combinedFeeBps,
+        grossSpreadBps: mode.grossSpreadBps,
+        economicallyPositive: mode.economicallyPositive,
+        feeFreshnessScore: mode.feeFreshnessScore,
+        buyMakerCostBps: authenticatedMakerCostBps(buyFee),
+        sellMakerCostBps: authenticatedMakerCostBps(sellFee),
+        buyTakerCostBps: authenticatedTakerCostBps(buyFee),
+        sellTakerCostBps: authenticatedTakerCostBps(sellFee),
+      };
+    }),
+    rpi: rpi.map(item => ({
+      symbol: item.symbol,
+      rpiSavingsVsTakerBps: item.rpiSavingsVsTakerBps,
+      rpiSavingsVsStandardMakerBps: item.rpiSavingsVsStandardMakerBps,
+    })),
+    zeroCapitalGapBps: zeroGap,
+    zeroCapitalGapImproving: zero?.closestCandidateGapImproving ?? null,
+  });
+
   let cexRaw = bestPositiveBps !== null
     ? positivePriority(bestPositiveBps)
     : gapPriority(closestRiskAdjustedGapBps, 10);
@@ -150,11 +196,13 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
     cexRaw *= 1 + Math.min(0.50, maxRpiSavingsVsTakerBps / 40);
   }
   cexRaw *= hyperdynamic.cexPriorityMultiplier;
+  cexRaw *= feeSurfaceStrategies.cexPriorityMultiplier;
 
   let zeroRaw = zeroPositive > 0 ? 3 + Math.min(4, zeroPositive) : gapPriority(zeroGap, 25);
   if (zero?.closestCandidateGapImproving === true) zeroRaw *= 1.20;
   if (zero?.closestCandidateGapImproving === false) zeroRaw *= 0.90;
   zeroRaw *= hyperdynamic.zeroCapitalPriorityMultiplier;
+  zeroRaw *= feeSurfaceStrategies.zeroCapitalPriorityMultiplier;
 
   const shares = normalizeShares(cexRaw, zeroRaw, hyperdynamic.explorationMultiplier);
   const baseBreadth = Math.max(0.40, Math.min(1, 0.40 + 0.60 * shares.cex / Math.max(0.01, 1 - shares.exploration)));
@@ -186,6 +234,7 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
     cexBreadthBias,
     cexCadenceBias,
     hyperdynamic,
+    feeSurfaceStrategies,
     objective: 'measured_distance_to_positive_bps_per_scarcity_unit',
     authority: 'search_and_compute_scheduling_only',
     executionAuthority: false,
@@ -195,6 +244,12 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
   logger.info('[BpsCompressionMesh] Cross-topology profitability attention refreshed', {
     component: 'BpsCompressionMesh',
     ...latest,
+    feeSurfaceSummary: {
+      activeStrategies: latest.feeSurfaceStrategies.activeStrategies.map(item => item.key),
+      bestMeasuredBpsBenefit: latest.feeSurfaceStrategies.bestMeasuredBpsBenefit,
+      authenticatedRebateSymbols: latest.feeSurfaceStrategies.authenticatedRebateSymbols.slice(0, 12),
+      executionAuthority: latest.feeSurfaceStrategies.executionAuthority,
+    },
   });
   return getBpsCompressionMeshSnapshot()!;
 }
@@ -209,6 +264,13 @@ export function getBpsCompressionMeshSnapshot(): BpsCompressionMeshSnapshot | nu
       ...latest.hyperdynamic,
       activeSolutionIds: [...latest.hyperdynamic.activeSolutionIds],
       activeSolutionKeys: [...latest.hyperdynamic.activeSolutionKeys],
+    },
+    feeSurfaceStrategies: {
+      ...latest.feeSurfaceStrategies,
+      activeStrategies: latest.feeSurfaceStrategies.activeStrategies.map(item => ({ ...item, symbols: [...item.symbols] })),
+      allStrategies: latest.feeSurfaceStrategies.allStrategies.map(item => ({ ...item, symbols: [...item.symbols] })),
+      authenticatedRebateSymbols: [...latest.feeSurfaceStrategies.authenticatedRebateSymbols],
+      prohibitedBehaviors: [...latest.feeSurfaceStrategies.prohibitedBehaviors],
     },
   } : null;
 }
