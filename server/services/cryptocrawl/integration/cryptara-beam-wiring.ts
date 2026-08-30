@@ -84,7 +84,10 @@ async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
       if (event.taskId !== task.id || settled) return;
       settled = true;
       cleanup();
-      const result = event.result ?? workloadRouter.consumeTaskOutcome(task.id)?.result;
+      // Always consume the router copy so repeated authoritative MC runs do not
+      // retain completed outcomes after the event result has already been handled.
+      const stored = workloadRouter.consumeTaskOutcome(task.id);
+      const result = event.result ?? stored?.result;
       if (!validMonteCarloResult(result)) {
         reject(new Error(`MC_INVALID_RESULT: Beam returned invalid Monte Carlo result for ${task.id}`));
         return;
@@ -95,7 +98,8 @@ async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
       if (event.taskId !== task.id || settled) return;
       settled = true;
       cleanup();
-      const error = event.error || `BEAM_EXECUTION_FAILED: Beam task ${task.id} failed`;
+      const stored = workloadRouter.consumeTaskOutcome(task.id);
+      const error = event.error || stored?.error || `BEAM_EXECUTION_FAILED: Beam task ${task.id} failed`;
       if (/deadline expired/i.test(error)) {
         reject(new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote'));
         return;
@@ -108,6 +112,7 @@ async function runThroughBeam(task: Task): Promise<MonteCarloResult> {
       if (settled) return;
       settled = true;
       cleanup();
+      workloadRouter.consumeTaskOutcome(task.id);
       reject(error);
     });
   });
@@ -216,6 +221,7 @@ export function ensureCryptaraBeamWiring(): Cryptara {
     sharedPolicyAuthority: true,
     quoteDeadlineBound: true,
     expiredCandidateCancellation: true,
+    routerOutcomesConsumed: true,
     executionAuthority: false,
   });
   return instance;
