@@ -46,6 +46,22 @@ function spendable(value: InventorySnapshot | null): number {
   );
 }
 
+function maxFeeEvidenceAgeMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_CEX_EXECUTION_FEE_MAX_AGE_MS || 5 * 60_000);
+  return Number.isFinite(parsed) ? Math.max(5_000, Math.min(30 * 60_000, Math.trunc(parsed))) : 5 * 60_000;
+}
+
+function feeFreshnessRejection(plan: VerifiedArbitragePlan): string | null {
+  if (!plan.feeEvidence?.buy || !plan.feeEvidence?.sell) return 'REJECT_FEE_EVIDENCE: complete buy/sell fee evidence is required';
+  const now = Date.now();
+  for (const [side, evidence] of [['buy', plan.feeEvidence.buy], ['sell', plan.feeEvidence.sell]] as const) {
+    if (!Number.isFinite(evidence.observedAt) || evidence.observedAt <= 0) return `REJECT_FEE_EVIDENCE: ${side} fee timestamp is invalid`;
+    if (now - evidence.observedAt > maxFeeEvidenceAgeMs()) return `REJECT_FEE_EVIDENCE_STALE: ${side} fee evidence exceeds bounded execution age`;
+    if (!Number.isFinite(Number(evidence.takerFeeBps)) || Number(evidence.takerFeeBps) < 0) return `REJECT_FEE_EVIDENCE: ${side} taker fee is unavailable`;
+  }
+  return null;
+}
+
 function buyFeeRate(plan: VerifiedArbitragePlan): number | null {
   const feeBps = Number(plan.feeEvidence?.buy.takerFeeBps);
   if (Number.isFinite(feeBps) && feeBps >= 0) return feeBps / 10_000;
@@ -124,6 +140,8 @@ async function reconcilePairBalances(plan: VerifiedArbitragePlan): Promise<boole
 async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<ReoptimizationDecision> {
   const capabilityRejection = activeExecutionCapability(plan);
   if (capabilityRejection) return { kind: 'reject', reason: capabilityRejection };
+  const feeRejection = feeFreshnessRejection(plan);
+  if (feeRejection) return { kind: 'reject', reason: feeRejection };
   if (!Number.isFinite(plan.netProfitUsd) || !(plan.netProfitUsd > 0)) {
     return { kind: 'reject', reason: 'REJECT_NEGATIVE_NET_EDGE: strict positive measured all-in economics required before inventory work' };
   }
@@ -154,6 +172,7 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
   });
 
   if (!refreshed) return { kind: 'reject', reason: 'REJECT_RESIZE_REQUOTE: no fresh verified plan for authenticated inventory capacity' };
+  if (feeFreshnessRejection(refreshed)) return { kind: 'reject', reason: 'REJECT_RESIZED_FEE_EVIDENCE: fresh-sized plan lacks current fee evidence' };
   if (refreshed.buyVenue !== plan.buyVenue || refreshed.sellVenue !== plan.sellVenue) {
     logger.info('[InventoryConstrainedCex] Fresh best venue pair changed; preserving opportunity identity and returning to discovery', {
       component: 'InventoryConstrainedCexExecutionWiring',
@@ -185,7 +204,7 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     resizedNetProfitUsd: refreshed.netProfitUsd,
     buyQuoteSpendable: capacity.buyQuoteSpendable,
     sellBaseSpendable: capacity.sellBaseSpendable,
-    economicsAuthority: 'fresh_order_books_plus_authenticated_fees',
+    economicsAuthority: 'fresh_order_books_plus_bounded_current_fee_evidence',
     inventoryAuthority: 'authenticated_spendable_balance_after_reserves',
     bpsExecutionFloor: null,
     executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
@@ -220,6 +239,7 @@ export function ensureInventoryConstrainedCexExecutionWiring(): void {
   logger.info('[InventoryConstrainedCex] Inventory-aware CEX re-optimization installed', {
     component: 'InventoryConstrainedCexExecutionWiring',
     authenticatedBalances: true,
+    boundedFeeEvidenceAgeMs: maxFeeEvidenceAgeMs(),
     partialInventoryCanResize: true,
     zeroInventoryBypass: false,
     freshEconomicsRequiredAfterResize: true,
