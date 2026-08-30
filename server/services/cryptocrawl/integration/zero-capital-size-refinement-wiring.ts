@@ -4,6 +4,7 @@ import {
   type SupportedChain,
   type ZeroCapitalOpportunity,
 } from '../core/zero-capital-engine.js';
+import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import { stageManager } from '../governance/stage-management.js';
 import {
   buildAtomicNotionalCandidates,
@@ -41,20 +42,23 @@ function routeForOpportunity(
 
 function coarseSizes(route: ConfiguredZeroCapitalRoute): number[] {
   const seedUsd = Math.max(0.000001, Number(route.amountIn) / 1_000_000);
-  const stage = stageManager.getStageConfig();
   const stageCanExecute = stageManager.canExecuteTrades();
-  const configuredDiscoveryCeiling = Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000);
-  const discoveryCeiling = Math.max(
+  const configuredStageOneDiscoveryCeiling = Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000);
+  const stageOneDiscoveryCeiling = Math.max(
     seedUsd,
-    Math.min(10_000, Number.isFinite(configuredDiscoveryCeiling) && configuredDiscoveryCeiling > 0 ? configuredDiscoveryCeiling : 1_000),
+    Math.min(100_000_000, Number.isFinite(configuredStageOneDiscoveryCeiling) && configuredStageOneDiscoveryCeiling > 0
+      ? configuredStageOneDiscoveryCeiling
+      : 1_000),
   );
-  // Discovery sizing and execution sizing are deliberately separate. Stage 1 may
-  // independently quote larger shadow sizes to amortize fixed gas/provider costs,
-  // while StageManager still grants zero execution authority. Stage 2+ discovery
-  // remains bounded by both the current stage capital ceiling and the discovery cap.
-  const maximumNotionalUsd = stageCanExecute && stage.maxPositionSizeUSD > 0
-    ? Math.min(stage.maxPositionSizeUSD, discoveryCeiling)
-    : discoveryCeiling;
+  const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd;
+
+  // Stage 1 may independently quote a bounded shadow curve but cannot execute.
+  // Once execution is authorized, the current Profit Ladder rung—not the legacy
+  // StageManager position field or Stage-1 discovery setting—owns the search cap.
+  const maximumNotionalUsd = stageCanExecute
+    ? Math.max(seedUsd, ladderMaxNotionalUsd)
+    : stageOneDiscoveryCeiling;
+
   return buildAtomicNotionalCandidates({
     seedNotionalUsd: seedUsd,
     maximumNotionalUsd,
@@ -105,14 +109,10 @@ function blockTimestampFromOpportunity(opportunity: ZeroCapitalOpportunity): num
 
 function bestRefinementQuote(values: readonly QuotedZeroCapitalRoute[]): QuotedZeroCapitalRoute | null {
   const positives = values.filter(value => value.netProfit > 0n);
-  if (positives.length > 0) {
-    return positives.reduce((best, value) => value.netProfit > best.netProfit ? value : best);
-  }
+  if (positives.length > 0) return positives.reduce((best, value) => value.netProfit > best.netProfit ? value : best);
   let best: QuotedZeroCapitalRoute | null = null;
   for (const value of values) {
-    if (!best || value.netProfitBps > best.netProfitBps || (value.netProfitBps === best.netProfitBps && value.netProfit > best.netProfit)) {
-      best = value;
-    }
+    if (!best || value.netProfitBps > best.netProfitBps || (value.netProfitBps === best.netProfitBps && value.netProfit > best.netProfit)) best = value;
   }
   return best;
 }
@@ -120,9 +120,7 @@ function bestRefinementQuote(values: readonly QuotedZeroCapitalRoute[]): QuotedZ
 function measuredImprovement(best: QuotedZeroCapitalRoute, opportunity: ZeroCapitalOpportunity): boolean {
   if (best.netProfit > 0n) return best.netProfit > opportunity.expectedProfit;
   if (opportunity.expectedProfit > 0n) return false;
-  if (Number.isFinite(best.netProfitBps) && Number.isFinite(opportunity.netProfitBps)) {
-    return best.netProfitBps > opportunity.netProfitBps;
-  }
+  if (Number.isFinite(best.netProfitBps) && Number.isFinite(opportunity.netProfitBps)) return best.netProfitBps > opportunity.netProfitBps;
   return best.netProfit > opportunity.expectedProfit;
 }
 
@@ -158,14 +156,13 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     if (chain === 'europa' || coarseOpportunities.length === 0) return coarseOpportunities;
 
     const dynamic = dynamicRefinementPolicy(coarseOpportunities);
-    const ordered = [...coarseOpportunities]
-      .sort((left, right) => {
-        const leftPriority = refinementPriority(left);
-        const rightPriority = refinementPriority(right);
-        if (rightPriority !== leftPriority) return rightPriority - leftPriority;
-        if (left.expectedProfit === right.expectedProfit) return 0;
-        return left.expectedProfit > right.expectedProfit ? -1 : 1;
-      });
+    const ordered = [...coarseOpportunities].sort((left, right) => {
+      const leftPriority = refinementPriority(left);
+      const rightPriority = refinementPriority(right);
+      if (rightPriority !== leftPriority) return rightPriority - leftPriority;
+      if (left.expectedProfit === right.expectedProfit) return 0;
+      return left.expectedProfit > right.expectedProfit ? -1 : 1;
+    });
     const refinableIds = new Set(ordered.slice(0, dynamic.routes).map(item => item.id));
     const output: ZeroCapitalOpportunity[] = [];
     let improved = 0;
@@ -202,9 +199,7 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
       const settled = await Promise.allSettled(refinement.map(notionalUsd =>
         quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(notionalUsd) }, provider),
       ));
-      const measured = settled.flatMap(result =>
-        result.status === 'fulfilled' && result.value ? [result.value] : [],
-      );
+      const measured = settled.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
       const best = bestRefinementQuote(measured);
       if (!best || !measuredImprovement(best, opportunity)) {
         output.push(opportunity);
@@ -222,9 +217,7 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
       if (opportunity.expectedProfit <= 0n && refined.expectedProfit > 0n) rescuedPositive += 1;
       if (refined.expectedProfit <= 0n) {
         improvedObservationOnly += 1;
-        if (Number.isFinite(refined.netProfitBps) && Number.isFinite(opportunity.netProfitBps) && refined.netProfitBps > opportunity.netProfitBps) {
-          improvedNegativeBps += 1;
-        }
+        if (Number.isFinite(refined.netProfitBps) && Number.isFinite(opportunity.netProfitBps) && refined.netProfitBps > opportunity.netProfitBps) improvedNegativeBps += 1;
       }
     }
 
@@ -263,7 +256,8 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     hyperdynamicBpsSizing: true,
     stage1ShadowDiscoveryCeilingUsd: Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000),
     stage1ShadowDiscoveryExecutionAuthority: false,
-    stage2PlusDiscoveryBoundedByStageCapital: true,
+    stage2PlusDiscoveryBoundedByProfitLadder: true,
+    legacyStagePositionCapAuthoritative: false,
     independentFreshQuotesRequired: true,
     strictMeasuredImprovementRequired: true,
     positiveSelectionObjective: 'highest_measured_net_profit',
