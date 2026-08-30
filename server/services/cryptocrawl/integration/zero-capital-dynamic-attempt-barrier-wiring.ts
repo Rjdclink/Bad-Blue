@@ -7,10 +7,14 @@ import {
 } from '../core/zero-capital-engine.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
+import { buildDualFlashLoanReceiverPayload } from '../execution/adapters/dual-flashloan-receiver-builder.js';
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
+import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
 import type { FlashLoanProviderKind } from '../execution/adapters/flash-loan-provider-economics.js';
 
 const installed = new WeakSet<object>();
+
+type BarrierProviderKind = FlashLoanProviderKind | 'aave_balancer_dual';
 
 interface FundingDecisionLike {
   mode: 'sponsored' | 'native' | 'unavailable';
@@ -32,7 +36,7 @@ export interface DynamicAttemptBarrierDecision {
   approved: boolean;
   reason: string;
   fundingMode: FundingDecisionLike['mode'];
-  flashLoanProvider: FlashLoanProviderKind;
+  flashLoanProvider: BarrierProviderKind;
   exactCallPassed: boolean;
   exactGasEstimatePassed: boolean;
   estimatedGasUnits: bigint | null;
@@ -93,11 +97,14 @@ async function evaluateBarrier(
   const funding = await runtime.getGasFundingDecision(opportunity.chain);
   const provider = runtime.providers.get(opportunity.chain);
   const wallet = runtime.executionWallets.get(opportunity.chain);
-  const selection = flashLoanProviderSelectionRegistry.get(opportunity.id, observedAt);
-  const flashLoanProvider: FlashLoanProviderKind = selection?.provider || 'balancer_v2';
-  const receiver = flashLoanProvider === 'aave_v3'
-    ? selection?.receiver || null
-    : runtime.receiverManager.getReceiver(opportunity.chain);
+  const dualSelection = dualFlashLoanProviderSelectionRegistry.get(opportunity.id, observedAt);
+  const selection = dualSelection ? null : flashLoanProviderSelectionRegistry.get(opportunity.id, observedAt);
+  const flashLoanProvider: BarrierProviderKind = dualSelection ? 'aave_balancer_dual' : selection?.provider || 'balancer_v2';
+  const receiver = dualSelection
+    ? dualSelection.receiver
+    : selection?.provider === 'aave_v3'
+      ? selection.receiver
+      : runtime.receiverManager.getReceiver(opportunity.chain);
   const ageFraction = quoteAgeFraction(opportunity, observedAt);
   const barrierMultiple = dynamicBarrierMultiple(opportunity, ageFraction);
 
@@ -142,7 +149,48 @@ async function evaluateBarrier(
       profitToFailureExposureRatio: null,
     };
   }
-  if (selection?.provider === 'aave_v3') {
+
+  if (dualSelection) {
+    if (dualSelection.expiresAt <= observedAt) {
+      return {
+        ...base,
+        approved: false,
+        reason: 'Dual-provider evidence expired before pre-broadcast validation',
+        exactCallPassed: false,
+        exactGasEstimatePassed: false,
+        estimatedGasUnits: null,
+        failedAttemptExposure: 0n,
+        dynamicBarrier: 0n,
+        profitToFailureExposureRatio: null,
+      };
+    }
+    if (wallet && dualSelection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()) {
+      return {
+        ...base,
+        approved: false,
+        reason: 'Dual-provider receiver owner no longer matches execution wallet',
+        exactCallPassed: false,
+        exactGasEstimatePassed: false,
+        estimatedGasUnits: null,
+        failedAttemptExposure: 0n,
+        dynamicBarrier: 0n,
+        profitToFailureExposureRatio: null,
+      };
+    }
+    if (dualSelection.balancerAmount + dualSelection.aaveAmount !== opportunity.flashLoanAmount) {
+      return {
+        ...base,
+        approved: false,
+        reason: 'Dual-provider principal split no longer equals exact opportunity notional',
+        exactCallPassed: false,
+        exactGasEstimatePassed: false,
+        estimatedGasUnits: null,
+        failedAttemptExposure: 0n,
+        dynamicBarrier: 0n,
+        profitToFailureExposureRatio: null,
+      };
+    }
+  } else if (selection?.provider === 'aave_v3') {
     if (selection.expiresAt <= observedAt) {
       return {
         ...base,
@@ -170,6 +218,7 @@ async function evaluateBarrier(
       };
     }
   }
+
   if (funding.mode === 'unavailable' || !provider || !wallet || !receiver) {
     return {
       ...base,
@@ -188,11 +237,23 @@ async function evaluateBarrier(
   try {
     const plan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
       receiver,
-      provider: flashLoanProvider,
+      provider: selection?.provider || 'balancer_v2',
       profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || wallet.address,
       nowMs: Date.now(),
     });
-    payload = buildFlashLoanReceiverPayloadFromPlan(plan);
+    payload = dualSelection
+      ? buildDualFlashLoanReceiverPayload({
+          chain: plan.chain,
+          receiver,
+          loanToken: plan.loanToken,
+          balancerAmount: dualSelection.balancerAmount.toString(),
+          aaveAmount: dualSelection.aaveAmount.toString(),
+          minProfit: plan.minProfit,
+          profitRecipient: plan.profitRecipient,
+          steps: plan.steps,
+          gasLimit: Math.max(1_800_000, plan.gasLimit || 0),
+        })
+      : buildFlashLoanReceiverPayloadFromPlan(plan);
   } catch (error) {
     return {
       ...base,
@@ -245,10 +306,6 @@ async function evaluateBarrier(
   }
 
   const estimatedGasUnits = BigInt(gas.value.toString());
-  // Sponsored execution has no direct wallet gas exposure. Native execution uses
-  // the route quoter's input-token gas estimate as the amount at risk if a
-  // transaction is mined but the atomic trade reverts. It is a barrier, not an
-  // additive expected cost and it never changes reported net profit.
   const failedAttemptExposure = funding.mode === 'native'
     ? opportunity.estimatedGasCostInInputToken || 0n
     : 0n;
@@ -299,7 +356,8 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
   const originalExecuteAndRecord = runtime.executeAndRecord.bind(runtime);
   runtime.executeAndRecord = async (opportunity): Promise<void> => {
     const age = quoteAgeFraction(opportunity);
-    const selection = flashLoanProviderSelectionRegistry.get(opportunity.id);
+    const dualSelection = dualFlashLoanProviderSelectionRegistry.get(opportunity.id);
+    const selection = dualSelection ? null : flashLoanProviderSelectionRegistry.get(opportunity.id);
     const decision = await evaluateBarrier(runtime, opportunity).catch(error => ({
       opportunityId: opportunity.id,
       chain: opportunity.chain,
@@ -307,7 +365,7 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
       approved: false,
       reason: `Dynamic attempt barrier failed closed: ${error instanceof Error ? error.message : String(error)}`,
       fundingMode: 'unavailable' as const,
-      flashLoanProvider: selection?.provider || 'balancer_v2' as const,
+      flashLoanProvider: dualSelection ? 'aave_balancer_dual' as const : selection?.provider || 'balancer_v2' as const,
       exactCallPassed: false,
       exactGasEstimatePassed: false,
       estimatedGasUnits: null,
@@ -356,7 +414,7 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
     component: 'ZeroCapitalDynamicAttemptBarrier',
     exactEthCallRequired: true,
     exactGasEstimateRequired: true,
-    providerSpecificPayloadParity: ['balancer_v2', 'aave_v3'],
+    providerSpecificPayloadParity: ['balancer_v2', 'aave_v3', 'aave_balancer_dual'],
     nativeFailedAttemptExposureUsesMeasuredInputTokenGasEstimate: true,
     sponsoredGasExposureZeroOnlyWhenFundingModeIsSponsored: true,
     barrierIsNotAddedToReportedEconomics: true,
