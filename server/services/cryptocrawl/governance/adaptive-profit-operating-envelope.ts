@@ -1,4 +1,5 @@
 import { profitLadder } from './profit-ladder.js';
+import { getProfitLadderNotionalAuthority } from './profit-ladder-notional-authority.js';
 import { stageManager, type PersistedCryptaraExecutionEvidence } from './stage-management.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -17,6 +18,7 @@ export interface AdaptiveProfitOperatingEnvelope {
   remainingDailyProfitCapacityUsd: number;
   newExposureAllowed: boolean;
   recommendedMaxNotionalUsd: number;
+  ladderMaxNotionalUsd: number;
   stageMaxPositionUsd: number;
   maxExpectedSlippageBps: number;
   rolling50AverageProfitBps: number | null;
@@ -118,10 +120,6 @@ function operatingLadder(now: number, stage: number): {
   };
 }
 
-function requestedBaseNotional(): number {
-  return finitePositive(process.env.CRYPTO_ADAPTIVE_BASE_NOTIONAL_USD) ?? 1_000;
-}
-
 function slippageCapBps(): number {
   const configured = Number(process.env.CRYPTO_ADAPTIVE_MAX_EXPECTED_SLIPPAGE_BPS ?? 0.5);
   return Number.isFinite(configured) ? Math.max(0.05, Math.min(25, configured)) : 0.5;
@@ -134,26 +132,19 @@ function cycleBudget(averageBps: number | null, consecutiveProfitable: number, d
   return Math.max(10, Math.min(1_000, Math.floor(10 * (1.5 ** promotions))));
 }
 
-function performanceNotionalMultiplier(
-  bps: readonly number[],
-  consecutiveProfitable: number,
-  degraded: boolean,
-): number {
-  if (bps.length > 0 && bps[bps.length - 1] < 0) return 0.5;
-  if (degraded) return 0.5;
-  if (consecutiveProfitable >= 3) return Math.min(4, 1.2 ** Math.floor(consecutiveProfitable / 3));
-  return 1;
-}
-
 /**
  * Realized-performance operating envelope.
  *
  * The six-day operating ladder is an internal capital/risk policy, not an
  * exchange-surveillance or "red flag" model. It gates NEW exposure only from
  * terminal-confirmed realized P/L. Each ladder ceiling applies to its persisted
- * 24-hour operating day; rolling-24h P/L remains telemetry only. StageManager
- * remains authoritative for stage, position-size, drawdown, MC, pause and
- * kill-switch controls.
+ * 24-hour operating day; rolling-24h P/L remains telemetry only.
+ *
+ * StageManager remains authoritative for whether execution is allowed, drawdown,
+ * MC, pause and kill-switch controls. Position-size authority is the current
+ * Profit Ladder capital allowance; downstream inventory, liquidity, slippage and
+ * risk checks may reduce the actual executable size but the legacy static stage
+ * position value may not impose a second smaller ceiling.
  */
 export function getAdaptiveProfitOperatingEnvelope(now = Date.now()): AdaptiveProfitOperatingEnvelope {
   const state = stageManager.getState();
@@ -197,17 +188,10 @@ export function getAdaptiveProfitOperatingEnvelope(now = Date.now()): AdaptivePr
     && recent10AverageProfitBps < priorAverageProfitBps * 0.5;
   const consecutiveProfitableCycles = consecutiveWins(bps);
 
-  // The new operating profit ladder supersedes only daily new-exposure profit
-  // ceilings. Existing StageManager/tier position limits remain hard risk caps.
+  const notionalAuthority = getProfitLadderNotionalAuthority(now);
   const stageMaxPositionUsd = Math.max(0, Number(stage.maxPositionSizeUSD) || 0);
-  const alignedTierPositionCap = tier.stage === state.currentStage && tier.maxPositionSizeUSD > 0
-    ? tier.maxPositionSizeUSD
-    : stageMaxPositionUsd;
-  const hardPositionCap = Math.min(stageMaxPositionUsd, alignedTierPositionCap || stageMaxPositionUsd);
-  const dynamicMultiplier = performanceNotionalMultiplier(bps, consecutiveProfitableCycles, performanceDegraded);
-  const recommendedMaxNotionalUsd = state.currentStage === 1
-    ? 0
-    : Math.max(0, Math.min(hardPositionCap, requestedBaseNotional() * dynamicMultiplier));
+  const ladderMaxNotionalUsd = notionalAuthority.maxNotionalUsd;
+  const recommendedMaxNotionalUsd = state.currentStage === 1 ? 0 : ladderMaxNotionalUsd;
 
   return {
     evaluatedAt: now,
@@ -221,6 +205,7 @@ export function getAdaptiveProfitOperatingEnvelope(now = Date.now()): AdaptivePr
     remainingDailyProfitCapacityUsd,
     newExposureAllowed: state.currentStage > 1 && remainingDailyProfitCapacityUsd > 0,
     recommendedMaxNotionalUsd,
+    ladderMaxNotionalUsd,
     stageMaxPositionUsd,
     maxExpectedSlippageBps: slippageCapBps(),
     rolling50AverageProfitBps,
