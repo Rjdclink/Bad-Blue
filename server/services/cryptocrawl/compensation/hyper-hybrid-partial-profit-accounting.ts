@@ -4,7 +4,7 @@ import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { queueCexResidualReplan } from '../discovery/cex-residual-replan.js';
 import type { HyperHybridChildExecution } from '../execution/hyper-hybrid-cex-execution.js';
 import type { NormalizedRealizedExecution, RealizedExecutionEconomics } from '../execution/settlement-types.js';
-import { retainedProfitLedger } from './retained-profit-ledger.js';
+import { retainedProfitLedger, type ProfitSplitAllocation } from './retained-profit-ledger.js';
 import { rainbowProfitBridge } from './rainbow-profit-bridge.js';
 
 function sumKnown(values: Array<number | null | undefined>): number | null {
@@ -45,6 +45,12 @@ function accountingIdentity(children: readonly HyperHybridChildExecution[]): str
  * This is accounting/treasury evidence, not Cryptara/stage/rank evidence. A split
  * parent can therefore keep already-realized profit without manufacturing extra
  * promotion samples simply because one parent required many child orders.
+ *
+ * Residual reassessment is market/execution discovery, not treasury authority.
+ * It is therefore queued in a finally block after the accounting attempt so a
+ * transient accounting-store failure cannot suppress fresh residual discovery.
+ * The accounting error still propagates so durable profit persistence never
+ * silently degrades.
  */
 export async function persistHyperHybridPartialProfit(input: {
   parent: VerifiedArbitragePlan;
@@ -99,26 +105,35 @@ export async function persistHyperHybridPartialProfit(input: {
     orders,
   };
   const identity = accountingIdentity(completed);
-  const allocation = await retainedProfitLedger.recordTerminalSettlement({
-    source: 'master_pipeline',
-    opportunityId: `hyper-hybrid-partial:${input.parent.symbol}:${identity}`,
-    chain: 'cex',
-    symbol: input.parent.symbol,
-    strategy: 'verified_cex_arbitrage_split_completed_subset_accounting',
-    success: true,
-    expectedProfitUsd: settlement.predicted.profitUsd ?? 0,
-    realizedProfitUsd: realized.netProfitUsd,
-    feeUsd: realized.exchangeFeeUsd,
-    slippageBps: realized.slippageBps,
-    latencyMs: Math.max(...completed.map(child => Math.max(0, child.latencyMs))),
-    usedZeroCapital: false,
-    timestamp: settledAt,
-    settlementStatus: settlement.status,
-    settlementConfirmed: true,
-    provenance: [...settlement.provenance, `accounting_identity:${identity}`],
-    settlement,
-    notes: 'Partial parent: profitable terminal child subset persisted directly to treasury; excluded from Cryptara/stage/rank evidence. Remaining parent notional is independently re-assessed from fresh market evidence before any later execution.',
-  });
+  let allocation: ProfitSplitAllocation | null = null;
+  try {
+    allocation = await retainedProfitLedger.recordTerminalSettlement({
+      source: 'master_pipeline',
+      opportunityId: `hyper-hybrid-partial:${input.parent.symbol}:${identity}`,
+      chain: 'cex',
+      symbol: input.parent.symbol,
+      strategy: 'verified_cex_arbitrage_split_completed_subset_accounting',
+      success: true,
+      expectedProfitUsd: settlement.predicted.profitUsd ?? 0,
+      realizedProfitUsd: realized.netProfitUsd,
+      feeUsd: realized.exchangeFeeUsd,
+      slippageBps: realized.slippageBps,
+      latencyMs: Math.max(...completed.map(child => Math.max(0, child.latencyMs))),
+      usedZeroCapital: false,
+      timestamp: settledAt,
+      settlementStatus: settlement.status,
+      settlementConfirmed: true,
+      provenance: [...settlement.provenance, `accounting_identity:${identity}`],
+      settlement,
+      notes: 'Partial parent: profitable terminal child subset persisted directly to treasury; excluded from Cryptara/stage/rank evidence. Remaining parent notional is independently re-assessed from fresh market evidence before any later execution.',
+    });
+  } finally {
+    queueCexResidualReplan({
+      symbol: input.parent.symbol,
+      remainingNotionalUsd,
+      sourceParentNotionalUsd: input.parent.notionalUsd,
+    });
+  }
 
   if (allocation?.recorded) {
     logger.info('[CEX HyperHybrid] Partial child profit persisted without rank inflation', {
@@ -131,12 +146,8 @@ export async function persistHyperHybridPartialProfit(input: {
       accountingIdentity: identity,
       rankAuthority: false,
       profitLadderProgressionAuthority: false,
+      residualReplanIndependentOfTreasuryPersistence: true,
     });
     void rainbowProfitBridge.wake('terminal_profit_recorded');
-    queueCexResidualReplan({
-      symbol: input.parent.symbol,
-      remainingNotionalUsd,
-      sourceParentNotionalUsd: input.parent.notionalUsd,
-    });
   }
 }
