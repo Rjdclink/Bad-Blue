@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import logger from '../../../logger.js';
 import type { QuoteVenue, VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { persistHyperHybridPartialProfit } from '../compensation/hyper-hybrid-partial-profit-accounting.js';
 import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import {
   getCoinbaseAdvancedProductConstraints,
@@ -509,6 +510,28 @@ export async function executeHyperHybridCexPlan(input: {
   const stopReason = reasons.length > 0 ? reasons.join(';') : undefined;
 
   const result = aggregateResult(input.parent, plannedChildren, childExecutions, stopReason);
+  try {
+    await persistHyperHybridPartialProfit({
+      parent: input.parent,
+      children: childExecutions,
+      parentSucceeded: result.success,
+    });
+  } catch (error) {
+    // Never convert already-settled child executions into a synthetic execution
+    // failure. The treasury ledger performs bounded retries; surface any final
+    // persistence failure loudly for reconciliation while preserving market truth.
+    logger.error('[CEX HyperHybrid] Partial child profit persistence failed after settlement', {
+      component: 'HyperHybridCexExecution',
+      symbol: input.parent.symbol,
+      buyVenue: input.parent.buyVenue,
+      sellVenue: input.parent.sellVenue,
+      completedNotionalUsd: result.completedNotionalUsd,
+      remainingNotionalUsd: result.remainingNotionalUsd,
+      error: error instanceof Error ? error.message : String(error),
+      realizedExecutionTruthPreserved: true,
+      retryExecutionAuthorizedByPersistenceFailure: false,
+    });
+  }
   logger.info('[CEX HyperHybrid] Parent/child parallel batch completed', {
     component: 'HyperHybridCexExecution',
     symbol: input.parent.symbol,
