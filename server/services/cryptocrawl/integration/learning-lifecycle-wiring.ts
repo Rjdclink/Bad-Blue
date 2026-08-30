@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import '../learning/supabase-compatibility.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { deepLearningStore } from '../learning/deep-learning-store.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
@@ -74,6 +75,7 @@ export function ensureLearningLifecycleWiring(): void {
     stagesOneToThree: 'bounded_runtime_feedback_only',
     stageFourPlus: 'primary_postgresql_hydration_plus_legacy_optional_store',
     measuredOutcomePersistence: 'primary_postgresql',
+    legacySupabaseMirrorEnvironmentNormalizedBeforeStoreImport: true,
     adaptiveTopologyFeedback: 'terminal_realized_bps_only',
     settlementProfitCalibration: 'terminal_confirmed_expected_vs_realized_only',
     settlementCalibrationExecutionAuthority: false,
