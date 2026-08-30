@@ -10,10 +10,6 @@ import { stageManager } from '../governance/stage-management.js';
 import { getTreasuryExecutionBarrier } from '../governance/treasury-execution-barrier.js';
 import { GovernanceError, type GovernanceAction } from '../governance/types.js';
 import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
-import {
-  ensureCryptaraAdaptiveStrategyHydrated,
-  getCryptaraAdaptiveStrategySnapshot,
-} from '../optimization/cryptara-adaptive-strategy-state.js';
 
 const ADAPTIVE_MARK = Symbol.for('cryptocrawl.adaptive-profit-operations');
 
@@ -47,9 +43,7 @@ function discoveryBoundedNotional(requested: number): number {
     return Math.max(requested, discoveryCeiling);
   }
   if (!(envelope.recommendedMaxNotionalUsd > 0)) return requested;
-  const adaptive = getCryptaraAdaptiveStrategySnapshot();
-  const bias = Math.max(0.10, Math.min(1, Number(adaptive.notionalBias) || 1));
-  return Math.max(1e-6, envelope.recommendedMaxNotionalUsd * bias);
+  return Math.max(1e-6, envelope.recommendedMaxNotionalUsd);
 }
 
 function planNeedsRefinement(plan: VerifiedArbitragePlan): { needed: boolean; scale: number; reasons: string[] } {
@@ -82,7 +76,6 @@ function planWithinOperatingEnvelope(plan: VerifiedArbitragePlan): boolean {
 }
 
 export function ensureAdaptiveProfitOperationsWiring(): void {
-  void ensureCryptaraAdaptiveStrategyHydrated();
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
     evaluateOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
     evaluateMany: (
@@ -217,7 +210,7 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     maxExpectedSlippageBps: envelope.maxExpectedSlippageBps,
     recommendedCycleBudget: envelope.recommendedCycleBudget,
     performanceDegraded: envelope.performanceDegraded,
-    discoveryNotionalPolicy: 'stage1_shadow_measurement_ceiling_then_profit_ladder_max_times_bounded_cryptara_bias',
+    discoveryNotionalPolicy: 'stage1_shadow_measurement_ceiling_then_full_current_profit_ladder_ceiling',
     stage1CexDiscoveryMaxNotionalUsd: discoveryBoundedNotional(positiveFinite(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD, 200)),
     stage1DiscoveryExecutionAuthority: false,
     evaluateOnceCanIncreaseCallerNotional: false,
