@@ -8,7 +8,7 @@ const OKX_BASE_URL = 'https://us.okx.com';
 
 export class OkxApiError extends Error {
   constructor(readonly code: string, readonly path: string, message: string) {
-    super(message);
+    super(['58207', '58239'].includes(code) ? `Withdrawal permission requires manual review: ${message}` : message);
     this.name = 'OkxApiError';
   }
 }
