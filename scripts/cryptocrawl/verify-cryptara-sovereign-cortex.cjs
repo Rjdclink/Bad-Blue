@@ -51,6 +51,9 @@ const requiredCortex = [
   'simulationsCanRaiseRank: false',
   'shadowTradesCanRaiseRank: false',
   'strategyProjectionCanRaiseRank: false',
+  "adaptiveEditScope: 'predictive_prefetch_cadence_only'",
+  "analyst: 'learn_and_diagnose_only_no_edits'",
+  'executionStrategyMutation: false',
   'executionAuthority: false',
   'syntheticEvidenceAllowed: false',
 ];
@@ -124,11 +127,14 @@ const requiredParallel = [
   'TaskIntensity.MODERATE',
   'priority: TaskPriority.HIGH',
   'priority: TaskPriority.MEDIUM',
+  'marketTask.metadata.maxRetries = 0',
+  'optimizationTask.metadata.maxRetries = 0',
   'helperEventBridgeInstalled',
   'currentQuoteAgeMs(context',
   "plan.liquidity.status === 'measured'",
   '!!plan.feeEvidence?.buy && !!plan.feeEvidence?.sell',
   'context.plan.netProfitUsd <= 0) return',
+  'helperRetries: 0',
   'staleFrameSubstitutionAllowed: false',
   'hotPathNetworkRequestsAdded: false',
   'writeAuthority: false',
@@ -172,4 +178,4 @@ if (!runtime.includes('ensureCryptaraSovereignCortexWiring();')) throw new Error
 if (!runtime.includes('ensureCryptaraPredictivePrefetchWiring();')) throw new Error('[cryptara-sovereign-cortex] canonical predictive prefetch wiring missing');
 if (!runtime.includes('cryptaraCortexExecutionAuthority: false')) throw new Error('[cryptara-sovereign-cortex] runtime execution-authority boundary missing');
 
-console.log('[cryptara-sovereign-cortex] PASS: terminal-only rank evidence, Strategist-minimum proven prefetch edits, ordered market/profit priorities, cleaned parallel cognition, and bounded predictive prefetch invariants preserved');
+console.log('[cryptara-sovereign-cortex] PASS: terminal-only rank evidence, Strategist-minimum proven prefetch edits, ordered market/profit priorities, zero-retry parallel cognition, and bounded predictive prefetch invariants preserved');
