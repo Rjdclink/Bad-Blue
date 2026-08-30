@@ -1,6 +1,8 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
-import { resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
+import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
+import { resolveExecutionWalletAddress, resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
+import { setTreasuryRestartSweepBarrier } from '../governance/treasury-execution-barrier.js';
 
 const SYSTEM_KEY = 'cryptocrawler';
 const HEARTBEAT_MS = 15_000;
@@ -9,10 +11,17 @@ const RAILWAY_DEPLOYMENT_ID = (process.env.RAILWAY_DEPLOYMENT_ID || '').trim();
 const RAILWAY_SERVICE_ID = (process.env.RAILWAY_SERVICE_ID || '').trim();
 const RAILWAY_ENVIRONMENT_ID = (process.env.RAILWAY_ENVIRONMENT_ID || '').trim();
 const DESTINATION = resolveTerminalPayoutAddress() || '';
+const EXECUTION_WALLET_DESTINATION = resolveExecutionWalletAddress().address || '';
+const FALLBACK_DESTINATION = EXECUTION_WALLET_DESTINATION && EXECUTION_WALLET_DESTINATION.toLowerCase() !== DESTINATION.toLowerCase()
+  ? EXECUTION_WALLET_DESTINATION
+  : '';
+
+type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 'MANUAL_REVIEW';
 
 let timer: NodeJS.Timeout | null = null;
 let heartbeatInFlight: Promise<void> | null = null;
 let signalInstalled = false;
+let workerSecretsSynchronized = false;
 let consecutiveHeartbeatFailures = 0;
 let heartbeatDegradedUntil = 0;
 
@@ -23,10 +32,9 @@ function databaseBackoffMs(): number {
 }
 
 const sigtermCandidateListener = (): void => {
-  // SIGTERM intent remains a direct best-effort safety write and is never
-  // suppressed by routine-heartbeat backoff.
+  setTreasuryRestartSweepBarrier(true, 'railway_sigterm_restart_drain');
   void markTerminalSweepCandidate('SIGTERM').catch(error => {
-    logger.warn('[Treasury] Terminal candidate persistence deferred', {
+    logger.warn('[Treasury] Restart-drain intent persistence deferred', {
       component: 'TerminalTreasuryLifecycle',
       error: error instanceof Error ? error.message : String(error),
     });
@@ -39,16 +47,25 @@ async function upsertVaultSecret(name: string, value: string): Promise<void> {
   const id = existing.rows[0]?.id ? String(existing.rows[0].id) : '';
   if (id) {
     await pool.query('SELECT vault.update_secret($1::uuid, $2, $3, $4)', [
-      id,
-      value,
-      name,
-      'CryptoCrawler terminal treasury worker secret synchronized from Railway runtime',
+      id, value, name, 'CryptoCrawler treasury worker secret synchronized from Railway runtime',
     ]);
   } else {
     await pool.query('SELECT vault.create_secret($1, $2, $3)', [
-      value,
-      name,
-      'CryptoCrawler terminal treasury worker secret synchronized from Railway runtime',
+      value, name, 'CryptoCrawler treasury worker secret synchronized from Railway runtime',
+    ]);
+  }
+}
+
+async function syncOptionalVaultSecret(name: string, value: string): Promise<void> {
+  const existing = await pool.query('SELECT id FROM vault.secrets WHERE name=$1 LIMIT 1', [name]);
+  const id = existing.rows[0]?.id ? String(existing.rows[0].id) : '';
+  if (id) {
+    await pool.query('SELECT vault.update_secret($1::uuid, $2, $3, $4)', [
+      id, value, name, 'CryptoCrawler optional treasury worker secret synchronized from Railway runtime',
+    ]);
+  } else if (value) {
+    await pool.query('SELECT vault.create_secret($1, $2, $3)', [
+      value, name, 'CryptoCrawler optional treasury worker secret synchronized from Railway runtime',
     ]);
   }
 }
@@ -63,85 +80,160 @@ async function syncWorkerSecrets(): Promise<void> {
     ['cryptocrawler_supabase_service_key', (process.env.SUPABASE_SERVICE_KEY || '').trim()],
   ];
   for (const [name, value] of secrets) await upsertVaultSecret(name, value);
+  await syncOptionalVaultSecret('cryptocrawler_fallback_wallet', FALLBACK_DESTINATION);
+}
+
+async function readTreasuryState(): Promise<TreasuryState> {
+  const result = await pool.query(
+    `SELECT desired_state FROM public.cryptocrawler_terminal_sweep_control WHERE system_key=$1`,
+    [SYSTEM_KEY],
+  );
+  return String(result.rows[0]?.desired_state || 'RUNNING') as TreasuryState;
 }
 
 async function heartbeatOnce(): Promise<void> {
-  if (!isDatabaseConfigured) return;
-  if (Date.now() < heartbeatDegradedUntil) return;
+  if (!isDatabaseConfigured || Date.now() < heartbeatDegradedUntil) return;
   if (heartbeatInFlight) return heartbeatInFlight;
+
   heartbeatInFlight = (async () => {
     try {
+      // Secret synchronization is part of the durable heartbeat rather than a
+      // one-shot startup precondition. A transient Supabase timeout therefore
+      // cannot permanently leave the independent worker without current Railway
+      // credentials or the WALLET_PRIVATE_KEY-derived public fallback address.
+      if (!workerSecretsSynchronized) {
+        await syncWorkerSecrets();
+        workerSecretsSynchronized = true;
+      }
+
+      const state = await readTreasuryState();
+
+      if (state === 'TERMINATE_AND_SWEEP' || state === 'SWEEPING') {
+        // A successor process must not cancel the previous deployment's restart
+        // drain and must not refresh last_seen_active_at. The central governance
+        // barrier blocks only NEW exposure while cancel/hedge/settle remain live.
+        setTreasuryRestartSweepBarrier(true, `treasury_state:${state}`);
+        void rainbowProfitBridge.wake('terminal_candidate');
+        consecutiveHeartbeatFailures = 0;
+        heartbeatDegradedUntil = 0;
+        return;
+      }
+
+      if (state === 'MANUAL_REVIEW') {
+        setTreasuryRestartSweepBarrier(true, 'treasury_manual_review');
+        consecutiveHeartbeatFailures = 0;
+        heartbeatDegradedUntil = 0;
+        return;
+      }
+
+      if (state === 'SWEPT') {
+        // The restart drain is complete. A surviving/new deployment can now
+        // reopen the lifecycle for future trading and future restart drains.
+        await pool.query(
+          `UPDATE public.cryptocrawler_terminal_sweep_control
+           SET desired_state='RUNNING',
+               terminal_epoch=NULL,
+               terminal_detection_not_before=NULL,
+               intent_source='successor_after_confirmed_restart_sweep',
+               active_successor_deployment_id=NULLIF($2,''),
+               last_observed_deployment_id=NULLIF($2,''),
+               last_observed_deployment_status='SUCCESS',
+               last_seen_active_at=now(),
+               destination_address=COALESCE(NULLIF($3,''), destination_address),
+               last_error=NULL,
+               updated_at=now()
+           WHERE system_key=$1 AND desired_state='SWEPT'`,
+          [SYSTEM_KEY, RAILWAY_DEPLOYMENT_ID, DESTINATION],
+        );
+        setTreasuryRestartSweepBarrier(false);
+        consecutiveHeartbeatFailures = 0;
+        heartbeatDegradedUntil = 0;
+        return;
+      }
+
       await pool.query(
         `UPDATE public.cryptocrawler_terminal_sweep_control
-         SET desired_state = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN 'RUNNING' ELSE desired_state END,
-             terminal_epoch = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE terminal_epoch END,
-             intent_source = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN 'successor_runtime_recovered' ELSE intent_source END,
-             active_successor_deployment_id = NULLIF($2,''),
-             last_observed_deployment_id = NULLIF($2,''),
-             last_observed_deployment_status = 'SUCCESS',
-             last_seen_active_at = now(),
-             terminal_detection_not_before = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE terminal_detection_not_before END,
-             destination_address = COALESCE(NULLIF($3,''), destination_address),
-             last_error = CASE WHEN desired_state='TERMINATE_AND_SWEEP' THEN NULL ELSE last_error END,
-             updated_at = now()
-         WHERE system_key=$1 AND desired_state IN ('RUNNING','TERMINATE_AND_SWEEP')`,
+         SET active_successor_deployment_id=NULLIF($2,''),
+             last_observed_deployment_id=NULLIF($2,''),
+             last_observed_deployment_status='SUCCESS',
+             last_seen_active_at=now(),
+             destination_address=COALESCE(NULLIF($3,''), destination_address),
+             updated_at=now()
+         WHERE system_key=$1 AND desired_state='RUNNING'`,
         [SYSTEM_KEY, RAILWAY_DEPLOYMENT_ID, DESTINATION],
       );
+      setTreasuryRestartSweepBarrier(false);
       consecutiveHeartbeatFailures = 0;
       heartbeatDegradedUntil = 0;
     } catch (error) {
+      workerSecretsSynchronized = false;
       consecutiveHeartbeatFailures += 1;
       heartbeatDegradedUntil = Date.now() + databaseBackoffMs();
       throw error;
     }
   })().finally(() => { heartbeatInFlight = null; });
+
   return heartbeatInFlight;
+}
+
+function logHeartbeatFailure(error: unknown): void {
+  logger.warn('[Treasury] Lifecycle heartbeat deferred', {
+    component: 'TerminalTreasuryLifecycle',
+    error: error instanceof Error ? error.message : String(error),
+    consecutiveHeartbeatFailures,
+    databaseRetryNotBeforeMs: Math.max(0, heartbeatDegradedUntil - Date.now()),
+    workerSecretsSynchronized,
+  });
 }
 
 export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
   if (!isDatabaseConfigured || timer) return;
   if (!DESTINATION) {
-    logger.warn('[Treasury] Terminal payout wallet is not configured; runtime retention remains active and terminal sweep is fail-closed', {
-      component: 'TerminalTreasuryLifecycle',
-      destinationVariable: 'CRYPTO_PROFIT_WALLET_ADDRESS',
+    logger.warn('[Treasury] MetaMask payout wallet is not configured; payouts and restart drain fail closed', {
+      component: 'TerminalTreasuryLifecycle', destinationVariable: 'CRYPTO_PROFIT_WALLET_ADDRESS',
     });
   }
-  await syncWorkerSecrets();
-  await heartbeatOnce();
+
   if (!signalInstalled && RAILWAY_DEPLOYMENT_ID) {
     process.prependListener('SIGTERM', sigtermCandidateListener);
     signalInstalled = true;
   }
-  timer = setInterval(() => void heartbeatOnce().catch(error => {
-    logger.warn('[Treasury] Lifecycle heartbeat deferred', {
-      component: 'TerminalTreasuryLifecycle',
-      error: error instanceof Error ? error.message : String(error),
-      consecutiveHeartbeatFailures,
-      databaseRetryNotBeforeMs: Math.max(0, heartbeatDegradedUntil - Date.now()),
-    });
-  }), HEARTBEAT_MS);
+
+  // Install the retry heartbeat before the first database attempt. A transient
+  // startup outage must not permanently disable secret synchronization or the
+  // restart-drain lifecycle for this otherwise healthy Railway process.
+  timer = setInterval(() => void heartbeatOnce().catch(logHeartbeatFailure), HEARTBEAT_MS);
   timer.unref?.();
-  logger.info('[Treasury] Persistent terminal-sweep lifecycle online', {
+  await heartbeatOnce().catch(logHeartbeatFailure);
+
+  logger.info('[Treasury] Persistent treasury lifecycle online', {
     component: 'TerminalTreasuryLifecycle',
     deploymentIdPresent: Boolean(RAILWAY_DEPLOYMENT_ID),
     serviceIdPresent: Boolean(RAILWAY_SERVICE_ID),
     environmentIdPresent: Boolean(RAILWAY_ENVIRONMENT_ID),
     terminalPayoutConfigured: Boolean(DESTINATION),
+    fallbackPayoutConfigured: Boolean(FALLBACK_DESTINATION),
+    fallbackDerivedFromCanonicalExecutionWallet: Boolean(FALLBACK_DESTINATION),
+    workerSecretSynchronizationRetryable: true,
+    workerSecretsSynchronized,
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
-    runtimePolicy: 'retain_and_compound',
-    routineDatabaseFailureBackoff: 'bounded_exponential',
-    sigtermIntentWriteBackoffBypass: true,
+    runtimePolicy: 'first_three_fixed_60_percent_then_persisted_dynamic_55_to_65_percent_eth_payout_remainder_retained_restart_drains_remaining_treasury',
+    successorCancelsRestartSweep: false,
+    successorNewExposureBlockedDuringSweep: true,
+    settlementHedgeFlatteningStillAllowed: true,
+    singlePayoutAuthority: 'supabase_worker_okx_only',
+    fallbackActivation: 'confirmed_primary_withdrawal_terminal_failure_only',
+    staleFallbackSecretAllowed: false,
   });
 }
 
 export async function markTerminalSweepCandidate(signal: string): Promise<void> {
-  if (!isDatabaseConfigured) return;
-  if (signal !== 'SIGTERM' || !RAILWAY_DEPLOYMENT_ID) return;
+  if (!isDatabaseConfigured || signal !== 'SIGTERM' || !RAILWAY_DEPLOYMENT_ID) return;
   await pool.query(
     `UPDATE public.cryptocrawler_terminal_sweep_control
      SET desired_state='TERMINATE_AND_SWEEP',
          terminal_epoch=gen_random_uuid(),
-         intent_source='railway_sigterm_candidate',
+         intent_source='railway_sigterm_restart_drain',
          last_observed_deployment_id=$2,
          last_observed_deployment_status='REMOVING',
          active_successor_deployment_id=NULL,
@@ -152,11 +244,13 @@ export async function markTerminalSweepCandidate(signal: string): Promise<void> 
      WHERE system_key=$1 AND desired_state='RUNNING'`,
     [SYSTEM_KEY, RAILWAY_DEPLOYMENT_ID, TERMINAL_GRACE_SECONDS],
   );
+  void rainbowProfitBridge.wake('terminal_candidate');
 }
 
 export function stopTerminalTreasuryLifecycle(): void {
   if (timer) clearInterval(timer);
   timer = null;
+  workerSecretsSynchronized = false;
   if (signalInstalled) {
     process.removeListener('SIGTERM', sigtermCandidateListener);
     signalInstalled = false;

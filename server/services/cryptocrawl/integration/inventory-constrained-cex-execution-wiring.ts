@@ -10,6 +10,8 @@ import {
 } from '../execution/cex-settlement.js';
 
 const installed = new WeakSet<object>();
+const balanceCache = new Map<ExecutableCexVenue, { expiresAt: number; balances: Record<string, string> }>();
+const balanceInFlight = new Map<ExecutableCexVenue, Promise<Record<string, string>>>();
 
 type BalanceCapableAdapter = CexSettlementAdapter & {
   getBalances: () => Promise<Record<string, string>>;
@@ -42,8 +44,57 @@ function snapshot(venue: InventoryVenue, asset: string): InventorySnapshot | nul
 function spendable(value: InventorySnapshot | null): number {
   if (!value) return 0;
   return Math.max(0,
-    value.available - value.reserved - value.pendingOrder - value.pendingTransfer - value.minimumReserve,
+    value.available - value.reserved - value.payoutReserved - value.pendingOrder - value.pendingTransfer - value.minimumReserve,
   );
+}
+
+function balanceCacheMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_CEX_BALANCE_CACHE_MS || 5_000);
+  return Number.isFinite(parsed) ? Math.max(500, Math.min(15_000, Math.trunc(parsed))) : 5_000;
+}
+
+function inventoryRetryDelaysMs(): number[] {
+  const configured = (process.env.CRYPTOCRAWL_CEX_INVENTORY_RETRY_DELAYS_MS || '5000,10000,20000')
+    .split(',')
+    .map(value => Number(value.trim()))
+    .filter(value => Number.isFinite(value) && value >= 0)
+    .slice(0, 3);
+  return configured.length > 0 ? configured : [5_000, 10_000, 20_000];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function getFreshAuthenticatedBalances(
+  venue: ExecutableCexVenue,
+  adapter: BalanceCapableAdapter,
+): Promise<Record<string, string>> {
+  const cached = balanceCache.get(venue);
+  if (cached && cached.expiresAt > Date.now()) return { ...cached.balances };
+  if (cached) balanceCache.delete(venue);
+  const existing = balanceInFlight.get(venue);
+  if (existing) return { ...(await existing) };
+
+  const work = (async () => {
+    const delays = inventoryRetryDelaysMs();
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      try {
+        const balances = await adapter.getBalances();
+        balanceCache.set(venue, { expiresAt: Date.now() + balanceCacheMs(), balances: { ...balances } });
+        return balances;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= delays.length) break;
+        await sleep(delays[attempt]);
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError || 'authenticated balance query failed'));
+  })().finally(() => balanceInFlight.delete(venue));
+
+  balanceInFlight.set(venue, work);
+  return { ...(await work) };
 }
 
 function maxFeeEvidenceAgeMs(): number {
@@ -62,13 +113,14 @@ function feeFreshnessRejection(plan: VerifiedArbitragePlan): string | null {
   return null;
 }
 
-function buyFeeRate(plan: VerifiedArbitragePlan): number | null {
-  const feeBps = Number(plan.feeEvidence?.buy.takerFeeBps);
-  if (Number.isFinite(feeBps) && feeBps >= 0) return feeBps / 10_000;
-  if (plan.notionalUsd > 0 && Number.isFinite(plan.costs.buyFeeUsd) && plan.costs.buyFeeUsd >= 0) {
-    return plan.costs.buyFeeUsd / plan.notionalUsd;
+function buyFundingFeeRate(plan: VerifiedArbitragePlan): number | null {
+  if (plan.notionalUsd > 0 && Number.isFinite(plan.costs.buyFeeUsd)) {
+    // A maker rebate cannot be spent before the fill occurs. Treat a negative
+    // execution fee as zero pre-trade funding burden rather than as inventory.
+    return Math.max(0, plan.costs.buyFeeUsd / plan.notionalUsd);
   }
-  return null;
+  const feeBps = Number(plan.feeEvidence?.buy.takerFeeBps);
+  return Number.isFinite(feeBps) && feeBps >= 0 ? feeBps / 10_000 : null;
 }
 
 function inventoryCapacity(plan: VerifiedArbitragePlan): {
@@ -85,8 +137,8 @@ function inventoryCapacity(plan: VerifiedArbitragePlan): {
   const buyQuoteSpendable = spendable(snapshot(buyVenue, pair.quote));
   const sellBaseSpendable = spendable(snapshot(sellVenue, pair.base));
   const buyPrice = plan.buyLimitPrice ?? plan.buyAsk;
-  const feeRate = buyFeeRate(plan);
-  if (!(buyPrice > 0) || feeRate === null || feeRate < 0) return null;
+  const feeRate = buyFundingFeeRate(plan);
+  if (!(buyPrice > 0) || feeRate === null) return null;
 
   const fullRequiredQuote = plan.baseQty * buyPrice * (1 + feeRate);
   const fullPlanFundable = buyQuoteSpendable + 1e-12 >= fullRequiredQuote && sellBaseSpendable + 1e-12 >= plan.baseQty;
@@ -117,8 +169,8 @@ async function reconcilePairBalances(plan: VerifiedArbitragePlan): Promise<boole
   if (!buyAdapter?.getBalances || !sellAdapter?.getBalances) return false;
   try {
     const [buyBalances, sellBalances] = await Promise.all([
-      buyAdapter.getBalances(),
-      sellAdapter.getBalances(),
+      getFreshAuthenticatedBalances(buyVenue, buyAdapter),
+      getFreshAuthenticatedBalances(sellVenue, sellAdapter),
     ]);
     await Promise.all([
       cexInventoryLedger.reconcile(buyVenue as InventoryVenue, buyBalances),
@@ -126,11 +178,14 @@ async function reconcilePairBalances(plan: VerifiedArbitragePlan): Promise<boole
     ]);
     return true;
   } catch (error) {
-    logger.warn('[InventoryConstrainedCex] Authenticated balance refresh failed; execution rejected before expensive downstream admission', {
+    logger.warn('[InventoryConstrainedCex] Authenticated balance refresh failed; stale last-known inventory retained for telemetry only and execution rejected', {
       component: 'InventoryConstrainedCexExecutionWiring',
       symbol: plan.symbol,
       buyVenue: plan.buyVenue,
       sellVenue: plan.sellVenue,
+      cacheMs: balanceCacheMs(),
+      retryDelaysMs: inventoryRetryDelaysMs(),
+      staleFallbackExecutionAuthority: false,
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
@@ -151,19 +206,24 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
 
   const capacity = inventoryCapacity(plan);
   if (!capacity) return { kind: 'reject', reason: 'REJECT_INVENTORY_EVIDENCE: inventory capacity could not be measured for this spot pair' };
-  if (capacity.fullPlanFundable) return { kind: 'execute', plan, resized: false };
   if (!(capacity.maxFundableNotionalUsd > 0) || capacity.buyQuoteSpendable <= 0 || capacity.sellBaseSpendable <= 0) {
     return { kind: 'reject', reason: 'REJECT_BALANCE_INSUFFICIENT: no positive two-sided authenticated inventory capacity' };
   }
 
+  // Balance I/O and rate-limit backoff can outlive the quote that entered this
+  // wrapper. Always re-quote after reconciliation, even when the original plan
+  // was fully fundable, so a slow inventory check can never authorize stale edge.
   const maxQuoteAgeMs = Math.max(250, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
+  const freshBound = capacity.fullPlanFundable
+    ? Math.min(plan.requestedNotionalUsd || plan.notionalUsd, capacity.maxFundableNotionalUsd)
+    : capacity.maxFundableNotionalUsd;
   const refreshed = await arbitrageVerifier.evaluateOnce({
     symbol: plan.symbol,
-    notionalUsd: capacity.maxFundableNotionalUsd,
+    notionalUsd: freshBound,
     maxQuoteAgeMs,
     minNetProfitUsd: 0,
   }).catch(error => {
-    logger.warn('[InventoryConstrainedCex] Fresh inventory-bounded economics evaluation failed closed', {
+    logger.warn('[InventoryConstrainedCex] Fresh post-balance economics evaluation failed closed', {
       component: 'InventoryConstrainedCexExecutionWiring',
       symbol: plan.symbol,
       error: error instanceof Error ? error.message : String(error),
@@ -171,7 +231,7 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     return null;
   });
 
-  if (!refreshed) return { kind: 'reject', reason: 'REJECT_RESIZE_REQUOTE: no fresh verified plan for authenticated inventory capacity' };
+  if (!refreshed) return { kind: 'reject', reason: 'REJECT_RESIZE_REQUOTE: no fresh verified plan after authenticated inventory reconciliation' };
   if (feeFreshnessRejection(refreshed)) return { kind: 'reject', reason: 'REJECT_RESIZED_FEE_EVIDENCE: fresh-sized plan lacks current fee evidence' };
   if (refreshed.buyVenue !== plan.buyVenue || refreshed.sellVenue !== plan.sellVenue) {
     logger.info('[InventoryConstrainedCex] Fresh best venue pair changed; preserving opportunity identity and returning to discovery', {
@@ -185,7 +245,7 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     return { kind: 'reject', reason: 'REJECT_VENUE_DRIFT: fresh inventory-bounded optimization changed venue pair' };
   }
   if (!Number.isFinite(refreshed.netProfitUsd) || refreshed.netProfitUsd <= 0) {
-    return { kind: 'reject', reason: 'REJECT_RESIZED_NEGATIVE_NET: resized fresh plan is not strictly profitable after measured costs' };
+    return { kind: 'reject', reason: 'REJECT_RESIZED_NEGATIVE_NET: fresh post-balance plan is not strictly profitable after measured costs' };
   }
 
   const refreshedCapacity = inventoryCapacity(refreshed);
@@ -193,7 +253,7 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     return { kind: 'reject', reason: 'REJECT_RESIZED_INVENTORY_DRIFT: refreshed size exceeds authenticated spendable capacity' };
   }
 
-  logger.info('[InventoryConstrainedCex] Profitable CEX plan resized to authenticated spendable inventory', {
+  logger.info('[InventoryConstrainedCex] Profitable CEX plan re-optimized to authenticated spendable inventory after rate-safe balance reconciliation', {
     component: 'InventoryConstrainedCexExecutionWiring',
     symbol: plan.symbol,
     venuePair: `${plan.buyVenue}->${plan.sellVenue}`,
@@ -204,13 +264,18 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     resizedNetProfitUsd: refreshed.netProfitUsd,
     buyQuoteSpendable: capacity.buyQuoteSpendable,
     sellBaseSpendable: capacity.sellBaseSpendable,
-    economicsAuthority: 'fresh_order_books_plus_bounded_current_fee_evidence',
-    inventoryAuthority: 'authenticated_spendable_balance_after_reserves',
+    economicsAuthority: 'fresh_order_books_plus_bounded_current_fee_evidence_after_balance_io',
+    inventoryAuthority: 'authenticated_spendable_balance_after_trade_and_payout_reserves',
+    balanceCacheMs: balanceCacheMs(),
+    retryDelaysMs: inventoryRetryDelaysMs(),
+    staleFallbackExecutionAuthority: false,
+    payoutShareRecycledIntoNewTrades: false,
+    retainedShareSpendable: true,
     bpsExecutionFloor: null,
     executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
     syntheticScaling: false,
   });
-  return { kind: 'execute', plan: refreshed, resized: true };
+  return { kind: 'execute', plan: refreshed, resized: Math.abs(refreshed.notionalUsd - plan.notionalUsd) > 1e-9 };
 }
 
 export function ensureInventoryConstrainedCexExecutionWiring(): void {
@@ -239,13 +304,19 @@ export function ensureInventoryConstrainedCexExecutionWiring(): void {
   logger.info('[InventoryConstrainedCex] Inventory-aware CEX re-optimization installed', {
     component: 'InventoryConstrainedCexExecutionWiring',
     authenticatedBalances: true,
+    authenticatedBalanceCacheMs: balanceCacheMs(),
+    inFlightBalanceDeduplication: true,
+    balanceRetryDelaysMs: inventoryRetryDelaysMs(),
     boundedFeeEvidenceAgeMs: maxFeeEvidenceAgeMs(),
     partialInventoryCanResize: true,
     zeroInventoryBypass: false,
-    freshEconomicsRequiredAfterResize: true,
+    freshEconomicsRequiredAfterEveryBalanceReconciliation: true,
     sameVenuePairRequired: true,
     inactiveVenueExecutionRejectedUpstream: true,
     unverifiedBalanceExecutionRejectedUpstream: true,
+    staleLastKnownBalanceExecutionAuthority: false,
+    payoutReservationsReduceOnlyNewSpendableInventory: true,
+    retainedFortyPercentRemainsSpendable: true,
     duplicateDownstreamAdmissionAvoidedOnKnownResourceFailure: true,
     bpsExecutionFloor: null,
     executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',

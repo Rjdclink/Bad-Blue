@@ -4,7 +4,7 @@ import logger from '../../../logger.js';
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { cexInventoryLedger, type InventoryRequirement, type InventoryVenue } from './cex-inventory-ledger.js';
 import { assertFreshCexProductConstraints } from './cex-submit-time-product-guard.js';
-import { runProfitabilityMonteCarlo } from './adapters/monte-carlo-profitability.js';
+import { parallelMonteCarloPool } from './adapters/parallel-monte-carlo-pool.js';
 import {
   createProductionCexSettlementAdapters,
   executeCexPlan,
@@ -162,7 +162,7 @@ async function acquireMeasuredInventory(
     if (!snapshot) {
       return { reservation: null, rejection: `REJECT_BALANCE_INSUFFICIENT: no reconciled ${requirement.venue} ${requirement.asset} balance` };
     }
-    const spendable = snapshot.available - snapshot.reserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve;
+    const spendable = snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve;
     if (!Number.isFinite(spendable) || spendable + 1e-12 < requirement.amount) {
       return {
         reservation: null,
@@ -234,9 +234,9 @@ export class CentralizedExchangeExecutor {
         ? Math.max(0, Math.min(1, empiricalFill * 0.70 + quoteFreshness * 0.20 + liquidityCoverage * 0.10))
         : Math.max(0, Math.min(1, quoteFreshness * liquidityCoverage));
 
-      const monteCarlo = runProfitabilityMonteCarlo({
+      const monteCarloInput = {
         seed: `cex:${plan.buyVenue}:${plan.sellVenue}:${plan.symbol}:${plan.buyAsk}:${plan.sellBid}:${plan.quoteAgeMs}`,
-        topology: 'CEX_CEX',
+        topology: 'CEX_CEX' as const,
         notionalUsd: plan.notionalUsd,
         expectedNetProfitUsd: plan.netProfitUsd,
         estimatedExecutionCostUsd: Math.max(0, plan.costs.totalCostsUsd),
@@ -260,7 +260,22 @@ export class CentralizedExchangeExecutor {
           partialFill: observation.partialFill,
           providerFailure: observation.providerFailure,
         })),
-      });
+      };
+      const monteCarloKey = [
+        monteCarloInput.seed,
+        plan.baseQty,
+        plan.netProfitUsd,
+        plan.costs.totalCostsUsd,
+        plan.expectedSlippageBps ?? 0,
+        calibration.samples,
+      ].join(':');
+      const monteCarloTtlMs = Math.max(100, Math.min(1000, maxQuoteAgeMs - Math.max(0, plan.quoteAgeMs)));
+      let monteCarlo;
+      try {
+        monteCarlo = await parallelMonteCarloPool.run(monteCarloKey, monteCarloInput, monteCarloTtlMs);
+      } catch (error) {
+        return rejectPlan(`REJECT_MC_COMPUTE: execution profitability simulation could not complete inside the governed quote window: ${error instanceof Error ? error.message : String(error)}`);
+      }
 
       const empiricalCalibrationAvailable = calibration.samples > 0;
       const coldStartMeasuredBootstrap = !empiricalCalibrationAvailable &&
@@ -308,6 +323,7 @@ export class CentralizedExchangeExecutor {
         samples: monteCarlo.samples, stoppedEarly: monteCarlo.stoppedEarly, converged: monteCarlo.converged,
         distribution: monteCarlo.distribution, distributionProvenance: monteCarlo.distributionProvenance,
         policyVersion: monteCarlo.policyVersion, approved: monteCarlo.approved, reason: monteCarlo.reason,
+        compute: parallelMonteCarloPool.getStatus(),
       });
 
       if (!monteCarlo.approved && empiricalCalibrationAvailable) {

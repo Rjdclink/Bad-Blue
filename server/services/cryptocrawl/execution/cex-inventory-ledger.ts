@@ -15,6 +15,7 @@ export interface InventorySnapshot {
   asset: string;
   available: number;
   reserved: number;
+  payoutReserved: number;
   pendingOrder: number;
   pendingTransfer: number;
   target: number | null;
@@ -45,6 +46,9 @@ export interface InventoryRebalanceRecommendation {
 
 const STATE_TABLE = 'cryptocrawler_cex_inventory_state_v1';
 const RESERVATION_TABLE = 'cryptocrawler_cex_inventory_reservations_v1';
+const PAYOUT_RESERVE_TABLE = 'cryptocrawler_payout_asset_reservations';
+const PAYOUT_EXECUTION_RESERVE_TABLE = 'cryptocrawler_payout_execution_reservations';
+const PAYOUT_ACTIVE_STATUSES = "('HELD','IN_FLIGHT','MANUAL_REVIEW')";
 
 function finiteNonNegative(value: unknown, fallback = 0): number {
   const parsed = Number(value);
@@ -93,43 +97,127 @@ class CexInventoryLedger {
     if (this.tableReady) return this.tableReady;
     this.tableReady = (async () => {
       try {
-        await pool.query(`
-          CREATE TABLE IF NOT EXISTS ${STATE_TABLE} (
-            venue text NOT NULL,
-            asset text NOT NULL,
-            available numeric NOT NULL,
-            pending_order numeric NOT NULL DEFAULT 0,
-            pending_transfer numeric NOT NULL DEFAULT 0,
-            target numeric NULL,
-            minimum_reserve numeric NOT NULL DEFAULT 0,
-            maximum_venue_exposure numeric NULL,
-            reconciled_at timestamptz NOT NULL,
-            PRIMARY KEY (venue, asset)
-          )
-        `);
-        await pool.query(`
-          CREATE TABLE IF NOT EXISTS ${RESERVATION_TABLE} (
-            reservation_id text NOT NULL,
-            opportunity_id text NOT NULL,
-            venue text NOT NULL,
-            asset text NOT NULL,
-            amount numeric NOT NULL,
-            acquired_at timestamptz NOT NULL,
-            expires_at timestamptz NOT NULL,
-            PRIMARY KEY (reservation_id, venue, asset)
-          )
-        `);
-        await pool.query(`CREATE INDEX IF NOT EXISTS ${RESERVATION_TABLE}_active_idx ON ${RESERVATION_TABLE} (venue, asset, expires_at)`);
-        return true;
+        // Schema ownership belongs to migrations. Runtime trading code is read/write
+        // only and must never acquire DDL locks during a deploy or restart.
+        const result = await pool.query(
+          `SELECT
+             to_regclass($1) IS NOT NULL AS state_present,
+             to_regclass($2) IS NOT NULL AS reservation_present,
+             EXISTS (
+               SELECT 1 FROM information_schema.columns
+               WHERE table_schema='public' AND table_name=$3 AND column_name='payout_reserved'
+             ) AS payout_column_present`,
+          [`public.${STATE_TABLE}`, `public.${RESERVATION_TABLE}`, STATE_TABLE],
+        );
+        const row = result.rows[0] || {};
+        const ready = row.state_present === true && row.reservation_present === true && row.payout_column_present === true;
+        if (!ready) {
+          logger.error('[InventoryLedger] Durable inventory schema is missing; live reservation fails closed', {
+            component: 'CexInventoryLedger',
+            stateTablePresent: row.state_present === true,
+            reservationTablePresent: row.reservation_present === true,
+            payoutReservedColumnPresent: row.payout_column_present === true,
+            runtimeSchemaMutationAllowed: false,
+          });
+        }
+        return ready;
       } catch (error) {
         logger.error('[InventoryLedger] Durable inventory tables unavailable; live reservation fails closed', {
           component: 'CexInventoryLedger',
           error: error instanceof Error ? error.message : String(error),
+          runtimeSchemaMutationAllowed: false,
         });
         return false;
       }
     })();
     return this.tableReady;
+  }
+
+  private async tableExists(client: { query: (text: string, values?: unknown[]) => Promise<any> }, table: string): Promise<boolean> {
+    const result = await client.query('SELECT to_regclass($1) IS NOT NULL AS present', [`public.${table}`]);
+    return result.rows[0]?.present === true;
+  }
+
+  private async payoutReservedForAsset(
+    client: { query: (text: string, values?: unknown[]) => Promise<any> },
+    venue: InventoryVenue,
+    asset: string,
+  ): Promise<number | null> {
+    const normalized = canonicalAsset(asset);
+    let sourceReserved = 0;
+    let executionReserved = 0;
+    let anyAuthority = false;
+
+    if (await this.tableExists(client, PAYOUT_RESERVE_TABLE)) {
+      anyAuthority = true;
+      const source = await client.query(
+        `SELECT COALESCE(SUM(remaining_asset_amount),0) AS reserved
+         FROM ${PAYOUT_RESERVE_TABLE}
+         WHERE venue=$1 AND asset=$2 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND remaining_asset_amount > 0`,
+        [venue, normalized],
+      );
+      sourceReserved = Number(source.rows[0]?.reserved || 0);
+    }
+
+    if (await this.tableExists(client, PAYOUT_EXECUTION_RESERVE_TABLE)) {
+      anyAuthority = true;
+      const execution = await client.query(
+        `SELECT COALESCE(SUM(reserved_asset_amount),0) AS reserved
+         FROM ${PAYOUT_EXECUTION_RESERVE_TABLE}
+         WHERE venue=$1 AND asset=$2 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND reserved_asset_amount > 0`,
+        [venue, normalized],
+      );
+      executionReserved = Number(execution.rows[0]?.reserved || 0);
+    }
+
+    // Source reservation and execution reservation can represent the same OKX
+    // payout capital during a batch. Protect the larger live claim rather than
+    // summing both representations and accidentally consuming retained capital.
+    const protectedAmount = Math.max(
+      Number.isFinite(sourceReserved) ? sourceReserved : 0,
+      Number.isFinite(executionReserved) ? executionReserved : 0,
+    );
+    return anyAuthority ? Math.max(0, protectedAmount) : null;
+  }
+
+  private async payoutReserves(venue: InventoryVenue): Promise<Map<string, number>> {
+    const values = new Map<string, number>();
+    if (!isDatabaseConfigured) return values;
+
+    const sourceExists = await this.tableExists(pool, PAYOUT_RESERVE_TABLE);
+    if (sourceExists) {
+      const source = await pool.query(
+        `SELECT asset, COALESCE(SUM(remaining_asset_amount),0) AS reserved
+         FROM ${PAYOUT_RESERVE_TABLE}
+         WHERE venue=$1 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND remaining_asset_amount > 0
+         GROUP BY asset`,
+        [venue],
+      );
+      for (const row of source.rows) {
+        const asset = canonicalAsset(String(row.asset || ''));
+        const amount = Number(row.reserved || 0);
+        if (asset && Number.isFinite(amount) && amount > 0) values.set(asset, amount);
+      }
+    }
+
+    const executionExists = await this.tableExists(pool, PAYOUT_EXECUTION_RESERVE_TABLE);
+    if (executionExists) {
+      const execution = await pool.query(
+        `SELECT asset, COALESCE(SUM(reserved_asset_amount),0) AS reserved
+         FROM ${PAYOUT_EXECUTION_RESERVE_TABLE}
+         WHERE venue=$1 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND reserved_asset_amount > 0
+         GROUP BY asset`,
+        [venue],
+      );
+      for (const row of execution.rows) {
+        const asset = canonicalAsset(String(row.asset || ''));
+        const amount = Number(row.reserved || 0);
+        if (asset && Number.isFinite(amount) && amount > 0) {
+          values.set(asset, Math.max(values.get(asset) || 0, amount));
+        }
+      }
+    }
+    return values;
   }
 
   async reconcile(venue: InventoryVenue, rawBalances: Record<string, string | number>): Promise<InventorySnapshot[]> {
@@ -143,6 +231,7 @@ class CexInventoryLedger {
       merged.set(asset, (merged.get(asset) || 0) + amount);
     }
 
+    const payoutReservedByAsset = await this.payoutReserves(venue);
     for (const [asset, available] of merged) {
       const policy = this.policy(venue, asset);
       const key = this.key(venue, asset);
@@ -152,6 +241,7 @@ class CexInventoryLedger {
         asset,
         available,
         reserved: previous?.reserved || 0,
+        payoutReserved: payoutReservedByAsset.get(asset) || 0,
         pendingOrder: previous?.pendingOrder || 0,
         pendingTransfer: previous?.pendingTransfer || 0,
         target: policy.target,
@@ -168,17 +258,19 @@ class CexInventoryLedger {
         await client.query(`DELETE FROM ${RESERVATION_TABLE} WHERE expires_at <= now()`);
         for (const [asset, available] of merged) {
           const policy = this.policy(venue, asset);
+          const payoutReserved = payoutReservedByAsset.get(asset) || 0;
           await client.query(
             `INSERT INTO ${STATE_TABLE}
-              (venue, asset, available, target, minimum_reserve, maximum_venue_exposure, reconciled_at)
-             VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7/1000.0))
+              (venue, asset, available, payout_reserved, target, minimum_reserve, maximum_venue_exposure, reconciled_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,to_timestamp($8/1000.0))
              ON CONFLICT (venue, asset) DO UPDATE SET
                available=EXCLUDED.available,
+               payout_reserved=EXCLUDED.payout_reserved,
                target=EXCLUDED.target,
                minimum_reserve=EXCLUDED.minimum_reserve,
                maximum_venue_exposure=EXCLUDED.maximum_venue_exposure,
                reconciled_at=EXCLUDED.reconciled_at`,
-            [venue, asset, available, policy.target, policy.minimumReserve, policy.maximumVenueExposure, now],
+            [venue, asset, available, payoutReserved, policy.target, policy.minimumReserve, policy.maximumVenueExposure, now],
           );
         }
         await client.query('COMMIT');
@@ -201,7 +293,7 @@ class CexInventoryLedger {
       const key = this.key(requirement.venue, requirement.asset);
       const snapshot = this.local.get(key);
       if (!snapshot) return false;
-      const spendable = snapshot.available - snapshot.reserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve;
+      const spendable = snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve;
       if (spendable + 1e-12 < requirement.amount) return false;
       if (snapshot.maximumVenueExposure !== null && snapshot.available > snapshot.maximumVenueExposure + 1e-12) return false;
     }
@@ -250,7 +342,7 @@ class CexInventoryLedger {
         await client.query(`DELETE FROM ${RESERVATION_TABLE} WHERE expires_at <= now()`);
         for (const requirement of requirements) {
           const state = await client.query(
-            `SELECT available, pending_order, pending_transfer, minimum_reserve, maximum_venue_exposure
+            `SELECT available, payout_reserved, pending_order, pending_transfer, minimum_reserve, maximum_venue_exposure
              FROM ${STATE_TABLE} WHERE venue=$1 AND asset=$2 FOR UPDATE`,
             [requirement.venue, requirement.asset],
           );
@@ -263,10 +355,12 @@ class CexInventoryLedger {
           );
           const available = Number(row.available);
           const alreadyReserved = Number(reserved.rows[0]?.reserved || 0);
+          const livePayoutReserved = await this.payoutReservedForAsset(client, requirement.venue, requirement.asset);
+          const payoutReserved = livePayoutReserved === null ? Number(row.payout_reserved || 0) : livePayoutReserved;
           const pending = Number(row.pending_order || 0) + Number(row.pending_transfer || 0);
           const minimumReserve = Number(row.minimum_reserve || 0);
           const maximumExposure = row.maximum_venue_exposure === null ? null : Number(row.maximum_venue_exposure);
-          const spendable = available - alreadyReserved - pending - minimumReserve;
+          const spendable = available - alreadyReserved - payoutReserved - pending - minimumReserve;
           if (!Number.isFinite(spendable) || spendable + 1e-12 < requirement.amount) {
             throw new Error(`inventory_insufficient:${requirement.venue}:${requirement.asset}`);
           }
@@ -329,7 +423,7 @@ class CexInventoryLedger {
     for (const snapshot of this.local.values()) {
       if (snapshot.target === null) continue;
       const currentSpendable = Math.max(0,
-        snapshot.available - snapshot.reserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve,
+        snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve,
       );
       const delta = snapshot.target - currentSpendable;
       const tolerance = Math.max(1e-12, snapshot.target * 0.02);

@@ -84,6 +84,8 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       import('./no-bps-maker-admission-wiring.js'),
       import('./hybrid-cex-execution-wiring.js'),
       import('./stage-proof-metrics-wiring.js'),
+      import('../integration/authenticated-fee-tier-optimization-wiring.js'),
+      import('./adaptive-profit-operations-wiring.js'),
       import('./expanded-market-universe-wiring.js'),
       import('./alchemy-filtered-mempool-wiring.js'),
       import('./low-latency-execution-wiring.js'),
@@ -94,6 +96,8 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       noBpsMakerPolicy,
       hybridCexPolicy,
       stageProofPolicy,
+      authenticatedFeePolicy,
+      adaptiveProfitPolicy,
       universePolicy,
       mempoolPolicy,
       executionPolicy,
@@ -101,14 +105,17 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       inventoryPolicy,
     ]) => {
       // Preserve authority order: canonical profitability/maker settlement wiring
-      // installs first; the no-BPS evaluator then removes only the artificial
-      // spread floor; verified MT/TM plans then reuse the same canonical CEX
-      // admission/execution path; inventory re-optimization remains the final
-      // pre-execution feasibility refinement rather than a discovery authority.
+      // installs first; the no-BPS evaluator removes only the artificial spread
+      // floor; MT/TM then reuse canonical execution. Fee/rebate observation uses
+      // the existing CEX fee resolver as the sole fee authority. The realized-
+      // profit envelope applies to new exposure and inventory remains the final
+      // resource/fresh-requote authority.
       profitPolicy.ensurePositiveProfitCaptureWiring();
       noBpsMakerPolicy.ensureNoBpsMakerAdmissionWiring();
       hybridCexPolicy.ensureHybridCexExecutionWiring();
       stageProofPolicy.ensureStageProofMetricsWiring();
+      authenticatedFeePolicy.ensureAuthenticatedFeeTierOptimizationWiring();
+      adaptiveProfitPolicy.ensureAdaptiveProfitOperationsWiring();
       universePolicy.ensureExpandedMarketUniverseWiring();
       mempoolPolicy.ensureAlchemyFilteredMempoolWiring();
       executionPolicy.ensureLowLatencyExecutionWiring();
@@ -158,8 +165,13 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     arbitraryBpsExecutionFloor: false,
     makerRecoveryEconomics: 'authenticated_fees_plus_fresh_books',
     hybridCexExecution: 'maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
+    authenticatedFeeObservation: 'canonical_cex_fee_resolver_only_with_batched_cached_rate_governed_telemetry',
+    adaptiveProfitOperatingEnvelope: 'terminal_realized_daily_cap_plus_depth_slippage_safe_sizing',
+    exchangeSurveillanceThresholdAssumed: false,
     stageProofMetrics: 'terminal_realized_sharpe_drawdown_plus_mc_outcome_validation',
     inventoryConstrainedCexReoptimization: true,
+    inventoryRateProtection: 'five_second_fresh_cache_plus_inflight_dedupe_plus_backoff_then_fresh_requote',
+    staleInventoryExecutionAuthority: false,
     expandedMarketUniverse: true,
     filteredMempoolPolicyInstalled: true,
     lowLatencyExecutionCorrectnessPolicyInstalled: true,

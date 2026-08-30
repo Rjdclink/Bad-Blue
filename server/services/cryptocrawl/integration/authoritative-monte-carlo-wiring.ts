@@ -4,7 +4,8 @@ import type {
   MonteCarloResult,
 } from '../../cryptara/index.js';
 import { createLogger } from '../../../logger.js';
-import { runProfitabilityMonteCarlo } from '../execution/adapters/monte-carlo-profitability.js';
+import { parallelMonteCarloPool } from '../execution/adapters/parallel-monte-carlo-pool.js';
+import type { MonteCarloProfitabilityResult } from '../execution/adapters/monte-carlo-profitability.js';
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import type { MonteCarloTopology } from '../validation/monte-carlo-policy.js';
 import {
@@ -14,7 +15,7 @@ import {
 
 const log = createLogger('AuthoritativeMonteCarloWiring');
 const installed = new WeakSet<object>();
-export const AUTHORITATIVE_LIVE_MC_MODEL_VERSION = 'cryptocrawl-authoritative-live-mc-1.1.0';
+export const AUTHORITATIVE_LIVE_MC_MODEL_VERSION = 'cryptocrawl-authoritative-live-mc-1.2.0';
 
 type LiveEvidence = {
   simulationId: string;
@@ -148,10 +149,16 @@ function sizeBucket(notionalUsd: number): string {
   return 'gte5000';
 }
 
+function currentQuoteAgeMs(context: CryptaraOpportunityContext): number {
+  const plan = context.plan;
+  if (!plan) return Number.POSITIVE_INFINITY;
+  return Math.max(0, plan.quoteAgeMs + Math.max(0, Date.now() - context.observedAt));
+}
+
 function toMonteCarloResult(input: {
   simulationId: string;
   notionalUsd: number;
-  result: ReturnType<typeof runProfitabilityMonteCarlo>;
+  result: MonteCarloProfitabilityResult;
 }): MonteCarloResult {
   const scale = Math.max(input.notionalUsd, 1e-12);
   const result = input.result;
@@ -223,7 +230,11 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
       limit: 2048,
     });
     const quoteMaxAgeMs = Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000));
-    const freshness = Math.max(0, Math.min(1, 1 - plan.quoteAgeMs / quoteMaxAgeMs));
+    const effectiveQuoteAgeBeforeMc = currentQuoteAgeMs(context);
+    if (!Number.isFinite(effectiveQuoteAgeBeforeMc) || effectiveQuoteAgeBeforeMc > quoteMaxAgeMs) {
+      throw new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote');
+    }
+    const freshness = Math.max(0, Math.min(1, 1 - effectiveQuoteAgeBeforeMc / quoteMaxAgeMs));
     const liquidity = liquidityCoverage(context);
     const empiricalFill = calibration.bothLegsFillRate;
     const confidence = empiricalFill !== null
@@ -233,14 +244,14 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
     target.latestMonteCarloEvidence = null;
     target.status.totalSimulations++;
     try {
-      const result = runProfitabilityMonteCarlo({
+      const mcInput = {
         seed: `${context.opportunityId}:${context.observedAt}:${plan.buyAsk}:${plan.sellBid}:${plan.notionalUsd}`,
         topology: mcTopology,
         notionalUsd: plan.notionalUsd,
         expectedNetProfitUsd: plan.netProfitUsd,
         estimatedExecutionCostUsd: Math.max(0, plan.costs.totalCostsUsd),
         expectedSlippageBps: Math.max(0, plan.expectedSlippageBps ?? 0),
-        quoteLatencyMs: Math.max(0, plan.quoteAgeMs),
+        quoteLatencyMs: effectiveQuoteAgeBeforeMc,
         quoteMaxAgeMs,
         executionHorizonMs: plan.bridge ? Math.max(quoteMaxAgeMs, plan.bridge.estimatedTimeSec * 1000) : quoteMaxAgeMs,
         confidence,
@@ -259,14 +270,32 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
           partialFill: observation.partialFill,
           providerFailure: observation.providerFailure,
         })),
-      });
+      };
+      const mcKey = [
+        AUTHORITATIVE_LIVE_MC_MODEL_VERSION,
+        context.opportunityId,
+        context.observedAt,
+        plan.buyAsk,
+        plan.sellBid,
+        plan.notionalUsd,
+        plan.netProfitUsd,
+        plan.costs.totalCostsUsd,
+        calibration.samples,
+      ].join(':');
+      const ttlMs = Math.max(100, Math.min(1000, quoteMaxAgeMs - effectiveQuoteAgeBeforeMc));
+      const result = await parallelMonteCarloPool.run(mcKey, mcInput, ttlMs, signal);
       if (signal?.aborted) throw new Error('MC_ABORTED: authoritative Monte Carlo aborted');
+      const effectiveQuoteAgeAfterMc = currentQuoteAgeMs(context);
+      if (!Number.isFinite(effectiveQuoteAgeAfterMc) || effectiveQuoteAgeAfterMc > quoteMaxAgeMs) {
+        throw new Error('EVIDENCE_INCOMPLETE: fresh_verified_quote');
+      }
 
       const simulationId = `adaptive-${context.opportunityId}-${context.observedAt}-${result.samples}`;
       const publicResult = toMonteCarloResult({ simulationId, notionalUsd: plan.notionalUsd, result });
       const runtimeConfidence = getRuntimeConfidenceBootstrapStatus(instance);
       const scale = Math.max(plan.notionalUsd, 1e-12);
       const calibrated = calibration.samples >= 3;
+      const computeStatus = parallelMonteCarloPool.getStatus();
       target.latestMonteCarloEvidence = {
         simulationId,
         evaluatedAt: Date.now(),
@@ -278,7 +307,7 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
         policyVersion: result.policyVersion,
         iterations: result.samples,
         seed: 0,
-        workersUsed: 1,
+        workersUsed: computeStatus.workerExecutionEnabled ? 1 : 0,
         convergence: result.converged ? 1 : 0,
         stoppedEarly: result.stoppedEarly,
         expectedProfit: result.p50NetProfitUsd / scale,
@@ -310,7 +339,7 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
         averageSampledSlippageBps: Math.max(0, plan.expectedSlippageBps ?? 0),
         averageSampledLatencyMs: calibration.latenciesMs.length > 0
           ? calibration.latenciesMs.reduce((sum, value) => sum + value, 0) / calibration.latenciesMs.length
-          : plan.quoteAgeMs,
+          : effectiveQuoteAgeBeforeMc,
         confidenceEnabled: runtimeConfidence.confidenceEnabled,
         confidenceState: runtimeConfidence.state,
         runtimeSuccessfulTrades: runtimeConfidence.successfulTrades,
@@ -344,6 +373,9 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
         expectedShortfall975Usd: result.expectedShortfall975Usd,
         expectedShortfall99Usd: result.expectedShortfall99Usd,
         executionHorizonMs: result.executionHorizonMs,
+        effectiveQuoteAgeBeforeMc,
+        effectiveQuoteAgeAfterMc,
+        compute: computeStatus,
         approved: result.approved,
         evidenceProvenance: [
           'deterministic_positive_economics',
@@ -374,6 +406,7 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
     cexExecutionCriticalEvidence: ['deterministic_positive_economics', 'authenticated_fee_evidence', 'measured_liquidity', 'measured_slippage_or_impact', 'quote_freshness'],
     legacyHyperRole: 'training_compatibility_only',
     legacyGeneralMonteCarloRole: 'non_authoritative_compatibility',
+    liveCompute: 'quanti_governed_worker_pool_with_cancellation_and_post_compute_freshness',
     deterministicPositiveGate: true,
   });
   return instance;

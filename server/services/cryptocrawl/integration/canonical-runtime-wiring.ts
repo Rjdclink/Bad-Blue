@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { isDatabaseConfigured, pool } from '../../../db.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
@@ -7,12 +8,14 @@ import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-r
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
+import { ensureAdaptiveProfitOperationsWiring } from '../runtime/adaptive-profit-operations-wiring.js';
 import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard-rpc-first-wiring.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureHybridCexExecutionWiring } from '../runtime/hybrid-cex-execution-wiring.js';
 import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
 import { ensureStageProofMetricsWiring } from '../runtime/stage-proof-metrics-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
+import { ensureAuthenticatedFeeTierOptimizationWiring } from './authenticated-fee-tier-optimization-wiring.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
 import { ensureCexInventoryReadinessWiring } from './cex-inventory-readiness-wiring.js';
 import { ensureComputationalReactorWiring } from './computational-reactor-wiring.js';
@@ -46,6 +49,8 @@ import { ensureDualProviderZeroCapitalExecutionWiring } from './dual-provider-ze
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
+let installProbeInFlight: Promise<void> | null = null;
+let installRetryTimer: NodeJS.Timeout | null = null;
 let zeroCapitalStartPromise: Promise<void> | null = null;
 let zeroCapitalRetryTimer: NodeJS.Timeout | null = null;
 let zeroCapitalStartAttempts = 0;
@@ -53,6 +58,16 @@ let zeroCapitalStartAttempts = 0;
 function zeroCapitalRetryDelayMs(): number {
   const configured = Number(process.env.ZERO_CAPITAL_RUNTIME_START_RETRY_MS || 15_000);
   return Number.isFinite(configured) ? Math.max(2_500, Math.min(120_000, Math.trunc(configured))) : 15_000;
+}
+
+function canonicalRuntimeStartupGraceMs(): number {
+  const configured = Number(process.env.CRYPTOCRAWL_RUNTIME_STARTUP_GRACE_MS || 30_000);
+  return Number.isFinite(configured) ? Math.max(5_000, Math.min(120_000, Math.trunc(configured))) : 30_000;
+}
+
+function canonicalRuntimeDatabaseRetryMs(): number {
+  const configured = Number(process.env.CRYPTOCRAWL_RUNTIME_DATABASE_RETRY_MS || 5_000);
+  return Number.isFinite(configured) ? Math.max(1_000, Math.min(30_000, Math.trunc(configured))) : 5_000;
 }
 
 function paidAlchemyPendingEvidenceExplicitlyEnabled(): boolean {
@@ -96,10 +111,13 @@ function startCanonicalZeroCapitalRuntime(): void {
     });
 }
 
-export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
+function installCanonicalRuntime(): void {
   if (installed) return;
   installed = true;
 
+  // Legacy fixed profit-cap methods are retired first. The adaptive terminal-
+  // realized operating envelope is installed later after profitability/maker
+  // policies so no Infinity compatibility override can become final authority.
   ensureStageProfitCapRetirement();
   logZeroCapitalReadinessDiagnostics();
   ensureComputationalReactorWiring();
@@ -129,6 +147,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureStablecoinMakerExecutionWiring();
   ensureHybridCexExecutionWiring();
   ensureStageProofMetricsWiring();
+  ensureAuthenticatedFeeTierOptimizationWiring();
+  ensureAdaptiveProfitOperationsWiring();
   ensureCexInventoryReadinessWiring();
   ensureExecutionReadinessProfitabilityWiring();
   ensureInventoryConstrainedCexExecutionWiring();
@@ -174,11 +194,20 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
     cexInventoryReadiness: 'proactive_authenticated_balance_hydration_then_candidate_specific_reconciliation',
+    cexInventoryRateProtection: 'five_second_fresh_cache_inflight_dedupe_bounded_backoff_then_fresh_requote',
+    staleInventoryExecutionAuthority: false,
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
+    cexAuthenticatedFeeTierOverlay: 'cache_only_observer_canonical_fee_resolver_refreshes_on_demand',
+    rebateModeSelection: 'expected_realized_net_value_not_rebate_alone',
+    minimumOrderNotionalTierAssumed: false,
     cexMakerExecution: 'kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
     coinbaseMakerExecutionAuthority: false,
     cexHybridExecutionAuthority: true,
     cexHybridExecution: 'MT_TM_maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
+    adaptiveProfitOperatingEnvelope: 'persisted_operating_day_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget',
+    adaptiveProfitCapScope: 'new_exposure_only_settlement_hedge_flattening_exempt',
+    rolling24hProfitRole: 'telemetry_only',
+    exchangeSurveillanceThresholdAssumed: false,
     stageProofMetricsAuthority: 'terminal_realized_sharpe_drawdown_plus_executed_mc_outcome_validation',
     computationalReactor: 'measured_cpu_memory_rate_pressure_plus_real_scorer_monte_carlo_plus_bounded_callbacks',
     computationalReactorExecutionAuthority: false,
@@ -218,5 +247,57 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     alchemyStandardTokenReads: 'public_rpc_first_then_enhanced_api_fallback',
     localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
+    startupAdmission: 'production_grace_then_database_health_probe',
+    startupGraceMs: canonicalRuntimeStartupGraceMs(),
   });
+}
+
+function scheduleCanonicalRuntimeInstall(delayMs: number, reason: string): void {
+  if (installed || installRetryTimer) return;
+  installRetryTimer = setTimeout(() => {
+    installRetryTimer = null;
+    ensureCanonicalCryptoCrawlerRuntimeWiring();
+  }, delayMs);
+  installRetryTimer.unref?.();
+  logger.info('[CryptoRuntimeStartup] Canonical runtime installation deferred', {
+    component: 'CanonicalCryptoCrawlerRuntimeWiring',
+    reason,
+    retryInMs: delayMs,
+    exchangeRequestsDuringDeferral: false,
+    executionAuthorityGranted: false,
+  });
+}
+
+export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
+  if (installed || installProbeInFlight) return;
+
+  if (process.env.NODE_ENV === 'production') {
+    const graceRemainingMs = Math.max(0, canonicalRuntimeStartupGraceMs() - Math.floor(process.uptime() * 1_000));
+    if (graceRemainingMs > 0) {
+      scheduleCanonicalRuntimeInstall(graceRemainingMs, 'production_startup_grace');
+      return;
+    }
+
+    if (isDatabaseConfigured) {
+      installProbeInFlight = pool.query('SELECT 1')
+        .then(() => {
+          installCanonicalRuntime();
+        })
+        .catch(error => {
+          logger.warn('[CryptoRuntimeStartup] Database admission probe unavailable; runtime remains deferred', {
+            component: 'CanonicalCryptoCrawlerRuntimeWiring',
+            error: error instanceof Error ? error.message : String(error),
+            exchangeRequestsDuringDeferral: false,
+            executionAuthorityGranted: false,
+          });
+          scheduleCanonicalRuntimeInstall(canonicalRuntimeDatabaseRetryMs(), 'database_admission_probe_failed');
+        })
+        .finally(() => {
+          installProbeInFlight = null;
+        });
+      return;
+    }
+  }
+
+  installCanonicalRuntime();
 }
