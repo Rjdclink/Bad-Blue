@@ -113,7 +113,9 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     profitabilityRecoveryIntelligence: 'fifty_signal_measured_recovery_coordinator',
     bpsSubsystemExecutionAuthority: false,
     terminalSettlementStillRequiredAfterExecution: true,
-    livePaths: ['CEX_TAKER_IOC', 'FLASH_LOAN'],
-    incompletePathsRemainFailClosed: ['CEX_MAKER', 'BRIDGE_FLASH_LOAN', 'FLASH_LOAN_LIQUIDATION', 'SPOT_PERP_FUNDING'],
+    canonicalCexPlanModes: ['TT', 'MM', 'MT', 'TM'],
+    hybridCexLifecycle: 'maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
+    livePaths: ['CEX_CEX_CANONICAL', 'FLASH_LOAN'],
+    incompleteTopologyPathsRemainFailClosed: ['MAKER_CEX_SHADOW', 'BRIDGE_FLASH_LOAN', 'FLASH_LOAN_LIQUIDATION', 'SPOT_PERP_FUNDING'],
   });
 }
