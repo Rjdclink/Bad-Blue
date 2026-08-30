@@ -9,6 +9,28 @@ export interface StageManagerStateStore {
 }
 
 const STATE_SCOPE = 'canonical';
+const STAGE_STATE_WRITE_LOCK = 'cryptocrawl:stage-manager-state-write:v1';
+
+function boundedIntegerEnv(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+const STATEMENT_TIMEOUT_MS = boundedIntegerEnv('CRYPTOCRAWL_STAGE_STATE_STATEMENT_TIMEOUT_MS', 8_000, 2_000, 30_000);
+const LOCK_TIMEOUT_MS = boundedIntegerEnv('CRYPTOCRAWL_STAGE_STATE_LOCK_TIMEOUT_MS', 2_000, 500, 10_000);
+const SAVE_RETRIES = boundedIntegerEnv('CRYPTOCRAWL_STAGE_STATE_SAVE_RETRIES', 3, 1, 5);
+
+function retryablePersistenceError(error: unknown): boolean {
+  const code = String((error as any)?.code || '');
+  const message = error instanceof Error ? error.message : String(error);
+  return code === '55P03' || code === '57014' || code === '40001' || code === '40P01' ||
+    /timeout|connection terminated|connection reset|server closed|too many clients|max clients/i.test(message);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 export class PostgresStageManagerStateStore implements StageManagerStateStore {
   private lastSuccessfulFingerprint: string | null = null;
@@ -46,18 +68,44 @@ export class PostgresStageManagerStateStore implements StageManagerStateStore {
     // into a second PostgreSQL JSONB rewrite/WAL event.
     if (fingerprint === this.lastSuccessfulFingerprint) return;
 
-    await this.query(
-      `INSERT INTO cryptocrawl_governance_state (scope, state, state_history, updated_at)
-       VALUES ($1, $2::jsonb, $3::jsonb, NOW())
-       ON CONFLICT (scope) DO UPDATE
-       SET state = EXCLUDED.state,
-           state_history = EXCLUDED.state_history,
-           updated_at = NOW()
-       WHERE cryptocrawl_governance_state.state IS DISTINCT FROM EXCLUDED.state
-          OR cryptocrawl_governance_state.state_history IS DISTINCT FROM EXCLUDED.state_history`,
-      [STATE_SCOPE, stateJson, historyJson],
-    );
-    this.lastSuccessfulFingerprint = fingerprint;
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= SAVE_RETRIES; attempt += 1) {
+      const { pool } = await import('../../../db.js');
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
+        await client.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT_MS}ms'`);
+
+        // Rolling deploys can briefly contain two healthy replicas. Serialize the
+        // single canonical governance row across replicas, but bound lock/statement
+        // wait time so persistence can never monopolize a scarce Supavisor session.
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [STAGE_STATE_WRITE_LOCK]);
+        await client.query(
+          `INSERT INTO cryptocrawl_governance_state (scope, state, state_history, updated_at)
+           VALUES ($1, $2::jsonb, $3::jsonb, NOW())
+           ON CONFLICT (scope) DO UPDATE
+           SET state = EXCLUDED.state,
+               state_history = EXCLUDED.state_history,
+               updated_at = NOW()
+           WHERE cryptocrawl_governance_state.state IS DISTINCT FROM EXCLUDED.state
+              OR cryptocrawl_governance_state.state_history IS DISTINCT FROM EXCLUDED.state_history`,
+          [STATE_SCOPE, stateJson, historyJson],
+        );
+        await client.query('COMMIT');
+        this.lastSuccessfulFingerprint = fingerprint;
+        return;
+      } catch (error) {
+        lastError = error;
+        try { await client.query('ROLLBACK'); } catch { /* connection release follows */ }
+        if (attempt >= SAVE_RETRIES || !retryablePersistenceError(error)) throw error;
+        await delay(Math.min(1_500, 200 * Math.pow(2, attempt - 1)));
+      } finally {
+        client.release();
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error(String(lastError || 'StageManager persistence failed'));
   }
 
   private fingerprint(snapshot: StageManagerPersistedSnapshot): string {
