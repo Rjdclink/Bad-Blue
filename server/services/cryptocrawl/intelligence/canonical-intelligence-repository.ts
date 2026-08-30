@@ -55,11 +55,14 @@ type PersistTask = {
   eventId: string;
   outcome: DurableTerminalOutcome;
   feedback: CryptaraExecutionFeedback;
+  attempts: number;
 };
 
 const HOT_OUTCOME_LIMIT = Math.max(64, Math.min(4096, Number(process.env.CRYPTARA_HOT_OUTCOME_LIMIT || 512)));
 const PERSISTENCE_QUEUE_LIMIT = Math.max(64, Math.min(8192, Number(process.env.CRYPTARA_PERSISTENCE_QUEUE_LIMIT || 2048)));
 const HYDRATE_LIMIT = Math.max(32, Math.min(HOT_OUTCOME_LIMIT, Number(process.env.CRYPTARA_REHYDRATE_LIMIT || 256)));
+const PERSISTENCE_MAX_RETRIES = Math.max(1, Math.min(12, Number(process.env.CRYPTARA_PERSISTENCE_MAX_RETRIES || 5)));
+const PERSISTENCE_RETRY_BASE_MS = Math.max(100, Math.min(10_000, Number(process.env.CRYPTARA_PERSISTENCE_RETRY_BASE_MS || 500)));
 
 function modelVersion(): string {
   return process.env.CRYPTARA_MODEL_VERSION?.trim() || 'cryptara-runtime-v1';
@@ -156,7 +159,7 @@ class CanonicalIntelligenceRepository {
     };
 
     this.rememberHot(outcome);
-    this.enqueue({ eventId, outcome, feedback: structuredClone(feedback) });
+    this.enqueue({ eventId, outcome, feedback: structuredClone(feedback), attempts: 0 });
   }
 
   getRecentTerminalOutcomes(limit = 128): DurableTerminalOutcome[] {
@@ -289,12 +292,31 @@ class CanonicalIntelligenceRepository {
           this.lastPersistenceError = null;
         } catch (error) {
           this.lastPersistenceError = error instanceof Error ? error.message : String(error);
-          logger.warn('[IntelligenceMemory] Durable terminal persistence degraded; hot learning memory retained', {
-            component: 'CanonicalIntelligenceRepository',
-            eventId: task.eventId,
-            error: this.lastPersistenceError,
-            executionBlocked: false,
-          });
+          task.attempts += 1;
+          if (task.attempts <= PERSISTENCE_MAX_RETRIES) {
+            const retryMs = Math.min(30_000, PERSISTENCE_RETRY_BASE_MS * (2 ** (task.attempts - 1)));
+            this.persistenceQueue.push(task);
+            logger.warn('[IntelligenceMemory] Durable terminal persistence retry scheduled; hot learning memory retained', {
+              component: 'CanonicalIntelligenceRepository',
+              eventId: task.eventId,
+              attempt: task.attempts,
+              maxRetries: PERSISTENCE_MAX_RETRIES,
+              retryMs,
+              error: this.lastPersistenceError,
+              executionBlocked: false,
+            });
+            await new Promise(resolve => setTimeout(resolve, retryMs));
+          } else {
+            this.droppedPersistenceTasks++;
+            logger.error('[IntelligenceMemory] Durable terminal persistence exhausted bounded retries; hot learning memory retained', {
+              component: 'CanonicalIntelligenceRepository',
+              eventId: task.eventId,
+              attempts: task.attempts,
+              droppedPersistenceTasks: this.droppedPersistenceTasks,
+              error: this.lastPersistenceError,
+              executionBlocked: false,
+            });
+          }
         }
       }
     } finally {
