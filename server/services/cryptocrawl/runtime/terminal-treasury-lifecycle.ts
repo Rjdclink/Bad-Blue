@@ -1,7 +1,7 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
-import { resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
+import { resolveExecutionWalletAddress, resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
 import { setTreasuryRestartSweepBarrier } from '../governance/treasury-execution-barrier.js';
 
 const SYSTEM_KEY = 'cryptocrawler';
@@ -11,6 +11,10 @@ const RAILWAY_DEPLOYMENT_ID = (process.env.RAILWAY_DEPLOYMENT_ID || '').trim();
 const RAILWAY_SERVICE_ID = (process.env.RAILWAY_SERVICE_ID || '').trim();
 const RAILWAY_ENVIRONMENT_ID = (process.env.RAILWAY_ENVIRONMENT_ID || '').trim();
 const DESTINATION = resolveTerminalPayoutAddress() || '';
+const EXECUTION_WALLET_DESTINATION = resolveExecutionWalletAddress().address || '';
+const FALLBACK_DESTINATION = EXECUTION_WALLET_DESTINATION && EXECUTION_WALLET_DESTINATION.toLowerCase() !== DESTINATION.toLowerCase()
+  ? EXECUTION_WALLET_DESTINATION
+  : '';
 
 type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 'MANUAL_REVIEW';
 
@@ -57,6 +61,7 @@ async function syncWorkerSecrets(): Promise<void> {
     ['cryptocrawler_okx_api_secret', (process.env.OKX_API_SECRET || '').trim()],
     ['cryptocrawler_okx_api_passphrase', (process.env.OKX_API_PASSPHRASE || '').trim()],
     ['cryptocrawler_profit_wallet', DESTINATION],
+    ['cryptocrawler_fallback_wallet', FALLBACK_DESTINATION],
     ['cryptocrawler_supabase_url', (process.env.SUPABASE_URL || '').trim()],
     ['cryptocrawler_supabase_service_key', (process.env.SUPABASE_SERVICE_KEY || '').trim()],
   ];
@@ -176,12 +181,15 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     serviceIdPresent: Boolean(RAILWAY_SERVICE_ID),
     environmentIdPresent: Boolean(RAILWAY_ENVIRONMENT_ID),
     terminalPayoutConfigured: Boolean(DESTINATION),
+    fallbackPayoutConfigured: Boolean(FALLBACK_DESTINATION),
+    fallbackDerivedFromCanonicalExecutionWallet: Boolean(FALLBACK_DESTINATION),
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
     runtimePolicy: 'first_three_fixed_60_percent_then_persisted_dynamic_55_to_65_percent_eth_payout_remainder_retained_restart_drains_remaining_treasury',
     successorCancelsRestartSweep: false,
     successorNewExposureBlockedDuringSweep: true,
     settlementHedgeFlatteningStillAllowed: true,
     singlePayoutAuthority: 'supabase_worker_okx_only',
+    fallbackActivation: 'confirmed_primary_withdrawal_terminal_failure_only',
   });
 }
 
