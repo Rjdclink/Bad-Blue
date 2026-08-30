@@ -56,6 +56,9 @@ const requiredAdaptive = [
   "outcome.success !== true || outcome.realizedProfitUsd <= 0",
   "status: 'probation'",
   'validationSamples < 3',
+  'requiredImprovementMargin = 0.01',
+  'average >= edit.baselineQualityScore + requiredImprovementMargin && average > 0',
+  'if (!improved)',
   "edit.status = 'rolled_back'",
   "edit.status = 'accepted'",
   "sharedEditMinimumRank: 'strategist'",
@@ -124,4 +127,4 @@ if (!runtime.includes('ensureCryptaraSovereignCortexWiring();')) throw new Error
 if (!runtime.includes('ensureCryptaraPredictivePrefetchWiring();')) throw new Error('[cryptara-sovereign-cortex] canonical predictive prefetch wiring missing');
 if (!runtime.includes('cryptaraCortexExecutionAuthority: false')) throw new Error('[cryptara-sovereign-cortex] runtime execution-authority boundary missing');
 
-console.log('[cryptara-sovereign-cortex] PASS: terminal-only rank evidence, Strategist-minimum shared micro-edits, lexicographic market/profit priority, parallel read-only cognition, and bounded predictive prefetch invariants preserved');
+console.log('[cryptara-sovereign-cortex] PASS: terminal-only rank evidence, Strategist-minimum proven shared micro-edits, lexicographic market/profit priority, parallel read-only cognition, and bounded predictive prefetch invariants preserved');
