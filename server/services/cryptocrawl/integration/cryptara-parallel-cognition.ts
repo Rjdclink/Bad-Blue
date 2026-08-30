@@ -119,8 +119,6 @@ function marketTruthHelper(input: MarketTruthInput) {
     && input.executableNotionalUsd !== null
     && input.executableNotionalUsd > 0;
 
-  // Provider quality strengthens confidence but never substitutes for direct
-  // executable quotes, measured depth, authenticated fees, or executable size.
   const qualitySupport = antennaQuality === null && providerQuality === null
     ? 0.5
     : Math.max(0, Math.min(1, ((antennaQuality ?? 0.5) + (providerQuality ?? 0.5)) / 2));
@@ -268,9 +266,6 @@ async function calculateFrame(context: CryptaraOpportunityContext): Promise<void
   const inputs = buildInputs(immutable);
   if (deadlineAt === null || inputs === null || Date.now() >= deadlineAt) return;
 
-  // These are small read-only arithmetic/evidence workloads. They still route
-  // through Beam/Quanti so the two lanes can run concurrently, but remain on the
-  // warm lane below authoritative Monte Carlo instead of competing as ultra-hot work.
   const marketTask = workloadRouter.createTask(TaskType.ML_PREDICTION, {
     helper: 'cryptara_market_truth_helper',
     quantiDeadlineAt: deadlineAt,
@@ -291,6 +286,11 @@ async function calculateFrame(context: CryptaraOpportunityContext): Promise<void
     priority: TaskPriority.MEDIUM,
     requiredLayer: ComputeLayer.BEAM,
   });
+
+  // Quote-bound helper work is never retried. If it misses its first deadline,
+  // the evidence is stale and a retry would only waste compute or resurrect old truth.
+  marketTask.metadata.maxRetries = 0;
+  optimizationTask.metadata.maxRetries = 0;
 
   const [marketResult, optimizationResult] = await Promise.allSettled([
     runBeamHelper(marketTask, inputs.market, marketTruthHelper),
@@ -317,12 +317,6 @@ async function calculateFrame(context: CryptaraOpportunityContext): Promise<void
   while (frames.size > MAX_FRAMES) frames.delete(frames.keys().next().value as string);
 }
 
-/**
- * Starts two bounded read-only helper lanes only for deterministic-positive plans.
- * The caller never waits for them. A helper frame can affect the same observation
- * only if it completes before the authoritative assessment returns; stale prior
- * observations are never substituted into a newer decision.
- */
 export function prewarmCryptaraParallelCognition(context: CryptaraOpportunityContext): void {
   if (!context.plan || !Number.isFinite(context.plan.netProfitUsd) || context.plan.netProfitUsd <= 0) return;
   const key = keyOf(context);
@@ -355,6 +349,7 @@ export function getCryptaraParallelCognitionStatus() {
     helpers: ['cryptara_market_truth_helper', 'cryptara_profit_efficiency_helper'],
     helperEventListeners: 2,
     helperComputeLane: 'quanti_warm_below_authoritative_monte_carlo',
+    helperRetries: 0,
     executionAuthority: false,
     writeAuthority: false,
     staleFrameSubstitutionAllowed: false,
