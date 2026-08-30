@@ -5,8 +5,10 @@ import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 
 const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
-const RETRY_ATTEMPTS = Math.max(1, Math.min(8, Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRIES || 4)));
-const RETRY_BASE_MS = Math.max(50, Math.min(5_000, Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRY_BASE_MS || 250)));
+const retryAttemptsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRIES || 4);
+const retryBaseMsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRY_BASE_MS || 250);
+const RETRY_ATTEMPTS = Number.isFinite(retryAttemptsRaw) ? Math.max(1, Math.min(8, Math.trunc(retryAttemptsRaw))) : 4;
+const RETRY_BASE_MS = Number.isFinite(retryBaseMsRaw) ? Math.max(50, Math.min(5_000, Math.trunc(retryBaseMsRaw))) : 250;
 
 function destinationFingerprint(): string {
   return DESTINATION
