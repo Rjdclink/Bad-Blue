@@ -52,6 +52,17 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function drawdownHeadroom(current: number, maximum: number): number {
+  if (!(maximum > 0)) return current > 0 ? 0 : 1;
+  return clamp(1 - Math.max(0, current) / maximum, 0, 1);
+}
+
+function edgeQuality(netProfitUsd: number, costUsd: number): number {
+  const grossEconomicValue = Math.max(0, netProfitUsd) + Math.max(0, costUsd);
+  if (!(grossEconomicValue > 0)) return 0;
+  return clamp(netProfitUsd / grossEconomicValue, 0.05, 1);
+}
+
 export function calculateProgressivePositionSize(
   request: PositionSizingRequest,
   context: PositionSizingContext = getRuntimePositionSizingContext(),
@@ -95,11 +106,6 @@ export function calculateProgressivePositionSize(
   }
 
   const realizedCapitalUsd = Math.max(0, state.totalProfitUSD);
-  // A flash-loan route has no wallet-principal requirement, so using the requested
-  // notional itself as the capital base created an impossible fixed point:
-  // max=requested*multiplier, then every request was rejected whenever multiplier
-  // was below 1. Anchor implemented zero-capital capacity to the governance stage
-  // ceiling instead. Ordinary wallet-funded routes remain tied to real capital.
   const capitalBaseUsd = request.zeroCapitalAvailable
     ? Math.max(0, stage.maxPositionSizeUSD)
     : Math.max(0, request.availableCapitalUsd + realizedCapitalUsd);
@@ -122,9 +128,20 @@ export function calculateProgressivePositionSize(
   const liquidityMultiplier = clamp(request.liquidityScore, 0.1, 1);
   const volatilityMultiplier = clamp(1 - request.volatilityScore, 0.2, 1);
   const costMultiplier = clamp(1 - request.expectedCostUsd / Math.max(request.requestedNotionalUsd, 1), 0.2, 1);
-  const capitalLimit = capitalBaseUsd * performanceMultiplier * liquidityMultiplier * volatilityMultiplier * costMultiplier;
+  const edgeMultiplier = edgeQuality(request.expectedNetProfitUsd, request.expectedCostUsd);
+  const drawdownMultiplier = clamp(drawdownHeadroom(state.currentDrawdownPercent, stage.maxDrawdownPercent), 0.1, 1);
+  const capitalLimit = capitalBaseUsd
+    * performanceMultiplier
+    * liquidityMultiplier
+    * volatilityMultiplier
+    * costMultiplier
+    * edgeMultiplier
+    * drawdownMultiplier;
   const maxPermittedNotionalUsd = Math.max(0, Math.min(stage.maxPositionSizeUSD, capitalLimit));
   const proposedNotionalUsd = Math.min(request.requestedNotionalUsd, maxPermittedNotionalUsd);
+
+  if (edgeMultiplier < 0.25) reasons.push('Thin net edge relative to measured costs reduced permitted exposure');
+  if (drawdownMultiplier < 0.75) reasons.push('Reduced drawdown headroom reduced permitted exposure before the hard stage limit');
 
   if (proposedNotionalUsd <= 0) {
     return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd, reasons: [...reasons, 'Risk-adjusted capital limit is zero'] };
@@ -134,7 +151,7 @@ export function calculateProgressivePositionSize(
     return { approved: false, proposedNotionalUsd, maxPermittedNotionalUsd, reasons };
   }
 
-  reasons.push('Exposure is within wallet/zero-capital capacity, Cryptara ranking, Monte Carlo, liquidity, volatility, and governance limits');
+  reasons.push('Exposure is within wallet/zero-capital capacity, net-edge quality, drawdown headroom, Cryptara ranking, Monte Carlo, liquidity, volatility, and governance limits');
   return { approved: true, proposedNotionalUsd, maxPermittedNotionalUsd, reasons };
 }
 
