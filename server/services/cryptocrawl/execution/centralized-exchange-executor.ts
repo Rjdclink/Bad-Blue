@@ -162,7 +162,7 @@ async function acquireMeasuredInventory(
     if (!snapshot) {
       return { reservation: null, rejection: `REJECT_BALANCE_INSUFFICIENT: no reconciled ${requirement.venue} ${requirement.asset} balance` };
     }
-    const spendable = snapshot.available - snapshot.reserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve;
+    const spendable = snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve;
     if (!Number.isFinite(spendable) || spendable + 1e-12 < requirement.amount) {
       return {
         reservation: null,
