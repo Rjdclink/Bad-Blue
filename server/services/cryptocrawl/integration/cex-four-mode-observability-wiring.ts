@@ -90,16 +90,29 @@ async function observe(): Promise<void> {
   running = true;
   try {
     const universe = getLastOrderedMarketUniverseSymbols();
-    const policy = buildAdaptiveProfitabilitySearchPolicy({
+    // Pre-scan policy chooses what to measure from the last known state.
+    const selectionPolicy = buildAdaptiveProfitabilitySearchPolicy({
       universeSymbols: universe,
       latestModes: latest,
       baseSymbolLimit: baseSymbolLimit(),
       baseIntervalMs: baseIntervalMs(),
     });
-    nextIntervalMs = policy.scanIntervalMs;
-    const symbols = policy.orderedSymbols;
+    const symbols = selectionPolicy.orderedSymbols;
     const settled = await Promise.allSettled(symbols.map(symbol => evaluateCexFourModeMatrix({ symbol })));
     latest = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []).sort(compare).slice(0, 256);
+
+    // Rebuild immediately from the CURRENT measurements. Previously the next
+    // interval inherited the pre-scan policy, so a newly discovered ~1 BPS edge
+    // could wait one extra cycle before cadence tightened. Edge-retention must
+    // react to current evidence, not the previous snapshot.
+    const nextPolicy = buildAdaptiveProfitabilitySearchPolicy({
+      universeSymbols: universe,
+      latestModes: latest,
+      baseSymbolLimit: baseSymbolLimit(),
+      baseIntervalMs: baseIntervalMs(),
+    });
+    nextIntervalMs = nextPolicy.scanIntervalMs;
+
     const positive = latest.filter(item => item.economicallyPositive);
     const nearMiss = latest.filter(item => !item.economicallyPositive);
     const closestBySymbol = getClosestCexNearMissesBySymbol(12);
@@ -122,16 +135,23 @@ async function observe(): Promise<void> {
         recoveryEfficiency: item.recoveryEfficiency,
       })),
       adaptiveSearch: {
-        symbolLimit: policy.symbolLimit,
-        nextIntervalMs: policy.scanIntervalMs,
-        closestGapBps: policy.closestGapBps,
-        closestRiskGapBps: policy.closestRiskGapBps,
-        recoverySymbols: policy.recoverySymbols,
-        explorationSymbols: policy.explorationSymbols,
-        hybridRecoverySymbols: policy.hybridRecoverySymbols,
-        staleEvidenceSymbols: policy.staleEvidenceSymbols,
-        authority: policy.authority,
-        executionAuthority: policy.executionAuthority,
+        selectionSymbolLimit: selectionPolicy.symbolLimit,
+        nextSymbolLimit: nextPolicy.symbolLimit,
+        nextIntervalMs: nextPolicy.scanIntervalMs,
+        closestGapBps: nextPolicy.closestGapBps,
+        closestRiskGapBps: nextPolicy.closestRiskGapBps,
+        recoverySymbols: nextPolicy.recoverySymbols,
+        explorationSymbols: nextPolicy.explorationSymbols,
+        hybridRecoverySymbols: nextPolicy.hybridRecoverySymbols,
+        staleEvidenceSymbols: nextPolicy.staleEvidenceSymbols,
+        feeRefreshMaxAgeMs: nextPolicy.feeRefreshMaxAgeMs,
+        activeBpsSolutionCount: nextPolicy.activeBpsSolutionCount,
+        activeBpsSolutionIds: nextPolicy.activeBpsSolutionIds,
+        makerFocusMultiplier: nextPolicy.makerFocusMultiplier,
+        sizeRefinementMultiplier: nextPolicy.sizeRefinementMultiplier,
+        mcSearchMultiplier: nextPolicy.mcSearchMultiplier,
+        authority: nextPolicy.authority,
+        executionAuthority: nextPolicy.executionAuthority,
       },
       bestPositive: positive[0] ? {
         symbol: positive[0].symbol,

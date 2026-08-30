@@ -15,7 +15,8 @@ const PAIR_CREATED_TOPIC = V2_PAIR_CREATED.getEventTopic('PairCreated');
 
 const V2_FACTORIES: Partial<Record<SupportedExecutionChain, Array<{ name: string; address: string }>>> = {
   polygon: [
-    { name: 'quickswap_v2', address: '0x5757371414417b8C6cAad45bAeF941aBc7d3Ab32' },
+    // Lower-case address avoids ethers rejecting a non-canonical mixed-case checksum.
+    { name: 'quickswap_v2', address: '0x5757371414417b8c6caad45baef941abc7d3ab32' },
     { name: 'sushiswap_v2', address: '0xc35DADB65012eC5796536bD9864eD8773aBc74C4' },
   ],
   arbitrum: [
@@ -140,6 +141,28 @@ function rememberAnchoredCandidate(
   }
 }
 
+function isArchiveRestriction(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /archive requests require|archive node|historical state|block range.*too (?:large|old)/i.test(message);
+}
+
+async function getLogsWithRecentFallback(
+  provider: providers.Provider,
+  filter: providers.Filter,
+  currentBlock: number,
+): Promise<providers.Log[]> {
+  try {
+    return await provider.getLogs(filter);
+  } catch (error) {
+    if (!isArchiveRestriction(error)) throw error;
+    // Public no-key RPCs often reject archive ranges. Retry only the most recent
+    // bounded window; this is discovery coverage, never execution evidence.
+    const recentBlocks = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_ARCHIVE_FALLBACK_BLOCKS, 128, 32, 2_000));
+    const recentFrom = Math.max(0, currentBlock - recentBlocks + 1);
+    return provider.getLogs({ ...filter, fromBlock: recentFrom, toBlock: currentBlock });
+  }
+}
+
 async function scanFactoryLogs(input: {
   provider: providers.Provider;
   currentBlock: number;
@@ -152,12 +175,19 @@ async function scanFactoryLogs(input: {
   observedAt: number;
   output: Map<string, GraphlessDexTokenCandidate>;
 }): Promise<void> {
-  const bootstrapBlocks = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_BOOTSTRAP_BLOCKS, 20_000, 500, 100_000));
+  // A recent bootstrap is sufficient for graphless scouting and avoids forcing
+  // free/public RPC endpoints into archive mode. Operators with archive RPCs can
+  // increase this explicitly without changing execution authority.
+  const bootstrapBlocks = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_BOOTSTRAP_BLOCKS, 512, 64, 100_000));
   const fromBlock = Math.max(0, lastFactoryBlock.get(input.chainKey) ?? input.currentBlock - bootstrapBlocks);
-  const chunk = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_LOG_CHUNK, 2_000, 100, 10_000));
+  const chunk = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_LOG_CHUNK, 512, 64, 10_000));
   for (let start = fromBlock; start <= input.currentBlock; start += chunk) {
     const end = Math.min(input.currentBlock, start + chunk - 1);
-    const logs = await input.provider.getLogs({ address: input.address, topics: [input.topic], fromBlock: start, toBlock: end });
+    const logs = await getLogsWithRecentFallback(
+      input.provider,
+      { address: input.address, topics: [input.topic], fromBlock: start, toBlock: end },
+      input.currentBlock,
+    );
     for (const log of logs) {
       try {
         const parsed = input.parse(log);
@@ -294,6 +324,7 @@ export async function discoverGraphlessDexTokens(
     directRpcAvailable,
     v2ForkRpcScanning: process.env.ZERO_CAPITAL_V2_FORK_RPC_SCANNING !== 'false',
     v2Factories: (V2_FACTORIES[chain] || []).map(factory => factory.name),
+    factoryBootstrapBlocks: Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_BOOTSTRAP_BLOCKS, 512, 64, 100_000)),
     errors,
     apiKeysRequired: false,
     executionAuthority: false,

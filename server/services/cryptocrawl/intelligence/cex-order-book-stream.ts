@@ -66,6 +66,25 @@ const MAX_PENDING_DELTAS = 256;
 const DEFAULT_STALE_MS = 7_500;
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 
+function configuredWebSocket(name: string): string | null {
+  const value = process.env[name]?.trim();
+  return value && /^wss:\/\//i.test(value) ? value : null;
+}
+
+/**
+ * Keep OKX public observation on the same regional market surface as the
+ * authenticated execution authority. U.S. credentials execute through
+ * https://us.okx.com and must observe wsus.okx.com rather than the global book.
+ * An explicit WS URL remains available for other authenticated regions.
+ */
+export function getOkxPublicWebSocketEndpoint(): string {
+  const explicit = configuredWebSocket('OKX_PUBLIC_WS_URL');
+  if (explicit) return explicit;
+  const restBase = (process.env.OKX_API_BASE_URL || 'https://us.okx.com').trim().toLowerCase();
+  if (restBase.includes('us.okx.com')) return 'wss://wsus.okx.com:8443/ws/v5/public';
+  return 'wss://ws.okx.com:8443/ws/v5/public';
+}
+
 function parseSymbol(symbol: string): { base: string; quote: string } | null {
   const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
   return match ? { base: match[1], quote: match[2] } : null;
@@ -350,7 +369,7 @@ class CexOrderBookStreamManager {
       ? 'wss://ws-feed.exchange.coinbase.com'
       : connection.venue === 'kraken'
         ? 'wss://ws.kraken.com/v2'
-        : 'wss://ws.okx.com:8443/ws/v5/public';
+        : getOkxPublicWebSocketEndpoint();
     const socket = new WebSocket(endpoint);
     connection.socket = socket;
 
@@ -358,6 +377,12 @@ class CexOrderBookStreamManager {
       this.stats.connectionsOpened += 1;
       if (connection.reconnectAttempts > 0) this.stats.reconnects += 1;
       connection.reconnectAttempts = 0;
+      logger.info('[CexOrderBookStream] venue market-data stream connected', {
+        component: 'CexOrderBookStream',
+        venue: connection.venue,
+        endpoint,
+        regionalExecutionAlignment: connection.venue === 'okx' ? 'rest_base_to_public_ws_region' : 'native_venue_endpoint',
+      });
       const symbols = [...connection.symbols];
       if (symbols.length > 0) this.send(socket, this.subscription(connection.venue, symbols), connection.venue, 'subscribe');
     });

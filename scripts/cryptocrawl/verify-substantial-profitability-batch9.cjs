@@ -40,7 +40,8 @@ const behaviors = [
   ['policy', "authority: 'measured_search_scheduling_only'", 'search-only authority boundary'],
 
   ['cex', 'buildAdaptiveProfitabilitySearchPolicy', 'adaptive policy wired into CEX observation'],
-  ['cex', 'nextIntervalMs = policy.scanIntervalMs', 'adaptive interval applied'],
+  ['cex', 'nextIntervalMs = nextPolicy.scanIntervalMs', 'current-cycle adaptive interval applied'],
+  ['cex', 'latestModes: latest', 'newly measured modes drive the next scan policy'],
   ['cex', 'setTimeout(async () =>', 'recursive adaptive rescheduling'],
   ['cex', 'smallest_risk_adjusted_then_exact_bps_to_break_even_first', 'risk-adjusted near-miss ordering'],
 
@@ -80,8 +81,8 @@ const behaviors = [
   ['transformWiring', 'closestByTopology', 'closest feasible rescue retained per topology'],
 ];
 
-if (behaviors.length !== 50) {
-  throw new Error(`[substantial-profitability-batch9] expected exactly 50 behavior checks, got ${behaviors.length}`);
+if (behaviors.length !== 51) {
+  throw new Error(`[substantial-profitability-batch9] expected exactly 51 behavior checks after current-cycle cadence hardening, got ${behaviors.length}`);
 }
 for (const [fileKey, pattern, name] of behaviors) {
   if (!source[fileKey].includes(pattern)) {
@@ -102,4 +103,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/profi
   throw new Error('[substantial-profitability-batch9] obsolete signal-count batch must not exist');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty behavior-level profitability enhancements are present; telemetry fields are not counted as enhancements; implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-one behavior-level profitability enhancements are present; current-cycle near-edge cadence is required; telemetry fields are not counted as enhancements; implemented CEX topology remains settlement-gated');

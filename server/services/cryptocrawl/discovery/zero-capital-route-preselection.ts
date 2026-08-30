@@ -6,6 +6,7 @@ import {
   getAriesRouteFormationScore,
   recordAriesRouteFormationObservation,
 } from '../intelligence/aries-edge-formation-reactor.js';
+import { buildHyperdynamicBpsPlan, type HyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
 
 export interface ZeroCapitalRoutePreselectionEvidence {
   routeId: string;
@@ -50,6 +51,10 @@ export interface ZeroCapitalRoutePreselection {
   scoredCandidates: number;
   explorationSelected: number;
   exploitationSelected: number;
+  activeBpsSolutionCount: number;
+  activeBpsSolutionIds: number[];
+  quoteBudgetMultiplier: number;
+  gasSensitivityMultiplier: number;
   scores: ZeroCapitalRoutePreScore[];
   authority: 'quote_budget_advisory_only';
   deterministicProfitAuthority: false;
@@ -125,14 +130,36 @@ function measuredEdgePotential(netProfitBps: number): number {
   return Math.max(0.000001, 1 / (1 + Math.abs(netProfitBps) / nearBreakEvenScaleBps));
 }
 
+function zeroCapitalPlan(routes: readonly ConfiguredZeroCapitalRoute[]): HyperdynamicBpsPlan {
+  let attempts = 0;
+  let measured = 0;
+  let positive = 0;
+  const gaps: number[] = [];
+  for (const route of routes) {
+    const item = evidence.get(route.id);
+    if (!item) continue;
+    attempts += item.attempts;
+    positive += item.positiveQuotes;
+    if (item.recentNetProfitBps === null || !Number.isFinite(item.recentNetProfitBps)) continue;
+    measured += 1;
+    if (item.recentNetProfitBps <= 0) gaps.push(Math.abs(item.recentNetProfitBps));
+  }
+  return buildHyperdynamicBpsPlan({
+    zeroCapitalGapBps: gaps.length > 0 ? Math.min(...gaps) : null,
+    zeroCapitalPositiveYield: attempts > 0 ? positive / attempts : null,
+    zeroCapitalQuoteUtilization: routes.length > 0 ? measured / routes.length : null,
+  });
+}
+
 function scoreRoute(
   route: ConfiguredZeroCapitalRoute,
   gasCostUsd: number,
   now: number,
+  plan: HyperdynamicBpsPlan,
 ): ZeroCapitalRoutePreScore {
   const item = evidence.get(route.id);
   const notionalUsd = routeNotionalUsd(route);
-  const gasPressure = Math.max(0.000001, gasCostUsd / Math.max(0.01, notionalUsd));
+  const gasPressure = Math.max(0.000001, gasCostUsd / Math.max(0.01, notionalUsd)) * plan.gasSensitivityMultiplier;
   const cost = quoteCost(route);
   if (!item || item.lastMeasuredAt === null || item.recentNetProfitBps === null || item.recentMeasuredNotionalUsd === null) {
     return {
@@ -208,12 +235,16 @@ function deterministicExploration(
   return oldestFirst(routes).slice(0, Math.min(count, routes.length));
 }
 
-function adaptiveQuoteBudget(routes: readonly ConfiguredZeroCapitalRoute[]): { base: number; budget: number; delta: number } {
+function adaptiveQuoteBudget(
+  routes: readonly ConfiguredZeroCapitalRoute[],
+  plan: HyperdynamicBpsPlan,
+): { base: number; budget: number; delta: number } {
   const base = boundedInteger(process.env.ZERO_CAPITAL_DYNAMIC_QUOTE_BUDGET, 16, 1, 256);
   const cap = Math.max(base, boundedInteger(process.env.ZERO_CAPITAL_ADAPTIVE_QUOTE_BUDGET_MAX, 64, base, 256));
   if (process.env.ZERO_CAPITAL_ADAPTIVE_QUOTE_BUDGET === 'false' || routes.length <= base) {
-    const budget = Math.min(routes.length, base);
-    return { base: Math.min(routes.length, base), budget, delta: 0 };
+    const raw = Math.min(routes.length, base);
+    const budget = Math.max(1, Math.min(routes.length, Math.round(raw * plan.quoteBudgetMultiplier)));
+    return { base: Math.min(routes.length, base), budget, delta: budget - Math.min(routes.length, base) };
   }
 
   const scaleBps = boundedNumber(process.env.ZERO_CAPITAL_NEAR_BREAK_EVEN_SCALE_BPS, 50, 1, 500);
@@ -228,20 +259,19 @@ function adaptiveQuoteBudget(routes: readonly ConfiguredZeroCapitalRoute[]): { b
     if (item.recentNetProfitBps >= -scaleBps) promising += 1;
   }
 
-  // Expand expensive exact quoting only when measured evidence says the search
-  // surface is producing near-break-even/positive routes. Cold-start exploration
-  // stays at the existing base budget, preventing an RPC-cost regression.
   const signal = measured > 0 ? (promising + positive * 2) / measured : 0;
   const structuralPressure = Math.min(1, routes.length / Math.max(base * 8, 1));
   const expansion = Math.floor((cap - base) * Math.min(1, signal) * (0.5 + 0.5 * structuralPressure));
-  const budget = Math.min(routes.length, cap, base + Math.max(0, expansion));
-  return { base: Math.min(routes.length, base), budget, delta: Math.max(0, budget - Math.min(routes.length, base)) };
+  const rawBudget = Math.min(routes.length, cap, base + Math.max(0, expansion));
+  const budget = Math.max(1, Math.min(routes.length, cap, Math.round(rawBudget * plan.quoteBudgetMultiplier)));
+  return { base: Math.min(routes.length, base), budget, delta: budget - Math.min(routes.length, base) };
 }
 
 export function selectZeroCapitalRoutesForQuote(
   routes: ConfiguredZeroCapitalRoute[],
   gasCostUsd: number,
 ): ZeroCapitalRoutePreselection {
+  const plan = zeroCapitalPlan(routes);
   if (routes.length === 0) {
     return {
       selectedRoutes: [],
@@ -252,6 +282,10 @@ export function selectZeroCapitalRoutesForQuote(
       scoredCandidates: 0,
       explorationSelected: 0,
       exploitationSelected: 0,
+      activeBpsSolutionCount: plan.activeSolutionCount,
+      activeBpsSolutionIds: [...plan.activeSolutionIds],
+      quoteBudgetMultiplier: plan.quoteBudgetMultiplier,
+      gasSensitivityMultiplier: plan.gasSensitivityMultiplier,
       scores: [],
       authority: 'quote_budget_advisory_only',
       deterministicProfitAuthority: false,
@@ -259,10 +293,10 @@ export function selectZeroCapitalRoutesForQuote(
     };
   }
 
-  const budgetDecision = adaptiveQuoteBudget(routes);
+  const budgetDecision = adaptiveQuoteBudget(routes, plan);
   const quoteBudget = budgetDecision.budget;
   if (quoteBudget >= routes.length) {
-    const scores = routes.map(route => scoreRoute(route, gasCostUsd, Date.now()));
+    const scores = routes.map(route => scoreRoute(route, gasCostUsd, Date.now(), plan));
     return {
       selectedRoutes: [...routes],
       structuralCandidates: routes.length,
@@ -272,6 +306,10 @@ export function selectZeroCapitalRoutesForQuote(
       scoredCandidates: scores.filter(score => score.evidenceSufficient).length,
       explorationSelected: routes.length,
       exploitationSelected: 0,
+      activeBpsSolutionCount: plan.activeSolutionCount,
+      activeBpsSolutionIds: [...plan.activeSolutionIds],
+      quoteBudgetMultiplier: plan.quoteBudgetMultiplier,
+      gasSensitivityMultiplier: plan.gasSensitivityMultiplier,
       scores,
       authority: 'quote_budget_advisory_only',
       deterministicProfitAuthority: false,
@@ -279,12 +317,13 @@ export function selectZeroCapitalRoutesForQuote(
     };
   }
 
-  const explorationFraction = boundedNumber(process.env.ZERO_CAPITAL_ROUTE_EXPLORATION_FRACTION, 0.25, 0.10, 0.75);
+  const baseExplorationFraction = boundedNumber(process.env.ZERO_CAPITAL_ROUTE_EXPLORATION_FRACTION, 0.25, 0.10, 0.75);
+  const explorationFraction = Math.max(0.10, Math.min(0.75, baseExplorationFraction * plan.explorationMultiplier));
   const explorationCount = Math.max(1, Math.min(quoteBudget, Math.ceil(quoteBudget * explorationFraction)));
   const exploration = deterministicExploration(routes, explorationCount);
   const selectedIds = new Set(exploration.map(route => route.id));
   const now = Date.now();
-  const scores = routes.map(route => scoreRoute(route, gasCostUsd, now));
+  const scores = routes.map(route => scoreRoute(route, gasCostUsd, now, plan));
   const byId = new Map(routes.map(route => [route.id, route]));
   const ranked = scores
     .filter(score => !selectedIds.has(score.routeId) && score.preScore !== null)
@@ -320,6 +359,10 @@ export function selectZeroCapitalRoutesForQuote(
     scoredCandidates: scores.filter(score => score.evidenceSufficient).length,
     explorationSelected: exploration.length,
     exploitationSelected: exploitation.length,
+    activeBpsSolutionCount: plan.activeSolutionCount,
+    activeBpsSolutionIds: [...plan.activeSolutionIds],
+    quoteBudgetMultiplier: plan.quoteBudgetMultiplier,
+    gasSensitivityMultiplier: plan.gasSensitivityMultiplier,
     scores,
     authority: 'quote_budget_advisory_only',
     deterministicProfitAuthority: false,

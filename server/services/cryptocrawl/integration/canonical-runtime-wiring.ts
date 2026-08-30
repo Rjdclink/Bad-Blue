@@ -12,12 +12,14 @@ import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-
 import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
+import { ensureCexInventoryReadinessWiring } from './cex-inventory-readiness-wiring.js';
 import { ensureComputationalReactorWiring } from './computational-reactor-wiring.js';
 import { ensureCrossVenueTimingGuardWiring } from './cross-venue-timing-guard-wiring.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureCryptaraSovereignCortexWiring } from './cryptara-sovereign-cortex-wiring.js';
 import { ensureCryptaraPredictivePrefetchWiring } from './cryptara-predictive-prefetch-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
+import { ensureExecutionReadinessProfitabilityWiring } from './execution-readiness-profitability-wiring.js';
 import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constrained-cex-execution-wiring.js';
 import { ensureMeasuredCandidateExpiryGuardWiring } from './measured-candidate-expiry-guard-wiring.js';
@@ -36,7 +38,9 @@ import { ensureZeroCapitalJointProviderSizeWiring } from './zero-capital-joint-p
 import { ensureZeroCapitalProfitabilityRescueV2 } from './zero-capital-profitability-rescue-v2.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
+import { ensureZeroCapitalDynamicAttemptBarrierWiring } from './zero-capital-dynamic-attempt-barrier-wiring.js';
 import { ensureProviderSpecificZeroCapitalExecutionWiring } from './provider-specific-zero-capital-execution-wiring.js';
+import { ensureDualProviderZeroCapitalExecutionWiring } from './dual-provider-zero-capital-execution-wiring.js';
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
@@ -108,7 +112,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureZeroCapitalProfitabilityRescueV2();
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
+  ensureDualProviderZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
+  ensureZeroCapitalDynamicAttemptBarrierWiring();
   ensureAlchemyStandardRpcFirstWiring();
 
   void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
@@ -119,6 +125,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureCryptaraSovereignCortexWiring();
   ensureCryptaraPredictivePrefetchWiring();
   ensureStablecoinMakerExecutionWiring();
+  ensureCexInventoryReadinessWiring();
+  ensureExecutionReadinessProfitabilityWiring();
   ensureInventoryConstrainedCexExecutionWiring();
   ensureCrossVenueTimingGuardWiring();
   ensureMeasuredCandidateExpiryGuardWiring();
@@ -156,10 +164,12 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history',
     adaptiveThresholdAuthority: 'terminal_realized_outcomes',
     measuredCandidateFreshnessPromotionGuard: true,
+    executionReadinessProfitabilityControls: '200_bounded_prewarm_retention_inventory_provider_expiry_rules_without_order_authority',
     crossVenueTimingGuard: 'fresh_synchronized_coinbase_kraken_okx_books_then_existing_exact_economic_requote',
     bpsExecutionFloor: null,
     executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
+    cexInventoryReadiness: 'proactive_authenticated_balance_hydration_then_candidate_specific_reconciliation',
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
     cexMakerExecution: 'kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
     coinbaseMakerExecutionAuthority: false,
@@ -187,10 +197,14 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     zeroCapitalRuntimeLifecycle: 'cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
     zeroCapitalSizeOptimization: 'coarse_independent_quotes_plus_bounded_fresh_local_refinement_plus_exact_provider_size_rescue_plus_profitability_rescue_v2',
     zeroCapitalProfitabilityRescue: 'decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
-    zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
-    zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
+    zeroCapitalFlashLoanEconomics: 'measured_single_provider_fee_liquidity_plus_combined_aave_balancer_liquidity_rescue',
+    zeroCapitalProviderExecution: 'verified_balancer_aave_or_dual_receiver_permission_binding',
+    zeroCapitalProviderMesh: 'balancer_or_aave_or_balancer_outer_plus_nested_aave_when_combined_liquidity_unlocks_exact_size',
+    zeroCapitalProviderMeshSinglePreferredWhenSufficient: true,
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
     zeroCapitalAtomicStackExecutionAuthority: false,
+    zeroCapitalDynamicAttemptBarrier: 'exact_provider_specific_eth_call_plus_exact_gas_estimate_then_dynamic_profit_cushion_vs_failed_attempt_exposure_defer_and_requote',
+    zeroCapitalDynamicAttemptBarrierExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
     zeroCapitalWorkOrdering: 'expected_net_profit_per_scarcity_unit_with_expiry_urgency_scheduling_only',
     alchemyPaidPendingStreamDefault: false,

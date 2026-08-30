@@ -103,13 +103,14 @@ requireAll('server/services/cryptocrawl/integration/learning-lifecycle-wiring.ts
   'settlementCalibrationExecutionAuthority: false',
 ]);
 
-// 6) Zero-capital provider repricing keeps strict positivity and rechecks Cryptara.
+// 6) Zero-capital provider repricing keeps strict positivity for every measured
+// provider shape (single or dual) and rechecks Cryptara after positive repricing.
 requireAll('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts', [
-  'if (netProfit <= 0n)',
+  'if (values.netProfit <= 0n)',
   'const cryptaraAllowed = !target.executionEnabled || await originalCryptaraAdmission(opportunity);',
   "'strict_positive_repriced_net'",
   'positiveProviderRescueRechecksCryptara: true',
   'nonPositiveProviderRepriceExecutable: false',
 ]);
 
-console.log('[runtime-safety-invariants] PASS: strict positive economics, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, and zero-capital repricing invariants preserved');
+console.log('[runtime-safety-invariants] PASS: strict positive economics, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, and single/dual zero-capital repricing invariants preserved');

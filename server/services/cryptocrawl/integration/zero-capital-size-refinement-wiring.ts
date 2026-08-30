@@ -14,6 +14,7 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import { buildHyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
 import type { providers } from 'ethers';
 
 const installed = new WeakSet<object>();
@@ -62,18 +63,36 @@ function maxRefinedRoutesPerScan(): number {
   return Number.isFinite(parsed) ? Math.max(1, Math.min(16, Math.trunc(parsed))) : 8;
 }
 
+function dynamicRefinementPolicy(opportunities: readonly ZeroCapitalOpportunity[]): {
+  candidates: number;
+  routes: number;
+  activeSolutionCount: number;
+  activeSolutionIds: number[];
+  sizeRefinementMultiplier: number;
+} {
+  const negativeGaps = opportunities
+    .filter(item => item.expectedProfit <= 0n && Number.isFinite(item.netProfitBps))
+    .map(item => Math.abs(item.netProfitBps));
+  const positive = opportunities.filter(item => item.expectedProfit > 0n).length;
+  const plan = buildHyperdynamicBpsPlan({
+    zeroCapitalGapBps: negativeGaps.length > 0 ? Math.min(...negativeGaps) : null,
+    zeroCapitalPositiveYield: opportunities.length > 0 ? positive / opportunities.length : null,
+  });
+  return {
+    candidates: Math.max(1, Math.min(6, Math.round(refinementBudget() * plan.sizeRefinementMultiplier))),
+    routes: Math.max(1, Math.min(16, Math.round(maxRefinedRoutesPerScan() * Math.max(0.75, Math.min(1.50, plan.sizeRefinementMultiplier))))),
+    activeSolutionCount: plan.activeSolutionCount,
+    activeSolutionIds: [...plan.activeSolutionIds],
+    sizeRefinementMultiplier: plan.sizeRefinementMultiplier,
+  };
+}
+
 function blockTimestampFromOpportunity(opportunity: ZeroCapitalOpportunity): number {
   const suffix = opportunity.id.match(/-(\d{8,})$/)?.[1];
   const parsed = Number(suffix);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1000);
 }
 
-/**
- * Positive refinement points compete on absolute measured net profit. If every
- * point is negative, the closest measured BPS to break-even wins instead. This
- * prevents a larger-notional dollar loss from hiding a materially better BPS
- * shape that downstream flash-provider repricing may be able to rescue.
- */
 function bestRefinementQuote(values: readonly QuotedZeroCapitalRoute[]): QuotedZeroCapitalRoute | null {
   const positives = values.filter(value => value.netProfit > 0n);
   if (positives.length > 0) {
@@ -128,6 +147,7 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     const coarseOpportunities = await originalScanChain(chain, provider);
     if (chain === 'europa' || coarseOpportunities.length === 0) return coarseOpportunities;
 
+    const dynamic = dynamicRefinementPolicy(coarseOpportunities);
     const ordered = [...coarseOpportunities]
       .sort((left, right) => {
         const leftPriority = refinementPriority(left);
@@ -136,7 +156,7 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
         if (left.expectedProfit === right.expectedProfit) return 0;
         return left.expectedProfit > right.expectedProfit ? -1 : 1;
       });
-    const refinableIds = new Set(ordered.slice(0, maxRefinedRoutesPerScan()).map(item => item.id));
+    const refinableIds = new Set(ordered.slice(0, dynamic.routes).map(item => item.id));
     const output: ZeroCapitalOpportunity[] = [];
     let improved = 0;
     let rescuedPositive = 0;
@@ -161,7 +181,7 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
         bestNotionalUsd: usdFromBaseUnits(opportunity.flashLoanAmount),
         minimumNotionalUsd: coarse[0] ?? 0.01,
         maximumNotionalUsd: maximum,
-        maxCandidates: refinementBudget(),
+        maxCandidates: dynamic.candidates,
       });
       if (refinement.length === 0) {
         output.push(opportunity);
@@ -203,7 +223,11 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
         component: 'ZeroCapitalSizeRefinementWiring',
         chain,
         coarseOpportunities: coarseOpportunities.length,
-        refinedRouteBudget: Math.min(coarseOpportunities.length, maxRefinedRoutesPerScan()),
+        refinedRouteBudget: Math.min(coarseOpportunities.length, dynamic.routes),
+        refinementCandidatesPerRoute: dynamic.candidates,
+        sizeRefinementMultiplier: dynamic.sizeRefinementMultiplier,
+        activeBpsSolutionCount: dynamic.activeSolutionCount,
+        activeBpsSolutionIds: dynamic.activeSolutionIds,
         extraIndependentQuotes: extraQuotes,
         improvedNetProfitRoutes: improved,
         rescuedPositiveRoutes: rescuedPositive,
@@ -224,8 +248,9 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
 
   logger.info('[ZeroCapitalSizeRefinement] Adaptive second-stage size optimizer installed', {
     component: 'ZeroCapitalSizeRefinementWiring',
-    refinementCandidatesPerRoute: refinementBudget(),
-    maxRoutesPerScan: maxRefinedRoutesPerScan(),
+    baseRefinementCandidatesPerRoute: refinementBudget(),
+    baseMaxRoutesPerScan: maxRefinedRoutesPerScan(),
+    hyperdynamicBpsSizing: true,
     independentFreshQuotesRequired: true,
     strictMeasuredImprovementRequired: true,
     positiveSelectionObjective: 'highest_measured_net_profit',
