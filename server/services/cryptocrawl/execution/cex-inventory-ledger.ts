@@ -144,7 +144,8 @@ class CexInventoryLedger {
     asset: string,
   ): Promise<number | null> {
     const normalized = canonicalAsset(asset);
-    let total = 0;
+    let sourceReserved = 0;
+    let executionReserved = 0;
     let anyAuthority = false;
 
     if (await this.tableExists(client, PAYOUT_RESERVE_TABLE)) {
@@ -155,7 +156,7 @@ class CexInventoryLedger {
          WHERE venue=$1 AND asset=$2 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND remaining_asset_amount > 0`,
         [venue, normalized],
       );
-      total += Number(source.rows[0]?.reserved || 0);
+      sourceReserved = Number(source.rows[0]?.reserved || 0);
     }
 
     if (await this.tableExists(client, PAYOUT_EXECUTION_RESERVE_TABLE)) {
@@ -166,10 +167,17 @@ class CexInventoryLedger {
          WHERE venue=$1 AND asset=$2 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND reserved_asset_amount > 0`,
         [venue, normalized],
       );
-      total += Number(execution.rows[0]?.reserved || 0);
+      executionReserved = Number(execution.rows[0]?.reserved || 0);
     }
 
-    return anyAuthority && Number.isFinite(total) ? Math.max(0, total) : null;
+    // Source reservation and execution reservation can represent the same OKX
+    // payout capital during a batch. Protect the larger live claim rather than
+    // summing both representations and accidentally consuming retained capital.
+    const protectedAmount = Math.max(
+      Number.isFinite(sourceReserved) ? sourceReserved : 0,
+      Number.isFinite(executionReserved) ? executionReserved : 0,
+    );
+    return anyAuthority ? Math.max(0, protectedAmount) : null;
   }
 
   private async payoutReserves(venue: InventoryVenue): Promise<Map<string, number>> {
@@ -188,7 +196,7 @@ class CexInventoryLedger {
       for (const row of source.rows) {
         const asset = canonicalAsset(String(row.asset || ''));
         const amount = Number(row.reserved || 0);
-        if (asset && Number.isFinite(amount) && amount > 0) values.set(asset, (values.get(asset) || 0) + amount);
+        if (asset && Number.isFinite(amount) && amount > 0) values.set(asset, amount);
       }
     }
 
@@ -204,7 +212,9 @@ class CexInventoryLedger {
       for (const row of execution.rows) {
         const asset = canonicalAsset(String(row.asset || ''));
         const amount = Number(row.reserved || 0);
-        if (asset && Number.isFinite(amount) && amount > 0) values.set(asset, (values.get(asset) || 0) + amount);
+        if (asset && Number.isFinite(amount) && amount > 0) {
+          values.set(asset, Math.max(values.get(asset) || 0, amount));
+        }
       }
     }
     return values;
