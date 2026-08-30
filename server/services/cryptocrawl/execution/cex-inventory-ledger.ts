@@ -97,40 +97,35 @@ class CexInventoryLedger {
     if (this.tableReady) return this.tableReady;
     this.tableReady = (async () => {
       try {
-        await pool.query(`
-          CREATE TABLE IF NOT EXISTS ${STATE_TABLE} (
-            venue text NOT NULL,
-            asset text NOT NULL,
-            available numeric NOT NULL,
-            payout_reserved numeric NOT NULL DEFAULT 0,
-            pending_order numeric NOT NULL DEFAULT 0,
-            pending_transfer numeric NOT NULL DEFAULT 0,
-            target numeric NULL,
-            minimum_reserve numeric NOT NULL DEFAULT 0,
-            maximum_venue_exposure numeric NULL,
-            reconciled_at timestamptz NOT NULL,
-            PRIMARY KEY (venue, asset)
-          )
-        `);
-        await pool.query(`ALTER TABLE ${STATE_TABLE} ADD COLUMN IF NOT EXISTS payout_reserved numeric NOT NULL DEFAULT 0`);
-        await pool.query(`
-          CREATE TABLE IF NOT EXISTS ${RESERVATION_TABLE} (
-            reservation_id text NOT NULL,
-            opportunity_id text NOT NULL,
-            venue text NOT NULL,
-            asset text NOT NULL,
-            amount numeric NOT NULL,
-            acquired_at timestamptz NOT NULL,
-            expires_at timestamptz NOT NULL,
-            PRIMARY KEY (reservation_id, venue, asset)
-          )
-        `);
-        await pool.query(`CREATE INDEX IF NOT EXISTS ${RESERVATION_TABLE}_active_idx ON ${RESERVATION_TABLE} (venue, asset, expires_at)`);
-        return true;
+        // Schema ownership belongs to migrations. Runtime trading code is read/write
+        // only and must never acquire DDL locks during a deploy or restart.
+        const result = await pool.query(
+          `SELECT
+             to_regclass($1) IS NOT NULL AS state_present,
+             to_regclass($2) IS NOT NULL AS reservation_present,
+             EXISTS (
+               SELECT 1 FROM information_schema.columns
+               WHERE table_schema='public' AND table_name=$3 AND column_name='payout_reserved'
+             ) AS payout_column_present`,
+          [`public.${STATE_TABLE}`, `public.${RESERVATION_TABLE}`, STATE_TABLE],
+        );
+        const row = result.rows[0] || {};
+        const ready = row.state_present === true && row.reservation_present === true && row.payout_column_present === true;
+        if (!ready) {
+          logger.error('[InventoryLedger] Durable inventory schema is missing; live reservation fails closed', {
+            component: 'CexInventoryLedger',
+            stateTablePresent: row.state_present === true,
+            reservationTablePresent: row.reservation_present === true,
+            payoutReservedColumnPresent: row.payout_column_present === true,
+            runtimeSchemaMutationAllowed: false,
+          });
+        }
+        return ready;
       } catch (error) {
         logger.error('[InventoryLedger] Durable inventory tables unavailable; live reservation fails closed', {
           component: 'CexInventoryLedger',
           error: error instanceof Error ? error.message : String(error),
+          runtimeSchemaMutationAllowed: false,
         });
         return false;
       }
