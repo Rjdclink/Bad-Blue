@@ -26,7 +26,7 @@ const capability = read('server/services/cryptocrawl/discovery/venue-capability-
 const maker = read('server/services/cryptocrawl/discovery/maker-opportunity-generator.ts');
 
 assert(publicDiscovery.includes('api.coinbase.com/api/v3/brokerage/market/products'), 'Coinbase discovery must use Advanced Trade public products');
-assert(publicDiscovery.includes('return capability.enabled && capability.publicDiscovery'), 'Coinbase must remain available to public discovery');
+assert(publicDiscovery.includes('!capability.enabled || !capability.publicDiscovery'), 'Coinbase public discovery must remain capability-gated');
 assert(!publicDiscovery.includes('api.exchange.coinbase.com'), 'Coinbase discovery must not regress to legacy Exchange API');
 assert(marketData.includes('/api/v3/brokerage/market/product_book'), 'Executable Coinbase book authority must use Advanced Trade v3 product book');
 assert(marketData.includes('/api/v3/brokerage/market/products/${encodeURIComponent(productId)}'), 'Coinbase product constraints must come from Advanced Trade public products');
