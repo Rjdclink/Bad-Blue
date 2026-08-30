@@ -58,10 +58,11 @@ function triggerCanonicalPositiveRevalidation(positive: readonly CexModeEconomic
   lastCanonicalPromotionSignature = signature;
   lastCanonicalPromotionAt = now;
 
-  // Four-mode economics are advisory and may use a broader observation surface.
-  // A positive observation is therefore only a scheduling trigger: the canonical
-  // graph must independently re-fetch executable books, authenticated fees,
-  // depth-aware sizing and all-in costs before it can create a candidate.
+  // Four-mode economics remain advisory. Positive TT/MT/TM/MM observations are
+  // scheduling triggers only; the canonical graph independently re-fetches
+  // executable books, authenticated fees, product constraints, depth-aware size,
+  // and all-in economics. MT/TM can now become canonical only through the
+  // maker-first/fresh-taker-requote execution wiring installed in the runtime.
   void import('../discovery/opportunity-graph.js')
     .then(({ measuredOpportunityGraph }) => measuredOpportunityGraph.scanOnce())
     .then(cycle => {
@@ -73,6 +74,7 @@ function triggerCanonicalPositiveRevalidation(positive: readonly CexModeEconomic
         canonicalCycleId: cycle.cycleId,
         authority: 'scheduling_trigger_only',
         observationExecutionAuthority: false,
+        canonicalHybridExecutionPathAvailable: true,
       });
     })
     .catch(error => {
@@ -90,7 +92,6 @@ async function observe(): Promise<void> {
   running = true;
   try {
     const universe = getLastOrderedMarketUniverseSymbols();
-    // Pre-scan policy chooses what to measure from the last known state.
     const selectionPolicy = buildAdaptiveProfitabilitySearchPolicy({
       universeSymbols: universe,
       latestModes: latest,
@@ -101,10 +102,6 @@ async function observe(): Promise<void> {
     const settled = await Promise.allSettled(symbols.map(symbol => evaluateCexFourModeMatrix({ symbol })));
     latest = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []).sort(compare).slice(0, 256);
 
-    // Rebuild immediately from the CURRENT measurements. Previously the next
-    // interval inherited the pre-scan policy, so a newly discovered ~1 BPS edge
-    // could wait one extra cycle before cadence tightened. Edge-retention must
-    // react to current evidence, not the previous snapshot.
     const nextPolicy = buildAdaptiveProfitabilitySearchPolicy({
       universeSymbols: universe,
       latestModes: latest,
@@ -160,7 +157,8 @@ async function observe(): Promise<void> {
         sellVenue: positive[0].sellVenue,
         netAfterExchangeFeesBps: positive[0].netAfterExchangeFeesBps,
         expectedFeeAdjustedBps: positive[0].expectedFeeAdjustedBps,
-        executionAuthority: positive[0].executionAuthority,
+        observationExecutionAuthority: positive[0].executionAuthority,
+        canonicalRevalidationRequired: true,
       } : null,
       canonicalPositivePromotion: {
         enabled: process.env.CRYPTOCRAWL_CEX_POSITIVE_PROMOTION_ENABLED !== 'false',
@@ -169,7 +167,9 @@ async function observe(): Promise<void> {
       },
       negativeRankingObjective: 'smallest_risk_adjusted_then_exact_bps_to_break_even_first',
       observationFloorBps: Number(process.env.CRYPTOCRAWL_CEX_FOUR_MODE_OBSERVATION_FLOOR_BPS ?? -200),
-      hybridExecutionAuthority: false,
+      hybridObservationExecutionAuthority: false,
+      hybridCanonicalExecutionAuthority: true,
+      hybridCanonicalExecutionPath: 'MT_TM_maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
       negativeObservationExecutionAuthority: false,
       existingTtMmExecutorsChanged: false,
     });

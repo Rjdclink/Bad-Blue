@@ -12,6 +12,7 @@ import { stageManager } from '../governance/stage-management.js';
 import { computeAriesExpectedValueOfInformation, rankAriesBeam } from '../intelligence/aries-vault.js';
 import { ensureCoinCapEnvironmentWiring } from './coincap-environment-wiring.js';
 import { ensureDynamicRpcProviderWiring } from './dynamic-rpc-provider-wiring.js';
+import { isHybridCexRecoveryPlan } from './hybrid-cex-execution-wiring.js';
 import { ensureStablecoinMakerExecutionWiring } from './stablecoin-maker-execution-wiring.js';
 
 let installed = false;
@@ -165,7 +166,8 @@ function normalizePositiveAssessment(
   if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) return assessment;
 
   const makerPlan = isMakerRecoveryPlan(plan) ? plan : null;
-  const makerCanary = makerPlan !== null;
+  const hybridPlan = isHybridCexRecoveryPlan(plan) ? plan : null;
+  const makerCanary = makerPlan !== null || hybridPlan !== null;
   const criticalMissing = criticalMissingInformation(assessment.missingInformation, makerCanary);
   if (criticalMissing.length > 0 || !assessment.monteCarlo) {
     assessment.recommendation = 'observe';
@@ -193,8 +195,11 @@ function normalizePositiveAssessment(
     ...assessment.provenance,
     makerPlan
       ? `positive_profit_capture:${makerPlan.makerExecution.strategy}:hyper_mc_qualified`
-      : 'positive_profit_capture:any_verified_net_gt_zero',
+      : hybridPlan
+        ? `positive_profit_capture:hybrid_${hybridPlan.hybridExecution.mode.toLowerCase()}:hyper_mc_qualified`
+        : 'positive_profit_capture:any_verified_net_gt_zero',
     ...(makerPlan ? ['maker_canary_bootstrap:post_only_cancel_only'] : []),
+    ...(hybridPlan ? ['hybrid_maker_canary:maker_first_fresh_taker_requote'] : []),
     'rank_diagnostic_only',
   ])];
   return assessment;
@@ -288,6 +293,13 @@ export function ensurePositiveProfitCaptureWiring(): void {
       cryptaraMonteCarloRequired: true,
       monteCarloDepth: 'opportunity_adaptive_early_stop',
       coldStartCanaryMinimumProbability: makerCanaryMinimumProbability(),
+    },
+    hybridMakerRecovery: {
+      enabled: true,
+      modes: ['MT', 'TM'],
+      canaryMinimumProbability: makerCanaryMinimumProbability(),
+      executionAuthority: 'canonical_hybrid_wiring_only',
+      riskGateWeakened: false,
     },
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedAuthorities: [

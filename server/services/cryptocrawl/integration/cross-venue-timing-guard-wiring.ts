@@ -1,7 +1,8 @@
 import logger from '../../../logger.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { centralizedExchangeExecutor, type ArbitrageExecutionResult } from '../execution/centralized-exchange-executor.js';
-import { cexOrderBookStreams, type CexStreamVenue } from '../intelligence/cex-order-book-stream.js';
+import { cexOrderBookStreams, type CexStreamVenue, type StreamOrderBookQuote } from '../intelligence/cex-order-book-stream.js';
+import { isHybridCexRecoveryPlan } from '../runtime/hybrid-cex-execution-wiring.js';
 
 let installed = false;
 
@@ -21,6 +22,20 @@ function maxCrossVenueSkewMs(): number {
 
 function activeVenue(value: string): value is CexStreamVenue {
   return value === 'coinbase' || value === 'kraken' || value === 'okx';
+}
+
+function synchronizedPlanEdge(plan: VerifiedArbitragePlan, buy: StreamOrderBookQuote, sell: StreamOrderBookQuote): {
+  positive: boolean;
+  buyPrice: number;
+  sellPrice: number;
+  mode: 'TT' | 'MT' | 'TM';
+} {
+  if (isHybridCexRecoveryPlan(plan)) {
+    const buyPrice = plan.hybridExecution.buyMode === 'maker' ? buy.bid : buy.ask;
+    const sellPrice = plan.hybridExecution.sellMode === 'maker' ? sell.ask : sell.bid;
+    return { positive: sellPrice > buyPrice, buyPrice, sellPrice, mode: plan.hybridExecution.mode };
+  }
+  return { positive: sell.bid > buy.ask, buyPrice: buy.ask, sellPrice: sell.bid, mode: 'TT' };
 }
 
 export function ensureCrossVenueTimingGuardWiring(): void {
@@ -64,10 +79,24 @@ export function ensureCrossVenueTimingGuardWiring(): void {
       });
       return reject('REJECT_CROSS_VENUE_TIMING: executable book timestamp skew exceeds bounded tolerance');
     }
-    if (!(sell.bid > buy.ask)) {
-      return reject('REJECT_CROSS_VENUE_TIMING: synchronized raw cross-venue edge no longer exists');
+
+    const edge = synchronizedPlanEdge(plan, buy, sell);
+    if (!edge.positive) {
+      return reject(`REJECT_CROSS_VENUE_TIMING: synchronized ${edge.mode} cross-venue edge no longer exists`);
     }
 
+    logger.debug('[CrossVenueTimingGuard] Synchronized plan-mode edge preserved', {
+      component: 'CrossVenueTimingGuardWiring',
+      symbol: plan.symbol,
+      buyVenue: plan.buyVenue,
+      sellVenue: plan.sellVenue,
+      mode: edge.mode,
+      buyPrice: edge.buyPrice,
+      sellPrice: edge.sellPrice,
+      skewMs,
+      fullEconomicsRequoteStillDownstream: true,
+      executionAuthorityGranted: false,
+    });
     return originalExecute(plan);
   };
 
@@ -76,6 +105,8 @@ export function ensureCrossVenueTimingGuardWiring(): void {
     maxCrossVenueSkewMs: maxCrossVenueSkewMs(),
     maxQuoteAgeMs: maxQuoteAgeMs(),
     rawEdgeRevalidated: true,
+    planModeAware: true,
+    supportedModes: ['TT', 'MT', 'TM'],
     fullEconomicsRequoteStillDownstream: true,
     executionAuthority: false,
   });

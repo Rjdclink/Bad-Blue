@@ -82,6 +82,8 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
     lifecyclePromise = Promise.all([
       import('./positive-profit-capture-wiring.js'),
       import('./no-bps-maker-admission-wiring.js'),
+      import('./hybrid-cex-execution-wiring.js'),
+      import('./stage-proof-metrics-wiring.js'),
       import('./expanded-market-universe-wiring.js'),
       import('./alchemy-filtered-mempool-wiring.js'),
       import('./low-latency-execution-wiring.js'),
@@ -90,6 +92,8 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
     ]).then(([
       profitPolicy,
       noBpsMakerPolicy,
+      hybridCexPolicy,
+      stageProofPolicy,
       universePolicy,
       mempoolPolicy,
       executionPolicy,
@@ -98,10 +102,13 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
     ]) => {
       // Preserve authority order: canonical profitability/maker settlement wiring
       // installs first; the no-BPS evaluator then removes only the artificial
-      // spread floor, and inventory re-optimization remains a final pre-execution
-      // feasibility refinement rather than a discovery authority.
+      // spread floor; verified MT/TM plans then reuse the same canonical CEX
+      // admission/execution path; inventory re-optimization remains the final
+      // pre-execution feasibility refinement rather than a discovery authority.
       profitPolicy.ensurePositiveProfitCaptureWiring();
       noBpsMakerPolicy.ensureNoBpsMakerAdmissionWiring();
+      hybridCexPolicy.ensureHybridCexExecutionWiring();
+      stageProofPolicy.ensureStageProofMetricsWiring();
       universePolicy.ensureExpandedMarketUniverseWiring();
       mempoolPolicy.ensureAlchemyFilteredMempoolWiring();
       executionPolicy.ensureLowLatencyExecutionWiring();
@@ -150,6 +157,8 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     positiveProfitCapturePolicy: 'strict_all_in_net_gt_zero',
     arbitraryBpsExecutionFloor: false,
     makerRecoveryEconomics: 'authenticated_fees_plus_fresh_books',
+    hybridCexExecution: 'maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
+    stageProofMetrics: 'terminal_realized_sharpe_drawdown_plus_mc_outcome_validation',
     inventoryConstrainedCexReoptimization: true,
     expandedMarketUniverse: true,
     filteredMempoolPolicyInstalled: true,

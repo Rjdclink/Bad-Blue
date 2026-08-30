@@ -8,6 +8,9 @@ const files = {
   antenna: 'server/services/cryptocrawl/integration/order-book-evolution-wiring.ts',
   prefetch: 'server/services/cryptocrawl/integration/cryptara-predictive-prefetch-wiring.ts',
   canonical: 'server/services/cryptocrawl/integration/canonical-runtime-wiring.ts',
+  hybrid: 'server/services/cryptocrawl/runtime/hybrid-cex-execution-wiring.ts',
+  stageProof: 'server/services/cryptocrawl/runtime/stage-proof-metrics-wiring.ts',
+  timing: 'server/services/cryptocrawl/integration/cross-venue-timing-guard-wiring.ts',
   venue: 'server/services/cryptocrawl/discovery/venue-capability-registry.ts',
 };
 
@@ -55,7 +58,24 @@ const required = [
   ['canonical', "import { ensureComputationalReactorWiring }", 'reactor canonical import'],
   ['canonical', 'ensureComputationalReactorWiring();', 'reactor canonical installation'],
   ['canonical', "executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'", 'strict positive economics preserved'],
-  ['canonical', 'cexHybridExecutionAuthority: false', 'hybrid execution remains disabled'],
+  ['canonical', 'cexHybridExecutionAuthority: true', 'implemented hybrid execution authority declared'],
+  ['canonical', 'ensureHybridCexExecutionWiring();', 'hybrid execution installed canonically'],
+  ['canonical', 'ensureStageProofMetricsWiring();', 'realized stage proof metrics installed canonically'],
+  ['hybrid', "export type HybridCexMode = 'MT' | 'TM'", 'hybrid scope limited to MT/TM'],
+  ['hybrid', 'createPostOnlyMakerAdapters', 'maker leg uses existing authenticated post-only adapters'],
+  ['hybrid', 'createProductionCexSettlementAdapters', 'taker hedge uses existing canonical settlement adapters'],
+  ['hybrid', 'sequential_partial_fill_safe_hybrid_executor: true', 'maker partial fill is hedged sequentially'],
+  ['hybrid', 'fresh_taker_requote_after_maker_fill: true', 'fresh taker requote occurs only after maker terminal fill'],
+  ['hybrid', "executionRule: 'strict_all_in_net_profit_usd_greater_than_zero'", 'hybrid admission preserves strict positive all-in economics'],
+  ['hybrid', "if (!isHybridCexRecoveryPlan(plan)) return originalExecute(plan);", 'TT/MM execution delegates unchanged'],
+  ['stageProof', 'realizedSharpe(profits)', 'realized profit history drives Sharpe'],
+  ['stageProof', 'realizedMaxDrawdown(profits)', 'realized profit history drives drawdown'],
+  ['stageProof', 'monteCarloValidation', 'executed canonical Monte Carlo is validated against terminal outcome'],
+  ['stageProof', 'stageThresholdsChanged: false', 'stage thresholds are not weakened'],
+  ['stageProof', 'tradeCountRequirementChanged: false', 'trade-count requirement is not weakened'],
+  ['timing', 'isHybridCexRecoveryPlan(plan)', 'cross-venue timing guard recognizes hybrid mode'],
+  ['timing', "mode: 'TT' | 'MT' | 'TM'", 'timing guard preserves TT and adds MT/TM'],
+  ['timing', 'fullEconomicsRequoteStillDownstream: true', 'timing guard remains non-economic authority'],
   ['canonical', 'computationalReactorExecutionAuthority: false', 'canonical reactor authority boundary'],
   ['canonical', 'alchemyPaidPendingStreamDefault: false', 'paid Alchemy pending stream remains off by default'],
   ['venue', "getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>", 'active executable CEX topology remains limited to implemented Coinbase/Kraken/OKX paths'],
@@ -69,11 +89,13 @@ for (const [fileKey, token, name] of required) {
 const forbidden = [
   ['reactor', 'this.heatMonitor.cpuUsage = Math.min(100, Math.random() * 30 + 20)', 'simulated CPU pressure'],
   ['reactor', 'const improvement = Math.random() * 2 - 0.5', 'fabricated Monte Carlo improvement'],
-  ['canonical', 'cexHybridExecutionAuthority: true', 'unverified hybrid execution authority'],
+  ['canonical', 'cexHybridExecutionAuthority: false', 'stale declaration that hybrid execution remains disabled'],
   ['canonical', 'alchemyPaidPendingStreamDefault: true', 'paid pending stream default-on'],
+  ['stageProof', 'm.totalTrades =', 'synthetic trade-count advancement'],
+  ['stageProof', 'requiredUptimeHours', 'stage-proof bridge must not rewrite uptime requirement'],
 ];
 for (const [fileKey, token, name] of forbidden) {
   if (source[fileKey].includes(token)) throw new Error(`[compute-antenna-monte-carlo-batch11] forbidden regression: ${name}`);
 }
 
-console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, real scorer Monte Carlo, adaptive Antenna scheduling, bounded implemented-venue prefetch, and execution-authority boundaries preserved');
+console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, adaptive Antenna scheduling, canonical MT/TM maker-first execution, realized stage-proof metrics, and retained safety boundaries verified');
