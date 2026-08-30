@@ -12,6 +12,7 @@ import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-
 import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
+import { ensureCexInventoryReadinessWiring } from './cex-inventory-readiness-wiring.js';
 import { ensureComputationalReactorWiring } from './computational-reactor-wiring.js';
 import { ensureCrossVenueTimingGuardWiring } from './cross-venue-timing-guard-wiring.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
@@ -119,6 +120,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureCryptaraSovereignCortexWiring();
   ensureCryptaraPredictivePrefetchWiring();
   ensureStablecoinMakerExecutionWiring();
+  ensureCexInventoryReadinessWiring();
   ensureInventoryConstrainedCexExecutionWiring();
   ensureCrossVenueTimingGuardWiring();
   ensureMeasuredCandidateExpiryGuardWiring();
@@ -160,6 +162,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     bpsExecutionFloor: null,
     executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
+    cexInventoryReadiness: 'proactive_authenticated_balance_hydration_then_candidate_specific_reconciliation',
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
     cexMakerExecution: 'kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
     coinbaseMakerExecutionAuthority: false,
