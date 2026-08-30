@@ -68,12 +68,6 @@ type VenueLimit = {
   quoteMaxSize: number | null;
 };
 
-function splitSymbol(symbol: string): { base: string; quote: string } {
-  const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
-  if (!match) throw new Error(`Unsupported hyper-hybrid CEX spot symbol: ${symbol}`);
-  return { base: match[1], quote: match[2] };
-}
-
 function decimalPlaces(value: number): number {
   const text = value.toString().toLowerCase();
   if (text.includes('e-')) {
@@ -151,9 +145,6 @@ function minQuantityForLimit(limit: VenueLimit, price: number): number {
 function proportionalChildPlan(parent: VerifiedArbitragePlan, baseQty: number): VerifiedArbitragePlan {
   const ratio = baseQty / parent.baseQty;
   if (!(ratio > 0 && ratio <= 1) || !Number.isFinite(ratio)) throw new Error('Invalid hyper-hybrid child ratio');
-  // A split cannot guess how a fixed gas/bridge/transfer cost should be allocated.
-  // Canonical CEX arbitrage is prepositioned-inventory execution and normally has
-  // zero fixed transport cost. Fail closed rather than fabricate split economics.
   const fixedCostsUsd = Math.max(0, parent.costs.gasUsd) + Math.max(0, parent.costs.bridgeFeeUsd) + Math.max(0, parent.costs.transferFeeUsd ?? 0);
   if (fixedCostsUsd > 1e-9) throw new Error('Hyper-hybrid CEX splitting requires zero fixed transport costs; cost allocation is not provable');
   const child: VerifiedArbitragePlan = {
@@ -243,36 +234,30 @@ function depthAtOrBetter(levels: readonly { price: number; quantity: number }[],
     .reduce((sum, level) => sum + Math.max(0, level.quantity), 0);
 }
 
-/**
- * Warm, no-new-network revalidation between child waves. This prevents a stale
- * parent from blindly continuing after the spread/depth disappears. Missing warm
- * evidence fails closed for later waves; the first wave already inherits the
- * canonical parent's fresh measured book evidence and submit-time product guard.
- */
-async function revalidateWave(parent: VerifiedArbitragePlan, waveQty: number, maxQuoteAgeMs: number): Promise<{ ok: boolean; reason: string }> {
+async function revalidateBatch(parent: VerifiedArbitragePlan, batchQty: number, maxQuoteAgeMs: number): Promise<{ ok: boolean; reason: string }> {
   const buyVenue = parent.buyVenue as ExecutableCexVenue;
   const sellVenue = parent.sellVenue as ExecutableCexVenue;
   const [buy, sell] = await Promise.all([
     cexOrderBookStreams.getQuote(buyVenue, parent.symbol, maxQuoteAgeMs),
     cexOrderBookStreams.getQuote(sellVenue, parent.symbol, maxQuoteAgeMs),
   ]);
-  if (!buy || !sell) return { ok: false, reason: 'warm_live_book_unavailable_for_next_split_wave' };
+  if (!buy || !sell) return { ok: false, reason: 'warm_live_book_unavailable_for_parallel_split_batch' };
 
   const buyLimit = parent.buyLimitPrice ?? parent.buyAsk;
   const sellLimit = parent.sellLimitPrice ?? parent.sellBid;
   const buyDepth = depthAtOrBetter(buy.depth.asks, 'buy', buyLimit);
   const sellDepth = depthAtOrBetter(sell.depth.bids, 'sell', sellLimit);
-  if (buyDepth + 1e-12 < waveQty || sellDepth + 1e-12 < waveQty) {
-    return { ok: false, reason: `remaining_depth_insufficient:buy=${buyDepth}:sell=${sellDepth}:wave=${waveQty}` };
+  if (buyDepth + 1e-12 < batchQty || sellDepth + 1e-12 < batchQty) {
+    return { ok: false, reason: `parallel_batch_depth_insufficient:buy=${buyDepth}:sell=${sellDepth}:batch=${batchQty}` };
   }
 
   const buyBps = takerFeeBps(parent, 'buy');
   const sellBps = takerFeeBps(parent, 'sell');
-  if (buyBps === null || sellBps === null) return { ok: false, reason: 'authenticated_taker_fee_evidence_missing_for_split_revalidation' };
-  const buyNotional = waveQty * buyLimit;
-  const sellNotional = waveQty * sellLimit;
+  if (buyBps === null || sellBps === null) return { ok: false, reason: 'authenticated_taker_fee_evidence_missing_for_parallel_split_batch' };
+  const buyNotional = batchQty * buyLimit;
+  const sellNotional = batchQty * sellLimit;
   const conservativeNet = sellNotional - buyNotional - buyNotional * buyBps / 10_000 - sellNotional * sellBps / 10_000;
-  if (!(conservativeNet > 0)) return { ok: false, reason: `split_wave_no_longer_positive_at_live_limits:${conservativeNet}` };
+  if (!(conservativeNet > 0)) return { ok: false, reason: `parallel_batch_no_longer_positive_at_live_limits:${conservativeNet}` };
   return { ok: true, reason: 'warm_live_book_depth_and_limit_economics_positive' };
 }
 
@@ -298,9 +283,9 @@ function fokAdapter(
       }
 
       if (venue === 'okx') {
-        const { base, quote } = splitSymbol(request.symbol);
+        const constraints = await getSpotProductConstraints('okx', request.symbol);
         const { data } = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
-          instId: `${base}-${quote}`,
+          instId: constraints.exchangeSymbol,
           tdMode: 'cash',
           side: request.side,
           ordType: 'fok',
@@ -410,6 +395,8 @@ function aggregateResult(
       `attempted_children:${children.length}`,
       `completed_children:${completedChildren.length}`,
       'split_children_fok:true',
+      'parallel_single_admitted_batch:true',
+      'sequential_child_waves:false',
       'completed_child_profit_retained:true',
       'unfilled_remaining_notional_requires_fresh_revalidation:true',
     ],
@@ -458,78 +445,71 @@ export async function executeHyperHybridCexPlan(input: {
 
   const splitAdapters = input.useProductionFok ? fokAdapters(input.adapters) : input.adapters;
   const concurrency = childConcurrency();
-  const childExecutions: HyperHybridChildExecution[] = [];
-  let stopReason: string | undefined;
-
-  for (let offset = 0; offset < plannedChildren.length; offset += concurrency) {
-    const wave = plannedChildren.slice(offset, offset + concurrency);
-    const effectiveQuoteAgeMs = Math.max(0, input.parent.quoteAgeMs) + (Date.now() - input.executionAdmissionStartedAt);
-    if (effectiveQuoteAgeMs > input.maxQuoteAgeMs) {
-      stopReason = `parent_quote_expired_before_child_wave:${effectiveQuoteAgeMs}>${input.maxQuoteAgeMs}`;
-      break;
-    }
-
-    if (offset > 0) {
-      const waveQty = wave.reduce((sum, child) => sum + child.baseQty, 0);
-      const live = await revalidateWave(input.parent, waveQty, input.maxQuoteAgeMs);
-      if (!live.ok) {
-        stopReason = live.reason;
-        break;
-      }
-    }
-
-    const settled = await Promise.all(wave.map(async (child, index) => {
-      const globalIndex = offset + index;
-      const childId = `child-${globalIndex + 1}-of-${plannedChildren.length}`;
-      const startedAt = Date.now();
-      try {
-        await assertFreshCexProductConstraints(child);
-        const result = await executeCexPlan(child, { ...input.executorOptions, adapters: splitAdapters });
-        return {
-          childId,
-          index: globalIndex,
-          plannedNotionalUsd: child.notionalUsd,
-          expectedProfitUsd: child.netProfitUsd,
-          timeInForce: input.useProductionFok ? 'FOK' as const : 'IOC' as const,
-          latencyMs: Date.now() - startedAt,
-          success: result.success,
-          status: result.status,
-          settlementConfirmed: result.settlementConfirmed,
-          normalized: result.normalized,
-          realizedProfitUsd: result.realizedProfitUsd ?? result.normalized?.realized.netProfitUsd ?? null,
-          realizedFeeUsd: result.realizedFeeUsd ?? result.normalized?.realized.exchangeFeeUsd ?? null,
-          realizedSlippageBps: result.realizedSlippageBps ?? result.normalized?.realized.slippageBps ?? null,
-          error: result.error,
-        } satisfies HyperHybridChildExecution;
-      } catch (error) {
-        return {
-          childId,
-          index: globalIndex,
-          plannedNotionalUsd: child.notionalUsd,
-          expectedProfitUsd: child.netProfitUsd,
-          timeInForce: input.useProductionFok ? 'FOK' as const : 'IOC' as const,
-          latencyMs: Date.now() - startedAt,
-          success: false,
-          status: 'rejected' as const,
-          settlementConfirmed: false,
-          realizedProfitUsd: null,
-          realizedFeeUsd: null,
-          realizedSlippageBps: null,
-          error: error instanceof Error ? error.message : String(error),
-        } satisfies HyperHybridChildExecution;
-      }
-    }));
-    childExecutions.push(...settled);
-
-    const failed = settled.find(child => !child.success || child.normalized?.terminal !== true || child.settlementConfirmed !== true);
-    if (failed) {
-      stopReason = `child_wave_stopped_after_${failed.childId}:${failed.error || failed.status}`;
-      break;
-    }
+  const admittedChildren = plannedChildren.slice(0, concurrency);
+  const deferredChildren = plannedChildren.slice(admittedChildren.length);
+  const effectiveQuoteAgeMs = Math.max(0, input.parent.quoteAgeMs) + (Date.now() - input.executionAdmissionStartedAt);
+  if (effectiveQuoteAgeMs > input.maxQuoteAgeMs) {
+    return aggregateResult(
+      input.parent,
+      plannedChildren,
+      [],
+      `parent_quote_expired_before_parallel_child_batch:${effectiveQuoteAgeMs}>${input.maxQuoteAgeMs}`,
+    );
   }
 
+  const admittedQty = admittedChildren.reduce((sum, child) => sum + child.baseQty, 0);
+  const live = await revalidateBatch(input.parent, admittedQty, input.maxQuoteAgeMs);
+  if (!live.ok) return aggregateResult(input.parent, plannedChildren, [], live.reason);
+
+  const childExecutions = await Promise.all(admittedChildren.map(async (child, index) => {
+    const childId = `child-${index + 1}-of-${plannedChildren.length}`;
+    const startedAt = Date.now();
+    try {
+      await assertFreshCexProductConstraints(child);
+      const result = await executeCexPlan(child, { ...input.executorOptions, adapters: splitAdapters });
+      return {
+        childId,
+        index,
+        plannedNotionalUsd: child.notionalUsd,
+        expectedProfitUsd: child.netProfitUsd,
+        timeInForce: input.useProductionFok ? 'FOK' as const : 'IOC' as const,
+        latencyMs: Date.now() - startedAt,
+        success: result.success,
+        status: result.status,
+        settlementConfirmed: result.settlementConfirmed,
+        normalized: result.normalized,
+        realizedProfitUsd: result.realizedProfitUsd ?? result.normalized?.realized.netProfitUsd ?? null,
+        realizedFeeUsd: result.realizedFeeUsd ?? result.normalized?.realized.exchangeFeeUsd ?? null,
+        realizedSlippageBps: result.realizedSlippageBps ?? result.normalized?.realized.slippageBps ?? null,
+        error: result.error,
+      } satisfies HyperHybridChildExecution;
+    } catch (error) {
+      return {
+        childId,
+        index,
+        plannedNotionalUsd: child.notionalUsd,
+        expectedProfitUsd: child.netProfitUsd,
+        timeInForce: input.useProductionFok ? 'FOK' as const : 'IOC' as const,
+        latencyMs: Date.now() - startedAt,
+        success: false,
+        status: 'rejected' as const,
+        settlementConfirmed: false,
+        realizedProfitUsd: null,
+        realizedFeeUsd: null,
+        realizedSlippageBps: null,
+        error: error instanceof Error ? error.message : String(error),
+      } satisfies HyperHybridChildExecution;
+    }
+  }));
+
+  const failed = childExecutions.filter(child => !child.success || child.normalized?.terminal !== true || child.settlementConfirmed !== true);
+  const reasons: string[] = [];
+  if (failed.length > 0) reasons.push(`parallel_batch_child_failures:${failed.length}`);
+  if (deferredChildren.length > 0) reasons.push(`parallel_batch_capacity_residual:${deferredChildren.length}_children_require_fresh_replan`);
+  const stopReason = reasons.length > 0 ? reasons.join(';') : undefined;
+
   const result = aggregateResult(input.parent, plannedChildren, childExecutions, stopReason);
-  logger.info('[CEX HyperHybrid] Parent/child execution completed', {
+  logger.info('[CEX HyperHybrid] Parent/child parallel batch completed', {
     component: 'HyperHybridCexExecution',
     symbol: input.parent.symbol,
     buyVenue: input.parent.buyVenue,
@@ -537,14 +517,19 @@ export async function executeHyperHybridCexPlan(input: {
     parentTargetNotionalUsd: input.parent.notionalUsd,
     profitLadderMaxNotionalUsd: getProfitLadderNotionalAuthority().maxNotionalUsd,
     plannedChildren: plannedChildren.length,
+    admittedChildren: admittedChildren.length,
     attemptedChildren: childExecutions.length,
     successfulChildren: childExecutions.filter(child => child.success).length,
+    failedChildren: failed.length,
+    deferredChildren: deferredChildren.length,
     completedNotionalUsd: result.completedNotionalUsd,
     remainingNotionalUsd: result.remainingNotionalUsd,
     childConcurrency: concurrency,
     productionSplitTimeInForce: input.useProductionFok ? 'FOK' : 'injected_adapter_semantics',
-    warmBookRevalidationBetweenWaves: true,
+    oneBoundedParallelBatch: true,
+    sequentialChildWaves: false,
     completedChildProfitRetained: true,
+    residualRequiresFreshReplan: true,
     stopReason: result.stopReason || null,
   });
   return result;
