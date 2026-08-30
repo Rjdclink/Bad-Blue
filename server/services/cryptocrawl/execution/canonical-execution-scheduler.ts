@@ -40,8 +40,40 @@ function boundedInt(raw: unknown, fallback: number, min: number, max: number): n
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
 }
 
+function boundedNumber(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+}
+
 function dispatchBatchLimit(): number {
   return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_BATCH, 8, 1, 32);
+}
+
+function baseDispatchIntervalMs(): number {
+  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_MS, 750, 250, 10_000);
+}
+
+function dispatchJitterFraction(): number {
+  return boundedNumber(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_JITTER_FRACTION, 0.15, 0, 0.35);
+}
+
+function maxDispatchIntervalMs(): number {
+  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_MAX_MS, 2500, 500, 10_000);
+}
+
+function idleCadenceMultiplier(reason: CanonicalSchedulerIdleReason | null): number {
+  if (reason === 'live_execution_posture_disabled' || reason === 'runtime_identity_mismatch' || reason === 'governance_stage_blocked') return 2;
+  if (reason === 'no_eligible_candidates') return 1.5;
+  if (reason === 'no_resource_qualified_candidates') return 1.4;
+  if (reason === 'candidate_retry_window') return 1.25;
+  return 1;
+}
+
+function nextDispatchDelayMs(reason: CanonicalSchedulerIdleReason | null): number {
+  const base = baseDispatchIntervalMs() * idleCadenceMultiplier(reason);
+  const jitter = dispatchJitterFraction();
+  const randomFactor = jitter > 0 ? 1 + ((Math.random() * 2 - 1) * jitter) : 1;
+  return Math.max(250, Math.min(maxDispatchIntervalMs(), Math.round(base * randomFactor)));
 }
 
 function isLiveExecutionPosture(): boolean {
@@ -116,6 +148,7 @@ function settlementLatencyOutcome(status: string, settlementConfirmed: boolean):
 
 class CanonicalExecutionScheduler {
   private timer: NodeJS.Timeout | null = null;
+  private started = false;
   private dispatchInFlight: Promise<void> | null = null;
   private readonly activeOpportunityIds = new Set<string>();
   private readonly lastAttemptAt = new Map<string, number>();
@@ -130,19 +163,19 @@ class CanonicalExecutionScheduler {
   private lastResourceQualifiedCount = 0;
 
   start(): void {
-    if (this.timer) return;
-    const intervalMs = Math.max(250, Number(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_MS || 750));
-    this.timer = setInterval(() => {
-      void this.dispatchOnce();
-    }, intervalMs);
-    this.timer.unref?.();
+    if (this.started) return;
+    this.started = true;
+    this.scheduleNextDispatch();
     logger.info('[ExecutionScheduler] Canonical execution scheduler started', {
       component: 'CanonicalExecutionScheduler',
-      intervalMs,
+      baseIntervalMs: baseDispatchIntervalMs(),
+      maxIntervalMs: maxDispatchIntervalMs(),
+      boundedJitterFraction: dispatchJitterFraction(),
       dispatchBatchLimit: dispatchBatchLimit(),
       ownerId: executionResourceScheduler.getOwnerId(),
       authority: 'canonical_eligible_opportunities',
       schedulingObjective: 'expected_profit_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration',
+      cadenceObjective: 'desynchronize_work_reduce_rate_and_resource_contention_without_weakening_freshness',
       terminalCalibrationAuthority: 'scheduling_only_confirmed_settlement_evidence',
       legacyBusinessCapsAuthoritative: false,
       distributedResourceLeases: true,
@@ -154,7 +187,8 @@ class CanonicalExecutionScheduler {
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.started = false;
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.lastIdleReason = 'not_started';
   }
@@ -169,7 +203,7 @@ class CanonicalExecutionScheduler {
 
   getStats(): CanonicalExecutionSchedulerStats {
     return {
-      running: this.timer !== null,
+      running: this.started,
       ownerId: executionResourceScheduler.getOwnerId(),
       active: this.activeOpportunityIds.size,
       attempts: this.attempts,
@@ -183,6 +217,25 @@ class CanonicalExecutionScheduler {
       lastResourceQualifiedCount: this.lastResourceQualifiedCount,
       resourceUsage: executionResourceScheduler.getLocalUsage(),
     };
+  }
+
+  private scheduleNextDispatch(): void {
+    if (!this.started || process.env.NO_INTERVALS === 'true') return;
+    const delayMs = nextDispatchDelayMs(this.lastIdleReason);
+    this.timer = setTimeout(async () => {
+      this.timer = null;
+      try {
+        await this.dispatchOnce();
+      } catch (error) {
+        logger.error('[ExecutionScheduler] Dispatch cycle failed closed', {
+          component: 'CanonicalExecutionScheduler',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        this.scheduleNextDispatch();
+      }
+    }, delayMs);
+    this.timer.unref?.();
   }
 
   private setIdle(reason: CanonicalSchedulerIdleReason, eligible = 0, dispatchable = 0, resourceQualified = 0): void {
