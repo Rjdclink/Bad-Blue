@@ -13,6 +13,51 @@ function amountKey(amount: number): string {
   return Number(amount.toFixed(12)).toString();
 }
 
+function activeTerminalDestination(secrets: Secrets, leg: Leg): string {
+  if (leg.destination_mode === 'fallback') {
+    if (!secrets.fallbackDestination) throw new Error('Fallback restart-drain destination is armed but unavailable');
+    return secrets.fallbackDestination;
+  }
+  return secrets.destination;
+}
+
+async function armTerminalFallback(secrets: Secrets, leg: Leg, withdrawalId: string, state: string): Promise<Leg> {
+  const reason = `OKX terminal ETH withdrawal failure state ${state}`;
+  if (leg.destination_mode === 'fallback' || !secrets.fallbackDestination) {
+    const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
+      status: 'MANUAL_REVIEW',
+      withdrawal_id: withdrawalId || leg.withdrawal_id,
+      primary_failure_withdrawal_id: leg.primary_failure_withdrawal_id || (leg.destination_mode === 'primary' ? withdrawalId : null),
+      primary_failure_at: leg.primary_failure_at || (leg.destination_mode === 'primary' ? nowIso() : null),
+      primary_failure_reason: leg.primary_failure_reason || (leg.destination_mode === 'primary' ? reason : null),
+      last_error: leg.destination_mode === 'fallback'
+        ? `Fallback ${reason}; automatic destination failover exhausted`
+        : `${reason}; no distinct Railway-derived fallback address is available`,
+      updated_at: nowIso(),
+    }).eq('leg_id', leg.leg_id).select().single();
+    if (error) throw error;
+    return data as Leg;
+  }
+
+  const fallbackClientId = await deterministicId(`terminal:${leg.terminal_epoch}:${leg.leg_id}:fallback:${secrets.fallbackDestination.toLowerCase()}`);
+  const fallbackHash = (await sha256Hex(secrets.fallbackDestination.toLowerCase())).slice(0, 16);
+  const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
+    status: 'RETRYABLE',
+    destination_mode: 'fallback',
+    destination_hash: fallbackHash,
+    primary_failure_withdrawal_id: withdrawalId || leg.withdrawal_id,
+    primary_failure_at: nowIso(),
+    primary_failure_reason: reason,
+    client_id: fallbackClientId,
+    withdrawal_id: null,
+    submitted_at: null,
+    last_error: `${reason}; fallback destination armed after confirmed primary failure`,
+    updated_at: nowIso(),
+  }).eq('leg_id', leg.leg_id).select().single();
+  if (error) throw error;
+  return data as Leg;
+}
+
 async function terminalMarketOrder(
   secrets: Secrets,
   epoch: string,
@@ -121,12 +166,7 @@ async function reconcileTerminalLeg(secrets: Secrets, leg: Leg): Promise<Leg> {
     return data as Leg;
   }
   if (state.startsWith('-')) {
-    const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
-      status: 'RETRYABLE', withdrawal_id: withdrawalId || null,
-      last_error: `OKX terminal ETH withdrawal failure state ${state}`, updated_at: nowIso(),
-    }).eq('leg_id', leg.leg_id).select().single();
-    if (error) throw error;
-    return data as Leg;
+    return armTerminalFallback(secrets, leg, withdrawalId, state);
   }
   return leg;
 }
@@ -170,8 +210,9 @@ async function submitDurableTerminalLeg(secrets: Secrets, input: Leg): Promise<L
   if (submittedStateError) throw submittedStateError;
   leg = submitted as Leg;
 
+  const destination = activeTerminalDestination(secrets, leg);
   try {
-    const withdrawalId = await submitEthWithdrawal(secrets, route, amount, leg.client_id);
+    const withdrawalId = await submitEthWithdrawal(secrets, route, amount, leg.client_id, destination);
     const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
       withdrawal_id: withdrawalId, updated_at: nowIso(), last_error: null,
     }).eq('leg_id', leg.leg_id).select().single();
@@ -225,7 +266,7 @@ async function submitTerminalEth(secrets: Secrets, epoch: string): Promise<Leg |
   const { error: upsertError } = await supabase.from('cryptocrawler_terminal_sweep_legs').upsert({
     terminal_epoch: epoch, venue: 'okx', asset: 'ETH', leg_sequence: sequence, chain: route.chain,
     status: 'PREPARED', client_id: clientId, amount, fee: route.feeEth,
-    destination_hash: destinationHash, updated_at: nowIso(),
+    destination_hash: destinationHash, destination_mode: 'primary', updated_at: nowIso(),
   }, { onConflict: 'terminal_epoch,venue,asset,leg_sequence', ignoreDuplicates: true });
   if (upsertError) throw upsertError;
 
@@ -282,6 +323,14 @@ export async function runTerminalSweep(secrets: Secrets, control: Control): Prom
   }
 
   const leg = await submitTerminalEth(secrets, epoch);
+  if (leg?.status === 'MANUAL_REVIEW') {
+    await supabase.from('cryptocrawler_terminal_sweep_control').update({
+      desired_state: 'MANUAL_REVIEW',
+      last_error: String((leg as any).last_error || 'Terminal ETH payout requires manual review').slice(0, 1000),
+      updated_at: nowIso(),
+    }).eq('system_key', SYSTEM_KEY).eq('terminal_epoch', epoch);
+    return { epoch, action: 'manual_review', legStatus: leg.status, legSequence: leg.leg_sequence };
+  }
   if (leg && leg.status !== 'CONFIRMED') {
     return { epoch, action: 'terminal_eth_withdrawal_pending', legStatus: leg.status, legSequence: leg.leg_sequence };
   }
