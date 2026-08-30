@@ -55,17 +55,31 @@ async function upsertVaultSecret(name: string, value: string): Promise<void> {
   }
 }
 
+async function syncOptionalVaultSecret(name: string, value: string): Promise<void> {
+  const existing = await pool.query('SELECT id FROM vault.secrets WHERE name=$1 LIMIT 1', [name]);
+  const id = existing.rows[0]?.id ? String(existing.rows[0].id) : '';
+  if (id) {
+    await pool.query('SELECT vault.update_secret($1::uuid, $2, $3, $4)', [
+      id, value, name, 'CryptoCrawler optional treasury worker secret synchronized from Railway runtime',
+    ]);
+  } else if (value) {
+    await pool.query('SELECT vault.create_secret($1, $2, $3)', [
+      value, name, 'CryptoCrawler optional treasury worker secret synchronized from Railway runtime',
+    ]);
+  }
+}
+
 async function syncWorkerSecrets(): Promise<void> {
   const secrets: Array<[string, string]> = [
     ['cryptocrawler_okx_api_key', (process.env.OKX_API_KEY || '').trim()],
     ['cryptocrawler_okx_api_secret', (process.env.OKX_API_SECRET || '').trim()],
     ['cryptocrawler_okx_api_passphrase', (process.env.OKX_API_PASSPHRASE || '').trim()],
     ['cryptocrawler_profit_wallet', DESTINATION],
-    ['cryptocrawler_fallback_wallet', FALLBACK_DESTINATION],
     ['cryptocrawler_supabase_url', (process.env.SUPABASE_URL || '').trim()],
     ['cryptocrawler_supabase_service_key', (process.env.SUPABASE_SERVICE_KEY || '').trim()],
   ];
   for (const [name, value] of secrets) await upsertVaultSecret(name, value);
+  await syncOptionalVaultSecret('cryptocrawler_fallback_wallet', FALLBACK_DESTINATION);
 }
 
 async function readTreasuryState(): Promise<TreasuryState> {
@@ -190,6 +204,7 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     settlementHedgeFlatteningStillAllowed: true,
     singlePayoutAuthority: 'supabase_worker_okx_only',
     fallbackActivation: 'confirmed_primary_withdrawal_terminal_failure_only',
+    staleFallbackSecretAllowed: false,
   });
 }
 
