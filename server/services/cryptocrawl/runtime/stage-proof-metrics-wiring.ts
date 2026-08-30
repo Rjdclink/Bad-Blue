@@ -57,6 +57,17 @@ function monteCarloValidation(input: {
   };
 }
 
+function currentStageHistory(
+  evidence: readonly PersistedCryptaraExecutionEvidence[],
+  incoming: PersistedCryptaraExecutionEvidence,
+  activatedAt: number | undefined,
+): PersistedCryptaraExecutionEvidence[] {
+  const stageStartedAt = Number.isFinite(activatedAt) ? Number(activatedAt) : 0;
+  return [...evidence, incoming]
+    .filter(item => Number.isFinite(item.timestamp) && item.timestamp >= stageStartedAt)
+    .slice(-1000);
+}
+
 async function refreshDerivedProofMetrics(input: {
   success: boolean;
   realizedProfitUsd: number | null;
@@ -65,7 +76,11 @@ async function refreshDerivedProofMetrics(input: {
   const state = stageManager.getState();
   if (state.currentStage < 2) return;
 
-  const history = [...state.cryptaraExecutionEvidence, input.cryptaraFeedback].slice(-1000);
+  const history = currentStageHistory(
+    state.cryptaraExecutionEvidence,
+    input.cryptaraFeedback,
+    state.activatedAt,
+  );
   const profits = history
     .map(finiteRealizedProfit)
     .filter((value): value is number => value !== null);
@@ -95,6 +110,7 @@ async function refreshDerivedProofMetrics(input: {
   logger.info('[StageProofMetrics] Realized progression metrics refreshed', {
     component: 'StageProofMetricsWiring',
     stage: state.currentStage,
+    stageActivatedAt: state.activatedAt ?? null,
     terminalProfitSamples: profits.length,
     sharpeRatio,
     maxDrawdown,
@@ -102,6 +118,7 @@ async function refreshDerivedProofMetrics(input: {
     monteCarloProbabilityOfProfit: mc.probabilityOfProfit,
     monteCarloPassRate,
     monteCarloSimulations,
+    metricWindowAuthority: 'current_stage_terminal_execution_history_only',
     monteCarloFieldAuthority: 'executed_canonical_mc_decision_validated_by_terminal_realized_outcome',
     thresholdsChanged: false,
     tradeCountRequirementChanged: false,
@@ -137,6 +154,7 @@ export function ensureStageProofMetricsWiring(): void {
     component: 'StageProofMetricsWiring',
     realizedSharpe: true,
     realizedMaxDrawdown: true,
+    metricWindow: 'current_stage_terminal_execution_history_only',
     monteCarloPassRate: 'canonical_pretrade_mc_decision_validated_against_terminal_realized_outcome',
     stageOneBootstrapChanged: false,
     stageThresholdsChanged: false,
