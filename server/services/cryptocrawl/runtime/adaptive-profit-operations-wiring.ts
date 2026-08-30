@@ -163,9 +163,12 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
 
       const envelope = getAdaptiveProfitOperatingEnvelope();
       if (!envelope.newExposureAllowed) {
-        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Adaptive daily realized-profit envelope reached; new exposure is paused until rolling capacity returns', {
+        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Adaptive operating-day realized-profit envelope reached; new exposure is paused until the next operating-day capacity is available', {
+          operatingLadderDay: envelope.operatingLadderDay,
+          operatingLadderActivatedAt: envelope.operatingLadderActivatedAt,
           dailyProfitCapUsd: envelope.dailyProfitCapUsd,
-          rolling24hRealizedProfitUsd: envelope.rolling24hRealizedProfitUsd,
+          operatingDayRealizedProfitUsd: envelope.operatingDayRealizedProfitUsd,
+          rolling24hRealizedProfitUsdTelemetryOnly: envelope.rolling24hRealizedProfitUsd,
           remainingDailyProfitCapacityUsd: envelope.remainingDailyProfitCapacityUsd,
           settlementAndFlatteningStillAllowed: true,
         });
@@ -182,6 +185,9 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
   logger.info('[AdaptiveProfitOperations] Terminal-realized profit operating envelope installed/reasserted', {
     component: 'AdaptiveProfitOperationsWiring',
     dailyProfitCapUsd: envelope.dailyProfitCapUsd,
+    operatingLadderDay: envelope.operatingLadderDay,
+    operatingDayRealizedProfitUsd: envelope.operatingDayRealizedProfitUsd,
+    rolling24hRealizedProfitUsdTelemetryOnly: envelope.rolling24hRealizedProfitUsd,
     recommendedMaxNotionalUsd: envelope.recommendedMaxNotionalUsd,
     maxExpectedSlippageBps: envelope.maxExpectedSlippageBps,
     recommendedCycleBudget: envelope.recommendedCycleBudget,
