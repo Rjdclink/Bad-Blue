@@ -1,12 +1,11 @@
-// Diagnostic isolation only: retain the established safety gates while Railway
-// identifies whether the current failure is in the newly added batch12 verifier
-// layer or in the normal downstream production build. The full batch12 gates are
-// restored before merge.
+// Diagnostic isolation: established safety gates plus the batch12 behavior
+// verifier. Coinbase-specific verifier is added back after this gate proves clean.
 
 require('./verify-runtime-safety-invariants.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
 require('./verify-substantial-profitability-batch9.cjs');
 require('./verify-cryptara-sovereign-cortex.cjs');
 require('./verify-compute-antenna-monte-carlo-batch11.cjs');
+require('./verify-remaining-seventeen-batch12.cjs');
 
-console.log('[deployment-preflight] diagnostic established safety gates passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] established safety plus batch12 behavior invariants passed; continuing to downstream prebuild/build');
