@@ -1,6 +1,7 @@
 import {
   calculateMeasuredFlashLoanFee,
   type FlashLoanProviderEconomics,
+  type FlashLoanProviderKind,
 } from './flash-loan-provider-economics.js';
 
 export interface MeasuredDualFlashLoanAllocation {
@@ -12,7 +13,9 @@ export interface MeasuredDualFlashLoanAllocation {
   balancerFee: bigint;
   aaveFee: bigint;
   totalFee: bigint;
-  reason: 'combined_liquidity_unlocks_exact_size';
+  bestSingleProviderFee: bigint | null;
+  measuredFeeSavingsVsBestSingle: bigint | null;
+  reason: 'combined_liquidity_unlocks_exact_size' | 'fee_split_beats_single_provider';
 }
 
 function complete(item: FlashLoanProviderEconomics | undefined): item is FlashLoanProviderEconomics {
@@ -28,16 +31,18 @@ function complete(item: FlashLoanProviderEconomics | undefined): item is FlashLo
 }
 
 /**
- * Dual borrowing is a liquidity-rescue topology, not a default. If either
- * provider can fund the requested exact size alone, the existing single-provider
- * selector remains authoritative because nesting another flash loan adds gas and
- * callback complexity without improving linear fee economics. The dual path is
- * considered only when neither can fund the size alone but measured combined
- * liquidity can.
+ * Evaluates Aave+Balancer as a true provider mesh. The lower-fee provider is
+ * filled first and the second provider supplies only the exact remainder.
+ * The dual path is returned when either:
+ * 1) no execution-ready single provider can fund the exact size, or
+ * 2) the measured split fee is strictly lower than the best execution-ready
+ *    single-provider fee for that same exact size.
+ * Exact dual eth_call/estimateGas remains mandatory before broadcast.
  */
 export function selectMeasuredDualFlashLoanAllocation(
   evidence: readonly FlashLoanProviderEconomics[],
   requestedAmount: bigint,
+  executableSingleProviders: readonly FlashLoanProviderKind[] = ['balancer_v2', 'aave_v3'],
 ): MeasuredDualFlashLoanAllocation | null {
   if (requestedAmount <= 0n) return null;
   const balancer = evidence.find(item => item.provider === 'balancer_v2');
@@ -45,7 +50,6 @@ export function selectMeasuredDualFlashLoanAllocation(
   if (!complete(balancer) || !complete(aave)) return null;
   const balancerLiquidity = balancer.availableLiquidity!;
   const aaveLiquidity = aave.availableLiquidity!;
-  if (balancerLiquidity >= requestedAmount || aaveLiquidity >= requestedAmount) return null;
   if (balancerLiquidity + aaveLiquidity < requestedAmount) return null;
 
   const balancerCheaper = (balancer.feeBps ?? Number.POSITIVE_INFINITY) <= (aave.feeBps ?? Number.POSITIVE_INFINITY);
@@ -58,12 +62,33 @@ export function selectMeasuredDualFlashLoanAllocation(
     aaveAmount = aaveLiquidity < requestedAmount ? aaveLiquidity : requestedAmount;
     balancerAmount = requestedAmount - aaveAmount;
   }
+
+  // If the cheaper provider can fund the whole trade, nesting the second provider
+  // cannot improve linear flash-loan fees and only adds callback/gas complexity.
   if (balancerAmount <= 0n || aaveAmount <= 0n) return null;
   if (balancerAmount > balancerLiquidity || aaveAmount > aaveLiquidity) return null;
 
   const balancerFee = calculateMeasuredFlashLoanFee(balancer, balancerAmount);
   const aaveFee = calculateMeasuredFlashLoanFee(aave, aaveAmount);
   if (balancerFee === null || aaveFee === null) return null;
+  const totalFee = balancerFee + aaveFee;
+
+  const executableSingles = evidence.filter(item =>
+    executableSingleProviders.includes(item.provider) &&
+    complete(item) &&
+    item.availableLiquidity! >= requestedAmount,
+  );
+  let bestSingleProviderFee: bigint | null = null;
+  for (const item of executableSingles) {
+    const fee = calculateMeasuredFlashLoanFee(item, requestedAmount);
+    if (fee === null) continue;
+    if (bestSingleProviderFee === null || fee < bestSingleProviderFee) bestSingleProviderFee = fee;
+  }
+
+  if (bestSingleProviderFee !== null && totalFee >= bestSingleProviderFee) return null;
+  const measuredFeeSavingsVsBestSingle = bestSingleProviderFee === null
+    ? null
+    : bestSingleProviderFee - totalFee;
 
   return {
     balancer,
@@ -73,7 +98,11 @@ export function selectMeasuredDualFlashLoanAllocation(
     totalAmount: requestedAmount,
     balancerFee,
     aaveFee,
-    totalFee: balancerFee + aaveFee,
-    reason: 'combined_liquidity_unlocks_exact_size',
+    totalFee,
+    bestSingleProviderFee,
+    measuredFeeSavingsVsBestSingle,
+    reason: bestSingleProviderFee === null
+      ? 'combined_liquidity_unlocks_exact_size'
+      : 'fee_split_beats_single_provider',
   };
 }
