@@ -225,11 +225,13 @@ export async function submitEthWithdrawal(
   route: EthRoute,
   amountEth: number,
   clientId: string,
+  destination: string = secrets.destination,
 ): Promise<string> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(destination)) throw new Error('ETH withdrawal destination is missing or invalid');
   const rows = await okxRequest(secrets, '/api/v5/asset/withdrawal', 'POST', {}, {
     amt: amountEth.toFixed(route.precision),
     fee: route.feeEth.toFixed(route.precision),
-    dest: '4', ccy: 'ETH', chain: route.chain, toAddr: secrets.destination, clientId,
+    dest: '4', ccy: 'ETH', chain: route.chain, toAddr: destination, clientId,
     rcvrInfo: { walletType: 'private' },
   });
   const withdrawalId = String(rows[0]?.wdId || '');
