@@ -8,6 +8,7 @@ import {
 } from '../intelligence/cex-fee-resolver.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
 import { observeMakerPaperProof } from '../intelligence/maker-microstructure-proof.js';
+import { evaluateMakerRecoveryCandidate } from '../execution/stablecoin-maker-strategy.js';
 
 function effectiveMakerFeeBps(fee: CexFeeEvidence | null | undefined): number | null {
   if (!fee || fee.source === 'configured_override') return null;
@@ -47,17 +48,12 @@ async function runBounded<T, R>(items: readonly T[], concurrency: number, worker
 }
 
 /**
- * Maker topology remains non-executable here. It performs a parallel shadow
- * proof pass using live WebSocket books: queue depletion, microprice, imbalance,
- * adaptive TTL, paired paper fills and adverse-selection evidence.
- *
- * Efficiency rule: market books are read from the already-running shared sockets,
- * then authenticated Kraken/OKX fee evidence is primed once per venue batch for
- * the entire measured symbol set. We do not issue one private fee request per
- * symbol and we never involve Coinbase in this no-new-key maker path.
- *
- * Paper results are never promoted to realized P&L and never grant execution
- * authority.
+ * Maker discovery has two evidence levels:
+ * 1) a fully measured live Kraken/OKX post-only plan produced by the canonical
+ *    maker evaluator may be promoted to eligible; it still has to pass every
+ *    downstream governance, inventory, product, execution and settlement gate;
+ * 2) otherwise the existing paper microstructure proof remains blocked and can
+ *    only improve calibration. Paper fills never become live authority.
  */
 export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandidate[]> {
   const venues = getActiveExecutableQuoteVenues().filter((venue): venue is 'kraken' | 'okx' => venue !== 'coinbase');
@@ -96,6 +92,71 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
   }).catch(() => null);
 
   for (const { symbol, usableBooks } of viable) {
+    const livePlan = await evaluateMakerRecoveryCandidate({
+      symbol,
+      notionalUsd: paperProbeNotionalUsd(),
+      maxQuoteAgeMs,
+    }).catch(() => null);
+
+    if (livePlan && Number.isFinite(livePlan.netProfitUsd) && livePlan.netProfitUsd > 0) {
+      const observedAt = Date.now() - Math.max(0, livePlan.quoteAgeMs);
+      const buyBook = usableBooks.find(book => book.venue === livePlan.buyVenue)?.quote ?? null;
+      const sellBook = usableBooks.find(book => book.venue === livePlan.sellVenue)?.quote ?? null;
+      output.push(measuredCandidateRegistry.record({
+        opportunityId: `maker-live:${livePlan.buyVenue}->${livePlan.sellVenue}:${symbol}:${observedAt}`,
+        topology: 'MAKER_CEX',
+        observedAt,
+        expiresAt: observedAt + Math.max(1_000, Math.min(ttlMs, livePlan.makerExecution.ttlMs)),
+        status: 'eligible',
+        assets: [symbol],
+        venues: [livePlan.buyVenue, livePlan.sellVenue],
+        chains: ['cex'],
+        rawQuotes: [
+          ...(buyBook ? [{
+            source: `${livePlan.buyVenue}:order_book`, venue: livePlan.buyVenue, symbol,
+            observedAt: buyBook.timestamp, bid: buyBook.bid, ask: buyBook.ask,
+            executable: true, provenance: ['measured_bbo', 'maker_post_only_plan', 'websocket_hot_path'],
+          }] : []),
+          ...(sellBook ? [{
+            source: `${livePlan.sellVenue}:order_book`, venue: livePlan.sellVenue, symbol,
+            observedAt: sellBook.timestamp, bid: sellBook.bid, ask: sellBook.ask,
+            executable: true, provenance: ['measured_bbo', 'maker_post_only_plan', 'websocket_hot_path'],
+          }] : []),
+        ],
+        depth: {
+          status: 'measured',
+          detail: `Canonical post-only maker plan: baseQty=${livePlan.baseQty}, jointFill=${livePlan.makerExecution.queueEcho.jointFillProbability.toFixed(4)}, stressPersistence=${livePlan.makerExecution.spreadStress.persistenceProbability.toFixed(4)}`,
+        },
+        economics: {
+          grossProfitUsd: livePlan.grossProfitUsd,
+          deterministicNetProfitUsd: livePlan.netProfitUsd,
+          feeUsd: livePlan.costs.totalCostsUsd,
+          gasUsd: livePlan.costs.gasUsd,
+          bridgeUsd: livePlan.costs.bridgeFeeUsd,
+          expectedSlippageBps: livePlan.expectedSlippageBps,
+          expectedPriceImpactBps: livePlan.expectedPriceImpactBps,
+        },
+        quoteAgeMs: livePlan.quoteAgeMs,
+        executableCapability: true,
+        executionCapabilityReason: 'Fully measured Kraken/OKX post-only maker plan; downstream inventory, governance, canary, product, execution and terminal settlement gates remain mandatory',
+        missingInformation: [],
+        provenance: [
+          'canonical_maker_recovery_plan',
+          `maker_strategy:${livePlan.makerExecution.strategy}`,
+          'authenticated_maker_fee_evidence',
+          `maker_book_authority:${livePlan.makerExecution.bookAuthority}`,
+          `queue_authority:${livePlan.makerExecution.queueEcho.authority}`,
+          `canary_sizing_authority:${livePlan.makerExecution.canarySizingAuthority}`,
+          'post_only:true',
+          'taker_fallback:false',
+          'coinbase_maker:false',
+          'strict_all_in_net_profit_gt_zero:true',
+          'terminal_settlement_still_required:true',
+          'synthetic_evidence:false',
+        ],
+      }));
+    }
+
     const quotes = usableBooks.map(entry => ({
       ...entry,
       fee: getCachedCexFeeEvidence(entry.venue, symbol),
@@ -157,12 +218,10 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
           },
           quoteAgeMs: Math.max(0, Date.now() - observedAt),
           executableCapability: false,
-          executionCapabilityReason: 'Paper maker proof accelerates calibration but cannot substitute for terminal settlement evidence or live execution authority',
+          executionCapabilityReason: 'Paper maker proof accelerates calibration but cannot substitute for a fully measured live maker plan or terminal settlement evidence',
           missingInformation: [
             ...(makerFeeKnown ? [] : ['authenticated_maker_fee_evidence']),
-            'terminal_empirical_maker_fill_probability',
-            'terminal_maker_adverse_selection_calibration',
-            'terminal_maker_cancel_latency_calibration',
+            'fully_measured_canonical_maker_plan',
           ],
           provenance: [
             'maker_order_not_assumed_filled',

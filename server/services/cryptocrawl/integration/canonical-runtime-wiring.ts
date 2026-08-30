@@ -9,6 +9,7 @@ import { canonicalIntelligenceRepository } from '../intelligence/canonical-intel
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard-rpc-first-wiring.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
+import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
 import { ensureComputationalReactorWiring } from './computational-reactor-wiring.js';
@@ -117,6 +118,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureCryptaraCexEvidenceWiring();
   ensureCryptaraSovereignCortexWiring();
   ensureCryptaraPredictivePrefetchWiring();
+  ensureStablecoinMakerExecutionWiring();
   ensureInventoryConstrainedCexExecutionWiring();
   ensureCrossVenueTimingGuardWiring();
   ensureMeasuredCandidateExpiryGuardWiring();
@@ -154,16 +156,18 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history',
     adaptiveThresholdAuthority: 'terminal_realized_outcomes',
     measuredCandidateFreshnessPromotionGuard: true,
-    crossVenueTimingGuard: 'fresh_synchronized_kraken_okx_books_then_existing_exact_economic_requote',
+    crossVenueTimingGuard: 'fresh_synchronized_coinbase_kraken_okx_books_then_existing_exact_economic_requote',
     bpsExecutionFloor: null,
     executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
+    cexMakerExecution: 'kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
+    coinbaseMakerExecutionAuthority: false,
     cexHybridExecutionAuthority: false,
     computationalReactor: 'measured_cpu_memory_rate_pressure_plus_real_scorer_monte_carlo_plus_bounded_callbacks',
     computationalReactorExecutionAuthority: false,
     cryptaraSovereignCortex: 'eight_dimension_measured_capability_vector_plus_consensus_confidence_plus_terminal_learning',
-    cryptaraPredictivePrefetch: 'positive_high_priority_compute_aware_provider_ranked_kraken_okx_book_warmup',
+    cryptaraPredictivePrefetch: 'positive_high_priority_compute_aware_provider_ranked_coinbase_kraken_okx_book_warmup',
     cryptaraCortexExecutionAuthority: false,
     legacyMasterOrchestratorRequired: false,
     executionAuthorityGranted: false,
