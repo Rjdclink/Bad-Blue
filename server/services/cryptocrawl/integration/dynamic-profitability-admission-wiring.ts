@@ -110,7 +110,7 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     bpsRescuePortfolio: 'measured_cost_decomposition_plus_decay_scheduling',
     bpsDecomposition: 'exact_measured_cross_topology_telemetry',
     zeroCapitalRecoveryTelemetry: 'exact_measured_gap_distribution',
-    profitabilityRecoveryIntelligence: 'twenty_signal_measured_recovery_coordinator',
+    profitabilityRecoveryIntelligence: 'fifty_signal_measured_recovery_coordinator',
     bpsSubsystemExecutionAuthority: false,
     terminalSettlementStillRequiredAfterExecution: true,
     livePaths: ['CEX_TAKER_IOC', 'FLASH_LOAN'],
