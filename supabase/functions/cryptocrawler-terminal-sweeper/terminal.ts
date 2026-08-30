@@ -9,6 +9,10 @@ import {
   submitEthWithdrawal, waitOrderTerminal,
 } from './okx.ts';
 
+function amountKey(amount: number): string {
+  return Number(amount.toFixed(12)).toString();
+}
+
 async function terminalMarketOrder(
   secrets: Secrets,
   epoch: string,
@@ -17,7 +21,7 @@ async function terminalMarketOrder(
   amount: number,
   tgtCcy: 'base_ccy' | 'quote_ccy',
 ): Promise<boolean> {
-  const clientId = await deterministicId(`terminal:${epoch}:order:${instId}:${side}`);
+  const clientId = await deterministicId(`terminal:${epoch}:order:${instId}:${side}:${tgtCcy}:${amountKey(amount)}`);
   let order = await findOrder(secrets, instId, null, clientId);
   let orderId = String(order?.ordId || '');
   if (!orderId) orderId = await placeMarketOrder(secrets, instId, side, amount, tgtCcy, clientId);
@@ -34,7 +38,14 @@ async function terminalTransfer(
   to: '6' | '18',
 ): Promise<boolean> {
   if (!(amount > TERMINAL_DUST_EPSILON)) return true;
-  const result = await ensureTransfer(secrets, `terminal:${epoch}:transfer:${ccy}:${from}:${to}`, ccy, amount, from, to);
+  const result = await ensureTransfer(
+    secrets,
+    `terminal:${epoch}:transfer:${ccy}:${from}:${to}:${amountKey(amount)}`,
+    ccy,
+    amount,
+    from,
+    to,
+  );
   return result.done;
 }
 
@@ -71,7 +82,7 @@ async function consolidateOkxToEth(secrets: Secrets, epoch: string): Promise<{ r
   }
   if (blockers.length > 0) return { ready: false, blockers };
 
-  // Terminal policy intentionally drains the remaining 40%/operating treasury too.
+  // Restart/terminal policy intentionally drains the remaining operating treasury too.
   trading = await getTradingBalances(secrets, ['ETH', ...PAYOUT_QUOTES]);
   for (const quote of PAYOUT_QUOTES) {
     const available = trading[quote] || 0;
@@ -118,29 +129,58 @@ async function reconcileTerminalLeg(secrets: Secrets, leg: Leg): Promise<Leg> {
   return leg;
 }
 
+async function existingTerminalLegs(epoch: string): Promise<Leg[]> {
+  const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs')
+    .select('*').eq('terminal_epoch', epoch).eq('venue', 'okx').eq('asset', 'ETH')
+    .order('leg_sequence', { ascending: true });
+  if (error) throw error;
+  return (data || []) as Leg[];
+}
+
 async function submitTerminalEth(secrets: Secrets, epoch: string): Promise<Leg | null> {
   const route = await getEthRoute(secrets);
+
+  const priorLegs = await existingTerminalLegs(epoch);
+  for (const prior of priorLegs) {
+    if (prior.status === 'MANUAL_REVIEW') return prior;
+    if (prior.status === 'SUBMITTED') return reconcileTerminalLeg(secrets, prior);
+    if (prior.status === 'RETRYABLE') {
+      // Reuse the same durable leg/client id; recovery is checked before retry.
+      const recovered = await findWithdrawal(secrets, prior.withdrawal_id, prior.client_id);
+      if (recovered?.wdId) {
+        const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
+          status: 'SUBMITTED', withdrawal_id: String(recovered.wdId), last_error: null, updated_at: nowIso(),
+        }).eq('leg_id', prior.leg_id).select().single();
+        if (error) throw error;
+        return reconcileTerminalLeg(secrets, data as Leg);
+      }
+    }
+  }
+
   const trading = await getTradingBalances(secrets, ['ETH']);
   if ((trading.ETH || 0) > TERMINAL_DUST_EPSILON && !await terminalTransfer(secrets, epoch, 'ETH', trading.ETH, '18', '6')) return null;
 
   const funding = await getFundingBalances(secrets, ['ETH']);
-  const amount = floorPrecision(Math.max(0, (funding.ETH || 0) - route.feeEth), route.precision);
+  const withdrawableAfterFee = floorPrecision(Math.max(0, (funding.ETH || 0) - route.feeEth), route.precision);
+  if (withdrawableAfterFee < route.minWithdrawalEth) return null;
+  const amount = floorPrecision(
+    route.maxWithdrawalEth > 0 ? Math.min(withdrawableAfterFee, route.maxWithdrawalEth) : withdrawableAfterFee,
+    route.precision,
+  );
   if (amount < route.minWithdrawalEth) return null;
-  if (route.maxWithdrawalEth > 0 && amount > route.maxWithdrawalEth) {
-    throw new Error(`Terminal ETH amount ${amount} exceeds authenticated single-withdrawal max ${route.maxWithdrawalEth}`);
-  }
 
-  const clientId = await deterministicId(`terminal:${epoch}:okx:ETH:${route.chain}`);
+  const sequence = priorLegs.reduce((max, leg) => Math.max(max, Number(leg.leg_sequence || 0)), 0) + 1;
+  const clientId = await deterministicId(`terminal:${epoch}:okx:ETH:${route.chain}:leg:${sequence}:amount:${amountKey(amount)}`);
   const destinationHash = (await sha256Hex(secrets.destination.toLowerCase())).slice(0, 16);
   const { error: upsertError } = await supabase.from('cryptocrawler_terminal_sweep_legs').upsert({
-    terminal_epoch: epoch, venue: 'okx', asset: 'ETH', chain: route.chain,
+    terminal_epoch: epoch, venue: 'okx', asset: 'ETH', leg_sequence: sequence, chain: route.chain,
     status: 'PREPARED', client_id: clientId, amount, fee: route.feeEth,
     destination_hash: destinationHash, updated_at: nowIso(),
-  }, { onConflict: 'terminal_epoch,venue,asset', ignoreDuplicates: true });
+  }, { onConflict: 'terminal_epoch,venue,asset,leg_sequence', ignoreDuplicates: true });
   if (upsertError) throw upsertError;
 
   const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs')
-    .select('*').eq('terminal_epoch', epoch).eq('venue', 'okx').eq('asset', 'ETH').single();
+    .select('*').eq('terminal_epoch', epoch).eq('venue', 'okx').eq('asset', 'ETH').eq('leg_sequence', sequence).single();
   if (error) throw error;
   let leg = data as Leg;
   if (leg.status === 'CONFIRMED' || leg.status === 'MANUAL_REVIEW') return leg;
@@ -155,10 +195,11 @@ async function submitTerminalEth(secrets: Secrets, epoch: string): Promise<Leg |
     return reconcileTerminalLeg(secrets, updated as Leg);
   }
 
-  await supabase.from('cryptocrawler_terminal_sweep_legs').update({
+  const { error: submittedStateError } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
     status: 'SUBMITTED', attempt_count: Number((data as any).attempt_count || 0) + 1,
     submitted_at: nowIso(), updated_at: nowIso(), last_error: null,
   }).eq('leg_id', leg.leg_id);
+  if (submittedStateError) throw submittedStateError;
 
   try {
     const withdrawalId = await submitEthWithdrawal(secrets, route, amount, clientId);
@@ -192,14 +233,26 @@ async function terminalResidualBlockers(secrets: Secrets): Promise<string[]> {
   return blockers;
 }
 
+async function payoutWorkInFlight(): Promise<{ jobs: number; batches: number }> {
+  const [{ count: jobs, error: jobsError }, { count: batches, error: batchesError }] = await Promise.all([
+    supabase.from('cryptocrawler_profit_payout_jobs')
+      .select('event_id', { head: true, count: 'exact' }).in('status', ['CONVERTING', 'WITHDRAWING', 'SUBMITTED']),
+    supabase.from('cryptocrawler_profit_payout_batches')
+      .select('batch_id', { head: true, count: 'exact' }).in('status', ['CONVERTING', 'WITHDRAWING', 'SUBMITTED']),
+  ]);
+  if (jobsError) throw jobsError;
+  if (batchesError) throw batchesError;
+  return { jobs: jobs || 0, batches: batches || 0 };
+}
+
 export async function runTerminalSweep(secrets: Secrets, control: Control): Promise<Record<string, unknown>> {
   const epoch = control.terminal_epoch;
   if (!epoch) throw new Error('Terminal sweep state is missing terminal_epoch');
 
-  const { count: inFlight, error: inFlightError } = await supabase.from('cryptocrawler_profit_payout_jobs')
-    .select('event_id', { head: true, count: 'exact' }).in('status', ['CONVERTING', 'WITHDRAWING', 'SUBMITTED']);
-  if (inFlightError) throw inFlightError;
-  if ((inFlight || 0) > 0) return { epoch, action: 'wait_for_per_trade_payout_reconciliation', inFlight };
+  const inFlight = await payoutWorkInFlight();
+  if (inFlight.jobs > 0 || inFlight.batches > 0) {
+    return { epoch, action: 'wait_for_profit_payout_reconciliation', inFlight };
+  }
 
   const consolidation = await consolidateOkxToEth(secrets, epoch);
   if (!consolidation.ready) {
@@ -212,18 +265,37 @@ export async function runTerminalSweep(secrets: Secrets, control: Control): Prom
   }
 
   const leg = await submitTerminalEth(secrets, epoch);
-  if (leg && leg.status !== 'CONFIRMED') return { epoch, action: 'terminal_eth_withdrawal_pending', legStatus: leg.status };
+  if (leg && leg.status !== 'CONFIRMED') {
+    return { epoch, action: 'terminal_eth_withdrawal_pending', legStatus: leg.status, legSequence: leg.leg_sequence };
+  }
 
   const residual = await terminalResidualBlockers(secrets);
-  if (residual.length > 0) return { epoch, action: 'terminal_residuals_remain', residual };
+  if (residual.length > 0) {
+    return { epoch, action: 'terminal_residuals_remain', residual, nextLegRequired: true };
+  }
 
   const ethUsd = await getTickerPrice('ETH-USDT').catch(() => 0);
-  const confirmedValueUsd = leg?.status === 'CONFIRMED' ? finite(leg.amount) * ethUsd : 0;
+  const legs = await existingTerminalLegs(epoch);
+  const confirmedValueUsd = legs
+    .filter(item => item.status === 'CONFIRMED')
+    .reduce((sum, item) => sum + finite(item.amount) * ethUsd, 0);
+  const allConfirmedHaveTxHash = legs
+    .filter(item => item.status === 'CONFIRMED')
+    .every(item => Boolean(item.transaction_hash));
+  if (legs.some(item => item.status === 'CONFIRMED') && !allConfirmedHaveTxHash) {
+    throw new Error('Terminal drain cannot be marked SWEPT without transaction hashes for every confirmed leg');
+  }
+
   const { error } = await supabase.from('cryptocrawler_terminal_sweep_control').update({
     desired_state: 'SWEPT', swept_value_usd: confirmedValueUsd, sweep_completed_at: nowIso(),
     worker_lease_owner: null, worker_lease_until: null, last_error: null, updated_at: nowIso(),
   }).eq('system_key', SYSTEM_KEY).eq('terminal_epoch', epoch);
   if (error) throw error;
   await supabase.rpc('cryptocrawler_terminal_sweep_finalize_events', { p_epoch: epoch });
-  return { epoch, action: 'terminal_eth_sweep_confirmed', transactionHashPresent: Boolean(leg?.transaction_hash) };
+  return {
+    epoch,
+    action: 'terminal_eth_sweep_confirmed',
+    confirmedLegs: legs.filter(item => item.status === 'CONFIRMED').length,
+    allConfirmedLegsHaveTransactionHash: allConfirmedHaveTxHash,
+  };
 }
