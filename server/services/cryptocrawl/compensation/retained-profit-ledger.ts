@@ -17,7 +17,15 @@ export interface ProfitSplitAllocation {
   realizedProfitUsd: number;
   payoutTargetUsd: number;
   retainedTargetUsd: number;
+  payoutSourceVenue: string | null;
+  payoutSourceAsset: string | null;
   recorded: boolean;
+}
+
+interface PayoutInventorySource {
+  venue: 'coinbase' | 'kraken' | 'okx';
+  asset: 'USD' | 'USDC' | 'USDT';
+  reservedAssetAmount: number;
 }
 
 function destinationFingerprint(): string {
@@ -41,7 +49,43 @@ function splitProfit(realized: number): { realized: number; payout: number; reta
   return { realized: normalized, payout, retained };
 }
 
+function splitSpotSymbol(symbol: string): { base: string; quote: 'USD' | 'USDC' | 'USDT' } | null {
+  const normalized = symbol.trim().toUpperCase().replace(/[-_/]/g, '');
+  for (const quote of ['USDT', 'USDC', 'USD'] as const) {
+    if (!normalized.endsWith(quote) || normalized.length <= quote.length) continue;
+    return { base: normalized.slice(0, -quote.length), quote };
+  }
+  return null;
+}
+
+function payoutInventorySource(feedback: CryptaraExecutionFeedback, payoutUsd: number): PayoutInventorySource | null {
+  const candidates = (feedback.settlement?.orders || [])
+    .filter(order => order.side === 'sell' && order.terminal === true && Number(order.filledQuantity || 0) > 0)
+    .flatMap(order => {
+      const pair = splitSpotSymbol(order.symbol);
+      const venue = String(order.venue || '').trim().toLowerCase();
+      if (!pair || !['coinbase', 'kraken', 'okx'].includes(venue)) return [];
+      return [{ venue: venue as PayoutInventorySource['venue'], asset: pair.quote }];
+    });
+  const unique = [...new Map(candidates.map(item => [`${item.venue}:${item.asset}`, item])).values()];
+  if (unique.length !== 1) return null;
+  return {
+    ...unique[0],
+    // Current canonical CEX quote assets are USD-pegged/fiat USD, so the
+    // terminal-realized USD payout obligation maps one-for-one to the quote
+    // inventory generated on the sell side. Unknown/non-USD quote sources are
+    // deliberately not guessed.
+    reservedAssetAmount: payoutUsd,
+  };
+}
+
 function sourceVenue(feedback: CryptaraExecutionFeedback): string | null {
+  const sells = (feedback.settlement?.orders || [])
+    .filter(order => order.side === 'sell' && order.terminal === true && Number(order.filledQuantity || 0) > 0)
+    .map(order => String(order.venue || '').trim().toLowerCase())
+    .filter(Boolean);
+  const uniqueSells = [...new Set(sells)];
+  if (uniqueSells.length === 1) return uniqueSells[0];
   const venues = [...new Set((feedback.settlement?.orders || [])
     .map(order => String(order.venue || '').trim().toLowerCase())
     .filter(Boolean))];
@@ -58,10 +102,10 @@ function sleep(ms: number): Promise<void> {
  * Persists one terminal-confirmed profitable settlement exactly once and creates
  * its durable payout job in the same database transaction.
  *
- * 60% is earmarked for ETH/Ethereum payout. 40% is accounting-retained operating
- * capital only: it is deliberately NOT inserted into the inventory reservation
- * table, so the canonical inventory ledger remains the sole authority deciding
- * what current venue balances are spendable by strategies, gas, and fees.
+ * 60% is payout capital. For canonical USD-quoted CEX settlements it is attached
+ * to the actual sell-side venue/quote inventory and excluded from NEW trade
+ * spendability until paid. 40% remains ordinary operating capital and is not
+ * inventory-reserved, so strategies, gas and fees can keep using it.
  */
 class RetainedProfitLedger {
   private ready: Promise<void> | null = null;
@@ -75,6 +119,7 @@ class RetainedProfitLedger {
     await this.ensureStore();
     const eventId = terminalFeedbackIdentity(feedback);
     const allocation = splitProfit(realized);
+    const payoutSource = payoutInventorySource(feedback, allocation.payout);
     const destinationHash = destinationFingerprint();
     let lastError: unknown = null;
 
@@ -96,18 +141,28 @@ class RetainedProfitLedger {
           await client.query(
             `INSERT INTO public.cryptocrawler_profit_payout_jobs
               (event_id, opportunity_id, realized_profit_usd, payout_target_usd, retained_target_usd,
-               payout_asset, payout_network, status, source_venue, destination_hash, created_at, updated_at)
-             VALUES ($1,$2,$3,$4,$5,'ETH','ethereum','QUEUED',$6,$7,now(),now())`,
+               payout_asset, payout_network, status, source_venue, source_asset, destination_hash, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,'ETH','ethereum','QUEUED',$6,$7,$8,now(),now())`,
             [
               eventId,
               feedback.opportunityId || null,
               allocation.realized,
               allocation.payout,
               allocation.retained,
-              sourceVenue(feedback),
+              payoutSource?.venue || sourceVenue(feedback),
+              payoutSource?.asset || null,
               destinationHash,
             ],
           );
+          if (payoutSource) {
+            await client.query(
+              `INSERT INTO public.cryptocrawler_payout_asset_reservations
+                (event_id, venue, asset, reserved_asset_amount, remaining_asset_amount, status, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$4,'HELD',now(),now())
+               ON CONFLICT (event_id) DO NOTHING`,
+              [eventId, payoutSource.venue, payoutSource.asset, payoutSource.reservedAssetAmount],
+            );
+          }
           await client.query(
             `UPDATE public.cryptocrawler_terminal_sweep_control
              SET retained_profit_usd = retained_profit_usd + $1,
@@ -124,6 +179,8 @@ class RetainedProfitLedger {
           realizedProfitUsd: allocation.realized,
           payoutTargetUsd: allocation.payout,
           retainedTargetUsd: allocation.retained,
+          payoutSourceVenue: payoutSource?.venue || sourceVenue(feedback),
+          payoutSourceAsset: payoutSource?.asset || null,
           recorded: inserted.rowCount === 1,
         };
       } catch (error) {
@@ -157,10 +214,11 @@ class RetainedProfitLedger {
         `SELECT
            to_regclass('private.cryptocrawler_rainbow_profit_events') IS NOT NULL AS event_table,
            to_regclass('public.cryptocrawler_terminal_sweep_control') IS NOT NULL AS control_table,
-           to_regclass('public.cryptocrawler_profit_payout_jobs') IS NOT NULL AS payout_table`,
+           to_regclass('public.cryptocrawler_profit_payout_jobs') IS NOT NULL AS payout_table,
+           to_regclass('public.cryptocrawler_payout_asset_reservations') IS NOT NULL AS payout_reserve_table`,
       );
       const row = requirements.rows[0] || {};
-      if (row.event_table !== true || row.control_table !== true || row.payout_table !== true) {
+      if (row.event_table !== true || row.control_table !== true || row.payout_table !== true || row.payout_reserve_table !== true) {
         throw new Error('profit split migration 018 is required before realized-profit capture');
       }
     })().catch(error => {
