@@ -1,4 +1,5 @@
 import { getCryptara } from '../../cryptara/index.js';
+import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import { riskGovernor } from '../governance/risk-governor.js';
 import { stageManager } from '../governance/stage-management.js';
 
@@ -70,6 +71,8 @@ export function calculateProgressivePositionSize(
   const reasons: string[] = [];
   const { stage, state, directive, ranking } = context;
   const bootstrapRecovery = request.zeroCapitalAvailable && !stageManager.isInitialGasReady();
+  const ladderAuthority = getProfitLadderNotionalAuthority();
+  const ladderMaxNotionalUsd = ladderAuthority.maxNotionalUsd;
 
   if (!Number.isFinite(request.requestedNotionalUsd) || request.requestedNotionalUsd <= 0) {
     return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['Requested notional must be positive'] };
@@ -105,12 +108,16 @@ export function calculateProgressivePositionSize(
     };
   }
 
+  if (!(ladderMaxNotionalUsd > 0)) {
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['Profit ladder does not currently authorize positive execution notional'] };
+  }
+
   const realizedCapitalUsd = Math.max(0, state.totalProfitUSD);
   const capitalBaseUsd = request.zeroCapitalAvailable
-    ? Math.max(0, stage.maxPositionSizeUSD)
+    ? ladderMaxNotionalUsd
     : Math.max(0, request.availableCapitalUsd + realizedCapitalUsd);
   if (capitalBaseUsd <= 0) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['No verified deployable wallet capital or implemented zero-capital stage capacity is available'] };
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['No verified deployable wallet capital or implemented zero-capital ladder capacity is available'] };
   }
 
   const hasVerifiedPerformance = ranking.sampleCount >= 3 &&
@@ -137,21 +144,21 @@ export function calculateProgressivePositionSize(
     * costMultiplier
     * edgeMultiplier
     * drawdownMultiplier;
-  const maxPermittedNotionalUsd = Math.max(0, Math.min(stage.maxPositionSizeUSD, capitalLimit));
+  const maxPermittedNotionalUsd = Math.max(0, Math.min(ladderMaxNotionalUsd, capitalLimit));
   const proposedNotionalUsd = Math.min(request.requestedNotionalUsd, maxPermittedNotionalUsd);
 
   if (edgeMultiplier < 0.25) reasons.push('Thin net edge relative to measured costs reduced permitted exposure');
-  if (drawdownMultiplier < 0.75) reasons.push('Reduced drawdown headroom reduced permitted exposure before the hard stage limit');
+  if (drawdownMultiplier < 0.75) reasons.push('Reduced drawdown headroom reduced permitted exposure before the profit-ladder ceiling');
 
   if (proposedNotionalUsd <= 0) {
     return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd, reasons: [...reasons, 'Risk-adjusted capital limit is zero'] };
   }
   if (proposedNotionalUsd < request.requestedNotionalUsd) {
-    reasons.push('Requested route exceeds the validated progressive exposure cap and must be re-quoted at the permitted size');
+    reasons.push('Requested route exceeds the validated progressive exposure cap beneath the current profit-ladder ceiling and must be re-quoted at the permitted size');
     return { approved: false, proposedNotionalUsd, maxPermittedNotionalUsd, reasons };
   }
 
-  reasons.push('Exposure is within wallet/zero-capital capacity, net-edge quality, drawdown headroom, Cryptara ranking, Monte Carlo, liquidity, volatility, and governance limits');
+  reasons.push('Exposure is within the current profit-ladder ceiling plus wallet/zero-capital capacity, net-edge quality, drawdown headroom, Cryptara ranking, Monte Carlo, liquidity, volatility, and governance limits');
   return { approved: true, proposedNotionalUsd, maxPermittedNotionalUsd, reasons };
 }
 
