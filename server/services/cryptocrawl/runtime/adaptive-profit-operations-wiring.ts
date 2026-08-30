@@ -10,7 +10,16 @@ import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError, type GovernanceAction } from '../governance/types.js';
 import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
 
-let installed = false;
+const ADAPTIVE_MARK = Symbol.for('cryptocrawl.adaptive-profit-operations');
+
+function marked(fn: unknown): boolean {
+  return typeof fn === 'function' && Boolean((fn as any)[ADAPTIVE_MARK]);
+}
+
+function mark<T extends Function>(fn: T): T {
+  (fn as any)[ADAPTIVE_MARK] = true;
+  return fn;
+}
 
 function boundedNotional(requested: number): number {
   const envelope = getAdaptiveProfitOperatingEnvelope();
@@ -48,9 +57,6 @@ function planWithinOperatingEnvelope(plan: VerifiedArbitragePlan): boolean {
 }
 
 export function ensureAdaptiveProfitOperationsWiring(): void {
-  if (installed) return;
-  installed = true;
-
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
     evaluateOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
     evaluateMany: (
@@ -59,72 +65,77 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
       capacity?: ScanCapacityDecision,
     ) => Promise<Map<string, VerifiedArbitragePlan | null>>;
   };
-  const originalEvaluateOnce = verifier.evaluateOnce.bind(verifier);
-  const originalEvaluateMany = verifier.evaluateMany.bind(verifier);
 
-  verifier.evaluateOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
-    const envelope = getAdaptiveProfitOperatingEnvelope();
-    if (envelope.stage > 1 && !envelope.newExposureAllowed) return null;
-    const requested = Number(request?.notionalUsd || 0);
-    const initialBound = requested > 0 ? boundedNotional(requested) : requested;
-    let plan = await originalEvaluateOnce({ ...request, notionalUsd: initialBound });
-    if (!plan) return null;
+  if (!marked(verifier.evaluateOnce)) {
+    const underlyingEvaluateOnce = verifier.evaluateOnce.bind(verifier);
+    verifier.evaluateOnce = mark(async (request: any): Promise<VerifiedArbitragePlan | null> => {
+      const envelope = getAdaptiveProfitOperatingEnvelope();
+      if (envelope.stage > 1 && !envelope.newExposureAllowed) return null;
+      const requested = Number(request?.notionalUsd || 0);
+      const initialBound = requested > 0 ? boundedNotional(requested) : requested;
+      let plan = await underlyingEvaluateOnce({ ...request, notionalUsd: initialBound });
+      if (!plan) return null;
 
-    const refinement = planNeedsRefinement(plan);
-    if (refinement.needed) {
-      const refinedBound = Math.max(1e-6, initialBound * refinement.scale);
-      const refined = await originalEvaluateOnce({ ...request, notionalUsd: refinedBound });
-      if (refined) plan = refined;
-      logger.info('[AdaptiveProfitOperations] CEX plan received one bounded depth/profit-cap refinement', {
-        component: 'AdaptiveProfitOperationsWiring',
-        symbol: plan.symbol,
-        originalRequestedNotionalUsd: requested,
-        initialBoundUsd: initialBound,
-        refinedBoundUsd: refinedBound,
-        reasons: refinement.reasons,
-        refinedPlanAvailable: Boolean(refined),
-      });
-    }
-    return planWithinOperatingEnvelope(plan) ? plan : null;
-  };
-
-  verifier.evaluateMany = async (
-    request: VerifyManyRequest,
-    symbols: readonly string[],
-    capacity?: ScanCapacityDecision,
-  ): Promise<Map<string, VerifiedArbitragePlan | null>> => {
-    const envelope = getAdaptiveProfitOperatingEnvelope();
-    if (envelope.stage > 1 && !envelope.newExposureAllowed) {
-      return new Map<string, VerifiedArbitragePlan | null>(
-        symbols.map(symbol => [symbol.trim().toUpperCase(), null] as [string, VerifiedArbitragePlan | null]),
-      );
-    }
-    const requested = Number(request.notionalUsd || 0);
-    const initialBound = requested > 0 ? boundedNotional(requested) : requested;
-    const plans = await originalEvaluateMany({ ...request, notionalUsd: initialBound }, symbols, capacity);
-
-    const refinements: Array<Promise<void>> = [];
-    for (const [symbol, plan] of plans.entries()) {
-      if (!plan) continue;
       const refinement = planNeedsRefinement(plan);
-      if (!refinement.needed) {
-        if (!planWithinOperatingEnvelope(plan)) plans.set(symbol, null);
-        continue;
-      }
-      refinements.push((async () => {
+      if (refinement.needed) {
         const refinedBound = Math.max(1e-6, initialBound * refinement.scale);
-        const refined = await originalEvaluateOnce({
-          ...request,
-          symbol,
-          notionalUsd: refinedBound,
-          minNetProfitUsd: 0,
-        }).catch(() => null);
-        plans.set(symbol, refined && planWithinOperatingEnvelope(refined) ? refined : null);
-      })());
-    }
-    await Promise.all(refinements);
-    return plans;
-  };
+        const refined = await underlyingEvaluateOnce({ ...request, notionalUsd: refinedBound });
+        if (refined) plan = refined;
+        logger.info('[AdaptiveProfitOperations] CEX plan received one bounded depth/profit-cap refinement', {
+          component: 'AdaptiveProfitOperationsWiring',
+          symbol: plan.symbol,
+          originalRequestedNotionalUsd: requested,
+          initialBoundUsd: initialBound,
+          refinedBoundUsd: refinedBound,
+          reasons: refinement.reasons,
+          refinedPlanAvailable: Boolean(refined),
+        });
+      }
+      return planWithinOperatingEnvelope(plan) ? plan : null;
+    });
+  }
+
+  if (!marked(verifier.evaluateMany)) {
+    const underlyingEvaluateMany = verifier.evaluateMany.bind(verifier);
+    const refinementEvaluateOnce = verifier.evaluateOnce.bind(verifier);
+    verifier.evaluateMany = mark(async (
+      request: VerifyManyRequest,
+      symbols: readonly string[],
+      capacity?: ScanCapacityDecision,
+    ): Promise<Map<string, VerifiedArbitragePlan | null>> => {
+      const envelope = getAdaptiveProfitOperatingEnvelope();
+      if (envelope.stage > 1 && !envelope.newExposureAllowed) {
+        return new Map<string, VerifiedArbitragePlan | null>(
+          symbols.map(symbol => [symbol.trim().toUpperCase(), null] as [string, VerifiedArbitragePlan | null]),
+        );
+      }
+      const requested = Number(request.notionalUsd || 0);
+      const initialBound = requested > 0 ? boundedNotional(requested) : requested;
+      const plans = await underlyingEvaluateMany({ ...request, notionalUsd: initialBound }, symbols, capacity);
+
+      const refinements: Array<Promise<void>> = [];
+      for (const [symbol, plan] of plans.entries()) {
+        if (!plan) continue;
+        const refinement = planNeedsRefinement(plan);
+        if (!refinement.needed) {
+          if (!planWithinOperatingEnvelope(plan)) plans.set(symbol, null);
+          continue;
+        }
+        refinements.push((async () => {
+          const refinedBound = Math.max(1e-6, initialBound * refinement.scale);
+          const refined = await refinementEvaluateOnce({
+            ...request,
+            symbol,
+            notionalUsd: refinedBound,
+            minNetProfitUsd: 0,
+          }).catch(() => null);
+          plans.set(symbol, refined && planWithinOperatingEnvelope(refined) ? refined : null);
+        })());
+      }
+      await Promise.all(refinements);
+      return plans;
+    });
+  }
 
   const governance = getCryptocrawlGovernance() as ReturnType<typeof getCryptocrawlGovernance> & {
     requireAllowed: (
@@ -132,34 +143,39 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
       context?: { chain?: string; pair?: string; venue?: string },
     ) => void;
   };
-  const originalRequireAllowed = governance.requireAllowed.bind(governance);
-  governance.requireAllowed = (action: GovernanceAction, context?: { chain?: string; pair?: string; venue?: string }): void => {
-    originalRequireAllowed(action, context);
-    // This gate blocks only NEW exposure. SUBMIT_TX remains available so an
-    // already-open position can always be cancelled, hedged, settled or flattened.
-    if (action !== 'EXECUTE_OPPORTUNITY') return;
-    const envelope = getAdaptiveProfitOperatingEnvelope();
-    if (!envelope.newExposureAllowed) {
-      throw new GovernanceError('CONSTRAINT_VIOLATION', 'Adaptive daily realized-profit envelope reached; new exposure is paused until rolling capacity returns', {
-        dailyProfitCapUsd: envelope.dailyProfitCapUsd,
-        rolling24hRealizedProfitUsd: envelope.rolling24hRealizedProfitUsd,
-        remainingDailyProfitCapacityUsd: envelope.remainingDailyProfitCapacityUsd,
-        settlementAndFlatteningStillAllowed: true,
-      });
-    }
-  };
+  if (!marked(governance.requireAllowed)) {
+    const underlyingRequireAllowed = governance.requireAllowed.bind(governance);
+    governance.requireAllowed = mark((action: GovernanceAction, context?: { chain?: string; pair?: string; venue?: string }): void => {
+      underlyingRequireAllowed(action, context);
+      // This gate blocks only NEW exposure. SUBMIT_TX remains available so an
+      // already-open position can always be cancelled, hedged, settled or flattened.
+      if (action !== 'EXECUTE_OPPORTUNITY') return;
+      const envelope = getAdaptiveProfitOperatingEnvelope();
+      if (!envelope.newExposureAllowed) {
+        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Adaptive daily realized-profit envelope reached; new exposure is paused until rolling capacity returns', {
+          dailyProfitCapUsd: envelope.dailyProfitCapUsd,
+          rolling24hRealizedProfitUsd: envelope.rolling24hRealizedProfitUsd,
+          remainingDailyProfitCapacityUsd: envelope.remainingDailyProfitCapacityUsd,
+          settlementAndFlatteningStillAllowed: true,
+        });
+      }
+    });
+  }
 
+  // Reassert this telemetry method on every installation call because older
+  // compatibility profitability wiring may be initialized in either runtime order.
   const stageRuntime = stageManager as typeof stageManager & { getMaxDailyProfit: () => number };
   stageRuntime.getMaxDailyProfit = () => getAdaptiveProfitOperatingEnvelope().dailyProfitCapUsd;
 
   const envelope = getAdaptiveProfitOperatingEnvelope();
-  logger.info('[AdaptiveProfitOperations] Terminal-realized profit operating envelope installed', {
+  logger.info('[AdaptiveProfitOperations] Terminal-realized profit operating envelope installed/reasserted', {
     component: 'AdaptiveProfitOperationsWiring',
     dailyProfitCapUsd: envelope.dailyProfitCapUsd,
     recommendedMaxNotionalUsd: envelope.recommendedMaxNotionalUsd,
     maxExpectedSlippageBps: envelope.maxExpectedSlippageBps,
     recommendedCycleBudget: envelope.recommendedCycleBudget,
     performanceDegraded: envelope.performanceDegraded,
+    wrapperOrderResilient: true,
     newExposureGateOnly: true,
     settlementHedgeFlatteningExemptFromProfitCap: true,
     stagePositionCeilingsPreserved: true,
