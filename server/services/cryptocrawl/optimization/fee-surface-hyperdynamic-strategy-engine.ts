@@ -15,6 +15,12 @@ export type FeeSurfaceStrategyKey =
   | 'zero_capital_fee_gas_compression'
   | 'cross_topology_fee_budget_switching';
 
+export type ProhibitedFeeSurfaceBehavior =
+  | 'wash_volume'
+  | 'self_trade'
+  | 'unverified_rebate_assumption'
+  | 'front_run_other_orders';
+
 export interface FeeSurfaceModeInput {
   symbol: string;
   buyVenue: 'kraken' | 'okx';
@@ -60,7 +66,7 @@ export interface FeeSurfaceHyperdynamicStrategyPlan {
   authority: 'search_ranking_and_measurement_only';
   executionAuthority: false;
   syntheticFeeAuthority: false;
-  prohibitedBehaviors: ['wash_volume', 'self_trade', 'unverified_rebate_assumption', 'front_run_other_orders'];
+  prohibitedBehaviors: ProhibitedFeeSurfaceBehavior[];
 }
 
 function finite(value: unknown): number | null {
@@ -173,7 +179,7 @@ export function buildFeeSurfaceHyperdynamicStrategyPlan(input: {
       mode.mode[0] === 'M' ? Math.max(0, -(mode.buyMakerCostBps ?? 0)) : 0,
       mode.mode[1] === 'M' ? Math.max(0, -(mode.sellMakerCostBps ?? 0)) : 0,
     );
-    return Math.max(0, Math.min(mode.grossSpreadBps, mode.grossSpreadBps + rebate));
+    return Math.max(0, mode.grossSpreadBps + rebate);
   })) : null;
 
   const freshest = modes.filter(mode => mode.feeFreshnessScore >= 0.75);
@@ -193,7 +199,7 @@ export function buildFeeSurfaceHyperdynamicStrategyPlan(input: {
   const best = (values: Array<{ benefit: number }>) => values.length ? Math.max(...values.map(item => item.benefit)) : null;
   const decisions: FeeSurfaceStrategyDecision[] = [
     decision('authenticated_maker_rebate_capture', bestRebate, rebateModes.map(mode => mode.symbol), 'Use only authenticated negative maker-fee evidence; never assume a pair rebates.'),
-    decision('stablecoin_zero_maker_lane', stableZeroMaker.length ? Math.max(...stableZeroMaker.map(mode => Math.max(0, mode.combinedFeeBps))) + 0.000001 : null, stableZeroMaker.map(mode => mode.symbol), 'Prioritize measured stablecoin lanes whose authenticated maker cost is zero or negative.'),
+    decision('stablecoin_zero_maker_lane', stableZeroMaker.length ? 0.000001 : null, stableZeroMaker.map(mode => mode.symbol), 'Prioritize measured stablecoin lanes whose authenticated maker cost is zero or negative.'),
     decision('maker_taker_fee_inversion', best(mtSavings), mtSavings.map(item => item.symbol), 'Prefer MT only when its measured fee surface beats the same-route TT alternative; partial-fill-safe execution remains mandatory.'),
     decision('taker_maker_fee_inversion', best(tmSavings), tmSavings.map(item => item.symbol), 'Prefer TM only when its measured fee surface beats the same-route TT alternative; fresh hedge economics remain mandatory.'),
     decision('dual_maker_fee_compression', best(mmSavings), mmSavings.map(item => item.symbol), 'Use MM as a measured fee-compression surface while retaining queue/fill proof requirements.'),
