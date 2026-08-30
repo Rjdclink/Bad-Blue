@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import logger from '../../../logger.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { queueCexResidualReplan } from '../discovery/cex-residual-replan.js';
 import type { HyperHybridChildExecution } from '../execution/hyper-hybrid-cex-execution.js';
 import type { NormalizedRealizedExecution, RealizedExecutionEconomics } from '../execution/settlement-types.js';
 import { retainedProfitLedger } from './retained-profit-ledger.js';
@@ -70,6 +71,8 @@ export async function persistHyperHybridPartialProfit(input: {
     .map(order => order.terminalAt)
     .filter((value): value is number => value !== null && Number.isFinite(value));
   const settledAt = terminalAt.length > 0 ? Math.max(...terminalAt) : Date.now();
+  const completedNotionalUsd = completed.reduce((sum, child) => sum + Math.max(0, child.plannedNotionalUsd), 0);
+  const remainingNotionalUsd = Math.max(0, input.parent.notionalUsd - completedNotionalUsd);
   const settlement: NormalizedRealizedExecution = {
     status: 'partially_filled',
     terminal: true,
@@ -89,6 +92,8 @@ export async function persistHyperHybridPartialProfit(input: {
       'cryptara_rank_authority:false',
       'profit_ladder_progression_authority:false',
       `parent_target_notional_usd:${input.parent.notionalUsd}`,
+      `completed_notional_usd:${completedNotionalUsd}`,
+      `remaining_notional_usd:${remainingNotionalUsd}`,
       `completed_children:${completed.length}`,
     ],
     orders,
@@ -112,7 +117,7 @@ export async function persistHyperHybridPartialProfit(input: {
     settlementConfirmed: true,
     provenance: [...settlement.provenance, `accounting_identity:${identity}`],
     settlement,
-    notes: 'Partial parent: profitable terminal child subset persisted directly to treasury; excluded from Cryptara/stage/rank evidence.',
+    notes: 'Partial parent: profitable terminal child subset persisted directly to treasury; excluded from Cryptara/stage/rank evidence. Remaining parent notional is independently re-assessed from fresh market evidence before any later execution.',
   });
 
   if (allocation?.recorded) {
@@ -121,10 +126,17 @@ export async function persistHyperHybridPartialProfit(input: {
       symbol: input.parent.symbol,
       realizedProfitUsd: allocation.realizedProfitUsd,
       completedChildren: completed.length,
+      completedNotionalUsd,
+      remainingNotionalUsd,
       accountingIdentity: identity,
       rankAuthority: false,
       profitLadderProgressionAuthority: false,
     });
     void rainbowProfitBridge.wake('terminal_profit_recorded');
+    queueCexResidualReplan({
+      symbol: input.parent.symbol,
+      remainingNotionalUsd,
+      sourceParentNotionalUsd: input.parent.notionalUsd,
+    });
   }
 }
