@@ -6,6 +6,7 @@ import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
 import { getProviderQualityAuctionSnapshot } from '../intelligence/provider-quality-auction.js';
 import { recordAntennaProviderObservation } from '../intelligence/sovereign-antenna-quality.js';
 import { orderBookEvolutionStore } from '../validation/order-book-evolution-store.js';
+import { getComputationalSearchPlan } from './computational-reactor-wiring.js';
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -29,6 +30,7 @@ function requestBatchSize(): number {
 function adaptivePlan(): { symbolLimit: number; intervalMs: number; maxAgeMs: number } {
   const heat = getHeatMonitor();
   const auction = getProviderQualityAuctionSnapshot();
+  const computePlan = getComputationalSearchPlan();
   const activeBids = auction.bids.filter(bid => !bid.temporarilyDeprioritized);
   const failurePressure = activeBids.length
     ? activeBids.reduce((sum, bid) => sum + bid.failureRate, 0) / activeBids.length
@@ -40,13 +42,15 @@ function adaptivePlan(): { symbolLimit: number; intervalMs: number; maxAgeMs: nu
 
   const heatFactor = heat.throttleLevel === 'heavy' ? 0.25 : heat.throttleLevel === 'moderate' ? 0.5 : heat.throttleLevel === 'light' ? 0.75 : 1;
   const providerFactor = failurePressure >= 0.5 ? 0.5 : failurePressure >= 0.25 ? 0.75 : 1;
-  const symbolLimit = Math.max(4, Math.min(baseSymbolLimit(), Math.floor(baseSymbolLimit() * heatFactor * providerFactor)));
+  const computeBreadth = computePlan.observedAt > 0 ? computePlan.breadthFactor : 1;
+  const symbolLimit = Math.max(4, Math.min(baseSymbolLimit(), Math.floor(baseSymbolLimit() * heatFactor * providerFactor * computeBreadth)));
 
   const baseInterval = Math.max(250, Number(process.env.CRYPTOCRAWL_BOOK_EVOLUTION_INTERVAL_MS || 1_000));
   const latencyFactor = p95Latency > 2_000 ? 2 : p95Latency > 750 ? 1.5 : 1;
   const pressureFactor = heat.throttleLevel === 'heavy' ? 4 : heat.throttleLevel === 'moderate' ? 2 : heat.throttleLevel === 'light' ? 1.25 : 1;
   const failureFactor = failurePressure >= 0.5 ? 2 : failurePressure >= 0.25 ? 1.5 : 1;
-  const intervalMs = Math.max(250, Math.min(15_000, Math.round(baseInterval * Math.max(latencyFactor, pressureFactor, failureFactor))));
+  const computeInterval = computePlan.observedAt > 0 ? computePlan.intervalFactor : 1;
+  const intervalMs = Math.max(250, Math.min(15_000, Math.round(baseInterval * Math.max(latencyFactor, pressureFactor, failureFactor) * computeInterval)));
 
   const configuredMaxAge = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
   const maxAgeMs = Math.max(500, Math.min(configuredMaxAge, Math.max(500, intervalMs * 2)));
@@ -60,7 +64,10 @@ async function observeOnce(): Promise<void> {
     const venues = getActiveExecutableQuoteVenues();
     const plan = adaptivePlan();
     const symbols = getLastOrderedMarketUniverseSymbols().slice(0, plan.symbolLimit);
-    const tasks = venues.flatMap(venue => symbols.map(symbol => async () => {
+    // Interleave venues per symbol so every request batch contains both Kraken
+    // and OKX whenever both are executable. Provider quality may change attention
+    // and cadence, but it never removes an executable venue from observation.
+    const tasks = symbols.flatMap(symbol => venues.map(venue => async () => {
       const startedAt = Date.now();
       try {
         const quote = await cexOrderBookStreams.getQuote(venue, symbol, plan.maxAgeMs);
@@ -103,6 +110,7 @@ async function observeOnce(): Promise<void> {
           reasons: bid.reasons,
         })),
         adaptivePlan: plan,
+        computeSearchPlan: getComputationalSearchPlan(),
         allExecutableVenuesStillObservedSimultaneously: true,
         providerAuctionAuthority: auction.authority,
         executionAuthority: false,
@@ -132,6 +140,7 @@ export function ensureOrderBookEvolutionWiring(): void {
     authoritativeVenues: getActiveExecutableQuoteVenues(),
     connectionModel: 'persistent_venue_socket_multi_symbol',
     computePressureAware: true,
+    computeSearchAllocationAware: true,
     providerFailureLatencyAware: true,
     boundedRequestBatches: requestBatchSize(),
     providerQualityTelemetry: 'measured_latency_hit_rate_failure_rate_recency',
