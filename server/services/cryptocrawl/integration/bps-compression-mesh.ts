@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { ensureOkxRpiFeeAdvisory, getOkxRpiFeeOpportunities } from '../intelligence/okx-rpi-fee-advisory.js';
 import { getCexFourModeSnapshot } from './cex-four-mode-observability-wiring.js';
 import { getZeroCapitalRecoverySnapshot } from './zero-capital-recovery-observability.js';
 
@@ -9,6 +10,8 @@ export interface BpsCompressionMeshSnapshot {
     positiveModes: number;
     bestPositiveBps: number | null;
     closestRiskAdjustedGapBps: number | null;
+    rpiEligibleSymbols: number;
+    maxRpiSavingsVsTakerBps: number | null;
     rawPriority: number;
     attentionShare: number;
   };
@@ -72,9 +75,16 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
     .filter(mode => !mode.economicallyPositive && Number.isFinite(mode.riskAdjustedBpsToBreakEven))
     .map(mode => mode.riskAdjustedBpsToBreakEven);
   const closestRiskAdjustedGapBps = negativeRiskGaps.length > 0 ? Math.min(...negativeRiskGaps) : null;
-  const cexRaw = bestPositiveBps !== null
+  const rpi = getOkxRpiFeeOpportunities();
+  const maxRpiSavingsVsTakerBps = rpi.length > 0 ? Math.max(...rpi.map(item => item.rpiSavingsVsTakerBps)) : null;
+  let cexRaw = bestPositiveBps !== null
     ? positivePriority(bestPositiveBps)
     : gapPriority(closestRiskAdjustedGapBps, 10);
+  if (maxRpiSavingsVsTakerBps !== null && maxRpiSavingsVsTakerBps > 0) {
+    // RPI is only an authenticated fee-opportunity signal here. It may make a
+    // near-miss more worth measuring, but it never changes executable economics.
+    cexRaw *= 1 + Math.min(0.50, maxRpiSavingsVsTakerBps / 40);
+  }
 
   const zero = getZeroCapitalRecoverySnapshot();
   const zeroPositive = zero?.positiveCandidates ?? 0;
@@ -96,6 +106,8 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
       positiveModes: positives.length,
       bestPositiveBps,
       closestRiskAdjustedGapBps,
+      rpiEligibleSymbols: rpi.length,
+      maxRpiSavingsVsTakerBps,
       rawPriority: cexRaw,
       attentionShare: shares.cex,
     },
@@ -134,6 +146,7 @@ export function getBpsCompressionMeshSnapshot(): BpsCompressionMeshSnapshot | nu
 
 export function ensureBpsCompressionMesh(): void {
   if (timer || process.env.CRYPTOCRAWL_BPS_COMPRESSION_MESH_ENABLED === 'false') return;
+  ensureOkxRpiFeeAdvisory();
   refreshBpsCompressionMesh();
   if (process.env.NO_INTERVALS !== 'true') {
     const intervalMs = bounded(process.env.CRYPTOCRAWL_BPS_COMPRESSION_MESH_INTERVAL_MS, 15_000, 5_000, 120_000);
