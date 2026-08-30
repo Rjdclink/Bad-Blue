@@ -36,7 +36,6 @@ DECLARE
   row_state record;
   active_trade_reserved numeric := 0;
   other_treasury_reserved numeric := 0;
-  current_reserved numeric := 0;
   spendable numeric := 0;
 BEGIN
   IF p_batch_id IS NULL OR length(trim(p_batch_id))=0 OR normalized_asset IS NULL OR length(normalized_asset)=0 OR p_amount IS NULL OR p_amount <= 0 THEN
@@ -73,11 +72,6 @@ BEGIN
     AND asset=normalized_asset
     AND batch_id<>p_batch_id
     AND status IN ('HELD','IN_FLIGHT','MANUAL_REVIEW');
-
-  SELECT COALESCE(reserved_asset_amount,0)
-  INTO current_reserved
-  FROM public.cryptocrawler_payout_execution_reservations
-  WHERE batch_id=p_batch_id AND venue='okx' AND asset=normalized_asset;
 
   spendable := greatest(
     0,
@@ -117,16 +111,39 @@ AS $$
 BEGIN
   IF NEW.status='CONFIRMED' AND OLD.status<>'CONFIRMED' THEN
     UPDATE public.cryptocrawler_payout_execution_reservations
-    SET status='RELEASED', reserved_asset_amount=reserved_asset_amount, updated_at=now()
+    SET status='RELEASED', updated_at=now()
     WHERE batch_id=NEW.batch_id;
+
   ELSIF NEW.status='TERMINAL_SWEPT' AND OLD.status<>'TERMINAL_SWEPT' THEN
     UPDATE public.cryptocrawler_payout_execution_reservations
     SET status='TERMINAL_SWEPT', updated_at=now()
     WHERE batch_id=NEW.batch_id;
+
+    UPDATE public.cryptocrawler_payout_asset_reservations
+    SET status='TERMINAL_SWEPT', remaining_asset_amount=0, updated_at=now()
+    WHERE event_id IN (
+      SELECT event_id FROM public.cryptocrawler_profit_payout_batch_allocations WHERE batch_id=NEW.batch_id
+    );
+
   ELSIF NEW.status='MANUAL_REVIEW' AND OLD.status<>'MANUAL_REVIEW' THEN
     UPDATE public.cryptocrawler_payout_execution_reservations
     SET status='MANUAL_REVIEW', updated_at=now()
     WHERE batch_id=NEW.batch_id;
+
+    UPDATE public.cryptocrawler_profit_payout_jobs
+    SET status='MANUAL_REVIEW',
+        last_error=COALESCE(NEW.last_error, last_error, 'Payout batch requires manual review'),
+        updated_at=now()
+    WHERE event_id IN (
+      SELECT event_id FROM public.cryptocrawler_profit_payout_batch_allocations WHERE batch_id=NEW.batch_id
+    ) AND status NOT IN ('CONFIRMED','TERMINAL_SWEPT');
+
+    UPDATE public.cryptocrawler_payout_asset_reservations
+    SET status='MANUAL_REVIEW', updated_at=now()
+    WHERE event_id IN (
+      SELECT event_id FROM public.cryptocrawler_profit_payout_batch_allocations WHERE batch_id=NEW.batch_id
+    ) AND remaining_asset_amount > 0;
+
   ELSIF NEW.status IN ('CONVERTING','WITHDRAWING','SUBMITTED') THEN
     UPDATE public.cryptocrawler_payout_execution_reservations
     SET status='IN_FLIGHT', updated_at=now()
