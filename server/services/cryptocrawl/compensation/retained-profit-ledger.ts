@@ -5,10 +5,20 @@ import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 
 const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
+const PAYOUT_FRACTION = 0.60;
+const RETAINED_FRACTION = 0.40;
 const retryAttemptsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRIES || 4);
 const retryBaseMsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRY_BASE_MS || 250);
 const RETRY_ATTEMPTS = Number.isFinite(retryAttemptsRaw) ? Math.max(1, Math.min(8, Math.trunc(retryAttemptsRaw))) : 4;
 const RETRY_BASE_MS = Number.isFinite(retryBaseMsRaw) ? Math.max(50, Math.min(5_000, Math.trunc(retryBaseMsRaw))) : 250;
+
+export interface ProfitSplitAllocation {
+  eventId: string;
+  realizedProfitUsd: number;
+  payoutTargetUsd: number;
+  retainedTargetUsd: number;
+  recorded: boolean;
+}
 
 function destinationFingerprint(): string {
   return DESTINATION
@@ -21,65 +31,115 @@ function realizedProfit(feedback: CryptaraExecutionFeedback): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function splitProfit(realized: number): { realized: number; payout: number; retained: number } {
+  const normalized = Number(realized.toFixed(12));
+  const payout = Number((normalized * PAYOUT_FRACTION).toFixed(12));
+  const retained = Number((normalized - payout).toFixed(12));
+  if (!(normalized > 0) || !(payout > 0) || retained < 0 || Math.abs((payout + retained) - normalized) > 1e-9) {
+    throw new Error('Invalid 60/40 realized-profit allocation');
+  }
+  return { realized: normalized, payout, retained };
+}
+
+function sourceVenue(feedback: CryptaraExecutionFeedback): string | null {
+  const venues = [...new Set((feedback.settlement?.orders || [])
+    .map(order => String(order.venue || '').trim().toLowerCase())
+    .filter(Boolean))];
+  if (venues.length === 1) return venues[0];
+  const route = String(feedback.settlement?.venueOrRoute || '').trim().toLowerCase();
+  return route || null;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**
- * Records terminally-settled profit without authorizing an external payout.
- * The event id is deterministic, so bounded retries are safe: the insert is
- * idempotent and retained_profit_usd is incremented only when a new event row is
- * inserted in the same transaction.
+ * Persists one terminal-confirmed profitable settlement exactly once and creates
+ * its durable payout job in the same database transaction.
+ *
+ * 60% is earmarked for ETH/Ethereum payout. 40% is accounting-retained operating
+ * capital only: it is deliberately NOT inserted into the inventory reservation
+ * table, so the canonical inventory ledger remains the sole authority deciding
+ * what current venue balances are spendable by strategies, gas, and fees.
  */
 class RetainedProfitLedger {
   private ready: Promise<void> | null = null;
 
-  async recordTerminalSettlement(feedback: CryptaraExecutionFeedback): Promise<void> {
-    if (!feedback.settlement || feedback.settlement.terminal !== true || feedback.settlement.settlementConfirmed !== true) return;
-    if (feedback.success !== true) return;
+  async recordTerminalSettlement(feedback: CryptaraExecutionFeedback): Promise<ProfitSplitAllocation | null> {
+    if (!feedback.settlement || feedback.settlement.terminal !== true || feedback.settlement.settlementConfirmed !== true) return null;
+    if (feedback.success !== true) return null;
     const realized = realizedProfit(feedback);
-    if (realized === null || !isDatabaseConfigured) return;
+    if (realized === null || !isDatabaseConfigured) return null;
 
     await this.ensureStore();
     const eventId = terminalFeedbackIdentity(feedback);
+    const allocation = splitProfit(realized);
+    const destinationHash = destinationFingerprint();
     let lastError: unknown = null;
+
     for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         const inserted = await client.query(
           `INSERT INTO private.cryptocrawler_rainbow_profit_events
-            (event_id, opportunity_id, realized_profit_usd, status, destination_hash, created_at, updated_at)
-           VALUES ($1, $2, $3, 'queued', $4, now(), now())
+            (event_id, opportunity_id, realized_profit_usd, payout_target_usd, retained_target_usd,
+             payout_operating_cost_usd, status, destination_hash, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, 0, 'queued', $6, now(), now())
            ON CONFLICT (event_id) DO NOTHING
            RETURNING event_id`,
-          [eventId, feedback.opportunityId || null, realized, destinationFingerprint()],
+          [eventId, feedback.opportunityId || null, allocation.realized, allocation.payout, allocation.retained, destinationHash],
         );
+
         if (inserted.rowCount === 1) {
+          await client.query(
+            `INSERT INTO public.cryptocrawler_profit_payout_jobs
+              (event_id, opportunity_id, realized_profit_usd, payout_target_usd, retained_target_usd,
+               payout_asset, payout_network, status, source_venue, destination_hash, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,'ETH','ethereum','QUEUED',$6,$7,now(),now())`,
+            [
+              eventId,
+              feedback.opportunityId || null,
+              allocation.realized,
+              allocation.payout,
+              allocation.retained,
+              sourceVenue(feedback),
+              destinationHash,
+            ],
+          );
           await client.query(
             `UPDATE public.cryptocrawler_terminal_sweep_control
              SET retained_profit_usd = retained_profit_usd + $1,
                  destination_address = COALESCE(NULLIF($2, ''), destination_address),
                  updated_at = now()
              WHERE system_key='cryptocrawler'`,
-            [realized, DESTINATION],
+            [allocation.retained, DESTINATION],
           );
         }
+
         await client.query('COMMIT');
-        return;
+        return {
+          eventId,
+          realizedProfitUsd: allocation.realized,
+          payoutTargetUsd: allocation.payout,
+          retainedTargetUsd: allocation.retained,
+          recorded: inserted.rowCount === 1,
+        };
       } catch (error) {
         lastError = error;
         try { await client.query('ROLLBACK'); } catch { /* transaction may already be gone */ }
         if (attempt < RETRY_ATTEMPTS) {
           const delayMs = Math.min(10_000, RETRY_BASE_MS * (2 ** (attempt - 1)));
-          logger.warn('[Treasury] Retained-profit persistence retry scheduled', {
+          logger.warn('[Treasury] Profit-split persistence retry scheduled', {
             component: 'RetainedProfitLedger',
             eventId,
             attempt,
             maxAttempts: RETRY_ATTEMPTS,
             delayMs,
             idempotentEvent: true,
-            externalPayoutAuthorized: false,
+            payoutFraction: PAYOUT_FRACTION,
+            retainedFraction: RETAINED_FRACTION,
           });
           await sleep(delayMs);
         }
@@ -87,44 +147,25 @@ class RetainedProfitLedger {
         client.release();
       }
     }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError || 'retained-profit persistence failed'));
+    throw lastError instanceof Error ? lastError : new Error(String(lastError || 'profit-split persistence failed'));
   }
 
   private async ensureStore(): Promise<void> {
     if (this.ready) return this.ready;
     this.ready = (async () => {
-      await pool.query('CREATE SCHEMA IF NOT EXISTS private');
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS private.cryptocrawler_rainbow_profit_events (
-          event_id text PRIMARY KEY,
-          opportunity_id text,
-          realized_profit_usd numeric NOT NULL CHECK (realized_profit_usd > 0),
-          status text NOT NULL CHECK (status IN ('queued','submitted','confirmed','failed')),
-          batch_id text,
-          client_id text,
-          asset text,
-          chain text,
-          payout_amount numeric,
-          payout_fee numeric,
-          withdrawal_id text,
-          transaction_hash text,
-          destination_hash text NOT NULL,
-          last_error text,
-          created_at timestamptz NOT NULL DEFAULT now(),
-          updated_at timestamptz NOT NULL DEFAULT now(),
-          confirmed_at timestamptz
-        )
-      `);
-      const control = await pool.query(
-        `SELECT 1 FROM information_schema.tables
-         WHERE table_schema='public' AND table_name='cryptocrawler_terminal_sweep_control'`,
+      const requirements = await pool.query(
+        `SELECT
+           to_regclass('private.cryptocrawler_rainbow_profit_events') IS NOT NULL AS event_table,
+           to_regclass('public.cryptocrawler_terminal_sweep_control') IS NOT NULL AS control_table,
+           to_regclass('public.cryptocrawler_profit_payout_jobs') IS NOT NULL AS payout_table`,
       );
-      if (control.rowCount !== 1) {
-        throw new Error('terminal sweep control migration 015 is required before retained-profit capture');
+      const row = requirements.rows[0] || {};
+      if (row.event_table !== true || row.control_table !== true || row.payout_table !== true) {
+        throw new Error('profit split migration 018 is required before realized-profit capture');
       }
     })().catch(error => {
       this.ready = null;
-      logger.warn('[Treasury] Retained-profit persistence unavailable', {
+      logger.warn('[Treasury] Profit-split persistence unavailable', {
         component: 'RetainedProfitLedger',
         error: error instanceof Error ? error.message : String(error),
       });
