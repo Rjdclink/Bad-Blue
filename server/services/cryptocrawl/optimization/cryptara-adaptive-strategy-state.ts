@@ -319,24 +319,25 @@ function validatePendingEdit(score: number): void {
   edit.validationScoreSum += score;
   if (edit.validationSamples < 3) return;
   const average = edit.validationScoreSum / edit.validationSamples;
-  const degraded = average + 0.02 < edit.baselineQualityScore;
-  if (degraded) {
+  const requiredImprovementMargin = 0.01;
+  const improved = average >= edit.baselineQualityScore + requiredImprovementMargin && average > 0;
+  if (!improved) {
     setParameter(edit.parameter, edit.before);
     edit.status = 'rolled_back';
     state.lastEdit = { ...edit };
-    logger.warn('Cryptara bounded micro-edit rolled back from terminal evidence', {
+    logger.warn('Cryptara bounded micro-edit rolled back because terminal evidence did not prove improvement', {
       component: 'CryptaraAdaptiveStrategyState', editId: edit.editId, parameter: edit.parameter,
       baselineQualityScore: edit.baselineQualityScore, validationAverageQualityScore: average,
-      validationSamples: edit.validationSamples,
+      requiredImprovementMargin, validationSamples: edit.validationSamples,
     });
   } else {
     edit.status = 'accepted';
     state.lastEdit = { ...edit };
     state.strategyGeneration += 1;
-    logger.info('Cryptara bounded micro-edit accepted from terminal evidence', {
+    logger.info('Cryptara bounded micro-edit accepted from proven terminal improvement', {
       component: 'CryptaraAdaptiveStrategyState', editId: edit.editId, parameter: edit.parameter,
       baselineQualityScore: edit.baselineQualityScore, validationAverageQualityScore: average,
-      validationSamples: edit.validationSamples, strategyGeneration: state.strategyGeneration,
+      requiredImprovementMargin, validationSamples: edit.validationSamples, strategyGeneration: state.strategyGeneration,
     });
   }
   state.pendingEdit = null;
