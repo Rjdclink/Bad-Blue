@@ -19,6 +19,7 @@ import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.
 import { ensureCryptaraSovereignCortexWiring } from './cryptara-sovereign-cortex-wiring.js';
 import { ensureCryptaraPredictivePrefetchWiring } from './cryptara-predictive-prefetch-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
+import { ensureExecutionReadinessProfitabilityWiring } from './execution-readiness-profitability-wiring.js';
 import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constrained-cex-execution-wiring.js';
 import { ensureMeasuredCandidateExpiryGuardWiring } from './measured-candidate-expiry-guard-wiring.js';
@@ -121,6 +122,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureCryptaraPredictivePrefetchWiring();
   ensureStablecoinMakerExecutionWiring();
   ensureCexInventoryReadinessWiring();
+  ensureExecutionReadinessProfitabilityWiring();
   ensureInventoryConstrainedCexExecutionWiring();
   ensureCrossVenueTimingGuardWiring();
   ensureMeasuredCandidateExpiryGuardWiring();
@@ -158,6 +160,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history',
     adaptiveThresholdAuthority: 'terminal_realized_outcomes',
     measuredCandidateFreshnessPromotionGuard: true,
+    executionReadinessProfitabilityControls: '200_bounded_prewarm_retention_inventory_provider_expiry_rules_without_order_authority',
     crossVenueTimingGuard: 'fresh_synchronized_coinbase_kraken_okx_books_then_existing_exact_economic_requote',
     bpsExecutionFloor: null,
     executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
