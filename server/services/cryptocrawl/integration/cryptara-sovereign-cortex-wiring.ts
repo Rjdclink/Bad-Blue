@@ -315,9 +315,6 @@ export function ensureCryptaraSovereignCortexWiring(): Cryptara {
   installed.add(instance);
   const target = instance as unknown as CryptaraTarget;
 
-  // Bootstrap rank from any terminal-confirmed execution history already restored
-  // by the canonical persistent learning path. If restoration happens later, the
-  // wrapped restore method below rebuilds this view again.
   rebuildTerminalHistory(target.getExecutionHistory(MAX_HISTORY));
 
   const originalRestoreExecutionHistory = target.restoreExecutionHistory.bind(target);
@@ -372,9 +369,8 @@ export function ensureCryptaraSovereignCortexWiring(): Cryptara {
     if (!appendTerminalSample(sample)) return;
     const rank = updateLatestTerminalRank();
 
-    // Bounded strategy evolution consumes the same terminal-only evidence used by
-    // rank. This call is deliberately fire-and-forget so persistence never blocks
-    // the execution/settlement hot path.
+    // Bounded prefetch tuning consumes the same terminal-only evidence used by
+    // rank. Persistence is fire-and-forget so settlement never waits on learning.
     void recordCryptaraAdaptiveOutcome({
       eventId: sample.eventId,
       success: sample.success,
@@ -402,12 +398,14 @@ export function ensureCryptaraSovereignCortexWiring(): Cryptara {
     simulationsCanRaiseRank: false,
     shadowTradesCanRaiseRank: false,
     strategyProjectionCanRaiseRank: false,
+    adaptiveEditScope: 'predictive_prefetch_cadence_only',
     rankEditingPolicy: {
-      observer: 'no_edits',
-      analyst: 'objective_failures_only',
-      strategist: 'objective_failures_plus_bounded_healthy_micro_optimization',
-      sovereign: 'same_bounded_scope_higher_confidence_no_safety_override',
+      observer: 'learn_and_diagnose_only_no_edits',
+      analyst: 'learn_and_diagnose_only_no_edits',
+      strategist: 'bounded_prefetch_micro_edits_with_terminal_proof',
+      sovereign: 'same_bounded_prefetch_scope_higher_confidence_no_safety_override',
     },
+    executionStrategyMutation: false,
     promotionMinimumSamples: MIN_PROMOTION_SAMPLES,
     strategistMinimumSamples: MIN_PROMOTION_SAMPLES,
     sovereignMinimumSamples: MIN_PROMOTION_SAMPLES * 2,
