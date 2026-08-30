@@ -19,7 +19,7 @@ Deno.serve(async () => {
     const secrets = await loadSecrets();
     let control = await loadControl();
 
-    // Every invocation first processes/reconciles per-terminal-trade 60% payouts.
+    // Every invocation first processes/reconciles due per-terminal-trade payouts.
     // A new terminal settlement wakes this worker immediately; pg_cron remains the
     // independent recovery loop if Railway or the immediate wake disappears.
     const payouts = await processPerTradePayouts(secrets, control);
@@ -38,11 +38,11 @@ Deno.serve(async () => {
         : Number.POSITIVE_INFINITY;
       if (Date.now() < notBefore) return response({ ok: true, state: control.desired_state, action: 'grace_window', payouts });
 
-      const lastActive = control.last_seen_active_at ? new Date(control.last_seen_active_at).getTime() : 0;
-      if (lastActive >= notBefore) {
-        return response({ ok: true, state: control.desired_state, action: 'active_successor_blocks_terminal_sweep', payouts });
-      }
-
+      // A successor Railway process is allowed to stay alive for settlement and
+      // recovery, but TerminalTreasuryLifecycle keeps its NEW-exposure barrier
+      // armed and intentionally does not refresh last_seen_active_at while this
+      // state is pending. Never cancel or defer the prior deployment's drain just
+      // because the successor process is healthy.
       const { data: claimed, error: claimError } = await supabase.from('cryptocrawler_terminal_sweep_control').update({
         desired_state: 'SWEEPING', sweep_started_at: nowIso(), last_error: null, updated_at: nowIso(),
       }).eq('system_key', SYSTEM_KEY)
