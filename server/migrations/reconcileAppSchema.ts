@@ -61,23 +61,39 @@ function finiteIntegerEnv(name: string, fallback: number, min: number, max: numb
 }
 
 /**
- * Railway performs overlapping rolling deploys. Supabase session mode currently
- * exposes a finite per-user client ceiling, so two replicas must leave headroom
- * for the control plane and short-lived maintenance sessions. This mutates the
- * already-created canonical Pool rather than creating another pool/authority.
+ * Railway performs overlapping rolling deploys. Supabase session mode exposes a
+ * finite per-user client ceiling, so the incoming replica temporarily leaves
+ * enough headroom for the outgoing replica and control-plane sessions. Once the
+ * overlap window has passed, restore the canonical steady-state pool capacity.
+ * This mutates the one shared Pool; no duplicate database authority is created.
  */
 function applyRollingDeploymentPoolHeadroom(): void {
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_ID) return;
   const options = (pool as any)?.options;
   if (!options) return;
 
-  const requestedMax = finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', 5, 2, 6);
-  options.max = Math.min(Number(options.max) || requestedMax, requestedMax);
+  const existingSteadyMax = Math.max(2, Math.trunc(Number(options.max) || 8));
+  const steadyMax = finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', existingSteadyMax, 2, 12);
+  const rolloutMax = Math.min(
+    steadyMax,
+    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', 5, 2, 6),
+  );
+  const rolloutWindowMs = finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS', 90_000, 30_000, 300_000);
+  const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 1;
+
+  options.max = rolloutMax;
   options.min = 0;
   options.connectionTimeoutMillis = Math.min(Number(options.connectionTimeoutMillis) || 12_000, 12_000);
   options.idleTimeoutMillis = Math.min(Number(options.idleTimeoutMillis) || 20_000, 20_000);
 
-  console.log(`[DATABASE] Rolling-deploy pool headroom active (max=${options.max}, min=0)`);
+  const restore = setTimeout(() => {
+    options.max = steadyMax;
+    options.min = originalMin;
+    console.log(`[DATABASE] Rolling-deploy headroom released (steady max=${options.max}, min=${options.min})`);
+  }, rolloutWindowMs);
+  restore.unref?.();
+
+  console.log(`[DATABASE] Rolling-deploy pool headroom active (rollout max=${rolloutMax}, steady max=${steadyMax}, windowMs=${rolloutWindowMs})`);
 }
 
 applyRollingDeploymentPoolHeadroom();
