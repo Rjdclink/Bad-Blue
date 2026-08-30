@@ -7,12 +7,14 @@ import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-r
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
+import { ensureAdaptiveProfitOperationsWiring } from '../runtime/adaptive-profit-operations-wiring.js';
 import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard-rpc-first-wiring.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureHybridCexExecutionWiring } from '../runtime/hybrid-cex-execution-wiring.js';
 import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
 import { ensureStageProofMetricsWiring } from '../runtime/stage-proof-metrics-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
+import { ensureAuthenticatedFeeTierOptimizationWiring } from './authenticated-fee-tier-optimization-wiring.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
 import { ensureCexInventoryReadinessWiring } from './cex-inventory-readiness-wiring.js';
 import { ensureComputationalReactorWiring } from './computational-reactor-wiring.js';
@@ -100,6 +102,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   if (installed) return;
   installed = true;
 
+  // Legacy fixed profit-cap methods are retired first. The adaptive terminal-
+  // realized operating envelope is installed later after profitability/maker
+  // policies so no Infinity compatibility override can become final authority.
   ensureStageProfitCapRetirement();
   logZeroCapitalReadinessDiagnostics();
   ensureComputationalReactorWiring();
@@ -129,6 +134,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureStablecoinMakerExecutionWiring();
   ensureHybridCexExecutionWiring();
   ensureStageProofMetricsWiring();
+  ensureAuthenticatedFeeTierOptimizationWiring();
+  ensureAdaptiveProfitOperationsWiring();
   ensureCexInventoryReadinessWiring();
   ensureExecutionReadinessProfitabilityWiring();
   ensureInventoryConstrainedCexExecutionWiring();
@@ -174,11 +181,19 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero',
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
     cexInventoryReadiness: 'proactive_authenticated_balance_hydration_then_candidate_specific_reconciliation',
+    cexInventoryRateProtection: 'five_second_fresh_cache_inflight_dedupe_bounded_backoff_then_fresh_requote',
+    staleInventoryExecutionAuthority: false,
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
+    cexAuthenticatedFeeTierOverlay: 'sixty_second_kraken_okx_coinbase_signed_fee_refresh',
+    rebateModeSelection: 'expected_realized_net_value_not_rebate_alone',
+    minimumOrderNotionalTierAssumed: false,
     cexMakerExecution: 'kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
     coinbaseMakerExecutionAuthority: false,
     cexHybridExecutionAuthority: true,
     cexHybridExecution: 'MT_TM_maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
+    adaptiveProfitOperatingEnvelope: 'rolling24h_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget',
+    adaptiveProfitCapScope: 'new_exposure_only_settlement_hedge_flattening_exempt',
+    exchangeSurveillanceThresholdAssumed: false,
     stageProofMetricsAuthority: 'terminal_realized_sharpe_drawdown_plus_executed_mc_outcome_validation',
     computationalReactor: 'measured_cpu_memory_rate_pressure_plus_real_scorer_monte_carlo_plus_bounded_callbacks',
     computationalReactorExecutionAuthority: false,
