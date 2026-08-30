@@ -33,6 +33,36 @@ const requiredSignals = [
   'zeroCapitalQuoteUtilization',
   'zeroCapitalPositiveYield',
   'recoveryPriority',
+  'medianFeeOnlyGapBps',
+  'p25FeeOnlyGapBps',
+  'p75FeeOnlyGapBps',
+  'p90FeeOnlyGapBps',
+  'medianRiskAdjustedGapBps',
+  'p90RiskAdjustedGapBps',
+  'meanRecoveryEfficiency',
+  'medianRecoveryEfficiency',
+  'positiveModeShare',
+  'hybridNearMissShare',
+  'freshFeeEvidenceShare',
+  'withinTwoBps',
+  'withinFiftyBps',
+  'uniqueNearMissSymbols',
+  'meanNearMissesPerSymbol',
+  'bestExpectedFeeAdjustedBps',
+  'closestExpectedFeeAdjustedGapBps',
+  'meanGrossSpreadBps',
+  'medianCombinedFeeBps',
+  'lowestCombinedFeeBps',
+  'bestGrossSpreadBps',
+  'symbolsWithinFiveBps',
+  'symbolsWithinTenBps',
+  'bestGapBySymbol',
+  'modeNearMissCounts',
+  'modeMeanRecoveryEfficiency',
+  'chainPositiveYield',
+  'chainMeasuredQuoteCount',
+  'zeroCapitalSelectedToMeasuredRatio',
+  'zeroCapitalQuoteBudgetSelections',
 ];
 
 for (const signal of requiredSignals) {
@@ -52,4 +82,4 @@ if (!wiring.includes('ensureProfitabilityRecoveryCoordinator();')) {
   throw new Error('[profitability-recovery-coordinator] canonical profitability bootstrap wiring missing');
 }
 
-console.log('[profitability-recovery-coordinator] PASS: twenty measured recovery signals are wired advisory-only with no execution authority');
+console.log('[profitability-recovery-coordinator] PASS: fifty measured recovery signals are wired advisory-only with no execution authority');
