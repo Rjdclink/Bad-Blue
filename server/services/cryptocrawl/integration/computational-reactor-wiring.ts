@@ -8,6 +8,7 @@ import {
   type ReactorJob,
 } from '../../../reactor/computationalReactor.js';
 import { getProviderQualityAuctionSnapshot } from '../intelligence/provider-quality-auction.js';
+import { buildHyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
 import { ensureBpsCompressionMesh, getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import { getCexFourModeSnapshot } from './cex-four-mode-observability-wiring.js';
 import { getCryptaraSovereignCortexSnapshot } from './cryptara-sovereign-cortex-wiring.js';
@@ -30,6 +31,8 @@ export interface ComputationalSearchPlan {
   hyperdynamicActiveSolutions: number;
   mcSearchMultiplier: number;
   feeRefreshMaxAgeMs: number | null;
+  runtimeRiskBufferMultiplier: number;
+  runtimeEvidenceRefreshMultiplier: number;
   authority: 'measured_compute_search_scheduling_only';
   executionAuthority: false;
 }
@@ -47,6 +50,8 @@ let latestSearchPlan: ComputationalSearchPlan = {
   hyperdynamicActiveSolutions: 0,
   mcSearchMultiplier: 1,
   feeRefreshMaxAgeMs: null,
+  runtimeRiskBufferMultiplier: 1,
+  runtimeEvidenceRefreshMultiplier: 1,
   authority: 'measured_compute_search_scheduling_only',
   executionAuthority: false,
 };
@@ -61,22 +66,41 @@ function calibrationIntervalMs(): number {
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(120_000, Math.trunc(parsed))) : 15_000;
 }
 
-function dynamicCalibrationIntervalMs(): number {
-  const base = calibrationIntervalMs();
-  const mesh = getBpsCompressionMeshSnapshot();
-  const mcSearchMultiplier = mesh?.hyperdynamic.mcSearchMultiplier ?? 1;
-  return Math.max(5_000, Math.min(120_000, Math.round(base / Math.max(0.70, mcSearchMultiplier))));
-}
-
-function searchPlanMaxAgeMs(): number {
-  const parsed = Number(process.env.REACTOR_SEARCH_PLAN_MAX_AGE_MS || 45_000);
-  return Number.isFinite(parsed) ? Math.max(15_000, Math.min(180_000, Math.trunc(parsed))) : 45_000;
+function heatPressure(): number {
+  const level = getHeatMonitor().throttleLevel;
+  if (level === 'heavy') return 1;
+  if (level === 'moderate') return 0.70;
+  if (level === 'light') return 0.40;
+  return 0.15;
 }
 
 function averageProviderQuality(): number {
   const active = getProviderQualityAuctionSnapshot().bids.filter(bid => !bid.temporarilyDeprioritized);
   if (!active.length) return 0;
   return Math.max(0, Math.min(1, active.reduce((sum, bid) => sum + bid.qualityScore, 0) / active.length));
+}
+
+function runtimeHyperdynamicPlan() {
+  return buildHyperdynamicBpsPlan({
+    providerQuality: averageProviderQuality(),
+    heatPressure: heatPressure(),
+  });
+}
+
+function effectiveMcMultiplier(): number {
+  const mesh = getBpsCompressionMeshSnapshot();
+  const runtime = runtimeHyperdynamicPlan();
+  return Math.max(0.70, Math.min(1.85, (mesh?.hyperdynamic.mcSearchMultiplier ?? 1) * runtime.mcSearchMultiplier));
+}
+
+function dynamicCalibrationIntervalMs(): number {
+  const base = calibrationIntervalMs();
+  return Math.max(5_000, Math.min(120_000, Math.round(base / effectiveMcMultiplier())));
+}
+
+function searchPlanMaxAgeMs(): number {
+  const parsed = Number(process.env.REACTOR_SEARCH_PLAN_MAX_AGE_MS || 45_000);
+  return Number.isFinite(parsed) ? Math.max(15_000, Math.min(180_000, Math.trunc(parsed))) : 45_000;
 }
 
 function priorityMultiplier(priority: ComputationalSearchPlan['cryptaraPriority']): number {
@@ -88,15 +112,20 @@ function priorityMultiplier(priority: ComputationalSearchPlan['cryptaraPriority'
 
 function meshFields(): Pick<ComputationalSearchPlan,
   'cexAttentionShare' | 'zeroCapitalAttentionShare' | 'explorationShare' |
-  'hyperdynamicActiveSolutions' | 'mcSearchMultiplier' | 'feeRefreshMaxAgeMs'> {
+  'hyperdynamicActiveSolutions' | 'mcSearchMultiplier' | 'feeRefreshMaxAgeMs' |
+  'runtimeRiskBufferMultiplier' | 'runtimeEvidenceRefreshMultiplier'> {
   const mesh = getBpsCompressionMeshSnapshot();
+  const runtime = runtimeHyperdynamicPlan();
+  const activeIds = new Set([...(mesh?.hyperdynamic.activeSolutionIds ?? []), ...runtime.activeSolutionIds]);
   return {
     cexAttentionShare: mesh?.cex.attentionShare ?? null,
     zeroCapitalAttentionShare: mesh?.zeroCapital.attentionShare ?? null,
     explorationShare: mesh?.exploration.attentionShare ?? null,
-    hyperdynamicActiveSolutions: mesh?.hyperdynamic.activeSolutionCount ?? 0,
-    mcSearchMultiplier: mesh?.hyperdynamic.mcSearchMultiplier ?? 1,
+    hyperdynamicActiveSolutions: activeIds.size,
+    mcSearchMultiplier: effectiveMcMultiplier(),
     feeRefreshMaxAgeMs: mesh?.hyperdynamic.feeRefreshMaxAgeMs ?? null,
+    runtimeRiskBufferMultiplier: runtime.riskBufferMultiplier,
+    runtimeEvidenceRefreshMultiplier: runtime.evidenceRefreshMultiplier,
   };
 }
 
@@ -137,6 +166,8 @@ function buildMeasuredSearchScorer() {
   const mesh = getBpsCompressionMeshSnapshot();
   const cexAttention = mesh?.cex.attentionShare ?? 0.5;
   const hyper = mesh?.hyperdynamic;
+  const runtime = runtimeHyperdynamicPlan();
+  const mcMultiplier = Math.max(0.70, Math.min(1.85, (hyper?.mcSearchMultiplier ?? 1) * runtime.mcSearchMultiplier));
 
   const scorer = (params: Record<string, number>): number => {
     const breadthFactor = Math.max(0.25, Math.min(1, params.breadthFactor));
@@ -160,8 +191,12 @@ function buildMeasuredSearchScorer() {
         const positiveValue = 1 + Math.min(2, positiveBps / 10);
         return sum + positiveValue * (0.65 + 0.35 * freshness);
       }
-      const gap = Math.max(0, mode.riskAdjustedBpsToBreakEven);
-      const gapValue = Math.exp(-gap / 25);
+      // Risk/staleness multipliers affect only scheduling value. They do not
+      // alter deterministic economics or any execution/admission threshold.
+      const scheduledGap = Math.max(0, mode.riskAdjustedBpsToBreakEven)
+        * runtime.riskBufferMultiplier
+        * runtime.stalePenaltyMultiplier;
+      const gapValue = Math.exp(-scheduledGap / 25);
       return sum + gapValue * (0.5 + 0.5 * recovery) * (0.5 + 0.5 * freshness);
     }, 0) / selected.length;
 
@@ -170,9 +205,11 @@ function buildMeasuredSearchScorer() {
     const heatCost = heat.throttleLevel === 'heavy' ? 1 : heat.throttleLevel === 'moderate' ? 0.6 : heat.throttleLevel === 'light' ? 0.3 : 0.1;
     const requestCost = breadthFactor / intervalFactor;
     const meshOpportunityMultiplier = 0.75 + 0.50 * Math.max(0, Math.min(1, cexAttention));
-    const hyperdynamicValue = (hyper?.mcSearchMultiplier ?? 1)
+    const hyperdynamicValue = mcMultiplier
       * (0.90 + 0.10 * (hyper?.liquidityFocusMultiplier ?? 1))
-      * (0.90 + 0.10 * (hyper?.latencyFocusMultiplier ?? 1));
+      * (0.90 + 0.10 * (hyper?.latencyFocusMultiplier ?? 1))
+      * (0.90 + 0.10 * (hyper?.sizeRefinementMultiplier ?? 1))
+      * (0.90 + 0.10 * runtime.evidenceRefreshMultiplier);
     return (opportunityValue
       * meshOpportunityMultiplier
       * hyperdynamicValue
@@ -183,7 +220,7 @@ function buildMeasuredSearchScorer() {
       - (0.08 * heatCost * requestCost);
   };
 
-  return { modes, providerQuality, cryptaraPriority, scorer };
+  return { modes, providerQuality, cryptaraPriority, runtime, scorer };
 }
 
 function applyCompletedCalibration(event: unknown): void {
@@ -197,12 +234,13 @@ function applyCompletedCalibration(event: unknown): void {
   if (!best) return;
   const modes = getCexFourModeSnapshot();
   const mesh = getBpsCompressionMeshSnapshot();
+  const runtime = runtimeHyperdynamicPlan();
   const meshBreadth = mesh?.cexBreadthBias ?? 1;
   const meshCadence = mesh?.cexCadenceBias ?? 1;
   latestSearchPlan = {
     observedAt: Date.now(),
-    breadthFactor: Math.max(0.25, Math.min(1, (Number(best.breadthFactor) || 1) * meshBreadth)),
-    intervalFactor: Math.max(0.5, Math.min(2.5, (Number(best.intervalFactor) || 1) * meshCadence)),
+    breadthFactor: Math.max(0.25, Math.min(1, (Number(best.breadthFactor) || 1) * meshBreadth * runtime.breadthMultiplier)),
+    intervalFactor: Math.max(0.5, Math.min(2.5, (Number(best.intervalFactor) || 1) * meshCadence * runtime.cadenceMultiplier)),
     sourceModes: modes.length,
     providerQuality: averageProviderQuality(),
     cryptaraPriority: getCryptaraSovereignCortexSnapshot()?.requestPriority ?? null,
@@ -214,7 +252,11 @@ function applyCompletedCalibration(event: unknown): void {
 
 async function calibrateSearchAllocation(): Promise<void> {
   const heat = getHeatMonitor();
-  if (heat.throttleLevel === 'heavy') return;
+  if (heat.throttleLevel === 'heavy') {
+    // Heavy heat keeps the previous bounded plan rather than scheduling more MC.
+    // Staleness protection in getComputationalSearchPlan still returns neutral.
+    return;
+  }
   const { modes, scorer } = buildMeasuredSearchScorer();
   if (modes.length < 4) {
     latestSearchPlan = neutralSearchPlan(modes.length);
@@ -271,6 +313,7 @@ export function ensureComputationalReactorWiring(): void {
       monteCarlo: 'caller_supplied_measured_scorer_only',
       searchAllocationCalibration: '100_solution_hyperdynamic_profit_positive_first_then_cross_topology_bps_gap_freshness_provider_quality_compute_cost',
       bpsCompressionMesh: getBpsCompressionMeshSnapshot(),
+      runtimeHyperdynamic: runtimeHyperdynamicPlan(),
       dynamicCalibrationIntervalMs: dynamicCalibrationIntervalMs(),
       searchPlanMaxAgeMs: searchPlanMaxAgeMs(),
       insufficientEvidenceFallback: 'neutral_full_breadth_base_cadence',
