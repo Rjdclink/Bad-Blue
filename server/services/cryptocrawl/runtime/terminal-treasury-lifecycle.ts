@@ -177,7 +177,7 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     environmentIdPresent: Boolean(RAILWAY_ENVIRONMENT_ID),
     terminalPayoutConfigured: Boolean(DESTINATION),
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
-    runtimePolicy: 'per_trade_60_percent_eth_payout_40_percent_retain_restart_drains_remaining_treasury',
+    runtimePolicy: 'first_three_fixed_60_percent_then_persisted_dynamic_55_to_65_percent_eth_payout_remainder_retained_restart_drains_remaining_treasury',
     successorCancelsRestartSweep: false,
     successorNewExposureBlockedDuringSweep: true,
     settlementHedgeFlatteningStillAllowed: true,
