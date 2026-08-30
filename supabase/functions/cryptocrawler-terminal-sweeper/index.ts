@@ -10,6 +10,10 @@ function response(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+function requiresManualWithdrawalConfiguration(message: string): boolean {
+  return /58207|58239|withdrawal permission requires manual review|not whitelisted|private wallet via api/i.test(message);
+}
+
 Deno.serve(async () => {
   const owner = crypto.randomUUID();
   try {
@@ -61,8 +65,13 @@ Deno.serve(async () => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     try {
+      const manual = requiresManualWithdrawalConfiguration(message);
       await supabase.from('cryptocrawler_terminal_sweep_control')
-        .update({ last_error: message.slice(0, 1000), updated_at: nowIso() })
+        .update({
+          ...(manual ? { desired_state: 'MANUAL_REVIEW' } : {}),
+          last_error: message.slice(0, 1000),
+          updated_at: nowIso(),
+        })
         .eq('system_key', SYSTEM_KEY)
         .in('desired_state', ['TERMINATE_AND_SWEEP', 'SWEEPING']);
     } catch { /* leave durable state for next worker invocation */ }
