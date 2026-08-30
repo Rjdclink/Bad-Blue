@@ -61,8 +61,14 @@ type PersistTask = {
 const HOT_OUTCOME_LIMIT = Math.max(64, Math.min(4096, Number(process.env.CRYPTARA_HOT_OUTCOME_LIMIT || 512)));
 const PERSISTENCE_QUEUE_LIMIT = Math.max(64, Math.min(8192, Number(process.env.CRYPTARA_PERSISTENCE_QUEUE_LIMIT || 2048)));
 const HYDRATE_LIMIT = Math.max(32, Math.min(HOT_OUTCOME_LIMIT, Number(process.env.CRYPTARA_REHYDRATE_LIMIT || 256)));
-const PERSISTENCE_MAX_RETRIES = Math.max(1, Math.min(12, Number(process.env.CRYPTARA_PERSISTENCE_MAX_RETRIES || 5)));
-const PERSISTENCE_RETRY_BASE_MS = Math.max(100, Math.min(10_000, Number(process.env.CRYPTARA_PERSISTENCE_RETRY_BASE_MS || 500)));
+const persistenceMaxRetriesRaw = Number(process.env.CRYPTARA_PERSISTENCE_MAX_RETRIES || 5);
+const persistenceRetryBaseMsRaw = Number(process.env.CRYPTARA_PERSISTENCE_RETRY_BASE_MS || 500);
+const PERSISTENCE_MAX_RETRIES = Number.isFinite(persistenceMaxRetriesRaw)
+  ? Math.max(1, Math.min(12, Math.trunc(persistenceMaxRetriesRaw)))
+  : 5;
+const PERSISTENCE_RETRY_BASE_MS = Number.isFinite(persistenceRetryBaseMsRaw)
+  ? Math.max(100, Math.min(10_000, Math.trunc(persistenceRetryBaseMsRaw)))
+  : 500;
 
 function modelVersion(): string {
   return process.env.CRYPTARA_MODEL_VERSION?.trim() || 'cryptara-runtime-v1';
