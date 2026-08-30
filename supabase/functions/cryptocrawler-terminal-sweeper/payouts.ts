@@ -2,7 +2,7 @@ import {
   PAYOUT_QUOTES, MAX_PAYOUT_JOBS_PER_RUN,
   type Control, type PayoutJob, type PayoutStatus, type Secrets,
   finite, positive, floorPrecision, round, nowIso, deterministicId,
-  supabase, updateJob,
+  supabase, updateJob, loadControl,
 } from './shared.ts';
 import {
   OkxApiError, findOrder, findWithdrawal, getEthRoute, getFundingBalances,
@@ -109,7 +109,7 @@ async function ensureEthInFunding(secrets: Secrets, input: PayoutJob, requiredFu
     status: 'WITHDRAWING', transfer_client_id: transfer.clientId,
     transfer_id: transfer.transferId, last_attempt_at: nowIso(), last_error: null,
   });
-  return transfer.done ? job : job;
+  return job;
 }
 
 export async function reconcilePayoutWithdrawal(secrets: Secrets, input: PayoutJob): Promise<PayoutJob> {
@@ -132,10 +132,9 @@ export async function reconcilePayoutWithdrawal(secrets: Secrets, input: PayoutJ
       last_error: `OKX ETH withdrawal terminal failure state ${state}`,
     });
   }
-  job = await updateJob(job.event_id, {
+  return updateJob(job.event_id, {
     status: 'SUBMITTED', withdrawal_id: withdrawalId || job.withdrawal_id, last_error: null,
   });
-  return job;
 }
 
 async function submitPayoutWithdrawal(secrets: Secrets, input: PayoutJob, amountEth: number): Promise<PayoutJob> {
@@ -235,7 +234,7 @@ export async function processPayoutJob(secrets: Secrets, control: Control, input
   }
 }
 
-export async function processPerTradePayouts(secrets: Secrets, control: Control): Promise<{ processed: number; confirmed: number; inFlight: number; manual: number }> {
+export async function processPerTradePayouts(secrets: Secrets, _control: Control): Promise<{ processed: number; confirmed: number; inFlight: number; manual: number }> {
   const { data, error } = await supabase.from('cryptocrawler_profit_payout_jobs')
     .select('*').in('status', ['QUEUED', 'RETRYABLE', 'CONVERTING', 'WITHDRAWING', 'SUBMITTED'])
     .order('created_at', { ascending: true }).limit(MAX_PAYOUT_JOBS_PER_RUN);
@@ -245,7 +244,8 @@ export async function processPerTradePayouts(secrets: Secrets, control: Control)
   let confirmed = 0;
   let manual = 0;
   for (const row of (data || []) as PayoutJob[]) {
-    const result = await processPayoutJob(secrets, control, row);
+    const currentControl = await loadControl();
+    const result = await processPayoutJob(secrets, currentControl, row);
     processed += 1;
     if (result.status === 'CONFIRMED') confirmed += 1;
     if (result.status === 'MANUAL_REVIEW') manual += 1;
