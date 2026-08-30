@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { isDatabaseConfigured, pool } from '../../../db.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
@@ -48,6 +49,8 @@ import { ensureDualProviderZeroCapitalExecutionWiring } from './dual-provider-ze
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
+let installProbeInFlight: Promise<void> | null = null;
+let installRetryTimer: NodeJS.Timeout | null = null;
 let zeroCapitalStartPromise: Promise<void> | null = null;
 let zeroCapitalRetryTimer: NodeJS.Timeout | null = null;
 let zeroCapitalStartAttempts = 0;
@@ -55,6 +58,16 @@ let zeroCapitalStartAttempts = 0;
 function zeroCapitalRetryDelayMs(): number {
   const configured = Number(process.env.ZERO_CAPITAL_RUNTIME_START_RETRY_MS || 15_000);
   return Number.isFinite(configured) ? Math.max(2_500, Math.min(120_000, Math.trunc(configured))) : 15_000;
+}
+
+function canonicalRuntimeStartupGraceMs(): number {
+  const configured = Number(process.env.CRYPTOCRAWL_RUNTIME_STARTUP_GRACE_MS || 30_000);
+  return Number.isFinite(configured) ? Math.max(5_000, Math.min(120_000, Math.trunc(configured))) : 30_000;
+}
+
+function canonicalRuntimeDatabaseRetryMs(): number {
+  const configured = Number(process.env.CRYPTOCRAWL_RUNTIME_DATABASE_RETRY_MS || 5_000);
+  return Number.isFinite(configured) ? Math.max(1_000, Math.min(30_000, Math.trunc(configured))) : 5_000;
 }
 
 function paidAlchemyPendingEvidenceExplicitlyEnabled(): boolean {
@@ -98,7 +111,7 @@ function startCanonicalZeroCapitalRuntime(): void {
     });
 }
 
-export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
+function installCanonicalRuntime(): void {
   if (installed) return;
   installed = true;
 
@@ -184,7 +197,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     cexInventoryRateProtection: 'five_second_fresh_cache_inflight_dedupe_bounded_backoff_then_fresh_requote',
     staleInventoryExecutionAuthority: false,
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
-    cexAuthenticatedFeeTierOverlay: 'sixty_second_kraken_okx_coinbase_signed_fee_refresh',
+    cexAuthenticatedFeeTierOverlay: 'cache_only_observer_canonical_fee_resolver_refreshes_on_demand',
     rebateModeSelection: 'expected_realized_net_value_not_rebate_alone',
     minimumOrderNotionalTierAssumed: false,
     cexMakerExecution: 'kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
@@ -234,5 +247,57 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     alchemyStandardTokenReads: 'public_rpc_first_then_enhanced_api_fallback',
     localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
+    startupAdmission: 'production_grace_then_database_health_probe',
+    startupGraceMs: canonicalRuntimeStartupGraceMs(),
   });
+}
+
+function scheduleCanonicalRuntimeInstall(delayMs: number, reason: string): void {
+  if (installed || installRetryTimer) return;
+  installRetryTimer = setTimeout(() => {
+    installRetryTimer = null;
+    ensureCanonicalCryptoCrawlerRuntimeWiring();
+  }, delayMs);
+  installRetryTimer.unref?.();
+  logger.info('[CryptoRuntimeStartup] Canonical runtime installation deferred', {
+    component: 'CanonicalCryptoCrawlerRuntimeWiring',
+    reason,
+    retryInMs: delayMs,
+    exchangeRequestsDuringDeferral: false,
+    executionAuthorityGranted: false,
+  });
+}
+
+export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
+  if (installed || installProbeInFlight) return;
+
+  if (process.env.NODE_ENV === 'production') {
+    const graceRemainingMs = Math.max(0, canonicalRuntimeStartupGraceMs() - Math.floor(process.uptime() * 1_000));
+    if (graceRemainingMs > 0) {
+      scheduleCanonicalRuntimeInstall(graceRemainingMs, 'production_startup_grace');
+      return;
+    }
+
+    if (isDatabaseConfigured) {
+      installProbeInFlight = pool.query('SELECT 1')
+        .then(() => {
+          installCanonicalRuntime();
+        })
+        .catch(error => {
+          logger.warn('[CryptoRuntimeStartup] Database admission probe unavailable; runtime remains deferred', {
+            component: 'CanonicalCryptoCrawlerRuntimeWiring',
+            error: error instanceof Error ? error.message : String(error),
+            exchangeRequestsDuringDeferral: false,
+            executionAuthorityGranted: false,
+          });
+          scheduleCanonicalRuntimeInstall(canonicalRuntimeDatabaseRetryMs(), 'database_admission_probe_failed');
+        })
+        .finally(() => {
+          installProbeInFlight = null;
+        });
+      return;
+    }
+  }
+
+  installCanonicalRuntime();
 }
