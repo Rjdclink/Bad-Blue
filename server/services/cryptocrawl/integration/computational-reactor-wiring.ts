@@ -48,6 +48,11 @@ function calibrationIntervalMs(): number {
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(120_000, Math.trunc(parsed))) : 15_000;
 }
 
+function searchPlanMaxAgeMs(): number {
+  const parsed = Number(process.env.REACTOR_SEARCH_PLAN_MAX_AGE_MS || 45_000);
+  return Number.isFinite(parsed) ? Math.max(15_000, Math.min(180_000, Math.trunc(parsed))) : 45_000;
+}
+
 function averageProviderQuality(): number {
   const active = getProviderQualityAuctionSnapshot().bids.filter(bid => !bid.temporarilyDeprioritized);
   if (!active.length) return 0;
@@ -59,6 +64,32 @@ function priorityMultiplier(priority: ComputationalSearchPlan['cryptaraPriority'
   if (priority === 'high') return 1.12;
   if (priority === 'low') return 0.85;
   return 1;
+}
+
+function neutralSearchPlan(sourceModes: number, observedAt = Date.now()): ComputationalSearchPlan {
+  return {
+    observedAt,
+    breadthFactor: 1,
+    intervalFactor: 1,
+    sourceModes: Math.max(0, sourceModes),
+    providerQuality: averageProviderQuality(),
+    cryptaraPriority: getCryptaraSovereignCortexSnapshot()?.requestPriority ?? null,
+    authority: 'measured_compute_search_scheduling_only',
+    executionAuthority: false,
+  };
+}
+
+function compareModesForCompute(left: ReturnType<typeof getCexFourModeSnapshot>[number], right: ReturnType<typeof getCexFourModeSnapshot>[number]): number {
+  const positiveDelta = Number(right.economicallyPositive) - Number(left.economicallyPositive);
+  if (positiveDelta !== 0) return positiveDelta;
+  if (left.economicallyPositive && right.economicallyPositive) {
+    return right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps
+      || right.netAfterExchangeFeesBps - left.netAfterExchangeFeesBps
+      || right.feeFreshnessScore - left.feeFreshnessScore;
+  }
+  return left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven
+    || left.bpsToBreakEven - right.bpsToBreakEven
+    || right.feeFreshnessScore - left.feeFreshnessScore;
 }
 
 function buildMeasuredSearchScorer() {
@@ -73,11 +104,7 @@ function buildMeasuredSearchScorer() {
     const breadthFactor = Math.max(0.25, Math.min(1, params.breadthFactor));
     const intervalFactor = Math.max(0.5, Math.min(2.5, params.intervalFactor));
     const symbolBudget = Math.max(1, Math.ceil(uniqueSymbols * breadthFactor));
-    const ranked = [...modes].sort((a, b) =>
-      a.riskAdjustedBpsToBreakEven - b.riskAdjustedBpsToBreakEven
-      || a.bpsToBreakEven - b.bpsToBreakEven
-      || b.feeFreshnessScore - a.feeFreshnessScore,
-    );
+    const ranked = [...modes].sort(compareModesForCompute);
     const chosenSymbols = new Set<string>();
     const selected = ranked.filter(mode => {
       if (chosenSymbols.has(mode.symbol)) return false;
@@ -88,17 +115,27 @@ function buildMeasuredSearchScorer() {
     if (!selected.length) return 0;
 
     const opportunityValue = selected.reduce((sum, mode) => {
-      const gap = Math.max(0, mode.riskAdjustedBpsToBreakEven);
-      const gapValue = Math.exp(-gap / 25);
       const recovery = Math.max(0.01, Math.min(1, mode.recoveryEfficiency));
       const freshness = Math.max(0, Math.min(1, mode.feeFreshnessScore));
+      if (mode.economicallyPositive) {
+        const positiveBps = Math.max(0, mode.expectedFeeAdjustedBps, mode.netAfterExchangeFeesBps);
+        const positiveValue = 1 + Math.min(2, positiveBps / 10);
+        return sum + positiveValue * (0.65 + 0.35 * freshness);
+      }
+      const gap = Math.max(0, mode.riskAdjustedBpsToBreakEven);
+      const gapValue = Math.exp(-gap / 25);
       return sum + gapValue * (0.5 + 0.5 * recovery) * (0.5 + 0.5 * freshness);
     }, 0) / selected.length;
 
+    const positiveCoverage = selected.filter(mode => mode.economicallyPositive).length / Math.max(1, selected.length);
     const coverage = selected.length / Math.max(1, uniqueSymbols);
     const heatCost = heat.throttleLevel === 'heavy' ? 1 : heat.throttleLevel === 'moderate' ? 0.6 : heat.throttleLevel === 'light' ? 0.3 : 0.1;
     const requestCost = breadthFactor / intervalFactor;
-    return (opportunityValue * (0.75 + 0.25 * providerQuality) * priorityMultiplier(cryptaraPriority) * (0.65 + 0.35 * coverage))
+    return (opportunityValue
+      * (1 + positiveCoverage * 0.50)
+      * (0.75 + 0.25 * providerQuality)
+      * priorityMultiplier(cryptaraPriority)
+      * (0.65 + 0.35 * coverage))
       - (0.08 * heatCost * requestCost);
   };
 
@@ -131,7 +168,13 @@ async function calibrateSearchAllocation(): Promise<void> {
   const heat = getHeatMonitor();
   if (heat.throttleLevel === 'heavy') return;
   const { modes, scorer } = buildMeasuredSearchScorer();
-  if (modes.length < 4) return;
+  if (modes.length < 4) {
+    // A prior optimized plan must never keep shrinking Antenna breadth/cadence
+    // after its measured CEX evidence disappears. Loss of evidence is not proof
+    // that a narrow/slow search is still optimal, so fail neutral for discovery.
+    latestSearchPlan = neutralSearchPlan(modes.length);
+    return;
+  }
   try {
     await computationalReactor.scheduleMonteCarloRun(
       'cryptocrawl_search_allocation',
@@ -180,7 +223,9 @@ export function ensureComputationalReactorWiring(): void {
       component: 'ComputationalReactorWiring',
       scheduler: 'priority_plus_age_with_measured_resource_pressure',
       monteCarlo: 'caller_supplied_measured_scorer_only',
-      searchAllocationCalibration: 'measured_cex_gap_freshness_provider_quality_compute_cost',
+      searchAllocationCalibration: 'profit_positive_first_then_measured_cex_gap_freshness_provider_quality_compute_cost',
+      searchPlanMaxAgeMs: searchPlanMaxAgeMs(),
+      insufficientEvidenceFallback: 'neutral_full_breadth_base_cadence',
       syntheticOptimizationScores: false,
       crawlerExecutors: 'explicit_callback_only',
       adaptiveConcurrency: true,
@@ -205,6 +250,13 @@ export function ensureComputationalReactorWiring(): void {
 }
 
 export function getComputationalSearchPlan(): ComputationalSearchPlan {
+  const modes = getCexFourModeSnapshot();
+  if (latestSearchPlan.observedAt > 0 && Date.now() - latestSearchPlan.observedAt > searchPlanMaxAgeMs()) {
+    // Consumers such as Antenna must not obey a stale Monte-Carlo allocation.
+    // Return a neutral scheduling plan; this changes search attention only and
+    // never grants execution authority or substitutes for measured economics.
+    return neutralSearchPlan(modes.length, 0);
+  }
   return { ...latestSearchPlan };
 }
 
