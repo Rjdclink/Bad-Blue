@@ -46,8 +46,8 @@ const required = [
   ['antenna', 'getProviderQualityAuctionSnapshot()', 'provider quality remains measured'],
   ['antenna', 'allExecutableVenuesStillObservedSimultaneously: true', 'provider auction cannot suppress executable venue observation'],
   ['antenna', 'executionAuthority: false', 'Antenna remains advisory'],
-  ['prefetch', "bid.venue === 'kraken' || bid.venue === 'okx'", 'stream-backed prefetch venue containment'],
-  ['prefetch', "const fallback: CexStreamVenue[] = ['kraken', 'okx']", 'both stream-backed venues preserved under provider ranking'],
+  ['prefetch', "bid.venue === 'coinbase' || bid.venue === 'kraken' || bid.venue === 'okx'", 'implemented prefetch venue containment'],
+  ['prefetch', "const fallback: CexStreamVenue[] = ['coinbase', 'kraken', 'okx']", 'all implemented venues preserved under provider ranking'],
   ['prefetch', "getHeatMonitor().throttleLevel === 'heavy'", 'prefetch stops under heavy compute pressure'],
   ['prefetch', 'universeIntervalMs()', 'market-universe prefetch bounded'],
   ['prefetch', 'inFlight.has(normalized)', 'per-symbol prefetch duplicate collapse'],
@@ -76,4 +76,4 @@ for (const [fileKey, token, name] of forbidden) {
   if (source[fileKey].includes(token)) throw new Error(`[compute-antenna-monte-carlo-batch11] forbidden regression: ${name}`);
 }
 
-console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, real scorer Monte Carlo, adaptive Antenna scheduling, bounded stream prefetch, implemented venue containment, and execution-authority boundaries preserved');
+console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, real scorer Monte Carlo, adaptive Antenna scheduling, bounded implemented-venue prefetch, and execution-authority boundaries preserved');
