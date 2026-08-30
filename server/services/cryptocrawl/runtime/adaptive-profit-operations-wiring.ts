@@ -10,6 +10,10 @@ import { stageManager } from '../governance/stage-management.js';
 import { getTreasuryExecutionBarrier } from '../governance/treasury-execution-barrier.js';
 import { GovernanceError, type GovernanceAction } from '../governance/types.js';
 import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
+import {
+  ensureCryptaraAdaptiveStrategyHydrated,
+  getCryptaraAdaptiveStrategySnapshot,
+} from '../optimization/cryptara-adaptive-strategy-state.js';
 
 const ADAPTIVE_MARK = Symbol.for('cryptocrawl.adaptive-profit-operations');
 
@@ -22,10 +26,30 @@ function mark<T extends Function>(fn: T): T {
   return fn;
 }
 
+/** Exact/single-plan evaluation never increases the caller's requested size. */
 function boundedNotional(requested: number): number {
   const envelope = getAdaptiveProfitOperatingEnvelope();
   if (envelope.stage <= 1 || !(envelope.recommendedMaxNotionalUsd > 0)) return requested;
   return Math.min(requested, envelope.recommendedMaxNotionalUsd);
+}
+
+/**
+ * Batch evaluation is discovery-only in the canonical runtime. Let the existing
+ * depth-aware verifier search its local size curve up to the current profit-ladder
+ * ceiling without adding market-data requests. Stage 1 may measure a larger
+ * shadow-live ceiling, but execution remains disabled by StageManager.
+ */
+function discoveryBoundedNotional(requested: number): number {
+  const envelope = getAdaptiveProfitOperatingEnvelope();
+  if (envelope.stage <= 1) {
+    const configured = Number(process.env.CRYPTO_STAGE1_CEX_DISCOVERY_MAX_NOTIONAL_USD || 1_000);
+    const discoveryCeiling = Number.isFinite(configured) && configured > 0 ? configured : 1_000;
+    return Math.max(requested, discoveryCeiling);
+  }
+  if (!(envelope.recommendedMaxNotionalUsd > 0)) return requested;
+  const adaptive = getCryptaraAdaptiveStrategySnapshot();
+  const bias = Math.max(0.10, Math.min(1, Number(adaptive.notionalBias) || 1));
+  return Math.max(1e-6, envelope.recommendedMaxNotionalUsd * bias);
 }
 
 function planNeedsRefinement(plan: VerifiedArbitragePlan): { needed: boolean; scale: number; reasons: string[] } {
@@ -58,6 +82,7 @@ function planWithinOperatingEnvelope(plan: VerifiedArbitragePlan): boolean {
 }
 
 export function ensureAdaptiveProfitOperationsWiring(): void {
+  void ensureCryptaraAdaptiveStrategyHydrated();
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
     evaluateOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
     evaluateMany: (
@@ -111,7 +136,7 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
         );
       }
       const requested = Number(request.notionalUsd || 0);
-      const initialBound = requested > 0 ? boundedNotional(requested) : requested;
+      const initialBound = requested > 0 ? discoveryBoundedNotional(requested) : requested;
       const plans = await underlyingEvaluateMany({ ...request, notionalUsd: initialBound }, symbols, capacity);
 
       const refinements: Array<Promise<void>> = [];
@@ -192,6 +217,11 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     maxExpectedSlippageBps: envelope.maxExpectedSlippageBps,
     recommendedCycleBudget: envelope.recommendedCycleBudget,
     performanceDegraded: envelope.performanceDegraded,
+    discoveryNotionalPolicy: 'stage1_shadow_measurement_ceiling_then_profit_ladder_max_times_bounded_cryptara_bias',
+    stage1CexDiscoveryMaxNotionalUsd: discoveryBoundedNotional(positiveFinite(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD, 200)),
+    stage1DiscoveryExecutionAuthority: false,
+    evaluateOnceCanIncreaseCallerNotional: false,
+    verifierDepthCurveReusedWithoutExtraMarketDataRequests: true,
     wrapperOrderResilient: true,
     newExposureGateOnly: true,
     restartTreasuryBarrierIntegrated: true,
@@ -201,4 +231,9 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     terminalSettlementAuthorityPreserved: true,
     exchangeSurveillanceThresholdAssumed: false,
   });
+}
+
+function positiveFinite(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
