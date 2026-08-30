@@ -65,6 +65,8 @@ function terminalPayload(value: unknown): value is TerminalOutcomeOutboxPayload 
 class CanonicalIntelligenceOutbox {
   private timer: NodeJS.Timeout | null = null;
   private cycleInFlight: Promise<void> | null = null;
+  private consecutiveCycleFailures = 0;
+  private degradedUntil = 0;
   private metrics: IntelligenceOutboxMetrics = {
     running: false,
     pending: 0,
@@ -96,6 +98,7 @@ class CanonicalIntelligenceOutbox {
       executionDependency: false,
       durableDedupe: true,
       staleLeaseRecovery: true,
+      databaseFailureBackoff: 'bounded_exponential',
     });
   }
 
@@ -201,7 +204,14 @@ class CanonicalIntelligenceOutbox {
     return this.getMetrics();
   }
 
+  private databaseBackoffMs(): number {
+    const baseMs = Math.max(1_000, Number(process.env.CRYPTARA_OUTBOX_DB_BACKOFF_BASE_MS || 2_000));
+    const maxMs = Math.max(baseMs, Number(process.env.CRYPTARA_OUTBOX_DB_BACKOFF_MAX_MS || 60_000));
+    return Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, this.consecutiveCycleFailures - 1)));
+  }
+
   private runCycle(): Promise<void> {
+    if (Date.now() < this.degradedUntil) return Promise.resolve();
     if (this.cycleInFlight) return this.cycleInFlight;
     this.cycleInFlight = this.drainCycle().finally(() => {
       this.cycleInFlight = null;
@@ -217,13 +227,21 @@ class CanonicalIntelligenceOutbox {
         if (!row) break;
         await this.process(row);
       }
-      await this.refreshMetrics();
+      const metrics = await this.refreshMetrics();
+      if (metrics.lastError) throw new Error(metrics.lastError);
+      this.consecutiveCycleFailures = 0;
+      this.degradedUntil = 0;
     } catch (error) {
       this.metrics.lastError = error instanceof Error ? error.message : String(error);
+      this.consecutiveCycleFailures += 1;
+      const backoffMs = this.databaseBackoffMs();
+      this.degradedUntil = Date.now() + backoffMs;
       logger.warn('[IntelligenceOutbox] Background queue cycle degraded; canonical execution remains independent', {
         component: 'CanonicalIntelligenceOutbox',
         error: this.metrics.lastError,
         executionBlocked: false,
+        consecutiveCycleFailures: this.consecutiveCycleFailures,
+        databaseRetryInMs: backoffMs,
       });
     }
   }
