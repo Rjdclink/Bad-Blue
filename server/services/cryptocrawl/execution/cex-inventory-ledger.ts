@@ -47,6 +47,8 @@ export interface InventoryRebalanceRecommendation {
 const STATE_TABLE = 'cryptocrawler_cex_inventory_state_v1';
 const RESERVATION_TABLE = 'cryptocrawler_cex_inventory_reservations_v1';
 const PAYOUT_RESERVE_TABLE = 'cryptocrawler_payout_asset_reservations';
+const PAYOUT_EXECUTION_RESERVE_TABLE = 'cryptocrawler_payout_execution_reservations';
+const PAYOUT_ACTIVE_STATUSES = "('HELD','IN_FLIGHT','MANUAL_REVIEW')";
 
 function finiteNonNegative(value: unknown, fallback = 0): number {
   const parsed = Number(value);
@@ -136,22 +138,79 @@ class CexInventoryLedger {
     return this.tableReady;
   }
 
+  private async tableExists(client: { query: (text: string, values?: unknown[]) => Promise<any> }, table: string): Promise<boolean> {
+    const result = await client.query('SELECT to_regclass($1) IS NOT NULL AS present', [`public.${table}`]);
+    return result.rows[0]?.present === true;
+  }
+
+  private async payoutReservedForAsset(
+    client: { query: (text: string, values?: unknown[]) => Promise<any> },
+    venue: InventoryVenue,
+    asset: string,
+  ): Promise<number | null> {
+    const normalized = canonicalAsset(asset);
+    let total = 0;
+    let anyAuthority = false;
+
+    if (await this.tableExists(client, PAYOUT_RESERVE_TABLE)) {
+      anyAuthority = true;
+      const source = await client.query(
+        `SELECT COALESCE(SUM(remaining_asset_amount),0) AS reserved
+         FROM ${PAYOUT_RESERVE_TABLE}
+         WHERE venue=$1 AND asset=$2 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND remaining_asset_amount > 0`,
+        [venue, normalized],
+      );
+      total += Number(source.rows[0]?.reserved || 0);
+    }
+
+    if (await this.tableExists(client, PAYOUT_EXECUTION_RESERVE_TABLE)) {
+      anyAuthority = true;
+      const execution = await client.query(
+        `SELECT COALESCE(SUM(reserved_asset_amount),0) AS reserved
+         FROM ${PAYOUT_EXECUTION_RESERVE_TABLE}
+         WHERE venue=$1 AND asset=$2 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND reserved_asset_amount > 0`,
+        [venue, normalized],
+      );
+      total += Number(execution.rows[0]?.reserved || 0);
+    }
+
+    return anyAuthority && Number.isFinite(total) ? Math.max(0, total) : null;
+  }
+
   private async payoutReserves(venue: InventoryVenue): Promise<Map<string, number>> {
     const values = new Map<string, number>();
     if (!isDatabaseConfigured) return values;
-    const exists = await pool.query(`SELECT to_regclass('public.${PAYOUT_RESERVE_TABLE}') IS NOT NULL AS present`);
-    if (exists.rows[0]?.present !== true) return values;
-    const result = await pool.query(
-      `SELECT asset, COALESCE(SUM(remaining_asset_amount),0) AS reserved
-       FROM ${PAYOUT_RESERVE_TABLE}
-       WHERE venue=$1 AND status IN ('HELD','IN_FLIGHT') AND remaining_asset_amount > 0
-       GROUP BY asset`,
-      [venue],
-    );
-    for (const row of result.rows) {
-      const asset = canonicalAsset(String(row.asset || ''));
-      const amount = Number(row.reserved || 0);
-      if (asset && Number.isFinite(amount) && amount > 0) values.set(asset, amount);
+
+    const sourceExists = await this.tableExists(pool, PAYOUT_RESERVE_TABLE);
+    if (sourceExists) {
+      const source = await pool.query(
+        `SELECT asset, COALESCE(SUM(remaining_asset_amount),0) AS reserved
+         FROM ${PAYOUT_RESERVE_TABLE}
+         WHERE venue=$1 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND remaining_asset_amount > 0
+         GROUP BY asset`,
+        [venue],
+      );
+      for (const row of source.rows) {
+        const asset = canonicalAsset(String(row.asset || ''));
+        const amount = Number(row.reserved || 0);
+        if (asset && Number.isFinite(amount) && amount > 0) values.set(asset, (values.get(asset) || 0) + amount);
+      }
+    }
+
+    const executionExists = await this.tableExists(pool, PAYOUT_EXECUTION_RESERVE_TABLE);
+    if (executionExists) {
+      const execution = await pool.query(
+        `SELECT asset, COALESCE(SUM(reserved_asset_amount),0) AS reserved
+         FROM ${PAYOUT_EXECUTION_RESERVE_TABLE}
+         WHERE venue=$1 AND status IN ${PAYOUT_ACTIVE_STATUSES} AND reserved_asset_amount > 0
+         GROUP BY asset`,
+        [venue],
+      );
+      for (const row of execution.rows) {
+        const asset = canonicalAsset(String(row.asset || ''));
+        const amount = Number(row.reserved || 0);
+        if (asset && Number.isFinite(amount) && amount > 0) values.set(asset, (values.get(asset) || 0) + amount);
+      }
     }
     return values;
   }
@@ -291,7 +350,8 @@ class CexInventoryLedger {
           );
           const available = Number(row.available);
           const alreadyReserved = Number(reserved.rows[0]?.reserved || 0);
-          const payoutReserved = Number(row.payout_reserved || 0);
+          const livePayoutReserved = await this.payoutReservedForAsset(client, requirement.venue, requirement.asset);
+          const payoutReserved = livePayoutReserved === null ? Number(row.payout_reserved || 0) : livePayoutReserved;
           const pending = Number(row.pending_order || 0) + Number(row.pending_transfer || 0);
           const minimumReserve = Number(row.minimum_reserve || 0);
           const maximumExposure = row.maximum_venue_exposure === null ? null : Number(row.maximum_venue_exposure);
