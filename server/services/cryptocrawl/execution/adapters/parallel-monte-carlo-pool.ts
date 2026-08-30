@@ -2,6 +2,10 @@ import os from 'node:os';
 import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import {
+  QuantiParallelismError,
+  quantiParallelismGovernor,
+} from '../../../quantiComp/index.js';
+import {
   runProfitabilityMonteCarlo,
   type MonteCarloProfitabilityInput,
   type MonteCarloProfitabilityResult,
@@ -42,6 +46,15 @@ function workerExecutionEnabled(): boolean {
   return process.env.NODE_ENV === 'production' && process.env.CRYPTOCRAWL_PARALLEL_MC_DISABLED !== 'true';
 }
 
+function quoteDeadlineAt(input: MonteCarloProfitabilityInput): number | undefined {
+  const maxQuoteAgeMs = Number.isFinite(input.quoteMaxAgeMs)
+    ? Math.max(1, Number(input.quoteMaxAgeMs))
+    : Math.max(1, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000));
+  const alreadyAgedMs = Math.max(0, Number(input.quoteLatencyMs) || 0);
+  const remaining = maxQuoteAgeMs - alreadyAgedMs;
+  return remaining > 0 ? Date.now() + remaining : Date.now();
+}
+
 class ParallelMonteCarloPool {
   private readonly queue: PendingJob[] = [];
   private readonly pending = new Map<string, PendingJob>();
@@ -52,6 +65,8 @@ class ParallelMonteCarloPool {
   private workerFailures = 0;
   private cacheHits = 0;
   private completed = 0;
+  private governedRuns = 0;
+  private deadlineRejects = 0;
 
   private ensureWorkers(): void {
     if (this.initialized || !workerExecutionEnabled()) return;
@@ -67,6 +82,7 @@ class ParallelMonteCarloPool {
     worker.on('exit', code => {
       if (code !== 0) this.handleWorkerFailure(slot, new Error(`Monte Carlo worker exited with code ${code}`));
     });
+    worker.unref?.();
     this.slots.push(slot);
   }
 
@@ -76,6 +92,7 @@ class ParallelMonteCarloPool {
     this.pending.delete(message.id);
     slot.busy = false;
     slot.currentJobId = null;
+    slot.worker.unref?.();
     if (message.error || !message.result) job.reject(new Error(message.error || 'Monte Carlo worker returned no result'));
     else {
       this.completed += 1;
@@ -111,6 +128,7 @@ class ParallelMonteCarloPool {
       if (!job) break;
       slot.busy = true;
       slot.currentJobId = job.id;
+      slot.worker.ref?.();
       this.pending.set(job.id, job);
       slot.worker.postMessage({ id: job.id, input: job.input });
     }
@@ -130,6 +148,37 @@ class ParallelMonteCarloPool {
       this.queue.push({ id: randomUUID(), input, resolve, reject });
       this.dispatch();
     });
+  }
+
+  private async executeGoverned(input: MonteCarloProfitabilityInput): Promise<MonteCarloProfitabilityResult> {
+    let lease;
+    try {
+      lease = await quantiParallelismGovernor.acquire({
+        id: `execution-mc:${randomUUID()}`,
+        units: 1,
+        lane: 'hot',
+        priority: 80,
+        deadlineAt: quoteDeadlineAt(input),
+        metadata: { model: 'execution_profitability_monte_carlo', topology: input.topology || 'CEX_CEX' },
+      });
+    } catch (error) {
+      if (error instanceof QuantiParallelismError && error.code === 'DEADLINE_EXPIRED') this.deadlineRejects += 1;
+      throw error;
+    }
+
+    this.governedRuns += 1;
+    try {
+      try {
+        return await this.executeOffThread(input);
+      } catch {
+        // Worker startup/runtime degradation falls back to the exact same pure
+        // model while retaining the Quanti resource lease. Resource-governor or
+        // quote-deadline failures never bypass this authority.
+        return runProfitabilityMonteCarlo(input);
+      }
+    } finally {
+      lease.release();
+    }
   }
 
   getCached(key: string): MonteCarloProfitabilityResult | null {
@@ -153,8 +202,7 @@ class ParallelMonteCarloPool {
     const existing = this.inFlightByKey.get(key);
     if (existing) return existing;
 
-    const promise = this.executeOffThread(input)
-      .catch(() => runProfitabilityMonteCarlo(input))
+    const promise = this.executeGoverned(input)
       .then(result => {
         this.cache.set(key, {
           expiresAt: Date.now() + Math.max(100, Math.min(120_000, ttlMs)),
@@ -183,6 +231,9 @@ class ParallelMonteCarloPool {
       cacheHits: this.cacheHits,
       completed: this.completed,
       workerFailures: this.workerFailures,
+      governedRuns: this.governedRuns,
+      deadlineRejects: this.deadlineRejects,
+      parallelismAuthority: 'quanti_parallelism_governor',
       mainEventLoopExecutionAuthority: false,
     };
   }
