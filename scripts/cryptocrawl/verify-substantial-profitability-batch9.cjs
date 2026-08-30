@@ -92,14 +92,14 @@ for (const [fileKey, pattern, name] of behaviors) {
 if (!source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2();')) {
   throw new Error('[substantial-profitability-batch9] zero-capital profitability rescue v2 is not canonically wired');
 }
-if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'kraken' | 'okx'>")) {
-  throw new Error('[substantial-profitability-batch9] active CEX quote topology must be Kraken/OKX only');
+if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
+  throw new Error('[substantial-profitability-batch9] active CEX quote topology must remain restricted to fully implemented Coinbase/Kraken/OKX paths');
 }
-if (!source.venue.includes("if (venue === 'coinbase') return false")) {
-  throw new Error('[substantial-profitability-batch9] Coinbase must remain retired from live execution');
+if (!source.venue.includes('settlementVerification: true')) {
+  throw new Error('[substantial-profitability-batch9] executable CEX venues must retain terminal settlement capability declarations');
 }
 if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/profitability-recovery-batch9.ts'))) {
   throw new Error('[substantial-profitability-batch9] obsolete signal-count batch must not exist');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty behavior-level profitability enhancements are present; telemetry fields are not counted as enhancements');
+console.log('[substantial-profitability-batch9] PASS: fifty behavior-level profitability enhancements are present; telemetry fields are not counted as enhancements; implemented CEX topology remains settlement-gated');
