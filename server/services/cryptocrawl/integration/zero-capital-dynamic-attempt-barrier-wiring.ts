@@ -1,0 +1,326 @@
+import type { Wallet, providers } from 'ethers';
+import logger from '../../../logger.js';
+import {
+  zeroCapitalEngine,
+  type SupportedChain,
+  type ZeroCapitalOpportunity,
+} from '../core/zero-capital-engine.js';
+import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
+import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
+
+const installed = new WeakSet<object>();
+
+interface FundingDecisionLike {
+  mode: 'sponsored' | 'native' | 'unavailable';
+  reason: string;
+}
+
+type ZeroCapitalBarrierRuntime = {
+  executeAndRecord: (opportunity: ZeroCapitalOpportunity) => Promise<void>;
+  providers: Map<SupportedChain, providers.JsonRpcProvider>;
+  executionWallets: Map<SupportedChain, Wallet>;
+  receiverManager: { getReceiver: (chain: string) => string | null };
+  getGasFundingDecision: (chain: SupportedChain) => Promise<FundingDecisionLike>;
+};
+
+export interface DynamicAttemptBarrierDecision {
+  opportunityId: string;
+  chain: SupportedChain;
+  observedAt: number;
+  approved: boolean;
+  reason: string;
+  fundingMode: FundingDecisionLike['mode'];
+  exactCallPassed: boolean;
+  exactGasEstimatePassed: boolean;
+  estimatedGasUnits: bigint | null;
+  expectedNetProfit: bigint;
+  failedAttemptExposure: bigint;
+  dynamicBarrier: bigint;
+  profitToFailureExposureRatio: number | null;
+  quoteAgeFraction: number;
+  confidence: number;
+  expectedSlippageBps: number;
+  barrierMultiple: number;
+  authority: 'pre_broadcast_defer_only';
+  executionAuthority: false;
+}
+
+let latest: DynamicAttemptBarrierDecision | null = null;
+let deferrals = 0;
+let approvals = 0;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function ratio(numerator: bigint, denominator: bigint): number | null {
+  if (denominator <= 0n) return null;
+  const scaled = Number((numerator * 1_000_000n) / denominator) / 1_000_000;
+  return Number.isFinite(scaled) ? scaled : null;
+}
+
+function multiplyCeil(value: bigint, multiplier: number): bigint {
+  if (value <= 0n) return 0n;
+  const millionths = BigInt(Math.max(1, Math.ceil(multiplier * 1_000_000)));
+  return (value * millionths + 999_999n) / 1_000_000n;
+}
+
+function quoteAgeFraction(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
+  const lifetime = Math.max(1, opportunity.expiresAt - opportunity.timestamp);
+  return clamp((now - opportunity.timestamp) / lifetime, 0, 2);
+}
+
+function dynamicBarrierMultiple(opportunity: ZeroCapitalOpportunity, ageFraction: number): number {
+  const base = clamp(Number(process.env.ZERO_CAPITAL_ATTEMPT_BARRIER_BASE_MULTIPLE || 1), 0.25, 5);
+  const agePenalty = ageFraction * clamp(Number(process.env.ZERO_CAPITAL_ATTEMPT_BARRIER_AGE_WEIGHT || 1.5), 0, 4);
+  const confidencePenalty = (1 - clamp(opportunity.confidence, 0, 1))
+    * clamp(Number(process.env.ZERO_CAPITAL_ATTEMPT_BARRIER_CONFIDENCE_WEIGHT || 2), 0, 5);
+  const slippagePenalty = Math.min(2, Math.max(0, opportunity.expectedSlippageBps) / 25)
+    * clamp(Number(process.env.ZERO_CAPITAL_ATTEMPT_BARRIER_SLIPPAGE_WEIGHT || 0.75), 0, 3);
+  const latencyPenalty = Math.min(2, Math.max(0, opportunity.quoteLatencyMs) / 2_000)
+    * clamp(Number(process.env.ZERO_CAPITAL_ATTEMPT_BARRIER_LATENCY_WEIGHT || 0.5), 0, 3);
+  return clamp(base + agePenalty + confidencePenalty + slippagePenalty + latencyPenalty, 0.25, 10);
+}
+
+async function evaluateBarrier(
+  runtime: ZeroCapitalBarrierRuntime,
+  opportunity: ZeroCapitalOpportunity,
+): Promise<DynamicAttemptBarrierDecision> {
+  const observedAt = Date.now();
+  const funding = await runtime.getGasFundingDecision(opportunity.chain);
+  const provider = runtime.providers.get(opportunity.chain);
+  const wallet = runtime.executionWallets.get(opportunity.chain);
+  const receiver = runtime.receiverManager.getReceiver(opportunity.chain);
+  const ageFraction = quoteAgeFraction(opportunity, observedAt);
+  const barrierMultiple = dynamicBarrierMultiple(opportunity, ageFraction);
+
+  const base = {
+    opportunityId: opportunity.id,
+    chain: opportunity.chain,
+    observedAt,
+    fundingMode: funding.mode,
+    expectedNetProfit: opportunity.expectedProfit,
+    quoteAgeFraction: ageFraction,
+    confidence: opportunity.confidence,
+    expectedSlippageBps: opportunity.expectedSlippageBps,
+    barrierMultiple,
+    authority: 'pre_broadcast_defer_only' as const,
+    executionAuthority: false as const,
+  };
+
+  if (opportunity.expectedProfit <= 0n) {
+    return {
+      ...base,
+      approved: false,
+      reason: 'Expected all-in net profit is not positive',
+      exactCallPassed: false,
+      exactGasEstimatePassed: false,
+      estimatedGasUnits: null,
+      failedAttemptExposure: 0n,
+      dynamicBarrier: 0n,
+      profitToFailureExposureRatio: null,
+    };
+  }
+  if (Date.now() >= opportunity.expiresAt) {
+    return {
+      ...base,
+      approved: false,
+      reason: 'Opportunity expired before exact pre-broadcast validation',
+      exactCallPassed: false,
+      exactGasEstimatePassed: false,
+      estimatedGasUnits: null,
+      failedAttemptExposure: 0n,
+      dynamicBarrier: 0n,
+      profitToFailureExposureRatio: null,
+    };
+  }
+  if (funding.mode === 'unavailable' || !provider || !wallet || !receiver) {
+    return {
+      ...base,
+      approved: false,
+      reason: funding.mode === 'unavailable' ? funding.reason : 'Provider, wallet, or verified receiver unavailable',
+      exactCallPassed: false,
+      exactGasEstimatePassed: false,
+      estimatedGasUnits: null,
+      failedAttemptExposure: 0n,
+      dynamicBarrier: 0n,
+      profitToFailureExposureRatio: null,
+    };
+  }
+
+  let payload;
+  try {
+    const plan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
+      receiver,
+      profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || wallet.address,
+      nowMs: Date.now(),
+    });
+    payload = buildFlashLoanReceiverPayloadFromPlan(plan);
+  } catch (error) {
+    return {
+      ...base,
+      approved: false,
+      reason: `Exact payload rebuild failed: ${error instanceof Error ? error.message : String(error)}`,
+      exactCallPassed: false,
+      exactGasEstimatePassed: false,
+      estimatedGasUnits: null,
+      failedAttemptExposure: 0n,
+      dynamicBarrier: 0n,
+      profitToFailureExposureRatio: null,
+    };
+  }
+
+  const request = {
+    from: wallet.address,
+    to: payload.to,
+    data: payload.data,
+    value: payload.value,
+  };
+  const [call, gas] = await Promise.allSettled([
+    provider.call(request),
+    provider.estimateGas(request),
+  ]);
+  if (call.status !== 'fulfilled') {
+    return {
+      ...base,
+      approved: false,
+      reason: `Exact eth_call rejected; defer and re-quote: ${call.reason instanceof Error ? call.reason.message : String(call.reason)}`,
+      exactCallPassed: false,
+      exactGasEstimatePassed: gas.status === 'fulfilled',
+      estimatedGasUnits: gas.status === 'fulfilled' ? BigInt(gas.value.toString()) : null,
+      failedAttemptExposure: funding.mode === 'native' ? opportunity.estimatedGasCostInInputToken || 0n : 0n,
+      dynamicBarrier: 0n,
+      profitToFailureExposureRatio: null,
+    };
+  }
+  if (gas.status !== 'fulfilled') {
+    return {
+      ...base,
+      approved: false,
+      reason: `Exact gas estimation rejected; defer and re-quote: ${gas.reason instanceof Error ? gas.reason.message : String(gas.reason)}`,
+      exactCallPassed: true,
+      exactGasEstimatePassed: false,
+      estimatedGasUnits: null,
+      failedAttemptExposure: funding.mode === 'native' ? opportunity.estimatedGasCostInInputToken || 0n : 0n,
+      dynamicBarrier: 0n,
+      profitToFailureExposureRatio: null,
+    };
+  }
+
+  const estimatedGasUnits = BigInt(gas.value.toString());
+  // Sponsored execution has no direct wallet gas exposure. Native execution uses
+  // the route quoter's input-token gas estimate as the amount at risk if a
+  // transaction is mined but the atomic trade reverts. It is a barrier, not an
+  // additive expected cost and it never changes reported net profit.
+  const failedAttemptExposure = funding.mode === 'native'
+    ? opportunity.estimatedGasCostInInputToken || 0n
+    : 0n;
+  const dynamicBarrier = multiplyCeil(failedAttemptExposure, barrierMultiple);
+  const profitToFailureExposureRatio = ratio(opportunity.expectedProfit, failedAttemptExposure);
+  const approved = failedAttemptExposure <= 0n || opportunity.expectedProfit > dynamicBarrier;
+
+  return {
+    ...base,
+    approved,
+    reason: approved
+      ? funding.mode === 'sponsored'
+        ? 'Exact call and gas estimate passed; sponsored funding removes direct failed-attempt gas exposure'
+        : `Exact call/gas passed and profit cushion exceeds dynamic failed-attempt barrier (${barrierMultiple.toFixed(3)}x)`
+      : `Defer and re-quote: profit cushion does not exceed dynamic failed-attempt barrier (${barrierMultiple.toFixed(3)}x)`,
+    exactCallPassed: true,
+    exactGasEstimatePassed: true,
+    estimatedGasUnits,
+    failedAttemptExposure,
+    dynamicBarrier,
+    profitToFailureExposureRatio,
+  };
+}
+
+export function getZeroCapitalDynamicAttemptBarrierSnapshot(): {
+  latest: DynamicAttemptBarrierDecision | null;
+  approvals: number;
+  deferrals: number;
+} {
+  return {
+    latest: latest ? { ...latest } : null,
+    approvals,
+    deferrals,
+  };
+}
+
+/**
+ * Adds a defer-only pre-broadcast barrier in front of the canonical executor.
+ * A blocked opportunity is not counted as a failed trade because no transaction
+ * was submitted. The normal scan loop will discover/re-quote the route again.
+ * This wrapper can only withhold execution; it cannot grant execution authority.
+ */
+export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
+  const runtime = zeroCapitalEngine as unknown as ZeroCapitalBarrierRuntime;
+  if (installed.has(runtime)) return;
+  installed.add(runtime);
+
+  const originalExecuteAndRecord = runtime.executeAndRecord.bind(runtime);
+  runtime.executeAndRecord = async (opportunity): Promise<void> => {
+    const decision = await evaluateBarrier(runtime, opportunity).catch(error => ({
+      opportunityId: opportunity.id,
+      chain: opportunity.chain,
+      observedAt: Date.now(),
+      approved: false,
+      reason: `Dynamic attempt barrier failed closed: ${error instanceof Error ? error.message : String(error)}`,
+      fundingMode: 'unavailable' as const,
+      exactCallPassed: false,
+      exactGasEstimatePassed: false,
+      estimatedGasUnits: null,
+      expectedNetProfit: opportunity.expectedProfit,
+      failedAttemptExposure: 0n,
+      dynamicBarrier: 0n,
+      profitToFailureExposureRatio: null,
+      quoteAgeFraction: quoteAgeFraction(opportunity),
+      confidence: opportunity.confidence,
+      expectedSlippageBps: opportunity.expectedSlippageBps,
+      barrierMultiple: dynamicBarrierMultiple(opportunity, quoteAgeFraction(opportunity)),
+      authority: 'pre_broadcast_defer_only' as const,
+      executionAuthority: false as const,
+    }));
+    latest = decision;
+
+    if (!decision.approved) {
+      deferrals++;
+      logger.info('[ZeroCapitalBarrier] Opportunity deferred before broadcast', {
+        component: 'ZeroCapitalDynamicAttemptBarrier',
+        ...decision,
+        expectedNetProfit: decision.expectedNetProfit.toString(),
+        failedAttemptExposure: decision.failedAttemptExposure.toString(),
+        dynamicBarrier: decision.dynamicBarrier.toString(),
+        estimatedGasUnits: decision.estimatedGasUnits?.toString() ?? null,
+        terminalTradeFailure: false,
+        transactionSubmitted: false,
+        revalidationAuthority: 'next_fresh_scan',
+      });
+      return;
+    }
+
+    approvals++;
+    logger.debug('[ZeroCapitalBarrier] Opportunity passed dynamic pre-broadcast barrier', {
+      component: 'ZeroCapitalDynamicAttemptBarrier',
+      ...decision,
+      expectedNetProfit: decision.expectedNetProfit.toString(),
+      failedAttemptExposure: decision.failedAttemptExposure.toString(),
+      dynamicBarrier: decision.dynamicBarrier.toString(),
+      estimatedGasUnits: decision.estimatedGasUnits?.toString() ?? null,
+    });
+    await originalExecuteAndRecord(opportunity);
+  };
+
+  logger.info('[ZeroCapitalBarrier] Dynamic failed-attempt barrier wiring installed', {
+    component: 'ZeroCapitalDynamicAttemptBarrier',
+    exactEthCallRequired: true,
+    exactGasEstimateRequired: true,
+    nativeFailedAttemptExposureUsesMeasuredInputTokenGasEstimate: true,
+    sponsoredGasExposureZeroOnlyWhenFundingModeIsSponsored: true,
+    barrierIsNotAddedToReportedEconomics: true,
+    blockedOpportunityTreatment: 'defer_and_requote_not_failed_trade',
+    dynamicInputs: ['quote_age', 'confidence', 'expected_slippage', 'quote_latency', 'funding_mode'],
+    executionAuthority: false,
+  });
+}
