@@ -216,7 +216,12 @@ export async function findWithdrawal(secrets: Secrets, withdrawalId: string | nu
   if (!withdrawalId && !clientId) return null;
   try {
     const rows = await okxRequest(secrets, '/api/v5/asset/withdrawal-history', 'GET', withdrawalId ? { wdId: withdrawalId } : { clientId: clientId! });
-    return rows.find((row: any) => withdrawalId ? String(row?.wdId || '') === withdrawalId : String(row?.clientId || '') === clientId) || rows[0] || null;
+    const record = rows.find((row: any) => withdrawalId ? String(row?.wdId || '') === withdrawalId : String(row?.clientId || '') === clientId) || rows[0] || null;
+    if (!record) return null;
+    // OKX state -3 is cancellation-in-progress, not a final failure. Normalize it
+    // to a non-terminal label so payout reconciliation waits for final -2/-1/2.
+    if (String(record.state ?? '') === '-3') return { ...record, rawState: '-3', state: 'canceling' };
+    return record;
   } catch { return null; }
 }
 
