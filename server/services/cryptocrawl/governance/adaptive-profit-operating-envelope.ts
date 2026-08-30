@@ -11,6 +11,7 @@ export interface AdaptiveProfitOperatingEnvelope {
   tierId: number;
   operatingLadderDay: number;
   operatingLadderActivatedAt: number | null;
+  operatingDayRealizedProfitUsd: number;
   dailyProfitCapUsd: number;
   rolling24hRealizedProfitUsd: number;
   remainingDailyProfitCapacityUsd: number;
@@ -86,8 +87,13 @@ function configuredDailyCap(ladderCap: number): number {
   return configured === null ? ladderCap : Math.min(ladderCap, configured);
 }
 
-function operatingLadder(now: number, stage: number): { activatedAt: number | null; day: number; capUsd: number } {
-  if (stage <= 1) return { activatedAt: null, day: 0, capUsd: 0 };
+function operatingLadder(now: number, stage: number): {
+  activatedAt: number | null;
+  day: number;
+  dayStart: number | null;
+  capUsd: number;
+} {
+  if (stage <= 1) return { activatedAt: null, day: 0, dayStart: null, capUsd: 0 };
 
   // Tier 1 is created exactly when StageManager proves Stage 1 and enters the
   // first live stage. Its startTime is already part of the persisted profit-
@@ -107,6 +113,7 @@ function operatingLadder(now: number, stage: number): { activatedAt: number | nu
   return {
     activatedAt,
     day,
+    dayStart: activatedAt + (day - 1) * DAY_MS,
     capUsd: OPERATING_DAILY_PROFIT_CAPS_USD[index],
   };
 }
@@ -143,8 +150,10 @@ function performanceNotionalMultiplier(
  *
  * The six-day operating ladder is an internal capital/risk policy, not an
  * exchange-surveillance or "red flag" model. It gates NEW exposure only from
- * terminal-confirmed realized P/L. StageManager remains authoritative for stage,
- * position-size, drawdown, MC, pause and kill-switch controls.
+ * terminal-confirmed realized P/L. Each ladder ceiling applies to its persisted
+ * 24-hour operating day; rolling-24h P/L remains telemetry only. StageManager
+ * remains authoritative for stage, position-size, drawdown, MC, pause and
+ * kill-switch controls.
  */
 export function getAdaptiveProfitOperatingEnvelope(now = Date.now()): AdaptiveProfitOperatingEnvelope {
   const state = stageManager.getState();
@@ -153,15 +162,23 @@ export function getAdaptiveProfitOperatingEnvelope(now = Date.now()): AdaptivePr
   const history = state.cryptaraExecutionEvidence
     .filter(terminalConfirmed)
     .sort((left, right) => left.timestamp - right.timestamp);
-  const rolling24h = history
+  const rolling24hRealizedProfitUsd = history
     .filter(item => item.timestamp >= now - DAY_MS)
     .map(realizedProfit)
     .filter((value): value is number => value !== null)
     .reduce((sum, value) => sum + value, 0);
 
   const ladder = operatingLadder(now, state.currentStage);
+  const operatingDayEnd = ladder.dayStart === null ? null : ladder.dayStart + DAY_MS;
+  const operatingDayRealizedProfitUsd = ladder.dayStart === null
+    ? 0
+    : history
+      .filter(item => item.timestamp >= ladder.dayStart! && item.timestamp < operatingDayEnd!)
+      .map(realizedProfit)
+      .filter((value): value is number => value !== null)
+      .reduce((sum, value) => sum + value, 0);
   const dailyProfitCapUsd = state.currentStage === 1 ? 0 : configuredDailyCap(ladder.capUsd);
-  const remainingDailyProfitCapacityUsd = Math.max(0, dailyProfitCapUsd - Math.max(0, rolling24h));
+  const remainingDailyProfitCapacityUsd = Math.max(0, dailyProfitCapUsd - Math.max(0, operatingDayRealizedProfitUsd));
 
   const last50 = history.slice(-50);
   const bps = last50
@@ -198,8 +215,9 @@ export function getAdaptiveProfitOperatingEnvelope(now = Date.now()): AdaptivePr
     tierId: tier.id,
     operatingLadderDay: ladder.day,
     operatingLadderActivatedAt: ladder.activatedAt,
+    operatingDayRealizedProfitUsd,
     dailyProfitCapUsd,
-    rolling24hRealizedProfitUsd: rolling24h,
+    rolling24hRealizedProfitUsd,
     remainingDailyProfitCapacityUsd,
     newExposureAllowed: state.currentStage > 1 && remainingDailyProfitCapacityUsd > 0,
     recommendedMaxNotionalUsd,
