@@ -7,6 +7,8 @@ import {
 } from '../core/zero-capital-engine.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
+import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
+import type { FlashLoanProviderKind } from '../execution/adapters/flash-loan-provider-economics.js';
 
 const installed = new WeakSet<object>();
 
@@ -30,6 +32,7 @@ export interface DynamicAttemptBarrierDecision {
   approved: boolean;
   reason: string;
   fundingMode: FundingDecisionLike['mode'];
+  flashLoanProvider: FlashLoanProviderKind;
   exactCallPassed: boolean;
   exactGasEstimatePassed: boolean;
   estimatedGasUnits: bigint | null;
@@ -90,7 +93,11 @@ async function evaluateBarrier(
   const funding = await runtime.getGasFundingDecision(opportunity.chain);
   const provider = runtime.providers.get(opportunity.chain);
   const wallet = runtime.executionWallets.get(opportunity.chain);
-  const receiver = runtime.receiverManager.getReceiver(opportunity.chain);
+  const selection = flashLoanProviderSelectionRegistry.get(opportunity.id, observedAt);
+  const flashLoanProvider: FlashLoanProviderKind = selection?.provider || 'balancer_v2';
+  const receiver = flashLoanProvider === 'aave_v3'
+    ? selection?.receiver || null
+    : runtime.receiverManager.getReceiver(opportunity.chain);
   const ageFraction = quoteAgeFraction(opportunity, observedAt);
   const barrierMultiple = dynamicBarrierMultiple(opportunity, ageFraction);
 
@@ -99,6 +106,7 @@ async function evaluateBarrier(
     chain: opportunity.chain,
     observedAt,
     fundingMode: funding.mode,
+    flashLoanProvider,
     expectedNetProfit: opportunity.expectedProfit,
     quoteAgeFraction: ageFraction,
     confidence: opportunity.confidence,
@@ -134,11 +142,39 @@ async function evaluateBarrier(
       profitToFailureExposureRatio: null,
     };
   }
+  if (selection?.provider === 'aave_v3') {
+    if (selection.expiresAt <= observedAt) {
+      return {
+        ...base,
+        approved: false,
+        reason: 'Selected Aave provider evidence expired before pre-broadcast validation',
+        exactCallPassed: false,
+        exactGasEstimatePassed: false,
+        estimatedGasUnits: null,
+        failedAttemptExposure: 0n,
+        dynamicBarrier: 0n,
+        profitToFailureExposureRatio: null,
+      };
+    }
+    if (wallet && selection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()) {
+      return {
+        ...base,
+        approved: false,
+        reason: 'Selected Aave receiver owner no longer matches execution wallet',
+        exactCallPassed: false,
+        exactGasEstimatePassed: false,
+        estimatedGasUnits: null,
+        failedAttemptExposure: 0n,
+        dynamicBarrier: 0n,
+        profitToFailureExposureRatio: null,
+      };
+    }
+  }
   if (funding.mode === 'unavailable' || !provider || !wallet || !receiver) {
     return {
       ...base,
       approved: false,
-      reason: funding.mode === 'unavailable' ? funding.reason : 'Provider, wallet, or verified receiver unavailable',
+      reason: funding.mode === 'unavailable' ? funding.reason : 'Provider, wallet, or provider-specific verified receiver unavailable',
       exactCallPassed: false,
       exactGasEstimatePassed: false,
       estimatedGasUnits: null,
@@ -152,6 +188,7 @@ async function evaluateBarrier(
   try {
     const plan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
       receiver,
+      provider: flashLoanProvider,
       profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || wallet.address,
       nowMs: Date.now(),
     });
@@ -160,7 +197,7 @@ async function evaluateBarrier(
     return {
       ...base,
       approved: false,
-      reason: `Exact payload rebuild failed: ${error instanceof Error ? error.message : String(error)}`,
+      reason: `Exact ${flashLoanProvider} payload rebuild failed: ${error instanceof Error ? error.message : String(error)}`,
       exactCallPassed: false,
       exactGasEstimatePassed: false,
       estimatedGasUnits: null,
@@ -184,7 +221,7 @@ async function evaluateBarrier(
     return {
       ...base,
       approved: false,
-      reason: `Exact eth_call rejected; defer and re-quote: ${call.reason instanceof Error ? call.reason.message : String(call.reason)}`,
+      reason: `Exact ${flashLoanProvider} eth_call rejected; defer and re-quote: ${call.reason instanceof Error ? call.reason.message : String(call.reason)}`,
       exactCallPassed: false,
       exactGasEstimatePassed: gas.status === 'fulfilled',
       estimatedGasUnits: gas.status === 'fulfilled' ? BigInt(gas.value.toString()) : null,
@@ -197,7 +234,7 @@ async function evaluateBarrier(
     return {
       ...base,
       approved: false,
-      reason: `Exact gas estimation rejected; defer and re-quote: ${gas.reason instanceof Error ? gas.reason.message : String(gas.reason)}`,
+      reason: `Exact ${flashLoanProvider} gas estimation rejected; defer and re-quote: ${gas.reason instanceof Error ? gas.reason.message : String(gas.reason)}`,
       exactCallPassed: true,
       exactGasEstimatePassed: false,
       estimatedGasUnits: null,
@@ -224,8 +261,8 @@ async function evaluateBarrier(
     approved,
     reason: approved
       ? funding.mode === 'sponsored'
-        ? 'Exact call and gas estimate passed; sponsored funding removes direct failed-attempt gas exposure'
-        : `Exact call/gas passed and profit cushion exceeds dynamic failed-attempt barrier (${barrierMultiple.toFixed(3)}x)`
+        ? `Exact ${flashLoanProvider} call and gas estimate passed; sponsored funding removes direct failed-attempt wallet gas exposure`
+        : `Exact ${flashLoanProvider} call/gas passed and profit cushion exceeds dynamic failed-attempt barrier (${barrierMultiple.toFixed(3)}x)`
       : `Defer and re-quote: profit cushion does not exceed dynamic failed-attempt barrier (${barrierMultiple.toFixed(3)}x)`,
     exactCallPassed: true,
     exactGasEstimatePassed: true,
@@ -261,6 +298,8 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
 
   const originalExecuteAndRecord = runtime.executeAndRecord.bind(runtime);
   runtime.executeAndRecord = async (opportunity): Promise<void> => {
+    const age = quoteAgeFraction(opportunity);
+    const selection = flashLoanProviderSelectionRegistry.get(opportunity.id);
     const decision = await evaluateBarrier(runtime, opportunity).catch(error => ({
       opportunityId: opportunity.id,
       chain: opportunity.chain,
@@ -268,6 +307,7 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
       approved: false,
       reason: `Dynamic attempt barrier failed closed: ${error instanceof Error ? error.message : String(error)}`,
       fundingMode: 'unavailable' as const,
+      flashLoanProvider: selection?.provider || 'balancer_v2' as const,
       exactCallPassed: false,
       exactGasEstimatePassed: false,
       estimatedGasUnits: null,
@@ -275,10 +315,10 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
       failedAttemptExposure: 0n,
       dynamicBarrier: 0n,
       profitToFailureExposureRatio: null,
-      quoteAgeFraction: quoteAgeFraction(opportunity),
+      quoteAgeFraction: age,
       confidence: opportunity.confidence,
       expectedSlippageBps: opportunity.expectedSlippageBps,
-      barrierMultiple: dynamicBarrierMultiple(opportunity, quoteAgeFraction(opportunity)),
+      barrierMultiple: dynamicBarrierMultiple(opportunity, age),
       authority: 'pre_broadcast_defer_only' as const,
       executionAuthority: false as const,
     }));
@@ -316,6 +356,7 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
     component: 'ZeroCapitalDynamicAttemptBarrier',
     exactEthCallRequired: true,
     exactGasEstimateRequired: true,
+    providerSpecificPayloadParity: ['balancer_v2', 'aave_v3'],
     nativeFailedAttemptExposureUsesMeasuredInputTokenGasEstimate: true,
     sponsoredGasExposureZeroOnlyWhenFundingModeIsSponsored: true,
     barrierIsNotAddedToReportedEconomics: true,
