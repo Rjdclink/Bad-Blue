@@ -38,6 +38,12 @@ export interface MonteCarloProfitabilityInput {
   measuredSlippageResidualsBps?: number[];
   measuredLatenciesMs?: number[];
   measuredJointResiduals?: MeasuredJointExecutionResidual[];
+  /**
+   * Advisory mode may simulate a measured zero/negative baseline so search can
+   * learn execution-risk and BPS-compression potential. It can never approve
+   * execution; authoritative execution callers retain deterministic net > 0.
+   */
+  advisoryOnly?: boolean;
 }
 
 export interface MonteCarloProfitabilityResult {
@@ -73,6 +79,11 @@ export interface MonteCarloProfitabilityResult {
 
 function assertFiniteNonNegative(label: string, value: number): number {
   if (!Number.isFinite(value) || value < 0) throw new Error(`${label} must be a finite non-negative number`);
+  return value;
+}
+
+function assertFiniteNumber(label: string, value: number): number {
+  if (!Number.isFinite(value)) throw new Error(`${label} must be a finite number`);
   return value;
 }
 
@@ -174,7 +185,7 @@ function correlatedFallbackShocks(distribution: MonteCarloDistribution, random: 
 
 export function runProfitabilityMonteCarlo(input: MonteCarloProfitabilityInput): MonteCarloProfitabilityResult {
   const notionalUsd = assertFiniteNonNegative('notionalUsd', input.notionalUsd);
-  const expectedNetProfitUsd = assertFiniteNonNegative('expectedNetProfitUsd', input.expectedNetProfitUsd);
+  const expectedNetProfitUsd = assertFiniteNumber('expectedNetProfitUsd', input.expectedNetProfitUsd);
   const estimatedExecutionCostUsd = assertFiniteNonNegative('estimatedExecutionCostUsd', input.estimatedExecutionCostUsd);
   const expectedSlippageBps = assertFiniteNonNegative('expectedSlippageBps', input.expectedSlippageBps);
   const quoteLatencyMs = assertFiniteNonNegative('quoteLatencyMs', input.quoteLatencyMs);
@@ -192,7 +203,7 @@ export function runProfitabilityMonteCarlo(input: MonteCarloProfitabilityInput):
   const policy = getMonteCarloPolicy({
     topology,
     notionalUsd,
-    deterministicNetProfitUsd: expectedNetProfitUsd,
+    deterministicNetProfitUsd: Math.max(0, expectedNetProfitUsd),
     confidence,
     quoteAgeMs: quoteLatencyMs,
     quoteMaxAgeMs,
@@ -232,7 +243,10 @@ export function runProfitabilityMonteCarlo(input: MonteCarloProfitabilityInput):
     reason,
   });
 
-  if (!(notionalUsd > 0) || !(expectedNetProfitUsd > 0)) {
+  if (!(notionalUsd > 0)) {
+    return emptyResult('Monte Carlo not admitted: measured notional must be positive');
+  }
+  if (!input.advisoryOnly && !(expectedNetProfitUsd > 0)) {
     return emptyResult('Monte Carlo not admitted: deterministic all-in net profit must be positive first');
   }
 
@@ -372,11 +386,12 @@ export function runProfitabilityMonteCarlo(input: MonteCarloProfitabilityInput):
   converged ||= halfWidth <= policy.targetProbabilityHalfWidth && stableTailBatches >= 2;
   const fillEvidenceSufficient = partialFillEvidenceSamples >= 8;
   const fillGate = !fillEvidenceSufficient || probabilityBothLegsFill >= policy.minimumBothLegsFillProbability;
-  const approved = profitableProbabilityInterval[0] >= policy.minimumProbabilityLowerBound &&
+  const approvedByPolicy = profitableProbabilityInterval[0] >= policy.minimumProbabilityLowerBound &&
     (!policy.requirePositiveP10 || p10NetProfitUsd > 0) && fillGate;
+  const approved = input.advisoryOnly !== true && expectedNetProfitUsd > 0 && approvedByPolicy;
   const distributionProvenance = policy.distribution === 'empirical_bootstrap'
-    ? `terminal_normalized_settlement_joint_bootstrap:${calibrationSamples}`
-    : `${policy.distribution}:cold_start_symmetric_correlated_fallback`;
+    ? `terminal_normalized_settlement_joint_bootstrap:${calibrationSamples}${input.advisoryOnly ? ':advisory_only' : ''}`
+    : `${policy.distribution}:cold_start_symmetric_correlated_fallback${input.advisoryOnly ? ':advisory_only' : ''}`;
 
   return {
     approved,
@@ -406,8 +421,10 @@ export function runProfitabilityMonteCarlo(input: MonteCarloProfitabilityInput):
     policyVersion: policy.policyVersion,
     executionHorizonMs: policy.executionHorizonMs,
     calibrationSamples,
-    reason: approved
-      ? `Monte Carlo approved by ${policy.policyVersion}: LCB ${(profitableProbabilityInterval[0] * 100).toFixed(1)}% >= ${(policy.minimumProbabilityLowerBound * 100).toFixed(1)}%; p10 net $${p10NetProfitUsd.toFixed(4)}; ES99 $${expectedShortfall99Usd.toFixed(4)}; ${samples} samples; ${distributionProvenance}`
-      : `Monte Carlo rejected by ${policy.policyVersion}: interval ${(profitableProbabilityInterval[0] * 100).toFixed(1)}-${(profitableProbabilityInterval[1] * 100).toFixed(1)}%; p10 net $${p10NetProfitUsd.toFixed(4)}; fill ${(probabilityBothLegsFill * 100).toFixed(1)}%; requires LCB ${(policy.minimumProbabilityLowerBound * 100).toFixed(1)}%${policy.requirePositiveP10 ? ' and positive p10' : ''}; ${samples} samples; ${distributionProvenance}`,
+    reason: input.advisoryOnly
+      ? `Advisory Monte Carlo only: deterministic baseline $${expectedNetProfitUsd.toFixed(4)}; P(profit) ${(profitableProbability * 100).toFixed(1)}%; p10 $${p10NetProfitUsd.toFixed(4)}; ${samples} samples; execution approval is intentionally disabled`
+      : approved
+        ? `Monte Carlo approved by ${policy.policyVersion}: LCB ${(profitableProbabilityInterval[0] * 100).toFixed(1)}% >= ${(policy.minimumProbabilityLowerBound * 100).toFixed(1)}%; p10 net $${p10NetProfitUsd.toFixed(4)}; ES99 $${expectedShortfall99Usd.toFixed(4)}; ${samples} samples; ${distributionProvenance}`
+        : `Monte Carlo rejected by ${policy.policyVersion}: interval ${(profitableProbabilityInterval[0] * 100).toFixed(1)}-${(profitableProbabilityInterval[1] * 100).toFixed(1)}%; p10 net $${p10NetProfitUsd.toFixed(4)}; fill ${(probabilityBothLegsFill * 100).toFixed(1)}%; requires LCB ${(policy.minimumProbabilityLowerBound * 100).toFixed(1)}%${policy.requirePositiveP10 ? ' and positive p10' : ''}; ${samples} samples; ${distributionProvenance}`,
   };
 }
