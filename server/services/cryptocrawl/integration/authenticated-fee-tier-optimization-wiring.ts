@@ -26,15 +26,21 @@ export interface AuthenticatedFeeTierSnapshot {
   source: 'kraken_trade_volume' | 'okx_trade_fee' | 'coinbase_transaction_summary';
 }
 
-let installed = false;
+const FEE_OVERLAY_MARK = Symbol.for('cryptocrawl.authenticated-fee-tier-overlay');
+let schedulerInstalled = false;
 let timer: NodeJS.Timeout | null = null;
 let scanInFlight: Promise<void> | null = null;
 let lastScanAt = 0;
+let refreshBackoff = 1;
 const latest = new Map<string, AuthenticatedFeeTierSnapshot>();
 
 function refreshMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_AUTHENTICATED_FEE_REFRESH_MS || 60_000);
   return Number.isFinite(parsed) ? Math.max(30_000, Math.min(300_000, Math.trunc(parsed))) : 60_000;
+}
+
+function effectiveRefreshMs(): number {
+  return Math.max(30_000, Math.min(300_000, Math.round(refreshMs() * refreshBackoff)));
 }
 
 function maxAgeMs(): number {
@@ -48,6 +54,16 @@ function key(venue: QuoteVenue, symbol: string): string {
 function finite(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function splitSpotSymbol(symbol: string): { base: string; quote: string } | null {
+  const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
+  return match ? { base: match[1], quote: match[2] } : null;
+}
+
+function krakenRequestPair(symbol: string): string {
+  const pair = splitSpotSymbol(symbol);
+  return pair ? `${pair.base}/${pair.quote}` : symbol;
 }
 
 function canonicalKrakenResponseSymbol(value: string): string {
@@ -87,7 +103,7 @@ async function scanKraken(symbols: readonly string[]): Promise<void> {
   const supported = await supportedSymbols('kraken', symbols);
   if (supported.length === 0) return;
   const result = await krakenPrivateRequest('/0/private/TradeVolume', {
-    pair: supported.join(','),
+    pair: supported.map(krakenRequestPair).join(','),
     'fee-info': 'true',
   }, { timeoutMs: 30_000 });
   const takerRows = result?.fees && typeof result.fees === 'object' ? result.fees : {};
@@ -132,9 +148,9 @@ async function scanOkx(symbols: readonly string[]): Promise<void> {
       const index = cursor++;
       if (index >= supported.length) return;
       const symbol = supported[index];
-      const match = symbol.match(/^([A-Z0-9]+)(USDT|USDC|USD)$/);
-      if (!match) continue;
-      const instId = `${match[1]}-${match[2]}`;
+      const pair = splitSpotSymbol(symbol);
+      if (!pair) continue;
+      const instId = `${pair.base}-${pair.quote}`;
       try {
         const { data } = await okxPrivateRequest('/api/v5/account/trade-fee', 'GET', {
           instType: 'SPOT',
@@ -221,6 +237,9 @@ async function scanOnce(symbolsInput?: readonly string[]): Promise<void> {
           ? (item.result.reason instanceof Error ? item.result.reason.message : String(item.result.reason))
           : '',
       }));
+    refreshBackoff = failures.length === 0
+      ? 1
+      : Math.min(5, Math.max(1.25, refreshBackoff * (failures.length === settled.length ? 1.75 : 1.25)));
     const rebates = [...latest.values()].filter(value => value.makerRebateActive && Date.now() - value.observedAt <= maxAgeMs());
     logger.info('[AuthenticatedFeeTier] Authenticated fee/rebate scan refreshed', {
       component: 'AuthenticatedFeeTierOptimizationWiring',
@@ -229,6 +248,7 @@ async function scanOnce(symbolsInput?: readonly string[]): Promise<void> {
       activeMakerRebates: rebates.map(item => ({ venue: item.venue, symbol: item.symbol, makerFeeBps: item.makerFeeBps })),
       failures,
       refreshMs: refreshMs(),
+      effectiveRefreshMs: effectiveRefreshMs(),
       modeSelectionAuthority: 'expected_realized_net_value_not_rebate_alone',
       minimumOrderNotionalTierAssumed: false,
     });
@@ -248,10 +268,20 @@ function feeFor(plan: VerifiedArbitragePlan, venue: QuoteVenue, side: 'buy' | 's
   return snapshot.takerFeeBps;
 }
 
+function feeSource(venue: QuoteVenue): CexFeeSource {
+  if (venue === 'kraken') return 'kraken_account_trade_volume';
+  if (venue === 'okx') return 'okx_account_trade_fee';
+  return 'coinbase_transaction_summary';
+}
+
+type CexFeeSource = NonNullable<VerifiedArbitragePlan['feeEvidence']>['buy']['source'];
+
 function reprice(plan: VerifiedArbitragePlan): VerifiedArbitragePlan {
+  const buySnapshot = fresh(plan.buyVenue, plan.symbol);
+  const sellSnapshot = fresh(plan.sellVenue, plan.symbol);
   const buyFeeBps = feeFor(plan, plan.buyVenue, 'buy');
   const sellFeeBps = feeFor(plan, plan.sellVenue, 'sell');
-  if (buyFeeBps === null || sellFeeBps === null) return plan;
+  if (!buySnapshot || !sellSnapshot || buyFeeBps === null || sellFeeBps === null) return plan;
   const buyNotional = plan.baseQty * plan.buyAsk;
   const sellNotional = plan.baseQty * plan.sellBid;
   const buyFeeUsd = buyNotional * buyFeeBps / 10_000;
@@ -267,18 +297,18 @@ function reprice(plan: VerifiedArbitragePlan): VerifiedArbitragePlan {
     costs: { ...plan.costs, buyFeeUsd, sellFeeUsd, totalCostsUsd },
     feeEvidence: {
       buy: {
-        takerFeeBps: fresh(plan.buyVenue, plan.symbol)?.takerFeeBps ?? plan.feeEvidence?.buy.takerFeeBps ?? 0,
+        takerFeeBps: buySnapshot.takerFeeBps,
         makerFeeBps: buyFeeBps >= 0 ? buyFeeBps : null,
         makerRebateBps: buyFeeBps < 0 ? Math.abs(buyFeeBps) : null,
-        source: plan.buyVenue === 'kraken' ? 'kraken_account_trade_volume' : plan.buyVenue === 'okx' ? 'okx_account_trade_fee' : 'coinbase_transaction_summary',
-        observedAt: fresh(plan.buyVenue, plan.symbol)?.observedAt ?? Date.now(),
+        source: feeSource(plan.buyVenue),
+        observedAt: buySnapshot.observedAt,
       },
       sell: {
-        takerFeeBps: fresh(plan.sellVenue, plan.symbol)?.takerFeeBps ?? plan.feeEvidence?.sell.takerFeeBps ?? 0,
+        takerFeeBps: sellSnapshot.takerFeeBps,
         makerFeeBps: sellFeeBps >= 0 ? sellFeeBps : null,
         makerRebateBps: sellFeeBps < 0 ? Math.abs(sellFeeBps) : null,
-        source: plan.sellVenue === 'kraken' ? 'kraken_account_trade_volume' : plan.sellVenue === 'okx' ? 'okx_account_trade_fee' : 'coinbase_transaction_summary',
-        observedAt: fresh(plan.sellVenue, plan.symbol)?.observedAt ?? Date.now(),
+        source: feeSource(plan.sellVenue),
+        observedAt: sellSnapshot.observedAt,
       },
     },
   };
@@ -295,13 +325,27 @@ function scheduleNext(): void {
     timer = null;
     await scanOnce().catch(() => undefined);
     scheduleNext();
-  }, refreshMs());
+  }, effectiveRefreshMs());
   timer.unref?.();
 }
 
+function ensureScheduler(): void {
+  if (schedulerInstalled) return;
+  schedulerInstalled = true;
+  void scanOnce().finally(scheduleNext);
+}
+
+function markOverlay<T extends Function>(fn: T): T {
+  Object.defineProperty(fn, FEE_OVERLAY_MARK, { value: true, configurable: false });
+  return fn;
+}
+
+function isOverlay(fn: Function): boolean {
+  return (fn as any)[FEE_OVERLAY_MARK] === true;
+}
+
 export function ensureAuthenticatedFeeTierOptimizationWiring(): void {
-  if (installed) return;
-  installed = true;
+  ensureScheduler();
 
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
     evaluateOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
@@ -311,33 +355,37 @@ export function ensureAuthenticatedFeeTierOptimizationWiring(): void {
       capacity?: ScanCapacityDecision,
     ) => Promise<Map<string, VerifiedArbitragePlan | null>>;
   };
-  const originalEvaluateOnce = verifier.evaluateOnce.bind(verifier);
-  const originalEvaluateMany = verifier.evaluateMany.bind(verifier);
 
-  verifier.evaluateOnce = async request => {
-    const symbol = String(request?.symbol || '').trim().toUpperCase();
-    if (Date.now() - lastScanAt >= refreshMs()) await scanOnce(symbol ? [symbol] : undefined).catch(() => undefined);
-    const plan = await originalEvaluateOnce(request);
-    if (!plan) return null;
-    const repriced = reprice(plan);
-    return Number.isFinite(repriced.netProfitUsd) && repriced.netProfitUsd > 0 ? repriced : null;
-  };
-
-  verifier.evaluateMany = async (request, symbols, capacity) => {
-    if (Date.now() - lastScanAt >= refreshMs()) await scanOnce(symbols).catch(() => undefined);
-    const plans = await originalEvaluateMany(request, symbols, capacity);
-    for (const [symbol, plan] of plans.entries()) {
-      if (!plan) continue;
+  if (!isOverlay(verifier.evaluateOnce)) {
+    const originalEvaluateOnce = verifier.evaluateOnce.bind(verifier);
+    verifier.evaluateOnce = markOverlay(async request => {
+      const symbol = String(request?.symbol || '').trim().toUpperCase();
+      if (Date.now() - lastScanAt >= effectiveRefreshMs()) await scanOnce(symbol ? [symbol] : undefined).catch(() => undefined);
+      const plan = await originalEvaluateOnce(request);
+      if (!plan) return null;
       const repriced = reprice(plan);
-      plans.set(symbol, Number.isFinite(repriced.netProfitUsd) && repriced.netProfitUsd > 0 ? repriced : null);
-    }
-    return plans;
-  };
+      return Number.isFinite(repriced.netProfitUsd) && repriced.netProfitUsd > 0 ? repriced : null;
+    });
+  }
 
-  void scanOnce().finally(scheduleNext);
+  if (!isOverlay(verifier.evaluateMany)) {
+    const originalEvaluateMany = verifier.evaluateMany.bind(verifier);
+    verifier.evaluateMany = markOverlay(async (request, symbols, capacity) => {
+      if (Date.now() - lastScanAt >= effectiveRefreshMs()) await scanOnce(symbols).catch(() => undefined);
+      const plans = await originalEvaluateMany(request, symbols, capacity);
+      for (const [symbol, plan] of plans.entries()) {
+        if (!plan) continue;
+        const repriced = reprice(plan);
+        plans.set(symbol, Number.isFinite(repriced.netProfitUsd) && repriced.netProfitUsd > 0 ? repriced : null);
+      }
+      return plans;
+    });
+  }
+
   logger.info('[AuthenticatedFeeTier] Dynamic authenticated fee-tier overlay installed', {
     component: 'AuthenticatedFeeTierOptimizationWiring',
     refreshMs: refreshMs(),
+    effectiveRefreshMs: effectiveRefreshMs(),
     krakenAuthority: 'POST_/0/private/TradeVolume_batched_pairs',
     okxAuthority: 'GET_/api/v5/account/trade-fee_exact_instId_rate_governed',
     coinbaseAuthority: 'GET_/api/v3/brokerage/transaction_summary',
@@ -346,6 +394,7 @@ export function ensureAuthenticatedFeeTierOptimizationWiring(): void {
     rebateAloneCanForceMakerMode: false,
     modeSelectionRule: 'highest_positive_expected_realized_net_after_fill_queue_and_cost_risk',
     configuredFeeFallbackStillPreserved: true,
+    wrapperOrderResilient: true,
     executionAuthority: false,
   });
 }
