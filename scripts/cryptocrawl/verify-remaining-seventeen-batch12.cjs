@@ -15,6 +15,7 @@ const calibration = read('server/services/cryptocrawl/learning/settlement-profit
 const memory = read('server/services/cryptocrawl/intelligence/canonical-intelligence-repository.ts');
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
 const atomicSize = read('server/services/cryptocrawl/execution/adapters/atomic-size-optimizer.ts');
+const zeroCapitalSizing = read('server/services/cryptocrawl/integration/zero-capital-size-refinement-wiring.ts');
 const retainedProfit = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
 const runtime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 
@@ -51,6 +52,12 @@ assert(dynamicRoutes.includes('truePositiveQuotes = quotes.filter(quote => quote
 assert(dynamicRoutes.includes('state.measuredQuotes += quotes.length'), 'measured quote count must reflect actual measured quotes');
 assert(atomicSize.includes('profit > 0n') && atomicSize.includes('bestPositive'), 'atomic size optimizer must prefer strict-positive measured dollar profit');
 assert(atomicSize.includes('bpsToBreakEven') && atomicSize.includes('bestNearMiss'), 'all-negative atomic size fallback must preserve the closest measured BPS near miss only');
+assert(zeroCapitalSizing.includes("ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000"), 'zero-capital Stage-1 discovery must retain a bounded shadow sizing ceiling');
+assert(zeroCapitalSizing.includes('const maximumNotionalUsd = stageCanExecute && stage.maxPositionSizeUSD > 0'), 'zero-capital sizing must separate discovery measurement from executable stage sizing');
+assert(zeroCapitalSizing.includes('? Math.min(stage.maxPositionSizeUSD, discoveryCeiling)') && zeroCapitalSizing.includes(': discoveryCeiling;'), 'Stage-1 zero-capital measurement must be able to probe its discovery ceiling while Stage2+ remains stage-bounded');
+assert(zeroCapitalSizing.includes('stage1ShadowDiscoveryExecutionAuthority: false'), 'Stage-1 zero-capital shadow sizing must never grant execution authority');
+assert(zeroCapitalSizing.includes('negativeObservationExecutionAuthority: false'), 'negative zero-capital observations must remain non-executable');
+assert(zeroCapitalSizing.includes('profitInterpolationUsed: false'), 'zero-capital refinement must use independently quoted economics rather than interpolation');
 
 // Retained profits stay retained and durable; retry does not authorize payout.
 assert(retainedProfit.includes('ON CONFLICT (event_id) DO NOTHING'), 'retained-profit terminal events must be idempotent');
@@ -61,6 +68,7 @@ assert(retainedProfit.includes('externalPayoutAuthorized: false'), 'retained-pro
 assert(runtime.includes('ensureInventoryConstrainedCexExecutionWiring();'), 'inventory-constrained CEX execution wiring must be installed');
 assert(runtime.includes('ensureCrossVenueTimingGuardWiring();'), 'cross-venue timing guard must be installed');
 assert(runtime.includes('ensureMeasuredCandidateExpiryGuardWiring();'), 'candidate expiry guard must be installed');
+assert(runtime.includes('ensureZeroCapitalSizeRefinementWiring();'), 'zero-capital size refinement wiring must be installed');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
 
-console.log('[remaining-seventeen-batch12] PASS: implemented CEX topology, exact inventory economics, synchronized timing, expiry/resource safety, terminal learning, zero-capital truth, atomic sizing, and retained-profit invariants preserved');
+console.log('[remaining-seventeen-batch12] PASS: implemented CEX topology, exact inventory economics, synchronized timing, expiry/resource safety, terminal learning, bounded Stage-1 zero-capital shadow sizing, atomic quote truth, and retained-profit invariants preserved');
