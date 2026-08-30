@@ -3,12 +3,6 @@ import { workloadRouter } from '../../computationalBeam/workloadRouter.js';
 import { ComputeLayer, TaskIntensity, TaskPriority, TaskType, type Task } from '../../computationalBeam/types.js';
 import { getAdaptiveProfitOperatingEnvelope } from '../governance/adaptive-profit-operating-envelope.js';
 import { getAntennaProviderQualitySummary } from '../intelligence/sovereign-antenna-quality.js';
-import { getComputationalProfitAdvisory } from '../optimization/computational-profit-advisory-state.js';
-import {
-  ensureCryptaraAdaptiveStrategyHydrated,
-  getCryptaraAdaptiveStrategySnapshot,
-} from '../optimization/cryptara-adaptive-strategy-state.js';
-import type { CryptaraPriorityDecisionVector } from '../optimization/cryptara-decision-priority.js';
 import { getCryptaraProviderConsensusSnapshot } from './cryptara-provider-consensus-wiring.js';
 
 export interface CryptaraParallelCognitionFrame {
@@ -28,20 +22,16 @@ export interface CryptaraParallelCognitionFrame {
     reasons: string[];
   };
   optimization: {
-    deterministicNetProfitUsd: number | null;
+    deterministicNetProfitUsd: number;
     netProfitBps: number | null;
     bpsToBreakEven: number | null;
     expectedSlippageBps: number | null;
-    quoteAgeMs: number | null;
+    quoteAgeMs: number;
     requestedNotionalUsd: number | null;
     executableNotionalUsd: number | null;
     profitLadderMaxNotionalUsd: number;
-    cryptaraBoundedTargetNotionalUsd: number;
-    adaptiveNotionalBias: number;
-    refinementDensity: number;
-    prefetchAggression: number;
+    boundedTargetNotionalUsd: number;
   };
-  decisionVector: CryptaraPriorityDecisionVector;
   helpers: {
     marketTruth: 'cryptara_market_truth_helper';
     optimization: 'cryptara_profit_efficiency_helper';
@@ -53,11 +43,8 @@ export interface CryptaraParallelCognitionFrame {
 }
 
 type MarketTruthInput = {
-  opportunityId: string;
-  observedAt: number;
-  quoteAgeMs: number | null;
+  quoteAgeMs: number;
   maxQuoteAgeMs: number;
-  hasPlan: boolean;
   measuredDepth: boolean;
   authenticatedFees: boolean;
   executableNotionalUsd: number | null;
@@ -68,21 +55,25 @@ type MarketTruthInput = {
 };
 
 type OptimizationInput = {
-  deterministicNetProfitUsd: number | null;
+  deterministicNetProfitUsd: number;
   notionalUsd: number | null;
   requestedNotionalUsd: number | null;
   executableNotionalUsd: number | null;
   expectedSlippageBps: number | null;
-  quoteAgeMs: number | null;
+  quoteAgeMs: number;
   profitLadderMaxNotionalUsd: number;
-  notionalBias: number;
-  refinementDensity: number;
-  prefetchAggression: number;
+};
+
+type PendingHelper = {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
 };
 
 const frames = new Map<string, CryptaraParallelCognitionFrame>();
 const inFlight = new Map<string, Promise<void>>();
+const pendingHelpers = new Map<string, PendingHelper>();
 const MAX_FRAMES = Math.max(64, Math.min(4096, Number(process.env.CRYPTARA_PARALLEL_COGNITION_FRAMES || 512)));
+let helperEventBridgeInstalled = false;
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 
@@ -90,9 +81,22 @@ function keyOf(context: Pick<CryptaraOpportunityContext, 'opportunityId' | 'obse
   return `${context.opportunityId}:${context.observedAt}`;
 }
 
-function helperDeadlineAt(context: CryptaraOpportunityContext): number {
-  const maxQuoteAgeMs = Math.max(250, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
-  return context.observedAt + maxQuoteAgeMs;
+function maxQuoteAgeMs(): number {
+  const configured = Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000);
+  return Number.isFinite(configured) ? Math.max(250, Math.min(15_000, configured)) : 5_000;
+}
+
+function currentQuoteAgeMs(context: CryptaraOpportunityContext, now = Date.now()): number | null {
+  const plan = context.plan;
+  if (!plan || !Number.isFinite(plan.quoteAgeMs)) return null;
+  return Math.max(0, plan.quoteAgeMs + Math.max(0, now - context.observedAt));
+}
+
+function helperDeadlineAt(context: CryptaraOpportunityContext): number | null {
+  const currentAge = currentQuoteAgeMs(context);
+  if (currentAge === null) return null;
+  const remainingMs = maxQuoteAgeMs() - currentAge;
+  return remainingMs > 0 ? Date.now() + remainingMs : null;
 }
 
 function isOptionalEnrichment(item: string, context: CryptaraOpportunityContext): boolean {
@@ -103,21 +107,20 @@ function isOptionalEnrichment(item: string, context: CryptaraOpportunityContext)
 }
 
 function marketTruthHelper(input: MarketTruthInput) {
-  const quoteFresh = input.hasPlan && input.quoteAgeMs !== null && input.quoteAgeMs <= input.maxQuoteAgeMs;
+  const quoteFresh = input.quoteAgeMs <= input.maxQuoteAgeMs;
   const antennaQuality = input.antennaQuality.length > 0
     ? input.antennaQuality.reduce((sum, item) => sum + item.quality, 0) / input.antennaQuality.length
     : null;
   const providerQuality = input.providerConsensusQuality;
-  const coreEvidenceReady = input.hasPlan
-    && quoteFresh
+  const ready = quoteFresh
     && input.measuredDepth
     && input.authenticatedFees
     && input.criticalMissingInformation.length === 0
     && input.executableNotionalUsd !== null
     && input.executableNotionalUsd > 0;
 
-  // Provider consensus/antenna quality strengthens confidence but cannot replace
-  // direct executable books, authenticated fees or measured depth.
+  // Provider quality strengthens confidence but never substitutes for direct
+  // executable quotes, measured depth, authenticated fees, or executable size.
   const qualitySupport = antennaQuality === null && providerQuality === null
     ? 0.5
     : Math.max(0, Math.min(1, ((antennaQuality ?? 0.5) + (providerQuality ?? 0.5)) / 2));
@@ -129,7 +132,6 @@ function marketTruthHelper(input: MarketTruthInput) {
     + qualitySupport * 0.15,
   );
   const reasons: string[] = [];
-  if (!input.hasPlan) reasons.push('verified_plan_missing');
   if (!quoteFresh) reasons.push('fresh_quote_missing');
   if (!input.measuredDepth) reasons.push('measured_depth_missing');
   if (!input.authenticatedFees) reasons.push('authenticated_fee_evidence_missing');
@@ -137,7 +139,7 @@ function marketTruthHelper(input: MarketTruthInput) {
   if (!(input.executableNotionalUsd !== null && input.executableNotionalUsd > 0)) reasons.push('executable_notional_missing');
 
   return {
-    ready: coreEvidenceReady,
+    ready,
     score: Number(score.toFixed(6)),
     quoteFresh,
     measuredDepth: input.measuredDepth,
@@ -152,18 +154,14 @@ function marketTruthHelper(input: MarketTruthInput) {
 
 function optimizationHelper(input: OptimizationInput) {
   const notional = input.notionalUsd !== null && input.notionalUsd > 0 ? input.notionalUsd : null;
-  const net = input.deterministicNetProfitUsd;
-  const netProfitBps = notional !== null && net !== null && Number.isFinite(net)
-    ? net / notional * 10_000
+  const netProfitBps = notional !== null
+    ? input.deterministicNetProfitUsd / notional * 10_000
     : null;
   const bpsToBreakEven = netProfitBps === null ? null : Math.max(0, -netProfitBps);
   const ladderMax = Math.max(0, input.profitLadderMaxNotionalUsd);
   const executable = Math.max(0, input.executableNotionalUsd ?? input.requestedNotionalUsd ?? input.notionalUsd ?? 0);
-  const target = ladderMax > 0
-    ? Math.min(executable, ladderMax * Math.max(0.10, Math.min(1, input.notionalBias)))
-    : 0;
   return {
-    deterministicNetProfitUsd: net,
+    deterministicNetProfitUsd: input.deterministicNetProfitUsd,
     netProfitBps: netProfitBps === null ? null : Number(netProfitBps.toFixed(8)),
     bpsToBreakEven: bpsToBreakEven === null ? null : Number(bpsToBreakEven.toFixed(8)),
     expectedSlippageBps: input.expectedSlippageBps,
@@ -171,11 +169,30 @@ function optimizationHelper(input: OptimizationInput) {
     requestedNotionalUsd: input.requestedNotionalUsd,
     executableNotionalUsd: input.executableNotionalUsd,
     profitLadderMaxNotionalUsd: ladderMax,
-    cryptaraBoundedTargetNotionalUsd: Math.max(0, target),
-    adaptiveNotionalBias: input.notionalBias,
-    refinementDensity: input.refinementDensity,
-    prefetchAggression: input.prefetchAggression,
+    boundedTargetNotionalUsd: ladderMax > 0 ? Math.min(executable, ladderMax) : 0,
   };
+}
+
+function ensureHelperEventBridge(): void {
+  if (helperEventBridgeInstalled) return;
+  helperEventBridgeInstalled = true;
+  workloadRouter.on('task-completed', (event: { taskId: string; result?: unknown }) => {
+    const pending = pendingHelpers.get(event.taskId);
+    if (!pending) return;
+    pendingHelpers.delete(event.taskId);
+    const outcome = event.result ?? workloadRouter.consumeTaskOutcome(event.taskId)?.result;
+    if (outcome === null || outcome === undefined) {
+      pending.reject(new Error(`CRYPTARA_HELPER_INVALID_RESULT:${event.taskId}`));
+      return;
+    }
+    pending.resolve(outcome);
+  });
+  workloadRouter.on('task-failed', (event: { taskId: string; error?: string }) => {
+    const pending = pendingHelpers.get(event.taskId);
+    if (!pending) return;
+    pendingHelpers.delete(event.taskId);
+    pending.reject(new Error(event.error || `CRYPTARA_HELPER_FAILED:${event.taskId}`));
+  });
 }
 
 async function runBeamHelper<Input, Output>(
@@ -183,25 +200,8 @@ async function runBeamHelper<Input, Output>(
   input: Input,
   execute: (input: Input) => Output,
 ): Promise<Output> {
+  ensureHelperEventBridge();
   return new Promise<Output>((resolve, reject) => {
-    let settled = false;
-    const cleanup = () => {
-      workloadRouter.off('task-completed', completed);
-      workloadRouter.off('task-failed', failed);
-    };
-    const completed = (event: { taskId: string; result?: unknown }) => {
-      if (settled || event.taskId !== task.id) return;
-      settled = true;
-      cleanup();
-      const outcome = event.result ?? workloadRouter.consumeTaskOutcome(task.id)?.result;
-      resolve(outcome as Output);
-    };
-    const failed = (event: { taskId: string; error?: string }) => {
-      if (settled || event.taskId !== task.id) return;
-      settled = true;
-      cleanup();
-      reject(new Error(event.error || `CRYPTARA_HELPER_FAILED:${task.id}`));
-    };
     task.workload = {
       id: `cryptara-helper:${task.id}`,
       type: String(task.payload?.helper || 'cryptara_helper'),
@@ -210,39 +210,38 @@ async function runBeamHelper<Input, Output>(
       execute: immutableInput => execute(immutableInput as Input),
       validate: result => result !== null && result !== undefined,
     };
-    workloadRouter.on('task-completed', completed);
-    workloadRouter.on('task-failed', failed);
+    pendingHelpers.set(task.id, {
+      resolve: value => resolve(value as Output),
+      reject,
+    });
     void workloadRouter.routeTask(task).catch(error => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error instanceof Error ? error : new Error(String(error)));
+      const pending = pendingHelpers.get(task.id);
+      if (!pending) return;
+      pendingHelpers.delete(task.id);
+      pending.reject(error instanceof Error ? error : new Error(String(error)));
     });
   });
 }
 
-function buildInputs(context: CryptaraOpportunityContext): { market: MarketTruthInput; optimization: OptimizationInput } {
+function buildInputs(context: CryptaraOpportunityContext): { market: MarketTruthInput; optimization: OptimizationInput } | null {
   const plan = context.plan;
-  const maxQuoteAgeMs = Math.max(250, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
+  if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) return null;
+  const quoteAgeMs = currentQuoteAgeMs(context);
+  if (quoteAgeMs === null) return null;
   const antenna = getAntennaProviderQualitySummary();
   const consensus = getCryptaraProviderConsensusSnapshot(context.opportunityId);
   const envelope = getAdaptiveProfitOperatingEnvelope();
-  const advisory = getComputationalProfitAdvisory();
-  const adaptive = getCryptaraAdaptiveStrategySnapshot();
   const criticalMissing = context.missingInformation.filter(item => !isOptionalEnrichment(item, context));
-  const expectedSlippageBps = plan && plan.expectedSlippageBps !== null && Number.isFinite(plan.expectedSlippageBps)
+  const expectedSlippageBps = plan.expectedSlippageBps !== null && Number.isFinite(plan.expectedSlippageBps)
     ? plan.expectedSlippageBps
     : null;
   return {
     market: {
-      opportunityId: context.opportunityId,
-      observedAt: context.observedAt,
-      quoteAgeMs: plan && Number.isFinite(plan.quoteAgeMs) ? Math.max(0, plan.quoteAgeMs) : null,
-      maxQuoteAgeMs,
-      hasPlan: !!plan,
-      measuredDepth: plan?.liquidity.status === 'measured',
-      authenticatedFees: !!plan?.feeEvidence?.buy && !!plan?.feeEvidence?.sell,
-      executableNotionalUsd: plan && Number.isFinite(plan.executableNotionalUsd) ? plan.executableNotionalUsd : null,
+      quoteAgeMs,
+      maxQuoteAgeMs: maxQuoteAgeMs(),
+      measuredDepth: plan.liquidity.status === 'measured',
+      authenticatedFees: !!plan.feeEvidence?.buy && !!plan.feeEvidence?.sell,
+      executableNotionalUsd: Number.isFinite(plan.executableNotionalUsd) ? plan.executableNotionalUsd : null,
       criticalMissingInformation: [...criticalMissing],
       antennaQuality: antenna.map(item => ({
         quality: item.confidenceAdjustedQualityScore,
@@ -252,39 +251,34 @@ function buildInputs(context: CryptaraOpportunityContext): { market: MarketTruth
       providerConsensusState: consensus?.state ?? null,
     },
     optimization: {
-      deterministicNetProfitUsd: plan && Number.isFinite(plan.netProfitUsd) ? plan.netProfitUsd : null,
-      notionalUsd: plan && Number.isFinite(plan.notionalUsd) ? plan.notionalUsd : null,
-      requestedNotionalUsd: plan && Number.isFinite(plan.requestedNotionalUsd) ? plan.requestedNotionalUsd : null,
-      executableNotionalUsd: plan && Number.isFinite(plan.executableNotionalUsd) ? plan.executableNotionalUsd : null,
+      deterministicNetProfitUsd: plan.netProfitUsd,
+      notionalUsd: Number.isFinite(plan.notionalUsd) ? plan.notionalUsd : null,
+      requestedNotionalUsd: Number.isFinite(plan.requestedNotionalUsd) ? plan.requestedNotionalUsd : null,
+      executableNotionalUsd: Number.isFinite(plan.executableNotionalUsd) ? plan.executableNotionalUsd : null,
       expectedSlippageBps,
-      quoteAgeMs: plan && Number.isFinite(plan.quoteAgeMs) ? Math.max(0, plan.quoteAgeMs) : null,
-      profitLadderMaxNotionalUsd: Math.max(
-        0,
-        Number(envelope.recommendedMaxNotionalUsd) || 0,
-        Number(advisory.profitLadderMaxNotionalUsd) || 0,
-      ),
-      notionalBias: adaptive.notionalBias,
-      refinementDensity: adaptive.refinementDensity,
-      prefetchAggression: adaptive.prefetchAggression,
+      quoteAgeMs,
+      profitLadderMaxNotionalUsd: Math.max(0, Number(envelope.recommendedMaxNotionalUsd) || 0),
     },
   };
 }
 
 async function calculateFrame(context: CryptaraOpportunityContext): Promise<void> {
-  await ensureCryptaraAdaptiveStrategyHydrated().catch(() => undefined);
   const immutable = structuredClone(context);
   const deadlineAt = helperDeadlineAt(immutable);
-  if (Date.now() >= deadlineAt) return;
   const inputs = buildInputs(immutable);
+  if (deadlineAt === null || inputs === null || Date.now() >= deadlineAt) return;
 
+  // These are small read-only arithmetic/evidence workloads. They still route
+  // through Beam/Quanti so the two lanes can run concurrently, but remain on the
+  // warm lane below authoritative Monte Carlo instead of competing as ultra-hot work.
   const marketTask = workloadRouter.createTask(TaskType.ML_PREDICTION, {
     helper: 'cryptara_market_truth_helper',
     quantiDeadlineAt: deadlineAt,
     quantiParallelismHint: 1,
     quantiUsefulWorkUnits: 1,
   }, {
-    intensity: TaskIntensity.HEAVY,
-    priority: TaskPriority.CRITICAL,
+    intensity: TaskIntensity.MODERATE,
+    priority: TaskPriority.HIGH,
     requiredLayer: ComputeLayer.BEAM,
   });
   const optimizationTask = workloadRouter.createTask(TaskType.ML_PREDICTION, {
@@ -293,8 +287,8 @@ async function calculateFrame(context: CryptaraOpportunityContext): Promise<void
     quantiParallelismHint: 1,
     quantiUsefulWorkUnits: 1,
   }, {
-    intensity: TaskIntensity.HEAVY,
-    priority: TaskPriority.HIGH,
+    intensity: TaskIntensity.MODERATE,
+    priority: TaskPriority.MEDIUM,
     requiredLayer: ComputeLayer.BEAM,
   });
 
@@ -303,25 +297,13 @@ async function calculateFrame(context: CryptaraOpportunityContext): Promise<void
     runBeamHelper(optimizationTask, inputs.optimization, optimizationHelper),
   ]);
   if (marketResult.status !== 'fulfilled' || optimizationResult.status !== 'fulfilled') return;
-  const marketTruth = marketResult.value;
-  const optimization = optimizationResult.value;
+
   const frame: CryptaraParallelCognitionFrame = {
     opportunityId: immutable.opportunityId,
     observedAt: immutable.observedAt,
     completedAt: Date.now(),
-    marketTruth,
-    optimization,
-    decisionVector: {
-      marketTruthReady: marketTruth.ready,
-      marketTruthScore: marketTruth.score,
-      deterministicNetProfitUsd: optimization.deterministicNetProfitUsd,
-      netProfitBps: optimization.netProfitBps,
-      bpsToBreakEven: optimization.bpsToBreakEven,
-      latencyMs: optimization.quoteAgeMs,
-      slippageBps: optimization.expectedSlippageBps,
-      executableNotionalUsd: optimization.cryptaraBoundedTargetNotionalUsd,
-      profitLadderMaxNotionalUsd: optimization.profitLadderMaxNotionalUsd,
-    },
+    marketTruth: marketResult.value,
+    optimization: optimizationResult.value,
     helpers: {
       marketTruth: 'cryptara_market_truth_helper',
       optimization: 'cryptara_profit_efficiency_helper',
@@ -336,11 +318,13 @@ async function calculateFrame(context: CryptaraOpportunityContext): Promise<void
 }
 
 /**
- * Starts the two Cryptara helper lanes without awaiting them. They execute in
- * parallel with Monte Carlo/assessment work and are deadline-bound to the same
- * quote lifetime. This function adds no market/network requests.
+ * Starts two bounded read-only helper lanes only for deterministic-positive plans.
+ * The caller never waits for them. A helper frame can affect the same observation
+ * only if it completes before the authoritative assessment returns; stale prior
+ * observations are never substituted into a newer decision.
  */
 export function prewarmCryptaraParallelCognition(context: CryptaraOpportunityContext): void {
+  if (!context.plan || !Number.isFinite(context.plan.netProfitUsd) || context.plan.netProfitUsd <= 0) return;
   const key = keyOf(context);
   if (frames.has(key) || inFlight.has(key)) return;
   const work = calculateFrame(context).finally(() => inFlight.delete(key));
@@ -366,10 +350,14 @@ export function getCryptaraParallelCognitionStatus() {
   return {
     cachedFrames: frames.size,
     inFlight: inFlight.size,
+    pendingHelpers: pendingHelpers.size,
     helperCount: 2,
     helpers: ['cryptara_market_truth_helper', 'cryptara_profit_efficiency_helper'],
+    helperEventListeners: 2,
+    helperComputeLane: 'quanti_warm_below_authoritative_monte_carlo',
     executionAuthority: false,
     writeAuthority: false,
+    staleFrameSubstitutionAllowed: false,
     hotPathNetworkRequestsAdded: false,
   };
 }
