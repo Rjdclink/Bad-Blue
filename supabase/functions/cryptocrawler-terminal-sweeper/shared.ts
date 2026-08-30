@@ -18,6 +18,8 @@ export type Control = {
   terminal_detection_not_before: string | null;
   last_seen_active_at: string | null;
   retained_profit_usd: number | string;
+  profitable_payout_sequence?: number | string;
+  last_profit_payout_scheduled_at?: string | null;
 };
 
 export type PayoutJob = {
@@ -26,6 +28,10 @@ export type PayoutJob = {
   realized_profit_usd: number | string;
   payout_target_usd: number | string;
   retained_target_usd: number | string;
+  payout_fraction: number | string | null;
+  retained_fraction: number | string | null;
+  payout_sequence: number | string | null;
+  scheduled_not_before: string | null;
   payout_paid_usd: number | string;
   payout_paid_eth: number | string;
   payout_transactions: Array<Record<string, unknown>> | null;
@@ -33,6 +39,7 @@ export type PayoutJob = {
   payout_network: 'ethereum';
   status: PayoutStatus;
   source_venue: string | null;
+  source_asset: string | null;
   quote_asset: string | null;
   conversion_client_id: string | null;
   conversion_trade_id: string | null;
