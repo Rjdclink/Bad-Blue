@@ -14,7 +14,7 @@ import {
 
 const log = createLogger('AuthoritativeMonteCarloWiring');
 const installed = new WeakSet<object>();
-export const AUTHORITATIVE_LIVE_MC_MODEL_VERSION = 'cryptocrawl-authoritative-live-mc-1.0.0';
+export const AUTHORITATIVE_LIVE_MC_MODEL_VERSION = 'cryptocrawl-authoritative-live-mc-1.1.0';
 
 type LiveEvidence = {
   simulationId: string;
@@ -86,11 +86,26 @@ function topology(context: CryptaraOpportunityContext): MonteCarloTopology {
   return 'CEX_CEX';
 }
 
-function technicalEvidence(context: CryptaraOpportunityContext): { ready: boolean; ageMs: number | null; missing: string[] } {
+function technicalEvidence(context: CryptaraOpportunityContext): { ready: boolean; ageMs: number | null; missing: string[]; required: boolean } {
   const technical = context.tradingView;
-  if (!technical) return { ready: false, ageMs: null, missing: ['live_technical_analysis'] };
+  const mcTopology = topology(context);
+
+  // CEX arbitrage is non-directional and its execution truth is the current
+  // executable venue pair: synchronized books, authenticated fees, measured
+  // depth, exact size, freshness and settlement capability. Directional TA may
+  // enrich search/ranking, but it must not veto an otherwise complete CEX plan.
+  // Cross-chain/on-chain topologies keep the existing technical-evidence rule.
+  if (mcTopology === 'CEX_CEX') {
+    if (!technical) return { ready: false, ageMs: null, missing: [], required: false };
+    const ageMs = Math.max(0, Date.now() - technical.sourceTimestamp);
+    const maxAgeMs = Math.max(30_000, Number(process.env.TRADINGVIEW_DATA_TTL_MS || 300_000));
+    const ready = technical.dataProvenance !== 'deterministic-fallback' && ageMs <= maxAgeMs;
+    return { ready, ageMs, missing: [], required: false };
+  }
+
+  if (!technical) return { ready: false, ageMs: null, missing: ['live_technical_analysis'], required: true };
   if (technical.dataProvenance === 'deterministic-fallback') {
-    return { ready: false, ageMs: Math.max(0, Date.now() - technical.sourceTimestamp), missing: ['live_technical_analysis'] };
+    return { ready: false, ageMs: Math.max(0, Date.now() - technical.sourceTimestamp), missing: ['live_technical_analysis'], required: true };
   }
   const ageMs = Math.max(0, Date.now() - technical.sourceTimestamp);
   const maxAgeMs = Math.max(30_000, Number(process.env.TRADINGVIEW_DATA_TTL_MS || 300_000));
@@ -98,7 +113,14 @@ function technicalEvidence(context: CryptaraOpportunityContext): { ready: boolea
     ready: ageMs <= maxAgeMs,
     ageMs,
     missing: ageMs <= maxAgeMs ? [] : ['fresh_live_technical_analysis'],
+    required: true,
   };
+}
+
+function authenticatedFeeEvidence(context: CryptaraOpportunityContext): boolean {
+  const evidence = context.plan?.feeEvidence;
+  if (!evidence) return false;
+  return evidence.buy.source !== 'configured_override' && evidence.sell.source !== 'configured_override';
 }
 
 function liquidityCoverage(context: CryptaraOpportunityContext): number {
@@ -182,8 +204,10 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
     const technical = technicalEvidence(context);
     const missing = [
       ...technical.missing,
-      ...(!plan.feeEvidence ? ['authenticated_fee_evidence'] : []),
+      ...(!authenticatedFeeEvidence(context) ? ['authenticated_fee_evidence'] : []),
       ...(plan.liquidity.status !== 'measured' ? ['measured_liquidity'] : []),
+      ...(!Number.isFinite(plan.expectedSlippageBps) ? ['measured_slippage_or_impact'] : []),
+      ...(!Number.isFinite(plan.expectedPriceImpactBps) ? ['measured_slippage_or_impact'] : []),
     ];
     if (missing.length > 0) throw new Error(`EVIDENCE_INCOMPLETE: ${[...new Set(missing)].join(',')}`);
 
@@ -275,7 +299,7 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
         p1: result.p1NetProfitUsd / scale,
         worst: result.worstNetProfitUsd / scale,
         maxDrawdown: Math.max(0, -result.worstNetProfitUsd / scale),
-        marketRegime: 'execution_calibrated',
+        marketRegime: mcTopology === 'CEX_CEX' ? 'execution_microstructure' : 'execution_calibrated',
         confidence,
         distribution: result.distribution,
         distributionProvenance: result.distributionProvenance,
@@ -325,7 +349,10 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
           'deterministic_positive_economics',
           'measured_order_book',
           'authenticated_fee_evidence',
-          technical.ready ? 'fresh_live_or_cached_from_live_technical' : 'technical_unavailable',
+          'measured_slippage_and_price_impact',
+          mcTopology === 'CEX_CEX'
+            ? (technical.ready ? 'technical_advisory_available' : 'technical_advisory_not_required')
+            : (technical.ready ? 'fresh_live_or_cached_from_live_technical' : 'technical_unavailable'),
           ...calibration.provenance,
         ],
       });
@@ -343,6 +370,8 @@ export function ensureAuthoritativeMonteCarloWiring(): Cryptara {
     livePolicy: 'monte-carlo-policy',
     terminalCalibration: true,
     empiricalJointResiduals: true,
+    cexTechnicalAnalysisRole: 'advisory_not_execution_gate',
+    cexExecutionCriticalEvidence: ['deterministic_positive_economics', 'authenticated_fee_evidence', 'measured_liquidity', 'measured_slippage_or_impact', 'quote_freshness'],
     legacyHyperRole: 'training_compatibility_only',
     legacyGeneralMonteCarloRole: 'non_authoritative_compatibility',
     deterministicPositiveGate: true,
