@@ -40,6 +40,7 @@ import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provi
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
 import { ensureZeroCapitalDynamicAttemptBarrierWiring } from './zero-capital-dynamic-attempt-barrier-wiring.js';
 import { ensureProviderSpecificZeroCapitalExecutionWiring } from './provider-specific-zero-capital-execution-wiring.js';
+import { ensureDualProviderZeroCapitalExecutionWiring } from './dual-provider-zero-capital-execution-wiring.js';
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
@@ -111,6 +112,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureZeroCapitalProfitabilityRescueV2();
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
+  ensureDualProviderZeroCapitalExecutionWiring();
   ensureZeroCapitalAtomicStackWiring();
   ensureZeroCapitalDynamicAttemptBarrierWiring();
   ensureAlchemyStandardRpcFirstWiring();
@@ -195,11 +197,13 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     zeroCapitalRuntimeLifecycle: 'cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
     zeroCapitalSizeOptimization: 'coarse_independent_quotes_plus_bounded_fresh_local_refinement_plus_exact_provider_size_rescue_plus_profitability_rescue_v2',
     zeroCapitalProfitabilityRescue: 'decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
-    zeroCapitalFlashLoanEconomics: 'measured_provider_fee_and_liquidity',
-    zeroCapitalProviderExecution: 'verified_provider_receiver_permission_binding',
+    zeroCapitalFlashLoanEconomics: 'measured_single_provider_fee_liquidity_plus_combined_aave_balancer_liquidity_rescue',
+    zeroCapitalProviderExecution: 'verified_balancer_aave_or_dual_receiver_permission_binding',
+    zeroCapitalProviderMesh: 'balancer_or_aave_or_balancer_outer_plus_nested_aave_when_combined_liquidity_unlocks_exact_size',
+    zeroCapitalProviderMeshSinglePreferredWhenSufficient: true,
     zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
     zeroCapitalAtomicStackExecutionAuthority: false,
-    zeroCapitalDynamicAttemptBarrier: 'exact_eth_call_plus_exact_gas_estimate_then_dynamic_profit_cushion_vs_failed_attempt_exposure_defer_and_requote',
+    zeroCapitalDynamicAttemptBarrier: 'exact_provider_specific_eth_call_plus_exact_gas_estimate_then_dynamic_profit_cushion_vs_failed_attempt_exposure_defer_and_requote',
     zeroCapitalDynamicAttemptBarrierExecutionAuthority: false,
     zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
     zeroCapitalWorkOrdering: 'expected_net_profit_per_scarcity_unit_with_expiry_urgency_scheduling_only',
