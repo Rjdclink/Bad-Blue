@@ -1,0 +1,30 @@
+name: Hybrid repair validation (temporary)
+
+on:
+  push:
+    branches:
+      - fix/hybrid-stage-profit-capture-20260830
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: TypeScript check
+        run: npm run check
+      - name: Build
+        run: npm run build
+      - name: No-regression opportunity pipeline
+        run: node scripts/cryptocrawl/verify-no-regression-opportunity-pipeline.cjs
+      - name: Hybrid and stage-proof invariants
+        run: node scripts/cryptocrawl/verify-compute-antenna-monte-carlo-batch11.cjs
+      - name: Autonomous stages
+        run: npm run verify:autonomous-stages
