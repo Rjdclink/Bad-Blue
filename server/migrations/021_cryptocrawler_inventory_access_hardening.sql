@@ -1,7 +1,7 @@
 -- CryptoCrawler inventory state is private execution infrastructure. Define the
 -- durable schema here so fresh environments do not rely on runtime table creation
--- inheriting browser-facing default grants. Runtime CREATE IF NOT EXISTS remains
--- compatibility-only after this migration.
+-- or inherit browser-facing default grants. Runtime trading code only verifies
+-- this migrated schema and fails closed when it is unavailable.
 
 CREATE TABLE IF NOT EXISTS public.cryptocrawler_cex_inventory_state_v1 (
   venue text NOT NULL,
