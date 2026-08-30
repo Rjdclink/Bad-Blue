@@ -11,6 +11,7 @@ export type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SW
 export type PayoutStatus = 'QUEUED' | 'CONVERTING' | 'WITHDRAWING' | 'SUBMITTED' | 'CONFIRMED' | 'RETRYABLE' | 'MANUAL_REVIEW' | 'TERMINAL_SWEPT';
 export type PayoutBatchStatus = 'PREPARED' | 'CONVERTING' | 'WITHDRAWING' | 'SUBMITTED' | 'CONFIRMED' | 'RETRYABLE' | 'MANUAL_REVIEW' | 'TERMINAL_SWEPT';
 export type LegStatus = 'PREPARED' | 'SUBMITTED' | 'CONFIRMED' | 'RETRYABLE' | 'MANUAL_REVIEW';
+export type DestinationMode = 'primary' | 'fallback';
 
 export type Control = {
   desired_state: TreasuryState;
@@ -82,6 +83,10 @@ export type PayoutBatch = {
   payout_fee_eth: number | string;
   operating_cost_usd: number | string;
   destination_hash: string;
+  destination_mode: DestinationMode;
+  primary_failure_withdrawal_id: string | null;
+  primary_failure_at: string | null;
+  primary_failure_reason: string | null;
   attempt_count: number;
   last_attempt_at: string | null;
   submitted_at: string | null;
@@ -111,9 +116,19 @@ export type Leg = {
   withdrawal_id: string | null;
   transaction_hash: string | null;
   submitted_at: string | null;
+  destination_mode: DestinationMode;
+  primary_failure_withdrawal_id: string | null;
+  primary_failure_at: string | null;
+  primary_failure_reason: string | null;
 };
 
-export type Secrets = { apiKey: string; apiSecret: string; passphrase: string; destination: string };
+export type Secrets = {
+  apiKey: string;
+  apiSecret: string;
+  passphrase: string;
+  destination: string;
+  fallbackDestination: string | null;
+};
 export type EthRoute = { chain: string; feeEth: number; minWithdrawalEth: number; maxWithdrawalEth: number; precision: number };
 
 export const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
@@ -158,15 +173,20 @@ async function readSecret(name: string): Promise<string> {
 }
 
 export async function loadSecrets(): Promise<Secrets> {
-  const [apiKey, apiSecret, passphrase, destination] = await Promise.all([
+  const [apiKey, apiSecret, passphrase, destination, fallbackRaw] = await Promise.all([
     readSecret('cryptocrawler_okx_api_key'),
     readSecret('cryptocrawler_okx_api_secret'),
     readSecret('cryptocrawler_okx_api_passphrase'),
     readSecret('cryptocrawler_profit_wallet'),
+    readSecret('cryptocrawler_fallback_wallet'),
   ]);
   if (!apiKey || !apiSecret || !passphrase) throw new Error('OKX treasury credentials are not synchronized');
   if (!/^0x[0-9a-fA-F]{40}$/.test(destination)) throw new Error('MetaMask payout wallet is missing or invalid');
-  return { apiKey, apiSecret, passphrase, destination };
+  const fallbackDestination = /^0x[0-9a-fA-F]{40}$/.test(fallbackRaw)
+    && fallbackRaw.toLowerCase() !== destination.toLowerCase()
+    ? fallbackRaw
+    : null;
+  return { apiKey, apiSecret, passphrase, destination, fallbackDestination };
 }
 
 export async function updateJob(eventId: string, patch: Record<string, unknown>): Promise<PayoutJob> {
