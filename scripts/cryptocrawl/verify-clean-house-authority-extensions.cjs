@@ -11,6 +11,8 @@ const forbidText = (source, text, description) => {
 };
 
 const riskGovernor = read('server/services/cryptocrawl/governance/risk-governor.ts');
+const ladderNotional = read('server/services/cryptocrawl/governance/profit-ladder-notional-authority.ts');
+const profitLadder = read('server/services/cryptocrawl/governance/profit-ladder.ts');
 const stageRetirement = read('server/services/cryptocrawl/governance/stage-profit-cap-retirement.ts');
 const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 const genie = read('server/services/genie-controller/index.ts');
@@ -34,7 +36,14 @@ forbidText(riskGovernor, 'currentDailyProfit >=', 'RiskGovernor cannot block aft
 forbidText(riskGovernor, 'Trade would exceed daily profit limit', 'RiskGovernor cannot reject profitable trades for exceeding a target');
 forbidText(riskGovernor, 'profitRatio > 0.5', 'RiskGovernor cannot impose a hidden 50% ROI ceiling');
 forbidText(riskGovernor, 'positionRatio > 0.95', 'RiskGovernor cannot add a hidden position-size ceiling below the configured maximum');
-requireText(riskGovernor, 'proposal.positionSizeUSD > stageConfig.maxPositionSizeUSD', 'configured position limit remains authoritative');
+requireText(riskGovernor, 'proposal.positionSizeUSD > notionalAuthority.maxNotionalUsd', 'profit-ladder position limit remains authoritative');
+requireText(riskGovernor, "positionSizeAuthority: 'profit_ladder_capital_allowance'", 'RiskGovernor reports Profit Ladder as position-size authority');
+forbidText(riskGovernor, 'proposal.positionSizeUSD > stageConfig.maxPositionSizeUSD', 'legacy StageManager maxPositionSizeUSD cannot remain an execution ceiling');
+requireText(ladderNotional, 'const configured = Number(tier.recommendedCapitalUSD);', 'current ladder rung recommended capital is the notional allowance');
+requireText(ladderNotional, "authority: 'profit_ladder_capital_allowance'", 'central ladder notional authority is explicit');
+requireText(ladderNotional, 'stagePositionCapAuthoritative: false', 'legacy stage position cap is explicitly non-authoritative');
+requireText(ladderNotional, 'const aligned = Number(tier.stage) === Number(stage.stage);', 'stage/tier mismatch fails closed before sizing');
+requireText(profitLadder, 'recommendedCapitalUSD: 10000', 'Tier 1 ladder allowance remains $10,000');
 requireText(riskGovernor, "this.circuitBreakers.set('daily-loss'", 'loss-side safety circuit breaker remains');
 requireText(riskGovernor, 'evidence!.expectedProfit > 0', 'Monte Carlo risk still requires positive expected economics');
 forbidText(executionIndex, 'directive.minimumNetProfitUsd > 0', 'execution cannot impose an autonomous minimum-profit floor');
