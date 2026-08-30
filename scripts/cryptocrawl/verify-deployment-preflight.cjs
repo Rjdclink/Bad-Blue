@@ -8,5 +8,7 @@ require('./verify-profitability-recovery-coordinator.cjs');
 require('./verify-substantial-profitability-batch9.cjs');
 require('./verify-cryptara-sovereign-cortex.cjs');
 require('./verify-compute-antenna-monte-carlo-batch11.cjs');
+require('./verify-coinbase-integration-wiring.cjs');
+require('./verify-remaining-seventeen-batch12.cjs');
 
-console.log('[deployment-preflight] targeted runtime safety, substantive profitability, Cryptara sovereign-cortex, and measured compute/Antenna/Monte-Carlo invariants passed; continuing to normal Vite/esbuild production build');
+console.log('[deployment-preflight] targeted runtime safety, substantive profitability, Cryptara sovereign-cortex, measured compute/Antenna/Monte-Carlo, Coinbase integration, and batch12 invariants passed; continuing to normal Vite/esbuild production build');
