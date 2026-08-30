@@ -68,7 +68,7 @@ const rules = [];
 for (let familyIndex = 0; familyIndex < parsedFamilies.length; familyIndex++) {
   const family = parsedFamilies[familyIndex];
   for (let level = 0; level < family.thresholds.length; level++) {
-    rules.push({ id: 101 + familyIndex * 10 + level, key: `${family.key}_${String(level + 1).padStart(2,'0')}`, ...family, threshold: family.thresholds[level] });
+    rules.push({ ...family, id: 101 + familyIndex * 10 + level, key: `${family.key}_${String(level + 1).padStart(2,'0')}`, threshold: family.thresholds[level] });
   }
 }
 if (rules.length !== 200 || new Set(rules.map(rule => rule.id)).size !== 200 || new Set(rules.map(rule => rule.key)).size !== 200) {
