@@ -43,11 +43,21 @@ function coarseSizes(route: ConfiguredZeroCapitalRoute): number[] {
   const seedUsd = Math.max(0.000001, Number(route.amountIn) / 1_000_000);
   const stage = stageManager.getStageConfig();
   const stageCanExecute = stageManager.canExecuteTrades();
-  const discoveryCeiling = Math.max(seedUsd, Math.min(10_000, Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000)));
-  const maximum = stageCanExecute && stage.maxPositionSizeUSD > 0 ? stage.maxPositionSizeUSD : seedUsd;
+  const configuredDiscoveryCeiling = Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000);
+  const discoveryCeiling = Math.max(
+    seedUsd,
+    Math.min(10_000, Number.isFinite(configuredDiscoveryCeiling) && configuredDiscoveryCeiling > 0 ? configuredDiscoveryCeiling : 1_000),
+  );
+  // Discovery sizing and execution sizing are deliberately separate. Stage 1 may
+  // independently quote larger shadow sizes to amortize fixed gas/provider costs,
+  // while StageManager still grants zero execution authority. Stage 2+ discovery
+  // remains bounded by both the current stage capital ceiling and the discovery cap.
+  const maximumNotionalUsd = stageCanExecute && stage.maxPositionSizeUSD > 0
+    ? Math.min(stage.maxPositionSizeUSD, discoveryCeiling)
+    : discoveryCeiling;
   return buildAtomicNotionalCandidates({
     seedNotionalUsd: seedUsd,
-    maximumNotionalUsd: Math.min(stageCanExecute ? maximum : seedUsd, discoveryCeiling),
+    maximumNotionalUsd,
     minimumNotionalUsd: 0.01,
     maxCandidates: Math.max(3, Math.min(12, Number(process.env.ZERO_CAPITAL_SIZE_CANDIDATES || 9))),
   });
@@ -251,6 +261,9 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     baseRefinementCandidatesPerRoute: refinementBudget(),
     baseMaxRoutesPerScan: maxRefinedRoutesPerScan(),
     hyperdynamicBpsSizing: true,
+    stage1ShadowDiscoveryCeilingUsd: Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000),
+    stage1ShadowDiscoveryExecutionAuthority: false,
+    stage2PlusDiscoveryBoundedByStageCapital: true,
     independentFreshQuotesRequired: true,
     strictMeasuredImprovementRequired: true,
     positiveSelectionObjective: 'highest_measured_net_profit',
