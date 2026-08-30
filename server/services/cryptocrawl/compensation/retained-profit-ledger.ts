@@ -321,6 +321,7 @@ class RetainedProfitLedger {
             maxAttempts: RETRY_ATTEMPTS,
             delayMs,
             idempotentEvent: true,
+            externalPayoutAuthorized: false,
           });
           await sleep(delayMs);
         }
