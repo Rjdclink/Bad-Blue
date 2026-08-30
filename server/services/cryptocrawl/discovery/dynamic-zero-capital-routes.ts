@@ -238,7 +238,6 @@ async function buildGraphlessProfitSurfaceTemplates(
     for (const input of inputs) {
       if (middle.toLowerCase() === input.token.toLowerCase()) continue;
       for (const notional of notionalsUsd()) {
-        // Cross-DEX cycles: direct quoting discards unsupported/non-liquid legs.
         for (const [firstProtocol, secondProtocol] of DYNAMIC_PROTOCOL_PAIRS) {
           for (const feeTier of tiers) {
             routes.push(routeBase({
@@ -255,7 +254,6 @@ async function buildGraphlessProfitSurfaceTemplates(
           }
         }
 
-        // Same-DEX fee-tier dislocations are valid atomic opportunities too.
         for (const firstTier of tiers) {
           for (const secondTier of tiers) {
             if (firstTier === secondTier) continue;
@@ -390,10 +388,11 @@ export async function discoverDynamicZeroCapitalQuotes(
     const preselection = selectZeroCapitalRoutesForQuote(enriched.routes, enriched.gasCostUsd);
     const selected = preselection.selectedRoutes;
     const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
+    const truePositiveQuotes = quotes.filter(quote => quote.executablePositive === true && quote.netProfit > 0n);
     recordZeroCapitalRouteQuoteCycle(selected, quotes);
 
-    state.measuredQuotes += selected.length;
-    state.positiveQuotes += quotes.length;
+    state.measuredQuotes += quotes.length;
+    state.positiveQuotes += truePositiveQuotes.length;
     state.quoteBudgetSelections += selected.length;
     state.chains[chain] = {
       candidates: templates.length,
@@ -403,8 +402,8 @@ export async function discoverDynamicZeroCapitalQuotes(
       graphlessTokens: graphless.tokens,
       graphlessSources: graphless.sources,
       selectedForQuote: selected.length,
-      measuredQuotes: selected.length,
-      positiveQuotes: quotes.length,
+      measuredQuotes: quotes.length,
+      positiveQuotes: truePositiveQuotes.length,
       gasCostUsd: enriched.gasCostUsd,
       quoteBudget: preselection.quoteBudget,
       scoredCandidates: preselection.scoredCandidates,
@@ -423,12 +422,14 @@ export async function discoverDynamicZeroCapitalQuotes(
       graphlessTokens: graphless.tokens,
       graphlessSources: graphless.sources,
       selectedForQuote: selected.length,
+      measuredQuotes: quotes.length,
       quoteBudget: preselection.quoteBudget,
       scoredCandidates: preselection.scoredCandidates,
       explorationSelected: preselection.explorationSelected,
       exploitationSelected: preselection.exploitationSelected,
       topFormationScores: topFormationScores(preselection.scores),
-      positiveQuotes: quotes.length,
+      positiveQuotes: truePositiveQuotes.length,
+      positiveQuoteAuthority: 'strict_all_in_net_profit_gt_zero_only',
       gasCostUsd: enriched.gasCostUsd,
       preScoreAuthority: preselection.authority,
       formationAuthority: 'scan_priority_advisory_only',
