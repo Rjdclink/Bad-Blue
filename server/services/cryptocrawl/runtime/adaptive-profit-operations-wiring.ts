@@ -7,7 +7,7 @@ import {
 import { getCryptocrawlGovernance } from '../governance/governance.js';
 import { getAdaptiveProfitOperatingEnvelope } from '../governance/adaptive-profit-operating-envelope.js';
 import { stageManager } from '../governance/stage-management.js';
-import { GovernanceError } from '../governance/types.js';
+import { GovernanceError, type GovernanceAction } from '../governance/types.js';
 import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
 
 let installed = false;
@@ -95,7 +95,9 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
   ): Promise<Map<string, VerifiedArbitragePlan | null>> => {
     const envelope = getAdaptiveProfitOperatingEnvelope();
     if (envelope.stage > 1 && !envelope.newExposureAllowed) {
-      return new Map(symbols.map(symbol => [symbol.trim().toUpperCase(), null]));
+      return new Map<string, VerifiedArbitragePlan | null>(
+        symbols.map(symbol => [symbol.trim().toUpperCase(), null] as [string, VerifiedArbitragePlan | null]),
+      );
     }
     const requested = Number(request.notionalUsd || 0);
     const initialBound = requested > 0 ? boundedNotional(requested) : requested;
@@ -126,12 +128,12 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
 
   const governance = getCryptocrawlGovernance() as ReturnType<typeof getCryptocrawlGovernance> & {
     requireAllowed: (
-      action: 'ADVISE' | 'EXECUTE_OPPORTUNITY' | 'SUBMIT_TX' | 'PERSIST_LONG_TERM_MEMORY' | 'EVOLVE_STRATEGY',
+      action: GovernanceAction,
       context?: { chain?: string; pair?: string; venue?: string },
     ) => void;
   };
   const originalRequireAllowed = governance.requireAllowed.bind(governance);
-  governance.requireAllowed = (action, context): void => {
+  governance.requireAllowed = (action: GovernanceAction, context?: { chain?: string; pair?: string; venue?: string }): void => {
     originalRequireAllowed(action, context);
     // This gate blocks only NEW exposure. SUBMIT_TX remains available so an
     // already-open position can always be cancelled, hedged, settled or flattened.
