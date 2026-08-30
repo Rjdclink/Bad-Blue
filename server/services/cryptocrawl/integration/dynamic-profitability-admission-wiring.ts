@@ -7,6 +7,7 @@ import { ensureBpsDecompositionObservability } from './bps-decomposition-observa
 import { ensureEconomicTransformationWiring } from './economic-transformation-wiring.js';
 import { ensureZeroCapitalRecoveryObservability } from './zero-capital-recovery-observability.js';
 import { ensureProfitabilityRecoveryCoordinator } from './profitability-recovery-coordinator.js';
+import { ensureProfitabilityRecoveryBatch9 } from './profitability-recovery-batch9.js';
 
 const installed = new WeakSet<object>();
 
@@ -29,6 +30,7 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
   ensureBpsDecompositionObservability();
   ensureZeroCapitalRecoveryObservability();
   ensureProfitabilityRecoveryCoordinator();
+  ensureProfitabilityRecoveryBatch9();
 
   const cex = centralizedExchangeExecutor as unknown as CexRuntime;
   if (!installed.has(cex)) {
@@ -110,7 +112,8 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     bpsRescuePortfolio: 'measured_cost_decomposition_plus_decay_scheduling',
     bpsDecomposition: 'exact_measured_cross_topology_telemetry',
     zeroCapitalRecoveryTelemetry: 'exact_measured_gap_distribution',
-    profitabilityRecoveryIntelligence: 'twenty_signal_measured_recovery_coordinator',
+    profitabilityRecoveryIntelligence: 'fifty_signal_measured_recovery_coordinator_plus_batch9_one_hundred_signal_pack',
+    batch9RecoveryEnhancements: 100,
     bpsSubsystemExecutionAuthority: false,
     terminalSettlementStillRequiredAfterExecution: true,
     livePaths: ['CEX_TAKER_IOC', 'FLASH_LOAN'],
