@@ -7,6 +7,8 @@ let timer: NodeJS.Timeout | null = null;
 let running = false;
 let latest: CexModeEconomics[] = [];
 let nextIntervalMs = 15_000;
+let lastCanonicalPromotionAt = 0;
+let lastCanonicalPromotionSignature = '';
 
 function baseSymbolLimit(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_CEX_MODE_MATRIX_SYMBOLS || 24);
@@ -16,6 +18,11 @@ function baseSymbolLimit(): number {
 function baseIntervalMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_CEX_MODE_MATRIX_INTERVAL_MS || 15_000);
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(60_000, Math.trunc(parsed))) : 15_000;
+}
+
+function canonicalPromotionCooldownMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_CEX_POSITIVE_PROMOTION_COOLDOWN_MS || 2_000);
+  return Number.isFinite(parsed) ? Math.max(500, Math.min(30_000, Math.trunc(parsed))) : 2_000;
 }
 
 function compare(left: CexModeEconomics, right: CexModeEconomics): number {
@@ -40,6 +47,42 @@ export function getClosestCexNearMissesBySymbol(limit = 16): CexModeEconomics[] 
     if (!current || compare(item, current) < 0) best.set(item.symbol, item);
   }
   return [...best.values()].sort(compare).slice(0, Math.max(1, Math.min(64, limit)));
+}
+
+function triggerCanonicalPositiveRevalidation(positive: readonly CexModeEconomics[]): void {
+  if (positive.length === 0 || process.env.CRYPTOCRAWL_CEX_POSITIVE_PROMOTION_ENABLED === 'false') return;
+  const now = Date.now();
+  const symbols = [...new Set(positive.map(item => item.symbol))].sort();
+  const signature = symbols.join(',');
+  if (signature === lastCanonicalPromotionSignature && now - lastCanonicalPromotionAt < canonicalPromotionCooldownMs()) return;
+  lastCanonicalPromotionSignature = signature;
+  lastCanonicalPromotionAt = now;
+
+  // Four-mode economics are advisory and may use a broader observation surface.
+  // A positive observation is therefore only a scheduling trigger: the canonical
+  // graph must independently re-fetch executable books, authenticated fees,
+  // depth-aware sizing and all-in costs before it can create a candidate.
+  void import('../discovery/opportunity-graph.js')
+    .then(({ measuredOpportunityGraph }) => measuredOpportunityGraph.scanOnce())
+    .then(cycle => {
+      logger.info('[CexFourMode] Positive observation triggered canonical economic revalidation', {
+        component: 'CexFourModeObservabilityWiring',
+        observedPositiveSymbols: symbols,
+        canonicalDeterministicPositive: cycle.deterministicPositive,
+        canonicalEligibleCandidates: cycle.eligibleCandidates,
+        canonicalCycleId: cycle.cycleId,
+        authority: 'scheduling_trigger_only',
+        observationExecutionAuthority: false,
+      });
+    })
+    .catch(error => {
+      logger.warn('[CexFourMode] Canonical positive revalidation trigger degraded; advisory observation remains non-executable', {
+        component: 'CexFourModeObservabilityWiring',
+        observedPositiveSymbols: symbols,
+        error: error instanceof Error ? error.message : String(error),
+        executionAuthority: false,
+      });
+    });
 }
 
 async function observe(): Promise<void> {
@@ -99,12 +142,18 @@ async function observe(): Promise<void> {
         expectedFeeAdjustedBps: positive[0].expectedFeeAdjustedBps,
         executionAuthority: positive[0].executionAuthority,
       } : null,
+      canonicalPositivePromotion: {
+        enabled: process.env.CRYPTOCRAWL_CEX_POSITIVE_PROMOTION_ENABLED !== 'false',
+        cooldownMs: canonicalPromotionCooldownMs(),
+        authority: 'scheduling_trigger_only',
+      },
       negativeRankingObjective: 'smallest_risk_adjusted_then_exact_bps_to_break_even_first',
       observationFloorBps: Number(process.env.CRYPTOCRAWL_CEX_FOUR_MODE_OBSERVATION_FLOOR_BPS ?? -200),
       hybridExecutionAuthority: false,
       negativeObservationExecutionAuthority: false,
       existingTtMmExecutorsChanged: false,
     });
+    triggerCanonicalPositiveRevalidation(positive);
   } finally {
     running = false;
   }
