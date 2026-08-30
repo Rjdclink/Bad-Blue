@@ -1,5 +1,3 @@
-import { getCoinbasePrivateAuthoritySnapshot } from '../intelligence/coinbase-advanced-trade-authority.js';
-
 export type CryptoCrawlerCexVenue =
   | 'coinbase'
   | 'kraken'
@@ -34,14 +32,14 @@ export interface VenueCapability {
 const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = Object.freeze({
   coinbase: Object.freeze({
     venue: 'coinbase',
-    enabled: true,
-    publicDiscovery: true,
-    executableQuotes: true,
-    measuredOrderBook: true,
-    authenticatedFeeEvidence: true,
-    liveExecution: true,
-    settlementVerification: true,
-    reason: 'Advanced Trade v3 product-book, authenticated permissions/fee tier, IOC order, fills, balances and terminal settlement are implemented; runtime evidence still gates every plan',
+    enabled: false,
+    publicDiscovery: false,
+    executableQuotes: false,
+    measuredOrderBook: false,
+    authenticatedFeeEvidence: false,
+    liveExecution: false,
+    settlementVerification: false,
+    reason: 'retired from the active canonical CEX topology; historical adapters remain non-authoritative compatibility code',
   }),
   kraken: Object.freeze({
     venue: 'kraken',
@@ -115,30 +113,20 @@ export function getVenueCapabilities(): ReadonlyArray<Readonly<VenueCapability>>
   return Object.values(CAPABILITIES).map(capability => ({ ...capability }));
 }
 
-function runtimeExecutable(venue: 'coinbase' | 'kraken' | 'okx'): boolean {
-  if (venue !== 'coinbase') return true;
-  const authority = getCoinbasePrivateAuthoritySnapshot();
-  if (authority.authCircuitOpen) return false;
-  if (authority.canView === false || authority.canTrade === false) return false;
-  return true;
-}
-
-export function getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'> {
-  return (['coinbase', 'kraken', 'okx'] as const).filter(venue => {
+export function getActiveExecutableQuoteVenues(): Array<'kraken' | 'okx'> {
+  return (['kraken', 'okx'] as const).filter(venue => {
     const capability = CAPABILITIES[venue];
     return capability.enabled
       && capability.executableQuotes
       && capability.measuredOrderBook
       && capability.authenticatedFeeEvidence
       && capability.liveExecution
-      && capability.settlementVerification
-      && runtimeExecutable(venue);
+      && capability.settlementVerification;
   });
 }
 
 export function isVenueLiveExecutable(venue: CryptoCrawlerCexVenue): boolean {
+  if (venue === 'coinbase') return false;
   const capability = CAPABILITIES[venue];
-  if (!(capability.enabled && capability.liveExecution && capability.settlementVerification)) return false;
-  if (venue === 'coinbase' || venue === 'kraken' || venue === 'okx') return runtimeExecutable(venue);
-  return true;
+  return capability.enabled && capability.liveExecution && capability.settlementVerification;
 }
