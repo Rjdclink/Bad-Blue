@@ -43,26 +43,29 @@ class ExecutionResourceScheduler {
     || `process-${process.pid}-${randomUUID()}`;
   private readonly localUsage = new Map<string, number>();
   private tableReady: Promise<boolean> | null = null;
+  private cleanupInFlight: Promise<void> | null = null;
+  private lastCleanupAt = 0;
 
   private async ensureTable(): Promise<boolean> {
     if (!isDatabaseConfigured) return false;
     if (this.tableReady) return this.tableReady;
     this.tableReady = (async () => {
       try {
-        await pool.query(`
-          CREATE TABLE IF NOT EXISTS ${TABLE} (
-            resource_key text PRIMARY KEY,
-            lease_id text NOT NULL,
-            owner_id text NOT NULL,
-            opportunity_id text NOT NULL,
-            acquired_at timestamptz NOT NULL DEFAULT now(),
-            expires_at timestamptz NOT NULL
-          )
-        `);
-        await pool.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_expires_idx ON ${TABLE} (expires_at)`);
-        return true;
+        const result = await pool.query(
+          `SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`,
+        );
+        const ready = result.rows?.[0]?.ready === true;
+        if (!ready) {
+          logger.error('[ResourceScheduler] Migration-owned distributed lease table is missing', {
+            component: 'ExecutionResourceScheduler',
+            table: `public.${TABLE}`,
+            executionAuthorityGranted: false,
+            runtimeDdlAllowed: false,
+          });
+        }
+        return ready;
       } catch (error) {
-        logger.error('[ResourceScheduler] Distributed lease table unavailable', {
+        logger.error('[ResourceScheduler] Distributed lease table availability check failed', {
           component: 'ExecutionResourceScheduler',
           error: error instanceof Error ? error.message : String(error),
         });
@@ -70,6 +73,24 @@ class ExecutionResourceScheduler {
       }
     })();
     return this.tableReady;
+  }
+
+  private maybeCleanupExpiredLeases(): void {
+    if (!isDatabaseConfigured || this.cleanupInFlight) return;
+    const intervalMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_LEASE_CLEANUP_MS, 60_000, 10_000, 600_000);
+    if (Date.now() - this.lastCleanupAt < intervalMs) return;
+    this.lastCleanupAt = Date.now();
+    this.cleanupInFlight = pool.query(`DELETE FROM ${TABLE} WHERE expires_at <= now()`)
+      .then(() => undefined)
+      .catch(error => {
+        logger.warn('[ResourceScheduler] Background expired-lease cleanup deferred', {
+          component: 'ExecutionResourceScheduler',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        this.cleanupInFlight = null;
+      });
   }
 
   private reserveLocal(specs: readonly ResourcePoolSpec[]): boolean {
@@ -116,6 +137,29 @@ class ExecutionResourceScheduler {
     return [...dedup.values()];
   }
 
+  private async claimResource(
+    client: any,
+    resourceKey: string,
+    leaseId: string,
+    opportunityId: string,
+    expiresAt: number,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
+       VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
+       ON CONFLICT (resource_key) DO UPDATE
+       SET lease_id = EXCLUDED.lease_id,
+           owner_id = EXCLUDED.owner_id,
+           opportunity_id = EXCLUDED.opportunity_id,
+           acquired_at = now(),
+           expires_at = EXCLUDED.expires_at
+       WHERE ${TABLE}.expires_at <= now()
+       RETURNING resource_key`,
+      [resourceKey, leaseId, this.ownerId, opportunityId, expiresAt],
+    );
+    return result.rowCount === 1;
+  }
+
   private async acquireDistributed(
     leaseId: string,
     opportunityId: string,
@@ -129,17 +173,9 @@ class ExecutionResourceScheduler {
     const acquired: string[] = [];
     try {
       await client.query('BEGIN');
-      await client.query(`DELETE FROM ${TABLE} WHERE expires_at <= now()`);
 
       const fixedOpportunityKey = `cex:opportunity:${opportunityId}`;
-      const fixed = await client.query(
-        `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
-         VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-         ON CONFLICT (resource_key) DO NOTHING
-         RETURNING resource_key`,
-        [fixedOpportunityKey, leaseId, this.ownerId, opportunityId, expiresAt],
-      );
-      if (fixed.rowCount !== 1) {
+      if (!await this.claimResource(client, fixedOpportunityKey, leaseId, opportunityId, expiresAt)) {
         await client.query('ROLLBACK');
         return null;
       }
@@ -149,14 +185,7 @@ class ExecutionResourceScheduler {
         let claimed: string | null = null;
         for (let slot = 0; slot < spec.capacity; slot++) {
           const resourceKey = `${spec.prefix}:slot:${slot}`;
-          const result = await client.query(
-            `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
-             VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-             ON CONFLICT (resource_key) DO NOTHING
-             RETURNING resource_key`,
-            [resourceKey, leaseId, this.ownerId, opportunityId, expiresAt],
-          );
-          if (result.rowCount === 1) {
+          if (await this.claimResource(client, resourceKey, leaseId, opportunityId, expiresAt)) {
             claimed = resourceKey;
             acquired.push(resourceKey);
             break;
@@ -209,6 +238,8 @@ class ExecutionResourceScheduler {
       this.releaseLocal(specs);
       return null;
     }
+
+    this.maybeCleanupExpiredLeases();
 
     let released = false;
     return {
