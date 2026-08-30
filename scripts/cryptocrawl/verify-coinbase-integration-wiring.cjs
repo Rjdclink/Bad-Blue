@@ -77,8 +77,10 @@ assert(executionIndex.includes("venue is 'coinbase' | 'kraken' | 'okx'"), 'execu
 assert(executionReadiness.includes("supportedCentralizedVenues: ['coinbase', 'kraken', 'okx']"), 'canonical execution capability must include Coinbase');
 assert(executionReadiness.includes('[krakenConfigured, okxConfigured, coinbaseConfigured].filter(Boolean).length >= 2'), 'CEX readiness must require any two configured supported venue accounts');
 
-// Coinbase taker/IOC support is promoted independently from maker execution.
-assert(maker.includes("venue !== 'coinbase'"), 'Coinbase must remain excluded from unverified maker topology');
-assert(maker.includes('Advanced Trade post-only'), 'maker exclusion must document the topology-specific evidence still required');
+// Coinbase taker/IOC execution is promoted independently from maker topology.
+// Maker discovery still deliberately narrows the shared executable set to the two
+// venues whose maker queue/fill evidence and authenticated fee batching are proven.
+assert(maker.includes("filter((venue): venue is 'kraken' | 'okx' => venue !== 'coinbase')"), 'Coinbase must remain excluded from maker discovery until its maker evidence path is proven');
+assert(maker.includes('primeCexFeeEvidenceForVenueSymbols({') && maker.includes('kraken: krakenSymbols') && maker.includes('okx: okxSymbols'), 'maker fee priming must remain bounded to proven Kraken/OKX maker topology');
 
 console.log('coinbase-integration-wiring:pass');
