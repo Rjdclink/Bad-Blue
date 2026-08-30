@@ -78,6 +78,10 @@ function nextUtcHour(now: number): number {
   return (Math.floor(now / 3_600_000) + 1) * 3_600_000;
 }
 
+function binanceFundingDiscoveryEnabled(): boolean {
+  return process.env.CRYPTOCRAWL_BINANCE_FUTURES_DISCOVERY?.trim().toLowerCase() === 'true';
+}
+
 function isBinanceJurisdictionFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /HTTP\s*451\b|restricted location|eligibility/i.test(message);
@@ -199,7 +203,7 @@ async function fetchOkxFunding(symbols: Set<string>): Promise<FundingRateObserva
       !!entry.pair && !!entry.swap && !!entry.spot)
     .slice(0, Math.max(1, Math.min(50, Number(process.env.CRYPTOCRAWL_FUNDING_OKX_SYMBOLS || 24))));
 
-  const concurrency = Math.max(1, Math.min(6, Number(process.env.CRYPTOCRAWL_FUNDING_OKX_CONCURRENCY || 4)));
+  const concurrency = Math.max(1, Math.min(6, Number(process.env.CRYPTOCRAWL_FUNDING_OKX_CONCURRENCY || 2)));
   const observations = new Array<FundingRateObservation>();
   let cursor = 0;
   await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, selected.length)) }, async () => {
@@ -265,10 +269,12 @@ export async function discoverFundingRates(symbolInputs: readonly string[]): Pro
   );
   const failures: FundingDiscoveryBatch['failures'] = [];
   const tasks: Array<{ venue: FundingDiscoveryVenue; promise: Promise<FundingRateObservation[]> }> = [
-    { venue: 'binance_futures', promise: fetchBinanceFunding(symbols) },
     { venue: 'kraken_futures', promise: fetchKrakenFunding(symbols) },
     { venue: 'okx', promise: fetchOkxFunding(symbols) },
   ];
+  if (binanceFundingDiscoveryEnabled()) {
+    tasks.push({ venue: 'binance_futures', promise: fetchBinanceFunding(symbols) });
+  }
   const settled = await Promise.allSettled(tasks.map(task => task.promise));
   const observations: FundingRateObservation[] = [];
   settled.forEach((result, index) => {
