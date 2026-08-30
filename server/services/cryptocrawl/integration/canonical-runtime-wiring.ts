@@ -12,6 +12,8 @@ import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
+import { ensureCryptaraSovereignCortexWiring } from './cryptara-sovereign-cortex-wiring.js';
+import { ensureCryptaraPredictivePrefetchWiring } from './cryptara-predictive-prefetch-wiring.js';
 import { ensureDynamicProfitabilityAdmissionWiring } from './dynamic-profitability-admission-wiring.js';
 import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constrained-cex-execution-wiring.js';
@@ -120,6 +122,11 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureOrderBookEvolutionWiring();
   ensureCexFourModeObservabilityWiring();
   ensureCryptaraCexEvidenceWiring();
+  // Cryptara's evidence adapters run first. The sovereign cortex consumes their
+  // measured outputs, then predictive prefetch uses the cortex priority to warm
+  // only high-value market evidence. Neither layer can authorize execution.
+  ensureCryptaraSovereignCortexWiring();
+  ensureCryptaraPredictivePrefetchWiring();
   ensureInventoryConstrainedCexExecutionWiring();
   ensureDynamicProfitabilityAdmissionWiring();
   ensureStageOneBootstrapAuthority();
@@ -159,6 +166,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
     cexHybridExecutionAuthority: false,
+    cryptaraSovereignCortex: 'eight_dimension_measured_capability_vector_plus_consensus_confidence_plus_terminal_learning',
+    cryptaraPredictivePrefetch: 'positive_high_priority_market_universe_plus_kraken_okx_book_warmup',
+    cryptaraCortexExecutionAuthority: false,
     legacyMasterOrchestratorRequired: false,
     executionAuthorityGranted: false,
     executionMetrics: 'terminal_settlement_only',
