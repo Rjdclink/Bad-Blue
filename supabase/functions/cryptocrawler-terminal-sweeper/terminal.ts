@@ -52,7 +52,6 @@ async function terminalTransfer(
 async function consolidateOkxToEth(secrets: Secrets, epoch: string): Promise<{ ready: boolean; blockers: string[] }> {
   const blockers: string[] = [];
 
-  // Funding assets cannot be traded. Move every non-ETH asset into Trading first.
   const funding = await getFundingBalances(secrets);
   for (const [asset, available] of Object.entries(funding)) {
     if (asset === 'ETH' || !(available > TERMINAL_DUST_EPSILON)) continue;
@@ -64,7 +63,6 @@ async function consolidateOkxToEth(secrets: Secrets, epoch: string): Promise<{ r
   }
   if (blockers.length > 0) return { ready: false, blockers };
 
-  // Convert every non-ETH/non-stable trading asset through a real live OKX pair.
   let trading = await getTradingBalances(secrets);
   for (const [asset, available] of Object.entries(trading)) {
     if (asset === 'ETH' || PAYOUT_QUOTES.includes(asset as any) || !(available > TERMINAL_DUST_EPSILON)) continue;
@@ -72,8 +70,11 @@ async function consolidateOkxToEth(secrets: Secrets, epoch: string): Promise<{ r
     for (const quote of PAYOUT_QUOTES) {
       const instId = `${asset}-${quote}`;
       if (!await spotInstrumentExists(instId)) continue;
-      try { sold = await terminalMarketOrder(secrets, epoch, instId, 'sell', available, 'base_ccy'); }
-      catch (error) { blockers.push(`asset_conversion_failed:${asset}:${error instanceof Error ? error.message : String(error)}`); }
+      try {
+        sold = await terminalMarketOrder(secrets, epoch, instId, 'sell', available, 'base_ccy');
+      } catch (error) {
+        blockers.push(`asset_conversion_failed:${asset}:${error instanceof Error ? error.message : String(error)}`);
+      }
       if (sold) break;
     }
     if (!sold && !blockers.some(item => item.startsWith(`asset_conversion_failed:${asset}:`))) {
@@ -82,7 +83,8 @@ async function consolidateOkxToEth(secrets: Secrets, epoch: string): Promise<{ r
   }
   if (blockers.length > 0) return { ready: false, blockers };
 
-  // Restart/terminal policy intentionally drains the remaining operating treasury too.
+  // Restart/terminal policy drains the remaining operating treasury too. This is
+  // intentionally separate from normal-runtime payouts, which convert only when due.
   trading = await getTradingBalances(secrets, ['ETH', ...PAYOUT_QUOTES]);
   for (const quote of PAYOUT_QUOTES) {
     const available = trading[quote] || 0;
@@ -137,23 +139,71 @@ async function existingTerminalLegs(epoch: string): Promise<Leg[]> {
   return (data || []) as Leg[];
 }
 
+async function submitDurableTerminalLeg(secrets: Secrets, input: Leg): Promise<Leg> {
+  let leg = input;
+  if (leg.status === 'CONFIRMED' || leg.status === 'MANUAL_REVIEW') return leg;
+  if (leg.status === 'SUBMITTED') return reconcileTerminalLeg(secrets, leg);
+
+  const amount = finite(leg.amount);
+  if (!(amount > 0)) throw new Error(`Terminal withdrawal leg ${leg.leg_id} has no positive amount`);
+  const route = await getEthRoute(secrets);
+  if (amount + 1e-12 < route.minWithdrawalEth) {
+    throw new Error(`Terminal withdrawal leg ${leg.leg_id} is below the current authenticated minimum`);
+  }
+  if (route.maxWithdrawalEth > 0 && amount > route.maxWithdrawalEth + 1e-12) {
+    throw new Error(`Terminal withdrawal leg ${leg.leg_id} exceeds the current authenticated maximum`);
+  }
+
+  const recovered = await findWithdrawal(secrets, leg.withdrawal_id, leg.client_id);
+  if (recovered?.wdId) {
+    const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
+      status: 'SUBMITTED', withdrawal_id: String(recovered.wdId), last_error: null, updated_at: nowIso(),
+    }).eq('leg_id', leg.leg_id).select().single();
+    if (error) throw error;
+    return reconcileTerminalLeg(secrets, data as Leg);
+  }
+
+  const { data: submitted, error: submittedStateError } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
+    status: 'SUBMITTED', attempt_count: Number((leg as any).attempt_count || 0) + 1,
+    submitted_at: nowIso(), updated_at: nowIso(), last_error: null,
+  }).eq('leg_id', leg.leg_id).select().single();
+  if (submittedStateError) throw submittedStateError;
+  leg = submitted as Leg;
+
+  try {
+    const withdrawalId = await submitEthWithdrawal(secrets, route, amount, leg.client_id);
+    const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
+      withdrawal_id: withdrawalId, updated_at: nowIso(), last_error: null,
+    }).eq('leg_id', leg.leg_id).select().single();
+    if (error) throw error;
+    leg = data as Leg;
+  } catch (error) {
+    const ambiguous = await findWithdrawal(secrets, null, leg.client_id);
+    if (!ambiguous?.wdId) {
+      await supabase.from('cryptocrawler_terminal_sweep_legs').update({
+        status: 'RETRYABLE', last_error: (error instanceof Error ? error.message : String(error)).slice(0, 1000), updated_at: nowIso(),
+      }).eq('leg_id', leg.leg_id);
+      throw error;
+    }
+    const { data, error: updateError } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
+      withdrawal_id: String(ambiguous.wdId), updated_at: nowIso(), last_error: null,
+    }).eq('leg_id', leg.leg_id).select().single();
+    if (updateError) throw updateError;
+    leg = data as Leg;
+  }
+  return reconcileTerminalLeg(secrets, leg);
+}
+
 async function submitTerminalEth(secrets: Secrets, epoch: string): Promise<Leg | null> {
   const route = await getEthRoute(secrets);
-
   const priorLegs = await existingTerminalLegs(epoch);
+
+  // Never skip a durable unresolved leg. A retry reuses the exact same leg,
+  // client id and amount; only after it confirms may a new residual leg be made.
   for (const prior of priorLegs) {
     if (prior.status === 'MANUAL_REVIEW') return prior;
-    if (prior.status === 'SUBMITTED') return reconcileTerminalLeg(secrets, prior);
-    if (prior.status === 'RETRYABLE') {
-      // Reuse the same durable leg/client id; recovery is checked before retry.
-      const recovered = await findWithdrawal(secrets, prior.withdrawal_id, prior.client_id);
-      if (recovered?.wdId) {
-        const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
-          status: 'SUBMITTED', withdrawal_id: String(recovered.wdId), last_error: null, updated_at: nowIso(),
-        }).eq('leg_id', prior.leg_id).select().single();
-        if (error) throw error;
-        return reconcileTerminalLeg(secrets, data as Leg);
-      }
+    if (prior.status === 'SUBMITTED' || prior.status === 'RETRYABLE' || prior.status === 'PREPARED') {
+      return submitDurableTerminalLeg(secrets, prior);
     }
   }
 
@@ -182,48 +232,15 @@ async function submitTerminalEth(secrets: Secrets, epoch: string): Promise<Leg |
   const { data, error } = await supabase.from('cryptocrawler_terminal_sweep_legs')
     .select('*').eq('terminal_epoch', epoch).eq('venue', 'okx').eq('asset', 'ETH').eq('leg_sequence', sequence).single();
   if (error) throw error;
-  let leg = data as Leg;
-  if (leg.status === 'CONFIRMED' || leg.status === 'MANUAL_REVIEW') return leg;
-  if (leg.status === 'SUBMITTED') return reconcileTerminalLeg(secrets, leg);
-
-  const recovered = await findWithdrawal(secrets, leg.withdrawal_id, clientId);
-  if (recovered?.wdId) {
-    const { data: updated, error: updateError } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
-      status: 'SUBMITTED', withdrawal_id: String(recovered.wdId), updated_at: nowIso(), last_error: null,
-    }).eq('leg_id', leg.leg_id).select().single();
-    if (updateError) throw updateError;
-    return reconcileTerminalLeg(secrets, updated as Leg);
-  }
-
-  const { error: submittedStateError } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
-    status: 'SUBMITTED', attempt_count: Number((data as any).attempt_count || 0) + 1,
-    submitted_at: nowIso(), updated_at: nowIso(), last_error: null,
-  }).eq('leg_id', leg.leg_id);
-  if (submittedStateError) throw submittedStateError;
-
-  try {
-    const withdrawalId = await submitEthWithdrawal(secrets, route, amount, clientId);
-    const { data: updated, error: updateError } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
-      withdrawal_id: withdrawalId, updated_at: nowIso(), last_error: null,
-    }).eq('leg_id', leg.leg_id).select().single();
-    if (updateError) throw updateError;
-    leg = updated as Leg;
-  } catch (error) {
-    const ambiguous = await findWithdrawal(secrets, null, clientId);
-    if (!ambiguous?.wdId) throw error;
-    const { data: updated, error: updateError } = await supabase.from('cryptocrawler_terminal_sweep_legs').update({
-      withdrawal_id: String(ambiguous.wdId), updated_at: nowIso(), last_error: null,
-    }).eq('leg_id', leg.leg_id).select().single();
-    if (updateError) throw updateError;
-    leg = updated as Leg;
-  }
-  return reconcileTerminalLeg(secrets, leg);
+  return submitDurableTerminalLeg(secrets, data as Leg);
 }
 
 async function terminalResidualBlockers(secrets: Secrets): Promise<string[]> {
   const [trading, funding] = await Promise.all([getTradingBalances(secrets), getFundingBalances(secrets)]);
   const blockers: string[] = [];
-  for (const [asset, amount] of Object.entries(trading)) if (amount > TERMINAL_DUST_EPSILON) blockers.push(`trading:${asset}`);
+  for (const [asset, amount] of Object.entries(trading)) {
+    if (amount > TERMINAL_DUST_EPSILON) blockers.push(`trading:${asset}`);
+  }
   const route = await getEthRoute(secrets).catch(() => null);
   for (const [asset, amount] of Object.entries(funding)) {
     if (!(amount > TERMINAL_DUST_EPSILON)) continue;
