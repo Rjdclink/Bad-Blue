@@ -20,7 +20,7 @@ function maxCrossVenueSkewMs(): number {
 }
 
 function activeVenue(value: string): value is CexStreamVenue {
-  return value === 'kraken' || value === 'okx';
+  return value === 'coinbase' || value === 'kraken' || value === 'okx';
 }
 
 export function ensureCrossVenueTimingGuardWiring(): void {
@@ -71,7 +71,7 @@ export function ensureCrossVenueTimingGuardWiring(): void {
     return originalExecute(plan);
   };
 
-  logger.info('[CrossVenueTimingGuard] Synchronized Kraken/OKX execution timing guard installed', {
+  logger.info('[CrossVenueTimingGuard] Synchronized Coinbase/Kraken/OKX execution timing guard installed', {
     component: 'CrossVenueTimingGuardWiring',
     maxCrossVenueSkewMs: maxCrossVenueSkewMs(),
     maxQuoteAgeMs: maxQuoteAgeMs(),
