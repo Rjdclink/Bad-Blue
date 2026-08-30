@@ -107,7 +107,7 @@ function normalizeEdit(value: unknown): CryptaraMicroEditEvidence | null {
 function normalize(input: CryptaraAdaptiveStrategySnapshot | null): CryptaraAdaptiveStrategySnapshot {
   if (!input || ![1, 2, 3].includes(Number((input as any).version))) return { ...DEFAULT_STATE };
   const raw = input as any;
-  return {
+  const normalized: CryptaraAdaptiveStrategySnapshot = {
     version: 3,
     updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
     terminalObservations: Math.max(0, Math.trunc(Number(raw.terminalObservations) || 0)),
@@ -126,6 +126,19 @@ function normalize(input: CryptaraAdaptiveStrategySnapshot | null): CryptaraAdap
     sourceCodeWriteAuthority: false,
     executionAuthority: false,
   };
+
+  // Shared knobs affect more than one route. A persisted edit authored below the
+  // second-highest rank is therefore invalid even if it was originally triggered
+  // by a failed trade: restoring it could alter unrelated strategies that work.
+  const pending = normalized.pendingEdit;
+  if (pending && pending.rankAtEdit !== 'strategist' && pending.rankAtEdit !== 'sovereign') {
+    if (pending.parameter === 'notionalBias') normalized.notionalBias = clamp(pending.before, 0.10, 1);
+    if (pending.parameter === 'refinementDensity') normalized.refinementDensity = clamp(pending.before, 0.25, 1);
+    if (pending.parameter === 'prefetchAggression') normalized.prefetchAggression = clamp(pending.before, 0.25, 1);
+    normalized.lastEdit = { ...pending, status: 'rolled_back' };
+    normalized.pendingEdit = null;
+  }
+  return normalized;
 }
 
 export function ensureCryptaraAdaptiveStrategyHydrated(): Promise<void> {
@@ -145,6 +158,7 @@ export function ensureCryptaraAdaptiveStrategyHydrated(): Promise<void> {
         prefetchAggression: state.prefetchAggression,
         pendingEdit: state.pendingEdit,
         editPolicy: state.editPolicy,
+        sharedEditMinimumRank: 'strategist',
         sourceCodeWriteAuthority: false,
         executionAuthority: false,
       });
@@ -252,9 +266,10 @@ function healthyOptimization(outcome: CryptaraAdaptiveOutcome): {
 }
 
 function proposedMicroEdit(outcome: CryptaraAdaptiveOutcome) {
-  // Observer is read/learn only. Analyst may repair only objective failures.
-  // Strategist/Sovereign may repair failures and cautiously optimize healthy work.
-  if (outcome.rank === 'observer') return null;
+  // These knobs are shared across routes. Observer and Analyst may learn,
+  // diagnose and propose repairs, but cannot mutate shared strategy state.
+  // Strategist (second-highest) is the first rank with bounded edit authority.
+  if (outcome.rank !== 'strategist' && outcome.rank !== 'sovereign') return null;
   if (objectivelyFailed(outcome)) return failureRepair(outcome);
   return healthyOptimization(outcome);
 }
@@ -292,6 +307,7 @@ function startMicroEdit(
     rankAtEdit: outcome.rank,
     hypothesis: proposal.hypothesis,
     validationSamplesRequired: 3,
+    sharedEditMinimumRank: 'strategist',
     sourceCodeWriteAuthority: false,
   });
 }
@@ -329,9 +345,10 @@ function validatePendingEdit(score: number): void {
 /**
  * Only canonical terminal-settlement callers write here. One micro-edit may be
  * active at a time and must prove itself over three later terminal observations.
- * Observer: no edits. Analyst: objective failures only. Strategist/Sovereign:
- * failure repair plus bounded optimization of healthy strategies. "Could be better"
- * is never sufficient below Strategist, and simulations/shadow trades never count.
+ * Observer/Analyst: learn and diagnose only; no shared edits. Strategist/Sovereign:
+ * bounded repair of objective failures plus bounded optimization of healthy work.
+ * "Could be better" is never edit authority below Strategist, and simulations or
+ * shadow trades never count as edit/rank evidence.
  */
 export async function recordCryptaraAdaptiveOutcome(outcome: CryptaraAdaptiveOutcome): Promise<void> {
   if (!Number.isFinite(outcome.realizedProfitUsd) || !Number.isFinite(outcome.expectedProfitUsd) || !Number.isFinite(outcome.latencyMs)) return;
