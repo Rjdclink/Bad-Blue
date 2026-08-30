@@ -6,6 +6,11 @@ import type {
 } from '../../cryptara/index.js';
 import { createLogger } from '../../../logger.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { getCryptaraDecisionPriorityList } from '../optimization/cryptara-decision-priority.js';
+import {
+  getCryptaraParallelCognitionFrame,
+  prewarmCryptaraParallelCognition,
+} from './cryptara-parallel-cognition.js';
 import { ensureCryptaraBeamWiring } from './cryptara-beam-wiring.js';
 
 const log = createLogger('CryptaraAssessmentWiring');
@@ -149,6 +154,41 @@ function enforceDeterministicRejection(
   return corrected;
 }
 
+function applyParallelPriorityFrame(
+  context: CryptaraOpportunityContext,
+  assessment: CryptaraOpportunityAssessment,
+): CryptaraOpportunityAssessment {
+  const frame = getCryptaraParallelCognitionFrame(context.opportunityId, context.observedAt);
+  if (!frame) {
+    return {
+      ...assessment,
+      provenance: [...new Set([...assessment.provenance, 'cryptara_parallel_helpers:pending_nonblocking'])],
+    };
+  }
+
+  let recommendation = assessment.recommendation;
+  // Priority #1 is absolute. For canonical CEX plans a completed helper frame may
+  // downgrade consideration when current executable market truth is incomplete.
+  // It can never promote a rejected/observed candidate or manufacture profit.
+  if (context.plan && recommendation === 'consider' && !frame.marketTruth.ready) recommendation = 'observe';
+
+  return {
+    ...assessment,
+    recommendation,
+    provenance: [...new Set([
+      ...assessment.provenance,
+      `cryptara_priority:market_truth:${frame.marketTruth.ready ? 'ready' : 'not_ready'}`,
+      `cryptara_priority:market_truth_score:${frame.marketTruth.score.toFixed(6)}`,
+      `cryptara_priority:net_profit_bps:${frame.optimization.netProfitBps ?? 'unknown'}`,
+      `cryptara_priority:bps_to_break_even:${frame.optimization.bpsToBreakEven ?? 'unknown'}`,
+      `cryptara_priority:bounded_notional_usd:${frame.optimization.cryptaraBoundedTargetNotionalUsd.toFixed(8)}`,
+      'cryptara_parallel_helpers:market_truth+profit_efficiency',
+      'cryptara_parallel_helpers:write_authority:false',
+      'cryptara_parallel_helpers:execution_authority:false',
+    ])],
+  };
+}
+
 export function ensureCryptaraAssessmentWiring(): Cryptara {
   const instance = ensureCryptaraBeamWiring();
   if (installed.has(instance)) return instance;
@@ -156,6 +196,12 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
   const target = instance as unknown as CryptaraAssessmentInternals;
 
   target.assessOpportunity = async (context: CryptaraOpportunityContext): Promise<CryptaraOpportunityAssessment> => {
+    // Start both bounded read-only helper lanes immediately. They run concurrently
+    // with Monte Carlo/assessment and are never awaited by the hot path. If they
+    // finish before assessment, their frame can only downgrade market-truth risk;
+    // otherwise the next observation consumes the freshly warmed state.
+    prewarmCryptaraParallelCognition(context);
+
     // Reset evidence for every observation, even when no verified plan exists. Stable
     // opportunity IDs are reused across cycles, so stale Monte Carlo evidence must
     // never survive into the next observation.
@@ -213,18 +259,23 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
       ],
     });
     const decorated = decorateOptionalEvidence(assessment, missing.optional);
-    return enforceDeterministicRejection(context, decorated);
+    const deterministic = enforceDeterministicRejection(context, decorated);
+    return applyParallelPriorityFrame(context, deterministic);
   };
 
   log.info('Cryptara assessment wiring installed', {
     incompleteWarningRepeatMs: WARNING_REPEAT_MS,
     warningTransitionsImmediate: true,
     monteCarloCompute: 'computational_beam_hyper_worker_pool',
+    parallelHelpers: ['cryptara_market_truth_helper', 'cryptara_profit_efficiency_helper'],
+    helperMode: 'read_only_deadline_bound_nonblocking',
+    decisionPriorities: getCryptaraDecisionPriorityList(),
     deterministicPositiveGateBeforeMonteCarlo: true,
     deterministicNonPositiveRecommendation: 'reject',
     optionalProviderMissingDoesNotReduceRank: ['coinstats', 'cex:coincap', 'cex:0x'],
     immutableOpportunityInput: true,
     staleEvidenceIsolation: true,
+    hotPathNetworkRequestsAddedByHelpers: false,
   });
   return instance;
 }
