@@ -143,11 +143,8 @@ export async function evaluateCexFourModeMatrix(input: {
           ? 0
           : Math.max(0, grossSpreadBps) * (1 - makerFillProbability);
         const now = Date.now();
-        const feeEvidenceAgeMs = Math.max(
-          0,
-          now - Math.min(fees[buyVenue]!.observedAt, fees[sellVenue]!.observedAt),
-        );
-        const feeFreshnessScore = Math.pow(0.5, feeEvidenceAgeMs / feeFreshnessHalfLifeMs);
+        const feeEvidenceAgeMs = Math.max(0, now - Math.min(fees[buyVenue]!.observedAt, fees[sellVenue]!.observedAt));
+        const feeFreshnessScore = Number(Math.pow(0.5, feeEvidenceAgeMs / feeFreshnessHalfLifeMs).toFixed(6));
         const staleEvidencePenaltyBps = Math.max(0, combinedFeeBps) * (1 - feeFreshnessScore);
         const riskAdjustedBpsToBreakEven = economicallyPositive
           ? queueRiskPenaltyBps + staleEvidencePenaltyBps
