@@ -20,8 +20,10 @@ const required = [
   [contract, '_safeTransfer(tokens[0], address(vault), balancerOwed)', 'Balancer repayment'],
   [contract, '_safeApprove(asset, address(pool), aaveOwed)', 'Aave repayment approval'],
   [contract, 'emit FlashLoanExecuted(', 'terminal profit event compatibility'],
-  [selector, 'balancerLiquidity >= requestedAmount || aaveLiquidity >= requestedAmount', 'single provider preferred when sufficient'],
   [selector, 'balancerLiquidity + aaveLiquidity < requestedAmount', 'combined liquidity exact-size guard'],
+  [selector, 'bestSingleProviderFee', 'best executable single-provider fee comparison'],
+  [selector, 'totalFee >= bestSingleProviderFee', 'dual path must beat sufficient single-provider fee'],
+  [selector, "'fee_split_beats_single_provider'", 'partial low-fee liquidity can compress provider BPS'],
   [providerWiring, 'selectMeasuredDualFlashLoanAllocation', 'provider mesh selection wired'],
   [providerWiring, "provider: 'aave_balancer_dual'", 'dual selection persisted'],
   [execution, 'dualFlashLoanProviderSelectionRegistry.get(opportunity.id)', 'dual execution selection read'],
@@ -45,15 +47,13 @@ if (!(providerIndex >= 0 && dualIndex > providerIndex && barrierIndex > dualInde
   throw new Error('[aave-balancer-provider-mesh] canonical wrapper order must be single-provider executor -> dual-provider executor -> dynamic exact barrier');
 }
 
-const forbidden = [
-  [selector, 'return {', ''],
-];
-// Explicit semantic prohibitions are checked independently to avoid false positives
-// from ordinary object returns in TypeScript.
 if (providerWiring.includes('synthetic_evidence:true')) throw new Error('[aave-balancer-provider-mesh] synthetic provider evidence regression');
 if (execution.includes('profitVerified: true') && !execution.includes('extractProfit(receipt')) throw new Error('[aave-balancer-provider-mesh] profit verification is not receipt-derived');
-if (!selector.includes('if (balancerLiquidity >= requestedAmount || aaveLiquidity >= requestedAmount) return null;')) {
-  throw new Error('[aave-balancer-provider-mesh] dual path must not replace a sufficient single provider');
+if (!selector.includes('if (balancerAmount <= 0n || aaveAmount <= 0n) return null;')) {
+  throw new Error('[aave-balancer-provider-mesh] dual path must not add a second provider when the cheaper provider funds the whole exact size');
+}
+if (!selector.includes('if (bestSingleProviderFee !== null && totalFee >= bestSingleProviderFee) return null;')) {
+  throw new Error('[aave-balancer-provider-mesh] dual path must not replace an equal-or-cheaper executable single-provider fee surface');
 }
 
-console.log('[aave-balancer-provider-mesh] PASS: either/both/neither provider mesh preserves measured liquidity/fees, exact dual simulation, both-provider repayment, terminal profit truth, and single-provider preference');
+console.log('[aave-balancer-provider-mesh] PASS: either/both/neither provider mesh preserves measured liquidity/fees, fee-split BPS compression, exact dual simulation, both-provider repayment, terminal profit truth, and single-provider preference when equal-or-cheaper');
