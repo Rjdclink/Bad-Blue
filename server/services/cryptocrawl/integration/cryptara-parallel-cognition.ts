@@ -95,6 +95,13 @@ function helperDeadlineAt(context: CryptaraOpportunityContext): number {
   return context.observedAt + maxQuoteAgeMs;
 }
 
+function isOptionalEnrichment(item: string, context: CryptaraOpportunityContext): boolean {
+  if (item.startsWith('optional:')) return true;
+  if (item.startsWith('provider_coinstats_')) return true;
+  if (context.chain !== 'cex') return false;
+  return item.startsWith('provider_coincap_') || item.startsWith('provider_0x_');
+}
+
 function marketTruthHelper(input: MarketTruthInput) {
   const quoteFresh = input.hasPlan && input.quoteAgeMs !== null && input.quoteAgeMs <= input.maxQuoteAgeMs;
   const antennaQuality = input.antennaQuality.length > 0
@@ -222,7 +229,10 @@ function buildInputs(context: CryptaraOpportunityContext): { market: MarketTruth
   const envelope = getAdaptiveProfitOperatingEnvelope();
   const advisory = getComputationalProfitAdvisory();
   const adaptive = getCryptaraAdaptiveStrategySnapshot();
-  const criticalMissing = context.missingInformation.filter(item => !item.startsWith('optional:'));
+  const criticalMissing = context.missingInformation.filter(item => !isOptionalEnrichment(item, context));
+  const expectedSlippageBps = plan && plan.expectedSlippageBps !== null && Number.isFinite(plan.expectedSlippageBps)
+    ? plan.expectedSlippageBps
+    : null;
   return {
     market: {
       opportunityId: context.opportunityId,
@@ -246,7 +256,7 @@ function buildInputs(context: CryptaraOpportunityContext): { market: MarketTruth
       notionalUsd: plan && Number.isFinite(plan.notionalUsd) ? plan.notionalUsd : null,
       requestedNotionalUsd: plan && Number.isFinite(plan.requestedNotionalUsd) ? plan.requestedNotionalUsd : null,
       executableNotionalUsd: plan && Number.isFinite(plan.executableNotionalUsd) ? plan.executableNotionalUsd : null,
-      expectedSlippageBps: plan?.expectedSlippageBps !== null && Number.isFinite(plan?.expectedSlippageBps) ? plan!.expectedSlippageBps : null,
+      expectedSlippageBps,
       quoteAgeMs: plan && Number.isFinite(plan.quoteAgeMs) ? Math.max(0, plan.quoteAgeMs) : null,
       profitLadderMaxNotionalUsd: Math.max(
         0,
