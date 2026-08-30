@@ -2,9 +2,35 @@ import logger from '../../../logger.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { getZeroCapitalRoutePreselectionEvidence } from '../discovery/zero-capital-route-preselection.js';
 
+export interface ZeroCapitalRecoverySnapshot {
+  observedAt: number;
+  observedCandidates: number;
+  candidatesWithNetBps: number;
+  positiveCandidates: number;
+  closestCandidateBpsToBreakEven: number | null;
+  previousClosestCandidateBpsToBreakEven: number | null;
+  closestCandidateGapImprovementBps: number | null;
+  closestCandidateGapImproving: boolean | null;
+  medianCandidateBpsToBreakEven: number | null;
+  p90CandidateBpsToBreakEven: number | null;
+  measuredRouteFamilies: number;
+  closestMeasuredRoute: {
+    routeId: string;
+    netProfitBps: number | null;
+    attempts: number;
+    positiveQuotes: number;
+    measuredNotionalUsd: number | null;
+    sameRouteGapImprovementBps: number | null;
+  } | null;
+  authority: 'telemetry_only';
+  executionAuthority: false;
+  syntheticProfitAllowed: false;
+}
+
 let timer: NodeJS.Timeout | null = null;
 let previousClosestCandidateGapBps: number | null = null;
 let previousClosestRoute: { routeId: string; gapBps: number } | null = null;
+let latest: ZeroCapitalRecoverySnapshot | null = null;
 
 function percentile(values: number[], p: number): number | null {
   if (values.length === 0) return null;
@@ -35,8 +61,8 @@ function refresh(): void {
     ? previousClosestRoute.gapBps - closestRouteGapBps!
     : null;
 
-  logger.info('[ZeroCapitalRecovery] Exact recovery-gap telemetry refreshed', {
-    component: 'ZeroCapitalRecoveryObservability',
+  latest = {
+    observedAt: Date.now(),
     observedCandidates: candidates.length,
     candidatesWithNetBps: withBps.length,
     positiveCandidates: withBps.filter(value => value > 0).length,
@@ -58,15 +84,27 @@ function refresh(): void {
         }
       : null,
     authority: 'telemetry_only',
-    trendAuthority: 'measured_observation_delta_only',
     executionAuthority: false,
     syntheticProfitAllowed: false,
+  };
+
+  logger.info('[ZeroCapitalRecovery] Exact recovery-gap telemetry refreshed', {
+    component: 'ZeroCapitalRecoveryObservability',
+    ...latest,
+    trendAuthority: 'measured_observation_delta_only',
   });
 
   previousClosestCandidateGapBps = closestCandidateGapBps;
   previousClosestRoute = closestRoute && closestRouteGapBps !== null
     ? { routeId: closestRoute.routeId, gapBps: closestRouteGapBps }
     : null;
+}
+
+export function getZeroCapitalRecoverySnapshot(): ZeroCapitalRecoverySnapshot | null {
+  return latest ? {
+    ...latest,
+    closestMeasuredRoute: latest.closestMeasuredRoute ? { ...latest.closestMeasuredRoute } : null,
+  } : null;
 }
 
 export function ensureZeroCapitalRecoveryObservability(): void {
