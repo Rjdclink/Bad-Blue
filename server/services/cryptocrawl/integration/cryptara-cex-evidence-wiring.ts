@@ -13,7 +13,7 @@ const installed = new WeakSet<object>();
 // Keep the active CEX governance surface aligned with the implemented execution
 // venues. Unsupported venues must not receive topology-specific completeness
 // corrections that could make them look more executable than they are.
-const CEX_EXECUTION_VENUES = new Set(['kraken', 'okx']);
+const CEX_EXECUTION_VENUES = new Set(['coinbase', 'kraken', 'okx']);
 
 type CryptaraAssessmentTarget = {
   assessOpportunity: (context: CryptaraOpportunityContext) => Promise<CryptaraOpportunityAssessment>;
