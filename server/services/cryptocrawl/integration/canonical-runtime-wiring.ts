@@ -9,7 +9,9 @@ import { canonicalIntelligenceRepository } from '../intelligence/canonical-intel
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard-rpc-first-wiring.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
+import { ensureHybridCexExecutionWiring } from '../runtime/hybrid-cex-execution-wiring.js';
 import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
+import { ensureStageProofMetricsWiring } from '../runtime/stage-proof-metrics-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
 import { ensureCexInventoryReadinessWiring } from './cex-inventory-readiness-wiring.js';
@@ -125,6 +127,8 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   ensureCryptaraSovereignCortexWiring();
   ensureCryptaraPredictivePrefetchWiring();
   ensureStablecoinMakerExecutionWiring();
+  ensureHybridCexExecutionWiring();
+  ensureStageProofMetricsWiring();
   ensureCexInventoryReadinessWiring();
   ensureExecutionReadinessProfitabilityWiring();
   ensureInventoryConstrainedCexExecutionWiring();
@@ -173,7 +177,9 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
     cexMakerExecution: 'kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
     coinbaseMakerExecutionAuthority: false,
-    cexHybridExecutionAuthority: false,
+    cexHybridExecutionAuthority: true,
+    cexHybridExecution: 'MT_TM_maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
+    stageProofMetricsAuthority: 'terminal_realized_sharpe_drawdown_plus_executed_mc_outcome_validation',
     computationalReactor: 'measured_cpu_memory_rate_pressure_plus_real_scorer_monte_carlo_plus_bounded_callbacks',
     computationalReactorExecutionAuthority: false,
     cryptaraSovereignCortex: 'eight_dimension_measured_capability_vector_plus_consensus_confidence_plus_terminal_learning',
