@@ -1,7 +1,7 @@
 import {
   PAYOUT_QUOTES, MAX_PAYOUT_JOBS_PER_RUN,
   type Control, type PayoutAllocation, type PayoutBatch, type PayoutBatchStatus, type PayoutJob, type Secrets,
-  finite, positive, floorPrecision, round, nowIso, deterministicId,
+  finite, positive, floorPrecision, round, nowIso, deterministicId, sha256Hex,
   supabase, updateBatch,
 } from './shared.ts';
 import {
@@ -52,6 +52,45 @@ function jobIsDue(job: PayoutJob, now = Date.now()): boolean {
   if (!job.scheduled_not_before) return true;
   const scheduled = new Date(job.scheduled_not_before).getTime();
   return Number.isFinite(scheduled) && scheduled <= now;
+}
+
+function activePayoutDestination(secrets: Secrets, batch: PayoutBatch): string {
+  if (batch.destination_mode === 'fallback') {
+    if (!secrets.fallbackDestination) throw new Error('Fallback payout destination is armed but unavailable');
+    return secrets.fallbackDestination;
+  }
+  return secrets.destination;
+}
+
+async function armFallbackDestination(secrets: Secrets, batch: PayoutBatch, withdrawalId: string, state: string): Promise<PayoutBatch> {
+  const reason = `OKX ETH withdrawal terminal failure state ${state}`;
+  if (batch.destination_mode === 'fallback' || !secrets.fallbackDestination) {
+    return updateBatch(batch.batch_id, {
+      status: 'MANUAL_REVIEW',
+      withdrawal_id: withdrawalId || batch.withdrawal_id,
+      primary_failure_withdrawal_id: batch.primary_failure_withdrawal_id || (batch.destination_mode === 'primary' ? withdrawalId : null),
+      primary_failure_at: batch.primary_failure_at || (batch.destination_mode === 'primary' ? nowIso() : null),
+      primary_failure_reason: batch.primary_failure_reason || (batch.destination_mode === 'primary' ? reason : null),
+      last_error: batch.destination_mode === 'fallback'
+        ? `Fallback ${reason}; automatic destination failover exhausted`
+        : `${reason}; no distinct Railway-derived fallback address is available`,
+    });
+  }
+
+  const fallbackClientId = await deterministicId(`payout-batch:${batch.batch_id}:fallback:${secrets.fallbackDestination.toLowerCase()}`);
+  const fallbackHash = (await sha256Hex(secrets.fallbackDestination.toLowerCase())).slice(0, 16);
+  return updateBatch(batch.batch_id, {
+    status: 'RETRYABLE',
+    destination_mode: 'fallback',
+    destination_hash: fallbackHash,
+    primary_failure_withdrawal_id: withdrawalId || batch.withdrawal_id,
+    primary_failure_at: nowIso(),
+    primary_failure_reason: reason,
+    withdrawal_client_id: fallbackClientId,
+    withdrawal_id: null,
+    submitted_at: null,
+    last_error: `${reason}; fallback destination armed after confirmed primary failure`,
+  });
 }
 
 async function treasuryTradingSpendable(asset: string, liveAvailable: number): Promise<number> {
@@ -140,6 +179,7 @@ async function createOrLoadPreparedBatch(secrets: Secrets, dueJobs: PayoutJob[])
     payout_fee_eth: route.feeEth,
     operating_cost_usd: route.feeEth * referencePrice,
     destination_hash: destinationHash,
+    destination_mode: 'primary',
     updated_at: nowIso(),
   }, { onConflict: 'batch_id', ignoreDuplicates: true });
   if (insertError) throw insertError;
@@ -311,10 +351,7 @@ async function reconcileBatchWithdrawal(secrets: Secrets, input: PayoutBatch): P
     return data as PayoutBatch;
   }
   if (state.startsWith('-')) {
-    return updateBatch(batch.batch_id, {
-      status: 'RETRYABLE', withdrawal_id: withdrawalId || null,
-      last_error: `OKX ETH withdrawal terminal failure state ${state}`,
-    });
+    return armFallbackDestination(secrets, batch, withdrawalId, state);
   }
   batch = await updateBatch(batch.batch_id, {
     status: 'SUBMITTED', withdrawal_id: withdrawalId || batch.withdrawal_id, last_error: null,
@@ -334,6 +371,7 @@ async function submitBatchWithdrawal(secrets: Secrets, input: PayoutBatch): Prom
     throw new Error('Prepared payout batch exceeds the current authenticated OKX Ethereum maximum');
   }
 
+  const destination = activePayoutDestination(secrets, batch);
   const clientId = batch.withdrawal_client_id || await deterministicId(`payout-batch:${batch.batch_id}:withdraw:ETH:${route.chain}:${amountEth.toFixed(12)}`);
   const recovered = await findWithdrawal(secrets, batch.withdrawal_id, clientId);
   if (recovered?.wdId) {
@@ -353,7 +391,7 @@ async function submitBatchWithdrawal(secrets: Secrets, input: PayoutBatch): Prom
   await markAllocatedJobsStatus(batch.batch_id, 'WITHDRAWING');
 
   try {
-    const withdrawalId = await submitEthWithdrawal(secrets, route, amountEth, clientId);
+    const withdrawalId = await submitEthWithdrawal(secrets, route, amountEth, clientId, destination);
     batch = await updateBatch(batch.batch_id, { status: 'SUBMITTED', withdrawal_id: withdrawalId, last_error: null });
   } catch (error) {
     const ambiguous = await findWithdrawal(secrets, null, clientId);
