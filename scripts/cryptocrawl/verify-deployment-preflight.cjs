@@ -4,5 +4,6 @@
 // provide whole-application syntax/module bundling validation.
 
 require('./verify-runtime-safety-invariants.cjs');
+require('./verify-profitability-recovery-coordinator.cjs');
 
-console.log('[deployment-preflight] targeted runtime safety invariants passed; continuing to normal Vite/esbuild production build');
+console.log('[deployment-preflight] targeted runtime safety and profitability-recovery invariants passed; continuing to normal Vite/esbuild production build');
