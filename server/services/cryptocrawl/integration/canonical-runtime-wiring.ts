@@ -11,6 +11,7 @@ import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
+import { ensureComputationalReactorWiring } from './computational-reactor-wiring.js';
 import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';
 import { ensureCryptaraSovereignCortexWiring } from './cryptara-sovereign-cortex-wiring.js';
 import { ensureCryptaraPredictivePrefetchWiring } from './cryptara-predictive-prefetch-wiring.js';
@@ -92,6 +93,7 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
 
   ensureStageProfitCapRetirement();
   logZeroCapitalReadinessDiagnostics();
+  ensureComputationalReactorWiring();
   ensureLearningLifecycleWiring();
   ensureMonteCarloCalibrationWiring();
   ensureOracleEvidenceWiring();
@@ -166,14 +168,16 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     cexInventorySizing: 'authenticated_spendable_inventory_then_fresh_economic_reoptimization',
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
     cexHybridExecutionAuthority: false,
+    computationalReactor: 'measured_cpu_memory_rate_pressure_plus_real_scorer_monte_carlo_plus_bounded_callbacks',
+    computationalReactorExecutionAuthority: false,
     cryptaraSovereignCortex: 'eight_dimension_measured_capability_vector_plus_consensus_confidence_plus_terminal_learning',
-    cryptaraPredictivePrefetch: 'positive_high_priority_market_universe_plus_kraken_okx_book_warmup',
+    cryptaraPredictivePrefetch: 'positive_high_priority_compute_aware_provider_ranked_kraken_okx_book_warmup',
     cryptaraCortexExecutionAuthority: false,
     legacyMasterOrchestratorRequired: false,
     executionAuthorityGranted: false,
     executionMetrics: 'terminal_settlement_only',
     opportunityMetrics: 'canonical_verified_stream',
-    orderBookEvolution: 'measured_short_horizon_transitions',
+    orderBookEvolution: 'adaptive_measured_short_horizon_transitions',
     dynamicScale: 'multi_axis_search_formation_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async',

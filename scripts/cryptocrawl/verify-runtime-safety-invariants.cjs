@@ -61,11 +61,18 @@ requireAll('server/services/cryptocrawl/intelligence/provider-quality-auction.ts
   'quality.failureRate',
   'quality.observationAgeMs',
 ]);
-requireAll('server/services/cryptocrawl/integration/order-book-evolution-wiring.ts', [
-  'Promise.all(venues.flatMap(venue => symbols.map(async symbol => {',
+const orderBookSource = requireAll('server/services/cryptocrawl/integration/order-book-evolution-wiring.ts', [
   'allExecutableVenuesStillObservedSimultaneously: true',
   "providerAuction: 'measured_quality_weighted_attention_advisory_only'",
+  'executionAuthority: false',
 ]);
+const legacySimultaneousShape = orderBookSource.includes('Promise.all(venues.flatMap(venue => symbols.map(async symbol => {');
+const interleavedSimultaneousShape = orderBookSource.includes('symbols.flatMap(symbol => venues.map')
+  && orderBookSource.includes('Promise.allSettled')
+  && orderBookSource.includes('getActiveExecutableQuoteVenues()');
+if (!legacySimultaneousShape && !interleavedSimultaneousShape) {
+  throw new Error('server/services/cryptocrawl/integration/order-book-evolution-wiring.ts is missing simultaneous executable-venue observation invariant');
+}
 
 // 4) BPS rescue remains a bounded search scheduler and requires exact re-quote.
 requireAll('server/services/cryptocrawl/integration/economic-transformation-wiring.ts', [

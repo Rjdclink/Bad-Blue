@@ -1,24 +1,27 @@
 /**
  * 4Ji Computational Reactor (OPIF)
- * 
- * Central compute and optimization engine responsible for:
- * - Job scheduling and prioritization
- * - Resource monitoring (CPU, memory, rate limits)
- * - Monte Carlo training passes
- * - Crawler coordination
- * - Heat monitoring and throttling
+ *
+ * Central measured compute and optimization engine responsible for:
+ * - priority/age-aware job scheduling
+ * - CPU, memory, queue and rate-budget pressure
+ * - real scoring-function Monte Carlo optimization
+ * - bounded crawler/model/inference executors
+ * - adaptive concurrency and retry backoff
+ *
+ * The reactor never grants trade execution authority and never fabricates
+ * optimization gains. Improvement metrics come from caller-supplied scorers.
  */
 
 import { EventEmitter } from 'events';
 import crypto from 'crypto';
+import os from 'os';
 
-// Types
 export interface ReactorJob {
   id: string;
   type: 'monte_carlo' | 'crawler_training' | 'osint_sweep' | 'heatmap_update' | 'model_optimization' | 'batch_inference';
   payload: Record<string, unknown>;
   status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-  priority: number;  // 1-10, higher = more urgent
+  priority: number;
   scheduledAt: Date;
   startedAt: Date | null;
   finishedAt: Date | null;
@@ -30,9 +33,9 @@ export interface ReactorJob {
 
 export interface ReactorMetrics {
   jobId: string;
-  cpuUsage: number;        // 0-100%
-  memoryUsage: number;     // 0-100%
-  requestsUsed: number;    // API requests consumed
+  cpuUsage: number;
+  memoryUsage: number;
+  requestsUsed: number;
   durationMs: number;
   scoreBefore: number;
   scoreAfter: number;
@@ -65,98 +68,106 @@ export interface ReactorConfig {
   timezone: string;
 }
 
-// Default configuration
+type NumericParameterSpace = Record<string, { min: number; max: number }>;
+type MonteCarloScorer = (params: Record<string, number>) => Promise<number> | number;
+type ReactorExecutorResult = {
+  requestsUsed?: number;
+  scoreBefore?: number;
+  scoreAfter?: number;
+  improvementPercent?: number;
+  result?: unknown;
+};
+type ReactorExecutor = (payload: Record<string, unknown>) => Promise<ReactorExecutorResult> | ReactorExecutorResult;
+
 const DEFAULT_CONFIG: ReactorConfig = {
   enabled: true,
   maxConcurrentJobs: 3,
   maxJobsPerHour: 100,
   monteCarloConfig: {
     passesPerCycle: 10,
-    scoringFunction: 'weighted_accuracy',
-    targetImprovement: 5,  // 5%
+    scoringFunction: 'caller_supplied',
+    targetImprovement: 5,
     maxIterations: 1000,
-    cooldownMs: 1000
+    cooldownMs: 0,
   },
   maintenanceWindow: { start: '02:00', end: '04:00' },
-  timezone: 'America/Chicago'
+  timezone: 'America/Chicago',
 };
 
-// Throttle thresholds
 const THROTTLE_THRESHOLDS = {
   light: { cpu: 60, memory: 70, rateLimit: 50, queueSize: 20 },
   moderate: { cpu: 75, memory: 80, rateLimit: 70, queueSize: 50 },
-  heavy: { cpu: 85, memory: 90, rateLimit: 85, queueSize: 100 }
+  heavy: { cpu: 85, memory: 90, rateLimit: 85, queueSize: 100 },
 };
+
+const MAX_QUEUE = Math.max(32, Math.min(10_000, Number(process.env.REACTOR_MAX_QUEUE || 1000)));
+const MAX_MONTE_CARLO_BATCH = Math.max(1, Math.min(32, Number(process.env.REACTOR_MONTE_CARLO_BATCH || 8)));
+const JOB_AGE_PRIORITY_MS = Math.max(5_000, Math.min(300_000, Number(process.env.REACTOR_JOB_AGE_PRIORITY_MS || 30_000)));
 
 export const reactorEvents = new EventEmitter();
 
 class ComputationalReactor {
   private static instance: ComputationalReactor;
-  private isInitialized: boolean = false;
+  private isInitialized = false;
   private config: ReactorConfig = DEFAULT_CONFIG;
-  
-  // Job management
   private jobQueue: ReactorJob[] = [];
-  private activeJobs: Map<string, ReactorJob> = new Map();
+  private activeJobs = new Map<string, ReactorJob>();
   private jobHistory: ReactorJob[] = [];
   private metricsHistory: ReactorMetrics[] = [];
-  
-  // Resource tracking
+  private dedupeKeys = new Map<string, string>();
   private heatMonitor: HeatMonitor = {
     cpuUsage: 0,
     memoryUsage: 0,
     rateLimitUsage: 0,
     jobQueueSize: 0,
     activeJobs: 0,
-    throttleLevel: 'none'
+    throttleLevel: 'none',
   };
-  
-  // Intervals
   private jobProcessorInterval: NodeJS.Timeout | null = null;
   private heatMonitorInterval: NodeJS.Timeout | null = null;
-  private jobsProcessedThisHour: number = 0;
-  private lastHourReset: Date = new Date();
+  private jobsProcessedThisHour = 0;
+  private lastHourReset = new Date();
+  private previousCpu = process.cpuUsage();
+  private previousCpuAt = process.hrtime.bigint();
 
   private constructor() {}
 
   static getInstance(): ComputationalReactor {
-    if (!ComputationalReactor.instance) {
-      ComputationalReactor.instance = new ComputationalReactor();
-    }
+    if (!ComputationalReactor.instance) ComputationalReactor.instance = new ComputationalReactor();
     return ComputationalReactor.instance;
   }
 
   async initialize(config?: Partial<ReactorConfig>): Promise<void> {
     if (this.isInitialized) return;
-
-    console.log('[Reactor] Initializing Computational Reactor...');
-
     if (config) {
-      this.config = { ...DEFAULT_CONFIG, ...config };
+      this.config = {
+        ...DEFAULT_CONFIG,
+        ...config,
+        monteCarloConfig: { ...DEFAULT_CONFIG.monteCarloConfig, ...(config.monteCarloConfig || {}) },
+        maintenanceWindow: { ...DEFAULT_CONFIG.maintenanceWindow, ...(config.maintenanceWindow || {}) },
+      };
     }
-
-    // Start job processor
     this.startJobProcessor();
-    
-    // Start heat monitor
     this.startHeatMonitor();
-
+    this.updateHeatMonitor();
     this.isInitialized = true;
-    console.log('[Reactor] Computational Reactor initialized');
-    reactorEvents.emit('reactor-initialized', { config: this.config });
+    reactorEvents.emit('reactor-initialized', { config: this.config, syntheticScores: false, executionAuthority: false });
   }
 
-  /**
-   * Submit a job to the reactor
-   */
   async submitJob(
     type: ReactorJob['type'],
     payload: Record<string, unknown>,
-    priority: number = 5,
-    options: { maxRetries?: number; scheduledAt?: Date } = {}
+    priority = 5,
+    options: { maxRetries?: number; scheduledAt?: Date; dedupeKey?: string } = {},
   ): Promise<string> {
+    if (this.jobQueue.length >= MAX_QUEUE) throw new Error('REACTOR_QUEUE_CAPACITY_REACHED');
+    const dedupeKey = options.dedupeKey?.trim();
+    if (dedupeKey) {
+      const existing = this.dedupeKeys.get(dedupeKey);
+      if (existing && this.getJob(existing)) return existing;
+    }
+
     const jobId = `job_${crypto.randomBytes(8).toString('hex')}`;
-    
     const job: ReactorJob = {
       id: jobId,
       type,
@@ -168,574 +179,346 @@ class ComputationalReactor {
       finishedAt: null,
       errorMessage: null,
       retryCount: 0,
-      maxRetries: options.maxRetries ?? 3,
-      createdAt: new Date()
+      maxRetries: Math.max(0, Math.min(10, options.maxRetries ?? 3)),
+      createdAt: new Date(),
     };
-
+    if (dedupeKey) {
+      job.payload.__reactorDedupeKey = dedupeKey;
+      this.dedupeKeys.set(dedupeKey, jobId);
+    }
     this.jobQueue.push(job);
     this.sortJobQueue();
-    
     this.updateHeatMonitor();
-
-    console.log(`[Reactor] Job submitted: ${jobId} (type: ${type}, priority: ${priority})`);
     reactorEvents.emit('job-submitted', job);
-
     return jobId;
   }
 
-  /**
-   * Schedule a Monte Carlo optimization run
-   */
   async scheduleMonteCarloRun(
     targetComponent: string,
     scoringFunction: (params: unknown) => Promise<number>,
-    parameterSpace: Record<string, { min: number; max: number }>
+    parameterSpace: NumericParameterSpace,
   ): Promise<string> {
-    const payload = {
+    if (typeof scoringFunction !== 'function') throw new Error('REACTOR_MONTE_CARLO_SCORER_REQUIRED');
+    this.validateParameterSpace(parameterSpace);
+    return this.submitJob('monte_carlo', {
       targetComponent,
       parameterSpace,
-      config: this.config.monteCarloConfig
-    };
-
-    return this.submitJob('monte_carlo', payload, 7);
+      scoringFunction: scoringFunction as MonteCarloScorer,
+      config: this.config.monteCarloConfig,
+    }, 7, { dedupeKey: `monte_carlo:${targetComponent}` });
   }
 
-  /**
-   * Schedule a crawler training cycle
-   */
   async scheduleCrawlerTraining(
     crawlerType: 'osint' | 'legal' | 'crypto' | 'gps',
-    config: Record<string, unknown>
+    config: Record<string, unknown>,
   ): Promise<string> {
-    return this.submitJob('crawler_training', { crawlerType, config }, 5);
+    return this.submitJob('crawler_training', { crawlerType, config }, 5, { dedupeKey: `crawler_training:${crawlerType}` });
   }
 
-  /**
-   * Start the job processor
-   */
   private startJobProcessor(): void {
-    if (this.jobProcessorInterval) {
-      clearInterval(this.jobProcessorInterval);
-    }
-
-    this.jobProcessorInterval = setInterval(async () => {
-      await this.processNextJobs();
-    }, 1000); // Check every second
+    if (this.jobProcessorInterval) clearInterval(this.jobProcessorInterval);
+    this.jobProcessorInterval = setInterval(() => void this.processNextJobs(), 250);
+    this.jobProcessorInterval.unref?.();
   }
 
-  /**
-   * Process the next available jobs
-   */
   private async processNextJobs(): Promise<void> {
-    if (!this.config.enabled) return;
-
-    // Check if we're in maintenance window
-    if (this.isInMaintenanceWindow()) {
-      return;
-    }
-
-    // Check hourly job limit
+    if (!this.config.enabled || this.isInMaintenanceWindow()) return;
     this.checkHourlyReset();
-    if (this.jobsProcessedThisHour >= this.config.maxJobsPerHour) {
-      console.log('[Reactor] Hourly job limit reached');
-      return;
-    }
+    if (this.jobsProcessedThisHour >= this.config.maxJobsPerHour) return;
+    this.updateHeatMonitor();
+    if (this.heatMonitor.throttleLevel === 'heavy') return;
 
-    // Check throttle level
-    if (this.heatMonitor.throttleLevel === 'heavy') {
-      console.log('[Reactor] Heavy throttle active, skipping job processing');
-      return;
-    }
-
-    // Get jobs ready to run
-    const readyJobs = this.jobQueue.filter(
-      job => job.status === 'pending' && job.scheduledAt <= new Date()
-    );
-
-    // Calculate how many jobs we can run
-    let slotsAvailable = this.config.maxConcurrentJobs - this.activeJobs.size;
-    
-    // Reduce slots based on throttle level
-    if (this.heatMonitor.throttleLevel === 'moderate') {
-      slotsAvailable = Math.max(1, Math.floor(slotsAvailable / 2));
-    } else if (this.heatMonitor.throttleLevel === 'light') {
-      slotsAvailable = Math.max(1, slotsAvailable - 1);
-    }
-
-    // Process jobs up to available slots
-    const jobsToProcess = readyJobs.slice(0, slotsAvailable);
-    
-    for (const job of jobsToProcess) {
-      this.executeJob(job);
-    }
+    this.sortJobQueue();
+    const readyJobs = this.jobQueue.filter(job => job.status === 'pending' && job.scheduledAt.getTime() <= Date.now());
+    let slots = Math.max(0, this.config.maxConcurrentJobs - this.activeJobs.size);
+    if (this.heatMonitor.throttleLevel === 'moderate') slots = Math.floor(slots / 2);
+    else if (this.heatMonitor.throttleLevel === 'light') slots = Math.max(0, slots - 1);
+    const hourlyRemaining = Math.max(0, this.config.maxJobsPerHour - this.jobsProcessedThisHour);
+    for (const job of readyJobs.slice(0, Math.min(slots, hourlyRemaining))) void this.executeJob(job);
   }
 
-  /**
-   * Execute a single job
-   */
   private async executeJob(job: ReactorJob): Promise<void> {
-    // Remove from queue
-    this.jobQueue = this.jobQueue.filter(j => j.id !== job.id);
-    
-    // Update status
+    this.jobQueue = this.jobQueue.filter(candidate => candidate.id !== job.id);
     job.status = 'running';
     job.startedAt = new Date();
     this.activeJobs.set(job.id, job);
-    
     this.updateHeatMonitor();
     reactorEvents.emit('job-started', job);
 
-    console.log(`[Reactor] Executing job: ${job.id} (type: ${job.type})`);
-
     try {
-      const startTime = Date.now();
+      const started = Date.now();
       const result = await this.runJobLogic(job);
-      const duration = Date.now() - startTime;
-
-      // Record metrics
+      const durationMs = Date.now() - started;
       const metrics: ReactorMetrics = {
         jobId: job.id,
         cpuUsage: this.heatMonitor.cpuUsage,
         memoryUsage: this.heatMonitor.memoryUsage,
         requestsUsed: result.requestsUsed ?? 0,
-        durationMs: duration,
+        durationMs,
         scoreBefore: result.scoreBefore ?? 0,
         scoreAfter: result.scoreAfter ?? 0,
-        improvementPercent: result.improvementPercent ?? 0
+        improvementPercent: result.improvementPercent ?? 0,
       };
       this.metricsHistory.push(metrics);
-
-      // Keep only last 1000 metrics
-      if (this.metricsHistory.length > 1000) {
-        this.metricsHistory = this.metricsHistory.slice(-1000);
-      }
-
-      // Complete job
+      if (this.metricsHistory.length > 1000) this.metricsHistory = this.metricsHistory.slice(-1000);
       job.status = 'completed';
       job.finishedAt = new Date();
-      
-      console.log(`[Reactor] Job completed: ${job.id} (duration: ${duration}ms)`);
       reactorEvents.emit('job-completed', { job, metrics, result });
-
-    } catch (error: any) {
-      console.error(`[Reactor] Job failed: ${job.id}`, error.message);
-      
-      job.errorMessage = error.message;
-      
-      // Check if we should retry
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      job.errorMessage = message;
       if (job.retryCount < job.maxRetries) {
-        job.retryCount++;
+        job.retryCount += 1;
         job.status = 'pending';
-        job.scheduledAt = new Date(Date.now() + 5000 * job.retryCount); // Exponential backoff
+        const backoff = Math.min(60_000, 1_000 * (2 ** (job.retryCount - 1)));
+        job.scheduledAt = new Date(Date.now() + backoff);
         this.jobQueue.push(job);
         this.sortJobQueue();
-        console.log(`[Reactor] Job queued for retry: ${job.id} (attempt ${job.retryCount}/${job.maxRetries})`);
       } else {
         job.status = 'failed';
         job.finishedAt = new Date();
       }
-
-      reactorEvents.emit('job-failed', { job, error: error.message });
+      reactorEvents.emit('job-failed', { job, error: message });
     } finally {
-      // Remove from active
       this.activeJobs.delete(job.id);
-      
-      // Add to history
-      this.jobHistory.push(job);
-      if (this.jobHistory.length > 1000) {
-        this.jobHistory = this.jobHistory.slice(-1000);
+      if (job.status !== 'pending') {
+        this.releaseDedupe(job);
+        this.jobHistory.push(job);
+        if (this.jobHistory.length > 1000) this.jobHistory = this.jobHistory.slice(-1000);
       }
-
-      this.jobsProcessedThisHour++;
+      this.jobsProcessedThisHour += 1;
       this.updateHeatMonitor();
     }
   }
 
-  /**
-   * Run the actual job logic based on type
-   */
-  private async runJobLogic(job: ReactorJob): Promise<{
-    requestsUsed?: number;
-    scoreBefore?: number;
-    scoreAfter?: number;
-    improvementPercent?: number;
-    result?: unknown;
-  }> {
+  private async runJobLogic(job: ReactorJob): Promise<ReactorExecutorResult> {
     switch (job.type) {
-      case 'monte_carlo':
-        return this.runMonteCarloJob(job);
-      case 'crawler_training':
-        return this.runCrawlerTrainingJob(job);
-      case 'osint_sweep':
-        return this.runOsintSweepJob(job);
-      case 'heatmap_update':
-        return this.runHeatmapUpdateJob(job);
-      case 'model_optimization':
-        return this.runModelOptimizationJob(job);
-      case 'batch_inference':
-        return this.runBatchInferenceJob(job);
-      default:
-        throw new Error(`Unknown job type: ${job.type}`);
+      case 'monte_carlo': return this.runMonteCarloJob(job);
+      case 'crawler_training': return this.runExecutorJob(job, 'trainer');
+      case 'osint_sweep': return this.runExecutorJob(job, 'executor');
+      case 'heatmap_update': return this.runExecutorJob(job, 'executor');
+      case 'model_optimization': return this.runExecutorJob(job, 'optimizer');
+      case 'batch_inference': return this.runBatchInferenceJob(job);
+      default: throw new Error(`Unknown job type: ${job.type}`);
     }
   }
 
-  /**
-   * Monte Carlo optimization job
-   */
-  private async runMonteCarloJob(job: ReactorJob): Promise<{
-    requestsUsed: number;
-    scoreBefore: number;
-    scoreAfter: number;
-    improvementPercent: number;
-  }> {
-    const config = job.payload.config as MonteCarloConfig;
-    const passCount = config.passesPerCycle;
-    
-    let scoreBefore = 50; // Baseline
-    let scoreAfter = 50;
-    let requestsUsed = 0;
+  private async runMonteCarloJob(job: ReactorJob): Promise<ReactorExecutorResult> {
+    const config = { ...this.config.monteCarloConfig, ...((job.payload.config || {}) as Partial<MonteCarloConfig>) };
+    const parameterSpace = job.payload.parameterSpace as NumericParameterSpace;
+    const scorer = job.payload.scoringFunction as MonteCarloScorer;
+    if (typeof scorer !== 'function') throw new Error('REACTOR_MONTE_CARLO_SCORER_REQUIRED');
+    this.validateParameterSpace(parameterSpace);
 
-    // Simulate Monte Carlo passes
-    for (let i = 0; i < passCount; i++) {
-      // Add small random improvement per pass
-      const improvement = Math.random() * 2 - 0.5; // -0.5 to +1.5
-      scoreAfter = Math.min(100, Math.max(0, scoreAfter + improvement));
-      requestsUsed++;
-      
-      // Cooldown between passes
-      await this.sleep(config.cooldownMs);
+    const midpoint = Object.fromEntries(Object.entries(parameterSpace).map(([key, range]) => [key, (range.min + range.max) / 2]));
+    const scoreBefore = this.requireFiniteScore(await scorer(midpoint));
+    let bestScore = scoreBefore;
+    let bestParameters = midpoint;
+    let requestsUsed = 1;
+    const passes = Math.max(1, Math.min(config.maxIterations, config.passesPerCycle));
+    const target = Math.max(0, config.targetImprovement);
+
+    for (let offset = 0; offset < passes; offset += MAX_MONTE_CARLO_BATCH) {
+      if (this.heatMonitor.throttleLevel === 'heavy') break;
+      const batchSize = Math.min(MAX_MONTE_CARLO_BATCH, passes - offset);
+      const candidates = Array.from({ length: batchSize }, () => this.sampleParameters(parameterSpace));
+      const scores = await Promise.all(candidates.map(candidate => Promise.resolve(scorer(candidate)).then(score => this.requireFiniteScore(score))));
+      requestsUsed += scores.length;
+      for (let index = 0; index < scores.length; index += 1) {
+        if (scores[index] > bestScore) {
+          bestScore = scores[index];
+          bestParameters = candidates[index];
+        }
+      }
+      const improvement = scoreBefore === 0 ? (bestScore > 0 ? 100 : 0) : ((bestScore - scoreBefore) / Math.abs(scoreBefore)) * 100;
+      if (target > 0 && improvement >= target) break;
+      if (config.cooldownMs > 0) await this.sleep(Math.min(5_000, config.cooldownMs));
     }
 
-    const improvementPercent = ((scoreAfter - scoreBefore) / scoreBefore) * 100;
-
-    return { requestsUsed, scoreBefore, scoreAfter, improvementPercent };
-  }
-
-  /**
-   * Crawler training job
-   */
-  private async runCrawlerTrainingJob(job: ReactorJob): Promise<{
-    requestsUsed: number;
-    scoreBefore: number;
-    scoreAfter: number;
-    improvementPercent: number;
-  }> {
-    const crawlerType = job.payload.crawlerType as string;
-    
-    console.log(`[Reactor] Training crawler: ${crawlerType}`);
-    
-    // Simulate training
-    await this.sleep(2000);
-
+    const improvementPercent = scoreBefore === 0 ? (bestScore > 0 ? 100 : 0) : ((bestScore - scoreBefore) / Math.abs(scoreBefore)) * 100;
     return {
-      requestsUsed: 10,
-      scoreBefore: 70,
-      scoreAfter: 75,
-      improvementPercent: 7.14
-    };
-  }
-
-  /**
-   * OSINT sweep job
-   */
-  private async runOsintSweepJob(job: ReactorJob): Promise<{ requestsUsed: number }> {
-    console.log('[Reactor] Running OSINT sweep');
-    await this.sleep(3000);
-    return { requestsUsed: 25 };
-  }
-
-  /**
-   * Heatmap update job
-   */
-  private async runHeatmapUpdateJob(job: ReactorJob): Promise<{ requestsUsed: number }> {
-    console.log('[Reactor] Updating heatmaps');
-    await this.sleep(1500);
-    return { requestsUsed: 5 };
-  }
-
-  /**
-   * Model optimization job
-   */
-  private async runModelOptimizationJob(job: ReactorJob): Promise<{
-    scoreBefore: number;
-    scoreAfter: number;
-    improvementPercent: number;
-  }> {
-    console.log('[Reactor] Optimizing model');
-    await this.sleep(5000);
-    
-    const scoreBefore = 80;
-    const scoreAfter = 83;
-    
-    return {
+      requestsUsed,
       scoreBefore,
-      scoreAfter,
-      improvementPercent: ((scoreAfter - scoreBefore) / scoreBefore) * 100
+      scoreAfter: bestScore,
+      improvementPercent,
+      result: { bestParameters, measuredScorer: true, syntheticImprovement: false, executionAuthority: false },
     };
   }
 
-  /**
-   * Batch inference job
-   */
-  private async runBatchInferenceJob(job: ReactorJob): Promise<{ requestsUsed: number; result: unknown }> {
-    const items = (job.payload.items as unknown[]) || [];
-    console.log(`[Reactor] Running batch inference on ${items.length} items`);
-    
-    await this.sleep(items.length * 100);
-    
-    return {
-      requestsUsed: items.length,
-      result: { processedCount: items.length, status: 'complete' }
-    };
-  }
-
-  /**
-   * Start heat monitoring
-   */
-  private startHeatMonitor(): void {
-    if (this.heatMonitorInterval) {
-      clearInterval(this.heatMonitorInterval);
+  private async runExecutorJob(job: ReactorJob, key: 'trainer' | 'executor' | 'optimizer'): Promise<ReactorExecutorResult> {
+    const executor = job.payload[key] as ReactorExecutor | undefined;
+    if (typeof executor !== 'function') {
+      return { requestsUsed: 0, result: { skipped: true, reason: `missing_${key}`, syntheticImprovement: false } };
     }
-
-    this.heatMonitorInterval = setInterval(() => {
-      this.updateHeatMonitor();
-    }, 5000); // Check every 5 seconds
+    return executor(job.payload);
   }
 
-  /**
-   * Update heat monitor readings
-   */
-  private updateHeatMonitor(): void {
-    // Get system metrics
-    const memUsage = process.memoryUsage();
-    const heapUsedPercent = (memUsage.heapUsed / memUsage.heapTotal) * 100;
+  private async runBatchInferenceJob(job: ReactorJob): Promise<ReactorExecutorResult> {
+    const items = Array.isArray(job.payload.items) ? job.payload.items as unknown[] : [];
+    const inference = job.payload.inferenceFunction as ((item: unknown) => Promise<unknown> | unknown) | undefined;
+    if (typeof inference !== 'function') return { requestsUsed: 0, result: { processedCount: 0, skipped: true, reason: 'missing_inference_function' } };
+    const concurrency = Math.max(1, Math.min(32, Number(job.payload.concurrency || 8)));
+    const output: unknown[] = [];
+    for (let offset = 0; offset < items.length; offset += concurrency) {
+      if (this.heatMonitor.throttleLevel === 'heavy') break;
+      output.push(...await Promise.all(items.slice(offset, offset + concurrency).map(item => inference(item))));
+    }
+    return { requestsUsed: output.length, result: { processedCount: output.length, output } };
+  }
 
-    this.heatMonitor.cpuUsage = Math.min(100, Math.random() * 30 + 20); // Simulated
-    this.heatMonitor.memoryUsage = Math.min(100, heapUsedPercent);
-    this.heatMonitor.rateLimitUsage = Math.min(100, (this.jobsProcessedThisHour / this.config.maxJobsPerHour) * 100);
+  private startHeatMonitor(): void {
+    if (this.heatMonitorInterval) clearInterval(this.heatMonitorInterval);
+    this.heatMonitorInterval = setInterval(() => this.updateHeatMonitor(), 1000);
+    this.heatMonitorInterval.unref?.();
+  }
+
+  private updateHeatMonitor(): void {
+    const nowCpu = process.cpuUsage();
+    const nowAt = process.hrtime.bigint();
+    const elapsedMicros = Number(nowAt - this.previousCpuAt) / 1000;
+    const usedMicros = (nowCpu.user - this.previousCpu.user) + (nowCpu.system - this.previousCpu.system);
+    const cpuCount = Math.max(1, os.cpus().length);
+    const cpuUsage = elapsedMicros > 0 ? (usedMicros / elapsedMicros / cpuCount) * 100 : 0;
+    this.previousCpu = nowCpu;
+    this.previousCpuAt = nowAt;
+
+    const memUsage = process.memoryUsage();
+    const memoryUsage = memUsage.heapTotal > 0 ? (memUsage.heapUsed / memUsage.heapTotal) * 100 : 0;
+    this.heatMonitor.cpuUsage = Math.max(0, Math.min(100, cpuUsage));
+    this.heatMonitor.memoryUsage = Math.max(0, Math.min(100, memoryUsage));
+    this.heatMonitor.rateLimitUsage = Math.max(0, Math.min(100, (this.jobsProcessedThisHour / Math.max(1, this.config.maxJobsPerHour)) * 100));
     this.heatMonitor.jobQueueSize = this.jobQueue.length;
     this.heatMonitor.activeJobs = this.activeJobs.size;
-
-    // Determine throttle level
     this.heatMonitor.throttleLevel = this.calculateThrottleLevel();
-
-    reactorEvents.emit('heat-update', this.heatMonitor);
+    reactorEvents.emit('heat-update', { ...this.heatMonitor, measuredCpu: true });
   }
 
-  /**
-   * Calculate throttle level based on current metrics
-   */
   private calculateThrottleLevel(): HeatMonitor['throttleLevel'] {
     const { cpuUsage, memoryUsage, rateLimitUsage, jobQueueSize } = this.heatMonitor;
-
-    if (
-      cpuUsage >= THROTTLE_THRESHOLDS.heavy.cpu ||
-      memoryUsage >= THROTTLE_THRESHOLDS.heavy.memory ||
-      rateLimitUsage >= THROTTLE_THRESHOLDS.heavy.rateLimit ||
-      jobQueueSize >= THROTTLE_THRESHOLDS.heavy.queueSize
-    ) {
-      return 'heavy';
-    }
-
-    if (
-      cpuUsage >= THROTTLE_THRESHOLDS.moderate.cpu ||
-      memoryUsage >= THROTTLE_THRESHOLDS.moderate.memory ||
-      rateLimitUsage >= THROTTLE_THRESHOLDS.moderate.rateLimit ||
-      jobQueueSize >= THROTTLE_THRESHOLDS.moderate.queueSize
-    ) {
-      return 'moderate';
-    }
-
-    if (
-      cpuUsage >= THROTTLE_THRESHOLDS.light.cpu ||
-      memoryUsage >= THROTTLE_THRESHOLDS.light.memory ||
-      rateLimitUsage >= THROTTLE_THRESHOLDS.light.rateLimit ||
-      jobQueueSize >= THROTTLE_THRESHOLDS.light.queueSize
-    ) {
-      return 'light';
-    }
-
+    if (cpuUsage >= THROTTLE_THRESHOLDS.heavy.cpu || memoryUsage >= THROTTLE_THRESHOLDS.heavy.memory || rateLimitUsage >= THROTTLE_THRESHOLDS.heavy.rateLimit || jobQueueSize >= THROTTLE_THRESHOLDS.heavy.queueSize) return 'heavy';
+    if (cpuUsage >= THROTTLE_THRESHOLDS.moderate.cpu || memoryUsage >= THROTTLE_THRESHOLDS.moderate.memory || rateLimitUsage >= THROTTLE_THRESHOLDS.moderate.rateLimit || jobQueueSize >= THROTTLE_THRESHOLDS.moderate.queueSize) return 'moderate';
+    if (cpuUsage >= THROTTLE_THRESHOLDS.light.cpu || memoryUsage >= THROTTLE_THRESHOLDS.light.memory || rateLimitUsage >= THROTTLE_THRESHOLDS.light.rateLimit || jobQueueSize >= THROTTLE_THRESHOLDS.light.queueSize) return 'light';
     return 'none';
   }
 
-  /**
-   * Check if we're in maintenance window
-   */
   private isInMaintenanceWindow(): boolean {
-    const now = new Date();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const currentTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-    
-    return currentTime >= this.config.maintenanceWindow.start && 
-           currentTime <= this.config.maintenanceWindow.end;
+    const formatter = new Intl.DateTimeFormat('en-US', { timeZone: this.config.timezone, hour: '2-digit', minute: '2-digit', hour12: false });
+    const parts = Object.fromEntries(formatter.formatToParts(new Date()).map(part => [part.type, part.value]));
+    const currentTime = `${parts.hour}:${parts.minute}`;
+    const { start, end } = this.config.maintenanceWindow;
+    if (start === end) return false;
+    return start < end ? currentTime >= start && currentTime <= end : currentTime >= start || currentTime <= end;
   }
 
-  /**
-   * Check and reset hourly job counter
-   */
   private checkHourlyReset(): void {
     const now = new Date();
-    const hourDiff = (now.getTime() - this.lastHourReset.getTime()) / (1000 * 60 * 60);
-    
-    if (hourDiff >= 1) {
+    if (now.getTime() - this.lastHourReset.getTime() >= 3_600_000) {
       this.jobsProcessedThisHour = 0;
       this.lastHourReset = now;
     }
   }
 
-  /**
-   * Sort job queue by priority (higher first) and scheduled time
-   */
   private sortJobQueue(): void {
+    const now = Date.now();
     this.jobQueue.sort((a, b) => {
-      if (a.priority !== b.priority) {
-        return b.priority - a.priority;
-      }
-      return a.scheduledAt.getTime() - b.scheduledAt.getTime();
+      const agedA = Math.min(10, a.priority + Math.floor((now - a.createdAt.getTime()) / JOB_AGE_PRIORITY_MS));
+      const agedB = Math.min(10, b.priority + Math.floor((now - b.createdAt.getTime()) / JOB_AGE_PRIORITY_MS));
+      return agedB - agedA || a.scheduledAt.getTime() - b.scheduledAt.getTime() || a.createdAt.getTime() - b.createdAt.getTime();
     });
   }
 
-  /**
-   * Sleep utility
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  /**
-   * Get job by ID
-   */
-  getJob(jobId: string): ReactorJob | undefined {
-    return this.activeJobs.get(jobId) || 
-           this.jobQueue.find(j => j.id === jobId) ||
-           this.jobHistory.find(j => j.id === jobId);
-  }
-
-  /**
-   * Cancel a job
-   */
-  cancelJob(jobId: string): boolean {
-    const queueIndex = this.jobQueue.findIndex(j => j.id === jobId);
-    if (queueIndex >= 0) {
-      const job = this.jobQueue[queueIndex];
-      job.status = 'cancelled';
-      job.finishedAt = new Date();
-      this.jobQueue.splice(queueIndex, 1);
-      this.jobHistory.push(job);
-      reactorEvents.emit('job-cancelled', job);
-      return true;
+  private validateParameterSpace(parameterSpace: NumericParameterSpace): void {
+    const entries = Object.entries(parameterSpace || {});
+    if (!entries.length) throw new Error('REACTOR_MONTE_CARLO_PARAMETER_SPACE_REQUIRED');
+    for (const [name, range] of entries) {
+      if (!Number.isFinite(range?.min) || !Number.isFinite(range?.max) || range.min > range.max) throw new Error(`REACTOR_INVALID_PARAMETER_RANGE:${name}`);
     }
-    return false;
   }
 
-  /**
-   * Get current heat monitor state
-   */
-  getHeatMonitor(): HeatMonitor {
-    return { ...this.heatMonitor };
+  private sampleParameters(parameterSpace: NumericParameterSpace): Record<string, number> {
+    return Object.fromEntries(Object.entries(parameterSpace).map(([key, range]) => [key, range.min + Math.random() * (range.max - range.min)]));
   }
 
-  /**
-   * Get reactor status
-   */
-  getStatus(): {
-    enabled: boolean;
-    activeJobs: number;
-    queuedJobs: number;
-    jobsProcessedThisHour: number;
-    throttleLevel: string;
-    heatMonitor: HeatMonitor;
-  } {
+  private requireFiniteScore(score: number): number {
+    if (!Number.isFinite(score)) throw new Error('REACTOR_NON_FINITE_SCORE');
+    return score;
+  }
+
+  private releaseDedupe(job: ReactorJob): void {
+    const key = typeof job.payload.__reactorDedupeKey === 'string' ? job.payload.__reactorDedupeKey : null;
+    if (key && this.dedupeKeys.get(key) === job.id) this.dedupeKeys.delete(key);
+  }
+
+  private sleep(ms: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+  getJob(jobId: string): ReactorJob | undefined {
+    return this.activeJobs.get(jobId) || this.jobQueue.find(job => job.id === jobId) || this.jobHistory.find(job => job.id === jobId);
+  }
+
+  cancelJob(jobId: string): boolean {
+    const queueIndex = this.jobQueue.findIndex(job => job.id === jobId);
+    if (queueIndex < 0) return false;
+    const job = this.jobQueue[queueIndex];
+    job.status = 'cancelled';
+    job.finishedAt = new Date();
+    this.jobQueue.splice(queueIndex, 1);
+    this.releaseDedupe(job);
+    this.jobHistory.push(job);
+    reactorEvents.emit('job-cancelled', job);
+    return true;
+  }
+
+  getHeatMonitor(): HeatMonitor { return { ...this.heatMonitor }; }
+
+  getStatus() {
     return {
       enabled: this.config.enabled,
       activeJobs: this.activeJobs.size,
       queuedJobs: this.jobQueue.length,
       jobsProcessedThisHour: this.jobsProcessedThisHour,
       throttleLevel: this.heatMonitor.throttleLevel,
-      heatMonitor: { ...this.heatMonitor }
+      heatMonitor: { ...this.heatMonitor },
     };
   }
 
-  /**
-   * Get recent metrics
-   */
-  getRecentMetrics(limit: number = 100): ReactorMetrics[] {
-    return this.metricsHistory.slice(-limit);
-  }
+  getRecentMetrics(limit = 100): ReactorMetrics[] { return this.metricsHistory.slice(-Math.max(0, limit)); }
 
-  /**
-   * Enable/disable reactor
-   */
   setEnabled(enabled: boolean): void {
     this.config.enabled = enabled;
-    console.log(`[Reactor] ${enabled ? 'Enabled' : 'Disabled'}`);
     reactorEvents.emit('reactor-state-change', { enabled });
   }
 
-  /**
-   * Update configuration
-   */
   updateConfig(config: Partial<ReactorConfig>): void {
-    this.config = { ...this.config, ...config };
-    console.log('[Reactor] Configuration updated');
+    this.config = {
+      ...this.config,
+      ...config,
+      monteCarloConfig: { ...this.config.monteCarloConfig, ...(config.monteCarloConfig || {}) },
+      maintenanceWindow: { ...this.config.maintenanceWindow, ...(config.maintenanceWindow || {}) },
+    };
     reactorEvents.emit('config-updated', this.config);
   }
 
-  /**
-   * Shutdown
-   */
   async shutdown(): Promise<void> {
-    console.log('[Reactor] Shutting down...');
-
-    if (this.jobProcessorInterval) {
-      clearInterval(this.jobProcessorInterval);
-      this.jobProcessorInterval = null;
-    }
-
-    if (this.heatMonitorInterval) {
-      clearInterval(this.heatMonitorInterval);
-      this.heatMonitorInterval = null;
-    }
-
-    // Cancel all queued jobs
+    if (this.jobProcessorInterval) clearInterval(this.jobProcessorInterval);
+    if (this.heatMonitorInterval) clearInterval(this.heatMonitorInterval);
+    this.jobProcessorInterval = null;
+    this.heatMonitorInterval = null;
     for (const job of this.jobQueue) {
       job.status = 'cancelled';
       job.finishedAt = new Date();
+      this.releaseDedupe(job);
     }
-
+    this.jobQueue = [];
     this.isInitialized = false;
-    console.log('[Reactor] Shutdown complete');
     reactorEvents.emit('reactor-shutdown');
   }
 }
 
-// Export singleton
 export const computationalReactor = ComputationalReactor.getInstance();
 
-// Export functions
-export async function initializeReactor(config?: Partial<ReactorConfig>): Promise<void> {
-  await computationalReactor.initialize(config);
-}
-
-export async function submitJob(
-  type: ReactorJob['type'],
-  payload: Record<string, unknown>,
-  priority?: number
-): Promise<string> {
-  return computationalReactor.submitJob(type, payload, priority);
-}
-
-export function getReactorStatus() {
-  return computationalReactor.getStatus();
-}
-
-export function getHeatMonitor(): HeatMonitor {
-  return computationalReactor.getHeatMonitor();
-}
-
-export async function shutdownReactor(): Promise<void> {
-  await computationalReactor.shutdown();
-}
-
+export async function initializeReactor(config?: Partial<ReactorConfig>): Promise<void> { await computationalReactor.initialize(config); }
+export async function submitJob(type: ReactorJob['type'], payload: Record<string, unknown>, priority?: number): Promise<string> { return computationalReactor.submitJob(type, payload, priority); }
+export function getReactorStatus() { return computationalReactor.getStatus(); }
+export function getHeatMonitor(): HeatMonitor { return computationalReactor.getHeatMonitor(); }
+export async function shutdownReactor(): Promise<void> { await computationalReactor.shutdown(); }
 export default computationalReactor;

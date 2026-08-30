@@ -39,8 +39,6 @@ for (const token of requiredCortex) {
 const requiredPrefetch = [
   "assessment.netProfitUsd === null || !(assessment.netProfitUsd > 0)",
   "assessment.recommendation === 'reject'",
-  "cexOrderBookStreams.getQuote('kraken'",
-  "cexOrderBookStreams.getQuote('okx'",
   'marketDataProviders.discoverUniverse()',
   'inFlight.has(normalized)',
   'backgroundIntervalCreated: false',
@@ -50,8 +48,17 @@ for (const token of requiredPrefetch) {
   if (!prefetch.includes(token)) throw new Error(`[cryptara-sovereign-cortex] missing prefetch invariant: ${token}`);
 }
 
+const directKrakenOkx = prefetch.includes("cexOrderBookStreams.getQuote('kraken'")
+  && prefetch.includes("cexOrderBookStreams.getQuote('okx'");
+const rankedKrakenOkx = prefetch.includes("const fallback: CexStreamVenue[] = ['kraken', 'okx']")
+  && prefetch.includes("bid.venue === 'kraken' || bid.venue === 'okx'")
+  && prefetch.includes('cexOrderBookStreams.getQuote(venue');
+if (!directKrakenOkx && !rankedKrakenOkx) {
+  throw new Error('[cryptara-sovereign-cortex] missing bounded Kraken/OKX predictive-prefetch invariant');
+}
+
 if (!runtime.includes('ensureCryptaraSovereignCortexWiring();')) throw new Error('[cryptara-sovereign-cortex] canonical cortex wiring missing');
 if (!runtime.includes('ensureCryptaraPredictivePrefetchWiring();')) throw new Error('[cryptara-sovereign-cortex] canonical predictive prefetch wiring missing');
 if (!runtime.includes('cryptaraCortexExecutionAuthority: false')) throw new Error('[cryptara-sovereign-cortex] runtime execution-authority boundary missing');
 
-console.log('[cryptara-sovereign-cortex] PASS: measured evidence quality, eight-dimensional capability evolution, terminal-only adaptation, and bounded predictive prefetch invariants preserved');
+console.log('[cryptara-sovereign-cortex] PASS: measured evidence quality, eight-dimensional capability evolution, terminal-only adaptation, and bounded Kraken/OKX predictive prefetch invariants preserved');
