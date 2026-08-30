@@ -57,6 +57,29 @@ function spendableSnapshot(venue: InventoryVenue, asset: string) {
   );
 }
 
+function authenticatedBalanceFreshnessMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_CEX_BALANCE_CACHE_MS || 5_000);
+  return Number.isFinite(parsed) ? Math.max(500, Math.min(15_000, Math.trunc(parsed))) : 5_000;
+}
+
+function hasFreshAuthenticatedPairInventory(
+  buyVenue: InventoryVenue,
+  sellVenue: InventoryVenue,
+  pair: { base: string; quote: string },
+): boolean {
+  const now = Date.now();
+  const maxAgeMs = authenticatedBalanceFreshnessMs();
+  const buy = spendableSnapshot(buyVenue, pair.quote);
+  const sell = spendableSnapshot(sellVenue, pair.base);
+  return Boolean(
+    buy && sell &&
+    Number.isFinite(buy.lastReconciliationAt) &&
+    Number.isFinite(sell.lastReconciliationAt) &&
+    now - buy.lastReconciliationAt <= maxAgeMs &&
+    now - sell.lastReconciliationAt <= maxAgeMs,
+  );
+}
+
 /**
  * A pair can be terminal even when both order submissions did not succeed. If
  * one IOC leg was accepted and reaches a terminal state while its counterpart
@@ -133,23 +156,30 @@ async function acquireMeasuredInventory(
     return { reservation: null, rejection: 'REJECT_BALANCE_INSUFFICIENT: live adapter does not expose authenticated balance reconciliation' };
   }
 
-  let buyBalances: Record<string, string>;
-  let sellBalances: Record<string, string>;
-  try {
-    [buyBalances, sellBalances] = await Promise.all([
-      buyAdapter.getBalances(),
-      sellAdapter.getBalances(),
+  // The inventory-constrained execution wrapper already performs authenticated
+  // balance reconciliation and then re-quotes the opportunity. Re-querying the
+  // same private balance endpoints immediately afterward adds latency and CEX
+  // traffic without adding truth. Reuse only a very recent authenticated ledger
+  // snapshot; otherwise fall back to a fresh concurrent reconciliation here.
+  if (!hasFreshAuthenticatedPairInventory(buyVenue, sellVenue, pair)) {
+    let buyBalances: Record<string, string>;
+    let sellBalances: Record<string, string>;
+    try {
+      [buyBalances, sellBalances] = await Promise.all([
+        buyAdapter.getBalances(),
+        sellAdapter.getBalances(),
+      ]);
+    } catch (error) {
+      return {
+        reservation: null,
+        rejection: `REJECT_BALANCE_INSUFFICIENT: authenticated balance reconciliation failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    await Promise.all([
+      cexInventoryLedger.reconcile(buyVenue, buyBalances),
+      cexInventoryLedger.reconcile(sellVenue, sellBalances),
     ]);
-  } catch (error) {
-    return {
-      reservation: null,
-      rejection: `REJECT_BALANCE_INSUFFICIENT: authenticated balance reconciliation failed: ${error instanceof Error ? error.message : String(error)}`,
-    };
   }
-  await Promise.all([
-    cexInventoryLedger.reconcile(buyVenue, buyBalances),
-    cexInventoryLedger.reconcile(sellVenue, sellBalances),
-  ]);
 
   const buyPrice = plan.buyLimitPrice ?? plan.buyAsk;
   const requiredQuote = plan.baseQty * buyPrice + Math.max(0, plan.costs.buyFeeUsd);
