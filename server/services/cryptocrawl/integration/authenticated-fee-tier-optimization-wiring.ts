@@ -1,8 +1,7 @@
 import logger from '../../../logger.js';
 import { getLastOrderedMarketUniverseSymbols } from '../discovery/market-universe-controller.js';
 import {
-  primeCexFeeEvidence,
-  resolveCexFeeEvidence,
+  getCachedCexFeeEvidence,
   type CexFeeEvidence,
   type CexFeeVenue,
 } from '../intelligence/cex-fee-resolver.js';
@@ -24,12 +23,12 @@ let lastScanAt = 0;
 const latest = new Map<string, AuthenticatedFeeTierSnapshot>();
 
 function observationIntervalMs(): number {
-  const parsed = Number(process.env.CRYPTOCRAWL_AUTHENTICATED_FEE_OBSERVATION_MS || 60_000);
-  return Number.isFinite(parsed) ? Math.max(30_000, Math.min(300_000, Math.trunc(parsed))) : 60_000;
+  const parsed = Number(process.env.CRYPTOCRAWL_AUTHENTICATED_FEE_OBSERVATION_MS || 300_000);
+  return Number.isFinite(parsed) ? Math.max(60_000, Math.min(900_000, Math.trunc(parsed))) : 300_000;
 }
 
 function snapshotMaxAgeMs(): number {
-  return Math.max(90_000, observationIntervalMs() * 6);
+  return Math.max(300_000, observationIntervalMs() * 6);
 }
 
 function key(venue: CexFeeVenue, symbol: string): string {
@@ -57,24 +56,27 @@ async function scanOnce(symbolsInput?: readonly string[]): Promise<void> {
       ...(symbolsInput || getLastOrderedMarketUniverseSymbols()).map(symbol => symbol.trim().toUpperCase()).filter(Boolean),
     ])].slice(0, 24);
 
-    // The canonical resolver remains the sole exchange-fee authority. It owns
-    // Kraken batching, OKX fee-group lookup, Coinbase account-tier lookup,
-    // product support, cache/dedupe, rate lanes and configured fallbacks. This
-    // observer never calls exchange private endpoints directly and never
-    // re-prices or grants execution authority.
-    const prime = await primeCexFeeEvidence(symbols);
+    // Observation must never create exchange traffic. The canonical fee resolver
+    // is the sole authenticated fee authority and refreshes evidence only when
+    // discovery/execution actually requires it. This observer consumes only
+    // already-fresh cache entries so telemetry cannot create rate-limit pressure.
     const venues: CexFeeVenue[] = ['coinbase', 'kraken', 'okx'];
-    await Promise.all(venues.flatMap(venue => symbols.map(async symbol => {
-      const evidence = await resolveCexFeeEvidence(venue, symbol).catch(() => null);
-      if (evidence) store(evidence);
-    })));
+    let cacheHits = 0;
+    for (const venue of venues) {
+      for (const symbol of symbols) {
+        const evidence = getCachedCexFeeEvidence(venue, symbol);
+        if (!evidence) continue;
+        cacheHits += 1;
+        store(evidence);
+      }
+    }
     lastScanAt = Date.now();
 
     const fresh = [...latest.values()].filter(value => Date.now() - value.observedAt <= snapshotMaxAgeMs());
     logger.info('[AuthenticatedFeeTier] Canonical authenticated fee/rebate telemetry observed', {
       component: 'AuthenticatedFeeTierOptimizationWiring',
       symbols: symbols.length,
-      prime,
+      cacheHits,
       freshSnapshots: fresh.length,
       activeMakerRebates: fresh
         .filter(item => (item.makerRebateBps ?? 0) > 0)
@@ -82,6 +84,7 @@ async function scanOnce(symbolsInput?: readonly string[]): Promise<void> {
       observationIntervalMs: observationIntervalMs(),
       feeAuthority: 'cex_fee_resolver_only',
       directPrivateExchangeRequests: false,
+      observationGeneratesExchangeTraffic: false,
       planRepricingAuthority: false,
       rebateAloneCanForceMakerMode: false,
       minimumOrderNotionalTierAssumed: false,
@@ -123,12 +126,13 @@ export function ensureAuthenticatedFeeTierOptimizationWiring(): void {
     });
   }).finally(scheduleNext);
 
-  logger.info('[AuthenticatedFeeTier] Canonical fee telemetry observer installed', {
+  logger.info('[AuthenticatedFeeTier] Cache-only canonical fee telemetry observer installed', {
     component: 'AuthenticatedFeeTierOptimizationWiring',
     observationIntervalMs: observationIntervalMs(),
     feeAuthority: 'cex_fee_resolver_only',
     privateRateAuthority: 'existing_exchange_rate_lanes_and_fee_cache',
     signedMakerEconomics: true,
+    observationGeneratesExchangeTraffic: false,
     rebateAloneCanForceMakerMode: false,
     planRepricingAuthority: false,
     executionAuthority: false,
