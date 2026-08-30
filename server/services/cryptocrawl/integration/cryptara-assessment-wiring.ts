@@ -49,11 +49,6 @@ function missingFromError(error: unknown): string[] {
 function isTopologyOptionalProvider(item: string, context: CryptaraOpportunityContext): boolean {
   if (item.startsWith('provider_coinstats_')) return true;
   if (context.chain !== 'cex') return false;
-
-  // Core CEX execution is independently grounded in direct exchange books,
-  // authenticated exchange fee evidence, measured depth and settlement-safe
-  // venue adapters. CoinCap and 0x are enrichment/discovery providers only for
-  // this topology; their outage must not veto an otherwise complete CEX plan.
   return item.startsWith('provider_coincap_') || item.startsWith('provider_0x_');
 }
 
@@ -88,8 +83,6 @@ function decorateOptionalEvidence(
   if (optionalMissing.length === 0) return assessment;
   return {
     ...assessment,
-    // Optional enrichment is surfaced for operators without being counted as a
-    // critical completeness defect by Cryptara's authoritative rank calculation.
     missingInformation: [
       ...assessment.missingInformation,
       ...optionalMissing.map(item => `optional:${item}`),
@@ -122,11 +115,6 @@ function enforceDeterministicRejection(
     provenance,
   };
 
-  // Cryptara's base recorder historically treated any plan without Monte Carlo as
-  // incomplete. For deterministic non-positive economics MC is intentionally not
-  // required, so overwrite the canonical snapshot with the authoritative rejection.
-  // This records no synthetic evidence: P(profitable execution)=0 follows directly
-  // from the already-measured all-in net economics being <= 0.
   canonicalOpportunityState.recordAssessment({
     opportunityId: context.opportunityId,
     observedAt: context.observedAt,
@@ -167,9 +155,6 @@ function applyParallelPriorityFrame(
   }
 
   let recommendation = assessment.recommendation;
-  // Priority #1 is absolute. For canonical CEX plans a completed helper frame may
-  // downgrade consideration when current executable market truth is incomplete.
-  // It can never promote a rejected/observed candidate or manufacture profit.
   if (context.plan && recommendation === 'consider' && !frame.marketTruth.ready) recommendation = 'observe';
 
   return {
@@ -181,7 +166,7 @@ function applyParallelPriorityFrame(
       `cryptara_priority:market_truth_score:${frame.marketTruth.score.toFixed(6)}`,
       `cryptara_priority:net_profit_bps:${frame.optimization.netProfitBps ?? 'unknown'}`,
       `cryptara_priority:bps_to_break_even:${frame.optimization.bpsToBreakEven ?? 'unknown'}`,
-      `cryptara_priority:bounded_notional_usd:${frame.optimization.cryptaraBoundedTargetNotionalUsd.toFixed(8)}`,
+      `cryptara_priority:bounded_notional_usd:${frame.optimization.boundedTargetNotionalUsd.toFixed(8)}`,
       'cryptara_parallel_helpers:market_truth+profit_efficiency',
       'cryptara_parallel_helpers:write_authority:false',
       'cryptara_parallel_helpers:execution_authority:false',
@@ -196,24 +181,16 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
   const target = instance as unknown as CryptaraAssessmentInternals;
 
   target.assessOpportunity = async (context: CryptaraOpportunityContext): Promise<CryptaraOpportunityAssessment> => {
-    // Start both bounded read-only helper lanes immediately. They run concurrently
-    // with Monte Carlo/assessment and are never awaited by the hot path. If they
-    // finish before assessment, their frame can only downgrade market-truth risk;
-    // otherwise the next observation consumes the freshly warmed state.
+    // Start both bounded read-only helpers without awaiting them. Only an exact
+    // same-observation frame may influence this decision; a late frame becomes
+    // telemetry only and is never substituted into a later observation.
     prewarmCryptaraParallelCognition(context);
 
-    // Reset evidence for every observation, even when no verified plan exists. Stable
-    // opportunity IDs are reused across cycles, so stale Monte Carlo evidence must
-    // never survive into the next observation.
     target.latestMonteCarloEvidence = null;
     target.latestOpportunityContext = structuredClone(context);
     let monteCarloMissingInformation: string[] = [];
     const missing = classifyMissingInformation(context.missingInformation, context);
 
-    // Deterministic all-in economics are authoritative and must run before stochastic
-    // execution-uncertainty analysis. Monte Carlo may estimate realization probability
-    // for an already-positive plan; it must never spend Beam capacity on, or transform,
-    // a deterministic zero/negative candidate into a tradeable opportunity.
     const deterministicPositivePlan = !!context.plan &&
       Number.isFinite(context.plan.netProfitUsd) &&
       context.plan.netProfitUsd > 0;
@@ -268,7 +245,7 @@ export function ensureCryptaraAssessmentWiring(): Cryptara {
     warningTransitionsImmediate: true,
     monteCarloCompute: 'computational_beam_hyper_worker_pool',
     parallelHelpers: ['cryptara_market_truth_helper', 'cryptara_profit_efficiency_helper'],
-    helperMode: 'read_only_deadline_bound_nonblocking',
+    helperMode: 'read_only_deadline_bound_nonblocking_same_observation_only',
     decisionPriorities: getCryptaraDecisionPriorityList(),
     deterministicPositiveGateBeforeMonteCarlo: true,
     deterministicNonPositiveRecommendation: 'reject',
