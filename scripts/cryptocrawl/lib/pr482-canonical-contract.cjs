@@ -22,10 +22,10 @@ function forbidPattern(source, pattern, description) {
 /**
  * Canonical CEX route contract introduced by PR #482.
  *
- * This intentionally verifies behavior across module boundaries instead of
- * pinning callers to one exact statement/string. Internal refactors may move a
- * guard or rename telemetry without breaking deployment as long as the same
- * authoritative route remains true:
+ * Verify behavior across module boundaries instead of pinning callers to one
+ * exact statement or telemetry string. Internal refactors may move a guard or
+ * rename observability without breaking deployment as long as the authoritative
+ * route remains true:
  * parent admission -> hyper-hybrid planner -> product-revalidated child ->
  * canonical settlement. Partial realized profit is treasury-only and residual
  * exposure can only re-enter through fresh verification/assessment.
@@ -43,9 +43,10 @@ function verifyCexExecutionContract() {
   requirePattern(hyperHybrid, /Promise\.all\s*\(\s*admittedChildren\.map/s, 'admitted child batch executes concurrently');
   forbidPattern(hyperHybrid, /for\s*\(\s*let\s+offset[\s\S]{0,240}plannedChildren\.length[\s\S]{0,160}concurrency/, 'automatic sequential child waves');
 
+  requirePattern(partialAccounting, /if\s*\(\s*input\.parentSucceeded\s*\)\s*return\s*;/, 'successful full parents are not double-counted by partial accounting');
   requirePattern(partialAccounting, /retainedProfitLedger\.recordTerminalSettlement\s*\(/, 'profitable terminal child subset reaches durable treasury accounting');
   requirePattern(partialAccounting, /finally\s*\{[\s\S]{0,900}queueCexResidualReplan\s*\(/, 'residual reassessment is independent of treasury persistence success');
-  forbidPattern(partialAccounting, /recordCryptaraExecutionEvidence\s*\(/, 'partial child accounting entering Cryptara/stage learning');
+  forbidPattern(partialAccounting, /recordCryptaraExecutionEvidence\s*\(|stageManager\.|profitLadder\./, 'partial child accounting entering rank/stage/ladder progression');
 
   requirePattern(residualReplan, /arbitrageVerifier\.evaluateOnce\s*\(/, 'residual notional receives a fresh canonical economics verification');
   requirePattern(residualReplan, /cryptara\.assessOpportunity\s*\(/, 'fresh residual receives Cryptara/Monte Carlo reassessment');
