@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { verifyCexExecutionContract } = require('./lib/pr482-canonical-contract.cjs');
 
 const root = process.cwd();
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -10,8 +11,10 @@ const readiness = read('server/services/cryptocrawl/integration/execution-readin
 const policy100 = read('server/services/cryptocrawl/optimization/hyperdynamic-bps-solution-engine.ts');
 const policy200 = read('server/services/cryptocrawl/optimization/execution-readiness-profitability-policy.ts');
 const canonical = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
-const centralized = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
-const hyperHybrid = read('server/services/cryptocrawl/execution/hyper-hybrid-cex-execution.ts');
+
+// Shared parent -> child -> settlement route truth is centralized so this verifier
+// cannot drift when the implementation moves without changing authority.
+verifyCexExecutionContract();
 
 const required = [
   [stage, "STAGE_1_CONSTRAINED_PILOT", 'stage one definition'],
@@ -35,9 +38,6 @@ const required = [
   [canonical, 'ensureCexInventoryReadinessWiring();', 'inventory readiness canonical installation'],
   [canonical, 'ensureExecutionReadinessProfitabilityWiring();', 'execution-readiness optimizer canonical installation'],
   [canonical, "executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'", 'canonical positive floor'],
-  [centralized, 'executeHyperHybridCexPlan', 'centralized execution reaches the parent/child execution layer'],
-  [hyperHybrid, 'executeCexPlan(child', 'hyper-hybrid child execution still reaches settlement-safe order submission'],
-  [hyperHybrid, 'assertFreshCexProductConstraints(child)', 'every split child is submit-time product revalidated'],
 ];
 for (const [source, token, name] of required) {
   if (!source.includes(token)) throw new Error(`[300-profitability-live-execution] missing invariant: ${name}`);
@@ -121,4 +121,4 @@ const forbidden = [
 ];
 for (const [source, token, name] of forbidden) if (source.includes(token)) throw new Error(`[300-profitability-live-execution] forbidden regression: ${name}`);
 
-console.log('[300-profitability-live-execution] PASS: 100 + 200 bounded controls reviewed across 100 dynamic passes; Stage 2+ live executor reaches hyper-hybrid child splitting and canonical settlement-safe order submission; Stage 1, inventory, positive-net, product, settlement and governance gates remain intact');
+console.log('[300-profitability-live-execution] PASS: 100 + 200 bounded controls reviewed across 100 dynamic passes; shared PR482 contract verifies the current parent/child/product/settlement route; Stage 1, inventory, positive-net and governance gates remain intact');
