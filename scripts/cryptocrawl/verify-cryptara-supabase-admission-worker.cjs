@@ -11,6 +11,12 @@ const requirePattern = (source, pattern, description) => {
 const forbidPattern = (source, pattern, description) => {
   if (pattern.test(source)) throw new Error(`[cryptara-supabase-worker] forbidden regression: ${description}`);
 };
+const requireFragments = (source, fragments, description) => {
+  const missing = fragments.filter(fragment => !source.includes(fragment));
+  if (missing.length > 0) {
+    throw new Error(`[cryptara-supabase-worker] missing invariant: ${description}; missing=${missing.join(' | ')}`);
+  }
+};
 
 const worker = read('server/services/cryptocrawl/integration/cryptara-supabase-admission-worker.ts');
 const governance = read('server/services/cryptocrawl/governance/index.ts');
@@ -36,13 +42,18 @@ requirePattern(worker, /while\s*\(admitted\s*<\s*admissionBudget/, 'each pressur
 requirePattern(worker, /if\s*\(this\s*!==\s*pool\)/, 'only the live ordinary pool is admitted through Cryptara');
 requirePattern(worker, /Pool\.prototype/, 'shared ordinary callers converge on one acquisition gate');
 
-// Start at the already-safe effective pool ceiling. Railway rollout headroom is
-// applied before this worker installs, so a healthy replica keeps full permitted
-// parallelism instead of climbing from an arbitrary concurrency of one.
-requirePattern(worker, /primeToCurrentPoolCapacity\(\)/, 'worker primes itself from the current effective pool capacity');
-requirePattern(worker, /this\.targetConcurrency\s*=\s*ceiling/, 'healthy startup begins at the current effective pool ceiling');
-requirePattern(worker, /if\s*\(stats\.waiting\s*>\s*0\)[\s\S]{0,220}Math\.floor\(ceiling\s*\/\s*2\)/, 'existing local pressure can still contract initial admission');
-requirePattern(worker, /governor\.primeToCurrentPoolCapacity\(\)[\s\S]{0,120}installed\s*=\s*true/, 'pool-capacity priming occurs during worker installation');
+// Start at the already-safe effective pool ceiling. These assertions are
+// deliberately fragment-based: formatting/comments must never turn a valid
+// invariant into a false deployment failure.
+requireFragments(worker, [
+  'primeToCurrentPoolCapacity(): void',
+  'const ceiling = Math.max(1, Math.trunc(stats.max || 1));',
+  'if (stats.waiting > 0)',
+  'Math.floor(ceiling / 2)',
+  'this.targetConcurrency = ceiling;',
+  'governor.primeToCurrentPoolCapacity();',
+  'installed = true;',
+], 'worker starts from the effective pool ceiling and contracts only on measured local pressure');
 
 // Dynamic pressure response: multiplicative decrease, additive recovery, bounded by live pool max.
 requirePattern(worker, /Math\.floor\(this\.targetConcurrency\s*\/\s*2\)/, 'multiplicative pressure contraction');
@@ -81,35 +92,62 @@ forbidPattern(executionLedger, /withCryptaraSupabasePriority\('critical'/, 'exec
 
 // Execution-facing database admission shares the same worker rather than creating
 // another pool/worker. Cleanup remains subordinate to live opportunity ownership.
-requirePattern(resourceScheduler, /withCryptaraSupabasePriority\('high',[\s\S]{0,120}pool\.connect/, 'execution resource lease acquisition receives high priority');
-requirePattern(resourceScheduler, /function\s+lowPriorityQuery[\s\S]{0,180}withCryptaraSupabasePriority\('low'/, 'lease cleanup receives low priority');
-requirePattern(resourceScheduler, /this\.cleanupInFlight\s*=\s*lowPriorityQuery/, 'expired-lease cleanup cannot outrank live resource leasing');
+requireFragments(resourceScheduler, [
+  "withCryptaraSupabasePriority('high', () => pool.connect())",
+  "withCryptaraSupabasePriority('low', () => pool.query(text, values))",
+  'this.cleanupInFlight = lowPriorityQuery',
+], 'execution leasing is high priority and expired-lease cleanup is low priority');
 forbidPattern(resourceScheduler, /\bnew\s+Pool\s*\(/, 'resource scheduler creating an independent database pool');
-requirePattern(distributedQuota, /withCryptaraSupabasePriority\('high',[\s\S]{0,120}pool\.connect/, 'distributed API quota claims receive high priority');
-requirePattern(distributedQuota, /quotaRetryDelayMs[\s\S]{0,420}Math\.random/, 'distributed quota retries are jittered across replicas');
-requirePattern(distributedQuota, /boundedBase\s*\+\s*extra/, 'quota jitter never deliberately wakes before the database-derived wait estimate');
+requireFragments(distributedQuota, [
+  "withCryptaraSupabasePriority('high', () => pool.connect())",
+  'function quotaRetryDelayMs',
+  'Math.random()',
+  'boundedBase + extra',
+], 'distributed quota claims are high priority and retries add only upward jitter');
 forbidPattern(distributedQuota, /\bnew\s+Pool\s*\(/, 'distributed quota creating an independent database pool');
 
-// Slot collision scans are migration-owned and happen inside PostgreSQL. This is
-// the call-coalescing optimization: one client round trip per slot domain while
-// retaining the same atomic ON CONFLICT takeover rule for expired leases.
-requirePattern(migration, /CREATE OR REPLACE FUNCTION private\.cryptocrawler_claim_resource_slot/, 'migration owns the server-side resource-slot claim function');
-requirePattern(migration, /FOR\s+v_offset\s+IN\s+0\.\.\(p_capacity\s*-\s*1\)\s+LOOP[\s\S]{0,1600}ON CONFLICT \(resource_key\) DO UPDATE[\s\S]{0,700}RETURN v_claimed_key/, 'server-side slot scan preserves atomic collision semantics');
-requirePattern(resourceScheduler, /private async claimResourceSlot[\s\S]{0,700}SELECT \$\{CLAIM_FUNCTION\}/, 'execution resource domains use one server-side slot-claim call');
-requirePattern(distributedQuota, /SELECT \$\{CLAIM_FUNCTION\}[\s\S]{0,300}AS resource_key/, 'distributed quota uses one server-side slot-claim call');
+// Slot collision scans are migration-owned and happen inside PostgreSQL. Verify
+// the semantic pieces individually rather than relying on source-character
+// distances, while still requiring the atomic expired-lease takeover rule.
+requireFragments(migration, [
+  'CREATE OR REPLACE FUNCTION private.cryptocrawler_claim_resource_slot(',
+  'FOR v_offset IN 0..(p_capacity - 1) LOOP',
+  'INSERT INTO public.cryptocrawler_resource_leases AS leases',
+  'ON CONFLICT (resource_key) DO UPDATE',
+  'WHERE leases.expires_at <= now()',
+  'RETURNING resource_key INTO v_claimed_key;',
+  'RETURN v_claimed_key;',
+  'GRANT EXECUTE ON FUNCTION private.cryptocrawler_claim_resource_slot',
+], 'server-side slot scan preserves the atomic collision and authorization contract');
+requireFragments(resourceScheduler, [
+  'private async claimResourceSlot(',
+  'SELECT ${CLAIM_FUNCTION}($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) AS resource_key',
+  "to_regprocedure('private.cryptocrawler_claim_resource_slot",
+], 'execution resource domains use the migration-owned single-call slot claimant');
+requireFragments(distributedQuota, [
+  'SELECT ${CLAIM_FUNCTION}($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) AS resource_key',
+  "to_regprocedure('private.cryptocrawler_claim_resource_slot",
+], 'distributed quota uses the migration-owned single-call slot claimant');
 forbidPattern(resourceScheduler, /for\s*\(let\s+slot\s*=\s*0;\s*slot\s*<\s*spec\.capacity/, 'client-side execution slot scan returning');
 forbidPattern(distributedQuota, /for\s*\(let\s+offset\s*=\s*0;\s*offset\s*<\s*capacity/, 'client-side quota slot scan returning');
-requirePattern(resourceScheduler, /to_regprocedure\('private\.cryptocrawler_claim_resource_slot/, 'resource scheduler verifies migration-owned slot function before use');
-requirePattern(distributedQuota, /to_regprocedure\('private\.cryptocrawler_claim_resource_slot/, 'quota scheduler verifies migration-owned slot function before use');
 
 // Terminal-confirmed money-state durability is critical, but still uses the same
 // ordinary pool. The default compounding path must not repeat two idempotency reads.
-requirePattern(retainedProfit, /withCryptaraSupabasePriority\('critical',[\s\S]{0,120}pool\.connect/, 'terminal realized-profit transaction receives critical priority');
-requirePattern(retainedProfit, /SELECT \* FROM \([\s\S]{0,900}UNION ALL[\s\S]{0,900}ORDER BY precedence[\s\S]{0,120}LIMIT 1/, 'legacy payout and retained-event idempotency are coalesced into one precedence-preserving read');
+requireFragments(retainedProfit, [
+  "withCryptaraSupabasePriority('critical', () => pool.connect())",
+  'SELECT * FROM (',
+  "'payout'::text AS source",
+  'UNION ALL',
+  "'retained'::text AS source",
+  'ORDER BY precedence',
+  'LIMIT 1',
+  'function persistenceRetryDelayMs',
+  'Math.random()',
+  "withCryptaraSupabasePriority('high', async () =>",
+  "to_regclass('private.cryptocrawler_rainbow_profit_events')",
+], 'terminal profit persistence is critical, call-coalesced, jittered and schema-gated');
 forbidPattern(retainedProfit, /const\s+existingPayout\s*=\s*await\s+client\.query/, 'separate legacy payout idempotency read returning');
 forbidPattern(retainedProfit, /const\s+existingRetained\s*=\s*await\s+client\.query/, 'separate retained-event idempotency read returning');
-requirePattern(retainedProfit, /function\s+persistenceRetryDelayMs[\s\S]{0,420}Math\.random/, 'terminal-profit retry timing is bounded and jittered');
-requirePattern(retainedProfit, /withCryptaraSupabasePriority\('high',\s*async\s*\(\)\s*=>[\s\S]{0,220}to_regclass/, 'profit schema verification is high priority without becoming critical authority');
 forbidPattern(retainedProfit, /\bnew\s+Pool\s*\(/, 'retained-profit ledger creating an independent database pool');
 
 // Remove redundant runtime DDL while preserving migration-owned persistence and
