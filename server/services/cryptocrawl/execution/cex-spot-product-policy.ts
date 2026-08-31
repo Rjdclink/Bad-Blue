@@ -11,11 +11,12 @@ export interface SpotProductConstraints {
   venue: ConstrainedSpotVenue;
   symbol: string;
   exchangeSymbol: string;
+  baseAsset: string;
+  quoteAsset: string;
   baseIncrement: number;
   priceIncrement: number;
   baseMinSize: number;
   quoteMinSize: number | null;
-  /** Per-order maximums from the live venue contract; null means not published here. */
   baseMaxSize: number | null;
   quoteMaxSize: number | null;
   state: 'live';
@@ -41,9 +42,7 @@ function positive(value: unknown): number | null {
 }
 
 function canonicalAsset(value: unknown): string | null {
-  let asset = String(value ?? '').trim().toUpperCase();
-  if (!asset) return null;
-  asset = asset.replace(/[^A-Z0-9]/g, '');
+  let asset = String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!asset) return null;
   if (asset === 'XBT') return 'BTC';
   if (asset === 'XDG') return 'DOGE';
@@ -53,38 +52,32 @@ function canonicalAsset(value: unknown): string | null {
 function canonicalKrakenAsset(value: unknown): string | null {
   let asset = String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!asset) return null;
-  // Kraken's legacy asset codes commonly prefix old assets/currencies with X/Z.
-  // Strip only the known one-character legacy namespace shape; never infer a
-  // quote currency from a suffix list.
   if ((asset.startsWith('X') || asset.startsWith('Z')) && asset.length === 4) asset = asset.slice(1);
   if (asset === 'XBT') return 'BTC';
   if (asset === 'XDG') return 'DOGE';
   return canonicalAsset(asset);
 }
 
-function canonicalPair(baseInput: unknown, quoteInput: unknown, kraken = false): string | null {
+type ProductIdentity = { symbol: string; baseAsset: string; quoteAsset: string };
+
+function canonicalPair(baseInput: unknown, quoteInput: unknown, kraken = false): ProductIdentity | null {
   const normalize = kraken ? canonicalKrakenAsset : canonicalAsset;
-  const base = normalize(baseInput);
-  const quote = normalize(quoteInput);
-  if (!base || !quote) return null;
-  return `${base}${quote}`;
+  const baseAsset = normalize(baseInput);
+  const quoteAsset = normalize(quoteInput);
+  if (!baseAsset || !quoteAsset) return null;
+  return { symbol: `${baseAsset}${quoteAsset}`, baseAsset, quoteAsset };
 }
 
-function canonicalDelimitedPair(value: unknown, kraken = false): string | null {
+function canonicalDelimitedPair(value: unknown, kraken = false): ProductIdentity | null {
   const raw = String(value ?? '').trim().toUpperCase();
   if (!raw) return null;
   const parts = raw.split(/[\/_-]/).filter(Boolean);
   return parts.length === 2 ? canonicalPair(parts[0], parts[1], kraken) : null;
 }
 
-/**
- * Lookup normalization accepts any live base/quote combination. Concatenated
- * canonical symbols are preserved; venue aliases are normalized only where the
- * mapping is deterministic. Product support itself comes from the live snapshot.
- */
 function canonicalLookupSymbol(value: string): string | null {
   const delimited = canonicalDelimitedPair(value);
-  if (delimited) return delimited;
+  if (delimited) return delimited.symbol;
   let compact = value.trim().toUpperCase().replace(/[\/_-]/g, '');
   if (!compact || !/^[A-Z0-9]+$/.test(compact)) return null;
   if (compact.startsWith('XBT')) compact = `BTC${compact.slice(3)}`;
@@ -92,13 +85,13 @@ function canonicalLookupSymbol(value: string): string | null {
   return compact;
 }
 
-function canonicalKrakenProduct(row: Record<string, unknown>): string | null {
-  const fromWsName = canonicalDelimitedPair(row.wsname, true);
-  if (fromWsName) return fromWsName;
-  return canonicalPair(row.base, row.quote, true);
+function canonicalKrakenProduct(row: Record<string, unknown>): ProductIdentity | null {
+  const fromFields = canonicalPair(row.base, row.quote, true);
+  if (fromFields) return fromFields;
+  return canonicalDelimitedPair(row.wsname, true);
 }
 
-function canonicalOkxProduct(raw: Record<string, unknown>): string | null {
+function canonicalOkxProduct(raw: Record<string, unknown>): ProductIdentity | null {
   const fromFields = canonicalPair(raw.baseCcy, raw.quoteCcy);
   if (fromFields) return fromFields;
   return canonicalDelimitedPair(raw.instId);
@@ -110,12 +103,12 @@ function powerOfTenIncrement(decimals: unknown): number | null {
   return 10 ** -parsed;
 }
 
-async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
-  if (krakenSnapshot && krakenSnapshot.expiresAt > Date.now()) return krakenSnapshot;
+async function fetchKrakenSnapshot(forceFresh = false): Promise<ConstraintSnapshot> {
+  if (!forceFresh && krakenSnapshot && krakenSnapshot.expiresAt > Date.now()) return krakenSnapshot;
   if (krakenInFlight) return krakenInFlight;
   krakenInFlight = (async () => {
     const payload = await fetchJsonWithRetry<any>('https://api.kraken.com/0/public/AssetPairs', {
-      init: { headers: { accept: 'application/json', 'cache-control': 'no-cache' } },
+      init: { headers: { accept: 'application/json', 'cache-control': forceFresh ? 'no-cache' : 'max-age=0' } },
       maxRetries: 1,
       baseDelayMs: 100,
       maxDelayMs: 500,
@@ -133,34 +126,34 @@ async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
       if (!row) continue;
       const state = typeof row.status === 'string' ? row.status.trim().toLowerCase() : 'online';
       if (state !== 'online') continue;
+      const identity = canonicalKrakenProduct(row);
+      if (!identity || ambiguous.has(identity.symbol)) continue;
       const exchangeSymbol = typeof row.altname === 'string' && row.altname.trim() ? row.altname.trim().toUpperCase() : responseKey;
-      const symbol = canonicalKrakenProduct(row);
-      if (!symbol || ambiguous.has(symbol)) continue;
       const baseIncrement = powerOfTenIncrement(row.lot_decimals);
       const priceIncrement = powerOfTenIncrement(row.pair_decimals);
       const baseMinSize = positive(row.ordermin);
       if (baseIncrement === null || priceIncrement === null || baseMinSize === null) continue;
       const constraint: SpotProductConstraints = {
         venue: 'kraken',
-        symbol,
+        symbol: identity.symbol,
         exchangeSymbol,
+        baseAsset: identity.baseAsset,
+        quoteAsset: identity.quoteAsset,
         baseIncrement,
         priceIncrement,
         baseMinSize,
         quoteMinSize: positive(row.costmin),
-        // Kraken AssetPairs does not publish one universal single-order maximum.
-        // Do not invent one; parent measured depth/inventory remains authoritative.
         baseMaxSize: null,
         quoteMaxSize: null,
         state: 'live',
         observedAt,
         source: 'kraken_asset_pairs',
       };
-      if (values.has(symbol)) {
-        values.delete(symbol);
-        ambiguous.add(symbol);
+      if (values.has(identity.symbol)) {
+        values.delete(identity.symbol);
+        ambiguous.add(identity.symbol);
       } else {
-        values.set(symbol, constraint);
+        values.set(identity.symbol, constraint);
       }
     }
     const snapshot = { expiresAt: Date.now() + TTL_MS, values };
@@ -169,6 +162,7 @@ async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
       component: 'CexSpotProductPolicy',
       products: values.size,
       ambiguous: ambiguous.size,
+      forceFresh,
       canonicalizationAuthority: 'live_base_quote_fields_or_wsname',
       quoteCurrencyAllowlistUsed: false,
       unpublishedSingleOrderMaxTreatedAsUnlimited: true,
@@ -178,13 +172,13 @@ async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
   return krakenInFlight;
 }
 
-async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
-  if (okxSnapshot && okxSnapshot.expiresAt > Date.now()) return okxSnapshot;
+async function fetchOkxSnapshot(forceFresh = false): Promise<ConstraintSnapshot> {
+  if (!forceFresh && okxSnapshot && okxSnapshot.expiresAt > Date.now()) return okxSnapshot;
   if (okxInFlight) return okxInFlight;
   okxInFlight = (async () => {
     const baseUrl = await getOkxExecutionRestBaseUrl();
     const payload = await fetchJsonWithRetry<any>(`${baseUrl}/api/v5/public/instruments?instType=SPOT`, {
-      init: { headers: { accept: 'application/json', 'cache-control': 'no-cache' } },
+      init: { headers: { accept: 'application/json', 'cache-control': forceFresh ? 'no-cache' : 'max-age=0' } },
       maxRetries: 1,
       baseDelayMs: 100,
       maxDelayMs: 500,
@@ -197,24 +191,24 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
       const raw = rawValue && typeof rawValue === 'object' ? rawValue as Record<string, unknown> : null;
       if (!raw) continue;
       const exchangeSymbol = typeof raw.instId === 'string' ? raw.instId.trim().toUpperCase() : '';
-      const symbol = canonicalOkxProduct(raw);
-      if (!symbol) continue;
+      const identity = canonicalOkxProduct(raw);
+      if (!identity) continue;
       const state = typeof raw.state === 'string' ? raw.state.trim().toLowerCase() : '';
       if (state !== 'live') continue;
       const baseIncrement = positive(raw.lotSz);
       const priceIncrement = positive(raw.tickSz);
       const baseMinSize = positive(raw.minSz);
       if (baseIncrement === null || priceIncrement === null || baseMinSize === null) continue;
-      values.set(symbol, {
+      values.set(identity.symbol, {
         venue: 'okx',
-        symbol,
+        symbol: identity.symbol,
         exchangeSymbol,
+        baseAsset: identity.baseAsset,
+        quoteAsset: identity.quoteAsset,
         baseIncrement,
         priceIncrement,
         baseMinSize,
         quoteMinSize: null,
-        // OKX documents these as current per-order maximums for SPOT. They are
-        // child-order split inputs, never a parent strategy/notional ceiling.
         baseMaxSize: positive(raw.maxLmtSz),
         quoteMaxSize: positive(raw.maxLmtAmt),
         state: 'live',
@@ -228,6 +222,7 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
       component: 'CexSpotProductPolicy',
       baseUrl,
       products: values.size,
+      forceFresh,
       canonicalizationAuthority: 'live_baseCcy_quoteCcy_fields',
       quoteCurrencyAllowlistUsed: false,
       perOrderMaximumsCaptured: true,
@@ -237,10 +232,14 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
   return okxInFlight;
 }
 
-export async function getSpotProductConstraints(venue: ConstrainedSpotVenue, symbolInput: string): Promise<SpotProductConstraints> {
+export async function getSpotProductConstraints(
+  venue: ConstrainedSpotVenue,
+  symbolInput: string,
+  forceFresh = false,
+): Promise<SpotProductConstraints> {
   const symbol = canonicalLookupSymbol(symbolInput);
   if (!symbol) throw new Error(`Unsupported ${venue} SPOT symbol ${symbolInput}`);
-  const snapshot = venue === 'kraken' ? await fetchKrakenSnapshot() : await fetchOkxSnapshot();
+  const snapshot = venue === 'kraken' ? await fetchKrakenSnapshot(forceFresh) : await fetchOkxSnapshot(forceFresh);
   const constraint = snapshot.values.get(symbol);
   if (!constraint) throw new Error(`${venue} SPOT product ${symbol} has no current live execution constraints`);
   return { ...constraint };
@@ -311,29 +310,16 @@ function recomputeEconomics(plan: VerifiedArbitragePlan, baseQty: number): Verif
   };
 }
 
-function validateLeg(
-  side: 'buy' | 'sell',
-  quantity: number,
-  price: number,
-  constraints: SpotProductConstraints,
-): string | null {
+function validateLeg(side: 'buy' | 'sell', quantity: number, price: number, constraints: SpotProductConstraints): string | null {
   if (!isIncrementAligned(quantity, constraints.baseIncrement)) return `${constraints.venue} ${side} quantity is off lot increment ${constraints.baseIncrement}`;
   if (!isIncrementAligned(price, constraints.priceIncrement)) return `${constraints.venue} ${side} price is off tick increment ${constraints.priceIncrement}`;
   if (quantity + constraints.baseIncrement * 1e-7 < constraints.baseMinSize) return `${constraints.venue} ${side} quantity is below minimum ${constraints.baseMinSize}`;
   if (constraints.quoteMinSize !== null && quantity * price + constraints.priceIncrement * constraints.baseIncrement < constraints.quoteMinSize) {
     return `${constraints.venue} ${side} notional is below quote minimum ${constraints.quoteMinSize}`;
   }
-  // Per-order maximums are intentionally not checked on the parent here. The
-  // hyper-hybrid executor will split a verified parent into legal child orders.
   return null;
 }
 
-/**
- * Normalize the canonical CEX PARENT plan to the intersection of participating
- * venue lot-size constraints before Cryptara eligibility. Book prices are never
- * rounded: off-tick evidence fails closed. Per-order maximums are not parent
- * ceilings; they are preserved as live child-splitting inputs at execution.
- */
 export async function normalizeCexExecutablePlan(input: VerifiedArbitragePlan): Promise<VerifiedArbitragePlan | null> {
   let plan = await normalizeCoinbaseExecutablePlan(input);
   if (!plan) return null;
