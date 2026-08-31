@@ -29,9 +29,20 @@ export interface ZeroCapitalResourcePriority {
   settlementEconomicsChanged: false;
 }
 
+export interface MeasuredAtomicResourceRequest {
+  opportunityId: string;
+  chain: string;
+  expiresAt: number;
+  expectedNetProfitUsd: number;
+  protocols: string[];
+  fundingMode: string;
+}
+
 type ResourcePoolSpec = { prefix: string; capacity: number };
 
-const TABLE = 'cryptocrawler_zero_capital_resource_leases';
+// One migration-owned lease table is shared by CEX and atomic execution. Resource
+// prefixes keep ownership domains disjoint while avoiding duplicate schema/runtime DDL.
+const TABLE = 'cryptocrawler_resource_leases';
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
@@ -39,8 +50,12 @@ function boundedInt(value: unknown, fallback: number, minimum: number, maximum: 
   return Math.max(minimum, Math.min(maximum, normalized));
 }
 
+function normalizedProtocols(protocols: readonly string[]): string[] {
+  return [...new Set(protocols.map(protocol => protocol.trim().toLowerCase()).filter(Boolean))];
+}
+
 function protocolNames(opportunity: ZeroCapitalOpportunity): string[] {
-  return [...new Set(opportunity.route.map(step => step.protocol.trim().toLowerCase()).filter(Boolean))];
+  return normalizedProtocols(opportunity.route.map(step => step.protocol));
 }
 
 function expectedNetUsd(opportunity: ZeroCapitalOpportunity): number {
@@ -55,61 +70,75 @@ class ZeroCapitalResourceScheduler {
     || `process-${process.pid}-${randomUUID()}`;
   private readonly localUsage = new Map<string, number>();
   private tableReady: Promise<boolean> | null = null;
+  private tableRetryAfter = 0;
 
   private async ensureTable(): Promise<boolean> {
     if (!isDatabaseConfigured) return false;
     if (this.tableReady) return this.tableReady;
-    this.tableReady = (async () => {
-      try {
-        await pool.query(`
-          CREATE TABLE IF NOT EXISTS ${TABLE} (
-            resource_key text PRIMARY KEY,
-            lease_id text NOT NULL,
-            owner_id text NOT NULL,
-            opportunity_id text NOT NULL,
-            acquired_at timestamptz NOT NULL DEFAULT now(),
-            expires_at timestamptz NOT NULL
-          )
-        `);
-        await pool.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_expires_idx ON ${TABLE} (expires_at)`);
-        return true;
-      } catch (error) {
-        logger.error('[ZeroCapitalScheduler] Distributed lease table unavailable', {
+    if (Date.now() < this.tableRetryAfter) return false;
+
+    const retryMs = boundedInt(process.env.ZERO_CAPITAL_RESOURCE_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
+    const probe = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
+      .then(result => {
+        const ready = result.rows?.[0]?.ready === true;
+        if (!ready) {
+          this.tableRetryAfter = Date.now() + retryMs;
+          logger.error('[ZeroCapitalScheduler] Migration-owned resource lease table is missing', {
+            component: 'ZeroCapitalResourceScheduler',
+            table: `public.${TABLE}`,
+            runtimeDdlAllowed: false,
+            executionAuthorityGranted: false,
+          });
+        }
+        return ready;
+      })
+      .catch(error => {
+        this.tableRetryAfter = Date.now() + retryMs;
+        logger.error('[ZeroCapitalScheduler] Resource lease table verification failed closed', {
           component: 'ZeroCapitalResourceScheduler',
+          retryAfterMs: retryMs,
           error: error instanceof Error ? error.message : String(error),
         });
         return false;
-      }
-    })();
-    return this.tableReady;
+      });
+
+    this.tableReady = probe;
+    try {
+      const ready = await probe;
+      if (!ready) this.tableReady = null;
+      return ready;
+    } finally {
+      if (this.tableReady === probe && Date.now() >= this.tableRetryAfter) this.tableReady = null;
+    }
   }
 
-  private specs(opportunity: ZeroCapitalOpportunity, fundingMode: string): ResourcePoolSpec[] {
-    const chain = opportunity.chain.toUpperCase();
+  private specsFor(chainRaw: string, protocols: readonly string[], fundingMode: string): ResourcePoolSpec[] {
+    const chain = chainRaw.trim().toLowerCase();
+    const chainEnv = chain.toUpperCase();
     const emergencyCeiling = boundedInt(process.env.ZERO_CAPITAL_EXECUTION_EMERGENCY_CEILING, 64, 1, 128);
-    const chainCapacity = boundedInt(process.env[`ZERO_CAPITAL_MAX_CONCURRENT_${chain}`], 2, 1, 32);
-    const walletNonceCapacity = boundedInt(process.env[`ZERO_CAPITAL_WALLET_NONCE_CAPACITY_${chain}`], 1, 1, 16);
-    const receiverCapacity = boundedInt(process.env[`ZERO_CAPITAL_RECEIVER_CAPACITY_${chain}`], 2, 1, 32);
-    const providerCapacity = boundedInt(process.env[`ZERO_CAPITAL_PROVIDER_CAPACITY_${chain}`], 4, 1, 32);
+    const chainCapacity = boundedInt(process.env[`ZERO_CAPITAL_MAX_CONCURRENT_${chainEnv}`], 2, 1, 32);
+    const walletNonceCapacity = boundedInt(process.env[`ZERO_CAPITAL_WALLET_NONCE_CAPACITY_${chainEnv}`], 1, 1, 16);
+    const receiverCapacity = boundedInt(process.env[`ZERO_CAPITAL_RECEIVER_CAPACITY_${chainEnv}`], 2, 1, 32);
+    const providerCapacity = boundedInt(process.env[`ZERO_CAPITAL_PROVIDER_CAPACITY_${chainEnv}`], 4, 1, 32);
     const sponsorCapacity = boundedInt(process.env.ZERO_CAPITAL_GAS_SPONSOR_CONCURRENCY, 4, 1, 32);
     const protocolCapacity = boundedInt(process.env.ZERO_CAPITAL_PROTOCOL_CONCURRENCY, 4, 1, 32);
 
     const specs: ResourcePoolSpec[] = [
       { prefix: 'zero:global', capacity: emergencyCeiling },
-      { prefix: `zero:chain:${opportunity.chain}`, capacity: chainCapacity },
-      { prefix: `zero:wallet-nonce:${opportunity.chain}`, capacity: walletNonceCapacity },
-      { prefix: `zero:receiver:${opportunity.chain}`, capacity: receiverCapacity },
-      { prefix: `zero:provider:${opportunity.chain}`, capacity: providerCapacity },
+      { prefix: `zero:chain:${chain}`, capacity: chainCapacity },
+      { prefix: `zero:wallet-nonce:${chain}`, capacity: walletNonceCapacity },
+      { prefix: `zero:receiver:${chain}`, capacity: receiverCapacity },
+      { prefix: `zero:provider:${chain}`, capacity: providerCapacity },
     ];
     if (fundingMode === 'sponsored') specs.push({ prefix: 'zero:gas-sponsor', capacity: sponsorCapacity });
-    for (const protocol of protocolNames(opportunity)) {
-      specs.push({ prefix: `zero:protocol:${opportunity.chain}:${protocol}`, capacity: protocolCapacity });
+    for (const protocol of normalizedProtocols(protocols)) {
+      specs.push({ prefix: `zero:protocol:${chain}:${protocol}`, capacity: protocolCapacity });
     }
     return specs;
   }
 
   scoreOpportunity(opportunity: ZeroCapitalOpportunity, fundingMode: string, now = Date.now()): ZeroCapitalResourcePriority {
-    const specs = this.specs(opportunity, fundingMode);
+    const specs = this.specsFor(opportunity.chain, protocolNames(opportunity), fundingMode);
     const pressures = specs.map(spec => ({
       resource: spec.prefix,
       pressure: ((this.localUsage.get(spec.prefix) || 0) + 1) / Math.max(1, spec.capacity),
@@ -171,12 +200,18 @@ class ZeroCapitalResourceScheduler {
     const acquired: string[] = [];
     try {
       await client.query('BEGIN');
-      await client.query(`DELETE FROM ${TABLE} WHERE expires_at <= now()`);
       const idempotency = `zero:opportunity:${opportunityId}`;
       const fixed = await client.query(
         `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
          VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-         ON CONFLICT (resource_key) DO NOTHING RETURNING resource_key`,
+         ON CONFLICT (resource_key) DO UPDATE
+         SET lease_id = EXCLUDED.lease_id,
+             owner_id = EXCLUDED.owner_id,
+             opportunity_id = EXCLUDED.opportunity_id,
+             acquired_at = now(),
+             expires_at = EXCLUDED.expires_at
+         WHERE ${TABLE}.expires_at <= now()
+         RETURNING resource_key`,
         [idempotency, leaseId, this.ownerId, opportunityId, expiresAt],
       );
       if (fixed.rowCount !== 1) {
@@ -192,7 +227,14 @@ class ZeroCapitalResourceScheduler {
           const result = await client.query(
             `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
              VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-             ON CONFLICT (resource_key) DO NOTHING RETURNING resource_key`,
+             ON CONFLICT (resource_key) DO UPDATE
+             SET lease_id = EXCLUDED.lease_id,
+                 owner_id = EXCLUDED.owner_id,
+                 opportunity_id = EXCLUDED.opportunity_id,
+                 acquired_at = now(),
+                 expires_at = EXCLUDED.expires_at
+             WHERE ${TABLE}.expires_at <= now()
+             RETURNING resource_key`,
             [key, leaseId, this.ownerId, opportunityId, expiresAt],
           );
           if (result.rowCount === 1) {
@@ -221,22 +263,23 @@ class ZeroCapitalResourceScheduler {
     }
   }
 
-  async acquire(
-    opportunity: ZeroCapitalOpportunity,
-    fundingMode: string,
+  private async acquireSpecs(
+    opportunityId: string,
+    expiresAt: number,
+    specs: readonly ResourcePoolSpec[],
   ): Promise<ZeroCapitalResourceLease | null> {
-    if (opportunity.expectedProfit <= 0n || Date.now() > opportunity.expiresAt) return null;
-    const specs = this.specs(opportunity, fundingMode);
+    const now = Date.now();
+    if (!opportunityId.trim() || !Number.isFinite(expiresAt) || expiresAt <= now) return null;
     if (!this.reserveLocal(specs)) return null;
     const leaseId = randomUUID();
-    const acquiredAt = Date.now();
+    const acquiredAt = now;
     const ttlMs = boundedInt(process.env.ZERO_CAPITAL_EXECUTION_LEASE_TTL_MS, 90_000, 10_000, 300_000);
-    const expiresAt = Math.min(acquiredAt + ttlMs, opportunity.expiresAt);
-    if (expiresAt <= acquiredAt) {
+    const leaseExpiresAt = Math.min(acquiredAt + ttlMs, expiresAt);
+    if (leaseExpiresAt <= acquiredAt) {
       this.releaseLocal(specs);
       return null;
     }
-    const resources = await this.acquireDistributed(leaseId, opportunity.id, specs, expiresAt);
+    const resources = await this.acquireDistributed(leaseId, opportunityId, specs, leaseExpiresAt);
     if (resources === null) {
       this.releaseLocal(specs);
       return null;
@@ -245,11 +288,11 @@ class ZeroCapitalResourceScheduler {
     let released = false;
     return {
       leaseId,
-      opportunityId: opportunity.id,
+      opportunityId,
       ownerId: this.ownerId,
       resources: resources.length > 0 ? resources : specs.map(spec => `${spec.prefix}:local`),
       acquiredAt,
-      expiresAt,
+      expiresAt: leaseExpiresAt,
       release: async () => {
         if (released) return;
         released = true;
@@ -260,7 +303,7 @@ class ZeroCapitalResourceScheduler {
         } catch (error) {
           logger.error('[ZeroCapitalScheduler] Lease release failed; TTL remains fail-safe', {
             component: 'ZeroCapitalResourceScheduler',
-            opportunityId: opportunity.id,
+            opportunityId,
             leaseId,
             error: error instanceof Error ? error.message : String(error),
           });
@@ -269,6 +312,28 @@ class ZeroCapitalResourceScheduler {
         }
       },
     };
+  }
+
+  async acquire(
+    opportunity: ZeroCapitalOpportunity,
+    fundingMode: string,
+  ): Promise<ZeroCapitalResourceLease | null> {
+    if (opportunity.expectedProfit <= 0n || Date.now() > opportunity.expiresAt) return null;
+    return this.acquireSpecs(
+      opportunity.id,
+      opportunity.expiresAt,
+      this.specsFor(opportunity.chain, protocolNames(opportunity), fundingMode),
+    );
+  }
+
+  async acquireMeasuredAtomic(input: MeasuredAtomicResourceRequest): Promise<ZeroCapitalResourceLease | null> {
+    if (!Number.isFinite(input.expectedNetProfitUsd) || input.expectedNetProfitUsd <= 0) return null;
+    if (!Number.isFinite(input.expiresAt) || input.expiresAt <= Date.now()) return null;
+    return this.acquireSpecs(
+      input.opportunityId,
+      input.expiresAt,
+      this.specsFor(input.chain, input.protocols, input.fundingMode),
+    );
   }
 
   getTelemetry(): { ownerId: string; localUsage: Record<string, number> } {
