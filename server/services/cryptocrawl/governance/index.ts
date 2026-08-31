@@ -113,10 +113,14 @@ async function initializeGovernanceState(): Promise<void> {
   getCryptara().restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
 
   // Fuse already-measured DB, Quanti Comp and Antenna telemetry without issuing a
-  // database/provider call. This is resource intelligence only; it grants no
-  // execution, write, profitability, settlement or governance authority.
+  // database/provider call. The installed advisor can only shorten the evidence
+  // window before an additive +1 permit after DB telemetry is already healthy.
   try {
-    const { getCryptaraResourceIntelligenceSnapshot } = await import('../integration/cryptara-resource-intelligence.js');
+    const {
+      getCryptaraResourceIntelligenceSnapshot,
+      installCryptaraResourceIntelligenceAdvisor,
+    } = await import('../integration/cryptara-resource-intelligence.js');
+    installCryptaraResourceIntelligenceAdvisor();
     const resourceIntelligence = getCryptaraResourceIntelligenceSnapshot();
     console.log('[GOVERNANCE] Cryptara resource intelligence:', {
       databaseMode: resourceIntelligence.database.mode,
@@ -124,6 +128,7 @@ async function initializeGovernanceState(): Promise<void> {
       computePressure: resourceIntelligence.compute.pressureScore,
       antennaQuality: resourceIntelligence.antenna.averageQuality,
       usefulParallelHeadroom: resourceIntelligence.usefulParallelHeadroom,
+      recoveryAcceleration: resourceIntelligence.dbRecoveryAcceleration,
       authority: resourceIntelligence.authority,
     });
   } catch (error) {
