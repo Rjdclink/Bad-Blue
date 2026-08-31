@@ -174,17 +174,26 @@ function databaseRetryDelayMs(attempt: number, baseMs: number = 2_000, maxMs: nu
 }
 
 function databaseErrorText(error: unknown): string {
-  if (error instanceof Error) return error.message.toLowerCase();
-  return String(error ?? '').toLowerCase();
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: any = error;
+  for (let depth = 0; depth < 6 && current != null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (current instanceof Error && current.message) parts.push(current.message);
+    else if (typeof current === 'string') parts.push(current);
+    if (current && typeof current === 'object' && current.code) parts.push(String(current.code));
+    current = current && typeof current === 'object' ? current.cause : null;
+  }
+  if (parts.length === 0) parts.push(String(error ?? ''));
+  return parts.join(' | ').toLowerCase();
 }
 
 function isDatabaseAdmissionPressureError(error: unknown): boolean {
-  const code = String((error as any)?.code ?? '').toUpperCase();
   const message = databaseErrorText(error);
   return (
-    code === '53300' || // PostgreSQL too_many_connections
-    code === '57P03' || // cannot_connect_now / transient admission failure
-    code === 'ETIMEDOUT' ||
+    message.includes('53300') || // PostgreSQL too_many_connections
+    message.includes('57p03') || // cannot_connect_now / transient admission failure
+    message.includes('etimedout') ||
     message.includes('connection timeout') ||
     message.includes('connection terminated due to connection timeout') ||
     message.includes('failed to connect to database: {:error, :timeout}') ||
@@ -632,7 +641,7 @@ startupTrace('routes_registration_completed');
       res.send(sitemap);
     } catch (error) {
       console.error('[Sitemap] Error generating sitemap:', error);
-      res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>');
+      res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap-image/1.1"></urlset>');
     }
   });
 
