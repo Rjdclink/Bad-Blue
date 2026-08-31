@@ -32,6 +32,7 @@ interface ResourcePoolSpec {
 }
 
 const TABLE = 'cryptocrawler_resource_leases';
+const CLAIM_FUNCTION = 'private.cryptocrawler_claim_resource_slot';
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
@@ -103,18 +104,23 @@ class ExecutionResourceScheduler {
 
     const retryMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
     const readyTtlMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
-    const probe = highPriorityQuery(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
+    const probe = highPriorityQuery(
+      `SELECT
+         to_regclass('public.${TABLE}') IS NOT NULL AS table_ready,
+         to_regprocedure('private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)') IS NOT NULL AS claim_function_ready`,
+    )
       .then(result => {
-        const ready = result.rows?.[0]?.ready === true;
+        const ready = result.rows?.[0]?.table_ready === true && result.rows?.[0]?.claim_function_ready === true;
         if (ready) {
           this.tableReadyUntil = Date.now() + readyTtlMs;
           this.tableRetryAfter = 0;
         } else {
           this.tableReadyUntil = 0;
           this.tableRetryAfter = Date.now() + retryMs;
-          logger.error('[ResourceScheduler] Migration-owned distributed lease table is missing', {
+          logger.error('[ResourceScheduler] Migration-owned distributed lease authority is missing', {
             component: 'ExecutionResourceScheduler',
             table: `public.${TABLE}`,
+            function: CLAIM_FUNCTION,
             executionAuthorityGranted: false,
             runtimeDdlAllowed: false,
           });
@@ -124,7 +130,7 @@ class ExecutionResourceScheduler {
       .catch(error => {
         this.tableReadyUntil = 0;
         this.tableRetryAfter = Date.now() + retryMs;
-        logger.error('[ResourceScheduler] Distributed lease table availability check failed', {
+        logger.error('[ResourceScheduler] Distributed lease authority availability check failed', {
           component: 'ExecutionResourceScheduler',
           retryAfterMs: retryMs,
           error: error instanceof Error ? error.message : String(error),
@@ -230,6 +236,22 @@ class ExecutionResourceScheduler {
     return result.rowCount === 1;
   }
 
+  private async claimResourceSlot(
+    client: any,
+    spec: ResourcePoolSpec,
+    leaseId: string,
+    opportunityId: string,
+    expiresAt: number,
+  ): Promise<string | null> {
+    const startSlot = Math.floor(Math.random() * spec.capacity);
+    const result = await client.query(
+      `SELECT ${CLAIM_FUNCTION}($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) AS resource_key`,
+      [spec.prefix, spec.capacity, startSlot, leaseId, this.ownerId, opportunityId, expiresAt],
+    );
+    const resourceKey = result.rows?.[0]?.resource_key;
+    return resourceKey ? String(resourceKey) : null;
+  }
+
   private async acquireDistributed(
     leaseId: string,
     opportunityId: string,
@@ -253,20 +275,16 @@ class ExecutionResourceScheduler {
       }
       acquired.push(fixedOpportunityKey);
 
+      // The slot search remains sequential by authority domain, but each domain is
+      // now one DB round trip regardless of capacity. PostgreSQL performs the same
+      // atomic slot-by-slot collision loop inside the transaction.
       for (const spec of specs) {
-        let claimed: string | null = null;
-        for (let slot = 0; slot < spec.capacity; slot++) {
-          const resourceKey = `${spec.prefix}:slot:${slot}`;
-          if (await this.claimResource(client, resourceKey, leaseId, opportunityId, expiresAt)) {
-            claimed = resourceKey;
-            acquired.push(resourceKey);
-            break;
-          }
-        }
+        const claimed = await this.claimResourceSlot(client, spec, leaseId, opportunityId, expiresAt);
         if (!claimed) {
           await client.query('ROLLBACK');
           return null;
         }
+        acquired.push(claimed);
       }
 
       await client.query('COMMIT');
