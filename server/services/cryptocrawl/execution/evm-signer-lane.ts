@@ -1,4 +1,4 @@
-import { isDatabaseConfigured, pool } from '../../../db.js';
+import { coordinationPool, isDatabaseConfigured } from '../../../db.js';
 
 const localTails = new Map<string, Promise<void>>();
 
@@ -32,9 +32,11 @@ async function withLocalLane<T>(key: string, operation: () => Promise<T>): Promi
  * session advisory lock across nonce observation, signing and network submission
  * so separate Railway replicas cannot become independent nonce owners.
  *
- * No durable nonce is pre-reserved here: a process crash before broadcast must
- * not create an artificial nonce gap. The authoritative pending nonce remains
- * the chain/provider observation made while this distributed lane is held.
+ * Session-level coordination is isolated from ordinary application queries by
+ * the dedicated coordination pool. No durable nonce is pre-reserved here: a
+ * process crash before broadcast must not create an artificial nonce gap. The
+ * authoritative pending nonce remains the chain/provider observation made while
+ * this distributed lane is held.
  */
 export async function withEvmSignerLane<T>(input: {
   chainId: number;
@@ -45,7 +47,7 @@ export async function withEvmSignerLane<T>(input: {
   return withLocalLane(key, async () => {
     if (!isDatabaseConfigured) return input.operation();
 
-    const client = await pool.connect();
+    const client = await coordinationPool.connect();
     let locked = false;
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [key]);
