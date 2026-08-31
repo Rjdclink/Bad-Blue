@@ -1,4 +1,4 @@
-import { getAcrossBridgeQuote, type AcrossBridgeQuote } from '../bridge/across-bridge-provider.js';
+import { getAcrossBridgeQuote, getAcrossBridgeReadiness, type AcrossBridgeQuote } from '../bridge/across-bridge-provider.js';
 import type { ChainId } from '../bridge/types.js';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
@@ -79,6 +79,10 @@ function bridgeQuoteProvenance(quote: AcrossBridgeQuote): string[] {
   return [...new Set(values)];
 }
 
+function signerConfigured(): boolean {
+  return Boolean(process.env.WALLET_PRIVATE_KEY?.trim());
+}
+
 function recordRoute(
   route: CrossChainRoute,
   now: number,
@@ -86,22 +90,31 @@ function recordRoute(
   quote: AcrossBridgeQuote | null,
 ): MeasuredCandidate {
   const hasFreshQuote = freshQuote(quote, now);
+  const readiness = getAcrossBridgeReadiness();
+  const hasSigner = signerConfigured();
   const expiresAt = hasFreshQuote
     ? Math.min(now + ttlMs, quote.expiresAt, quote.observedAt + Math.max(1_000, Math.min(60_000, Number(process.env.CRYPTOCRAWL_ACROSS_MAX_QUOTE_AGE_MS || 10_000))))
     : now + ttlMs;
   const bridgeCostUsd = hasFreshQuote ? quote.totalFeeUsd : null;
+
+  // Across transport is no longer misreported as missing transaction-builder,
+  // status-monitor, drift, recovery, or terminal-receipt machinery: the existing
+  // Across executor refreshes the quote/payload before signing, applies the
+  // original minimum-output bound, submits under governance, and waits for a
+  // destination fill or verified refund. What this discovery object still lacks
+  // is an ARBITRAGE REVENUE LEG. A bridge transfer by itself cannot have invented
+  // gross/net profit, so CROSS_CHAIN remains fail-closed until source/destination
+  // economic legs are composed around this measured transport.
   const missingInformation = [
+    ...(!readiness.configured ? ['across_production_credentials'] : []),
     ...(!hasFreshQuote ? ['measured_bridge_quote', 'measured_bridge_liquidity', 'measured_bridge_transfer_time'] : []),
     ...(hasFreshQuote && quote.totalFeeUsd === null ? ['measured_bridge_total_fee'] : []),
     ...(hasFreshQuote && !quote.simulationSuccess ? ['bridge_provider_simulation_success'] : []),
-    // S-40 remains deliberately granular: having quote and monitoring machinery
-    // does not imply that the current execution path is bound to either one.
-    'cross_chain_transaction_builder_admission',
-    'cross_chain_status_monitor_binding',
-    'cross_chain_destination_receipt_after_execution',
-    'cross_chain_drift_tolerance',
-    'cross_chain_failure_recovery',
-    'cross_chain_terminal_settlement',
+    ...(hasFreshQuote && !quote.swapTransactionPresent ? ['across_swap_transaction_payload'] : []),
+    ...(!hasSigner ? ['cross_chain_signer'] : []),
+    'cross_chain_source_destination_profit_leg',
+    'cross_chain_destination_price_and_revenue',
+    'cross_chain_deterministic_all_in_profit_composition',
   ];
 
   return measuredCandidateRegistry.record({
@@ -127,13 +140,12 @@ function recordRoute(
     depth: hasFreshQuote
       ? {
           status: 'measured',
-          detail: `Across returned a fresh exact-input route for the sampled ${discoveryNotionalUsd()} ${route.asset}; this proves only the quoted amount, not global bridge depth`,
+          detail: `Across returned a fresh exact-input route for the sampled ${discoveryNotionalUsd()} ${route.asset}; this proves executable transport for the quoted amount, not a profitable cross-chain trade or global bridge depth`,
         }
       : { status: 'unavailable', detail: 'No fresh measured bridge liquidity quote has been admitted for this route in the current rotation' },
     economics: {
-      // A bridge quote proves current route cost, not an arbitrage revenue leg.
-      // Keep deterministic profitability unavailable until destination price/drift
-      // and terminal cross-chain settlement are canonical.
+      // A bridge quote proves current transport cost, not arbitrage revenue.
+      // Never manufacture a spread by treating same-asset movement as profit.
       grossProfitUsd: null,
       deterministicNetProfitUsd: null,
       feeUsd: null,
@@ -145,16 +157,21 @@ function recordRoute(
     quoteAgeMs: hasFreshQuote ? Math.max(0, now - quote.observedAt) : null,
     executableCapability: false,
     executionCapabilityReason: hasFreshQuote
-      ? 'Fresh Across route economics are measured and settlement verification exists, but transaction-builder admission, execution binding, drift tolerance, failure recovery, and terminal settlement wiring remain incomplete'
-      : 'Source/destination RPCs are measured healthy, but no fresh authoritative bridge quote is admitted for this route in the current rotation',
+      ? 'Across transport has fresh measured cost/simulation and an existing refresh-sign-submit-terminal-settlement executor; this object is intentionally non-executable because no source/destination arbitrage revenue leg has yet been composed around the transport'
+      : readiness.reason,
     missingInformation,
     provenance: [
       `rpc:${route.from}:healthy`,
       `rpc:${route.to}:healthy`,
       ...(hasFreshQuote ? bridgeQuoteProvenance(quote) : ['across_quote:not_sampled_or_unavailable_this_cycle']),
-      'across_settlement_monitor:available_but_not_execution_bound',
+      `across_production_configured:${readiness.configured}`,
+      `cross_chain_signer_configured:${hasSigner}`,
+      'across_terminal_executor:refresh_quote_and_payload_before_signing',
+      'across_terminal_executor:minimum_output_drift_bound',
+      'across_terminal_executor:destination_receipt_or_verified_refund',
       'bridge_static_average_costs:non_authoritative',
-      'cross_chain_profitability:not_authorized',
+      'cross_chain_transport_only:not_profit_opportunity',
+      'cross_chain_profitability:not_authorized_without_revenue_leg',
       'synthetic_evidence:false',
     ],
   });
@@ -163,8 +180,8 @@ function recordRoute(
 /**
  * Structural coverage is complete for every currently healthy chain pair and
  * stablecoin. Fresh Across approval quotes are sampled on a bounded rotating
- * subset so current costs are learned without shrinking the route universe or
- * treating static/legacy bridge averages as economic truth.
+ * subset so current transport costs are learned without shrinking the route
+ * universe or pretending that transport alone is an arbitrage opportunity.
  */
 export async function discoverMeasuredCrossChainCandidates(): Promise<MeasuredCandidate[]> {
   await multiProviderRpcManager.initialize(CHAINS);
