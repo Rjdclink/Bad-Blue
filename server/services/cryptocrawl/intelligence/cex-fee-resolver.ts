@@ -7,6 +7,7 @@ import { assertCoinbaseSpotTradeReady } from './coinbase-advanced-trade-authorit
 import { getCoinbaseSpotFeeEvidence } from './coinbase-fee-evidence.js';
 import {
   getSpotProductConstraints,
+  SpotProductUnavailableError,
   type SpotProductConstraints,
 } from '../execution/cex-spot-product-policy.js';
 
@@ -131,6 +132,7 @@ function markFeeUnavailable(venue: CexFeeVenue, symbol: string, reason: string, 
     until: Date.now() + Math.max(1_000, ttlMs),
     reason,
   });
+  feeTransientRetryUntil.delete(cacheKey(venue, symbol));
 }
 
 function clearFeeUnavailable(venue: CexFeeVenue, symbol: string): void {
@@ -138,6 +140,7 @@ function clearFeeUnavailable(venue: CexFeeVenue, symbol: string): void {
 }
 
 function markTransientRetry(venue: CexFeeVenue, symbol: string, reason: string, ttlMs = TRANSIENT_RETRY_MS): void {
+  if (unavailableEntry(venue, symbol)) return;
   const key = cacheKey(venue, symbol);
   const until = Date.now() + Math.max(250, ttlMs);
   const existing = feeTransientRetryUntil.get(key);
@@ -193,15 +196,30 @@ async function verifiedConstraints(
   symbol: string,
 ): Promise<SpotProductConstraints | null> {
   try {
-    return await getSpotProductConstraints(venue, symbol);
+    const constraints = await getSpotProductConstraints(venue, symbol);
+    clearTransientRetry(venue, symbol);
+    return constraints;
   } catch (error) {
-    markFeeUnavailable(venue, symbol, 'product_not_in_authoritative_live_catalog');
-    logger.debug('[CEX Fees] Product authority rejected fee lookup after canonical live-catalog hydration', {
+    if (error instanceof SpotProductUnavailableError) {
+      markFeeUnavailable(venue, symbol, `product_${error.reason}`);
+      logger.debug('[CEX Fees] Product authority rejected fee lookup from an authoritative live catalog', {
+        component: 'CexFeeResolver',
+        venue,
+        symbol,
+        reason: error.reason,
+        retrySuppressedUntil: unavailableEntry(venue, symbol)?.until || null,
+        failClosed: true,
+      });
+      return null;
+    }
+    markTransientRetry(venue, symbol, 'product_catalog_transient_failure');
+    logger.debug('[CEX Fees] Product catalog hydration degraded transiently; product is not negative-cached as unsupported', {
       component: 'CexFeeResolver',
       venue,
       symbol,
       error: error instanceof Error ? error.message : String(error),
-      retrySuppressedUntil: unavailableEntry(venue, symbol)?.until || null,
+      retrySuppressedUntil: transientRetryEntry(venue, symbol)?.until || null,
+      authoritativeAbsenceProven: false,
       failClosed: true,
     });
     return null;
@@ -258,16 +276,25 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
 
   const resolved: Array<{ symbol: string; constraints: SpotProductConstraints }> = [];
   const unsupportedSymbols: string[] = [];
+  const transientProductSymbols: string[] = [];
   const settled = await Promise.allSettled(symbols.map(async symbol => ({
     symbol,
     constraints: await getSpotProductConstraints('kraken', symbol),
   })));
   for (let index = 0; index < settled.length; index++) {
     const result = settled[index];
-    if (result.status === 'fulfilled') resolved.push(result.value);
-    else {
-      unsupportedSymbols.push(symbols[index]);
-      markFeeUnavailable('kraken', symbols[index], 'product_not_in_authoritative_live_catalog');
+    if (result.status === 'fulfilled') {
+      resolved.push(result.value);
+      clearTransientRetry('kraken', result.value.symbol);
+      continue;
+    }
+    const symbol = symbols[index];
+    if (result.reason instanceof SpotProductUnavailableError) {
+      unsupportedSymbols.push(symbol);
+      markFeeUnavailable('kraken', symbol, `product_${result.reason.reason}`);
+    } else {
+      transientProductSymbols.push(symbol);
+      markTransientRetry('kraken', symbol, 'product_catalog_transient_failure');
     }
   }
   if (resolved.length === 0) return output;
@@ -318,6 +345,7 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
     translatedSymbols: resolved.length,
     unsupportedSymbols: unsupportedSymbols.length,
     unsupportedSample: unsupportedSymbols.slice(0, 5),
+    transientProductFailures: transientProductSymbols.length,
     authenticatedRowsMissing: missingAuthenticatedRows.length,
     authenticatedRowsMissingSample: missingAuthenticatedRows.slice(0, 5),
     resolvedSymbols: output.size,
@@ -423,16 +451,25 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
 
   const constraintsBySymbol = new Map<string, SpotProductConstraints>();
   const unsupportedSymbols: string[] = [];
+  const transientProductSymbols: string[] = [];
   const settled = await Promise.allSettled(symbols.map(async symbol => ({
     symbol,
     constraints: await getSpotProductConstraints('okx', symbol),
   })));
   for (let index = 0; index < settled.length; index++) {
     const result = settled[index];
-    if (result.status === 'fulfilled') constraintsBySymbol.set(result.value.symbol, result.value.constraints);
-    else {
-      unsupportedSymbols.push(symbols[index]);
-      markFeeUnavailable('okx', symbols[index], 'product_not_in_authoritative_live_catalog');
+    if (result.status === 'fulfilled') {
+      constraintsBySymbol.set(result.value.symbol, result.value.constraints);
+      clearTransientRetry('okx', result.value.symbol);
+      continue;
+    }
+    const symbol = symbols[index];
+    if (result.reason instanceof SpotProductUnavailableError) {
+      unsupportedSymbols.push(symbol);
+      markFeeUnavailable('okx', symbol, `product_${result.reason.reason}`);
+    } else {
+      transientProductSymbols.push(symbol);
+      markTransientRetry('okx', symbol, 'product_catalog_transient_failure');
     }
   }
 
@@ -517,6 +554,7 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
     perInstrumentRequests: perInstrumentTargets.length,
     unsupportedSymbols: unsupportedSymbols.length,
     unsupportedSample: unsupportedSymbols.slice(0, 5),
+    transientProductFailures: transientProductSymbols.length,
     resolvedSymbols: output.size,
     productAuthority: 'cex_spot_product_policy',
     quoteCurrencyAllowlistUsed: false,
