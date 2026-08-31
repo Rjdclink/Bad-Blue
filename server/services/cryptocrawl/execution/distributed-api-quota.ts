@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import logger from '../../../logger.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 
 const TABLE = 'cryptocrawler_resource_leases';
 const ownerId = process.env.RAILWAY_REPLICA_ID?.trim()
@@ -34,6 +35,18 @@ function stateFor(namespace: string): QuotaState {
   return created;
 }
 
+function highPriorityQuery(text: string, values: unknown[] = []) {
+  return withCryptaraSupabasePriority('high', () => pool.query(text, values));
+}
+
+function quotaRetryDelayMs(baseMs: number, remainingMs: number): number {
+  const boundedBase = Math.max(25, Math.min(baseMs, remainingMs));
+  // Jitter only upward from the database-derived availability estimate. This
+  // desynchronizes replicas without waking early and creating extra quota probes.
+  const extra = Math.floor(Math.random() * Math.max(1, Math.ceil(boundedBase * 0.25) + 1));
+  return Math.max(1, Math.min(remainingMs, boundedBase + extra));
+}
+
 async function ensureLeaseTable(): Promise<boolean> {
   if (!isDatabaseConfigured) return false;
   const now = Date.now();
@@ -43,7 +56,7 @@ async function ensureLeaseTable(): Promise<boolean> {
 
   const retryMs = boundedInt(process.env.CRYPTOCRAWL_API_QUOTA_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
   const readyTtlMs = boundedInt(process.env.CRYPTOCRAWL_API_QUOTA_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
-  const probe = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
+  const probe = highPriorityQuery(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
     .then(result => {
       const ready = result.rows?.[0]?.ready === true;
       if (ready) {
@@ -102,7 +115,9 @@ export async function acquireDistributedApiQuota(input: {
 
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
-    const client = await pool.connect();
+    // API-quota ownership is execution-facing admission, so it outranks optional
+    // persistence/observability while still sharing the one ordinary pool.
+    const client = await withCryptaraSupabasePriority('high', () => pool.connect());
     let claimed = false;
     let waitMs = Math.max(25, Math.ceil(windowMs / capacity));
     try {
@@ -160,7 +175,7 @@ export async function acquireDistributedApiQuota(input: {
 
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
-    const sleepMs = Math.min(waitMs, remaining);
+    const sleepMs = quotaRetryDelayMs(waitMs, remaining);
     state.waits += 1;
     state.waitMs += sleepMs;
     await new Promise(resolve => setTimeout(resolve, sleepMs));
