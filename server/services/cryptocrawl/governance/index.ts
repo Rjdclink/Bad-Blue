@@ -97,6 +97,13 @@ async function initializeGovernanceState(): Promise<void> {
   // or route-owned background consumers can compete for Supavisor connections.
   installCryptaraSupabaseAdmissionWorker();
 
+  // Railway keeps the previous replica active while this one is unready. The new
+  // replica therefore bootstraps with a one-client ordinary pool. Once Cryptara
+  // owns admission, restore only the *ceiling*; Cryptara grows into it additively
+  // from measured successful admissions instead of opening a connection burst.
+  const { releaseRollingDeploymentPoolHeadroom } = await import('../../../migrations/reconcileAppSchema.js');
+  releaseRollingDeploymentPoolHeadroom('cryptara_worker_installed');
+
   const restored = await stageManager.restorePersistence(new PostgresStageManagerStateStore());
   const persistedProfitLadder = stageManager.getProfitLadderState();
   if (persistedProfitLadder) {
@@ -111,6 +118,24 @@ async function initializeGovernanceState(): Promise<void> {
   }
   const { getCryptara } = await import('../../cryptara/index.js');
   getCryptara().restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
+
+  // Fuse already-measured DB, Quanti Comp and Antenna telemetry without issuing a
+  // database/provider call. This is resource intelligence only; it grants no
+  // execution, write, profitability, settlement or governance authority.
+  try {
+    const { getCryptaraResourceIntelligenceSnapshot } = await import('../integration/cryptara-resource-intelligence.js');
+    const resourceIntelligence = getCryptaraResourceIntelligenceSnapshot();
+    console.log('[GOVERNANCE] Cryptara resource intelligence:', {
+      databaseMode: resourceIntelligence.database.mode,
+      databasePressure: resourceIntelligence.database.pressureScore,
+      computePressure: resourceIntelligence.compute.pressureScore,
+      antennaQuality: resourceIntelligence.antenna.averageQuality,
+      usefulParallelHeadroom: resourceIntelligence.usefulParallelHeadroom,
+      authority: resourceIntelligence.authority,
+    });
+  } catch (error) {
+    console.warn('[GOVERNANCE] Resource intelligence snapshot unavailable:', error instanceof Error ? error.message : String(error));
+  }
   
   const currentStage = stageManager.getCurrentStage();
   const stageConfig = stageManager.getStageConfig();
