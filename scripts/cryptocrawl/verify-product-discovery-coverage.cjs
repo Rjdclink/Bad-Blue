@@ -31,7 +31,7 @@ assert(providers.includes("source: 'cex_product_directory' as const"), 'discover
 assert(productPolicy.includes('MISSING_CATALOG_RECHECK_MS'), 'Kraken/OKX missing-product refreshes must be bounded');
 assert(productPolicy.includes('unsupportedUntil'), 'proven unsupported products must be negative-cached');
 assert(productPolicy.includes('class SpotProductUnavailableError'), 'authoritative product absence must have a typed error contract');
-assert(productPolicy.includes('resolveOkxProductBaseUrl(allowAuthenticatedRegionSelection)'), 'OKX public/product constraint region resolution must be explicit');
+assert(/resolveOkxProductBaseUrl\(allowAuthenticatedRegionSelection\s*:\s*boolean\)/.test(productPolicy), 'OKX public/product constraint region resolution must be explicit and typed');
 assert(productPolicy.includes('fetchOkxSnapshot(forceFresh, false)'), 'public OKX directory must forbid authenticated region selection');
 assert(productPolicy.includes('privateFeeRequestIssuedByPublicDirectory: false'), 'OKX public directory must declare zero private-fee requests');
 assert(productPolicy.includes('fetchOkxSnapshot(false, true)'), 'execution-time OKX constraint validation may use authenticated region selection');
