@@ -201,6 +201,16 @@ export function ensureCexInventoryReadinessWiring(): void {
   });
 }
 
+/**
+ * Bounded on-demand proof hydration for governance/readiness callers. Reuses the
+ * exact same single-flight authenticated balance authority as the background
+ * scheduler; it cannot synthesize balances or grant execution permission.
+ */
+export async function refreshCexInventoryReadinessNow(): Promise<CexInventoryReadinessSnapshot> {
+  await runRefresh();
+  return getCexInventoryReadinessSnapshot();
+}
+
 export function getCexInventoryReadinessSnapshot(): CexInventoryReadinessSnapshot {
   return {
     ...latest,
