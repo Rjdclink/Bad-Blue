@@ -133,10 +133,6 @@ class CryptaraSupabaseResourceGovernor {
     }
   }
 
-  private currentCeiling(): number {
-    return Math.max(1, Math.trunc(this.poolSnapshot().max || 1));
-  }
-
   private mode(now = Date.now()): CryptaraSupabaseAdmissionSnapshot['mode'] {
     const stats = this.poolSnapshot();
     if (now < this.pressureUntil || stats.waiting > 0) return 'pressure';
@@ -252,20 +248,28 @@ class CryptaraSupabaseResourceGovernor {
     const ceiling = Math.max(1, Math.trunc(stats.max || 1));
     this.targetConcurrency = Math.max(1, Math.min(this.targetConcurrency, ceiling));
 
-    // Under upstream admission pressure, immediately reuse an already-idle client
-    // because that costs no new backend admission. If no idle client exists, wait
-    // through one jittered cooldown before asking Supavisor for another client.
-    // This is a one-shot pressure timer, not polling, and is removed once fired.
+    // During a pressure cooldown, reusable idle clients are free capacity: admit
+    // no more tasks than the number already idle. That prevents a single idle
+    // client from accidentally opening additional Supavisor clients in the same
+    // drain pass. With no idle client, pause until the one-shot jitter expires.
     const now = Date.now();
-    if (this.queue.length > 0 && now < this.pressureUntil && stats.idle === 0) {
+    const pressureActive = now < this.pressureUntil;
+    if (this.queue.length > 0 && pressureActive && stats.idle === 0) {
       this.schedulePressureResume(now);
       return;
     }
 
-    while (this.inFlight < this.targetConcurrency && this.queue.length > 0) {
+    const targetSlots = Math.max(0, this.targetConcurrency - this.inFlight);
+    const admissionBudget = pressureActive
+      ? Math.min(targetSlots, Math.max(0, stats.idle))
+      : targetSlots;
+    let admitted = 0;
+
+    while (admitted < admissionBudget && this.queue.length > 0) {
       const index = this.nextWaiterIndex();
       const waiter = this.queue.splice(index, 1)[0];
       this.inFlight += 1;
+      admitted += 1;
       let released = false;
       waiter.resolve({
         release: (error?: unknown, heldMs?: number) => {
@@ -372,19 +376,24 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
       if (typeof callback === 'function') {
         void governor.acquire(priority).then(permit => {
           const acquisitionStartedAt = Date.now();
-          originalConnect.call(this, (error: unknown, client: any, release: (error?: unknown) => void) => {
-            const acquireMs = Date.now() - acquisitionStartedAt;
-            governor.reportConnectionOutcome(acquireMs, error);
-            if (error || !client) {
-              // The connection outcome already taught the governor about pressure;
-              // release only the worker permit here to avoid double contraction.
-              permit.release(undefined, 0);
-              callback(error, client, release);
-              return;
-            }
-            const wrappedRelease = wrapClientRelease(client, release, permit, Date.now());
-            callback(null, client, wrappedRelease);
-          });
+          try {
+            originalConnect.call(this, (error: unknown, client: any, release: (error?: unknown) => void) => {
+              const acquireMs = Date.now() - acquisitionStartedAt;
+              governor.reportConnectionOutcome(acquireMs, error);
+              if (error || !client) {
+                // The connection outcome already taught the governor about pressure;
+                // release only the worker permit here to avoid double contraction.
+                permit.release(undefined, 0);
+                callback(error, client, release);
+                return;
+              }
+              const wrappedRelease = wrapClientRelease(client, release, permit, Date.now());
+              callback(null, client, wrappedRelease);
+            });
+          } catch (error) {
+            permit.release(undefined, 0);
+            throw error;
+          }
         }).catch(error => callback(error));
         return undefined;
       }
