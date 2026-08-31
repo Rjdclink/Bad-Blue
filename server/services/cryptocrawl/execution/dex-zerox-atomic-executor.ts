@@ -1,0 +1,486 @@
+import { BigNumber, Contract, Wallet, ethers } from 'ethers';
+import logger from '../../../logger.js';
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
+import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
+import { gasOracle } from '../bridge/gas-oracle.js';
+import type { ChainId } from '../bridge/types.js';
+import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
+import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../governance/zero-capital-infrastructure-policy.js';
+import { stageManager } from '../governance/stage-management.js';
+import { marketDataProviders, type DexQuoteObservation } from '../intelligence/market-data-providers.js';
+import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
+import { getGasSponsorManager, type SponsoredCall } from '../strategies/gas-sponsorship.js';
+import { withEvmSignerLane } from './evm-signer-lane.js';
+import {
+  getSponsoredReceiverManager,
+  resolveSponsoredReceiverVault,
+  supportsSponsoredReceiverChain,
+  type ReceiverFundingMode,
+} from './adapters/sponsored-receiver-manager.js';
+
+const RECEIVER_ABI = [
+  'function executeBalancerFlashLoan(address loanToken,uint256 loanAmount,(address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps,uint256 minProfit,address profitRecipient) external',
+  'function allowedTargets(address) view returns (bool)',
+  'function allowedApprovalTokens(address) view returns (bool)',
+  'function setAllowedTarget(address target,bool allowed)',
+  'function setAllowedApprovalToken(address token,bool allowed)',
+  'event FlashLoanExecuted(address indexed initiator,address indexed loanToken,uint256 loanAmount,uint256 profit)',
+];
+const BALANCER_VAULT_ABI = ['function getProtocolFeesCollector() view returns (address)'];
+const BALANCER_FEE_COLLECTOR_ABI = ['function getFlashLoanFeePercentage() view returns (uint256)'];
+const ONE_18 = BigNumber.from('1000000000000000000');
+
+export interface ZeroXAtomicRoundTripPreparation {
+  opportunityId: string;
+  chain: ChainId;
+  receiver: string;
+  inputToken: string;
+  intermediateToken: string;
+  loanAmount: string;
+  finalAmount: string;
+  flashLoanFeeAmount: string;
+  grossProfitUsd: number;
+  flashLoanFeeUsd: number;
+  gasUsd: number;
+  deterministicNetProfitUsd: number;
+  grossProfitBps: number;
+  flashLoanFeeBps: number;
+  gasCostBps: number;
+  allInCostBps: number;
+  netProfitBps: number;
+  minProfit: string;
+  payload: { to: string; data: string; value: string; gasLimit: number };
+  firstQuote: DexQuoteObservation;
+  secondQuote: DexQuoteObservation;
+  expiresAt: number;
+  simulated: true;
+  provenance: string[];
+}
+
+export interface ZeroXAtomicExecutionResult {
+  success: boolean;
+  settlementConfirmed: boolean;
+  transactionHash?: string;
+  realizedProfitUsd?: number;
+  realizedProfitBps?: number;
+  gasUsd?: number;
+  error?: string;
+}
+
+interface AtomicRequest {
+  opportunityId: string;
+  chain: ChainId;
+  notionalUsd: number;
+}
+
+const preparedPlans = new Map<string, ZeroXAtomicRoundTripPreparation>();
+const requestInputs = new Map<string, AtomicRequest>();
+
+function configuredWallet(): Wallet | null {
+  const raw = process.env.WALLET_PRIVATE_KEY?.trim();
+  if (!raw) return null;
+  const normalized = raw.startsWith('0x') ? raw : `0x${raw}`;
+  try { return new Wallet(normalized); } catch { return null; }
+}
+
+function asAddress(label: string, value: string | undefined | null): string {
+  if (!value || !ethers.utils.isAddress(value)) throw new Error(`${label} is not a valid EVM address`);
+  return ethers.utils.getAddress(value);
+}
+
+function asPositiveInteger(label: string, value: string | undefined): BigNumber {
+  if (!value || !/^\d+$/.test(value)) throw new Error(`${label} must be a positive integer string`);
+  const parsed = BigNumber.from(value);
+  if (parsed.lte(0)) throw new Error(`${label} must be greater than zero`);
+  return parsed;
+}
+
+function stableUnits(usd: number): string {
+  return BigNumber.from(Math.max(1, Math.floor(usd * 1_000_000))).toString();
+}
+
+function baseUnitsToUsd(value: BigNumber): number {
+  const result = Number(value.toString()) / 1_000_000;
+  if (!Number.isFinite(result)) throw new Error('Stablecoin base-unit value exceeds safe USD conversion range');
+  return result;
+}
+
+function sameAddress(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+function quoteTransaction(quote: DexQuoteObservation, expectedSellAmount: BigNumber): {
+  target: string;
+  data: string;
+  value: BigNumber;
+  gas: BigNumber;
+  allowanceSpender: string;
+} {
+  if (!quote.executable || quote.quoteKind !== 'quote' || !quote.transaction) {
+    throw new Error('0x firm quote did not return executable transaction evidence');
+  }
+  const target = asAddress('0x transaction target', quote.transaction.to);
+  const data = String(quote.transaction.data || '');
+  if (!ethers.utils.isHexString(data) || data === '0x') throw new Error('0x firm quote transaction calldata is missing');
+  const value = BigNumber.from(quote.transaction.value || '0');
+  if (!value.isZero()) throw new Error('Stablecoin atomic DEX route unexpectedly requires native transaction value');
+  const gas = asPositiveInteger('0x firm quote gas', quote.transaction.gas || quote.estimatedGas);
+  const spender = asAddress('0x allowance spender', quote.allowanceTarget || target);
+  // Current AllowanceHolder v2 contract is both allowance spender and transaction
+  // entry point for ERC-20 swaps. We verify this instead of assuming it so an API
+  // or route-mode change fails closed rather than approving an unrelated address.
+  if (!sameAddress(spender, target)) throw new Error('0x allowance spender differs from transaction target; unsupported route fails closed');
+  const quotedSellAmount = asPositiveInteger('0x firm quote sellAmount', quote.sellAmount);
+  if (!quotedSellAmount.eq(expectedSellAmount)) throw new Error('0x firm quote sell amount drifted from the requested atomic amount');
+  return { target, data, value, gas, allowanceSpender: spender };
+}
+
+async function measureBalancerFlashFeeBps(chain: ChainId, provider: ethers.providers.JsonRpcProvider): Promise<number> {
+  const vaultAddress = resolveSponsoredReceiverVault(chain);
+  if (!vaultAddress) throw new Error(`No reviewed Balancer V2 vault is configured for ${chain}`);
+  const vault = new Contract(vaultAddress, BALANCER_VAULT_ABI, provider);
+  const collectorAddress = asAddress('Balancer protocol fee collector', await vault.getProtocolFeesCollector());
+  const collector = new Contract(collectorAddress, BALANCER_FEE_COLLECTOR_ABI, provider);
+  const raw = BigNumber.from(await collector.getFlashLoanFeePercentage());
+  if (raw.lt(0) || raw.gt(ONE_18)) throw new Error('Balancer flash-loan fee percentage is outside the valid fixed-point range');
+  const bps = Number(raw.mul(10_000).div(ONE_18).toString());
+  if (!Number.isFinite(bps) || bps < 0 || bps > 10_000) throw new Error('Balancer flash-loan fee BPS could not be measured');
+  return bps;
+}
+
+function infrastructureFundingMode(): ReceiverFundingMode {
+  return getGasSponsorManager().getReadiness().ready ? 'sponsored' : 'native';
+}
+
+async function ensureReceiverPermissions(input: {
+  chain: ChainId;
+  chainId: number;
+  receiver: string;
+  wallet: Wallet;
+  provider: ethers.providers.JsonRpcProvider;
+  targets: string[];
+  approvalTokens: string[];
+  fundingMode: ReceiverFundingMode;
+}): Promise<void> {
+  const receiver = new Contract(input.receiver, RECEIVER_ABI, input.provider);
+  const iface = new ethers.utils.Interface(RECEIVER_ABI);
+  const calls: SponsoredCall[] = [];
+  for (const target of [...new Set(input.targets.map(value => asAddress('0x target', value)))]) {
+    if (!await receiver.allowedTargets(target)) {
+      calls.push({ to: input.receiver, data: iface.encodeFunctionData('setAllowedTarget', [target, true]) });
+    }
+  }
+  for (const token of [...new Set(input.approvalTokens.map(value => asAddress('approval token', value)))]) {
+    if (!await receiver.allowedApprovalTokens(token)) {
+      calls.push({ to: input.receiver, data: iface.encodeFunctionData('setAllowedApprovalToken', [token, true]) });
+    }
+  }
+  if (calls.length === 0) return;
+
+  requireZeroCapitalInfrastructureDeploymentAllowed({ chain: input.chain, operation: 'receiver_permissions' });
+  if (input.fundingMode === 'sponsored') {
+    const sponsor = getGasSponsorManager();
+    const result = await sponsor.execute({
+      wallet: input.wallet,
+      chainId: input.chainId,
+      calls,
+      timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_DEPLOY_TIMEOUT_MS || 90_000)),
+    });
+    if (!result.transactionHash) throw new Error('Sponsored 0x receiver permission transaction returned no hash');
+  } else {
+    const connected = input.wallet.connect(input.provider);
+    await withEvmSignerLane({
+      chainId: input.chainId,
+      walletAddress: connected.address,
+      operation: async () => {
+        for (const call of calls) {
+          const transaction = await connected.sendTransaction({ to: call.to, data: call.data, value: BigNumber.from(call.value || 0) });
+          const receipt = await transaction.wait(1);
+          if (!receipt || receipt.status !== 1) throw new Error('0x receiver permission transaction reverted');
+        }
+      },
+    });
+  }
+}
+
+function encodeReceiverPayload(input: {
+  receiver: string;
+  loanToken: string;
+  loanAmount: BigNumber;
+  minProfit: BigNumber;
+  profitRecipient: string;
+  first: ReturnType<typeof quoteTransaction>;
+  second: ReturnType<typeof quoteTransaction>;
+  intermediateAmount: BigNumber;
+  intermediateToken: string;
+}): string {
+  const iface = new ethers.utils.Interface(RECEIVER_ABI);
+  return iface.encodeFunctionData('executeBalancerFlashLoan', [
+    input.loanToken,
+    input.loanAmount,
+    [
+      {
+        target: input.first.target,
+        value: input.first.value,
+        callData: input.first.data,
+        approvalToken: input.loanToken,
+        approvalAmount: input.loanAmount,
+      },
+      {
+        target: input.second.target,
+        value: input.second.value,
+        callData: input.second.data,
+        approvalToken: input.intermediateToken,
+        approvalAmount: input.intermediateAmount,
+      },
+    ],
+    input.minProfit,
+    input.profitRecipient,
+  ]);
+}
+
+export function getPreparedZeroXAtomicPlan(opportunityId: string): ZeroXAtomicRoundTripPreparation | null {
+  const plan = preparedPlans.get(opportunityId);
+  if (!plan || plan.expiresAt <= Date.now()) {
+    preparedPlans.delete(opportunityId);
+    return null;
+  }
+  return { ...plan, payload: { ...plan.payload }, firstQuote: { ...plan.firstQuote }, secondQuote: { ...plan.secondQuote }, provenance: [...plan.provenance] };
+}
+
+export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise<ZeroXAtomicRoundTripPreparation> {
+  requestInputs.set(input.opportunityId, { ...input });
+  if (!supportsSponsoredReceiverChain(input.chain)) throw new Error(`${input.chain} has no reviewed receiver-backed Balancer execution surface`);
+  const config = SUPPORTED_CHAINS[input.chain];
+  if (!config?.usdc || !config?.usdt) throw new Error(`${input.chain} stablecoin contract identities are incomplete`);
+  if (!Number.isFinite(input.notionalUsd) || input.notionalUsd <= 0) throw new Error('DEX atomic notional must be positive');
+
+  await multiProviderRpcManager.initialize([input.chain]);
+  const { http: provider } = await multiProviderRpcManager.getProvider(input.chain, 'json_rpc');
+  const wallet = configuredWallet();
+  if (!wallet) throw new Error('DEX atomic preparation requires the configured execution signer');
+  const connectedWallet = wallet.connect(provider);
+  const network = await provider.getNetwork();
+  if (network.chainId !== config.chainId) throw new Error(`DEX atomic provider chain mismatch for ${input.chain}`);
+  const fundingMode = infrastructureFundingMode();
+  const receiverRecord = await getSponsoredReceiverManager().ensureReceiver({
+    chain: input.chain,
+    provider,
+    wallet: connectedWallet,
+    fundingMode,
+  });
+  const receiver = receiverRecord.address;
+
+  const loanAmount = BigNumber.from(stableUnits(input.notionalUsd));
+  const firstQuote = await marketDataProviders.getDexQuote({
+    chainId: config.chainId,
+    sellToken: config.usdc,
+    buyToken: config.usdt,
+    sellAmount: loanAmount.toString(),
+    takerAddress: receiver,
+    purpose: 'execution',
+  });
+  if (!firstQuote?.buyAmount || !firstQuote.liquidityAvailable) throw new Error('0x first firm quote unavailable');
+  const intermediateAmount = asPositiveInteger('0x first buyAmount', firstQuote.buyAmount);
+  const first = quoteTransaction(firstQuote, loanAmount);
+
+  const secondQuote = await marketDataProviders.getDexQuote({
+    chainId: config.chainId,
+    sellToken: config.usdt,
+    buyToken: config.usdc,
+    sellAmount: intermediateAmount.toString(),
+    takerAddress: receiver,
+    purpose: 'execution',
+  });
+  if (!secondQuote?.buyAmount || !secondQuote.liquidityAvailable) throw new Error('0x second firm quote unavailable');
+  const finalAmount = asPositiveInteger('0x second buyAmount', secondQuote.buyAmount);
+  const second = quoteTransaction(secondQuote, intermediateAmount);
+
+  await ensureReceiverPermissions({
+    chain: input.chain,
+    chainId: config.chainId,
+    receiver,
+    wallet: connectedWallet,
+    provider,
+    targets: [first.target, second.target],
+    approvalTokens: [config.usdc, config.usdt],
+    fundingMode,
+  });
+
+  const flashLoanFeeBps = await measureBalancerFlashFeeBps(input.chain, provider);
+  const flashLoanFeeAmount = loanAmount.mul(Math.round(flashLoanFeeBps * 1000)).div(10_000_000);
+  const grossBaseUnits = finalAmount.sub(loanAmount);
+  if (grossBaseUnits.lte(0)) throw new Error('0x firm round-trip gross economics are not positive');
+  const profitRecipient = asAddress('operational profit recipient', resolveOperationalProfitRecipient());
+
+  const preliminaryData = encodeReceiverPayload({
+    receiver,
+    loanToken: config.usdc,
+    loanAmount,
+    minProfit: BigNumber.from(1),
+    profitRecipient,
+    first,
+    second,
+    intermediateAmount,
+    intermediateToken: config.usdt,
+  });
+  await provider.call({ from: connectedWallet.address, to: receiver, data: preliminaryData, value: 0 });
+  const estimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data: preliminaryData, value: 0 });
+  const gas = await gasOracle.getGasPrice(input.chain);
+  const gasUsd = gas.usdCost * Number(estimatedGas.toString()) / DEFAULT_GAS_LIMIT;
+  if (!Number.isFinite(gasUsd) || gasUsd < 0) throw new Error('Exact DEX atomic gas cost could not be measured');
+  const gasBaseUnits = BigNumber.from(Math.ceil(gasUsd * 1_000_000));
+  const deterministicNetBaseUnits = grossBaseUnits.sub(flashLoanFeeAmount).sub(gasBaseUnits);
+  if (deterministicNetBaseUnits.lte(0)) throw new Error('0x firm atomic round-trip is not positive after measured flash fee and gas');
+
+  const minProfitBps = Math.max(1, Math.min(10_000, Math.trunc(Number(process.env.ZERO_CAPITAL_MIN_PROFIT_BPS || 9000))));
+  const minProfit = deterministicNetBaseUnits.mul(minProfitBps).div(10_000);
+  const finalData = encodeReceiverPayload({
+    receiver,
+    loanToken: config.usdc,
+    loanAmount,
+    minProfit: minProfit.gt(0) ? minProfit : BigNumber.from(1),
+    profitRecipient,
+    first,
+    second,
+    intermediateAmount,
+    intermediateToken: config.usdt,
+  });
+  await provider.call({ from: connectedWallet.address, to: receiver, data: finalData, value: 0 });
+
+  const grossProfitUsd = baseUnitsToUsd(grossBaseUnits);
+  const flashLoanFeeUsd = baseUnitsToUsd(flashLoanFeeAmount);
+  const deterministicNetProfitUsd = baseUnitsToUsd(deterministicNetBaseUnits);
+  const grossProfitBps = grossProfitUsd / input.notionalUsd * 10_000;
+  const gasCostBps = gasUsd / input.notionalUsd * 10_000;
+  const allInCostBps = flashLoanFeeBps + gasCostBps;
+  const netProfitBps = deterministicNetProfitUsd / input.notionalUsd * 10_000;
+  const quoteTtlMs = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
+  const expiresAt = Math.min(firstQuote.observedAt + quoteTtlMs, secondQuote.observedAt + quoteTtlMs);
+  if (expiresAt <= Date.now()) throw new Error('0x firm quote expired during exact atomic preparation');
+
+  const plan: ZeroXAtomicRoundTripPreparation = {
+    opportunityId: input.opportunityId,
+    chain: input.chain,
+    receiver,
+    inputToken: config.usdc,
+    intermediateToken: config.usdt,
+    loanAmount: loanAmount.toString(),
+    finalAmount: finalAmount.toString(),
+    flashLoanFeeAmount: flashLoanFeeAmount.toString(),
+    grossProfitUsd,
+    flashLoanFeeUsd,
+    gasUsd,
+    deterministicNetProfitUsd,
+    grossProfitBps,
+    flashLoanFeeBps,
+    gasCostBps,
+    allInCostBps,
+    netProfitBps,
+    minProfit: (minProfit.gt(0) ? minProfit : BigNumber.from(1)).toString(),
+    payload: { to: receiver, data: finalData, value: '0', gasLimit: Number(estimatedGas.toString()) },
+    firstQuote,
+    secondQuote,
+    expiresAt,
+    simulated: true,
+    provenance: [
+      '0x:v2_allowance_holder_firm_quote',
+      '0x:allowance_spender_equals_transaction_target_verified',
+      'balancer_v2:flash_fee_measured_onchain',
+      'receiver:exact_eth_call_simulation',
+      'receiver:exact_gas_estimate',
+      'synthetic_evidence:false',
+    ],
+  };
+  preparedPlans.set(input.opportunityId, plan);
+  return getPreparedZeroXAtomicPlan(input.opportunityId)!;
+}
+
+export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string): Promise<ZeroXAtomicExecutionResult> {
+  const request = requestInputs.get(opportunityId);
+  if (!request) return { success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_REQUEST_CONTEXT_MISSING' };
+  if (!stageManager.canExecuteTrades()) return { success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_STAGE_NOT_EXECUTABLE' };
+  getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: request.chain });
+
+  // Requote and re-simulate immediately before submission. The prior discovery
+  // plan is never treated as durable execution evidence.
+  let plan: ZeroXAtomicRoundTripPreparation;
+  try { plan = await prepareZeroXAtomicRoundTrip(request); }
+  catch (error) { return { success: false, settlementConfirmed: false, error: error instanceof Error ? error.message : String(error) }; }
+  if (!(plan.deterministicNetProfitUsd > 0) || plan.expiresAt <= Date.now()) {
+    return { success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_FRESH_ALL_IN_ECONOMICS_NOT_POSITIVE' };
+  }
+
+  const config = SUPPORTED_CHAINS[request.chain];
+  await multiProviderRpcManager.initialize([request.chain]);
+  const { http: provider } = await multiProviderRpcManager.getProvider(request.chain, 'json_rpc');
+  const wallet = configuredWallet();
+  if (!wallet) return { success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_SIGNER_MISSING' };
+  const connectedWallet = wallet.connect(provider);
+  const sponsor = getGasSponsorManager();
+
+  try {
+    let transactionHash: string;
+    if (sponsor.getReadiness().ready) {
+      const sponsored = await sponsor.execute({
+        wallet: connectedWallet,
+        chainId: config.chainId,
+        calls: [{ to: plan.payload.to, data: plan.payload.data, value: BigNumber.from(0) }],
+        timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_EXECUTION_TIMEOUT_MS || 90_000)),
+      });
+      transactionHash = sponsored.transactionHash;
+    } else {
+      transactionHash = await withEvmSignerLane({
+        chainId: config.chainId,
+        walletAddress: connectedWallet.address,
+        operation: async () => {
+          const transaction = await connectedWallet.sendTransaction({
+            to: plan.payload.to,
+            data: plan.payload.data,
+            value: 0,
+            gasLimit: plan.payload.gasLimit,
+          });
+          return transaction.hash;
+        },
+      });
+    }
+    const receipt = await provider.waitForTransaction(transactionHash, 1, Math.max(15_000, Number(process.env.ZERO_CAPITAL_RECEIPT_TIMEOUT_MS || 120_000)));
+    if (!receipt || receipt.status !== 1) return { success: false, settlementConfirmed: false, transactionHash, error: 'DEX_ATOMIC_RECEIPT_NOT_SUCCESSFUL' };
+
+    const iface = new ethers.utils.Interface(RECEIVER_ABI);
+    let realizedProfit: BigNumber | null = null;
+    for (const log of receipt.logs) {
+      if (!sameAddress(log.address, plan.receiver)) continue;
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === 'FlashLoanExecuted') realizedProfit = BigNumber.from(parsed.args.profit);
+      } catch { /* unrelated receiver log */ }
+    }
+    if (!realizedProfit || realizedProfit.lte(0)) {
+      return { success: false, settlementConfirmed: true, transactionHash, error: 'DEX_ATOMIC_TERMINAL_PROFIT_EVENT_MISSING_OR_NONPOSITIVE' };
+    }
+    const realizedProfitUsd = baseUnitsToUsd(realizedProfit);
+    const realizedProfitBps = realizedProfitUsd / request.notionalUsd * 10_000;
+    const latest = measuredCandidateRegistry.get(opportunityId);
+    if (latest) {
+      measuredCandidateRegistry.updateStatus(opportunityId, latest.status, {
+        economics: { ...latest.economics, realizedNetProfitBps: realizedProfitBps },
+        provenance: ['dex_atomic:terminal_receiver_profit_event', `dex_atomic:tx:${transactionHash}`],
+      });
+    }
+    logger.info('[DexAtomic] Terminal 0x receiver settlement confirmed', {
+      component: 'DexZeroXAtomicExecutor',
+      opportunityId,
+      chain: request.chain,
+      transactionHash,
+      realizedProfitUsd,
+      realizedProfitBps,
+      settlementConfirmed: true,
+      syntheticEvidence: false,
+    });
+    return { success: true, settlementConfirmed: true, transactionHash, realizedProfitUsd, realizedProfitBps, gasUsd: plan.gasUsd };
+  } catch (error) {
+    return { success: false, settlementConfirmed: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
