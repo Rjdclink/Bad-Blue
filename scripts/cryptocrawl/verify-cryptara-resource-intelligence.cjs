@@ -26,7 +26,7 @@ requirePattern(intelligence, /getCryptaraSupabaseAdmissionSnapshot/, 'Cryptara D
 requirePattern(intelligence, /quantiParallelismGovernor\.getStatus\(\)/, 'Quanti Comp parallelism telemetry is reused');
 requirePattern(intelligence, /quantiComp\.getStatus\(\)/, 'Quanti Comp resource telemetry is reused');
 requirePattern(intelligence, /getProviderQualityAuctionSnapshot\(\)/, 'Antenna-derived provider quality is reused');
-forbidPattern(intelligence, /\bpool\b|coordinationPool|\.query\s*\(|\bfetch\s*\(|axios|https?\.request|new\s+Pool\s*\(/, 'resource intelligence performs DB/provider/network work instead of reusing snapshots');
+forbidPattern(intelligence, /from\s+['"]\.\.\/\.\.\/\.\.\/db(?:\.js)?['"]|coordinationPool|\bnew\s+Pool\s*\(|\.query\s*\(|\bfetch\s*\(|axios|https?\.request/, 'resource intelligence performs DB/provider/network work instead of reusing snapshots');
 
 // Resource fusion is advisory only and cannot become a trading authority.
 requirePattern(intelligence, /authority:\s*'resource_intelligence_advisory_only'/, 'resource fusion authority remains advisory');
