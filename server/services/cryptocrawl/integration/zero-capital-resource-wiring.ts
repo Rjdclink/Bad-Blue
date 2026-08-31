@@ -196,12 +196,6 @@ function recordZeroCapitalCandidate(input: {
   });
 }
 
-/**
- * Receiver permissions are infrastructure state, not market evidence. If a
- * newly discovered graphless route needs permission transactions, prepare them
- * but deliberately reject the current quote so the next scan must obtain fresh
- * contract quotes before execution.
- */
 async function prepareGraphlessPermissions(
   target: ZeroCapitalRuntime,
   chain: SupportedChain,
@@ -232,8 +226,6 @@ async function prepareGraphlessPermissions(
     });
     if (calls.length > 0) {
       await target.executeSetupCalls(chain as any, provider, wallet, funding.mode as ReceiverFundingMode, calls);
-      // Permission setup consumed time and state changed. Never execute the quote
-      // that preceded it; require a clean re-quote on the next scan.
       for (const route of graphless) eligible.delete(route.id);
     }
     logger.info('[ZeroCapitalWiring] Graphless positive-route permissions checked', {
@@ -324,7 +316,11 @@ export function ensureZeroCapitalResourceWiring(): void {
       });
     }
 
-    const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider);
+    // Bind discovery economics to the same live funding authority used at
+    // execution. Only an actual sponsored funding decision may zero user gas;
+    // native/unavailable modes retain measured native-gas economics.
+    const funding = await target.getGasFundingDecision(chain);
+    const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode);
     if (dynamicQuotes.length === 0) return configured;
     const positiveRouteIds = new Set(dynamicQuotes
       .filter(quote => quote.executablePositive && quote.netProfit > 0n)
@@ -367,9 +363,6 @@ export function ensureZeroCapitalResourceWiring(): void {
         simulationReady: simulation.ready,
       });
 
-      // The observation envelope deliberately stops here for non-positive routes.
-      // They may influence search/optimization telemetry, but never Cryptara,
-      // execution resources, simulation admission, or the executable queue.
       if (!positive) continue;
       if (target.executionEligible && !executableCapability) continue;
       if (target.executionEnabled && !await target.isAllowedByCryptara(opportunity)) continue;
@@ -505,6 +498,7 @@ export function ensureZeroCapitalResourceWiring(): void {
     globalValueSemantics: 'emergency_ceiling_only',
     nearBreakEvenObservation: true,
     bpsEvidencePropagated: true,
+    sponsoredEconomicsAuthority: 'live_gas_funding_decision_only',
     scheduler: zeroCapitalResourceScheduler.getTelemetry(),
     safety: ['governance', 'positive_net', 'receiver', 'dynamic_route_permissions', 'fresh_requote_after_permission_change', 'exact_atomic_simulation', 'wallet_nonce', 'chain', 'provider', 'protocol', 'gas_sponsor'],
   });
