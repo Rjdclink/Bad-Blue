@@ -28,10 +28,11 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Diagnostic only: run the explicit build script while suppressing npm pre/post
-# lifecycle hooks. This branch is never mergeable; it separates verifier failure
-# from Vite/esbuild/Docker failure without weakening PR #499 or production.
-RUN npm_config_ignore_scripts=true npm run build && \
+# Diagnostic only: execute deployment-preflight explicitly, then run the build
+# with npm lifecycle hooks suppressed. This isolates deployment-preflight from the
+# three trailing package prebuild guards without weakening PR #499 or production.
+RUN node scripts/cryptocrawl/verify-deployment-preflight.cjs && \
+    npm_config_ignore_scripts=true npm run build && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
 
