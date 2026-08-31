@@ -27,8 +27,10 @@ function verifyCexExecutionContract() {
   const capability = read('server/services/cryptocrawl/discovery/venue-capability-registry.ts');
   const fourMode = read('server/services/cryptocrawl/intelligence/cex-four-mode-matrix.ts');
   const maker = read('server/services/cryptocrawl/execution/stablecoin-maker-strategy.ts');
+  const makerDiscovery = read('server/services/cryptocrawl/discovery/maker-opportunity-generator.ts');
   const makerAdapters = read('server/services/cryptocrawl/execution/post-only-maker-adapters.ts');
   const hybrid = read('server/services/cryptocrawl/runtime/hybrid-cex-execution-wiring.ts');
+  const positiveCapture = read('server/services/cryptocrawl/runtime/positive-profit-capture-wiring.ts');
   const spotProducts = read('server/services/cryptocrawl/execution/cex-spot-product-policy.ts');
   const submitGuard = read('server/services/cryptocrawl/execution/cex-submit-time-product-guard.ts');
   const coinbaseMarket = read('server/services/cryptocrawl/intelligence/coinbase-advanced-market-data.ts');
@@ -57,9 +59,20 @@ function verifyCexExecutionContract() {
   requirePattern(maker, /CEX_VENUES[^=]*=\s*\['coinbase',\s*'kraken',\s*'okx'\]/, 'MM maker recovery evaluates all three executable venues');
   requirePattern(hybrid, /HYBRID_VENUES[^=]*=\s*\['coinbase',\s*'kraken',\s*'okx'\]/, 'MT/TM recovery evaluates all three executable venues');
   requirePattern(hybrid, /coinbase:\s*governedSymbols/, 'MT/TM authenticated fee prime includes Coinbase');
+  requirePattern(makerDiscovery, /coinbase:\s*coinbaseSymbols/, 'maker discovery primes authenticated Coinbase fees alongside Kraken and OKX');
+  requirePattern(makerDiscovery, /venue\s*===\s*'coinbase'\s*\|\|\s*venue\s*===\s*'kraken'\s*\|\|\s*venue\s*===\s*'okx'/, 'maker discovery consumes all three canonical executable venues');
+  forbidPattern(makerDiscovery, /venue\s*!==\s*'coinbase'|coinbase_maker:false|coinbase_dependency:false/, 'maker discovery carrying a stale Coinbase exclusion');
   requirePattern(makerAdapters, /venue:\s*ExecutableCexVenue/, 'post-only maker adapter is shared across executable venues');
   requirePattern(makerAdapters, /limit_limit_gtc/, 'Coinbase post-only maker translation is installed');
   forbidPattern(fourMode, /buyVenue:\s*'kraken'\s*\|\s*'okx'|sellVenue:\s*'kraken'\s*\|\s*'okx'/, 'four-mode matrix narrowing strategy authority to Kraken/OKX');
+
+  // Universal product representation must never fabricate USD-denominated economics.
+  requirePattern(maker, /USD_NORMALIZED_QUOTES/, 'maker planning has an explicit USD-normalization boundary');
+  requirePattern(maker, /USD_NORMALIZED_QUOTES\.has\(quoteAsset\)/, 'maker planning rejects non-normalized quote assets before producing USD P&L');
+  requirePattern(makerAdapters, /assertUsdNormalizedMakerEconomics\s*\(/, 'maker submission independently fails closed without USD normalization');
+  requirePattern(positiveCapture, /venues:\s*\['coinbase',\s*'kraken',\s*'okx'\]/, 'profit-capture telemetry reports the actual three-venue maker surface');
+  requirePattern(positiveCapture, /hardMaxCanaryUsd:\s*makerCanary\.hardMaxUsd/, 'maker status reports the real tighten-only ladder-bounded hard maximum');
+  forbidPattern(positiveCapture, /hardMaxCanaryUsd:\s*finiteBoundedEnv\([^\n]*1_000_000/, 'legacy $1M telemetry presented as maker authority');
 
   // One product identity authority per venue family; submit guard may validate but not re-parse.
   requirePattern(spotProducts, /getSpotProductConstraints[\s\S]*forceFresh\s*=\s*false/, 'Kraken/OKX product authority supports forced-fresh reads');
@@ -69,7 +82,10 @@ function verifyCexExecutionContract() {
   forbidPattern(coinbaseMarket, /\(USDT\|USDC\|USD\)/, 'Coinbase live product authority using a stablecoin quote whitelist');
   forbidPattern(spotProducts, /\(USDT\|USDC\|USD\)/, 'Kraken/OKX live product authority using a stablecoin quote whitelist');
 
-  return { centralized, hyperHybrid, partialAccounting, residualReplan, capability, fourMode, maker, makerAdapters, hybrid, spotProducts, submitGuard, coinbaseMarket };
+  return {
+    centralized, hyperHybrid, partialAccounting, residualReplan, capability, fourMode,
+    maker, makerDiscovery, makerAdapters, hybrid, positiveCapture, spotProducts, submitGuard, coinbaseMarket,
+  };
 }
 
 function verifyProfitLadderNotionalContract() {
