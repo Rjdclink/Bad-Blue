@@ -115,9 +115,10 @@ function measuredMakerSavingsBps(modes: ReturnType<typeof getCexFourModeSnapshot
 
 function poolPressure(stats: { total: number; idle: number; waiting: number; max: number }): number {
   if (stats.max <= 0) return 1;
-  const occupancy = Math.max(0, Math.min(1, stats.total / stats.max));
+  const active = Math.max(0, stats.total - stats.idle);
+  const occupancy = Math.max(0, Math.min(1, active / stats.max));
   const waiting = stats.waiting > 0 ? Math.min(1, 0.65 + stats.waiting / Math.max(1, stats.max)) : 0;
-  const noIdlePenalty = stats.idle === 0 && stats.total > 0 ? 0.80 : 0;
+  const noIdlePenalty = stats.idle === 0 && active > 0 ? 0.80 : 0;
   return Math.max(occupancy * 0.70, waiting, noIdlePenalty);
 }
 
