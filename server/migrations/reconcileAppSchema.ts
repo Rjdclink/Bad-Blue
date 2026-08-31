@@ -47,6 +47,9 @@ const CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES = [
   'private.cryptocrawler_funding_lifecycles',
 ] as const;
 
+const CRYPTOCRAWL_RESOURCE_SLOT_FUNCTION_SIGNATURE =
+  'private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)';
+
 export class CryptocrawlerAuthoritySchemaError extends Error {
   constructor(message: string) {
     super(message);
@@ -81,20 +84,33 @@ async function runCryptocrawlerAuthorityMigration(
 }
 
 async function verifyCryptocrawlerAuthoritySchemaOnce(): Promise<void> {
+  // One query proves every current execution-critical relation plus the shared
+  // resource-slot claimant. The same proof primes the runtime lease cache below,
+  // so CEX/zero-capital/quota do not repeat this schema query after startup.
   const result = await pool.query(
     `SELECT
        to_regclass($1)::text AS resource_leases,
        to_regclass($2)::text AS mc_calibration,
        to_regclass($3)::text AS kraken_nonce,
-       to_regclass($4)::text AS funding_lifecycles`,
-    [...CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES],
+       to_regclass($4)::text AS funding_lifecycles,
+       to_regprocedure($5)::text AS resource_slot_claimant`,
+    [...CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES, CRYPTOCRAWL_RESOURCE_SLOT_FUNCTION_SIGNATURE],
   );
   const row = result.rows?.[0] || {};
   const observed = [row.resource_leases, row.mc_calibration, row.kraken_nonce, row.funding_lifecycles];
   const missing = CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES.filter((_, index) => !observed[index]);
-  if (missing.length > 0) {
-    throw new Error(`required CryptoCrawler authority schema is absent: ${missing.join(', ')}`);
+  if (missing.length > 0 || !row.resource_slot_claimant) {
+    const missingAuthority = [
+      ...missing,
+      ...(!row.resource_slot_claimant ? [CRYPTOCRAWL_RESOURCE_SLOT_FUNCTION_SIGNATURE] : []),
+    ];
+    throw new Error(`required CryptoCrawler authority schema is absent: ${missingAuthority.join(', ')}`);
   }
+
+  const { primeResourceLeaseAuthorityReady } = await import(
+    '../services/cryptocrawl/execution/resource-lease-authority.js'
+  );
+  primeResourceLeaseAuthorityReady();
 }
 
 function schemaRetryDelayMs(attempt: number): number {
@@ -185,10 +201,10 @@ let rollingDeploymentHeadroom: RollingDeploymentHeadroomState | null = null;
 
 /**
  * Railway keeps the previous deployment active until the incoming deployment is
- * healthy. During that overlap the recovering replica must consume the smallest
- * practical ordinary-pool footprint. Capacity is released explicitly only after
- * Cryptara's adaptive admission worker is installed; a wall-clock timer must not
- * expand a replica that is still failing readiness.
+ * healthy. Startup itself is serialized before route import, so more than one
+ * ordinary DB client cannot increase useful bootstrap throughput. Hold exactly
+ * one ordinary slot until Cryptara owns admission; this prevents incidental work
+ * or stale environment overrides from defeating rollout headroom.
  */
 function applyRollingDeploymentPoolHeadroom(): void {
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_ID) return;
@@ -203,13 +219,7 @@ function applyRollingDeploymentPoolHeadroom(): void {
     canonicalSteadyMax,
   );
   const steadyMax = Math.min(canonicalSteadyMax, requestedSteadyMax);
-  // One ordinary client is enough to prove admission and run sequential startup
-  // work while an older Railway replica is still serving. Operators may raise
-  // this explicitly, but rollout never inherits the full steady pool by default.
-  const rolloutMax = Math.min(
-    steadyMax,
-    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', 1, 1, steadyMax),
-  );
+  const rolloutMax = 1;
   const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 0;
 
   options.max = rolloutMax;
@@ -332,7 +342,7 @@ export async function runAllSchemaMigrations(options?: {
       results.push({
         name: 'CryptoCrawler authority schema readiness',
         success: true,
-        message: 'All execution-critical migration-owned tables are present.',
+        message: 'All execution-critical migration-owned tables/functions are present and shared lease readiness is primed.',
       });
     } catch (error) {
       results.push(schemaFailureResult(error));
@@ -355,7 +365,7 @@ export async function runAllSchemaMigrations(options?: {
       fallback.push({
         name: 'CryptoCrawler authority schema readiness',
         success: true,
-        message: 'Coordinator unavailable, but required CryptoCrawler authority schema independently verified.',
+        message: 'Coordinator unavailable, but required CryptoCrawler authority schema independently verified and lease readiness primed.',
       });
     } catch (schemaError) {
       fallback.push(schemaFailureResult(schemaError));
