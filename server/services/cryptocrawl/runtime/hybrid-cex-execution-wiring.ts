@@ -11,6 +11,7 @@ import {
   type ArbitrageExecutionResult,
 } from '../execution/centralized-exchange-executor.js';
 import { floorToIncrement } from '../execution/coinbase-product-policy.js';
+import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
 import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 import {
   createProductionCexSettlementAdapters,
@@ -31,6 +32,7 @@ import {
   primeCexFeeEvidenceForVenueSymbols,
   resolveCexFeeEvidence,
   type CexFeeEvidence,
+  type CexFeeVenue,
 } from '../intelligence/cex-fee-resolver.js';
 import { cexOrderBookStreams, type StreamOrderBookQuote } from '../intelligence/cex-order-book-stream.js';
 import { observeAriesQueueEcho, stressTestAriesSpread } from '../intelligence/aries-microstructure.js';
@@ -38,6 +40,7 @@ import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js'
 
 export type HybridCexMode = 'MT' | 'TM';
 export type HybridCexLegMode = 'maker' | 'taker';
+type HybridVenue = ExecutableCexVenue;
 
 export type HybridCexRecoveryPlan = VerifiedArbitragePlan & {
   hybridExecution: {
@@ -45,8 +48,8 @@ export type HybridCexRecoveryPlan = VerifiedArbitragePlan & {
     buyMode: HybridCexLegMode;
     sellMode: HybridCexLegMode;
     makerSide: 'buy' | 'sell';
-    makerVenue: 'kraken' | 'okx';
-    takerVenue: 'kraken' | 'okx';
+    makerVenue: HybridVenue;
+    takerVenue: HybridVenue;
     ttlMs: number;
     maxQuoteAgeMs: number;
     feeAuthority: 'authenticated';
@@ -65,13 +68,16 @@ export type HybridCexRecoveryPlan = VerifiedArbitragePlan & {
   };
 };
 
-type HybridVenue = 'kraken' | 'okx';
-
-type HybridBook = {
-  venue: HybridVenue;
-  quote: StreamOrderBookQuote;
+type HybridBook = { venue: HybridVenue; quote: StreamOrderBookQuote };
+type HybridProductConstraints = {
+  baseIncrement: number;
+  baseMinSize: number;
+  quoteMinSize: number | null;
+  baseMaxSize: number | null;
+  quoteMaxSize: number | null;
 };
 
+const HYBRID_VENUES: readonly HybridVenue[] = ['coinbase', 'kraken', 'okx'] as const;
 let installed = false;
 
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
@@ -81,17 +87,47 @@ function bounded(raw: unknown, fallback: number, min: number, max: number): numb
 
 function authenticatedFeeBps(evidence: CexFeeEvidence | null, mode: HybridCexLegMode): number | null {
   if (!evidence || evidence.source === 'configured_override') return null;
-  if (mode === 'taker') {
-    return Number.isFinite(evidence.takerFeeBps) ? Math.max(0, Number(evidence.takerFeeBps)) : null;
-  }
+  if (mode === 'taker') return Number.isFinite(evidence.takerFeeBps) ? Math.max(0, Number(evidence.takerFeeBps)) : null;
   if (evidence.makerFeeBps !== null && Number.isFinite(evidence.makerFeeBps)) return Number(evidence.makerFeeBps);
   if (evidence.makerRebateBps !== null && Number.isFinite(evidence.makerRebateBps)) return -Math.abs(Number(evidence.makerRebateBps));
   return null;
 }
 
 async function feeEvidence(venue: HybridVenue, symbol: string): Promise<CexFeeEvidence | null> {
-  return getCachedCexFeeEvidence(venue, symbol)
-    || await resolveCexFeeEvidence(venue, symbol).catch(() => null);
+  return getCachedCexFeeEvidence(venue as CexFeeVenue, symbol)
+    || await resolveCexFeeEvidence(venue as CexFeeVenue, symbol).catch(() => null);
+}
+
+async function productConstraints(venue: HybridVenue, symbol: string): Promise<HybridProductConstraints | null> {
+  if (venue === 'coinbase') {
+    const value = await getCoinbaseAdvancedProductConstraints(symbol).catch(() => null);
+    if (!value || value.isDisabled || value.tradingDisabled || value.cancelOnly || value.auctionMode || value.viewOnly) return null;
+    return {
+      baseIncrement: value.baseIncrement,
+      baseMinSize: value.baseMinSize,
+      quoteMinSize: value.quoteMinSize,
+      baseMaxSize: value.baseMaxSize,
+      quoteMaxSize: value.quoteMaxSize,
+    };
+  }
+  const value = await getSpotProductConstraints(venue, symbol).catch(() => null);
+  if (!value) return null;
+  return {
+    baseIncrement: value.baseIncrement,
+    baseMinSize: value.baseMinSize,
+    quoteMinSize: value.quoteMinSize,
+    baseMaxSize: value.baseMaxSize,
+    quoteMaxSize: value.quoteMaxSize,
+  };
+}
+
+/**
+ * Current deterministic CEX P&L fields are USD denominated. Universal product
+ * discovery may represent any quote asset, but MT/TM execution fails closed until
+ * a non-USD quote has authoritative quote-to-USD valuation evidence.
+ */
+function hasUsdNormalizedExecutionEconomics(symbol: string): boolean {
+  return /^([A-Z0-9]+?)(USDT|USDC|USD)$/.test(symbol);
 }
 
 function topQuantity(book: StreamOrderBookQuote, side: 'buy' | 'sell', mode: HybridCexLegMode): number {
@@ -107,15 +143,18 @@ function executionPrice(book: StreamOrderBookQuote, side: 'buy' | 'sell', mode: 
   return mode === 'maker' ? book.ask : book.bid;
 }
 
-function hybridModes(): Array<{
-  mode: HybridCexMode;
-  buyMode: HybridCexLegMode;
-  sellMode: HybridCexLegMode;
-}> {
+function hybridModes(): Array<{ mode: HybridCexMode; buyMode: HybridCexLegMode; sellMode: HybridCexLegMode }> {
   return [
     { mode: 'MT', buyMode: 'maker', sellMode: 'taker' },
     { mode: 'TM', buyMode: 'taker', sellMode: 'maker' },
   ];
+}
+
+function maximumNotional(constraints: HybridProductConstraints, price: number): number {
+  let maximum = Number.POSITIVE_INFINITY;
+  if (constraints.baseMaxSize !== null) maximum = Math.min(maximum, constraints.baseMaxSize * price);
+  if (constraints.quoteMaxSize !== null) maximum = Math.min(maximum, constraints.quoteMaxSize);
+  return maximum;
 }
 
 async function evaluateHybridCandidate(input: {
@@ -124,21 +163,25 @@ async function evaluateHybridCandidate(input: {
   maxQuoteAgeMs: number;
 }): Promise<HybridCexRecoveryPlan | null> {
   const symbol = input.symbol.trim().toUpperCase();
-  if (!(input.notionalUsd > 0) || !/^([A-Z0-9]+?)(USDT|USDC|USD)$/.test(symbol)) return null;
+  if (!(input.notionalUsd > 0) || !hasUsdNormalizedExecutionEconomics(symbol)) return null;
 
-  const [krakenQuote, okxQuote, krakenFee, okxFee] = await Promise.all([
-    cexOrderBookStreams.getQuote('kraken', symbol, input.maxQuoteAgeMs).catch(() => null),
-    cexOrderBookStreams.getQuote('okx', symbol, input.maxQuoteAgeMs).catch(() => null),
-    feeEvidence('kraken', symbol),
-    feeEvidence('okx', symbol),
-  ]);
-  if (!krakenQuote || !okxQuote || !krakenFee || !okxFee) return null;
+  const observations = await Promise.all(HYBRID_VENUES.map(async venue => {
+    const [quote, fee] = await Promise.all([
+      cexOrderBookStreams.getQuote(venue, symbol, input.maxQuoteAgeMs).catch(() => null),
+      feeEvidence(venue, symbol),
+    ]);
+    return { venue, quote, fee };
+  }));
 
-  const books: Record<HybridVenue, HybridBook> = {
-    kraken: { venue: 'kraken', quote: krakenQuote },
-    okx: { venue: 'okx', quote: okxQuote },
-  };
-  const fees: Record<HybridVenue, CexFeeEvidence> = { kraken: krakenFee, okx: okxFee };
+  const books = new Map<HybridVenue, HybridBook>();
+  const fees = new Map<HybridVenue, CexFeeEvidence>();
+  for (const observation of observations) {
+    if (observation.quote) books.set(observation.venue, { venue: observation.venue, quote: observation.quote });
+    if (observation.fee) fees.set(observation.venue, observation.fee);
+  }
+  const usable = HYBRID_VENUES.filter(venue => books.has(venue) && fees.has(venue));
+  if (usable.length < 2) return null;
+
   const now = Date.now();
   const ttlMs = Math.max(2_000, Math.min(30_000, Number(process.env.CRYPTO_ARBITRAGE_MAKER_TTL_MS || 30_000)));
   const canary = getDynamicMakerCanaryStatus();
@@ -148,25 +191,27 @@ async function evaluateHybridCandidate(input: {
   const minStressPersistence = bounded(process.env.CRYPTO_ARBITRAGE_HYBRID_MIN_STRESS_PERSISTENCE, 0.35, 0.05, 0.95);
 
   let best: HybridCexRecoveryPlan | null = null;
-  for (const buyVenue of ['kraken', 'okx'] as const) {
-    for (const sellVenue of ['kraken', 'okx'] as const) {
+  for (const buyVenue of usable) {
+    for (const sellVenue of usable) {
       if (buyVenue === sellVenue) continue;
-      const buyBook = books[buyVenue].quote;
-      const sellBook = books[sellVenue].quote;
+      const buyBook = books.get(buyVenue)!.quote;
+      const sellBook = books.get(sellVenue)!.quote;
+      const buyEvidence = fees.get(buyVenue)!;
+      const sellEvidence = fees.get(sellVenue)!;
 
       for (const candidate of hybridModes()) {
         const buyPrice = executionPrice(buyBook, 'buy', candidate.buyMode);
         const sellPrice = executionPrice(sellBook, 'sell', candidate.sellMode);
         if (!(buyPrice > 0) || !(sellPrice > buyPrice)) continue;
 
-        const buyFeeBps = authenticatedFeeBps(fees[buyVenue], candidate.buyMode);
-        const sellFeeBps = authenticatedFeeBps(fees[sellVenue], candidate.sellMode);
+        const buyFeeBps = authenticatedFeeBps(buyEvidence, candidate.buyMode);
+        const sellFeeBps = authenticatedFeeBps(sellEvidence, candidate.sellMode);
         if (buyFeeBps === null || sellFeeBps === null) continue;
 
         const makerSide = candidate.buyMode === 'maker' ? 'buy' as const : 'sell' as const;
         const makerVenue = makerSide === 'buy' ? buyVenue : sellVenue;
         const takerVenue = makerSide === 'buy' ? sellVenue : buyVenue;
-        const makerBook = books[makerVenue].quote;
+        const makerBook = books.get(makerVenue)!.quote;
         const queue = observeAriesQueueEcho(makerBook, makerSide, ttlMs, 0.02);
         const measuredQueue = queue.orderArrivalRatePerSecond > 0 && queue.queueClearSeconds !== null;
         if (measuredQueue && queue.fillProbabilityWithinTtl < minMakerFill) continue;
@@ -176,8 +221,8 @@ async function evaluateHybridCandidate(input: {
         if (stress.paths > 0 && stress.persistenceProbability < minStressPersistence) continue;
 
         const [buyConstraints, sellConstraints] = await Promise.all([
-          getSpotProductConstraints(buyVenue, symbol).catch(() => null),
-          getSpotProductConstraints(sellVenue, symbol).catch(() => null),
+          productConstraints(buyVenue, symbol),
+          productConstraints(sellVenue, symbol),
         ]);
         if (!buyConstraints || !sellConstraints) continue;
 
@@ -185,7 +230,9 @@ async function evaluateHybridCandidate(input: {
         const sellQty = topQuantity(sellBook, 'sell', candidate.sellMode);
         if (!(buyQty > 0) || !(sellQty > 0)) continue;
         const commonIncrement = Math.max(buyConstraints.baseIncrement, sellConstraints.baseIncrement);
-        const requestedQty = Math.min(notionalCap / buyPrice, buyQty, sellQty);
+        const singleOrderCap = Math.min(maximumNotional(buyConstraints, buyPrice), maximumNotional(sellConstraints, sellPrice));
+        const sizedNotional = Number.isFinite(singleOrderCap) ? Math.min(notionalCap, singleOrderCap) : notionalCap;
+        const requestedQty = Math.min(sizedNotional / buyPrice, buyQty, sellQty);
         const baseQty = floorToIncrement(requestedQty, commonIncrement);
         if (!(baseQty > 0) || baseQty < buyConstraints.baseMinSize || baseQty < sellConstraints.baseMinSize) continue;
 
@@ -219,14 +266,7 @@ async function evaluateHybridCandidate(input: {
           grossProfitUsd,
           netProfitUsd,
           spreadPct: (sellPrice - buyPrice) / buyPrice * 100,
-          costs: {
-            buyFeeUsd,
-            sellFeeUsd,
-            gasUsd: 0,
-            bridgeFeeUsd: 0,
-            transferFeeUsd: 0,
-            totalCostsUsd,
-          },
+          costs: { buyFeeUsd, sellFeeUsd, gasUsd: 0, bridgeFeeUsd: 0, transferFeeUsd: 0, totalCostsUsd },
           quoteAgeMs,
           expectedSlippageBps: 0,
           expectedPriceImpactBps: 0,
@@ -240,7 +280,7 @@ async function evaluateHybridCandidate(input: {
               `hybrid_${candidate.mode.toLowerCase()}:maker_first_fresh_taker_requote`,
             ],
           },
-          feeEvidence: { buy: fees[buyVenue], sell: fees[sellVenue] },
+          feeEvidence: { buy: buyEvidence, sell: sellEvidence },
           crossVenueCostModel: 'prepositioned_inventory',
           hybridExecution: {
             mode: candidate.mode,
@@ -261,12 +301,10 @@ async function evaluateHybridCandidate(input: {
             spreadStress: stress,
           },
         };
-
         if (!best || plan.netProfitUsd > best.netProfitUsd) best = plan;
       }
     }
   }
-
   return best;
 }
 
@@ -277,10 +315,7 @@ export function isHybridCexRecoveryPlan(plan: VerifiedArbitragePlan): plan is Hy
     && value.hybridExecution.partialFillHedgeRequired === true;
 }
 
-function betterPlan(
-  current: VerifiedArbitragePlan | null | undefined,
-  candidate: VerifiedArbitragePlan | null | undefined,
-): VerifiedArbitragePlan | null {
+function betterPlan(current: VerifiedArbitragePlan | null | undefined, candidate: VerifiedArbitragePlan | null | undefined): VerifiedArbitragePlan | null {
   if (!candidate || !Number.isFinite(candidate.netProfitUsd) || candidate.netProfitUsd <= 0) return current ?? null;
   if (!current || !Number.isFinite(current.netProfitUsd) || current.netProfitUsd <= 0) return candidate;
   return candidate.netProfitUsd > current.netProfitUsd ? candidate : current;
@@ -299,11 +334,7 @@ async function runBounded<T>(items: readonly T[], concurrency: number, worker: (
   }));
 }
 
-async function awaitMakerTerminal(
-  receipt: CexOrderReceipt,
-  adapter: CexSettlementAdapter,
-  ttlMs: number,
-): Promise<NormalizedOrderSettlement> {
+async function awaitMakerTerminal(receipt: CexOrderReceipt, adapter: CexSettlementAdapter, ttlMs: number): Promise<NormalizedOrderSettlement> {
   const pollMs = Math.max(75, Math.min(750, Number(process.env.CRYPTO_ARBITRAGE_HYBRID_MAKER_POLL_MS || 200)));
   const deadline = Date.now() + ttlMs;
   let last: NormalizedOrderSettlement | null = null;
@@ -317,9 +348,7 @@ async function awaitMakerTerminal(
     await adapter.cancel(receipt);
   } catch (error) {
     logger.warn('[HybridCEX] Maker cancellation degraded before taker hedge decision', {
-      component: 'HybridCexExecutionWiring',
-      venue: receipt.venue,
-      orderId: receipt.orderId,
+      component: 'HybridCexExecutionWiring', venue: receipt.venue, orderId: receipt.orderId,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -328,11 +357,7 @@ async function awaitMakerTerminal(
   return final;
 }
 
-function depthExecution(input: {
-  quote: StreamOrderBookQuote;
-  side: 'buy' | 'sell';
-  quantity: number;
-}): { averagePrice: number; limitPrice: number; coveredQuantity: number; coverage: number } | null {
+function depthExecution(input: { quote: StreamOrderBookQuote; side: 'buy' | 'sell'; quantity: number }): { averagePrice: number; limitPrice: number; coveredQuantity: number; coverage: number } | null {
   const levels = input.side === 'buy' ? input.quote.depth.asks : input.quote.depth.bids;
   if (levels.length === 0 || !(input.quantity > 0)) return null;
   let remaining = input.quantity;
@@ -351,12 +376,7 @@ function depthExecution(input: {
     if (remaining <= 1e-12) break;
   }
   if (!(coveredQuantity > 0) || !(limitPrice > 0)) return null;
-  return {
-    averagePrice: notional / coveredQuantity,
-    limitPrice,
-    coveredQuantity,
-    coverage: Math.max(0, Math.min(1, coveredQuantity / input.quantity)),
-  };
+  return { averagePrice: notional / coveredQuantity, limitPrice, coveredQuantity, coverage: Math.max(0, Math.min(1, coveredQuantity / input.quantity)) };
 }
 
 function wrapHybridAdapters(plan: HybridCexRecoveryPlan): {
@@ -371,10 +391,7 @@ function wrapHybridAdapters(plan: HybridCexRecoveryPlan): {
   let makerSettlement: NormalizedOrderSettlement | null = null;
   let resolveMaker!: (settlement: NormalizedOrderSettlement) => void;
   let rejectMaker!: (error: unknown) => void;
-  const makerTerminal = new Promise<NormalizedOrderSettlement>((resolve, reject) => {
-    resolveMaker = resolve;
-    rejectMaker = reject;
-  });
+  const makerTerminal = new Promise<NormalizedOrderSettlement>((resolve, reject) => { resolveMaker = resolve; rejectMaker = reject; });
 
   const makerWrapper: CexSettlementAdapter = {
     async submit(request: OrderRequest): Promise<CexOrderReceipt> {
@@ -401,11 +418,10 @@ function wrapHybridAdapters(plan: HybridCexRecoveryPlan): {
         throw new Error('HYBRID_MAKER_NO_TERMINAL_FILL');
       }
 
-      const constraints = await getSpotProductConstraints(metadata.takerVenue, plan.symbol);
+      const constraints = await productConstraints(metadata.takerVenue, plan.symbol);
+      if (!constraints) throw new Error('HYBRID_TAKER_PRODUCT_CONSTRAINTS_UNAVAILABLE');
       const hedgeQuantity = floorToIncrement(makerFilled, constraints.baseIncrement);
-      if (!(hedgeQuantity > 0) || hedgeQuantity < constraints.baseMinSize) {
-        throw new Error('HYBRID_PARTIAL_FILL_BELOW_TAKER_MINIMUM');
-      }
+      if (!(hedgeQuantity > 0) || hedgeQuantity < constraints.baseMinSize) throw new Error('HYBRID_PARTIAL_FILL_BELOW_TAKER_MINIMUM');
 
       const quoteMaxAgeMs = Math.max(250, Math.min(2_500, metadata.maxQuoteAgeMs));
       const [freshBook, makerFee, takerFee] = await Promise.all([
@@ -431,16 +447,10 @@ function wrapHybridAdapters(plan: HybridCexRecoveryPlan): {
       const residual = Math.max(0, makerFilled - hedgeQuantity);
 
       logger.info('[HybridCEX] Maker terminal fill triggered fresh taker requote', {
-        component: 'HybridCexExecutionWiring',
-        symbol: plan.symbol,
-        mode: metadata.mode,
-        makerVenue: metadata.makerVenue,
-        takerVenue: metadata.takerVenue,
-        makerFilled,
-        hedgeQuantity,
-        roundingResidualQuantity: residual,
-        freshDepthCoverage: depth.coverage,
-        freshTakerAveragePrice: depth.averagePrice,
+        component: 'HybridCexExecutionWiring', symbol: plan.symbol, mode: metadata.mode,
+        makerVenue: metadata.makerVenue, takerVenue: metadata.takerVenue,
+        makerFilled, hedgeQuantity, roundingResidualQuantity: residual,
+        freshDepthCoverage: depth.coverage, freshTakerAveragePrice: depth.averagePrice,
         freshTakerLimitPrice: depth.limitPrice,
         freshAllInNetProfitUsd: depth.coverage >= 0.999999 ? freshNetProfitUsd : null,
         freshEconomicsPositive: depth.coverage >= 0.999999 ? freshNetProfitUsd > 0 : null,
@@ -449,11 +459,7 @@ function wrapHybridAdapters(plan: HybridCexRecoveryPlan): {
         fresh_taker_requote_after_maker_fill: true,
       });
 
-      return takerDelegate.submit({
-        ...request,
-        quantity: hedgeQuantity,
-        price: depth.limitPrice,
-      });
+      return takerDelegate.submit({ ...request, quantity: hedgeQuantity, price: depth.limitPrice });
     },
     query: order => takerDelegate.query(order),
     cancel: order => takerDelegate.cancel(order),
@@ -466,15 +472,9 @@ function wrapHybridAdapters(plan: HybridCexRecoveryPlan): {
   return { adapters, getMakerSettlement: () => makerSettlement };
 }
 
-function normalizeHybridLifecycle(
-  plan: HybridCexRecoveryPlan,
-  result: ArbitrageExecutionResult,
-  makerSettlement: NormalizedOrderSettlement | null,
-): ArbitrageExecutionResult {
+function normalizeHybridLifecycle(plan: HybridCexRecoveryPlan, result: ArbitrageExecutionResult, makerSettlement: NormalizedOrderSettlement | null): ArbitrageExecutionResult {
   if (!makerSettlement?.terminal || !result.normalized || !result.settlementConfirmed) return result;
-  const takerSettlement = (result.orders || []).find(order =>
-    order.venue === plan.hybridExecution.takerVenue && order.side !== plan.hybridExecution.makerSide,
-  );
+  const takerSettlement = (result.orders || []).find(order => order.venue === plan.hybridExecution.takerVenue && order.side !== plan.hybridExecution.makerSide);
   if (!takerSettlement?.terminal) return result;
   const makerFilled = Number(makerSettlement.filledQuantity || 0);
   const takerFilled = Number(takerSettlement.filledQuantity || 0);
@@ -482,7 +482,6 @@ function normalizeHybridLifecycle(
   const exposureFlat = makerFilled > 0 && takerFilled > 0 && Math.abs(makerFilled - takerFilled) <= tolerance;
   const realizedNet = result.normalized.realized.netProfitUsd;
   if (!exposureFlat || realizedNet === null || !Number.isFinite(realizedNet)) return result;
-
   const success = realizedNet > 0;
   return {
     ...result,
@@ -491,16 +490,8 @@ function normalizeHybridLifecycle(
     settlementConfirmed: true,
     normalized: {
       ...result.normalized,
-      status: 'filled',
-      terminal: true,
-      settlementConfirmed: true,
-      provenance: [...new Set([
-        ...result.normalized.provenance,
-        'hybrid_maker_first_terminal_fill',
-        'hybrid_fresh_taker_requote',
-        'hybrid_partial_fill_quantity_hedged',
-        'hybrid_terminal_exposure_flat',
-      ])],
+      status: 'filled', terminal: true, settlementConfirmed: true,
+      provenance: [...new Set([...result.normalized.provenance, 'hybrid_maker_first_terminal_fill', 'hybrid_fresh_taker_requote', 'hybrid_partial_fill_quantity_hedged', 'hybrid_terminal_exposure_flat'])],
       error: success ? undefined : result.normalized.error || 'Hybrid lifecycle flattened exposure but realized non-positive net economics',
     },
     error: success ? undefined : result.error || 'Hybrid lifecycle flattened exposure but realized non-positive net economics',
@@ -508,28 +499,16 @@ function normalizeHybridLifecycle(
 }
 
 function rejectResult(reason: string): ArbitrageExecutionResult {
-  return {
-    success: false,
-    status: 'rejected',
-    settlementConfirmed: false,
-    error: reason,
-  } as ArbitrageExecutionResult;
+  return { success: false, status: 'rejected', settlementConfirmed: false, error: reason } as ArbitrageExecutionResult;
 }
 
 async function executeHybridPlan(plan: HybridCexRecoveryPlan): Promise<ArbitrageExecutionResult> {
   if (plan.hybridExecution.feeAuthority !== 'authenticated') return rejectResult('REJECT_HYBRID_FEE_AUTHORITY');
-  if (!(plan.notionalUsd > 0) || plan.notionalUsd > plan.hybridExecution.canaryCeilingUsd + 1e-9) {
-    return rejectResult('REJECT_HYBRID_CANARY_CEILING');
-  }
+  if (!(plan.notionalUsd > 0) || plan.notionalUsd > plan.hybridExecution.canaryCeilingUsd + 1e-9) return rejectResult('REJECT_HYBRID_CANARY_CEILING');
   const minFill = bounded(process.env.CRYPTO_ARBITRAGE_HYBRID_EXECUTION_MIN_MAKER_FILL, 0.20, 0.05, 0.95);
-  if (plan.hybridExecution.makerFillProbability < minFill && plan.hybridExecution.canaryProofSamples > 0) {
-    return rejectResult('REJECT_HYBRID_MAKER_FILL_PROBABILITY');
-  }
+  if (plan.hybridExecution.makerFillProbability < minFill && plan.hybridExecution.canaryProofSamples > 0) return rejectResult('REJECT_HYBRID_MAKER_FILL_PROBABILITY');
   const minPersistence = bounded(process.env.CRYPTO_ARBITRAGE_HYBRID_EXECUTION_MIN_STRESS_PERSISTENCE, 0.35, 0.05, 0.95);
-  if (plan.hybridExecution.spreadStress.paths > 0
-      && plan.hybridExecution.spreadStress.persistenceProbability < minPersistence) {
-    return rejectResult('REJECT_HYBRID_SPREAD_PERSISTENCE');
-  }
+  if (plan.hybridExecution.spreadStress.paths > 0 && plan.hybridExecution.spreadStress.persistenceProbability < minPersistence) return rejectResult('REJECT_HYBRID_SPREAD_PERSISTENCE');
 
   const wrapped = wrapHybridAdapters(plan);
   const executor = new CentralizedExchangeExecutor({
@@ -548,11 +527,7 @@ export function ensureHybridCexExecutionWiring(): void {
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
     evaluateOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
     verifyOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
-    evaluateMany: (
-      request: VerifyManyRequest,
-      symbols: readonly string[],
-      capacity?: ScanCapacityDecision,
-    ) => Promise<Map<string, VerifiedArbitragePlan | null>>;
+    evaluateMany: (request: VerifyManyRequest, symbols: readonly string[], capacity?: ScanCapacityDecision) => Promise<Map<string, VerifiedArbitragePlan | null>>;
   };
   const originalEvaluateOnce = verifier.evaluateOnce.bind(verifier);
   const originalEvaluateMany = verifier.evaluateMany.bind(verifier);
@@ -567,33 +542,26 @@ export function ensureHybridCexExecutionWiring(): void {
     return betterPlan(existing, hybrid);
   };
 
-  verifier.evaluateMany = async (
-    request: VerifyManyRequest,
-    symbols: readonly string[],
-    capacity?: ScanCapacityDecision,
-  ): Promise<Map<string, VerifiedArbitragePlan | null>> => {
+  verifier.evaluateMany = async (request: VerifyManyRequest, symbols: readonly string[], capacity?: ScanCapacityDecision): Promise<Map<string, VerifiedArbitragePlan | null>> => {
     const plans = await originalEvaluateMany(request, symbols, capacity);
     const governance = getCryptocrawlGovernance();
-    const governedSymbols = [...new Set(symbols
-      .map(symbol => symbol.trim().toUpperCase())
-      .filter(Boolean)
-      .filter(symbol => {
-        try {
-          governance.requireAllowed('ADVISE', { chain: request.gas?.chain, pair: symbol });
-          return true;
-        } catch {
-          return false;
-        }
-      }))];
-
+    const governedSymbols = [...new Set(symbols.map(symbol => symbol.trim().toUpperCase()).filter(Boolean).filter(symbol => {
+      try {
+        governance.requireAllowed('ADVISE', { chain: request.gas?.chain, pair: symbol });
+        return true;
+      } catch {
+        return false;
+      }
+    }))];
     if (governedSymbols.length === 0) return plans;
+
     await primeCexFeeEvidenceForVenueSymbols({
+      coinbase: governedSymbols,
       kraken: governedSymbols,
       okx: governedSymbols,
     }).catch(error => {
       logger.debug('[HybridCEX] Batch authenticated fee prime degraded', {
-        component: 'HybridCexExecutionWiring',
-        symbols: governedSymbols.length,
+        component: 'HybridCexExecutionWiring', symbols: governedSymbols.length,
         error: error instanceof Error ? error.message : String(error),
       });
     });
@@ -611,24 +579,17 @@ export function ensureHybridCexExecutionWiring(): void {
       if (!hybrid) return;
       hybridPositive++;
       const selected = betterPlan(before, hybrid);
-      if (selected === hybrid) {
-        plans.set(symbol, hybrid);
-        hybridSelected++;
-      }
+      if (selected === hybrid) { plans.set(symbol, hybrid); hybridSelected++; }
     });
 
     logger.info('[HybridCEX] MT/TM canonical comparison completed', {
-      component: 'HybridCexExecutionWiring',
-      symbolsRequested: symbols.length,
-      governedSymbols: governedSymbols.length,
-      hybridPositive,
-      hybridSelected,
+      component: 'HybridCexExecutionWiring', symbolsRequested: symbols.length,
+      governedSymbols: governedSymbols.length, hybridPositive, hybridSelected,
+      venues: HYBRID_VENUES,
       executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
       executionSequence: 'maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
       partialFillHandling: 'hedge_actual_terminal_maker_fill_quantity',
-      authenticatedFeesRequired: true,
-      measuredDepthRequired: true,
-      syntheticEconomicsAllowed: false,
+      authenticatedFeesRequired: true, measuredDepthRequired: true, syntheticEconomicsAllowed: false,
     });
     return plans;
   };
@@ -648,15 +609,11 @@ export function ensureHybridCexExecutionWiring(): void {
   };
 
   logger.info('[HybridCEX] Canonical MT/TM admission and execution wiring installed', {
-    component: 'HybridCexExecutionWiring',
-    supportedModes: ['MT', 'TM'],
-    makerFirst: true,
-    freshTakerRequoteAfterMakerFill: true,
-    sequentialPartialFillSafeHybridExecutor: true,
-    authenticatedFeeAuthority: true,
-    measuredDepthAuthority: true,
-    existingTTExecutionChanged: false,
-    existingMMExecutionChanged: false,
+    component: 'HybridCexExecutionWiring', supportedModes: ['MT', 'TM'],
+    venues: HYBRID_VENUES,
+    makerFirst: true, freshTakerRequoteAfterMakerFill: true,
+    sequentialPartialFillSafeHybridExecutor: true, authenticatedFeeAuthority: true,
+    measuredDepthAuthority: true, existingTTExecutionChanged: false, existingMMExecutionChanged: false,
     arbitraryBpsExecutionFloor: false,
     executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
   });
