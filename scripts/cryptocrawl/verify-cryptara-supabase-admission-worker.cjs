@@ -82,6 +82,18 @@ requirePattern(distributedQuota, /quotaRetryDelayMs[\s\S]{0,420}Math\.random/, '
 requirePattern(distributedQuota, /boundedBase\s*\+\s*extra/, 'quota jitter never deliberately wakes before the database-derived wait estimate');
 forbidPattern(distributedQuota, /\bnew\s+Pool\s*\(/, 'distributed quota creating an independent database pool');
 
+// Slot collision scans are migration-owned and happen inside PostgreSQL. This is
+// the call-coalescing optimization: one client round trip per slot domain while
+// retaining the same atomic ON CONFLICT takeover rule for expired leases.
+requirePattern(migration, /CREATE OR REPLACE FUNCTION private\.cryptocrawler_claim_resource_slot/, 'migration owns the server-side resource-slot claim function');
+requirePattern(migration, /FOR\s+v_offset\s+IN\s+0\.\.\(p_capacity\s*-\s*1\)\s+LOOP[\s\S]{0,1600}ON CONFLICT \(resource_key\) DO UPDATE[\s\S]{0,700}RETURN v_claimed_key/, 'server-side slot scan preserves atomic collision semantics');
+requirePattern(resourceScheduler, /private async claimResourceSlot[\s\S]{0,700}SELECT \$\{CLAIM_FUNCTION\}/, 'execution resource domains use one server-side slot-claim call');
+requirePattern(distributedQuota, /SELECT \$\{CLAIM_FUNCTION\}[\s\S]{0,300}AS resource_key/, 'distributed quota uses one server-side slot-claim call');
+forbidPattern(resourceScheduler, /for\s*\(let\s+slot\s*=\s*0;\s*slot\s*<\s*spec\.capacity/, 'client-side execution slot scan returning');
+forbidPattern(distributedQuota, /for\s*\(let\s+offset\s*=\s*0;\s*offset\s*<\s*capacity/, 'client-side quota slot scan returning');
+requirePattern(resourceScheduler, /to_regprocedure\('private\.cryptocrawler_claim_resource_slot/, 'resource scheduler verifies migration-owned slot function before use');
+requirePattern(distributedQuota, /to_regprocedure\('private\.cryptocrawler_claim_resource_slot/, 'quota scheduler verifies migration-owned slot function before use');
+
 // Terminal-confirmed money-state durability is critical, but still uses the same
 // ordinary pool. The default compounding path must not repeat two idempotency reads.
 requirePattern(retainedProfit, /withCryptaraSupabasePriority\('critical',[\s\S]{0,120}pool\.connect/, 'terminal realized-profit transaction receives critical priority');
@@ -103,4 +115,4 @@ requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}IN
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
-console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, execution/quota prioritization, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned calibration persistence invariants passed');
+console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, execution/quota prioritization, server-side slot call coalescing, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned persistence invariants passed');
