@@ -1,11 +1,17 @@
 import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
+import { supportsSponsoredReceiverChain } from '../execution/adapters/sponsored-receiver-manager.js';
 import { prepareZeroXAtomicRoundTrip } from '../execution/dex-zerox-atomic-executor.js';
 import { marketDataProviders, type DexQuoteObservation } from '../intelligence/market-data-providers.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
 
-const DISCOVERY_CHAINS: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];
+function executableDiscoveryChains(): ChainId[] {
+  return (Object.keys(SUPPORTED_CHAINS) as ChainId[]).filter(chain => {
+    const config = SUPPORTED_CHAINS[chain];
+    return Boolean(config?.usdc && config?.usdt && supportsSponsoredReceiverChain(chain));
+  });
+}
 
 function boundedPositiveList(raw: string | undefined): number[] {
   const values = raw?.trim()
@@ -65,7 +71,7 @@ async function discoverChainCandidates(
   ttlMs: number,
 ): Promise<MeasuredCandidate[]> {
   const config = SUPPORTED_CHAINS[chain];
-  if (!config?.usdc || !config?.usdt) return [];
+  if (!config?.usdc || !config?.usdt || !supportsSponsoredReceiverChain(chain)) return [];
   const observed: MeasuredCandidate[] = [];
 
   // Notionals remain sequential within one chain because the two-leg round trip
@@ -80,8 +86,6 @@ async function discoverChainCandidates(
       sellAmount: stableUnits(notionalUsd),
       purpose: 'discovery',
     });
-    // Discovery remains read-only. Firm transaction payloads are obtained only
-    // by the execution-preparation authority for measured near-profit routes.
     if (!isDiscoveryPriceEvidence(first) || !first.liquidityAvailable || !first.buyAmount) continue;
 
     const second = await marketDataProviders.getDexQuote({
@@ -109,9 +113,10 @@ async function discoverChainCandidates(
 
     let prepared: Awaited<ReturnType<typeof prepareZeroXAtomicRoundTrip>> | null = null;
     let preparationUnavailable = false;
-    // `/price` may rank a route for firm hydration, but it is never sufficient
-    // for deterministic profit because flash fee, exact receiver gas, allowances
-    // and executable calldata are still unknown at this point.
+    // Near-profit firm hydration remains read-only: the preparation authority may
+    // read firm quotes, receiver permissions, flash fee, gas and eth_call results,
+    // but it cannot deploy or change permissions. Any missing infrastructure is
+    // queued for the canonical scheduler's subordinate execution adapter.
     if (grossAfterIndicativeGasBps !== null && grossAfterIndicativeGasBps >= firmHydrationFloorBps()) {
       try {
         prepared = await prepareZeroXAtomicRoundTrip({ opportunityId, chain, notionalUsd });
@@ -149,7 +154,7 @@ async function discoverChainCandidates(
       depth: {
         status: first.liquidityAvailable && second.liquidityAvailable ? 'measured' : 'unavailable',
         detail: prepared
-          ? '0x indicative route plus two firm allowance-holder quotes, exact receiver simulation and exact gas estimation'
+          ? '0x indicative route plus two firm allowance-holder quotes, existing receiver permissions, exact receiver simulation and exact gas estimation'
           : '0x /price liquidityAvailable/route response; pool-level depth and executable atomic settlement are not inferred',
       },
       economics: prepared ? {
@@ -192,13 +197,15 @@ async function discoverChainCandidates(
       quoteAgeMs,
       executableCapability: prepared !== null,
       executionCapabilityReason: prepared
-        ? 'Two fresh 0x v2 firm quotes are atomically compiled into the reviewed Balancer receiver, current flash fee and exact receiver gas are measured, permissions are verified, and eth_call simulation succeeds'
-        : 'Indicative DEX evidence remains non-executable until firm quotes, flash fee, receiver permissions, exact gas and atomic simulation are current',
+        ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; current flash fee and exact receiver gas are measured, existing permissions are verified, and eth_call simulation succeeds'
+        : 'Indicative DEX evidence remains non-executable until firm quotes, flash fee, existing receiver permissions, exact gas and atomic simulation are current',
       missingInformation,
       provenance: [
         '0x:price_only_discovery',
         ...(prepared ? prepared.provenance : ['0x:firm_execution_not_promoted']),
         'gas_oracle:measured_when_available',
+        'receiver_chain_capability:verified',
+        'discovery_infrastructure_mutation:false',
         'unknown_flash_fee_is_not_zero',
         'synthetic_evidence:false',
       ],
@@ -211,12 +218,14 @@ async function discoverChainCandidates(
 export async function discoverMeasuredDexCandidates(): Promise<MeasuredCandidate[]> {
   const ttlMs = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
   const notionals = boundedPositiveList(process.env.CRYPTOCRAWL_DEX_NOTIONAL_USD);
+  const chains = executableDiscoveryChains();
+  if (chains.length === 0) return [];
 
-  // Chains are independent measured markets, so they may be scanned concurrently.
-  // Promise.all preserves deterministic chain order in the returned groups while
-  // reducing wall-clock discovery latency. No chain or notional is removed.
+  // Only chains with both stablecoin identities and an actual reviewed/configured
+  // Balancer receiver surface are scanned. This prevents structural dead lanes
+  // such as a chain with no receiver vault from consuming 0x/provider budget.
   const byChain = await Promise.all(
-    DISCOVERY_CHAINS.map(chain => discoverChainCandidates(chain, notionals, ttlMs)),
+    chains.map(chain => discoverChainCandidates(chain, notionals, ttlMs)),
   );
   return byChain.flat();
 }
