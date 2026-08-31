@@ -1,4 +1,5 @@
 import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
+import { filteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 
 export type MempoolCapability =
   | 'filtered_full_pending_transaction_feed'
@@ -21,27 +22,50 @@ export interface MempoolCapabilityRecord {
 }
 
 /**
- * Capability is intentionally conservative. The current Alchemy integration
- * aggregates pending observations without attaching a chain to each returned
- * candidate, so it cannot be promoted to chain-bound backrun execution evidence.
+ * Capability is intentionally conservative. The newer provider-filtered stream
+ * carries exact per-transaction chain identity on Ethereum/Polygon, while the
+ * legacy aggregate Alchemy integration does not. Neither feed by itself proves
+ * post-victim state or deterministic backrun profit, so executable evidence stays
+ * false until an exact topology compiler supplies those facts.
  */
 export function getMempoolCapabilities(): MempoolCapabilityRecord[] {
-  const statistics = alchemyIntegration.getStatistics();
-  const active = new Set(statistics.readiness.activeNetworks.map(String));
-  const configured = statistics.readiness.configured;
+  const legacy = alchemyIntegration.getStatistics();
+  const legacyActive = new Set(legacy.readiness.activeNetworks.map(String));
+  const legacyConfigured = legacy.readiness.configured;
+  const filtered = filteredAlchemyPendingStream.getStatistics();
+  const filteredActive = new Set(filtered.activeNetworks.map(String));
+  const filteredConfigured = new Set(filtered.configuredNetworks.map(String));
   const chains = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base'];
   const observedAt = Date.now();
-  return chains.map(chain => ({
-    chain,
-    provider: 'alchemy',
-    capability: configured && active.has(chain) ? 'provider_specific_pending_feed' : 'none',
-    active: configured && active.has(chain),
-    transactionChainBinding: false,
-    decodedRouteState: false,
-    executableBackrunEvidence: false,
-    reason: configured && active.has(chain)
-      ? 'Measured pending feed is active, but per-transaction chain binding and post-transaction pool-state simulation are not authoritative yet'
-      : 'No active measured pending feed for this chain',
-    observedAt,
-  }));
+
+  return chains.map(chain => {
+    const exactFilteredConfigured = filteredConfigured.has(chain);
+    const exactFilteredActive = filteredActive.has(chain);
+    const legacyIsActive = legacyConfigured && legacyActive.has(chain);
+    const active = exactFilteredActive || legacyIsActive;
+    const capability: MempoolCapability = exactFilteredConfigured
+      ? 'provider_specific_pending_feed'
+      : legacyIsActive
+        ? 'provider_specific_pending_feed'
+        : 'none';
+    const transactionChainBinding = exactFilteredConfigured && filtered.exactChainBinding;
+
+    return {
+      chain,
+      provider: 'alchemy',
+      capability,
+      active,
+      transactionChainBinding,
+      decodedRouteState: false,
+      executableBackrunEvidence: false,
+      reason: transactionChainBinding
+        ? 'Provider-filtered pending observations carry exact chain identity; decoded route completeness is measured per transaction, but post-victim state and deterministic backrun economics are not yet executable evidence'
+        : active
+          ? 'Legacy measured pending feed is active, but its aggregate observations do not carry authoritative per-transaction chain binding or post-victim state'
+          : exactFilteredConfigured
+            ? 'Exact-chain filtered pending monitoring is configured but not currently active'
+            : 'No active measured pending feed for this chain',
+      observedAt,
+    };
+  });
 }
