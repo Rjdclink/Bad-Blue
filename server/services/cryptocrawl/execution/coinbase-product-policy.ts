@@ -36,23 +36,24 @@ export function isIncrementAligned(value: number, increment: number): boolean {
   return Math.abs(value - nearest) <= tolerance;
 }
 
-export function validateCoinbaseOrderAgainstProduct(
+function validateCoinbaseOrderAgainstProductInternal(
   request: CoinbaseOrderConstraintInput,
   constraints: CoinbaseAdvancedProductConstraints,
+  mode: 'taker_ioc' | 'maker_post_only',
 ): CoinbaseOrderConstraintResult {
-  if (
-    constraints.isDisabled
+  const hardBlocked = constraints.isDisabled
     || constraints.tradingDisabled
     || constraints.cancelOnly
-    || constraints.postOnly
     || constraints.auctionMode
-    || constraints.viewOnly
-  ) {
+    || constraints.viewOnly;
+  if (hardBlocked || (mode === 'taker_ioc' && constraints.postOnly)) {
     return {
       valid: false,
       reason: constraints.auctionMode
-        ? 'Coinbase product is in auction mode and cannot satisfy immediate IOC execution semantics'
-        : 'Coinbase product is not currently available for taker IOC execution',
+        ? 'Coinbase product is in auction mode and cannot satisfy the requested execution semantics'
+        : mode === 'taker_ioc'
+          ? 'Coinbase product is not currently available for taker IOC execution'
+          : 'Coinbase product is not currently available for post-only maker execution',
     };
   }
   if (!finitePositive(request.quantity) || !finitePositive(request.price)) {
@@ -80,4 +81,23 @@ export function validateCoinbaseOrderAgainstProduct(
     return { valid: false, reason: `Coinbase quote notional exceeds maximum ${constraints.quoteMaxSize}` };
   }
   return { valid: true, reason: null };
+}
+
+export function validateCoinbaseOrderAgainstProduct(
+  request: CoinbaseOrderConstraintInput,
+  constraints: CoinbaseAdvancedProductConstraints,
+): CoinbaseOrderConstraintResult {
+  return validateCoinbaseOrderAgainstProductInternal(request, constraints, 'taker_ioc');
+}
+
+/**
+ * Maker validation shares the same live product, increment and size authority as
+ * IOC validation, but an exchange-declared post-only product is not a blocker for
+ * a post-only order. This does not grant any execution authority by itself.
+ */
+export function validateCoinbasePostOnlyOrderAgainstProduct(
+  request: CoinbaseOrderConstraintInput,
+  constraints: CoinbaseAdvancedProductConstraints,
+): CoinbaseOrderConstraintResult {
+  return validateCoinbaseOrderAgainstProductInternal(request, constraints, 'maker_post_only');
 }
