@@ -11,6 +11,7 @@ import {
   getOkxRpiExecutionCapability,
   isOkxRpiMakerPriceAdmissible,
 } from '../intelligence/okx-rpi-fee-advisory.js';
+import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import {
   createProductionCexSettlementAdapters,
   type CexOrderReceipt,
@@ -26,6 +27,10 @@ import { getMakerLifecycleTraceId } from './maker-lifecycle-trace.js';
 import type { MakerOrderStyle, MakerRecoveryPlan } from './stablecoin-maker-strategy.js';
 
 const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
+
+type SharedMakerPlan = VerifiedArbitragePlan & {
+  makerExecution?: MakerRecoveryPlan['makerExecution'];
+};
 
 function assertUsdNormalizedMakerEconomics(
   venue: ExecutableCexVenue,
@@ -43,21 +48,25 @@ function okxGatewayLatencyMs(payload: any): number | null {
   return (outTime - inTime) / 1_000;
 }
 
-function makerOrderStyle(plan: MakerRecoveryPlan, venue: ExecutableCexVenue, side: 'buy' | 'sell'): {
+function makerOrderStyle(plan: SharedMakerPlan, venue: ExecutableCexVenue, side: 'buy' | 'sell'): {
   style: MakerOrderStyle;
   expectedMakerFeeBps: number;
 } {
+  const execution = plan.makerExecution;
   if (venue === plan.buyVenue && side === 'buy') {
     return {
-      style: plan.makerExecution.orderStyle?.buy ?? 'post_only',
-      expectedMakerFeeBps: plan.makerExecution.orderStyle?.buyEffectiveMakerFeeBps
+      // MT/TM deliberately reuse this adapter without makerExecution metadata.
+      // They are always standard post-only makers; only an admitted MM plan can
+      // opt a leg into RPI from authenticated, sized, spacing-valid economics.
+      style: execution?.orderStyle?.buy ?? 'post_only',
+      expectedMakerFeeBps: execution?.orderStyle?.buyEffectiveMakerFeeBps
         ?? Number(plan.feeEvidence?.buy?.makerFeeBps ?? 0),
     };
   }
   if (venue === plan.sellVenue && side === 'sell') {
     return {
-      style: plan.makerExecution.orderStyle?.sell ?? 'post_only',
-      expectedMakerFeeBps: plan.makerExecution.orderStyle?.sellEffectiveMakerFeeBps
+      style: execution?.orderStyle?.sell ?? 'post_only',
+      expectedMakerFeeBps: execution?.orderStyle?.sellEffectiveMakerFeeBps
         ?? Number(plan.feeEvidence?.sell?.makerFeeBps ?? 0),
     };
   }
@@ -90,7 +99,7 @@ function wrapMakerSubmit(
   venue: ExecutableCexVenue,
   delegate: CexSettlementAdapter,
   traceId: string,
-  plan: MakerRecoveryPlan,
+  plan: SharedMakerPlan,
 ): CexSettlementAdapter {
   return {
     async submit(request: OrderRequest): Promise<CexOrderReceipt> {
@@ -216,13 +225,15 @@ function wrapMakerSubmit(
 
 /**
  * Shared maker adapter for every canonical executable CEX venue. Standard maker
- * intent remains post-only. An OKX RPI leg is submitted only when the canonical
- * plan explicitly selected it from authenticated fee economics and submit-time
- * product permission, minimum notional, visible RPI spacing, fresh book and fee
- * evidence still support the same-or-better economics. There is no silent
- * downgrade from RPI to standard maker because that could invalidate plan P&L.
+ * intent remains post-only. MT/TM may reuse the same adapter without MM-specific
+ * makerExecution metadata and therefore default to standard post-only semantics.
+ * An OKX RPI leg is submitted only when an MM plan explicitly selected it from
+ * authenticated fee economics and submit-time product permission, minimum
+ * notional, visible RPI spacing, fresh book and fee evidence still support the
+ * same-or-better economics. There is no silent downgrade from RPI to standard
+ * maker because that could invalidate plan P&L.
  */
-export function createPostOnlyMakerAdapters(plan: MakerRecoveryPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
+export function createPostOnlyMakerAdapters(plan: SharedMakerPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();
   const traceId = getMakerLifecycleTraceId(plan);
   adapters[plan.buyVenue] = wrapMakerSubmit(plan.buyVenue, adapters[plan.buyVenue], traceId, plan);
