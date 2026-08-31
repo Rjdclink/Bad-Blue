@@ -14,6 +14,7 @@ import {
 import {
   executeHyperHybridCexPlan,
   type HyperHybridCexExecutionResult,
+  type HyperHybridChildExecutor,
 } from './hyper-hybrid-cex-execution.js';
 
 export type ExchangeOrderReceipt = NonNullable<CexExecutionResult['buyOrder']>;
@@ -21,6 +22,15 @@ export type ArbitrageExecutionResult = HyperHybridCexExecutionResult;
 
 type BalanceCapableAdapter = CexSettlementAdapter & {
   getBalances: () => Promise<Record<string, string>>;
+};
+
+type CentralizedExchangeExecutorOptions = CexExecutorOptions & {
+  /**
+   * Optional strategy-specific child lifecycle. Full-parent inventory, MC,
+   * governance and ladder admission stay here; only terminal child submission
+   * semantics are delegated.
+   */
+  childExecutor?: HyperHybridChildExecutor;
 };
 
 const SUPPORTED_CEX_VENUES = new Set<ExecutableCexVenue>(['coinbase', 'kraken', 'okx']);
@@ -220,7 +230,7 @@ async function reconcileTerminalBalances(result: ArbitrageExecutionResult): Prom
 }
 
 export class CentralizedExchangeExecutor {
-  constructor(private readonly options: CexExecutorOptions = {}) {}
+  constructor(private readonly options: CentralizedExchangeExecutorOptions = {}) {}
 
   async execute(plan: VerifiedArbitragePlan): Promise<ArbitrageExecutionResult> {
     getCryptocrawlGovernance().requireAllowed('EXECUTE_OPPORTUNITY', { pair: plan.symbol });
@@ -389,9 +399,11 @@ export class CentralizedExchangeExecutor {
         executorOptions: this.options,
         maxQuoteAgeMs,
         executionAdmissionStartedAt,
-        // Production uses venue-native FOK for split children. Injected adapters
-        // retain their own deterministic semantics for isolated tests.
-        useProductionFok: !this.options.adapters,
+        // Production uses venue-native FOK for default TT split children. A
+        // strategy-specific child executor (e.g. MT/TM maker-first) preserves
+        // that strategy's own terminal semantics while sharing this admission.
+        useProductionFok: !this.options.adapters && !this.options.childExecutor,
+        executeChild: this.options.childExecutor,
       }));
       await reconcileTerminalBalances(result);
       return result;
@@ -403,6 +415,7 @@ export class CentralizedExchangeExecutor {
 
 const productionCexAdapters = createProductionCexSettlementAdapters();
 // Production adapters are already merged inside execute(). Leaving options empty
-// lets the hyper-hybrid layer distinguish production FOK submission from injected
-// deterministic test adapters without changing the public constructor contract.
+// selects venue-native FOK for default TT split children; strategy-specific
+// executors may delegate only child submission while this class retains full-
+// parent inventory, MC, governance, ladder and settlement aggregation authority.
 export const centralizedExchangeExecutor = new CentralizedExchangeExecutor();
