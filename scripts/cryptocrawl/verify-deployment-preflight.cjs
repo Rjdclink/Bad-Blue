@@ -1,4 +1,4 @@
-// Diagnostic isolation: established safety gates plus current measured-profitability behavior verifiers.
+// Established safety gates plus current measured-profitability behavior verifiers.
 
 require('./verify-runtime-safety-invariants.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
@@ -9,6 +9,7 @@ require('./verify-remaining-seventeen-batch12.cjs');
 require('./verify-300-profitability-live-execution-controls.cjs');
 require('./verify-aave-balancer-provider-mesh.cjs');
 require('./verify-cex-websocket-rpi-modernization.cjs');
+require('./verify-resource-bps-coordination.cjs');
 require('./verify-cross-chain-funding-route-truth.cjs');
 
-console.log('[deployment-preflight] safety, measured-profitability, 300-control, Aave/Balancer provider-mesh, CEX websocket/RPI modernization, cross-chain/funding route truth, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] safety, measured-profitability, 300-control, Aave/Balancer provider-mesh, CEX websocket/RPI modernization, resource/BPS coordination, cross-chain/funding route truth, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
