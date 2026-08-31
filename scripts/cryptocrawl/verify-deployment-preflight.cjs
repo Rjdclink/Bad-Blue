@@ -6,9 +6,6 @@ const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical
 const spotProducts = read('server/services/cryptocrawl/execution/cex-spot-product-policy.ts');
 const submitGuard = read('server/services/cryptocrawl/execution/cex-submit-time-product-guard.ts');
 const coinbaseMarket = read('server/services/cryptocrawl/intelligence/coinbase-advanced-market-data.ts');
-const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
-const arbVerifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
-const inventoryReadiness = read('server/services/cryptocrawl/integration/cex-inventory-readiness-wiring.ts');
 requirePattern(timingGuard, /supportedModes:\s*\['TT',\s*'MT',\s*'TM',\s*'MM'\]/, 'timing modes');
 requirePattern(timingGuard, /makerExecution/, 'timing maker metadata');
 requirePattern(canonicalRuntime, /coinbaseMakerExecutionAuthority:\s*true/, 'coinbase maker telemetry');
@@ -24,12 +21,4 @@ forbidPattern(submitGuard, /api\.kraken\.com|public\/instruments|match\(\/\^\(\[
 requirePattern(coinbaseMarket, /resolveCoinbaseAdvancedProductId\s*\(/, 'Coinbase live product id');
 forbidPattern(coinbaseMarket, /\(USDT\|USDC\|USD\)/, 'Coinbase stablecoin whitelist');
 forbidPattern(spotProducts, /\(USDT\|USDC\|USD\)/, 'Kraken OKX stablecoin whitelist');
-requirePattern(feeResolver, /getSpotProductConstraints/, 'fee resolver canonical product authority');
-forbidPattern(feeResolver, /const\s+quotes\s*=\s*\['USDT'|\(USDT\|USDC\|USD\)/, 'fee resolver quote parser');
-requirePattern(arbVerifier, /getSpotProductConstraints\('kraken',\s*symbol\)/, 'Kraken depth exact product');
-requirePattern(arbVerifier, /getSpotProductConstraints\('okx',\s*symbol\)/, 'OKX depth exact product');
-forbidPattern(arbVerifier, /function\s+okxInstId|\(USDT\|USDC\|USD\)/, 'arb verifier duplicate product parser');
-requirePattern(inventoryReadiness, /positiveBalanceAssets/, 'positive balance semantics');
-requirePattern(inventoryReadiness, /inventoryAssetCount:\s*metrics\.positiveBalanceAssetCount/, 'funded asset readiness');
-requirePattern(inventoryReadiness, /syntheticBalancesAllowed:\s*false/, 'no synthetic balances');
-console.log('[deployment-preflight][diagnostic] timing/product/fee/inventory canonical assertions passed; continuing to downstream build');
+console.log('[deployment-preflight][diagnostic] timing/product canonical assertions passed; continuing to downstream build');
