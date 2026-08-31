@@ -120,6 +120,7 @@ class CryptaraSupabaseResourceGovernor {
   private ewmaHoldMs = 0;
   private healthySuccesses = 0;
   private pressureUntil = 0;
+  private pressureResumeTimer: NodeJS.Timeout | null = null;
   private admissionFailures = 0;
   private peakQueued = 0;
   private lastMode: CryptaraSupabaseAdmissionSnapshot['mode'] = 'recovering';
@@ -151,6 +152,16 @@ class CryptaraSupabaseResourceGovernor {
 
   private pressureCooldown(): number {
     return jitterMs(MIN_COOLDOWN_MS, MAX_COOLDOWN_MS);
+  }
+
+  private schedulePressureResume(now = Date.now()): void {
+    if (this.pressureResumeTimer || this.queue.length === 0) return;
+    const delayMs = Math.max(1, this.pressureUntil - now);
+    this.pressureResumeTimer = setTimeout(() => {
+      this.pressureResumeTimer = null;
+      this.drain();
+    }, delayMs);
+    this.pressureResumeTimer.unref?.();
   }
 
   private contract(reason: string): void {
@@ -237,8 +248,20 @@ class CryptaraSupabaseResourceGovernor {
   }
 
   private drain(): void {
-    const ceiling = this.currentCeiling();
+    const stats = this.poolSnapshot();
+    const ceiling = Math.max(1, Math.trunc(stats.max || 1));
     this.targetConcurrency = Math.max(1, Math.min(this.targetConcurrency, ceiling));
+
+    // Under upstream admission pressure, immediately reuse an already-idle client
+    // because that costs no new backend admission. If no idle client exists, wait
+    // through one jittered cooldown before asking Supavisor for another client.
+    // This is a one-shot pressure timer, not polling, and is removed once fired.
+    const now = Date.now();
+    if (this.queue.length > 0 && now < this.pressureUntil && stats.idle === 0) {
+      this.schedulePressureResume(now);
+      return;
+    }
+
     while (this.inFlight < this.targetConcurrency && this.queue.length > 0) {
       const index = this.nextWaiterIndex();
       const waiter = this.queue.splice(index, 1)[0];
