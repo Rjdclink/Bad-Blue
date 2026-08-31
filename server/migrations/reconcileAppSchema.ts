@@ -36,6 +36,20 @@ const CRYPTOCRAWL_AUTHORITY_MIGRATIONS = [
   '024_cryptocrawler_funding_lifecycle.sql',
 ] as const;
 
+const CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES = [
+  'public.cryptocrawler_resource_leases',
+  'public.cryptocrawler_mc_calibration_v1',
+  'private.cryptocrawler_kraken_nonce_state',
+  'private.cryptocrawler_funding_lifecycles',
+] as const;
+
+class CryptocrawlerAuthoritySchemaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CryptocrawlerAuthoritySchemaError';
+  }
+}
+
 function resolveBundledMigrationPath(file: string): string {
   const candidates = [
     path.resolve(process.cwd(), 'dist', 'migrations', file),
@@ -54,6 +68,40 @@ async function runCryptocrawlerAuthorityMigration(file: typeof CRYPTOCRAWL_AUTHO
   if (!sql.trim()) throw new Error(`Migration-owned CryptoCrawler SQL asset is empty: ${file}`);
   await pool.query(sql);
   return { message: `${file} applied from migration authority` };
+}
+
+async function verifyCryptocrawlerAuthoritySchemaOnce(): Promise<void> {
+  const result = await pool.query(
+    `SELECT
+       to_regclass($1)::text AS resource_leases,
+       to_regclass($2)::text AS mc_calibration,
+       to_regclass($3)::text AS kraken_nonce,
+       to_regclass($4)::text AS funding_lifecycles`,
+    [...CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES],
+  );
+  const row = result.rows?.[0] || {};
+  const observed = [row.resource_leases, row.mc_calibration, row.kraken_nonce, row.funding_lifecycles];
+  const missing = CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES.filter((_, index) => !observed[index]);
+  if (missing.length > 0) {
+    throw new Error(`required CryptoCrawler authority schema is absent: ${missing.join(', ')}`);
+  }
+}
+
+async function requireCryptocrawlerAuthoritySchema(maxAttempts = 6): Promise<void> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await verifyCryptocrawlerAuthoritySchemaOnce();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+      }
+    }
+  }
+  const message = lastError instanceof Error ? lastError.message : String(lastError || 'unknown schema verification failure');
+  throw new CryptocrawlerAuthoritySchemaError(`CryptoCrawler authority schema readiness failed after ${maxAttempts} attempts: ${message}`);
 }
 
 const migrationSteps: MigrationStep[] = [
@@ -155,10 +203,13 @@ export async function runAllSchemaMigrations(options?: {
     );
     ownsMigrationLock = lockResult.rows?.[0]?.acquired === true;
     if (!ownsMigrationLock) {
+      // Another replica may be applying the authority migrations. This replica
+      // may skip duplicate DDL only after the required schema becomes observable.
+      await requireCryptocrawlerAuthoritySchema();
       return [{
         name: 'Startup migration coordinator',
         success: true,
-        message: 'Another live replica is already reconciling schema; duplicate startup DDL skipped.',
+        message: 'Another live replica reconciled schema; required CryptoCrawler authority schema verified before readiness.',
       }];
     }
 
@@ -189,8 +240,17 @@ export async function runAllSchemaMigrations(options?: {
       }
     }
 
+    // Noncritical compatibility migrations may remain warning-only, but the
+    // execution-critical authority schema is a hard readiness condition.
+    await requireCryptocrawlerAuthoritySchema();
+    results.push({
+      name: 'CryptoCrawler authority schema readiness',
+      success: true,
+      message: 'All execution-critical migration-owned tables are present.',
+    });
     return results;
   } catch (error: any) {
+    if (error instanceof CryptocrawlerAuthoritySchemaError) throw error;
     if (!continueOnError) throw error;
     return [{
       name: 'Startup migration coordinator',
