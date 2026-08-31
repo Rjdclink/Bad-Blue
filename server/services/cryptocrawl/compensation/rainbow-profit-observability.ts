@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 
 export interface RainbowProfitSnapshot {
   observedAt: number;
@@ -36,19 +37,20 @@ function numeric(value: unknown): number {
 
 class RainbowProfitObservability {
   private timer: NodeJS.Timeout | null = null;
+  private running = false;
   private inFlight: Promise<RainbowProfitSnapshot | null> | null = null;
   private latest: RainbowProfitSnapshot | null = null;
   private lastSignature = '';
 
   start(): void {
-    if (this.timer) return;
-    void this.refresh();
-    this.timer = setInterval(() => void this.refresh(), INTERVAL_MS);
-    this.timer.unref?.();
+    if (this.running) return;
+    this.running = true;
+    void this.refreshAndSchedule();
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.running = false;
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
   }
 
@@ -62,60 +64,76 @@ class RainbowProfitObservability {
     return this.inFlight;
   }
 
+  private async refreshAndSchedule(): Promise<void> {
+    try {
+      await this.refresh();
+    } finally {
+      if (!this.running) return;
+      // One-shot scheduling prevents overlap/drift when Supabase is slow. There is
+      // never a second timer trying to create another observability query while a
+      // prior refresh is still occupying or waiting for ordinary-lane capacity.
+      this.timer = setTimeout(() => {
+        this.timer = null;
+        void this.refreshAndSchedule();
+      }, INTERVAL_MS);
+      this.timer.unref?.();
+    }
+  }
+
   private async refreshOnce(): Promise<RainbowProfitSnapshot | null> {
     if (!isDatabaseConfigured) return null;
     try {
-      const [states, fees, latestTx] = await Promise.all([
-        pool.query(`
-          SELECT status,
-                 COUNT(*)::int AS events,
-                 COALESCE(SUM(realized_profit_usd), 0)::numeric AS profit_usd,
-                 MIN(created_at) AS oldest_created_at
+      // This used to issue three concurrent queries every refresh. Collapse the
+      // same snapshot into one SQL round trip and classify it as low-priority
+      // observability so governance/settlement persistence always wins pressure.
+      const result = await withCryptaraSupabasePriority('low', () => pool.query(`
+        WITH summary AS (
+          SELECT
+            COUNT(*) FILTER (WHERE status = 'queued')::int AS queued_events,
+            COUNT(*) FILTER (WHERE status = 'submitted')::int AS submitted_events,
+            COUNT(*) FILTER (WHERE status = 'confirmed')::int AS confirmed_events,
+            COALESCE(SUM(realized_profit_usd) FILTER (WHERE status = 'queued'), 0)::numeric AS queued_profit_usd,
+            COALESCE(SUM(realized_profit_usd) FILTER (WHERE status = 'submitted'), 0)::numeric AS submitted_profit_usd,
+            COALESCE(SUM(realized_profit_usd) FILTER (WHERE status = 'confirmed'), 0)::numeric AS confirmed_profit_usd,
+            MIN(created_at) FILTER (WHERE status = 'queued') AS oldest_queued_at
           FROM private.cryptocrawler_rainbow_profit_events
-          GROUP BY status
-        `),
-        pool.query(`
+        ),
+        fees AS (
           SELECT COALESCE(SUM(batch_fee), 0)::numeric AS confirmed_fees
           FROM (
             SELECT batch_id, MAX(payout_fee)::numeric AS batch_fee
             FROM private.cryptocrawler_rainbow_profit_events
-            WHERE status='confirmed' AND batch_id IS NOT NULL AND payout_fee IS NOT NULL
+            WHERE status = 'confirmed' AND batch_id IS NOT NULL AND payout_fee IS NOT NULL
             GROUP BY batch_id
           ) batches
-        `),
-        pool.query(`
+        ),
+        latest AS (
           SELECT transaction_hash
           FROM private.cryptocrawler_rainbow_profit_events
-          WHERE status='confirmed' AND transaction_hash IS NOT NULL AND transaction_hash <> ''
+          WHERE status = 'confirmed' AND transaction_hash IS NOT NULL AND transaction_hash <> ''
           ORDER BY confirmed_at DESC NULLS LAST, updated_at DESC
           LIMIT 1
-        `),
-      ]);
+        )
+        SELECT summary.*, fees.confirmed_fees, latest.transaction_hash
+        FROM summary
+        CROSS JOIN fees
+        LEFT JOIN latest ON true
+      `));
 
-      const byStatus = new Map<string, { events: number; profitUsd: number; oldest: number | null }>();
-      for (const row of states.rows) {
-        const oldest = row.oldest_created_at ? new Date(row.oldest_created_at).getTime() : null;
-        byStatus.set(String(row.status), {
-          events: numeric(row.events),
-          profitUsd: numeric(row.profit_usd),
-          oldest: Number.isFinite(oldest) ? oldest : null,
-        });
-      }
-      const queued = byStatus.get('queued') || { events: 0, profitUsd: 0, oldest: null };
-      const submitted = byStatus.get('submitted') || { events: 0, profitUsd: 0, oldest: null };
-      const confirmed = byStatus.get('confirmed') || { events: 0, profitUsd: 0, oldest: null };
+      const row = result.rows[0] || {};
+      const oldest = row.oldest_queued_at ? new Date(row.oldest_queued_at).getTime() : null;
       const observedAt = Date.now();
       const snapshot: RainbowProfitSnapshot = {
         observedAt,
-        queuedProfitUsd: queued.profitUsd,
-        submittedProfitUsd: submitted.profitUsd,
-        confirmedProfitUsd: confirmed.profitUsd,
-        queuedEvents: queued.events,
-        submittedEvents: submitted.events,
-        confirmedEvents: confirmed.events,
-        oldestQueuedAgeMs: queued.oldest === null ? null : Math.max(0, observedAt - queued.oldest),
-        confirmedWithdrawalFees: numeric(fees.rows[0]?.confirmed_fees),
-        lastConfirmedTransactionHash: latestTx.rows[0]?.transaction_hash ? String(latestTx.rows[0].transaction_hash) : null,
+        queuedProfitUsd: numeric(row.queued_profit_usd),
+        submittedProfitUsd: numeric(row.submitted_profit_usd),
+        confirmedProfitUsd: numeric(row.confirmed_profit_usd),
+        queuedEvents: numeric(row.queued_events),
+        submittedEvents: numeric(row.submitted_events),
+        confirmedEvents: numeric(row.confirmed_events),
+        oldestQueuedAgeMs: Number.isFinite(oldest) ? Math.max(0, observedAt - (oldest as number)) : null,
+        confirmedWithdrawalFees: numeric(row.confirmed_fees),
+        lastConfirmedTransactionHash: row.transaction_hash ? String(row.transaction_hash) : null,
         destinationFingerprint: destinationFingerprint(),
       };
       this.latest = snapshot;
