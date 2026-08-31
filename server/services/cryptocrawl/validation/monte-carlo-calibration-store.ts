@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import type { MonteCarloTopology } from './monte-carlo-policy.js';
 
@@ -160,7 +161,9 @@ class MonteCarloCalibrationStore {
         // Migration 023 owns this schema. Runtime calibration must never acquire
         // DDL locks or create indexes on the hot path; verify the migration-owned
         // relation once, then use ordinary DML through the shared admission lane.
-        const result = await pool.query('SELECT to_regclass($1::text) AS relation', [`public.${TABLE}`]);
+        const result = await withCryptaraSupabasePriority('low', () =>
+          pool.query('SELECT to_regclass($1::text) AS relation', [`public.${TABLE}`]),
+        );
         this.persistenceReady = typeof result.rows?.[0]?.relation === 'string';
         if (!this.persistenceReady) {
           logger.warn('[MonteCarloCalibration] Migration-owned persistence table unavailable; retaining measured in-memory calibration', {
@@ -185,7 +188,9 @@ class MonteCarloCalibrationStore {
     if (this.hydratePromise) return this.hydratePromise;
     this.hydratePromise = (async () => {
       if (!await this.ensureTable()) return;
-      const result = await pool.query(`SELECT payload FROM ${TABLE} ORDER BY observed_at DESC LIMIT $1`, [this.maxEntries]);
+      const result = await withCryptaraSupabasePriority('low', () =>
+        pool.query(`SELECT payload FROM ${TABLE} ORDER BY observed_at DESC LIMIT $1`, [this.maxEntries]),
+      );
       for (const row of result.rows) {
         const observation = row.payload as MonteCarloCalibrationObservation;
         if (observation?.eventId) this.observations.set(observation.eventId, observation);
@@ -210,7 +215,7 @@ class MonteCarloCalibrationStore {
     this.observations.set(observation.eventId, observation);
     this.prune();
     if (await this.ensureTable()) {
-      await pool.query(
+      await withCryptaraSupabasePriority('low', () => pool.query(
         `INSERT INTO ${TABLE} (event_id, observed_at, topology, venue_pair, symbol, chain, strategy, size_bucket, payload, model_version)
          VALUES ($1, to_timestamp($2 / 1000.0), $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
          ON CONFLICT (event_id) DO NOTHING`,
@@ -226,7 +231,7 @@ class MonteCarloCalibrationStore {
           JSON.stringify(observation),
           MODEL_VERSION,
         ],
-      ).catch(error => {
+      )).catch(error => {
         logger.warn('[MonteCarloCalibration] Persistence write failed; measured in-memory sample retained', {
           component: 'MonteCarloCalibrationStore',
           eventId: observation.eventId,
