@@ -1,6 +1,9 @@
 import logger from '../../../logger.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
-import { getOkxExecutionRestBaseUrl } from '../intelligence/cex-private-authority.js';
+import {
+  getCachedOkxExecutionRestBaseUrl,
+  getOkxExecutionRestBaseUrl,
+} from '../intelligence/cex-private-authority.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { normalizeCoinbaseExecutablePlan } from './coinbase-executable-plan-policy.js';
 import { floorToIncrement, isIncrementAligned } from './coinbase-product-policy.js';
@@ -55,6 +58,24 @@ const unsupportedUntil = new Map<string, number>();
 function positive(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function configuredOkxPublicBaseUrl(): string | null {
+  const raw = process.env.OKX_API_BASE_URL?.trim().replace(/\/+$/, '');
+  if (!raw) return null;
+  if (!/^https:\/\/[a-z0-9.-]+$/i.test(raw)) throw new Error('OKX_API_BASE_URL must be an https origin');
+  return raw;
+}
+
+async function resolveOkxProductBaseUrl(allowAuthenticatedRegionSelection: boolean): Promise<string> {
+  const cached = getCachedOkxExecutionRestBaseUrl();
+  if (cached) return cached;
+  const configured = configuredOkxPublicBaseUrl();
+  if (configured) return configured;
+  if (!allowAuthenticatedRegionSelection) {
+    throw new Error('OKX public product directory deferred until the account region is cached or OKX_API_BASE_URL is configured');
+  }
+  return getOkxExecutionRestBaseUrl();
 }
 
 function canonicalAsset(value: unknown): string | null {
@@ -233,11 +254,14 @@ async function fetchKrakenSnapshot(forceRefresh = false): Promise<ConstraintSnap
   return krakenInFlight;
 }
 
-async function fetchOkxSnapshot(forceRefresh = false): Promise<ConstraintSnapshot> {
+async function fetchOkxSnapshot(
+  forceRefresh = false,
+  allowAuthenticatedRegionSelection = false,
+): Promise<ConstraintSnapshot> {
   if (!forceRefresh && okxSnapshot && okxSnapshot.expiresAt > Date.now()) return okxSnapshot;
   if (okxInFlight) return okxInFlight;
   okxInFlight = (async () => {
-    const baseUrl = await getOkxExecutionRestBaseUrl();
+    const baseUrl = await resolveOkxProductBaseUrl(allowAuthenticatedRegionSelection);
     const payload = await fetchJsonWithRetry<any>(`${baseUrl}/api/v5/public/instruments?instType=SPOT`, {
       init: { headers: { accept: 'application/json', 'cache-control': forceRefresh ? 'no-cache' : 'max-age=0' } },
       maxRetries: 1,
@@ -262,6 +286,8 @@ async function fetchOkxSnapshot(forceRefresh = false): Promise<ConstraintSnapsho
       baseUrl,
       products: values.size,
       forcedRefresh: forceRefresh,
+      authenticatedRegionSelectionAllowed: allowAuthenticatedRegionSelection,
+      privateFeeRequestIssuedByPublicDirectory: false,
       canonicalizationAuthority: 'live_baseCcy_quoteCcy_fields',
       quoteCurrencyAllowlistUsed: false,
       perOrderMaximumsCaptured: true,
@@ -277,7 +303,7 @@ export async function getLiveSpotProductDirectory(
 ): Promise<LiveSpotProductDirectory> {
   const snapshot = venue === 'kraken'
     ? await fetchKrakenSnapshot(forceFresh)
-    : await fetchOkxSnapshot(forceFresh);
+    : await fetchOkxSnapshot(forceFresh, false);
   return {
     venue,
     observedAt: snapshot.observedAt,
@@ -320,7 +346,7 @@ async function fetchTargetedFreshConstraint(venue: ConstrainedSpotVenue, current
       return matches[0];
     }
 
-    const baseUrl = await getOkxExecutionRestBaseUrl();
+    const baseUrl = await resolveOkxProductBaseUrl(true);
     const url = `${baseUrl}/api/v5/public/instruments?instType=SPOT&instId=${encodeURIComponent(current.exchangeSymbol)}`;
     const payload = await fetchJsonWithRetry<any>(url, {
       init: { headers: { accept: 'application/json', 'cache-control': 'no-cache' } },
@@ -357,14 +383,18 @@ export async function getSpotProductConstraints(
     throw new Error(`${venue} SPOT product ${symbol} was absent from a recently authoritative live catalog`);
   }
 
-  let snapshot = venue === 'kraken' ? await fetchKrakenSnapshot() : await fetchOkxSnapshot();
+  let snapshot = venue === 'kraken'
+    ? await fetchKrakenSnapshot()
+    : await fetchOkxSnapshot(false, true);
   let constraint = snapshot.values.get(symbol);
   if (!constraint) {
     // A just-fetched full catalog is already authoritative. Do not force another
     // full catalog request for every missing symbol in the same scan cycle. Only
     // recheck once the shared catalog has aged enough to plausibly be stale.
     if (Date.now() - snapshot.observedAt >= MISSING_CATALOG_RECHECK_MS) {
-      snapshot = venue === 'kraken' ? await fetchKrakenSnapshot(true) : await fetchOkxSnapshot(true);
+      snapshot = venue === 'kraken'
+        ? await fetchKrakenSnapshot(true)
+        : await fetchOkxSnapshot(true, true);
       constraint = snapshot.values.get(symbol);
     }
     if (!constraint) {
@@ -406,7 +436,7 @@ function commonIncrement(increments: number[]): number | null {
   const scale = 10 ** scalePlaces;
   if (!Number.isSafeInteger(scale)) return null;
   const units = increments.map(value => BigInt(Math.round(value * scale)));
-  if (units.some(value => value <= 0n)) return null;
+  if (units.some(value => value <= 0n) return null;
   const commonUnits = units.reduce((current, value) => lcm(current, value));
   const numeric = Number(commonUnits) / scale;
   return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
