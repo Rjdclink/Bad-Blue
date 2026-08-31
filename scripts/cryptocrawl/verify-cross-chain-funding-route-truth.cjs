@@ -24,6 +24,8 @@ const acrossExecutor = read('server/services/cryptocrawl/execution/across-bridge
 const funding = read('server/services/cryptocrawl/discovery/funding-rate-monitor.ts');
 const fundingPolicy = read('server/services/cryptocrawl/discovery/funding-arbitrage-policy.ts');
 const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const retainedProfit = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
+const inventoryReadiness = read('server/services/cryptocrawl/integration/cex-inventory-readiness-wiring.ts');
 
 // The discovery layer may not keep reporting runtime machinery as absent when a
 // fail-closed Across executor already refreshes, signs, submits, monitors and
@@ -61,10 +63,24 @@ requirePattern(funding, /executableCapability:\s*false/, 'funding observations r
 requirePattern(fundingPolicy, /input\.fundingRateLocked\s*&&\s*supportedDirection/, 'deterministic funding P&L requires locked rate and supported direction');
 requirePattern(fundingPolicy, /unknown|projected funding|projected profit/i, 'funding policy documents projected-versus-deterministic separation');
 
-// Profit may remain in-system for redeployment. The retired daily realized-profit
-// cap cannot reappear in runtime telemetry as if it still governed new exposure.
+// Profit may remain in-system for compounding/redeployment. Automatic per-profit
+// wallet withdrawals are opt-in only; a configured wallet address by itself must
+// never reserve or drain newly realized strategy capital.
+requirePattern(retainedProfit, /CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED/, 'automatic per-profit payout requires an explicit operator opt-in');
+requirePattern(retainedProfit, /if\s*\(!automaticProfitPayoutEnabled\(\)\)/, 'default settlement path is full retention');
+requirePattern(retainedProfit, /payoutTargetUsd:\s*0/, 'default retained settlement creates zero payout target');
+requirePattern(retainedProfit, /retainedFraction:\s*1/, 'default retained settlement preserves one hundred percent of realized profit');
+requirePattern(retainedProfit, /payoutReservationCreated:\s*false/, 'default retained settlement does not reserve payout inventory');
+requirePattern(retainedProfit, /profitAvailableForRedeployment:\s*true/, 'default retained profit stays available for strategy reuse');
+requirePattern(inventoryReadiness, /automaticProfitPayoutRequiresExplicitOptIn:\s*true/, 'inventory telemetry reflects explicit-opt-in payout authority');
+requirePattern(inventoryReadiness, /unreservedRetainedProfitAvailableToStrategies:\s*true/, 'inventory telemetry reflects retained-capital spendability');
+forbidPattern(inventoryReadiness, /retainedFortyPercentAvailableToStrategies/, 'stale forty-percent retention telemetry');
+
+// The separate daily realized-profit execution cap is retired. Realized profit
+// remains performance telemetry while Profit Ladder/Stage/inventory/liquidity/risk
+// govern future exposure.
 requirePattern(canonicalRuntime, /adaptiveProfitCapScope:\s*'retired_no_daily_realized_profit_execution_cap'/, 'runtime telemetry reports daily profit-cap retirement');
 requirePattern(canonicalRuntime, /retainedProfitRole:\s*'available_for_redeployment_subject_to_profit_ladder_stage_inventory_liquidity_and_risk'/, 'runtime telemetry reports retained-profit redeployment correctly');
 forbidPattern(canonicalRuntime, /persisted_operating_day_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget|new_exposure_only_settlement_hedge_flattening_exempt/, 'stale daily profit-cap authority telemetry');
 
-console.log('[route-truth] Across transport-vs-profit, funding carry lifecycle, and retired profit-cap telemetry invariants passed');
+console.log('[route-truth] Across transport-vs-profit, funding carry lifecycle, compounding-first treasury, and retired profit-cap invariants passed');
