@@ -33,6 +33,7 @@ const evmSigner = read('server/services/cryptocrawl/execution/evm-signer-lane.ts
 const distributedQuota = read('server/services/cryptocrawl/execution/distributed-api-quota.ts');
 const resources = read('server/services/cryptocrawl/execution/resource-scheduler.ts');
 const zeroResources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
+const leaseAuthority = read('server/services/cryptocrawl/execution/resource-lease-authority.ts');
 const hotPathMigration = read('server/migrations/023_cryptocrawler_hot_path_schema_authority.sql');
 const makerDiscovery = read('server/services/cryptocrawl/discovery/maker-opportunity-generator.ts');
 const makerAdmission = read('server/services/cryptocrawl/runtime/no-bps-maker-admission-wiring.ts');
@@ -69,10 +70,19 @@ requirePattern(resources, /effectiveGlobalCapacityMultiplier/, 'execution capaci
 requirePattern(resources, /plan\.netProfitUsd\)\s*\|\|\s*plan\.netProfitUsd\s*<=\s*0/, 'resource admission still requires positive verified net profit');
 requirePattern(resources, /settlementOrFlatteningBlocked:\s*false/, 'pressure admission does not block settlement/flattening');
 requirePattern(resources, /`cex:venue:\$\{plan\.buyVenue\}`/, 'all CEX venues including Coinbase receive distributed execution venue ownership');
-requirePattern(zeroResources, /const\s+TABLE\s*=\s*'cryptocrawler_resource_leases'/, 'atomic resource scheduler reuses canonical lease table');
-requirePattern(zeroResources, /to_regclass\('public\.\$\{TABLE\}'\)/, 'atomic scheduler verifies migration-owned table');
+requirePattern(resources, /ensureResourceLeaseAuthority\('high'\)/, 'CEX resource admission consumes shared lease authority');
+requirePattern(resources, /claimResourceSlot\(client,\s*\{/, 'CEX resource slot claims use the shared server-side claimant');
+requirePattern(zeroResources, /RESOURCE_LEASE_TABLE\s+as\s+TABLE/, 'atomic resource scheduler imports the canonical shared lease table name');
+requirePattern(zeroResources, /ensureResourceLeaseAuthority\('high'\)/, 'atomic resource scheduler consumes shared lease readiness');
+requirePattern(zeroResources, /claimResourceSlot\(client,\s*\{/, 'atomic resource scheduler uses the shared server-side slot claimant');
 requirePattern(zeroResources, /acquireMeasuredAtomic\s*\(/, 'measured DEX atomic uses shared atomic resource leasing');
+forbidPattern(zeroResources, /tableProbeInFlight|tableReadyUntil|tableRetryAfter|to_regclass\(/, 'atomic scheduler reintroduces a duplicate lease readiness cache/probe');
 forbidPattern(zeroResources, /CREATE\s+(TABLE|SCHEMA|INDEX)/i, 'atomic resource scheduler performs runtime DDL');
+requirePattern(leaseAuthority, /export\s+const\s+RESOURCE_LEASE_TABLE\s*=\s*'cryptocrawler_resource_leases'/, 'shared lease authority owns the canonical lease table name');
+requirePattern(leaseAuthority, /authorityProbeInFlight:\s*Promise<boolean>\s*\|\s*null/, 'shared lease authority keeps one single-flight readiness probe');
+requirePattern(leaseAuthority, /to_regclass\('public\.\$\{RESOURCE_LEASE_TABLE\}'\)/, 'shared lease authority verifies the migration-owned table once');
+requirePattern(leaseAuthority, /to_regprocedure\('private\.cryptocrawler_claim_resource_slot/, 'shared lease authority verifies the migration-owned slot function once');
+requirePattern(leaseAuthority, /export\s+async\s+function\s+claimResourceSlot\s*\(/, 'shared lease authority owns the one-call slot claimant');
 
 // Solution 3 — Kraken ordering, OKX User-ID quota, Coinbase private resilience.
 requirePattern(privateAuthority, /coordinationPool\.query\([\s\S]{0,220}cryptocrawler_kraken_nonce_state/, 'Kraken nonce state is verified through coordination lane');
@@ -86,8 +96,10 @@ forbidPattern(privateAuthority, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS/i, 'Kraken r
 requirePattern(privateAuthority, /CRYPTO_OKX_FEE_BUCKET_CAPACITY',\s*5,\s*1,\s*5/, 'OKX fee lane cannot exceed five requests per documented window');
 requirePattern(privateAuthority, /CRYPTO_OKX_FEE_BUCKET_WINDOW_MS',\s*2_000,\s*2_000,/, 'OKX fee window cannot be shortened below two seconds');
 requirePattern(privateAuthority, /acquireDistributedApiQuota\s*\(/, 'OKX fee lane participates in cluster-wide quota admission');
-requirePattern(distributedQuota, /const\s+TABLE\s*=\s*'cryptocrawler_resource_leases'/, 'distributed API quota reuses canonical lease storage');
-requirePattern(distributedQuota, /cryptocrawler_claim_resource_slot/, 'distributed API quota delegates slot scanning to migration-owned authority');
+requirePattern(distributedQuota, /RESOURCE_LEASE_TABLE\s+as\s+TABLE/, 'distributed API quota imports canonical shared lease storage');
+requirePattern(distributedQuota, /ensureResourceLeaseAuthority\('high'\)/, 'distributed API quota consumes shared lease readiness');
+requirePattern(distributedQuota, /claimResourceSlot\(client,\s*\{/, 'distributed API quota delegates slot scanning to shared migration-backed authority');
+forbidPattern(distributedQuota, /tableProbeInFlight|tableReadyUntil|tableRetryAfter|to_regclass\(/, 'distributed quota reintroduces a duplicate lease readiness cache/probe');
 requirePattern(hotPathMigration, /WHERE\s+leases\.expires_at\s*<=\s*now\(\)/, 'expired quota/resource slots remain atomically reclaimable in the migration-owned claimant');
 forbidPattern(distributedQuota, /CREATE\s+(TABLE|SCHEMA)/i, 'distributed quota creates runtime schema');
 requirePattern(evmSigner, /coordinationPool\.connect\(\)/, 'EVM signer uses coordination pool');
@@ -192,9 +204,9 @@ requirePattern(canonicalScheduler, /measuredTopologyExecutionAdapter\.dispatch/,
 forbidFile('server/services/cryptocrawl/execution/measured-topology-execution-scheduler.ts', 'duplicate topology scheduler exists');
 
 // Analysis/reference frameworks must never become runtime architecture.
-for (const [name, source] of Object.entries({ db, privateAuthority, coinbasePrivate, feeResolver, productPolicy, arbitrageVerifier, evmSigner, distributedQuota, resources, zeroResources, makerDiscovery, makerAdmission, marginal, hyperdynamic, mesh, universe, marketFocus, reactor, dexDiscovery, dexExecutor, dexAdapter, discoveryController, canonicalScheduler, adaptiveProfit, residualReplan })) {
+for (const [name, source] of Object.entries({ db, privateAuthority, coinbasePrivate, feeResolver, productPolicy, arbitrageVerifier, evmSigner, distributedQuota, resources, zeroResources, leaseAuthority, makerDiscovery, makerAdmission, marginal, hyperdynamic, mesh, universe, marketFocus, reactor, dexDiscovery, dexExecutor, dexAdapter, discoveryController, canonicalScheduler, adaptiveProfit, residualReplan })) {
   forbidPattern(source, /\bhyperscope\b/i, `${name} embeds Hyperscope reference vocabulary into runtime code`);
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds the enhancements list into runtime code`);
 }
 
-console.log('[resource-bps] ten-solution resource/BPS contract, Coinbase/Kraken/OKX authenticated fee authority, transient product/fee fan-out suppression, bounded barrier measurement, bounded Kraken/EVM signer lock contention, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
+console.log('[resource-bps] ten-solution resource/BPS contract, shared single-flight lease authority, Coinbase/Kraken/OKX authenticated fee authority, transient product/fee fan-out suppression, bounded barrier measurement, bounded Kraken/EVM signer lock contention, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
