@@ -80,8 +80,8 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
       || right.netAfterExchangeFeesBps - left.netAfterExchangeFeesBps
       || left.makerLegCount - right.makerLegCount;
   }
-  return left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven
-    || left.bpsToBreakEven - right.bpsToBreakEven
+  return left.bpsToBreakEven - right.bpsToBreakEven
+    || left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven
     || right.makerFeeSavingsVsTakerBps - left.makerFeeSavingsVsTakerBps
     || right.feeFreshnessScore - left.feeFreshnessScore
     || right.recoveryEfficiency - left.recoveryEfficiency
@@ -90,10 +90,18 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
 }
 
 /**
- * Measures TT/MT/TM/MM across every currently executable venue on one fresh
- * evidence surface. Maker modes publish their exact authenticated fee savings
- * relative to the same venue-pair TT baseline so the existing BPS optimizer can
- * prioritize real fee compression instead of inferring a missing field.
+ * Measures all TT/MT/TM/MM price-and-fee topologies across every currently
+ * executable CEX venue on the same fresh evidence surface. Coinbase, Kraken and
+ * OKX are peers here; venue-specific API details live below this layer.
+ *
+ * Negative modes inside a bounded observation envelope are retained so the BPS
+ * optimizer can learn the exact recovery gap instead of seeing only winners.
+ * Maker modes additionally expose queue-risk, authenticated fee-evidence freshness,
+ * and exact authenticated fee savings relative to the same venue-pair TT baseline.
+ * These are advisory and never change measured fees or grant execution authority.
+ * Positive observations are scheduling triggers only; canonical execution still
+ * requires depth-aware all-in revalidation, inventory, governance, product
+ * constraints, and terminal settlement.
  */
 export async function evaluateCexFourModeMatrix(input: {
   symbol: string;
