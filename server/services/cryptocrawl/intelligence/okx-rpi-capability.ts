@@ -235,11 +235,15 @@ export async function getOkxRpiExecutionCapability(
 }
 
 function organicLevelsBetween(
-  levels: readonly OkxRpiBookLevel[],
+  capability: OkxRpiExecutionCapability,
   lowerExclusive: number,
   upperExclusive: number,
 ): number {
-  return levels.filter(level => level.organicQty > 0 && level.price > lowerExclusive && level.price < upperExclusive).length;
+  const prices = new Set<number>();
+  for (const level of [...capability.rpiBookBids, ...capability.rpiBookAsks]) {
+    if (level.organicQty > 0 && level.price > lowerExclusive && level.price < upperExclusive) prices.add(level.price);
+  }
+  return prices.size;
 }
 
 /**
@@ -280,10 +284,10 @@ export function isOkxRpiMakerPriceAdmissible(input: {
     } else if (requiredOrganicLevels <= capability.rpiBookDepthPerSide) {
       if (side === 'buy' && capability.visibleRpiAsk !== null) {
         levelPass = price < capability.visibleRpiAsk
-          && organicLevelsBetween(capability.rpiBookAsks, price, capability.visibleRpiAsk) >= requiredOrganicLevels;
+          && organicLevelsBetween(capability, price, capability.visibleRpiAsk) >= requiredOrganicLevels;
       } else if (side === 'sell' && capability.visibleRpiBid !== null) {
         levelPass = price > capability.visibleRpiBid
-          && organicLevelsBetween(capability.rpiBookBids, capability.visibleRpiBid, price) >= requiredOrganicLevels;
+          && organicLevelsBetween(capability, capability.visibleRpiBid, price) >= requiredOrganicLevels;
       } else {
         // With no visible opposite-side RPI, OKX explicitly says the price-level
         // spacing check passes; the non-crossing check above uses organic BBO.
