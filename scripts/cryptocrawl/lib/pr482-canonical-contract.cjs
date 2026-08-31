@@ -99,7 +99,8 @@ function verifyCexExecutionContract() {
   requirePattern(timingGuard, /supportedModes:\s*\['TT',\s*'MT',\s*'TM',\s*'MM'\]/, 'cross-venue freshness timing covers all four CEX execution modes');
   requirePattern(timingGuard, /makerExecution/, 'MM timing guard recognizes canonical maker execution metadata');
   requirePattern(canonicalRuntime, /coinbaseMakerExecutionAuthority:\s*true/, 'runtime telemetry reflects actual Coinbase post-only maker authority');
-  forbidPattern(canonicalRuntime, /kraken_okx_post_only/, 'runtime telemetry narrowing maker execution to Kraken/OKX');
+  requirePattern(canonicalRuntime, /cexMakerExecution:\s*'coinbase_kraken_okx_post_only/, 'runtime telemetry reports the full Coinbase/Kraken/OKX post-only maker surface');
+  forbidPattern(canonicalRuntime, /cexMakerExecution:\s*'kraken_okx_post_only/, 'runtime telemetry narrowing maker execution to Kraken/OKX');
 
   // High-probability measured recovery may recheck at ~1.75s, while broad scans
   // remain adaptive and fee/product private traffic stays under shared caches.
