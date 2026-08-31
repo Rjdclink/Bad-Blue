@@ -54,7 +54,7 @@ async function getDatabasePool() {
   return pool;
 }
 
-async function highPriorityQuery(text: string, values?: any[]) {
+async function highPriorityQuery(text: string, values: any[] = []) {
   const pool = await getDatabasePool();
   return withCryptaraSupabasePriority('high', () => pool.query(text, values));
 }
