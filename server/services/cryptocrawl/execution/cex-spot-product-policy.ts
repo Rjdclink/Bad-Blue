@@ -436,7 +436,7 @@ function commonIncrement(increments: number[]): number | null {
   const scale = 10 ** scalePlaces;
   if (!Number.isSafeInteger(scale)) return null;
   const units = increments.map(value => BigInt(Math.round(value * scale)));
-  if (units.some(value => value <= 0n) return null;
+  if (units.some(value => value <= 0n)) return null;
   const commonUnits = units.reduce((current, value) => lcm(current, value));
   const numeric = Number(commonUnits) / scale;
   return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
