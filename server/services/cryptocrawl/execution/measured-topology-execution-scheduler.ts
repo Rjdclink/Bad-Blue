@@ -83,7 +83,8 @@ class MeasuredTopologyExecutionScheduler {
     if (result.success && result.settlementConfirmed && result.transactionHash && result.realizedProfitUsd !== undefined && result.realizedProfitUsd > 0) {
       const settledAt = Date.now();
       const expectedProfitUsd = Number(candidate.economics.deterministicNetProfitUsd || 0);
-      const realizedFeeUsd = Math.max(0, Number(candidate.economics.feeUsd || 0) + Number(result.gasUsd ?? candidate.economics.gasUsd || 0));
+      const realizedGasUsd = Number(result.gasUsd ?? candidate.economics.gasUsd ?? 0);
+      const realizedFeeUsd = Math.max(0, Number(candidate.economics.feeUsd || 0) + realizedGasUsd);
       await recordCryptaraExecutionEvidence({
         source: 'flash_loan',
         opportunityId: candidate.opportunityId,
