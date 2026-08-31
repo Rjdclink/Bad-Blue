@@ -20,6 +20,17 @@ import { validateCoinbasePostOnlyOrderAgainstProduct } from './coinbase-product-
 import { getMakerLifecycleTraceId } from './maker-lifecycle-trace.js';
 import type { MakerRecoveryPlan } from './stablecoin-maker-strategy.js';
 
+const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
+
+function assertUsdNormalizedMakerEconomics(
+  venue: ExecutableCexVenue,
+  symbol: string,
+  quoteAsset: string,
+): void {
+  if (USD_NORMALIZED_QUOTES.has(quoteAsset.trim().toUpperCase())) return;
+  throw new Error(`MAKER_USD_NORMALIZATION_UNAVAILABLE: ${venue} ${symbol} quote=${quoteAsset}`);
+}
+
 function okxGatewayLatencyMs(payload: any): number | null {
   const inTime = Number(payload?.inTime);
   const outTime = Number(payload?.outTime);
@@ -56,7 +67,8 @@ function wrapMakerSubmit(
     async submit(request: OrderRequest): Promise<CexOrderReceipt> {
       const submittedAt = Date.now();
       if (venue === 'kraken') {
-        const constraints = await getSpotProductConstraints('kraken', request.symbol);
+        const constraints = await getSpotProductConstraints('kraken', request.symbol, true);
+        assertUsdNormalizedMakerEconomics(venue, request.symbol, constraints.quoteAsset);
         const result = await krakenPrivateRequest('/0/private/AddOrder', {
           pair: constraints.exchangeSymbol,
           type: request.side,
@@ -73,7 +85,8 @@ function wrapMakerSubmit(
       }
 
       if (venue === 'okx') {
-        const constraints = await getSpotProductConstraints('okx', request.symbol);
+        const constraints = await getSpotProductConstraints('okx', request.symbol, true);
+        assertUsdNormalizedMakerEconomics(venue, request.symbol, constraints.quoteAsset);
         const { payload, data } = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
           instId: constraints.exchangeSymbol,
           tdMode: 'cash',
@@ -98,6 +111,7 @@ function wrapMakerSubmit(
 
       await assertCoinbaseSpotTradeReady();
       const constraints = await getCoinbaseAdvancedProductConstraints(request.symbol, true);
+      assertUsdNormalizedMakerEconomics(venue, request.symbol, constraints.quoteAsset);
       const check = validateCoinbasePostOnlyOrderAgainstProduct(
         { quantity: request.quantity, price: request.price },
         constraints,
@@ -145,7 +159,9 @@ function wrapMakerSubmit(
 /**
  * Shared post-only adapter for every canonical executable CEX venue. Asset-class
  * admission and economics happen upstream; this layer only translates the same
- * maker intent into each venue's exact authenticated order contract.
+ * maker intent into each venue's exact authenticated order contract. Until an
+ * authoritative quote-to-USD conversion is bound to a plan, non-USD-normalized
+ * quote products fail closed before submission rather than fabricating USD P&L.
  */
 export function createPostOnlyMakerAdapters(plan: MakerRecoveryPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();
