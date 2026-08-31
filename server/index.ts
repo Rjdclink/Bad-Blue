@@ -168,7 +168,8 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 function databaseRetryDelayMs(attempt: number, baseMs: number = 2_000, maxMs: number = 12_000): number {
-  const capMs = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, attempt - 1)));
+  const exponent = Math.min(8, Math.max(0, attempt - 1));
+  const capMs = Math.min(maxMs, baseMs * Math.pow(2, exponent));
   const floorMs = Math.min(500, Math.max(100, Math.floor(capMs / 4)));
   return floorMs + Math.floor(Math.random() * Math.max(1, capMs - floorMs + 1));
 }
@@ -190,6 +191,7 @@ function databaseErrorText(error: unknown): string {
 
 function isDatabaseAdmissionPressureError(error: unknown): boolean {
   const message = databaseErrorText(error);
+  const timeoutContext = message.includes('timeout') || message.includes('timed out') || message.includes('connection terminated');
   return (
     message.includes('53300') || // PostgreSQL too_many_connections
     message.includes('57p03') || // cannot_connect_now / transient admission failure
@@ -202,28 +204,84 @@ function isDatabaseAdmissionPressureError(error: unknown): boolean {
     message.includes('remaining connection slots') ||
     message.includes('max_client_conn') ||
     message.includes('database is overloaded') ||
-    message.includes('timeout expired')
+    message.includes('timeout expired') ||
+    (message.includes('08006') && timeoutContext)
   );
 }
 
-async function retryDatabaseProbe(maxAttempts: number = 3): Promise<void> {
+function isPermanentDatabaseStartupError(error: unknown): boolean {
+  const message = databaseErrorText(error);
+  return (
+    message.includes('28p01') || // invalid_password
+    message.includes('28000') || // invalid_authorization_specification
+    message.includes('3d000') || // invalid_catalog_name
+    message.includes('password authentication failed') ||
+    message.includes('database does not exist') ||
+    message.includes('invalid connection string')
+  );
+}
+
+function isLocalPoolFailure(error: unknown): boolean {
+  const message = databaseErrorText(error);
+  return (
+    message.includes('cannot use a pool after calling end') ||
+    message.includes('pool is closed') ||
+    message.includes('client was closed and is not queryable')
+  );
+}
+
+function startupDatabaseAdmissionBudgetMs(): number {
+  const railwayHealthcheckSeconds = Number(process.env.RAILWAY_HEALTHCHECK_TIMEOUT_SEC || 300);
+  const healthcheckMs = Number.isFinite(railwayHealthcheckSeconds) && railwayHealthcheckSeconds > 0
+    ? railwayHealthcheckSeconds * 1_000
+    : 300_000;
+  const reserveMs = Math.min(60_000, Math.max(30_000, Math.floor(healthcheckMs * 0.20)));
+  const defaultBudgetMs = Math.max(30_000, healthcheckMs - reserveMs);
+  const configuredBudgetMs = Number(process.env.BADBLUE_DATABASE_ADMISSION_BUDGET_MS || defaultBudgetMs);
+  const safeUpperBoundMs = Math.max(30_000, healthcheckMs - 15_000);
+  return Math.max(30_000, Math.min(safeUpperBoundMs, Number.isFinite(configuredBudgetMs) ? configuredBudgetMs : defaultBudgetMs));
+}
+
+async function retryDatabaseProbeWithinBudget(): Promise<void> {
+  const budgetMs = startupDatabaseAdmissionBudgetMs();
+  const startedAt = Date.now();
+  let attempt = 0;
   let lastError: unknown = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+
+  while (Date.now() - startedAt < budgetMs) {
+    attempt += 1;
     try {
       const { db } = await import('./db');
       await db.execute('SELECT 1');
+      if (attempt > 1) {
+        console.log(`[RETRY] Database admission recovered on attempt ${attempt} after ${Date.now() - startedAt}ms`);
+      }
       return;
     } catch (error: any) {
       lastError = error;
-      console.warn(`[RETRY] Database probe ${attempt}/${maxAttempts} failed:`, error?.message ?? error);
-      if (attempt < maxAttempts) {
-        const waitTime = databaseRetryDelayMs(attempt);
-        console.log(`[RETRY] Database admission backoff ${waitTime}ms before retry...`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
+      const elapsedMs = Date.now() - startedAt;
+      const admissionPressure = isDatabaseAdmissionPressureError(error);
+      console.warn(`[RETRY] Database probe ${attempt} failed after ${elapsedMs}ms:`, error?.message ?? error);
+
+      if (isPermanentDatabaseStartupError(error) || isLocalPoolFailure(error)) {
+        throw error;
       }
+
+      const remainingMs = Math.max(0, budgetMs - elapsedMs);
+      if (remainingMs <= 0) break;
+
+      // One admission attempt at a time with full jitter. Under measured upstream
+      // pressure this intentionally avoids parallel probes, pool recreation and a
+      // synchronized retry cadence across Railway replicas.
+      const waitTime = Math.min(databaseRetryDelayMs(attempt), remainingMs);
+      console.log(`[RETRY] Database admission ${admissionPressure ? 'pressure' : 'transient failure'}; jittering ${waitTime}ms (${remainingMs}ms budget remaining)`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'database probe failed'));
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`database admission budget exhausted after ${budgetMs}ms`);
 }
 
 async function initializeDatabase(): Promise<boolean> {
@@ -232,20 +290,20 @@ async function initializeDatabase(): Promise<boolean> {
   
   let lastError: unknown = null;
   try {
-    await retryDatabaseProbe(3);
+    await retryDatabaseProbeWithinBudget();
     console.log('[STARTUP] ✓ Database connection verified');
     startupTrace('database_initialization_completed', { connected: true, recovered: false });
     return true;
   } catch (error: any) {
     lastError = error;
-    console.error('[STARTUP] ❌ Database connection failed after retries:', error?.message ?? error);
+    console.error('[STARTUP] ❌ Database admission window ended:', error?.message ?? error);
   }
 
   // Pool recreation is useful for a locally closed/corrupt pool, but it is an
   // anti-pattern when the upstream database/pooler is overloaded. In that case
   // recreating both pools immediately adds fresh connection demand and can turn
   // a recoverable admission event into a retry storm.
-  if (!isDatabaseAdmissionPressureError(lastError)) {
+  if (!isDatabaseAdmissionPressureError(lastError) && !isPermanentDatabaseStartupError(lastError)) {
     console.log('[STARTUP] Local pool failure detected; attempting one bounded pool reset...');
     try {
       const { resetPool } = await import('./db');
@@ -257,14 +315,17 @@ async function initializeDatabase(): Promise<boolean> {
       lastError = resetError;
       console.error('[STARTUP] ❌ Database pool reset failed:', resetError?.message ?? resetError);
     }
-  } else {
+  } else if (isDatabaseAdmissionPressureError(lastError)) {
     console.warn('[STARTUP] Database admission pressure detected; skipping pool reset to avoid connection churn');
+  } else {
+    console.error('[STARTUP] Permanent database configuration/authentication failure; pool reset suppressed');
   }
 
   console.warn('[STARTUP] Database unavailable; deployment remains unready while the previous Railway deployment can continue serving');
   startupTrace('database_initialization_completed', {
     connected: false,
     admissionPressure: isDatabaseAdmissionPressureError(lastError),
+    permanentFailure: isPermanentDatabaseStartupError(lastError),
     error: lastError instanceof Error ? lastError.message : String(lastError),
   });
   return false;
