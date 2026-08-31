@@ -77,6 +77,7 @@ function terminalPayload(value: unknown): value is TerminalOutcomeOutboxPayload 
 class CanonicalIntelligenceOutbox {
   private timer: NodeJS.Timeout | null = null;
   private cycleInFlight: Promise<number> | null = null;
+  private kickPending = false;
   private consecutiveCycleFailures = 0;
   private degradedUntil = 0;
   private idleDelayMs = 0;
@@ -114,6 +115,7 @@ class CanonicalIntelligenceOutbox {
     if (this.metrics.running) return;
     this.metrics.running = true;
     this.idleDelayMs = this.activePollMs();
+    this.kickPending = false;
     this.schedule(0);
     logger.info('[IntelligenceOutbox] Restart-safe adaptive background worker started', {
       component: 'CanonicalIntelligenceOutbox',
@@ -131,6 +133,7 @@ class CanonicalIntelligenceOutbox {
 
   stop(): void {
     this.metrics.running = false;
+    this.kickPending = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
   }
@@ -148,11 +151,17 @@ class CanonicalIntelligenceOutbox {
   private kick(): void {
     if (!this.metrics.running) return;
     this.idleDelayMs = this.activePollMs();
+    this.kickPending = true;
     if (this.cycleInFlight) return;
+    this.kickPending = false;
     this.schedule(0);
   }
 
   private async runScheduledCycle(): Promise<void> {
+    // Any wake that scheduled this cycle is now being consumed. If another event
+    // arrives while the drain is active, kick() sets this flag again and the
+    // post-drain check below immediately schedules another pass.
+    this.kickPending = false;
     const now = Date.now();
     if (now < this.degradedUntil) {
       this.schedule(Math.max(1, this.degradedUntil - now));
@@ -161,6 +170,13 @@ class CanonicalIntelligenceOutbox {
 
     const processed = await this.runCycle();
     if (!this.metrics.running) return;
+
+    if (this.kickPending) {
+      this.kickPending = false;
+      this.idleDelayMs = this.activePollMs();
+      this.schedule(0);
+      return;
+    }
 
     if (this.degradedUntil > Date.now()) {
       this.schedule(Math.max(1, this.degradedUntil - Date.now()));
