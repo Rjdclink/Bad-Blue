@@ -117,6 +117,12 @@ requirePattern(feeResolver, /!unavailableEntry\('okx'/, 'OKX proven-unavailable 
 requirePattern(productPolicy, /MISSING_CATALOG_RECHECK_MS/, 'missing-product catalog recheck is bounded');
 requirePattern(productPolicy, /Date\.now\(\)\s*-\s*snapshot\.observedAt\s*>=\s*MISSING_CATALOG_RECHECK_MS/, 'fresh authoritative catalog is not immediately refetched per missing symbol');
 requirePattern(productPolicy, /unsupportedUntil/, 'product negative cache remains active');
+requirePattern(productPolicy, /SpotProductUnavailableError/, 'authoritative product absence has a typed signal');
+requirePattern(productPolicy, /fetchOkxSnapshot\(forceFresh,\s*false\)/, 'public OKX product directory cannot trigger authenticated region selection');
+requirePattern(productPolicy, /resolveOkxProductBaseUrl\(allowAuthenticatedRegionSelection/, 'OKX product base-url authority separates public discovery from authenticated validation');
+requirePattern(feeResolver, /error\s+instanceof\s+SpotProductUnavailableError/, 'fee resolver distinguishes authoritative product absence from transient catalog failure');
+requirePattern(feeResolver, /product_catalog_transient_failure/, 'transient product catalog failure uses the short retry gate instead of negative caching');
+requirePattern(feeResolver, /authoritativeAbsenceProven:\s*false/, 'transient catalog telemetry explicitly denies authoritative absence');
 requirePattern(arbitrageVerifier, /ECONOMIC_BARRIER_HYDRATION_BUDGET/, 'near-miss private economics hydration is bounded');
 requirePattern(arbitrageVerifier, /const\s+nearMissSymbols\s*=/, 'best raw near misses are selected for authenticated barrier measurement');
 requirePattern(arbitrageVerifier, /economicBarrierPolicy:\s*'raw_positive_plus_bounded_best_near_misses'/, 'barrier hydration policy is observable');
@@ -188,4 +194,4 @@ for (const [name, source] of Object.entries({ db, privateAuthority, coinbasePriv
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds the enhancements list into runtime code`);
 }
 
-console.log('[resource-bps] ten-solution resource/BPS contract, Coinbase/Kraken/OKX authenticated fee authority, transient fan-out suppression, bounded barrier measurement, bounded Kraken/EVM signer lock contention, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
+console.log('[resource-bps] ten-solution resource/BPS contract, Coinbase/Kraken/OKX authenticated fee authority, transient product/fee fan-out suppression, bounded barrier measurement, bounded Kraken/EVM signer lock contention, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
