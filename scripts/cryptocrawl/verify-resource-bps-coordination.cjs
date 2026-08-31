@@ -59,7 +59,8 @@ requirePattern(db, /mainPoolMax\s*=\s*ordinaryUsesTransactionPool\s*\?\s*request
 requirePattern(db, /CRYPTOCRAWL_COORDINATION_POOL_MAX,\s*1,\s*1,\s*2/, 'coordination pool remains tightly bounded');
 requirePattern(db, /postgresPort\(transactionDatabaseUrl\)\s*!==\s*'6543'/, 'transaction lane rejects non-transaction port');
 requirePattern(db, /postgresPort\(coordinationDatabaseUrl\)\s*===\s*'6543'/, 'session advisory-lock lane rejects transaction port');
-requirePattern(db, /min:\s*ordinaryUsesTransactionPool\s*\?\s*0\s*:\s*1/, 'transaction pool does not pin an idle minimum session');
+requirePattern(db, /min:\s*0/, 'ordinary pool pins no idle backend in transaction or session fallback mode');
+forbidPattern(db, /min:\s*ordinaryUsesTransactionPool\s*\?\s*0\s*:\s*1/, 'session fallback pins an idle backend');
 requirePattern(resources, /getExecutionResourcePressureSnapshot/, 'resource scheduler exposes measured DB pressure');
 requirePattern(resources, /const\s+active\s*=\s*Math\.max\(0,\s*stats\.total\s*-\s*stats\.idle\)/, 'execution resource pressure measures checked-out clients rather than idle pool size');
 forbidPattern(resources, /stats\.total\s*\/\s*stats\.max/, 'execution resource pressure treats idle pooled clients as active pressure');
