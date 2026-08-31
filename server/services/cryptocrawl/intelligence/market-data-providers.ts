@@ -1,11 +1,18 @@
+import logger from '../../../logger.js';
 import { orderMeasuredMarketUniverse, rankMeasuredMarketUniverse } from '../discovery/market-universe-controller.js';
+import { canonicalizeCexSymbol, isUsefulArbitrageSymbol } from '../discovery/symbol-registry.js';
+import { getLiveSpotProductDirectory } from '../execution/cex-spot-product-policy.js';
 import {
   adoptResolvedEnvironmentVariable,
   resolveCoinStatsEnvironment,
 } from '../runtime/environment-contract.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
+import { getCoinbaseAdvancedSpotProductDirectory } from './coinbase-advanced-market-data.js';
+import { getCachedOkxExecutionRestBaseUrl } from './cex-private-authority.js';
 import { zeroXRequestBudget } from './zerox-request-budget.js';
 import { resolveZeroXRequestPolicy, type ZeroXRequestPurpose } from './zerox-request-policy.js';
+
+export type MarketUniverseSource = 'coincap' | 'coingecko' | 'coinstats' | 'cex_product_directory';
 
 export interface MarketUniverseAsset {
   symbol: string;
@@ -16,8 +23,8 @@ export interface MarketUniverseAsset {
   marketCapUsd?: number;
   priceChange24hPct?: number;
   priceHistory?: number[];
-  source: 'coincap' | 'coingecko' | 'coinstats';
-  sources?: Array<'coincap' | 'coingecko' | 'coinstats'>;
+  source: MarketUniverseSource;
+  sources?: MarketUniverseSource[];
   observedAt: number;
 }
 
@@ -79,8 +86,13 @@ const COINGECKO_TTL_MS = Math.max(30_000, Number(process.env.COINGECKO_MARKET_TT
 const COINSTATS_TTL_MS = Math.max(30_000, Number(process.env.COINSTATS_MARKET_TTL_MS || 300_000));
 const ZEROX_TTL_MS = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
 const MAX_UNIVERSE_SIZE = Math.min(50, Math.max(3, Number(process.env.CRYPTO_MARKET_UNIVERSE_SIZE || 12)));
+const CEX_PRODUCT_DISCOVERY_EXPANSION = Math.max(0, Math.min(100, Math.floor(Number(process.env.CRYPTO_CEX_PRODUCT_DISCOVERY_EXPANSION || 24))));
+const CEX_PRODUCT_DISCOVERY_CACHE_MS = Math.max(5_000, Math.min(300_000, Number(process.env.CRYPTO_CEX_PRODUCT_DISCOVERY_CACHE_MS || 60_000)));
 
 interface CacheEntry<T> { value: T; expiresAt: number; }
+
+type ProductDirectoryVenue = 'coinbase' | 'kraken' | 'okx';
+type ProductDirectoryObservation = { venue: ProductDirectoryVenue; observedAt: number; symbols: string[] };
 
 function getCoinStatsApiKey(): { apiKey: string | undefined; sourceName: string | null; state: string } {
   const resolution = resolveCoinStatsEnvironment();
@@ -96,6 +108,7 @@ class MarketDataProviders {
   private coinStatsCache: CacheEntry<MarketUniverseAsset[]> | null = null;
   private quoteCache = new Map<string, CacheEntry<DexQuoteObservation | null>>();
   private inFlight = new Map<string, Promise<unknown>>();
+  private productDiscoveryCursor = 0;
   private providerStatuses: Record<MarketDataProviderName, MarketDataProviderStatus> = {
     coincap: { provider: 'coincap', state: 'not_queried', observedAt: null, detail: 'not queried' },
     coingecko: { provider: 'coingecko', state: 'not_queried', observedAt: null, detail: 'not queried' },
@@ -120,6 +133,92 @@ class MarketDataProviders {
     };
   }
 
+  private async discoverCrossVenueProductCandidates(): Promise<MarketUniverseAsset[]> {
+    if (CEX_PRODUCT_DISCOVERY_EXPANSION <= 0) return [];
+
+    // Coinbase/Kraken catalogs are public. OKX is added only after its canonical
+    // authenticated region authority has already selected the account region;
+    // product discovery itself never spends a private trade-fee request merely to
+    // enumerate products.
+    const tasks: Array<Promise<ProductDirectoryObservation | null>> = [
+      getCoinbaseAdvancedSpotProductDirectory()
+        .then(directory => ({ ...directory } as ProductDirectoryObservation))
+        .catch(error => {
+          logger.debug('[MarketUniverse] Coinbase product-directory expansion unavailable', {
+            component: 'MarketDataProviders',
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }),
+      getLiveSpotProductDirectory('kraken')
+        .then(directory => ({ ...directory } as ProductDirectoryObservation))
+        .catch(error => {
+          logger.debug('[MarketUniverse] Kraken product-directory expansion unavailable', {
+            component: 'MarketDataProviders',
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }),
+    ];
+
+    if (getCachedOkxExecutionRestBaseUrl()) {
+      tasks.push(getLiveSpotProductDirectory('okx')
+        .then(directory => ({ ...directory } as ProductDirectoryObservation))
+        .catch(error => {
+          logger.debug('[MarketUniverse] OKX product-directory expansion unavailable', {
+            component: 'MarketDataProviders',
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }));
+    }
+
+    const directories = (await Promise.all(tasks)).filter((value): value is ProductDirectoryObservation => value !== null);
+    const support = new Map<string, { venues: Set<ProductDirectoryVenue>; observedAt: number }>();
+    for (const directory of directories) {
+      for (const raw of directory.symbols) {
+        const canonical = canonicalizeCexSymbol(raw);
+        if (!canonical || !isUsefulArbitrageSymbol(canonical.symbol)) continue;
+        const current = support.get(canonical.symbol) || { venues: new Set<ProductDirectoryVenue>(), observedAt: 0 };
+        current.venues.add(directory.venue);
+        current.observedAt = Math.max(current.observedAt, directory.observedAt);
+        support.set(canonical.symbol, current);
+      }
+    }
+
+    // Cross-venue spot arbitrage requires at least two independently listed live
+    // venue products. A single-venue listing remains discoverable by that venue's
+    // product authority but cannot consume CEX cross-venue scan capacity here.
+    const eligible = [...support.entries()]
+      .filter(([, value]) => value.venues.size >= 2)
+      .sort((left, right) => right[1].venues.size - left[1].venues.size || left[0].localeCompare(right[0]));
+    if (eligible.length === 0) return [];
+
+    const budget = Math.min(CEX_PRODUCT_DISCOVERY_EXPANSION, eligible.length);
+    const start = this.productDiscoveryCursor % eligible.length;
+    const selected = Array.from({ length: budget }, (_, offset) => eligible[(start + offset) % eligible.length]);
+    this.productDiscoveryCursor = (start + Math.max(1, budget)) % eligible.length;
+
+    logger.info('[MarketUniverse] Live cross-venue product discovery expanded search coverage', {
+      component: 'MarketDataProviders',
+      directories: directories.map(directory => ({ venue: directory.venue, products: directory.symbols.length, observedAt: directory.observedAt })),
+      crossVenueProducts: eligible.length,
+      expansionBudget: budget,
+      selectedProducts: selected.length,
+      okxIncluded: directories.some(directory => directory.venue === 'okx'),
+      privateFeeRequestsIssuedByProductDiscovery: false,
+      minimumVenueSupport: 2,
+      executionAuthorityChanged: false,
+    });
+
+    return selected.map(([symbol, value]) => ({
+      symbol,
+      source: 'cex_product_directory' as const,
+      sources: ['cex_product_directory' as const],
+      observedAt: value.observedAt || Date.now(),
+    }));
+  }
+
   async discoverUniverse(): Promise<MarketUniverseAsset[]> {
     if (this.universeCache && this.universeCache.expiresAt > Date.now()) {
       for (const provider of ['coincap', 'coingecko', 'coinstats'] as const) {
@@ -130,13 +229,15 @@ class MarketDataProviders {
       return orderMeasuredMarketUniverse(this.universeCache.value);
     }
 
-    // CoinCap is intentionally first: when the paid feed is configured its measured
-    // fields become the canonical values, while CoinGecko/CoinStats add independent
-    // provenance and fill symbols CoinCap does not return.
-    const [coinCapAssets, coinGeckoAssets, coinStatsAssets] = await Promise.all([
+    // External market feeds retain the measured market-cap/volume ranking primary
+    // surface. Public exchange directories add a bounded rotating tail of products
+    // that actually exist on >=2 CEX venues, preventing external feeds from hiding
+    // executable cross-venue markets without flooding fee/private APIs.
+    const [coinCapAssets, coinGeckoAssets, coinStatsAssets, productCandidates] = await Promise.all([
       this.fetchCoinCapUniverse(),
       this.fetchCoinGeckoUniverse(),
       this.fetchCoinStatsUniverse(),
+      this.discoverCrossVenueProductCandidates(),
     ]);
     const bySymbol = new Map<string, MarketUniverseAsset>();
     for (const asset of [...coinCapAssets, ...coinGeckoAssets, ...coinStatsAssets]) {
@@ -147,14 +248,15 @@ class MarketDataProviders {
       } : { ...asset, sources: [asset.source] });
     }
 
-    // Cache a deterministic quality-ranked universe. Rotation is applied exactly
-    // once at the consumption boundary below, preventing a refresh from advancing
-    // the scan cursor twice and skipping candidates.
-    const ranked = rankMeasuredMarketUniverse([...bySymbol.values()]).slice(0, MAX_UNIVERSE_SIZE);
-    if (ranked.length > 0) {
-      this.lastUniverse = ranked;
-      this.universeCache = { value: ranked, expiresAt: Date.now() + (coinCapAssets.length > 0 ? COINCAP_TTL_MS : COINGECKO_TTL_MS) };
-      return orderMeasuredMarketUniverse(ranked);
+    const primary = rankMeasuredMarketUniverse([...bySymbol.values()]).slice(0, MAX_UNIVERSE_SIZE);
+    const primarySymbols = new Set(primary.map(asset => asset.symbol));
+    const expansion = productCandidates.filter(asset => !primarySymbols.has(asset.symbol));
+    const combined = [...primary, ...expansion];
+    if (combined.length > 0) {
+      this.lastUniverse = combined;
+      const externalTtl = coinCapAssets.length > 0 ? COINCAP_TTL_MS : COINGECKO_TTL_MS;
+      this.universeCache = { value: combined, expiresAt: Date.now() + Math.min(externalTtl, CEX_PRODUCT_DISCOVERY_CACHE_MS) };
+      return orderMeasuredMarketUniverse(combined);
     }
 
     if (this.lastUniverse.length > 0) {
@@ -165,7 +267,7 @@ class MarketDataProviders {
       if (this.providerStatuses.coinstats.state !== 'unavailable') {
         this.setProviderStatus('coinstats', 'stale', 'live universe refresh failed; serving the last successful universe');
       }
-      this.universeCache = { value: this.lastUniverse, expiresAt: Date.now() + Math.min(COINCAP_TTL_MS, COINGECKO_TTL_MS, 30_000) };
+      this.universeCache = { value: this.lastUniverse, expiresAt: Date.now() + Math.min(COINCAP_TTL_MS, COINGECKO_TTL_MS, CEX_PRODUCT_DISCOVERY_CACHE_MS, 30_000) };
       return orderMeasuredMarketUniverse(this.lastUniverse);
     }
 
