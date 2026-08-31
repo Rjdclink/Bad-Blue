@@ -116,7 +116,7 @@ export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntel
   // more permits than the worker's live pool ceiling.
   const dbRecoveryAcceleration = database.mode === 'recovering'
     && databasePressure < 0.35
-    && database.poolWaiting === 0
+    && database.pool.waiting === 0
     ? Math.max(1, Math.min(1.5, 1 + usefulParallelHeadroom * 0.5))
     : 1;
 
