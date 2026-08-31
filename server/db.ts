@@ -175,7 +175,8 @@ const getPoolConfig = () => {
     idleTimeoutMillis: ordinaryUsesTransactionPool ? 10000 : 30000,
     connectionTimeoutMillis: (isRailway || isProduction) ? 30000 : 10000,
     max: mainPoolMax,
-    min: ordinaryUsesTransactionPool ? 0 : 1,
+    // Never pin an idle backend; session/direct fallback acquires on demand.
+    min: 0,
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000,
     ssl: sslConfig(),
