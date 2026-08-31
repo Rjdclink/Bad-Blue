@@ -86,7 +86,7 @@ requirePattern(makerAdapters, /getOkxRpiExecutionCapability\(request\.symbol,\s*
 requirePattern(makerAdapters, /ordType\s*=\s*'rpi'/, 'qualified OKX maker legs can submit as RPI');
 requirePattern(makerAdapters, /OKX_RPI_REJECT_FEE_WORSENED/, 'submit-time RPI fee worsening fails closed');
 requirePattern(makerAdapters, /OKX_RPI_REJECT_PERMISSION_NOTIONAL_OR_SPACING_CHANGED/, 'submit-time RPI permission/notional/spacing drift fails closed');
-requirePattern(makerAdapters, /There is no silent[\s\S]{0,120}downgrade from RPI to standard maker/, 'RPI plan cannot silently fall back to a worse standard-maker fee');
+requirePattern(makerAdapters, /There is no silent[\s\S]{0,120}downgrade from RPI to standard/, 'RPI plan cannot silently fall back to a worse standard-maker fee');
 
 // MT/TM reuse the maker adapter but do not carry MM makerExecution metadata.
 // Optional access is required so hybrid maker submission remains standard
@@ -96,6 +96,16 @@ requirePattern(makerAdapters, /const\s+execution\s*=\s*plan\.makerExecution/, 's
 requirePattern(makerAdapters, /execution\?\.orderStyle\?\.buy/, 'hybrid-safe buy maker style defaults through optional metadata');
 requirePattern(makerAdapters, /execution\?\.orderStyle\?\.sell/, 'hybrid-safe sell maker style defaults through optional metadata');
 forbidPattern(makerAdapters, /plan\.makerExecution\.orderStyle/, 'shared maker adapter directly dereferencing absent hybrid makerExecution metadata');
+
+// The default settlement adapters must consume the same live-product authority as
+// planning, fee discovery, FOK and maker paths. No local Kraken/OKX instrument-id
+// reconstruction is allowed to survive into MT/TM taker settlement.
+requirePattern(settlement, /getSpotProductConstraints\(\s*'kraken'\s*,\s*request\.symbol\s*,\s*true\s*\)/, 'Kraken default settlement force-refreshes canonical live product identity at submit');
+requirePattern(settlement, /pair:\s*constraints\.exchangeSymbol/, 'Kraken default settlement submits exact live exchange symbol');
+requirePattern(settlement, /getSpotProductConstraints\(\s*'okx'\s*,\s*request\.symbol\s*,\s*true\s*\)/, 'OKX default settlement force-refreshes canonical live product identity at submit');
+requirePattern(settlement, /instId:\s*constraints\.exchangeSymbol/, 'OKX default settlement uses exact regional live exchange symbol');
+requirePattern(settlement, /getSpotProductConstraints\(\s*'okx'\s*,\s*order\.symbol/, 'OKX query/cancel settlement remains bound to canonical product identity');
+forbidPattern(settlement, /instId:\s*`\$\{base\}-\$\{quote\}`/, 'OKX settlement locally reconstructing an instrument id');
 
 // Normalize venue-native terminal fee signs before realized P&L. OKX reports
 // fees as negative and rebates as positive, opposite the canonical economic-cost
@@ -122,4 +132,4 @@ requirePattern(rpiAdvisory, /from '\.\/okx-rpi-capability\.js'/, 'RPI advisory c
 requirePattern(rpiAdvisory, /await import\('\.\.\/integration\/cex-four-mode-observability-wiring\.js'\)/, 'four-mode advisory dependency is lazy and non-authoritative');
 requirePattern(rpiAdvisory, /executionAuthority:\s*false/, 'RPI advisory never grants execution authority');
 
-console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, authenticated OKX RPI maker with correct independent spacing semantics, hybrid-safe maker adapters, canonical terminal fee signs, and safe RPI-taker depth observability invariants passed');
+console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, authenticated OKX RPI maker with correct independent spacing semantics, hybrid-safe maker adapters, canonical settlement product ids/fee signs, and safe RPI-taker depth observability invariants passed');
