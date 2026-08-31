@@ -32,7 +32,7 @@ requirePattern(liquidationExecutor, /provider\.call\(/, 'complete liquidation pa
 requirePattern(liquidationExecutor, /provider\.estimateGas\(/, 'complete liquidation payload is gas-estimated before admission');
 requirePattern(liquidationExecutor, /getLiveSymbolPrices/, 'pretrade gas uses live native USD pricing');
 requirePattern(liquidationExecutor, /deterministicNetProfitUsd\s*<=\s*0/, 'non-positive all-in liquidation economics fail closed');
-requirePattern(liquidationExecutor, /balanceOf\(receiver\)/, 'selected Aave receiver loan-token starting balance is checked');
+requirePattern(liquidationExecutor, /balanceOf\((?:plan\.)?receiver\)/, 'selected Aave receiver loan-token starting balance is checked');
 requirePattern(liquidationExecutor, /AAVE_LIQUIDATION_RECEIVER_DEBT_BALANCE_CHANGED_BEFORE_SUBMISSION/, 'submit-time receiver balance drift fails closed');
 requirePattern(liquidationExecutor, /FlashLoanExecuted/, 'terminal receiver profit event is parsed');
 requirePattern(liquidationExecutor, /synthetic_evidence:false/, 'liquidation provenance explicitly forbids synthetic evidence');
