@@ -58,30 +58,60 @@ function normalizedOptionalDatabaseUrl(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : '';
 }
 
-function postgresPort(url: string): string | null {
+function parsedPostgresUrl(url: string): URL | null {
   try {
-    return new URL(url).port || null;
+    const parsed = new URL(url);
+    return parsed.protocol === 'postgres:' || parsed.protocol === 'postgresql:' ? parsed : null;
   } catch {
     return null;
   }
 }
 
-// Ordinary query traffic may use Supavisor transaction mode (6543) when an
-// explicit transaction-pool URL is configured. Session-scoped advisory-lock
-// traffic must stay on the dedicated coordination URL/session lane.
-const transactionDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.SUPABASE_TRANSACTION_DATABASE_URL);
+function postgresPort(url: string): string | null {
+  return parsedPostgresUrl(url)?.port || null;
+}
+
+function isSupabaseSharedPoolerUrl(url: string): boolean {
+  const parsed = parsedPostgresUrl(url);
+  return Boolean(parsed && /(^|\.)pooler\.supabase\.com$/i.test(parsed.hostname));
+}
+
+function deriveSupabasePoolerModeUrl(url: string, port: '5432' | '6543'): string {
+  const parsed = parsedPostgresUrl(url);
+  if (!parsed || !isSupabaseSharedPoolerUrl(url)) return '';
+  if (parsed.port !== '5432' && parsed.port !== '6543') return '';
+  parsed.port = port;
+  return parsed.toString();
+}
+
+// Supabase's shared pooler uses the same host/tenant credentials for both modes:
+// 5432 = session, 6543 = transaction. Derive the complementary URL when Railway
+// already has one pooler URL so the dual-lane fix is effective without requiring
+// additional secrets. Direct db.<project>.supabase.co connections are never
+// rewritten because their port semantics are different.
+const explicitTransactionDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.SUPABASE_TRANSACTION_DATABASE_URL);
 const explicitCoordinationDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.CRYPTOCRAWL_COORDINATION_DATABASE_URL);
-const coordinationDatabaseUrl = explicitCoordinationDatabaseUrl || databaseUrl;
+const derivedTransactionDatabaseUrl = explicitTransactionDatabaseUrl ? '' : deriveSupabasePoolerModeUrl(databaseUrl, '6543');
+const derivedCoordinationDatabaseUrl = explicitCoordinationDatabaseUrl ? '' : deriveSupabasePoolerModeUrl(databaseUrl, '5432');
+const transactionDatabaseUrl = explicitTransactionDatabaseUrl || derivedTransactionDatabaseUrl;
+const coordinationDatabaseUrl = explicitCoordinationDatabaseUrl || derivedCoordinationDatabaseUrl || databaseUrl;
 const ordinaryDatabaseUrl = transactionDatabaseUrl || databaseUrl;
-const mainPoolMax = boundedPoolInt(process.env.DATABASE_POOL_MAX, 5, 1, 32);
-const coordinationPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_COORDINATION_POOL_MAX, 1, 1, 4);
+const ordinaryUsesTransactionPool = postgresPort(ordinaryDatabaseUrl) === '6543' && isSupabaseSharedPoolerUrl(ordinaryDatabaseUrl);
+// Transaction-mode clients are multiplexed by Supavisor. If no transaction lane
+// is available, use a deliberately smaller session fallback so multiple Railway
+// replicas cannot consume the entire 15-session pool before coordination/admin.
+const mainPoolMax = boundedPoolInt(process.env.DATABASE_POOL_MAX, ordinaryUsesTransactionPool ? 5 : 3, 1, 32);
+const coordinationPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_COORDINATION_POOL_MAX, 1, 1, 2);
 
 if (transactionDatabaseUrl) {
   if (isSupabaseProjectUrl(transactionDatabaseUrl) || !isPostgresConnectionString(transactionDatabaseUrl)) {
-    throw new Error('[DATABASE] SUPABASE_TRANSACTION_DATABASE_URL must be a Postgres connection string');
+    throw new Error('[DATABASE] SUPABASE transaction lane must be a Postgres connection string');
   }
   if (isProduction && !isSupabasePostgresConnectionString(transactionDatabaseUrl)) {
-    throw new Error('[DATABASE] SUPABASE_TRANSACTION_DATABASE_URL must be a Supabase Postgres connection string in production');
+    throw new Error('[DATABASE] Supabase transaction lane must remain Supabase-bound in production');
+  }
+  if (postgresPort(transactionDatabaseUrl) !== '6543') {
+    throw new Error('[DATABASE] Supabase transaction lane must use transaction-pool port 6543');
   }
 }
 
@@ -90,7 +120,7 @@ if (isDatabaseConfigured) {
     throw new Error('[DATABASE] CryptoCrawler coordination URL must be a Postgres connection string');
   }
   if (isProduction && !isSupabasePostgresConnectionString(coordinationDatabaseUrl)) {
-    throw new Error('[DATABASE] CRYPTOCRAWL_COORDINATION_DATABASE_URL must be a Supabase Postgres connection string in production');
+    throw new Error('[DATABASE] CRYPTOCRAWL coordination URL must be a Supabase Postgres connection string in production');
   }
   if (postgresPort(coordinationDatabaseUrl) === '6543') {
     throw new Error('[DATABASE] CryptoCrawler coordination requires a session-capable/direct Postgres URL, not transaction-pool port 6543');
@@ -131,17 +161,16 @@ const sslConfig = () => process.env.PGSSLMODE !== 'disable' ? {
   ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {})
 } : false;
 
-// Ordinary application queries. Default capacity is intentionally below the old
-// value of 8 so two Railway replicas do not consume a 15-session Supavisor pool
-// before coordination and operational headroom are considered.
+// Ordinary application queries. Prefer Supavisor transaction mode so short-lived
+// application/lease queries do not pin database sessions across replicas.
 const getPoolConfig = () => {
   const connectionString = isDatabaseConfigured ? ordinaryDatabaseUrl : 'postgresql://127.0.0.1:1/devlite';
   return {
     connectionString,
-    idleTimeoutMillis: 30000,
+    idleTimeoutMillis: ordinaryUsesTransactionPool ? 10000 : 30000,
     connectionTimeoutMillis: (isRailway || isProduction) ? 30000 : 10000,
     max: mainPoolMax,
-    min: 1,
+    min: ordinaryUsesTransactionPool ? 0 : 1,
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000,
     ssl: sslConfig(),
@@ -247,7 +276,13 @@ function startPoolMonitor(): void {
 // Start pool monitor
 startPoolMonitor();
 
-console.log(`[DATABASE] Connection pools created - ordinary max=${mainPoolMax}, coordination max=${coordinationPoolMax}, ordinaryMode=${transactionDatabaseUrl ? 'transaction_pool' : 'configured_default'}, coordinationMode=session_capable`);
+const ordinaryMode = ordinaryUsesTransactionPool
+  ? explicitTransactionDatabaseUrl ? 'transaction_pool_explicit' : 'transaction_pool_derived'
+  : 'session_or_direct_fallback';
+const coordinationMode = explicitCoordinationDatabaseUrl
+  ? 'session_capable_explicit'
+  : derivedCoordinationDatabaseUrl ? 'session_pool_derived' : 'configured_session_or_direct';
+console.log(`[DATABASE] Connection pools created - ordinary max=${mainPoolMax}, coordination max=${coordinationPoolMax}, ordinaryMode=${ordinaryMode}, coordinationMode=${coordinationMode}`);
 
 export let db = drizzle(pool, { schema });
 
