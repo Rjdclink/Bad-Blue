@@ -94,7 +94,9 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
  * optimizer can learn the exact recovery gap instead of seeing only winners.
  * Maker modes additionally expose queue-risk and authenticated fee-evidence
  * freshness penalties. These are advisory and never change measured fees or
- * grant hybrid execution authority.
+ * grant execution authority. Positive observations are scheduling triggers only;
+ * canonical execution still requires depth-aware all-in revalidation, inventory,
+ * governance, product constraints, and terminal settlement.
  */
 export async function evaluateCexFourModeMatrix(input: {
   symbol: string;
@@ -173,7 +175,6 @@ export async function evaluateCexFourModeMatrix(input: {
         const riskAdjustedBpsToBreakEven = economicallyPositive
           ? queueRiskPenaltyBps + staleEvidencePenaltyBps
           : bpsToBreakEven + queueRiskPenaltyBps + staleEvidencePenaltyBps;
-        const hybrid = candidate.mode === 'MT' || candidate.mode === 'TM';
         output.push({
           symbol,
           buyVenue,
@@ -196,15 +197,14 @@ export async function evaluateCexFourModeMatrix(input: {
           staleEvidencePenaltyBps,
           riskAdjustedBpsToBreakEven,
           economicallyPositive,
-          observationOnly: !economicallyPositive || hybrid,
+          observationOnly: !economicallyPositive,
           expectedFeeAdjustedBps,
           observedAt: Math.min(buyBook.timestamp, sellBook.timestamp),
           authority: 'measured_advisory',
           executionAuthority: false,
-          missingExecutionInformation: [
-            ...(!economicallyPositive ? ['positive_all_in_economics_required'] : []),
-            ...(hybrid ? ['sequential_partial_fill_safe_hybrid_executor', 'fresh_taker_requote_after_maker_fill'] : []),
-          ],
+          missingExecutionInformation: economicallyPositive
+            ? ['canonical_depth_aware_all_in_revalidation_required', 'inventory_governance_product_and_terminal_settlement_admission_required']
+            : ['positive_all_in_economics_required'],
         });
       }
     }
