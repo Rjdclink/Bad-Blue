@@ -13,11 +13,6 @@ healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
-region = "us-east1"
-
-[services.web]
-name = "badblue-web"
-port = 5000
 
 # Environment variables should be configured in Railway dashboard
 # Required environment variables:

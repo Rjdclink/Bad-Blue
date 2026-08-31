@@ -196,6 +196,53 @@ class AdaptiveTopologyOptimizer {
     }
   }
 
+  /**
+   * Before terminal settlement history exists, current measured opportunities may
+   * influence search attention without becoming execution evidence. The modifier
+   * is deliberately narrow: eligibility/positive economics, distance to break-even,
+   * evidence completeness and freshness can move attention, but never authorize a
+   * trade or synthesize a result. Once terminal history exists it remains dominant.
+   */
+  private liveOpportunityWeight(topology: MeasuredOpportunityTopology): number {
+    const now = Date.now();
+    const windowMs = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTOCRAWL_TOPOLOGY_LIVE_WEIGHT_WINDOW_MS || 30_000)));
+    const candidates = measuredCandidateRegistry.getRecent(4096)
+      .filter(candidate => candidate.topology === topology && candidate.observedAt >= now - windowMs && candidate.expiresAt >= now);
+    if (candidates.length === 0) return 1;
+
+    let signal = 0;
+    for (const candidate of candidates) {
+      const netUsd = candidate.economics.deterministicNetProfitUsd;
+      const netBps = candidate.economics.netProfitBps;
+      const gapBps = candidate.economics.bpsToBreakEven;
+      const evidenceComplete = candidate.missingInformation.length === 0 && candidate.depth.status !== 'unavailable';
+      if (candidate.status === 'eligible' && candidate.executableCapability && evidenceComplete) signal += 1.5;
+      else if ((candidate.status === 'deterministic_positive' || (netUsd !== null && Number.isFinite(netUsd) && netUsd > 0))) signal += 0.9;
+      else if (gapBps !== null && gapBps !== undefined && Number.isFinite(gapBps)) {
+        if (gapBps <= 2) signal += 0.65;
+        else if (gapBps <= 5) signal += 0.45;
+        else if (gapBps <= 10) signal += 0.25;
+      } else if (netBps !== null && netBps !== undefined && Number.isFinite(netBps) && netBps > -10) {
+        signal += 0.15;
+      }
+      if (evidenceComplete) signal += 0.10;
+      if (candidate.status === 'blocked' && candidate.missingInformation.length > 0) signal -= 0.10;
+      const ageFraction = clamp((now - candidate.observedAt) / Math.max(1, windowMs), 0, 1);
+      signal *= 1 - ageFraction * 0.05;
+    }
+
+    const normalized = signal / Math.max(1, Math.sqrt(candidates.length));
+    return clamp(1 + Math.tanh(normalized) * 0.35, 0.80, 1.35);
+  }
+
+  private effectivePriorityWeight(state: TopologyPerformanceState): number {
+    const live = this.liveOpportunityWeight(state.topology);
+    if (state.terminalSamples === 0) return live;
+    // Terminal settlement is the primary authority. Live evidence only nudges
+    // current search allocation around the terminally learned baseline.
+    return clamp(state.priorityWeight * (0.85 + 0.15 * live), 0.50, 2.00);
+  }
+
   getDynamicAdmissionPolicy(): DynamicAdmissionPolicy {
     if (this.admissionOutcomes.length === 0) {
       return {
@@ -270,15 +317,20 @@ class AdaptiveTopologyOptimizer {
   }
 
   getPerformanceState(topology: MeasuredOpportunityTopology): TopologyPerformanceState {
-    return { ...this.performance.get(topology)! };
+    const state = this.performance.get(topology)!;
+    return { ...state, priorityWeight: this.effectivePriorityWeight(state) };
   }
 
   getPriority(topology: MeasuredOpportunityTopology): number {
-    return this.performance.get(topology)?.priorityWeight ?? 1;
+    const state = this.performance.get(topology);
+    return state ? this.effectivePriorityWeight(state) : 1;
   }
 
   getSnapshot(): TopologyPerformanceState[] {
-    return TOPOLOGIES.map(topology => ({ ...this.performance.get(topology)! }));
+    return TOPOLOGIES.map(topology => {
+      const state = this.performance.get(topology)!;
+      return { ...state, priorityWeight: this.effectivePriorityWeight(state) };
+    });
   }
 }
 

@@ -1,5 +1,6 @@
 import type { CexModeEconomics } from '../intelligence/cex-four-mode-matrix.js';
-import { buildHyperdynamicBpsPlan } from './hyperdynamic-bps-solution-engine.js';
+import { buildHyperdynamicBpsPlan, type HyperdynamicBpsInput } from './hyperdynamic-bps-solution-engine.js';
+import { buildMarginalBpsAllocation } from './marginal-bps-allocator.js';
 
 export interface AdaptiveProfitabilitySearchPolicy {
   orderedSymbols: string[];
@@ -19,6 +20,8 @@ export interface AdaptiveProfitabilitySearchPolicy {
   makerFocusMultiplier: number;
   sizeRefinementMultiplier: number;
   mcSearchMultiplier: number;
+  topMarginalLever: string | null;
+  estimatedRecoverableBps: number | null;
   authority: 'measured_search_scheduling_only';
   executionAuthority: false;
 }
@@ -49,19 +52,44 @@ function percentile(values: number[], p: number): number | null {
 }
 
 function riskGap(item: CexModeEconomics): number {
-  return finite((item as any).riskAdjustedBpsToBreakEven) ?? item.bpsToBreakEven;
+  return finite(item.riskAdjustedBpsToBreakEven) ?? item.bpsToBreakEven;
 }
 
 function feeFreshness(item: CexModeEconomics): number {
-  return clamp(finite((item as any).feeFreshnessScore) ?? 1, 0, 1);
+  return clamp(finite(item.feeFreshnessScore) ?? 1, 0, 1);
 }
 
-function recoveryScore(item: CexModeEconomics, now: number, makerFocusMultiplier = 1): number {
+function routeKey(item: CexModeEconomics): string {
+  return `${item.symbol}:${item.buyVenue}:${item.sellVenue}`;
+}
+
+function takerFeeByRoute(modes: readonly CexModeEconomics[]): ReadonlyMap<string, number> {
+  const output = new Map<string, number>();
+  for (const item of modes) {
+    if (item.mode !== 'TT' || !Number.isFinite(item.combinedFeeBps)) continue;
+    output.set(routeKey(item), item.combinedFeeBps);
+  }
+  return output;
+}
+
+function measuredMakerSavings(item: CexModeEconomics, takerFees: ReadonlyMap<string, number>): number {
+  if (item.mode === 'TT') return 0;
+  const takerFee = takerFees.get(routeKey(item));
+  if (takerFee === undefined || !Number.isFinite(takerFee) || !Number.isFinite(item.combinedFeeBps)) return 0;
+  return Math.max(0, takerFee - item.combinedFeeBps);
+}
+
+function recoveryScore(
+  item: CexModeEconomics,
+  now: number,
+  takerFees: ReadonlyMap<string, number>,
+  makerFocusMultiplier = 1,
+): number {
   const gap = Math.max(0.01, item.bpsToBreakEven);
   const adjustedGap = Math.max(gap, riskGap(item));
   const efficiency = Math.max(0, finite(item.recoveryEfficiency) ?? 0);
   const freshness = feeFreshness(item);
-  const makerSavings = Math.max(0, finite((item as any).makerFeeSavingsVsTakerBps) ?? 0);
+  const makerSavings = measuredMakerSavings(item, takerFees);
   const grossSpread = Math.max(0, finite(item.grossSpreadBps) ?? 0);
   const combinedFees = Math.max(0.01, finite(item.combinedFeeBps) ?? 0.01);
   const feeCoverage = clamp(grossSpread / combinedFees, 0, 2);
@@ -74,6 +102,7 @@ function recoveryScore(item: CexModeEconomics, now: number, makerFocusMultiplier
   const hybridBoost = item.mode === 'MT' || item.mode === 'TM' ? 1.15 : 1;
   const makerSavingsBoost = 1 + Math.min(0.75, makerSavings / Math.max(1, gap) * 0.25);
   const passiveFocusBoost = item.makerLegCount > 0 ? makerFocusMultiplier : 1;
+  const queueQuality = item.makerFillProbability === null ? 1 : 0.5 + 0.5 * clamp(item.makerFillProbability, 0, 1);
   return (1 / adjustedGap)
     * (0.35 + 0.65 * freshness)
     * (1 + Math.min(1.5, efficiency))
@@ -82,7 +111,8 @@ function recoveryScore(item: CexModeEconomics, now: number, makerFocusMultiplier
     * improvementBoost
     * hybridBoost
     * makerSavingsBoost
-    * passiveFocusBoost;
+    * passiveFocusBoost
+    * queueQuality;
 }
 
 function bestNearMissBySymbol(modes: readonly CexModeEconomics[]): CexModeEconomics[] {
@@ -132,13 +162,14 @@ export function buildAdaptiveProfitabilitySearchPolicy(input: {
   now?: number;
 }): AdaptiveProfitabilitySearchPolicy {
   const now = input.now ?? Date.now();
+  const takerFees = takerFeeByRoute(input.latestModes);
   const nearMisses = bestNearMissBySymbol(input.latestModes);
   const feeGaps = nearMisses.map(item => item.bpsToBreakEven).filter(Number.isFinite);
   const riskGaps = nearMisses.map(riskGap).filter(Number.isFinite);
   const freshnessValues = input.latestModes.map(feeFreshness);
   const staleEvidenceModes = freshnessValues.filter(value => value < 0.75).length;
   const hybridCount = nearMisses.filter(item => item.mode === 'MT' || item.mode === 'TM').length;
-  const makerSavings = input.latestModes.map(item => finite((item as any).makerFeeSavingsVsTakerBps)).filter((value): value is number => value !== null);
+  const makerSavings = input.latestModes.map(item => measuredMakerSavings(item, takerFees)).filter(value => value > 0);
   const combinedFees = input.latestModes.map(item => finite(item.combinedFeeBps)).filter((value): value is number => value !== null);
   const grossSpreads = input.latestModes.map(item => finite(item.grossSpreadBps)).filter((value): value is number => value !== null);
   const recoveries = nearMisses.map(item => finite(item.recoveryEfficiency)).filter((value): value is number => value !== null);
@@ -146,7 +177,7 @@ export function buildAdaptiveProfitabilitySearchPolicy(input: {
   const preliminaryClosestGap = feeGaps.length > 0 ? Math.min(...feeGaps) : null;
   const preliminaryClosestRiskGap = riskGaps.length > 0 ? Math.min(...riskGaps) : null;
 
-  const hyperdynamic = buildHyperdynamicBpsPlan({
+  const hyperdynamicInput: HyperdynamicBpsInput = {
     closestFeeGapBps: preliminaryClosestGap,
     closestRiskGapBps: preliminaryClosestRiskGap,
     positiveModes,
@@ -162,9 +193,13 @@ export function buildAdaptiveProfitabilitySearchPolicy(input: {
     withinTenBps: nearMisses.filter(item => item.bpsToBreakEven <= 10).length,
     medianGapBps: median(feeGaps),
     p90GapBps: percentile(feeGaps, 0.9),
-  });
+  };
+  const hyperdynamic = buildHyperdynamicBpsPlan(hyperdynamicInput);
+  const marginal = buildMarginalBpsAllocation(hyperdynamicInput, hyperdynamic);
 
-  const ranked = [...nearMisses].sort((left, right) => recoveryScore(right, now, hyperdynamic.makerFocusMultiplier) - recoveryScore(left, now, hyperdynamic.makerFocusMultiplier));
+  const ranked = [...nearMisses].sort((left, right) =>
+    recoveryScore(right, now, takerFees, hyperdynamic.makerFocusMultiplier)
+    - recoveryScore(left, now, takerFees, hyperdynamic.makerFocusMultiplier));
   const closestGapBps = ranked.length > 0 ? Math.min(...ranked.map(item => item.bpsToBreakEven)) : null;
   const closestRiskGapBps = ranked.length > 0 ? Math.min(...ranked.map(riskGap)) : null;
 
@@ -173,13 +208,17 @@ export function buildAdaptiveProfitabilitySearchPolicy(input: {
       : closestGapBps !== null && closestGapBps <= 25 ? 8
         : 0;
   const baseExpandedLimit = input.baseSymbolLimit + expansion;
-  const symbolLimit = Math.max(4, Math.min(96, Math.trunc(baseExpandedLimit * hyperdynamic.breadthMultiplier)));
+  const efficiencyBreadth = clamp(marginal.cexEfficiencyMultiplier, 1, 1.20);
+  const symbolLimit = Math.max(4, Math.min(96, Math.trunc(baseExpandedLimit * hyperdynamic.breadthMultiplier * efficiencyBreadth)));
 
   const baseRecoveryQuota = Math.min(
     Math.max(4, Math.floor(symbolLimit * (closestGapBps !== null && closestGapBps <= 10 ? 0.6 : 0.4))),
     ranked.length,
   );
-  const recoveryQuota = Math.min(ranked.length, Math.max(1, Math.round(baseRecoveryQuota * hyperdynamic.recoveryQuotaMultiplier)));
+  const recoveryQuota = Math.min(
+    ranked.length,
+    Math.max(1, Math.round(baseRecoveryQuota * hyperdynamic.recoveryQuotaMultiplier * clamp(marginal.cexEfficiencyMultiplier, 1, 1.15))),
+  );
   const recoverySymbols = diversifyRecoverySymbols(ranked, recoveryQuota);
 
   const baseHybridQuota = Math.max(2, Math.ceil(recoveryQuota / 3));
@@ -231,7 +270,9 @@ export function buildAdaptiveProfitabilitySearchPolicy(input: {
   const fastLaneTargetMs = !highProbabilityFastLane ? null
     : positiveModes > 0 || (closestGapBps !== null && closestGapBps <= 2) ? 1_750
       : 2_500;
-  const adaptiveIntervalMs = Math.round(input.baseIntervalMs * intervalFactor * hyperdynamic.cadenceMultiplier);
+  const adaptiveIntervalMs = Math.round(
+    input.baseIntervalMs * intervalFactor * hyperdynamic.cadenceMultiplier / clamp(marginal.cexEfficiencyMultiplier, 1, 1.20),
+  );
   const scanIntervalMs = Math.max(
     highProbabilityFastLane ? 1_750 : 2_000,
     Math.min(60_000, fastLaneTargetMs === null ? adaptiveIntervalMs : Math.min(adaptiveIntervalMs, fastLaneTargetMs)),
@@ -255,6 +296,8 @@ export function buildAdaptiveProfitabilitySearchPolicy(input: {
     makerFocusMultiplier: hyperdynamic.makerFocusMultiplier,
     sizeRefinementMultiplier: hyperdynamic.sizeRefinementMultiplier,
     mcSearchMultiplier: hyperdynamic.mcSearchMultiplier,
+    topMarginalLever: marginal.topLever,
+    estimatedRecoverableBps: marginal.estimatedAggregateRecoverableBps,
     authority: 'measured_search_scheduling_only',
     executionAuthority: false,
   };

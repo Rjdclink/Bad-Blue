@@ -20,6 +20,10 @@ function cacheTtlMs(): number {
   return Math.max(60_000, Math.min(30 * 60_000, Number.isFinite(configured) ? configured : 300_000));
 }
 
+function isProductDiscoveryAsset(asset: MarketUniverseAsset): boolean {
+  return asset.source === 'cex_product_directory' || asset.sources?.includes('cex_product_directory') === true;
+}
+
 async function fetchExpandedCoinGeckoUniverse(target: number): Promise<MarketUniverseAsset[]> {
   const headers: HeadersInit = { accept: 'application/json' };
   const apiKey = process.env.COINGECKO_API_KEY?.trim();
@@ -81,10 +85,10 @@ async function expandedUniverse(): Promise<MarketUniverseAsset[]> {
 }
 
 /**
- * Extends the existing measured CoinGecko/CoinStats universe without adding a
- * credential dependency. Existing provider data wins on duplicate symbols so
- * CoinStats provenance and provider health remain intact; expansion only adds
- * measured assets that were previously hidden by the historic 50-symbol cap.
+ * Extends the existing measured market universe without replacing the product
+ * authority. External market-cap/volume evidence owns the broad ranked primary
+ * set. The canonical provider's bounded cross-venue product-discovery tail is
+ * preserved after that ranking instead of being silently dropped by this wrapper.
  */
 export function ensureExpandedMarketUniverseWiring(): void {
   if (installed) return;
@@ -96,9 +100,12 @@ export function ensureExpandedMarketUniverseWiring(): void {
       original(),
       expandedUniverse(),
     ]);
+
+    const productTail = canonical.filter(isProductDiscoveryAsset);
+    const canonicalPrimary = canonical.filter(asset => !isProductDiscoveryAsset(asset));
     const bySymbol = new Map<string, MarketUniverseAsset>();
     for (const asset of expanded) bySymbol.set(asset.symbol.toUpperCase(), { ...asset, sources: asset.sources ? [...asset.sources] : undefined });
-    for (const asset of canonical) {
+    for (const asset of canonicalPrimary) {
       const key = asset.symbol.toUpperCase();
       const previous = bySymbol.get(key);
       bySymbol.set(key, previous ? {
@@ -107,8 +114,22 @@ export function ensureExpandedMarketUniverseWiring(): void {
         sources: [...new Set([...(previous.sources || [previous.source]), ...(asset.sources || [asset.source])])],
       } : { ...asset, sources: asset.sources ? [...asset.sources] : [asset.source] });
     }
+
     const target = targetUniverseSize();
-    return orderMeasuredMarketUniverse(rankMeasuredMarketUniverse([...bySymbol.values()]).slice(0, target));
+    const rankedPrimary = rankMeasuredMarketUniverse([...bySymbol.values()]).slice(0, target);
+    const primarySymbols = new Set(rankedPrimary.map(asset => asset.symbol.toUpperCase()));
+    const preservedProductTail = productTail.filter(asset => !primarySymbols.has(asset.symbol.toUpperCase()));
+    const combined = [...rankedPrimary, ...preservedProductTail];
+
+    logger.info('[ExpandedUniverse] Final universe composed from broad market evidence plus live cross-venue product discovery', {
+      component: 'ExpandedMarketUniverse',
+      rankedPrimary: rankedPrimary.length,
+      preservedProductTail: preservedProductTail.length,
+      total: combined.length,
+      productDiscoveryDiscardedByMarketScore: false,
+      productDiscoveryExecutionAuthority: false,
+    });
+    return orderMeasuredMarketUniverse(combined);
   };
 
   logger.info('[ExpandedUniverse] Broad measured market-universe wiring installed', {
@@ -116,5 +137,6 @@ export function ensureExpandedMarketUniverseWiring(): void {
     targetSymbols: targetUniverseSize(),
     newCredentialsRequired: false,
     canonicalProviderEvidencePreserved: true,
+    crossVenueProductDiscoveryTailPreserved: true,
   });
 }

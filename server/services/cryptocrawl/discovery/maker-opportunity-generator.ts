@@ -7,7 +7,7 @@ import {
   type CexFeeEvidence,
   type CexFeeVenue,
 } from '../intelligence/cex-fee-resolver.js';
-import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
+import { cexOrderBookStreams, type StreamOrderBookQuote } from '../intelligence/cex-order-book-stream.js';
 import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
 import { observeMakerPaperProof } from '../intelligence/maker-microstructure-proof.js';
 import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
@@ -15,6 +15,18 @@ import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.
 import { evaluateMakerRecoveryCandidate } from '../execution/stablecoin-maker-strategy.js';
 
 const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
+let makerFeePrimeCursor = 0;
+
+type MeasuredMakerBook = {
+  venue: CexFeeVenue;
+  quote: StreamOrderBookQuote | null;
+  usdNormalized: boolean;
+};
+
+type ViableMakerSymbol = {
+  symbol: string;
+  usableBooks: MeasuredMakerBook[];
+};
 
 function effectiveMakerFeeBps(fee: CexFeeEvidence | null | undefined): number | null {
   if (!fee || fee.source === 'configured_override') return null;
@@ -36,6 +48,11 @@ function liveMakerTargetNotionalUsd(): number {
 function makerDiscoverySymbolBudget(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_MAKER_DISCOVERY_SYMBOLS || 72);
   return Math.max(12, Math.min(96, Number.isFinite(parsed) ? Math.floor(parsed) : 72));
+}
+
+function makerFeePrimeBudget(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_MAKER_FEE_PRIME_SYMBOLS || 24);
+  return Math.max(8, Math.min(48, Number.isFinite(parsed) ? Math.floor(parsed) : 24));
 }
 
 function makerBookConcurrency(): number {
@@ -69,6 +86,64 @@ async function hasUsdNormalizedMakerEconomics(venue: CexFeeVenue, symbol: string
   }
 }
 
+function cachedAuthenticatedFeeCoverage(entry: ViableMakerSymbol): number {
+  return entry.usableBooks.filter(book => Boolean(getCachedCexFeeEvidence(book.venue, entry.symbol))).length;
+}
+
+function measuredGrossMakerSpreadBps(entry: ViableMakerSymbol): number {
+  let best = Number.NEGATIVE_INFINITY;
+  for (const buy of entry.usableBooks) {
+    if (!buy.quote || !(buy.quote.bid > 0)) continue;
+    for (const sell of entry.usableBooks) {
+      if (sell.venue === buy.venue || !sell.quote || !(sell.quote.ask > 0)) continue;
+      const grossBps = (sell.quote.ask - buy.quote.bid) / buy.quote.bid * 10_000;
+      if (Number.isFinite(grossBps)) best = Math.max(best, grossBps);
+    }
+  }
+  return Number.isFinite(best) ? best : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Private fee hydration is intentionally narrower than public-book discovery.
+ * Existing authenticated cache coverage is free; new private requests are spent
+ * mostly on the best measured public maker spreads, with a rotating exploration
+ * slice so ranking cannot permanently starve the rest of the canonical universe.
+ */
+function selectMakerFeePrimeTargets(viable: readonly ViableMakerSymbol[]): ViableMakerSymbol[] {
+  if (viable.length === 0) return [];
+  const budget = Math.min(viable.length, makerFeePrimeBudget());
+  if (budget >= viable.length) return [...viable];
+
+  const cached = viable
+    .filter(entry => cachedAuthenticatedFeeCoverage(entry) >= 2)
+    .sort((a, b) => measuredGrossMakerSpreadBps(b) - measuredGrossMakerSpreadBps(a));
+  const selected = new Map(cached.slice(0, budget).map(entry => [entry.symbol, entry]));
+  if (selected.size >= budget) return [...selected.values()];
+
+  const remaining = viable
+    .filter(entry => !selected.has(entry.symbol))
+    .sort((a, b) => measuredGrossMakerSpreadBps(b) - measuredGrossMakerSpreadBps(a));
+  const remainingBudget = budget - selected.size;
+  const explorationSlots = Math.min(remainingBudget, Math.max(1, Math.floor(budget * 0.25)));
+  const economicSlots = Math.max(0, remainingBudget - explorationSlots);
+  for (const entry of remaining.slice(0, economicSlots)) selected.set(entry.symbol, entry);
+
+  const explorationPool = remaining.filter(entry => !selected.has(entry.symbol));
+  if (explorationPool.length > 0 && explorationSlots > 0) {
+    const start = makerFeePrimeCursor % explorationPool.length;
+    for (let offset = 0; offset < Math.min(explorationSlots, explorationPool.length); offset++) {
+      selected.set(explorationPool[(start + offset) % explorationPool.length].symbol, explorationPool[(start + offset) % explorationPool.length]);
+    }
+    makerFeePrimeCursor = (start + Math.max(1, explorationSlots)) % explorationPool.length;
+  }
+
+  for (const entry of remaining) {
+    if (selected.size >= budget) break;
+    selected.set(entry.symbol, entry);
+  }
+  return [...selected.values()];
+}
+
 /**
  * Maker discovery has two evidence levels:
  * 1) a fully measured live Coinbase/Kraken/OKX post-only plan produced by the
@@ -98,24 +173,26 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
         cexOrderBookStreams.getQuote(venue, symbol, maxQuoteAgeMs).catch(() => null),
         hasUsdNormalizedMakerEconomics(venue, symbol),
       ]);
-      return { venue, quote, usdNormalized };
+      return { venue, quote, usdNormalized } satisfies MeasuredMakerBook;
     }));
     return {
       symbol,
       usableBooks: measuredBooks.filter(entry => entry.quote !== null && entry.usdNormalized),
-    };
+    } satisfies ViableMakerSymbol;
   });
 
   const viable = measured.filter(entry => entry.usableBooks.length >= 2);
   if (viable.length === 0) return [];
 
-  const coinbaseSymbols = viable
+  const feeTargets = selectMakerFeePrimeTargets(viable);
+  const feeTargetSet = new Set(feeTargets.map(entry => entry.symbol));
+  const coinbaseSymbols = feeTargets
     .filter(entry => entry.usableBooks.some(book => book.venue === 'coinbase'))
     .map(entry => entry.symbol);
-  const krakenSymbols = viable
+  const krakenSymbols = feeTargets
     .filter(entry => entry.usableBooks.some(book => book.venue === 'kraken'))
     .map(entry => entry.symbol);
-  const okxSymbols = viable
+  const okxSymbols = feeTargets
     .filter(entry => entry.usableBooks.some(book => book.venue === 'okx'))
     .map(entry => entry.symbol);
 
@@ -127,11 +204,17 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
 
   const liveTargetNotionalUsd = liveMakerTargetNotionalUsd();
   for (const { symbol, usableBooks } of viable) {
-    const livePlan = await evaluateMakerRecoveryCandidate({
+    // Full live evaluation may trigger a final authenticated fee resolution. Only
+    // the demand-selected subset (or an already well-cached symbol) is allowed to
+    // spend that private API budget this cycle. All other public-book observations
+    // remain visible as blocked paper evidence and rotate into later prime cycles.
+    const liveFeeReady = feeTargetSet.has(symbol)
+      || usableBooks.filter(book => Boolean(getCachedCexFeeEvidence(book.venue, symbol))).length >= 2;
+    const livePlan = liveFeeReady ? await evaluateMakerRecoveryCandidate({
       symbol,
       notionalUsd: liveTargetNotionalUsd,
       maxQuoteAgeMs,
-    }).catch(() => null);
+    }).catch(() => null) : null;
 
     if (livePlan && Number.isFinite(livePlan.netProfitUsd) && livePlan.netProfitUsd > 0) {
       const observedAt = Date.now() - Math.max(0, livePlan.quoteAgeMs);
@@ -266,7 +349,8 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
             'conditional_topology_only',
             'microprice_queue_imbalance_shadow_model',
             'adaptive_maker_ttl_shadow_model',
-            'maker_fee_prime:single_batched_cycle',
+            'maker_fee_prime:demand_selected_batched_cycle',
+            `maker_fee_prime_selected:${feeTargetSet.has(symbol)}`,
             'usd_normalized_quote_evidence',
             'canonical_cex_venues:coinbase_kraken_okx',
             ...(paperProof ? [`paper_probe:${paperProof.state}`, `paper_probe_ttl_ms:${paperProof.adaptiveTtlMs}`] : []),

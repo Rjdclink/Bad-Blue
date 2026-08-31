@@ -9,7 +9,10 @@ import { discoverMeasuredCrossChainCandidates } from './cross-chain-opportunity-
 import { discoverMeasuredMempoolCandidates } from './mempool-opportunity-generator.js';
 import { discoverMeasuredLiquidationCandidates } from './liquidation-opportunity-generator.js';
 import { discoverMeasuredMakerCandidates } from './maker-opportunity-generator.js';
-import { measuredCandidateRegistry } from './measured-candidate-registry.js';
+import {
+  measuredCandidateRegistry,
+  type MeasuredOpportunityTopology,
+} from './measured-candidate-registry.js';
 
 export interface MultiTopologyDiscoveryCycle {
   cycleId: string;
@@ -44,11 +47,26 @@ function elapsedMs(startedAt: bigint): number {
   return Number(process.hrtime.bigint() - startedAt) / 1_000_000;
 }
 
-async function timed<T>(operation: () => Promise<T> | T): Promise<{ value: T; durationMs: number }> {
+async function timedOptional<T>(
+  enabled: boolean,
+  operation: () => Promise<T> | T,
+): Promise<{ value: T | null; durationMs: number | null; skipped: boolean }> {
+  if (!enabled) return { value: null, durationMs: null, skipped: true };
   const startedAt = process.hrtime.bigint();
   const value = await operation();
-  return { value, durationMs: elapsedMs(startedAt) };
+  return { value, durationMs: elapsedMs(startedAt), skipped: false };
 }
+
+const TOPOLOGY_PHASE: Record<MeasuredOpportunityTopology, number> = {
+  CEX_CEX: 0,
+  DEX_ATOMIC: 1,
+  ZERO_CAPITAL_ATOMIC: 2,
+  CROSS_CHAIN: 3,
+  MEMPOOL_BACKRUN: 4,
+  LIQUIDATION: 5,
+  MAKER_CEX: 6,
+  FUNDING_ARBITRAGE: 7,
+};
 
 class MultiTopologyDiscoveryController {
   private timer: NodeJS.Timeout | null = null;
@@ -56,22 +74,27 @@ class MultiTopologyDiscoveryController {
   private latest: MultiTopologyDiscoveryCycle | null = null;
   private running = false;
   private baseIntervalMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_MULTI_TOPOLOGY_SCAN_INTERVAL_MS || 15_000));
+  private cycleSequence = 0;
+  private readonly lastTopologyScanAt = new Map<MeasuredOpportunityTopology, number>();
 
   start(): void {
     if (this.running) return;
     this.running = true;
     this.baseIntervalMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_MULTI_TOPOLOGY_SCAN_INTERVAL_MS || 15_000));
     void this.scanOnce().finally(() => this.scheduleNext());
-    logger.info('[OpportunityGraph] Unified parallel discovery controller started', {
+    logger.info('[OpportunityGraph] Unified adaptive discovery controller started', {
       component: 'MultiTopologyDiscoveryController',
       baseIntervalMs: this.baseIntervalMs,
-      parallelEveryCycle: true,
       fixedTopologyPriority: false,
+      adaptiveScanAllocationApplied: true,
       topologies: ['CEX_CEX', 'DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE', 'ZERO_CAPITAL_ATOMIC'],
       zeroCapitalDiscoveryAuthority: 'zero_capital_engine_parallel_runtime',
       candidateAuthority: 'measured_candidate_registry',
       realizedPerformanceAdjustsAttention: true,
+      liveMeasuredEvidenceAdjustsColdStartAttention: true,
       minimumCoveragePreserved: true,
+      executionDispatchAuthority: 'canonical_execution_scheduler_only',
+      discoveryMaySubmitTransactions: false,
       makerOrdersAssumedFilled: false,
       liquidationProfitAssumed: false,
       fundingCarryAssumedExecutable: false,
@@ -95,10 +118,48 @@ class MultiTopologyDiscoveryController {
     this.timer.unref?.();
   }
 
+  /**
+   * Search-allocation only. Priority >= 0.90 keeps full base cadence. Weights
+   * below that reduce expensive discovery work by a bounded stride, but every
+   * topology is forced to refresh within maxCoverageGapMs. No candidate becomes
+   * executable because of this decision and no topology can be permanently starved.
+   */
+  private shouldScanTopology(topology: MeasuredOpportunityTopology, priorityWeight: number, now: number): boolean {
+    const maxCoverageGapMs = Math.max(
+      this.baseIntervalMs,
+      Math.min(120_000, Number(process.env.CRYPTOCRAWL_TOPOLOGY_MAX_COVERAGE_GAP_MS || 45_000)),
+    );
+    const last = this.lastTopologyScanAt.get(topology) || 0;
+    if (last === 0 || now - last >= maxCoverageGapMs) return true;
+    if (priorityWeight >= 0.90) return true;
+    const stride = priorityWeight >= 0.70 ? 2 : 3;
+    return (this.cycleSequence + TOPOLOGY_PHASE[topology]) % stride === 0;
+  }
+
+  private markTopologyScanned(topology: MeasuredOpportunityTopology, enabled: boolean, now: number): void {
+    if (enabled) this.lastTopologyScanAt.set(topology, now);
+  }
+
   async scanOnce(): Promise<MultiTopologyDiscoveryCycle> {
     if (this.inFlight) return this.inFlight;
     const startedAt = Date.now();
     const cycleId = `multi-topology:${startedAt}`;
+    const scanPriorities = adaptiveTopologyOptimizer.getSnapshot();
+    const priorityByTopology = new Map(scanPriorities.map(state => [state.topology, state.priorityWeight]));
+    const should = (topology: MeasuredOpportunityTopology) => this.shouldScanTopology(
+      topology,
+      Number(priorityByTopology.get(topology) ?? 1),
+      startedAt,
+    );
+    const runCex = should('CEX_CEX');
+    const runDex = should('DEX_ATOMIC');
+    const runCross = should('CROSS_CHAIN');
+    const runMempool = should('MEMPOOL_BACKRUN');
+    const runLiquidation = should('LIQUIDATION');
+    const runMaker = should('MAKER_CEX');
+    const runFunding = should('FUNDING_ARBITRAGE');
+    this.cycleSequence += 1;
+
     this.inFlight = (async () => {
       const errors: string[] = [];
       let cexCandidates = 0;
@@ -118,52 +179,64 @@ class MultiTopologyDiscoveryController {
         funding: null,
       };
 
-      const beforeFunding = measuredCandidateRegistry.getRecent(4096)
-        .filter(candidate => candidate.topology === 'FUNDING_ARBITRAGE').length;
+      const beforeFunding = runFunding
+        ? measuredCandidateRegistry.getRecent(4096).filter(candidate => candidate.topology === 'FUNDING_ARBITRAGE').length
+        : 0;
 
-      // No source has a fixed ordering or hard-coded preference. Each producer
-      // starts in the same event-loop turn and retains its own provider/rate safety.
+      // Producers selected for this cycle still start in the same event-loop turn;
+      // adaptive cadence only reduces search-resource pressure and never changes
+      // execution, governance, settlement or evidence authority.
       const [cex, dex, cross, mempool, liquidation, maker, funding] = await Promise.allSettled([
-        timed(() => measuredOpportunityGraph.scanOnce()),
-        timed(() => discoverMeasuredDexCandidates()),
-        timed(() => discoverMeasuredCrossChainCandidates()),
-        timed(() => discoverMeasuredMempoolCandidates()),
-        timed(() => discoverMeasuredLiquidationCandidates()),
-        timed(() => discoverMeasuredMakerCandidates()),
-        timed(() => fundingRateMonitor.scanOnce()),
+        timedOptional(runCex, () => measuredOpportunityGraph.scanOnce()),
+        timedOptional(runDex, () => discoverMeasuredDexCandidates()),
+        timedOptional(runCross, () => discoverMeasuredCrossChainCandidates()),
+        timedOptional(runMempool, () => discoverMeasuredMempoolCandidates()),
+        timedOptional(runLiquidation, () => discoverMeasuredLiquidationCandidates()),
+        timedOptional(runMaker, () => discoverMeasuredMakerCandidates()),
+        timedOptional(runFunding, () => fundingRateMonitor.scanOnce()),
       ]);
 
-      if (cex.status === 'fulfilled') {
+      this.markTopologyScanned('CEX_CEX', runCex, startedAt);
+      this.markTopologyScanned('DEX_ATOMIC', runDex, startedAt);
+      this.markTopologyScanned('CROSS_CHAIN', runCross, startedAt);
+      this.markTopologyScanned('MEMPOOL_BACKRUN', runMempool, startedAt);
+      this.markTopologyScanned('LIQUIDATION', runLiquidation, startedAt);
+      this.markTopologyScanned('MAKER_CEX', runMaker, startedAt);
+      this.markTopologyScanned('FUNDING_ARBITRAGE', runFunding, startedAt);
+
+      if (cex.status === 'fulfilled' && cex.value.value) {
         cexCandidates = cex.value.value.deterministicPositive;
         durationMsByTopology.cex = cex.value.durationMs;
-      } else errors.push(`cex:${cex.reason instanceof Error ? cex.reason.message : String(cex.reason)}`);
-      if (dex.status === 'fulfilled') {
+      } else if (cex.status === 'rejected') errors.push(`cex:${cex.reason instanceof Error ? cex.reason.message : String(cex.reason)}`);
+      if (dex.status === 'fulfilled' && dex.value.value) {
         dexCandidates = dex.value.value.length;
         durationMsByTopology.dex = dex.value.durationMs;
-      } else errors.push(`dex:${dex.reason instanceof Error ? dex.reason.message : String(dex.reason)}`);
-      if (cross.status === 'fulfilled') {
+      } else if (dex.status === 'rejected') errors.push(`dex:${dex.reason instanceof Error ? dex.reason.message : String(dex.reason)}`);
+      if (cross.status === 'fulfilled' && cross.value.value) {
         crossChainCandidates = cross.value.value.length;
         durationMsByTopology.crossChain = cross.value.durationMs;
-      } else errors.push(`cross_chain:${cross.reason instanceof Error ? cross.reason.message : String(cross.reason)}`);
-      if (mempool.status === 'fulfilled') {
+      } else if (cross.status === 'rejected') errors.push(`cross_chain:${cross.reason instanceof Error ? cross.reason.message : String(cross.reason)}`);
+      if (mempool.status === 'fulfilled' && mempool.value.value) {
         mempoolCandidates = mempool.value.value.length;
         durationMsByTopology.mempool = mempool.value.durationMs;
-      } else errors.push(`mempool:${mempool.reason instanceof Error ? mempool.reason.message : String(mempool.reason)}`);
-      if (liquidation.status === 'fulfilled') {
+      } else if (mempool.status === 'rejected') errors.push(`mempool:${mempool.reason instanceof Error ? mempool.reason.message : String(mempool.reason)}`);
+      if (liquidation.status === 'fulfilled' && liquidation.value.value) {
         liquidationCandidates = liquidation.value.value.length;
         durationMsByTopology.liquidation = liquidation.value.durationMs;
-      } else errors.push(`liquidation:${liquidation.reason instanceof Error ? liquidation.reason.message : String(liquidation.reason)}`);
-      if (maker.status === 'fulfilled') {
+      } else if (liquidation.status === 'rejected') errors.push(`liquidation:${liquidation.reason instanceof Error ? liquidation.reason.message : String(liquidation.reason)}`);
+      if (maker.status === 'fulfilled' && maker.value.value) {
         makerCandidates = maker.value.value.length;
         durationMsByTopology.maker = maker.value.durationMs;
-      } else errors.push(`maker:${maker.reason instanceof Error ? maker.reason.message : String(maker.reason)}`);
-      if (funding.status === 'fulfilled') {
+      } else if (maker.status === 'rejected') errors.push(`maker:${maker.reason instanceof Error ? maker.reason.message : String(maker.reason)}`);
+      if (funding.status === 'fulfilled' && !funding.value.skipped) {
         durationMsByTopology.funding = funding.value.durationMs;
         const afterFunding = measuredCandidateRegistry.getRecent(4096)
           .filter(candidate => candidate.topology === 'FUNDING_ARBITRAGE').length;
         fundingCandidates = Math.max(0, afterFunding - beforeFunding);
-      } else errors.push(`funding:${funding.reason instanceof Error ? funding.reason.message : String(funding.reason)}`);
+      } else if (funding.status === 'rejected') errors.push(`funding:${funding.reason instanceof Error ? funding.reason.message : String(funding.reason)}`);
 
+      // Routing is advisory only. The canonical execution scheduler consumes the
+      // same measured registry independently; discovery never calls an executor.
       const routedOpportunities = routeRecentMeasuredOpportunities(1024);
       const compositePlan = unifiedMultiLegArbitrageEngine.assemble();
       const completedAt = Date.now();
@@ -179,7 +252,7 @@ class MultiTopologyDiscoveryController {
         makerCandidates,
         fundingCandidates,
         durationMsByTopology,
-        scanPriorities: adaptiveTopologyOptimizer.getSnapshot(),
+        scanPriorities,
         admissionPolicy: adaptiveTopologyOptimizer.getDynamicAdmissionPolicy(),
         assemblyPolicy: adaptiveTopologyOptimizer.getAssemblyPolicy(),
         routedOpportunities,
@@ -188,12 +261,26 @@ class MultiTopologyDiscoveryController {
         errors,
       };
       this.latest = cycle;
-      logger.info('[OpportunityGraph] Unified parallel discovery cycle completed', {
+
+      const skippedTopologies = [
+        ['CEX_CEX', runCex],
+        ['DEX_ATOMIC', runDex],
+        ['CROSS_CHAIN', runCross],
+        ['MEMPOOL_BACKRUN', runMempool],
+        ['LIQUIDATION', runLiquidation],
+        ['MAKER_CEX', runMaker],
+        ['FUNDING_ARBITRAGE', runFunding],
+      ].filter(([, enabled]) => !enabled).map(([topology]) => topology);
+
+      logger.info('[OpportunityGraph] Unified adaptive discovery cycle completed', {
         component: 'MultiTopologyDiscoveryController',
         cycleId,
         durationMs: completedAt - startedAt,
         durationMsByTopology,
         fixedTopologyPriority: false,
+        adaptiveScanAllocationApplied: true,
+        skippedTopologies,
+        minimumCoveragePreserved: true,
         scanPriorities: cycle.scanPriorities.map(state => ({
           topology: state.topology,
           priorityWeight: state.priorityWeight,

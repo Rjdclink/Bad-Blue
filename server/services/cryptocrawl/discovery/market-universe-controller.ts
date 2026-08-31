@@ -16,9 +16,20 @@ export interface MarketUniversePerformanceHint {
   averageSlippageBps: number | null;
 }
 
+export interface MarketUniverseEconomicHint {
+  symbol: string;
+  observedModes: number;
+  positiveModes: number;
+  closestRiskAdjustedGapBps: number | null;
+  bestPositiveBps: number | null;
+  feeFreshnessScore: number | null;
+  makerFillProbability: number | null;
+}
+
 let rotationCursor = 0;
 let lastOrderedSymbols: string[] = [];
 let performanceProvider: (() => ReadonlyMap<string, MarketUniversePerformanceHint>) | null = null;
+let economicProvider: (() => ReadonlyMap<string, MarketUniverseEconomicHint>) | null = null;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
@@ -46,9 +57,24 @@ function measuredPerformanceModifier(hint: MarketUniversePerformanceHint | undef
   return confidence * (2 * winEdge + 1.5 * profitMagnitude - slippagePenalty);
 }
 
+function measuredEconomicModifier(hint: MarketUniverseEconomicHint | undefined): number {
+  if (!hint || hint.observedModes <= 0) return 0;
+  const confidence = clamp(hint.observedModes / 12, 0.15, 1);
+  const positiveBonus = hint.positiveModes > 0
+    ? 2 + clamp((hint.bestPositiveBps || 0) / 10, 0, 1)
+    : 0;
+  const gapBonus = hint.closestRiskAdjustedGapBps === null
+    ? 0
+    : 2 / (1 + Math.max(0, hint.closestRiskAdjustedGapBps) / 10);
+  const freshnessBonus = hint.feeFreshnessScore === null ? 0 : clamp(hint.feeFreshnessScore, 0, 1) * 0.75;
+  const makerBonus = hint.makerFillProbability === null ? 0 : clamp(hint.makerFillProbability, 0, 1) * 0.50;
+  return clamp(confidence * (positiveBonus + gapBonus + freshnessBonus + makerBonus), 0, 4);
+}
+
 function score(
   candidate: MarketUniverseCandidate,
   performance: ReadonlyMap<string, MarketUniversePerformanceHint>,
+  economics: ReadonlyMap<string, MarketUniverseEconomicHint>,
 ): number {
   const volume = Number.isFinite(candidate.volume24hUsd) && (candidate.volume24hUsd || 0) > 0
     ? Math.log10((candidate.volume24hUsd || 0) + 1)
@@ -60,7 +86,11 @@ function score(
     ? 1 / Math.sqrt(candidate.marketCapRank || 1)
     : 0;
   const canonical = canonicalizeCexSymbol(candidate.symbol)?.symbol || candidate.symbol.trim().toUpperCase();
-  return volume * 2 + cap * 0.35 + rank + measuredPerformanceModifier(performance.get(canonical));
+  return volume * 2
+    + cap * 0.35
+    + rank
+    + measuredPerformanceModifier(performance.get(canonical))
+    + measuredEconomicModifier(economics.get(canonical));
 }
 
 function rememberOrderedUniverse<T extends MarketUniverseCandidate>(ordered: T[]): T[] {
@@ -80,6 +110,17 @@ export function setMarketUniversePerformanceProvider(
 }
 
 /**
+ * Installs current measured BPS/evidence hints for search ordering only. These
+ * hints never create economics, never exclude a symbol, and never bypass the
+ * canonical verifier, governance, resource scheduler, execution or settlement.
+ */
+export function setMarketUniverseEconomicProvider(
+  provider: (() => ReadonlyMap<string, MarketUniverseEconomicHint>) | null,
+): void {
+  economicProvider = provider;
+}
+
+/**
  * Returns the most recently consumed measured universe order without advancing
  * the rotation cursor. Downstream scanners use this to share the exact market
  * cycle selected by the provider boundary rather than consuming/rotating again.
@@ -93,29 +134,33 @@ export function getLastOrderedMarketUniverseSymbols(): string[] {
  * advancing the rotation cursor. Cache/storage paths should use this function so
  * a refresh cannot accidentally rotate the search window more than once.
  *
- * Terminal realized pair performance is a bounded priority hint only. New or
- * previously unprofitable pairs remain in the universe and continue rotating
- * through the search window, preserving exploration and regime-change detection.
+ * Terminal realized pair performance and live measured economic distance are
+ * bounded priority hints only. New or previously unprofitable pairs remain in
+ * the universe and continue rotating through the search window, preserving
+ * exploration and regime-change detection.
  */
 export function rankMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
   const performance = performanceProvider?.() || new Map<string, MarketUniversePerformanceHint>();
+  const economics = economicProvider?.() || new Map<string, MarketUniverseEconomicHint>();
   const bySymbol = new Map<string, T>();
   for (const asset of assets) {
     const canonical = canonicalizeCexSymbol(asset.symbol);
     if (!canonical || !isUsefulArbitrageSymbol(canonical.symbol)) continue;
     const normalized = { ...asset, symbol: canonical.symbol } as T;
     const existing = bySymbol.get(canonical.symbol);
-    if (!existing || score(normalized, performance) > score(existing, performance)) bySymbol.set(canonical.symbol, normalized);
+    if (!existing || score(normalized, performance, economics) > score(existing, performance, economics)) {
+      bySymbol.set(canonical.symbol, normalized);
+    }
   }
-  return [...bySymbol.values()].sort((left, right) => score(right, performance) - score(left, performance));
+  return [...bySymbol.values()].sort((left, right) => score(right, performance, economics) - score(left, performance, economics));
 }
 
 /**
  * Produces a performance-focused but still rotating candidate order. When there
- * is terminal pair history, a bounded prefix of the highest measured performers
- * remains anchored so limited scan budgets revisit proven markets more often.
- * The rest of the measured universe continues to rotate, preventing historical
- * winners from starving new pairs or regime-change detection.
+ * is measured terminal/economic evidence, a bounded prefix remains anchored so
+ * limited scan budgets revisit the most promising markets more often. The rest
+ * of the measured universe continues to rotate, preventing historical winners or
+ * transient near-misses from starving new pairs or regime-change detection.
  */
 export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
   const ranked = rankMeasuredMarketUniverse(assets);
@@ -127,9 +172,11 @@ export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(a
     Math.max(1, Number.isFinite(configuredWindow) ? Math.floor(configuredWindow) : ranked.length),
   );
   const performance = performanceProvider?.() || new Map<string, MarketUniversePerformanceHint>();
+  const economics = economicProvider?.() || new Map<string, MarketUniverseEconomicHint>();
   const configuredFocusFraction = Number(process.env.CRYPTO_MARKET_PERFORMANCE_FOCUS_FRACTION || 0.25);
   const focusFraction = clamp(Number.isFinite(configuredFocusFraction) ? configuredFocusFraction : 0.25, 0, 0.5);
-  const focusCount = performance.size > 0 && windowSize > 1
+  const hasMeasuredFocus = performance.size > 0 || economics.size > 0;
+  const focusCount = hasMeasuredFocus && windowSize > 1
     ? Math.min(windowSize - 1, Math.max(1, Math.floor(windowSize * focusFraction)))
     : 0;
   const focus = ranked.slice(0, focusCount);

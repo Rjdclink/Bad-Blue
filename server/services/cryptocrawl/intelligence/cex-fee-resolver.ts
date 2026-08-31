@@ -7,6 +7,7 @@ import { assertCoinbaseSpotTradeReady } from './coinbase-advanced-trade-authorit
 import { getCoinbaseSpotFeeEvidence } from './coinbase-fee-evidence.js';
 import {
   getSpotProductConstraints,
+  SpotProductUnavailableError,
   type SpotProductConstraints,
 } from '../execution/cex-spot-product-policy.js';
 
@@ -42,14 +43,20 @@ export interface CexSpotProductSupport {
 export interface ResolveCexFeeEvidenceOptions {
   /** Maximum acceptable evidence age for this consumer. Tightens only. */
   maxAgeMs?: number;
-  /** Bypass the shared cache and obtain fresh authenticated evidence. */
+  /** Bypass shared cache/backoff and obtain fresh authenticated evidence. */
   forceRefresh?: boolean;
 }
 
 const FEE_CACHE_TTL_MS = Math.max(5_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_CACHE_MS || 300_000));
 const REQUEST_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_TIMEOUT_MS || 8_000));
+const UNAVAILABLE_TTL_MS = Math.max(5_000, Math.min(300_000, Number(process.env.CRYPTO_CEX_FEE_UNAVAILABLE_TTL_MS || 60_000)));
+const TRANSIENT_RETRY_MS = Math.max(500, Math.min(10_000, Number(process.env.CRYPTO_CEX_FEE_TRANSIENT_RETRY_MS || 2_500)));
+const OKX_PER_INSTRUMENT_BUDGET = Math.max(1, Math.min(4, Math.floor(Number(process.env.CRYPTO_OKX_FEE_PER_INSTRUMENT_BUDGET || 2))));
 const feeCache = new Map<string, CexFeeEvidence>();
 const feeInFlight = new Map<string, Promise<CexFeeEvidence | null>>();
+const feeUnavailableUntil = new Map<string, { until: number; reason: string }>();
+const feeTransientRetryUntil = new Map<string, { until: number; reason: string }>();
+let okxPerInstrumentCursor = 0;
 
 function finiteNumber(value: unknown): number | null {
   const parsed = Number(value);
@@ -98,6 +105,56 @@ function cacheKey(venue: CexFeeVenue, symbol: string): string {
   return `${venue}:${normalizeSymbolInput(symbol)}`;
 }
 
+function unavailableEntry(venue: CexFeeVenue, symbol: string): { until: number; reason: string } | null {
+  const key = cacheKey(venue, symbol);
+  const entry = feeUnavailableUntil.get(key);
+  if (!entry) return null;
+  if (entry.until <= Date.now()) {
+    feeUnavailableUntil.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+function transientRetryEntry(venue: CexFeeVenue, symbol: string): { until: number; reason: string } | null {
+  const key = cacheKey(venue, symbol);
+  const entry = feeTransientRetryUntil.get(key);
+  if (!entry) return null;
+  if (entry.until <= Date.now()) {
+    feeTransientRetryUntil.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+function markFeeUnavailable(venue: CexFeeVenue, symbol: string, reason: string, ttlMs = UNAVAILABLE_TTL_MS): void {
+  feeUnavailableUntil.set(cacheKey(venue, symbol), {
+    until: Date.now() + Math.max(1_000, ttlMs),
+    reason,
+  });
+  feeTransientRetryUntil.delete(cacheKey(venue, symbol));
+}
+
+function clearFeeUnavailable(venue: CexFeeVenue, symbol: string): void {
+  feeUnavailableUntil.delete(cacheKey(venue, symbol));
+}
+
+function markTransientRetry(venue: CexFeeVenue, symbol: string, reason: string, ttlMs = TRANSIENT_RETRY_MS): void {
+  if (unavailableEntry(venue, symbol)) return;
+  const key = cacheKey(venue, symbol);
+  const until = Date.now() + Math.max(250, ttlMs);
+  const existing = feeTransientRetryUntil.get(key);
+  if (!existing || existing.until < until) feeTransientRetryUntil.set(key, { until, reason });
+}
+
+function markTransientRetryMany(venue: CexFeeVenue, symbols: readonly string[], reason: string): void {
+  for (const symbol of symbols) markTransientRetry(venue, symbol, reason);
+}
+
+function clearTransientRetry(venue: CexFeeVenue, symbol: string): void {
+  feeTransientRetryUntil.delete(cacheKey(venue, symbol));
+}
+
 function readFreshCache(venue: CexFeeVenue, symbol: string, maxAgeMs = FEE_CACHE_TTL_MS): CexFeeEvidence | null {
   const key = cacheKey(venue, symbol);
   const cached = feeCache.get(key);
@@ -112,7 +169,13 @@ function readFreshCache(venue: CexFeeVenue, symbol: string, maxAgeMs = FEE_CACHE
 }
 
 function storeFeeEvidence(evidence: CexFeeEvidence): void {
+  // Configured values can assist diagnostics/non-executable planning, but they
+  // are never authenticated venue evidence and therefore must never enter the
+  // cache used by prime resolution or executable economics.
+  if (evidence.source === 'configured_override') return;
   feeCache.set(cacheKey(evidence.venue, evidence.symbol), evidence);
+  clearFeeUnavailable(evidence.venue, evidence.symbol);
+  clearTransientRetry(evidence.venue, evidence.symbol);
   if (feeCache.size <= 1024) return;
   const now = Date.now();
   for (const [key, value] of feeCache.entries()) {
@@ -133,13 +196,30 @@ async function verifiedConstraints(
   symbol: string,
 ): Promise<SpotProductConstraints | null> {
   try {
-    return await getSpotProductConstraints(venue, symbol);
+    const constraints = await getSpotProductConstraints(venue, symbol);
+    clearTransientRetry(venue, symbol);
+    return constraints;
   } catch (error) {
-    logger.debug('[CEX Fees] Product authority rejected fee lookup after targeted live-catalog hydration', {
+    if (error instanceof SpotProductUnavailableError) {
+      markFeeUnavailable(venue, symbol, `product_${error.reason}`);
+      logger.debug('[CEX Fees] Product authority rejected fee lookup from an authoritative live catalog', {
+        component: 'CexFeeResolver',
+        venue,
+        symbol,
+        reason: error.reason,
+        retrySuppressedUntil: unavailableEntry(venue, symbol)?.until || null,
+        failClosed: true,
+      });
+      return null;
+    }
+    markTransientRetry(venue, symbol, 'product_catalog_transient_failure');
+    logger.debug('[CEX Fees] Product catalog hydration degraded transiently; product is not negative-cached as unsupported', {
       component: 'CexFeeResolver',
       venue,
       symbol,
       error: error instanceof Error ? error.message : String(error),
+      retrySuppressedUntil: transientRetryEntry(venue, symbol)?.until || null,
+      authoritativeAbsenceProven: false,
       failClosed: true,
     });
     return null;
@@ -190,19 +270,32 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
       apiSecretPresent: Boolean(apiSecret),
       symbols: symbols.length,
     });
+    markTransientRetryMany('kraken', symbols, 'credentials_temporarily_unavailable');
     return output;
   }
 
   const resolved: Array<{ symbol: string; constraints: SpotProductConstraints }> = [];
   const unsupportedSymbols: string[] = [];
+  const transientProductSymbols: string[] = [];
   const settled = await Promise.allSettled(symbols.map(async symbol => ({
     symbol,
     constraints: await getSpotProductConstraints('kraken', symbol),
   })));
   for (let index = 0; index < settled.length; index++) {
     const result = settled[index];
-    if (result.status === 'fulfilled') resolved.push(result.value);
-    else unsupportedSymbols.push(symbols[index]);
+    if (result.status === 'fulfilled') {
+      resolved.push(result.value);
+      clearTransientRetry('kraken', result.value.symbol);
+      continue;
+    }
+    const symbol = symbols[index];
+    if (result.reason instanceof SpotProductUnavailableError) {
+      unsupportedSymbols.push(symbol);
+      markFeeUnavailable('kraken', symbol, `product_${result.reason.reason}`);
+    } else {
+      transientProductSymbols.push(symbol);
+      markTransientRetry('kraken', symbol, 'product_catalog_transient_failure');
+    }
   }
   if (resolved.length === 0) return output;
 
@@ -221,16 +314,18 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
     const takerRow = fees[lookupKey] as Record<string, unknown> | undefined;
     if (!takerRow) {
       missingAuthenticatedRows.push({ symbol, feeLookupKey: lookupKey });
+      markFeeUnavailable('kraken', symbol, 'authenticated_trade_volume_fee_row_missing');
       continue;
     }
     const takerPct = finiteNumber(takerRow.fee);
     if (takerPct === null) {
       missingAuthenticatedRows.push({ symbol, feeLookupKey: lookupKey });
+      markFeeUnavailable('kraken', symbol, 'authenticated_trade_volume_fee_rate_missing');
       continue;
     }
     const makerRow = makerFees[lookupKey] as Record<string, unknown> | undefined;
     const makerPct = finiteNumber(makerRow?.fee);
-    output.set(symbol, {
+    const evidence: CexFeeEvidence = {
       venue: 'kraken',
       symbol,
       takerFeeBps: Math.max(0, takerPct * 100),
@@ -238,7 +333,10 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
       makerRebateBps: makerPct !== null && makerPct < 0 ? Math.abs(makerPct) * 100 : null,
       source: 'kraken_account_trade_volume',
       observedAt,
-    });
+    };
+    output.set(symbol, evidence);
+    clearFeeUnavailable('kraken', symbol);
+    clearTransientRetry('kraken', symbol);
   }
 
   logger.info('[CEX Fees] Kraken batch fee evidence resolved from canonical live-product identities', {
@@ -247,6 +345,7 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
     translatedSymbols: resolved.length,
     unsupportedSymbols: unsupportedSymbols.length,
     unsupportedSample: unsupportedSymbols.slice(0, 5),
+    transientProductFailures: transientProductSymbols.length,
     authenticatedRowsMissing: missingAuthenticatedRows.length,
     authenticatedRowsMissingSample: missingAuthenticatedRows.slice(0, 5),
     resolvedSymbols: output.size,
@@ -320,10 +419,21 @@ async function fetchOkxFeeEvidence(symbolInput: string): Promise<CexFeeEvidence 
       apiSecretPresent: Boolean(apiSecret),
       passphrasePresent: Boolean(passphrase),
     });
+    markTransientRetry('okx', symbol, 'credentials_temporarily_unavailable');
     return null;
   }
-  const constraints = await getSpotProductConstraints('okx', symbol);
+  const constraints = await verifiedConstraints('okx', symbol);
+  if (!constraints) return null;
   return fetchOkxFeeEvidenceFromConstraint(symbol, constraints);
+}
+
+function selectOkxPerInstrumentTargets(symbols: readonly string[]): string[] {
+  const unique = [...new Set(symbols)];
+  if (unique.length <= OKX_PER_INSTRUMENT_BUDGET) return unique;
+  const start = okxPerInstrumentCursor % unique.length;
+  const selected = Array.from({ length: OKX_PER_INSTRUMENT_BUDGET }, (_, offset) => unique[(start + offset) % unique.length]);
+  okxPerInstrumentCursor = (start + OKX_PER_INSTRUMENT_BUDGET) % unique.length;
+  return selected;
 }
 
 async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promise<Map<string, CexFeeEvidence>> {
@@ -334,25 +444,40 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
   const apiKey = credential('OKX_API_KEY');
   const apiSecret = credential('OKX_API_SECRET');
   const passphrase = credential('OKX_API_PASSPHRASE');
-  if (!apiKey || !apiSecret || !passphrase) return output;
+  if (!apiKey || !apiSecret || !passphrase) {
+    markTransientRetryMany('okx', symbols, 'credentials_temporarily_unavailable');
+    return output;
+  }
 
   const constraintsBySymbol = new Map<string, SpotProductConstraints>();
   const unsupportedSymbols: string[] = [];
+  const transientProductSymbols: string[] = [];
   const settled = await Promise.allSettled(symbols.map(async symbol => ({
     symbol,
     constraints: await getSpotProductConstraints('okx', symbol),
   })));
   for (let index = 0; index < settled.length; index++) {
     const result = settled[index];
-    if (result.status === 'fulfilled') constraintsBySymbol.set(result.value.symbol, result.value.constraints);
-    else unsupportedSymbols.push(symbols[index]);
+    if (result.status === 'fulfilled') {
+      constraintsBySymbol.set(result.value.symbol, result.value.constraints);
+      clearTransientRetry('okx', result.value.symbol);
+      continue;
+    }
+    const symbol = symbols[index];
+    if (result.reason instanceof SpotProductUnavailableError) {
+      unsupportedSymbols.push(symbol);
+      markFeeUnavailable('okx', symbol, `product_${result.reason.reason}`);
+    } else {
+      transientProductSymbols.push(symbol);
+      markTransientRetry('okx', symbol, 'product_catalog_transient_failure');
+    }
   }
 
   const byGroup = new Map<string, string[]>();
-  const perInstrument: string[] = [];
+  const ungrouped: string[] = [];
   for (const [symbol, constraints] of constraintsBySymbol.entries()) {
     if (!constraints.feeGroupId) {
-      perInstrument.push(symbol);
+      ungrouped.push(symbol);
       continue;
     }
     const current = byGroup.get(constraints.feeGroupId) || [];
@@ -360,44 +485,76 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
     byGroup.set(constraints.feeGroupId, current);
   }
 
+  let failedGroups = 0;
   for (const [groupId, groupSymbols] of byGroup.entries()) {
     try {
       const result = await fetchOkxFeeRates({ groupId }, groupId);
-      for (const symbol of groupSymbols) output.set(symbol, okxEvidence(symbol, result.rates, result.observedAt));
+      for (const symbol of groupSymbols) {
+        const evidence = okxEvidence(symbol, result.rates, result.observedAt);
+        output.set(symbol, evidence);
+        clearFeeUnavailable('okx', symbol);
+        clearTransientRetry('okx', symbol);
+      }
     } catch (error) {
-      logger.debug('[CEX Fees] OKX fee-group batch degraded; verified products will use per-instrument fee lookup', {
+      // A group request already consumed the account-wide private quota. Never
+      // fan one group failure into N same-cycle instrument requests. A short
+      // transient gate is distinct from product/fee unavailability and therefore
+      // cannot falsely convert a transport/rate failure into missing evidence.
+      failedGroups += 1;
+      markTransientRetryMany('okx', groupSymbols, 'group_fee_request_transient_failure');
+      logger.debug('[CEX Fees] OKX fee-group batch degraded; same-cycle per-instrument fan-out suppressed', {
         component: 'CexFeeResolver',
         groupId,
         symbols: groupSymbols.length,
         error: error instanceof Error ? error.message : String(error),
+        immediatePerInstrumentFallbackAllowed: false,
+        transientRetrySuppressed: true,
       });
-      perInstrument.push(...groupSymbols);
     }
   }
 
-  await Promise.all(perInstrument.map(async symbol => {
+  const eligibleUngrouped = ungrouped.filter(symbol => !unavailableEntry('okx', symbol) && !transientRetryEntry('okx', symbol));
+  const perInstrumentTargets = selectOkxPerInstrumentTargets(eligibleUngrouped);
+  const selectedSet = new Set(perInstrumentTargets);
+  markTransientRetryMany(
+    'okx',
+    eligibleUngrouped.filter(symbol => !selectedSet.has(symbol)),
+    'bounded_per_instrument_budget_deferred',
+  );
+  for (const symbol of perInstrumentTargets) {
     const constraints = constraintsBySymbol.get(symbol);
-    if (!constraints) return;
+    if (!constraints) continue;
     try {
       const evidence = await fetchOkxFeeEvidenceFromConstraint(symbol, constraints);
-      if (evidence) output.set(symbol, evidence);
+      if (evidence) {
+        output.set(symbol, evidence);
+        clearFeeUnavailable('okx', symbol);
+        clearTransientRetry('okx', symbol);
+      }
     } catch (error) {
-      logger.debug('[CEX Fees] OKX verified product has no current authenticated fee row', {
+      // Transport/rate errors are transient, never product-negative evidence.
+      markTransientRetry('okx', symbol, 'per_instrument_fee_request_transient_failure');
+      logger.debug('[CEX Fees] OKX bounded per-instrument fee lookup degraded', {
         component: 'CexFeeResolver',
         symbol,
         exchangeSymbol: constraints.exchangeSymbol,
         error: error instanceof Error ? error.message : String(error),
+        transientRetrySuppressed: true,
       });
     }
-  }));
+  }
 
   logger.info('[CEX Fees] OKX fee batch resolved from canonical regional live products', {
     component: 'CexFeeResolver',
     requestedSymbols: symbols.length,
     groupRequests: byGroup.size,
-    perInstrumentFallbacks: perInstrument.length,
+    failedGroups,
+    ungroupedProducts: ungrouped.length,
+    perInstrumentBudget: OKX_PER_INSTRUMENT_BUDGET,
+    perInstrumentRequests: perInstrumentTargets.length,
     unsupportedSymbols: unsupportedSymbols.length,
     unsupportedSample: unsupportedSymbols.slice(0, 5),
+    transientProductFailures: transientProductSymbols.length,
     resolvedSymbols: output.size,
     productAuthority: 'cex_spot_product_policy',
     quoteCurrencyAllowlistUsed: false,
@@ -426,6 +583,9 @@ export async function resolveCexFeeEvidence(
   const maxAgeMs = options.forceRefresh ? 0 : boundedEvidenceAge(options.maxAgeMs ?? FEE_CACHE_TTL_MS);
   const cached = options.forceRefresh ? null : readFreshCache(venue, symbol, maxAgeMs);
   if (cached) return cached;
+  if (!options.forceRefresh && unavailableEntry(venue, symbol)) return null;
+  if (!options.forceRefresh && transientRetryEntry(venue, symbol)) return null;
+
   const key = cacheKey(venue, symbol);
   const inFlight = feeInFlight.get(key);
   if (inFlight) {
@@ -437,42 +597,45 @@ export async function resolveCexFeeEvidence(
   const promise = (async () => {
     try {
       const live = await fetchLiveFeeEvidence(venue, symbol, options.forceRefresh || maxAgeMs < FEE_CACHE_TTL_MS);
-      const evidence = live || await configuredFallbackForVenue(venue, symbol);
-      if (evidence) {
-        storeFeeEvidence(evidence);
+      if (live) {
+        storeFeeEvidence(live);
         logger.info('[CEX Fees] Fee evidence resolved', {
           component: 'CexFeeResolver',
           venue,
           symbol,
-          source: evidence.source,
-          takerFeeBps: evidence.takerFeeBps,
-          makerFeeBps: evidence.makerFeeBps,
-          makerRebateBps: evidence.makerRebateBps,
+          source: live.source,
+          takerFeeBps: live.takerFeeBps,
+          makerFeeBps: live.makerFeeBps,
+          makerRebateBps: live.makerRebateBps,
           requestedMaxAgeMs: maxAgeMs,
           forceRefresh: options.forceRefresh === true,
+          authenticatedCacheAuthority: true,
         });
-        return { ...evidence };
+        return { ...live };
       }
-      logger.warn('[CEX Fees] Verified live product has no supported authenticated fee evidence', {
+
+      const fallback = await configuredFallbackForVenue(venue, symbol);
+      if (!unavailableEntry(venue, symbol)) markTransientRetry(venue, symbol, 'authenticated_fee_temporarily_unresolved');
+      logger.debug('[CEX Fees] Verified live product has no current authenticated fee evidence', {
         component: 'CexFeeResolver',
         venue,
         symbol,
+        retrySuppressed: Boolean(unavailableEntry(venue, symbol) || transientRetryEntry(venue, symbol)),
+        configuredFallbackReturnedButNotCached: Boolean(fallback),
         failClosed: true,
       });
-      return null;
+      return fallback ? { ...fallback } : null;
     } catch (error) {
+      markTransientRetry(venue, symbol, 'authenticated_fee_request_transient_failure');
       logger.warn('[CEX Fees] Authenticated fee discovery failed closed after canonical product hydration', {
         component: 'CexFeeResolver',
         venue,
         symbol,
         error: error instanceof Error ? error.message : String(error),
+        transientRetrySuppressed: true,
       });
       const fallback = await configuredFallbackForVenue(venue, symbol);
-      if (fallback) {
-        storeFeeEvidence(fallback);
-        return { ...fallback };
-      }
-      return null;
+      return fallback ? { ...fallback } : null;
     }
   })().finally(() => feeInFlight.delete(key));
 
@@ -497,54 +660,66 @@ export async function primeCexFeeEvidenceForVenueSymbols(
   const acceptedAgeMs = boundedEvidenceAge(maxAgeMs);
   const unresolved: CexFeePrimeResult['unresolved'] = [];
 
-  const missingCoinbase = requested.coinbase.filter(symbol => !readFreshCache('coinbase', symbol, acceptedAgeMs));
+  const missingCoinbase = requested.coinbase.filter(symbol =>
+    !readFreshCache('coinbase', symbol, acceptedAgeMs) && !transientRetryEntry('coinbase', symbol));
   if (missingCoinbase.length > 0) {
     try {
+      // Coinbase transaction-summary fees are account-level. One authenticated
+      // read hydrates every requested Coinbase SPOT symbol; never issue one fee
+      // request per symbol.
       const baseEvidence = await fetchCoinbaseFeeEvidence(missingCoinbase[0], acceptedAgeMs < FEE_CACHE_TTL_MS);
       if (baseEvidence) for (const symbol of missingCoinbase) storeFeeEvidence({ ...baseEvidence, symbol });
+      else markTransientRetryMany('coinbase', missingCoinbase, 'account_fee_temporarily_unresolved');
     } catch (error) {
+      markTransientRetryMany('coinbase', missingCoinbase, 'account_fee_request_transient_failure');
       logger.debug('[CEX Fees] Coinbase account fee prime unavailable; Coinbase remains fail-closed for executable economics', {
         component: 'CexFeeResolver',
         symbols: missingCoinbase.length,
         error: error instanceof Error ? error.message : String(error),
+        transientRetrySuppressed: true,
       });
     }
   }
 
-  const missingKraken = requested.kraken.filter(symbol => !readFreshCache('kraken', symbol, acceptedAgeMs));
+  const missingKraken = requested.kraken.filter(symbol =>
+    !readFreshCache('kraken', symbol, acceptedAgeMs) &&
+    !unavailableEntry('kraken', symbol) &&
+    !transientRetryEntry('kraken', symbol));
   if (missingKraken.length > 0) {
     try {
       const batch = await fetchKrakenFeeEvidenceBatch(missingKraken);
       for (const evidence of batch.values()) storeFeeEvidence(evidence);
-      for (const symbol of missingKraken) {
-        if (readFreshCache('kraken', symbol, acceptedAgeMs)) continue;
-        const fallback = await configuredFallbackForVenue('kraken', symbol);
-        if (fallback) storeFeeEvidence(fallback);
-      }
+      // Prime resolution is authenticated-only. Configured overrides remain
+      // diagnostic fallbacks and may never be cached/count as resolved here.
     } catch (error) {
-      logger.warn('[CEX Fees] Kraken batch prime degraded; per-symbol final verification remains available', {
+      markTransientRetryMany('kraken', missingKraken, 'batch_fee_request_transient_failure');
+      logger.warn('[CEX Fees] Kraken batch prime degraded; same-cycle per-symbol retry remains suppressed', {
         component: 'CexFeeResolver',
         symbols: missingKraken.length,
         error: error instanceof Error ? error.message : String(error),
+        transientRetrySuppressed: true,
       });
     }
   }
 
-  const missingOkx = requested.okx.filter(symbol => !readFreshCache('okx', symbol, acceptedAgeMs));
+  const missingOkx = requested.okx.filter(symbol =>
+    !readFreshCache('okx', symbol, acceptedAgeMs) &&
+    !unavailableEntry('okx', symbol) &&
+    !transientRetryEntry('okx', symbol));
   if (missingOkx.length > 0) {
     try {
       const batch = await fetchOkxFeeEvidenceBatch(missingOkx);
       for (const evidence of batch.values()) storeFeeEvidence(evidence);
-      for (const symbol of missingOkx) {
-        if (readFreshCache('okx', symbol, acceptedAgeMs)) continue;
-        const fallback = await configuredFallbackForVenue('okx', symbol);
-        if (fallback) storeFeeEvidence(fallback);
-      }
+      // Do not immediately fan unresolved OKX symbols into individual private
+      // lookups. fetchOkxFeeEvidenceBatch owns the bounded rotating fallback budget
+      // and records transient suppression for deferred/failed symbols.
     } catch (error) {
-      logger.warn('[CEX Fees] OKX grouped batch prime degraded; per-symbol final verification remains available', {
+      markTransientRetryMany('okx', missingOkx, 'grouped_batch_request_transient_failure');
+      logger.warn('[CEX Fees] OKX grouped batch prime degraded; same-cycle fan-out remains suppressed', {
         component: 'CexFeeResolver',
         symbols: missingOkx.length,
         error: error instanceof Error ? error.message : String(error),
+        transientRetrySuppressed: true,
       });
     }
   }

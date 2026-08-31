@@ -60,14 +60,34 @@ export interface FundingLifecycleResult {
   error?: string;
 }
 
+type StoredLifecycle = {
+  lifecycleId: string;
+  plan: FundingExecutionPlan;
+  status: string;
+  receipt: FundingOpenReceipt | null;
+  settlement: FundingTerminalSettlement | null;
+  lastError: string | null;
+};
+
+const TABLE = 'private.cryptocrawler_funding_lifecycles';
+
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
 }
 
+function parseJson<T>(raw: unknown): T | null {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw as T;
+  try { return JSON.parse(String(raw)) as T; } catch { return null; }
+}
+
 class FundingPositionLifecycle {
   private readonly adapters = new Map<FundingExecutionPlan['venue'], FundingLifecycleAdapter>();
-  private ready: Promise<void> | null = null;
+  private tableProbeInFlight: Promise<boolean> | null = null;
+  private tableReadyUntil = 0;
+  private tableRetryAfter = 0;
+  private advancing = new Set<string>();
 
   registerAdapter(adapter: FundingLifecycleAdapter): void {
     this.adapters.set(adapter.venue, adapter);
@@ -77,6 +97,12 @@ class FundingPositionLifecycle {
     return [...this.adapters.keys()];
   }
 
+  /**
+   * Open a funding lifecycle and return immediately after terminal entry fills are
+   * proven delta-neutral. Holding/margin monitoring/close settlement is advanced
+   * by later canonical scheduler ticks via advanceOpenLifecycles(). The scheduler
+   * therefore never sleeps through a funding window.
+   */
   async execute(plan: FundingExecutionPlan): Promise<FundingLifecycleResult> {
     const rejection = this.validate(plan);
     if (rejection) return { success: false, settlementConfirmed: false, status: 'rejected', error: rejection };
@@ -87,7 +113,21 @@ class FundingPositionLifecycle {
     }
 
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: `cex:${plan.venue}` });
-    await this.ensureStore();
+    if (!await this.ensureStore()) {
+      return { success: false, settlementConfirmed: false, status: 'rejected', error: 'REJECT_FUNDING_LIFECYCLE_STORE_UNAVAILABLE' };
+    }
+
+    const existing = await this.findActiveByOpportunity(plan.opportunityId);
+    if (existing) {
+      return {
+        success: existing.status === 'open',
+        settlementConfirmed: false,
+        status: existing.status === 'failed' ? 'failed' : 'opened',
+        lifecycleId: existing.lifecycleId,
+        error: existing.status === 'open' ? undefined : 'FUNDING_OPPORTUNITY_ALREADY_ACTIVE',
+      };
+    }
+
     const lifecycleId = `funding:${randomUUID()}`;
     await this.persist(lifecycleId, plan, 'opening', null);
 
@@ -95,34 +135,85 @@ class FundingPositionLifecycle {
     try {
       receipt = await adapter.openDeltaNeutral(plan, lifecycleId);
     } catch (error) {
-      await this.persist(lifecycleId, plan, 'failed', error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      await this.persist(lifecycleId, plan, 'failed', message);
       return { success: false, settlementConfirmed: false, status: 'failed', lifecycleId, error: 'FUNDING_OPEN_FAILED' };
     }
     if (!receipt.deltaNeutral || !(receipt.measuredSpotQuantity > 0) || !(receipt.measuredPerpQuantity > 0)) {
-      await this.persist(lifecycleId, plan, 'failed', 'opened legs are not proven delta-neutral');
+      await this.persist(lifecycleId, plan, 'failed', 'opened legs are not proven delta-neutral', receipt);
       return { success: false, settlementConfirmed: false, status: 'failed', lifecycleId, error: 'FUNDING_DELTA_NEUTRALITY_UNPROVEN' };
     }
     await this.persist(lifecycleId, plan, 'open', null, receipt);
+    logger.info('[FundingLifecycle] Delta-neutral position opened; lifecycle delegated to scheduler ticks', {
+      component: 'FundingPositionLifecycle',
+      lifecycleId,
+      venue: plan.venue,
+      symbol: plan.symbol,
+      fundingTimestamp: plan.fundingTimestamp,
+      blockingWait: false,
+      durableState: true,
+    });
+    return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId };
+  }
 
-    const maxHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_MAX_HOLD_MS, 8 * 60 * 60_000, 60_000, 24 * 60 * 60_000);
-    const marginPollMs = bounded(process.env.CRYPTOCRAWL_FUNDING_MARGIN_POLL_MS, 5_000, 1_000, 60_000);
-    const normalCloseAt = Math.min(plan.fundingTimestamp + bounded(process.env.CRYPTOCRAWL_FUNDING_POST_PAYMENT_HOLD_MS, 30_000, 0, 5 * 60_000), receipt.openedAt + maxHoldMs);
-    let closeReason = 'funding_window_complete';
-    while (Date.now() < normalCloseAt) {
-      const healthy = await adapter.marginHealthy(receipt).catch(() => false);
-      if (!healthy) {
-        closeReason = 'margin_health_exit';
-        break;
+  async advanceOpenLifecycles(limit = 4): Promise<FundingLifecycleResult[]> {
+    if (!await this.ensureStore()) return [];
+    const rows = await pool.query(
+      `SELECT lifecycle_id, plan, status, open_receipt, terminal_settlement, last_error
+       FROM ${TABLE}
+       WHERE status IN ('open','closing','settlement_unknown')
+       ORDER BY updated_at ASC
+       LIMIT $1`,
+      [bounded(limit, 4, 1, 32)],
+    );
+    const results: FundingLifecycleResult[] = [];
+    for (const row of rows.rows) {
+      const lifecycleId = String(row.lifecycle_id || '');
+      if (!lifecycleId || this.advancing.has(lifecycleId)) continue;
+      this.advancing.add(lifecycleId);
+      try {
+        const result = await this.advanceStored({
+          lifecycleId,
+          plan: parseJson<FundingExecutionPlan>(row.plan)!,
+          status: String(row.status || ''),
+          receipt: parseJson<FundingOpenReceipt>(row.open_receipt),
+          settlement: parseJson<FundingTerminalSettlement>(row.terminal_settlement),
+          lastError: row.last_error ? String(row.last_error) : null,
+        });
+        results.push(result);
+      } finally {
+        this.advancing.delete(lifecycleId);
       }
-      await new Promise(resolve => setTimeout(resolve, Math.min(marginPollMs, Math.max(0, normalCloseAt - Date.now()))));
+    }
+    return results;
+  }
+
+  private async advanceStored(stored: StoredLifecycle): Promise<FundingLifecycleResult> {
+    const { lifecycleId, plan, receipt } = stored;
+    if (!plan || !receipt) {
+      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_DURABLE_STATE_INCOMPLETE' };
+    }
+    const adapter = this.adapters.get(plan.venue);
+    if (!adapter) {
+      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_LIFECYCLE_ADAPTER_UNAVAILABLE' };
     }
 
+    const maxHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_MAX_HOLD_MS, 8 * 60 * 60_000, 60_000, 24 * 60 * 60_000);
+    const postPaymentHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_POST_PAYMENT_HOLD_MS, 30_000, 0, 5 * 60_000);
+    const normalCloseAt = Math.min(plan.fundingTimestamp + postPaymentHoldMs, receipt.openedAt + maxHoldMs);
+    const healthy = await adapter.marginHealthy(receipt).catch(() => false);
+    if (healthy && Date.now() < normalCloseAt && stored.status !== 'closing') {
+      return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId };
+    }
+
+    const closeReason = healthy ? 'funding_window_complete' : 'margin_health_exit';
     await this.persist(lifecycleId, plan, 'closing', closeReason, receipt);
     let settlement: FundingTerminalSettlement;
     try {
       settlement = await adapter.closeAndSettle(plan, receipt);
     } catch (error) {
-      await this.persist(lifecycleId, plan, 'settlement_unknown', error instanceof Error ? error.message : String(error), receipt);
+      const message = error instanceof Error ? error.message : String(error);
+      await this.persist(lifecycleId, plan, 'settlement_unknown', message, receipt);
       return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_CLOSE_SETTLEMENT_FAILED' };
     }
 
@@ -130,6 +221,9 @@ class FundingPositionLifecycle {
       && settlement.settlementConfirmed
       && settlement.spotClosed
       && settlement.perpClosed
+      && settlement.fundingPaymentUsd !== null
+      && settlement.realizedEntryExitPnlUsd !== null
+      && settlement.realizedFeesUsd !== null
       && settlement.realizedNetProfitUsd !== null
       && Number.isFinite(settlement.realizedNetProfitUsd);
     await this.persist(lifecycleId, plan, confirmed ? 'closed' : 'settlement_unknown', settlement.error || null, receipt, settlement);
@@ -162,30 +256,69 @@ class FundingPositionLifecycle {
     return null;
   }
 
-  private async ensureStore(): Promise<void> {
-    if (!isDatabaseConfigured) throw new Error('Funding lifecycle requires durable PostgreSQL state');
-    if (this.ready) return this.ready;
-    this.ready = (async () => {
-      await pool.query('CREATE SCHEMA IF NOT EXISTS private');
-      await pool.query(`CREATE TABLE IF NOT EXISTS private.cryptocrawler_funding_lifecycles (
-        lifecycle_id text PRIMARY KEY,
-        opportunity_id text NOT NULL,
-        venue text NOT NULL,
-        symbol text NOT NULL,
-        status text NOT NULL,
-        expected_net_profit_usd numeric NOT NULL,
-        plan jsonb NOT NULL,
-        open_receipt jsonb,
-        terminal_settlement jsonb,
-        last_error text,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )`);
-    })().catch(error => {
-      this.ready = null;
-      throw error;
-    });
-    return this.ready;
+  private async ensureStore(): Promise<boolean> {
+    if (!isDatabaseConfigured) return false;
+    const now = Date.now();
+    if (this.tableReadyUntil > now) return true;
+    if (now < this.tableRetryAfter) return false;
+    if (this.tableProbeInFlight) return this.tableProbeInFlight;
+    const readyTtlMs = bounded(process.env.CRYPTOCRAWL_FUNDING_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
+    const retryMs = bounded(process.env.CRYPTOCRAWL_FUNDING_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
+    const probe = pool.query(`SELECT to_regclass('${TABLE}') IS NOT NULL AS ready`)
+      .then(result => {
+        const ready = result.rows?.[0]?.ready === true;
+        if (ready) {
+          this.tableReadyUntil = Date.now() + readyTtlMs;
+          this.tableRetryAfter = 0;
+        } else {
+          this.tableReadyUntil = 0;
+          this.tableRetryAfter = Date.now() + retryMs;
+          logger.error('[FundingLifecycle] Migration-owned lifecycle table is missing', {
+            component: 'FundingPositionLifecycle',
+            table: TABLE,
+            runtimeDdlAllowed: false,
+            executionAuthorityGranted: false,
+          });
+        }
+        return ready;
+      })
+      .catch(error => {
+        this.tableReadyUntil = 0;
+        this.tableRetryAfter = Date.now() + retryMs;
+        logger.warn('[FundingLifecycle] Lifecycle-store verification failed closed', {
+          component: 'FundingPositionLifecycle',
+          retryAfterMs: retryMs,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      })
+      .finally(() => {
+        if (this.tableProbeInFlight === probe) this.tableProbeInFlight = null;
+      });
+    this.tableProbeInFlight = probe;
+    return probe;
+  }
+
+  private async findActiveByOpportunity(opportunityId: string): Promise<StoredLifecycle | null> {
+    const result = await pool.query(
+      `SELECT lifecycle_id, plan, status, open_receipt, terminal_settlement, last_error
+       FROM ${TABLE}
+       WHERE opportunity_id = $1 AND status IN ('opening','open','closing','settlement_unknown')
+       ORDER BY updated_at DESC LIMIT 1`,
+      [opportunityId],
+    );
+    const row = result.rows?.[0];
+    if (!row) return null;
+    const plan = parseJson<FundingExecutionPlan>(row.plan);
+    if (!plan) return null;
+    return {
+      lifecycleId: String(row.lifecycle_id),
+      plan,
+      status: String(row.status),
+      receipt: parseJson<FundingOpenReceipt>(row.open_receipt),
+      settlement: parseJson<FundingTerminalSettlement>(row.terminal_settlement),
+      lastError: row.last_error ? String(row.last_error) : null,
+    };
   }
 
   private async persist(
@@ -196,7 +329,7 @@ class FundingPositionLifecycle {
     receipt?: FundingOpenReceipt,
     settlement?: FundingTerminalSettlement,
   ): Promise<void> {
-    await pool.query(`INSERT INTO private.cryptocrawler_funding_lifecycles
+    await pool.query(`INSERT INTO ${TABLE}
       (lifecycle_id, opportunity_id, venue, symbol, status, expected_net_profit_usd, plan, open_receipt, terminal_settlement, last_error, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,now())
       ON CONFLICT (lifecycle_id) DO UPDATE SET status=EXCLUDED.status, open_receipt=EXCLUDED.open_receipt,
