@@ -95,6 +95,7 @@ type MakerCanaryProof = {
 };
 
 type MakerProductConstraints = {
+  quoteAsset: string;
   baseIncrement: number;
   baseMinSize: number;
   quoteMinSize: number | null;
@@ -103,6 +104,7 @@ type MakerProductConstraints = {
 };
 
 const STABLECOIN_SYMBOLS = new Set(['USDGUSDT', 'USDCUSDT', 'DAIUSDT', 'RLUSDUSDT']);
+const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
 const DEFAULT_TTL_MS = 30_000;
 const CEX_VENUES: readonly CexFeeVenue[] = ['coinbase', 'kraken', 'okx'] as const;
 
@@ -267,6 +269,7 @@ async function makerProductConstraints(venue: CexFeeVenue, symbol: string): Prom
     const constraints = await getCoinbaseAdvancedProductConstraints(symbol).catch(() => null);
     if (!constraints || constraints.isDisabled || constraints.tradingDisabled || constraints.cancelOnly || constraints.auctionMode || constraints.viewOnly) return null;
     return {
+      quoteAsset: constraints.quoteAsset,
       baseIncrement: constraints.baseIncrement,
       baseMinSize: constraints.baseMinSize,
       quoteMinSize: constraints.quoteMinSize,
@@ -277,6 +280,7 @@ async function makerProductConstraints(venue: CexFeeVenue, symbol: string): Prom
   const constraints = await getSpotProductConstraints(venue, symbol).catch(() => null);
   if (!constraints) return null;
   return {
+    quoteAsset: constraints.quoteAsset,
     baseIncrement: constraints.baseIncrement,
     baseMinSize: constraints.baseMinSize,
     quoteMinSize: constraints.quoteMinSize,
@@ -364,6 +368,14 @@ async function evaluateMakerCandidate(input: {
         makerProductConstraints(sell.venue, symbol),
       ]);
       if (!buyConstraints || !sellConstraints) continue;
+      const quoteAsset = buyConstraints.quoteAsset.trim().toUpperCase();
+      if (quoteAsset !== sellConstraints.quoteAsset.trim().toUpperCase()) continue;
+      // Product representation is universal, but `*Usd` fields are execution
+      // authority only when the quote is already USD-normalized. Other quote
+      // currencies remain discoverable/advisory until a measured conversion is
+      // bound to the opportunity; never relabel raw BTC/EUR/etc. as dollars.
+      if (!USD_NORMALIZED_QUOTES.has(quoteAsset)) continue;
+
       const commonIncrement = Math.max(buyConstraints.baseIncrement, sellConstraints.baseIncrement);
       const canary = maxCanaryUsd(input.notionalUsd);
       const singleOrderEnvelopeUsd = Math.min(
@@ -501,9 +513,11 @@ export async function evaluateStablecoinMakerCandidate(input: {
 }
 
 /**
- * Maker recovery across every canonical executable CEX venue. Stablecoins need
- * only clear authenticated maker fees; volatile pairs additionally require a wide
- * gross spread before Queue-Echo, stress, product, canary and governance gates.
+ * Maker recovery across every canonical executable CEX venue. Product discovery
+ * is universal; executable USD P&L remains fail-closed until the quote currency
+ * has authoritative USD normalization. Stablecoins need only clear authenticated
+ * maker fees; volatile pairs additionally require a wide gross spread before
+ * Queue-Echo, stress, product, canary and governance gates.
  */
 export async function evaluateMakerRecoveryCandidate(input: {
   symbol: string;
