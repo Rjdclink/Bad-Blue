@@ -97,7 +97,7 @@ async function getOkxSwapCapability(observation: FundingRateObservation): Promis
         instrumentVisible,
         accountModeVisible: accountContext.accountModeVisible,
         reason: instrumentVisible && accountContext.accountModeVisible
-          ? 'Existing OKX credentials can read the SWAP instrument and account mode; live funding execution still requires a persistent delta-neutral lifecycle and liquidation-safe close authority'
+          ? 'Existing OKX credentials can read the SWAP instrument and account mode; the durable lifecycle exists, but live funding execution still requires a registered OKX lifecycle adapter plus measured entry/exit depth, margin-safe sizing and terminal funding/close evidence'
           : 'Existing OKX credentials did not prove both SWAP instrument visibility and account mode',
       };
       okxSwapCapabilityCache.set(cacheKey, { expiresAt: Date.now() + OKX_SWAP_CONTEXT_TTL_MS, value });
@@ -145,7 +145,8 @@ class FundingRateMonitor {
       venues: ['okx', 'kraken_futures', 'binance_futures'],
       okxPrivateAccountContextTtlMs: OKX_SWAP_CONTEXT_TTL_MS,
       newKeysRequiredForDiscovery: false,
-      executionAuthority: 'none_until_topology_specific_lifecycle_exists',
+      durableFundingLifecycleImplemented: true,
+      executionAuthority: 'none_until_topology_specific_adapter_and_exact_economics_exist',
     });
   }
 
@@ -180,10 +181,9 @@ class FundingRateMonitor {
           : null;
         const swapCapability = await getOkxSwapCapability(observation);
 
-        // Public funding discovery can establish the carry signal without a new
-        // key, but executable all-in economics also require depth/slippage and a
-        // topology-specific position lifecycle. Until those are measured, they
-        // remain explicit unknowns rather than silently assuming zero.
+        // Public funding discovery establishes carry signal. It does not promote
+        // execution until future close/basis risk, entry/exit depth, adapter
+        // capability and terminal funding settlement are all measured.
         const decision = evaluateFundingArbitrage({
           fundingRate: observation.fundingRate,
           notionalUsd,
@@ -206,7 +206,7 @@ class FundingRateMonitor {
           ...decision.missingInformation,
           'measured_entry_and_exit_depth',
           'measured_exit_basis_reserve',
-          'persistent_delta_neutral_position_lifecycle',
+          'funding_venue_lifecycle_adapter',
           'liquidation_margin_and_collateral_monitoring',
           'terminal_funding_payment_and_close_settlement',
           ...(observation.venue === 'kraken_futures' ? ['kraken_derivatives_execution_credentials'] : []),
@@ -240,7 +240,7 @@ class FundingRateMonitor {
               ...(observation.nextFundingTime ? [`next_funding_time:${observation.nextFundingTime}`] : []),
             ],
           }],
-          depth: { status: 'unavailable', detail: 'Funding discovery uses public ticker/funding snapshots; executable depth is intentionally not inferred' },
+          depth: { status: 'unavailable', detail: 'Funding discovery uses public ticker/funding snapshots; executable entry/exit depth is intentionally not inferred' },
           economics: {
             grossProfitUsd: decision.expectedFundingUsd,
             deterministicNetProfitUsd: decision.deterministicNetProfitUsd,
@@ -261,6 +261,7 @@ class FundingRateMonitor {
           provenance: [
             ...observation.provenance,
             'funding_arbitrage_policy:all_in_costs_required',
+            'durable_funding_lifecycle:implemented_migration_owned_nonblocking',
             'unknown_cost_is_not_zero',
             'execution_not_promoted_from_public_discovery',
           ],
@@ -278,8 +279,9 @@ class FundingRateMonitor {
         projectedPositive,
         deterministicPositive,
         eligible: 0,
+        durableFundingLifecycleImplemented: true,
         okxSwapCapabilityCacheEntries: okxSwapCapabilityCache.size,
-        note: 'Funding rate is carry, not instant spread; unknown exit/liquidation evidence blocks execution',
+        note: 'Funding rate is carry, not instant spread; unknown exit/depth/adapter/liquidation evidence blocks execution',
       });
     } catch (error) {
       this.cycles++;
