@@ -6,6 +6,12 @@ import {
 } from '../intelligence/coinbase-advanced-trade-authority.js';
 import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
+import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
+import {
+  getOkxRpiExecutionCapability,
+  isOkxRpiMakerPriceAdmissible,
+} from '../intelligence/okx-rpi-fee-advisory.js';
+import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import {
   createProductionCexSettlementAdapters,
   type CexOrderReceipt,
@@ -18,9 +24,13 @@ import { getSpotProductConstraints } from './cex-spot-product-policy.js';
 import { coinbaseDecimalString } from './coinbase-spot-settlement-adapter.js';
 import { validateCoinbasePostOnlyOrderAgainstProduct } from './coinbase-product-policy.js';
 import { getMakerLifecycleTraceId } from './maker-lifecycle-trace.js';
-import type { MakerRecoveryPlan } from './stablecoin-maker-strategy.js';
+import type { MakerOrderStyle, MakerRecoveryPlan } from './stablecoin-maker-strategy.js';
 
 const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
+
+type SharedMakerPlan = VerifiedArbitragePlan & {
+  makerExecution?: MakerRecoveryPlan['makerExecution'];
+};
 
 function assertUsdNormalizedMakerEconomics(
   venue: ExecutableCexVenue,
@@ -38,6 +48,31 @@ function okxGatewayLatencyMs(payload: any): number | null {
   return (outTime - inTime) / 1_000;
 }
 
+function makerOrderStyle(plan: SharedMakerPlan, venue: ExecutableCexVenue, side: 'buy' | 'sell'): {
+  style: MakerOrderStyle;
+  expectedMakerFeeBps: number;
+} {
+  const execution = plan.makerExecution;
+  if (venue === plan.buyVenue && side === 'buy') {
+    return {
+      // MT/TM deliberately reuse this adapter without makerExecution metadata.
+      // They are always standard post-only makers; only an admitted MM plan can
+      // opt a leg into RPI from authenticated, sized, spacing-valid economics.
+      style: execution?.orderStyle?.buy ?? 'post_only',
+      expectedMakerFeeBps: execution?.orderStyle?.buyEffectiveMakerFeeBps
+        ?? Number(plan.feeEvidence?.buy?.makerFeeBps ?? 0),
+    };
+  }
+  if (venue === plan.sellVenue && side === 'sell') {
+    return {
+      style: execution?.orderStyle?.sell ?? 'post_only',
+      expectedMakerFeeBps: execution?.orderStyle?.sellEffectiveMakerFeeBps
+        ?? Number(plan.feeEvidence?.sell?.makerFeeBps ?? 0),
+    };
+  }
+  return { style: 'post_only', expectedMakerFeeBps: 0 };
+}
+
 function recordLatency(input: {
   traceId: string;
   venue: ExecutableCexVenue;
@@ -45,6 +80,7 @@ function recordLatency(input: {
   symbol: string;
   clientRoundTripMs: number;
   gatewayProcessingMs?: number | null;
+  orderStyle?: MakerOrderStyle;
 }): void {
   logger.info('[MakerRecovery] Maker order latency evidence', {
     component: 'PostOnlyMakerAdapters',
@@ -52,6 +88,7 @@ function recordLatency(input: {
     venue: input.venue,
     operation: input.operation,
     symbol: input.symbol,
+    orderStyle: input.orderStyle ?? 'post_only',
     clientRoundTripMs: input.clientRoundTripMs,
     gatewayProcessingMs: input.gatewayProcessingMs ?? null,
     executionAuthorityChanged: false,
@@ -62,6 +99,7 @@ function wrapMakerSubmit(
   venue: ExecutableCexVenue,
   delegate: CexSettlementAdapter,
   traceId: string,
+  plan: SharedMakerPlan,
 ): CexSettlementAdapter {
   return {
     async submit(request: OrderRequest): Promise<CexOrderReceipt> {
@@ -80,24 +118,52 @@ function wrapMakerSubmit(
         });
         const orderId = result.txid?.[0];
         if (!orderId) throw new Error('Kraken did not return a post-only maker order id');
-        recordLatency({ traceId, venue, operation: 'submit', symbol: request.symbol, clientRoundTripMs: Date.now() - submittedAt });
+        recordLatency({ traceId, venue, operation: 'submit', symbol: request.symbol, clientRoundTripMs: Date.now() - submittedAt, orderStyle: 'post_only' });
         return { venue: 'kraken', orderId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
       }
 
       if (venue === 'okx') {
         const constraints = await getSpotProductConstraints('okx', request.symbol, true);
         assertUsdNormalizedMakerEconomics(venue, request.symbol, constraints.quoteAsset);
+        const planned = makerOrderStyle(plan, venue, request.side);
+        let ordType: 'post_only' | 'rpi' = 'post_only';
+
+        if (planned.style === 'rpi') {
+          const [capability, currentBook] = await Promise.all([
+            getOkxRpiExecutionCapability(request.symbol, true),
+            cexOrderBookStreams.getQuote('okx', request.symbol, Math.max(500, Number(process.env.CRYPTO_OKX_RPI_SUBMIT_BOOK_MAX_AGE_MS || 1_500))).catch(() => null),
+          ]);
+          if (!capability || !currentBook) {
+            throw new Error('OKX_RPI_REJECT_FRESH_CAPABILITY_OR_BOOK_UNAVAILABLE');
+          }
+          const oppositeOrganicPrice = request.side === 'buy' ? currentBook.ask : currentBook.bid;
+          const admissible = isOkxRpiMakerPriceAdmissible({
+            capability,
+            side: request.side,
+            price: request.price,
+            oppositeOrganicPrice,
+            tickSize: constraints.priceIncrement,
+            notionalUsd: request.quantity * request.price,
+          });
+          if (!admissible) throw new Error('OKX_RPI_REJECT_PERMISSION_NOTIONAL_OR_SPACING_CHANGED');
+          if (capability.rpiMakerFeeBps > planned.expectedMakerFeeBps + 1e-9) {
+            throw new Error(`OKX_RPI_REJECT_FEE_WORSENED expected=${planned.expectedMakerFeeBps} current=${capability.rpiMakerFeeBps}`);
+          }
+          ordType = 'rpi';
+        }
+
         const { payload, data } = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
           instId: constraints.exchangeSymbol,
           tdMode: 'cash',
           side: request.side,
-          ordType: 'post_only',
+          ordType,
           px: cexDecimalString(request.price),
           sz: cexDecimalString(request.quantity),
+          ...(ordType === 'rpi' ? { rpiPxRound: false } : {}),
           clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
         }, { lane: 'order_write' });
         const order = data[0];
-        if (!order || order.sCode !== '0' || !order.ordId) throw new Error(`OKX rejected post-only maker order: ${order?.sMsg || 'unknown error'}`);
+        if (!order || order.sCode !== '0' || !order.ordId) throw new Error(`OKX rejected ${ordType} maker order: ${order?.sMsg || 'unknown error'}`);
         recordLatency({
           traceId,
           venue,
@@ -105,6 +171,7 @@ function wrapMakerSubmit(
           symbol: request.symbol,
           clientRoundTripMs: Date.now() - submittedAt,
           gatewayProcessingMs: okxGatewayLatencyMs(payload),
+          orderStyle: ordType,
         });
         return { venue: 'okx', orderId: order.ordId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
       }
@@ -135,7 +202,7 @@ function wrapMakerSubmit(
         const message = payload?.error_response?.message || payload?.error_response?.error_details || 'unknown Coinbase post-only rejection';
         throw new Error(`Coinbase rejected post-only maker order: ${String(message)}`);
       }
-      recordLatency({ traceId, venue, operation: 'submit', symbol: request.symbol, clientRoundTripMs: Date.now() - submittedAt });
+      recordLatency({ traceId, venue, operation: 'submit', symbol: request.symbol, clientRoundTripMs: Date.now() - submittedAt, orderStyle: 'post_only' });
       return {
         venue: 'coinbase',
         orderId: String(payload.success_response.order_id),
@@ -157,16 +224,19 @@ function wrapMakerSubmit(
 }
 
 /**
- * Shared post-only adapter for every canonical executable CEX venue. Asset-class
- * admission and economics happen upstream; this layer only translates the same
- * maker intent into each venue's exact authenticated order contract. Until an
- * authoritative quote-to-USD conversion is bound to a plan, non-USD-normalized
- * quote products fail closed before submission rather than fabricating USD P&L.
+ * Shared maker adapter for every canonical executable CEX venue. Standard maker
+ * intent remains post-only. MT/TM may reuse the same adapter without MM-specific
+ * makerExecution metadata and therefore default to standard post-only semantics.
+ * An OKX RPI leg is submitted only when an MM plan explicitly selected it from
+ * authenticated fee economics and submit-time product permission, minimum
+ * notional, visible RPI spacing, fresh book and fee evidence still support the
+ * same-or-better economics. There is no silent downgrade from RPI to standard
+ * maker because that could invalidate plan P&L.
  */
-export function createPostOnlyMakerAdapters(plan: MakerRecoveryPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
+export function createPostOnlyMakerAdapters(plan: SharedMakerPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();
   const traceId = getMakerLifecycleTraceId(plan);
-  adapters[plan.buyVenue] = wrapMakerSubmit(plan.buyVenue, adapters[plan.buyVenue], traceId);
-  adapters[plan.sellVenue] = wrapMakerSubmit(plan.sellVenue, adapters[plan.sellVenue], traceId);
+  adapters[plan.buyVenue] = wrapMakerSubmit(plan.buyVenue, adapters[plan.buyVenue], traceId, plan);
+  adapters[plan.sellVenue] = wrapMakerSubmit(plan.sellVenue, adapters[plan.sellVenue], traceId, plan);
   return adapters;
 }

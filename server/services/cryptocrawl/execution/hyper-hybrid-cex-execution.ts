@@ -13,6 +13,7 @@ import {
 } from '../intelligence/coinbase-advanced-trade-authority.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
+import { getOkxRpiExecutionCapability } from '../intelligence/okx-rpi-capability.js';
 import {
   executeCexPlan,
   type CexExecutionResult,
@@ -71,6 +72,7 @@ type VenueLimit = {
 };
 
 type PlannedLegMode = 'maker' | 'taker';
+type PlannedOrderStyle = 'post_only' | 'rpi';
 type PlannedExecutionShape = {
   hybridExecution?: {
     buyMode?: PlannedLegMode;
@@ -79,6 +81,10 @@ type PlannedExecutionShape = {
   makerExecution?: {
     buyMode?: PlannedLegMode;
     sellMode?: PlannedLegMode;
+    orderStyle?: {
+      buy?: PlannedOrderStyle;
+      sell?: PlannedOrderStyle;
+    };
   };
 };
 
@@ -156,6 +162,35 @@ function minQuantityForLimit(limit: VenueLimit, price: number): number {
   return minimum;
 }
 
+function executionShape(plan: VerifiedArbitragePlan): PlannedExecutionShape {
+  return plan as VerifiedArbitragePlan & PlannedExecutionShape;
+}
+
+async function strategyMinimumChildQuantity(
+  parent: VerifiedArbitragePlan,
+  buyPrice: number,
+  sellPrice: number,
+): Promise<number> {
+  const maker = executionShape(parent).makerExecution;
+  if (!maker?.orderStyle) return 0;
+
+  let minimum = 0;
+  const rpiBuy = parent.buyVenue === 'okx' && maker.orderStyle.buy === 'rpi';
+  const rpiSell = parent.sellVenue === 'okx' && maker.orderStyle.sell === 'rpi';
+  if (!rpiBuy && !rpiSell) return 0;
+
+  // If the admitted parent economics depended on RPI, every split child must be
+  // large enough to retain that same fee treatment. Do not manufacture many tiny
+  // maker orders merely to increase order count or nominal rebate activity.
+  const capability = await getOkxRpiExecutionCapability(parent.symbol, true);
+  if (!capability || !capability.makerPermission || !capability.executableFeeAdvantage) {
+    throw new Error('RPI parent economics cannot be preserved across split children: fresh OKX RPI capability unavailable');
+  }
+  if (rpiBuy) minimum = Math.max(minimum, capability.minimumRpiNotionalUsd / buyPrice);
+  if (rpiSell) minimum = Math.max(minimum, capability.minimumRpiNotionalUsd / sellPrice);
+  return minimum;
+}
+
 function proportionalChildPlan(parent: VerifiedArbitragePlan, baseQty: number): VerifiedArbitragePlan {
   const ratio = baseQty / parent.baseQty;
   if (!(ratio > 0 && ratio <= 1) || !Number.isFinite(ratio)) throw new Error('Invalid hyper-hybrid child ratio');
@@ -194,9 +229,10 @@ export async function buildHyperHybridCexChildren(parent: VerifiedArbitragePlan)
 
   const buyPrice = parent.buyLimitPrice ?? parent.buyAsk;
   const sellPrice = parent.sellLimitPrice ?? parent.sellBid;
-  const [buy, sell] = await Promise.all([
+  const [buy, sell, strategyMinimumQty] = await Promise.all([
     venueLimit(parent.buyVenue, parent.symbol),
     venueLimit(parent.sellVenue, parent.symbol),
+    strategyMinimumChildQuantity(parent, buyPrice, sellPrice),
   ]);
   const increment = commonIncrement([buy.baseIncrement, sell.baseIncrement]);
   const totalQty = floorToIncrement(parent.baseQty, increment);
@@ -213,20 +249,21 @@ export async function buildHyperHybridCexChildren(parent: VerifiedArbitragePlan)
   const minimumQty = Math.max(
     minQuantityForLimit(buy, buyPrice),
     minQuantityForLimit(sell, sellPrice),
+    strategyMinimumQty,
   );
   const totalUnits = Math.floor(totalQty / increment + 1e-8);
   const maxUnits = Math.floor(maxChildQty / increment + 1e-8);
   const minUnits = Math.max(1, Math.ceil(minimumQty / increment - 1e-8));
   const childCount = Math.max(1, Math.ceil(totalUnits / maxUnits));
   if (totalUnits < childCount * minUnits) {
-    throw new Error('Parent cannot be split into children that simultaneously satisfy current exchange minimums and maximums');
+    throw new Error('Parent cannot be split into children that simultaneously satisfy current exchange/strategy minimums and per-order maximums');
   }
 
   const baseUnits = Math.floor(totalUnits / childCount);
   const remainder = totalUnits % childCount;
   const quantities = Array.from({ length: childCount }, (_, index) => (baseUnits + (index < remainder ? 1 : 0)) * increment);
   if (quantities.some(quantity => quantity + increment * 1e-7 < minimumQty || quantity > maxChildQty + increment * 1e-7)) {
-    throw new Error('Derived CEX child quantity violates current exchange size envelope');
+    throw new Error('Derived CEX child quantity violates current exchange/strategy size envelope');
   }
   return quantities.map(quantity => proportionalChildPlan(parent, Number(quantity.toPrecision(15))));
 }
@@ -234,10 +271,6 @@ export async function buildHyperHybridCexChildren(parent: VerifiedArbitragePlan)
 function childConcurrency(): number {
   const parsed = Number(process.env.CRYPTO_CEX_CHILD_CONCURRENCY || DEFAULT_CHILD_CONCURRENCY);
   return Number.isFinite(parsed) ? Math.max(1, Math.min(32, Math.trunc(parsed))) : DEFAULT_CHILD_CONCURRENCY;
-}
-
-function executionShape(plan: VerifiedArbitragePlan): PlannedExecutionShape {
-  return plan as VerifiedArbitragePlan & PlannedExecutionShape;
 }
 
 function plannedLegMode(plan: VerifiedArbitragePlan, side: 'buy' | 'sell'): PlannedLegMode {
@@ -448,6 +481,8 @@ function aggregateResult(
       `attempted_children:${children.length}`,
       `completed_children:${completedChildren.length}`,
       'split_children_per_order_limit_bounded:true',
+      'split_children_strategy_minimum_bounded:true',
+      'rebate_order_count_objective:false',
       'parallel_single_admitted_batch:true',
       'sequential_child_waves:false',
       'completed_child_profit_retained:true',
@@ -608,6 +643,8 @@ export async function executeHyperHybridCexPlan(input: {
     sequentialChildWaves: false,
     completedChildProfitRetained: true,
     residualRequiresFreshReplan: true,
+    smartSplitObjective: 'preserve_net_execution_quality_not_order_count_or_artificial_volume',
+    rebateOrderCountObjective: false,
     stopReason: result.stopReason || null,
   });
   return result;

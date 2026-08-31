@@ -17,6 +17,7 @@ import type { ChainId as BridgeChainId } from '../bridge/types';
 import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
 import { getLastOrderedMarketUniverseSymbols } from '../discovery/market-universe-controller.js';
 import { getCexScanCapacity, type ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
+import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
@@ -29,7 +30,10 @@ import {
 import { getOkxExecutionRestBaseUrl } from '../intelligence/okx-region-authority.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
-import { getCoinbaseAdvancedProductBook } from '../intelligence/coinbase-advanced-market-data.js';
+import {
+  getCoinbaseAdvancedProductBook,
+  getCoinbaseAdvancedProductConstraints,
+} from '../intelligence/coinbase-advanced-market-data.js';
 
 export type QuoteVenue = 'coinbase' | 'kraken' | 'okx';
 
@@ -132,7 +136,9 @@ export interface VerifyRequest {
   notionalUsd: number;
   maxQuoteAgeMs: number;
   minNetProfitUsd: number;
+  /** Compatibility/advisory inputs only. Executable economics require authenticated venue evidence. */
   buyFeesBps?: Partial<Record<QuoteVenue, number>>;
+  /** Compatibility/advisory inputs only. Executable economics require authenticated venue evidence. */
   sellFeesBps?: Partial<Record<QuoteVenue, number>>;
   bridge?: {
     enabled: boolean;
@@ -148,6 +154,7 @@ export interface VerifyRequest {
 
 export type VerifyManyRequest = Omit<VerifyRequest, 'symbol' | 'minNetProfitUsd'>;
 
+const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
 const QUOTE_REQUEST_CACHE_TTL_MS = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_QUOTE_CACHE_MS || 2000));
 const quoteRequestCache = new Map<string, { payload: any; expiresAt: number }>();
 const quoteRequestInFlight = new Map<string, Promise<any>>();
@@ -190,8 +197,17 @@ async function fetchJson(url: string, timeoutMs: number): Promise<any> {
   return requestPromise;
 }
 
+function assertUsdNormalizedQuote(venue: QuoteVenue, symbol: string, quoteAsset: string): void {
+  if (USD_NORMALIZED_QUOTES.has(quoteAsset.trim().toUpperCase())) return;
+  throw new Error(`CEX_USD_NORMALIZATION_UNAVAILABLE: ${venue} ${symbol} quote=${quoteAsset}`);
+}
+
 async function fetchCoinbaseTopOfBook(symbol: string): Promise<TopOfBookQuote> {
-  const book = await getCoinbaseAdvancedProductBook(symbol);
+  const [book, product] = await Promise.all([
+    getCoinbaseAdvancedProductBook(symbol),
+    getCoinbaseAdvancedProductConstraints(symbol),
+  ]);
+  assertUsdNormalizedQuote('coinbase', product.symbol, product.quoteAsset);
   return {
     venue: 'coinbase',
     symbol: book.symbol,
@@ -209,7 +225,9 @@ async function fetchCoinbaseTopOfBook(symbol: string): Promise<TopOfBookQuote> {
 }
 
 async function fetchKrakenTopOfBook(symbol: string): Promise<TopOfBookQuote> {
-  const data = await fetchJson(`https://api.kraken.com/0/public/Depth?pair=${encodeURIComponent(symbol)}&count=20`, 2500);
+  const product = await getSpotProductConstraints('kraken', symbol);
+  assertUsdNormalizedQuote('kraken', product.symbol, product.quoteAsset);
+  const data = await fetchJson(`https://api.kraken.com/0/public/Depth?pair=${encodeURIComponent(product.exchangeSymbol)}&count=20`, 2500);
   const key = Object.keys(data?.result || {})[0];
   const row = key ? data?.result?.[key] : null;
   const bids = normalizeBookLevels(row?.b).sort((left, right) => right.price - left.price);
@@ -218,17 +236,16 @@ async function fetchKrakenTopOfBook(symbol: string): Promise<TopOfBookQuote> {
   const ask = asks[0]?.price;
   if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0) throw new Error('Invalid Kraken quote');
   const observedAt = Date.now();
-  return { venue: 'kraken', symbol, bid, ask, timestamp: observedAt, transport: 'rest', depth: { bids, asks, observedAt, source: 'kraken' } };
-}
-
-function okxInstId(symbol: string): string {
-  const m = symbol.match(/^([A-Z0-9]+)(USDT|USDC|USD)$/);
-  return m ? `${m[1]}-${m[2]}` : symbol;
+  return { venue: 'kraken', symbol: product.symbol, bid, ask, timestamp: observedAt, transport: 'rest', depth: { bids, asks, observedAt, source: 'kraken' } };
 }
 
 async function fetchOkxTopOfBook(symbol: string): Promise<TopOfBookQuote> {
-  const baseUrl = await getOkxExecutionRestBaseUrl();
-  const data = await fetchJson(`${baseUrl}/api/v5/market/books?instId=${encodeURIComponent(okxInstId(symbol))}&sz=20`, 2500);
+  const [baseUrl, product] = await Promise.all([
+    getOkxExecutionRestBaseUrl(),
+    getSpotProductConstraints('okx', symbol),
+  ]);
+  assertUsdNormalizedQuote('okx', product.symbol, product.quoteAsset);
+  const data = await fetchJson(`${baseUrl}/api/v5/market/books?instId=${encodeURIComponent(product.exchangeSymbol)}&sz=20`, 2500);
   const row = data?.data?.[0];
   const bids = normalizeBookLevels(row?.bids).sort((left, right) => right.price - left.price);
   const asks = normalizeBookLevels(row?.asks).sort((left, right) => left.price - right.price);
@@ -236,13 +253,17 @@ async function fetchOkxTopOfBook(symbol: string): Promise<TopOfBookQuote> {
   const ask = asks[0]?.price;
   if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0) throw new Error('Invalid OKX quote');
   const observedAt = Date.now();
-  return { venue: 'okx', symbol, bid, ask, timestamp: observedAt, transport: 'rest', depth: { bids, asks, observedAt, source: 'okx' } };
+  return { venue: 'okx', symbol: product.symbol, bid, ask, timestamp: observedAt, transport: 'rest', depth: { bids, asks, observedAt, source: 'okx' } };
 }
 
 async function fetchStreamQuote(venue: CexStreamVenue, symbol: string, maxAgeMs: number): Promise<TopOfBookQuote | null> {
+  const quoteAsset = venue === 'coinbase'
+    ? (await getCoinbaseAdvancedProductConstraints(symbol)).quoteAsset
+    : (await getSpotProductConstraints(venue, symbol)).quoteAsset;
+  assertUsdNormalizedQuote(venue, symbol, quoteAsset);
   const quote = await cexOrderBookStreams.getQuote(venue, symbol, maxAgeMs);
   if (!quote) return null;
-  return { venue, symbol, bid: quote.bid, ask: quote.ask, timestamp: quote.timestamp, transport: 'websocket', depth: { ...quote.depth, source: venue } };
+  return { venue, symbol: quote.symbol, bid: quote.bid, ask: quote.ask, timestamp: quote.timestamp, transport: 'websocket', depth: { ...quote.depth, source: venue } };
 }
 
 function normalizeBookLevels(raw: unknown): OrderBookLevel[] {
@@ -290,13 +311,13 @@ function consumeSellBids(bids: OrderBookLevel[], requestedQuantity: number): { q
 async function fetchQuotes(symbol: string, maxAgeMs: number): Promise<TopOfBookQuote[]> {
   const venues = getActiveExecutableQuoteVenues();
   const tasks = venues.map(venue => {
-    if (venue === 'coinbase') return fetchCoinbaseTopOfBook(symbol);
+    if (venue === 'coinbase') {
+      return fetchStreamQuote('coinbase', symbol, maxAgeMs).then(quote => quote || fetchCoinbaseTopOfBook(symbol));
+    }
     if (venue === 'kraken') {
       return fetchStreamQuote('kraken', symbol, maxAgeMs).then(quote => quote || fetchKrakenTopOfBook(symbol));
     }
-    // Until the OKX WebSocket manager is regionalized, executable planning must
-    // use the authenticated account-region REST book rather than Global WS data.
-    return fetchOkxTopOfBook(symbol);
+    return fetchStreamQuote('okx', symbol, maxAgeMs).then(quote => quote || fetchOkxTopOfBook(symbol));
   });
   const settled = await Promise.allSettled(tasks);
   const quotes: TopOfBookQuote[] = [];
@@ -314,47 +335,16 @@ function feeUsd(amountUsd: number, feeBps: number): number {
   return amountUsd * (feeBps / 10_000);
 }
 
-function configuredTakerFeeBps(venue: QuoteVenue): number | null {
-  const value = Number(process.env[`CRYPTO_ARBITRAGE_${venue.toUpperCase()}_TAKER_FEE_BPS`]);
-  return Number.isFinite(value) && value >= 0 ? value : null;
-}
-
 function configuredTransferFeeUsd(): number {
   const value = Number(process.env.CRYPTO_ARBITRAGE_CROSS_VENUE_TRANSFER_FEE_USD);
   return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
-function overrideEvidence(venue: QuoteVenue, symbol: string, takerFeeBps: number): CexFeeEvidence {
-  return {
-    venue,
-    symbol,
-    takerFeeBps,
-    makerFeeBps: null,
-    makerRebateBps: null,
-    source: 'configured_override',
-    observedAt: Date.now(),
-  };
-}
-
-function requestedFeeOverride(req: Omit<VerifyRequest, 'minNetProfitUsd'>, venue: QuoteVenue): number | null {
-  const buyOverride = req.buyFeesBps?.[venue];
-  if (Number.isFinite(buyOverride) && buyOverride! >= 0) return buyOverride!;
-  const sellOverride = req.sellFeesBps?.[venue];
-  return Number.isFinite(sellOverride) && sellOverride! >= 0 ? sellOverride! : null;
-}
-
-function effectiveTakerFeeBps(
-  venue: QuoteVenue,
-  evidence: CexFeeEvidence | null,
-  requestOverride: number | undefined,
-): number | null {
-  // Coinbase and OKX require canonical authenticated/resolver evidence before
-  // any configured/request override may participate in executable economics.
-  if ((venue === 'okx' || venue === 'coinbase') && !evidence) return null;
-  if (venue === 'coinbase' && evidence) return evidence.takerFeeBps;
-  if (Number.isFinite(requestOverride) && requestOverride! >= 0) return requestOverride!;
-  if (evidence && Number.isFinite(evidence.takerFeeBps) && evidence.takerFeeBps >= 0) return evidence.takerFeeBps;
-  return venue === 'okx' ? null : configuredTakerFeeBps(venue);
+function effectiveTakerFeeBps(evidence: CexFeeEvidence | null): number | null {
+  if (!evidence || evidence.source === 'configured_override') return null;
+  return Number.isFinite(evidence.takerFeeBps) && evidence.takerFeeBps >= 0
+    ? evidence.takerFeeBps
+    : null;
 }
 
 function scanRequestKey(req: Omit<VerifyRequest, 'minNetProfitUsd'>, symbols: readonly string[]): string {
@@ -362,6 +352,8 @@ function scanRequestKey(req: Omit<VerifyRequest, 'minNetProfitUsd'>, symbols: re
     symbols: [...symbols].sort(),
     notionalUsd: req.notionalUsd,
     maxQuoteAgeMs: req.maxQuoteAgeMs,
+    // Compatibility inputs remain part of the cache identity even though they
+    // cannot alter executable economics.
     buyFeesBps: req.buyFeesBps || null,
     sellFeesBps: req.sellFeesBps || null,
     gas: req.gas || null,
@@ -449,12 +441,6 @@ export class ArbitrageVerifier {
     }
   }
 
-  /**
-   * Evaluate one explicit graph-selected symbol set through exactly one existing
-   * verifier batch. This is the canonical graph handoff: it preserves all quote,
-   * fee, depth, sizing and deterministic economics gates while preventing the
-   * opportunity graph from recursively launching a broad batch for every seed.
-   */
   async evaluateMany(
     req: VerifyManyRequest,
     symbolsInput: readonly string[],
@@ -552,9 +538,6 @@ export class ArbitrageVerifier {
       const concurrency = Math.max(1, Math.min(symbols.length || 1, capacity.workerConcurrency, 8));
       let cursor = 0;
 
-      // Fetch executable books broadly first. A taker/taker CEX route with no
-      // positive raw cross-venue bid/ask edge cannot become profitable after
-      // adding non-negative account fees, so reject it before private fee traffic.
       const quoteWorkers = Array.from({ length: concurrency }, async () => {
         while (true) {
           const index = cursor++;
@@ -585,9 +568,6 @@ export class ArbitrageVerifier {
       });
       await Promise.all(quoteWorkers);
 
-      // One fee authority primes Coinbase/Kraken/OKX. Private account work is
-      // deduplicated/cached by that authority and remains downstream of the cheap
-      // raw-edge screen.
       const feePrime = await primeCexFeeEvidence([...rawEdgeSurvivors]);
       const survivorSymbols = symbols.filter(symbol => rawEdgeSurvivors.has(symbol));
       cursor = 0;
@@ -636,6 +616,10 @@ export class ArbitrageVerifier {
         verifiedPositivePerMinute: capacity.verifiedPositivePerMinute,
         capacityReason: capacity.reason,
         feePrime,
+        quoteTransportPolicy: 'coinbase_kraken_okx_websocket_first_with_exact_rest_fallback',
+        executableFeeAuthority: 'authenticated_venue_evidence_only',
+        configuredOrRequestFeeOverridesExecutable: false,
+        nonUsdNormalizedQuoteExecutionAuthority: false,
       });
       return plans;
     })().finally(() => this.scanBatchInFlight.delete(key));
@@ -673,27 +657,8 @@ export class ArbitrageVerifier {
     const transferFeeUsd = bridge ? 0 : configuredTransferFeeUsd();
     const feeEvidence = new Map<QuoteVenue, CexFeeEvidence | null>();
     await Promise.all(freshQuotes.map(async quote => {
-      const requestOverride = requestedFeeOverride(req, quote.venue);
       const evidence = await resolveCexFeeEvidence(quote.venue, symbol);
-      if (quote.venue === 'coinbase') {
-        // Coinbase fee overrides are never authoritative. The canonical resolver
-        // returns evidence only after authenticated trade permission + account
-        // SPOT fee-tier evidence are present.
-        feeEvidence.set(quote.venue, evidence);
-        return;
-      }
-      if (quote.venue === 'okx') {
-        feeEvidence.set(
-          quote.venue,
-          evidence && requestOverride !== null ? overrideEvidence(quote.venue, symbol, requestOverride) : evidence,
-        );
-        return;
-      }
-      const explicit = requestOverride ?? configuredTakerFeeBps(quote.venue);
-      feeEvidence.set(
-        quote.venue,
-        explicit !== null ? overrideEvidence(quote.venue, symbol, explicit) : evidence,
-      );
+      feeEvidence.set(quote.venue, evidence?.source === 'configured_override' ? null : evidence);
     }));
 
     let bestFeeContext: CrossVenueFeeContext | null = null;
@@ -702,8 +667,8 @@ export class ArbitrageVerifier {
         if (buy.venue === sell.venue) continue;
         const buyEvidence = feeEvidence.get(buy.venue) || null;
         const sellEvidence = feeEvidence.get(sell.venue) || null;
-        const buyFeeBps = effectiveTakerFeeBps(buy.venue, buyEvidence, req.buyFeesBps?.[buy.venue]);
-        const sellFeeBps = effectiveTakerFeeBps(sell.venue, sellEvidence, req.sellFeesBps?.[sell.venue]);
+        const buyFeeBps = effectiveTakerFeeBps(buyEvidence);
+        const sellFeeBps = effectiveTakerFeeBps(sellEvidence);
         if (buyFeeBps === null || sellFeeBps === null) continue;
         const grossSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
         if (!Number.isFinite(grossSpreadBps)) continue;
@@ -730,8 +695,6 @@ export class ArbitrageVerifier {
       this.crossVenueFeeContexts.delete(symbol);
     }
 
-    // Depth-aware dynamic notional curve. The configured request is a maximum
-    // search bound, not a fixed authoritative trade size.
     const quantityFractions = [0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
     let bestPlan: VerifiedArbitragePlan | null = null;
     for (const buy of freshQuotes) {
@@ -739,9 +702,9 @@ export class ArbitrageVerifier {
         if (buy.venue === sell.venue || sell.bid <= buy.ask || !buy.depth || !sell.depth) continue;
         const buyEvidence = feeEvidence.get(buy.venue) || null;
         const sellEvidence = feeEvidence.get(sell.venue) || null;
-        const buyFeeBps = effectiveTakerFeeBps(buy.venue, buyEvidence, req.buyFeesBps?.[buy.venue]);
-        const sellFeeBps = effectiveTakerFeeBps(sell.venue, sellEvidence, req.sellFeesBps?.[sell.venue]);
-        if (buyFeeBps === null || sellFeeBps === null) continue;
+        const buyFeeBps = effectiveTakerFeeBps(buyEvidence);
+        const sellFeeBps = effectiveTakerFeeBps(sellEvidence);
+        if (buyFeeBps === null || sellFeeBps === null || !buyEvidence || !sellEvidence) continue;
 
         const topSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
         const fixedCostsBpsAtMaxNotional = ((gasUsd + bridgeFeeUsd + transferFeeUsd) / req.notionalUsd) * 10_000;
@@ -788,8 +751,8 @@ export class ArbitrageVerifier {
               source: [`${buy.venue}:order_book:${buy.transport}`, `${sell.venue}:order_book:${sell.transport}`],
             },
             feeEvidence: {
-              buy: buyEvidence || overrideEvidence(buy.venue, symbol, buyFeeBps),
-              sell: sellEvidence || overrideEvidence(sell.venue, symbol, sellFeeBps),
+              buy: buyEvidence,
+              sell: sellEvidence,
             },
             crossVenueCostModel: bridge
               ? 'bridge'
@@ -817,7 +780,12 @@ export class ArbitrageVerifier {
       return bestPlan;
     }
 
-    const missingFeeVenues = freshQuotes.filter(quote => !feeEvidence.get(quote.venue)).map(quote => quote.venue);
+    const missingFeeVenues = freshQuotes
+      .filter(quote => {
+        const evidence = feeEvidence.get(quote.venue);
+        return !evidence || evidence.source === 'configured_override';
+      })
+      .map(quote => quote.venue);
     if (missingFeeVenues.length > 0) {
       logger.warn('[ArbVerifier] Complete cross-venue economics unavailable because authenticated fee/permission evidence is missing', {
         component: 'ArbitrageVerifier',
@@ -828,6 +796,7 @@ export class ArbitrageVerifier {
           'KRAKEN_API_KEY/KRAKEN_API_SECRET',
           'OKX_API_KEY/OKX_API_SECRET/OKX_API_PASSPHRASE',
         ],
+        configuredOrRequestFeeOverridesExecutable: false,
       });
     }
     return null;

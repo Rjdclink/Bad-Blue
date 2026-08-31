@@ -9,6 +9,7 @@ const files = {
   prefetch: 'server/services/cryptocrawl/integration/cryptara-predictive-prefetch-wiring.ts',
   canonical: 'server/services/cryptocrawl/integration/canonical-runtime-wiring.ts',
   hybrid: 'server/services/cryptocrawl/runtime/hybrid-cex-execution-wiring.ts',
+  fourMode: 'server/services/cryptocrawl/intelligence/cex-four-mode-matrix.ts',
   stageProof: 'server/services/cryptocrawl/runtime/stage-proof-metrics-wiring.ts',
   timing: 'server/services/cryptocrawl/integration/cross-venue-timing-guard-wiring.ts',
   venue: 'server/services/cryptocrawl/discovery/venue-capability-registry.ts',
@@ -68,13 +69,16 @@ const required = [
   ['hybrid', 'fresh_taker_requote_after_maker_fill: true', 'fresh taker requote occurs only after maker terminal fill'],
   ['hybrid', "executionRule: 'strict_all_in_net_profit_usd_greater_than_zero'", 'hybrid admission preserves strict positive all-in economics'],
   ['hybrid', "if (!isHybridCexRecoveryPlan(plan)) return originalExecute(plan);", 'TT/MM execution delegates unchanged'],
+  ['fourMode', 'observationOnly: !economicallyPositive', 'positive MT/TM/MM observations are no longer mislabeled by stale topology blockers'],
+  ['fourMode', 'canonical_depth_aware_all_in_revalidation_required', 'positive four-mode observations explicitly require canonical all-in revalidation'],
   ['stageProof', 'realizedSharpe(profits)', 'realized profit history drives Sharpe'],
   ['stageProof', 'realizedMaxDrawdown(profits)', 'realized profit history drives drawdown'],
   ['stageProof', 'monteCarloValidation', 'executed canonical Monte Carlo is validated against terminal outcome'],
   ['stageProof', 'stageThresholdsChanged: false', 'stage thresholds are not weakened'],
   ['stageProof', 'tradeCountRequirementChanged: false', 'trade-count requirement is not weakened'],
   ['timing', 'isHybridCexRecoveryPlan(plan)', 'cross-venue timing guard recognizes hybrid mode'],
-  ['timing', "mode: 'TT' | 'MT' | 'TM'", 'timing guard preserves TT and adds MT/TM'],
+  ['timing', "mode: 'TT' | 'MT' | 'TM' | 'MM'", 'timing guard preserves TT/MT/TM and includes MM'],
+  ['timing', "supportedModes: ['TT', 'MT', 'TM', 'MM']", 'runtime timing telemetry declares all four CEX modes'],
   ['timing', 'fullEconomicsRequoteStillDownstream: true', 'timing guard remains non-economic authority'],
   ['canonical', 'computationalReactorExecutionAuthority: false', 'canonical reactor authority boundary'],
   ['canonical', 'alchemyPaidPendingStreamDefault: false', 'paid Alchemy pending stream remains off by default'],
@@ -93,9 +97,11 @@ const forbidden = [
   ['canonical', 'alchemyPaidPendingStreamDefault: true', 'paid pending stream default-on'],
   ['stageProof', 'm.totalTrades =', 'synthetic trade-count advancement'],
   ['stageProof', 'requiredUptimeHours', 'stage-proof bridge must not rewrite uptime requirement'],
+  ['fourMode', 'sequential_partial_fill_safe_hybrid_executor', 'stale four-mode claim that the installed hybrid executor is missing'],
+  ['fourMode', 'fresh_taker_requote_after_maker_fill', 'stale four-mode claim that installed fresh hedge re-quote is missing'],
 ];
 for (const [fileKey, token, name] of forbidden) {
   if (source[fileKey].includes(token)) throw new Error(`[compute-antenna-monte-carlo-batch11] forbidden regression: ${name}`);
 }
 
-console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, adaptive Antenna scheduling, canonical MT/TM maker-first execution, realized stage-proof metrics, and retained safety boundaries verified');
+console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, adaptive Antenna scheduling, canonical TT/MT/TM/MM execution timing, realized stage-proof metrics, and retained safety boundaries verified');

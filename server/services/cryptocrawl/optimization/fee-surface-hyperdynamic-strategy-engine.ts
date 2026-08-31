@@ -1,3 +1,5 @@
+import type { CexFeeVenue } from '../intelligence/cex-fee-resolver.js';
+
 export type FeeSurfaceStrategyKey =
   | 'authenticated_maker_rebate_capture'
   | 'stablecoin_zero_maker_lane'
@@ -19,12 +21,13 @@ export type ProhibitedFeeSurfaceBehavior =
   | 'wash_volume'
   | 'self_trade'
   | 'unverified_rebate_assumption'
-  | 'front_run_other_orders';
+  | 'front_run_other_orders'
+  | 'artificial_tier_volume';
 
 export interface FeeSurfaceModeInput {
   symbol: string;
-  buyVenue: 'kraken' | 'okx';
-  sellVenue: 'kraken' | 'okx';
+  buyVenue: CexFeeVenue;
+  sellVenue: CexFeeVenue;
   mode: 'MM' | 'MT' | 'TM' | 'TT';
   netAfterExchangeFeesBps: number;
   expectedFeeAdjustedBps: number;
@@ -62,7 +65,7 @@ export interface FeeSurfaceHyperdynamicStrategyPlan {
   authenticatedRebateSymbols: string[];
   cexPriorityMultiplier: number;
   zeroCapitalPriorityMultiplier: number;
-  objective: 'harvest_authenticated_fee_structure_without_inventing_economics';
+  objective: 'maximize_expected_realized_net_execution_quality_with_authenticated_fee_structure';
   authority: 'search_ranking_and_measurement_only';
   executionAuthority: false;
   syntheticFeeAuthority: false;
@@ -116,6 +119,10 @@ function modeKey(mode: FeeSurfaceModeInput): string {
  * never submits an order. It only identifies measured fee structures worth
  * spending more discovery/verification budget on. Canonical execution remains
  * governed by the existing fresh all-in netProfitUsd > 0 path.
+ *
+ * Fee/rebate magnitude is never the sole routing objective: price, executable
+ * depth, fill/queue probability, latency, adverse selection, inventory and
+ * terminal settlement remain part of the canonical execution-quality decision.
  */
 export function buildFeeSurfaceHyperdynamicStrategyPlan(input: {
   modes: FeeSurfaceModeInput[];
@@ -188,29 +195,29 @@ export function buildFeeSurfaceHyperdynamicStrategyPlan(input: {
   const takerCandidates = modes.flatMap(mode => [
     mode.buyTakerCostBps === null ? null : { symbol: mode.symbol, venue: mode.buyVenue, fee: mode.buyTakerCostBps },
     mode.sellTakerCostBps === null ? null : { symbol: mode.symbol, venue: mode.sellVenue, fee: mode.sellTakerCostBps },
-  ].filter((item): item is { symbol: string; venue: 'kraken' | 'okx'; fee: number } => item !== null));
+  ].filter((item): item is { symbol: string; venue: CexFeeVenue; fee: number } => item !== null));
   const makerCandidates = modes.flatMap(mode => [
     mode.buyMakerCostBps === null ? null : { symbol: mode.symbol, venue: mode.buyVenue, fee: mode.buyMakerCostBps },
     mode.sellMakerCostBps === null ? null : { symbol: mode.symbol, venue: mode.sellVenue, fee: mode.sellMakerCostBps },
-  ].filter((item): item is { symbol: string; venue: 'kraken' | 'okx'; fee: number } => item !== null));
+  ].filter((item): item is { symbol: string; venue: CexFeeVenue; fee: number } => item !== null));
   const takerRange = takerCandidates.length ? Math.max(...takerCandidates.map(item => item.fee)) - Math.min(...takerCandidates.map(item => item.fee)) : null;
   const makerRange = makerCandidates.length ? Math.max(...makerCandidates.map(item => item.fee)) - Math.min(...makerCandidates.map(item => item.fee)) : null;
 
   const best = (values: Array<{ benefit: number }>) => values.length ? Math.max(...values.map(item => item.benefit)) : null;
   const decisions: FeeSurfaceStrategyDecision[] = [
-    decision('authenticated_maker_rebate_capture', bestRebate, rebateModes.map(mode => mode.symbol), 'Use only authenticated negative maker-fee evidence; never assume a pair rebates.'),
+    decision('authenticated_maker_rebate_capture', bestRebate, rebateModes.map(mode => mode.symbol), 'Use only authenticated negative maker-fee evidence; never assume a pair rebates or route solely to maximize rebate.'),
     decision('stablecoin_zero_maker_lane', stableZeroMaker.length ? 0.000001 : null, stableZeroMaker.map(mode => mode.symbol), 'Prioritize measured stablecoin lanes whose authenticated maker cost is zero or negative.'),
     decision('maker_taker_fee_inversion', best(mtSavings), mtSavings.map(item => item.symbol), 'Prefer MT only when its measured fee surface beats the same-route TT alternative; partial-fill-safe execution remains mandatory.'),
     decision('taker_maker_fee_inversion', best(tmSavings), tmSavings.map(item => item.symbol), 'Prefer TM only when its measured fee surface beats the same-route TT alternative; fresh hedge economics remain mandatory.'),
     decision('dual_maker_fee_compression', best(mmSavings), mmSavings.map(item => item.symbol), 'Use MM as a measured fee-compression surface while retaining queue/fill proof requirements.'),
-    decision('rpi_authenticated_fee_compression', bestRpi, rpiPositive.map(item => item.symbol), 'Exploit RPI/ELP economics only when the authenticated account fee endpoint proves a positive saving.'),
+    decision('rpi_authenticated_fee_compression', bestRpi, rpiPositive.map(item => item.symbol), 'Exploit RPI economics only when current OKX account/product permission, price spacing and authenticated fee evidence prove a positive saving.'),
     decision('positive_edge_fee_deepening', best(positiveDeepening), positiveDeepening.map(item => item.symbol), 'Continue reducing fees on already-positive opportunities instead of stopping optimization at break-even.'),
     decision('near_edge_fee_rescue', best(nearEdgeRescue), nearEdgeRescue.map(item => item.symbol), 'Spend extra measurement budget where authenticated fee-mode changes can materially close a measured break-even gap.'),
     decision('spread_plus_rebate_stack', spreadRebateBenefit, spreadRebate.map(mode => mode.symbol), 'Stack a real spread with a real authenticated rebate; neither component may be simulated into execution truth.'),
-    decision('lowest_taker_surface_routing', takerRange, takerCandidates.map(item => item.symbol), 'Continuously compare authenticated taker surfaces by symbol/venue and route measurement toward the cheapest executable venue.'),
-    decision('lowest_maker_surface_routing', makerRange, makerCandidates.map(item => item.symbol), 'Continuously compare authenticated maker surfaces, including zero and negative effective maker cost.'),
+    decision('lowest_taker_surface_routing', takerRange, takerCandidates.map(item => item.symbol), 'Continuously compare authenticated taker surfaces across Coinbase/Kraken/OKX, but let canonical price/depth/latency economics choose the actual route.'),
+    decision('lowest_maker_surface_routing', makerRange, makerCandidates.map(item => item.symbol), 'Continuously compare authenticated maker surfaces across Coinbase/Kraken/OKX, including zero and negative effective maker cost.'),
     decision('fee_freshness_prewarm', stale.length && freshest.length ? 1 : null, stale.map(mode => mode.symbol), 'Refresh stale authenticated fee evidence before promising routes consume canonical verification time.'),
-    decision('account_fee_surface_refresh', modes.length ? Math.max(0.000001, takerRange ?? 0, makerRange ?? 0) : null, modes.map(mode => mode.symbol), 'Treat account-specific fee tiers as changing market state; refresh rather than hard-code public schedules.'),
+    decision('account_fee_surface_refresh', modes.length ? Math.max(0.000001, takerRange ?? 0, makerRange ?? 0) : null, modes.map(mode => mode.symbol), 'Treat actual account-specific fee tiers as changing market state; refresh authenticated rates rather than hard-code public schedules or speculate about a future tier.'),
     decision('zero_capital_fee_gas_compression', input.zeroCapitalGapBps !== null && input.zeroCapitalGapBps > 0 ? 1 / (1 + input.zeroCapitalGapBps / 25) : null, input.zeroCapitalGapBps !== null ? ['ZERO_CAPITAL'] : [], 'Allocate zero-capital quote/gas work only from measured route economics; flash-loan principal never substitutes for unknown fees or gas.'),
     decision('cross_topology_fee_budget_switching', input.zeroCapitalGapImproving === true && modes.length > 0 ? 0.5 : null, input.zeroCapitalGapImproving === true ? ['CEX', 'ZERO_CAPITAL'] : [], 'Shift search budget between CEX fee surfaces and zero-capital routes using measured distance to profitability, preserving exploration floors.'),
   ];
@@ -229,10 +236,10 @@ export function buildFeeSurfaceHyperdynamicStrategyPlan(input: {
     authenticatedRebateSymbols: unique(rebateModes.map(mode => mode.symbol)),
     cexPriorityMultiplier: clamp(1 + Math.min(0.35, cexSignals * 0.015 + (bestMeasuredBpsBenefit ?? 0) / 100), 0.85, 1.35),
     zeroCapitalPriorityMultiplier: clamp(1 + Math.min(0.20, zeroSignals * 0.04), 0.90, 1.20),
-    objective: 'harvest_authenticated_fee_structure_without_inventing_economics',
+    objective: 'maximize_expected_realized_net_execution_quality_with_authenticated_fee_structure',
     authority: 'search_ranking_and_measurement_only',
     executionAuthority: false,
     syntheticFeeAuthority: false,
-    prohibitedBehaviors: ['wash_volume', 'self_trade', 'unverified_rebate_assumption', 'front_run_other_orders'],
+    prohibitedBehaviors: ['wash_volume', 'self_trade', 'unverified_rebate_assumption', 'front_run_other_orders', 'artificial_tier_volume'],
   };
 }

@@ -12,6 +12,8 @@ export interface AdaptiveProfitabilitySearchPolicy {
   hybridRecoverySymbols: string[];
   staleEvidenceSymbols: string[];
   feeRefreshMaxAgeMs: number;
+  highProbabilityFastLane: boolean;
+  fastLaneTargetMs: number | null;
   activeBpsSolutionCount: number;
   activeBpsSolutionIds: number[];
   makerFocusMultiplier: number;
@@ -210,9 +212,29 @@ export function buildAdaptiveProfitabilitySearchPolicy(input: {
       : closestGapBps !== null && closestGapBps <= 10 ? 0.67
         : closestGapBps !== null && closestGapBps >= 75 ? 1.5
           : 1;
+
+  // A fast lane is earned from measured evidence, not configured optimism. Keep
+  // the broad surface on its adaptive cadence, but when a positive mode exists or
+  // a fresh/risk-bounded near miss is inside five BPS, cap the next cycle target
+  // at 1.75-2.5s. Fee and product authorities remain cached/single-flight so this
+  // increases warm-book decision frequency without creating private API storms.
+  const bestRecovery = recoveries.length > 0 ? Math.max(...recoveries) : 0;
+  const feeFreshnessShare = freshnessValues.length > 0
+    ? freshnessValues.filter(value => value >= 0.75).length / freshnessValues.length
+    : 0;
+  const highProbabilityFastLane = positiveModes > 0 || (
+    closestGapBps !== null && closestGapBps <= 5
+    && closestRiskGapBps !== null && closestRiskGapBps <= 10
+    && feeFreshnessShare >= 0.75
+    && bestRecovery >= 0.35
+  );
+  const fastLaneTargetMs = !highProbabilityFastLane ? null
+    : positiveModes > 0 || (closestGapBps !== null && closestGapBps <= 2) ? 1_750
+      : 2_500;
+  const adaptiveIntervalMs = Math.round(input.baseIntervalMs * intervalFactor * hyperdynamic.cadenceMultiplier);
   const scanIntervalMs = Math.max(
-    2_000,
-    Math.min(60_000, Math.round(input.baseIntervalMs * intervalFactor * hyperdynamic.cadenceMultiplier)),
+    highProbabilityFastLane ? 1_750 : 2_000,
+    Math.min(60_000, fastLaneTargetMs === null ? adaptiveIntervalMs : Math.min(adaptiveIntervalMs, fastLaneTargetMs)),
   );
 
   return {
@@ -226,6 +248,8 @@ export function buildAdaptiveProfitabilitySearchPolicy(input: {
     hybridRecoverySymbols,
     staleEvidenceSymbols,
     feeRefreshMaxAgeMs: hyperdynamic.feeRefreshMaxAgeMs,
+    highProbabilityFastLane,
+    fastLaneTargetMs,
     activeBpsSolutionCount: hyperdynamic.activeSolutionCount,
     activeBpsSolutionIds: [...hyperdynamic.activeSolutionIds],
     makerFocusMultiplier: hyperdynamic.makerFocusMultiplier,

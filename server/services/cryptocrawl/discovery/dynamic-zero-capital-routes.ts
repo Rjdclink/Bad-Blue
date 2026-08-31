@@ -3,6 +3,7 @@ import logger from '../../../logger.js';
 import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
+import type { GasFundingMode } from '../capital-free/dynamic-gas-funding-engine.js';
 import {
   quoteConfiguredZeroCapitalRoutesForChain,
   type ConfiguredZeroCapitalRoute,
@@ -31,9 +32,13 @@ export interface DynamicZeroCapitalDiscoveryState {
     graphlessTokens: number;
     graphlessSources: string[];
     selectedForQuote: number;
+    recoverySelected: number;
+    recoveryMeasuredQuotes: number;
     measuredQuotes: number;
     positiveQuotes: number;
     gasCostUsd: number | null;
+    gasCostAuthority: 'verified_sponsored_user_cost_zero' | 'measured_native_gas' | 'unavailable';
+    fundingMode: GasFundingMode | 'unknown';
     quoteBudget: number;
     scoredCandidates: number;
     explorationSelected: number;
@@ -129,7 +134,8 @@ function routeBase(input: {
     estimatedGasCostInInputToken: '0',
     relayFeeInInputToken: '0',
     flashLoanFeeBps: bounded(process.env.ZERO_CAPITAL_DYNAMIC_FLASH_LOAN_FEE_BPS, 12, 0, 1000),
-    minNetProfitBps: bounded(process.env.ZERO_CAPITAL_DYNAMIC_MIN_NET_PROFIT_BPS, 1, 1, 5000),
+    // Compatibility telemetry only. Executable admission is strictly netProfit > 0.
+    minNetProfitBps: 0,
     legs: input.legs,
   };
 }
@@ -160,9 +166,7 @@ function triangleCandidatePairs(candidates: readonly GraphlessDexTokenCandidate[
   const selected = candidates.slice(0, tokenLimit);
   const pairs: Array<[GraphlessDexTokenCandidate, GraphlessDexTokenCandidate]> = [];
   for (let left = 0; left < selected.length; left += 1) {
-    for (let right = left + 1; right < selected.length; right += 1) {
-      pairs.push([selected[left], selected[right]]);
-    }
+    for (let right = left + 1; right < selected.length; right += 1) pairs.push([selected[left], selected[right]]);
   }
   return pairs
     .sort((left, right) => {
@@ -176,10 +180,6 @@ function triangleCandidatePairs(candidates: readonly GraphlessDexTokenCandidate[
     .slice(0, pairLimit);
 }
 
-/**
- * Compatibility/static seed routes. They guarantee that graphless discovery can
- * degrade without disabling the existing USDC/USDT atomic scanner.
- */
 export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionChain): ConfiguredZeroCapitalRoute[] {
   if (!DYNAMIC_EXECUTABLE_CHAINS.has(chain as ChainId)) return [];
   const config = SUPPORTED_CHAINS[chain as ChainId];
@@ -211,12 +211,6 @@ export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionC
   return routes;
 }
 
-/**
- * Builds two-leg and triangular volatile/intermediate-token atomic cycles from a
- * no-key discovery surface. Public scout data is candidate generation only.
- * Every route is re-quoted directly against chain-specific router/quoter state;
- * unsupported or non-liquid intermediate edges simply fail closed.
- */
 async function buildGraphlessProfitSurfaceTemplates(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
@@ -321,13 +315,27 @@ export function getCachedGraphlessDynamicRouteTemplates(chain?: SupportedExecuti
   return [...cachedGraphlessTemplates.values()].flatMap(routes => routes);
 }
 
+type GasEnrichment = {
+  routes: ConfiguredZeroCapitalRoute[];
+  gasCostUsd: number;
+  gasCostAuthority: 'verified_sponsored_user_cost_zero' | 'measured_native_gas';
+};
+
 async function enrichMeasuredGasCost(
   chain: ChainId,
   routes: ConfiguredZeroCapitalRoute[],
-): Promise<{ routes: ConfiguredZeroCapitalRoute[]; gasCostUsd: number }> {
+  fundingMode: GasFundingMode | 'unknown',
+): Promise<GasEnrichment> {
+  if (fundingMode === 'sponsored') {
+    return {
+      gasCostUsd: 0,
+      gasCostAuthority: 'verified_sponsored_user_cost_zero',
+      routes: routes.map(route => ({ ...route, estimatedGasCostInInputToken: '0' })),
+    };
+  }
+
   const gas = await gasOracle.getGasPrice(chain);
   if (!Number.isFinite(gas.usdCost) || gas.usdCost < 0) throw new Error(`Measured gas cost unavailable for ${chain}`);
-
   const estimatedGasUnits = Math.max(
     DEFAULT_GAS_LIMIT,
     Math.floor(bounded(process.env.ZERO_CAPITAL_DYNAMIC_EXECUTION_GAS_UNITS, 1_400_000, 100_000, 5_000_000)),
@@ -337,13 +345,31 @@ async function enrichMeasuredGasCost(
   const gasCostBaseUnits = BigInt(Math.max(0, Math.ceil(gasCostUsd * 1_000_000))).toString();
   return {
     gasCostUsd,
+    gasCostAuthority: 'measured_native_gas',
     routes: routes.map(route => ({ ...route, estimatedGasCostInInputToken: gasCostBaseUnits })),
   };
+}
+
+function recoveryQuoteRoutes(
+  routes: readonly ConfiguredZeroCapitalRoute[],
+  attempted: readonly ConfiguredZeroCapitalRoute[],
+): ConfiguredZeroCapitalRoute[] {
+  const attemptedIds = new Set(attempted.map(route => route.id));
+  const limit = Math.floor(bounded(process.env.ZERO_CAPITAL_QUOTE_RECOVERY_BUDGET, 8, 2, 24));
+  return routes
+    .filter(route => !attemptedIds.has(route.id))
+    .sort((left, right) => {
+      const leftStable = left.id.startsWith('dynamic-') ? 0 : 1;
+      const rightStable = right.id.startsWith('dynamic-') ? 0 : 1;
+      return leftStable - rightStable || Number(left.amountIn) - Number(right.amountIn) || left.id.localeCompare(right.id);
+    })
+    .slice(0, limit);
 }
 
 export async function discoverDynamicZeroCapitalQuotes(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
+  fundingMode: GasFundingMode | 'unknown' = 'unknown',
 ): Promise<QuotedZeroCapitalRoute[]> {
   const stableTemplates = buildDynamicZeroCapitalRouteTemplates(chain);
   let graphless = { routes: [] as ConfiguredZeroCapitalRoute[], tokens: 0, sources: [] as string[], triangularTemplates: 0 };
@@ -370,9 +396,13 @@ export async function discoverDynamicZeroCapitalQuotes(
       graphlessTokens: graphless.tokens,
       graphlessSources: graphless.sources,
       selectedForQuote: 0,
+      recoverySelected: 0,
+      recoveryMeasuredQuotes: 0,
       measuredQuotes: 0,
       positiveQuotes: 0,
       gasCostUsd: null,
+      gasCostAuthority: 'unavailable',
+      fundingMode,
       quoteBudget: 0,
       scoredCandidates: 0,
       explorationSelected: 0,
@@ -384,16 +414,28 @@ export async function discoverDynamicZeroCapitalQuotes(
   }
 
   try {
-    const enriched = await enrichMeasuredGasCost(chain as ChainId, templates);
+    const enriched = await enrichMeasuredGasCost(chain as ChainId, templates, fundingMode);
     const preselection = selectZeroCapitalRoutesForQuote(enriched.routes, enriched.gasCostUsd);
     const selected = preselection.selectedRoutes;
-    const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
+    let quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
+    let recoverySelected: ConfiguredZeroCapitalRoute[] = [];
+    let recoveryQuotes: QuotedZeroCapitalRoute[] = [];
+
+    if (quotes.length === 0 && selected.length > 0) {
+      recoverySelected = recoveryQuoteRoutes(enriched.routes, selected);
+      if (recoverySelected.length > 0) {
+        recoveryQuotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, recoverySelected);
+        quotes = recoveryQuotes;
+      }
+    }
+
+    const attempted = [...selected, ...recoverySelected];
     const truePositiveQuotes = quotes.filter(quote => quote.executablePositive === true && quote.netProfit > 0n);
-    recordZeroCapitalRouteQuoteCycle(selected, quotes);
+    recordZeroCapitalRouteQuoteCycle(attempted, quotes);
 
     state.measuredQuotes += quotes.length;
     state.positiveQuotes += truePositiveQuotes.length;
-    state.quoteBudgetSelections += selected.length;
+    state.quoteBudgetSelections += attempted.length;
     state.chains[chain] = {
       candidates: templates.length,
       stableTemplates: stableTemplates.length,
@@ -401,10 +443,14 @@ export async function discoverDynamicZeroCapitalQuotes(
       triangularTemplates: graphless.triangularTemplates,
       graphlessTokens: graphless.tokens,
       graphlessSources: graphless.sources,
-      selectedForQuote: selected.length,
+      selectedForQuote: attempted.length,
+      recoverySelected: recoverySelected.length,
+      recoveryMeasuredQuotes: recoveryQuotes.length,
       measuredQuotes: quotes.length,
       positiveQuotes: truePositiveQuotes.length,
       gasCostUsd: enriched.gasCostUsd,
+      gasCostAuthority: enriched.gasCostAuthority,
+      fundingMode,
       quoteBudget: preselection.quoteBudget,
       scoredCandidates: preselection.scoredCandidates,
       explorationSelected: preselection.explorationSelected,
@@ -421,7 +467,10 @@ export async function discoverDynamicZeroCapitalQuotes(
       triangularTemplates: graphless.triangularTemplates,
       graphlessTokens: graphless.tokens,
       graphlessSources: graphless.sources,
-      selectedForQuote: selected.length,
+      selectedForQuote: attempted.length,
+      primarySelected: selected.length,
+      recoverySelected: recoverySelected.length,
+      recoveryMeasuredQuotes: recoveryQuotes.length,
       measuredQuotes: quotes.length,
       quoteBudget: preselection.quoteBudget,
       scoredCandidates: preselection.scoredCandidates,
@@ -430,7 +479,10 @@ export async function discoverDynamicZeroCapitalQuotes(
       topFormationScores: topFormationScores(preselection.scores),
       positiveQuotes: truePositiveQuotes.length,
       positiveQuoteAuthority: 'strict_all_in_net_profit_gt_zero_only',
+      fundingMode,
       gasCostUsd: enriched.gasCostUsd,
+      gasCostAuthority: enriched.gasCostAuthority,
+      sponsoredGasDiscountAppliedOnlyFromVerifiedFundingDecision: true,
       preScoreAuthority: preselection.authority,
       formationAuthority: 'scan_priority_advisory_only',
       deterministicProfitAuthority: preselection.deterministicProfitAuthority,
@@ -449,9 +501,13 @@ export async function discoverDynamicZeroCapitalQuotes(
       graphlessTokens: graphless.tokens,
       graphlessSources: graphless.sources,
       selectedForQuote: 0,
+      recoverySelected: 0,
+      recoveryMeasuredQuotes: 0,
       measuredQuotes: 0,
       positiveQuotes: 0,
       gasCostUsd: null,
+      gasCostAuthority: 'unavailable',
+      fundingMode,
       quoteBudget: 0,
       scoredCandidates: 0,
       explorationSelected: 0,
@@ -463,6 +519,7 @@ export async function discoverDynamicZeroCapitalQuotes(
     logger.warn('[DynamicZeroCapital] Measured route cycle failed closed', {
       component: 'DynamicZeroCapitalRouteDiscovery',
       chain,
+      fundingMode,
       error: message,
     });
     return [];

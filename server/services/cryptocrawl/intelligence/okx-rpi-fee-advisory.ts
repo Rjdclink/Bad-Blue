@@ -1,78 +1,59 @@
 import logger from '../../../logger.js';
-import { okxPrivateRequest } from './cex-private-authority.js';
-import { getCexFourModeSnapshot } from '../integration/cex-four-mode-observability-wiring.js';
+import {
+  getOkxRpiExecutionCapability,
+  getOkxSpotRpiMinimumNotionalUsd,
+  type OkxRpiExecutionCapability,
+} from './okx-rpi-capability.js';
 
-export interface OkxRpiFeeOpportunity {
-  symbol: string;
-  observedAt: number;
-  takerFeeBps: number;
-  standardMakerFeeBps: number | null;
-  rpiMakerFeeBps: number;
-  rpiSavingsVsTakerBps: number;
-  rpiSavingsVsStandardMakerBps: number | null;
-  minimumRpiNotionalUsd: number;
+export {
+  getOkxRpiExecutionCapability,
+  getOkxSpotRpiMinimumNotionalUsd,
+  isOkxRpiMakerPriceAdmissible,
+  type OkxRpiExecutionCapability,
+} from './okx-rpi-capability.js';
+
+export interface OkxRpiFeeOpportunity extends OkxRpiExecutionCapability {
   minimumNotionalRuleEffectiveDate: '2026-08-18';
   feeSource: 'okx_authenticated_trade_fee';
   authority: 'fee_opportunity_advisory_only';
   executionAuthority: false;
+  rpiTakerAccess: {
+    documentedStandardOrderTypes: ['limit', 'market', 'fok', 'ioc'];
+    observedAdditionalBidBaseQty: number;
+    observedAdditionalAskBaseQty: number;
+    liquidityImprovementVisible: boolean;
+    permissionProven: false;
+    executionAuthority: false;
+    reason: 'public_rpi_depth_visible_but_account_taker_permission_not_read_only_provable';
+  };
 }
 
 let latest: OkxRpiFeeOpportunity[] = [];
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
-function finite(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+function sumRpiQty(levels: readonly { rpiQty: number }[]): number {
+  return levels.reduce((sum, level) => sum + Math.max(0, Number(level.rpiQty) || 0), 0);
 }
 
-function canonicalInstId(symbol: string): string | null {
-  const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
-  return match ? `${match[1]}-${match[2]}` : null;
-}
-
-function rateToBps(rate: number): number {
-  // OKX reports fees as signed decimal rates: negative = charged fee,
-  // positive = rebate. Preserve the economic sign as BPS cost/rebate.
-  return -rate * 10_000;
-}
-
-function selectFeeRow(row: any): { taker: number; maker: number | null; rpiMaker: number | null } | null {
-  const groups = Array.isArray(row?.feeGroup) ? row.feeGroup : [];
-  const group = groups.length === 1 ? groups[0] : null;
-  const taker = finite(group?.taker ?? row?.taker);
-  if (taker === null) return null;
-  const maker = finite(group?.maker ?? row?.maker);
-  const rpiMaker = finite(group?.rpiMaker ?? group?.elpMaker ?? row?.rpiMaker ?? row?.elpMaker);
-  return { taker, maker, rpiMaker };
-}
-
-async function observeSymbol(symbol: string): Promise<OkxRpiFeeOpportunity | null> {
-  const instId = canonicalInstId(symbol);
-  if (!instId) return null;
-  const { data } = await okxPrivateRequest('/api/v5/account/trade-fee', 'GET', {
-    instType: 'SPOT',
-    instId,
-  }, { lane: 'trade_fee' });
-  const selected = selectFeeRow(data[0]);
-  if (!selected || selected.rpiMaker === null) return null;
-
-  const takerFeeBps = rateToBps(selected.taker);
-  const standardMakerFeeBps = selected.maker === null ? null : rateToBps(selected.maker);
-  const rpiMakerFeeBps = rateToBps(selected.rpiMaker);
+function toOpportunity(capability: OkxRpiExecutionCapability): OkxRpiFeeOpportunity {
+  const observedAdditionalBidBaseQty = sumRpiQty(capability.rpiBookBids);
+  const observedAdditionalAskBaseQty = sumRpiQty(capability.rpiBookAsks);
   return {
-    symbol,
-    observedAt: Date.now(),
-    takerFeeBps,
-    standardMakerFeeBps,
-    rpiMakerFeeBps,
-    rpiSavingsVsTakerBps: takerFeeBps - rpiMakerFeeBps,
-    rpiSavingsVsStandardMakerBps: standardMakerFeeBps === null ? null : standardMakerFeeBps - rpiMakerFeeBps,
-    minimumRpiNotionalUsd: Math.max(1_000, Number(process.env.CRYPTO_OKX_RPI_MIN_NOTIONAL_USD || 1_000)),
+    ...capability,
     minimumNotionalRuleEffectiveDate: '2026-08-18',
     feeSource: 'okx_authenticated_trade_fee',
     authority: 'fee_opportunity_advisory_only',
     executionAuthority: false,
+    rpiTakerAccess: {
+      documentedStandardOrderTypes: ['limit', 'market', 'fok', 'ioc'],
+      observedAdditionalBidBaseQty,
+      observedAdditionalAskBaseQty,
+      liquidityImprovementVisible: observedAdditionalBidBaseQty > 0 || observedAdditionalAskBaseQty > 0,
+      permissionProven: false,
+      executionAuthority: false,
+      reason: 'public_rpi_depth_visible_but_account_taker_permission_not_read_only_provable',
+    },
   };
 }
 
@@ -80,24 +61,39 @@ async function refresh(): Promise<void> {
   if (running) return;
   running = true;
   try {
+    // Lazy import keeps execution-time RPI capability independent from this
+    // advisory scheduler and prevents intelligence -> integration import cycles.
+    const { getCexFourModeSnapshot } = await import('../integration/cex-four-mode-observability-wiring.js');
     const symbols = [...new Set(getCexFourModeSnapshot()
       .sort((a, b) => Number(b.economicallyPositive) - Number(a.economicallyPositive)
         || a.riskAdjustedBpsToBreakEven - b.riskAdjustedBpsToBreakEven)
       .map(mode => mode.symbol))]
-      .slice(0, Math.max(1, Math.min(12, Number(process.env.CRYPTO_OKX_RPI_ADVISORY_SYMBOLS || 6))));
+      .slice(0, Math.max(1, Math.min(24, Number(process.env.CRYPTO_OKX_RPI_ADVISORY_SYMBOLS || 12))));
     if (symbols.length === 0) return;
 
-    const observed = await Promise.all(symbols.map(symbol => observeSymbol(symbol).catch(() => null)));
-    latest = observed.filter((item): item is OkxRpiFeeOpportunity => item !== null)
-      .sort((a, b) => b.rpiSavingsVsTakerBps - a.rpiSavingsVsTakerBps);
+    const observed = await Promise.all(symbols.map(symbol => getOkxRpiExecutionCapability(symbol).catch(() => null)));
+    latest = observed.filter((item): item is OkxRpiExecutionCapability => item !== null)
+      .map(toOpportunity)
+      .sort((a, b) => Number(b.executableFeeAdvantage) - Number(a.executableFeeAdvantage)
+        || Number(b.rpiTakerAccess.liquidityImprovementVisible) - Number(a.rpiTakerAccess.liquidityImprovementVisible)
+        || b.rpiSavingsVsTakerBps - a.rpiSavingsVsTakerBps);
 
-    logger.info('[OKX RPI] Authenticated fee savings advisory refreshed', {
+    logger.info('[OKX RPI] Authenticated RPI maker economics and taker-liquidity advisory refreshed', {
       component: 'OkxRpiFeeAdvisory',
       observedSymbols: symbols.length,
-      rpiEligibleObserved: latest.length,
+      rpiFeeRowsObserved: latest.length,
+      makerPermitted: latest.filter(item => item.makerPermission).length,
+      executableFeeAdvantages: latest.filter(item => item.makerPermission && item.executableFeeAdvantage).length,
+      visibleRpiLiquidity: latest.filter(item => item.rpiLiquidityVisible).length,
+      rpiTakerLiquidityImprovementVisible: latest.filter(item => item.rpiTakerAccess.liquidityImprovementVisible).length,
+      rpiTakerPermissionProven: false,
+      rpiTakerExecutionAuthority: false,
+      rpiTakerPolicy: 'prewarm_and_measure_only_until_non_mutating_account_permission_evidence_exists',
       best: latest[0] ?? null,
-      officialRuleEffectiveDate: '2026-08-18',
-      spotRpiMinimumNotionalUsd: Math.max(1_000, Number(process.env.CRYPTO_OKX_RPI_MIN_NOTIONAL_USD || 1_000)),
+      capabilityAuthority: 'okx_rpi_capability',
+      productIdentityAuthority: 'cex_spot_product_policy',
+      quoteCurrencyAllowlistUsed: false,
+      spotRpiMinimumNotionalUsd: getOkxSpotRpiMinimumNotionalUsd(),
       executionAuthority: false,
     });
   } finally {
@@ -105,15 +101,40 @@ async function refresh(): Promise<void> {
   }
 }
 
+/**
+ * The profitability/BPS mesh consumes only RPI rows the authenticated account can
+ * actually use and whose RPI maker rate improves on standard maker economics.
+ * Non-permitted maker rows and the separate RPI-taker depth observation remain
+ * advisory. We do not probe taker permission by intentionally sending a live
+ * order because a rejected cross-venue leg could create inventory exposure.
+ */
 export function getOkxRpiFeeOpportunities(): OkxRpiFeeOpportunity[] {
-  return latest.map(item => ({ ...item }));
+  return latest
+    .filter(item => item.makerPermission && item.executableFeeAdvantage)
+    .map(item => ({
+      ...item,
+      rpiBookBids: item.rpiBookBids.map(level => ({ ...level })),
+      rpiBookAsks: item.rpiBookAsks.map(level => ({ ...level })),
+      rpiTakerAccess: { ...item.rpiTakerAccess, documentedStandardOrderTypes: [...item.rpiTakerAccess.documentedStandardOrderTypes] as ['limit', 'market', 'fok', 'ioc'] },
+    }));
+}
+
+export function getOkxRpiTakerLiquidityAdvisory(): OkxRpiFeeOpportunity[] {
+  return latest
+    .filter(item => item.rpiTakerAccess.liquidityImprovementVisible)
+    .map(item => ({
+      ...item,
+      rpiBookBids: item.rpiBookBids.map(level => ({ ...level })),
+      rpiBookAsks: item.rpiBookAsks.map(level => ({ ...level })),
+      rpiTakerAccess: { ...item.rpiTakerAccess, documentedStandardOrderTypes: [...item.rpiTakerAccess.documentedStandardOrderTypes] as ['limit', 'market', 'fok', 'ioc'] },
+    }));
 }
 
 export function ensureOkxRpiFeeAdvisory(): void {
   if (timer || process.env.CRYPTO_OKX_RPI_FEE_ADVISORY_ENABLED === 'false') return;
   void refresh();
   if (process.env.NO_INTERVALS !== 'true') {
-    const intervalMs = Math.max(30_000, Math.min(30 * 60_000, Number(process.env.CRYPTO_OKX_RPI_FEE_ADVISORY_INTERVAL_MS || 300_000)));
+    const intervalMs = Math.max(15_000, Math.min(30 * 60_000, Number(process.env.CRYPTO_OKX_RPI_FEE_ADVISORY_INTERVAL_MS || 120_000)));
     timer = setInterval(() => void refresh(), intervalMs);
     timer.unref?.();
   }

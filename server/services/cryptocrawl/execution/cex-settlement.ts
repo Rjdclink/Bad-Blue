@@ -7,6 +7,7 @@ import {
   type CoinbaseOrderReceipt,
 } from './coinbase-spot-settlement-adapter.js';
 import { cexDecimalString } from './cex-order-serialization.js';
+import { getSpotProductConstraints } from './cex-spot-product-policy.js';
 import type {
   ExecutionFill,
   ExecutionStatus,
@@ -145,8 +146,9 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
 
   async submit(request: OrderRequest): Promise<CexOrderReceipt> {
     const submittedAt = Date.now();
+    const constraints = await getSpotProductConstraints('kraken', request.symbol, true);
     const result = await this.privateRequest('/0/private/AddOrder', {
-      pair: request.symbol,
+      pair: constraints.exchangeSymbol,
       type: request.side,
       ordertype: 'limit',
       price: cexDecimalString(request.price),
@@ -261,9 +263,9 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
 
   async submit(request: OrderRequest): Promise<CexOrderReceipt> {
     const submittedAt = Date.now();
-    const { base, quote } = splitSymbol(request.symbol);
+    const constraints = await getSpotProductConstraints('okx', request.symbol, true);
     const rows = await this.privateRequest('/api/v5/trade/order', 'POST', {
-      instId: `${base}-${quote}`,
+      instId: constraints.exchangeSymbol,
       tdMode: 'cash',
       side: request.side,
       ordType: 'ioc',
@@ -278,8 +280,8 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
 
   async query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement> {
     if (order.venue !== 'okx') throw new Error(`OKX adapter cannot query ${order.venue} order`);
-    const { base, quote } = splitSymbol(order.symbol);
-    const rows = await this.privateRequest('/api/v5/trade/order', 'GET', { instId: `${base}-${quote}`, ordId: order.orderId });
+    const constraints = await getSpotProductConstraints('okx', order.symbol);
+    const rows = await this.privateRequest('/api/v5/trade/order', 'GET', { instId: constraints.exchangeSymbol, ordId: order.orderId });
     const row = rows[0];
     if (!row) throw new Error(`OKX returned no order state for ${order.orderId}`);
     const filledQuantity = nullableNumber(row.accFillSz) ?? 0;
@@ -288,7 +290,7 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
     let fills: ExecutionFill[] = [];
     try {
       const fillRows = await this.privateRequest('/api/v5/trade/fills', 'GET', {
-        instId: `${base}-${quote}`,
+        instId: constraints.exchangeSymbol,
         ordId: order.orderId,
         limit: '100',
       });
@@ -345,8 +347,8 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
 
   async cancel(order: CexOrderReceipt): Promise<void> {
     if (order.venue !== 'okx') throw new Error(`OKX adapter cannot cancel ${order.venue} order`);
-    const { base, quote } = splitSymbol(order.symbol);
-    await this.privateRequest('/api/v5/trade/cancel-order', 'POST', { instId: `${base}-${quote}`, ordId: order.orderId });
+    const constraints = await getSpotProductConstraints('okx', order.symbol, true);
+    await this.privateRequest('/api/v5/trade/cancel-order', 'POST', { instId: constraints.exchangeSymbol, ordId: order.orderId });
   }
 
   async getBalances(): Promise<Record<string, string>> {
@@ -392,12 +394,16 @@ function knownFeeUsd(order: NormalizedOrderSettlement, baseAsset: string, quoteA
   if (order.feeAmount === null) return null;
   if (order.feeAmount === 0) return 0;
   if (!order.feeAsset) return null;
-  const feeAmount = order.feeAmount;
+  // Normalize venue-native fee signs into one economic convention:
+  // positive = cost, negative = rebate. OKX reports the inverse at the API
+  // boundary (negative charge, positive rebate), while Kraken/Coinbase settlement
+  // amounts are already represented as positive charges.
+  const economicFeeAmount = order.venue === 'okx' ? -order.feeAmount : order.feeAmount;
   const feeAsset = canonicalFeeAsset(order.feeAsset);
   const normalizedBase = canonicalFeeAsset(baseAsset);
   const normalizedQuote = canonicalFeeAsset(quoteAsset);
-  if (feeAsset === normalizedQuote) return feeAmount;
-  if (feeAsset === normalizedBase && order.averageFillPrice !== null) return feeAmount * order.averageFillPrice;
+  if (feeAsset === normalizedQuote) return economicFeeAmount;
+  if (feeAsset === normalizedBase && order.averageFillPrice !== null) return economicFeeAmount * order.averageFillPrice;
   return null;
 }
 
@@ -628,6 +634,8 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
       ...(buySettlement.fills.length > 0 ? [`${plan.buyVenue}:fills`] : []),
       ...(sellSettlement.fills.length > 0 ? [`${plan.sellVenue}:fills`] : []),
       ...(buySettlement.finalBalances || sellSettlement.finalBalances ? ['authenticated_final_balances'] : []),
+      'venue_native_fee_sign_normalized_to_economic_cost',
+      'kraken_okx_settlement_product_identity:canonical_live_product_authority',
     ],
     orders: [buySettlement, sellSettlement],
     error: submissionError.length > 0 ? submissionError.join('; ') : undefined,

@@ -35,6 +35,16 @@ assert.match(wiring, /if \(!positive\) continue;/);
 assert.match(wiring, /executableCapability: positive && input\.executableCapability/);
 assert.match(wiring, /zeroCapitalDiscoveryFloorBps\(\)/);
 
+// Candidate execution-capability truth must consume the exact same current gas
+// funding authority as dispatch. A deterministic-positive route remains useful
+// discovery evidence when funding is unavailable, but it cannot advertise itself
+// executable or silently omit the missing funding evidence.
+assert.match(wiring, /const fundingReady = funding\.mode !== 'unavailable';/);
+assert.match(wiring, /const executableCapability = positive && receiverReady && fundingReady;/);
+assert.match(wiring, /const executableCapability = positive && fundingReady && receiverReady && permissionReady && simulationReady;/);
+assert.match(wiring, /live_gas_funding/);
+assert.match(wiring, /if \(funding\.mode === 'unavailable'\) continue;/);
+
 // DynamicScale may react to near-break-even density only as bounded search
 // pressure. Profitability remains terminal-confirmed realized truth.
 assert.match(scale, /zeroCapitalNearBreakEvenPressure/);
@@ -53,6 +63,7 @@ console.log(JSON.stringify({
   zeroCapitalBpsPropagation: 'verified',
   nearBreakEvenClassification: 'enriched_observation_only',
   positiveExecutionFloorPreserved: true,
+  gasFundingExecutionTruthBound: true,
   dynamicScaleUse: 'bounded_search_pressure_only',
   realizedProfitabilityAuthorityPreserved: true,
 }, null, 2));

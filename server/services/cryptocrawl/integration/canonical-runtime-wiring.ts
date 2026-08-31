@@ -14,6 +14,7 @@ import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-
 import { ensureHybridCexExecutionWiring } from '../runtime/hybrid-cex-execution-wiring.js';
 import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
 import { ensureStageProofMetricsWiring } from '../runtime/stage-proof-metrics-wiring.js';
+import { ensureZeroCapitalRealizedProfitWiring } from '../runtime/zero-capital-realized-profit-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureAuthenticatedFeeTierOptimizationWiring } from './authenticated-fee-tier-optimization-wiring.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
@@ -115,9 +116,6 @@ function installCanonicalRuntime(): void {
   if (installed) return;
   installed = true;
 
-  // Legacy fixed profit-cap methods are retired first. The adaptive terminal-
-  // realized operating envelope is installed later after profitability/maker
-  // policies so no Infinity compatibility override can become final authority.
   ensureStageProfitCapRetirement();
   logZeroCapitalReadinessDiagnostics();
   ensureComputationalReactorWiring();
@@ -137,6 +135,10 @@ function installCanonicalRuntime(): void {
   ensureZeroCapitalDynamicAttemptBarrierWiring();
   ensureAlchemyStandardRpcFirstWiring();
 
+  // Terminal realized-profit reconciliation must exist before the engine can
+  // select native funding or broadcast any zero-capital transaction. The wiring
+  // is idempotent, so every lifecycle entry point can safely reassert it.
+  ensureZeroCapitalRealizedProfitWiring();
   void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
 
   ensureOrderBookEvolutionWiring();
@@ -200,13 +202,14 @@ function installCanonicalRuntime(): void {
     cexAuthenticatedFeeTierOverlay: 'cache_only_observer_canonical_fee_resolver_refreshes_on_demand',
     rebateModeSelection: 'expected_realized_net_value_not_rebate_alone',
     minimumOrderNotionalTierAssumed: false,
-    cexMakerExecution: 'kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
-    coinbaseMakerExecutionAuthority: false,
+    cexMakerExecution: 'coinbase_kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
+    coinbaseMakerExecutionAuthority: true,
     cexHybridExecutionAuthority: true,
     cexHybridExecution: 'MT_TM_maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
-    adaptiveProfitOperatingEnvelope: 'persisted_operating_day_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget',
-    adaptiveProfitCapScope: 'new_exposure_only_settlement_hedge_flattening_exempt',
+    adaptiveProfitOperatingEnvelope: 'terminal_realized_performance_telemetry_plus_profit_ladder_notional_and_dynamic_cycle_budget',
+    adaptiveProfitCapScope: 'retired_no_daily_realized_profit_execution_cap',
     rolling24hProfitRole: 'telemetry_only',
+    retainedProfitRole: 'available_for_redeployment_subject_to_profit_ladder_stage_inventory_liquidity_and_risk',
     exchangeSurveillanceThresholdAssumed: false,
     stageProofMetricsAuthority: 'terminal_realized_sharpe_drawdown_plus_executed_mc_outcome_validation',
     computationalReactor: 'measured_cpu_memory_rate_pressure_plus_real_scorer_monte_carlo_plus_bounded_callbacks',
@@ -229,7 +232,7 @@ function installCanonicalRuntime(): void {
     predictionMarketExecutionAuthority: false,
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
-    zeroCapitalRuntimeLifecycle: 'cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
+    zeroCapitalRuntimeLifecycle: 'terminal_realized_profit_authority_then_cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
     zeroCapitalSizeOptimization: 'coarse_independent_quotes_plus_bounded_fresh_local_refinement_plus_exact_provider_size_rescue_plus_profitability_rescue_v2',
     zeroCapitalProfitabilityRescue: 'decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
     zeroCapitalFlashLoanEconomics: 'measured_single_provider_fee_liquidity_plus_combined_aave_balancer_liquidity_rescue',

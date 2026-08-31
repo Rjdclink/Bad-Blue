@@ -19,6 +19,8 @@ export interface SpotProductConstraints {
   quoteMinSize: number | null;
   baseMaxSize: number | null;
   quoteMaxSize: number | null;
+  feeLookupKey: string | null;
+  feeGroupId: string | null;
   state: 'live';
   observedAt: number;
   source: 'kraken_asset_pairs' | 'okx_public_instruments';
@@ -31,11 +33,13 @@ interface ConstraintSnapshot {
 
 const TTL_MS = Math.max(5_000, Math.min(300_000, Number(process.env.CRYPTO_CEX_PRODUCT_CONSTRAINT_TTL_MS || 60_000)));
 const TIMEOUT_MS = Math.max(1_000, Math.min(10_000, Number(process.env.CRYPTO_CEX_PRODUCT_CONSTRAINT_TIMEOUT_MS || 4_000)));
+const NEGATIVE_TTL_MS = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTO_CEX_PRODUCT_NEGATIVE_TTL_MS || 30_000)));
 let krakenSnapshot: ConstraintSnapshot | null = null;
 let krakenInFlight: Promise<ConstraintSnapshot> | null = null;
 let okxSnapshot: ConstraintSnapshot | null = null;
 let okxInFlight: Promise<ConstraintSnapshot> | null = null;
 const freshConstraintInFlight = new Map<string, Promise<SpotProductConstraints>>();
+const unsupportedUntil = new Map<string, number>();
 
 function positive(value: unknown): number | null {
   const parsed = Number(value);
@@ -126,6 +130,8 @@ function krakenConstraint(responseKey: string, row: Record<string, unknown>, obs
     quoteMinSize: positive(row.costmin),
     baseMaxSize: null,
     quoteMaxSize: null,
+    feeLookupKey: responseKey,
+    feeGroupId: null,
     state: 'live',
     observedAt,
     source: 'kraken_asset_pairs',
@@ -142,6 +148,7 @@ function okxConstraint(raw: Record<string, unknown>, observedAt: number): SpotPr
   const priceIncrement = positive(raw.tickSz);
   const baseMinSize = positive(raw.minSz);
   if (baseIncrement === null || priceIncrement === null || baseMinSize === null) return null;
+  const feeGroupId = typeof raw.groupId === 'string' && raw.groupId.trim() ? raw.groupId.trim() : null;
   return {
     venue: 'okx',
     symbol: identity.symbol,
@@ -154,18 +161,28 @@ function okxConstraint(raw: Record<string, unknown>, observedAt: number): SpotPr
     quoteMinSize: null,
     baseMaxSize: positive(raw.maxLmtSz),
     quoteMaxSize: positive(raw.maxLmtAmt),
+    feeLookupKey: exchangeSymbol,
+    feeGroupId,
     state: 'live',
     observedAt,
     source: 'okx_public_instruments',
   };
 }
 
-async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
-  if (krakenSnapshot && krakenSnapshot.expiresAt > Date.now()) return krakenSnapshot;
+function clearNegativeEntries(venue: ConstrainedSpotVenue, snapshot: ConstraintSnapshot): void {
+  for (const key of unsupportedUntil.keys()) {
+    if (!key.startsWith(`${venue}:`)) continue;
+    const symbol = key.slice(venue.length + 1);
+    if (snapshot.values.has(symbol)) unsupportedUntil.delete(key);
+  }
+}
+
+async function fetchKrakenSnapshot(forceRefresh = false): Promise<ConstraintSnapshot> {
+  if (!forceRefresh && krakenSnapshot && krakenSnapshot.expiresAt > Date.now()) return krakenSnapshot;
   if (krakenInFlight) return krakenInFlight;
   krakenInFlight = (async () => {
     const payload = await fetchJsonWithRetry<any>('https://api.kraken.com/0/public/AssetPairs', {
-      init: { headers: { accept: 'application/json', 'cache-control': 'max-age=0' } },
+      init: { headers: { accept: 'application/json', 'cache-control': forceRefresh ? 'no-cache' : 'max-age=0' } },
       maxRetries: 1,
       baseDelayMs: 100,
       maxDelayMs: 500,
@@ -190,10 +207,12 @@ async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
     }
     const snapshot = { expiresAt: Date.now() + TTL_MS, values };
     krakenSnapshot = snapshot;
+    clearNegativeEntries('kraken', snapshot);
     logger.info('[CEX Product] Kraken SPOT constraints refreshed', {
       component: 'CexSpotProductPolicy',
       products: values.size,
       ambiguous: ambiguous.size,
+      forcedRefresh: forceRefresh,
       canonicalizationAuthority: 'live_base_quote_fields_or_wsname',
       quoteCurrencyAllowlistUsed: false,
       unpublishedSingleOrderMaxTreatedAsUnlimited: true,
@@ -203,13 +222,13 @@ async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
   return krakenInFlight;
 }
 
-async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
-  if (okxSnapshot && okxSnapshot.expiresAt > Date.now()) return okxSnapshot;
+async function fetchOkxSnapshot(forceRefresh = false): Promise<ConstraintSnapshot> {
+  if (!forceRefresh && okxSnapshot && okxSnapshot.expiresAt > Date.now()) return okxSnapshot;
   if (okxInFlight) return okxInFlight;
   okxInFlight = (async () => {
     const baseUrl = await getOkxExecutionRestBaseUrl();
     const payload = await fetchJsonWithRetry<any>(`${baseUrl}/api/v5/public/instruments?instType=SPOT`, {
-      init: { headers: { accept: 'application/json', 'cache-control': 'max-age=0' } },
+      init: { headers: { accept: 'application/json', 'cache-control': forceRefresh ? 'no-cache' : 'max-age=0' } },
       maxRetries: 1,
       baseDelayMs: 100,
       maxDelayMs: 500,
@@ -226,10 +245,12 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
     }
     const snapshot = { expiresAt: Date.now() + TTL_MS, values };
     okxSnapshot = snapshot;
+    clearNegativeEntries('okx', snapshot);
     logger.info('[CEX Product] OKX regional SPOT constraints refreshed', {
       component: 'CexSpotProductPolicy',
       baseUrl,
       products: values.size,
+      forcedRefresh: forceRefresh,
       canonicalizationAuthority: 'live_baseCcy_quoteCcy_fields',
       quoteCurrencyAllowlistUsed: false,
       perOrderMaximumsCaptured: true,
@@ -242,9 +263,8 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
 function updateSnapshotConstraint(venue: ConstrainedSpotVenue, constraint: SpotProductConstraints): void {
   const snapshot = venue === 'kraken' ? krakenSnapshot : okxSnapshot;
   if (!snapshot) return;
-  // Refresh only this product. Never extend the full-catalog TTL because one
-  // child refreshed; unrelated products must still expire on their original TTL.
   snapshot.values.set(constraint.symbol, constraint);
+  unsupportedUntil.delete(`${venue}:${constraint.symbol}`);
 }
 
 async function fetchTargetedFreshConstraint(venue: ConstrainedSpotVenue, current: SpotProductConstraints): Promise<SpotProductConstraints> {
@@ -306,9 +326,23 @@ export async function getSpotProductConstraints(
 ): Promise<SpotProductConstraints> {
   const symbol = canonicalLookupSymbol(symbolInput);
   if (!symbol) throw new Error(`Unsupported ${venue} SPOT symbol ${symbolInput}`);
-  const snapshot = venue === 'kraken' ? await fetchKrakenSnapshot() : await fetchOkxSnapshot();
-  const constraint = snapshot.values.get(symbol);
-  if (!constraint) throw new Error(`${venue} SPOT product ${symbol} has no current live execution constraints`);
+  const negativeKey = `${venue}:${symbol}`;
+  const negativeUntil = unsupportedUntil.get(negativeKey) || 0;
+  if (!forceFresh && negativeUntil > Date.now()) {
+    throw new Error(`${venue} SPOT product ${symbol} was absent from a recently forced live catalog refresh`);
+  }
+
+  let snapshot = venue === 'kraken' ? await fetchKrakenSnapshot() : await fetchOkxSnapshot();
+  let constraint = snapshot.values.get(symbol);
+  if (!constraint) {
+    snapshot = venue === 'kraken' ? await fetchKrakenSnapshot(true) : await fetchOkxSnapshot(true);
+    constraint = snapshot.values.get(symbol);
+    if (!constraint) {
+      unsupportedUntil.set(negativeKey, Date.now() + NEGATIVE_TTL_MS);
+      throw new Error(`${venue} SPOT product ${symbol} has no current live execution constraints after authoritative catalog refresh`);
+    }
+  }
+  unsupportedUntil.delete(negativeKey);
   if (!forceFresh) return { ...constraint };
   return { ...(await fetchTargetedFreshConstraint(venue, constraint)) };
 }

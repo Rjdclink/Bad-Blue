@@ -99,7 +99,10 @@ async function observe(): Promise<void> {
       baseIntervalMs: baseIntervalMs(),
     });
     const symbols = selectionPolicy.orderedSymbols;
-    const settled = await Promise.allSettled(symbols.map(symbol => evaluateCexFourModeMatrix({ symbol })));
+    const settled = await Promise.allSettled(symbols.map(symbol => evaluateCexFourModeMatrix({
+      symbol,
+      maxFeeAgeMs: selectionPolicy.feeRefreshMaxAgeMs,
+    })));
     latest = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []).sort(compare).slice(0, 256);
 
     const nextPolicy = buildAdaptiveProfitabilitySearchPolicy({
@@ -167,6 +170,7 @@ async function observe(): Promise<void> {
       },
       negativeRankingObjective: 'smallest_risk_adjusted_then_exact_bps_to_break_even_first',
       observationFloorBps: Number(process.env.CRYPTOCRAWL_CEX_FOUR_MODE_OBSERVATION_FLOOR_BPS ?? -200),
+      selectedFeeFreshnessTargetMs: selectionPolicy.feeRefreshMaxAgeMs,
       hybridObservationExecutionAuthority: false,
       hybridCanonicalExecutionAuthority: true,
       hybridCanonicalExecutionPath: 'MT_TM_maker_terminal_fill_then_fresh_depth_aware_taker_hedge',

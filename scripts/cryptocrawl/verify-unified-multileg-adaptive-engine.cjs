@@ -109,7 +109,7 @@ const required = [
   ['stageOneBootstrap', "candidate.status !== 'eligible'", 'Stage 1 eligible-only validation'],
   ['stageOneBootstrap', '!candidate.executableCapability', 'Stage 1 execution-capability requirement'],
   ['stageOneBootstrap', 'candidate.missingInformation.length > 0', 'Stage 1 complete-evidence requirement'],
-  ['stageOneBootstrap', "candidate.topology !== 'CEX_CEX' && candidate.topology !== 'ZERO_CAPITAL_ATOMIC'", 'Stage 1 bounded bootstrap topologies'],
+  ['stageOneBootstrap', "candidate.topology !== 'CEX_CEX' && candidate.topology !== 'MAKER_CEX' && candidate.topology !== 'ZERO_CAPITAL_ATOMIC'", 'Stage 1 bounded bootstrap topologies include fully measured maker CEX'],
   ['stageOneBootstrap', 'candidate.economics.deterministicNetProfitUsd', 'Stage 1 positive economics'],
   ['stageOneBootstrap', 'stageManager.recordLiveValidation', 'Stage 1 uses canonical live-validation API'],
   ['stageOneBootstrap', 'stageOneFoundationLadderEvidence', 'Stage 1 foundation ladder evidence'],

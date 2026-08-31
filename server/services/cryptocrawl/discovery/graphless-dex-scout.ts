@@ -15,7 +15,6 @@ const PAIR_CREATED_TOPIC = V2_PAIR_CREATED.getEventTopic('PairCreated');
 
 const V2_FACTORIES: Partial<Record<SupportedExecutionChain, Array<{ name: string; address: string }>>> = {
   polygon: [
-    // Lower-case address avoids ethers rejecting a non-canonical mixed-case checksum.
     { name: 'quickswap_v2', address: '0x5757371414417b8c6caad45baef941abc7d3ab32' },
     { name: 'sushiswap_v2', address: '0xc35DADB65012eC5796536bD9864eD8773aBc74C4' },
   ],
@@ -53,6 +52,7 @@ export interface GraphlessDexScoutResult {
 type CacheEntry = { expiresAt: number; result: GraphlessDexScoutResult };
 const cache = new Map<string, CacheEntry>();
 const lastFactoryBlock = new Map<string, number>();
+const archiveRestrictedKeys = new Set<string>();
 
 function bounded(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
@@ -146,20 +146,32 @@ function isArchiveRestriction(error: unknown): boolean {
   return /archive requests require|archive node|historical state|block range.*too (?:large|old)/i.test(message);
 }
 
+function recentFilter(filter: providers.Filter, currentBlock: number): providers.Filter {
+  const recentBlocks = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_ARCHIVE_FALLBACK_BLOCKS, 128, 32, 2_000));
+  const recentFrom = Math.max(0, currentBlock - recentBlocks + 1);
+  return { ...filter, fromBlock: recentFrom, toBlock: currentBlock };
+}
+
 async function getLogsWithRecentFallback(
   provider: providers.Provider,
   filter: providers.Filter,
   currentBlock: number,
+  capabilityKey: string,
 ): Promise<providers.Log[]> {
+  if (archiveRestrictedKeys.has(capabilityKey)) {
+    return provider.getLogs(recentFilter(filter, currentBlock));
+  }
   try {
     return await provider.getLogs(filter);
   } catch (error) {
     if (!isArchiveRestriction(error)) throw error;
-    // Public no-key RPCs often reject archive ranges. Retry only the most recent
-    // bounded window; this is discovery coverage, never execution evidence.
-    const recentBlocks = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_ARCHIVE_FALLBACK_BLOCKS, 128, 32, 2_000));
-    const recentFrom = Math.max(0, currentBlock - recentBlocks + 1);
-    return provider.getLogs({ ...filter, fromBlock: recentFrom, toBlock: currentBlock });
+    archiveRestrictedKeys.add(capabilityKey);
+    logger.info('[GraphlessDexScout] RPC archive restriction learned; future discovery uses bounded recent logs directly', {
+      component: 'GraphlessDexScout',
+      capabilityKey,
+      executionAuthority: false,
+    });
+    return provider.getLogs(recentFilter(filter, currentBlock));
   }
 }
 
@@ -175,9 +187,6 @@ async function scanFactoryLogs(input: {
   observedAt: number;
   output: Map<string, GraphlessDexTokenCandidate>;
 }): Promise<void> {
-  // A recent bootstrap is sufficient for graphless scouting and avoids forcing
-  // free/public RPC endpoints into archive mode. Operators with archive RPCs can
-  // increase this explicitly without changing execution authority.
   const bootstrapBlocks = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_BOOTSTRAP_BLOCKS, 512, 64, 100_000));
   const fromBlock = Math.max(0, lastFactoryBlock.get(input.chainKey) ?? input.currentBlock - bootstrapBlocks);
   const chunk = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_LOG_CHUNK, 512, 64, 10_000));
@@ -187,6 +196,7 @@ async function scanFactoryLogs(input: {
       input.provider,
       { address: input.address, topics: [input.topic], fromBlock: start, toBlock: end },
       input.currentBlock,
+      input.chainKey,
     );
     for (const log of logs) {
       try {
@@ -259,12 +269,6 @@ async function fetchRecentFactoryCandidates(
   return [...candidates.values()];
 }
 
-/**
- * No-key DEX discovery. Public analytics are optional scouts only. Direct RPC
- * V3 and compatible V2-fork factory events keep discovery alive when scouts are
- * unavailable. Neither source grants execution authority: every route must still
- * receive fresh router/quoter outputs plus all-in profitability checks downstream.
- */
 export async function discoverGraphlessDexTokens(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
@@ -322,6 +326,7 @@ export async function discoverGraphlessDexTokens(
     sources: result.sources,
     publicScoutAvailable,
     directRpcAvailable,
+    archiveRestrictedCapabilities: archiveRestrictedKeys.size,
     v2ForkRpcScanning: process.env.ZERO_CAPITAL_V2_FORK_RPC_SCANNING !== 'false',
     v2Factories: (V2_FACTORIES[chain] || []).map(factory => factory.name),
     factoryBootstrapBlocks: Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_BOOTSTRAP_BLOCKS, 512, 64, 100_000)),
