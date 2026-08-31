@@ -9,6 +9,8 @@ import {
   type SupportedChain,
   type ZeroCapitalOpportunity,
 } from '../core/zero-capital-engine.js';
+import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
+import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
 import { withEvmSignerLane } from '../execution/evm-signer-lane.js';
 import { evaluateZeroCapitalRealizedProfit } from '../execution/zero-capital-realized-profit-policy.js';
 
@@ -43,7 +45,7 @@ function correctedSettlement(result: any, economics: ReturnType<typeof evaluateZ
       ...new Set([
         ...(result.normalized.provenance || []),
         'receiver_event:gross_profit',
-        'receiver_starting_loan_token_balance:zero_verified',
+        'selected_receiver_starting_loan_token_balance:zero_verified',
         'operational_profit_recipient_delta:matches_receiver_event',
         result.zeroMonetaryGasVerified
           ? 'sponsored_gas:user_native_cost_zero'
@@ -54,6 +56,14 @@ function correctedSettlement(result: any, economics: ReturnType<typeof evaluateZ
   };
 }
 
+function selectedReceiver(runtime: any, opportunity: ZeroCapitalOpportunity): string | null {
+  const dual = dualFlashLoanProviderSelectionRegistry.get(opportunity.id);
+  if (dual?.receiver) return dual.receiver;
+  const single = flashLoanProviderSelectionRegistry.get(opportunity.id);
+  if (single?.receiver) return single.receiver;
+  return runtime.receiverManager?.getReceiver(opportunity.chain) || null;
+}
+
 async function executeWithProfitProvenanceBoundary(
   runtime: any,
   delegate: Function,
@@ -62,9 +72,9 @@ async function executeWithProfitProvenanceBoundary(
 ): Promise<any> {
   const provider = runtime.providers?.get(opportunity.chain);
   const wallet = runtime.executionWallets?.get(opportunity.chain);
-  const receiver = runtime.receiverManager?.getReceiver(opportunity.chain);
+  const receiver = selectedReceiver(runtime, opportunity);
   if (!provider || !wallet || !receiver) {
-    return { success: false, error: `Zero-capital profit-provenance boundary has no provider/wallet/receiver for ${opportunity.chain}` };
+    return { success: false, error: `Zero-capital profit-provenance boundary has no provider/wallet/selected receiver for ${opportunity.chain}` };
   }
 
   const token = new Contract(opportunity.inputToken, ERC20_BALANCE_ABI, provider);
@@ -79,7 +89,7 @@ async function executeWithProfitProvenanceBoundary(
   if (receiverStarting !== 0n) {
     return {
       success: false,
-      error: `ZERO_CAPITAL_RECEIVER_STARTING_LOAN_TOKEN_BALANCE_NONZERO:${receiverStarting.toString()}`,
+      error: `ZERO_CAPITAL_SELECTED_RECEIVER_STARTING_LOAN_TOKEN_BALANCE_NONZERO:${receiverStarting.toString()}`,
     };
   }
 
@@ -174,7 +184,7 @@ function reconcileAllInResult(opportunity: ZeroCapitalOpportunity, result: any):
       grossProfitUsd: economics.grossProfitUsd,
       realizedGasUsd: economics.gasUsd,
       realizedNetProfitUsd: economics.netProfitUsd,
-      receiverStartingLoanTokenBalanceZero: true,
+      selectedReceiverStartingLoanTokenBalanceZero: true,
       operationalProfitRecipientDeltaVerified: true,
       distributedNativeSignerLane: result.zeroMonetaryGasVerified !== true,
       economicsVerified,
@@ -268,6 +278,7 @@ export function ensureZeroCapitalRealizedProfitWiring(): void {
   logger.info('[CryptoCoreRuntime] Zero-capital realized-profit wiring asserted', {
     component: 'CryptoCoreRuntime',
     wrapsCurrentInstanceExecutionStack: true,
+    selectedReceiverBoundToProviderSelectionRegistry: true,
     reentrantCapturedWrappersBypassDuplicateBoundary: true,
     receiverEventClassifiedAs: 'gross_profit_only_after_zero_starting_balance',
     operationalProfitRecipientDeltaRequired: true,
