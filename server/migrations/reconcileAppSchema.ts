@@ -97,6 +97,12 @@ async function verifyCryptocrawlerAuthoritySchemaOnce(): Promise<void> {
   }
 }
 
+function schemaRetryDelayMs(attempt: number): number {
+  const capMs = Math.min(4_000, 500 * Math.max(1, attempt));
+  const floorMs = Math.min(250, Math.max(50, Math.floor(capMs / 4)));
+  return floorMs + Math.floor(Math.random() * Math.max(1, capMs - floorMs + 1));
+}
+
 export async function requireCryptocrawlerAuthoritySchema(maxAttempts = 6): Promise<void> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -106,7 +112,7 @@ export async function requireCryptocrawlerAuthoritySchema(maxAttempts = 6): Prom
     } catch (error) {
       lastError = error;
       if (attempt < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        await new Promise(resolve => setTimeout(resolve, schemaRetryDelayMs(attempt)));
       }
     }
   }
@@ -185,9 +191,14 @@ function applyRollingDeploymentPoolHeadroom(): void {
     canonicalSteadyMax,
   );
   const steadyMax = Math.min(canonicalSteadyMax, requestedSteadyMax);
+  // During rolling overlap, two replicas can otherwise open their full client
+  // pools simultaneously. Default the incoming replica to half of its steady
+  // parallelism (rounded up), then restore full throughput after the overlap
+  // window. This is phase-adaptive resource use, not a permanent capacity cut.
+  const defaultRolloutMax = Math.max(1, Math.ceil(steadyMax / 2));
   const rolloutMax = Math.min(
     steadyMax,
-    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', Math.min(5, steadyMax), 1, steadyMax),
+    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', defaultRolloutMax, 1, steadyMax),
   );
   const rolloutWindowMs = finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS', 90_000, 30_000, 300_000);
   const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 0;
