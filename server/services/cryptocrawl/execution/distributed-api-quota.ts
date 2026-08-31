@@ -17,6 +17,7 @@ interface QuotaState {
 
 const states = new Map<string, QuotaState>();
 let tableReady: Promise<boolean> | null = null;
+let tableReadyRetryAfter = 0;
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
@@ -35,16 +36,33 @@ function stateFor(namespace: string): QuotaState {
 async function ensureLeaseTable(): Promise<boolean> {
   if (!isDatabaseConfigured) return false;
   if (tableReady) return tableReady;
-  tableReady = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
-    .then(result => result.rows?.[0]?.ready === true)
+  if (Date.now() < tableReadyRetryAfter) return false;
+
+  const retryMs = boundedInt(process.env.CRYPTOCRAWL_API_QUOTA_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
+  const probe = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
+    .then(result => {
+      const ready = result.rows?.[0]?.ready === true;
+      if (!ready) tableReadyRetryAfter = Date.now() + retryMs;
+      return ready;
+    })
     .catch(error => {
+      tableReadyRetryAfter = Date.now() + retryMs;
       logger.warn('[DistributedApiQuota] Lease table availability check failed', {
         component: 'DistributedApiQuota',
+        retryAfterMs: retryMs,
         error: error instanceof Error ? error.message : String(error),
       });
       return false;
     });
-  return tableReady;
+
+  tableReady = probe;
+  try {
+    const ready = await probe;
+    if (!ready) tableReady = null;
+    return ready;
+  } finally {
+    if (tableReady === probe && Date.now() >= tableReadyRetryAfter) tableReady = null;
+  }
 }
 
 /**
