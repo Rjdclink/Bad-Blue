@@ -123,7 +123,6 @@ class CryptaraSupabaseResourceGovernor {
   private admissionFailures = 0;
   private peakQueued = 0;
   private lastMode: CryptaraSupabaseAdmissionSnapshot['mode'] = 'recovering';
-  private lastLoggedTarget = 1;
 
   private poolSnapshot() {
     try {
@@ -163,10 +162,9 @@ class CryptaraSupabaseResourceGovernor {
       console.warn(`[CRYPTARA][SUPABASE-WORKER] pressure=${reason}; concurrency ${previous}->${this.targetConcurrency}; queued=${this.queue.length}`);
     }
     this.lastMode = 'pressure';
-    this.lastLoggedTarget = this.targetConcurrency;
   }
 
-  private considerRecovery(acquireMs: number, heldMs: number): void {
+  private considerRecovery(acquireMs: number): void {
     const now = Date.now();
     const stats = this.poolSnapshot();
     const ceiling = Math.max(1, stats.max);
@@ -174,10 +172,9 @@ class CryptaraSupabaseResourceGovernor {
 
     const localPressure = stats.waiting > 0 ||
       acquireMs >= PRESSURE_ACQUIRE_MS ||
-      (heldMs >= PRESSURE_HOLD_MS && this.queue.length > 0) ||
       (stats.total >= ceiling && stats.idle === 0 && this.queue.length > this.targetConcurrency);
     if (localPressure) {
-      this.contract(stats.waiting > 0 ? 'pool_waiters' : acquireMs >= PRESSURE_ACQUIRE_MS ? 'slow_admission' : 'sustained_checkout');
+      this.contract(stats.waiting > 0 ? 'pool_waiters' : acquireMs >= PRESSURE_ACQUIRE_MS ? 'slow_admission' : 'pool_saturation');
       return;
     }
 
@@ -203,7 +200,6 @@ class CryptaraSupabaseResourceGovernor {
     this.healthySuccesses = 0;
     if (previous !== this.targetConcurrency) {
       console.log(`[CRYPTARA][SUPABASE-WORKER] healthy admission; concurrency ${previous}->${this.targetConcurrency}; pool=${stats.total}/${stats.max}`);
-      this.lastLoggedTarget = this.targetConcurrency;
     }
     this.lastMode = this.mode(now);
   }
@@ -228,6 +224,18 @@ class CryptaraSupabaseResourceGovernor {
     return bestIndex;
   }
 
+  private observeRelease(error: unknown, heldMs: number): void {
+    if (heldMs > 0) this.ewmaHoldMs = this.updateEwma(this.ewmaHoldMs, heldMs);
+    if (isAdmissionPressureError(error)) {
+      this.admissionFailures += 1;
+      this.contract('upstream_query_or_release_error');
+      return;
+    }
+    if (heldMs >= PRESSURE_HOLD_MS && this.queue.length > 0) {
+      this.contract('sustained_checkout');
+    }
+  }
+
   private drain(): void {
     const ceiling = this.currentCeiling();
     this.targetConcurrency = Math.max(1, Math.min(this.targetConcurrency, ceiling));
@@ -241,14 +249,7 @@ class CryptaraSupabaseResourceGovernor {
           if (released) return;
           released = true;
           this.inFlight = Math.max(0, this.inFlight - 1);
-          const duration = finiteNonNegative(heldMs);
-          if (duration > 0) this.ewmaHoldMs = this.updateEwma(this.ewmaHoldMs, duration);
-          if (isAdmissionPressureError(error)) {
-            this.admissionFailures += 1;
-            this.contract('upstream_admission_error');
-          } else {
-            this.considerRecovery(0, duration);
-          }
+          this.observeRelease(error, finiteNonNegative(heldMs));
           this.drain();
         },
       });
@@ -271,7 +272,7 @@ class CryptaraSupabaseResourceGovernor {
       this.contract('connection_acquisition_error');
       return;
     }
-    if (!error) this.considerRecovery(duration, 0);
+    if (!error) this.considerRecovery(duration);
   }
 
   snapshot(installed: boolean): CryptaraSupabaseAdmissionSnapshot {
@@ -333,7 +334,9 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
     const patchedConnect = function(this: any, callback?: (...args: any[]) => void): any {
       // The live ESM binding tracks resetPool() replacements. Coordination and any
       // unrelated pg pools bypass this worker completely.
-      if (this !== pool) return originalConnect.apply(this, arguments as any);
+      if (this !== pool) {
+        return typeof callback === 'function' ? originalConnect.call(this, callback) : originalConnect.call(this);
+      }
 
       const contextualPriority = priorityContext.getStore();
       const priority: CryptaraSupabasePriority = contextualPriority || (typeof callback === 'function' ? 'normal' : 'high');
@@ -345,7 +348,9 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
             const acquireMs = Date.now() - acquisitionStartedAt;
             governor.reportConnectionOutcome(acquireMs, error);
             if (error || !client) {
-              permit.release(error, 0);
+              // The connection outcome already taught the governor about pressure;
+              // release only the worker permit here to avoid double contraction.
+              permit.release(undefined, 0);
               callback(error, client, release);
               return;
             }
@@ -366,7 +371,9 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
           return client;
         } catch (error) {
           governor.reportConnectionOutcome(Date.now() - acquisitionStartedAt, error);
-          permit.release(error, 0);
+          // See callback path above: report once, then return the permit without
+          // re-classifying the same acquisition failure.
+          permit.release(undefined, 0);
           throw error;
         }
       });
