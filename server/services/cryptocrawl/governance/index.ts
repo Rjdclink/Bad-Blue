@@ -92,19 +92,12 @@ export function initializeGovernance(): Promise<void> {
 async function initializeGovernanceState(): Promise<void> {
   console.log('[GOVERNANCE] Initializing 6-Stage Deployment System...');
 
-  // Migrations/schema admission have already completed in server bootstrap. Install
-  // Cryptara's ordinary-lane resource governor before any governance persistence
-  // or route-owned background consumers can compete for Supavisor connections.
+  // Install the ordinary-lane governor before any governance persistence.
   installCryptaraSupabaseAdmissionWorker();
-
-  // Railway keeps the previous replica active while this one is unready. The new
-  // replica therefore bootstraps with a one-client ordinary pool. Once Cryptara
-  // owns admission, restore only the *ceiling*; Cryptara grows into it additively
-  // from measured successful admissions instead of opening a connection burst.
   const { releaseRollingDeploymentPoolHeadroom } = await import('../../../migrations/reconcileAppSchema.js');
   releaseRollingDeploymentPoolHeadroom('cryptara_worker_installed');
-
   const restored = await stageManager.restorePersistence(new PostgresStageManagerStateStore());
+
   const persistedProfitLadder = stageManager.getProfitLadderState();
   if (persistedProfitLadder) {
     profitLadder.importState(persistedProfitLadder);
