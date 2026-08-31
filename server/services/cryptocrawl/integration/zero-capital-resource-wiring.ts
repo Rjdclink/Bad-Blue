@@ -300,26 +300,33 @@ export function ensureZeroCapitalResourceWiring(): void {
     if (chain === 'europa') return configured;
 
     const receiverReady = !!target.receiverManager.getReceiver(chain);
+    const funding = await target.getGasFundingDecision(chain);
+    const fundingReady = funding.mode !== 'unavailable';
     for (const opportunity of configured) {
       const positive = opportunity.expectedProfit > 0n;
+      const executableCapability = positive && receiverReady && fundingReady;
       recordZeroCapitalCandidate({
         opportunity,
         chain,
         source: 'configured',
-        executableCapability: positive && receiverReady,
-        executionCapabilityReason: positive
-          ? receiverReady
-            ? 'Measured configured atomic route is deterministic-positive; Cryptara/Monte Carlo/governance remain required before execution'
-            : 'Measured configured atomic route is deterministic-positive, but no verified funded receiver is registered on the chain'
-          : `Measured configured route is ${opportunity.netProfitBps} BPS net and retained inside the observation envelope for optimization only`,
-        missingInformation: positive && !receiverReady ? ['verified_funded_receiver'] : [],
+        executableCapability,
+        executionCapabilityReason: !positive
+          ? `Measured configured route is ${opportunity.netProfitBps} BPS net and retained inside the observation envelope for optimization only`
+          : !fundingReady
+            ? `Measured configured atomic route is deterministic-positive, but live gas funding is unavailable: ${funding.reason}`
+            : receiverReady
+              ? 'Measured configured atomic route is deterministic-positive with live gas funding; Cryptara/Monte Carlo/governance remain required before execution'
+              : 'Measured configured atomic route is deterministic-positive, but no verified funded receiver is registered on the chain',
+        missingInformation: !positive || executableCapability ? [] : [
+          ...(!fundingReady ? ['live_gas_funding'] : []),
+          ...(!receiverReady ? ['verified_funded_receiver'] : []),
+        ],
       });
     }
 
     // Bind discovery economics to the same live funding authority used at
     // execution. Only an actual sponsored funding decision may zero user gas;
     // native/unavailable modes retain measured native-gas economics.
-    const funding = await target.getGasFundingDecision(chain);
     const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode);
     if (dynamicQuotes.length === 0) return configured;
     const positiveRouteIds = new Set(dynamicQuotes
@@ -341,7 +348,7 @@ export function ensureZeroCapitalResourceWiring(): void {
         : { ready: false, reason: positive ? 'dynamic_route_permissions_require_fresh_requote' : 'near_break_even_observation_only' };
       const exactSimulationRequired = positive && quote.id.startsWith('graphless-') && target.executionEligible;
       const simulationReady = !exactSimulationRequired || simulation.ready;
-      const executableCapability = positive && receiverReady && permissionReady && simulationReady;
+      const executableCapability = positive && fundingReady && receiverReady && permissionReady && simulationReady;
       recordZeroCapitalCandidate({
         opportunity,
         chain,
@@ -350,15 +357,20 @@ export function ensureZeroCapitalResourceWiring(): void {
         executableCapability,
         executionCapabilityReason: !positive
           ? `Measured near-break-even route retained for optimization only; ${quote.bpsToBreakEven} BPS remains to strict positive break-even`
-          : executableCapability
-            ? 'Measured atomic route has receiver, route permissions and required exact simulation; Cryptara/Monte Carlo/governance remain required before execution'
-            : !receiverReady
-              ? 'Measured deterministic-positive route has no verified funded receiver on the chain'
-              : !permissionReady
-                ? 'Measured deterministic-positive route requires fresh quoting after dynamic receiver permissions'
-                : `Measured deterministic-positive route exact atomic simulation is not ready: ${simulation.reason}`,
+          : !fundingReady
+            ? `Measured deterministic-positive route has no currently usable gas funding: ${funding.reason}`
+            : executableCapability
+              ? 'Measured atomic route has live gas funding, receiver, route permissions and required exact simulation; Cryptara/Monte Carlo/governance remain required before execution'
+              : !receiverReady
+                ? 'Measured deterministic-positive route has no verified funded receiver on the chain'
+                : !permissionReady
+                  ? 'Measured deterministic-positive route requires fresh quoting after dynamic receiver permissions'
+                  : `Measured deterministic-positive route exact atomic simulation is not ready: ${simulation.reason}`,
         missingInformation: !positive || executableCapability ? [] : [
-          !receiverReady ? 'verified_funded_receiver' : !permissionReady ? 'fresh_quote_after_dynamic_route_permissions' : 'exact_atomic_simulation',
+          ...(!fundingReady ? ['live_gas_funding'] : []),
+          ...(!receiverReady ? ['verified_funded_receiver'] : []),
+          ...(!permissionReady ? ['fresh_quote_after_dynamic_route_permissions'] : []),
+          ...(permissionReady && !simulationReady ? ['exact_atomic_simulation'] : []),
         ],
         simulationReady: simulation.ready,
       });
