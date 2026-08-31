@@ -16,6 +16,9 @@ const worker = read('server/services/cryptocrawl/integration/cryptara-supabase-a
 const governance = read('server/services/cryptocrawl/governance/index.ts');
 const stageState = read('server/services/cryptocrawl/governance/stage-state-store.ts');
 const executionLedger = read('server/services/cryptocrawl/execution/adapters/stage4-execution-ledger.ts');
+const resourceScheduler = read('server/services/cryptocrawl/execution/resource-scheduler.ts');
+const distributedQuota = read('server/services/cryptocrawl/execution/distributed-api-quota.ts');
+const retainedProfit = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
 const calibration = read('server/services/cryptocrawl/validation/monte-carlo-calibration-store.ts');
 const migration = read('server/migrations/023_cryptocrawler_hot_path_schema_authority.sql');
 
@@ -68,6 +71,27 @@ requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,16
 requirePattern(executionLedger, /function\s+highPriorityQuery[\s\S]{0,260}withCryptaraSupabasePriority\('high',[\s\S]{0,120}pool\.query/, 'Stage-4 execution ledger persistence receives high resource priority');
 forbidPattern(executionLedger, /withCryptaraSupabasePriority\('critical'/, 'execution ledger outranking canonical governance persistence');
 
+// Execution-facing database admission shares the same worker rather than creating
+// another pool/worker. Cleanup remains subordinate to live opportunity ownership.
+requirePattern(resourceScheduler, /withCryptaraSupabasePriority\('high',[\s\S]{0,120}pool\.connect/, 'execution resource lease acquisition receives high priority');
+requirePattern(resourceScheduler, /function\s+lowPriorityQuery[\s\S]{0,180}withCryptaraSupabasePriority\('low'/, 'lease cleanup receives low priority');
+requirePattern(resourceScheduler, /this\.cleanupInFlight\s*=\s*lowPriorityQuery/, 'expired-lease cleanup cannot outrank live resource leasing');
+forbidPattern(resourceScheduler, /\bnew\s+Pool\s*\(/, 'resource scheduler creating an independent database pool');
+requirePattern(distributedQuota, /withCryptaraSupabasePriority\('high',[\s\S]{0,120}pool\.connect/, 'distributed API quota claims receive high priority');
+requirePattern(distributedQuota, /quotaRetryDelayMs[\s\S]{0,420}Math\.random/, 'distributed quota retries are jittered across replicas');
+requirePattern(distributedQuota, /boundedBase\s*\+\s*extra/, 'quota jitter never deliberately wakes before the database-derived wait estimate');
+forbidPattern(distributedQuota, /\bnew\s+Pool\s*\(/, 'distributed quota creating an independent database pool');
+
+// Terminal-confirmed money-state durability is critical, but still uses the same
+// ordinary pool. The default compounding path must not repeat two idempotency reads.
+requirePattern(retainedProfit, /withCryptaraSupabasePriority\('critical',[\s\S]{0,120}pool\.connect/, 'terminal realized-profit transaction receives critical priority');
+requirePattern(retainedProfit, /SELECT \* FROM \([\s\S]{0,900}UNION ALL[\s\S]{0,900}ORDER BY precedence[\s\S]{0,120}LIMIT 1/, 'legacy payout and retained-event idempotency are coalesced into one precedence-preserving read');
+forbidPattern(retainedProfit, /const\s+existingPayout\s*=\s*await\s+client\.query/, 'separate legacy payout idempotency read returning');
+forbidPattern(retainedProfit, /const\s+existingRetained\s*=\s*await\s+client\.query/, 'separate retained-event idempotency read returning');
+requirePattern(retainedProfit, /function\s+persistenceRetryDelayMs[\s\S]{0,420}Math\.random/, 'terminal-profit retry timing is bounded and jittered');
+requirePattern(retainedProfit, /withCryptaraSupabasePriority\('high',\s*async\s*\(\)\s*=>[\s\S]{0,220}to_regclass/, 'profit schema verification is high priority without becoming critical authority');
+forbidPattern(retainedProfit, /\bnew\s+Pool\s*\(/, 'retained-profit ledger creating an independent database pool');
+
 // Remove redundant runtime DDL while preserving migration-owned persistence and
 // classify learning persistence below governance/settlement work during pressure.
 requirePattern(migration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/, 'migration owns Monte Carlo calibration schema');
@@ -79,4 +103,4 @@ requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}IN
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
-console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, idle-reuse pressure budgeting, jittered acquisition backoff, zero-extra-pool, critical/high/normal/low task priority, authority isolation, starvation protection, and migration-owned calibration persistence invariants passed');
+console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, execution/quota prioritization, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned calibration persistence invariants passed');
