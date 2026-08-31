@@ -23,6 +23,7 @@ const crossChain = read('server/services/cryptocrawl/discovery/cross-chain-oppor
 const acrossExecutor = read('server/services/cryptocrawl/execution/across-bridge-executor.ts');
 const funding = read('server/services/cryptocrawl/discovery/funding-rate-monitor.ts');
 const fundingPolicy = read('server/services/cryptocrawl/discovery/funding-arbitrage-policy.ts');
+const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 
 // The discovery layer may not keep reporting runtime machinery as absent when a
 // fail-closed Across executor already refreshes, signs, submits, monitors and
@@ -60,4 +61,10 @@ requirePattern(funding, /executableCapability:\s*false/, 'funding observations r
 requirePattern(fundingPolicy, /input\.fundingRateLocked\s*&&\s*supportedDirection/, 'deterministic funding P&L requires locked rate and supported direction');
 requirePattern(fundingPolicy, /unknown|projected funding|projected profit/i, 'funding policy documents projected-versus-deterministic separation');
 
-console.log('[route-truth] Across transport-vs-profit and funding carry lifecycle invariants passed');
+// Profit may remain in-system for redeployment. The retired daily realized-profit
+// cap cannot reappear in runtime telemetry as if it still governed new exposure.
+requirePattern(canonicalRuntime, /adaptiveProfitCapScope:\s*'retired_no_daily_realized_profit_execution_cap'/, 'runtime telemetry reports daily profit-cap retirement');
+requirePattern(canonicalRuntime, /retainedProfitRole:\s*'available_for_redeployment_subject_to_profit_ladder_stage_inventory_liquidity_and_risk'/, 'runtime telemetry reports retained-profit redeployment correctly');
+forbidPattern(canonicalRuntime, /persisted_operating_day_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget|new_exposure_only_settlement_hedge_flattening_exempt/, 'stale daily profit-cap authority telemetry');
+
+console.log('[route-truth] Across transport-vs-profit, funding carry lifecycle, and retired profit-cap telemetry invariants passed');
