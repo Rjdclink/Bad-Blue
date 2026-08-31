@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { centralizedExchangeExecutor, type ArbitrageExecutionResult } from '../execution/centralized-exchange-executor.js';
+import type { MakerRecoveryPlan } from '../execution/stablecoin-maker-strategy.js';
 import { cexOrderBookStreams, type CexStreamVenue, type StreamOrderBookQuote } from '../intelligence/cex-order-book-stream.js';
 import { isHybridCexRecoveryPlan } from '../runtime/hybrid-cex-execution-wiring.js';
 
@@ -24,16 +25,24 @@ function activeVenue(value: string): value is CexStreamVenue {
   return value === 'coinbase' || value === 'kraken' || value === 'okx';
 }
 
+function isMakerRecoveryPlan(plan: VerifiedArbitragePlan): plan is MakerRecoveryPlan {
+  const maker = (plan as Partial<MakerRecoveryPlan>).makerExecution;
+  return Boolean(maker && maker.buyMode === 'maker' && maker.sellMode === 'maker');
+}
+
 function synchronizedPlanEdge(plan: VerifiedArbitragePlan, buy: StreamOrderBookQuote, sell: StreamOrderBookQuote): {
   positive: boolean;
   buyPrice: number;
   sellPrice: number;
-  mode: 'TT' | 'MT' | 'TM';
+  mode: 'TT' | 'MT' | 'TM' | 'MM';
 } {
   if (isHybridCexRecoveryPlan(plan)) {
     const buyPrice = plan.hybridExecution.buyMode === 'maker' ? buy.bid : buy.ask;
     const sellPrice = plan.hybridExecution.sellMode === 'maker' ? sell.ask : sell.bid;
     return { positive: sellPrice > buyPrice, buyPrice, sellPrice, mode: plan.hybridExecution.mode };
+  }
+  if (isMakerRecoveryPlan(plan)) {
+    return { positive: sell.ask > buy.bid, buyPrice: buy.bid, sellPrice: sell.ask, mode: 'MM' };
   }
   return { positive: sell.bid > buy.ask, buyPrice: buy.ask, sellPrice: sell.bid, mode: 'TT' };
 }
@@ -55,9 +64,8 @@ export function ensureCrossVenueTimingGuardWiring(): void {
       cexOrderBookStreams.getQuote(plan.buyVenue, plan.symbol, ageLimit).catch(() => null),
       cexOrderBookStreams.getQuote(plan.sellVenue, plan.symbol, ageLimit).catch(() => null),
     ]);
-    if (!buy || !sell) {
-      return reject('REJECT_CROSS_VENUE_TIMING: synchronized executable books are unavailable');
-    }
+    if (!buy || !sell) return reject('REJECT_CROSS_VENUE_TIMING: synchronized executable books are unavailable');
+
     const now = Date.now();
     const buyAgeMs = Math.max(0, now - buy.timestamp);
     const sellAgeMs = Math.max(0, now - sell.timestamp);
@@ -81,9 +89,7 @@ export function ensureCrossVenueTimingGuardWiring(): void {
     }
 
     const edge = synchronizedPlanEdge(plan, buy, sell);
-    if (!edge.positive) {
-      return reject(`REJECT_CROSS_VENUE_TIMING: synchronized ${edge.mode} cross-venue edge no longer exists`);
-    }
+    if (!edge.positive) return reject(`REJECT_CROSS_VENUE_TIMING: synchronized ${edge.mode} cross-venue edge no longer exists`);
 
     logger.debug('[CrossVenueTimingGuard] Synchronized plan-mode edge preserved', {
       component: 'CrossVenueTimingGuardWiring',
@@ -106,7 +112,7 @@ export function ensureCrossVenueTimingGuardWiring(): void {
     maxQuoteAgeMs: maxQuoteAgeMs(),
     rawEdgeRevalidated: true,
     planModeAware: true,
-    supportedModes: ['TT', 'MT', 'TM'],
+    supportedModes: ['TT', 'MT', 'TM', 'MM'],
     fullEconomicsRequoteStillDownstream: true,
     executionAuthority: false,
   });
