@@ -155,8 +155,8 @@ export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(a
     Math.max(1, Number.isFinite(configuredWindow) ? Math.floor(configuredWindow) : ranked.length),
   );
   const performance = performanceProvider?.() || new Map<string, MarketUniversePerformanceHint>();
-  const configuredFocusFraction = Number(process.env.CRYPTO_MARKET_PERFORMANCE_FOCUS_FRACTION || 0.35);
-  const focusFraction = clamp(Number.isFinite(configuredFocusFraction) ? configuredFocusFraction : 0.35, 0, 0.6);
+  const configuredFocusFraction = Number(process.env.CRYPTO_MARKET_PERFORMANCE_FOCUS_FRACTION || 0.25);
+  const focusFraction = clamp(Number.isFinite(configuredFocusFraction) ? configuredFocusFraction : 0.25, 0, 0.5);
   const focusCount = performance.size > 0 && windowSize > 1
     ? Math.min(windowSize - 1, Math.max(1, Math.floor(windowSize * focusFraction)))
     : 0;
