@@ -15,6 +15,7 @@ import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-
 import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 import {
   createProductionCexSettlementAdapters,
+  executeCexPlan,
   type CexOrderReceipt,
   type CexSettlementAdapter,
   type ExecutableCexVenue,
@@ -150,13 +151,6 @@ function hybridModes(): Array<{ mode: HybridCexMode; buyMode: HybridCexLegMode; 
   ];
 }
 
-function maximumNotional(constraints: HybridProductConstraints, price: number): number {
-  let maximum = Number.POSITIVE_INFINITY;
-  if (constraints.baseMaxSize !== null) maximum = Math.min(maximum, constraints.baseMaxSize * price);
-  if (constraints.quoteMaxSize !== null) maximum = Math.min(maximum, constraints.quoteMaxSize);
-  return maximum;
-}
-
 async function evaluateHybridCandidate(input: {
   symbol: string;
   notionalUsd: number;
@@ -230,9 +224,10 @@ async function evaluateHybridCandidate(input: {
         const sellQty = topQuantity(sellBook, 'sell', candidate.sellMode);
         if (!(buyQty > 0) || !(sellQty > 0)) continue;
         const commonIncrement = Math.max(buyConstraints.baseIncrement, sellConstraints.baseIncrement);
-        const singleOrderCap = Math.min(maximumNotional(buyConstraints, buyPrice), maximumNotional(sellConstraints, sellPrice));
-        const sizedNotional = Number.isFinite(singleOrderCap) ? Math.min(notionalCap, singleOrderCap) : notionalCap;
-        const requestedQty = Math.min(sizedNotional / buyPrice, buyQty, sellQty);
+        // The parent remains the full measured/ladder-authorized target. Current
+        // venue single-order maxima are enforced later by the canonical child
+        // splitter and must never silently redefine the parent strategy size.
+        const requestedQty = Math.min(notionalCap / buyPrice, buyQty, sellQty);
         const baseQty = floorToIncrement(requestedQty, commonIncrement);
         if (!(baseQty > 0) || baseQty < buyConstraints.baseMinSize || baseQty < sellConstraints.baseMinSize) continue;
 
@@ -510,14 +505,26 @@ async function executeHybridPlan(plan: HybridCexRecoveryPlan): Promise<Arbitrage
   const minPersistence = bounded(process.env.CRYPTO_ARBITRAGE_HYBRID_EXECUTION_MIN_STRESS_PERSISTENCE, 0.35, 0.05, 0.95);
   if (plan.hybridExecution.spreadStress.paths > 0 && plan.hybridExecution.spreadStress.persistenceProbability < minPersistence) return rejectResult('REJECT_HYBRID_SPREAD_PERSISTENCE');
 
-  const wrapped = wrapHybridAdapters(plan);
+  const settlementTimeoutMs = Math.max(2_000, Math.min(30_000, plan.hybridExecution.ttlMs));
+  const pollIntervalMs = Math.max(75, Math.min(750, Number(process.env.CRYPTO_ARBITRAGE_HYBRID_SETTLEMENT_POLL_MS || 200)));
   const executor = new CentralizedExchangeExecutor({
-    adapters: wrapped.adapters,
-    settlementTimeoutMs: Math.max(2_000, Math.min(30_000, plan.hybridExecution.ttlMs)),
-    pollIntervalMs: Math.max(75, Math.min(750, Number(process.env.CRYPTO_ARBITRAGE_HYBRID_SETTLEMENT_POLL_MS || 200))),
+    settlementTimeoutMs,
+    pollIntervalMs,
+    childExecutor: async childPlan => {
+      if (!isHybridCexRecoveryPlan(childPlan)) throw new Error('HYBRID_CHILD_METADATA_MISSING');
+      // Every parallel child gets its own maker-terminal promise and adapters.
+      // This prevents one child fill from authorizing or contaminating another
+      // child's taker hedge while the parent remains admitted exactly once.
+      const wrapped = wrapHybridAdapters(childPlan);
+      const result = await executeCexPlan(childPlan, {
+        adapters: wrapped.adapters,
+        settlementTimeoutMs,
+        pollIntervalMs,
+      });
+      return normalizeHybridLifecycle(childPlan, result, wrapped.getMakerSettlement());
+    },
   });
-  const result = await executor.execute(plan);
-  return normalizeHybridLifecycle(plan, result, wrapped.getMakerSettlement());
+  return executor.execute(plan);
 }
 
 export function ensureHybridCexExecutionWiring(): void {
@@ -612,6 +619,8 @@ export function ensureHybridCexExecutionWiring(): void {
     component: 'HybridCexExecutionWiring', supportedModes: ['MT', 'TM'],
     venues: HYBRID_VENUES,
     makerFirst: true, freshTakerRequoteAfterMakerFill: true,
+    parallelChildrenUseIsolatedMakerLifecycle: true,
+    fullParentAdmissionBeforeChildSplit: true,
     sequentialPartialFillSafeHybridExecutor: true, authenticatedFeeAuthority: true,
     measuredDepthAuthority: true, existingTTExecutionChanged: false, existingMMExecutionChanged: false,
     arbitraryBpsExecutionFloor: false,
