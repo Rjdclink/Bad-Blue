@@ -16,6 +16,7 @@ const railway = read('railway.toml');
 const index = read('server/index.ts');
 const db = read('server/db.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
+const governance = read('server/services/cryptocrawl/governance/index.ts');
 const stageState = read('server/services/cryptocrawl/governance/stage-state-store.ts');
 
 requirePattern(railway, /healthcheckPath\s*=\s*"\/api\/ready"/, 'Railway must promote only a fully initialized deployment');
@@ -28,7 +29,7 @@ requirePattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2200}await\s+db\.e
 forbidPattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2600}Promise\.all\s*\(/, 'startup database recovery must not fan out parallel probes');
 requirePattern(index, /function\s+isPermanentDatabaseStartupError[\s\S]{0,900}28p01[\s\S]{0,900}password authentication failed/, 'permanent authentication/configuration failures must be classified separately from pressure');
 requirePattern(index, /isPermanentDatabaseStartupError\(error\)\s*\|\|\s*isLocalPoolFailure\(error\)[\s\S]{0,100}throw\s+error/, 'permanent/local pool failures must fail out of the pressure retry loop instead of burning the full readiness budget');
-requirePattern(index, /if\s*\(!isDatabaseAdmissionPressureError\(lastError\)\s*&&\s*!isPermanentDatabaseStartupError\(lastError\)\)[\s\S]{0,700}resetPool/, 'pool reset must be reserved for local/non-pressure failure');
+requirePattern(index, /if\s*\(!isDatabaseAdmissionPressureError\(lastError\)\s*&&\s*!isPermanentDatabaseStartupError\(lastError\)\)[\s\S]{0,700}resetPool/, 'pool reset must remain outside recognized upstream pressure/authentication failures');
 requirePattern(index, /else\s+if\s*\(isDatabaseAdmissionPressureError\(lastError\)\)[\s\S]{0,220}skipping pool reset/i, 'upstream pressure must never trigger pool recreation');
 requirePattern(index, /const\s+databaseReady\s*=\s*await\s+initializeDatabase\(\)[\s\S]*startupTrace\('routes_import_started'\)/, 'database/migration admission must complete before the heavyweight route graph imports');
 requirePattern(index, /isFullyInitialized\s*&&\s*databaseInitialized[\s\S]*res\.status\(200\)/, 'strict readiness must explicitly require database initialization');
@@ -37,7 +38,16 @@ forbidPattern(index, /if\s*\(!schemaReady\)\s*\{\s*throw\s+new\s+Error/, 'Crypto
 requirePattern(db, /await\s+db\.execute\('SELECT 1'\)[\s\S]*await\s+coordinationPool\.query\('SELECT 1'\)/, 'pool reset verification must restore lanes sequentially rather than opening both concurrently');
 forbidPattern(db, /Promise\.all\(\[\s*db\.execute\('SELECT 1'\),\s*coordinationPool\.query\('SELECT 1'\)/, 'pool reset must not probe ordinary and coordination lanes concurrently');
 requirePattern(db, /previousEffectiveMainMax[\s\S]*nextMainConfig\.max/, 'pool reset must preserve any active rollout contraction');
-requirePattern(migrations, /defaultRolloutMax[\s\S]*Math\.ceil\(steadyMax\s*\/\s*2\)/, 'rolling deployment must reserve database headroom during overlap');
+
+// Railway leaves the previous replica serving until readiness succeeds. The new
+// replica therefore boots with one ordinary client and may not expand merely
+// because time passed. Once Cryptara owns ordinary-pool admission, only the pool
+// ceiling is restored; Cryptara performs measured additive recovery beneath it.
+requirePattern(migrations, /finiteIntegerEnv\('BADBLUE_DATABASE_ROLLOUT_POOL_MAX',\s*1,\s*1,\s*steadyMax\)/, 'rolling deployment must default to one ordinary DB client during overlap');
+requirePattern(migrations, /export\s+function\s+releaseRollingDeploymentPoolHeadroom[\s\S]{0,900}state\.options\.max\s*=\s*state\.steadyMax/, 'rollout ceiling must have an explicit governed release path');
+forbidPattern(migrations, /const\s+restore\s*=\s*setTimeout\([\s\S]{0,500}options\.max\s*=\s*steadyMax/, 'an unready deployment must never re-expand its database pool on a wall-clock timer');
+requirePattern(governance, /installCryptaraSupabaseAdmissionWorker\(\)[\s\S]{0,700}releaseRollingDeploymentPoolHeadroom\('cryptara_worker_installed'\)[\s\S]{0,700}stageManager\.restorePersistence/, 'rollout headroom must release only after Cryptara admission is installed and before governed persistence');
+
 requirePattern(migrations, /schemaRetryDelayMs[\s\S]*Math\.random/, 'migration/schema retry timing must include jitter');
 requirePattern(stageState, /pg_try_advisory_xact_lock\(hashtext\(\$1\)\)/, 'StageManager persistence must use non-blocking cross-replica lock admission');
 forbidPattern(stageState, /SELECT\s+pg_advisory_xact_lock\(/, 'StageManager persistence must not create a PostgreSQL advisory-lock wait queue');
