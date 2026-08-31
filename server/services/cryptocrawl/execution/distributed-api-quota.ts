@@ -16,7 +16,8 @@ interface QuotaState {
 }
 
 const states = new Map<string, QuotaState>();
-let tableReady: Promise<boolean> | null = null;
+let tableProbeInFlight: Promise<boolean> | null = null;
+let tableReadyUntil = 0;
 let tableReadyRetryAfter = 0;
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
@@ -35,17 +36,27 @@ function stateFor(namespace: string): QuotaState {
 
 async function ensureLeaseTable(): Promise<boolean> {
   if (!isDatabaseConfigured) return false;
-  if (tableReady) return tableReady;
-  if (Date.now() < tableReadyRetryAfter) return false;
+  const now = Date.now();
+  if (tableReadyUntil > now) return true;
+  if (now < tableReadyRetryAfter) return false;
+  if (tableProbeInFlight) return tableProbeInFlight;
 
   const retryMs = boundedInt(process.env.CRYPTOCRAWL_API_QUOTA_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
+  const readyTtlMs = boundedInt(process.env.CRYPTOCRAWL_API_QUOTA_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
   const probe = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
     .then(result => {
       const ready = result.rows?.[0]?.ready === true;
-      if (!ready) tableReadyRetryAfter = Date.now() + retryMs;
+      if (ready) {
+        tableReadyUntil = Date.now() + readyTtlMs;
+        tableReadyRetryAfter = 0;
+      } else {
+        tableReadyUntil = 0;
+        tableReadyRetryAfter = Date.now() + retryMs;
+      }
       return ready;
     })
     .catch(error => {
+      tableReadyUntil = 0;
       tableReadyRetryAfter = Date.now() + retryMs;
       logger.warn('[DistributedApiQuota] Lease table availability check failed', {
         component: 'DistributedApiQuota',
@@ -53,16 +64,13 @@ async function ensureLeaseTable(): Promise<boolean> {
         error: error instanceof Error ? error.message : String(error),
       });
       return false;
+    })
+    .finally(() => {
+      if (tableProbeInFlight === probe) tableProbeInFlight = null;
     });
 
-  tableReady = probe;
-  try {
-    const ready = await probe;
-    if (!ready) tableReady = null;
-    return ready;
-  } finally {
-    if (tableReady === probe && Date.now() >= tableReadyRetryAfter) tableReady = null;
-  }
+  tableProbeInFlight = probe;
+  return probe;
 }
 
 /**
