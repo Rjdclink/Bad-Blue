@@ -33,7 +33,8 @@ type MakerExecutionMetadata = {
   canaryProofSamples: number;
   canaryConfidenceScore: number;
   canarySizingAuthority: 'bootstrap' | 'cryptara_realized_evidence';
-  volatileMinGrossSpreadBps: number | null;
+  /** Compatibility telemetry only. Artificial maker BPS floors are retired. */
+  volatileMinGrossSpreadBps: null;
   queueEcho: {
     buyFillProbability: number;
     sellFillProbability: number;
@@ -145,10 +146,6 @@ export function getDynamicMakerCanaryStatus(): MakerCanaryProof {
 function maxCanaryUsd(requested: number): { amount: number; proof: MakerCanaryProof } {
   const proof = makerCanaryProof();
   return { amount: Math.min(requested, proof.ceilingUsd), proof };
-}
-
-function volatileMinGrossSpreadBps(): number {
-  return finiteBoundedEnv('CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS', 70, 10, 2_000);
 }
 
 function minMeasuredJointFillProbability(): number {
@@ -329,7 +326,6 @@ async function evaluateMakerCandidate(input: {
   if (books.length < 2) return null;
 
   const now = Date.now();
-  const volatileFloorBps = stablecoin ? null : volatileMinGrossSpreadBps();
   const configuredTtlMs = ttlMs();
   const participation = queueParticipationFraction();
 
@@ -350,8 +346,10 @@ async function evaluateMakerCandidate(input: {
       if (!(sellPrice > buyPrice)) continue;
       const grossSpreadBps = ((sellPrice - buyPrice) / buyPrice) * 10_000;
       const feeFloorBps = buyFeeBps + sellFeeBps;
+      // No arbitrary BPS floor: authenticated fee clearance plus final real
+      // net-profit dollars, measured queue/stress, liquidity and governance are
+      // the economic/safety criteria.
       if (!(grossSpreadBps > feeFloorBps)) continue;
-      if (volatileFloorBps !== null && grossSpreadBps < volatileFloorBps) continue;
 
       const buyQueue = observeAriesQueueEcho(buy.quote, 'buy', configuredTtlMs, participation);
       const sellQueue = observeAriesQueueEcho(sell.quote, 'sell', configuredTtlMs, participation);
@@ -370,10 +368,6 @@ async function evaluateMakerCandidate(input: {
       if (!buyConstraints || !sellConstraints) continue;
       const quoteAsset = buyConstraints.quoteAsset.trim().toUpperCase();
       if (quoteAsset !== sellConstraints.quoteAsset.trim().toUpperCase()) continue;
-      // Product representation is universal, but `*Usd` fields are execution
-      // authority only when the quote is already USD-normalized. Other quote
-      // currencies remain discoverable/advisory until a measured conversion is
-      // bound to the opportunity; never relabel raw BTC/EUR/etc. as dollars.
       if (!USD_NORMALIZED_QUOTES.has(quoteAsset)) continue;
 
       const commonIncrement = Math.max(buyConstraints.baseIncrement, sellConstraints.baseIncrement);
@@ -470,7 +464,7 @@ async function evaluateMakerCandidate(input: {
           canaryProofSamples: canary.proof.samples,
           canaryConfidenceScore: canary.proof.confidenceScore,
           canarySizingAuthority: canary.proof.sizingAuthority,
-          volatileMinGrossSpreadBps: volatileFloorBps,
+          volatileMinGrossSpreadBps: null,
           queueEcho: {
             buyFillProbability: buyQueue.fillProbabilityWithinTtl,
             sellFillProbability: sellQueue.fillProbabilityWithinTtl,
@@ -503,7 +497,6 @@ async function evaluateMakerCandidate(input: {
   return best;
 }
 
-/** Stablecoin-only compatibility entry point retained for existing callers/tests. */
 export async function evaluateStablecoinMakerCandidate(input: {
   symbol: string;
   notionalUsd: number;
@@ -515,9 +508,8 @@ export async function evaluateStablecoinMakerCandidate(input: {
 /**
  * Maker recovery across every canonical executable CEX venue. Product discovery
  * is universal; executable USD P&L remains fail-closed until the quote currency
- * has authoritative USD normalization. Stablecoins need only clear authenticated
- * maker fees; volatile pairs additionally require a wide gross spread before
- * Queue-Echo, stress, product, canary and governance gates.
+ * has authoritative USD normalization. There is no arbitrary BPS admission floor:
+ * strict positive all-in net dollars plus measured execution/risk evidence governs.
  */
 export async function evaluateMakerRecoveryCandidate(input: {
   symbol: string;
