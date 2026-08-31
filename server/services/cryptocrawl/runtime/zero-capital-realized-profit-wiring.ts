@@ -1,10 +1,14 @@
+import { Contract } from 'ethers';
 import logger from '../../../logger.js';
 import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
+import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { AutonomousZeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { withEvmSignerLane } from '../execution/evm-signer-lane.js';
 import { evaluateZeroCapitalRealizedProfit } from '../execution/zero-capital-realized-profit-policy.js';
 
 const installed = new WeakSet<object>();
+const ERC20_BALANCE_ABI = ['function balanceOf(address account) view returns (uint256)'];
 
 const NATIVE_SYMBOL: Partial<Record<SupportedChain, 'ETH' | 'POL' | 'BNB' | 'AVAX'>> = {
   ethereum: 'ETH',
@@ -34,6 +38,8 @@ function correctedSettlement(result: any, economics: ReturnType<typeof evaluateZ
       ...new Set([
         ...(result.normalized.provenance || []),
         'receiver_event:gross_profit',
+        'receiver_starting_loan_token_balance:zero_verified',
+        'operational_profit_recipient_delta:matches_receiver_event',
         result.zeroMonetaryGasVerified
           ? 'sponsored_gas:user_native_cost_zero'
           : 'receipt_effective_gas_fee:measured',
@@ -43,13 +49,92 @@ function correctedSettlement(result: any, economics: ReturnType<typeof evaluateZ
   };
 }
 
+async function executeWithProfitProvenanceBoundary(
+  runtime: any,
+  originalExecuteFunded: Function,
+  opportunity: ZeroCapitalOpportunity,
+  funding: any,
+): Promise<any> {
+  const provider = runtime.providers?.get(opportunity.chain);
+  const wallet = runtime.executionWallets?.get(opportunity.chain);
+  const receiver = runtime.receiverManager?.getReceiver(opportunity.chain);
+  if (!provider || !wallet || !receiver) {
+    return { success: false, error: `Zero-capital profit-provenance boundary has no provider/wallet/receiver for ${opportunity.chain}` };
+  }
+
+  const token = new Contract(opportunity.inputToken, ERC20_BALANCE_ABI, provider);
+  const profitRecipient = resolveOperationalProfitRecipient();
+  const [receiverStartingRaw, recipientStartingRaw, network] = await Promise.all([
+    token.balanceOf(receiver),
+    token.balanceOf(profitRecipient),
+    provider.getNetwork(),
+  ]);
+  const receiverStarting = BigInt(receiverStartingRaw.toString());
+  const recipientStarting = BigInt(recipientStartingRaw.toString());
+  if (receiverStarting !== 0n) {
+    return {
+      success: false,
+      error: `ZERO_CAPITAL_RECEIVER_STARTING_LOAN_TOKEN_BALANCE_NONZERO:${receiverStarting.toString()}`,
+    };
+  }
+
+  const invoke = () => originalExecuteFunded.call(runtime, opportunity, funding);
+  const result = funding?.mode === 'native'
+    ? await withEvmSignerLane({
+        chainId: network.chainId,
+        walletAddress: wallet.address,
+        operation: invoke,
+      })
+    : await invoke();
+
+  if (!result?.txHash || result.receiptStatus !== 1 || typeof result.profit !== 'bigint') return result;
+
+  let recipientEnding: bigint;
+  try {
+    const raw = await token.balanceOf(profitRecipient);
+    recipientEnding = BigInt(raw.toString());
+  } catch (error) {
+    return {
+      ...result,
+      success: false,
+      profit: undefined,
+      profitVerified: false,
+      profitRecipient,
+      profitRecipientStartingInputBalance: recipientStarting,
+      error: `Terminal receiver profit event exists but operational profit-recipient ending balance is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+
+  const recipientDelta = recipientEnding - recipientStarting;
+  if (recipientDelta !== result.profit) {
+    return {
+      ...result,
+      success: false,
+      profit: undefined,
+      profitVerified: false,
+      profitRecipient,
+      profitRecipientStartingInputBalance: recipientStarting,
+      profitRecipientEndingInputBalance: recipientEnding,
+      error: `Terminal receiver profit event does not equal operational profit-recipient token delta: event=${result.profit.toString()} delta=${recipientDelta.toString()}`,
+    };
+  }
+
+  return {
+    ...result,
+    profitRecipient,
+    profitRecipientStartingInputBalance: recipientStarting,
+    profitRecipientEndingInputBalance: recipientEnding,
+  };
+}
+
 /**
  * Correct the zero-capital settlement boundary so the receiver's emitted token
- * surplus is treated as gross profit. Native-funded receipt gas is subtracted at
- * a live native/USD price before a trade is considered genuinely profitable.
- * Unknown native price remains unknown and pauses learning rather than becoming
- * zero cost. The patch also makes the engine's cumulative total include realized
- * losses instead of summing wins only.
+ * surplus is treated as gross profit only when provenance is pure: the receiver
+ * must begin with zero loan-token balance and the terminal operational-wallet
+ * balance delta must exactly equal the emitted profit. Native-funded submissions
+ * are serialized through the shared distributed signer lane. Native receipt gas
+ * is then subtracted at a live native/USD price before a trade is considered
+ * genuinely profitable. Unknown evidence remains unknown and pauses learning.
  */
 export function ensureZeroCapitalRealizedProfitWiring(): void {
   const prototype = AutonomousZeroCapitalEngine.prototype as any;
@@ -58,7 +143,15 @@ export function ensureZeroCapitalRealizedProfitWiring(): void {
 
   const originalExecuteFunded = prototype.executeFunded;
   prototype.executeFunded = async function(opportunity: ZeroCapitalOpportunity, funding: any) {
-    const result = await originalExecuteFunded.call(this, opportunity, funding);
+    let result: any;
+    try {
+      result = await executeWithProfitProvenanceBoundary(this, originalExecuteFunded, opportunity, funding);
+    } catch (error) {
+      return {
+        success: false,
+        error: `Zero-capital receiver profit-provenance boundary failed closed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
     if (!result?.txHash || result.receiptStatus !== 1 || typeof result.profit !== 'bigint') return result;
 
     const grossProfitBaseUnits = result.profit as bigint;
@@ -100,6 +193,9 @@ export function ensureZeroCapitalRealizedProfitWiring(): void {
       grossProfitUsd: economics.grossProfitUsd,
       realizedGasUsd: economics.gasUsd,
       realizedNetProfitUsd: economics.netProfitUsd,
+      receiverStartingLoanTokenBalanceZero: true,
+      operationalProfitRecipientDeltaVerified: true,
+      distributedNativeSignerLane: result.zeroMonetaryGasVerified !== true,
       economicsVerified,
       positiveAfterAllInCost: positive,
       missingInformation: economics.missingInformation,
@@ -152,7 +248,9 @@ export function ensureZeroCapitalRealizedProfitWiring(): void {
 
   logger.info('[CryptoCoreRuntime] Zero-capital realized-profit wiring installed', {
     component: 'CryptoCoreRuntime',
-    receiverEventClassifiedAs: 'gross_profit',
+    receiverEventClassifiedAs: 'gross_profit_only_after_zero_starting_balance',
+    operationalProfitRecipientDeltaRequired: true,
+    nativeSubmissionDistributedSignerLane: true,
     actualNativeReceiptGasSubtracted: true,
     liveNativeUsdPriceRequiredForNativeFunding: true,
     sponsoredUserGasCost: 0,
