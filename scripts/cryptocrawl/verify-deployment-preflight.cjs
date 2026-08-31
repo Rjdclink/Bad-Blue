@@ -1,4 +1,4 @@
-// Diagnostic isolation: established safety gates plus current measured-profitability behavior verifiers.
+// Diagnostic isolation: established gates plus resource/schema/product verifier group.
 
 require('./verify-runtime-safety-invariants.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
@@ -9,6 +9,9 @@ require('./verify-remaining-seventeen-batch12.cjs');
 require('./verify-300-profitability-live-execution-controls.cjs');
 require('./verify-aave-balancer-provider-mesh.cjs');
 require('./verify-cex-websocket-rpi-modernization.cjs');
+require('./verify-resource-bps-coordination.cjs');
+require('./verify-migration-authority-runtime.cjs');
+require('./verify-product-discovery-coverage.cjs');
 require('./verify-cross-chain-funding-route-truth.cjs');
 
-console.log('[deployment-preflight] diagnostic baseline: established safety, measured-profitability, provider-mesh, CEX modernization, cross-chain/funding, and Stage-2+ live-execution gates passed; downstream prebuild/build continues unchanged');
+console.log('[deployment-preflight] diagnostic group A: established gates plus resource/BPS, migration authority, product discovery, and cross-chain/funding verified; downstream prebuild/build continues unchanged');
