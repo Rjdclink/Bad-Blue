@@ -22,7 +22,9 @@ const worker = read('server/services/cryptocrawl/integration/cryptara-supabase-a
 const governance = read('server/services/cryptocrawl/governance/index.ts');
 const stageState = read('server/services/cryptocrawl/governance/stage-state-store.ts');
 const executionLedger = read('server/services/cryptocrawl/execution/adapters/stage4-execution-ledger.ts');
+const leaseAuthority = read('server/services/cryptocrawl/execution/resource-lease-authority.ts');
 const resourceScheduler = read('server/services/cryptocrawl/execution/resource-scheduler.ts');
+const zeroCapitalResources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
 const distributedQuota = read('server/services/cryptocrawl/execution/distributed-api-quota.ts');
 const retainedProfit = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
 const calibration = read('server/services/cryptocrawl/validation/monte-carlo-calibration-store.ts');
@@ -42,9 +44,6 @@ requirePattern(worker, /while\s*\(admitted\s*<\s*admissionBudget/, 'each pressur
 requirePattern(worker, /if\s*\(this\s*!==\s*pool\)/, 'only the live ordinary pool is admitted through Cryptara');
 requirePattern(worker, /Pool\.prototype/, 'shared ordinary callers converge on one acquisition gate');
 
-// Start at the already-safe effective pool ceiling. These assertions are
-// deliberately fragment-based: formatting/comments must never turn a valid
-// invariant into a false deployment failure.
 requireFragments(worker, [
   'primeToCurrentPoolCapacity(): void',
   'const ceiling = Math.max(1, Math.trunc(stats.max || 1));',
@@ -90,25 +89,55 @@ requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,16
 requirePattern(executionLedger, /function\s+highPriorityQuery[\s\S]{0,260}withCryptaraSupabasePriority\('high',[\s\S]{0,120}pool\.query/, 'Stage-4 execution ledger persistence receives high resource priority');
 forbidPattern(executionLedger, /withCryptaraSupabasePriority\('critical'/, 'execution ledger outranking canonical governance persistence');
 
-// Execution-facing database admission shares the same worker rather than creating
-// another pool/worker. Cleanup remains subordinate to live opportunity ownership.
+// One shared, single-flight lease authority supplies CEX execution, zero-capital
+// execution and distributed API quotas. No caller owns an independent readiness
+// cache or schema probe anymore.
+requireFragments(leaseAuthority, [
+  "export const RESOURCE_LEASE_TABLE = 'cryptocrawler_resource_leases';",
+  "export const RESOURCE_SLOT_CLAIM_FUNCTION = 'private.cryptocrawler_claim_resource_slot';",
+  'let authorityProbeInFlight: Promise<boolean> | null = null;',
+  'let authorityReadyUntil = 0;',
+  'let authorityRetryAfter = 0;',
+  'if (authorityProbeInFlight) return authorityProbeInFlight;',
+  "withCryptaraSupabasePriority(priority, () => pool.query(",
+  "to_regclass('public.${RESOURCE_LEASE_TABLE}')",
+  "to_regprocedure('private.cryptocrawler_claim_resource_slot",
+  'export async function claimResourceSlot(',
+  'SELECT ${RESOURCE_SLOT_CLAIM_FUNCTION}',
+  'export async function claimFixedResource(',
+  'WHERE ${RESOURCE_LEASE_TABLE}.expires_at <= now()',
+], 'lease-table/function readiness and atomic claim implementation are single-source and single-flight');
+forbidPattern(leaseAuthority, /\bnew\s+Pool\s*\(/, 'shared lease authority creating an independent pool');
+
 requireFragments(resourceScheduler, [
+  "ensureResourceLeaseAuthority('high')",
   "withCryptaraSupabasePriority('high', () => pool.connect())",
+  'claimFixedResource(client, {',
+  'claimResourceSlot(client, {',
   "withCryptaraSupabasePriority('low', () => pool.query(text, values))",
   'this.cleanupInFlight = lowPriorityQuery',
-], 'execution leasing is high priority and expired-lease cleanup is low priority');
-forbidPattern(resourceScheduler, /\bnew\s+Pool\s*\(/, 'resource scheduler creating an independent database pool');
-requireFragments(distributedQuota, [
+], 'CEX leasing reuses shared authority at high priority while cleanup stays low');
+requireFragments(zeroCapitalResources, [
+  "ensureResourceLeaseAuthority('high')",
   "withCryptaraSupabasePriority('high', () => pool.connect())",
+  'claimFixedResource(client, {',
+  'claimResourceSlot(client, {',
+], 'zero-capital leasing reuses the same high-priority authority and claimant');
+requireFragments(distributedQuota, [
+  "ensureResourceLeaseAuthority('high')",
+  "withCryptaraSupabasePriority('high', () => pool.connect())",
+  'claimResourceSlot(client, {',
   'function quotaRetryDelayMs',
   'Math.random()',
   'boundedBase + extra',
-], 'distributed quota claims are high priority and retries add only upward jitter');
-forbidPattern(distributedQuota, /\bnew\s+Pool\s*\(/, 'distributed quota creating an independent database pool');
+], 'distributed quota reuses shared authority and adds only upward retry jitter');
+for (const [name, source] of Object.entries({ resourceScheduler, zeroCapitalResources, distributedQuota })) {
+  forbidPattern(source, /tableProbeInFlight|tableReadyUntil|tableRetryAfter/, `${name} reintroduces an independent lease-authority cache`);
+  forbidPattern(source, /to_regclass\('public\.\$\{?TABLE/, `${name} reintroduces an independent lease-table readiness probe`);
+  forbidPattern(source, /\bnew\s+Pool\s*\(/, `${name} creates an independent database pool`);
+}
 
-// Slot collision scans are migration-owned and happen inside PostgreSQL. Verify
-// the semantic pieces individually rather than relying on source-character
-// distances, while still requiring the atomic expired-lease takeover rule.
+// Slot collision scans remain migration-owned and execute inside PostgreSQL.
 requireFragments(migration, [
   'CREATE OR REPLACE FUNCTION private.cryptocrawler_claim_resource_slot(',
   'FOR v_offset IN 0..(p_capacity - 1) LOOP',
@@ -118,17 +147,9 @@ requireFragments(migration, [
   'RETURNING resource_key INTO v_claimed_key;',
   'RETURN v_claimed_key;',
   'GRANT EXECUTE ON FUNCTION private.cryptocrawler_claim_resource_slot',
-], 'server-side slot scan preserves the atomic collision and authorization contract');
-requireFragments(resourceScheduler, [
-  'private async claimResourceSlot(',
-  'SELECT ${CLAIM_FUNCTION}($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) AS resource_key',
-  "to_regprocedure('private.cryptocrawler_claim_resource_slot",
-], 'execution resource domains use the migration-owned single-call slot claimant');
-requireFragments(distributedQuota, [
-  'SELECT ${CLAIM_FUNCTION}($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) AS resource_key',
-  "to_regprocedure('private.cryptocrawler_claim_resource_slot",
-], 'distributed quota uses the migration-owned single-call slot claimant');
-forbidPattern(resourceScheduler, /for\s*\(let\s+slot\s*=\s*0;\s*slot\s*<\s*spec\.capacity/, 'client-side execution slot scan returning');
+], 'server-side slot scan preserves atomic collision and authorization semantics');
+forbidPattern(resourceScheduler, /for\s*\(let\s+slot\s*=\s*0;\s*slot\s*<\s*spec\.capacity/, 'client-side CEX slot scan returning');
+forbidPattern(zeroCapitalResources, /for\s*\(let\s+slot\s*=\s*0;\s*slot\s*<\s*spec\.capacity/, 'client-side zero-capital slot scan returning');
 forbidPattern(distributedQuota, /for\s*\(let\s+offset\s*=\s*0;\s*offset\s*<\s*capacity/, 'client-side quota slot scan returning');
 
 // Terminal-confirmed money-state durability is critical, but still uses the same
@@ -161,4 +182,4 @@ requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}IN
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
-console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, full effective startup capacity, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, execution/quota prioritization, server-side slot call coalescing, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned persistence invariants passed');
+console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, full effective startup capacity, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, single-flight shared lease authority across CEX/zero-capital/quota, server-side slot call coalescing, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned persistence invariants passed');
