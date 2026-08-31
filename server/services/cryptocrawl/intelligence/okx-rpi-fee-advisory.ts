@@ -1,8 +1,14 @@
 import logger from '../../../logger.js';
-import { getCexFourModeSnapshot } from '../integration/cex-four-mode-observability-wiring.js';
 import {
   getOkxRpiExecutionCapability,
   getOkxSpotRpiMinimumNotionalUsd,
+  type OkxRpiExecutionCapability,
+} from './okx-rpi-capability.js';
+
+export {
+  getOkxRpiExecutionCapability,
+  getOkxSpotRpiMinimumNotionalUsd,
+  isOkxRpiMakerPriceAdmissible,
   type OkxRpiExecutionCapability,
 } from './okx-rpi-capability.js';
 
@@ -31,6 +37,9 @@ async function refresh(): Promise<void> {
   if (running) return;
   running = true;
   try {
+    // Lazy import keeps execution-time RPI capability independent from this
+    // advisory scheduler and prevents intelligence -> integration import cycles.
+    const { getCexFourModeSnapshot } = await import('../integration/cex-four-mode-observability-wiring.js');
     const symbols = [...new Set(getCexFourModeSnapshot()
       .sort((a, b) => Number(b.economicallyPositive) - Number(a.economicallyPositive)
         || a.riskAdjustedBpsToBreakEven - b.riskAdjustedBpsToBreakEven)
