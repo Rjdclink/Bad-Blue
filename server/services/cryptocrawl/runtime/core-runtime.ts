@@ -127,10 +127,12 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
  * Producer-specific provider/rate failures degrade only their own topology.
  */
 export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
-  // Global app readiness may remain available when CryptoCrawler-specific schema
-  // is unavailable, but the actual discovery/execution lifecycle must not start
-  // until every migration-owned execution authority is observable.
-  await requireCryptocrawlerAuthoritySchema(2);
+  // Global application readiness remains independent from CryptoCrawler-specific
+  // schema, but production discovery/execution cannot start until every
+  // migration-owned execution authority is observable.
+  if (process.env.NODE_ENV === 'production') {
+    await requireCryptocrawlerAuthoritySchema(2);
+  }
   ensureCanonicalWalletConfiguration();
   ensureZeroCapitalRealizedProfitWiring();
   const lifecycle = await getLifecycle();
@@ -167,7 +169,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     rainbowProfitBridgeScheduled: true,
     canonicalWalletArchitectureInstalled: true,
     fundingRateDiscovery: 'owned_by_unified_parallel_controller',
-    authoritySchemaGate: 'migration_owned_runtime_start_required',
+    authoritySchemaGate: 'production_migration_owned_runtime_start_required',
   });
 }
 
