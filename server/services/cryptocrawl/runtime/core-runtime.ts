@@ -4,9 +4,9 @@ import {
   createCryptoCrawlerCoreLifecycle,
   type CryptoCrawlerCoreLifecycle,
 } from './core-runtime-lifecycle.js';
+import { ensureZeroCapitalRealizedProfitWiring } from './zero-capital-realized-profit-wiring.js';
 
 let lifecyclePromise: Promise<CryptoCrawlerCoreLifecycle> | null = null;
-let zeroCapitalProfitWiringScheduled = false;
 let coinbaseReadinessScheduled = false;
 let rainbowProfitBridgeScheduled = false;
 let walletConfigurationInstalled = false;
@@ -25,22 +25,6 @@ function ensureCanonicalWalletConfiguration(): void {
     deprecatedVariablesPresent: wallet.deprecatedVariablesPresent,
     operationalProfitDestination: 'WALLET_PRIVATE_KEY-derived execution wallet',
     terminalPayoutDestination: 'CRYPTO_PROFIT_WALLET_ADDRESS',
-  });
-}
-
-function scheduleZeroCapitalProfitWiring(): void {
-  if (zeroCapitalProfitWiringScheduled) return;
-  zeroCapitalProfitWiringScheduled = true;
-  queueMicrotask(() => {
-    void import('./zero-capital-realized-profit-wiring.js')
-      .then(module => module.ensureZeroCapitalRealizedProfitWiring())
-      .catch(error => {
-        zeroCapitalProfitWiringScheduled = false;
-        logger.error('[CryptoCoreRuntime] Zero-capital realized-profit wiring failed to install', {
-          component: 'CryptoCoreRuntime',
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
   });
 }
 
@@ -79,6 +63,9 @@ function scheduleRainbowProfitBridge(): void {
 async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
   if (!lifecyclePromise) {
     ensureCanonicalWalletConfiguration();
+    // Same idempotent settlement authority used by canonical runtime wiring.
+    // Install it before any lifecycle-owned zero-cap execution can start.
+    ensureZeroCapitalRealizedProfitWiring();
     lifecyclePromise = Promise.all([
       import('./positive-profit-capture-wiring.js'),
       import('./no-bps-maker-admission-wiring.js'),
@@ -104,12 +91,6 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       marketFocusPolicy,
       inventoryPolicy,
     ]) => {
-      // Preserve authority order: canonical profitability/maker settlement wiring
-      // installs first; the no-BPS evaluator removes only the artificial spread
-      // floor; MT/TM then reuse canonical execution. Fee/rebate observation uses
-      // the existing CEX fee resolver as the sole fee authority. The realized-
-      // profit envelope applies to new exposure and inventory remains the final
-      // resource/fresh-requote authority.
       profitPolicy.ensurePositiveProfitCaptureWiring();
       noBpsMakerPolicy.ensureNoBpsMakerAdmissionWiring();
       hybridCexPolicy.ensureHybridCexExecutionWiring();
@@ -146,10 +127,10 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
  */
 export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   ensureCanonicalWalletConfiguration();
+  ensureZeroCapitalRealizedProfitWiring();
   const lifecycle = await getLifecycle();
   const changed = lifecycle.start();
   started = lifecycle.isStarted();
-  scheduleZeroCapitalProfitWiring();
   scheduleCoinbaseReadinessProbe();
   scheduleRainbowProfitBridge();
 
@@ -176,7 +157,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     filteredMempoolPolicyInstalled: true,
     lowLatencyExecutionCorrectnessPolicyInstalled: true,
     marketFocusPolicyInstalled: true,
-    zeroCapitalRealizedProfitPolicyScheduled: true,
+    zeroCapitalRealizedProfitPolicyInstalledBeforeLifecycle: true,
     coinbaseReadinessProbeScheduled: true,
     rainbowProfitBridgeScheduled: true,
     canonicalWalletArchitectureInstalled: true,
