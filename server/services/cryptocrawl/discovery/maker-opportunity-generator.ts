@@ -8,6 +8,7 @@ import {
 } from '../intelligence/cex-fee-resolver.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
 import { observeMakerPaperProof } from '../intelligence/maker-microstructure-proof.js';
+import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import { evaluateMakerRecoveryCandidate } from '../execution/stablecoin-maker-strategy.js';
 
 function effectiveMakerFeeBps(fee: CexFeeEvidence | null | undefined): number | null {
@@ -20,6 +21,11 @@ function effectiveMakerFeeBps(fee: CexFeeEvidence | null | undefined): number | 
 function paperProbeNotionalUsd(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_MAKER_PAPER_NOTIONAL_USD || 1_000);
   return Math.max(10, Math.min(5_000, Number.isFinite(parsed) ? parsed : 1_000));
+}
+
+function liveMakerTargetNotionalUsd(): number {
+  const ladder = getProfitLadderNotionalAuthority();
+  return ladder.maxNotionalUsd > 0 ? ladder.maxNotionalUsd : paperProbeNotionalUsd();
 }
 
 function makerDiscoverySymbolBudget(): number {
@@ -91,10 +97,11 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
     okx: okxSymbols,
   }).catch(() => null);
 
+  const liveTargetNotionalUsd = liveMakerTargetNotionalUsd();
   for (const { symbol, usableBooks } of viable) {
     const livePlan = await evaluateMakerRecoveryCandidate({
       symbol,
-      notionalUsd: paperProbeNotionalUsd(),
+      notionalUsd: liveTargetNotionalUsd,
       maxQuoteAgeMs,
     }).catch(() => null);
 
@@ -143,6 +150,8 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
         provenance: [
           'canonical_maker_recovery_plan',
           `maker_strategy:${livePlan.makerExecution.strategy}`,
+          `profit_ladder_target_notional_usd:${liveTargetNotionalUsd}`,
+          'maker_canary_is_tightening_only_beneath_profit_ladder',
           'authenticated_maker_fee_evidence',
           `maker_book_authority:${livePlan.makerExecution.bookAuthority}`,
           `queue_authority:${livePlan.makerExecution.queueEcho.authority}`,

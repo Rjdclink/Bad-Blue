@@ -15,6 +15,10 @@ const calibration = read('server/services/cryptocrawl/learning/settlement-profit
 const memory = read('server/services/cryptocrawl/intelligence/canonical-intelligence-repository.ts');
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
 const atomicSize = read('server/services/cryptocrawl/execution/adapters/atomic-size-optimizer.ts');
+const zeroCapitalSizing = read('server/services/cryptocrawl/integration/zero-capital-size-refinement-wiring.ts');
+const ladderNotional = read('server/services/cryptocrawl/governance/profit-ladder-notional-authority.ts');
+const hyperHybrid = read('server/services/cryptocrawl/execution/hyper-hybrid-cex-execution.ts');
+const partialProfitAccounting = read('server/services/cryptocrawl/compensation/hyper-hybrid-partial-profit-accounting.ts');
 const retainedProfit = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
 const runtime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 
@@ -51,6 +55,40 @@ assert(dynamicRoutes.includes('truePositiveQuotes = quotes.filter(quote => quote
 assert(dynamicRoutes.includes('state.measuredQuotes += quotes.length'), 'measured quote count must reflect actual measured quotes');
 assert(atomicSize.includes('profit > 0n') && atomicSize.includes('bestPositive'), 'atomic size optimizer must prefer strict-positive measured dollar profit');
 assert(atomicSize.includes('bpsToBreakEven') && atomicSize.includes('bestNearMiss'), 'all-negative atomic size fallback must preserve the closest measured BPS near miss only');
+assert(zeroCapitalSizing.includes("ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000"), 'zero-capital Stage-1 discovery must retain a bounded shadow sizing ceiling');
+assert(zeroCapitalSizing.includes('const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd'), 'Stage2+ zero-capital sizing must consume the single profit-ladder notional authority');
+assert(zeroCapitalSizing.includes('stageCanExecute') && zeroCapitalSizing.includes('? Math.max(seedUsd, ladderMaxNotionalUsd)') && zeroCapitalSizing.includes(': stageOneDiscoveryCeiling;'), 'Stage-1 shadow measurement must remain separate while executable sizing follows the ladder');
+assert(!zeroCapitalSizing.includes('stage.maxPositionSizeUSD'), 'legacy StageManager position caps must not remain a zero-capital notional authority');
+assert(zeroCapitalSizing.includes('stage1ShadowDiscoveryExecutionAuthority: false'), 'Stage-1 zero-capital shadow sizing must never grant execution authority');
+assert(zeroCapitalSizing.includes('stage2PlusDiscoveryBoundedByProfitLadder: true'), 'Stage2+ discovery must remain bounded by the current profit ladder');
+assert(zeroCapitalSizing.includes('legacyStagePositionCapAuthoritative: false'), 'zero-capital telemetry must explicitly retire the legacy stage position cap');
+assert(zeroCapitalSizing.includes('negativeObservationExecutionAuthority: false'), 'negative zero-capital observations must remain non-executable');
+assert(zeroCapitalSizing.includes('profitInterpolationUsed: false'), 'zero-capital refinement must use independently quoted economics rather than interpolation');
+
+// Profit Ladder is the only notional authority and may progress to $100M from terminal evidence.
+assert(ladderNotional.includes('SYSTEM_MAX_NOTIONAL_USD = 100_000_000'), 'system profit-ladder notional path must support a $100M terminal-evidence rung');
+assert(ladderNotional.includes("key: 'institutional_100m'"), 'institutional ladder must contain the explicit $100M rung');
+assert(ladderNotional.includes("authority: 'profit_ladder_capital_allowance'"), 'profit ladder must identify itself as the single capital-size authority');
+assert(ladderNotional.includes('stagePositionCapAuthoritative: false'), 'legacy stage position cap must remain non-authoritative');
+
+// Large CEX parents split into one admitted parallel batch. Good children survive
+// sibling failures; residual quantity is replanned from fresh market evidence.
+assert(hyperHybrid.includes('const admittedChildren = plannedChildren.slice(0, concurrency);'), 'split executor must admit one bounded parallel child batch');
+assert(hyperHybrid.includes('await Promise.all(admittedChildren.map'), 'admitted split children must execute concurrently');
+assert(!hyperHybrid.includes('for (let offset = 0; offset < plannedChildren.length; offset += concurrency)'), 'automatic sequential child waves must remain removed');
+assert(hyperHybrid.includes('oneBoundedParallelBatch: true'), 'parallel-batch telemetry must remain explicit');
+assert(hyperHybrid.includes('sequentialChildWaves: false'), 'sequential-wave behavior must remain disabled');
+assert(hyperHybrid.includes('parallel_batch_capacity_residual') && hyperHybrid.includes('require_fresh_replan'), 'unadmitted residual notional must require a fresh replan');
+assert(hyperHybrid.includes('persistHyperHybridPartialProfit({'), 'partial successful children must reach durable profit accounting');
+assert(!hyperHybrid.includes("match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/"), 'hyper-hybrid OKX child submission must not reintroduce a local stablecoin-only symbol parser');
+
+// Partial child accounting is treasury-only so order splitting cannot manufacture
+// Cryptara rank, stage, or profit-ladder promotion samples.
+assert(partialProfitAccounting.includes('if (input.parentSucceeded) return;'), 'full parent success must not be double-counted by partial accounting');
+assert(partialProfitAccounting.includes('retainedProfitLedger.recordTerminalSettlement({'), 'completed profitable subset must persist to the durable retained-profit ledger');
+assert(partialProfitAccounting.includes('cryptara_rank_authority:false'), 'partial child accounting must explicitly carry no Cryptara rank authority');
+assert(partialProfitAccounting.includes('profit_ladder_progression_authority:false'), 'partial child accounting must explicitly carry no profit-ladder progression authority');
+assert(!partialProfitAccounting.includes('recordCryptaraExecutionEvidence('), 'partial child accounting must not enter Cryptara/stage learning');
 
 // Retained profits stay retained and durable; retry does not authorize payout.
 assert(retainedProfit.includes('ON CONFLICT (event_id) DO NOTHING'), 'retained-profit terminal events must be idempotent');
@@ -61,6 +99,7 @@ assert(retainedProfit.includes('externalPayoutAuthorized: false'), 'retained-pro
 assert(runtime.includes('ensureInventoryConstrainedCexExecutionWiring();'), 'inventory-constrained CEX execution wiring must be installed');
 assert(runtime.includes('ensureCrossVenueTimingGuardWiring();'), 'cross-venue timing guard must be installed');
 assert(runtime.includes('ensureMeasuredCandidateExpiryGuardWiring();'), 'candidate expiry guard must be installed');
+assert(runtime.includes('ensureZeroCapitalSizeRefinementWiring();'), 'zero-capital size refinement wiring must be installed');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
 
-console.log('[remaining-seventeen-batch12] PASS: implemented CEX topology, exact inventory economics, synchronized timing, expiry/resource safety, terminal learning, zero-capital truth, atomic sizing, and retained-profit invariants preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single profit-ladder notional authority through $100M, one-batch parallel CEX splitting with residual replanning, anti-rank-gaming partial profit accounting, and strict quote truth invariants preserved');

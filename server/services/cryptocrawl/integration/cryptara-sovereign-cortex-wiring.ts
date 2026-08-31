@@ -6,6 +6,10 @@ import {
   type CryptaraOpportunityContext,
 } from '../../cryptara/index.js';
 import { createLogger } from '../../../logger.js';
+import {
+  recordCryptaraAdaptiveOutcome,
+  type CryptaraAdaptiveRank,
+} from '../optimization/cryptara-adaptive-strategy-state.js';
 import { getCryptaraProviderConsensusSnapshot } from './cryptara-provider-consensus-wiring.js';
 
 const log = createLogger('CryptaraSovereignCortexWiring');
@@ -13,7 +17,7 @@ const installed = new WeakSet<object>();
 const MAX_HISTORY = Math.max(32, Math.min(2_000, Number(process.env.CRYPTARA_CORTEX_MAX_TERMINAL_HISTORY || 512)));
 const MIN_PROMOTION_SAMPLES = Math.max(5, Math.min(500, Number(process.env.CRYPTARA_CORTEX_MIN_PROMOTION_SAMPLES || 20)));
 
-export type CryptaraCortexRank = 'observer' | 'analyst' | 'strategist' | 'sovereign';
+export type CryptaraCortexRank = CryptaraAdaptiveRank;
 
 export interface CryptaraCapabilityVector {
   alphaGeneration: number;
@@ -44,6 +48,7 @@ export interface CryptaraSovereignCortexSnapshot {
   recommendationBeforeCortex: CryptaraOpportunityAssessment['recommendation'] | null;
   recommendationAfterCortex: CryptaraOpportunityAssessment['recommendation'] | null;
   requestPriority: 'critical' | 'high' | 'normal' | 'low';
+  rankEvidenceAuthority: 'terminal_confirmed_external_settlement_only';
   executionAuthority: false;
   syntheticEvidenceAllowed: false;
 }
@@ -51,9 +56,12 @@ export interface CryptaraSovereignCortexSnapshot {
 type CryptaraTarget = {
   assessOpportunity: (context: CryptaraOpportunityContext) => Promise<CryptaraOpportunityAssessment>;
   recordExecutionResult: (feedback: CryptaraExecutionFeedback) => void;
+  getExecutionHistory: (limit?: number) => CryptaraExecutionFeedback[];
+  restoreExecutionHistory: (history: CryptaraExecutionFeedback[]) => void;
 };
 
 type TerminalSample = {
+  eventId: string;
   success: boolean;
   expectedProfitUsd: number;
   realizedProfitUsd: number;
@@ -63,20 +71,81 @@ type TerminalSample = {
 };
 
 const terminalHistory: TerminalSample[] = [];
+const terminalEvidenceIds = new Set<string>();
 let latestSnapshot: CryptaraSovereignCortexSnapshot | null = null;
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 const mean = (values: number[]): number | null => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 
+function terminalEventId(feedback: CryptaraExecutionFeedback): string {
+  return [
+    feedback.opportunityId || 'unknown',
+    feedback.settlement?.settledAt ?? feedback.timestamp,
+    feedback.symbol,
+    feedback.strategy,
+    feedback.realizedProfitUsd ?? 'null',
+  ].join(':');
+}
+
+function isTerminalRankEvidence(feedback: CryptaraExecutionFeedback): boolean {
+  return feedback.settlementConfirmed === true
+    && feedback.settlement?.terminal === true
+    && feedback.settlement.settlementConfirmed === true
+    && feedback.realizedProfitUsd !== null
+    && Number.isFinite(feedback.realizedProfitUsd)
+    && Number.isFinite(feedback.expectedProfitUsd)
+    && Number.isFinite(feedback.latencyMs)
+    && Number.isFinite(feedback.timestamp);
+}
+
+function toTerminalSample(feedback: CryptaraExecutionFeedback): TerminalSample {
+  return {
+    eventId: terminalEventId(feedback),
+    success: feedback.success,
+    expectedProfitUsd: feedback.expectedProfitUsd,
+    realizedProfitUsd: feedback.realizedProfitUsd!,
+    latencyMs: Math.max(0, feedback.latencyMs),
+    slippageBps: feedback.slippageBps !== null && Number.isFinite(feedback.slippageBps)
+      ? Math.max(0, feedback.slippageBps)
+      : null,
+    timestamp: feedback.timestamp,
+  };
+}
+
+function appendTerminalSample(sample: TerminalSample): boolean {
+  if (terminalEvidenceIds.has(sample.eventId)) return false;
+  terminalEvidenceIds.add(sample.eventId);
+  terminalHistory.push(sample);
+  terminalHistory.sort((left, right) => left.timestamp - right.timestamp);
+  if (terminalHistory.length > MAX_HISTORY) {
+    const removed = terminalHistory.splice(0, terminalHistory.length - MAX_HISTORY);
+    for (const item of removed) terminalEvidenceIds.delete(item.eventId);
+  }
+  return true;
+}
+
+function rebuildTerminalHistory(history: CryptaraExecutionFeedback[]): void {
+  terminalHistory.splice(0, terminalHistory.length);
+  terminalEvidenceIds.clear();
+  for (const feedback of history) {
+    if (!isTerminalRankEvidence(feedback)) continue;
+    appendTerminalSample(toTerminalSample(feedback));
+  }
+}
+
 function terminalStats() {
   const wins = terminalHistory.filter(item => item.success && item.realizedProfitUsd > 0).length;
   const errors = terminalHistory.map(item => Math.abs(item.realizedProfitUsd - item.expectedProfitUsd));
+  const normalizedErrors = terminalHistory.map(item =>
+    Math.abs(item.realizedProfitUsd - item.expectedProfitUsd) / Math.max(0.10, Math.abs(item.expectedProfitUsd)),
+  );
   const latencies = terminalHistory.map(item => item.latencyMs).filter(value => Number.isFinite(value) && value >= 0);
   const slippages = terminalHistory.map(item => item.slippageBps).filter((value): value is number => value !== null && Number.isFinite(value) && value >= 0);
   return {
     samples: terminalHistory.length,
     winRate: terminalHistory.length ? wins / terminalHistory.length : null,
     averageAbsoluteProfitErrorUsd: mean(errors),
+    averageNormalizedProfitError: mean(normalizedErrors),
     averageLatencyMs: mean(latencies),
     averageSlippageBps: mean(slippages),
   };
@@ -94,9 +163,9 @@ function capabilityVector(
   const executionPrecision = stats.samples === 0
     ? clamp01(assessment.executionConfidence ?? 0)
     : clamp01(
-        (assessment.executionConfidence ?? 0) * 0.35
-        + (stats.winRate ?? 0) * 0.35
-        + (stats.averageSlippageBps === null ? 0.5 : 1 / (1 + stats.averageSlippageBps / 10)) * 0.30,
+        (assessment.executionConfidence ?? 0) * 0.20
+        + (stats.winRate ?? 0) * 0.45
+        + (stats.averageSlippageBps === null ? 0.5 : 1 / (1 + stats.averageSlippageBps / 10)) * 0.35,
       );
   const patternRecognition = clamp01(
     (assessment.probabilityOfProfitableExecution ?? 0) * 0.60
@@ -111,16 +180,16 @@ function capabilityVector(
     + providerQuality * 0.35
     + (assessment.monteCarlo ? 0.20 : 0),
   );
-  const adaptationSpeed = stats.averageAbsoluteProfitErrorUsd === null
+  const adaptationSpeed = stats.averageNormalizedProfitError === null
     ? 0.5
-    : clamp01(1 / (1 + stats.averageAbsoluteProfitErrorUsd / Math.max(1, Math.abs(assessment.netProfitUsd ?? 1))));
+    : clamp01(1 / (1 + stats.averageNormalizedProfitError));
   const systemEfficiency = stats.averageLatencyMs === null
     ? providerQuality
-    : clamp01(providerQuality * 0.55 + (1 / (1 + stats.averageLatencyMs / 1_000)) * 0.45);
+    : clamp01(providerQuality * 0.40 + (1 / (1 + stats.averageLatencyMs / 1_000)) * 0.60);
   const sovereignty = clamp01(
-    providerQuality * 0.30
-    + assessment.dataCompleteness * 0.25
-    + executionPrecision * 0.25
+    providerQuality * 0.25
+    + assessment.dataCompleteness * 0.20
+    + executionPrecision * 0.35
     + riskControl * 0.20,
   );
   return {
@@ -135,24 +204,35 @@ function capabilityVector(
   };
 }
 
-function rankFrom(score: number): CryptaraCortexRank {
-  if (score >= 0.85) return 'sovereign';
-  if (score >= 0.70) return 'strategist';
-  if (score >= 0.50) return 'analyst';
-  return 'observer';
+/** Rank score is terminal-only: current opportunities and simulations cannot raise it. */
+function terminalRankScore(): number {
+  const stats = terminalStats();
+  if (stats.samples === 0) return 0;
+  const winRate = clamp01(stats.winRate ?? 0);
+  const profitAccuracy = stats.averageNormalizedProfitError === null
+    ? 0
+    : clamp01(1 / (1 + stats.averageNormalizedProfitError));
+  const slippageControl = stats.averageSlippageBps === null
+    ? 0.5
+    : clamp01(1 / (1 + stats.averageSlippageBps / 8));
+  const latencyControl = stats.averageLatencyMs === null
+    ? 0.5
+    : clamp01(1 / (1 + stats.averageLatencyMs / 750));
+  const rawQuality = clamp01(
+    winRate * 0.45
+    + profitAccuracy * 0.25
+    + slippageControl * 0.18
+    + latencyControl * 0.12,
+  );
+  const sampleConfidence = clamp01(stats.samples / MIN_PROMOTION_SAMPLES);
+  return clamp01(rawQuality * (0.50 + 0.50 * sampleConfidence));
 }
 
-function weightedRank(vector: CryptaraCapabilityVector): number {
-  return clamp01(
-    vector.alphaGeneration * 0.18
-    + vector.executionPrecision * 0.16
-    + vector.patternRecognition * 0.13
-    + vector.riskControl * 0.18
-    + vector.strategicDepth * 0.10
-    + vector.adaptationSpeed * 0.08
-    + vector.systemEfficiency * 0.08
-    + vector.sovereignty * 0.09,
-  );
+function rankFromTerminal(score: number, samples: number): CryptaraCortexRank {
+  if (samples >= MIN_PROMOTION_SAMPLES * 2 && score >= 0.85) return 'sovereign';
+  if (samples >= MIN_PROMOTION_SAMPLES && score >= 0.70) return 'strategist';
+  if (samples >= 5 && score >= 0.50) return 'analyst';
+  return 'observer';
 }
 
 function evidenceConfidence(assessment: CryptaraOpportunityAssessment, providerQuality: number): number {
@@ -178,17 +258,13 @@ function applyEvidenceQuality(
   evidence: number,
 ): CryptaraOpportunityAssessment {
   let recommendation = assessment.recommendation;
-  // Cryptara may prioritize or defer work, but it never manufactures profitability.
-  // Stale/missing market consensus cannot remain a high-confidence "consider" decision.
   if ((providerState === 'stale' || providerState === 'missing') && recommendation === 'consider') recommendation = 'observe';
-  // A single fresh source is allowed to remain useful, but high-confidence consideration
-  // requires stronger stochastic evidence until independent corroboration arrives.
   if (providerState === 'single_source_fresh' && recommendation === 'consider' && (assessment.monteCarlo?.confidence ?? 0) < 0.80) recommendation = 'observe';
 
   const adjustedExecutionConfidence = assessment.executionConfidence === null
     ? null
     : Number((assessment.executionConfidence * Math.max(0.25, evidence)).toFixed(6));
-  const adjustedRankScore = assessment.rankScore === null
+  const adjustedOpportunityRankScore = assessment.rankScore === null
     ? null
     : Number((assessment.rankScore * Math.max(0.25, 0.5 + providerQuality * 0.5)).toFixed(6));
 
@@ -196,15 +272,37 @@ function applyEvidenceQuality(
     ...assessment,
     recommendation,
     executionConfidence: adjustedExecutionConfidence,
-    rankScore: adjustedRankScore,
+    rankScore: adjustedOpportunityRankScore,
     provenance: [...new Set([
       ...assessment.provenance,
       `sovereign_cortex:evidence_confidence:${evidence.toFixed(4)}`,
       `sovereign_cortex:provider_quality:${providerQuality.toFixed(4)}`,
       `sovereign_cortex:recommendation:${assessment.recommendation}->${recommendation}`,
+      'sovereign_cortex:rank_evidence:terminal_confirmed_external_settlement_only',
       'sovereign_cortex:execution_authority:false',
     ])],
   };
+}
+
+function updateLatestTerminalRank(): CryptaraCortexRank {
+  const stats = terminalStats();
+  const rankScore = terminalRankScore();
+  const rank = rankFromTerminal(rankScore, stats.samples);
+  if (latestSnapshot) {
+    latestSnapshot = {
+      ...latestSnapshot,
+      evaluatedAt: Date.now(),
+      rankScore: Number(rankScore.toFixed(6)),
+      rank,
+      promotionEligible: rank === 'sovereign',
+      terminalSamples: stats.samples,
+      terminalWinRate: stats.winRate,
+      averageAbsoluteProfitErrorUsd: stats.averageAbsoluteProfitErrorUsd,
+      averageLatencyMs: stats.averageLatencyMs,
+      rankEvidenceAuthority: 'terminal_confirmed_external_settlement_only',
+    };
+  }
+  return rank;
 }
 
 export function getCryptaraSovereignCortexSnapshot(): CryptaraSovereignCortexSnapshot | null {
@@ -217,6 +315,15 @@ export function ensureCryptaraSovereignCortexWiring(): Cryptara {
   installed.add(instance);
   const target = instance as unknown as CryptaraTarget;
 
+  rebuildTerminalHistory(target.getExecutionHistory(MAX_HISTORY));
+
+  const originalRestoreExecutionHistory = target.restoreExecutionHistory.bind(target);
+  target.restoreExecutionHistory = history => {
+    originalRestoreExecutionHistory(history);
+    rebuildTerminalHistory(target.getExecutionHistory(MAX_HISTORY));
+    updateLatestTerminalRank();
+  };
+
   const originalAssessOpportunity = target.assessOpportunity.bind(target);
   target.assessOpportunity = async context => {
     const assessment = await originalAssessOpportunity(context);
@@ -225,13 +332,9 @@ export function ensureCryptaraSovereignCortexWiring(): Cryptara {
     const evidence = evidenceConfidence(assessment, providerQuality);
     const adjusted = applyEvidenceQuality(assessment, consensus?.state ?? null, providerQuality, evidence);
     const vector = capabilityVector(adjusted, providerQuality);
-    const rankScore = weightedRank(vector);
-    const rank = rankFrom(rankScore);
     const stats = terminalStats();
-    const promotionEligible = stats.samples >= MIN_PROMOTION_SAMPLES
-      && rank === 'sovereign'
-      && vector.riskControl >= 0.70
-      && vector.executionPrecision >= 0.70;
+    const rankScore = terminalRankScore();
+    const rank = rankFromTerminal(rankScore, stats.samples);
 
     latestSnapshot = {
       evaluatedAt: Date.now(),
@@ -240,7 +343,7 @@ export function ensureCryptaraSovereignCortexWiring(): Cryptara {
       capabilityVector: vector,
       rankScore: Number(rankScore.toFixed(6)),
       rank,
-      promotionEligible,
+      promotionEligible: rank === 'sovereign',
       terminalSamples: stats.samples,
       terminalWinRate: stats.winRate,
       averageAbsoluteProfitErrorUsd: stats.averageAbsoluteProfitErrorUsd,
@@ -251,6 +354,7 @@ export function ensureCryptaraSovereignCortexWiring(): Cryptara {
       recommendationBeforeCortex: assessment.recommendation,
       recommendationAfterCortex: adjusted.recommendation,
       requestPriority: requestPriority(adjusted, evidence),
+      rankEvidenceAuthority: 'terminal_confirmed_external_settlement_only',
       executionAuthority: false,
       syntheticEvidenceAllowed: false,
     };
@@ -260,34 +364,51 @@ export function ensureCryptaraSovereignCortexWiring(): Cryptara {
   const originalRecordExecutionResult = target.recordExecutionResult.bind(target);
   target.recordExecutionResult = feedback => {
     originalRecordExecutionResult(feedback);
-    if (
-      feedback.settlementConfirmed !== true
-      || feedback.realizedProfitUsd === null
-      || !Number.isFinite(feedback.realizedProfitUsd)
-      || !Number.isFinite(feedback.expectedProfitUsd)
-      || !Number.isFinite(feedback.latencyMs)
-    ) return;
+    if (!isTerminalRankEvidence(feedback)) return;
+    const sample = toTerminalSample(feedback);
+    if (!appendTerminalSample(sample)) return;
+    const rank = updateLatestTerminalRank();
 
-    terminalHistory.push({
-      success: feedback.success,
-      expectedProfitUsd: feedback.expectedProfitUsd,
-      realizedProfitUsd: feedback.realizedProfitUsd,
-      latencyMs: Math.max(0, feedback.latencyMs),
-      slippageBps: feedback.slippageBps !== null && Number.isFinite(feedback.slippageBps) ? Math.max(0, feedback.slippageBps) : null,
-      timestamp: feedback.timestamp,
+    // Bounded prefetch tuning consumes the same terminal-only evidence used by
+    // rank. Persistence is fire-and-forget so settlement never waits on learning.
+    void recordCryptaraAdaptiveOutcome({
+      eventId: sample.eventId,
+      success: sample.success,
+      expectedProfitUsd: sample.expectedProfitUsd,
+      realizedProfitUsd: sample.realizedProfitUsd,
+      latencyMs: sample.latencyMs,
+      slippageBps: sample.slippageBps,
+      timestamp: sample.timestamp,
+      rank,
+    }).catch(error => {
+      log.warn('Cryptara adaptive terminal learning persistence failed', {
+        component: 'CryptaraSovereignCortexWiring',
+        eventId: sample.eventId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
-    if (terminalHistory.length > MAX_HISTORY) terminalHistory.splice(0, terminalHistory.length - MAX_HISTORY);
   };
 
   log.info('Cryptara sovereign cortex wiring installed', {
     capabilityDimensions: 8,
-    providerConsensusInfluencesConfidence: true,
-    staleOrMissingConsensusCanDeferConsideration: true,
-    singleSourceRequiresStrongMonteCarloForConsideration: true,
-    terminalSettlementOnlyLearning: true,
-    dynamicRankEvolution: true,
+    providerConsensusInfluencesOpportunityConfidence: true,
+    terminalHistoryHydratedFromCanonicalExecutionHistory: true,
+    terminalSettlementOnlyRankLearning: true,
+    rankEvidenceAuthority: 'terminal_confirmed_external_settlement_only',
+    simulationsCanRaiseRank: false,
+    shadowTradesCanRaiseRank: false,
+    strategyProjectionCanRaiseRank: false,
+    adaptiveEditScope: 'predictive_prefetch_cadence_only',
+    rankEditingPolicy: {
+      observer: 'learn_and_diagnose_only_no_edits',
+      analyst: 'learn_and_diagnose_only_no_edits',
+      strategist: 'bounded_prefetch_micro_edits_with_terminal_proof',
+      sovereign: 'same_bounded_prefetch_scope_higher_confidence_no_safety_override',
+    },
+    executionStrategyMutation: false,
     promotionMinimumSamples: MIN_PROMOTION_SAMPLES,
-    requestPriorityAdvisory: true,
+    strategistMinimumSamples: MIN_PROMOTION_SAMPLES,
+    sovereignMinimumSamples: MIN_PROMOTION_SAMPLES * 2,
     syntheticEvidenceAllowed: false,
     executionAuthority: false,
   });

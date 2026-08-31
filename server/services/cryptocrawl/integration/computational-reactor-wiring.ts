@@ -7,6 +7,7 @@ import {
   reactorEvents,
   type ReactorJob,
 } from '../../../reactor/computationalReactor.js';
+import { getAdaptiveProfitOperatingEnvelope } from '../governance/adaptive-profit-operating-envelope.js';
 import { getProviderQualityAuctionSnapshot } from '../intelligence/provider-quality-auction.js';
 import { buildHyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
 import { ensureBpsCompressionMesh, getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
@@ -33,6 +34,9 @@ export interface ComputationalSearchPlan {
   feeRefreshMaxAgeMs: number | null;
   runtimeRiskBufferMultiplier: number;
   runtimeEvidenceRefreshMultiplier: number;
+  profitLadderMaxNotionalUsd: number;
+  dollarValuePerBpsUsd: number;
+  profitLadderComputeMultiplier: number;
   authority: 'measured_compute_search_scheduling_only';
   executionAuthority: false;
 }
@@ -52,6 +56,9 @@ let latestSearchPlan: ComputationalSearchPlan = {
   feeRefreshMaxAgeMs: null,
   runtimeRiskBufferMultiplier: 1,
   runtimeEvidenceRefreshMultiplier: 1,
+  profitLadderMaxNotionalUsd: 0,
+  dollarValuePerBpsUsd: 0,
+  profitLadderComputeMultiplier: 1,
   authority: 'measured_compute_search_scheduling_only',
   executionAuthority: false,
 };
@@ -93,9 +100,33 @@ function effectiveMcMultiplier(): number {
   return Math.max(0.70, Math.min(1.85, (mesh?.hyperdynamic.mcSearchMultiplier ?? 1) * runtime.mcSearchMultiplier));
 }
 
+function profitLadderFields(): Pick<ComputationalSearchPlan,
+  'profitLadderMaxNotionalUsd' | 'dollarValuePerBpsUsd' | 'profitLadderComputeMultiplier'> {
+  const envelope = getAdaptiveProfitOperatingEnvelope();
+  const profitLadderMaxNotionalUsd = Math.max(0, Number(envelope.recommendedMaxNotionalUsd) || 0);
+  const dollarValuePerBpsUsd = profitLadderMaxNotionalUsd / 10_000;
+  const realizedBps = Number(envelope.recent10AverageProfitBps ?? envelope.rolling50AverageProfitBps ?? 0);
+  const performanceMultiplier = envelope.performanceDegraded
+    ? 0.80
+    : 1 + Math.min(0.25, Math.max(0, Number.isFinite(realizedBps) ? realizedBps : 0) / 40);
+  const streakMultiplier = 1 + Math.min(0.15, Math.max(0, envelope.consecutiveProfitableCycles) * 0.01);
+  const capitalMultiplier = 1 + Math.min(0.20, Math.log10(1 + dollarValuePerBpsUsd) / 5);
+  const profitLadderComputeMultiplier = Math.max(0.75, Math.min(1.35,
+    performanceMultiplier * streakMultiplier * capitalMultiplier,
+  ));
+  return {
+    profitLadderMaxNotionalUsd,
+    dollarValuePerBpsUsd,
+    profitLadderComputeMultiplier,
+  };
+}
+
 function dynamicCalibrationIntervalMs(): number {
   const base = calibrationIntervalMs();
-  return Math.max(5_000, Math.min(120_000, Math.round(base / effectiveMcMultiplier())));
+  const ladder = profitLadderFields();
+  return Math.max(5_000, Math.min(120_000, Math.round(
+    base / Math.max(0.70, effectiveMcMultiplier() * ladder.profitLadderComputeMultiplier),
+  )));
 }
 
 function searchPlanMaxAgeMs(): number {
@@ -138,6 +169,7 @@ function neutralSearchPlan(sourceModes: number, observedAt = Date.now()): Comput
     providerQuality: averageProviderQuality(),
     cryptaraPriority: getCryptaraSovereignCortexSnapshot()?.requestPriority ?? null,
     ...meshFields(),
+    ...profitLadderFields(),
     authority: 'measured_compute_search_scheduling_only',
     executionAuthority: false,
   };
@@ -167,6 +199,7 @@ function buildMeasuredSearchScorer() {
   const cexAttention = mesh?.cex.attentionShare ?? 0.5;
   const hyper = mesh?.hyperdynamic;
   const runtime = runtimeHyperdynamicPlan();
+  const ladder = profitLadderFields();
   const mcMultiplier = Math.max(0.70, Math.min(1.85, (hyper?.mcSearchMultiplier ?? 1) * runtime.mcSearchMultiplier));
 
   const scorer = (params: Record<string, number>): number => {
@@ -200,12 +233,20 @@ function buildMeasuredSearchScorer() {
       return sum + gapValue * (0.5 + 0.5 * recovery) * (0.5 + 0.5 * freshness);
     }, 0) / selected.length;
 
-    const positiveCoverage = selected.filter(mode => mode.economicallyPositive).length / Math.max(1, selected.length);
+    const positiveModes = selected.filter(mode => mode.economicallyPositive);
+    const positiveCoverage = positiveModes.length / Math.max(1, selected.length);
+    const averagePositiveBps = positiveModes.length > 0
+      ? positiveModes.reduce((sum, mode) => sum + Math.max(0, mode.expectedFeeAdjustedBps, mode.netAfterExchangeFeesBps), 0) / positiveModes.length
+      : 0;
+    const measuredDollarEdgeAtLadder = ladder.dollarValuePerBpsUsd * averagePositiveBps;
+    const dollarLeverageMultiplier = 1 + Math.min(0.50, Math.log10(1 + Math.max(0, measuredDollarEdgeAtLadder)) / 6);
     const coverage = selected.length / Math.max(1, uniqueSymbols);
     const heatCost = heat.throttleLevel === 'heavy' ? 1 : heat.throttleLevel === 'moderate' ? 0.6 : heat.throttleLevel === 'light' ? 0.3 : 0.1;
     const requestCost = breadthFactor / intervalFactor;
     const meshOpportunityMultiplier = 0.75 + 0.50 * Math.max(0, Math.min(1, cexAttention));
     const hyperdynamicValue = mcMultiplier
+      * ladder.profitLadderComputeMultiplier
+      * dollarLeverageMultiplier
       * (0.90 + 0.10 * (hyper?.liquidityFocusMultiplier ?? 1))
       * (0.90 + 0.10 * (hyper?.latencyFocusMultiplier ?? 1))
       * (0.90 + 0.10 * (hyper?.sizeRefinementMultiplier ?? 1))
@@ -220,7 +261,7 @@ function buildMeasuredSearchScorer() {
       - (0.08 * heatCost * requestCost);
   };
 
-  return { modes, providerQuality, cryptaraPriority, runtime, scorer };
+  return { modes, providerQuality, cryptaraPriority, runtime, ladder, scorer };
 }
 
 function applyCompletedCalibration(event: unknown): void {
@@ -245,6 +286,7 @@ function applyCompletedCalibration(event: unknown): void {
     providerQuality: averageProviderQuality(),
     cryptaraPriority: getCryptaraSovereignCortexSnapshot()?.requestPriority ?? null,
     ...meshFields(),
+    ...profitLadderFields(),
     authority: 'measured_compute_search_scheduling_only',
     executionAuthority: false,
   };
@@ -311,12 +353,15 @@ export function ensureComputationalReactorWiring(): void {
       component: 'ComputationalReactorWiring',
       scheduler: 'priority_plus_age_with_measured_resource_pressure',
       monteCarlo: 'caller_supplied_measured_scorer_only',
-      searchAllocationCalibration: '100_solution_hyperdynamic_profit_positive_first_then_cross_topology_bps_gap_freshness_provider_quality_compute_cost',
+      searchAllocationCalibration: 'profit_ladder_dollar_bps_plus_100_solution_hyperdynamic_positive_first_cross_topology_gap_freshness_provider_quality_compute_cost',
       bpsCompressionMesh: getBpsCompressionMeshSnapshot(),
       runtimeHyperdynamic: runtimeHyperdynamicPlan(),
+      profitLadderCompute: profitLadderFields(),
       dynamicCalibrationIntervalMs: dynamicCalibrationIntervalMs(),
       searchPlanMaxAgeMs: searchPlanMaxAgeMs(),
       insufficientEvidenceFallback: 'neutral_full_breadth_base_cadence',
+      hotPathNetworkRequestsAdded: false,
+      executionAuthorityUnchanged: true,
       syntheticOptimizationScores: false,
       crawlerExecutors: 'explicit_callback_only',
       adaptiveConcurrency: true,

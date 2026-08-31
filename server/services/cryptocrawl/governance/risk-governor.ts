@@ -4,14 +4,15 @@
  * Manages execution risk controls and Monte Carlo consensus requirements.
  * Profit magnitude is never an execution ceiling: deterministic all-in positive
  * economics is an upstream eligibility requirement, while this governor owns
- * loss/drawdown, position-size, current Monte Carlo, anomaly, and circuit-breaker
- * safety only.
+ * loss/drawdown, profit-ladder position-size, current Monte Carlo, anomaly, and
+ * circuit-breaker safety only.
  */
 
 import { EventEmitter } from 'events';
 import { createLogger } from '../../../logger';
-import { stageManager } from './stage-management';
 import { getCryptara } from '../../cryptara/index.js';
+import { getProfitLadderNotionalAuthority } from './profit-ladder-notional-authority.js';
+import { stageManager } from './stage-management';
 
 const log = createLogger('RiskGovernor');
 
@@ -85,9 +86,7 @@ export class RiskGovernor extends EventEmitter {
   }
 
   static getInstance(): RiskGovernor {
-    if (!RiskGovernor.instance) {
-      RiskGovernor.instance = new RiskGovernor();
-    }
+    if (!RiskGovernor.instance) RiskGovernor.instance = new RiskGovernor();
     return RiskGovernor.instance;
   }
 
@@ -148,7 +147,7 @@ export class RiskGovernor extends EventEmitter {
       return assessment;
     }
 
-    // CHECK 4: Drawdown limit.
+    // CHECK 4: Drawdown limit remains a StageManager safety responsibility.
     const state = stageManager.getState();
     if (state.currentDrawdownPercent > stageConfig.maxDrawdownPercent) {
       assessment.reason = `Drawdown limit exceeded: ${state.currentDrawdownPercent.toFixed(2)}% > ${stageConfig.maxDrawdownPercent}%`;
@@ -158,13 +157,19 @@ export class RiskGovernor extends EventEmitter {
     assessment.checksPass.drawdownCheck = true;
 
     // CHECK 5: Profit ceiling intentionally retired.
-    // Profit magnitude is not risk authority. Positive all-in economics is checked
-    // upstream; loss/drawdown and position exposure remain governed below.
     assessment.checksPass.dailyLimitCheck = true;
 
-    // CHECK 6: Position size limit is the single position-size authority here.
-    if (proposal.positionSizeUSD > stageConfig.maxPositionSizeUSD) {
-      assessment.reason = `Position size exceeds limit: $${proposal.positionSizeUSD} > $${stageConfig.maxPositionSizeUSD}`;
+    // CHECK 6: Profit Ladder is the single new-exposure notional ceiling.
+    // The legacy StageManager maxPositionSizeUSD remains compatibility telemetry;
+    // it cannot impose a second smaller position cap beneath the active ladder rung.
+    const notionalAuthority = getProfitLadderNotionalAuthority();
+    if (!(notionalAuthority.maxNotionalUsd > 0)) {
+      assessment.reason = 'Profit ladder does not currently authorize positive execution notional';
+      this.recordAssessment(assessment);
+      return assessment;
+    }
+    if (proposal.positionSizeUSD > notionalAuthority.maxNotionalUsd) {
+      assessment.reason = `Position size exceeds profit-ladder limit: $${proposal.positionSizeUSD} > $${notionalAuthority.maxNotionalUsd}`;
       this.recordAssessment(assessment);
       return assessment;
     }
@@ -217,6 +222,7 @@ export class RiskGovernor extends EventEmitter {
         proposalId: proposal.id,
         strategy: proposal.strategy,
         positionUSD: proposal.positionSizeUSD,
+        profitLadderMaxNotionalUsd: notionalAuthority.maxNotionalUsd,
         riskScore: assessment.riskScore,
         confidence: assessment.confidenceScore,
         confidenceEnabled: confidenceEnabledForRisk,
@@ -315,21 +321,16 @@ export class RiskGovernor extends EventEmitter {
     confidenceEnabled: boolean = true,
   ): number {
     let score = 0;
-    const stageConfig = stageManager.getStageConfig();
-    const positionRatio = stageConfig.maxPositionSizeUSD > 0
-      ? proposal.positionSizeUSD / stageConfig.maxPositionSizeUSD
+    const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd;
+    const positionRatio = ladderMaxNotionalUsd > 0
+      ? proposal.positionSizeUSD / ladderMaxNotionalUsd
       : 1;
     score += Math.max(0, Math.min(1, positionRatio)) * 25;
     score += Math.max(0, Math.min(1, proposal.estimatedRiskPercent)) * 25;
 
-    if (confidenceEnabled) {
-      score += (1 - assessment.confidenceScore) * 25;
-    }
-    if (assessment.monteCarloConsensus > 0) {
-      score += (1 - assessment.monteCarloConsensus) * 25;
-    } else {
-      score += 25;
-    }
+    if (confidenceEnabled) score += (1 - assessment.confidenceScore) * 25;
+    if (assessment.monteCarloConsensus > 0) score += (1 - assessment.monteCarloConsensus) * 25;
+    else score += 25;
 
     return Math.min(100, Math.max(0, score));
   }
@@ -445,6 +446,8 @@ export class RiskGovernor extends EventEmitter {
       assessmentHistory: this.assessmentHistory.slice(-100),
       approvalRate: this.getApprovalRate(),
       profitCeilingAuthority: false,
+      positionSizeAuthority: 'profit_ladder_capital_allowance',
+      legacyStagePositionCapAuthoritative: false,
       timestamp: Date.now(),
     };
   }

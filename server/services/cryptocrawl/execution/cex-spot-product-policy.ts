@@ -15,6 +15,9 @@ export interface SpotProductConstraints {
   priceIncrement: number;
   baseMinSize: number;
   quoteMinSize: number | null;
+  /** Per-order maximums from the live venue contract; null means not published here. */
+  baseMaxSize: number | null;
+  quoteMaxSize: number | null;
   state: 'live';
   observedAt: number;
   source: 'kraken_asset_pairs' | 'okx_public_instruments';
@@ -91,6 +94,10 @@ async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
         priceIncrement,
         baseMinSize,
         quoteMinSize: positive(row.costmin),
+        // Kraken AssetPairs does not publish one universal single-order maximum.
+        // Do not invent one; parent measured depth/inventory remains authoritative.
+        baseMaxSize: null,
+        quoteMaxSize: null,
         state: 'live',
         observedAt,
         source: 'kraken_asset_pairs',
@@ -108,6 +115,7 @@ async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
       component: 'CexSpotProductPolicy',
       products: values.size,
       ambiguous: ambiguous.size,
+      unpublishedSingleOrderMaxTreatedAsUnlimited: true,
     });
     return snapshot;
   })().finally(() => { krakenInFlight = null; });
@@ -147,6 +155,10 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
         priceIncrement,
         baseMinSize,
         quoteMinSize: null,
+        // OKX documents these as current per-order maximums for SPOT. They are
+        // child-order split inputs, never a parent strategy/notional ceiling.
+        baseMaxSize: positive(raw?.maxLmtSz),
+        quoteMaxSize: positive(raw?.maxLmtAmt),
         state: 'live',
         observedAt,
         source: 'okx_public_instruments',
@@ -158,6 +170,7 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
       component: 'CexSpotProductPolicy',
       baseUrl,
       products: values.size,
+      perOrderMaximumsCaptured: true,
     });
     return snapshot;
   })().finally(() => { okxInFlight = null; });
@@ -250,14 +263,16 @@ function validateLeg(
   if (constraints.quoteMinSize !== null && quantity * price + constraints.priceIncrement * constraints.baseIncrement < constraints.quoteMinSize) {
     return `${constraints.venue} ${side} notional is below quote minimum ${constraints.quoteMinSize}`;
   }
+  // Per-order maximums are intentionally not checked on the parent here. The
+  // hyper-hybrid executor will split a verified parent into legal child orders.
   return null;
 }
 
 /**
- * Normalize the canonical CEX plan to the intersection of every participating
- * venue's measured lot-size constraints before Cryptara eligibility. Book prices
- * are never rounded: off-tick evidence fails closed. Any smaller executable size
- * gets a fresh all-in deterministic economics calculation.
+ * Normalize the canonical CEX PARENT plan to the intersection of participating
+ * venue lot-size constraints before Cryptara eligibility. Book prices are never
+ * rounded: off-tick evidence fails closed. Per-order maximums are not parent
+ * ceilings; they are preserved as live child-splitting inputs at execution.
  */
 export async function normalizeCexExecutablePlan(input: VerifiedArbitragePlan): Promise<VerifiedArbitragePlan | null> {
   let plan = await normalizeCoinbaseExecutablePlan(input);
