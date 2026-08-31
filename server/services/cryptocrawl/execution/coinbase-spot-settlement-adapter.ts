@@ -4,7 +4,10 @@ import {
   assertCoinbaseSpotTradeReady,
   coinbasePrivateRequest,
 } from '../intelligence/coinbase-advanced-trade-authority.js';
-import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
+import {
+  getCachedCoinbaseAdvancedProductId,
+  getCoinbaseAdvancedProductConstraints,
+} from '../intelligence/coinbase-advanced-market-data.js';
 import { validateCoinbaseOrderAgainstProduct } from './coinbase-product-policy.js';
 import type {
   ExecutionFill,
@@ -25,7 +28,7 @@ export interface CoinbaseOrderReceipt {
   venue: 'coinbase';
   orderId: string;
   symbol: string;
-  productId: string;
+  productId?: string;
   side: 'buy' | 'sell';
   requestedQuantity: number;
   submittedAt: number;
@@ -51,11 +54,18 @@ function explicitProductId(value: unknown): string | null {
 }
 
 /**
- * Serialize the already-validated numeric value without imposing a second,
- * undocumented decimal-place limit. Number#toString is canonical but may emit
- * exponent notation for small increments; Coinbase order amounts are sent as
- * plain decimal strings, so expand exponent notation exactly at this boundary.
+ * Compatibility boundary for legacy synchronous callers. This never infers a
+ * product from a quote-currency suffix: it succeeds only for an explicit product
+ * id or a product identity already resolved from fresh Coinbase metadata.
  */
+export function coinbaseProductId(symbol: string): string {
+  const explicit = explicitProductId(symbol);
+  if (explicit) return explicit;
+  const cached = getCachedCoinbaseAdvancedProductId(symbol);
+  if (!cached) throw new Error(`Coinbase product id for ${symbol} is not present in the live metadata cache`);
+  return cached;
+}
+
 export function coinbaseDecimalString(value: number): string {
   if (!Number.isFinite(value) || value <= 0) throw new Error('Coinbase order values must be finite and positive');
   const canonical = value.toString().toLowerCase();
@@ -114,9 +124,9 @@ function aggregateFee(fills: ExecutionFill[], fallback: unknown): number | null 
   return fills.reduce((sum, fill) => sum + (fill.feeAmount || 0), 0);
 }
 
-function aggregateFeeAsset(fills: ExecutionFill[], productId: string): string | null {
+function aggregateFeeAsset(fills: ExecutionFill[], productId: string | null): string | null {
   const assets = fills.map(fill => fill.feeAsset).filter((value): value is string => Boolean(value));
-  if (assets.length === 0) return productId.split('-')[1] || null;
+  if (assets.length === 0) return productId?.split('-')[1] || null;
   const first = assets[0].toUpperCase();
   return assets.every(asset => asset.toUpperCase() === first) ? first : null;
 }
@@ -131,12 +141,12 @@ export function parseCoinbaseOrderSettlement(input: {
   if (!row) throw new Error(`Coinbase returned no order state for ${input.receipt.orderId}`);
   const requestedQuantity = positive(row?.order_configuration?.sor_limit_ioc?.base_size)
     ?? positive(row?.order_configuration?.limit_limit_fok?.base_size)
+    ?? positive(row?.order_configuration?.limit_limit_gtc?.base_size)
     ?? input.receipt.requestedQuantity;
   const filledQuantity = Math.max(0, finite(row?.filled_size) ?? 0);
   const averageFillPrice = positive(row?.average_filled_price);
-  const productId = typeof row?.product_id === 'string' && explicitProductId(row.product_id)
-    ? explicitProductId(row.product_id)!
-    : input.receipt.productId;
+  const rowProductId = typeof row?.product_id === 'string' ? explicitProductId(row.product_id) : null;
+  const productId = rowProductId || explicitProductId(input.receipt.productId) || null;
   const fills = parseCoinbaseFills(input.fillsPayload || {}, input.receipt.orderId);
   const classification = classify(row, requestedQuantity);
   const totalFee = aggregateFee(fills, row?.total_fees);
@@ -183,14 +193,6 @@ async function readCoinbaseBalances(requester: CoinbasePrivateRequester): Promis
   return output;
 }
 
-/**
- * Settlement-safe Coinbase Advanced Trade spot adapter. Authenticated permission
- * checks happen before live submission, every terminal order is queried through
- * Advanced Trade, and balances are exposed to the canonical inventory ledger so
- * Coinbase can participate only when real spendable inventory is reconciled.
- * Product ID authority comes from live Coinbase metadata, never a quote suffix
- * allowlist.
- */
 export class CoinbaseSpotSettlementAdapter {
   constructor(private readonly requester: CoinbasePrivateRequester = coinbasePrivateRequest) {}
 
