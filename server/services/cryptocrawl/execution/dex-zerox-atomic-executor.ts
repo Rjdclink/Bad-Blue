@@ -9,7 +9,6 @@ import { getCryptocrawlGovernance } from '../governance/index.js';
 import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../governance/zero-capital-infrastructure-policy.js';
 import { stageManager } from '../governance/stage-management.js';
 import { marketDataProviders, type DexQuoteObservation } from '../intelligence/market-data-providers.js';
-import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { getGasSponsorManager, type SponsoredCall } from '../strategies/gas-sponsorship.js';
 import { withEvmSignerLane } from './evm-signer-lane.js';
 import {
@@ -62,8 +61,11 @@ export interface ZeroXAtomicExecutionResult {
   success: boolean;
   settlementConfirmed: boolean;
   transactionHash?: string;
+  /** Receiver profit after flash-loan repayment/fee, before wallet-paid native gas. */
   realizedProfitUsd?: number;
+  /** Receiver profit BPS before wallet-paid native gas. Not terminal all-in net BPS. */
   realizedProfitBps?: number;
+  /** Pretrade gas estimate only. Terminal gas reconciliation is owned by the caller. */
   gasUsd?: number;
   error?: string;
 }
@@ -127,9 +129,10 @@ function quoteTransaction(quote: DexQuoteObservation, expectedSellAmount: BigNum
   if (!value.isZero()) throw new Error('Stablecoin atomic DEX route unexpectedly requires native transaction value');
   const gas = asPositiveInteger('0x firm quote gas', quote.transaction.gas || quote.estimatedGas);
   const spender = asAddress('0x allowance spender', quote.allowanceTarget || target);
-  // Current AllowanceHolder v2 contract is both allowance spender and transaction
-  // entry point for ERC-20 swaps. We verify this instead of assuming it so an API
-  // or route-mode change fails closed rather than approving an unrelated address.
+  // The /swap/allowance-holder ERC-20 route uses AllowanceHolder as both the
+  // approval spender and transaction entry point. Fail closed if the API ever
+  // returns a different spender/entry-point relationship because the reviewed
+  // V1 flash-loan receiver approves the exact call target.
   if (!sameAddress(spender, target)) throw new Error('0x allowance spender differs from transaction target; unsupported route fails closed');
   const quotedSellAmount = asPositiveInteger('0x firm quote sellAmount', quote.sellAmount);
   if (!quotedSellAmount.eq(expectedSellAmount)) throw new Error('0x firm quote sell amount drifted from the requested atomic amount');
@@ -449,34 +452,32 @@ export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string)
     if (!receipt || receipt.status !== 1) return { success: false, settlementConfirmed: false, transactionHash, error: 'DEX_ATOMIC_RECEIPT_NOT_SUCCESSFUL' };
 
     const iface = new ethers.utils.Interface(RECEIVER_ABI);
-    let realizedProfit: BigNumber | null = null;
+    let receiverProfit: BigNumber | null = null;
     for (const log of receipt.logs) {
       if (!sameAddress(log.address, plan.receiver)) continue;
       try {
         const parsed = iface.parseLog(log);
-        if (parsed.name === 'FlashLoanExecuted') realizedProfit = BigNumber.from(parsed.args.profit);
+        if (parsed.name === 'FlashLoanExecuted') receiverProfit = BigNumber.from(parsed.args.profit);
       } catch { /* unrelated receiver log */ }
     }
-    if (!realizedProfit || realizedProfit.lte(0)) {
+    if (!receiverProfit || receiverProfit.lte(0)) {
       return { success: false, settlementConfirmed: true, transactionHash, error: 'DEX_ATOMIC_TERMINAL_PROFIT_EVENT_MISSING_OR_NONPOSITIVE' };
     }
-    const realizedProfitUsd = baseUnitsToUsd(realizedProfit);
+    const realizedProfitUsd = baseUnitsToUsd(receiverProfit);
     const realizedProfitBps = realizedProfitUsd / request.notionalUsd * 10_000;
-    const latest = measuredCandidateRegistry.get(opportunityId);
-    if (latest) {
-      measuredCandidateRegistry.updateStatus(opportunityId, latest.status, {
-        economics: { ...latest.economics, realizedNetProfitBps: realizedProfitBps },
-        provenance: ['dex_atomic:terminal_receiver_profit_event', `dex_atomic:tx:${transactionHash}`],
-      });
-    }
-    logger.info('[DexAtomic] Terminal 0x receiver settlement confirmed', {
+
+    // This low-level executor proves receipt + receiver profit only. It deliberately
+    // does not publish realized all-in economics or learning because wallet-paid
+    // native gas must first be reconciled by the canonical topology adapter.
+    logger.info('[DexAtomic] Terminal 0x receiver event confirmed; all-in reconciliation pending', {
       component: 'DexZeroXAtomicExecutor',
       opportunityId,
       chain: request.chain,
       transactionHash,
-      realizedProfitUsd,
-      realizedProfitBps,
+      receiverProfitUsd: realizedProfitUsd,
+      receiverProfitBps: realizedProfitBps,
       settlementConfirmed: true,
+      allInRealizedEconomicsAuthority: 'canonical_measured_topology_adapter_after_actual_gas',
       syntheticEvidence: false,
     });
     return { success: true, settlementConfirmed: true, transactionHash, realizedProfitUsd, realizedProfitBps, gasUsd: plan.gasUsd };
