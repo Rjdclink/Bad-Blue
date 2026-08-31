@@ -23,6 +23,8 @@ const stream = read('server/services/cryptocrawl/intelligence/cex-order-book-str
 const arbVerifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
 const maker = read('server/services/cryptocrawl/execution/stablecoin-maker-strategy.ts');
 const makerAdapters = read('server/services/cryptocrawl/execution/post-only-maker-adapters.ts');
+const hybrid = read('server/services/cryptocrawl/runtime/hybrid-cex-execution-wiring.ts');
+const settlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 const rpiCapability = read('server/services/cryptocrawl/intelligence/okx-rpi-capability.ts');
 const rpiAdvisory = read('server/services/cryptocrawl/intelligence/okx-rpi-fee-advisory.ts');
 
@@ -86,6 +88,22 @@ requirePattern(makerAdapters, /OKX_RPI_REJECT_FEE_WORSENED/, 'submit-time RPI fe
 requirePattern(makerAdapters, /OKX_RPI_REJECT_PERMISSION_NOTIONAL_OR_SPACING_CHANGED/, 'submit-time RPI permission/notional/spacing drift fails closed');
 requirePattern(makerAdapters, /There is no silent[\s\S]{0,120}downgrade from RPI to standard maker/, 'RPI plan cannot silently fall back to a worse standard-maker fee');
 
+// MT/TM reuse the maker adapter but do not carry MM makerExecution metadata.
+// Optional access is required so hybrid maker submission remains standard
+// post-only instead of throwing before the first order.
+requirePattern(hybrid, /createPostOnlyMakerAdapters\(plan as unknown as MakerRecoveryPlan\)/, 'hybrid lifecycle reuses the shared maker adapter');
+requirePattern(makerAdapters, /const\s+execution\s*=\s*plan\.makerExecution/, 'shared maker adapter isolates optional MM execution metadata');
+requirePattern(makerAdapters, /execution\?\.orderStyle\?\.buy/, 'hybrid-safe buy maker style defaults through optional metadata');
+requirePattern(makerAdapters, /execution\?\.orderStyle\?\.sell/, 'hybrid-safe sell maker style defaults through optional metadata');
+forbidPattern(makerAdapters, /plan\.makerExecution\.orderStyle/, 'shared maker adapter directly dereferencing absent hybrid makerExecution metadata');
+
+// Normalize venue-native terminal fee signs before realized P&L. OKX reports
+// fees as negative and rebates as positive, opposite the canonical economic-cost
+// convention. A charged fee must decrease realized P&L and a rebate must increase it.
+requirePattern(settlement, /order\.venue\s*===\s*'okx'\s*\?\s*-order\.feeAmount\s*:\s*order\.feeAmount/, 'OKX terminal fee/rebate sign is converted to canonical economic cost');
+requirePattern(settlement, /proceedsUsd\s*-\s*acquisitionCostUsd\s*-\s*exchangeFeeUsd/, 'realized P&L subtracts canonical signed economic fee cost');
+requirePattern(settlement, /venue_native_fee_sign_normalized_to_economic_cost/, 'terminal provenance records fee-sign normalization');
+
 // RPI-taker access can expose additional executable depth for standard OKX order
 // types, but the API does not expose a safe read-only account permission probe.
 // Observe/prewarm the incremental RPI depth and keep execution disabled rather
@@ -104,4 +122,4 @@ requirePattern(rpiAdvisory, /from '\.\/okx-rpi-capability\.js'/, 'RPI advisory c
 requirePattern(rpiAdvisory, /await import\('\.\.\/integration\/cex-four-mode-observability-wiring\.js'\)/, 'four-mode advisory dependency is lazy and non-authoritative');
 requirePattern(rpiAdvisory, /executionAuthority:\s*false/, 'RPI advisory never grants execution authority');
 
-console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, authenticated OKX RPI maker with correct independent spacing semantics, and safe RPI-taker depth observability invariants passed');
+console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, authenticated OKX RPI maker with correct independent spacing semantics, hybrid-safe maker adapters, canonical terminal fee signs, and safe RPI-taker depth observability invariants passed');
