@@ -1,6 +1,7 @@
 import { createHash, createHmac } from 'crypto';
 import logger from '../../../logger.js';
-import { isDatabaseConfigured, pool } from '../../../db.js';
+import { coordinationPool, isDatabaseConfigured } from '../../../db.js';
+import { acquireDistributedApiQuota, getDistributedApiQuotaSnapshot } from '../execution/distributed-api-quota.js';
 
 function finiteEnvNumber(name: string, fallback: number, min: number, max: number): number {
   const parsed = Number(process.env[name]);
@@ -140,14 +141,12 @@ async function ensureKrakenDistributedState(): Promise<void> {
   if (krakenDistributedStateReady) return krakenDistributedStateReady;
   krakenDistributedStateReady = (async () => {
     try {
-      await pool.query('CREATE SCHEMA IF NOT EXISTS private');
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS private.cryptocrawler_kraken_nonce_state (
-          key_hash text PRIMARY KEY,
-          last_nonce bigint NOT NULL,
-          updated_at timestamptz NOT NULL DEFAULT now()
-        )
-      `);
+      const result = await coordinationPool.query(
+        `SELECT to_regclass('private.cryptocrawler_kraken_nonce_state') IS NOT NULL AS ready`,
+      );
+      if (result.rows?.[0]?.ready !== true) {
+        throw new Error('Migration-owned private.cryptocrawler_kraken_nonce_state table is missing');
+      }
       recordKrakenDatabaseSuccess();
     } catch (error) {
       recordKrakenDatabaseFailure(error);
@@ -164,9 +163,11 @@ async function ensureKrakenDistributedState(): Promise<void> {
  * Kraken nonces are an API-key-wide ordering domain, not a process-local one.
  * Hold a PostgreSQL advisory lock across nonce allocation AND the signed network
  * request so separate Railway replicas cannot allocate increasing nonces and
- * then transmit them out of order. In local/no-database development the existing
- * in-process lane is sufficient; when a production database is configured, loss
- * of the distributed lane fails closed rather than weakening nonce safety.
+ * then transmit them out of order. The session-scoped lock lives on the tiny
+ * coordination pool rather than consuming ordinary application query capacity.
+ * In local/no-database development the existing in-process lane is sufficient;
+ * when a production database is configured, loss of the distributed lane fails
+ * closed rather than weakening nonce safety.
  */
 async function withKrakenDistributedLane<T>(
   apiKey: string,
@@ -181,7 +182,7 @@ async function withKrakenDistributedLane<T>(
   const lockName = `cryptocrawl:kraken-private:${keyHash}`;
   let client;
   try {
-    client = await pool.connect();
+    client = await coordinationPool.connect();
   } catch (error) {
     recordKrakenDatabaseFailure(error);
     throw error;
@@ -333,8 +334,10 @@ interface OkxLaneSnapshot {
 
 const OKX_LANE_POLICIES: Record<OkxPrivateLane, OkxLanePolicy> = {
   trade_fee: {
-    capacity: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_CAPACITY', 5, 1, 20),
-    windowMs: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_WINDOW_MS', 2_000, 500, 60_000),
+    // OKX documents this endpoint at 5 requests / 2 seconds per User ID.
+    // Never let an environment override expand beyond the venue's authority.
+    capacity: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_CAPACITY', 5, 1, 5),
+    windowMs: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_WINDOW_MS', 2_000, 2_000, 60_000),
     priority: 10,
   },
   order_write: {
@@ -435,10 +438,27 @@ async function acquireOkxToken(lane: OkxPrivateLane): Promise<void> {
   }
 }
 
+function okxTradeFeeQuotaNamespace(): string {
+  const apiKey = requireCredential('OKX_API_KEY');
+  return `okx:trade_fee:${createHash('sha256').update(apiKey).digest('hex').slice(0, 24)}`;
+}
+
+async function acquireOkxDistributedQuota(lane: OkxPrivateLane): Promise<void> {
+  if (lane !== 'trade_fee' || !isDatabaseConfigured) return;
+  const policy = OKX_LANE_POLICIES.trade_fee;
+  await acquireDistributedApiQuota({
+    namespace: okxTradeFeeQuotaNamespace(),
+    capacity: policy.capacity,
+    windowMs: policy.windowMs,
+    maxWaitMs: Math.max(10_000, policy.windowMs * 5),
+  });
+}
+
 function scheduleOkxLane<T>(lane: OkxPrivateLane, operation: () => Promise<T>): Promise<T> {
   const state = okxLanes[lane];
   const run = state.tail.catch(() => undefined).then(async () => {
     await acquireOkxToken(lane);
+    await acquireOkxDistributedQuota(lane);
     const waitMs = Math.max(0, state.lastStartedAt + laneIntervalMs(lane) - Date.now());
     if (waitMs > 0) await sleep(waitMs);
     state.lastStartedAt = Date.now();
@@ -658,6 +678,7 @@ export function getOkxPrivateAuthoritySnapshot(): {
   regionSource: OkxRegionSnapshot['source'] | null;
   regionExpiresAt: number | null;
   lanes: Record<OkxPrivateLane, OkxLaneSnapshot>;
+  distributedQuota: ReturnType<typeof getDistributedApiQuotaSnapshot>;
 } {
   const lanes = Object.fromEntries(
     (Object.keys(okxLanes) as OkxPrivateLane[]).map(lane => {
@@ -686,5 +707,6 @@ export function getOkxPrivateAuthoritySnapshot(): {
     regionSource: okxRegion?.source || null,
     regionExpiresAt: okxRegion?.expiresAt || null,
     lanes,
+    distributedQuota: getDistributedApiQuotaSnapshot(),
   };
 }
