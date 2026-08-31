@@ -33,6 +33,7 @@ const evmSigner = read('server/services/cryptocrawl/execution/evm-signer-lane.ts
 const distributedQuota = read('server/services/cryptocrawl/execution/distributed-api-quota.ts');
 const resources = read('server/services/cryptocrawl/execution/resource-scheduler.ts');
 const zeroResources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
+const hotPathMigration = read('server/migrations/023_cryptocrawler_hot_path_schema_authority.sql');
 const makerDiscovery = read('server/services/cryptocrawl/discovery/maker-opportunity-generator.ts');
 const makerAdmission = read('server/services/cryptocrawl/runtime/no-bps-maker-admission-wiring.ts');
 const marginal = read('server/services/cryptocrawl/optimization/marginal-bps-allocator.ts');
@@ -86,7 +87,8 @@ requirePattern(privateAuthority, /CRYPTO_OKX_FEE_BUCKET_CAPACITY',\s*5,\s*1,\s*5
 requirePattern(privateAuthority, /CRYPTO_OKX_FEE_BUCKET_WINDOW_MS',\s*2_000,\s*2_000,/, 'OKX fee window cannot be shortened below two seconds');
 requirePattern(privateAuthority, /acquireDistributedApiQuota\s*\(/, 'OKX fee lane participates in cluster-wide quota admission');
 requirePattern(distributedQuota, /const\s+TABLE\s*=\s*'cryptocrawler_resource_leases'/, 'distributed API quota reuses canonical lease storage');
-requirePattern(distributedQuota, /expires_at\s*<=\s*now\(\)/, 'expired quota slots are atomically reclaimable');
+requirePattern(distributedQuota, /cryptocrawler_claim_resource_slot/, 'distributed API quota delegates slot scanning to migration-owned authority');
+requirePattern(hotPathMigration, /WHERE\s+leases\.expires_at\s*<=\s*now\(\)/, 'expired quota/resource slots remain atomically reclaimable in the migration-owned claimant');
 forbidPattern(distributedQuota, /CREATE\s+(TABLE|SCHEMA)/i, 'distributed quota creates runtime schema');
 requirePattern(evmSigner, /coordinationPool\.connect\(\)/, 'EVM signer uses coordination pool');
 requirePattern(evmSigner, /pg_try_advisory_lock\(hashtext\(\$1\)\)/, 'EVM signer advisory acquisition is non-blocking at PostgreSQL');
