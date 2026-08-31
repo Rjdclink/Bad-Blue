@@ -75,6 +75,10 @@ forbidPattern(zeroResources, /CREATE\s+(TABLE|SCHEMA|INDEX)/i, 'atomic resource 
 // Solution 3 — Kraken ordering, OKX User-ID quota, Coinbase private resilience.
 requirePattern(privateAuthority, /coordinationPool\.query\([\s\S]{0,220}cryptocrawler_kraken_nonce_state/, 'Kraken nonce state is verified through coordination lane');
 requirePattern(privateAuthority, /client\s*=\s*await\s+coordinationPool\.connect\(\)/, 'Kraken session advisory lock consumes only coordination capacity');
+requirePattern(privateAuthority, /pg_try_advisory_lock\(hashtext\(\$1\)\)/, 'Kraken advisory acquisition is non-blocking at PostgreSQL');
+requirePattern(privateAuthority, /CRYPTO_KRAKEN_LOCK_MAX_WAIT_MS/, 'Kraken cross-replica contention wait is bounded');
+requirePattern(privateAuthority, /krakenLockTimeoutCount/, 'Kraken bounded lock contention is observable');
+forbidPattern(privateAuthority, /SELECT\s+pg_advisory_lock\(/, 'Kraken creates a blocking advisory-lock wait queue');
 forbidPattern(privateAuthority, /CREATE\s+SCHEMA\s+IF\s+NOT\s+EXISTS/i, 'Kraken runtime creates schemas');
 forbidPattern(privateAuthority, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS/i, 'Kraken runtime creates nonce tables');
 requirePattern(privateAuthority, /CRYPTO_OKX_FEE_BUCKET_CAPACITY',\s*5,\s*1,\s*5/, 'OKX fee lane cannot exceed five requests per documented window');
@@ -143,7 +147,7 @@ requirePattern(marketFocus, /pairExclusionAllowed:\s*false/, 'economic ranking c
 requirePattern(marketFocus, /executionAuthorityChanged:\s*false/, 'economic ranking cannot grant execution authority');
 
 // Solution 9 — Profit-Ladder/depth sizing remains the one notional authority.
-requirePattern(adaptiveProfit, /Profit Ladder|profit ladder|profitLadder/i, 'adaptive profit operations preserve Profit-Ladder sizing');
+requirePattern(adaptiveProfit, /profit[-_ ]?ladder/i, 'adaptive profit operations preserve Profit-Ladder sizing');
 requirePattern(adaptiveProfit, /netProfitUsd\s*>\s*0|netProfitUsd[^\n]{0,80}positive/i, 'adaptive sizing retains positive-net gate');
 requirePattern(residualReplan, /residual/i, 'partial/residual replanning remains available');
 requirePattern(residualReplan, /netProfitUsd[^\n]{0,120}>\s*0|netProfitUsd[^\n]{0,120}positive/i, 'residual replan requires positive verified economics');
@@ -172,4 +176,4 @@ for (const [name, source] of Object.entries({ db, privateAuthority, coinbasePriv
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds the enhancements list into runtime code`);
 }
 
-console.log('[resource-bps] ten-solution resource/BPS contract, Coinbase/Kraken/OKX resilience, bounded barrier measurement, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
+console.log('[resource-bps] ten-solution resource/BPS contract, Coinbase/Kraken/OKX resilience, bounded barrier measurement, bounded Kraken lock contention, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
