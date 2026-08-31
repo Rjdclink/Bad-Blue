@@ -180,7 +180,10 @@ const getPoolConfig = () => {
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000,
     ssl: sslConfig(),
-    statement_timeout: 30000,
+    // Supavisor transaction mode cannot retain session-level statement_timeout.
+    // Keep the node-postgres client-side timeout everywhere; only session/direct
+    // fallback connections receive the server-side session timeout parameter.
+    ...(ordinaryUsesTransactionPool ? {} : { statement_timeout: 30000 }),
     query_timeout: 30000,
     application_name: isRailway ? 'badblue-railway' : 'badblue',
   } as any;
