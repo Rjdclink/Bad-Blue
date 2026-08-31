@@ -88,6 +88,10 @@ requirePattern(distributedQuota, /const\s+TABLE\s*=\s*'cryptocrawler_resource_le
 requirePattern(distributedQuota, /expires_at\s*<=\s*now\(\)/, 'expired quota slots are atomically reclaimable');
 forbidPattern(distributedQuota, /CREATE\s+(TABLE|SCHEMA)/i, 'distributed quota creates runtime schema');
 requirePattern(evmSigner, /coordinationPool\.connect\(\)/, 'EVM signer uses coordination pool');
+requirePattern(evmSigner, /pg_try_advisory_lock\(hashtext\(\$1\)\)/, 'EVM signer advisory acquisition is non-blocking at PostgreSQL');
+requirePattern(evmSigner, /CRYPTOCRAWL_EVM_SIGNER_LOCK_MAX_WAIT_MS/, 'EVM signer cross-replica contention wait is bounded');
+requirePattern(evmSigner, /distributedLockTimeoutCount/, 'EVM signer lock contention is observable');
+forbidPattern(evmSigner, /SELECT\s+pg_advisory_lock\(/, 'EVM signer creates a blocking advisory-lock wait queue');
 forbidPattern(evmSigner, /\bpool\.connect\(\)/, 'EVM signer consumes ordinary query pool');
 requirePattern(coinbasePrivate, /response\.status\s*===\s*429/, 'Coinbase private authority handles HTTP 429 explicitly');
 requirePattern(coinbasePrivate, /method\s*===\s*'GET'\s*\?\s*RATE_MAX_READ_RETRIES\s*\+\s*1\s*:\s*1/, 'Coinbase retries bounded reads but never automatically retries writes');
@@ -176,4 +180,4 @@ for (const [name, source] of Object.entries({ db, privateAuthority, coinbasePriv
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds the enhancements list into runtime code`);
 }
 
-console.log('[resource-bps] ten-solution resource/BPS contract, Coinbase/Kraken/OKX resilience, bounded barrier measurement, bounded Kraken lock contention, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
+console.log('[resource-bps] ten-solution resource/BPS contract, Coinbase/Kraken/OKX resilience, bounded barrier measurement, bounded Kraken/EVM signer lock contention, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
