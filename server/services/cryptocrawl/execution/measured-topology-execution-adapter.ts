@@ -10,6 +10,7 @@ import { stageManager } from '../governance/stage-management.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 import {
   executePreparedZeroXAtomicRoundTrip,
+  reconcilePendingZeroXAtomicInfrastructure,
   type ZeroXAtomicExecutionResult,
 } from './dex-zerox-atomic-executor.js';
 import type { UnifiedExecutionDecision } from './unified-execution-router.js';
@@ -123,6 +124,28 @@ class MeasuredTopologyExecutionAdapter {
 
   async dispatch(decisions: readonly UnifiedExecutionDecision[]): Promise<MeasuredTopologyDispatchResult[]> {
     if (!this.liveExecutionEnabled() || !stageManager.isMarketOperationsAllowed() || !stageManager.canExecuteTrades()) return [];
+
+    // Discovery can only queue a readiness need. Infrastructure mutation runs here
+    // because this adapter is invoked only beneath the canonical execution scheduler
+    // and owns no timer. At most one readiness item is reconciled per scheduler tick.
+    try {
+      const infrastructure = await reconcilePendingZeroXAtomicInfrastructure(1);
+      if (infrastructure.attempted > 0) {
+        logger.info('[MeasuredTopologyAdapter] Bounded DEX infrastructure readiness reconciliation completed', {
+          component: 'MeasuredTopologyExecutionAdapter',
+          ...infrastructure,
+          swapSubmitted: false,
+          canonicalSchedulerAuthorityPreserved: true,
+        });
+      }
+    } catch (error) {
+      logger.warn('[MeasuredTopologyAdapter] DEX infrastructure readiness reconciliation failed closed', {
+        component: 'MeasuredTopologyExecutionAdapter',
+        error: error instanceof Error ? error.message : String(error),
+        swapSubmitted: false,
+      });
+    }
+
     const candidates = decisions
       .filter(decision => decision.admitted && decision.topology === 'DEX_ATOMIC' && decision.path === 'FLASH_LOAN')
       .filter(decision => !this.inFlight.has(decision.opportunityId) && !this.terminalApplied.has(decision.opportunityId))
@@ -173,6 +196,7 @@ class MeasuredTopologyExecutionAdapter {
       ? realizedNetProfitUsd / notionalUsd * 10_000
       : null;
     const settledAt = Date.now();
+    const terminalSettlementConfirmed = input.result.settlementConfirmed === true;
 
     measuredCandidateRegistry.updateStatus(candidate.opportunityId, economicallySuccessful ? candidate.status : 'blocked', {
       economics: { ...candidate.economics, realizedNetProfitBps },
@@ -181,6 +205,7 @@ class MeasuredTopologyExecutionAdapter {
         : input.result.error || 'Terminal DEX atomic result was not all-in profitable',
       provenance: [
         `dex_atomic:terminal_status:${input.result.status}`,
+        `dex_atomic:settlement_confirmed:${terminalSettlementConfirmed}`,
         ...input.actualGas.provenance,
         `dex_atomic:tx:${input.result.transactionHash}`,
       ],
@@ -206,17 +231,18 @@ class MeasuredTopologyExecutionAdapter {
           ? undefined
           : input.result.error || 'Terminal DEX execution was non-profitable after actual gas',
       settlementStatus: economicallySuccessful ? 'filled' : 'failed',
-      settlementConfirmed: economicallySuccessful,
+      settlementConfirmed: terminalSettlementConfirmed,
       provenance: [
         ...candidate.provenance,
         'dex_atomic:canonical_execution_scheduler_adapter',
         `dex_atomic:terminal_status:${input.result.status}`,
+        `dex_atomic:settlement_confirmed:${terminalSettlementConfirmed}`,
         ...input.actualGas.provenance,
       ],
       settlement: {
         status: economicallySuccessful ? 'filled' : 'failed',
         terminal: true,
-        settlementConfirmed: economicallySuccessful,
+        settlementConfirmed: terminalSettlementConfirmed,
         submittedAt: input.startedAt,
         settledAt,
         venueOrRoute: '0x_allowance_holder->0x_allowance_holder@balancer_v2_flash_loan',
