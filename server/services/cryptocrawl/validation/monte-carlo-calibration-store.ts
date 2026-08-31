@@ -149,6 +149,7 @@ class MonteCarloCalibrationStore {
   private readonly observations = new Map<string, MonteCarloCalibrationObservation>();
   private hydratePromise: Promise<void> | null = null;
   private tableReady: Promise<boolean> | null = null;
+  private persistenceReady = false;
   private readonly maxEntries = Math.max(128, Math.min(50_000, Number(process.env.CRYPTOCRAWL_MC_CALIBRATION_MAX || 10_000)));
 
   private async ensureTable(): Promise<boolean> {
@@ -156,23 +157,20 @@ class MonteCarloCalibrationStore {
     if (this.tableReady) return this.tableReady;
     this.tableReady = (async () => {
       try {
-        await pool.query(`
-          CREATE TABLE IF NOT EXISTS ${TABLE} (
-            event_id text PRIMARY KEY,
-            observed_at timestamptz NOT NULL,
-            topology text NOT NULL,
-            venue_pair text NOT NULL,
-            symbol text NOT NULL,
-            chain text NOT NULL,
-            strategy text NOT NULL,
-            size_bucket text NOT NULL,
-            payload jsonb NOT NULL,
-            model_version text NOT NULL
-          )
-        `);
-        await pool.query(`CREATE INDEX IF NOT EXISTS ${TABLE}_segment_idx ON ${TABLE} (topology, venue_pair, symbol, chain, strategy, size_bucket, observed_at DESC)`);
-        return true;
+        // Migration 023 owns this schema. Runtime calibration must never acquire
+        // DDL locks or create indexes on the hot path; verify the migration-owned
+        // relation once, then use ordinary DML through the shared admission lane.
+        const result = await pool.query('SELECT to_regclass($1::text) AS relation', [`public.${TABLE}`]);
+        this.persistenceReady = typeof result.rows?.[0]?.relation === 'string';
+        if (!this.persistenceReady) {
+          logger.warn('[MonteCarloCalibration] Migration-owned persistence table unavailable; retaining measured in-memory calibration', {
+            component: 'MonteCarloCalibrationStore',
+            table: TABLE,
+          });
+        }
+        return this.persistenceReady;
       } catch (error) {
+        this.persistenceReady = false;
         logger.warn('[MonteCarloCalibration] Persistence unavailable; retaining measured in-memory calibration', {
           component: 'MonteCarloCalibrationStore',
           error: error instanceof Error ? error.message : String(error),
@@ -285,7 +283,7 @@ class MonteCarloCalibrationStore {
   }
 
   getMetrics(): { samples: number; modelVersion: string; persisted: boolean } {
-    return { samples: this.observations.size, modelVersion: MODEL_VERSION, persisted: isDatabaseConfigured };
+    return { samples: this.observations.size, modelVersion: MODEL_VERSION, persisted: this.persistenceReady };
   }
 
   private prune(): void {
