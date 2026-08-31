@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { evaluateAutomaticStageProgression } from './automatic-stage-progression.js';
+import { hydrateStageOneAdvancementEvidence } from './stage-one-evidence-hydrator.js';
 import { stageManager, type AutomaticAdvancementEvidence, type AutomaticAdvancementResult } from './stage-management.js';
 
 const appliedValidationEvidence = new Set<string>();
@@ -27,7 +28,7 @@ function stageOneValidationCandidate(candidate: MeasuredCandidate, now: number):
   if (candidate.missingInformation.length > 0) return false;
   if (candidate.expiresAt <= now) return false;
   if (now - candidate.updatedAt > validationWindowMs()) return false;
-  if (candidate.topology !== 'CEX_CEX' && candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return false;
+  if (candidate.topology !== 'CEX_CEX' && candidate.topology !== 'MAKER_CEX' && candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return false;
   if (candidate.depth.status === 'unavailable') return false;
   if (candidate.rawQuotes.length === 0) return false;
   if (candidate.rawQuotes.some(quote => quote.executable === false)) return false;
@@ -141,6 +142,19 @@ async function cycle(): Promise<void> {
   }
   const work = (async (): Promise<void> => {
     if (stageManager.getState().currentStage !== 1) return;
+
+    // Missing evidence remains a blocker, but Stage 1 now actively asks the
+    // canonical proof producers for fresh market/inventory evidence before it
+    // decides that information is absent. Single-flight guards in both producers
+    // prevent this 750ms loop from creating duplicate network work.
+    await hydrateStageOneAdvancementEvidence().catch(error => {
+      logger.debug('[StageOneBootstrap] Proactive evidence hydration remained incomplete', {
+        component: 'StageOneBootstrapAuthority',
+        error: error instanceof Error ? error.message : String(error),
+        missingEvidenceBypass: false,
+      });
+    });
+
     const recorded = await recordFreshStageOneValidations();
     if (recorded > 0 || stageManager.getState().proofMetrics.meetsAdvancementCriteria) {
       await attemptStageOneBootstrap();
@@ -168,9 +182,10 @@ export function ensureStageOneBootstrapAuthority(): void {
   logger.info('[StageOneBootstrap] Current-evidence foundation authority installed', {
     component: 'StageOneBootstrapAuthority',
     intervalMs,
-    validationSource: 'fresh_eligible_executable_candidates',
-    supportedBootstrapTopologies: ['CEX_CEX', 'ZERO_CAPITAL_ATOMIC'],
+    validationSource: 'fresh_eligible_executable_candidates_after_proactive_hydration',
+    supportedBootstrapTopologies: ['CEX_CEX', 'MAKER_CEX', 'ZERO_CAPITAL_ATOMIC'],
     priorTerminalHistoryRequired: false,
+    missingCriticalEvidenceMayAdvance: false,
     tierZeroAuthority: 'stage_manager_live_validation_proof',
     realizedProfitCriteriaBeginAtStage2: true,
     pauseKillRiskMarketGatesPreserved: true,
