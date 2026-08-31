@@ -61,11 +61,11 @@ function finiteIntegerEnv(name: string, fallback: number, min: number, max: numb
 }
 
 /**
- * Railway performs overlapping rolling deploys. Supabase session mode exposes a
- * finite per-user client ceiling, so the incoming replica temporarily leaves
- * enough headroom for the outgoing replica and control-plane sessions. Once the
- * overlap window has passed, restore the canonical steady-state pool capacity.
- * This mutates the one shared Pool; no duplicate database authority is created.
+ * Railway rolling deploys briefly run two application replicas. Budget the
+ * existing shared application Pool together with the dedicated CryptoCrawler
+ * session-coordination pools and an explicit control-plane reserve. This keeps
+ * the existing single application-pool authority while preventing the overlap
+ * window from consuming every Supavisor session slot.
  */
 function applyRollingDeploymentPoolHeadroom(): void {
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_ID) return;
@@ -73,10 +73,32 @@ function applyRollingDeploymentPoolHeadroom(): void {
   if (!options) return;
 
   const existingSteadyMax = Math.max(2, Math.trunc(Number(options.max) || 8));
-  const steadyMax = finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', existingSteadyMax, 2, 12);
+  const sessionPoolLimit = finiteIntegerEnv('BADBLUE_DATABASE_SESSION_POOL_LIMIT', 15, 8, 200);
+  const reservedSessions = finiteIntegerEnv('BADBLUE_DATABASE_SESSION_RESERVE', 2, 1, Math.max(1, sessionPoolLimit - 4));
+  const coordinationPerReplica = finiteIntegerEnv('CRYPTOCRAWL_COORDINATION_POOL_MAX', 2, 1, 4);
+
+  // A default steady pool of six on a 15-session pool leaves enough capacity for
+  // one rolling replica, two coordination lanes per replica, and two spare slots.
+  const safeSteadyDefault = Math.max(2, Math.min(
+    existingSteadyMax,
+    Math.floor((sessionPoolLimit - reservedSessions) / 2),
+  ));
+  const maximumSteadyWithinBudget = Math.max(
+    2,
+    sessionPoolLimit - reservedSessions - (2 * coordinationPerReplica) - 1,
+  );
+  const requestedSteady = finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', safeSteadyDefault, 2, 12);
+  const steadyMax = Math.min(requestedSteady, maximumSteadyWithinBudget);
+
+  const remainingForIncomingReplica = Math.max(
+    1,
+    sessionPoolLimit - reservedSessions - steadyMax - (2 * coordinationPerReplica),
+  );
+  const safeRolloutDefault = Math.max(1, Math.min(3, remainingForIncomingReplica));
   const rolloutMax = Math.min(
     steadyMax,
-    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', 5, 2, 6),
+    remainingForIncomingReplica,
+    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', safeRolloutDefault, 1, 6),
   );
   const rolloutWindowMs = finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS', 90_000, 30_000, 300_000);
   const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 1;
@@ -93,7 +115,7 @@ function applyRollingDeploymentPoolHeadroom(): void {
   }, rolloutWindowMs);
   restore.unref?.();
 
-  console.log(`[DATABASE] Rolling-deploy pool headroom active (rollout max=${rolloutMax}, steady max=${steadyMax}, windowMs=${rolloutWindowMs})`);
+  console.log(`[DATABASE] Rolling-deploy pool headroom active (rollout max=${rolloutMax}, steady max=${steadyMax}, sessionLimit=${sessionPoolLimit}, reserved=${reservedSessions}, coordinationPerReplica=${coordinationPerReplica}, windowMs=${rolloutWindowMs})`);
 }
 
 applyRollingDeploymentPoolHeadroom();
@@ -109,7 +131,7 @@ export async function runAllSchemaMigrations(options?: {
   try {
     coordinator = await pool.connect();
     const lockResult = await coordinator.query(
-      'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired',
+      'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
       [STARTUP_MIGRATION_LOCK],
     );
     ownsMigrationLock = lockResult.rows?.[0]?.acquired === true;
@@ -160,7 +182,7 @@ export async function runAllSchemaMigrations(options?: {
     if (coordinator) {
       if (ownsMigrationLock) {
         try {
-          await coordinator.query('SELECT pg_advisory_unlock(hashtext($1))', [STARTUP_MIGRATION_LOCK]);
+          await coordinator.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [STARTUP_MIGRATION_LOCK]);
         } catch {
           // Session release also clears the advisory lock.
         }
