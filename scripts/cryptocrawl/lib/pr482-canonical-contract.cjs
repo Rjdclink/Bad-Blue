@@ -26,6 +26,8 @@ function verifyCexExecutionContract() {
   const residualReplan = read('server/services/cryptocrawl/discovery/cex-residual-replan.ts');
   const capability = read('server/services/cryptocrawl/discovery/venue-capability-registry.ts');
   const fourMode = read('server/services/cryptocrawl/intelligence/cex-four-mode-matrix.ts');
+  const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
+  const arbVerifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
   const maker = read('server/services/cryptocrawl/execution/stablecoin-maker-strategy.ts');
   const makerDiscovery = read('server/services/cryptocrawl/discovery/maker-opportunity-generator.ts');
   const makerAdapters = read('server/services/cryptocrawl/execution/post-only-maker-adapters.ts');
@@ -34,6 +36,14 @@ function verifyCexExecutionContract() {
   const spotProducts = read('server/services/cryptocrawl/execution/cex-spot-product-policy.ts');
   const submitGuard = read('server/services/cryptocrawl/execution/cex-submit-time-product-guard.ts');
   const coinbaseMarket = read('server/services/cryptocrawl/intelligence/coinbase-advanced-market-data.ts');
+  const timingGuard = read('server/services/cryptocrawl/integration/cross-venue-timing-guard-wiring.ts');
+  const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+  const inventoryReadiness = read('server/services/cryptocrawl/integration/cex-inventory-readiness-wiring.ts');
+  const gasFunding = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
+  const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
+  const zeroResource = read('server/services/cryptocrawl/integration/zero-capital-resource-wiring.ts');
+  const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
+  const graphlessScout = read('server/services/cryptocrawl/discovery/graphless-dex-scout.ts');
 
   // Parent -> children -> canonical terminal settlement.
   requirePattern(centralized, /\bexecuteHyperHybridCexPlan\s*\(/, 'centralized parent execution delegates to hyper-hybrid execution');
@@ -74,6 +84,10 @@ function verifyCexExecutionContract() {
   requirePattern(makerAdapters, /venue:\s*ExecutableCexVenue/, 'post-only maker adapter is shared across executable venues');
   requirePattern(makerAdapters, /limit_limit_gtc/, 'Coinbase post-only maker translation is installed');
   forbidPattern(fourMode, /buyVenue:\s*'kraken'\s*\|\s*'okx'|sellVenue:\s*'kraken'\s*\|\s*'okx'/, 'four-mode matrix narrowing strategy authority to Kraken/OKX');
+  requirePattern(timingGuard, /supportedModes:\s*\['TT',\s*'MT',\s*'TM',\s*'MM'\]/, 'cross-venue freshness timing covers all four CEX execution modes');
+  requirePattern(timingGuard, /makerExecution/, 'MM timing guard recognizes canonical maker execution metadata');
+  requirePattern(canonicalRuntime, /coinbaseMakerExecutionAuthority:\s*true/, 'runtime telemetry reflects actual Coinbase post-only maker authority');
+  forbidPattern(canonicalRuntime, /kraken_okx_post_only/, 'runtime telemetry narrowing maker execution to Kraken/OKX');
 
   // Universal product representation must never fabricate USD-denominated economics.
   requirePattern(maker, /USD_NORMALIZED_QUOTES/, 'maker planning has an explicit USD-normalization boundary');
@@ -83,17 +97,51 @@ function verifyCexExecutionContract() {
   requirePattern(positiveCapture, /hardMaxCanaryUsd:\s*makerCanary\.hardMaxUsd/, 'maker status reports the real tighten-only ladder-bounded hard maximum');
   forbidPattern(positiveCapture, /hardMaxCanaryUsd:\s*finiteBoundedEnv\([^\n]*1_000_000/, 'legacy $1M telemetry presented as maker authority');
 
-  // One product identity authority per venue family; submit guard may validate but not re-parse.
+  // One product identity authority per venue family. Directory misses trigger a
+  // forced live catalog hydration before a short authoritative negative cache.
   requirePattern(spotProducts, /getSpotProductConstraints[\s\S]*forceFresh\s*=\s*false/, 'Kraken/OKX product authority supports forced-fresh reads');
+  requirePattern(spotProducts, /fetchKrakenSnapshot\(true\)/, 'Kraken directory miss triggers authoritative live catalog refresh');
+  requirePattern(spotProducts, /fetchOkxSnapshot\(true\)/, 'OKX directory miss triggers authoritative live catalog refresh');
+  requirePattern(spotProducts, /NEGATIVE_TTL_MS/, 'unsupported products use bounded negative caching rather than permanent local absence');
+  requirePattern(spotProducts, /row\.base,\s*row\.quote/, 'Kraken canonical product identity consumes live base/quote fields');
+  requirePattern(spotProducts, /raw\.baseCcy,\s*raw\.quoteCcy/, 'OKX canonical product identity consumes live base/quote fields');
   requirePattern(submitGuard, /getSpotProductConstraints\(venue,\s*symbol,\s*true\)/, 'submit-time Kraken/OKX drift guard force-refreshes canonical product authority');
   forbidPattern(submitGuard, /api\.kraken\.com|public\/instruments|match\(\/\^\(\[A-Z0-9\]/, 'submit-time guard implementing a second product directory/parser');
   requirePattern(coinbaseMarket, /resolveCoinbaseAdvancedProductId\s*\(/, 'Coinbase product ids resolve from the live product directory');
   forbidPattern(coinbaseMarket, /\(USDT\|USDC\|USD\)/, 'Coinbase live product authority using a stablecoin quote whitelist');
   forbidPattern(spotProducts, /\(USDT\|USDC\|USD\)/, 'Kraken/OKX live product authority using a stablecoin quote whitelist');
+  requirePattern(feeResolver, /getSpotProductConstraints/, 'authenticated fee routing consumes canonical live product authority');
+  forbidPattern(feeResolver, /const\s+quotes\s*=\s*\['USDT'|\(USDT\|USDC\|USD\)/, 'fee resolver carrying an independent quote-currency product parser');
+  requirePattern(arbVerifier, /getSpotProductConstraints\('kraken',\s*symbol\)/, 'Kraken executable REST depth resolves exact live exchange symbol');
+  requirePattern(arbVerifier, /getSpotProductConstraints\('okx',\s*symbol\)/, 'OKX executable REST depth resolves exact regional live exchange symbol');
+  forbidPattern(arbVerifier, /function\s+okxInstId|\(USDT\|USDC\|USD\)/, 'arbitrage verifier reintroducing a quote-currency instrument parser');
+
+  // Authenticated inventory rows with zero balances cannot masquerade as funded
+  // assets or alter readiness pressure.
+  requirePattern(inventoryReadiness, /positiveBalanceAssets/, 'inventory readiness distinguishes funded assets from zero-balance rows');
+  requirePattern(inventoryReadiness, /inventoryAssetCount:\s*metrics\.positiveBalanceAssetCount/, 'readiness pressure consumes funded asset count');
+  requirePattern(inventoryReadiness, /syntheticBalancesAllowed:\s*false/, 'inventory readiness remains authenticated and fail closed');
+
+  // Sponsored/user-op gas is an execution property, not a synthetic discount.
+  // The live funding decision is bound before route ranking; native execution is
+  // admitted only because receipt gas is terminally converted and subtracted.
+  requirePattern(gasFunding, /mode:\s*'native'/, 'sufficient native reserve can use terminal-accounted native gas execution');
+  requirePattern(gasFunding, /actual receipt gas is terminally converted and subtracted/, 'native funding explicitly depends on terminal gas accounting');
+  requirePattern(canonicalRuntime, /ensureZeroCapitalRealizedProfitWiring\(\);[\s\S]{0,240}ensureDynamicRpcProviderWiring\(\)[\s\S]{0,160}startCanonicalZeroCapitalRuntime/, 'realized-profit wiring is installed before zero-capital lifecycle start');
+  requirePattern(coreRuntime, /ensureZeroCapitalRealizedProfitWiring\(\);/, 'core lifecycle reasserts the same idempotent realized-profit authority synchronously');
+  forbidPattern(coreRuntime, /scheduleZeroCapitalProfitWiring|zeroCapitalRealizedProfitPolicyScheduled/, 'deferred duplicate realized-profit authority scheduling');
+  requirePattern(zeroResource, /discoverDynamicZeroCapitalQuotes\(chain,\s*provider,\s*funding\.mode\)/, 'dynamic quote economics consume the live gas-funding decision');
+  requirePattern(dynamicRoutes, /fundingMode\s*===\s*'sponsored'/, 'dynamic route gas compression recognizes verified sponsored funding');
+  requirePattern(dynamicRoutes, /gasCostAuthority:\s*'verified_sponsored_user_cost_zero'/, 'sponsored zero-user-gas economics are explicitly provenance-bound');
+  requirePattern(dynamicRoutes, /recoveryQuoteRoutes\s*\(/, 'zero-measured-quote funnel has a bounded recovery quote lane');
+  requirePattern(dynamicRoutes, /minNetProfitBps:\s*0/, 'dynamic route compatibility field has no artificial positive BPS floor');
+  requirePattern(graphlessScout, /archiveRestrictedKeys/, 'public RPC archive capability is learned and cached');
+  requirePattern(graphlessScout, /recentFilter\s*\(/, 'archive-restricted RPC discovery falls back to bounded recent logs');
 
   return {
-    centralized, hyperHybrid, partialAccounting, residualReplan, capability, fourMode,
+    centralized, hyperHybrid, partialAccounting, residualReplan, capability, fourMode, feeResolver, arbVerifier,
     maker, makerDiscovery, makerAdapters, hybrid, positiveCapture, spotProducts, submitGuard, coinbaseMarket,
+    timingGuard, canonicalRuntime, inventoryReadiness, gasFunding, dynamicRoutes, zeroResource, coreRuntime, graphlessScout,
   };
 }
 
