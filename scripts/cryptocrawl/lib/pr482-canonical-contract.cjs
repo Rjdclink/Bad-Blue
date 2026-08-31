@@ -43,6 +43,15 @@ function verifyCexExecutionContract() {
   requirePattern(hyperHybrid, /Promise\.all\s*\(\s*admittedChildren\.map/s, 'admitted child batch executes concurrently');
   forbidPattern(hyperHybrid, /for\s*\(\s*let\s+offset[\s\S]{0,240}plannedChildren\.length[\s\S]{0,160}concurrency/, 'automatic sequential child waves');
 
+  // Order maxima constrain child orders, never the full strategy parent. The
+  // shared revalidator must preserve TT, MT, TM and MM execution semantics.
+  requirePattern(hyperHybrid, /makerExecution\?:[\s\S]{0,180}buyMode\?:\s*PlannedLegMode[\s\S]{0,180}sellMode\?:\s*PlannedLegMode/, 'split revalidation recognizes maker/maker execution metadata');
+  requirePattern(hyperHybrid, /shape\.hybridExecution\s*\?\?\s*shape\.makerExecution/, 'split revalidation resolves hybrid or maker execution modes');
+  requirePattern(hyperHybrid, /'GTC_POST_ONLY'/, 'split maker children report post-only GTC order semantics');
+  requirePattern(hyperHybrid, /'STRATEGY_SPECIFIC'/, 'strategy-specific hybrid children report delegated order semantics truthfully');
+  requirePattern(maker, /const\s+parentCeilingUsd\s*=\s*canary\.amount/, 'MM parent keeps the measured canary/ladder strategy ceiling');
+  forbidPattern(maker, /maxOrderNotionalUsd|singleOrderEnvelopeUsd|directOrderCeilingUsd/, 'MM strategy treating a venue single-order maximum as the parent trade ceiling');
+
   // Partial success is durable money truth but cannot create extra learning/rank samples.
   requirePattern(partialAccounting, /if\s*\(\s*input\.parentSucceeded\s*\)\s*return\s*;/, 'successful full parents are not double-counted by partial accounting');
   requirePattern(partialAccounting, /retainedProfitLedger\.recordTerminalSettlement\s*\(/, 'profitable terminal child subset reaches durable treasury accounting');
