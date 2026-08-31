@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { isDatabaseConfigured, pool } from '../../../db.js';
-import logger from '../../../logger.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  RESOURCE_LEASE_TABLE as TABLE,
+  claimResourceSlot,
+  ensureResourceLeaseAuthority,
+} from './resource-lease-authority.js';
 
-const TABLE = 'cryptocrawler_resource_leases';
-const CLAIM_FUNCTION = 'private.cryptocrawler_claim_resource_slot';
 const ownerId = process.env.RAILWAY_REPLICA_ID?.trim()
   || process.env.HOSTNAME?.trim()
   || `process-${process.pid}`;
@@ -18,9 +20,6 @@ interface QuotaState {
 }
 
 const states = new Map<string, QuotaState>();
-let tableProbeInFlight: Promise<boolean> | null = null;
-let tableReadyUntil = 0;
-let tableReadyRetryAfter = 0;
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
@@ -36,67 +35,17 @@ function stateFor(namespace: string): QuotaState {
   return created;
 }
 
-function highPriorityQuery(text: string, values: unknown[] = []) {
-  return withCryptaraSupabasePriority('high', () => pool.query(text, values));
-}
-
 function quotaRetryDelayMs(baseMs: number, remainingMs: number): number {
   const boundedBase = Math.max(25, Math.min(baseMs, remainingMs));
-  // Jitter only upward from the database-derived availability estimate. This
-  // desynchronizes replicas without waking early and creating extra quota probes.
   const extra = Math.floor(Math.random() * Math.max(1, Math.ceil(boundedBase * 0.25) + 1));
   return Math.max(1, Math.min(remainingMs, boundedBase + extra));
 }
 
-async function ensureLeaseTable(): Promise<boolean> {
-  if (!isDatabaseConfigured) return false;
-  const now = Date.now();
-  if (tableReadyUntil > now) return true;
-  if (now < tableReadyRetryAfter) return false;
-  if (tableProbeInFlight) return tableProbeInFlight;
-
-  const retryMs = boundedInt(process.env.CRYPTOCRAWL_API_QUOTA_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
-  const readyTtlMs = boundedInt(process.env.CRYPTOCRAWL_API_QUOTA_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
-  const probe = highPriorityQuery(
-    `SELECT
-       to_regclass('public.${TABLE}') IS NOT NULL AS table_ready,
-       to_regprocedure('private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)') IS NOT NULL AS claim_function_ready`,
-  )
-    .then(result => {
-      const ready = result.rows?.[0]?.table_ready === true && result.rows?.[0]?.claim_function_ready === true;
-      if (ready) {
-        tableReadyUntil = Date.now() + readyTtlMs;
-        tableReadyRetryAfter = 0;
-      } else {
-        tableReadyUntil = 0;
-        tableReadyRetryAfter = Date.now() + retryMs;
-      }
-      return ready;
-    })
-    .catch(error => {
-      tableReadyUntil = 0;
-      tableReadyRetryAfter = Date.now() + retryMs;
-      logger.warn('[DistributedApiQuota] Lease authority availability check failed', {
-        component: 'DistributedApiQuota',
-        retryAfterMs: retryMs,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    })
-    .finally(() => {
-      if (tableProbeInFlight === probe) tableProbeInFlight = null;
-    });
-
-  tableProbeInFlight = probe;
-  return probe;
-}
-
 /**
  * Claims one cluster-wide request slot for a sliding-window-like API quota using
- * the existing migration-owned resource-lease table. Slots are intentionally not
- * released early: each claim remains occupied for windowMs, providing a
- * conservative upper bound across Railway replicas without creating another
- * authority or schema.
+ * the existing migration-owned resource-lease table. All lease users share one
+ * schema/function readiness cache, so quota admission cannot duplicate the same
+ * Supabase readiness probe already performed by CEX or zero-capital execution.
  */
 export async function acquireDistributedApiQuota(input: {
   namespace: string;
@@ -113,15 +62,13 @@ export async function acquireDistributedApiQuota(input: {
   const maxWaitMs = boundedInt(input.maxWaitMs, Math.max(windowMs * 3, 5_000), windowMs, 300_000);
   const state = stateFor(namespace);
 
-  if (!await ensureLeaseTable()) {
+  if (!await ensureResourceLeaseAuthority('high')) {
     state.failures += 1;
-    throw new Error(`Distributed API quota unavailable: migration-owned lease authority is missing or unreachable`);
+    throw new Error('Distributed API quota unavailable: migration-owned lease authority is missing or unreachable');
   }
 
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
-    // API-quota ownership is execution-facing admission, so it outranks optional
-    // persistence/observability while still sharing the one ordinary pool.
     const client = await withCryptaraSupabasePriority('high', () => pool.connect());
     let claimed = false;
     let waitMs = Math.max(25, Math.ceil(windowMs / capacity));
@@ -129,17 +76,18 @@ export async function acquireDistributedApiQuota(input: {
       await client.query('BEGIN');
       const leaseId = randomUUID();
       const expiresAt = Date.now() + windowMs;
-      const startSlot = Math.floor(Math.random() * capacity);
       const prefix = `api-quota:${namespace}`;
 
-      // PostgreSQL scans the same randomized slot order server-side, preserving
-      // the atomic collision rule while reducing up to `capacity` network calls
-      // to one database round trip.
-      const claim = await client.query(
-        `SELECT ${CLAIM_FUNCTION}($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) AS resource_key`,
-        [prefix, capacity, startSlot, leaseId, ownerId, `api-quota:${namespace}`, expiresAt],
-      );
-      claimed = Boolean(claim.rows?.[0]?.resource_key);
+      const resourceKey = await claimResourceSlot(client, {
+        prefix,
+        capacity,
+        startSlot: Math.floor(Math.random() * capacity),
+        leaseId,
+        ownerId,
+        opportunityId: `api-quota:${namespace}`,
+        expiresAt,
+      });
+      claimed = resourceKey !== null;
 
       if (claimed) {
         await client.query('COMMIT');
