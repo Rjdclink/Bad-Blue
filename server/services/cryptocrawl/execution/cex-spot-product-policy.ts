@@ -242,8 +242,9 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
 function updateSnapshotConstraint(venue: ConstrainedSpotVenue, constraint: SpotProductConstraints): void {
   const snapshot = venue === 'kraken' ? krakenSnapshot : okxSnapshot;
   if (!snapshot) return;
+  // Refresh only this product. Never extend the full-catalog TTL because one
+  // child refreshed; unrelated products must still expire on their original TTL.
   snapshot.values.set(constraint.symbol, constraint);
-  snapshot.expiresAt = Math.max(snapshot.expiresAt, Date.now() + TTL_MS);
 }
 
 async function fetchTargetedFreshConstraint(venue: ConstrainedSpotVenue, current: SpotProductConstraints): Promise<SpotProductConstraints> {
