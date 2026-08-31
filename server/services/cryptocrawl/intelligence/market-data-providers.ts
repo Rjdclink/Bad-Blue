@@ -40,8 +40,17 @@ export interface DexQuoteObservation {
   estimatedGas?: string;
   gasPrice?: string;
   fees?: Record<string, unknown>;
+  /** Legacy/compatibility allowance field when emitted by 0x. */
   allowanceTarget?: string;
+  /** v2 authoritative allowance spender from issues.allowance.spender. */
+  allowanceSpender?: string;
   requiresAllowance?: boolean;
+  simulationIncomplete?: boolean;
+  balanceIssue?: {
+    token?: string;
+    actual?: string;
+    expected?: string;
+  };
   transaction?: {
     to?: string;
     data?: string;
@@ -214,6 +223,12 @@ class MarketDataProviders {
         toToken: typeof fill?.to === 'string' ? fill.to : undefined,
       })).filter((fill: { source?: string; proportionBps?: number; fromToken?: string; toToken?: string }) => fill.source || fill.proportionBps !== undefined || fill.fromToken || fill.toToken) : undefined;
       const priceImpact = Number(payload?.priceImpact);
+      const allowanceIssue = payload?.issues?.allowance && typeof payload.issues.allowance === 'object'
+        ? payload.issues.allowance
+        : null;
+      const balanceIssue = payload?.issues?.balance && typeof payload.issues.balance === 'object'
+        ? payload.issues.balance
+        : null;
       const observation: DexQuoteObservation | null = Number.isFinite(buyAmount) && buyAmount > 0 ? {
         chainId: request.chainId,
         sellToken: request.sellToken,
@@ -231,7 +246,14 @@ class MarketDataProviders {
         gasPrice: typeof payload?.gasPrice === 'string' ? payload.gasPrice : undefined,
         fees: payload?.fees && typeof payload.fees === 'object' ? payload.fees : undefined,
         allowanceTarget: typeof payload?.allowanceTarget === 'string' ? payload.allowanceTarget : undefined,
-        requiresAllowance: payload?.issues?.allowance !== undefined ? Boolean(payload.issues.allowance) : undefined,
+        allowanceSpender: typeof allowanceIssue?.spender === 'string' ? allowanceIssue.spender : undefined,
+        requiresAllowance: allowanceIssue !== null,
+        simulationIncomplete: payload?.issues?.simulationIncomplete === true,
+        balanceIssue: balanceIssue ? {
+          token: typeof balanceIssue.token === 'string' ? balanceIssue.token : undefined,
+          actual: typeof balanceIssue.actual === 'string' ? balanceIssue.actual : undefined,
+          expected: typeof balanceIssue.expected === 'string' ? balanceIssue.expected : undefined,
+        } : undefined,
         transaction: policy.endpoint === 'quote' && payload?.transaction && typeof payload.transaction === 'object' ? {
           to: typeof payload.transaction.to === 'string' ? payload.transaction.to : undefined,
           data: typeof payload.transaction.data === 'string' ? payload.transaction.data : undefined,
