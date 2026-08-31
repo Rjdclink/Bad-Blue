@@ -7,6 +7,7 @@ import {
   pool,
 } from '../../../db.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 
 export interface ExecutionResourceLease {
   leaseId: string;
@@ -36,6 +37,14 @@ function boundedInt(value: unknown, fallback: number, minimum: number, maximum: 
   const parsed = Number(value);
   const normalized = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
   return Math.max(minimum, Math.min(maximum, normalized));
+}
+
+function highPriorityQuery(text: string, values: unknown[] = []) {
+  return withCryptaraSupabasePriority('high', () => pool.query(text, values));
+}
+
+function lowPriorityQuery(text: string, values: unknown[] = []) {
+  return withCryptaraSupabasePriority('low', () => pool.query(text, values));
 }
 
 function configuredVenueCapacity(venue: string): number {
@@ -94,7 +103,7 @@ class ExecutionResourceScheduler {
 
     const retryMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
     const readyTtlMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
-    const probe = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
+    const probe = highPriorityQuery(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
       .then(result => {
         const ready = result.rows?.[0]?.ready === true;
         if (ready) {
@@ -135,7 +144,8 @@ class ExecutionResourceScheduler {
     const intervalMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_LEASE_CLEANUP_MS, 60_000, 10_000, 600_000);
     if (Date.now() - this.lastCleanupAt < intervalMs) return;
     this.lastCleanupAt = Date.now();
-    this.cleanupInFlight = pool.query(`DELETE FROM ${TABLE} WHERE expires_at <= now()`)
+    // Cleanup is useful but never competes with live resource acquisition.
+    this.cleanupInFlight = lowPriorityQuery(`DELETE FROM ${TABLE} WHERE expires_at <= now()`)
       .then(() => undefined)
       .catch(error => {
         logger.warn('[ResourceScheduler] Background expired-lease cleanup deferred', {
@@ -229,7 +239,9 @@ class ExecutionResourceScheduler {
     if (!isDatabaseConfigured) return [];
     if (!await this.ensureTable()) return null;
 
-    const client = await pool.connect();
+    // Execution resource ownership is latency-sensitive and must outrank optional
+    // persistence, while still sharing Cryptara's single adaptive permit budget.
+    const client = await withCryptaraSupabasePriority('high', () => pool.connect());
     const acquired: string[] = [];
     try {
       await client.query('BEGIN');
@@ -336,13 +348,13 @@ class ExecutionResourceScheduler {
         try {
           if (isDatabaseConfigured && distributedResources.length > 0) {
             if (retainOpportunityUntilExpiry) {
-              await pool.query(
+              await highPriorityQuery(
                 `DELETE FROM ${TABLE}
                  WHERE lease_id = $1 AND owner_id = $2 AND resource_key <> $3`,
                 [leaseId, this.ownerId, `cex:opportunity:${opportunityId}`],
               );
             } else {
-              await pool.query(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]);
+              await highPriorityQuery(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]);
             }
           }
         } catch (error) {
