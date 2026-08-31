@@ -30,6 +30,8 @@ type AdmissionPermit = {
   release: (error?: unknown, heldMs?: number) => void;
 };
 
+type RecoveryAdvisor = () => number;
+
 export interface CryptaraSupabaseAdmissionSnapshot {
   installed: boolean;
   governor: 'cryptara';
@@ -70,9 +72,21 @@ const MIN_COOLDOWN_MS = Math.max(250, Math.min(10_000, Number(process.env.CRYPTA
 const MAX_COOLDOWN_MS = Math.max(MIN_COOLDOWN_MS, Math.min(30_000, Number(process.env.CRYPTARA_DB_MAX_COOLDOWN_MS || 6_000)));
 const HEALTHY_SUCCESSES_TO_GROW = Math.max(2, Math.min(32, Number(process.env.CRYPTARA_DB_HEALTHY_SUCCESSES_TO_GROW || 3)));
 
+let recoveryAdvisor: RecoveryAdvisor | null = null;
+
 function finiteNonNegative(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function boundedRecoveryAcceleration(): number {
+  if (!recoveryAdvisor) return 1;
+  try {
+    const value = Number(recoveryAdvisor());
+    return Number.isFinite(value) ? Math.max(1, Math.min(1.5, value)) : 1;
+  } catch {
+    return 1;
+  }
 }
 
 function jitterMs(minMs: number, maxMs: number): number {
@@ -218,16 +232,18 @@ class CryptaraSupabaseResourceGovernor {
     }
 
     this.healthySuccesses += 1;
-    if (this.healthySuccesses < HEALTHY_SUCCESSES_TO_GROW || this.targetConcurrency >= ceiling) return;
+    const recoveryAcceleration = boundedRecoveryAcceleration();
+    const healthySuccessThreshold = Math.max(2, Math.ceil(HEALTHY_SUCCESSES_TO_GROW / recoveryAcceleration));
+    if (this.healthySuccesses < healthySuccessThreshold || this.targetConcurrency >= ceiling) return;
 
     const previous = this.targetConcurrency;
-    // Additive recovery deliberately grows one permit at a time. This preserves
-    // known-good parallelism while preventing a recovering replica from opening
-    // a burst of fresh Supavisor clients at once.
+    // Additive recovery always grows exactly one permit. Comp/Antenna intelligence
+    // may only shorten the already-healthy evidence window (bounded 1..1.5x); it
+    // cannot bypass DB pressure, cooldown, pool ceiling, or multiplicative backoff.
     this.targetConcurrency = Math.min(ceiling, this.targetConcurrency + 1);
     this.healthySuccesses = 0;
     if (previous !== this.targetConcurrency) {
-      console.log(`[CRYPTARA][SUPABASE-WORKER] healthy admission; concurrency ${previous}->${this.targetConcurrency}; pool=${stats.total}/${stats.max}`);
+      console.log(`[CRYPTARA][SUPABASE-WORKER] healthy admission; concurrency ${previous}->${this.targetConcurrency}; pool=${stats.total}/${stats.max}; evidence=${healthySuccessThreshold}; advisory=${recoveryAcceleration.toFixed(2)}x`);
     }
     this.lastMode = this.mode(now);
   }
@@ -455,6 +471,15 @@ export function withCryptaraSupabasePriority<T>(
   task: () => T,
 ): T {
   return priorityContext.run(priority, task);
+}
+
+/**
+ * Install or remove advisory recovery acceleration. The callback cannot set a
+ * concurrency target; its numeric output is clamped to 1..1.5 and is consulted
+ * only after the worker has already classified an admission as healthy.
+ */
+export function setCryptaraSupabaseRecoveryAdvisor(advisor: RecoveryAdvisor | null): void {
+  recoveryAdvisor = advisor;
 }
 
 export function getCryptaraSupabaseAdmissionSnapshot(): CryptaraSupabaseAdmissionSnapshot {
