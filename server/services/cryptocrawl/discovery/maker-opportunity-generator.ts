@@ -5,11 +5,16 @@ import {
   primeCexFeeEvidenceForVenueSymbols,
   getCachedCexFeeEvidence,
   type CexFeeEvidence,
+  type CexFeeVenue,
 } from '../intelligence/cex-fee-resolver.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
+import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
 import { observeMakerPaperProof } from '../intelligence/maker-microstructure-proof.js';
 import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
+import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 import { evaluateMakerRecoveryCandidate } from '../execution/stablecoin-maker-strategy.js';
+
+const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
 
 function effectiveMakerFeeBps(fee: CexFeeEvidence | null | undefined): number | null {
   if (!fee || fee.source === 'configured_override') return null;
@@ -53,16 +58,32 @@ async function runBounded<T, R>(items: readonly T[], concurrency: number, worker
   return results;
 }
 
+async function hasUsdNormalizedMakerEconomics(venue: CexFeeVenue, symbol: string): Promise<boolean> {
+  try {
+    const quoteAsset = venue === 'coinbase'
+      ? (await getCoinbaseAdvancedProductConstraints(symbol)).quoteAsset
+      : (await getSpotProductConstraints(venue, symbol)).quoteAsset;
+    return USD_NORMALIZED_QUOTES.has(quoteAsset.trim().toUpperCase());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Maker discovery has two evidence levels:
- * 1) a fully measured live Kraken/OKX post-only plan produced by the canonical
- *    maker evaluator may be promoted to eligible; it still has to pass every
- *    downstream governance, inventory, product, execution and settlement gate;
+ * 1) a fully measured live Coinbase/Kraken/OKX post-only plan produced by the
+ *    canonical maker evaluator may be promoted to eligible; it still has to pass
+ *    every downstream governance, inventory, product, execution and settlement gate;
  * 2) otherwise the existing paper microstructure proof remains blocked and can
  *    only improve calibration. Paper fills never become live authority.
+ *
+ * Product representation is universal, but this USD-denominated maker surface
+ * admits only products whose live venue metadata proves a USD-normalized quote.
  */
 export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandidate[]> {
-  const venues = getActiveExecutableQuoteVenues().filter((venue): venue is 'kraken' | 'okx' => venue !== 'coinbase');
+  const venues = getActiveExecutableQuoteVenues().filter(
+    (venue): venue is CexFeeVenue => venue === 'coinbase' || venue === 'kraken' || venue === 'okx',
+  );
   if (venues.length < 2) return [];
   const symbols = getLastOrderedMarketUniverseSymbols().slice(0, makerDiscoverySymbolBudget());
   if (symbols.length === 0) return [];
@@ -72,19 +93,25 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
   const output: MeasuredCandidate[] = [];
 
   const measured = await runBounded(symbols, makerBookConcurrency(), async symbol => {
-    const measuredBooks = await Promise.all(venues.map(async venue => ({
-      venue,
-      quote: await cexOrderBookStreams.getQuote(venue, symbol, maxQuoteAgeMs).catch(() => null),
-    })));
+    const measuredBooks = await Promise.all(venues.map(async venue => {
+      const [quote, usdNormalized] = await Promise.all([
+        cexOrderBookStreams.getQuote(venue, symbol, maxQuoteAgeMs).catch(() => null),
+        hasUsdNormalizedMakerEconomics(venue, symbol),
+      ]);
+      return { venue, quote, usdNormalized };
+    }));
     return {
       symbol,
-      usableBooks: measuredBooks.filter(entry => entry.quote !== null),
+      usableBooks: measuredBooks.filter(entry => entry.quote !== null && entry.usdNormalized),
     };
   });
 
   const viable = measured.filter(entry => entry.usableBooks.length >= 2);
   if (viable.length === 0) return [];
 
+  const coinbaseSymbols = viable
+    .filter(entry => entry.usableBooks.some(book => book.venue === 'coinbase'))
+    .map(entry => entry.symbol);
   const krakenSymbols = viable
     .filter(entry => entry.usableBooks.some(book => book.venue === 'kraken'))
     .map(entry => entry.symbol);
@@ -93,6 +120,7 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
     .map(entry => entry.symbol);
 
   await primeCexFeeEvidenceForVenueSymbols({
+    coinbase: coinbaseSymbols,
     kraken: krakenSymbols,
     okx: okxSymbols,
   }).catch(() => null);
@@ -145,7 +173,7 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
         },
         quoteAgeMs: livePlan.quoteAgeMs,
         executableCapability: true,
-        executionCapabilityReason: 'Fully measured Kraken/OKX post-only maker plan; downstream inventory, governance, canary, product, execution and terminal settlement gates remain mandatory',
+        executionCapabilityReason: 'Fully measured Coinbase/Kraken/OKX post-only maker plan with USD-normalized quote evidence; downstream inventory, governance, canary, product, execution and terminal settlement gates remain mandatory',
         missingInformation: [],
         provenance: [
           'canonical_maker_recovery_plan',
@@ -153,12 +181,13 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
           `profit_ladder_target_notional_usd:${liveTargetNotionalUsd}`,
           'maker_canary_is_tightening_only_beneath_profit_ladder',
           'authenticated_maker_fee_evidence',
+          'usd_normalized_quote_evidence',
           `maker_book_authority:${livePlan.makerExecution.bookAuthority}`,
           `queue_authority:${livePlan.makerExecution.queueEcho.authority}`,
           `canary_sizing_authority:${livePlan.makerExecution.canarySizingAuthority}`,
           'post_only:true',
           'taker_fallback:false',
-          'coinbase_maker:false',
+          'canonical_cex_venues:coinbase_kraken_okx',
           'strict_all_in_net_profit_gt_zero:true',
           'terminal_settlement_still_required:true',
           'synthetic_evidence:false',
@@ -238,7 +267,8 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
             'microprice_queue_imbalance_shadow_model',
             'adaptive_maker_ttl_shadow_model',
             'maker_fee_prime:single_batched_cycle',
-            'coinbase_dependency:false',
+            'usd_normalized_quote_evidence',
+            'canonical_cex_venues:coinbase_kraken_okx',
             ...(paperProof ? [`paper_probe:${paperProof.state}`, `paper_probe_ttl_ms:${paperProof.adaptiveTtlMs}`] : []),
             ...(paperProof?.paperNetProfitUsd !== null && paperProof?.paperNetProfitUsd !== undefined
               ? [`paper_net_profit_usd:${paperProof.paperNetProfitUsd.toFixed(6)}`]
