@@ -129,9 +129,7 @@ function quoteTransaction(quote: DexQuoteObservation, expectedSellAmount: BigNum
   gas: BigNumber;
   allowanceSpender: string;
 } {
-  if (!quote.executable || quote.quoteKind !== 'quote' || !quote.transaction) {
-    throw new Error('0x firm quote did not return executable transaction evidence');
-  }
+  if (!quote.executable || quote.quoteKind !== 'quote' || !quote.transaction) throw new Error('0x firm quote did not return executable transaction evidence');
   const target = asAddress('0x transaction target', quote.transaction.to);
   const data = String(quote.transaction.data || '');
   if (!ethers.utils.isHexString(data) || data === '0x') throw new Error('0x firm quote transaction calldata is missing');
@@ -139,8 +137,6 @@ function quoteTransaction(quote: DexQuoteObservation, expectedSellAmount: BigNum
   if (!value.isZero()) throw new Error('Stablecoin atomic DEX route unexpectedly requires native transaction value');
   const gas = asPositiveInteger('0x firm quote gas', quote.transaction.gas || quote.estimatedGas);
   const spender = asAddress('0x allowance spender', quote.allowanceTarget || target);
-  // The /swap/allowance-holder ERC-20 route uses AllowanceHolder as both the
-  // approval spender and transaction entry point. Fail closed if this changes.
   if (!sameAddress(spender, target)) throw new Error('0x allowance spender differs from transaction target; unsupported route fails closed');
   const quotedSellAmount = asPositiveInteger('0x firm quote sellAmount', quote.sellAmount);
   if (!quotedSellAmount.eq(expectedSellAmount)) throw new Error('0x firm quote sell amount drifted from the requested atomic amount');
@@ -184,11 +180,9 @@ async function ensureReceiverPermissions(input: {
     if (!await receiver.allowedApprovalTokens(token)) calls.push({ to: input.receiver, data: iface.encodeFunctionData('setAllowedApprovalToken', [token, true]) });
   }
   if (calls.length === 0) return;
-
   requireZeroCapitalInfrastructureDeploymentAllowed({ chain: input.chain, operation: 'receiver_permissions' });
   if (input.fundingMode === 'sponsored') {
-    const sponsor = getGasSponsorManager();
-    const result = await sponsor.execute({
+    const result = await getGasSponsorManager().execute({
       wallet: input.wallet,
       chainId: input.chainId,
       calls,
@@ -222,8 +216,7 @@ function encodeReceiverPayload(input: {
   intermediateAmount: BigNumber;
   intermediateToken: string;
 }): string {
-  const iface = new ethers.utils.Interface(RECEIVER_ABI);
-  return iface.encodeFunctionData('executeBalancerFlashLoan', [
+  return new ethers.utils.Interface(RECEIVER_ABI).encodeFunctionData('executeBalancerFlashLoan', [
     input.loanToken,
     input.loanAmount,
     [
@@ -263,58 +256,23 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   const receiver = receiverRecord.address;
 
   const loanAmount = BigNumber.from(stableUnits(input.notionalUsd));
-  const firstQuote = await marketDataProviders.getDexQuote({
-    chainId: config.chainId,
-    sellToken: config.usdc,
-    buyToken: config.usdt,
-    sellAmount: loanAmount.toString(),
-    takerAddress: receiver,
-    purpose: 'execution',
-  });
+  const firstQuote = await marketDataProviders.getDexQuote({ chainId: config.chainId, sellToken: config.usdc, buyToken: config.usdt, sellAmount: loanAmount.toString(), takerAddress: receiver, purpose: 'execution' });
   if (!firstQuote?.buyAmount || !firstQuote.liquidityAvailable) throw new Error('0x first firm quote unavailable');
   const intermediateAmount = asPositiveInteger('0x first buyAmount', firstQuote.buyAmount);
   const first = quoteTransaction(firstQuote, loanAmount);
-
-  const secondQuote = await marketDataProviders.getDexQuote({
-    chainId: config.chainId,
-    sellToken: config.usdt,
-    buyToken: config.usdc,
-    sellAmount: intermediateAmount.toString(),
-    takerAddress: receiver,
-    purpose: 'execution',
-  });
+  const secondQuote = await marketDataProviders.getDexQuote({ chainId: config.chainId, sellToken: config.usdt, buyToken: config.usdc, sellAmount: intermediateAmount.toString(), takerAddress: receiver, purpose: 'execution' });
   if (!secondQuote?.buyAmount || !secondQuote.liquidityAvailable) throw new Error('0x second firm quote unavailable');
   const finalAmount = asPositiveInteger('0x second buyAmount', secondQuote.buyAmount);
   const second = quoteTransaction(secondQuote, intermediateAmount);
 
-  await ensureReceiverPermissions({
-    chain: input.chain,
-    chainId: config.chainId,
-    receiver,
-    wallet: connectedWallet,
-    provider,
-    targets: [first.target, second.target],
-    approvalTokens: [config.usdc, config.usdt],
-    fundingMode,
-  });
+  await ensureReceiverPermissions({ chain: input.chain, chainId: config.chainId, receiver, wallet: connectedWallet, provider, targets: [first.target, second.target], approvalTokens: [config.usdc, config.usdt], fundingMode });
 
   const flashLoanFeeBps = await measureBalancerFlashFeeBps(input.chain, provider);
   const flashLoanFeeAmount = loanAmount.mul(Math.round(flashLoanFeeBps * 1000)).div(10_000_000);
   const grossBaseUnits = finalAmount.sub(loanAmount);
   if (grossBaseUnits.lte(0)) throw new Error('0x firm round-trip gross economics are not positive');
   const profitRecipient = asAddress('operational profit recipient', resolveOperationalProfitRecipient());
-
-  const preliminaryData = encodeReceiverPayload({
-    receiver,
-    loanToken: config.usdc,
-    loanAmount,
-    minProfit: BigNumber.from(1),
-    profitRecipient,
-    first,
-    second,
-    intermediateAmount,
-    intermediateToken: config.usdt,
-  });
+  const preliminaryData = encodeReceiverPayload({ receiver, loanToken: config.usdc, loanAmount, minProfit: BigNumber.from(1), profitRecipient, first, second, intermediateAmount, intermediateToken: config.usdt });
   await provider.call({ from: connectedWallet.address, to: receiver, data: preliminaryData, value: 0 });
   const estimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data: preliminaryData, value: 0 });
   const gas = await gasOracle.getGasPrice(input.chain);
@@ -326,17 +284,7 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
 
   const minProfitBps = Math.max(1, Math.min(10_000, Math.trunc(Number(process.env.ZERO_CAPITAL_MIN_PROFIT_BPS || 9000))));
   const minProfit = deterministicNetBaseUnits.mul(minProfitBps).div(10_000);
-  const finalData = encodeReceiverPayload({
-    receiver,
-    loanToken: config.usdc,
-    loanAmount,
-    minProfit: minProfit.gt(0) ? minProfit : BigNumber.from(1),
-    profitRecipient,
-    first,
-    second,
-    intermediateAmount,
-    intermediateToken: config.usdt,
-  });
+  const finalData = encodeReceiverPayload({ receiver, loanToken: config.usdc, loanAmount, minProfit: minProfit.gt(0) ? minProfit : BigNumber.from(1), profitRecipient, first, second, intermediateAmount, intermediateToken: config.usdt });
   await provider.call({ from: connectedWallet.address, to: receiver, data: finalData, value: 0 });
 
   const grossProfitUsd = baseUnitsToUsd(grossBaseUnits);
@@ -374,20 +322,16 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
     secondQuote,
     expiresAt,
     simulated: true,
-    provenance: [
-      '0x:v2_allowance_holder_firm_quote',
-      '0x:allowance_spender_equals_transaction_target_verified',
-      'balancer_v2:flash_fee_measured_onchain',
-      'receiver:exact_eth_call_simulation',
-      'receiver:exact_gas_estimate',
-      'synthetic_evidence:false',
-    ],
+    provenance: ['0x:v2_allowance_holder_firm_quote', '0x:allowance_spender_equals_transaction_target_verified', 'balancer_v2:flash_fee_measured_onchain', 'receiver:exact_eth_call_simulation', 'receiver:exact_gas_estimate', 'synthetic_evidence:false'],
   };
   preparedPlans.set(input.opportunityId, plan);
   return getPreparedZeroXAtomicPlan(input.opportunityId)!;
 }
 
-export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string): Promise<ZeroXAtomicExecutionResult> {
+export async function executePreparedZeroXAtomicRoundTrip(
+  opportunityId: string,
+  options: { fundingMode?: 'sponsored' | 'native' } = {},
+): Promise<ZeroXAtomicExecutionResult> {
   const request = requestInputs.get(opportunityId);
   if (!request) return rejected('DEX_ATOMIC_REQUEST_CONTEXT_MISSING');
   if (!stageManager.canExecuteTrades()) return rejected('DEX_ATOMIC_STAGE_NOT_EXECUTABLE');
@@ -405,11 +349,13 @@ export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string)
   if (!wallet) return rejected('DEX_ATOMIC_SIGNER_MISSING');
   const connectedWallet = wallet.connect(provider);
   const sponsor = getGasSponsorManager();
+  const requestedFundingMode = options.fundingMode ?? (sponsor.getReadiness().ready ? 'sponsored' : 'native');
   let transactionHash: string | undefined;
   let fundingModeUsed: 'sponsored' | 'native' | undefined;
 
   try {
-    if (sponsor.getReadiness().ready) {
+    if (requestedFundingMode === 'sponsored') {
+      if (!sponsor.getReadiness().ready) return rejected('DEX_ATOMIC_SPONSORSHIP_NOT_READY_FOR_LEASED_MODE');
       const sponsored = await sponsor.execute({
         wallet: connectedWallet,
         chainId: config.chainId,
@@ -423,12 +369,7 @@ export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string)
         chainId: config.chainId,
         walletAddress: connectedWallet.address,
         operation: async () => {
-          const transaction = await connectedWallet.sendTransaction({
-            to: plan.payload.to,
-            data: plan.payload.data,
-            value: 0,
-            gasLimit: plan.payload.gasLimit,
-          });
+          const transaction = await connectedWallet.sendTransaction({ to: plan.payload.to, data: plan.payload.data, value: 0, gasLimit: plan.payload.gasLimit });
           return transaction.hash;
         },
       });
@@ -436,35 +377,12 @@ export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string)
     }
 
     const receipt = await provider.waitForTransaction(transactionHash, 1, Math.max(15_000, Number(process.env.ZERO_CAPITAL_RECEIPT_TIMEOUT_MS || 120_000)));
-    if (!receipt) {
-      return {
-        success: false,
-        status: 'settlement_unknown',
-        terminal: false,
-        settlementConfirmed: false,
-        transactionHash,
-        fundingModeUsed,
-        error: 'DEX_ATOMIC_RECEIPT_UNAVAILABLE',
-      };
-    }
+    if (!receipt) return { success: false, status: 'settlement_unknown', terminal: false, settlementConfirmed: false, transactionHash, fundingModeUsed, error: 'DEX_ATOMIC_RECEIPT_UNAVAILABLE' };
 
     const receiptStatus = receipt.status === 1 ? 1 : 0;
     const gasUsed = receipt.gasUsed?.toString();
     const effectiveGasPriceWei = receipt.effectiveGasPrice?.toString();
-    if (receiptStatus !== 1) {
-      return {
-        success: false,
-        status: 'failed',
-        terminal: true,
-        settlementConfirmed: false,
-        transactionHash,
-        fundingModeUsed,
-        receiptStatus,
-        gasUsed,
-        effectiveGasPriceWei,
-        error: 'DEX_ATOMIC_RECEIPT_REVERTED',
-      };
-    }
+    if (receiptStatus !== 1) return { success: false, status: 'failed', terminal: true, settlementConfirmed: false, transactionHash, fundingModeUsed, receiptStatus, gasUsed, effectiveGasPriceWei, error: 'DEX_ATOMIC_RECEIPT_REVERTED' };
 
     const iface = new ethers.utils.Interface(RECEIVER_ABI);
     let receiverProfit: BigNumber | null = null;
@@ -475,70 +393,19 @@ export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string)
         if (parsed.name === 'FlashLoanExecuted') receiverProfit = BigNumber.from(parsed.args.profit);
       } catch { /* unrelated receiver log */ }
     }
-    if (!receiverProfit || receiverProfit.lte(0)) {
-      return {
-        success: false,
-        status: 'failed',
-        terminal: true,
-        settlementConfirmed: false,
-        transactionHash,
-        fundingModeUsed,
-        receiptStatus,
-        gasUsed,
-        effectiveGasPriceWei,
-        error: 'DEX_ATOMIC_TERMINAL_PROFIT_EVENT_MISSING_OR_NONPOSITIVE',
-      };
-    }
+    if (!receiverProfit || receiverProfit.lte(0)) return { success: false, status: 'failed', terminal: true, settlementConfirmed: false, transactionHash, fundingModeUsed, receiptStatus, gasUsed, effectiveGasPriceWei, error: 'DEX_ATOMIC_TERMINAL_PROFIT_EVENT_MISSING_OR_NONPOSITIVE' };
 
     const realizedProfitUsd = baseUnitsToUsd(receiverProfit);
     const realizedProfitBps = realizedProfitUsd / request.notionalUsd * 10_000;
     logger.info('[DexAtomic] Terminal 0x receiver event confirmed; all-in reconciliation pending', {
-      component: 'DexZeroXAtomicExecutor',
-      opportunityId,
-      chain: request.chain,
-      transactionHash,
-      fundingModeUsed,
-      receiverProfitUsd: realizedProfitUsd,
-      receiverProfitBps: realizedProfitBps,
-      receiptStatus,
-      gasUsed,
-      effectiveGasPriceWei,
-      settlementConfirmed: true,
-      allInRealizedEconomicsAuthority: 'canonical_measured_topology_adapter_after_actual_gas',
-      syntheticEvidence: false,
+      component: 'DexZeroXAtomicExecutor', opportunityId, chain: request.chain, transactionHash, fundingModeUsed,
+      receiverProfitUsd: realizedProfitUsd, receiverProfitBps: realizedProfitBps, receiptStatus, gasUsed, effectiveGasPriceWei,
+      settlementConfirmed: true, allInRealizedEconomicsAuthority: 'canonical_measured_topology_adapter_after_actual_gas', syntheticEvidence: false,
     });
-    return {
-      success: true,
-      status: 'filled',
-      terminal: true,
-      settlementConfirmed: true,
-      transactionHash,
-      fundingModeUsed,
-      receiptStatus,
-      gasUsed,
-      effectiveGasPriceWei,
-      realizedProfitUsd,
-      realizedProfitBps,
-      gasUsd: plan.gasUsd,
-    };
+    return { success: true, status: 'filled', terminal: true, settlementConfirmed: true, transactionHash, fundingModeUsed, receiptStatus, gasUsed, effectiveGasPriceWei, realizedProfitUsd, realizedProfitBps, gasUsd: plan.gasUsd };
   } catch (error) {
     return transactionHash
-      ? {
-          success: false,
-          status: 'settlement_unknown',
-          terminal: false,
-          settlementConfirmed: false,
-          transactionHash,
-          fundingModeUsed,
-          error: error instanceof Error ? error.message : String(error),
-        }
-      : {
-          success: false,
-          status: 'failed',
-          terminal: true,
-          settlementConfirmed: false,
-          fundingModeUsed,
-          error: error instanceof Error ? error.message : String(error),
-        };
+      ? { success: false, status: 'settlement_unknown', terminal: false, settlementConfirmed: false, transactionHash, fundingModeUsed, error: error instanceof Error ? error.message : String(error) }
+      : { success: false, status: 'failed', terminal: true, settlementConfirmed: false, fundingModeUsed, error: error instanceof Error ? error.message : String(error) };
   }
 }
