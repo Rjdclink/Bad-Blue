@@ -92,11 +92,7 @@ export function canonicalCoinbaseSymbol(symbolInput: string): string {
   return compact;
 }
 
-function addDirectoryProduct(
-  values: Map<string, string>,
-  ambiguous: Set<string>,
-  raw: unknown,
-): void {
+function addDirectoryProduct(values: Map<string, string>, ambiguous: Set<string>, raw: unknown): void {
   const row = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
   if (!row) return;
   const productType = String(row.product_type ?? '').trim().toUpperCase();
@@ -166,6 +162,24 @@ export async function resolveCoinbaseAdvancedProductId(symbolInput: string, forc
   return productId;
 }
 
+/**
+ * Synchronous compatibility lookup for call sites that already fetched live
+ * Coinbase metadata immediately beforehand. It never guesses a product id from a
+ * quote suffix: only a fresh product/constraint cache or live directory may answer.
+ */
+export function getCachedCoinbaseAdvancedProductId(symbolInput: string): string | null {
+  let symbol: string;
+  try {
+    symbol = canonicalCoinbaseSymbol(symbolInput);
+  } catch {
+    return null;
+  }
+  const product = productCache.get(symbol);
+  if (product && product.expiresAt > Date.now()) return product.value.productId;
+  if (directorySnapshot && directorySnapshot.expiresAt > Date.now()) return directorySnapshot.values.get(symbol) || null;
+  return null;
+}
+
 function canonicalSymbol(productId: string): string {
   const parsed = parseCoinbaseProductId(productId);
   if (!parsed) throw new Error(`Coinbase Advanced Trade returned unsupported product id: ${productId}`);
@@ -180,11 +194,6 @@ function parseLevels(raw: unknown): CoinbaseAdvancedBookLevel[] {
   }).filter((row): row is CoinbaseAdvancedBookLevel => row.price !== null && row.quantity !== null);
 }
 
-/**
- * Parses only the Coinbase Advanced Trade v3 product-book response. The legacy
- * Coinbase Exchange /products/{id}/book schema is intentionally not accepted so
- * an old endpoint cannot accidentally become executable market evidence.
- */
 export function parseCoinbaseAdvancedProductBook(payload: any, requestedSymbol: string, fallbackObservedAt = Date.now()): CoinbaseAdvancedProductBook {
   const pricebook = payload?.pricebook;
   if (!pricebook || typeof pricebook !== 'object') throw new Error('Coinbase Advanced Trade product book is missing pricebook');
@@ -201,25 +210,9 @@ export function parseCoinbaseAdvancedProductBook(payload: any, requestedSymbol: 
   }
   const parsedTime = typeof pricebook.time === 'string' ? Date.parse(pricebook.time) : NaN;
   const observedAt = Number.isFinite(parsedTime) && parsedTime > 0 ? parsedTime : fallbackObservedAt;
-  return {
-    venue: 'coinbase',
-    symbol,
-    productId,
-    bid: bids[0].price,
-    ask: asks[0].price,
-    observedAt,
-    bids,
-    asks,
-    source: 'coinbase_advanced_public_product_book',
-  };
+  return { venue: 'coinbase', symbol, productId, bid: bids[0].price, ask: asks[0].price, observedAt, bids, asks, source: 'coinbase_advanced_public_product_book' };
 }
 
-/**
- * Parse the current Advanced Trade public product contract. Product increments,
- * minimums and trading-state flags are execution evidence: if Coinbase stops
- * supplying a required numeric value, executable normalization fails closed
- * rather than guessing a decimal or order size.
- */
 export function parseCoinbaseAdvancedProductConstraints(payload: any, requestedSymbol: string, observedAt = Date.now()): CoinbaseAdvancedProductConstraints {
   const productId = typeof payload?.product_id === 'string' ? payload.product_id.trim().toUpperCase() : '';
   const parsedProduct = parseCoinbaseProductId(productId);
