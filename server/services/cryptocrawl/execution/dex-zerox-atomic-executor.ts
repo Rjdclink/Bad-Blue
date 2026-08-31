@@ -59,13 +59,19 @@ export interface ZeroXAtomicRoundTripPreparation {
 
 export interface ZeroXAtomicExecutionResult {
   success: boolean;
+  status: 'rejected' | 'failed' | 'filled' | 'settlement_unknown';
+  terminal: boolean;
   settlementConfirmed: boolean;
   transactionHash?: string;
+  fundingModeUsed?: 'sponsored' | 'native';
+  receiptStatus?: 0 | 1;
+  gasUsed?: string;
+  effectiveGasPriceWei?: string;
   /** Receiver profit after flash-loan repayment/fee, before wallet-paid native gas. */
   realizedProfitUsd?: number;
   /** Receiver profit BPS before wallet-paid native gas. Not terminal all-in net BPS. */
   realizedProfitBps?: number;
-  /** Pretrade gas estimate only. Terminal gas reconciliation is owned by the caller. */
+  /** Pretrade gas estimate only. Terminal gas reconciliation must use receipt fields above. */
   gasUsd?: number;
   error?: string;
 }
@@ -78,6 +84,10 @@ interface AtomicRequest {
 
 const preparedPlans = new Map<string, ZeroXAtomicRoundTripPreparation>();
 const requestInputs = new Map<string, AtomicRequest>();
+
+function rejected(error: string): ZeroXAtomicExecutionResult {
+  return { success: false, status: 'rejected', terminal: true, settlementConfirmed: false, error };
+}
 
 function configuredWallet(): Wallet | null {
   const raw = process.env.WALLET_PRIVATE_KEY?.trim();
@@ -130,9 +140,7 @@ function quoteTransaction(quote: DexQuoteObservation, expectedSellAmount: BigNum
   const gas = asPositiveInteger('0x firm quote gas', quote.transaction.gas || quote.estimatedGas);
   const spender = asAddress('0x allowance spender', quote.allowanceTarget || target);
   // The /swap/allowance-holder ERC-20 route uses AllowanceHolder as both the
-  // approval spender and transaction entry point. Fail closed if the API ever
-  // returns a different spender/entry-point relationship because the reviewed
-  // V1 flash-loan receiver approves the exact call target.
+  // approval spender and transaction entry point. Fail closed if this changes.
   if (!sameAddress(spender, target)) throw new Error('0x allowance spender differs from transaction target; unsupported route fails closed');
   const quotedSellAmount = asPositiveInteger('0x firm quote sellAmount', quote.sellAmount);
   if (!quotedSellAmount.eq(expectedSellAmount)) throw new Error('0x firm quote sell amount drifted from the requested atomic amount');
@@ -170,14 +178,10 @@ async function ensureReceiverPermissions(input: {
   const iface = new ethers.utils.Interface(RECEIVER_ABI);
   const calls: SponsoredCall[] = [];
   for (const target of [...new Set(input.targets.map(value => asAddress('0x target', value)))]) {
-    if (!await receiver.allowedTargets(target)) {
-      calls.push({ to: input.receiver, data: iface.encodeFunctionData('setAllowedTarget', [target, true]) });
-    }
+    if (!await receiver.allowedTargets(target)) calls.push({ to: input.receiver, data: iface.encodeFunctionData('setAllowedTarget', [target, true]) });
   }
   for (const token of [...new Set(input.approvalTokens.map(value => asAddress('approval token', value)))]) {
-    if (!await receiver.allowedApprovalTokens(token)) {
-      calls.push({ to: input.receiver, data: iface.encodeFunctionData('setAllowedApprovalToken', [token, true]) });
-    }
+    if (!await receiver.allowedApprovalTokens(token)) calls.push({ to: input.receiver, data: iface.encodeFunctionData('setAllowedApprovalToken', [token, true]) });
   }
   if (calls.length === 0) return;
 
@@ -223,20 +227,8 @@ function encodeReceiverPayload(input: {
     input.loanToken,
     input.loanAmount,
     [
-      {
-        target: input.first.target,
-        value: input.first.value,
-        callData: input.first.data,
-        approvalToken: input.loanToken,
-        approvalAmount: input.loanAmount,
-      },
-      {
-        target: input.second.target,
-        value: input.second.value,
-        callData: input.second.data,
-        approvalToken: input.intermediateToken,
-        approvalAmount: input.intermediateAmount,
-      },
+      { target: input.first.target, value: input.first.value, callData: input.first.data, approvalToken: input.loanToken, approvalAmount: input.loanAmount },
+      { target: input.second.target, value: input.second.value, callData: input.second.data, approvalToken: input.intermediateToken, approvalAmount: input.intermediateAmount },
     ],
     input.minProfit,
     input.profitRecipient,
@@ -267,12 +259,7 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   const network = await provider.getNetwork();
   if (network.chainId !== config.chainId) throw new Error(`DEX atomic provider chain mismatch for ${input.chain}`);
   const fundingMode = infrastructureFundingMode();
-  const receiverRecord = await getSponsoredReceiverManager().ensureReceiver({
-    chain: input.chain,
-    provider,
-    wallet: connectedWallet,
-    fundingMode,
-  });
+  const receiverRecord = await getSponsoredReceiverManager().ensureReceiver({ chain: input.chain, provider, wallet: connectedWallet, fundingMode });
   const receiver = receiverRecord.address;
 
   const loanAmount = BigNumber.from(stableUnits(input.notionalUsd));
@@ -402,29 +389,26 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
 
 export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string): Promise<ZeroXAtomicExecutionResult> {
   const request = requestInputs.get(opportunityId);
-  if (!request) return { success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_REQUEST_CONTEXT_MISSING' };
-  if (!stageManager.canExecuteTrades()) return { success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_STAGE_NOT_EXECUTABLE' };
+  if (!request) return rejected('DEX_ATOMIC_REQUEST_CONTEXT_MISSING');
+  if (!stageManager.canExecuteTrades()) return rejected('DEX_ATOMIC_STAGE_NOT_EXECUTABLE');
   getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: request.chain });
 
-  // Requote and re-simulate immediately before submission. The prior discovery
-  // plan is never treated as durable execution evidence.
   let plan: ZeroXAtomicRoundTripPreparation;
   try { plan = await prepareZeroXAtomicRoundTrip(request); }
-  catch (error) { return { success: false, settlementConfirmed: false, error: error instanceof Error ? error.message : String(error) }; }
-  if (!(plan.deterministicNetProfitUsd > 0) || plan.expiresAt <= Date.now()) {
-    return { success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_FRESH_ALL_IN_ECONOMICS_NOT_POSITIVE' };
-  }
+  catch (error) { return rejected(error instanceof Error ? error.message : String(error)); }
+  if (!(plan.deterministicNetProfitUsd > 0) || plan.expiresAt <= Date.now()) return rejected('DEX_ATOMIC_FRESH_ALL_IN_ECONOMICS_NOT_POSITIVE');
 
   const config = SUPPORTED_CHAINS[request.chain];
   await multiProviderRpcManager.initialize([request.chain]);
   const { http: provider } = await multiProviderRpcManager.getProvider(request.chain, 'json_rpc');
   const wallet = configuredWallet();
-  if (!wallet) return { success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_SIGNER_MISSING' };
+  if (!wallet) return rejected('DEX_ATOMIC_SIGNER_MISSING');
   const connectedWallet = wallet.connect(provider);
   const sponsor = getGasSponsorManager();
+  let transactionHash: string | undefined;
+  let fundingModeUsed: 'sponsored' | 'native' | undefined;
 
   try {
-    let transactionHash: string;
     if (sponsor.getReadiness().ready) {
       const sponsored = await sponsor.execute({
         wallet: connectedWallet,
@@ -433,6 +417,7 @@ export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string)
         timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_EXECUTION_TIMEOUT_MS || 90_000)),
       });
       transactionHash = sponsored.transactionHash;
+      fundingModeUsed = 'sponsored';
     } else {
       transactionHash = await withEvmSignerLane({
         chainId: config.chainId,
@@ -447,9 +432,39 @@ export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string)
           return transaction.hash;
         },
       });
+      fundingModeUsed = 'native';
     }
+
     const receipt = await provider.waitForTransaction(transactionHash, 1, Math.max(15_000, Number(process.env.ZERO_CAPITAL_RECEIPT_TIMEOUT_MS || 120_000)));
-    if (!receipt || receipt.status !== 1) return { success: false, settlementConfirmed: false, transactionHash, error: 'DEX_ATOMIC_RECEIPT_NOT_SUCCESSFUL' };
+    if (!receipt) {
+      return {
+        success: false,
+        status: 'settlement_unknown',
+        terminal: false,
+        settlementConfirmed: false,
+        transactionHash,
+        fundingModeUsed,
+        error: 'DEX_ATOMIC_RECEIPT_UNAVAILABLE',
+      };
+    }
+
+    const receiptStatus = receipt.status === 1 ? 1 : 0;
+    const gasUsed = receipt.gasUsed?.toString();
+    const effectiveGasPriceWei = receipt.effectiveGasPrice?.toString();
+    if (receiptStatus !== 1) {
+      return {
+        success: false,
+        status: 'failed',
+        terminal: true,
+        settlementConfirmed: false,
+        transactionHash,
+        fundingModeUsed,
+        receiptStatus,
+        gasUsed,
+        effectiveGasPriceWei,
+        error: 'DEX_ATOMIC_RECEIPT_REVERTED',
+      };
+    }
 
     const iface = new ethers.utils.Interface(RECEIVER_ABI);
     let receiverProfit: BigNumber | null = null;
@@ -461,27 +476,69 @@ export async function executePreparedZeroXAtomicRoundTrip(opportunityId: string)
       } catch { /* unrelated receiver log */ }
     }
     if (!receiverProfit || receiverProfit.lte(0)) {
-      return { success: false, settlementConfirmed: true, transactionHash, error: 'DEX_ATOMIC_TERMINAL_PROFIT_EVENT_MISSING_OR_NONPOSITIVE' };
+      return {
+        success: false,
+        status: 'failed',
+        terminal: true,
+        settlementConfirmed: false,
+        transactionHash,
+        fundingModeUsed,
+        receiptStatus,
+        gasUsed,
+        effectiveGasPriceWei,
+        error: 'DEX_ATOMIC_TERMINAL_PROFIT_EVENT_MISSING_OR_NONPOSITIVE',
+      };
     }
+
     const realizedProfitUsd = baseUnitsToUsd(receiverProfit);
     const realizedProfitBps = realizedProfitUsd / request.notionalUsd * 10_000;
-
-    // This low-level executor proves receipt + receiver profit only. It deliberately
-    // does not publish realized all-in economics or learning because wallet-paid
-    // native gas must first be reconciled by the canonical topology adapter.
     logger.info('[DexAtomic] Terminal 0x receiver event confirmed; all-in reconciliation pending', {
       component: 'DexZeroXAtomicExecutor',
       opportunityId,
       chain: request.chain,
       transactionHash,
+      fundingModeUsed,
       receiverProfitUsd: realizedProfitUsd,
       receiverProfitBps: realizedProfitBps,
+      receiptStatus,
+      gasUsed,
+      effectiveGasPriceWei,
       settlementConfirmed: true,
       allInRealizedEconomicsAuthority: 'canonical_measured_topology_adapter_after_actual_gas',
       syntheticEvidence: false,
     });
-    return { success: true, settlementConfirmed: true, transactionHash, realizedProfitUsd, realizedProfitBps, gasUsd: plan.gasUsd };
+    return {
+      success: true,
+      status: 'filled',
+      terminal: true,
+      settlementConfirmed: true,
+      transactionHash,
+      fundingModeUsed,
+      receiptStatus,
+      gasUsed,
+      effectiveGasPriceWei,
+      realizedProfitUsd,
+      realizedProfitBps,
+      gasUsd: plan.gasUsd,
+    };
   } catch (error) {
-    return { success: false, settlementConfirmed: false, error: error instanceof Error ? error.message : String(error) };
+    return transactionHash
+      ? {
+          success: false,
+          status: 'settlement_unknown',
+          terminal: false,
+          settlementConfirmed: false,
+          transactionHash,
+          fundingModeUsed,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      : {
+          success: false,
+          status: 'failed',
+          terminal: true,
+          settlementConfirmed: false,
+          fundingModeUsed,
+          error: error instanceof Error ? error.message : String(error),
+        };
   }
 }
