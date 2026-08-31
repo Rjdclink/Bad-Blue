@@ -76,20 +76,25 @@ assert(feeResolver.includes('const feeInFlight = new Map'), 'canonical fee resol
 assert(feeResolver.includes('const feeCache = new Map'), 'canonical fee resolver must retain shared process cache');
 
 // The existing BPS optimizer already consumes maker savings. Four-mode economics
-// must now publish the exact authenticated TT -> maker/hybrid fee reduction.
+// must now publish the exact authenticated TT -> maker/hybrid fee reduction while
+// retaining the pre-existing primary mode ordering.
 assert(fourMode.includes('makerFeeSavingsVsTakerBps'), 'four-mode economics must publish measured maker BPS savings');
 assert(fourMode.includes('ttCombinedFeeBps - combinedFeeBps'), 'maker BPS savings must be computed against the same venue-pair TT fee baseline');
+assert(fourMode.includes('return left.bpsToBreakEven - right.bpsToBreakEven\n    || left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven'), 'maker-savings activation must not replace the original primary Four-Mode break-even ordering');
 assert(adaptivePolicy.includes('makerFeeSavingsVsTakerBps'), 'adaptive profitability policy must consume measured maker savings');
 
 // Market ordering may use current measured BPS recovery and provider quality only
 // as advisory priority. Rotation/exploration and execution authority stay separate.
 assert(marketFocus.includes('getCexFourModeSnapshot'), 'market focus must consume the current measured BPS surface');
 assert(marketFocus.includes('getProviderQualityAuctionSnapshot'), 'market focus must consume measured provider quality');
+assert(marketFocus.includes('mode.makerFeeSavingsVsTakerBps'), 'market focus must consume canonical Four-Mode maker savings');
+assert(!marketFocus.includes('tt.combinedFeeBps - row.combinedFeeBps'), 'market focus must not duplicate maker-savings economics');
 assert(marketUniverse.includes('currentEconomicModifier'), 'market universe must include bounded current-economic priority');
+assert(marketUniverse.includes('CRYPTO_MARKET_PERFORMANCE_FOCUS_FRACTION || 0.25'), 'BPS ranking must retain the pre-existing 25% default focus budget');
 assert(marketUniverse.includes('rotationPool'), 'market universe must preserve exploration rotation');
 
 // Hyperscope is a reference method only, never a source artifact or runtime authority.
 assert(!exists('scripts/cryptocrawl/verify-hyperscope-seven-system-completion.cjs'), 'Hyperscope-named verifier must not exist in source');
 assert(exists('scripts/cryptocrawl/verify-canonical-execution-family-completion.cjs'), 'real execution-family invariants must remain verified under canonical naming');
 
-console.log('[resource-bps-authority] PASS: DB coordination, deploy configuration, private-rate authority, measured BPS compression, exploration, and reference-framework separation are locked');
+console.log('[resource-bps-authority] PASS: DB coordination, deploy configuration, private-rate authority, measured BPS compression, no-regression ordering/exploration, and reference-framework separation are locked');
