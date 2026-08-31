@@ -59,6 +59,7 @@ export interface HyperHybridCexExecutionMetadata {
 }
 
 export type HyperHybridCexExecutionResult = CexExecutionResult & HyperHybridCexExecutionMetadata;
+export type HyperHybridChildExecutor = (child: VerifiedArbitragePlan) => Promise<CexExecutionResult>;
 
 type VenueLimit = {
   venue: ExecutableCexVenue;
@@ -67,6 +68,14 @@ type VenueLimit = {
   quoteMinSize: number | null;
   baseMaxSize: number | null;
   quoteMaxSize: number | null;
+};
+
+type PlannedLegMode = 'maker' | 'taker';
+type HybridExecutionShape = {
+  hybridExecution?: {
+    buyMode?: PlannedLegMode;
+    sellMode?: PlannedLegMode;
+  };
 };
 
 function decimalPlaces(value: number): number {
@@ -223,15 +232,34 @@ function childConcurrency(): number {
   return Number.isFinite(parsed) ? Math.max(1, Math.min(32, Math.trunc(parsed))) : DEFAULT_CHILD_CONCURRENCY;
 }
 
-function takerFeeBps(plan: VerifiedArbitragePlan, side: 'buy' | 'sell'): number | null {
+function plannedLegMode(plan: VerifiedArbitragePlan, side: 'buy' | 'sell'): PlannedLegMode {
+  const hybrid = (plan as VerifiedArbitragePlan & HybridExecutionShape).hybridExecution;
+  return side === 'buy'
+    ? hybrid?.buyMode === 'maker' ? 'maker' : 'taker'
+    : hybrid?.sellMode === 'maker' ? 'maker' : 'taker';
+}
+
+function plannedFeeBps(plan: VerifiedArbitragePlan, side: 'buy' | 'sell'): number | null {
+  const price = side === 'buy' ? (plan.buyLimitPrice ?? plan.buyAsk) : (plan.sellLimitPrice ?? plan.sellBid);
+  const notional = plan.baseQty * price;
+  const feeUsd = side === 'buy' ? plan.costs.buyFeeUsd : plan.costs.sellFeeUsd;
+  if (Number.isFinite(feeUsd) && notional > 0) return Number(feeUsd) / notional * 10_000;
   const evidence = side === 'buy' ? plan.feeEvidence?.buy : plan.feeEvidence?.sell;
   const value = Number(evidence?.takerFeeBps);
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function depthAtOrBetter(levels: readonly { price: number; quantity: number }[], side: 'buy' | 'sell', limitPrice: number): number {
+function depthAtOrBetter(
+  levels: readonly { price: number; quantity: number }[],
+  side: 'buy' | 'sell',
+  mode: PlannedLegMode,
+  limitPrice: number,
+): number {
   return levels
-    .filter(level => side === 'buy' ? level.price <= limitPrice : level.price >= limitPrice)
+    .filter(level => {
+      if (mode === 'maker') return side === 'buy' ? level.price >= limitPrice : level.price <= limitPrice;
+      return side === 'buy' ? level.price <= limitPrice : level.price >= limitPrice;
+    })
     .reduce((sum, level) => sum + Math.max(0, level.quantity), 0);
 }
 
@@ -246,20 +274,24 @@ async function revalidateBatch(parent: VerifiedArbitragePlan, batchQty: number, 
 
   const buyLimit = parent.buyLimitPrice ?? parent.buyAsk;
   const sellLimit = parent.sellLimitPrice ?? parent.sellBid;
-  const buyDepth = depthAtOrBetter(buy.depth.asks, 'buy', buyLimit);
-  const sellDepth = depthAtOrBetter(sell.depth.bids, 'sell', sellLimit);
+  const buyMode = plannedLegMode(parent, 'buy');
+  const sellMode = plannedLegMode(parent, 'sell');
+  const buyLevels = buyMode === 'maker' ? buy.depth.bids : buy.depth.asks;
+  const sellLevels = sellMode === 'maker' ? sell.depth.asks : sell.depth.bids;
+  const buyDepth = depthAtOrBetter(buyLevels, 'buy', buyMode, buyLimit);
+  const sellDepth = depthAtOrBetter(sellLevels, 'sell', sellMode, sellLimit);
   if (buyDepth + 1e-12 < batchQty || sellDepth + 1e-12 < batchQty) {
     return { ok: false, reason: `parallel_batch_depth_insufficient:buy=${buyDepth}:sell=${sellDepth}:batch=${batchQty}` };
   }
 
-  const buyBps = takerFeeBps(parent, 'buy');
-  const sellBps = takerFeeBps(parent, 'sell');
-  if (buyBps === null || sellBps === null) return { ok: false, reason: 'authenticated_taker_fee_evidence_missing_for_parallel_split_batch' };
+  const buyBps = plannedFeeBps(parent, 'buy');
+  const sellBps = plannedFeeBps(parent, 'sell');
+  if (buyBps === null || sellBps === null) return { ok: false, reason: 'authenticated_planned_fee_economics_missing_for_parallel_split_batch' };
   const buyNotional = batchQty * buyLimit;
   const sellNotional = batchQty * sellLimit;
   const conservativeNet = sellNotional - buyNotional - buyNotional * buyBps / 10_000 - sellNotional * sellBps / 10_000;
   if (!(conservativeNet > 0)) return { ok: false, reason: `parallel_batch_no_longer_positive_at_live_limits:${conservativeNet}` };
-  return { ok: true, reason: 'warm_live_book_depth_and_limit_economics_positive' };
+  return { ok: true, reason: 'warm_live_book_depth_and_planned_fee_economics_positive' };
 }
 
 function fokAdapter(
@@ -395,7 +427,7 @@ function aggregateResult(
       `planned_children:${plannedChildren.length}`,
       `attempted_children:${children.length}`,
       `completed_children:${completedChildren.length}`,
-      'split_children_fok:true',
+      'split_children_per_order_limit_bounded:true',
       'parallel_single_admitted_batch:true',
       'sequential_child_waves:false',
       'completed_child_profit_retained:true',
@@ -430,11 +462,14 @@ export async function executeHyperHybridCexPlan(input: {
   maxQuoteAgeMs: number;
   executionAdmissionStartedAt: number;
   useProductionFok: boolean;
+  executeChild?: HyperHybridChildExecutor;
 }): Promise<HyperHybridCexExecutionResult> {
   const plannedChildren = await buildHyperHybridCexChildren(input.parent);
   if (plannedChildren.length === 1) {
     await assertFreshCexProductConstraints(plannedChildren[0]);
-    const result = await executeCexPlan(plannedChildren[0], { ...input.executorOptions, adapters: input.adapters });
+    const result = input.executeChild
+      ? await input.executeChild(plannedChildren[0])
+      : await executeCexPlan(plannedChildren[0], { ...input.executorOptions, adapters: input.adapters });
     return {
       ...result,
       parentTargetNotionalUsd: input.parent.notionalUsd,
@@ -467,13 +502,15 @@ export async function executeHyperHybridCexPlan(input: {
     const startedAt = Date.now();
     try {
       await assertFreshCexProductConstraints(child);
-      const result = await executeCexPlan(child, { ...input.executorOptions, adapters: splitAdapters });
+      const result = input.executeChild
+        ? await input.executeChild(child)
+        : await executeCexPlan(child, { ...input.executorOptions, adapters: splitAdapters });
       return {
         childId,
         index,
         plannedNotionalUsd: child.notionalUsd,
         expectedProfitUsd: child.netProfitUsd,
-        timeInForce: input.useProductionFok ? 'FOK' as const : 'IOC' as const,
+        timeInForce: input.useProductionFok && !input.executeChild ? 'FOK' as const : 'IOC' as const,
         latencyMs: Date.now() - startedAt,
         success: result.success,
         status: result.status,
@@ -490,7 +527,7 @@ export async function executeHyperHybridCexPlan(input: {
         index,
         plannedNotionalUsd: child.notionalUsd,
         expectedProfitUsd: child.netProfitUsd,
-        timeInForce: input.useProductionFok ? 'FOK' as const : 'IOC' as const,
+        timeInForce: input.useProductionFok && !input.executeChild ? 'FOK' as const : 'IOC' as const,
         latencyMs: Date.now() - startedAt,
         success: false,
         status: 'rejected' as const,
@@ -517,9 +554,6 @@ export async function executeHyperHybridCexPlan(input: {
       parentSucceeded: result.success,
     });
   } catch (error) {
-    // Never convert already-settled child executions into a synthetic execution
-    // failure. The treasury ledger performs bounded retries; surface any final
-    // persistence failure loudly for reconciliation while preserving market truth.
     logger.error('[CEX HyperHybrid] Partial child profit persistence failed after settlement', {
       component: 'HyperHybridCexExecution',
       symbol: input.parent.symbol,
@@ -548,7 +582,9 @@ export async function executeHyperHybridCexPlan(input: {
     completedNotionalUsd: result.completedNotionalUsd,
     remainingNotionalUsd: result.remainingNotionalUsd,
     childConcurrency: concurrency,
-    productionSplitTimeInForce: input.useProductionFok ? 'FOK' : 'injected_adapter_semantics',
+    productionSplitTimeInForce: input.executeChild
+      ? 'strategy_specific_child_executor'
+      : input.useProductionFok ? 'FOK' : 'injected_adapter_semantics',
     oneBoundedParallelBatch: true,
     sequentialChildWaves: false,
     completedChildProfitRetained: true,
