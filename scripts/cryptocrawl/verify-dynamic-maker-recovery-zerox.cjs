@@ -7,18 +7,23 @@ const execution = fs.readFileSync('server/services/cryptocrawl/runtime/stablecoi
 const marketData = fs.readFileSync('server/services/cryptocrawl/intelligence/market-data-providers.ts', 'utf8');
 const zeroCapital = fs.readFileSync('server/services/cryptocrawl/core/zero-capital-engine.ts', 'utf8');
 
-// Tiny first proof trade, then evidence-driven scaling only.
-assert.match(strategy, /CRYPTO_ARBITRAGE_MAKER_CANARY_BOOTSTRAP_USD', 10/);
-assert.match(strategy, /PROOF_CAPS_USD = \[10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000\]/);
-assert.match(strategy, /settlementConfirmed === true && isMakerEvidence/);
-assert.match(strategy, /wins >= 75/);
-assert.match(strategy, /ceilingUsd: Math\.min\(hardMaxUsd, proofCap\)/);
+// Dynamic maker sizing remains evidence-driven and tightening-only. The maker
+// strategy consumes Cryptara's canary decision rather than duplicating a static
+// capital ladder or hard-coded position authority here.
+assert.match(strategy, /getCryptaraDynamicMakerCanaryDecision/);
+assert.match(strategy, /canaryCeilingUsd/);
+assert.match(strategy, /canaryProofSamples/);
+assert.match(strategy, /canarySizingAuthority/);
 
-// Stablecoin low-fee recovery and high-spread volatile recovery share the same
-// post-only/cancel-only settlement path, while volatile pairs require a wide edge.
+// Coinbase, Kraken and OKX share the same post-only recovery strategy. Admission
+// has NO arbitrary BPS floor: authenticated fee clearance + strict positive real
+// net dollars + measured queue/stress/product/canary controls decide eligibility.
+assert.match(strategy, /CEX_VENUES[^=]*=\s*\['coinbase',\s*'kraken',\s*'okx'\]/);
 assert.match(strategy, /'stablecoin_post_only' \| 'volatile_spread_post_only'/);
-assert.match(strategy, /CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS', 70/);
-assert.match(strategy, /grossSpreadBps < volatileFloorBps/);
+assert.doesNotMatch(strategy, /CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS/);
+assert.doesNotMatch(strategy, /grossSpreadBps\s*<\s*volatileFloorBps/);
+assert.match(strategy, /volatileMinGrossSpreadBps:\s*null/);
+assert.match(strategy, /if \(!\(netProfitUsd > 0\)\) continue/);
 assert.match(strategy, /takerFallbackAllowed: false/);
 assert.match(strategy, /feeAuthority: 'authenticated'/);
 assert.match(strategy, /evaluateMakerRecoveryCandidate/);
@@ -42,11 +47,12 @@ assert.doesNotMatch(strategy, /flashLoan|Aave|Balancer/i);
 assert.doesNotMatch(execution, /flashLoan|Aave|Balancer/i);
 
 console.log(JSON.stringify({
-  makerBootstrapUsd: 10,
-  makerCanaryScaling: 'terminal_confirmed_maker_evidence',
+  makerCanaryScaling: 'cryptara_terminal_evidence_tightening_only',
+  canonicalMakerVenues: ['coinbase', 'kraken', 'okx'],
   stablecoinMakerRecovery: true,
   volatileMakerRecovery: true,
-  volatileGrossSpreadFloorBps: 70,
+  arbitraryMakerBpsFloor: false,
+  strictPositiveNetUsd: true,
   postOnly: true,
   takerFallback: false,
   zeroXAliasNormalization: true,
