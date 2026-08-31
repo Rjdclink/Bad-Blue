@@ -39,6 +39,13 @@ export interface CexSpotProductSupport {
   baseUrl?: string;
 }
 
+export interface ResolveCexFeeEvidenceOptions {
+  /** Maximum acceptable evidence age for this consumer. Tightens only. */
+  maxAgeMs?: number;
+  /** Bypass the shared cache and obtain fresh authenticated evidence. */
+  forceRefresh?: boolean;
+}
+
 const FEE_CACHE_TTL_MS = Math.max(5_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_CACHE_MS || 300_000));
 const REQUEST_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_TIMEOUT_MS || 8_000));
 const feeCache = new Map<string, CexFeeEvidence>();
@@ -47,6 +54,12 @@ const feeInFlight = new Map<string, Promise<CexFeeEvidence | null>>();
 function finiteNumber(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function boundedEvidenceAge(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return FEE_CACHE_TTL_MS;
+  return Math.max(0, Math.min(FEE_CACHE_TTL_MS, Math.trunc(parsed)));
 }
 
 function credential(name: string): string | null {
@@ -85,14 +98,16 @@ function cacheKey(venue: CexFeeVenue, symbol: string): string {
   return `${venue}:${normalizeSymbolInput(symbol)}`;
 }
 
-function readFreshCache(venue: CexFeeVenue, symbol: string): CexFeeEvidence | null {
+function readFreshCache(venue: CexFeeVenue, symbol: string, maxAgeMs = FEE_CACHE_TTL_MS): CexFeeEvidence | null {
   const key = cacheKey(venue, symbol);
   const cached = feeCache.get(key);
   if (!cached) return null;
-  if (Date.now() - cached.observedAt > FEE_CACHE_TTL_MS) {
+  const ageMs = Date.now() - cached.observedAt;
+  if (ageMs > FEE_CACHE_TTL_MS) {
     feeCache.delete(key);
     return null;
   }
+  if (ageMs > boundedEvidenceAge(maxAgeMs)) return null;
   return { ...cached };
 }
 
@@ -105,8 +120,12 @@ function storeFeeEvidence(evidence: CexFeeEvidence): void {
   }
 }
 
-export function getCachedCexFeeEvidence(venue: CexFeeVenue, symbolInput: string): CexFeeEvidence | null {
-  return readFreshCache(venue, normalizeSymbolInput(symbolInput));
+export function getCachedCexFeeEvidence(
+  venue: CexFeeVenue,
+  symbolInput: string,
+  maxAgeMs = FEE_CACHE_TTL_MS,
+): CexFeeEvidence | null {
+  return readFreshCache(venue, normalizeSymbolInput(symbolInput), maxAgeMs);
 }
 
 async function verifiedConstraints(
@@ -142,10 +161,10 @@ export async function getCexSpotProductSupport(venue: CexFeeVenue, symbolInput: 
   };
 }
 
-async function fetchCoinbaseFeeEvidence(symbolInput: string): Promise<CexFeeEvidence | null> {
+async function fetchCoinbaseFeeEvidence(symbolInput: string, forceRefresh = false): Promise<CexFeeEvidence | null> {
   const symbol = normalizeSymbolInput(symbolInput);
   await assertCoinbaseSpotTradeReady();
-  const accountFee = await getCoinbaseSpotFeeEvidence();
+  const accountFee = await getCoinbaseSpotFeeEvidence(forceRefresh);
   return {
     venue: 'coinbase',
     symbol,
@@ -155,14 +174,6 @@ async function fetchCoinbaseFeeEvidence(symbolInput: string): Promise<CexFeeEvid
     source: 'coinbase_transaction_summary',
     observedAt: accountFee.observedAt,
   };
-}
-
-async function resolveKrakenConstraints(symbols: readonly string[]): Promise<Array<{ symbol: string; constraints: SpotProductConstraints }>> {
-  const settled = await Promise.all(symbols.map(async symbol => ({
-    symbol,
-    constraints: await getSpotProductConstraints('kraken', symbol),
-  })));
-  return settled;
 }
 
 async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Promise<Map<string, CexFeeEvidence>> {
@@ -394,8 +405,8 @@ async function fetchOkxFeeEvidenceBatch(symbolInputs: readonly string[]): Promis
   return output;
 }
 
-async function fetchLiveFeeEvidence(venue: CexFeeVenue, symbol: string): Promise<CexFeeEvidence | null> {
-  if (venue === 'coinbase') return fetchCoinbaseFeeEvidence(symbol);
+async function fetchLiveFeeEvidence(venue: CexFeeVenue, symbol: string, forceRefresh = false): Promise<CexFeeEvidence | null> {
+  if (venue === 'coinbase') return fetchCoinbaseFeeEvidence(symbol, forceRefresh);
   if (venue === 'kraken') return fetchKrakenFeeEvidence(symbol);
   return fetchOkxFeeEvidence(symbol);
 }
@@ -406,17 +417,26 @@ async function configuredFallbackForVenue(venue: CexFeeVenue, symbol: string): P
   return constraints ? configuredFee(venue, symbol) : null;
 }
 
-export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: string): Promise<CexFeeEvidence | null> {
+export async function resolveCexFeeEvidence(
+  venue: CexFeeVenue,
+  symbolInput: string,
+  options: ResolveCexFeeEvidenceOptions = {},
+): Promise<CexFeeEvidence | null> {
   const symbol = normalizeSymbolInput(symbolInput);
-  const cached = readFreshCache(venue, symbol);
+  const maxAgeMs = options.forceRefresh ? 0 : boundedEvidenceAge(options.maxAgeMs ?? FEE_CACHE_TTL_MS);
+  const cached = options.forceRefresh ? null : readFreshCache(venue, symbol, maxAgeMs);
   if (cached) return cached;
   const key = cacheKey(venue, symbol);
   const inFlight = feeInFlight.get(key);
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    const evidence = await inFlight;
+    if (!evidence) return null;
+    return Date.now() - evidence.observedAt <= maxAgeMs || maxAgeMs === 0 ? { ...evidence } : null;
+  }
 
   const promise = (async () => {
     try {
-      const live = await fetchLiveFeeEvidence(venue, symbol);
+      const live = await fetchLiveFeeEvidence(venue, symbol, options.forceRefresh || maxAgeMs < FEE_CACHE_TTL_MS);
       const evidence = live || await configuredFallbackForVenue(venue, symbol);
       if (evidence) {
         storeFeeEvidence(evidence);
@@ -428,6 +448,8 @@ export async function resolveCexFeeEvidence(venue: CexFeeVenue, symbolInput: str
           takerFeeBps: evidence.takerFeeBps,
           makerFeeBps: evidence.makerFeeBps,
           makerRebateBps: evidence.makerRebateBps,
+          requestedMaxAgeMs: maxAgeMs,
+          forceRefresh: options.forceRefresh === true,
         });
         return { ...evidence };
       }
@@ -469,14 +491,16 @@ function normalizedVenueSymbols(input: Partial<Record<CexFeeVenue, readonly stri
 
 export async function primeCexFeeEvidenceForVenueSymbols(
   input: Partial<Record<CexFeeVenue, readonly string[]>>,
+  maxAgeMs = FEE_CACHE_TTL_MS,
 ): Promise<CexFeePrimeResult> {
   const requested = normalizedVenueSymbols(input);
+  const acceptedAgeMs = boundedEvidenceAge(maxAgeMs);
   const unresolved: CexFeePrimeResult['unresolved'] = [];
 
-  const missingCoinbase = requested.coinbase.filter(symbol => !readFreshCache('coinbase', symbol));
+  const missingCoinbase = requested.coinbase.filter(symbol => !readFreshCache('coinbase', symbol, acceptedAgeMs));
   if (missingCoinbase.length > 0) {
     try {
-      const baseEvidence = await fetchCoinbaseFeeEvidence(missingCoinbase[0]);
+      const baseEvidence = await fetchCoinbaseFeeEvidence(missingCoinbase[0], acceptedAgeMs < FEE_CACHE_TTL_MS);
       if (baseEvidence) for (const symbol of missingCoinbase) storeFeeEvidence({ ...baseEvidence, symbol });
     } catch (error) {
       logger.debug('[CEX Fees] Coinbase account fee prime unavailable; Coinbase remains fail-closed for executable economics', {
@@ -487,13 +511,13 @@ export async function primeCexFeeEvidenceForVenueSymbols(
     }
   }
 
-  const missingKraken = requested.kraken.filter(symbol => !readFreshCache('kraken', symbol));
+  const missingKraken = requested.kraken.filter(symbol => !readFreshCache('kraken', symbol, acceptedAgeMs));
   if (missingKraken.length > 0) {
     try {
       const batch = await fetchKrakenFeeEvidenceBatch(missingKraken);
       for (const evidence of batch.values()) storeFeeEvidence(evidence);
       for (const symbol of missingKraken) {
-        if (readFreshCache('kraken', symbol)) continue;
+        if (readFreshCache('kraken', symbol, acceptedAgeMs)) continue;
         const fallback = await configuredFallbackForVenue('kraken', symbol);
         if (fallback) storeFeeEvidence(fallback);
       }
@@ -506,13 +530,13 @@ export async function primeCexFeeEvidenceForVenueSymbols(
     }
   }
 
-  const missingOkx = requested.okx.filter(symbol => !readFreshCache('okx', symbol));
+  const missingOkx = requested.okx.filter(symbol => !readFreshCache('okx', symbol, acceptedAgeMs));
   if (missingOkx.length > 0) {
     try {
       const batch = await fetchOkxFeeEvidenceBatch(missingOkx);
       for (const evidence of batch.values()) storeFeeEvidence(evidence);
       for (const symbol of missingOkx) {
-        if (readFreshCache('okx', symbol)) continue;
+        if (readFreshCache('okx', symbol, acceptedAgeMs)) continue;
         const fallback = await configuredFallbackForVenue('okx', symbol);
         if (fallback) storeFeeEvidence(fallback);
       }
@@ -526,7 +550,9 @@ export async function primeCexFeeEvidenceForVenueSymbols(
   }
 
   for (const venue of ['coinbase', 'kraken', 'okx'] as const) {
-    for (const symbol of requested[venue]) if (!readFreshCache(venue, symbol)) unresolved.push({ venue, symbol });
+    for (const symbol of requested[venue]) {
+      if (!readFreshCache(venue, symbol, acceptedAgeMs)) unresolved.push({ venue, symbol });
+    }
   }
 
   const allRequestedSymbols = new Set([...requested.coinbase, ...requested.kraken, ...requested.okx]);
@@ -537,14 +563,17 @@ export async function primeCexFeeEvidenceForVenueSymbols(
       kraken: requested.kraken.length,
       okx: requested.okx.length,
     },
-    coinbaseResolved: requested.coinbase.filter(symbol => Boolean(readFreshCache('coinbase', symbol))).length,
-    krakenResolved: requested.kraken.filter(symbol => Boolean(readFreshCache('kraken', symbol))).length,
-    okxResolved: requested.okx.filter(symbol => Boolean(readFreshCache('okx', symbol))).length,
+    coinbaseResolved: requested.coinbase.filter(symbol => Boolean(readFreshCache('coinbase', symbol, acceptedAgeMs))).length,
+    krakenResolved: requested.kraken.filter(symbol => Boolean(readFreshCache('kraken', symbol, acceptedAgeMs))).length,
+    okxResolved: requested.okx.filter(symbol => Boolean(readFreshCache('okx', symbol, acceptedAgeMs))).length,
     unresolved,
   };
 }
 
-export async function primeCexFeeEvidence(symbolInputs: readonly string[]): Promise<CexFeePrimeResult> {
+export async function primeCexFeeEvidence(
+  symbolInputs: readonly string[],
+  maxAgeMs = FEE_CACHE_TTL_MS,
+): Promise<CexFeePrimeResult> {
   const symbols = [...new Set(symbolInputs.map(normalizeSymbolInput).filter(Boolean))];
-  return primeCexFeeEvidenceForVenueSymbols({ coinbase: symbols, kraken: symbols, okx: symbols });
+  return primeCexFeeEvidenceForVenueSymbols({ coinbase: symbols, kraken: symbols, okx: symbols }, maxAgeMs);
 }
