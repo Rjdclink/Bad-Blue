@@ -1,5 +1,18 @@
 'use strict';
 // Diagnostic isolation only. Do not merge this branch.
-const { verifyProfitLadderNotionalContract } = require('./lib/pr482-canonical-contract.cjs');
-verifyProfitLadderNotionalContract();
-console.log('[deployment-preflight][diagnostic] profit-ladder/notional canonical contract passed; continuing to downstream build');
+const { read, requirePattern, forbidPattern } = require('./lib/pr482-canonical-contract.cjs');
+const spotProducts = read('server/services/cryptocrawl/execution/cex-spot-product-policy.ts');
+const submitGuard = read('server/services/cryptocrawl/execution/cex-submit-time-product-guard.ts');
+const coinbaseMarket = read('server/services/cryptocrawl/intelligence/coinbase-advanced-market-data.ts');
+requirePattern(spotProducts, /getSpotProductConstraints[\s\S]*forceFresh\s*=\s*false/, 'forced-fresh product authority');
+requirePattern(spotProducts, /fetchKrakenSnapshot\(true\)/, 'Kraken forced catalog refresh');
+requirePattern(spotProducts, /fetchOkxSnapshot\(true\)/, 'OKX forced catalog refresh');
+requirePattern(spotProducts, /NEGATIVE_TTL_MS/, 'bounded negative cache');
+requirePattern(spotProducts, /row\.base,\s*row\.quote/, 'Kraken base quote identity');
+requirePattern(spotProducts, /raw\.baseCcy,\s*raw\.quoteCcy/, 'OKX base quote identity');
+requirePattern(submitGuard, /getSpotProductConstraints\(venue,\s*symbol,\s*true\)/, 'submit fresh constraint');
+forbidPattern(submitGuard, /api\.kraken\.com|public\/instruments|match\(\/\^\(\[A-Z0-9\]/, 'duplicate submit parser');
+requirePattern(coinbaseMarket, /resolveCoinbaseAdvancedProductId\s*\(/, 'Coinbase live product id');
+forbidPattern(coinbaseMarket, /\(USDT\|USDC\|USD\)/, 'Coinbase stablecoin whitelist');
+forbidPattern(spotProducts, /\(USDT\|USDC\|USD\)/, 'Kraken OKX stablecoin whitelist');
+console.log('[deployment-preflight][diagnostic] product identity canonical assertions passed; continuing to downstream build');
