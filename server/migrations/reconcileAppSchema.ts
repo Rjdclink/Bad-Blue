@@ -252,10 +252,16 @@ export async function runAllSchemaMigrations(options?: {
   } catch (error: any) {
     if (error instanceof CryptocrawlerAuthoritySchemaError) throw error;
     if (!continueOnError) throw error;
+
+    // Coordination can fail independently of the ordinary transaction lane.
+    // Proceed only if the migration-owned authority schema is already complete;
+    // otherwise convert the deployment into a hard readiness failure.
+    await requireCryptocrawlerAuthoritySchema();
     return [{
       name: 'Startup migration coordinator',
       success: false,
       error: error?.message ?? String(error),
+      message: 'Migration coordinator unavailable, but required CryptoCrawler authority schema was independently verified.',
     }];
   } finally {
     if (coordinator) {
