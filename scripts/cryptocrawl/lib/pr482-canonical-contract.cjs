@@ -39,6 +39,12 @@ function verifyCexExecutionContract() {
   const timingGuard = read('server/services/cryptocrawl/integration/cross-venue-timing-guard-wiring.ts');
   const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
   const inventoryReadiness = read('server/services/cryptocrawl/integration/cex-inventory-readiness-wiring.ts');
+  const adaptiveSearch = read('server/services/cryptocrawl/optimization/adaptive-profitability-search-policy.ts');
+  const feeSurface = read('server/services/cryptocrawl/optimization/fee-surface-hyperdynamic-strategy-engine.ts');
+  const stageProgression = read('server/services/cryptocrawl/governance/automatic-stage-progression.ts');
+  const stageBootstrap = read('server/services/cryptocrawl/governance/stage-one-bootstrap-authority.ts');
+  const stageHydrator = read('server/services/cryptocrawl/governance/stage-one-evidence-hydrator.ts');
+  const rpiCapability = read('server/services/cryptocrawl/intelligence/okx-rpi-capability.ts');
   const gasFunding = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
   const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
   const zeroResource = read('server/services/cryptocrawl/integration/zero-capital-resource-wiring.ts');
@@ -59,6 +65,9 @@ function verifyCexExecutionContract() {
   requirePattern(hyperHybrid, /shape\.hybridExecution\s*\?\?\s*shape\.makerExecution/, 'split revalidation resolves hybrid or maker execution modes');
   requirePattern(hyperHybrid, /'GTC_POST_ONLY'/, 'split maker children report post-only GTC order semantics');
   requirePattern(hyperHybrid, /'STRATEGY_SPECIFIC'/, 'strategy-specific hybrid children report delegated order semantics truthfully');
+  requirePattern(hyperHybrid, /getOkxRpiExecutionCapability\(parent\.symbol,\s*true\)/, 'RPI-dependent parents refresh account capability before child sizing');
+  requirePattern(hyperHybrid, /minimumRpiNotionalUsd/, 'RPI minimum notional constrains split children rather than being discovered after submit');
+  requirePattern(hyperHybrid, /rebateOrderCountObjective:\s*false/, 'child splitting explicitly rejects rebate order-count farming as an objective');
   requirePattern(maker, /const\s+parentCeilingUsd\s*=\s*canary\.amount/, 'MM parent keeps the measured canary/ladder strategy ceiling');
   forbidPattern(maker, /maxOrderNotionalUsd|singleOrderEnvelopeUsd|directOrderCeilingUsd/, 'MM strategy treating a venue single-order maximum as the parent trade ceiling');
 
@@ -84,10 +93,29 @@ function verifyCexExecutionContract() {
   requirePattern(makerAdapters, /venue:\s*ExecutableCexVenue/, 'post-only maker adapter is shared across executable venues');
   requirePattern(makerAdapters, /limit_limit_gtc/, 'Coinbase post-only maker translation is installed');
   forbidPattern(fourMode, /buyVenue:\s*'kraken'\s*\|\s*'okx'|sellVenue:\s*'kraken'\s*\|\s*'okx'/, 'four-mode matrix narrowing strategy authority to Kraken/OKX');
+  requirePattern(feeSurface, /buyVenue:\s*CexFeeVenue/, 'hyperdynamic fee routing consumes the three-venue canonical CEX fee type');
+  forbidPattern(feeSurface, /buyVenue:\s*'kraken'\s*\|\s*'okx'|sellVenue:\s*'kraken'\s*\|\s*'okx'/, 'hyperdynamic fee routing narrowing its surface to Kraken/OKX');
+  requirePattern(feeSurface, /artificial_tier_volume/, 'fee-surface policy explicitly prohibits artificial volume for fee tiers');
   requirePattern(timingGuard, /supportedModes:\s*\['TT',\s*'MT',\s*'TM',\s*'MM'\]/, 'cross-venue freshness timing covers all four CEX execution modes');
   requirePattern(timingGuard, /makerExecution/, 'MM timing guard recognizes canonical maker execution metadata');
   requirePattern(canonicalRuntime, /coinbaseMakerExecutionAuthority:\s*true/, 'runtime telemetry reflects actual Coinbase post-only maker authority');
   forbidPattern(canonicalRuntime, /kraken_okx_post_only/, 'runtime telemetry narrowing maker execution to Kraken/OKX');
+
+  // High-probability measured recovery may recheck at ~1.75s, while broad scans
+  // remain adaptive and fee/product private traffic stays under shared caches.
+  requirePattern(adaptiveSearch, /highProbabilityFastLane/, 'adaptive search explicitly identifies the measured CEX fast lane');
+  requirePattern(adaptiveSearch, /1_750/, 'measured high-probability CEX fast lane can reach 1750ms');
+  requirePattern(adaptiveSearch, /feeFreshnessShare\s*>=\s*0\.75/, 'fast lane requires fresh-enough authenticated fee evidence');
+
+  // Stage 1 never advances on unknown critical information. Instead it actively
+  // refreshes canonical proof sources, and fully measured maker CEX plans count as
+  // legitimate bootstrap evidence alongside standard CEX and zero-capital routes.
+  requirePattern(stageHydrator, /measuredOpportunityGraph\.scanOnce\(\)/, 'Stage 1 proactively refreshes the canonical measured CEX graph');
+  requirePattern(stageHydrator, /refreshCexInventoryReadinessNow\(\)/, 'Stage 1 proactively refreshes authenticated CEX inventory evidence');
+  requirePattern(stageHydrator, /executionAuthority:\s*false/, 'Stage evidence hydration cannot grant execution authority');
+  requirePattern(stageBootstrap, /candidate\.topology\s*!==\s*'MAKER_CEX'/, 'fully measured maker CEX candidates participate in Stage 1 validation');
+  requirePattern(stageProgression, /eligibleMakerCexCandidate/, 'automatic progression recognizes fully measured maker CEX resource readiness');
+  requirePattern(stageProgression, /missingEvidenceBypass:\s*false/, 'automatic progression remains fail closed when proof hydration is incomplete');
 
   // Universal product representation must never fabricate USD-denominated economics.
   requirePattern(maker, /USD_NORMALIZED_QUOTES/, 'maker planning has an explicit USD-normalization boundary');
@@ -116,11 +144,18 @@ function verifyCexExecutionContract() {
   requirePattern(arbVerifier, /getSpotProductConstraints\('okx',\s*symbol\)/, 'OKX executable REST depth resolves exact regional live exchange symbol');
   forbidPattern(arbVerifier, /function\s+okxInstId|\(USDT\|USDC\|USD\)/, 'arbitrage verifier reintroducing a quote-currency instrument parser');
 
+  // Authenticated RPI capability is account/product specific and cannot be a
+  // public-fee assumption or an advisory-only substitute at execution time.
+  requirePattern(rpiCapability, /makerPermission:\s*permissionState\s*===\s*'2'/, 'OKX RPI maker permission is authenticated per account/product');
+  requirePattern(rpiCapability, /minimumRpiNotionalUsd/, 'OKX RPI capability carries the current minimum-notional rule');
+  requirePattern(rpiCapability, /rpiMinLevel/, 'OKX RPI capability measures spacing constraints');
+
   // Authenticated inventory rows with zero balances cannot masquerade as funded
   // assets or alter readiness pressure.
   requirePattern(inventoryReadiness, /positiveBalanceAssets/, 'inventory readiness distinguishes funded assets from zero-balance rows');
   requirePattern(inventoryReadiness, /inventoryAssetCount:\s*metrics\.positiveBalanceAssetCount/, 'readiness pressure consumes funded asset count');
   requirePattern(inventoryReadiness, /syntheticBalancesAllowed:\s*false/, 'inventory readiness remains authenticated and fail closed');
+  requirePattern(inventoryReadiness, /refreshCexInventoryReadinessNow/, 'governance can request the same single-flight authenticated inventory authority on demand');
 
   // Sponsored/user-op gas is an execution property, not a synthetic discount.
   // The live funding decision is bound before route ranking; native execution is
@@ -141,7 +176,8 @@ function verifyCexExecutionContract() {
   return {
     centralized, hyperHybrid, partialAccounting, residualReplan, capability, fourMode, feeResolver, arbVerifier,
     maker, makerDiscovery, makerAdapters, hybrid, positiveCapture, spotProducts, submitGuard, coinbaseMarket,
-    timingGuard, canonicalRuntime, inventoryReadiness, gasFunding, dynamicRoutes, zeroResource, coreRuntime, graphlessScout,
+    timingGuard, canonicalRuntime, inventoryReadiness, adaptiveSearch, feeSurface, stageProgression, stageBootstrap,
+    stageHydrator, rpiCapability, gasFunding, dynamicRoutes, zeroResource, coreRuntime, graphlessScout,
   };
 }
 
