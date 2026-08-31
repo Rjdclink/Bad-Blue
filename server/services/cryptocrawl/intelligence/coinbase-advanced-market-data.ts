@@ -41,7 +41,14 @@ export interface CoinbaseAdvancedProductConstraints {
   source: 'coinbase_advanced_public_product';
 }
 
+export interface CoinbaseAdvancedSpotProductDirectory {
+  venue: 'coinbase';
+  observedAt: number;
+  symbols: string[];
+}
+
 interface CoinbaseProductDirectorySnapshot {
+  observedAt: number;
   expiresAt: number;
   values: Map<string, string>;
 }
@@ -135,7 +142,8 @@ async function fetchCoinbaseProductDirectory(forceFresh = false): Promise<Coinba
       cursor = next;
     }
 
-    const snapshot = { values, expiresAt: Date.now() + DIRECTORY_CACHE_TTL_MS };
+    const observedAt = Date.now();
+    const snapshot = { values, observedAt, expiresAt: observedAt + DIRECTORY_CACHE_TTL_MS };
     directorySnapshot = snapshot;
     logger.info('[Coinbase] Advanced Trade SPOT product directory refreshed', {
       component: 'CoinbaseAdvancedMarketData',
@@ -150,6 +158,15 @@ async function fetchCoinbaseProductDirectory(forceFresh = false): Promise<Coinba
   })().finally(() => { directoryInFlight = null; });
 
   return directoryInFlight;
+}
+
+export async function getCoinbaseAdvancedSpotProductDirectory(forceFresh = false): Promise<CoinbaseAdvancedSpotProductDirectory> {
+  const snapshot = await fetchCoinbaseProductDirectory(forceFresh);
+  return {
+    venue: 'coinbase',
+    observedAt: snapshot.observedAt,
+    symbols: [...snapshot.values.keys()].sort(),
+  };
 }
 
 export function getCachedCoinbaseAdvancedProductId(symbolInput: string): string | null {
