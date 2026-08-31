@@ -299,11 +299,10 @@ async function initializeDatabase(): Promise<boolean> {
     console.error('[STARTUP] ❌ Database admission window ended:', error?.message ?? error);
   }
 
-  // Pool recreation is useful for a locally closed/corrupt pool, but it is an
-  // anti-pattern when the upstream database/pooler is overloaded. In that case
-  // recreating both pools immediately adds fresh connection demand and can turn
-  // a recoverable admission event into a retry storm.
-  if (!isDatabaseAdmissionPressureError(lastError) && !isPermanentDatabaseStartupError(lastError)) {
+  // Recreate pools only when the local node-postgres pool itself is positively
+  // known to be closed/corrupt. Upstream overload, auth/config failures and
+  // unknown transient network errors must never create a two-lane reconnect burst.
+  if (isLocalPoolFailure(lastError)) {
     console.log('[STARTUP] Local pool failure detected; attempting one bounded pool reset...');
     try {
       const { resetPool } = await import('./db');
@@ -317,8 +316,10 @@ async function initializeDatabase(): Promise<boolean> {
     }
   } else if (isDatabaseAdmissionPressureError(lastError)) {
     console.warn('[STARTUP] Database admission pressure detected; skipping pool reset to avoid connection churn');
-  } else {
+  } else if (isPermanentDatabaseStartupError(lastError)) {
     console.error('[STARTUP] Permanent database configuration/authentication failure; pool reset suppressed');
+  } else {
+    console.warn('[STARTUP] Unknown transient database/network failure; pool reset suppressed to avoid reconnect amplification');
   }
 
   console.warn('[STARTUP] Database unavailable; deployment remains unready while the previous Railway deployment can continue serving');
@@ -326,6 +327,7 @@ async function initializeDatabase(): Promise<boolean> {
     connected: false,
     admissionPressure: isDatabaseAdmissionPressureError(lastError),
     permanentFailure: isPermanentDatabaseStartupError(lastError),
+    localPoolFailure: isLocalPoolFailure(lastError),
     error: lastError instanceof Error ? lastError.message : String(lastError),
   });
   return false;
