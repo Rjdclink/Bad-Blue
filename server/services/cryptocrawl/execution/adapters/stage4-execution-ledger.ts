@@ -1,3 +1,5 @@
+import { withCryptaraSupabasePriority } from '../../integration/cryptara-supabase-admission-worker.js';
+
 export type Stage4ExecutionState = 'PREPARED' | 'SUBMITTED' | 'CONFIRMED' | 'FAILED' | 'STALE';
 
 export interface Stage4ExecutionRecord {
@@ -52,10 +54,14 @@ async function getDatabasePool() {
   return pool;
 }
 
+async function highPriorityQuery(text: string, values?: unknown[]) {
+  const pool = await getDatabasePool();
+  return withCryptaraSupabasePriority('high', () => pool.query(text, values));
+}
+
 export class PostgresStage4ExecutionLedger implements Stage4ExecutionLedger {
   async reserve(record: Stage4ExecutionRecord): Promise<{ created: boolean; record: Stage4ExecutionRecord }> {
-    const pool = await getDatabasePool();
-    const inserted = await pool.query(
+    const inserted = await highPriorityQuery(
       `INSERT INTO zero_capital_execution_ledger (
         execution_key, opportunity_id, chain, state, state_fingerprint, receiver,
         starting_native_balance_wei, starting_input_balance
@@ -75,14 +81,13 @@ export class PostgresStage4ExecutionLedger implements Stage4ExecutionLedger {
     );
     if (inserted.rows[0]) return { created: true, record: fromRow(inserted.rows[0]) };
 
-    const existing = await pool.query('SELECT * FROM zero_capital_execution_ledger WHERE execution_key = $1', [record.executionKey]);
+    const existing = await highPriorityQuery('SELECT * FROM zero_capital_execution_ledger WHERE execution_key = $1', [record.executionKey]);
     if (!existing.rows[0]) throw new Error(`Execution ledger conflict without a record for ${record.executionKey}`);
     return { created: false, record: fromRow(existing.rows[0]) };
   }
 
   async markSubmitted(executionKey: string, transactionHash: string, transactionNonce: number): Promise<void> {
-    const pool = await getDatabasePool();
-    await pool.query(
+    await highPriorityQuery(
       `UPDATE zero_capital_execution_ledger
        SET state = 'SUBMITTED', transaction_hash = $2, transaction_nonce = $3, updated_at = NOW()
        WHERE execution_key = $1 AND state = 'PREPARED'`,
@@ -91,8 +96,7 @@ export class PostgresStage4ExecutionLedger implements Stage4ExecutionLedger {
   }
 
   async markConfirmed(executionKey: string, update: Pick<Stage4ExecutionRecord, 'endingNativeBalanceWei' | 'nativeFeeWei' | 'endingInputBalance' | 'realizedProfit' | 'receiptBlock'>): Promise<void> {
-    const pool = await getDatabasePool();
-    await pool.query(
+    await highPriorityQuery(
       `UPDATE zero_capital_execution_ledger
        SET state = 'CONFIRMED', ending_native_balance_wei = $2, native_fee_wei = $3,
            ending_input_balance = $4, realized_profit = $5, receipt_block = $6, updated_at = NOW()
@@ -102,8 +106,7 @@ export class PostgresStage4ExecutionLedger implements Stage4ExecutionLedger {
   }
 
   async markFailed(executionKey: string, error: string): Promise<void> {
-    const pool = await getDatabasePool();
-    await pool.query(
+    await highPriorityQuery(
       `UPDATE zero_capital_execution_ledger
        SET state = 'FAILED', error = $2, updated_at = NOW()
        WHERE execution_key = $1 AND state <> 'CONFIRMED'`,
