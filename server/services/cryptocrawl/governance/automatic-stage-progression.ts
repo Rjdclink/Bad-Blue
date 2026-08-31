@@ -15,6 +15,7 @@ import {
 } from './stage-management.js';
 import { profitLadder } from './profit-ladder.js';
 import { riskGovernor } from './risk-governor.js';
+import { hydrateStageOneAdvancementEvidence } from './stage-one-evidence-hydrator.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
@@ -120,9 +121,12 @@ function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReas
 
   // Stage 1 must be able to create its first realized history. Do not require a
   // prior terminal settlement, and do not couple a settlement-safe CEX candidate
-  // to zero-capital native-gas/receiver readiness. Resource readiness is scoped
-  // to the topology that would actually execute the first trade.
-  const eligibleCexCandidate = recentCandidates.byTopology.CEX_CEX.eligible > 0;
+  // to zero-capital native-gas/receiver readiness. Fully measured maker CEX plans
+  // use the same authenticated inventory/settlement safety surface and therefore
+  // count as legitimate CEX bootstrap proof rather than being discarded.
+  const eligibleStandardCexCandidate = recentCandidates.byTopology.CEX_CEX.eligible > 0;
+  const eligibleMakerCexCandidate = recentCandidates.byTopology.MAKER_CEX.eligible > 0;
+  const eligibleCexCandidate = eligibleStandardCexCandidate || eligibleMakerCexCandidate;
   const eligibleZeroCapitalCandidate = recentCandidates.byTopology.ZERO_CAPITAL_ATOMIC.eligible > 0;
   const stageOneTopologyResourceReady = stageState.currentStage !== 1 ||
     eligibleCexCandidate ||
@@ -142,6 +146,7 @@ function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReas
     advancementReasons = [
       'Stage 1 has a verified-positive signal but no eligible settlement-safe bootstrap topology is currently resource-ready',
       `eligibleCexCandidates=${recentCandidates.byTopology.CEX_CEX.eligible}`,
+      `eligibleMakerCexCandidates=${recentCandidates.byTopology.MAKER_CEX.eligible}`,
       `eligibleZeroCapitalCandidates=${recentCandidates.byTopology.ZERO_CAPITAL_ATOMIC.eligible}`,
       `zeroCapitalInitialGasReady=${initialGasReady}`,
       ...readinessGate.reasons,
@@ -149,9 +154,11 @@ function toAutomaticEvidence(gate?: Pick<GateEvaluation, 'decision' | 'blockReas
   } else {
     advancementReasons = [
       ...readinessGate.reasons,
-      eligibleCexCandidate
-        ? 'Stage 1 bootstrap evidence includes a fresh eligible CEX candidate; prior realized settlement history is not required to enter Stage 2'
-        : 'Stage 1 bootstrap evidence includes a fresh eligible zero-capital candidate with topology-specific funding/receiver readiness',
+      eligibleMakerCexCandidate
+        ? 'Stage 1 bootstrap evidence includes a fresh fully measured executable maker CEX candidate; prior realized settlement history is not required to enter Stage 2'
+        : eligibleStandardCexCandidate
+          ? 'Stage 1 bootstrap evidence includes a fresh eligible CEX candidate; prior realized settlement history is not required to enter Stage 2'
+          : 'Stage 1 bootstrap evidence includes a fresh eligible zero-capital candidate with topology-specific funding/receiver readiness',
     ];
   }
 
@@ -215,6 +222,15 @@ export async function evaluateAutomaticStageProgression(
   gate?: Pick<GateEvaluation, 'decision' | 'blockReasons' | 'metadata'>,
 ): Promise<AutomaticAdvancementResult> {
   await ensureCryptaraMlRankerHydrated();
+  if (stageManager.getState().currentStage === 1) {
+    await hydrateStageOneAdvancementEvidence().catch(error => {
+      logger.debug('[AutomaticStageProgression] Stage 1 proof hydration remained incomplete; advancement stays fail-closed', {
+        component: 'AutomaticStageProgression',
+        error: error instanceof Error ? error.message : String(error),
+        missingEvidenceBypass: false,
+      });
+    });
+  }
   await refreshStageOneBootstrapGate(gate);
   await stageManager.recordProfitLadderState(profitLadder.exportState());
   const result = await stageManager.evaluateAutomaticAdvancement(toAutomaticEvidence(gate));
