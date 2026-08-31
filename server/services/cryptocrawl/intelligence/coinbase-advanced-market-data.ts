@@ -152,14 +152,6 @@ async function fetchCoinbaseProductDirectory(forceFresh = false): Promise<Coinba
   return directoryInFlight;
 }
 
-export async function resolveCoinbaseAdvancedProductId(symbolInput: string, forceFresh = false): Promise<string> {
-  const symbol = canonicalCoinbaseSymbol(symbolInput);
-  const directory = await fetchCoinbaseProductDirectory(forceFresh);
-  const productId = directory.values.get(symbol);
-  if (!productId) throw new Error(`Coinbase Advanced Trade SPOT product ${symbol} is not present in the current live product directory`);
-  return productId;
-}
-
 export function getCachedCoinbaseAdvancedProductId(symbolInput: string): string | null {
   let symbol: string;
   try { symbol = canonicalCoinbaseSymbol(symbolInput); } catch { return null; }
@@ -167,6 +159,22 @@ export function getCachedCoinbaseAdvancedProductId(symbolInput: string): string 
   if (product && product.expiresAt > Date.now()) return product.value.productId;
   if (directorySnapshot && directorySnapshot.expiresAt > Date.now()) return directorySnapshot.values.get(symbol) || null;
   return null;
+}
+
+export async function resolveCoinbaseAdvancedProductId(symbolInput: string, forceFresh = false): Promise<string> {
+  const symbol = canonicalCoinbaseSymbol(symbolInput);
+  // Submission-time freshness applies to the exact product metadata endpoint.
+  // A still-fresh directory identity is safe to reuse and avoids paginating the
+  // entire catalog in the hot path; the exact product request still uses no-cache
+  // and fails closed if the product is disabled, missing or changed.
+  if (forceFresh) {
+    const cachedProductId = getCachedCoinbaseAdvancedProductId(symbol);
+    if (cachedProductId) return cachedProductId;
+  }
+  const directory = await fetchCoinbaseProductDirectory(forceFresh);
+  const productId = directory.values.get(symbol);
+  if (!productId) throw new Error(`Coinbase Advanced Trade SPOT product ${symbol} is not present in the current live product directory`);
+  return productId;
 }
 
 function canonicalSymbol(productId: string): string {
@@ -273,7 +281,8 @@ export async function getCoinbaseAdvancedProductConstraints(symbolInput: string,
   const symbol = canonicalCoinbaseSymbol(symbolInput);
   const cached = productCache.get(symbol);
   if (!forceFresh && cached && cached.expiresAt > Date.now()) return { ...cached.value };
-  const pending = productInFlight.get(symbol);
+  const requestKey = `${symbol}:${forceFresh ? 'fresh' : 'cached'}`;
+  const pending = productInFlight.get(requestKey);
   if (pending) return pending;
 
   const request = (async () => {
@@ -292,8 +301,8 @@ export async function getCoinbaseAdvancedProductConstraints(symbolInput: string,
   })().catch(error => {
     logger.debug('[Coinbase] Advanced Trade product constraints unavailable', { component: 'CoinbaseAdvancedMarketData', symbol, forceFresh, error: error instanceof Error ? error.message : String(error) });
     throw error;
-  }).finally(() => productInFlight.delete(symbol));
+  }).finally(() => productInFlight.delete(requestKey));
 
-  productInFlight.set(symbol, request);
+  productInFlight.set(requestKey, request);
   return request;
 }
