@@ -15,7 +15,9 @@ export interface CexInventoryReadinessSnapshot {
   configuredExecutableVenues: ExecutableCexVenue[];
   reconciledVenues: ExecutableCexVenue[];
   failedVenues: Array<{ venue: ExecutableCexVenue; error: string }>;
+  /** Compatibility count of authenticated venue/asset rows, including zero balances. */
   inventoryAssets: number;
+  positiveBalanceAssets: number;
   spendableAssets: number;
   payoutReservedAssets: number;
   inventoryFreshnessShare: number | null;
@@ -35,6 +37,7 @@ let latest: CexInventoryReadinessSnapshot = {
   reconciledVenues: [],
   failedVenues: [],
   inventoryAssets: 0,
+  positiveBalanceAssets: 0,
   spendableAssets: 0,
   payoutReservedAssets: 0,
   inventoryFreshnessShare: null,
@@ -68,6 +71,7 @@ function currentMetrics(now = Date.now()) {
   return {
     snapshots,
     inventoryAssetCount: snapshots.length,
+    positiveBalanceAssetCount: snapshots.filter(item => item.available > 0).length,
     inventoryVenueCount: venues.size,
     inventoryFreshnessShare: snapshots.length > 0 ? fresh.length / snapshots.length : 0,
     spendableAssets: snapshots.filter(item => spendable(item) > 0).length,
@@ -79,7 +83,7 @@ function nextRefreshIntervalMs(): { intervalMs: number; activeRules: number } {
   const metrics = currentMetrics();
   const state = stageManager.getState();
   const plan = buildExecutionReadinessProfitabilityPlan({
-    inventoryAssetCount: metrics.inventoryAssetCount,
+    inventoryAssetCount: metrics.positiveBalanceAssetCount,
     inventoryVenueCount: metrics.inventoryVenueCount,
     inventoryFreshnessShare: metrics.inventoryFreshnessShare,
     governanceCanExecute: stageManager.canExecuteTrades() ? 1 : 0,
@@ -121,6 +125,7 @@ async function refreshOnce(): Promise<void> {
     reconciledVenues: [...reconciledVenues],
     failedVenues: [...failedVenues],
     inventoryAssets: metrics.inventoryAssetCount,
+    positiveBalanceAssets: metrics.positiveBalanceAssetCount,
     spendableAssets: metrics.spendableAssets,
     payoutReservedAssets: metrics.payoutReservedAssets,
     inventoryFreshnessShare: metrics.inventoryAssetCount > 0 ? metrics.inventoryFreshnessShare : null,
@@ -136,9 +141,11 @@ async function refreshOnce(): Promise<void> {
     configuredExecutableVenues: venues,
     reconciledVenues,
     failedVenues: failedVenues.map(item => ({ venue: item.venue, error: item.error })),
-    inventoryAssets: metrics.inventoryAssetCount,
+    inventoryAssetRows: metrics.inventoryAssetCount,
+    positiveBalanceAssets: metrics.positiveBalanceAssetCount,
     spendableAssets: metrics.spendableAssets,
     payoutReservedAssets: metrics.payoutReservedAssets,
+    zeroBalanceRowsExcludedFromReadinessPressure: true,
     payoutShareExcludedFromNewTradeSpendability: true,
     retainedShareRemainsSpendable: true,
     inventoryFreshnessShare: latest.inventoryFreshnessShare,
