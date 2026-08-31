@@ -311,7 +311,12 @@ function wrapClientRelease(
 ): (error?: unknown) => void {
   let released = false;
   const wrappedRelease = (error?: unknown) => {
-    if (released) return;
+    // Preserve node-postgres double-release behavior instead of silently hiding a
+    // caller bug; only the Cryptara permit is protected from double release.
+    if (released) {
+      originalRelease(error);
+      return;
+    }
     released = true;
     try {
       originalRelease(error);
@@ -339,7 +344,7 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
       }
 
       const contextualPriority = priorityContext.getStore();
-      const priority: CryptaraSupabasePriority = contextualPriority || (typeof callback === 'function' ? 'normal' : 'high');
+      const priority: CryptaraSupabasePriority = contextualPriority || 'normal';
 
       if (typeof callback === 'function') {
         void governor.acquire(priority).then(permit => {
