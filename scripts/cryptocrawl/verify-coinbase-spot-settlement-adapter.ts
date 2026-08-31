@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import {
   CoinbaseSpotSettlementAdapter,
   coinbaseDecimalString,
-  coinbaseProductId,
   type CoinbasePrivateRequester,
 } from '../../server/services/cryptocrawl/execution/coinbase-spot-settlement-adapter.js';
 
@@ -62,18 +61,20 @@ const requester: CoinbasePrivateRequester = async (path, method, options = {}) =
   throw new Error(`unexpected mock request: ${method} ${path}`);
 };
 
-assert.equal(coinbaseProductId('BTCUSD'), 'BTC-USD');
-assert.equal(coinbaseProductId('ETHUSDC'), 'ETH-USDC');
-assert.throws(() => coinbaseProductId('BTC-EUR'), /Unsupported Coinbase spot symbol/);
 assert.equal(coinbaseDecimalString(100.01), '100.01');
 assert.equal(coinbaseDecimalString(1e-13), '0.0000000000001');
 assert.equal(coinbaseDecimalString(1.25e6), '1250000');
 assert.throws(() => coinbaseDecimalString(0), /finite and positive/);
 
 const adapter = new CoinbaseSpotSettlementAdapter(requester);
-const receipt = await adapter.submit({ symbol: 'BTCUSD', side: 'buy', quantity: 0.01, price: 100 });
+await assert.rejects(
+  () => adapter.submit({ symbol: 'BTCUSD', side: 'buy', quantity: 0.01, price: 100 }),
+  /explicit exact productId/,
+);
+const receipt = await adapter.submit({ symbol: 'BTCUSD', productId: 'BTC-USD', side: 'buy', quantity: 0.01, price: 100 });
 assert.equal(receipt.venue, 'coinbase');
 assert.equal(receipt.orderId, 'order-1');
+assert.equal(receipt.productId, 'BTC-USD');
 const settlement = await adapter.query(receipt);
 assert.equal(settlement.terminal, true);
 assert.equal(settlement.status, 'filled');
