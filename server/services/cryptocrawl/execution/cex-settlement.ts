@@ -392,12 +392,16 @@ function knownFeeUsd(order: NormalizedOrderSettlement, baseAsset: string, quoteA
   if (order.feeAmount === null) return null;
   if (order.feeAmount === 0) return 0;
   if (!order.feeAsset) return null;
-  const feeAmount = order.feeAmount;
+  // Normalize venue-native fee signs into one economic convention:
+  // positive = cost, negative = rebate. OKX reports the inverse at the API
+  // boundary (negative charge, positive rebate), while Kraken/Coinbase settlement
+  // amounts are already represented as positive charges.
+  const economicFeeAmount = order.venue === 'okx' ? -order.feeAmount : order.feeAmount;
   const feeAsset = canonicalFeeAsset(order.feeAsset);
   const normalizedBase = canonicalFeeAsset(baseAsset);
   const normalizedQuote = canonicalFeeAsset(quoteAsset);
-  if (feeAsset === normalizedQuote) return feeAmount;
-  if (feeAsset === normalizedBase && order.averageFillPrice !== null) return feeAmount * order.averageFillPrice;
+  if (feeAsset === normalizedQuote) return economicFeeAmount;
+  if (feeAsset === normalizedBase && order.averageFillPrice !== null) return economicFeeAmount * order.averageFillPrice;
   return null;
 }
 
@@ -628,6 +632,7 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
       ...(buySettlement.fills.length > 0 ? [`${plan.buyVenue}:fills`] : []),
       ...(sellSettlement.fills.length > 0 ? [`${plan.sellVenue}:fills`] : []),
       ...(buySettlement.finalBalances || sellSettlement.finalBalances ? ['authenticated_final_balances'] : []),
+      'venue_native_fee_sign_normalized_to_economic_cost',
     ],
     orders: [buySettlement, sellSettlement],
     error: submissionError.length > 0 ? submissionError.join('; ') : undefined,
