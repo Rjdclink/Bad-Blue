@@ -578,13 +578,16 @@ httpServer = createServer(app);
     const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
     await initializeGovernance();
 
-    // A deployment must not be promoted if it merely connects to the wrong or
-    // incomplete database. Keep Railway on the previous deployment until the
-    // production schema is actually usable.
+    // Schema verification is global application telemetry. A degraded/missing
+    // CryptoCrawler authority object must not take down unrelated LegalWhat
+    // availability; CryptoCrawler lifecycle entry independently verifies and
+    // fails closed on its migration-owned authority schema before execution.
     const { runStartupSchemaVerification } = await import('./db');
     const schemaReady = await runStartupSchemaVerification();
     if (!schemaReady) {
-      throw new Error('Startup schema verification did not establish the required production schema');
+      backgroundInitializationError = 'Startup schema verification reported degraded database schema';
+      startupTrace('database_schema_degraded');
+      console.warn('[STARTUP] ⚠ Production schema verification reported degraded state; scoped runtime authorities remain fail-closed');
     }
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error);
