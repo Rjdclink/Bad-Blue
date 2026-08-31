@@ -27,6 +27,7 @@ export interface SpotProductConstraints {
 }
 
 interface ConstraintSnapshot {
+  observedAt: number;
   expiresAt: number;
   values: Map<string, SpotProductConstraints>;
 }
@@ -34,6 +35,10 @@ interface ConstraintSnapshot {
 const TTL_MS = Math.max(5_000, Math.min(300_000, Number(process.env.CRYPTO_CEX_PRODUCT_CONSTRAINT_TTL_MS || 60_000)));
 const TIMEOUT_MS = Math.max(1_000, Math.min(10_000, Number(process.env.CRYPTO_CEX_PRODUCT_CONSTRAINT_TIMEOUT_MS || 4_000)));
 const NEGATIVE_TTL_MS = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTO_CEX_PRODUCT_NEGATIVE_TTL_MS || 30_000)));
+const MISSING_CATALOG_RECHECK_MS = Math.max(
+  5_000,
+  Math.min(TTL_MS, Number(process.env.CRYPTO_CEX_MISSING_CATALOG_RECHECK_MS || Math.min(30_000, TTL_MS))),
+);
 let krakenSnapshot: ConstraintSnapshot | null = null;
 let krakenInFlight: Promise<ConstraintSnapshot> | null = null;
 let okxSnapshot: ConstraintSnapshot | null = null;
@@ -205,7 +210,7 @@ async function fetchKrakenSnapshot(forceRefresh = false): Promise<ConstraintSnap
         values.set(constraint.symbol, constraint);
       }
     }
-    const snapshot = { expiresAt: Date.now() + TTL_MS, values };
+    const snapshot = { observedAt, expiresAt: observedAt + TTL_MS, values };
     krakenSnapshot = snapshot;
     clearNegativeEntries('kraken', snapshot);
     logger.info('[CEX Product] Kraken SPOT constraints refreshed', {
@@ -243,7 +248,7 @@ async function fetchOkxSnapshot(forceRefresh = false): Promise<ConstraintSnapsho
       const constraint = okxConstraint(raw, observedAt);
       if (constraint) values.set(constraint.symbol, constraint);
     }
-    const snapshot = { expiresAt: Date.now() + TTL_MS, values };
+    const snapshot = { observedAt, expiresAt: observedAt + TTL_MS, values };
     okxSnapshot = snapshot;
     clearNegativeEntries('okx', snapshot);
     logger.info('[CEX Product] OKX regional SPOT constraints refreshed', {
@@ -329,17 +334,22 @@ export async function getSpotProductConstraints(
   const negativeKey = `${venue}:${symbol}`;
   const negativeUntil = unsupportedUntil.get(negativeKey) || 0;
   if (!forceFresh && negativeUntil > Date.now()) {
-    throw new Error(`${venue} SPOT product ${symbol} was absent from a recently forced live catalog refresh`);
+    throw new Error(`${venue} SPOT product ${symbol} was absent from a recently authoritative live catalog`);
   }
 
   let snapshot = venue === 'kraken' ? await fetchKrakenSnapshot() : await fetchOkxSnapshot();
   let constraint = snapshot.values.get(symbol);
   if (!constraint) {
-    snapshot = venue === 'kraken' ? await fetchKrakenSnapshot(true) : await fetchOkxSnapshot(true);
-    constraint = snapshot.values.get(symbol);
+    // A just-fetched full catalog is already authoritative. Do not force another
+    // full catalog request for every missing symbol in the same scan cycle. Only
+    // recheck once the shared catalog has aged enough to plausibly be stale.
+    if (Date.now() - snapshot.observedAt >= MISSING_CATALOG_RECHECK_MS) {
+      snapshot = venue === 'kraken' ? await fetchKrakenSnapshot(true) : await fetchOkxSnapshot(true);
+      constraint = snapshot.values.get(symbol);
+    }
     if (!constraint) {
       unsupportedUntil.set(negativeKey, Date.now() + NEGATIVE_TTL_MS);
-      throw new Error(`${venue} SPOT product ${symbol} has no current live execution constraints after authoritative catalog refresh`);
+      throw new Error(`${venue} SPOT product ${symbol} has no current live execution constraints in the authoritative catalog`);
     }
   }
   unsupportedUntil.delete(negativeKey);
