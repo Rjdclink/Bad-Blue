@@ -1,6 +1,19 @@
+import type { PoolClient } from 'pg';
 import { coordinationPool, isDatabaseConfigured } from '../../../db.js';
 
 const localTails = new Map<string, Promise<void>>();
+
+function boundedNumber(raw: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(raw);
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+const DISTRIBUTED_LOCK_MAX_WAIT_MS = boundedNumber(process.env.CRYPTOCRAWL_EVM_SIGNER_LOCK_MAX_WAIT_MS, 1_500, 100, 10_000);
+const DISTRIBUTED_LOCK_POLL_MS = boundedNumber(process.env.CRYPTOCRAWL_EVM_SIGNER_LOCK_POLL_MS, 75, 20, 500);
+let distributedLockContentionCount = 0;
+let distributedLockTimeoutCount = 0;
+let distributedLastLockWaitMs = 0;
 
 function normalizeWalletAddress(value: string): string {
   const normalized = value.trim().toLowerCase();
@@ -27,16 +40,41 @@ async function withLocalLane<T>(key: string, operation: () => Promise<T>): Promi
   }
 }
 
+async function acquireDistributedSignerLock(client: PoolClient, key: string): Promise<void> {
+  const startedAt = Date.now();
+  const deadline = startedAt + DISTRIBUTED_LOCK_MAX_WAIT_MS;
+  while (true) {
+    const result = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS locked', [key]);
+    if (result.rows?.[0]?.locked === true) {
+      distributedLastLockWaitMs = Math.max(0, Date.now() - startedAt);
+      return;
+    }
+
+    distributedLockContentionCount += 1;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      distributedLockTimeoutCount += 1;
+      distributedLastLockWaitMs = Math.max(0, Date.now() - startedAt);
+      throw new Error(`distributed signer lane busy after ${distributedLastLockWaitMs}ms; fail-closed without blocking PostgreSQL advisory-lock waiters`);
+    }
+
+    const pollMs = Math.min(DISTRIBUTED_LOCK_POLL_MS, remainingMs);
+    const lowMs = Math.max(10, Math.floor(pollMs / 2));
+    const jitterMs = Math.floor(Math.random() * Math.max(1, pollMs - lowMs + 1));
+    await new Promise(resolve => setTimeout(resolve, Math.min(remainingMs, lowMs + jitterMs)));
+  }
+}
+
 /**
  * One EVM account on one chain is one nonce-ordering domain. Hold a PostgreSQL
  * session advisory lock across nonce observation, signing and network submission
  * so separate Railway replicas cannot become independent nonce owners.
  *
- * Session-level coordination is isolated from ordinary application queries by
+ * Acquisition uses pg_try_advisory_lock with a bounded jittered wait. Busy lanes
+ * fail closed instead of entering PostgreSQL's blocking advisory-lock wait queue.
+ * Session-level coordination stays isolated from ordinary application queries by
  * the dedicated coordination pool. No durable nonce is pre-reserved here: a
- * process crash before broadcast must not create an artificial nonce gap. The
- * authoritative pending nonce remains the chain/provider observation made while
- * this distributed lane is held.
+ * process crash before broadcast must not create an artificial nonce gap.
  */
 export async function withEvmSignerLane<T>(input: {
   chainId: number;
@@ -50,7 +88,7 @@ export async function withEvmSignerLane<T>(input: {
     const client = await coordinationPool.connect();
     let locked = false;
     try {
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [key]);
+      await acquireDistributedSignerLock(client, key);
       locked = true;
       return await input.operation();
     } catch (error) {
@@ -66,4 +104,20 @@ export async function withEvmSignerLane<T>(input: {
       client.release();
     }
   });
+}
+
+export function getEvmSignerLaneSnapshot(): {
+  localLaneCount: number;
+  distributedLockContentionCount: number;
+  distributedLockTimeoutCount: number;
+  distributedLastLockWaitMs: number;
+  blockingAdvisoryLockUsed: false;
+} {
+  return {
+    localLaneCount: localTails.size,
+    distributedLockContentionCount,
+    distributedLockTimeoutCount,
+    distributedLastLockWaitMs,
+    blockingAdvisoryLockUsed: false,
+  };
 }
