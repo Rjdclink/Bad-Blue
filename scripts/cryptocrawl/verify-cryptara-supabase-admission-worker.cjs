@@ -15,6 +15,7 @@ const forbidPattern = (source, pattern, description) => {
 const worker = read('server/services/cryptocrawl/integration/cryptara-supabase-admission-worker.ts');
 const governance = read('server/services/cryptocrawl/governance/index.ts');
 const stageState = read('server/services/cryptocrawl/governance/stage-state-store.ts');
+const executionLedger = read('server/services/cryptocrawl/execution/adapters/stage4-execution-ledger.ts');
 const calibration = read('server/services/cryptocrawl/validation/monte-carlo-calibration-store.ts');
 const migration = read('server/migrations/023_cryptocrawler_hot_path_schema_authority.sql');
 
@@ -64,6 +65,8 @@ requirePattern(worker, /executionAuthority:\s*false/, 'worker has no execution a
 requirePattern(governance, /installCryptaraSupabaseAdmissionWorker\(\)[\s\S]{0,500}stageManager\.restorePersistence/, 'worker is installed before governance persistence begins');
 requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,160}pool\.query/, 'governance reads use critical resource priority');
 requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,160}pool\.connect/, 'governance transactions use critical resource priority');
+requirePattern(executionLedger, /withCryptaraSupabasePriority\('high',[\s\S]{0,120}pool\.query/, 'Stage-4 execution ledger persistence receives high resource priority');
+forbidPattern(executionLedger, /withCryptaraSupabasePriority\('critical'/, 'execution ledger outranking canonical governance persistence');
 
 // Remove redundant runtime DDL while preserving migration-owned persistence and
 // classify learning persistence below governance/settlement work during pressure.
@@ -76,4 +79,4 @@ requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}IN
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
-console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, idle-reuse pressure budgeting, jittered acquisition backoff, zero-extra-pool, explicit task priority, authority isolation, starvation protection, and migration-owned calibration persistence invariants passed');
+console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, idle-reuse pressure budgeting, jittered acquisition backoff, zero-extra-pool, critical/high/normal/low task priority, authority isolation, starvation protection, and migration-owned calibration persistence invariants passed');
