@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'crypto';
+import type { PoolClient } from 'pg';
 import logger from '../../../logger.js';
 import { coordinationPool, isDatabaseConfigured } from '../../../db.js';
 import { acquireDistributedApiQuota, getDistributedApiQuotaSnapshot } from '../execution/distributed-api-quota.js';
@@ -12,6 +13,8 @@ function finiteEnvNumber(name: string, fallback: number, min: number, max: numbe
 const KRAKEN_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_KRAKEN_PRIVATE_TIMEOUT_MS || 12_000));
 const KRAKEN_DB_BREAKER_BASE_MS = finiteEnvNumber('CRYPTO_KRAKEN_DB_BREAKER_BASE_MS', 5_000, 1_000, 60_000);
 const KRAKEN_DB_BREAKER_MAX_MS = finiteEnvNumber('CRYPTO_KRAKEN_DB_BREAKER_MAX_MS', 60_000, 5_000, 300_000);
+const KRAKEN_LOCK_MAX_WAIT_MS = finiteEnvNumber('CRYPTO_KRAKEN_LOCK_MAX_WAIT_MS', 1_500, 100, 10_000);
+const KRAKEN_LOCK_POLL_MS = finiteEnvNumber('CRYPTO_KRAKEN_LOCK_POLL_MS', 75, 20, 500);
 const OKX_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_OKX_PRIVATE_TIMEOUT_MS || 12_000));
 const OKX_REGION_CACHE_MS = Math.max(60_000, Number(process.env.CRYPTO_OKX_REGION_CACHE_MS || 3_600_000));
 const OKX_FEE_MIN_INTERVAL_MS = Math.max(425, Number(process.env.CRYPTO_OKX_FEE_MIN_INTERVAL_MS || 450));
@@ -77,6 +80,16 @@ let krakenDistributedStateReady: Promise<void> | null = null;
 let krakenDbFailureCount = 0;
 let krakenDbBreakerOpenUntil = 0;
 let krakenDbLastError: string | null = null;
+let krakenLockContentionCount = 0;
+let krakenLockTimeoutCount = 0;
+let krakenLastLockWaitMs = 0;
+
+class KrakenLockBusyError extends Error {
+  constructor(readonly waitedMs: number) {
+    super(`Kraken distributed nonce lane busy after ${waitedMs}ms; fail-closed and retry on a later hydration cycle`);
+    this.name = 'KrakenLockBusyError';
+  }
+}
 
 function nextKrakenNonce(): string {
   const nonce = Math.max(Date.now(), krakenLastNonce + 1);
@@ -159,15 +172,47 @@ async function ensureKrakenDistributedState(): Promise<void> {
   return krakenDistributedStateReady;
 }
 
+async function acquireKrakenDistributedLock(client: PoolClient, lockName: string): Promise<void> {
+  const startedAt = Date.now();
+  const deadline = startedAt + KRAKEN_LOCK_MAX_WAIT_MS;
+  while (true) {
+    const result = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS locked', [lockName]);
+    if (result.rows?.[0]?.locked === true) {
+      krakenLastLockWaitMs = Math.max(0, Date.now() - startedAt);
+      return;
+    }
+
+    krakenLockContentionCount += 1;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      krakenLockTimeoutCount += 1;
+      krakenLastLockWaitMs = Math.max(0, Date.now() - startedAt);
+      logger.warn('[CEX Private] Kraken distributed nonce lane busy; request deferred without blocking an advisory-lock wait queue', {
+        component: 'CexPrivateAuthority',
+        waitedMs: krakenLastLockWaitMs,
+        contentionCount: krakenLockContentionCount,
+        timeoutCount: krakenLockTimeoutCount,
+        blockingAdvisoryLockUsed: false,
+        localNonceFallbackAllowed: false,
+      });
+      throw new KrakenLockBusyError(krakenLastLockWaitMs);
+    }
+
+    const pollMs = Math.min(KRAKEN_LOCK_POLL_MS, remainingMs);
+    const lowMs = Math.max(10, Math.floor(pollMs / 2));
+    const jitterMs = Math.floor(Math.random() * Math.max(1, pollMs - lowMs + 1));
+    await new Promise(resolve => setTimeout(resolve, Math.min(remainingMs, lowMs + jitterMs)));
+  }
+}
+
 /**
  * Kraken nonces are an API-key-wide ordering domain, not a process-local one.
- * Hold a PostgreSQL advisory lock across nonce allocation AND the signed network
+ * Hold a session advisory lock across nonce allocation AND the signed network
  * request so separate Railway replicas cannot allocate increasing nonces and
- * then transmit them out of order. The session-scoped lock lives on the tiny
- * coordination pool rather than consuming ordinary application query capacity.
- * In local/no-database development the existing in-process lane is sufficient;
- * when a production database is configured, loss of the distributed lane fails
- * closed rather than weakening nonce safety.
+ * then transmit them out of order. Acquisition uses pg_try_advisory_lock with a
+ * short bounded jittered wait; a busy lane fails closed instead of creating the
+ * PostgreSQL advisory-lock wait queues seen in production. The session lock lives
+ * on the tiny coordination pool rather than ordinary application query capacity.
  */
 async function withKrakenDistributedLane<T>(
   apiKey: string,
@@ -180,7 +225,7 @@ async function withKrakenDistributedLane<T>(
 
   const keyHash = krakenKeyFingerprint(apiKey);
   const lockName = `cryptocrawl:kraken-private:${keyHash}`;
-  let client;
+  let client: PoolClient;
   try {
     client = await coordinationPool.connect();
   } catch (error) {
@@ -191,7 +236,7 @@ async function withKrakenDistributedLane<T>(
   try {
     let nonce: string;
     try {
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockName]);
+      await acquireKrakenDistributedLock(client, lockName);
       locked = true;
       const proposed = String(Math.max(Date.now(), krakenLastNonce + 1));
       const allocated = await client.query(
@@ -209,7 +254,7 @@ async function withKrakenDistributedLane<T>(
       if (Number.isSafeInteger(numericNonce)) krakenLastNonce = Math.max(krakenLastNonce, numericNonce);
       recordKrakenDatabaseSuccess();
     } catch (error) {
-      recordKrakenDatabaseFailure(error);
+      if (!(error instanceof KrakenLockBusyError)) recordKrakenDatabaseFailure(error);
       throw error;
     }
 
@@ -262,6 +307,9 @@ export function getKrakenPrivateAuthoritySnapshot(): {
   databaseBreakerOpenUntil: number;
   databaseConsecutiveFailures: number;
   databaseLastError: string | null;
+  lockContentionCount: number;
+  lockTimeoutCount: number;
+  lastLockWaitMs: number;
 } {
   return {
     lastNonce: krakenLastNonce,
@@ -269,6 +317,9 @@ export function getKrakenPrivateAuthoritySnapshot(): {
     databaseBreakerOpenUntil: krakenDbBreakerOpenUntil,
     databaseConsecutiveFailures: krakenDbFailureCount,
     databaseLastError: krakenDbLastError,
+    lockContentionCount: krakenLockContentionCount,
+    lockTimeoutCount: krakenLockTimeoutCount,
+    lastLockWaitMs: krakenLastLockWaitMs,
   };
 }
 
