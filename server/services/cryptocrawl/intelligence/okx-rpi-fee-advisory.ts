@@ -58,7 +58,7 @@ async function refresh(): Promise<void> {
       observedSymbols: symbols.length,
       rpiFeeRowsObserved: latest.length,
       makerPermitted: latest.filter(item => item.makerPermission).length,
-      executableFeeAdvantages: latest.filter(item => item.executableFeeAdvantage).length,
+      executableFeeAdvantages: latest.filter(item => item.makerPermission && item.executableFeeAdvantage).length,
       visibleRpiLiquidity: latest.filter(item => item.rpiLiquidityVisible).length,
       best: latest[0] ?? null,
       capabilityAuthority: 'okx_rpi_capability',
@@ -72,8 +72,16 @@ async function refresh(): Promise<void> {
   }
 }
 
+/**
+ * The profitability/BPS mesh consumes only RPI rows the authenticated account can
+ * actually use and whose RPI maker rate improves on standard maker economics.
+ * Non-permitted fee observations remain visible in this module's telemetry but
+ * cannot attract route-search budget or masquerade as a capitalizable rebate.
+ */
 export function getOkxRpiFeeOpportunities(): OkxRpiFeeOpportunity[] {
-  return latest.map(item => ({ ...item }));
+  return latest
+    .filter(item => item.makerPermission && item.executableFeeAdvantage)
+    .map(item => ({ ...item }));
 }
 
 export function ensureOkxRpiFeeAdvisory(): void {
