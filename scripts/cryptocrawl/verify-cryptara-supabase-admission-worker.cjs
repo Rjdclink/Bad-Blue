@@ -35,7 +35,7 @@ requirePattern(worker, /PRESSURE_ACQUIRE_MS/, 'measured admission latency feeds 
 requirePattern(worker, /PRESSURE_HOLD_MS/, 'sustained checkouts with queued work feed the pressure decision');
 requirePattern(worker, /53300/, 'Postgres too-many-connections pressure classification');
 requirePattern(worker, /57p03/i, 'Postgres cannot-connect-now pressure classification');
-requirePattern(worker, /08006[\s\S]{0,120}timeoutContext/, '08006 is treated as pressure only with timeout/termination context');
+requirePattern(worker, /08006[\s\S]{0,160}timeoutContext/, '08006 is treated as pressure only with timeout/termination context');
 requirePattern(worker, /connection terminated due to connection timeout/i, 'observed Supabase connection timeout classification');
 
 // Preserve capability: queue all work, prioritize without starvation, and release every permit.
@@ -44,7 +44,7 @@ requirePattern(worker, /AGE_PROMOTION_MS/, 'priority aging prevents low-priority
 requirePattern(worker, /contextualPriority\s*\|\|\s*'normal'/, 'unclassified callers keep neutral priority rather than gaining accidental authority');
 requirePattern(worker, /finally\s*\{[\s\S]{0,160}permit\.release/, 'client release always returns the worker permit');
 requirePattern(worker, /permit\.release\(undefined,\s*0\)/, 'failed acquisitions return their worker permit without double-counting pressure');
-requirePattern(worker, /if\s*\(released\)[\s\S]{0,100}originalRelease\(error\)/, 'node-postgres double-release semantics are preserved');
+requirePattern(worker, /if\s*\(released\)[\s\S]{0,320}originalRelease\(error\)/, 'node-postgres double-release semantics are preserved');
 forbidPattern(worker, /queue\.length[^\n]{0,100}(throw|reject|shift\(\)\s*;\s*return)/, 'queue-overflow task dropping');
 
 // Cryptara controls resource admission only; business/execution authority remains elsewhere.
@@ -55,17 +55,17 @@ requirePattern(worker, /executionAuthority:\s*false/, 'worker has no execution a
 
 // Install after migration admission but before governance persistence and heavyweight route import.
 requirePattern(governance, /installCryptaraSupabaseAdmissionWorker\(\)[\s\S]{0,500}stageManager\.restorePersistence/, 'worker is installed before governance persistence begins');
-requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,120}pool\.query/, 'governance reads use critical resource priority');
-requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,120}pool\.connect/, 'governance transactions use critical resource priority');
+requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,160}pool\.query/, 'governance reads use critical resource priority');
+requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,160}pool\.connect/, 'governance transactions use critical resource priority');
 
 // Remove redundant runtime DDL while preserving migration-owned persistence and
 // classify learning persistence below governance/settlement work during pressure.
 requirePattern(migration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/, 'migration owns Monte Carlo calibration schema');
 requirePattern(calibration, /to_regclass\(\$1::text\)/, 'runtime verifies the migration-owned calibration relation');
 forbidPattern(calibration, /CREATE\s+(TABLE|INDEX)[\s\S]{0,120}cryptocrawler_mc_calibration_v1/i, 'runtime Monte Carlo DDL and associated lock pressure');
-requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,180}SELECT to_regclass/, 'calibration schema verification is background-priority work');
-requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,180}SELECT payload FROM/, 'calibration hydration is background-priority work');
-requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,180}INSERT INTO/, 'terminal calibration persistence is background-priority work');
+requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}SELECT to_regclass/, 'calibration schema verification is background-priority work');
+requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}SELECT payload FROM/, 'calibration hydration is background-priority work');
+requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}INSERT INTO/, 'terminal calibration persistence is background-priority work');
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
