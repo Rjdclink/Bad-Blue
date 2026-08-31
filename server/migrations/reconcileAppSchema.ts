@@ -173,10 +173,22 @@ function finiteIntegerEnv(name: string, fallback: number, min: number, max: numb
   return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
+type RollingDeploymentHeadroomState = {
+  options: any;
+  steadyMax: number;
+  originalMin: number;
+  rolloutMax: number;
+  activatedAt: number;
+};
+
+let rollingDeploymentHeadroom: RollingDeploymentHeadroomState | null = null;
+
 /**
- * Railway performs overlapping rolling deploys. Never expand the canonical pool
- * capacity chosen by db.ts here: this helper may temporarily contract ordinary
- * capacity during rollout, but it cannot override the session-fallback hard cap.
+ * Railway keeps the previous deployment active until the incoming deployment is
+ * healthy. During that overlap the recovering replica must consume the smallest
+ * practical ordinary-pool footprint. Capacity is released explicitly only after
+ * Cryptara's adaptive admission worker is installed; a wall-clock timer must not
+ * expand a replica that is still failing readiness.
  */
 function applyRollingDeploymentPoolHeadroom(): void {
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_ID) return;
@@ -191,31 +203,58 @@ function applyRollingDeploymentPoolHeadroom(): void {
     canonicalSteadyMax,
   );
   const steadyMax = Math.min(canonicalSteadyMax, requestedSteadyMax);
-  // During rolling overlap, two replicas can otherwise open their full client
-  // pools simultaneously. Default the incoming replica to half of its steady
-  // parallelism (rounded up), then restore full throughput after the overlap
-  // window. This is phase-adaptive resource use, not a permanent capacity cut.
-  const defaultRolloutMax = Math.max(1, Math.ceil(steadyMax / 2));
+  // One ordinary client is enough to prove admission and run sequential startup
+  // work while an older Railway replica is still serving. Operators may raise
+  // this explicitly, but rollout never inherits the full steady pool by default.
   const rolloutMax = Math.min(
     steadyMax,
-    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', defaultRolloutMax, 1, steadyMax),
+    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', 1, 1, steadyMax),
   );
-  const rolloutWindowMs = finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS', 90_000, 30_000, 300_000);
   const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 0;
 
   options.max = rolloutMax;
   options.min = 0;
   options.connectionTimeoutMillis = Math.min(Number(options.connectionTimeoutMillis) || 12_000, 12_000);
   options.idleTimeoutMillis = Math.min(Number(options.idleTimeoutMillis) || 20_000, 20_000);
+  rollingDeploymentHeadroom = {
+    options,
+    steadyMax,
+    originalMin,
+    rolloutMax,
+    activatedAt: Date.now(),
+  };
 
-  const restore = setTimeout(() => {
-    options.max = steadyMax;
-    options.min = originalMin;
-    console.log(`[DATABASE] Rolling-deploy headroom released (steady max=${options.max}, min=${options.min})`);
-  }, rolloutWindowMs);
-  restore.unref?.();
+  console.log(`[DATABASE] Rolling-deploy admission guard active (rollout max=${rolloutMax}, steady max=${steadyMax}, canonical max=${canonicalSteadyMax}, release=cryptara_worker_installed)`);
+}
 
-  console.log(`[DATABASE] Rolling-deploy pool headroom active (rollout max=${rolloutMax}, steady max=${steadyMax}, canonical max=${canonicalSteadyMax}, windowMs=${rolloutWindowMs})`);
+/**
+ * Restore the ordinary pool ceiling only after all subsequent pool acquisition is
+ * governed by Cryptara. Cryptara starts from the rollout ceiling and then grows
+ * additively from measured successful admissions, so this restores the ceiling
+ * without creating a connection burst.
+ */
+export function releaseRollingDeploymentPoolHeadroom(reason = 'cryptara_worker_installed'): void {
+  const state = rollingDeploymentHeadroom;
+  if (!state) return;
+  rollingDeploymentHeadroom = null;
+  state.options.max = state.steadyMax;
+  state.options.min = state.originalMin;
+  console.log(`[DATABASE] Rolling-deploy admission guard released (reason=${reason}, rollout max=${state.rolloutMax}, steady max=${state.steadyMax}, heldMs=${Date.now() - state.activatedAt})`);
+}
+
+export function getRollingDeploymentPoolHeadroomSnapshot(): {
+  active: boolean;
+  rolloutMax: number | null;
+  steadyMax: number | null;
+  heldMs: number;
+} {
+  const state = rollingDeploymentHeadroom;
+  return {
+    active: state !== null,
+    rolloutMax: state?.rolloutMax ?? null,
+    steadyMax: state?.steadyMax ?? null,
+    heldMs: state ? Math.max(0, Date.now() - state.activatedAt) : 0,
+  };
 }
 
 applyRollingDeploymentPoolHeadroom();
