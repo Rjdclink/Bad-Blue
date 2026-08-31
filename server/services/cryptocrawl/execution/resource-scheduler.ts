@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import logger from '../../../logger.js';
-import { isDatabaseConfigured, pool } from '../../../db.js';
+import {
+  getCoordinationPoolStats,
+  getPoolStats,
+  isDatabaseConfigured,
+  pool,
+} from '../../../db.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 
 export interface ExecutionResourceLease {
@@ -11,6 +16,13 @@ export interface ExecutionResourceLease {
   expiresAt: number;
   resources: string[];
   release: (options?: { retainOpportunityUntilExpiry?: boolean }) => Promise<void>;
+}
+
+export interface ExecutionResourcePressureSnapshot {
+  ordinaryDbPressure: number;
+  coordinationDbPressure: number;
+  hardAdmissionPressure: boolean;
+  effectiveGlobalCapacityMultiplier: number;
 }
 
 interface ResourcePoolSpec {
@@ -35,6 +47,30 @@ function configuredVenueCapacity(venue: string): number {
 function splitSpotSymbol(symbol: string): { base: string; quote: string } | null {
   const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
   return match ? { base: match[1], quote: match[2] } : null;
+}
+
+function poolPressure(stats: { total: number; idle: number; waiting: number; max: number }): number {
+  if (stats.max <= 0) return 1;
+  const occupancy = Math.max(0, Math.min(1, stats.total / stats.max));
+  const waiting = stats.waiting > 0 ? Math.min(1, 0.70 + stats.waiting / Math.max(1, stats.max)) : 0;
+  const noIdle = stats.total > 0 && stats.idle === 0 ? 0.80 : 0;
+  return Math.max(occupancy * 0.70, waiting, noIdle);
+}
+
+export function getExecutionResourcePressureSnapshot(): ExecutionResourcePressureSnapshot {
+  const ordinary = getPoolStats();
+  const coordination = getCoordinationPoolStats();
+  const ordinaryPressure = poolPressure(ordinary);
+  const coordinationPressure = poolPressure(coordination);
+  const hardAdmissionPressure = (ordinary.waiting > 0 && ordinary.idle === 0)
+    || (coordination.waiting > 0 && coordination.idle === 0);
+  const combined = Math.max(ordinaryPressure, coordinationPressure);
+  return {
+    ordinaryDbPressure: Number(ordinaryPressure.toFixed(6)),
+    coordinationDbPressure: Number(coordinationPressure.toFixed(6)),
+    hardAdmissionPressure,
+    effectiveGlobalCapacityMultiplier: combined >= 0.90 ? 0.25 : combined >= 0.75 ? 0.50 : combined >= 0.60 ? 0.75 : 1,
+  };
 }
 
 class ExecutionResourceScheduler {
@@ -109,11 +145,12 @@ class ExecutionResourceScheduler {
     }
   }
 
-  private resourceSpecs(plan: VerifiedArbitragePlan): ResourcePoolSpec[] {
+  private resourceSpecs(plan: VerifiedArbitragePlan, pressure: ExecutionResourcePressureSnapshot): ResourcePoolSpec[] {
     const emergencyCeiling = boundedInt(process.env.CRYPTOCRAWL_EXECUTION_EMERGENCY_CEILING, 64, 1, 128);
+    const effectiveGlobalCapacity = Math.max(1, Math.floor(emergencyCeiling * pressure.effectiveGlobalCapacityMultiplier));
     const settlementCapacity = boundedInt(process.env.CRYPTOCRAWL_SETTLEMENT_CONCURRENCY, 16, 1, 64);
     const specs: ResourcePoolSpec[] = [
-      { prefix: 'cex:global', capacity: emergencyCeiling },
+      { prefix: 'cex:global', capacity: effectiveGlobalCapacity },
       { prefix: 'cex:settlement', capacity: settlementCapacity },
       { prefix: `cex:venue:${plan.buyVenue}`, capacity: configuredVenueCapacity(plan.buyVenue) },
       { prefix: `cex:venue:${plan.sellVenue}`, capacity: configuredVenueCapacity(plan.sellVenue) },
@@ -121,6 +158,10 @@ class ExecutionResourceScheduler {
 
     if (plan.buyVenue === 'kraken' || plan.sellVenue === 'kraken') {
       specs.push({ prefix: 'cex:nonce:kraken-account', capacity: 1 });
+    }
+
+    if (plan.buyVenue === 'okx' || plan.sellVenue === 'okx') {
+      specs.push({ prefix: 'cex:private:okx-account', capacity: boundedInt(process.env.CRYPTOCRAWL_OKX_PRIVATE_EXECUTION_CONCURRENCY, 2, 1, 8) });
     }
 
     const pair = splitSpotSymbol(plan.symbol);
@@ -226,7 +267,25 @@ class ExecutionResourceScheduler {
       return null;
     }
 
-    const specs = this.resourceSpecs(plan);
+    const pressure = getExecutionResourcePressureSnapshot();
+    const needsCoordination = plan.buyVenue === 'kraken' || plan.sellVenue === 'kraken';
+    const ordinary = getPoolStats();
+    const coordination = getCoordinationPoolStats();
+    const hardForPlan = (ordinary.waiting > 0 && ordinary.idle === 0)
+      || (needsCoordination && coordination.waiting > 0 && coordination.idle === 0);
+    if (hardForPlan) {
+      logger.warn('[ResourceScheduler] New execution admission deferred under hard database pressure', {
+        component: 'ExecutionResourceScheduler',
+        opportunityId,
+        pressure,
+        needsCoordination,
+        executionAuthorityGranted: false,
+        settlementOrFlatteningBlocked: false,
+      });
+      return null;
+    }
+
+    const specs = this.resourceSpecs(plan, pressure);
     if (!this.reserveLocal(specs)) return null;
 
     const leaseId = randomUUID();
