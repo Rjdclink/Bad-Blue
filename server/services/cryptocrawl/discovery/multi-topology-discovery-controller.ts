@@ -1,7 +1,6 @@
 import logger from '../../../logger.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { unifiedMultiLegArbitrageEngine } from '../optimization/unified-multileg-arbitrage-engine.js';
-import { measuredTopologyExecutionScheduler } from '../execution/measured-topology-execution-scheduler.js';
 import { routeRecentMeasuredOpportunities } from '../execution/unified-execution-router.js';
 import { measuredOpportunityGraph } from './opportunity-graph.js';
 import { fundingRateMonitor } from './funding-rate-monitor.js';
@@ -74,6 +73,8 @@ class MultiTopologyDiscoveryController {
       realizedPerformanceAdjustsAttention: true,
       liveMeasuredEvidenceAdjustsColdStartAttention: true,
       minimumCoveragePreserved: true,
+      executionDispatchAuthority: 'canonical_execution_scheduler_only',
+      discoveryMaySubmitTransactions: false,
       makerOrdersAssumedFilled: false,
       liquidationProfitAssumed: false,
       fundingCarryAssumedExecutable: false,
@@ -166,6 +167,8 @@ class MultiTopologyDiscoveryController {
         fundingCandidates = Math.max(0, afterFunding - beforeFunding);
       } else errors.push(`funding:${funding.reason instanceof Error ? funding.reason.message : String(funding.reason)}`);
 
+      // Routing is advisory only. The canonical execution scheduler consumes this
+      // measured registry independently; discovery never calls an executor.
       const routedOpportunities = routeRecentMeasuredOpportunities(1024);
       const compositePlan = unifiedMultiLegArbitrageEngine.assemble();
       const completedAt = Date.now();
@@ -190,20 +193,6 @@ class MultiTopologyDiscoveryController {
         errors,
       };
       this.latest = cycle;
-
-      // Discovery remains read-only. Only already-admitted, fully measured
-      // topology plans are handed to the separate execution scheduler, which
-      // revalidates governance, StageManager and fresh all-in economics before
-      // any submission. CEX and ZERO_CAPITAL keep their existing canonical
-      // execution authorities and are deliberately not duplicated here.
-      void measuredTopologyExecutionScheduler.dispatch(routedOpportunities).catch(error => {
-        logger.warn('[MeasuredTopologyExecution] Post-discovery dispatch degraded', {
-          component: 'MultiTopologyDiscoveryController',
-          cycleId,
-          error: error instanceof Error ? error.message : String(error),
-          discoveryAuthorityChanged: false,
-        });
-      });
 
       logger.info('[OpportunityGraph] Unified parallel discovery cycle completed', {
         component: 'MultiTopologyDiscoveryController',
