@@ -17,6 +17,7 @@ const index = read('server/index.ts');
 const db = read('server/db.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
 const governance = read('server/services/cryptocrawl/governance/index.ts');
+const leaseAuthority = read('server/services/cryptocrawl/execution/resource-lease-authority.ts');
 const stageState = read('server/services/cryptocrawl/governance/stage-state-store.ts');
 
 requirePattern(railway, /healthcheckPath\s*=\s*"\/api\/ready"/, 'Railway must promote only a fully initialized deployment');
@@ -39,14 +40,21 @@ requirePattern(db, /await\s+db\.execute\('SELECT 1'\)[\s\S]*await\s+coordination
 forbidPattern(db, /Promise\.all\(\[\s*db\.execute\('SELECT 1'\),\s*coordinationPool\.query\('SELECT 1'\)/, 'pool reset must not probe ordinary and coordination lanes concurrently');
 requirePattern(db, /previousEffectiveMainMax[\s\S]*nextMainConfig\.max/, 'pool reset must preserve any active rollout contraction');
 
-// Railway leaves the previous replica serving until readiness succeeds. The new
-// replica therefore boots with one ordinary client and may not expand merely
-// because time passed. Once Cryptara owns ordinary-pool admission, only the pool
-// ceiling is restored; Cryptara performs measured additive recovery beneath it.
-requirePattern(migrations, /finiteIntegerEnv\('BADBLUE_DATABASE_ROLLOUT_POOL_MAX',\s*1,\s*1,\s*steadyMax\)/, 'rolling deployment must default to one ordinary DB client during overlap');
+// Railway leaves the previous replica serving until readiness succeeds. Startup is
+// intentionally serialized, so one ordinary client provides all useful bootstrap
+// throughput while eliminating overlap amplification and incidental DB fan-out.
+requirePattern(migrations, /const\s+rolloutMax\s*=\s*1\s*;/, 'rolling deployment must hard-cap the incoming ordinary pool at one client');
+forbidPattern(migrations, /BADBLUE_DATABASE_ROLLOUT_POOL_MAX/, 'an environment override must not defeat the one-client rollout admission guard');
 requirePattern(migrations, /export\s+function\s+releaseRollingDeploymentPoolHeadroom[\s\S]{0,900}state\.options\.max\s*=\s*state\.steadyMax/, 'rollout ceiling must have an explicit governed release path');
 forbidPattern(migrations, /const\s+restore\s*=\s*setTimeout\([\s\S]{0,500}options\.max\s*=\s*steadyMax/, 'an unready deployment must never re-expand its database pool on a wall-clock timer');
 requirePattern(governance, /installCryptaraSupabaseAdmissionWorker\(\)[\s\S]{0,700}releaseRollingDeploymentPoolHeadroom\('cryptara_worker_installed'\)[\s\S]{0,700}stageManager\.restorePersistence/, 'rollout headroom must release only after Cryptara admission is installed and before governed persistence');
+
+// Startup already proves the migration-owned lease table/function. That exact
+// truth must seed the runtime shared cache instead of causing a duplicate query.
+requirePattern(migrations, /to_regprocedure\(\$5\)::text\s+AS\s+resource_slot_claimant/i, 'startup schema proof includes the resource-slot claimant');
+requirePattern(migrations, /primeResourceLeaseAuthorityReady/, 'startup schema proof primes the shared runtime lease authority');
+requirePattern(leaseAuthority, /export\s+function\s+primeResourceLeaseAuthorityReady/, 'shared lease authority accepts a trusted startup schema proof');
+requirePattern(leaseAuthority, /authorityReadyUntil\s*=\s*Math\.max/, 'priming extends rather than shortens an existing readiness proof');
 
 requirePattern(migrations, /schemaRetryDelayMs[\s\S]*Math\.random/, 'migration/schema retry timing must include jitter');
 requirePattern(stageState, /pg_try_advisory_xact_lock\(hashtext\(\$1\)\)/, 'StageManager persistence must use non-blocking cross-replica lock admission');
