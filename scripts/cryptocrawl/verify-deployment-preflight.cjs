@@ -1,5 +1,22 @@
 'use strict';
 // Diagnostic isolation only. Do not merge this branch.
-const { verifyProfitLadderNotionalContract } = require('./lib/pr482-canonical-contract.cjs');
-verifyProfitLadderNotionalContract();
-console.log('[deployment-preflight][diagnostic] profit-ladder/notional canonical contract passed; continuing to downstream build');
+const { read, requirePattern, forbidPattern } = require('./lib/pr482-canonical-contract.cjs');
+const gasFunding = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
+const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
+const zeroResource = read('server/services/cryptocrawl/integration/zero-capital-resource-wiring.ts');
+const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
+const graphlessScout = read('server/services/cryptocrawl/discovery/graphless-dex-scout.ts');
+requirePattern(gasFunding, /mode:\s*'native'/, 'native funding mode');
+requirePattern(gasFunding, /actual receipt gas is terminally converted and subtracted/, 'terminal native gas accounting');
+requirePattern(canonicalRuntime, /ensureZeroCapitalRealizedProfitWiring\(\);[\s\S]{0,240}ensureDynamicRpcProviderWiring\(\)[\s\S]{0,160}startCanonicalZeroCapitalRuntime/, 'zero-cap realized wiring before lifecycle');
+requirePattern(coreRuntime, /ensureZeroCapitalRealizedProfitWiring\(\);/, 'core realized-profit authority');
+forbidPattern(coreRuntime, /scheduleZeroCapitalProfitWiring|zeroCapitalRealizedProfitPolicyScheduled/, 'duplicate deferred realized-profit authority');
+requirePattern(zeroResource, /discoverDynamicZeroCapitalQuotes\(chain,\s*provider,\s*funding\.mode\)/, 'funding decision bound to dynamic quotes');
+requirePattern(dynamicRoutes, /fundingMode\s*===\s*'sponsored'/, 'sponsored economics path');
+requirePattern(dynamicRoutes, /gasCostAuthority:\s*'verified_sponsored_user_cost_zero'/, 'sponsored gas provenance');
+requirePattern(dynamicRoutes, /recoveryQuoteRoutes\s*\(/, 'zero-quote recovery lane');
+requirePattern(dynamicRoutes, /minNetProfitBps:\s*0/, 'no positive BPS floor');
+requirePattern(graphlessScout, /archiveRestrictedKeys/, 'archive capability cache');
+requirePattern(graphlessScout, /recentFilter\s*\(/, 'bounded recent-log fallback');
+console.log('[deployment-preflight][diagnostic] zero-cap gas/RPC canonical assertions passed; continuing to downstream build');
