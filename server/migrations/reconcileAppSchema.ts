@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { addUsersStatusColumn } from './add_users_status_column';
 import { addFMIFields } from './addFMIFields';
 import { createCryptoGovernanceStateTable } from './createCryptoGovernanceStateTable';
@@ -15,7 +17,7 @@ import { createTokenMetricsTables } from './createTokenMetrics';
 import { runFreeAccessMigration } from './freeAccessForAll';
 import { runSquareMigration } from './runSquareMigration';
 import ensureSchemaSync from '../ensureSchema';
-import { pool } from '../db';
+import { coordinationPool, pool } from '../db';
 
 export interface SchemaMigrationResult {
   name: string;
@@ -28,6 +30,31 @@ type MigrationStep = {
   name: string;
   run: () => Promise<unknown>;
 };
+
+const CRYPTOCRAWL_AUTHORITY_MIGRATIONS = [
+  '023_cryptocrawler_hot_path_schema_authority.sql',
+  '024_cryptocrawler_funding_lifecycle.sql',
+] as const;
+
+function resolveBundledMigrationPath(file: string): string {
+  const candidates = [
+    path.resolve(process.cwd(), 'dist', 'migrations', file),
+    path.resolve(process.cwd(), 'server', 'migrations', file),
+  ];
+  const resolved = candidates.find(candidate => fs.existsSync(candidate));
+  if (!resolved) {
+    throw new Error(`Migration-owned CryptoCrawler SQL asset is missing: ${file}`);
+  }
+  return resolved;
+}
+
+async function runCryptocrawlerAuthorityMigration(file: typeof CRYPTOCRAWL_AUTHORITY_MIGRATIONS[number]): Promise<{ message: string }> {
+  const filePath = resolveBundledMigrationPath(file);
+  const sql = fs.readFileSync(filePath, 'utf8');
+  if (!sql.trim()) throw new Error(`Migration-owned CryptoCrawler SQL asset is empty: ${file}`);
+  await pool.query(sql);
+  return { message: `${file} applied from migration authority` };
+}
 
 const migrationSteps: MigrationStep[] = [
   { name: 'Square Payment Migration', run: runSquareMigration },
@@ -47,6 +74,14 @@ const migrationSteps: MigrationStep[] = [
   { name: 'Search Prioritization tables', run: createSearchPrioritizationTables },
   { name: 'Document Creator tables', run: createDocumentCreatorTables },
   { name: 'F.M.I. evidence fields', run: addFMIFields },
+  {
+    name: 'CryptoCrawler hot-path schema authority',
+    run: () => runCryptocrawlerAuthorityMigration('023_cryptocrawler_hot_path_schema_authority.sql'),
+  },
+  {
+    name: 'CryptoCrawler funding lifecycle schema authority',
+    run: () => runCryptocrawlerAuthorityMigration('024_cryptocrawler_funding_lifecycle.sql'),
+  },
   { name: 'CryptoCrawler governance state', run: createCryptoGovernanceStateTable },
   { name: 'Remove legacy CryptoCrawler Flashbots auth secret table', run: removeCryptocrawlFlashbotsAuthIdentityTable },
   { name: 'Free Access for All Users', run: runFreeAccessMigration },
@@ -61,25 +96,29 @@ function finiteIntegerEnv(name: string, fallback: number, min: number, max: numb
 }
 
 /**
- * Railway performs overlapping rolling deploys. Supabase session mode exposes a
- * finite per-user client ceiling, so the incoming replica temporarily leaves
- * enough headroom for the outgoing replica and control-plane sessions. Once the
- * overlap window has passed, restore the canonical steady-state pool capacity.
- * This mutates the one shared Pool; no duplicate database authority is created.
+ * Railway performs overlapping rolling deploys. Never expand the canonical pool
+ * capacity chosen by db.ts here: this helper may temporarily contract ordinary
+ * capacity during rollout, but it cannot override the session-fallback hard cap.
  */
 function applyRollingDeploymentPoolHeadroom(): void {
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_ID) return;
   const options = (pool as any)?.options;
   if (!options) return;
 
-  const existingSteadyMax = Math.max(2, Math.trunc(Number(options.max) || 8));
-  const steadyMax = finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', existingSteadyMax, 2, 12);
+  const canonicalSteadyMax = Math.max(1, Math.trunc(Number(options.max) || 1));
+  const requestedSteadyMax = finiteIntegerEnv(
+    'BADBLUE_DATABASE_POOL_MAX',
+    canonicalSteadyMax,
+    1,
+    canonicalSteadyMax,
+  );
+  const steadyMax = Math.min(canonicalSteadyMax, requestedSteadyMax);
   const rolloutMax = Math.min(
     steadyMax,
-    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', 5, 2, 6),
+    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', Math.min(5, steadyMax), 1, steadyMax),
   );
   const rolloutWindowMs = finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS', 90_000, 30_000, 300_000);
-  const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 1;
+  const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 0;
 
   options.max = rolloutMax;
   options.min = 0;
@@ -93,7 +132,7 @@ function applyRollingDeploymentPoolHeadroom(): void {
   }, rolloutWindowMs);
   restore.unref?.();
 
-  console.log(`[DATABASE] Rolling-deploy pool headroom active (rollout max=${rolloutMax}, steady max=${steadyMax}, windowMs=${rolloutWindowMs})`);
+  console.log(`[DATABASE] Rolling-deploy pool headroom active (rollout max=${rolloutMax}, steady max=${steadyMax}, canonical max=${canonicalSteadyMax}, windowMs=${rolloutWindowMs})`);
 }
 
 applyRollingDeploymentPoolHeadroom();
@@ -107,7 +146,9 @@ export async function runAllSchemaMigrations(options?: {
   let ownsMigrationLock = false;
 
   try {
-    coordinator = await pool.connect();
+    // Session-level advisory locks belong exclusively on the dedicated session
+    // coordination lane. Ordinary pool may be Supavisor transaction mode (6543).
+    coordinator = await coordinationPool.connect();
     const lockResult = await coordinator.query(
       'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired',
       [STARTUP_MIGRATION_LOCK],
