@@ -4,6 +4,7 @@ import {
 } from '../discovery/measured-candidate-registry.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { computeProfitabilityScore, type ProfitabilityScoreResult } from '../optimization/profitability-score.js';
+import { fundingPositionLifecycle } from './funding-position-lifecycle.js';
 
 export type UnifiedExecutionPath =
   | 'FLASH_LOAN'
@@ -39,9 +40,17 @@ function preferredPath(candidate: MeasuredCandidate): UnifiedExecutionPath {
     case 'LIQUIDATION':
       return 'FLASH_LOAN_LIQUIDATION';
     case 'FUNDING_ARBITRAGE':
-      return 'SPOT_PERP_FUNDING';
+      // A funding candidate is not a routable trade merely because projected
+      // carry exists. The lifecycle must have a registered venue adapter that can
+      // open, monitor, close and settle both legs with actual funding/fee evidence.
+      return fundingPositionLifecycle.getRegisteredVenues().includes(candidate.venues[0] as 'okx' | 'kraken')
+        ? 'SPOT_PERP_FUNDING'
+        : 'UNAVAILABLE';
     case 'MEMPOOL_BACKRUN':
-      return 'MEV_ATOMIC';
+      // The strict relay executor accepts an already-built exact signed bundle,
+      // but no canonical compiler currently proves post-victim state and all-in
+      // profit. Do not advertise a dispatch path until that compiler exists.
+      return 'UNAVAILABLE';
     default:
       return 'UNAVAILABLE';
   }
@@ -77,7 +86,8 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   if (path === 'CEX_MAKER' && !candidate.executableCapability) reasons.push('blocked:maker_live_executor_not_authoritative');
   if (path === 'BRIDGE_FLASH_LOAN' && !candidate.executableCapability) reasons.push('blocked:cross_chain_terminal_executor_not_authoritative');
   if (path === 'FLASH_LOAN_LIQUIDATION' && !candidate.executableCapability) reasons.push('blocked:liquidation_economics_or_executor_not_authoritative');
-  if (path === 'SPOT_PERP_FUNDING' && !candidate.executableCapability) reasons.push('blocked:funding_position_lifecycle_not_authoritative');
+  if (candidate.topology === 'FUNDING_ARBITRAGE' && path === 'UNAVAILABLE') reasons.push('blocked:funding_lifecycle_adapter_unavailable');
+  if (candidate.topology === 'MEMPOOL_BACKRUN' && path === 'UNAVAILABLE') reasons.push('blocked:exact_post_victim_backrun_compiler_unavailable');
 
   return {
     opportunityId: candidate.opportunityId,
