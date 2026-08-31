@@ -47,6 +47,48 @@ const databaseUrl = getDatabaseUrl();
 const databaseUrlSource = getDatabaseUrlSource();
 export const isDatabaseConfigured = !!(databaseUrl && databaseUrl.trim().length > 0);
 
+function boundedPoolInt(raw: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(raw);
+  const value = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function normalizedOptionalDatabaseUrl(raw: unknown): string {
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function postgresPort(url: string): string | null {
+  try {
+    return new URL(url).port || null;
+  } catch {
+    return null;
+  }
+}
+
+// Ordinary query traffic may use Supavisor transaction mode (6543) when an
+// explicit transaction-pool URL is configured. Session-scoped advisory-lock
+// traffic must stay on the dedicated coordination URL/session lane.
+const transactionDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.SUPABASE_TRANSACTION_DATABASE_URL);
+const coordinationDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.CRYPTOCRAWL_COORDINATION_DATABASE_URL) || databaseUrl;
+const ordinaryDatabaseUrl = transactionDatabaseUrl || databaseUrl;
+const mainPoolMax = boundedPoolInt(process.env.DATABASE_POOL_MAX, 5, 1, 32);
+const coordinationPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_COORDINATION_POOL_MAX, 1, 1, 4);
+
+if (transactionDatabaseUrl) {
+  if (isSupabaseProjectUrl(transactionDatabaseUrl) || !isSupabasePostgresConnectionString(transactionDatabaseUrl)) {
+    throw new Error('[DATABASE] SUPABASE_TRANSACTION_DATABASE_URL must be a Supabase Postgres connection string');
+  }
+}
+
+if (isDatabaseConfigured) {
+  if (isSupabaseProjectUrl(coordinationDatabaseUrl) || !isSupabasePostgresConnectionString(coordinationDatabaseUrl)) {
+    throw new Error('[DATABASE] CRYPTOCRAWL_COORDINATION_DATABASE_URL must be a Supabase Postgres connection string');
+  }
+  if (postgresPort(coordinationDatabaseUrl) === '6543') {
+    throw new Error('[DATABASE] CryptoCrawler coordination requires a session-capable/direct Postgres URL, not transaction-pool port 6543');
+  }
+}
+
 // Determine if using Supabase for logging purposes
 const isUsingSupabase = isSupabasePostgresConnectionString(databaseUrl);
 
@@ -76,48 +118,74 @@ if (!isDatabaseConfigured) {
   console.warn('[DATABASE] ⚠️ No database configured - running in dev-lite mode (DB features disabled)');
 }
 
-// Connection configuration - simplified without IPv4 forcing (removed as it doesn't work on Railway)
-// ISSUE: Railway cannot reach Supabase's IPv6 addresses, and the pg Pool's lookup option doesn't help
+const sslConfig = () => process.env.PGSSLMODE !== 'disable' ? {
+  rejectUnauthorized: false,
+  ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {})
+} : false;
+
+// Ordinary application queries. Default capacity is intentionally below the old
+// value of 8 so two Railway replicas do not consume a 15-session Supavisor pool
+// before coordination and operational headroom are considered.
 const getPoolConfig = () => {
-  // If no DB is configured, use a fast-failing localhost connection string so any accidental
-  // DB access errors quickly (instead of hanging). This keeps the runtime object shape stable.
-  const connectionString = isDatabaseConfigured ? databaseUrl : 'postgresql://127.0.0.1:1/devlite';
-  const baseConfig: any = {
+  const connectionString = isDatabaseConfigured ? ordinaryDatabaseUrl : 'postgresql://127.0.0.1:1/devlite';
+  return {
     connectionString,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: (isRailway || isProduction) ? 30000 : 10000,
-    max: 8,
+    max: mainPoolMax,
     min: 1,
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000,
-    ssl: process.env.PGSSLMODE !== 'disable' ? { 
-      rejectUnauthorized: false,
-      ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {})
-    } : false,
+    ssl: sslConfig(),
     statement_timeout: 30000,
     query_timeout: 30000,
     application_name: isRailway ? 'badblue-railway' : 'badblue',
-  };
-
-  return baseConfig;
+  } as any;
 };
 
-// Module-level pool and drizzle instance (use 'let' so they can be reassigned during repairs)
-export let pool = new Pool(getPoolConfig());
+// Session-capable coordination lane for CryptoCrawler nonce/advisory-lock work.
+// Keep this pool tiny because every session-level advisory lock pins a backend
+// connection until explicitly unlocked or the session ends.
+const getCoordinationPoolConfig = () => {
+  const connectionString = isDatabaseConfigured ? coordinationDatabaseUrl : 'postgresql://127.0.0.1:1/devlite';
+  return {
+    connectionString,
+    idleTimeoutMillis: 15000,
+    connectionTimeoutMillis: (isRailway || isProduction) ? 15000 : 10000,
+    max: coordinationPoolMax,
+    min: 0,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000,
+    ssl: sslConfig(),
+    statement_timeout: 15000,
+    query_timeout: 15000,
+    application_name: isRailway ? 'badblue-cryptocrawl-coordination' : 'badblue-cryptocrawl-coordination-local',
+  } as any;
+};
 
-// Global error handler to prevent unhandled error crashes
-pool.on('error', (err, client) => {
-  console.error('[DATABASE POOL] Unexpected error on idle client:', err.message);
-  console.error('[DATABASE POOL] Error code:', (err as any).code);
-  console.error('[DATABASE POOL] Error severity:', (err as any).severity);
-  
-  if (err.message?.includes('shutdown') || err.message?.includes('termination') || 
-      err.message?.includes('Cannot use a pool after calling end') ||
-      err.message?.includes('Connection terminated')) {
-    console.log('[DATABASE POOL] Database connection issue detected - will auto-recover');
-    // Don't call resetPool here as it might cause recursion
-  }
-});
+// Module-level pools and drizzle instance (use 'let' so they can be reassigned during repairs)
+export let pool = new Pool(getPoolConfig());
+export let coordinationPool = new Pool(getCoordinationPoolConfig());
+
+function attachPoolErrorHandlers(): void {
+  pool.on('error', (err, client) => {
+    console.error('[DATABASE POOL] Unexpected error on idle client:', err.message);
+    console.error('[DATABASE POOL] Error code:', (err as any).code);
+    console.error('[DATABASE POOL] Error severity:', (err as any).severity);
+    if (err.message?.includes('shutdown') || err.message?.includes('termination') ||
+        err.message?.includes('Cannot use a pool after calling end') ||
+        err.message?.includes('Connection terminated')) {
+      console.log('[DATABASE POOL] Database connection issue detected - will auto-recover');
+    }
+  });
+
+  coordinationPool.on('error', err => {
+    console.error('[DATABASE COORDINATION] Unexpected error on idle coordination client:', err.message);
+    console.error('[DATABASE COORDINATION] Error code:', (err as any).code);
+  });
+}
+
+attachPoolErrorHandlers();
 
 /**
  * Get current connection pool statistics for monitoring
@@ -133,7 +201,21 @@ export function getPoolStats(): {
     total: pool.totalCount,
     idle: pool.idleCount,
     waiting: pool.waitingCount,
-    max: getPoolConfig().max,
+    max: mainPoolMax,
+  };
+}
+
+export function getCoordinationPoolStats(): {
+  total: number;
+  idle: number;
+  waiting: number;
+  max: number;
+} {
+  return {
+    total: coordinationPool.totalCount,
+    idle: coordinationPool.idleCount,
+    waiting: coordinationPool.waitingCount,
+    max: coordinationPoolMax,
   };
 }
 
@@ -147,9 +229,9 @@ function startPoolMonitor(): void {
   
   poolMonitorInterval = setInterval(() => {
     const stats = getPoolStats();
-    // Only log if there's connection pressure (waiting > 0 or total approaching max)
-    if (stats.waiting > 0 || stats.total >= stats.max - 2) {
-      console.log(`[DATABASE POOL] ⚠️ Connection pressure: total=${stats.total}/${stats.max}, idle=${stats.idle}, waiting=${stats.waiting}`);
+    const coordination = getCoordinationPoolStats();
+    if (stats.waiting > 0 || stats.total >= stats.max - 1 || coordination.waiting > 0) {
+      console.log(`[DATABASE POOL] ⚠️ Connection pressure: main=${stats.total}/${stats.max}, mainIdle=${stats.idle}, mainWaiting=${stats.waiting}, coordination=${coordination.total}/${coordination.max}, coordinationIdle=${coordination.idle}, coordinationWaiting=${coordination.waiting}`);
     }
   }, 300000); // 5 minutes
 }
@@ -157,7 +239,7 @@ function startPoolMonitor(): void {
 // Start pool monitor
 startPoolMonitor();
 
-console.log(`[DATABASE] Connection pool created - ready for queries (${isRailway ? 'Railway' : 'Replit/local'} mode, max=${getPoolConfig().max})`);
+console.log(`[DATABASE] Connection pools created - ordinary max=${mainPoolMax}, coordination max=${coordinationPoolMax}, ordinaryMode=${transactionDatabaseUrl ? 'transaction_pool' : 'configured_default'}, coordinationMode=session_capable`);
 
 export let db = drizzle(pool, { schema });
 
@@ -178,13 +260,13 @@ export async function resetPool(): Promise<void> {
 
   resetInProgress = (async () => {
     try {
-      console.log('[DATABASE] Resetting connection pool...');
+      console.log('[DATABASE] Resetting connection pools...');
 
       try {
-        await pool.end();
-        console.log('[DATABASE] Old pool closed');
+        await Promise.allSettled([pool.end(), coordinationPool.end()]);
+        console.log('[DATABASE] Old pools closed');
       } catch (error) {
-        console.warn('[DATABASE] Error closing old pool (may already be closed):', error);
+        console.warn('[DATABASE] Error closing old pools (may already be closed):', error);
       }
 
       // Use getDatabaseUrl from config for consistency
@@ -193,22 +275,17 @@ export async function resetPool(): Promise<void> {
         throw new Error('Database URL not available for pool reset');
       }
 
-      // Use the same configuration function for consistency (includes IPv4 forcing for Railway)
       pool = new Pool(getPoolConfig());
-
-      // Re-attach error handler to new pool
-      pool.on('error', (err, client) => {
-        console.error('[DATABASE POOL] Unexpected error on idle client:', err.message);
-        if (err.message?.includes('shutdown') || err.message?.includes('termination')) {
-          console.log('[DATABASE POOL] Database connection terminated - pool will reconnect automatically');
-        }
-      });
-
+      coordinationPool = new Pool(getCoordinationPoolConfig());
+      attachPoolErrorHandlers();
       db = drizzle(pool, { schema });
 
-      await db.execute('SELECT 1');
+      await Promise.all([
+        db.execute('SELECT 1'),
+        coordinationPool.query('SELECT 1'),
+      ]);
 
-      console.log('[DATABASE] ✓ Pool reset successful - connection restored');
+      console.log('[DATABASE] ✓ Pool reset successful - ordinary and coordination connections restored');
     } catch (error) {
       console.error('[DATABASE] ❌ Pool reset failed:', error);
       throw error;
@@ -305,7 +382,7 @@ export async function verifyDatabaseSchema(): Promise<{
       success, 
       tableCount, 
       missingTables, 
-      connectionSource, 
+      connectionSource,
       details,
       allTables: existingTables,
       isProductionDatabase
