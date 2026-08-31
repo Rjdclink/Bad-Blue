@@ -1,9 +1,12 @@
 import logger from '../../../logger.js';
+import { getCoordinationPoolStats, getPoolStats } from '../../../db.js';
 import { getDynamicZeroCapitalDiscoveryState } from '../discovery/dynamic-zero-capital-routes.js';
 import { getCachedCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
+import { getOkxPrivateAuthoritySnapshot } from '../intelligence/cex-private-authority.js';
 import { ensureOkxRpiFeeAdvisory, getOkxRpiFeeOpportunities } from '../intelligence/okx-rpi-fee-advisory.js';
 import { buildFeeSurfaceHyperdynamicStrategyPlan, type FeeSurfaceHyperdynamicStrategyPlan } from '../optimization/fee-surface-hyperdynamic-strategy-engine.js';
-import { buildHyperdynamicBpsPlan, type HyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
+import { buildHyperdynamicBpsPlan, type HyperdynamicBpsInput, type HyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
+import { buildMarginalBpsAllocation, type MarginalBpsAllocation } from '../optimization/marginal-bps-allocator.js';
 import { getCexFourModeSnapshot } from './cex-four-mode-observability-wiring.js';
 import { getZeroCapitalRecoverySnapshot } from './zero-capital-recovery-observability.js';
 
@@ -30,9 +33,17 @@ export interface BpsCompressionMeshSnapshot {
   exploration: {
     attentionShare: number;
   };
+  resourceScarcity: {
+    ordinaryDbPressure: number;
+    coordinationDbPressure: number;
+    okxTradeFeePressure: number;
+    combinedPressure: number;
+    cexScarcityMultiplier: number;
+  };
   cexBreadthBias: number;
   cexCadenceBias: number;
   hyperdynamic: HyperdynamicBpsPlan;
+  marginalAllocation: MarginalBpsAllocation;
   feeSurfaceStrategies: FeeSurfaceHyperdynamicStrategyPlan;
   objective: 'measured_distance_to_positive_bps_per_scarcity_unit';
   authority: 'search_and_compute_scheduling_only';
@@ -81,6 +92,56 @@ function authenticatedTakerCostBps(fee: CexFeeEvidence | null): number | null {
   return Math.max(0, fee.takerFeeBps);
 }
 
+function measuredMakerSavingsBps(modes: ReturnType<typeof getCexFourModeSnapshot>): number[] {
+  const byRoute = new Map<string, typeof modes>();
+  for (const mode of modes) {
+    const key = `${mode.symbol}:${mode.buyVenue}:${mode.sellVenue}`;
+    const rows = byRoute.get(key) || [];
+    rows.push(mode);
+    byRoute.set(key, rows);
+  }
+  const savings: number[] = [];
+  for (const rows of byRoute.values()) {
+    const taker = rows.find(row => row.mode === 'TT');
+    if (!taker || !Number.isFinite(taker.combinedFeeBps)) continue;
+    for (const row of rows) {
+      if (row.mode === 'TT' || !Number.isFinite(row.combinedFeeBps)) continue;
+      const saved = taker.combinedFeeBps - row.combinedFeeBps;
+      if (Number.isFinite(saved) && saved > 0) savings.push(saved);
+    }
+  }
+  return savings;
+}
+
+function poolPressure(stats: { total: number; idle: number; waiting: number; max: number }): number {
+  if (stats.max <= 0) return 1;
+  const occupancy = Math.max(0, Math.min(1, stats.total / stats.max));
+  const waiting = stats.waiting > 0 ? Math.min(1, 0.65 + stats.waiting / Math.max(1, stats.max)) : 0;
+  const noIdlePenalty = stats.idle === 0 && stats.total > 0 ? 0.80 : 0;
+  return Math.max(occupancy * 0.70, waiting, noIdlePenalty);
+}
+
+function measuredResourceScarcity(): BpsCompressionMeshSnapshot['resourceScarcity'] {
+  const ordinary = poolPressure(getPoolStats());
+  const coordination = poolPressure(getCoordinationPoolStats());
+  const okx = getOkxPrivateAuthoritySnapshot().lanes.trade_fee;
+  const tokenPressure = okx.capacity > 0 ? 1 - Math.max(0, Math.min(1, okx.tokens / okx.capacity)) : 1;
+  const now = Date.now();
+  const okxTradeFeePressure = okx.breakerOpenUntil > now
+    ? 1
+    : okx.cooldownUntil > now
+      ? Math.max(0.85, tokenPressure)
+      : Math.max(0, Math.min(1, tokenPressure));
+  const combinedPressure = Math.max(ordinary, coordination, okxTradeFeePressure);
+  return {
+    ordinaryDbPressure: Number(ordinary.toFixed(6)),
+    coordinationDbPressure: Number(coordination.toFixed(6)),
+    okxTradeFeePressure: Number(okxTradeFeePressure.toFixed(6)),
+    combinedPressure: Number(combinedPressure.toFixed(6)),
+    cexScarcityMultiplier: Number((1 + combinedPressure * 1.5).toFixed(6)),
+  };
+}
+
 function normalizeShares(
   cexRaw: number,
   zeroRaw: number,
@@ -122,19 +183,20 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
   const zeroQuoteUtilization = dynamic.structuralCandidates > 0 ? dynamic.measuredQuotes / dynamic.structuralCandidates : null;
   const zeroPositiveYield = dynamic.measuredQuotes > 0 ? dynamic.positiveQuotes / dynamic.measuredQuotes : null;
 
-  const freshness = modes.map(mode => finite((mode as any).feeFreshnessScore)).filter((value): value is number => value !== null);
+  const freshness = modes.map(mode => finite(mode.feeFreshnessScore)).filter((value): value is number => value !== null);
   const feeFreshnessShare = freshness.length > 0 ? freshness.filter(value => value >= 0.75).length / freshness.length : null;
   const staleFeeModes = freshness.filter(value => value < 0.75).length;
   const hybrids = negatives.filter(mode => mode.mode === 'MT' || mode.mode === 'TM');
-  const makerSavings = modes.map(mode => finite((mode as any).makerFeeSavingsVsTakerBps)).filter((value): value is number => value !== null);
+  const makerSavings = measuredMakerSavingsBps(modes);
   const combinedFees = modes.map(mode => finite(mode.combinedFeeBps)).filter((value): value is number => value !== null);
   const grossSpreads = modes.map(mode => finite(mode.grossSpreadBps)).filter((value): value is number => value !== null);
   const recoveries = negatives.map(mode => finite(mode.recoveryEfficiency)).filter((value): value is number => value !== null);
   const relativeCexAdvantageBps = zeroGap !== null && closestRiskAdjustedGapBps !== null
     ? zeroGap - closestRiskAdjustedGapBps
     : null;
+  const scarcity = measuredResourceScarcity();
 
-  const hyperdynamic = buildHyperdynamicBpsPlan({
+  const hyperdynamicInput: HyperdynamicBpsInput = {
     closestFeeGapBps,
     closestRiskGapBps: closestRiskAdjustedGapBps,
     positiveModes: positives.length,
@@ -152,11 +214,14 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
     p90GapBps: negatives.length > 0 ? [...negatives.map(mode => mode.bpsToBreakEven)].sort((a, b) => a - b)[Math.min(negatives.length - 1, Math.floor(negatives.length * 0.9))] : null,
     rpiSavingsBps: maxRpiSavingsVsTakerBps,
     rpiEligibleSymbols: rpi.length,
+    heatPressure: scarcity.combinedPressure,
     zeroCapitalGapBps: zeroGap,
     zeroCapitalPositiveYield: zeroPositiveYield,
     zeroCapitalQuoteUtilization: zeroQuoteUtilization,
     relativeCexAdvantageBps,
-  });
+  };
+  const hyperdynamic = buildHyperdynamicBpsPlan(hyperdynamicInput);
+  const marginalAllocation = buildMarginalBpsAllocation(hyperdynamicInput, hyperdynamic);
 
   const feeSurfaceStrategies = buildFeeSurfaceHyperdynamicStrategyPlan({
     modes: modes.map(mode => {
@@ -197,12 +262,16 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
   }
   cexRaw *= hyperdynamic.cexPriorityMultiplier;
   cexRaw *= feeSurfaceStrategies.cexPriorityMultiplier;
+  cexRaw *= marginalAllocation.cexEfficiencyMultiplier;
+  cexRaw /= scarcity.cexScarcityMultiplier;
+  if (positives.length > 0) cexRaw = Math.max(cexRaw, 1.5);
 
   let zeroRaw = zeroPositive > 0 ? 3 + Math.min(4, zeroPositive) : gapPriority(zeroGap, 25);
   if (zero?.closestCandidateGapImproving === true) zeroRaw *= 1.20;
   if (zero?.closestCandidateGapImproving === false) zeroRaw *= 0.90;
   zeroRaw *= hyperdynamic.zeroCapitalPriorityMultiplier;
   zeroRaw *= feeSurfaceStrategies.zeroCapitalPriorityMultiplier;
+  zeroRaw *= marginalAllocation.zeroCapitalEfficiencyMultiplier;
 
   const shares = normalizeShares(cexRaw, zeroRaw, hyperdynamic.explorationMultiplier);
   const baseBreadth = Math.max(0.40, Math.min(1, 0.40 + 0.60 * shares.cex / Math.max(0.01, 1 - shares.exploration)));
@@ -231,9 +300,11 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
       attentionShare: shares.zero,
     },
     exploration: { attentionShare: shares.exploration },
+    resourceScarcity: scarcity,
     cexBreadthBias,
     cexCadenceBias,
     hyperdynamic,
+    marginalAllocation,
     feeSurfaceStrategies,
     objective: 'measured_distance_to_positive_bps_per_scarcity_unit',
     authority: 'search_and_compute_scheduling_only',
@@ -244,6 +315,12 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
   logger.info('[BpsCompressionMesh] Cross-topology profitability attention refreshed', {
     component: 'BpsCompressionMesh',
     ...latest,
+    marginalBpsSummary: {
+      topLever: latest.marginalAllocation.topLever,
+      estimatedAggregateRecoverableBps: latest.marginalAllocation.estimatedAggregateRecoverableBps,
+      topLevers: latest.marginalAllocation.ranked.slice(0, 5),
+      executionAuthority: latest.marginalAllocation.executionAuthority,
+    },
     feeSurfaceSummary: {
       activeStrategies: latest.feeSurfaceStrategies.activeStrategies.map(item => item.key),
       bestMeasuredBpsBenefit: latest.feeSurfaceStrategies.bestMeasuredBpsBenefit,
@@ -260,10 +337,15 @@ export function getBpsCompressionMeshSnapshot(): BpsCompressionMeshSnapshot | nu
     cex: { ...latest.cex },
     zeroCapital: { ...latest.zeroCapital },
     exploration: { ...latest.exploration },
+    resourceScarcity: { ...latest.resourceScarcity },
     hyperdynamic: {
       ...latest.hyperdynamic,
       activeSolutionIds: [...latest.hyperdynamic.activeSolutionIds],
       activeSolutionKeys: [...latest.hyperdynamic.activeSolutionKeys],
+    },
+    marginalAllocation: {
+      ...latest.marginalAllocation,
+      ranked: latest.marginalAllocation.ranked.map(item => ({ ...item, activeSolutions: [...item.activeSolutions] })),
     },
     feeSurfaceStrategies: {
       ...latest.feeSurfaceStrategies,
