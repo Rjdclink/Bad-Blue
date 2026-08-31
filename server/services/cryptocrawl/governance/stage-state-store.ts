@@ -32,6 +32,12 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function persistenceRetryDelayMs(attempt: number): number {
+  const capMs = Math.min(1_500, 200 * Math.pow(2, Math.max(0, attempt - 1)));
+  const floorMs = Math.min(250, Math.max(50, Math.floor(capMs / 4)));
+  return floorMs + Math.floor(Math.random() * Math.max(1, capMs - floorMs + 1));
+}
+
 export class PostgresStageManagerStateStore implements StageManagerStateStore {
   private lastSuccessfulFingerprint: string | null = null;
 
@@ -78,10 +84,20 @@ export class PostgresStageManagerStateStore implements StageManagerStateStore {
         await client.query(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
         await client.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT_MS}ms'`);
 
-        // Rolling deploys can briefly contain two healthy replicas. Serialize the
-        // single canonical governance row across replicas, but bound lock/statement
-        // wait time so persistence can never monopolize a scarce Supavisor session.
-        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [STAGE_STATE_WRITE_LOCK]);
+        // Rolling deploys can briefly contain two healthy replicas. Preserve one
+        // canonical writer without creating a PostgreSQL-side advisory-lock wait
+        // queue: fail fast on contention and let bounded jittered application
+        // retries arbitrate ownership instead of consuming scarce DB sessions.
+        const lockResult = await client.query(
+          'SELECT pg_try_advisory_xact_lock(hashtext($1)) AS acquired',
+          [STAGE_STATE_WRITE_LOCK],
+        );
+        if (lockResult.rows?.[0]?.acquired !== true) {
+          const lockBusy = new Error('StageManager persistence lock busy');
+          (lockBusy as any).code = '55P03';
+          throw lockBusy;
+        }
+
         await client.query(
           `INSERT INTO cryptocrawl_governance_state (scope, state, state_history, updated_at)
            VALUES ($1, $2::jsonb, $3::jsonb, NOW())
@@ -102,7 +118,7 @@ export class PostgresStageManagerStateStore implements StageManagerStateStore {
           try { await client.query('ROLLBACK'); } catch { /* connection release follows */ }
         }
         if (attempt >= SAVE_RETRIES || !retryablePersistenceError(error)) throw error;
-        await delay(Math.min(1_500, 200 * Math.pow(2, attempt - 1)));
+        await delay(persistenceRetryDelayMs(attempt));
       } finally {
         client?.release();
       }
