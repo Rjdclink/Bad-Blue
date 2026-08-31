@@ -49,7 +49,7 @@ BEGIN
     v_resource_key := p_prefix || ':slot:' || v_slot::text;
     v_claimed_key := NULL;
 
-    INSERT INTO public.cryptocrawler_resource_leases
+    INSERT INTO public.cryptocrawler_resource_leases AS leases
       (resource_key, lease_id, owner_id, opportunity_id, expires_at)
     VALUES
       (v_resource_key, p_lease_id, p_owner_id, p_opportunity_id, p_expires_at)
@@ -59,7 +59,7 @@ BEGIN
         opportunity_id = EXCLUDED.opportunity_id,
         acquired_at = now(),
         expires_at = EXCLUDED.expires_at
-    WHERE public.cryptocrawler_resource_leases.expires_at <= now()
+    WHERE leases.expires_at <= now()
     RETURNING resource_key INTO v_claimed_key;
 
     IF v_claimed_key IS NOT NULL THEN
