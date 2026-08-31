@@ -71,7 +71,7 @@ assert.match(adminApi, /executionAuthorityGranted:\s*false/);
 
 // Dev/test no-secret workflows must not be forced through production DB schema.
 assert.doesNotMatch(coreRuntime, /export async function ensureCryptoCrawlerCoreRuntime\(\): Promise<void> \{\s*await requireCryptocrawlerAuthoritySchema/);
-assert.doesNotMatch(adminApi, /export async function startCryptoCrawlerRuntime\(\): Promise<CryptoCrawlerStartResult> \{[\s\S]{0,240}await requireCryptocrawlerAuthoritySchema\(2\);\s*\n\s*try \{\s*await initializeGovernance/);
+assert.doesNotMatch(adminApi, /export async function startCryptoCrawlerRuntime\(\): Promise<CryptoCrawlerStartResult> \{\s*await requireCryptocrawlerAuthoritySchema/);
 
 // Rolling-deploy headroom may contract ordinary capacity, never expand past the
 // canonical hard ceiling already selected by db.ts.
