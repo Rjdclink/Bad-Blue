@@ -1,6 +1,9 @@
 import { quantiComp, quantiParallelismGovernor } from '../../quantiComp/index.js';
 import { getProviderQualityAuctionSnapshot } from '../intelligence/provider-quality-auction.js';
-import { getCryptaraSupabaseAdmissionSnapshot } from './cryptara-supabase-admission-worker.js';
+import {
+  getCryptaraSupabaseAdmissionSnapshot,
+  setCryptaraSupabaseRecoveryAdvisor,
+} from './cryptara-supabase-admission-worker.js';
 
 export interface CryptaraResourceIntelligenceSnapshot {
   observedAt: number;
@@ -64,7 +67,10 @@ export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntel
     : 0;
   const waitingPressure = database.pool.waiting > 0 ? 1 : 0;
   const latencyPressure = clamp01(database.ewmaAcquireMs / 1_500);
-  const modePressure = database.mode === 'pressure' ? 1 : database.mode === 'recovering' ? 0.45 : 0;
+  // Recovering is not itself pressure; it only means the current target is below
+  // the live ceiling. Keep a small bias so acceleration still requires clean DB
+  // telemetry instead of being enabled merely by healthy compute/providers.
+  const modePressure = database.mode === 'pressure' ? 1 : database.mode === 'recovering' ? 0.15 : 0;
   const databasePressure = clamp01(Math.max(
     waitingPressure,
     modePressure,
@@ -102,9 +108,13 @@ export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntel
     + signalConfidence * 0.10,
   );
 
-  // This advisory can only accelerate recovery above the worker's safe baseline;
-  // it can never force a contraction or bypass DB-measured pressure decisions.
-  const dbRecoveryAcceleration = database.mode === 'recovering' && databasePressure < 0.35
+  // This advisory can only accelerate additive recovery after DB telemetry itself
+  // is clean. It can never force a contraction, skip a pressure cooldown or open
+  // more permits than the worker's live pool ceiling.
+  const dbRecoveryAcceleration = database.mode === 'recovering'
+    && databasePressure < 0.35
+    && database.poolWaiting === 0
+    && database.queued === 0
     ? Math.max(1, Math.min(1.5, 1 + usefulParallelHeadroom * 0.5))
     : 1;
 
@@ -138,4 +148,16 @@ export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntel
     writeAuthority: false,
     executionAuthority: false,
   };
+}
+
+/**
+ * Install the local resource advisory into Cryptara's DB governor. The advisor can
+ * only reduce the count of already-healthy admissions required before the next
+ * +1 permit; the worker remains the sole authority for contraction/cooldown/max.
+ */
+export function installCryptaraResourceIntelligenceAdvisor(): void {
+  setCryptaraSupabaseRecoveryAdvisor(() => {
+    const snapshot = getCryptaraResourceIntelligenceSnapshot();
+    return snapshot.dbRecoveryAcceleration;
+  });
 }
