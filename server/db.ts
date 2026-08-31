@@ -100,7 +100,12 @@ const ordinaryUsesTransactionPool = postgresPort(ordinaryDatabaseUrl) === '6543'
 // Transaction-mode clients are multiplexed by Supavisor. If no transaction lane
 // is available, use a deliberately smaller session fallback so multiple Railway
 // replicas cannot consume the entire 15-session pool before coordination/admin.
-const mainPoolMax = boundedPoolInt(process.env.DATABASE_POOL_MAX, ordinaryUsesTransactionPool ? 5 : 3, 1, 32);
+// A legacy DATABASE_POOL_MAX value cannot bypass the hard session fallback ceiling.
+const requestedMainPoolMax = boundedPoolInt(process.env.DATABASE_POOL_MAX, 5, 1, 32);
+const sessionFallbackPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_SESSION_FALLBACK_POOL_MAX, 3, 1, 4);
+const mainPoolMax = ordinaryUsesTransactionPool
+  ? requestedMainPoolMax
+  : Math.min(requestedMainPoolMax, sessionFallbackPoolMax);
 const coordinationPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_COORDINATION_POOL_MAX, 1, 1, 2);
 
 if (transactionDatabaseUrl) {
