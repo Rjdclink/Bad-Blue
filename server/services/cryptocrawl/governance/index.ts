@@ -47,6 +47,7 @@ import { killSwitch } from './kill-switch';
 import { composer } from './composer-interface';
 import { profitLadder } from './profit-ladder';
 import { GovernanceError } from './types.js';
+import { installCryptaraSupabaseAdmissionWorker } from '../integration/cryptara-supabase-admission-worker.js';
 
 /**
  * Dedicated bootstrap/recovery authority. This never grants ordinary trading
@@ -90,6 +91,11 @@ export function initializeGovernance(): Promise<void> {
 
 async function initializeGovernanceState(): Promise<void> {
   console.log('[GOVERNANCE] Initializing 6-Stage Deployment System...');
+
+  // Migrations/schema admission have already completed in server bootstrap. Install
+  // Cryptara's ordinary-lane resource governor before any governance persistence
+  // or route-owned background consumers can compete for Supavisor connections.
+  installCryptaraSupabaseAdmissionWorker();
 
   const restored = await stageManager.restorePersistence(new PostgresStageManagerStateStore());
   const persistedProfitLadder = stageManager.getProfitLadderState();
