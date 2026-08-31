@@ -30,8 +30,17 @@ requirePattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2200}await\s+db\.e
 forbidPattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2600}Promise\.all\s*\(/, 'startup database recovery must not fan out parallel probes');
 requirePattern(index, /function\s+isPermanentDatabaseStartupError[\s\S]{0,900}28p01[\s\S]{0,900}password authentication failed/, 'permanent authentication/configuration failures must be classified separately from pressure');
 requirePattern(index, /isPermanentDatabaseStartupError\(error\)\s*\|\|\s*isLocalPoolFailure\(error\)[\s\S]{0,100}throw\s+error/, 'permanent/local pool failures must fail out of the pressure retry loop instead of burning the full readiness budget');
-requirePattern(index, /if\s*\(!isDatabaseAdmissionPressureError\(lastError\)\s*&&\s*!isPermanentDatabaseStartupError\(lastError\)\)[\s\S]{0,700}resetPool/, 'pool reset must remain outside recognized upstream pressure/authentication failures');
-requirePattern(index, /else\s+if\s*\(isDatabaseAdmissionPressureError\(lastError\)\)[\s\S]{0,220}skipping pool reset/i, 'upstream pressure must never trigger pool recreation');
+
+// Pool recreation is the most expensive local recovery action. It is legal only
+// when node-postgres itself is known closed/corrupt; pressure, auth/config faults
+// and unknown transient network errors must all avoid reconnect amplification.
+requirePattern(index, /if\s*\(isLocalPoolFailure\(lastError\)\)[\s\S]{0,700}resetPool/, 'pool reset must require a positively identified local pool failure');
+forbidPattern(index, /if\s*\(!isDatabaseAdmissionPressureError\(lastError\)\s*&&\s*!isPermanentDatabaseStartupError\(lastError\)\)[\s\S]{0,700}resetPool/, 'unknown transient failures must not qualify for pool recreation by exclusion');
+requirePattern(index, /else\s+if\s*\(isDatabaseAdmissionPressureError\(lastError\)\)[\s\S]{0,240}skipping pool reset/i, 'upstream pressure must never trigger pool recreation');
+requirePattern(index, /else\s+if\s*\(isPermanentDatabaseStartupError\(lastError\)\)[\s\S]{0,260}pool reset suppressed/i, 'permanent auth/config faults must not recreate pools');
+requirePattern(index, /Unknown transient database\/network failure; pool reset suppressed to avoid reconnect amplification/i, 'unknown transient network faults must suppress pool recreation');
+requirePattern(index, /localPoolFailure:\s*isLocalPoolFailure\(lastError\)/, 'startup telemetry must distinguish proven local pool failure from upstream/transient failure');
+
 requirePattern(index, /const\s+databaseReady\s*=\s*await\s+initializeDatabase\(\)[\s\S]*startupTrace\('routes_import_started'\)/, 'database/migration admission must complete before the heavyweight route graph imports');
 requirePattern(index, /isFullyInitialized\s*&&\s*databaseInitialized[\s\S]*res\.status\(200\)/, 'strict readiness must explicitly require database initialization');
 requirePattern(index, /const\s+schemaReady\s*=\s*await\s+runStartupSchemaVerification\(\)/, 'startup must retain production schema telemetry');
