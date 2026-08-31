@@ -22,7 +22,11 @@ const migration = read('server/migrations/023_cryptocrawler_hot_path_schema_auth
 requirePattern(worker, /import\s+\{\s*getPoolStats,\s*pool\s*\}\s+from\s+'\.\.\/\.\.\/\.\.\/db\.js'/, 'worker consumes the existing ordinary pool and its telemetry');
 forbidPattern(worker, /\bnew\s+Pool\s*\(/, 'worker creating a second application pool');
 forbidPattern(worker, /coordinationPool/, 'worker consuming or modifying the session-capable coordination lane');
-forbidPattern(worker, /setInterval\s*\(|setTimeout\s*\(/, 'polling/timer loop adding idle worker overhead');
+forbidPattern(worker, /setInterval\s*\(/, 'polling loop adding idle worker overhead');
+requirePattern(worker, /pressureResumeTimer:\s*NodeJS\.Timeout\s*\|\s*null/, 'pressure backoff uses one reusable one-shot timer');
+requirePattern(worker, /setTimeout\([\s\S]{0,220}this\.pressureResumeTimer\s*=\s*null;[\s\S]{0,120}this\.drain\(\)/, 'pressure cooldown resumes queued work once without polling');
+requirePattern(worker, /pressureResumeTimer\.unref\?\.\(\)/, 'pressure cooldown timer never keeps the process alive');
+requirePattern(worker, /now\s*<\s*this\.pressureUntil\s*&&\s*stats\.idle\s*===\s*0/, 'pressure cooldown still permits immediate reuse of idle clients');
 requirePattern(worker, /if\s*\(this\s*!==\s*pool\)/, 'only the live ordinary pool is admitted through Cryptara');
 requirePattern(worker, /Pool\.prototype/, 'shared ordinary callers converge on one acquisition gate');
 
@@ -69,4 +73,4 @@ requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}IN
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
-console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, zero-extra-pool, explicit task priority, authority isolation, starvation protection, and migration-owned calibration persistence invariants passed');
+console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, jittered pressure backoff, zero-extra-pool, explicit task priority, authority isolation, starvation protection, and migration-owned calibration persistence invariants passed');
