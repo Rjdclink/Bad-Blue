@@ -70,6 +70,12 @@ RUN rm -rf node_modules || true && \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 
+# CryptoCrawler execution-critical DDL remains migration-owned. The runtime image
+# must carry the two idempotent authority migrations because the production stage
+# intentionally does not copy the TypeScript source tree.
+COPY --from=builder /app/server/migrations/023_cryptocrawler_hot_path_schema_authority.sql ./dist/migrations/023_cryptocrawler_hot_path_schema_authority.sql
+COPY --from=builder /app/server/migrations/024_cryptocrawler_funding_lifecycle.sql ./dist/migrations/024_cryptocrawler_funding_lifecycle.sql
+
 # Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
