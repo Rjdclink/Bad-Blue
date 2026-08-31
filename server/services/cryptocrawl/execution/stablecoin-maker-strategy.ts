@@ -16,7 +16,10 @@ import {
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { floorToIncrement } from './coinbase-product-policy.js';
 import { getSpotProductConstraints } from './cex-spot-product-policy.js';
-import { getCryptaraDynamicMakerCanaryDecision } from './cryptara-dynamic-canary-controller.js';
+import {
+  getCryptaraDynamicMakerCanaryDecision,
+  type DynamicMakerCanaryDecision,
+} from './cryptara-dynamic-canary-controller.js';
 
 export type MakerLegMode = 'maker';
 export type MakerRecoveryStrategy = 'stablecoin_post_only' | 'volatile_spread_post_only';
@@ -86,22 +89,13 @@ type Book = {
   quote: StreamOrderBookQuote;
 };
 
-type MakerCanaryProof = {
-  samples: number;
-  wins: number;
-  winRate: number | null;
-  ceilingUsd: number;
-  confidenceScore: number;
-  sizingAuthority: 'bootstrap' | 'cryptara_realized_evidence';
-};
+type MakerCanaryProof = DynamicMakerCanaryDecision;
 
 type MakerProductConstraints = {
   quoteAsset: string;
   baseIncrement: number;
   baseMinSize: number;
   quoteMinSize: number | null;
-  baseMaxSize: number | null;
-  quoteMaxSize: number | null;
 };
 
 const STABLECOIN_SYMBOLS = new Set(['USDGUSDT', 'USDCUSDT', 'DAIUSDT', 'RLUSDUSDT']);
@@ -128,15 +122,7 @@ function authenticatedMakerFeeBps(evidence: CexFeeEvidence | null): number | nul
 }
 
 function makerCanaryProof(): MakerCanaryProof {
-  const decision = getCryptaraDynamicMakerCanaryDecision();
-  return {
-    samples: decision.samples,
-    wins: decision.wins,
-    winRate: decision.winRate,
-    ceilingUsd: decision.ceilingUsd,
-    confidenceScore: decision.confidenceScore,
-    sizingAuthority: decision.sizingAuthority,
-  };
+  return getCryptaraDynamicMakerCanaryDecision();
 }
 
 export function getDynamicMakerCanaryStatus(): MakerCanaryProof {
@@ -270,8 +256,6 @@ async function makerProductConstraints(venue: CexFeeVenue, symbol: string): Prom
       baseIncrement: constraints.baseIncrement,
       baseMinSize: constraints.baseMinSize,
       quoteMinSize: constraints.quoteMinSize,
-      baseMaxSize: constraints.baseMaxSize,
-      quoteMaxSize: constraints.quoteMaxSize,
     };
   }
   const constraints = await getSpotProductConstraints(venue, symbol).catch(() => null);
@@ -281,16 +265,7 @@ async function makerProductConstraints(venue: CexFeeVenue, symbol: string): Prom
     baseIncrement: constraints.baseIncrement,
     baseMinSize: constraints.baseMinSize,
     quoteMinSize: constraints.quoteMinSize,
-    baseMaxSize: constraints.baseMaxSize,
-    quoteMaxSize: constraints.quoteMaxSize,
   };
-}
-
-function maxOrderNotionalUsd(constraints: MakerProductConstraints, price: number): number {
-  let maximum = Number.POSITIVE_INFINITY;
-  if (constraints.baseMaxSize !== null) maximum = Math.min(maximum, constraints.baseMaxSize * price);
-  if (constraints.quoteMaxSize !== null) maximum = Math.min(maximum, constraints.quoteMaxSize);
-  return maximum;
 }
 
 function ttlMs(): number {
@@ -372,15 +347,13 @@ async function evaluateMakerCandidate(input: {
 
       const commonIncrement = Math.max(buyConstraints.baseIncrement, sellConstraints.baseIncrement);
       const canary = maxCanaryUsd(input.notionalUsd);
-      const singleOrderEnvelopeUsd = Math.min(
-        maxOrderNotionalUsd(buyConstraints, buyPrice),
-        maxOrderNotionalUsd(sellConstraints, sellPrice),
-      );
-      const directOrderCeilingUsd = Number.isFinite(singleOrderEnvelopeUsd)
-        ? Math.min(canary.amount, singleOrderEnvelopeUsd)
-        : canary.amount;
-      if (!(directOrderCeilingUsd > 0)) continue;
+      const parentCeilingUsd = canary.amount;
+      if (!(parentCeilingUsd > 0)) continue;
 
+      // Queue participation and Kelly may tighten total safe exposure beneath the
+      // active ladder/canary ceiling. Venue single-order maxima are deliberately
+      // absent here: the canonical hyper-hybrid executor applies them only when
+      // partitioning this measured parent into legal child orders.
       const queueQty = Math.min(buy.bidQty, sell.askQty) * participation;
       const queueLiquidityUsd = Math.max(0, queueQty * buyPrice);
       const atrFraction = Math.max(buyQueue.atrFraction, sellQueue.atrFraction);
@@ -392,14 +365,14 @@ async function evaluateMakerCandidate(input: {
         confidence: kellyConfidence,
         atrFraction,
         hurstExponent,
-        capitalUsd: directOrderCeilingUsd,
+        capitalUsd: parentCeilingUsd,
         kellyFraction: finiteBoundedEnv('CRYPTO_ARBITRAGE_FRACTIONAL_KELLY', 0.25, 0.05, 0.50),
         liquidityCapUsd: queueLiquidityUsd,
-        governanceCapUsd: directOrderCeilingUsd,
+        governanceCapUsd: parentCeilingUsd,
         maxFractionOfCapital: finiteBoundedEnv('CRYPTO_ARBITRAGE_KELLY_MAX_FRACTION', 0.20, 0.01, 0.50),
       });
       const kellyApplied = queueAuthority === 'measured_history' && canary.proof.samples >= 5 && kelly.recommendedNotionalUsd > 0;
-      const sizingUsd = kellyApplied ? Math.min(directOrderCeilingUsd, kelly.recommendedNotionalUsd) : directOrderCeilingUsd;
+      const sizingUsd = kellyApplied ? Math.min(parentCeilingUsd, kelly.recommendedNotionalUsd) : parentCeilingUsd;
       const requestedQty = Math.min(sizingUsd / buyPrice, queueQty);
       const baseQty = floorToIncrement(requestedQty, commonIncrement);
       if (!(baseQty > 0) || baseQty < buyConstraints.baseMinSize || baseQty < sellConstraints.baseMinSize) continue;
