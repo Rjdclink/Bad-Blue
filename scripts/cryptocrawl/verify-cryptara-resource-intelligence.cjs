@@ -35,7 +35,8 @@ requirePattern(intelligence, /writeAuthority:\s*false/, 'resource intelligence h
 requirePattern(intelligence, /executionAuthority:\s*false/, 'resource intelligence has no execution authority');
 requirePattern(intelligence, /database\.mode\s*===\s*'recovering'/, 'compute/provider signals can accelerate only an already recovering DB lane');
 requirePattern(intelligence, /databasePressure\s*<\s*0\.35/, 'resource intelligence cannot accelerate DB recovery while measured DB pressure is elevated');
-requirePattern(intelligence, /database\.poolWaiting\s*===\s*0/, 'resource intelligence cannot accelerate while node-postgres has DB waiters');
+requirePattern(intelligence, /database\.pool\.waiting\s*===\s*0/, 'resource intelligence cannot accelerate while node-postgres has DB waiters');
+requirePattern(intelligence, /poolWaiting:\s*database\.pool\.waiting/, 'normalized resource snapshot exposes the same raw waiter count');
 requirePattern(intelligence, /database\.queued\s*\/\s*Math\.max\(1,\s*database\.pool\.max\s*\*\s*4\)/, 'small worker backlog is treated as bounded demand rather than automatic overload');
 
 // Comp/Antenna may only shorten already-healthy additive recovery. The worker owns
