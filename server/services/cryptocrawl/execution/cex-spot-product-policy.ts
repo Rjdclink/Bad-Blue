@@ -26,6 +26,12 @@ export interface SpotProductConstraints {
   source: 'kraken_asset_pairs' | 'okx_public_instruments';
 }
 
+export interface LiveSpotProductDirectory {
+  venue: ConstrainedSpotVenue;
+  observedAt: number;
+  symbols: string[];
+}
+
 interface ConstraintSnapshot {
   observedAt: number;
   expiresAt: number;
@@ -263,6 +269,20 @@ async function fetchOkxSnapshot(forceRefresh = false): Promise<ConstraintSnapsho
     return snapshot;
   })().finally(() => { okxInFlight = null; });
   return okxInFlight;
+}
+
+export async function getLiveSpotProductDirectory(
+  venue: ConstrainedSpotVenue,
+  forceFresh = false,
+): Promise<LiveSpotProductDirectory> {
+  const snapshot = venue === 'kraken'
+    ? await fetchKrakenSnapshot(forceFresh)
+    : await fetchOkxSnapshot(forceFresh);
+  return {
+    venue,
+    observedAt: snapshot.observedAt,
+    symbols: [...snapshot.values.keys()].sort(),
+  };
 }
 
 function updateSnapshotConstraint(venue: ConstrainedSpotVenue, constraint: SpotProductConstraints): void {
