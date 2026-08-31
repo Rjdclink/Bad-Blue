@@ -64,6 +64,17 @@ function authorityReadyTtlMs(): number {
 }
 
 /**
+ * Reuse an exact schema proof already obtained by startup migration verification.
+ * This performs no database work. It only prevents CEX, zero-capital and quota
+ * callers from asking Supabase the identical table/function question again.
+ */
+export function primeResourceLeaseAuthorityReady(ttlMs = authorityReadyTtlMs()): void {
+  const boundedTtlMs = boundedInt(ttlMs, authorityReadyTtlMs(), 30_000, 900_000);
+  authorityReadyUntil = Math.max(authorityReadyUntil, Date.now() + boundedTtlMs);
+  authorityRetryAfter = 0;
+}
+
+/**
  * One process-wide, single-flight truth source for the migration-owned lease
  * table and slot-claim function. Every execution topology consumes this same
  * cached answer instead of independently asking Supabase the same schema question.
@@ -87,8 +98,7 @@ export async function ensureResourceLeaseAuthority(
     .then(result => {
       const ready = result.rows?.[0]?.table_ready === true && result.rows?.[0]?.claim_function_ready === true;
       if (ready) {
-        authorityReadyUntil = Date.now() + readyTtlMs;
-        authorityRetryAfter = 0;
+        primeResourceLeaseAuthorityReady(readyTtlMs);
       } else {
         authorityReadyUntil = 0;
         authorityRetryAfter = Date.now() + retryMs;
