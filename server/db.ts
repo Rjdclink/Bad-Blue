@@ -28,6 +28,7 @@ import * as schema from "@shared/schema";
 import {
   getDatabaseUrl,
   getDatabaseUrlSource,
+  isPostgresConnectionString,
   isRailway as isRailwayHelper,
   isProduction as isProductionHelper,
   isSupabasePostgresConnectionString,
@@ -69,20 +70,27 @@ function postgresPort(url: string): string | null {
 // explicit transaction-pool URL is configured. Session-scoped advisory-lock
 // traffic must stay on the dedicated coordination URL/session lane.
 const transactionDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.SUPABASE_TRANSACTION_DATABASE_URL);
-const coordinationDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.CRYPTOCRAWL_COORDINATION_DATABASE_URL) || databaseUrl;
+const explicitCoordinationDatabaseUrl = normalizedOptionalDatabaseUrl(process.env.CRYPTOCRAWL_COORDINATION_DATABASE_URL);
+const coordinationDatabaseUrl = explicitCoordinationDatabaseUrl || databaseUrl;
 const ordinaryDatabaseUrl = transactionDatabaseUrl || databaseUrl;
 const mainPoolMax = boundedPoolInt(process.env.DATABASE_POOL_MAX, 5, 1, 32);
 const coordinationPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_COORDINATION_POOL_MAX, 1, 1, 4);
 
 if (transactionDatabaseUrl) {
-  if (isSupabaseProjectUrl(transactionDatabaseUrl) || !isSupabasePostgresConnectionString(transactionDatabaseUrl)) {
-    throw new Error('[DATABASE] SUPABASE_TRANSACTION_DATABASE_URL must be a Supabase Postgres connection string');
+  if (isSupabaseProjectUrl(transactionDatabaseUrl) || !isPostgresConnectionString(transactionDatabaseUrl)) {
+    throw new Error('[DATABASE] SUPABASE_TRANSACTION_DATABASE_URL must be a Postgres connection string');
+  }
+  if (isProduction && !isSupabasePostgresConnectionString(transactionDatabaseUrl)) {
+    throw new Error('[DATABASE] SUPABASE_TRANSACTION_DATABASE_URL must be a Supabase Postgres connection string in production');
   }
 }
 
 if (isDatabaseConfigured) {
-  if (isSupabaseProjectUrl(coordinationDatabaseUrl) || !isSupabasePostgresConnectionString(coordinationDatabaseUrl)) {
-    throw new Error('[DATABASE] CRYPTOCRAWL_COORDINATION_DATABASE_URL must be a Supabase Postgres connection string');
+  if (isSupabaseProjectUrl(coordinationDatabaseUrl) || !isPostgresConnectionString(coordinationDatabaseUrl)) {
+    throw new Error('[DATABASE] CryptoCrawler coordination URL must be a Postgres connection string');
+  }
+  if (isProduction && !isSupabasePostgresConnectionString(coordinationDatabaseUrl)) {
+    throw new Error('[DATABASE] CRYPTOCRAWL_COORDINATION_DATABASE_URL must be a Supabase Postgres connection string in production');
   }
   if (postgresPort(coordinationDatabaseUrl) === '6543') {
     throw new Error('[DATABASE] CryptoCrawler coordination requires a session-capable/direct Postgres URL, not transaction-pool port 6543');
