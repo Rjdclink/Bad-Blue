@@ -15,6 +15,11 @@ assert.doesNotMatch(
   /^\s*region\s*=\s*"(?:us-east1|us-west1|us-central1|europe-west1)"\s*$/m,
   'obsolete Railway region identifier can block deployment before Docker build starts',
 );
+assert.doesNotMatch(
+  config,
+  /^\s*\[services(?:\.|\])?/m,
+  'legacy nested services blocks are not valid single-service Railway Config-as-Code',
+);
 assert.match(dockerfile, /^FROM\s+node:20-/m);
 
-console.log('[railway-config-compatibility] PASS: root Dockerfile deployment is explicit and no obsolete pre-Metal region override can block deployment initialization');
+console.log('[railway-config-compatibility] PASS: single-service root Dockerfile deployment is explicit, with no obsolete region or nested service config that can block initialization');
