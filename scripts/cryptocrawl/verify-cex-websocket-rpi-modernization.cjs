@@ -84,10 +84,22 @@ requirePattern(makerAdapters, /OKX_RPI_REJECT_FEE_WORSENED/, 'submit-time RPI fe
 requirePattern(makerAdapters, /OKX_RPI_REJECT_PERMISSION_NOTIONAL_OR_SPACING_CHANGED/, 'submit-time RPI permission/notional/spacing drift fails closed');
 requirePattern(makerAdapters, /There is no silent[\s\S]{0,120}downgrade from RPI to standard maker/, 'RPI plan cannot silently fall back to a worse standard-maker fee');
 
+// RPI-taker access can expose additional executable depth for standard OKX order
+// types, but the API does not expose a safe read-only account permission probe.
+// Observe/prewarm the incremental RPI depth and keep execution disabled rather
+// than testing eligibility with a live one-leg order.
+requirePattern(rpiAdvisory, /documentedStandardOrderTypes:\s*\['limit',\s*'market',\s*'fok',\s*'ioc'\]/, 'RPI taker advisory recognizes every documented standard order type');
+requirePattern(rpiAdvisory, /observedAdditionalBidBaseQty/, 'RPI taker advisory measures extra bid-side RPI depth');
+requirePattern(rpiAdvisory, /observedAdditionalAskBaseQty/, 'RPI taker advisory measures extra ask-side RPI depth');
+requirePattern(rpiAdvisory, /permissionProven:\s*false/, 'RPI taker access cannot claim unproven account permission');
+requirePattern(rpiAdvisory, /rpiTakerExecutionAuthority:\s*false/, 'RPI taker depth observation cannot grant execution authority');
+requirePattern(rpiAdvisory, /prewarm_and_measure_only_until_non_mutating_account_permission_evidence_exists/, 'RPI taker access remains prewarm-only until safe permission evidence exists');
+forbidPattern(makerAdapters, /rpiTakerAccess\s*:\s*true/, 'maker execution cannot smuggle unproven RPI taker access into orders');
+
 // Advisory scheduling remains read-only and is separated from execution-time
 // capability to avoid intelligence/integration initialization cycles.
 requirePattern(rpiAdvisory, /from '\.\/okx-rpi-capability\.js'/, 'RPI advisory consumes the dedicated capability authority');
 requirePattern(rpiAdvisory, /await import\('\.\.\/integration\/cex-four-mode-observability-wiring\.js'\)/, 'four-mode advisory dependency is lazy and non-authoritative');
 requirePattern(rpiAdvisory, /executionAuthority:\s*false/, 'RPI advisory never grants execution authority');
 
-console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, and authenticated OKX RPI maker invariants passed');
+console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, authenticated OKX RPI maker, and safe RPI-taker depth observability invariants passed');
