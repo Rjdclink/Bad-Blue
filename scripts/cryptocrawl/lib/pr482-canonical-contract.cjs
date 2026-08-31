@@ -126,11 +126,13 @@ function verifyCexExecutionContract() {
   requirePattern(positiveCapture, /hardMaxCanaryUsd:\s*makerCanary\.hardMaxUsd/, 'maker status reports the real tighten-only ladder-bounded hard maximum');
   forbidPattern(positiveCapture, /hardMaxCanaryUsd:\s*finiteBoundedEnv\([^\n]*1_000_000/, 'legacy $1M telemetry presented as maker authority');
 
-  // One product identity authority per venue family. Directory misses trigger a
-  // forced live catalog hydration before a short authoritative negative cache.
+  // One product identity authority per venue family. A fresh authoritative catalog
+  // is reused across missing symbols; a full recheck occurs only after the shared
+  // snapshot is old enough, and OKX execution-time refresh may authenticate region.
   requirePattern(spotProducts, /getSpotProductConstraints[\s\S]*forceFresh\s*=\s*false/, 'Kraken/OKX product authority supports forced-fresh reads');
-  requirePattern(spotProducts, /fetchKrakenSnapshot\(true\)/, 'Kraken directory miss triggers authoritative live catalog refresh');
-  requirePattern(spotProducts, /fetchOkxSnapshot\(true\)/, 'OKX directory miss triggers authoritative live catalog refresh');
+  requirePattern(spotProducts, /MISSING_CATALOG_RECHECK_MS/, 'missing-product full-catalog refresh is age-bounded');
+  requirePattern(spotProducts, /fetchKrakenSnapshot\(true\)/, 'aged Kraken directory miss can trigger authoritative live catalog refresh');
+  requirePattern(spotProducts, /fetchOkxSnapshot\(true,\s*true\)/, 'aged OKX execution-time miss can trigger authenticated-region live catalog refresh');
   requirePattern(spotProducts, /NEGATIVE_TTL_MS/, 'unsupported products use bounded negative caching rather than permanent local absence');
   requirePattern(spotProducts, /row\.base,\s*row\.quote/, 'Kraken canonical product identity consumes live base/quote fields');
   requirePattern(spotProducts, /raw\.baseCcy,\s*raw\.quoteCcy/, 'OKX canonical product identity consumes live base/quote fields');
