@@ -1,13 +1,14 @@
-// Diagnostic isolation: established safety gates plus current measured-profitability behavior verifiers.
+'use strict';
+// Diagnostic isolation only. Do not merge this branch.
+// Run the canonical PR #482 execution/notional contract, then continue directly
+// toward the application build after the downstream diagnostic no-ops.
 
-require('./verify-runtime-safety-invariants.cjs');
-require('./verify-profitability-recovery-coordinator.cjs');
-require('./verify-substantial-profitability-batch9.cjs');
-require('./verify-cryptara-sovereign-cortex.cjs');
-require('./verify-compute-antenna-monte-carlo-batch11.cjs');
-require('./verify-remaining-seventeen-batch12.cjs');
-require('./verify-300-profitability-live-execution-controls.cjs');
-require('./verify-aave-balancer-provider-mesh.cjs');
-require('./verify-cex-websocket-rpi-modernization.cjs');
+const {
+  verifyCexExecutionContract,
+  verifyProfitLadderNotionalContract,
+} = require('./lib/pr482-canonical-contract.cjs');
 
-console.log('[deployment-preflight] safety, measured-profitability, 300-control, Aave/Balancer provider-mesh, CEX websocket/RPI modernization, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+verifyCexExecutionContract();
+verifyProfitLadderNotionalContract();
+
+console.log('[deployment-preflight][diagnostic] canonical PR #482 contract passed; continuing to downstream build');
