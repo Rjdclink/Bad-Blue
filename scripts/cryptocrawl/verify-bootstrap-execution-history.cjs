@@ -21,7 +21,9 @@ const executor = read('server/services/cryptocrawl/execution/centralized-exchang
 verifyCexExecutionContract();
 
 must(progression, /measuredCandidateRegistry\.getMetrics\(STAGE_ONE_SIGNAL_WINDOW_MS\)/, 'Stage 1 uses recent measured candidate evidence');
-must(progression, /eligibleCexCandidate\s*=\s*recentCandidates\.byTopology\.CEX_CEX\.eligible\s*>\s*0/, 'CEX bootstrap candidate is topology-specific');
+must(progression, /eligibleStandardCexCandidate\s*=\s*recentCandidates\.byTopology\.CEX_CEX\.eligible\s*>\s*0/, 'standard CEX bootstrap candidate is topology-specific');
+must(progression, /eligibleMakerCexCandidate\s*=\s*recentCandidates\.byTopology\.MAKER_CEX\.eligible\s*>\s*0/, 'fully measured maker CEX bootstrap candidate is topology-specific');
+must(progression, /eligibleCexCandidate\s*=\s*eligibleStandardCexCandidate\s*\|\|\s*eligibleMakerCexCandidate/, 'CEX bootstrap readiness combines standard and fully measured maker CEX evidence without changing authority');
 must(progression, /eligibleZeroCapitalCandidate\s*=\s*recentCandidates\.byTopology\.ZERO_CAPITAL_ATOMIC\.eligible\s*>\s*0/, 'zero-capital bootstrap candidate is topology-specific');
 must(progression, /eligibleCexCandidate\s*\|\|\s*\(eligibleZeroCapitalCandidate\s*&&\s*initialGasReady\)/s, 'CEX does not require zero-capital gas readiness while zero-capital does');
 mustNot(progression, /const advancementMarketGateReady\s*=\s*initialGasReady\s*&&/, 'global initialGasReady must not gate every Stage 1 topology');
@@ -38,4 +40,4 @@ must(executor, /!monteCarlo\.approved\s*&&\s*!coldStartMeasuredBootstrap/, 'inco
 must(executor, /requireAllowed\s*\(\s*'SUBMIT_TX'/, 'governance still controls parent execution admission');
 mustNot(executor, /calibration\.samples\s*===\s*0[^\n]*return rejectPlan/, 'zero history alone cannot reject the first measured trade');
 
-console.log('[verify-bootstrap-execution-history] PASS: Stage-1 bootstrap remains measured and non-executable; shared PR482 execution contract verifies Stage-2+ parent/child/product/settlement routing');
+console.log('[verify-bootstrap-execution-history] PASS: Stage-1 bootstrap remains measured and non-executable across standard CEX, fully measured maker CEX, and topology-ready zero-capital evidence; shared PR482 execution contract verifies Stage-2+ parent/child/product/settlement routing');
