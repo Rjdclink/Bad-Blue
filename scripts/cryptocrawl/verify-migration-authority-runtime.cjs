@@ -11,6 +11,9 @@ const reconciler = read('server/migrations/reconcileAppSchema.ts');
 const numberedRunner = read('server/migrations/runMigrations.ts');
 const hotPathMigration = read('server/migrations/023_cryptocrawler_hot_path_schema_authority.sql');
 const fundingMigration = read('server/migrations/024_cryptocrawler_funding_lifecycle.sql');
+const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
+const adminApi = read('server/services/cryptocrawl/api/admin-api.ts');
 const dockerfile = read('Dockerfile');
 
 // Session-level startup coordination must never use the ordinary pool because
@@ -33,10 +36,8 @@ assert.match(reconciler, /runCryptocrawlerAuthorityMigration/);
 assert.match(reconciler, /path\.resolve\(process\.cwd\(\), 'dist', 'migrations', file\)/);
 assert.match(reconciler, /path\.resolve\(process\.cwd\(\), 'server', 'migrations', file\)/);
 
-// Authority-schema truth is explicit and bounded, but a CryptoCrawler-specific
-// schema fault must not take down unrelated LegalWhat/Bad-Blue application
-// availability. Execution/resource/funding verifiers separately require their
-// consumers to fail closed whenever these migration-owned objects are absent.
+// Authority-schema truth is explicit and bounded, while global application
+// availability remains independent from CryptoCrawler-specific schema health.
 assert.match(reconciler, /CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES/);
 for (const table of [
   'public.cryptocrawler_resource_leases',
@@ -53,6 +54,24 @@ assert.match(reconciler, /CryptoCrawler remains fail-closed until authority sche
 assert.match(reconciler, /schemaFailureResult\(error\)/);
 assert.doesNotMatch(reconciler, /if \(error instanceof CryptocrawlerAuthoritySchemaError\) throw error/);
 assert.match(reconciler, /Report the fault without taking down unrelated services/);
+
+// The actual production lifecycle boundaries—not global LegalWhat readiness—must
+// consume the one migration-owned schema authority before discovery/execution.
+assert.match(canonicalRuntime, /requireCryptocrawlerAuthoritySchema/);
+assert.match(canonicalRuntime, /pool\.query\('SELECT 1'\)[\s\S]{0,180}requireCryptocrawlerAuthoritySchema\(2\)[\s\S]{0,180}installCanonicalRuntime\(\)/);
+assert.match(canonicalRuntime, /database_or_authority_schema_admission_probe_failed/);
+assert.match(coreRuntime, /if \(process\.env\.NODE_ENV === 'production'\) \{\s*await requireCryptocrawlerAuthoritySchema\(2\);\s*\}/);
+assert.match(adminApi, /if \(process\.env\.NODE_ENV === 'production'\) \{[\s\S]{0,180}await requireCryptocrawlerAuthoritySchema\(2\)/);
+const adminSchemaGate = adminApi.indexOf('await requireCryptocrawlerAuthoritySchema(2)');
+const adminPantheonClaim = adminApi.indexOf('notifyCryptocrawlerStarting()');
+const adminZeroCapitalStart = adminApi.indexOf('await zeroCapitalEngine.start({');
+assert.ok(adminSchemaGate >= 0 && adminSchemaGate < adminPantheonClaim && adminPantheonClaim < adminZeroCapitalStart,
+  'explicit runtime start must verify authority schema before claiming lifecycle ownership or starting zero-capital execution');
+assert.match(adminApi, /executionAuthorityGranted:\s*false/);
+
+// Dev/test no-secret workflows must not be forced through production DB schema.
+assert.doesNotMatch(coreRuntime, /export async function ensureCryptoCrawlerCoreRuntime\(\): Promise<void> \{\s*await requireCryptocrawlerAuthoritySchema/);
+assert.doesNotMatch(adminApi, /export async function startCryptoCrawlerRuntime\(\): Promise<CryptoCrawlerStartResult> \{[\s\S]{0,240}await requireCryptocrawlerAuthoritySchema\(2\);\s*\n\s*try \{\s*await initializeGovernance/);
 
 // Rolling-deploy headroom may contract ordinary capacity, never expand past the
 // canonical hard ceiling already selected by db.ts.
@@ -74,4 +93,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: CryptoCrawler authority migrations are session-coordinated, shipped in production, explicitly verified without regressing unrelated app availability, ESM-runnable manually, and cannot expand the canonical DB pool ceiling');
+console.log('[migration-authority-runtime] PASS: authority migrations are session-coordinated and production-shipped, global app availability remains independent, and every production CryptoCrawler lifecycle entry verifies the migration-owned schema before discovery/execution');
