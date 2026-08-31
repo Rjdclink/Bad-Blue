@@ -32,27 +32,6 @@ function terminalRowsBySymbol(): Map<string, TerminalRow[]> {
   return grouped;
 }
 
-function makerSavingsForSymbol(modes: ReturnType<typeof getCexFourModeSnapshot>): number | null {
-  const byPair = new Map<string, typeof modes>();
-  for (const mode of modes) {
-    const key = `${mode.buyVenue}:${mode.sellVenue}`;
-    const rows = byPair.get(key) || [];
-    rows.push(mode);
-    byPair.set(key, rows);
-  }
-  let best: number | null = null;
-  for (const rows of byPair.values()) {
-    const tt = rows.find(row => row.mode === 'TT');
-    if (!tt) continue;
-    for (const row of rows) {
-      if (row.mode === 'TT') continue;
-      const savings = tt.combinedFeeBps - row.combinedFeeBps;
-      if (Number.isFinite(savings) && (best === null || savings > best)) best = savings;
-    }
-  }
-  return best === null ? null : Math.max(0, best);
-}
-
 function buildPairPerformanceHints(): ReadonlyMap<string, MarketUniversePerformanceHint> {
   const terminal = terminalRowsBySymbol();
   const modesBySymbol = new Map<string, ReturnType<typeof getCexFourModeSnapshot>>();
@@ -81,6 +60,7 @@ function buildPairPerformanceHints(): ReadonlyMap<string, MarketUniversePerforma
     const expected = modes.map(mode => Number(mode.expectedFeeAdjustedBps)).filter(Number.isFinite);
     const recoveries = modes.map(mode => Number(mode.recoveryEfficiency)).filter(Number.isFinite);
     const freshness = modes.map(mode => Number(mode.feeFreshnessScore)).filter(Number.isFinite);
+    const makerSavings = modes.map(mode => Number(mode.makerFeeSavingsVsTakerBps)).filter(Number.isFinite);
 
     hints.set(symbol, {
       symbol,
@@ -97,7 +77,7 @@ function buildPairPerformanceHints(): ReadonlyMap<string, MarketUniversePerforma
       feeFreshnessScore: freshness.length > 0
         ? freshness.reduce((sum, value) => sum + value, 0) / freshness.length
         : null,
-      makerSavingsBps: makerSavingsForSymbol(modes),
+      makerSavingsBps: makerSavings.length > 0 ? Math.max(...makerSavings) : null,
       providerQuality: venueQuality.length > 0
         ? venueQuality.reduce((sum, value) => sum + value, 0) / venueQuality.length
         : null,
