@@ -16,6 +16,7 @@ const adaptivePolicy = read('server/services/cryptocrawl/optimization/adaptive-p
 const marketFocus = read('server/services/cryptocrawl/runtime/market-focus-wiring.ts');
 const marketUniverse = read('server/services/cryptocrawl/discovery/market-universe-controller.ts');
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
+const railwayExample = read('.env.railway.example');
 
 // Session-level ownership must live on a dedicated bounded lane, never the
 // transaction pooler or an unbounded blocking advisory lock.
@@ -52,6 +53,24 @@ assert(migrationCoordinator.includes('BADBLUE_DATABASE_SESSION_RESERVE'), 'rolli
 assert(migrationCoordinator.includes('CRYPTOCRAWL_COORDINATION_POOL_MAX'), 'rolling deployment budget must include coordination pools');
 assert(migrationCoordinator.includes('pg_try_advisory_lock(hashtextextended($1, 0))'), 'migration coordination must use the collision-resistant advisory key family');
 
+// Railway configuration must expose the exact bounded/session-safe controls so the
+// code cannot be deployed with its new authority only half configured.
+for (const key of [
+  'CRYPTOCRAWL_COORDINATION_DATABASE_URL=',
+  'CRYPTOCRAWL_COORDINATION_POOL_MAX=2',
+  'BADBLUE_DATABASE_SESSION_POOL_LIMIT=15',
+  'BADBLUE_DATABASE_SESSION_RESERVE=2',
+  'BADBLUE_DATABASE_POOL_MAX=6',
+  'BADBLUE_DATABASE_ROLLOUT_POOL_MAX=3',
+  'CRYPTO_KRAKEN_LOCK_ACQUIRE_TIMEOUT_MS=6000',
+  'CRYPTO_EVM_SIGNER_LOCK_TIMEOUT_MS=6000',
+  'CRYPTO_OKX_DISTRIBUTED_RATE_LOCK_TIMEOUT_MS=7500',
+  'CRYPTO_OKX_REPLICA_SAFETY_FACTOR=4',
+]) {
+  assert(railwayExample.includes(key), `Railway example must document ${key}`);
+}
+assert(railwayExample.includes('NEVER point CRYPTOCRAWL_COORDINATION_DATABASE_URL at transaction-pooler port 6543'), 'Railway example must warn that transaction pooling cannot own session advisory locks');
+
 // Fee traffic must stay demand-driven/single-flight. Do not add a duplicate fee authority.
 assert(feeResolver.includes('const feeInFlight = new Map'), 'canonical fee resolver must retain single-flight requests');
 assert(feeResolver.includes('const feeCache = new Map'), 'canonical fee resolver must retain shared process cache');
@@ -73,4 +92,4 @@ assert(marketUniverse.includes('rotationPool'), 'market universe must preserve e
 assert(!exists('scripts/cryptocrawl/verify-hyperscope-seven-system-completion.cjs'), 'Hyperscope-named verifier must not exist in source');
 assert(exists('scripts/cryptocrawl/verify-canonical-execution-family-completion.cjs'), 'real execution-family invariants must remain verified under canonical naming');
 
-console.log('[resource-bps-authority] PASS: DB coordination, private-rate authority, measured BPS compression, exploration, and reference-framework separation are locked');
+console.log('[resource-bps-authority] PASS: DB coordination, deploy configuration, private-rate authority, measured BPS compression, exploration, and reference-framework separation are locked');
