@@ -245,8 +245,10 @@ function organicLevelsBetween(
 /**
  * Evidence-only RPI admission predicate. The result never grants trade authority;
  * it proves the requested order still satisfies exact account permission, the
- * SPOT minimum notional, organic price-band and visible-RPI spacing measured in
- * actual organic book levels. Unknown/insufficient spacing evidence fails closed.
+ * SPOT minimum notional, and OKX's independent spacing rules. After the mandatory
+ * non-crossing check, either the organic-level-spacing condition or the BPS
+ * price-band condition may admit the order. Unknown evidence never fabricates a
+ * passing condition.
  */
 export function isOkxRpiMakerPriceAdmissible(input: {
   capability: OkxRpiExecutionCapability;
@@ -263,29 +265,32 @@ export function isOkxRpiMakerPriceAdmissible(input: {
   const nonCrossing = side === 'buy' ? price < oppositeOrganicPrice : price > oppositeOrganicPrice;
   if (!nonCrossing) return false;
 
-  if (capability.rpiMinPxBandBps !== null) {
+  const bandPass = capability.rpiMinPxBandBps !== null && (() => {
     const bandBps = side === 'buy'
       ? (oppositeOrganicPrice - price) / oppositeOrganicPrice * 10_000
       : (price - oppositeOrganicPrice) / oppositeOrganicPrice * 10_000;
-    if (bandBps + 1e-9 < capability.rpiMinPxBandBps) return false;
-  }
+    return bandBps + 1e-9 >= capability.rpiMinPxBandBps!;
+  })();
 
+  let levelPass = false;
   const requiredOrganicLevels = capability.rpiMinLevel;
-  if (requiredOrganicLevels === null) return false;
-  if (requiredOrganicLevels <= 0) return true;
-  if (requiredOrganicLevels > capability.rpiBookDepthPerSide) return false;
-
-  if (side === 'buy' && capability.visibleRpiAsk !== null) {
-    if (!(price < capability.visibleRpiAsk)) return false;
-    return organicLevelsBetween(capability.rpiBookAsks, price, capability.visibleRpiAsk) >= requiredOrganicLevels;
+  if (requiredOrganicLevels !== null) {
+    if (requiredOrganicLevels <= 0) {
+      levelPass = true;
+    } else if (requiredOrganicLevels <= capability.rpiBookDepthPerSide) {
+      if (side === 'buy' && capability.visibleRpiAsk !== null) {
+        levelPass = price < capability.visibleRpiAsk
+          && organicLevelsBetween(capability.rpiBookAsks, price, capability.visibleRpiAsk) >= requiredOrganicLevels;
+      } else if (side === 'sell' && capability.visibleRpiBid !== null) {
+        levelPass = price > capability.visibleRpiBid
+          && organicLevelsBetween(capability.rpiBookBids, capability.visibleRpiBid, price) >= requiredOrganicLevels;
+      } else {
+        // With no visible opposite-side RPI, OKX explicitly says the price-level
+        // spacing check passes; the non-crossing check above uses organic BBO.
+        levelPass = true;
+      }
+    }
   }
-  if (side === 'sell' && capability.visibleRpiBid !== null) {
-    if (!(price > capability.visibleRpiBid)) return false;
-    return organicLevelsBetween(capability.rpiBookBids, capability.visibleRpiBid, price) >= requiredOrganicLevels;
-  }
 
-  // No opposite visible RPI within the maximum 400-level consolidated book.
-  // With required spacing <= captured depth, any unseen RPI is farther away than
-  // the spacing requirement. Organic BPS band remains independently enforced.
-  return true;
+  return bandPass || levelPass;
 }
