@@ -20,6 +20,7 @@ function forbidPattern(source, pattern, description) {
 }
 
 const stream = read('server/services/cryptocrawl/intelligence/cex-order-book-stream.ts');
+const arbVerifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
 const maker = read('server/services/cryptocrawl/execution/stablecoin-maker-strategy.ts');
 const makerAdapters = read('server/services/cryptocrawl/execution/post-only-maker-adapters.ts');
 const rpiCapability = read('server/services/cryptocrawl/intelligence/okx-rpi-capability.ts');
@@ -35,6 +36,27 @@ requirePattern(stream, /wss:\/\/ws\.kraken\.com\/v2/, 'Kraken websocket v2 endpo
 requirePattern(stream, /wsus\.okx\.com[\s\S]{0,220}us\.okx\.com|us\.okx\.com[\s\S]{0,220}wsus\.okx\.com/, 'OKX US websocket stays aligned to the US REST region');
 requirePattern(stream, /quoteCurrencyAllowlistUsed:\s*false/, 'websocket telemetry declares no quote allowlist authority');
 forbidPattern(stream, /\(USDT\|USDC\|USD\)/, 'websocket product identity using a stablecoin-only quote regex');
+
+// Canonical taker planning must use the same modern stream surface for every
+// executable CEX and may only fall back to the exact live REST product. USD P&L
+// is admitted only on products with an authoritative USD-normalized quote.
+requirePattern(arbVerifier, /fetchStreamQuote\(\s*'coinbase'\s*,\s*symbol\s*,\s*maxAgeMs\s*\)/, 'Coinbase taker planning uses Advanced Trade websocket first');
+requirePattern(arbVerifier, /fetchStreamQuote\(\s*'kraken'\s*,\s*symbol\s*,\s*maxAgeMs\s*\)/, 'Kraken taker planning uses websocket v2 first');
+requirePattern(arbVerifier, /fetchStreamQuote\(\s*'okx'\s*,\s*symbol\s*,\s*maxAgeMs\s*\)/, 'OKX taker planning uses regional websocket first');
+requirePattern(arbVerifier, /quoteTransportPolicy:\s*'coinbase_kraken_okx_websocket_first_with_exact_rest_fallback'/, 'taker telemetry declares the shared stream-first policy');
+requirePattern(arbVerifier, /USD_NORMALIZED_QUOTES/, 'taker planning has an explicit USD-normalization boundary');
+requirePattern(arbVerifier, /assertUsdNormalizedQuote\s*\(/, 'taker planning rejects quote assets without authoritative USD normalization');
+requirePattern(arbVerifier, /nonUsdNormalizedQuoteExecutionAuthority:\s*false/, 'non-USD-normalized quote products have no execution authority');
+
+// Request/configured fee values may remain compatibility inputs, but they can
+// never replace authenticated venue fees in executable economics.
+requirePattern(arbVerifier, /evidence\?\.source\s*===\s*'configured_override'\s*\?\s*null\s*:\s*evidence/, 'configured fee evidence is removed before executable economics');
+requirePattern(arbVerifier, /executableFeeAuthority:\s*'authenticated_venue_evidence_only'/, 'authenticated venue fees are the sole executable taker fee authority');
+requirePattern(arbVerifier, /configuredOrRequestFeeOverridesExecutable:\s*false/, 'configured/request fee overrides are explicitly non-executable');
+requirePattern(arbVerifier, /if\s*\(!evidence\s*\|\|\s*evidence\.source\s*===\s*'configured_override'\)\s*return\s*null/, 'effective taker fee fails closed on missing or configured-only evidence');
+forbidPattern(arbVerifier, /function\s+configuredTakerFeeBps\s*\(/, 'configured taker fee helper retaining executable authority');
+forbidPattern(arbVerifier, /function\s+requestedFeeOverride\s*\(/, 'request fee override helper retaining executable authority');
+forbidPattern(arbVerifier, /function\s+overrideEvidence\s*\(/, 'synthetic configured fee evidence constructor retaining executable authority');
 
 // RPI capability is authenticated/account-specific evidence, never a synthetic
 // rebate. Exact regional product identity comes from cex-spot-product-policy.
@@ -68,4 +90,4 @@ requirePattern(rpiAdvisory, /from '\.\/okx-rpi-capability\.js'/, 'RPI advisory c
 requirePattern(rpiAdvisory, /await import\('\.\.\/integration\/cex-four-mode-observability-wiring\.js'\)/, 'four-mode advisory dependency is lazy and non-authoritative');
 requirePattern(rpiAdvisory, /executionAuthority:\s*false/, 'RPI advisory never grants execution authority');
 
-console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional websocket product authority and authenticated OKX RPI maker invariants passed');
+console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, and authenticated OKX RPI maker invariants passed');
