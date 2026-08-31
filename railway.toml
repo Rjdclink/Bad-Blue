@@ -1,14 +1,10 @@
 
-# Railway Configuration for BadBlue
-# Platform-independent deployment configuration
-# Redeploy trigger: refresh production from the current develop head.
-
-[build]
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+# Railway deployment policy for BadBlue.
+# Railway auto-detects the repository-root Dockerfile, and the image owns its
+# start command via Docker CMD. Keep Config-as-Code limited to deploy policy so
+# stale builder/path/start overrides cannot block snapshot/build initialization.
 
 [deploy]
-startCommand = "npm start"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
