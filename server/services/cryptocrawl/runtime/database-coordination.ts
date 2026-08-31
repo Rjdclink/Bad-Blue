@@ -66,7 +66,10 @@ const coordinationPool = new Pool({
   idleTimeoutMillis: COORDINATION_IDLE_TIMEOUT_MS,
   keepAlive: true,
   keepAliveInitialDelayMillis: 5_000,
-  ssl: process.env.PGSSLMODE !== 'disable' ? { rejectUnauthorized: false } : false,
+  ssl: process.env.PGSSLMODE !== 'disable' ? {
+    rejectUnauthorized: false,
+    ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {}),
+  } : false,
   statement_timeout: 10_000,
   query_timeout: 10_000,
   application_name: 'cryptocrawl-coordination',
@@ -154,9 +157,9 @@ export async function withDatabaseSessionAdvisoryLock<T>(
   }
 }
 
-export async function queryCoordinationDatabase<T = any>(text: string, values: unknown[] = []): Promise<T> {
+export async function queryCoordinationDatabase(text: string, values: unknown[] = []): Promise<pg.QueryResult> {
   assertCoordinationDatabaseAvailable();
-  return coordinationPool.query(text, values) as Promise<T>;
+  return coordinationPool.query(text, values);
 }
 
 export function getDatabaseCoordinationSnapshot(): {
