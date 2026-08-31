@@ -90,10 +90,15 @@ assert(partialProfitAccounting.includes('cryptara_rank_authority:false'), 'parti
 assert(partialProfitAccounting.includes('profit_ladder_progression_authority:false'), 'partial child accounting must explicitly carry no profit-ladder progression authority');
 assert(!partialProfitAccounting.includes('recordCryptaraExecutionEvidence('), 'partial child accounting must not enter Cryptara/stage learning');
 
-// Retained profits stay retained and durable; retry does not authorize payout.
+// Terminal profit is durable and idempotent. Compounding is the default: no
+// per-profit wallet reservation/job exists unless the operator explicitly opts in.
 assert(retainedProfit.includes('ON CONFLICT (event_id) DO NOTHING'), 'retained-profit terminal events must be idempotent');
 assert(retainedProfit.includes('retained_profit_usd = retained_profit_usd + $1'), 'new terminal profit must increment retained treasury accounting');
-assert(retainedProfit.includes('externalPayoutAuthorized: false'), 'retained-profit retries must not authorize payout');
+assert(retainedProfit.includes('CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED'), 'automatic profit payout must require an explicit opt-in control');
+assert(retainedProfit.includes('if (!automaticProfitPayoutEnabled())'), 'default terminal-profit path must retain instead of enqueueing payout');
+assert(retainedProfit.includes('payoutTargetUsd: 0') && retainedProfit.includes('retainedFraction: 1'), 'default terminal profit must be one hundred percent retained');
+assert(retainedProfit.includes('payoutReservationCreated: false'), 'default terminal profit must not reserve strategy inventory for payout');
+assert(retainedProfit.includes('profitAvailableForRedeployment: true'), 'default retained profit must remain available to strategies');
 
 // New protections are actually installed in the canonical runtime.
 assert(runtime.includes('ensureInventoryConstrainedCexExecutionWiring();'), 'inventory-constrained CEX execution wiring must be installed');
@@ -102,4 +107,4 @@ assert(runtime.includes('ensureMeasuredCandidateExpiryGuardWiring();'), 'candida
 assert(runtime.includes('ensureZeroCapitalSizeRefinementWiring();'), 'zero-capital size refinement wiring must be installed');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
 
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single profit-ladder notional authority through $100M, one-batch parallel CEX splitting with residual replanning, anti-rank-gaming partial profit accounting, and strict quote truth invariants preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single profit-ladder notional authority through $100M, one-batch parallel CEX splitting with residual replanning, anti-rank-gaming partial profit accounting, compounding-first retained-profit authority, and strict quote truth invariants preserved');
