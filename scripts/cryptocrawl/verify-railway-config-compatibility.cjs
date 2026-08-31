@@ -8,7 +8,11 @@ const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 
 assert.match(config, /\[build\][\s\S]{0,160}builder\s*=\s*"DOCKERFILE"/);
 assert.match(config, /dockerfilePath\s*=\s*"Dockerfile"/);
-assert.match(config, /healthcheckPath\s*=\s*"\/api\/health"/);
+assert.match(
+  config,
+  /healthcheckPath\s*=\s*"\/api\/ready"/,
+  'Railway deployment admission must use strict application readiness, not bind-only liveness',
+);
 assert.match(config, /startCommand\s*=\s*"npm start"/);
 assert.doesNotMatch(
   config,
@@ -22,4 +26,4 @@ assert.doesNotMatch(
 );
 assert.match(dockerfile, /^FROM\s+node:20-/m);
 
-console.log('[railway-config-compatibility] PASS: single-service root Dockerfile deployment is explicit, with no obsolete region or nested service config that can block initialization');
+console.log('[railway-config-compatibility] PASS: single-service root Dockerfile deployment is explicit, strict readiness gates promotion, and no obsolete region or nested service config can block initialization');
