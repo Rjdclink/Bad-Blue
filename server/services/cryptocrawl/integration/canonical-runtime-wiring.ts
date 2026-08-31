@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
+import { requireCryptocrawlerAuthoritySchema } from '../../../migrations/reconcileAppSchema.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
@@ -250,7 +251,7 @@ function installCanonicalRuntime(): void {
     alchemyStandardTokenReads: 'public_rpc_first_then_enhanced_api_fallback',
     localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
-    startupAdmission: 'production_grace_then_database_health_probe',
+    startupAdmission: 'production_grace_then_database_and_authority_schema_probe',
     startupGraceMs: canonicalRuntimeStartupGraceMs(),
   });
 }
@@ -283,17 +284,18 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
 
     if (isDatabaseConfigured) {
       installProbeInFlight = pool.query('SELECT 1')
+        .then(() => requireCryptocrawlerAuthoritySchema(2))
         .then(() => {
           installCanonicalRuntime();
         })
         .catch(error => {
-          logger.warn('[CryptoRuntimeStartup] Database admission probe unavailable; runtime remains deferred', {
+          logger.warn('[CryptoRuntimeStartup] Database/schema admission probe unavailable; runtime remains deferred', {
             component: 'CanonicalCryptoCrawlerRuntimeWiring',
             error: error instanceof Error ? error.message : String(error),
             exchangeRequestsDuringDeferral: false,
             executionAuthorityGranted: false,
           });
-          scheduleCanonicalRuntimeInstall(canonicalRuntimeDatabaseRetryMs(), 'database_admission_probe_failed');
+          scheduleCanonicalRuntimeInstall(canonicalRuntimeDatabaseRetryMs(), 'database_or_authority_schema_admission_probe_failed');
         })
         .finally(() => {
           installProbeInFlight = null;
