@@ -33,23 +33,26 @@ assert.match(reconciler, /runCryptocrawlerAuthorityMigration/);
 assert.match(reconciler, /path\.resolve\(process\.cwd\(\), 'dist', 'migrations', file\)/);
 assert.match(reconciler, /path\.resolve\(process\.cwd\(\), 'server', 'migrations', file\)/);
 
-// Execution-critical migration state is a hard deployment-readiness condition.
-// Another replica may own the session migration lock, but this replica cannot
-// become ready until every migration-owned authority table is observable.
+// Authority-schema truth is explicit and bounded, but a CryptoCrawler-specific
+// schema fault must not take down unrelated LegalWhat/Bad-Blue application
+// availability. Execution/resource/funding verifiers separately require their
+// consumers to fail closed whenever these migration-owned objects are absent.
 assert.match(reconciler, /CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES/);
 for (const table of [
   'public.cryptocrawler_resource_leases',
   'public.cryptocrawler_mc_calibration_v1',
   'private.cryptocrawler_kraken_nonce_state',
   'private.cryptocrawler_funding_lifecycles',
-]) assert.ok(reconciler.includes(table), `hard readiness must include ${table}`);
+]) assert.ok(reconciler.includes(table), `authority verification must include ${table}`);
 assert.match(reconciler, /to_regclass\(\$1\)::text AS resource_leases/);
 assert.match(reconciler, /to_regclass\(\$4\)::text AS funding_lifecycles/);
-assert.match(reconciler, /requireCryptocrawlerAuthoritySchema\(maxAttempts = 6\)/);
-assert.match(reconciler, /if \(!ownsMigrationLock\)[\s\S]{0,420}await requireCryptocrawlerAuthoritySchema\(\)/);
-assert.match(reconciler, /execution-critical authority schema is a hard readiness condition[\s\S]{0,180}await requireCryptocrawlerAuthoritySchema\(\)/);
-assert.match(reconciler, /if \(error instanceof CryptocrawlerAuthoritySchemaError\) throw error/);
-assert.match(reconciler, /Migration coordinator unavailable, but required CryptoCrawler authority schema was independently verified/);
+assert.match(reconciler, /export async function requireCryptocrawlerAuthoritySchema\(maxAttempts = 6\)/);
+assert.match(reconciler, /if \(!ownsMigrationLock\)[\s\S]{0,700}requireCryptocrawlerAuthoritySchema\(3\)/);
+assert.match(reconciler, /await requireCryptocrawlerAuthoritySchema\(1\)/);
+assert.match(reconciler, /CryptoCrawler remains fail-closed until authority schema verifies/);
+assert.match(reconciler, /schemaFailureResult\(error\)/);
+assert.doesNotMatch(reconciler, /if \(error instanceof CryptocrawlerAuthoritySchemaError\) throw error/);
+assert.match(reconciler, /Report the fault without taking down unrelated services/);
 
 // Rolling-deploy headroom may contract ordinary capacity, never expand past the
 // canonical hard ceiling already selected by db.ts.
@@ -71,4 +74,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: CryptoCrawler authority migrations are startup-applied under the session coordination lane, shipped in the production image, hard-verified before readiness, ESM-runnable manually, and cannot expand the canonical DB pool ceiling');
+console.log('[migration-authority-runtime] PASS: CryptoCrawler authority migrations are session-coordinated, shipped in production, explicitly verified without regressing unrelated app availability, ESM-runnable manually, and cannot expand the canonical DB pool ceiling');
