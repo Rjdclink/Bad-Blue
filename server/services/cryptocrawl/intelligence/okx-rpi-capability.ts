@@ -3,6 +3,13 @@ import { getOkxExecutionRestBaseUrl } from './okx-region-authority.js';
 import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
+export interface OkxRpiBookLevel {
+  price: number;
+  totalQty: number;
+  organicQty: number;
+  rpiQty: number;
+}
+
 export interface OkxRpiExecutionCapability {
   symbol: string;
   exchangeSymbol: string;
@@ -20,6 +27,9 @@ export interface OkxRpiExecutionCapability {
   visibleRpiBid: number | null;
   visibleRpiAsk: number | null;
   rpiLiquidityVisible: boolean;
+  rpiBookDepthPerSide: number;
+  rpiBookBids: OkxRpiBookLevel[];
+  rpiBookAsks: OkxRpiBookLevel[];
   executableFeeAdvantage: boolean;
   source: 'okx_authenticated_rpi_capability';
 }
@@ -35,6 +45,9 @@ type RpiPublicMetadata = {
   visibleRpiBid: number | null;
   visibleRpiAsk: number | null;
   rpiLiquidityVisible: boolean;
+  rpiBookDepthPerSide: number;
+  rpiBookBids: OkxRpiBookLevel[];
+  rpiBookAsks: OkxRpiBookLevel[];
 };
 
 let accountSnapshot: AccountInstrumentSnapshot | null = null;
@@ -44,6 +57,7 @@ const capabilityInFlight = new Map<string, Promise<OkxRpiExecutionCapability | n
 
 const CACHE_TTL_MS = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTO_OKX_RPI_CAPABILITY_TTL_MS || 30_000)));
 const REQUEST_TIMEOUT_MS = Math.max(1_000, Math.min(8_000, Number(process.env.CRYPTO_OKX_RPI_REQUEST_TIMEOUT_MS || 3_000)));
+const RPI_BOOK_DEPTH = 400;
 
 function finite(value: unknown): number | null {
   const parsed = Number(value);
@@ -100,17 +114,20 @@ async function getAccountInstrumentSnapshot(forceFresh = false): Promise<Account
   return accountSnapshotInFlight;
 }
 
-function visibleRpiPrice(levels: unknown): number | null {
-  if (!Array.isArray(levels)) return null;
-  for (const level of levels) {
-    if (!Array.isArray(level) || level.length < 3) continue;
+function parseRpiBookLevels(levels: unknown): OkxRpiBookLevel[] {
+  if (!Array.isArray(levels)) return [];
+  return levels.flatMap(level => {
+    if (!Array.isArray(level) || level.length < 3) return [];
     const price = finitePositive(level[0]);
     const totalQty = finiteNonNegative(level[1]);
-    const nonRpiQty = finiteNonNegative(level[2]);
-    if (price === null || totalQty === null || nonRpiQty === null) continue;
-    if (totalQty - nonRpiQty > 0) return price;
-  }
-  return null;
+    const organicQty = finiteNonNegative(level[2]);
+    if (price === null || totalQty === null || organicQty === null || organicQty > totalQty + 1e-12) return [];
+    return [{ price, totalQty, organicQty, rpiQty: Math.max(0, totalQty - organicQty) }];
+  });
+}
+
+function visibleRpiPrice(levels: readonly OkxRpiBookLevel[]): number | null {
+  return levels.find(level => level.rpiQty > 0)?.price ?? null;
 }
 
 async function getPublicRpiMetadata(exchangeSymbol: string): Promise<RpiPublicMetadata> {
@@ -123,7 +140,7 @@ async function getPublicRpiMetadata(exchangeSymbol: string): Promise<RpiPublicMe
       maxDelayMs: 400,
       timeoutMs: REQUEST_TIMEOUT_MS,
     }),
-    fetchJsonWithRetry<any>(`${baseUrl}/api/v5/market/books-rpi?instId=${encodeURIComponent(exchangeSymbol)}&sz=5`, {
+    fetchJsonWithRetry<any>(`${baseUrl}/api/v5/market/books-rpi?instId=${encodeURIComponent(exchangeSymbol)}&sz=${RPI_BOOK_DEPTH}`, {
       init: { headers: { accept: 'application/json', 'cache-control': 'no-cache' } },
       maxRetries: 1,
       baseDelayMs: 100,
@@ -133,14 +150,19 @@ async function getPublicRpiMetadata(exchangeSymbol: string): Promise<RpiPublicMe
   ]);
   const instrument = String(instrumentPayload?.code) === '0' ? instrumentPayload?.data?.[0] : null;
   const book = bookPayload && String(bookPayload?.code) === '0' ? bookPayload?.data?.[0] : null;
-  const visibleRpiBid = visibleRpiPrice(book?.bids);
-  const visibleRpiAsk = visibleRpiPrice(book?.asks);
+  const rpiBookBids = parseRpiBookLevels(book?.bids);
+  const rpiBookAsks = parseRpiBookLevels(book?.asks);
+  const visibleRpiBid = visibleRpiPrice(rpiBookBids);
+  const visibleRpiAsk = visibleRpiPrice(rpiBookAsks);
   return {
     rpiMinLevel: finiteNonNegative(instrument?.rpiMinLevel),
     rpiMinPxBandBps: finiteNonNegative(instrument?.rpiMinPxBand),
     visibleRpiBid,
     visibleRpiAsk,
     rpiLiquidityVisible: visibleRpiBid !== null || visibleRpiAsk !== null,
+    rpiBookDepthPerSide: RPI_BOOK_DEPTH,
+    rpiBookBids,
+    rpiBookAsks,
   };
 }
 
@@ -152,7 +174,11 @@ export async function getOkxRpiExecutionCapability(
   if (!constraints) return null;
   const cacheKey = `${constraints.symbol}:${constraints.exchangeSymbol}`;
   const cached = capabilityCache.get(cacheKey);
-  if (!forceFresh && cached && cached.expiresAt > Date.now()) return { ...cached.value };
+  if (!forceFresh && cached && cached.expiresAt > Date.now()) return {
+    ...cached.value,
+    rpiBookBids: cached.value.rpiBookBids.map(level => ({ ...level })),
+    rpiBookAsks: cached.value.rpiBookAsks.map(level => ({ ...level })),
+  };
   const existing = capabilityInFlight.get(cacheKey);
   if (existing) return existing;
 
@@ -197,17 +223,30 @@ export async function getOkxRpiExecutionCapability(
       source: 'okx_authenticated_rpi_capability',
     };
     capabilityCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, value });
-    return { ...value };
+    return {
+      ...value,
+      rpiBookBids: value.rpiBookBids.map(level => ({ ...level })),
+      rpiBookAsks: value.rpiBookAsks.map(level => ({ ...level })),
+    };
   })().finally(() => capabilityInFlight.delete(cacheKey));
 
   capabilityInFlight.set(cacheKey, promise);
   return promise;
 }
 
+function organicLevelsBetween(
+  levels: readonly OkxRpiBookLevel[],
+  lowerExclusive: number,
+  upperExclusive: number,
+): number {
+  return levels.filter(level => level.organicQty > 0 && level.price > lowerExclusive && level.price < upperExclusive).length;
+}
+
 /**
  * Evidence-only RPI admission predicate. The result never grants trade authority;
  * it proves the requested order still satisfies exact account permission, the
- * SPOT minimum notional, organic price-band and visible-RPI level spacing.
+ * SPOT minimum notional, organic price-band and visible-RPI spacing measured in
+ * actual organic book levels. Unknown/insufficient spacing evidence fails closed.
  */
 export function isOkxRpiMakerPriceAdmissible(input: {
   capability: OkxRpiExecutionCapability;
@@ -231,12 +270,22 @@ export function isOkxRpiMakerPriceAdmissible(input: {
     if (bandBps + 1e-9 < capability.rpiMinPxBandBps) return false;
   }
 
-  const levels = capability.rpiMinLevel ?? 0;
-  if (levels > 0) {
-    if (side === 'buy' && capability.visibleRpiAsk !== null
-        && price > capability.visibleRpiAsk - levels * tickSize + tickSize * 1e-8) return false;
-    if (side === 'sell' && capability.visibleRpiBid !== null
-        && price < capability.visibleRpiBid + levels * tickSize - tickSize * 1e-8) return false;
+  const requiredOrganicLevels = capability.rpiMinLevel;
+  if (requiredOrganicLevels === null) return false;
+  if (requiredOrganicLevels <= 0) return true;
+  if (requiredOrganicLevels > capability.rpiBookDepthPerSide) return false;
+
+  if (side === 'buy' && capability.visibleRpiAsk !== null) {
+    if (!(price < capability.visibleRpiAsk)) return false;
+    return organicLevelsBetween(capability.rpiBookAsks, price, capability.visibleRpiAsk) >= requiredOrganicLevels;
   }
+  if (side === 'sell' && capability.visibleRpiBid !== null) {
+    if (!(price > capability.visibleRpiBid)) return false;
+    return organicLevelsBetween(capability.rpiBookBids, capability.visibleRpiBid, price) >= requiredOrganicLevels;
+  }
+
+  // No opposite visible RPI within the maximum 400-level consolidated book.
+  // With required spacing <= captured depth, any unseen RPI is farther away than
+  // the spacing requirement. Organic BPS band remains independently enforced.
   return true;
 }
