@@ -1,4 +1,4 @@
-import pg from 'pg';
+import pg, { type PoolClient, type QueryResult } from 'pg';
 import logger from '../../../logger.js';
 import { getDatabaseUrl } from '../../../config.js';
 import { isDatabaseConfigured } from '../../../db.js';
@@ -118,7 +118,7 @@ export interface CoordinationLockOptions {
  */
 export async function withDatabaseSessionAdvisoryLock<T>(
   lockName: string,
-  operation: (client: pg.PoolClient) => Promise<T>,
+  operation: (client: PoolClient) => Promise<T>,
   options: CoordinationLockOptions = {},
 ): Promise<T> {
   assertCoordinationDatabaseAvailable();
@@ -157,7 +157,7 @@ export async function withDatabaseSessionAdvisoryLock<T>(
   }
 }
 
-export async function queryCoordinationDatabase(text: string, values: unknown[] = []): Promise<pg.QueryResult> {
+export async function queryCoordinationDatabase(text: string, values: unknown[] = []): Promise<QueryResult> {
   assertCoordinationDatabaseAvailable();
   return coordinationPool.query(text, values);
 }
