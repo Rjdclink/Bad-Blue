@@ -26,9 +26,13 @@ export interface SchemaMigrationResult {
   error?: string;
 }
 
+type MigrationCoordinator = {
+  query: (text: string, values?: unknown[]) => Promise<any>;
+};
+
 type MigrationStep = {
   name: string;
-  run: () => Promise<unknown>;
+  run: (coordinator?: MigrationCoordinator) => Promise<unknown>;
 };
 
 const CRYPTOCRAWL_AUTHORITY_MIGRATIONS = [
@@ -62,12 +66,18 @@ function resolveBundledMigrationPath(file: string): string {
   return resolved;
 }
 
-async function runCryptocrawlerAuthorityMigration(file: typeof CRYPTOCRAWL_AUTHORITY_MIGRATIONS[number]): Promise<{ message: string }> {
+async function runCryptocrawlerAuthorityMigration(
+  coordinator: MigrationCoordinator,
+  file: typeof CRYPTOCRAWL_AUTHORITY_MIGRATIONS[number],
+): Promise<{ message: string }> {
   const filePath = resolveBundledMigrationPath(file);
   const sql = fs.readFileSync(filePath, 'utf8');
   if (!sql.trim()) throw new Error(`Migration-owned CryptoCrawler SQL asset is empty: ${file}`);
-  await pool.query(sql);
-  return { message: `${file} applied from migration authority` };
+  // DDL/migrations belong on a session-capable/direct connection. Using the same
+  // client that owns STARTUP_MIGRATION_LOCK also keeps ownership and mutation in
+  // one session and avoids routing migration DDL through Supavisor transaction mode.
+  await coordinator.query(sql);
+  return { message: `${file} applied from migration authority on session coordinator` };
 }
 
 async function verifyCryptocrawlerAuthoritySchemaOnce(): Promise<void> {
@@ -132,11 +142,17 @@ const migrationSteps: MigrationStep[] = [
   { name: 'F.M.I. evidence fields', run: addFMIFields },
   {
     name: 'CryptoCrawler hot-path schema authority',
-    run: () => runCryptocrawlerAuthorityMigration('023_cryptocrawler_hot_path_schema_authority.sql'),
+    run: coordinator => {
+      if (!coordinator) throw new Error('CryptoCrawler authority migration requires the session migration coordinator');
+      return runCryptocrawlerAuthorityMigration(coordinator, '023_cryptocrawler_hot_path_schema_authority.sql');
+    },
   },
   {
     name: 'CryptoCrawler funding lifecycle schema authority',
-    run: () => runCryptocrawlerAuthorityMigration('024_cryptocrawler_funding_lifecycle.sql'),
+    run: coordinator => {
+      if (!coordinator) throw new Error('CryptoCrawler authority migration requires the session migration coordinator');
+      return runCryptocrawlerAuthorityMigration(coordinator, '024_cryptocrawler_funding_lifecycle.sql');
+    },
   },
   { name: 'CryptoCrawler governance state', run: createCryptoGovernanceStateTable },
   { name: 'Remove legacy CryptoCrawler Flashbots auth secret table', run: removeCryptocrawlFlashbotsAuthIdentityTable },
@@ -236,7 +252,7 @@ export async function runAllSchemaMigrations(options?: {
 
     for (const step of migrationSteps) {
       try {
-        const outcome = await step.run();
+        const outcome = await step.run(coordinator);
         const message =
           typeof outcome === 'object' && outcome !== null && 'message' in outcome
             ? String((outcome as { message?: unknown }).message ?? '')
