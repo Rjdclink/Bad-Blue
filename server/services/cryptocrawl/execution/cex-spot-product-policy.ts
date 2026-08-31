@@ -35,6 +35,7 @@ let krakenSnapshot: ConstraintSnapshot | null = null;
 let krakenInFlight: Promise<ConstraintSnapshot> | null = null;
 let okxSnapshot: ConstraintSnapshot | null = null;
 let okxInFlight: Promise<ConstraintSnapshot> | null = null;
+const freshConstraintInFlight = new Map<string, Promise<SpotProductConstraints>>();
 
 function positive(value: unknown): number | null {
   const parsed = Number(value);
@@ -103,20 +104,74 @@ function powerOfTenIncrement(decimals: unknown): number | null {
   return 10 ** -parsed;
 }
 
-async function fetchKrakenSnapshot(forceFresh = false): Promise<ConstraintSnapshot> {
-  if (!forceFresh && krakenSnapshot && krakenSnapshot.expiresAt > Date.now()) return krakenSnapshot;
+function krakenConstraint(responseKey: string, row: Record<string, unknown>, observedAt: number): SpotProductConstraints | null {
+  const state = typeof row.status === 'string' ? row.status.trim().toLowerCase() : 'online';
+  if (state !== 'online') return null;
+  const identity = canonicalKrakenProduct(row);
+  if (!identity) return null;
+  const exchangeSymbol = typeof row.altname === 'string' && row.altname.trim() ? row.altname.trim().toUpperCase() : responseKey;
+  const baseIncrement = powerOfTenIncrement(row.lot_decimals);
+  const priceIncrement = powerOfTenIncrement(row.pair_decimals);
+  const baseMinSize = positive(row.ordermin);
+  if (baseIncrement === null || priceIncrement === null || baseMinSize === null) return null;
+  return {
+    venue: 'kraken',
+    symbol: identity.symbol,
+    exchangeSymbol,
+    baseAsset: identity.baseAsset,
+    quoteAsset: identity.quoteAsset,
+    baseIncrement,
+    priceIncrement,
+    baseMinSize,
+    quoteMinSize: positive(row.costmin),
+    baseMaxSize: null,
+    quoteMaxSize: null,
+    state: 'live',
+    observedAt,
+    source: 'kraken_asset_pairs',
+  };
+}
+
+function okxConstraint(raw: Record<string, unknown>, observedAt: number): SpotProductConstraints | null {
+  const exchangeSymbol = typeof raw.instId === 'string' ? raw.instId.trim().toUpperCase() : '';
+  const identity = canonicalOkxProduct(raw);
+  if (!identity || !exchangeSymbol) return null;
+  const state = typeof raw.state === 'string' ? raw.state.trim().toLowerCase() : '';
+  if (state !== 'live') return null;
+  const baseIncrement = positive(raw.lotSz);
+  const priceIncrement = positive(raw.tickSz);
+  const baseMinSize = positive(raw.minSz);
+  if (baseIncrement === null || priceIncrement === null || baseMinSize === null) return null;
+  return {
+    venue: 'okx',
+    symbol: identity.symbol,
+    exchangeSymbol,
+    baseAsset: identity.baseAsset,
+    quoteAsset: identity.quoteAsset,
+    baseIncrement,
+    priceIncrement,
+    baseMinSize,
+    quoteMinSize: null,
+    baseMaxSize: positive(raw.maxLmtSz),
+    quoteMaxSize: positive(raw.maxLmtAmt),
+    state: 'live',
+    observedAt,
+    source: 'okx_public_instruments',
+  };
+}
+
+async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
+  if (krakenSnapshot && krakenSnapshot.expiresAt > Date.now()) return krakenSnapshot;
   if (krakenInFlight) return krakenInFlight;
   krakenInFlight = (async () => {
     const payload = await fetchJsonWithRetry<any>('https://api.kraken.com/0/public/AssetPairs', {
-      init: { headers: { accept: 'application/json', 'cache-control': forceFresh ? 'no-cache' : 'max-age=0' } },
+      init: { headers: { accept: 'application/json', 'cache-control': 'max-age=0' } },
       maxRetries: 1,
       baseDelayMs: 100,
       maxDelayMs: 500,
       timeoutMs: TIMEOUT_MS,
     });
-    if (Array.isArray(payload?.error) && payload.error.length > 0) {
-      throw new Error(`Kraken AssetPairs constraint request failed: ${payload.error.join(', ')}`);
-    }
+    if (Array.isArray(payload?.error) && payload.error.length > 0) throw new Error(`Kraken AssetPairs constraint request failed: ${payload.error.join(', ')}`);
     const values = new Map<string, SpotProductConstraints>();
     const ambiguous = new Set<string>();
     const rows = payload?.result && typeof payload.result === 'object' ? payload.result : {};
@@ -124,36 +179,13 @@ async function fetchKrakenSnapshot(forceFresh = false): Promise<ConstraintSnapsh
     for (const [responseKey, raw] of Object.entries(rows)) {
       const row = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
       if (!row) continue;
-      const state = typeof row.status === 'string' ? row.status.trim().toLowerCase() : 'online';
-      if (state !== 'online') continue;
-      const identity = canonicalKrakenProduct(row);
-      if (!identity || ambiguous.has(identity.symbol)) continue;
-      const exchangeSymbol = typeof row.altname === 'string' && row.altname.trim() ? row.altname.trim().toUpperCase() : responseKey;
-      const baseIncrement = powerOfTenIncrement(row.lot_decimals);
-      const priceIncrement = powerOfTenIncrement(row.pair_decimals);
-      const baseMinSize = positive(row.ordermin);
-      if (baseIncrement === null || priceIncrement === null || baseMinSize === null) continue;
-      const constraint: SpotProductConstraints = {
-        venue: 'kraken',
-        symbol: identity.symbol,
-        exchangeSymbol,
-        baseAsset: identity.baseAsset,
-        quoteAsset: identity.quoteAsset,
-        baseIncrement,
-        priceIncrement,
-        baseMinSize,
-        quoteMinSize: positive(row.costmin),
-        baseMaxSize: null,
-        quoteMaxSize: null,
-        state: 'live',
-        observedAt,
-        source: 'kraken_asset_pairs',
-      };
-      if (values.has(identity.symbol)) {
-        values.delete(identity.symbol);
-        ambiguous.add(identity.symbol);
+      const constraint = krakenConstraint(responseKey, row, observedAt);
+      if (!constraint || ambiguous.has(constraint.symbol)) continue;
+      if (values.has(constraint.symbol)) {
+        values.delete(constraint.symbol);
+        ambiguous.add(constraint.symbol);
       } else {
-        values.set(identity.symbol, constraint);
+        values.set(constraint.symbol, constraint);
       }
     }
     const snapshot = { expiresAt: Date.now() + TTL_MS, values };
@@ -162,7 +194,6 @@ async function fetchKrakenSnapshot(forceFresh = false): Promise<ConstraintSnapsh
       component: 'CexSpotProductPolicy',
       products: values.size,
       ambiguous: ambiguous.size,
-      forceFresh,
       canonicalizationAuthority: 'live_base_quote_fields_or_wsname',
       quoteCurrencyAllowlistUsed: false,
       unpublishedSingleOrderMaxTreatedAsUnlimited: true,
@@ -172,13 +203,13 @@ async function fetchKrakenSnapshot(forceFresh = false): Promise<ConstraintSnapsh
   return krakenInFlight;
 }
 
-async function fetchOkxSnapshot(forceFresh = false): Promise<ConstraintSnapshot> {
-  if (!forceFresh && okxSnapshot && okxSnapshot.expiresAt > Date.now()) return okxSnapshot;
+async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
+  if (okxSnapshot && okxSnapshot.expiresAt > Date.now()) return okxSnapshot;
   if (okxInFlight) return okxInFlight;
   okxInFlight = (async () => {
     const baseUrl = await getOkxExecutionRestBaseUrl();
     const payload = await fetchJsonWithRetry<any>(`${baseUrl}/api/v5/public/instruments?instType=SPOT`, {
-      init: { headers: { accept: 'application/json', 'cache-control': forceFresh ? 'no-cache' : 'max-age=0' } },
+      init: { headers: { accept: 'application/json', 'cache-control': 'max-age=0' } },
       maxRetries: 1,
       baseDelayMs: 100,
       maxDelayMs: 500,
@@ -190,31 +221,8 @@ async function fetchOkxSnapshot(forceFresh = false): Promise<ConstraintSnapshot>
     for (const rawValue of Array.isArray(payload?.data) ? payload.data : []) {
       const raw = rawValue && typeof rawValue === 'object' ? rawValue as Record<string, unknown> : null;
       if (!raw) continue;
-      const exchangeSymbol = typeof raw.instId === 'string' ? raw.instId.trim().toUpperCase() : '';
-      const identity = canonicalOkxProduct(raw);
-      if (!identity) continue;
-      const state = typeof raw.state === 'string' ? raw.state.trim().toLowerCase() : '';
-      if (state !== 'live') continue;
-      const baseIncrement = positive(raw.lotSz);
-      const priceIncrement = positive(raw.tickSz);
-      const baseMinSize = positive(raw.minSz);
-      if (baseIncrement === null || priceIncrement === null || baseMinSize === null) continue;
-      values.set(identity.symbol, {
-        venue: 'okx',
-        symbol: identity.symbol,
-        exchangeSymbol,
-        baseAsset: identity.baseAsset,
-        quoteAsset: identity.quoteAsset,
-        baseIncrement,
-        priceIncrement,
-        baseMinSize,
-        quoteMinSize: null,
-        baseMaxSize: positive(raw.maxLmtSz),
-        quoteMaxSize: positive(raw.maxLmtAmt),
-        state: 'live',
-        observedAt,
-        source: 'okx_public_instruments',
-      });
+      const constraint = okxConstraint(raw, observedAt);
+      if (constraint) values.set(constraint.symbol, constraint);
     }
     const snapshot = { expiresAt: Date.now() + TTL_MS, values };
     okxSnapshot = snapshot;
@@ -222,7 +230,6 @@ async function fetchOkxSnapshot(forceFresh = false): Promise<ConstraintSnapshot>
       component: 'CexSpotProductPolicy',
       baseUrl,
       products: values.size,
-      forceFresh,
       canonicalizationAuthority: 'live_baseCcy_quoteCcy_fields',
       quoteCurrencyAllowlistUsed: false,
       perOrderMaximumsCaptured: true,
@@ -232,6 +239,65 @@ async function fetchOkxSnapshot(forceFresh = false): Promise<ConstraintSnapshot>
   return okxInFlight;
 }
 
+function updateSnapshotConstraint(venue: ConstrainedSpotVenue, constraint: SpotProductConstraints): void {
+  const snapshot = venue === 'kraken' ? krakenSnapshot : okxSnapshot;
+  if (!snapshot) return;
+  snapshot.values.set(constraint.symbol, constraint);
+  snapshot.expiresAt = Math.max(snapshot.expiresAt, Date.now() + TTL_MS);
+}
+
+async function fetchTargetedFreshConstraint(venue: ConstrainedSpotVenue, current: SpotProductConstraints): Promise<SpotProductConstraints> {
+  const key = `${venue}:${current.symbol}`;
+  const pending = freshConstraintInFlight.get(key);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const observedAt = Date.now();
+    if (venue === 'kraken') {
+      const url = `https://api.kraken.com/0/public/AssetPairs?pair=${encodeURIComponent(current.exchangeSymbol)}`;
+      const payload = await fetchJsonWithRetry<any>(url, {
+        init: { headers: { accept: 'application/json', 'cache-control': 'no-cache' } },
+        maxRetries: 1,
+        baseDelayMs: 100,
+        maxDelayMs: 500,
+        timeoutMs: TIMEOUT_MS,
+      });
+      if (Array.isArray(payload?.error) && payload.error.length > 0) throw new Error(`Kraken targeted AssetPairs refresh failed: ${payload.error.join(', ')}`);
+      const rows = payload?.result && typeof payload.result === 'object' ? payload.result : {};
+      const matches = Object.entries(rows).flatMap(([responseKey, raw]) => {
+        const row = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+        const constraint = row ? krakenConstraint(responseKey, row, observedAt) : null;
+        return constraint && constraint.symbol === current.symbol ? [constraint] : [];
+      });
+      if (matches.length !== 1) throw new Error(`Kraken ${current.symbol} targeted refresh returned ${matches.length} unambiguous live products`);
+      updateSnapshotConstraint(venue, matches[0]);
+      return matches[0];
+    }
+
+    const baseUrl = await getOkxExecutionRestBaseUrl();
+    const url = `${baseUrl}/api/v5/public/instruments?instType=SPOT&instId=${encodeURIComponent(current.exchangeSymbol)}`;
+    const payload = await fetchJsonWithRetry<any>(url, {
+      init: { headers: { accept: 'application/json', 'cache-control': 'no-cache' } },
+      maxRetries: 1,
+      baseDelayMs: 100,
+      maxDelayMs: 500,
+      timeoutMs: TIMEOUT_MS,
+    });
+    if (String(payload?.code) !== '0') throw new Error(`OKX targeted instrument refresh failed: ${String(payload?.code)} ${String(payload?.msg || '')}`.trim());
+    const matches = (Array.isArray(payload?.data) ? payload.data : []).flatMap((rawValue: unknown) => {
+      const raw = rawValue && typeof rawValue === 'object' ? rawValue as Record<string, unknown> : null;
+      const constraint = raw ? okxConstraint(raw, observedAt) : null;
+      return constraint && constraint.symbol === current.symbol && constraint.exchangeSymbol === current.exchangeSymbol ? [constraint] : [];
+    });
+    if (matches.length !== 1) throw new Error(`OKX ${current.symbol} targeted refresh returned ${matches.length} unambiguous live products`);
+    updateSnapshotConstraint(venue, matches[0]);
+    return matches[0];
+  })().finally(() => freshConstraintInFlight.delete(key));
+
+  freshConstraintInFlight.set(key, request);
+  return request;
+}
+
 export async function getSpotProductConstraints(
   venue: ConstrainedSpotVenue,
   symbolInput: string,
@@ -239,10 +305,11 @@ export async function getSpotProductConstraints(
 ): Promise<SpotProductConstraints> {
   const symbol = canonicalLookupSymbol(symbolInput);
   if (!symbol) throw new Error(`Unsupported ${venue} SPOT symbol ${symbolInput}`);
-  const snapshot = venue === 'kraken' ? await fetchKrakenSnapshot(forceFresh) : await fetchOkxSnapshot(forceFresh);
+  const snapshot = venue === 'kraken' ? await fetchKrakenSnapshot() : await fetchOkxSnapshot();
   const constraint = snapshot.values.get(symbol);
   if (!constraint) throw new Error(`${venue} SPOT product ${symbol} has no current live execution constraints`);
-  return { ...constraint };
+  if (!forceFresh) return { ...constraint };
+  return { ...(await fetchTargetedFreshConstraint(venue, constraint)) };
 }
 
 function decimalPlaces(value: number): number {
@@ -344,6 +411,5 @@ export async function normalizeCexExecutablePlan(input: VerifiedArbitragePlan): 
   }
 
   if (Math.abs(normalizedQty - plan.baseQty) <= Math.max(increment * 1e-8, Number.EPSILON * plan.baseQty * 16)) return plan;
-  plan = recomputeEconomics(plan, normalizedQty);
-  return plan;
+  return recomputeEconomics(plan, normalizedQty);
 }
