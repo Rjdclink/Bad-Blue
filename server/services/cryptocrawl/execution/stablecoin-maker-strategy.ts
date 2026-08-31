@@ -7,6 +7,11 @@ import { resolveCexFeeEvidence, type CexFeeEvidence, type CexFeeVenue } from '..
 import { getOkxExecutionRestBaseUrl } from '../intelligence/cex-private-authority.js';
 import { cexOrderBookStreams, type StreamOrderBookQuote } from '../intelligence/cex-order-book-stream.js';
 import {
+  getOkxRpiExecutionCapability,
+  isOkxRpiMakerPriceAdmissible,
+  type OkxRpiExecutionCapability,
+} from '../intelligence/okx-rpi-fee-advisory.js';
+import {
   computeAriesFractionalKellySizing,
   estimateAriesVenueLeadLag,
   observeAriesQueueEcho,
@@ -23,6 +28,7 @@ import {
 
 export type MakerLegMode = 'maker';
 export type MakerRecoveryStrategy = 'stablecoin_post_only' | 'volatile_spread_post_only';
+export type MakerOrderStyle = 'post_only' | 'rpi';
 
 type MakerExecutionMetadata = {
   strategy: MakerRecoveryStrategy;
@@ -38,6 +44,14 @@ type MakerExecutionMetadata = {
   canarySizingAuthority: 'bootstrap' | 'cryptara_realized_evidence';
   /** Compatibility telemetry only. Artificial maker BPS floors are retired. */
   volatileMinGrossSpreadBps: null;
+  orderStyle: {
+    buy: MakerOrderStyle;
+    sell: MakerOrderStyle;
+    buyEffectiveMakerFeeBps: number;
+    sellEffectiveMakerFeeBps: number;
+    okxRpiEvidenceObservedAt: number | null;
+    rpiPermissionAndSpacingRequiredAtSubmit: true;
+  };
   queueEcho: {
     buyFillProbability: number;
     sellFillProbability: number;
@@ -94,8 +108,15 @@ type MakerCanaryProof = DynamicMakerCanaryDecision;
 type MakerProductConstraints = {
   quoteAsset: string;
   baseIncrement: number;
+  priceIncrement: number;
   baseMinSize: number;
   quoteMinSize: number | null;
+};
+
+type MakerLegEconomics = {
+  style: MakerOrderStyle;
+  feeBps: number;
+  rpiEvidenceObservedAt: number | null;
 };
 
 const STABLECOIN_SYMBOLS = new Set(['USDGUSDT', 'USDCUSDT', 'DAIUSDT', 'RLUSDUSDT']);
@@ -119,6 +140,47 @@ function authenticatedMakerFeeBps(evidence: CexFeeEvidence | null): number | nul
   if (evidence.makerFeeBps !== null && Number.isFinite(evidence.makerFeeBps)) return Math.max(0, evidence.makerFeeBps);
   if (evidence.makerRebateBps !== null && Number.isFinite(evidence.makerRebateBps)) return -Math.max(0, evidence.makerRebateBps);
   return null;
+}
+
+function optimisticMakerFeeBps(
+  venue: CexFeeVenue,
+  standardMakerFeeBps: number,
+  rpi: OkxRpiExecutionCapability | null,
+): number {
+  if (venue !== 'okx' || !rpi?.makerPermission || !rpi.executableFeeAdvantage) return standardMakerFeeBps;
+  return Math.min(standardMakerFeeBps, rpi.rpiMakerFeeBps);
+}
+
+function exactMakerLegEconomics(input: {
+  venue: CexFeeVenue;
+  standardMakerFeeBps: number;
+  rpi: OkxRpiExecutionCapability | null;
+  side: 'buy' | 'sell';
+  price: number;
+  oppositeOrganicPrice: number;
+  tickSize: number;
+  notionalUsd: number;
+}): MakerLegEconomics {
+  const standard: MakerLegEconomics = {
+    style: 'post_only',
+    feeBps: input.standardMakerFeeBps,
+    rpiEvidenceObservedAt: null,
+  };
+  if (input.venue !== 'okx' || !input.rpi) return standard;
+  if (!(input.rpi.rpiMakerFeeBps < input.standardMakerFeeBps)) return standard;
+  if (!isOkxRpiMakerPriceAdmissible({
+    capability: input.rpi,
+    side: input.side,
+    price: input.price,
+    oppositeOrganicPrice: input.oppositeOrganicPrice,
+    tickSize: input.tickSize,
+    notionalUsd: input.notionalUsd,
+  })) return standard;
+  return {
+    style: 'rpi',
+    feeBps: input.rpi.rpiMakerFeeBps,
+    rpiEvidenceObservedAt: input.rpi.observedAt,
+  };
 }
 
 function makerCanaryProof(): MakerCanaryProof {
@@ -254,6 +316,7 @@ async function makerProductConstraints(venue: CexFeeVenue, symbol: string): Prom
     return {
       quoteAsset: constraints.quoteAsset,
       baseIncrement: constraints.baseIncrement,
+      priceIncrement: constraints.priceIncrement,
       baseMinSize: constraints.baseMinSize,
       quoteMinSize: constraints.quoteMinSize,
     };
@@ -263,6 +326,7 @@ async function makerProductConstraints(venue: CexFeeVenue, symbol: string): Prom
   return {
     quoteAsset: constraints.quoteAsset,
     baseIncrement: constraints.baseIncrement,
+    priceIncrement: constraints.priceIncrement,
     baseMinSize: constraints.baseMinSize,
     quoteMinSize: constraints.quoteMinSize,
   };
@@ -289,15 +353,20 @@ async function evaluateMakerCandidate(input: {
   if (!(input.notionalUsd > 0) || !symbol) return null;
 
   const observations = await Promise.all(CEX_VENUES.map(async venue => {
-    const [book, fee] = await Promise.all([
+    const [book, fee, rpi] = await Promise.all([
       venueBook(venue, symbol, input.maxQuoteAgeMs).catch(() => null),
       resolveCexFeeEvidence(venue, symbol).catch(() => null),
+      venue === 'okx' ? getOkxRpiExecutionCapability(symbol).catch(() => null) : Promise.resolve(null),
     ]);
-    return { venue, book, fee };
+    return { venue, book, fee, rpi };
   }));
   const books = observations.flatMap(value => value.book ? [value.book] : []);
   const fees = new Map<CexFeeVenue, CexFeeEvidence>();
-  for (const observation of observations) if (observation.fee) fees.set(observation.venue, observation.fee);
+  const rpiByVenue = new Map<CexFeeVenue, OkxRpiExecutionCapability>();
+  for (const observation of observations) {
+    if (observation.fee) fees.set(observation.venue, observation.fee);
+    if (observation.rpi) rpiByVenue.set(observation.venue, observation.rpi);
+  }
   if (books.length < 2) return null;
 
   const now = Date.now();
@@ -312,19 +381,22 @@ async function evaluateMakerCandidate(input: {
       if (buy.venue === sell.venue) continue;
       const buyEvidence = fees.get(buy.venue) || null;
       const sellEvidence = fees.get(sell.venue) || null;
-      const buyFeeBps = authenticatedMakerFeeBps(buyEvidence);
-      const sellFeeBps = authenticatedMakerFeeBps(sellEvidence);
-      if (buyFeeBps === null || sellFeeBps === null) continue;
+      const standardBuyFeeBps = authenticatedMakerFeeBps(buyEvidence);
+      const standardSellFeeBps = authenticatedMakerFeeBps(sellEvidence);
+      if (standardBuyFeeBps === null || standardSellFeeBps === null) continue;
+      const buyRpi = buy.venue === 'okx' ? rpiByVenue.get('okx') || null : null;
+      const sellRpi = sell.venue === 'okx' ? rpiByVenue.get('okx') || null : null;
 
       const buyPrice = buy.bid;
       const sellPrice = sell.ask;
       if (!(sellPrice > buyPrice)) continue;
       const grossSpreadBps = ((sellPrice - buyPrice) / buyPrice) * 10_000;
-      const feeFloorBps = buyFeeBps + sellFeeBps;
-      // No arbitrary BPS floor: authenticated fee clearance plus final real
-      // net-profit dollars, measured queue/stress, liquidity and governance are
-      // the economic/safety criteria.
-      if (!(grossSpreadBps > feeFloorBps)) continue;
+      // This optimistic screen exists only to avoid discarding a route that a
+      // currently permitted RPI rebate could rescue. Exact RPI notional, spacing,
+      // book, fee and permission checks occur after sizing and again at submit.
+      const optimisticFeeFloorBps = optimisticMakerFeeBps(buy.venue, standardBuyFeeBps, buyRpi)
+        + optimisticMakerFeeBps(sell.venue, standardSellFeeBps, sellRpi);
+      if (!(grossSpreadBps > optimisticFeeFloorBps)) continue;
 
       const buyQueue = observeAriesQueueEcho(buy.quote, 'buy', configuredTtlMs, participation);
       const sellQueue = observeAriesQueueEcho(sell.quote, 'sell', configuredTtlMs, participation);
@@ -381,8 +453,29 @@ async function evaluateMakerCandidate(input: {
       const sellNotional = baseQty * sellPrice;
       if (buyConstraints.quoteMinSize !== null && buyNotional < buyConstraints.quoteMinSize) continue;
       if (sellConstraints.quoteMinSize !== null && sellNotional < sellConstraints.quoteMinSize) continue;
-      const buyFeeUsd = buyNotional * buyFeeBps / 10_000;
-      const sellFeeUsd = sellNotional * sellFeeBps / 10_000;
+
+      const buyMaker = exactMakerLegEconomics({
+        venue: buy.venue,
+        standardMakerFeeBps: standardBuyFeeBps,
+        rpi: buyRpi,
+        side: 'buy',
+        price: buyPrice,
+        oppositeOrganicPrice: buy.ask,
+        tickSize: buyConstraints.priceIncrement,
+        notionalUsd: buyNotional,
+      });
+      const sellMaker = exactMakerLegEconomics({
+        venue: sell.venue,
+        standardMakerFeeBps: standardSellFeeBps,
+        rpi: sellRpi,
+        side: 'sell',
+        price: sellPrice,
+        oppositeOrganicPrice: sell.bid,
+        tickSize: sellConstraints.priceIncrement,
+        notionalUsd: sellNotional,
+      });
+      const buyFeeUsd = buyNotional * buyMaker.feeBps / 10_000;
+      const sellFeeUsd = sellNotional * sellMaker.feeBps / 10_000;
       const grossProfitUsd = sellNotional - buyNotional;
       const totalCostsUsd = buyFeeUsd + sellFeeUsd;
       const netProfitUsd = grossProfitUsd - totalCostsUsd;
@@ -393,6 +486,10 @@ async function evaluateMakerCandidate(input: {
       const authority: 'websocket' | 'rest_fallback' = buy.authority === 'websocket' && sell.authority === 'websocket'
         ? 'websocket'
         : 'rest_fallback';
+      const rpiEvidenceObservedAt = Math.max(
+        buyMaker.rpiEvidenceObservedAt ?? 0,
+        sellMaker.rpiEvidenceObservedAt ?? 0,
+      ) || null;
       const candidate: MakerRecoveryPlan = {
         symbol,
         notionalUsd: buyNotional,
@@ -421,6 +518,7 @@ async function evaluateMakerCandidate(input: {
             `${sell.venue}:maker_queue:${sell.authority}`,
             `aries_queue_echo:${queueAuthority}`,
             `aries_stress_paths:${stress.paths}`,
+            ...(buyMaker.style === 'rpi' || sellMaker.style === 'rpi' ? ['okx_rpi:authenticated_permission_fee_spacing'] : []),
           ],
         },
         feeEvidence: { buy: buyEvidence!, sell: sellEvidence! },
@@ -438,6 +536,14 @@ async function evaluateMakerCandidate(input: {
           canaryConfidenceScore: canary.proof.confidenceScore,
           canarySizingAuthority: canary.proof.sizingAuthority,
           volatileMinGrossSpreadBps: null,
+          orderStyle: {
+            buy: buyMaker.style,
+            sell: sellMaker.style,
+            buyEffectiveMakerFeeBps: buyMaker.feeBps,
+            sellEffectiveMakerFeeBps: sellMaker.feeBps,
+            okxRpiEvidenceObservedAt: rpiEvidenceObservedAt,
+            rpiPermissionAndSpacingRequiredAtSubmit: true,
+          },
           queueEcho: {
             buyFillProbability: buyQueue.fillProbabilityWithinTtl,
             sellFillProbability: sellQueue.fillProbabilityWithinTtl,
