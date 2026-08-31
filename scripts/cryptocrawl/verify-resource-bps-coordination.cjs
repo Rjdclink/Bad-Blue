@@ -53,12 +53,16 @@ const residualReplan = read('server/services/cryptocrawl/discovery/cex-residual-
 requirePattern(db, /export\s+let\s+coordinationPool\s*=\s*new\s+Pool/, 'dedicated coordination pool exists');
 requirePattern(db, /deriveSupabasePoolerModeUrl\(databaseUrl,\s*'6543'\)/, 'ordinary transaction lane is derived from existing shared pooler credentials');
 requirePattern(db, /deriveSupabasePoolerModeUrl\(databaseUrl,\s*'5432'\)/, 'coordination session lane is derived from existing shared pooler credentials');
-requirePattern(db, /ordinaryUsesTransactionPool\s*\?\s*5\s*:\s*3/, 'session fallback capacity is smaller than transaction-pooled capacity');
+requirePattern(db, /requestedMainPoolMax\s*=\s*boundedPoolInt\(process\.env\.DATABASE_POOL_MAX,\s*5,/, 'transaction-pooled capacity retains bounded configurable default');
+requirePattern(db, /sessionFallbackPoolMax\s*=\s*boundedPoolInt\(process\.env\.CRYPTOCRAWL_SESSION_FALLBACK_POOL_MAX,\s*3,\s*1,\s*4\)/, 'session fallback capacity remains tightly bounded');
+requirePattern(db, /mainPoolMax\s*=\s*ordinaryUsesTransactionPool\s*\?\s*requestedMainPoolMax\s*:\s*Math\.min\(requestedMainPoolMax,\s*sessionFallbackPoolMax\)/, 'session fallback cannot inherit an oversized transaction-pool budget');
 requirePattern(db, /CRYPTOCRAWL_COORDINATION_POOL_MAX,\s*1,\s*1,\s*2/, 'coordination pool remains tightly bounded');
 requirePattern(db, /postgresPort\(transactionDatabaseUrl\)\s*!==\s*'6543'/, 'transaction lane rejects non-transaction port');
 requirePattern(db, /postgresPort\(coordinationDatabaseUrl\)\s*===\s*'6543'/, 'session advisory-lock lane rejects transaction port');
 requirePattern(db, /min:\s*ordinaryUsesTransactionPool\s*\?\s*0\s*:\s*1/, 'transaction pool does not pin an idle minimum session');
 requirePattern(resources, /getExecutionResourcePressureSnapshot/, 'resource scheduler exposes measured DB pressure');
+requirePattern(resources, /const\s+active\s*=\s*Math\.max\(0,\s*stats\.total\s*-\s*stats\.idle\)/, 'execution resource pressure measures checked-out clients rather than idle pool size');
+forbidPattern(resources, /stats\.total\s*\/\s*stats\.max/, 'execution resource pressure treats idle pooled clients as active pressure');
 requirePattern(resources, /effectiveGlobalCapacityMultiplier/, 'execution capacity contracts under resource pressure');
 requirePattern(resources, /plan\.netProfitUsd\)\s*\|\|\s*plan\.netProfitUsd\s*<=\s*0/, 'resource admission still requires positive verified net profit');
 requirePattern(resources, /settlementOrFlatteningBlocked:\s*false/, 'pressure admission does not block settlement/flattening');
@@ -146,6 +150,8 @@ requirePattern(residualReplan, /netProfitUsd[^\n]{0,120}>\s*0|netProfitUsd[^\n]{
 
 // Solution 10 — cross-topology BPS/scarcity router remains search allocation only.
 requirePattern(mesh, /resourceScarcity/, 'BPS mesh measures current scarcity');
+requirePattern(mesh, /const\s+active\s*=\s*Math\.max\(0,\s*stats\.total\s*-\s*stats\.idle\)/, 'BPS scarcity measures checked-out clients rather than idle pool size');
+forbidPattern(mesh, /stats\.total\s*\/\s*stats\.max/, 'BPS scarcity treats idle pooled clients as active pressure');
 requirePattern(mesh, /buildMarginalBpsAllocation/, 'BPS mesh consumes marginal allocator');
 requirePattern(mesh, /cexRaw\s*\/=\s*scarcity\.cexScarcityMultiplier/, 'CEX search pressure contracts under scarcity');
 requirePattern(mesh, /objective:\s*'measured_distance_to_positive_bps_per_scarcity_unit'/, 'BPS mesh retains distance-per-scarcity objective');
