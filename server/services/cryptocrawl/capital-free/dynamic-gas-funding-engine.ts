@@ -12,11 +12,12 @@ export interface GasFundingDecision {
 }
 
 /**
- * Zero-capital execution must be able to prove realized all-in profit, not only
- * contract-level token profit. Sponsored execution has measured zero monetary
- * gas. Native-funded trading remains observation/reserve evidence only until the
- * settlement layer has a measured native-gas -> input-token/USD conversion for
- * the actual receipt fee; otherwise realized net profit would be unknowable.
+ * Zero-capital execution must prove realized all-in profit, not merely receiver
+ * token surplus. Sponsored execution has verified zero monetary gas for the
+ * execution wallet. Native execution is permitted only when the reserve floor is
+ * actually present; terminal settlement then measures receipt gas, converts the
+ * native fee to USD, subtracts it from gross receiver profit, and fails closed if
+ * that conversion is unavailable. Funding selection never invents zero gas.
  */
 export function chooseGasFundingMode(
   chain: DynamicChainConfig,
@@ -33,17 +34,17 @@ export function chooseGasFundingMode(
       mode: 'sponsored',
       nativeBalance,
       reserveFloor,
-      reason: 'Sponsored execution is ready and preserves measured zero-monetary-gas settlement accounting',
+      reason: 'Sponsored execution is ready; final receipt still verifies zero monetary gas before realized-profit accounting',
     };
   }
 
   if (nativeBalance >= reserveFloor) {
     return {
       chain: chain.id,
-      mode: 'unavailable',
+      mode: 'native',
       nativeBalance,
       reserveFloor,
-      reason: 'Native gas reserve is sufficient, but live trading is fail-closed until actual receipt gas has measured same-unit realized-profit conversion',
+      reason: 'Native gas reserve is sufficient; actual receipt gas is terminally converted and subtracted before realized profit is accepted',
     };
   }
 
@@ -52,7 +53,7 @@ export function chooseGasFundingMode(
     mode: 'unavailable',
     nativeBalance,
     reserveFloor,
-    reason: 'Neither settlement-accountable sponsorship nor executable native-gas accounting is available',
+    reason: 'Neither verified sponsorship nor the required native gas reserve is available',
   };
 }
 
