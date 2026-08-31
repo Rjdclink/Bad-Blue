@@ -1,5 +1,4 @@
 # Production-grade Playwright/Puppeteer Dockerfile with multi-stage build
-# Build stage - for compiling the application and installing browsers
 FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
@@ -20,11 +19,8 @@ RUN rm -rf node_modules || true && \
 
 COPY . .
 
-# Diagnostic only: deployment preflight plus the first two trailing package
-# prebuild guards. Unified-multileg is intentionally omitted in this pass.
-RUN node scripts/cryptocrawl/verify-deployment-preflight.cjs && \
-    node scripts/cryptocrawl/verify-zero-capital-bps-propagation.cjs && \
-    node scripts/cryptocrawl/verify-bootstrap-execution-history.cjs && \
+# Diagnostic only: confirm the isolated trailing prebuild blocker.
+RUN node scripts/cryptocrawl/verify-unified-multileg-adaptive-engine.cjs && \
     npm_config_ignore_scripts=true npm run build && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
