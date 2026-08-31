@@ -25,7 +25,7 @@ for (const [key, relative] of Object.entries(files)) {
 // provider admission, execution-stage maker safety, or rescue feasibility.
 const behaviors = [
   ['policy', 'riskAdjustedBpsToBreakEven', 'risk-adjusted CEX gap ranking'],
-  ['policy', 'makerFeeSavingsVsTakerBps', 'maker-savings recovery weighting'],
+  ['policy', 'measuredMakerSavings(item, takerFees)', 'maker-savings recovery weighting'],
   ['policy', 'grossSpread / combinedFees', 'spread-to-fee coverage weighting'],
   ['policy', 'CRYPTOCRAWL_RECOVERY_SYMBOL_COOLDOWN_MS', 'recovery-symbol cooldown'],
   ['policy', 'improvementBoost', 'improving-gap promotion'],
