@@ -101,6 +101,14 @@ requirePattern(coinbasePrivate, /rateCooldownUntil/, 'Coinbase rate cooldown is 
 // Solution 4 — authenticated fee compression without request storms.
 requirePattern(feeResolver, /const\s+feeInFlight\s*=\s*new\s+Map/, 'canonical fee resolver retains single-flight');
 requirePattern(feeResolver, /feeUnavailableUntil/, 'proven unsupported fee/product evidence is negative-cached');
+requirePattern(feeResolver, /feeTransientRetryUntil/, 'transient private-fee failures have a separate short retry gate');
+requirePattern(feeResolver, /CRYPTO_CEX_FEE_TRANSIENT_RETRY_MS/, 'transient fee retry suppression is bounded and configurable');
+requirePattern(feeResolver, /transientRetryEntry\(venue,\s*symbol\)/, 'same-cycle direct fee resolution consumes the transient retry gate');
+requirePattern(feeResolver, /markTransientRetryMany\('kraken',\s*missingKraken/, 'Kraken failed batch cannot fan back out per symbol in the same scan');
+requirePattern(feeResolver, /markTransientRetryMany\('coinbase',\s*missingCoinbase/, 'Coinbase account-level failure cannot fan back out per symbol in the same scan');
+requirePattern(feeResolver, /markTransientRetryMany\('okx',\s*groupSymbols/, 'OKX failed fee group cannot fan back out per symbol in the same scan');
+requirePattern(feeResolver, /evidence\.source\s*===\s*'configured_override'\)\s*return/, 'configured overrides cannot enter the authenticated fee cache');
+forbidPattern(feeResolver, /storeFeeEvidence\(fallback\)/, 'configured fallback is cached as authenticated fee evidence');
 requirePattern(feeResolver, /OKX_PER_INSTRUMENT_BUDGET/, 'OKX per-instrument fallback is bounded');
 requirePattern(feeResolver, /same-cycle per-instrument fan-out suppressed/, 'failed OKX group request cannot fan out in the same cycle');
 requirePattern(feeResolver, /fetchCoinbaseFeeEvidence\(missingCoinbase\[0\]/, 'one account-level Coinbase fee read hydrates all requested Coinbase symbols');
@@ -180,4 +188,4 @@ for (const [name, source] of Object.entries({ db, privateAuthority, coinbasePriv
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds the enhancements list into runtime code`);
 }
 
-console.log('[resource-bps] ten-solution resource/BPS contract, Coinbase/Kraken/OKX resilience, bounded barrier measurement, bounded Kraken/EVM signer lock contention, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
+console.log('[resource-bps] ten-solution resource/BPS contract, Coinbase/Kraken/OKX authenticated fee authority, transient fan-out suppression, bounded barrier measurement, bounded Kraken/EVM signer lock contention, scheduler-owned DEX readiness, and reference-framework separation invariants passed');
