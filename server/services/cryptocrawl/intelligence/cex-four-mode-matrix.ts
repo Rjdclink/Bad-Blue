@@ -22,6 +22,7 @@ export interface CexModeEconomics {
   sellPrice: number;
   grossSpreadBps: number;
   combinedFeeBps: number;
+  makerFeeSavingsVsTakerBps: number;
   netAfterExchangeFeesBps: number;
   bpsToBreakEven: number;
   recoveryEfficiency: number;
@@ -74,12 +75,14 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
   if (positiveDelta !== 0) return positiveDelta;
   if (left.economicallyPositive && right.economicallyPositive) {
     return right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps
+      || right.makerFeeSavingsVsTakerBps - left.makerFeeSavingsVsTakerBps
       || right.feeFreshnessScore - left.feeFreshnessScore
       || right.netAfterExchangeFeesBps - left.netAfterExchangeFeesBps
       || left.makerLegCount - right.makerLegCount;
   }
-  return left.bpsToBreakEven - right.bpsToBreakEven
-    || left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven
+  return left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven
+    || left.bpsToBreakEven - right.bpsToBreakEven
+    || right.makerFeeSavingsVsTakerBps - left.makerFeeSavingsVsTakerBps
     || right.feeFreshnessScore - left.feeFreshnessScore
     || right.recoveryEfficiency - left.recoveryEfficiency
     || (right.makerFillProbability ?? 1) - (left.makerFillProbability ?? 1)
@@ -87,17 +90,10 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
 }
 
 /**
- * Measures all TT/MT/TM/MM price-and-fee topologies across every currently
- * executable CEX venue on the same fresh evidence surface. Coinbase, Kraken and
- * OKX are peers here; venue-specific API details live below this layer.
- *
- * Negative modes inside a bounded observation envelope are retained so the BPS
- * optimizer can learn the exact recovery gap instead of seeing only winners.
- * Maker modes additionally expose queue-risk and authenticated fee-evidence
- * freshness penalties. These are advisory and never change measured fees or
- * grant execution authority. Positive observations are scheduling triggers only;
- * canonical execution still requires depth-aware all-in revalidation, inventory,
- * governance, product constraints, and terminal settlement.
+ * Measures TT/MT/TM/MM across every currently executable venue on one fresh
+ * evidence surface. Maker modes publish their exact authenticated fee savings
+ * relative to the same venue-pair TT baseline so the existing BPS optimizer can
+ * prioritize real fee compression instead of inferring a missing field.
  */
 export async function evaluateCexFourModeMatrix(input: {
   symbol: string;
@@ -140,6 +136,11 @@ export async function evaluateCexFourModeMatrix(input: {
       const sellBook = books.get(sellVenue)!;
       const buyFee = fees.get(buyVenue)!;
       const sellFee = fees.get(sellVenue)!;
+      const ttBuyFeeBps = authenticatedFee(buyFee, 'taker');
+      const ttSellFeeBps = authenticatedFee(sellFee, 'taker');
+      const ttCombinedFeeBps = ttBuyFeeBps !== null && ttSellFeeBps !== null
+        ? ttBuyFeeBps + ttSellFeeBps
+        : null;
 
       for (const candidate of modes()) {
         const buyPrice = candidate.buyMode === 'maker' ? buyBook.bid : buyBook.ask;
@@ -150,6 +151,9 @@ export async function evaluateCexFourModeMatrix(input: {
         if (buyFeeBps === null || sellFeeBps === null) continue;
         const grossSpreadBps = (sellPrice - buyPrice) / buyPrice * 10_000;
         const combinedFeeBps = buyFeeBps + sellFeeBps;
+        const makerFeeSavingsVsTakerBps = ttCombinedFeeBps === null
+          ? 0
+          : Math.max(0, ttCombinedFeeBps - combinedFeeBps);
         const netAfterExchangeFeesBps = grossSpreadBps - combinedFeeBps;
         if (netAfterExchangeFeesBps < floorBps) continue;
         const economicallyPositive = netAfterExchangeFeesBps > 0;
@@ -189,6 +193,7 @@ export async function evaluateCexFourModeMatrix(input: {
           sellPrice,
           grossSpreadBps,
           combinedFeeBps,
+          makerFeeSavingsVsTakerBps,
           netAfterExchangeFeesBps,
           bpsToBreakEven,
           recoveryEfficiency,
