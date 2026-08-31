@@ -36,6 +36,14 @@ requirePattern(worker, /while\s*\(admitted\s*<\s*admissionBudget/, 'each pressur
 requirePattern(worker, /if\s*\(this\s*!==\s*pool\)/, 'only the live ordinary pool is admitted through Cryptara');
 requirePattern(worker, /Pool\.prototype/, 'shared ordinary callers converge on one acquisition gate');
 
+// Start at the already-safe effective pool ceiling. Railway rollout headroom is
+// applied before this worker installs, so a healthy replica keeps full permitted
+// parallelism instead of climbing from an arbitrary concurrency of one.
+requirePattern(worker, /primeToCurrentPoolCapacity\(\)/, 'worker primes itself from the current effective pool capacity');
+requirePattern(worker, /this\.targetConcurrency\s*=\s*ceiling/, 'healthy startup begins at the current effective pool ceiling');
+requirePattern(worker, /if\s*\(stats\.waiting\s*>\s*0\)[\s\S]{0,220}Math\.floor\(ceiling\s*\/\s*2\)/, 'existing local pressure can still contract initial admission');
+requirePattern(worker, /governor\.primeToCurrentPoolCapacity\(\)[\s\S]{0,120}installed\s*=\s*true/, 'pool-capacity priming occurs during worker installation');
+
 // Dynamic pressure response: multiplicative decrease, additive recovery, bounded by live pool max.
 requirePattern(worker, /Math\.floor\(this\.targetConcurrency\s*\/\s*2\)/, 'multiplicative pressure contraction');
 requirePattern(worker, /this\.targetConcurrency\s*\+\s*1/, 'additive healthy recovery');
@@ -115,4 +123,4 @@ requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}IN
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
-console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, execution/quota prioritization, server-side slot call coalescing, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned persistence invariants passed');
+console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, full effective startup capacity, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, execution/quota prioritization, server-side slot call coalescing, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned persistence invariants passed');
