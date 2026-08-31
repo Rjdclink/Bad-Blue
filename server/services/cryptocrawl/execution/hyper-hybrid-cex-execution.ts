@@ -37,7 +37,7 @@ export interface HyperHybridChildExecution {
   index: number;
   plannedNotionalUsd: number;
   expectedProfitUsd: number;
-  timeInForce: 'IOC' | 'FOK';
+  timeInForce: 'IOC' | 'FOK' | 'GTC_POST_ONLY' | 'STRATEGY_SPECIFIC';
   latencyMs: number;
   success: boolean;
   status: ExecutionStatus;
@@ -71,8 +71,12 @@ type VenueLimit = {
 };
 
 type PlannedLegMode = 'maker' | 'taker';
-type HybridExecutionShape = {
+type PlannedExecutionShape = {
   hybridExecution?: {
+    buyMode?: PlannedLegMode;
+    sellMode?: PlannedLegMode;
+  };
+  makerExecution?: {
     buyMode?: PlannedLegMode;
     sellMode?: PlannedLegMode;
   };
@@ -232,11 +236,27 @@ function childConcurrency(): number {
   return Number.isFinite(parsed) ? Math.max(1, Math.min(32, Math.trunc(parsed))) : DEFAULT_CHILD_CONCURRENCY;
 }
 
+function executionShape(plan: VerifiedArbitragePlan): PlannedExecutionShape {
+  return plan as VerifiedArbitragePlan & PlannedExecutionShape;
+}
+
 function plannedLegMode(plan: VerifiedArbitragePlan, side: 'buy' | 'sell'): PlannedLegMode {
-  const hybrid = (plan as VerifiedArbitragePlan & HybridExecutionShape).hybridExecution;
+  const shape = executionShape(plan);
+  const execution = shape.hybridExecution ?? shape.makerExecution;
   return side === 'buy'
-    ? hybrid?.buyMode === 'maker' ? 'maker' : 'taker'
-    : hybrid?.sellMode === 'maker' ? 'maker' : 'taker';
+    ? execution?.buyMode === 'maker' ? 'maker' : 'taker'
+    : execution?.sellMode === 'maker' ? 'maker' : 'taker';
+}
+
+function childTimeInForce(
+  parent: VerifiedArbitragePlan,
+  useProductionFok: boolean,
+  hasStrategyChildExecutor: boolean,
+): HyperHybridChildExecution['timeInForce'] {
+  if (hasStrategyChildExecutor) return 'STRATEGY_SPECIFIC';
+  const maker = executionShape(parent).makerExecution;
+  if (maker?.buyMode === 'maker' && maker.sellMode === 'maker') return 'GTC_POST_ONLY';
+  return useProductionFok ? 'FOK' : 'IOC';
 }
 
 function plannedFeeBps(plan: VerifiedArbitragePlan, side: 'buy' | 'sell'): number | null {
@@ -326,7 +346,7 @@ function fokAdapter(
           sz: cexDecimalString(request.quantity),
           clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
         }, { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS });
-        const order = data?.[0];
+        const order = data[0];
         if (!order || order.sCode !== '0' || !order.ordId) throw new Error(`OKX rejected FOK child: ${order?.sMsg || 'unknown error'}`);
         return { venue, orderId: order.ordId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
       }
@@ -497,6 +517,7 @@ export async function executeHyperHybridCexPlan(input: {
   const live = await revalidateBatch(input.parent, admittedQty, input.maxQuoteAgeMs);
   if (!live.ok) return aggregateResult(input.parent, plannedChildren, [], live.reason);
 
+  const executionTimeInForce = childTimeInForce(input.parent, input.useProductionFok, Boolean(input.executeChild));
   const childExecutions = await Promise.all(admittedChildren.map(async (child, index) => {
     const childId = `child-${index + 1}-of-${plannedChildren.length}`;
     const startedAt = Date.now();
@@ -510,7 +531,7 @@ export async function executeHyperHybridCexPlan(input: {
         index,
         plannedNotionalUsd: child.notionalUsd,
         expectedProfitUsd: child.netProfitUsd,
-        timeInForce: input.useProductionFok && !input.executeChild ? 'FOK' as const : 'IOC' as const,
+        timeInForce: executionTimeInForce,
         latencyMs: Date.now() - startedAt,
         success: result.success,
         status: result.status,
@@ -527,7 +548,7 @@ export async function executeHyperHybridCexPlan(input: {
         index,
         plannedNotionalUsd: child.notionalUsd,
         expectedProfitUsd: child.netProfitUsd,
-        timeInForce: input.useProductionFok && !input.executeChild ? 'FOK' as const : 'IOC' as const,
+        timeInForce: executionTimeInForce,
         latencyMs: Date.now() - startedAt,
         success: false,
         status: 'rejected' as const,
@@ -582,9 +603,7 @@ export async function executeHyperHybridCexPlan(input: {
     completedNotionalUsd: result.completedNotionalUsd,
     remainingNotionalUsd: result.remainingNotionalUsd,
     childConcurrency: concurrency,
-    productionSplitTimeInForce: input.executeChild
-      ? 'strategy_specific_child_executor'
-      : input.useProductionFok ? 'FOK' : 'injected_adapter_semantics',
+    productionSplitTimeInForce: executionTimeInForce,
     oneBoundedParallelBatch: true,
     sequentialChildWaves: false,
     completedChildProfitRetained: true,
