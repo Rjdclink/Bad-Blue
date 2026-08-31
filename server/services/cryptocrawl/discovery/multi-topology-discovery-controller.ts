@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { unifiedMultiLegArbitrageEngine } from '../optimization/unified-multileg-arbitrage-engine.js';
+import { measuredTopologyExecutionScheduler } from '../execution/measured-topology-execution-scheduler.js';
 import { routeRecentMeasuredOpportunities } from '../execution/unified-execution-router.js';
 import { measuredOpportunityGraph } from './opportunity-graph.js';
 import { fundingRateMonitor } from './funding-rate-monitor.js';
@@ -71,6 +72,7 @@ class MultiTopologyDiscoveryController {
       zeroCapitalDiscoveryAuthority: 'zero_capital_engine_parallel_runtime',
       candidateAuthority: 'measured_candidate_registry',
       realizedPerformanceAdjustsAttention: true,
+      liveMeasuredEvidenceAdjustsColdStartAttention: true,
       minimumCoveragePreserved: true,
       makerOrdersAssumedFilled: false,
       liquidationProfitAssumed: false,
@@ -188,6 +190,21 @@ class MultiTopologyDiscoveryController {
         errors,
       };
       this.latest = cycle;
+
+      // Discovery remains read-only. Only already-admitted, fully measured
+      // topology plans are handed to the separate execution scheduler, which
+      // revalidates governance, StageManager and fresh all-in economics before
+      // any submission. CEX and ZERO_CAPITAL keep their existing canonical
+      // execution authorities and are deliberately not duplicated here.
+      void measuredTopologyExecutionScheduler.dispatch(routedOpportunities).catch(error => {
+        logger.warn('[MeasuredTopologyExecution] Post-discovery dispatch degraded', {
+          component: 'MultiTopologyDiscoveryController',
+          cycleId,
+          error: error instanceof Error ? error.message : String(error),
+          discoveryAuthorityChanged: false,
+        });
+      });
+
       logger.info('[OpportunityGraph] Unified parallel discovery cycle completed', {
         component: 'MultiTopologyDiscoveryController',
         cycleId,
