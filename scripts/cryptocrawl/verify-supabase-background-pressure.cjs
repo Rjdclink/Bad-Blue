@@ -1,0 +1,54 @@
+'use strict';
+
+const fs = require('node:fs');
+
+const read = path => fs.readFileSync(path, 'utf8');
+const requirePattern = (source, pattern, description) => {
+  if (!pattern.test(source)) throw new Error(`[supabase-background-pressure] missing invariant: ${description}`);
+};
+const forbidPattern = (source, pattern, description) => {
+  if (pattern.test(source)) throw new Error(`[supabase-background-pressure] forbidden regression: ${description}`);
+};
+
+const rainbow = read('server/services/cryptocrawl/compensation/rainbow-profit-observability.ts');
+const outbox = read('server/services/cryptocrawl/intelligence/canonical-intelligence-outbox.ts');
+const treasury = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
+const outboxMigration = read('server/migrations/014_cryptocrawler_private_outbox.sql');
+const intelligenceMigration = read('server/migrations/013_cryptocrawler_private_intelligence_memory.sql');
+const treasuryMigration = read('server/migrations/016_cryptocrawler_terminal_sweeper_runtime.sql');
+const profitMigration = read('server/migrations/018_cryptocrawler_profit_split_eth_payout.sql');
+
+// Rainbow observability must be one low-priority snapshot acquisition, never a
+// burst of independent SELECTs or an overlapping interval loop.
+requirePattern(rainbow, /withCryptaraSupabasePriority\('low'[\s\S]{0,500}WITH\s+summary\s+AS/i, 'Rainbow snapshot is admitted as one low-priority SQL statement');
+requirePattern(rainbow, /WITH\s+summary\s+AS[\s\S]{0,3000}fees\s+AS[\s\S]{0,3000}latest\s+AS/i, 'Rainbow state, fees, and latest transaction are collapsed into one query');
+forbidPattern(rainbow, /Promise\.all\s*\(/, 'Rainbow observability must not fan out parallel database reads');
+forbidPattern(rainbow, /setInterval\s*\(/, 'Rainbow observability must not schedule overlapping interval ticks');
+requirePattern(rainbow, /setTimeout\s*\([\s\S]{0,500}refreshAndSchedule/, 'Rainbow uses completion-aware one-shot scheduling');
+
+// The durable outbox keeps immediate/durable handoff but sharply reduces empty
+// polling pressure and never lets low-value metrics compete with execution writes.
+forbidPattern(outbox, /setInterval\s*\(/, 'Outbox idle polling must be adaptive one-shot scheduling');
+requirePattern(outbox, /CRYPTARA_OUTBOX_IDLE_POLL_MAX_MS/, 'Outbox idle polling has a bounded adaptive ceiling');
+requirePattern(outbox, /idleDelayMs\s*\*\s*2/, 'Outbox exponentially reduces empty poll traffic');
+requirePattern(outbox, /kickPending[\s\S]{0,1200}schedule\(0\)/, 'Outbox preserves an immediate wake even when terminal evidence arrives during an active drain');
+requirePattern(outbox, /enqueueTerminalOutcome[\s\S]{0,3000}withCryptaraSupabasePriority\('high'/, 'Durable terminal-event enqueue outranks background persistence');
+requirePattern(outbox, /claimOne[\s\S]{0,1200}withCryptaraSupabasePriority\('low'/, 'Background outbox claims use low-priority admission');
+requirePattern(outbox, /CRYPTARA_OUTBOX_METRICS_INTERVAL_MS/, 'Outbox metrics are rate-limited independently of queue authority');
+requirePattern(outbox, /databaseBackoffMs[\s\S]{0,900}jitterMs/, 'Outbox database failure retries use bounded jitter');
+
+// Treasury heartbeat cadence/safety is preserved while round trips are reduced.
+requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*15_000/, 'Treasury safety heartbeat cadence remains unchanged');
+requirePattern(treasury, /SELECT\s+id,\s*name\s+FROM\s+vault\.secrets\s+WHERE\s+name\s*=\s*ANY/i, 'Vault ids are resolved in one lookup per synchronization pass');
+requirePattern(treasury, /WITH\s+state\s+AS\s+MATERIALIZED[\s\S]{0,3500}RETURNING\s+state\.desired_state\s+AS\s+prior_state/i, 'Treasury state read and permitted heartbeat transition share one row-locked SQL round trip');
+forbidPattern(treasury, /async\s+function\s+readTreasuryState/, 'Treasury must not reintroduce a separate steady-state read query');
+requirePattern(treasury, /criticalPriorityQuery[\s\S]*markTerminalSweepCandidate|markTerminalSweepCandidate[\s\S]{0,1000}criticalPriorityQuery/, 'SIGTERM terminal-sweep intent remains critical-priority persistence');
+requirePattern(treasury, /databaseBackoffMs[\s\S]{0,900}Math\.random/, 'Treasury failure backoff is jittered across replicas');
+
+// Runtime only consumes migration-owned authority schema.
+requirePattern(outboxMigration, /private\.cryptara_outbox/i, 'Outbox schema remains migration-owned');
+requirePattern(intelligenceMigration, /private\.cryptara_trade_outcomes/i, 'Trade-outcome memory remains migration-owned');
+requirePattern(treasuryMigration, /cryptocrawler_terminal_sweep_control/i, 'Treasury lifecycle control remains migration-owned');
+requirePattern(profitMigration, /cryptocrawler_rainbow_profit_events/i, 'Rainbow profit storage remains migration-owned');
+
+console.log('[supabase-background-pressure] adaptive idle scheduling, collapsed observability/treasury round trips, priority separation, jitter, and migration ownership verified');
