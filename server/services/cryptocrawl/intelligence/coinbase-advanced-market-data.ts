@@ -50,6 +50,8 @@ const CACHE_TTL_MS = Math.max(100, Math.min(2_000, Number(process.env.CRYPTO_COI
 const REQUEST_TIMEOUT_MS = Math.max(1_000, Math.min(10_000, Number(process.env.CRYPTO_COINBASE_BOOK_TIMEOUT_MS || 3_000)));
 const PRODUCT_CACHE_TTL_MS = Math.max(1_000, Math.min(30_000, Number(process.env.CRYPTO_COINBASE_PRODUCT_CACHE_MS || 5_000)));
 const DIRECTORY_CACHE_TTL_MS = Math.max(5_000, Math.min(300_000, Number(process.env.CRYPTO_COINBASE_PRODUCT_DIRECTORY_CACHE_MS || 60_000)));
+const DIRECTORY_PAGE_LIMIT = Math.max(100, Math.min(1_000, Number(process.env.CRYPTO_COINBASE_PRODUCT_DIRECTORY_PAGE_LIMIT || 1_000)));
+const DIRECTORY_MAX_PAGES = Math.max(1, Math.min(100, Number(process.env.CRYPTO_COINBASE_PRODUCT_DIRECTORY_MAX_PAGES || 20)));
 const cache = new Map<string, { expiresAt: number; value: CoinbaseAdvancedProductBook }>();
 const inFlight = new Map<string, Promise<CoinbaseAdvancedProductBook>>();
 const productCache = new Map<string, { expiresAt: number; value: CoinbaseAdvancedProductConstraints }>();
@@ -74,21 +76,14 @@ function parseCoinbaseProductId(productIdInput: unknown): { productId: string; b
   const baseAsset = canonicalAsset(parts[0]);
   const quoteAsset = canonicalAsset(parts[1]);
   if (!baseAsset || !quoteAsset) return null;
-  return {
-    productId: `${baseAsset}-${quoteAsset}`,
-    baseAsset,
-    quoteAsset,
-    symbol: `${baseAsset}${quoteAsset}`,
-  };
+  return { productId: `${baseAsset}-${quoteAsset}`, baseAsset, quoteAsset, symbol: `${baseAsset}${quoteAsset}` };
 }
 
 export function canonicalCoinbaseSymbol(symbolInput: string): string {
   const explicitProduct = parseCoinbaseProductId(symbolInput.replace(/[\/_]/g, '-'));
   if (explicitProduct) return explicitProduct.symbol;
   const compact = symbolInput.trim().toUpperCase().replace(/[-_/]/g, '');
-  if (!compact || !/^[A-Z0-9]+$/.test(compact)) {
-    throw new Error(`Unsupported Coinbase Advanced Trade spot symbol: ${symbolInput}`);
-  }
+  if (!compact || !/^[A-Z0-9]+$/.test(compact)) throw new Error(`Unsupported Coinbase Advanced Trade spot symbol: ${symbolInput}`);
   return compact;
 }
 
@@ -118,10 +113,10 @@ async function fetchCoinbaseProductDirectory(forceFresh = false): Promise<Coinba
     const seenCursors = new Set<string>();
     let cursor = '';
     let pages = 0;
-    do {
+    while (pages < DIRECTORY_MAX_PAGES) {
       const url = new URL('https://api.coinbase.com/api/v3/brokerage/market/products');
       url.searchParams.set('product_type', 'SPOT');
-      url.searchParams.set('limit', '1000');
+      url.searchParams.set('limit', String(DIRECTORY_PAGE_LIMIT));
       if (cursor) url.searchParams.set('cursor', cursor);
       const payload = await fetchJsonWithRetry<any>(url.toString(), {
         init: { headers: { accept: 'application/json', 'cache-control': forceFresh ? 'no-cache' : 'max-age=0' } },
@@ -131,12 +126,14 @@ async function fetchCoinbaseProductDirectory(forceFresh = false): Promise<Coinba
         timeoutMs: REQUEST_TIMEOUT_MS,
       });
       for (const row of Array.isArray(payload?.products) ? payload.products : []) addDirectoryProduct(values, ambiguous, row);
-      const next = typeof payload?.cursor === 'string' ? payload.cursor.trim() : '';
-      pages++;
-      if (!next || next === cursor || seenCursors.has(next)) break;
+      pages += 1;
+      const pagination = payload?.pagination && typeof payload.pagination === 'object' ? payload.pagination : null;
+      const hasNext = pagination?.has_next === true;
+      const next = typeof pagination?.next_cursor === 'string' ? pagination.next_cursor.trim() : '';
+      if (!hasNext || !next || next === cursor || seenCursors.has(next)) break;
       seenCursors.add(next);
       cursor = next;
-    } while (pages < 10);
+    }
 
     const snapshot = { values, expiresAt: Date.now() + DIRECTORY_CACHE_TTL_MS };
     directorySnapshot = snapshot;
@@ -146,6 +143,7 @@ async function fetchCoinbaseProductDirectory(forceFresh = false): Promise<Coinba
       ambiguous: ambiguous.size,
       pages,
       productIdAuthority: 'live_coinbase_product_catalog',
+      paginationAuthority: 'pagination.next_cursor_has_next',
       quoteCurrencyAllowlistUsed: false,
     });
     return snapshot;
@@ -162,18 +160,9 @@ export async function resolveCoinbaseAdvancedProductId(symbolInput: string, forc
   return productId;
 }
 
-/**
- * Synchronous compatibility lookup for call sites that already fetched live
- * Coinbase metadata immediately beforehand. It never guesses a product id from a
- * quote suffix: only a fresh product/constraint cache or live directory may answer.
- */
 export function getCachedCoinbaseAdvancedProductId(symbolInput: string): string | null {
   let symbol: string;
-  try {
-    symbol = canonicalCoinbaseSymbol(symbolInput);
-  } catch {
-    return null;
-  }
+  try { symbol = canonicalCoinbaseSymbol(symbolInput); } catch { return null; }
   const product = productCache.get(symbol);
   if (product && product.expiresAt > Date.now()) return product.value.productId;
   if (directorySnapshot && directorySnapshot.expiresAt > Date.now()) return directorySnapshot.values.get(symbol) || null;
@@ -200,14 +189,10 @@ export function parseCoinbaseAdvancedProductBook(payload: any, requestedSymbol: 
   const productId = typeof pricebook.product_id === 'string' ? pricebook.product_id.trim().toUpperCase() : '';
   const symbol = canonicalSymbol(productId);
   const expectedSymbol = canonicalCoinbaseSymbol(requestedSymbol);
-  if (symbol !== expectedSymbol) {
-    throw new Error(`Coinbase Advanced Trade product mismatch: expected ${expectedSymbol}, received ${symbol || 'unknown'}`);
-  }
+  if (symbol !== expectedSymbol) throw new Error(`Coinbase Advanced Trade product mismatch: expected ${expectedSymbol}, received ${symbol || 'unknown'}`);
   const bids = parseLevels(pricebook.bids).sort((left, right) => right.price - left.price);
   const asks = parseLevels(pricebook.asks).sort((left, right) => left.price - right.price);
-  if (bids.length === 0 || asks.length === 0 || asks[0].price < bids[0].price) {
-    throw new Error('Coinbase Advanced Trade product book has no valid non-crossed bid/ask depth');
-  }
+  if (bids.length === 0 || asks.length === 0 || asks[0].price < bids[0].price) throw new Error('Coinbase Advanced Trade product book has no valid non-crossed bid/ask depth');
   const parsedTime = typeof pricebook.time === 'string' ? Date.parse(pricebook.time) : NaN;
   const observedAt = Number.isFinite(parsedTime) && parsedTime > 0 ? parsedTime : fallbackObservedAt;
   return { venue: 'coinbase', symbol, productId, bid: bids[0].price, ask: asks[0].price, observedAt, bids, asks, source: 'coinbase_advanced_public_product_book' };
@@ -218,9 +203,7 @@ export function parseCoinbaseAdvancedProductConstraints(payload: any, requestedS
   const parsedProduct = parseCoinbaseProductId(productId);
   if (!parsedProduct) throw new Error(`Coinbase Advanced Trade returned unsupported product id: ${productId || 'unknown'}`);
   const expectedSymbol = canonicalCoinbaseSymbol(requestedSymbol);
-  if (parsedProduct.symbol !== expectedSymbol) {
-    throw new Error(`Coinbase Advanced Trade product metadata mismatch: expected ${expectedSymbol}, received ${parsedProduct.symbol}`);
-  }
+  if (parsedProduct.symbol !== expectedSymbol) throw new Error(`Coinbase Advanced Trade product metadata mismatch: expected ${expectedSymbol}, received ${parsedProduct.symbol}`);
 
   const baseIncrement = positive(payload?.base_increment);
   const quoteIncrement = positive(payload?.quote_increment);
@@ -278,11 +261,7 @@ export async function getCoinbaseAdvancedProductBook(symbolInput: string): Promi
     cache.set(symbol, { value, expiresAt: Date.now() + CACHE_TTL_MS });
     return value;
   })().catch(error => {
-    logger.debug('[Coinbase] Advanced Trade product book unavailable', {
-      component: 'CoinbaseAdvancedMarketData',
-      symbol,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.debug('[Coinbase] Advanced Trade product book unavailable', { component: 'CoinbaseAdvancedMarketData', symbol, error: error instanceof Error ? error.message : String(error) });
     throw error;
   }).finally(() => inFlight.delete(symbol));
 
@@ -311,12 +290,7 @@ export async function getCoinbaseAdvancedProductConstraints(symbolInput: string,
     productCache.set(symbol, { value, expiresAt: Date.now() + PRODUCT_CACHE_TTL_MS });
     return value;
   })().catch(error => {
-    logger.debug('[Coinbase] Advanced Trade product constraints unavailable', {
-      component: 'CoinbaseAdvancedMarketData',
-      symbol,
-      forceFresh,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.debug('[Coinbase] Advanced Trade product constraints unavailable', { component: 'CoinbaseAdvancedMarketData', symbol, forceFresh, error: error instanceof Error ? error.message : String(error) });
     throw error;
   }).finally(() => productInFlight.delete(symbol));
 
