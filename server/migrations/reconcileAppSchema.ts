@@ -43,7 +43,7 @@ const CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES = [
   'private.cryptocrawler_funding_lifecycles',
 ] as const;
 
-class CryptocrawlerAuthoritySchemaError extends Error {
+export class CryptocrawlerAuthoritySchemaError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CryptocrawlerAuthoritySchemaError';
@@ -87,7 +87,7 @@ async function verifyCryptocrawlerAuthoritySchemaOnce(): Promise<void> {
   }
 }
 
-async function requireCryptocrawlerAuthoritySchema(maxAttempts = 6): Promise<void> {
+export async function requireCryptocrawlerAuthoritySchema(maxAttempts = 6): Promise<void> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -102,6 +102,14 @@ async function requireCryptocrawlerAuthoritySchema(maxAttempts = 6): Promise<voi
   }
   const message = lastError instanceof Error ? lastError.message : String(lastError || 'unknown schema verification failure');
   throw new CryptocrawlerAuthoritySchemaError(`CryptoCrawler authority schema readiness failed after ${maxAttempts} attempts: ${message}`);
+}
+
+function schemaFailureResult(error: unknown): SchemaMigrationResult {
+  return {
+    name: 'CryptoCrawler authority schema readiness',
+    success: false,
+    error: error instanceof Error ? error.message : String(error),
+  };
 }
 
 const migrationSteps: MigrationStep[] = [
@@ -203,14 +211,27 @@ export async function runAllSchemaMigrations(options?: {
     );
     ownsMigrationLock = lockResult.rows?.[0]?.acquired === true;
     if (!ownsMigrationLock) {
-      // Another replica may be applying the authority migrations. This replica
-      // may skip duplicate DDL only after the required schema becomes observable.
-      await requireCryptocrawlerAuthoritySchema();
-      return [{
-        name: 'Startup migration coordinator',
-        success: true,
-        message: 'Another live replica reconciled schema; required CryptoCrawler authority schema verified before readiness.',
-      }];
+      // Another replica may be applying the authority migrations. Verify briefly
+      // for startup telemetry, but do not make unrelated application availability
+      // depend on CryptoCrawler schema. CryptoCrawler start has the hard gate.
+      try {
+        await requireCryptocrawlerAuthoritySchema(3);
+        return [{
+          name: 'Startup migration coordinator',
+          success: true,
+          message: 'Another live replica reconciled schema; required CryptoCrawler authority schema verified.',
+        }];
+      } catch (error) {
+        if (!continueOnError) throw error;
+        return [
+          {
+            name: 'Startup migration coordinator',
+            success: true,
+            message: 'Another live replica owns schema reconciliation; CryptoCrawler remains fail-closed until authority schema verifies.',
+          },
+          schemaFailureResult(error),
+        ];
+      }
     }
 
     for (const step of migrationSteps) {
@@ -240,29 +261,40 @@ export async function runAllSchemaMigrations(options?: {
       }
     }
 
-    // Noncritical compatibility migrations may remain warning-only, but the
-    // execution-critical authority schema is a hard readiness condition.
-    await requireCryptocrawlerAuthoritySchema();
-    results.push({
-      name: 'CryptoCrawler authority schema readiness',
-      success: true,
-      message: 'All execution-critical migration-owned tables are present.',
-    });
+    try {
+      await requireCryptocrawlerAuthoritySchema(1);
+      results.push({
+        name: 'CryptoCrawler authority schema readiness',
+        success: true,
+        message: 'All execution-critical migration-owned tables are present.',
+      });
+    } catch (error) {
+      results.push(schemaFailureResult(error));
+      if (!continueOnError) throw error;
+    }
     return results;
   } catch (error: any) {
-    if (error instanceof CryptocrawlerAuthoritySchemaError) throw error;
     if (!continueOnError) throw error;
 
-    // Coordination can fail independently of the ordinary transaction lane.
-    // Proceed only if the migration-owned authority schema is already complete;
-    // otherwise convert the deployment into a hard readiness failure.
-    await requireCryptocrawlerAuthoritySchema();
-    return [{
+    // Coordination can fail independently of the ordinary application database.
+    // Report the fault without taking down unrelated services. CryptoCrawler's
+    // start authority independently requires the complete schema before runtime.
+    const fallback: SchemaMigrationResult[] = [{
       name: 'Startup migration coordinator',
       success: false,
       error: error?.message ?? String(error),
-      message: 'Migration coordinator unavailable, but required CryptoCrawler authority schema was independently verified.',
     }];
+    try {
+      await requireCryptocrawlerAuthoritySchema(1);
+      fallback.push({
+        name: 'CryptoCrawler authority schema readiness',
+        success: true,
+        message: 'Coordinator unavailable, but required CryptoCrawler authority schema independently verified.',
+      });
+    } catch (schemaError) {
+      fallback.push(schemaFailureResult(schemaError));
+    }
+    return fallback;
   } finally {
     if (coordinator) {
       if (ownsMigrationLock) {
