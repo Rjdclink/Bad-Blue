@@ -40,14 +40,68 @@ function positive(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function canonicalSymbol(value: string): string | null {
-  const compact = value.trim().toUpperCase().replace(/[\/_-]/g, '');
-  const match = compact.match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
-  if (!match) return null;
-  let base = match[1];
-  if (base === 'XBT') base = 'BTC';
-  if (base === 'XDG') base = 'DOGE';
-  return `${base}${match[2]}`;
+function canonicalAsset(value: unknown): string | null {
+  let asset = String(value ?? '').trim().toUpperCase();
+  if (!asset) return null;
+  asset = asset.replace(/[^A-Z0-9]/g, '');
+  if (!asset) return null;
+  if (asset === 'XBT') return 'BTC';
+  if (asset === 'XDG') return 'DOGE';
+  return asset;
+}
+
+function canonicalKrakenAsset(value: unknown): string | null {
+  let asset = String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!asset) return null;
+  // Kraken's legacy asset codes commonly prefix old assets/currencies with X/Z.
+  // Strip only the known one-character legacy namespace shape; never infer a
+  // quote currency from a suffix list.
+  if ((asset.startsWith('X') || asset.startsWith('Z')) && asset.length === 4) asset = asset.slice(1);
+  if (asset === 'XBT') return 'BTC';
+  if (asset === 'XDG') return 'DOGE';
+  return canonicalAsset(asset);
+}
+
+function canonicalPair(baseInput: unknown, quoteInput: unknown, kraken = false): string | null {
+  const normalize = kraken ? canonicalKrakenAsset : canonicalAsset;
+  const base = normalize(baseInput);
+  const quote = normalize(quoteInput);
+  if (!base || !quote) return null;
+  return `${base}${quote}`;
+}
+
+function canonicalDelimitedPair(value: unknown, kraken = false): string | null {
+  const raw = String(value ?? '').trim().toUpperCase();
+  if (!raw) return null;
+  const parts = raw.split(/[\/_-]/).filter(Boolean);
+  return parts.length === 2 ? canonicalPair(parts[0], parts[1], kraken) : null;
+}
+
+/**
+ * Lookup normalization accepts any live base/quote combination. Concatenated
+ * canonical symbols are preserved; venue aliases are normalized only where the
+ * mapping is deterministic. Product support itself comes from the live snapshot.
+ */
+function canonicalLookupSymbol(value: string): string | null {
+  const delimited = canonicalDelimitedPair(value);
+  if (delimited) return delimited;
+  let compact = value.trim().toUpperCase().replace(/[\/_-]/g, '');
+  if (!compact || !/^[A-Z0-9]+$/.test(compact)) return null;
+  if (compact.startsWith('XBT')) compact = `BTC${compact.slice(3)}`;
+  if (compact.startsWith('XDG')) compact = `DOGE${compact.slice(3)}`;
+  return compact;
+}
+
+function canonicalKrakenProduct(row: Record<string, unknown>): string | null {
+  const fromWsName = canonicalDelimitedPair(row.wsname, true);
+  if (fromWsName) return fromWsName;
+  return canonicalPair(row.base, row.quote, true);
+}
+
+function canonicalOkxProduct(raw: Record<string, unknown>): string | null {
+  const fromFields = canonicalPair(raw.baseCcy, raw.quoteCcy);
+  if (fromFields) return fromFields;
+  return canonicalDelimitedPair(raw.instId);
 }
 
 function powerOfTenIncrement(decimals: unknown): number | null {
@@ -80,7 +134,7 @@ async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
       const state = typeof row.status === 'string' ? row.status.trim().toLowerCase() : 'online';
       if (state !== 'online') continue;
       const exchangeSymbol = typeof row.altname === 'string' && row.altname.trim() ? row.altname.trim().toUpperCase() : responseKey;
-      const symbol = canonicalSymbol(String(row.altname || row.wsname || exchangeSymbol));
+      const symbol = canonicalKrakenProduct(row);
       if (!symbol || ambiguous.has(symbol)) continue;
       const baseIncrement = powerOfTenIncrement(row.lot_decimals);
       const priceIncrement = powerOfTenIncrement(row.pair_decimals);
@@ -115,6 +169,8 @@ async function fetchKrakenSnapshot(): Promise<ConstraintSnapshot> {
       component: 'CexSpotProductPolicy',
       products: values.size,
       ambiguous: ambiguous.size,
+      canonicalizationAuthority: 'live_base_quote_fields_or_wsname',
+      quoteCurrencyAllowlistUsed: false,
       unpublishedSingleOrderMaxTreatedAsUnlimited: true,
     });
     return snapshot;
@@ -137,15 +193,17 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
     if (String(payload?.code) !== '0') throw new Error(`OKX SPOT instrument constraints failed: ${String(payload?.code)} ${String(payload?.msg || '')}`.trim());
     const values = new Map<string, SpotProductConstraints>();
     const observedAt = Date.now();
-    for (const raw of Array.isArray(payload?.data) ? payload.data : []) {
-      const exchangeSymbol = typeof raw?.instId === 'string' ? raw.instId.trim().toUpperCase() : '';
-      const symbol = canonicalSymbol(exchangeSymbol);
+    for (const rawValue of Array.isArray(payload?.data) ? payload.data : []) {
+      const raw = rawValue && typeof rawValue === 'object' ? rawValue as Record<string, unknown> : null;
+      if (!raw) continue;
+      const exchangeSymbol = typeof raw.instId === 'string' ? raw.instId.trim().toUpperCase() : '';
+      const symbol = canonicalOkxProduct(raw);
       if (!symbol) continue;
-      const state = typeof raw?.state === 'string' ? raw.state.trim().toLowerCase() : '';
+      const state = typeof raw.state === 'string' ? raw.state.trim().toLowerCase() : '';
       if (state !== 'live') continue;
-      const baseIncrement = positive(raw?.lotSz);
-      const priceIncrement = positive(raw?.tickSz);
-      const baseMinSize = positive(raw?.minSz);
+      const baseIncrement = positive(raw.lotSz);
+      const priceIncrement = positive(raw.tickSz);
+      const baseMinSize = positive(raw.minSz);
       if (baseIncrement === null || priceIncrement === null || baseMinSize === null) continue;
       values.set(symbol, {
         venue: 'okx',
@@ -157,8 +215,8 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
         quoteMinSize: null,
         // OKX documents these as current per-order maximums for SPOT. They are
         // child-order split inputs, never a parent strategy/notional ceiling.
-        baseMaxSize: positive(raw?.maxLmtSz),
-        quoteMaxSize: positive(raw?.maxLmtAmt),
+        baseMaxSize: positive(raw.maxLmtSz),
+        quoteMaxSize: positive(raw.maxLmtAmt),
         state: 'live',
         observedAt,
         source: 'okx_public_instruments',
@@ -170,6 +228,8 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
       component: 'CexSpotProductPolicy',
       baseUrl,
       products: values.size,
+      canonicalizationAuthority: 'live_baseCcy_quoteCcy_fields',
+      quoteCurrencyAllowlistUsed: false,
       perOrderMaximumsCaptured: true,
     });
     return snapshot;
@@ -178,7 +238,7 @@ async function fetchOkxSnapshot(): Promise<ConstraintSnapshot> {
 }
 
 export async function getSpotProductConstraints(venue: ConstrainedSpotVenue, symbolInput: string): Promise<SpotProductConstraints> {
-  const symbol = canonicalSymbol(symbolInput);
+  const symbol = canonicalLookupSymbol(symbolInput);
   if (!symbol) throw new Error(`Unsupported ${venue} SPOT symbol ${symbolInput}`);
   const snapshot = venue === 'kraken' ? await fetchKrakenSnapshot() : await fetchOkxSnapshot();
   const constraint = snapshot.values.get(symbol);
