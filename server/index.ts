@@ -167,67 +167,98 @@ async function gracefulShutdown(signal: string): Promise<void> {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-async function retryAsync<T>(
-  fn: () => Promise<T>,
-  maxRetries: number = 3,
-  delayMs: number = 1000,
-  backoffMultiplier: number = 2
-): Promise<T> {
-  let lastError: Error | undefined;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+function databaseRetryDelayMs(attempt: number, baseMs: number = 2_000, maxMs: number = 12_000): number {
+  const capMs = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, attempt - 1)));
+  const floorMs = Math.min(500, Math.max(100, Math.floor(capMs / 4)));
+  return floorMs + Math.floor(Math.random() * Math.max(1, capMs - floorMs + 1));
+}
+
+function databaseErrorText(error: unknown): string {
+  if (error instanceof Error) return error.message.toLowerCase();
+  return String(error ?? '').toLowerCase();
+}
+
+function isDatabaseAdmissionPressureError(error: unknown): boolean {
+  const code = String((error as any)?.code ?? '').toUpperCase();
+  const message = databaseErrorText(error);
+  return (
+    code === '53300' || // PostgreSQL too_many_connections
+    code === '57P03' || // cannot_connect_now / transient admission failure
+    code === 'ETIMEDOUT' ||
+    message.includes('connection timeout') ||
+    message.includes('connection terminated due to connection timeout') ||
+    message.includes('failed to connect to database: {:error, :timeout}') ||
+    message.includes('too many connections') ||
+    message.includes('too many clients') ||
+    message.includes('remaining connection slots') ||
+    message.includes('max_client_conn') ||
+    message.includes('database is overloaded') ||
+    message.includes('timeout expired')
+  );
+}
+
+async function retryDatabaseProbe(maxAttempts: number = 3): Promise<void> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return await fn();
+      const { db } = await import('./db');
+      await db.execute('SELECT 1');
+      return;
     } catch (error: any) {
       lastError = error;
-      console.warn(`[RETRY] Attempt ${attempt}/${maxRetries} failed:`, error?.message ?? error);
-      
-      if (attempt < maxRetries) {
-        const waitTime = delayMs * Math.pow(backoffMultiplier, attempt - 1);
-        console.log(`[RETRY] Waiting ${waitTime}ms before retry...`);
+      console.warn(`[RETRY] Database probe ${attempt}/${maxAttempts} failed:`, error?.message ?? error);
+      if (attempt < maxAttempts) {
+        const waitTime = databaseRetryDelayMs(attempt);
+        console.log(`[RETRY] Database admission backoff ${waitTime}ms before retry...`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
   }
-  
-  throw lastError;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'database probe failed'));
 }
 
 async function initializeDatabase(): Promise<boolean> {
   startupTrace('database_initialization_started');
   console.log('[STARTUP] Stage 1: Database connection...');
   
+  let lastError: unknown = null;
   try {
-    await retryAsync(async () => {
-      const { db } = await import('./db');
-      await db.execute('SELECT 1');
-    }, 3, 2000);
+    await retryDatabaseProbe(3);
     console.log('[STARTUP] ✓ Database connection verified');
     startupTrace('database_initialization_completed', { connected: true, recovered: false });
     return true;
   } catch (error: any) {
+    lastError = error;
     console.error('[STARTUP] ❌ Database connection failed after retries:', error?.message ?? error);
-    console.log('[STARTUP] Attempting pool reset...');
-    
+  }
+
+  // Pool recreation is useful for a locally closed/corrupt pool, but it is an
+  // anti-pattern when the upstream database/pooler is overloaded. In that case
+  // recreating both pools immediately adds fresh connection demand and can turn
+  // a recoverable admission event into a retry storm.
+  if (!isDatabaseAdmissionPressureError(lastError)) {
+    console.log('[STARTUP] Local pool failure detected; attempting one bounded pool reset...');
     try {
       const { resetPool } = await import('./db');
       await resetPool();
-      
-      const { db } = await import('./db');
-      await db.execute('SELECT 1');
       console.log('[STARTUP] ✓ Database pool reset successful');
       startupTrace('database_initialization_completed', { connected: true, recovered: true });
       return true;
     } catch (resetError: any) {
+      lastError = resetError;
       console.error('[STARTUP] ❌ Database pool reset failed:', resetError?.message ?? resetError);
-      console.warn('[STARTUP] Starting with degraded database connectivity');
-      startupTrace('database_initialization_completed', {
-        connected: false,
-        error: resetError?.message ?? String(resetError),
-      });
-      return false;
     }
+  } else {
+    console.warn('[STARTUP] Database admission pressure detected; skipping pool reset to avoid connection churn');
   }
+
+  console.warn('[STARTUP] Database unavailable; deployment remains unready while the previous Railway deployment can continue serving');
+  startupTrace('database_initialization_completed', {
+    connected: false,
+    admissionPressure: isDatabaseAdmissionPressureError(lastError),
+    error: lastError instanceof Error ? lastError.message : String(lastError),
+  });
+  return false;
 }
 
 async function runMigrations(): Promise<void> {
@@ -416,8 +447,8 @@ app.get("/api/health", (req, res) => {
           ? 'starting'
           : 'initializing';
 
-  // Railway liveness must not wait on a database probe. Core database readiness
-  // is recorded by startup initialization and strict readiness remains /api/ready.
+  // Cheap runtime liveness intentionally does not wait on a database probe.
+  // Railway deployment admission is the strict /api/ready endpoint below.
   const httpStatus = isReady && !startupError ? 200 : 503;
 
   res.status(httpStatus).json({
@@ -455,15 +486,17 @@ app.get("/api/health", (req, res) => {
 startupTrace('health_route_registered');
 
 app.get("/api/ready", (_req, res) => {
-  // /api/ready returns 200 only when FULLY initialized (all migrations + services)
-  // /api/health is the Railway liveness endpoint; this endpoint is strict readiness.
-  if (isFullyInitialized && !isShuttingDown && !startupError) {
-    res.status(200).json({ ready: true, fullyInitialized: true });
+  // Railway promotes a deployment only after this endpoint returns 200.
+  // Database admission is explicit even though full initialization also depends on it.
+  if (isFullyInitialized && databaseInitialized && !isShuttingDown && !startupError) {
+    res.status(200).json({ ready: true, fullyInitialized: true, databaseInitialized: true });
   } else {
     res.status(503).json({ 
-      ready: isReady, 
+      ready: isReady,
       fullyInitialized: isFullyInitialized,
-      shuttingDown: isShuttingDown 
+      databaseInitialized,
+      shuttingDown: isShuttingDown,
+      startupError,
     });
   }
 });
@@ -519,13 +552,45 @@ httpServer = createServer(app);
     });
   });
 
+  // Bootstrap admission is intentionally serialized before the heavyweight route
+  // graph is imported. Several route modules schedule autonomous/background work
+  // at module load; importing them before Stage 1 was proven caused optional DB
+  // consumers and CryptoCrawler admission probes to compete with the one query
+  // whose job was to establish database readiness.
+  try {
+    const databaseReady = await initializeDatabase();
+    if (!databaseReady) {
+      throw new Error('Database initialization did not establish a usable connection');
+    }
+    databaseInitialized = true;
+
+    await runMigrations();
+
+    const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
+    await initializeGovernance();
+
+    // A deployment must not be promoted if it merely connects to the wrong or
+    // incomplete database. Keep Railway on the previous deployment until the
+    // production schema is actually usable.
+    const { runStartupSchemaVerification } = await import('./db');
+    const schemaReady = await runStartupSchemaVerification();
+    if (!schemaReady) {
+      throw new Error('Startup schema verification did not establish the required production schema');
+    }
+  } catch (error) {
+    startupError = error instanceof Error ? error.message : String(error);
+    startupTrace('core_initialization_failed', { error: startupError });
+    console.error('[STARTUP] ❌ Core initialization failed:', error);
+    return;
+  }
+
 startupTrace('routes_import_started');
 const { registerRoutes } = await import("./routes");
 startupTrace('routes_import_completed');
 startupTrace('routes_registration_started');
 await registerRoutes(app);
 startupTrace('routes_registration_completed');
-  // Routes may initialize optional subsystems; keep Railway liveness independent.
+  // Heavy route-owned subsystems can now initialize against a proven database.
   
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -593,44 +658,17 @@ startupTrace('routes_registration_completed');
     startupTrace('static_serving_completed');
   }
 
-(async () => {
+  try {
+    await initializeServices();
     
-  // Continue initialization after binding; /api/ready remains unavailable until it completes.
-    try {
-      // Database and migrations are required before the application is fully ready.
-      const databaseReady = await initializeDatabase();
-      if (!databaseReady) {
-        throw new Error('Database initialization did not establish a usable connection');
-      }
-      databaseInitialized = true;
-      
-      await runMigrations();
-
-      const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
-      await initializeGovernance();
-      
-      // Run startup schema verification to confirm correct database connection
-      const { runStartupSchemaVerification } = await import('./db');
-      await runStartupSchemaVerification();
-    } catch (error) {
-      startupError = error instanceof Error ? error.message : String(error);
-      startupTrace('core_initialization_failed', { error: startupError });
-      console.error('[STARTUP] ❌ Core initialization failed:', error);
-      return;
-    }
-
-    try {
-      await initializeServices();
-      
-      isFullyInitialized = true;
-      startupTrace('application_ready');
-      console.log('[STARTUP] ✓ Server fully initialized and ready');
-    } catch (error) {
-      backgroundInitializationError = error instanceof Error ? error.message : String(error);
-      startupTrace('background_initialization_failed', { error: backgroundInitializationError });
-      console.error('[STARTUP] ⚠ Background initialization failed:', error);
-    }
-  })();
+    isFullyInitialized = true;
+    startupTrace('application_ready');
+    console.log('[STARTUP] ✓ Server fully initialized and ready');
+  } catch (error) {
+    backgroundInitializationError = error instanceof Error ? error.message : String(error);
+    startupTrace('background_initialization_failed', { error: backgroundInitializationError });
+    console.error('[STARTUP] ⚠ Background initialization failed:', error);
+  }
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error);
     startupTrace('bootstrap_failed_before_listening', { error: startupError });
