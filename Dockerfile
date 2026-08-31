@@ -28,8 +28,10 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Build application (requires dev dependencies)
-RUN npm run build && \
+# Diagnostic only: run the explicit build script while suppressing npm pre/post
+# lifecycle hooks. This branch is never mergeable; it separates verifier failure
+# from Vite/esbuild/Docker failure without weakening PR #499 or production.
+RUN npm_config_ignore_scripts=true npm run build && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
 
