@@ -93,6 +93,13 @@ let krakenDbFailureCount = 0;
 let krakenDbBreakerOpenUntil = 0;
 let krakenDbLastError: string | null = null;
 
+class KrakenPostCoordinationError extends Error {
+  constructor(readonly causeError: unknown) {
+    super(causeError instanceof Error ? causeError.message : String(causeError));
+    this.name = 'KrakenPostCoordinationError';
+  }
+}
+
 function nextKrakenNonce(): string {
   const nonce = Math.max(Date.now(), krakenLastNonce + 1);
   krakenLastNonce = nonce;
@@ -154,7 +161,7 @@ async function ensureKrakenDistributedState(): Promise<void> {
 
   krakenDistributedStateReady = (async () => {
     try {
-      const result = await queryCoordinationDatabase<any>(
+      const result = await queryCoordinationDatabase(
         `SELECT to_regclass('private.cryptocrawler_kraken_nonce_state') IS NOT NULL AS ready`,
       );
       if (result.rows?.[0]?.ready !== true) {
@@ -206,9 +213,18 @@ async function withKrakenDistributedLane<T>(
       const numericNonce = Number(nonce);
       if (Number.isSafeInteger(numericNonce)) krakenLastNonce = Math.max(krakenLastNonce, numericNonce);
       recordKrakenDatabaseSuccess();
-      return operation(nonce);
+
+      // Network/exchange failures occur after nonce authority is proven. Keep the
+      // session lock until submission finishes, but never misclassify those errors
+      // as database failures or open the database breaker.
+      try {
+        return await operation(nonce);
+      } catch (error) {
+        throw new KrakenPostCoordinationError(error);
+      }
     }, { acquireTimeoutMs: KRAKEN_LOCK_ACQUIRE_TIMEOUT_MS });
   } catch (error) {
+    if (error instanceof KrakenPostCoordinationError) throw error.causeError;
     recordKrakenDatabaseFailure(error);
     throw error;
   }
@@ -385,6 +401,7 @@ function okxBaseUrlCandidates(): string[] {
 
 function laneIntervalMs(lane: OkxPrivateLane): number {
   if (lane === 'trade_fee') {
+    if (!isDatabaseConfigured) return OKX_FEE_MIN_INTERVAL_MS;
     return isCoordinationDatabaseConfigured
       ? OKX_FEE_MIN_INTERVAL_MS
       : OKX_FEE_MIN_INTERVAL_MS * OKX_REPLICA_SAFETY_FACTOR;
@@ -435,9 +452,6 @@ async function executeStartedLaneOperation<T>(lane: OkxPrivateLane, operation: (
   state.lastStartedAt = startedAt;
   const result = await operation();
 
-  // When the trade-fee lane is globally locked, retain the lock until one full
-  // start interval has elapsed. This creates a User-ID-wide start-rate ceiling
-  // across replicas without coupling the independent order-write lane to fees.
   if (lane === 'trade_fee' && isCoordinationDatabaseConfigured) {
     await sleep(Math.max(0, startedAt + OKX_FEE_MIN_INTERVAL_MS - Date.now()));
   }
