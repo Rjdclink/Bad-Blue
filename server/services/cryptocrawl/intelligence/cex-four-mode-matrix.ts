@@ -49,8 +49,9 @@ function authenticatedFee(evidence: CexFeeEvidence | null, mode: CexLegMode): nu
   return null;
 }
 
-async function evidence(venue: CexFeeVenue, symbol: string): Promise<CexFeeEvidence | null> {
-  return getCachedCexFeeEvidence(venue, symbol) || await resolveCexFeeEvidence(venue, symbol).catch(() => null);
+async function evidence(venue: CexFeeVenue, symbol: string, maxAgeMs: number): Promise<CexFeeEvidence | null> {
+  return getCachedCexFeeEvidence(venue, symbol, maxAgeMs)
+    || await resolveCexFeeEvidence(venue, symbol, { maxAgeMs }).catch(() => null);
 }
 
 function modes(): Array<{ mode: CexFourMode; buyMode: CexLegMode; sellMode: CexLegMode }> {
@@ -101,16 +102,18 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
 export async function evaluateCexFourModeMatrix(input: {
   symbol: string;
   maxQuoteAgeMs?: number;
+  maxFeeAgeMs?: number;
 }): Promise<CexModeEconomics[]> {
   const symbol = input.symbol.trim().toUpperCase();
   const maxQuoteAgeMs = Math.max(250, Math.min(15_000, Number(input.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000)));
+  const maxFeeAgeMs = Math.max(5_000, Math.min(300_000, Number(input.maxFeeAgeMs || process.env.CRYPTOCRAWL_CEX_FOUR_MODE_FEE_MAX_AGE_MS || 60_000)));
   const venues = getActiveExecutableQuoteVenues() as CexFeeVenue[];
   if (venues.length < 2) return [];
 
   const observations = await Promise.all(venues.map(async venue => {
     const [book, fee] = await Promise.all([
       cexOrderBookStreams.getQuote(venue as CexStreamVenue, symbol, maxQuoteAgeMs).catch(() => null),
-      evidence(venue, symbol),
+      evidence(venue, symbol, maxFeeAgeMs),
     ]);
     return { venue, book, fee };
   }));
@@ -126,7 +129,7 @@ export async function evaluateCexFourModeMatrix(input: {
   if (usableVenues.length < 2) return [];
 
   const ttlMs = Math.max(2_000, Math.min(30_000, Number(process.env.CRYPTO_ARBITRAGE_MAKER_TTL_MS || 30_000)));
-  const feeFreshnessHalfLifeMs = Math.max(5_000, Math.min(30 * 60_000, Number(process.env.CRYPTOCRAWL_CEX_FEE_FRESHNESS_HALF_LIFE_MS || 300_000)));
+  const feeFreshnessHalfLifeMs = Math.max(5_000, Math.min(30 * 60_000, Number(process.env.CRYPTOCRAWL_CEX_FEE_FRESHNESS_HALF_LIFE_MS || maxFeeAgeMs)));
   const floorBps = observationFloorBps();
   const output: CexModeEconomics[] = [];
 
