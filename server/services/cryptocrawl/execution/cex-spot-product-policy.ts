@@ -35,6 +35,17 @@ export interface LiveSpotProductDirectory {
   symbols: string[];
 }
 
+export class SpotProductUnavailableError extends Error {
+  constructor(
+    readonly venue: ConstrainedSpotVenue,
+    readonly symbol: string,
+    readonly reason: 'invalid_symbol' | 'recently_absent' | 'absent_from_authoritative_catalog',
+  ) {
+    super(`${venue} SPOT product ${symbol} unavailable: ${reason}`);
+    this.name = 'SpotProductUnavailableError';
+  }
+}
+
 interface ConstraintSnapshot {
   observedAt: number;
   expiresAt: number;
@@ -376,11 +387,11 @@ export async function getSpotProductConstraints(
   forceFresh = false,
 ): Promise<SpotProductConstraints> {
   const symbol = canonicalLookupSymbol(symbolInput);
-  if (!symbol) throw new Error(`Unsupported ${venue} SPOT symbol ${symbolInput}`);
+  if (!symbol) throw new SpotProductUnavailableError(venue, symbolInput, 'invalid_symbol');
   const negativeKey = `${venue}:${symbol}`;
   const negativeUntil = unsupportedUntil.get(negativeKey) || 0;
   if (!forceFresh && negativeUntil > Date.now()) {
-    throw new Error(`${venue} SPOT product ${symbol} was absent from a recently authoritative live catalog`);
+    throw new SpotProductUnavailableError(venue, symbol, 'recently_absent');
   }
 
   let snapshot = venue === 'kraken'
@@ -399,7 +410,7 @@ export async function getSpotProductConstraints(
     }
     if (!constraint) {
       unsupportedUntil.set(negativeKey, Date.now() + NEGATIVE_TTL_MS);
-      throw new Error(`${venue} SPOT product ${symbol} has no current live execution constraints in the authoritative catalog`);
+      throw new SpotProductUnavailableError(venue, symbol, 'absent_from_authoritative_catalog');
     }
   }
   unsupportedUntil.delete(negativeKey);
