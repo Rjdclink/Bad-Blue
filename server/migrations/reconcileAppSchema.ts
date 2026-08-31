@@ -16,6 +16,7 @@ import { runFreeAccessMigration } from './freeAccessForAll';
 import { runSquareMigration } from './runSquareMigration';
 import ensureSchemaSync from '../ensureSchema';
 import { pool } from '../db';
+import { coordinationPool } from '../db-coordination';
 
 export interface SchemaMigrationResult {
   name: string;
@@ -62,21 +63,22 @@ function finiteIntegerEnv(name: string, fallback: number, min: number, max: numb
 
 /**
  * Railway performs overlapping rolling deploys. Supabase session mode exposes a
- * finite per-user client ceiling, so the incoming replica temporarily leaves
- * enough headroom for the outgoing replica and control-plane sessions. Once the
- * overlap window has passed, restore the canonical steady-state pool capacity.
- * This mutates the one shared Pool; no duplicate database authority is created.
+ * finite per-user client ceiling. Keep the ordinary query pool bounded below the
+ * observed shared-session ceiling and reserve the dedicated coordination pool for
+ * session-level advisory locks. This avoids the previous two-replica 8+8 demand
+ * pattern while preserving a configurable escape hatch for measured capacity.
  */
 function applyRollingDeploymentPoolHeadroom(): void {
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_ID) return;
   const options = (pool as any)?.options;
   if (!options) return;
 
-  const existingSteadyMax = Math.max(2, Math.trunc(Number(options.max) || 8));
-  const steadyMax = finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', existingSteadyMax, 2, 12);
+  const existingMax = Math.max(2, Math.trunc(Number(options.max) || 8));
+  const steadyDefault = Math.min(existingMax, 4);
+  const steadyMax = finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', steadyDefault, 2, 6);
   const rolloutMax = Math.min(
     steadyMax,
-    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', 5, 2, 6),
+    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', 3, 2, 4),
   );
   const rolloutWindowMs = finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS', 90_000, 30_000, 300_000);
   const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 1;
@@ -89,11 +91,11 @@ function applyRollingDeploymentPoolHeadroom(): void {
   const restore = setTimeout(() => {
     options.max = steadyMax;
     options.min = originalMin;
-    console.log(`[DATABASE] Rolling-deploy headroom released (steady max=${options.max}, min=${options.min})`);
+    console.log(`[DATABASE] Rolling-deploy headroom released (steady ordinary max=${options.max}, min=${options.min}, dedicated coordination pool separate)`);
   }, rolloutWindowMs);
   restore.unref?.();
 
-  console.log(`[DATABASE] Rolling-deploy pool headroom active (rollout max=${rolloutMax}, steady max=${steadyMax}, windowMs=${rolloutWindowMs})`);
+  console.log(`[DATABASE] Rolling-deploy pool headroom active (ordinary rollout max=${rolloutMax}, ordinary steady max=${steadyMax}, windowMs=${rolloutWindowMs}, coordination lane=dedicated)`);
 }
 
 applyRollingDeploymentPoolHeadroom();
@@ -107,7 +109,7 @@ export async function runAllSchemaMigrations(options?: {
   let ownsMigrationLock = false;
 
   try {
-    coordinator = await pool.connect();
+    coordinator = await coordinationPool.connect();
     const lockResult = await coordinator.query(
       'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired',
       [STARTUP_MIGRATION_LOCK],
