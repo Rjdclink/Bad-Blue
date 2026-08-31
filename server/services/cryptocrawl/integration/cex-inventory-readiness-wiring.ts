@@ -147,7 +147,8 @@ async function refreshOnce(): Promise<void> {
     payoutReservedAssets: metrics.payoutReservedAssets,
     zeroBalanceRowsExcludedFromReadinessPressure: true,
     payoutShareExcludedFromNewTradeSpendability: true,
-    retainedShareRemainsSpendable: true,
+    automaticProfitPayoutDefault: false,
+    unreservedRetainedProfitAvailableToStrategies: true,
     inventoryFreshnessShare: latest.inventoryFreshnessShare,
     nextRefreshMs: latest.nextRefreshMs,
     proactiveHydration: true,
@@ -194,10 +195,12 @@ export function ensureCexInventoryReadinessWiring(): void {
     privateRequestDeduplication: 'one_in_flight_cycle',
     liveExecutionPreparation: true,
     payoutReservationsProtectedFromNewOrders: true,
-    retainedFortyPercentAvailableToStrategies: true,
+    automaticProfitPayoutRequiresExplicitOptIn: true,
+    unreservedRetainedProfitAvailableToStrategies: true,
     stageManagerAuthorityPreserved: true,
     strictPositiveNetAuthorityPreserved: true,
     executionAuthority: false,
+    syntheticBalancesAllowed: false,
   });
 }
 
