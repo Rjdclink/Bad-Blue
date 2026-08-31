@@ -106,6 +106,8 @@ const sessionFallbackPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_SESSION_FA
 const mainPoolMax = ordinaryUsesTransactionPool
   ? requestedMainPoolMax
   : Math.min(requestedMainPoolMax, sessionFallbackPoolMax);
+const configuredSteadyMainPoolMax = boundedPoolInt(process.env.BADBLUE_DATABASE_POOL_MAX, mainPoolMax, 1, mainPoolMax);
+const rolloutHeadroomWindowMs = boundedPoolInt(process.env.BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS, 90_000, 30_000, 300_000);
 const coordinationPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_COORDINATION_POOL_MAX, 1, 1, 2);
 
 if (transactionDatabaseUrl) {
@@ -233,6 +235,11 @@ function attachPoolErrorHandlers(): void {
 
 attachPoolErrorHandlers();
 
+function effectivePoolMax(targetPool: any, fallback: number): number {
+  const configured = Number(targetPool?.options?.max);
+  return Number.isFinite(configured) ? Math.max(1, Math.trunc(configured)) : fallback;
+}
+
 /**
  * Get current connection pool statistics for monitoring
  * Useful for debugging connection pool exhaustion issues
@@ -247,7 +254,7 @@ export function getPoolStats(): {
     total: pool.totalCount,
     idle: pool.idleCount,
     waiting: pool.waitingCount,
-    max: mainPoolMax,
+    max: effectivePoolMax(pool, mainPoolMax),
   };
 }
 
@@ -261,7 +268,7 @@ export function getCoordinationPoolStats(): {
     total: coordinationPool.totalCount,
     idle: coordinationPool.idleCount,
     waiting: coordinationPool.waitingCount,
-    max: coordinationPoolMax,
+    max: effectivePoolMax(coordinationPool, coordinationPoolMax),
   };
 }
 
@@ -297,6 +304,26 @@ export let db = drizzle(pool, { schema });
 
 // Reset lock to prevent concurrent pool resets
 let resetInProgress: Promise<void> | null = null;
+let resetCapacityRestoreTimer: NodeJS.Timeout | null = null;
+
+function scheduleResetPoolCapacityRestore(): void {
+  if (!isProduction && !isRailway) return;
+  if (resetCapacityRestoreTimer) clearTimeout(resetCapacityRestoreTimer);
+  const remainingMs = Math.max(0, rolloutHeadroomWindowMs - Math.floor(process.uptime() * 1000));
+  if (remainingMs <= 0) {
+    const options = (pool as any)?.options;
+    if (options) options.max = configuredSteadyMainPoolMax;
+    return;
+  }
+  resetCapacityRestoreTimer = setTimeout(() => {
+    resetCapacityRestoreTimer = null;
+    const options = (pool as any)?.options;
+    if (!options) return;
+    options.max = configuredSteadyMainPoolMax;
+    console.log(`[DATABASE] Reset pool rollout headroom released (steady max=${options.max})`);
+  }, remainingMs);
+  resetCapacityRestoreTimer.unref?.();
+}
 
 /**
  * Reset the database connection pool and Drizzle instance
@@ -313,6 +340,10 @@ export async function resetPool(): Promise<void> {
   resetInProgress = (async () => {
     try {
       console.log('[DATABASE] Resetting connection pools...');
+      // Preserve any rollout contraction already applied to the live ordinary
+      // pool. A recovery path must never silently re-expand client concurrency
+      // while Supabase is under admission pressure.
+      const previousEffectiveMainMax = effectivePoolMax(pool, mainPoolMax);
 
       try {
         await Promise.allSettled([pool.end(), coordinationPool.end()]);
@@ -327,15 +358,19 @@ export async function resetPool(): Promise<void> {
         throw new Error('Database URL not available for pool reset');
       }
 
-      pool = new Pool(getPoolConfig());
+      const nextMainConfig = getPoolConfig();
+      nextMainConfig.max = Math.min(mainPoolMax, previousEffectiveMainMax);
+      pool = new Pool(nextMainConfig);
       coordinationPool = new Pool(getCoordinationPoolConfig());
       attachPoolErrorHandlers();
       db = drizzle(pool, { schema });
+      scheduleResetPoolCapacityRestore();
 
-      await Promise.all([
-        db.execute('SELECT 1'),
-        coordinationPool.query('SELECT 1'),
-      ]);
+      // Restore the ordinary lane first. Only after it is admitted do we verify
+      // the session-capable coordination lane. Parallel probes double connection
+      // demand at exactly the point where reset is trying to recover capacity.
+      await db.execute('SELECT 1');
+      await coordinationPool.query('SELECT 1');
 
       console.log('[DATABASE] ✓ Pool reset successful - ordinary and coordination connections restored');
     } catch (error) {
