@@ -25,9 +25,15 @@ assert(providers.includes('productDiscoveryCursor'), 'bounded product discovery 
 assert(providers.includes('privateFeeRequestsIssuedByProductDiscovery: false'), 'public product discovery cannot spend private fee quota');
 assert(providers.includes("source: 'cex_product_directory' as const"), 'discovered live products must carry explicit source provenance');
 
-// Product authorities must retain their own bounded cache/negative-cache truth.
+// Product authorities must retain bounded cache/negative-cache truth. Public OKX
+// catalog discovery may consume a cached/configured region, but may not trigger an
+// authenticated trade-fee probe merely to enumerate products.
 assert(productPolicy.includes('MISSING_CATALOG_RECHECK_MS'), 'Kraken/OKX missing-product refreshes must be bounded');
 assert(productPolicy.includes('unsupportedUntil'), 'proven unsupported products must be negative-cached');
+assert(productPolicy.includes('resolveOkxProductBaseUrl'), 'OKX product policy must separate public base-url resolution from authenticated execution-region selection');
+assert(productPolicy.includes('fetchOkxSnapshot(forceFresh, false)'), 'public OKX directory must explicitly forbid authenticated region selection');
+assert(productPolicy.includes('privateFeeRequestIssuedByPublicDirectory: false'), 'OKX product telemetry must preserve public-directory no-private-fee invariant');
+assert(productPolicy.includes('SpotProductUnavailableError'), 'authoritative product absence must have a typed fail-closed signal distinct from transient catalog failure');
 assert(coinbase.includes('getCoinbaseAdvancedSpotProductDirectory'), 'Coinbase must expose a reusable public spot product directory');
 
 // A later broad-market wrapper may rank the primary set, but it may not silently
@@ -37,4 +43,4 @@ assert(expanded.includes('preservedProductTail'), 'expanded universe must preser
 assert(expanded.includes('productDiscoveryDiscardedByMarketScore: false'), 'runtime telemetry must assert that market-score ranking cannot discard the tail');
 assert(expanded.includes('productDiscoveryExecutionAuthority: false'), 'product discovery remains search coverage, not execution authority');
 
-console.log('[product-discovery-coverage] PASS: Coinbase/Kraken/OKX live products expand the bounded searchable universe and survive the final runtime boundary without private-fee quota leakage');
+console.log('[product-discovery-coverage] PASS: Coinbase/Kraken/OKX live products expand the bounded searchable universe, OKX public enumeration spends no private fee quota, and the discovery tail survives the final runtime boundary');
