@@ -3,12 +3,19 @@ import logger from '../../../logger.js';
 import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
-import { AutonomousZeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import {
+  AutonomousZeroCapitalEngine,
+  zeroCapitalEngine,
+  type SupportedChain,
+  type ZeroCapitalOpportunity,
+} from '../core/zero-capital-engine.js';
 import { withEvmSignerLane } from '../execution/evm-signer-lane.js';
 import { evaluateZeroCapitalRealizedProfit } from '../execution/zero-capital-realized-profit-policy.js';
 
-const installed = new WeakSet<object>();
 const ERC20_BALANCE_ABI = ['function balanceOf(address account) view returns (uint256)'];
+const activeProfitBoundaries = new WeakSet<object>();
+let latestWrappedExecuteFunded: Function | null = null;
+let executeAndRecordPatched = false;
 
 const NATIVE_SYMBOL: Partial<Record<SupportedChain, 'ETH' | 'POL' | 'BNB' | 'AVAX'>> = {
   ethereum: 'ETH',
@@ -26,8 +33,6 @@ function correctedSettlement(result: any, economics: ReturnType<typeof evaluateZ
     ...result.normalized,
     status: positive ? 'filled' : 'failed',
     terminal: true,
-    // Receipt status 1 is terminal settlement evidence even when realized net
-    // economics are negative or unavailable. Do not conflate settlement with P&L.
     settlementConfirmed: result.receiptStatus === 1,
     realized: {
       ...result.normalized.realized,
@@ -51,7 +56,7 @@ function correctedSettlement(result: any, economics: ReturnType<typeof evaluateZ
 
 async function executeWithProfitProvenanceBoundary(
   runtime: any,
-  originalExecuteFunded: Function,
+  delegate: Function,
   opportunity: ZeroCapitalOpportunity,
   funding: any,
 ): Promise<any> {
@@ -78,7 +83,7 @@ async function executeWithProfitProvenanceBoundary(
     };
   }
 
-  const invoke = () => originalExecuteFunded.call(runtime, opportunity, funding);
+  const invoke = () => delegate(opportunity, funding);
   const result = funding?.mode === 'native'
     ? await withEvmSignerLane({
         chainId: network.chainId,
@@ -127,33 +132,9 @@ async function executeWithProfitProvenanceBoundary(
   };
 }
 
-/**
- * Correct the zero-capital settlement boundary so the receiver's emitted token
- * surplus is treated as gross profit only when provenance is pure: the receiver
- * must begin with zero loan-token balance and the terminal operational-wallet
- * balance delta must exactly equal the emitted profit. Native-funded submissions
- * are serialized through the shared distributed signer lane. Native receipt gas
- * is then subtracted at a live native/USD price before a trade is considered
- * genuinely profitable. Unknown evidence remains unknown and pauses learning.
- */
-export function ensureZeroCapitalRealizedProfitWiring(): void {
-  const prototype = AutonomousZeroCapitalEngine.prototype as any;
-  if (installed.has(prototype)) return;
-  installed.add(prototype);
-
-  const originalExecuteFunded = prototype.executeFunded;
-  prototype.executeFunded = async function(opportunity: ZeroCapitalOpportunity, funding: any) {
-    let result: any;
-    try {
-      result = await executeWithProfitProvenanceBoundary(this, originalExecuteFunded, opportunity, funding);
-    } catch (error) {
-      return {
-        success: false,
-        error: `Zero-capital receiver profit-provenance boundary failed closed: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-    if (!result?.txHash || result.receiptStatus !== 1 || typeof result.profit !== 'bigint') return result;
-
+function reconcileAllInResult(opportunity: ZeroCapitalOpportunity, result: any): Promise<any> | any {
+  if (!result?.txHash || result.receiptStatus !== 1 || typeof result.profit !== 'bigint') return result;
+  return (async () => {
     const grossProfitBaseUnits = result.profit as bigint;
     let nativeUsdPrice: number | null = null;
     if (!result.zeroMonetaryGasVerified) {
@@ -212,42 +193,82 @@ export function ensureZeroCapitalRealizedProfitWiring(): void {
       normalized,
       error,
     };
-  };
+  })();
+}
 
-  prototype.executeAndRecord = async function(opportunity: ZeroCapitalOpportunity): Promise<void> {
-    let result: any;
-    try {
-      result = await this.executeOpportunity(opportunity);
-    } catch (error) {
-      result = { success: false, economicsVerified: false, error: error instanceof Error ? error.message : String(error) };
-    }
-
-    await this.recordExecutionFeedback(opportunity, result);
-    this.state.totalTrades++;
-
-    if (result.economicsVerified === true && typeof result.profit === 'bigint') {
-      // Signed net base units: realized losses are part of cumulative performance.
-      this.state.totalProfit += result.profit;
-      if (result.profit > 0n && result.success) {
-        this.state.successfulTrades++;
-        this.state.lastTradeTimestamp = Date.now();
-      } else {
-        this.state.failedTrades++;
+/**
+ * Install terminal profit reconciliation around the CURRENT instance execution
+ * stack, not only the class prototype. Provider-specific and dual-provider
+ * execution are instance wrappers; canonical runtime may install/reassert this
+ * layer before or after them. Re-entrant execution is detected by opportunity
+ * object identity so an older captured reconciliation wrapper delegates directly
+ * instead of nesting signer locks or double-counting settlement evidence.
+ */
+export function ensureZeroCapitalRealizedProfitWiring(): void {
+  const target = zeroCapitalEngine as any;
+  if (target.executeFunded !== latestWrappedExecuteFunded) {
+    const delegate = target.executeFunded.bind(target);
+    const wrapped = async (opportunity: ZeroCapitalOpportunity, funding: any) => {
+      if (activeProfitBoundaries.has(opportunity as object)) return delegate(opportunity, funding);
+      activeProfitBoundaries.add(opportunity as object);
+      try {
+        let result: any;
+        try {
+          result = await executeWithProfitProvenanceBoundary(target, delegate, opportunity, funding);
+        } catch (error) {
+          return {
+            success: false,
+            error: `Zero-capital receiver profit-provenance boundary failed closed: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+        return await reconcileAllInResult(opportunity, result);
+      } finally {
+        activeProfitBoundaries.delete(opportunity as object);
       }
-      return;
-    }
+    };
+    target.executeFunded = wrapped;
+    latestWrappedExecuteFunded = wrapped;
+  }
 
-    if (result.txHash && result.receiptStatus === 1) {
-      this.state.includedUnverifiedTrades++;
-      getCryptocrawlGovernance().pause('system', 'zero_capital_realized_economics_unverified');
-      return;
-    }
+  if (!executeAndRecordPatched) {
+    executeAndRecordPatched = true;
+    const prototype = AutonomousZeroCapitalEngine.prototype as any;
+    prototype.executeAndRecord = async function(opportunity: ZeroCapitalOpportunity): Promise<void> {
+      let result: any;
+      try {
+        result = await this.executeOpportunity(opportunity);
+      } catch (error) {
+        result = { success: false, economicsVerified: false, error: error instanceof Error ? error.message : String(error) };
+      }
 
-    this.state.failedTrades++;
-  };
+      await this.recordExecutionFeedback(opportunity, result);
+      this.state.totalTrades++;
 
-  logger.info('[CryptoCoreRuntime] Zero-capital realized-profit wiring installed', {
+      if (result.economicsVerified === true && typeof result.profit === 'bigint') {
+        this.state.totalProfit += result.profit;
+        if (result.profit > 0n && result.success) {
+          this.state.successfulTrades++;
+          this.state.lastTradeTimestamp = Date.now();
+        } else {
+          this.state.failedTrades++;
+        }
+        return;
+      }
+
+      if (result.txHash && result.receiptStatus === 1) {
+        this.state.includedUnverifiedTrades++;
+        getCryptocrawlGovernance().pause('system', 'zero_capital_realized_economics_unverified');
+        return;
+      }
+
+      this.state.failedTrades++;
+    };
+  }
+
+  logger.info('[CryptoCoreRuntime] Zero-capital realized-profit wiring asserted', {
     component: 'CryptoCoreRuntime',
+    wrapsCurrentInstanceExecutionStack: true,
+    reentrantCapturedWrappersBypassDuplicateBoundary: true,
     receiverEventClassifiedAs: 'gross_profit_only_after_zero_starting_balance',
     operationalProfitRecipientDeltaRequired: true,
     nativeSubmissionDistributedSignerLane: true,
