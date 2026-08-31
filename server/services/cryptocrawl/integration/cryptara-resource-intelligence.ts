@@ -62,8 +62,11 @@ export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntel
   const poolOccupancy = database.pool.max > 0
     ? Math.max(0, database.pool.total - database.pool.idle) / database.pool.max
     : 1;
+  // Queue depth represents demand, not automatically overload. Scale it against
+  // four pool-widths so a small healthy backlog can justify additive recovery,
+  // while a deep backlog still blocks advisory acceleration.
   const queuePressure = database.queued > 0
-    ? Math.min(1, 0.35 + database.queued / Math.max(1, database.pool.max * 2))
+    ? Math.min(1, database.queued / Math.max(1, database.pool.max * 4))
     : 0;
   const waitingPressure = database.pool.waiting > 0 ? 1 : 0;
   const latencyPressure = clamp01(database.ewmaAcquireMs / 1_500);
@@ -114,7 +117,6 @@ export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntel
   const dbRecoveryAcceleration = database.mode === 'recovering'
     && databasePressure < 0.35
     && database.poolWaiting === 0
-    && database.queued === 0
     ? Math.max(1, Math.min(1.5, 1 + usefulParallelHeadroom * 0.5))
     : 1;
 
