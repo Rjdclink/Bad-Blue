@@ -10,6 +10,7 @@ require('./verify-300-profitability-live-execution-controls.cjs');
 require('./verify-aave-balancer-provider-mesh.cjs');
 require('./verify-cex-websocket-rpi-modernization.cjs');
 require('./verify-resource-bps-coordination.cjs');
+require('./verify-dex-atomic-profit-path.cjs');
 require('./verify-cross-chain-funding-route-truth.cjs');
 
-console.log('[deployment-preflight] safety, measured-profitability, 300-control, Aave/Balancer provider-mesh, CEX websocket/RPI modernization, resource/BPS coordination, cross-chain/funding route truth, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] safety, measured-profitability, 300-control, Aave/Balancer provider-mesh, CEX websocket/RPI modernization, resource/BPS coordination, DEX atomic profitability, cross-chain/funding route truth, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
