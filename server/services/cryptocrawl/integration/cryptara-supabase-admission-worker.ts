@@ -140,6 +140,27 @@ class CryptaraSupabaseResourceGovernor {
     return 'steady';
   }
 
+  primeToCurrentPoolCapacity(): void {
+    const stats = this.poolSnapshot();
+    const ceiling = Math.max(1, Math.trunc(stats.max || 1));
+    this.healthySuccesses = 0;
+
+    // Do not impose a synthetic cold-start throttle. Railway rollout headroom has
+    // already reduced the incoming replica's effective pool max when overlap is
+    // possible, so healthy startup can immediately use that safe capacity. If
+    // local pool telemetry already shows a queue, start contracted instead.
+    if (stats.waiting > 0) {
+      this.targetConcurrency = Math.max(1, Math.floor(ceiling / 2));
+      this.pressureUntil = Date.now() + this.pressureCooldown();
+      this.lastMode = 'pressure';
+      return;
+    }
+
+    this.targetConcurrency = ceiling;
+    this.pressureUntil = 0;
+    this.lastMode = 'steady';
+  }
+
   private updateEwma(current: number, sample: number): number {
     if (!Number.isFinite(sample) || sample < 0) return current;
     if (current <= 0) return sample;
@@ -419,8 +440,10 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
     prototype.connect = patchedConnect;
   }
 
+  governor.primeToCurrentPoolCapacity();
   installed = true;
-  console.log('[CRYPTARA][SUPABASE-WORKER] adaptive admission installed; ordinary pool only, no additional pool or connection budget');
+  const snapshot = governor.snapshot(true);
+  console.log(`[CRYPTARA][SUPABASE-WORKER] adaptive admission installed; ordinary pool only, no additional pool or connection budget; initial concurrency=${snapshot.targetConcurrency}/${snapshot.pool.max}`);
 }
 
 /**
