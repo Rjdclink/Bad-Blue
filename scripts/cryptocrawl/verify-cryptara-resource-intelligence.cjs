@@ -15,6 +15,7 @@ function forbidPattern(source, pattern, description) {
 }
 
 const intelligence = read('server/services/cryptocrawl/integration/cryptara-resource-intelligence.ts');
+const worker = read('server/services/cryptocrawl/integration/cryptara-supabase-admission-worker.ts');
 const antenna = read('server/services/cryptocrawl/intelligence/sovereign-antenna-quality.ts');
 const auction = read('server/services/cryptocrawl/intelligence/provider-quality-auction.ts');
 const quanti = read('server/services/quantiComp/index.ts');
@@ -34,6 +35,19 @@ requirePattern(intelligence, /writeAuthority:\s*false/, 'resource intelligence h
 requirePattern(intelligence, /executionAuthority:\s*false/, 'resource intelligence has no execution authority');
 requirePattern(intelligence, /database\.mode\s*===\s*'recovering'/, 'compute/provider signals can accelerate only an already recovering DB lane');
 requirePattern(intelligence, /databasePressure\s*<\s*0\.35/, 'resource intelligence cannot accelerate DB recovery while measured DB pressure is elevated');
+requirePattern(intelligence, /database\.poolWaiting\s*===\s*0/, 'resource intelligence cannot accelerate while node-postgres has DB waiters');
+requirePattern(intelligence, /database\.queued\s*\/\s*Math\.max\(1,\s*database\.pool\.max\s*\*\s*4\)/, 'small worker backlog is treated as bounded demand rather than automatic overload');
+
+// Comp/Antenna may only shorten already-healthy additive recovery. The worker owns
+// all contraction, cooldown, and ceiling decisions and clamps the advisory tightly.
+requirePattern(intelligence, /installCryptaraResourceIntelligenceAdvisor/, 'resource intelligence installs a local recovery advisor');
+requirePattern(intelligence, /setCryptaraSupabaseRecoveryAdvisor/, 'resource intelligence connects to the existing Cryptara governor');
+requirePattern(worker, /export\s+function\s+setCryptaraSupabaseRecoveryAdvisor/, 'worker exposes advisory-only recovery input');
+requirePattern(worker, /Math\.max\(1,\s*Math\.min\(1\.5,\s*value\)\)/, 'recovery advice is clamped to 1.0x..1.5x');
+requirePattern(worker, /const\s+healthy\s*=\s*stats\.waiting\s*===\s*0\s*&&\s*acquireMs\s*<=\s*HEALTHY_ACQUIRE_MS/, 'worker first requires its own healthy DB evidence');
+requirePattern(worker, /Math\.max\(2,\s*Math\.ceil\(HEALTHY_SUCCESSES_TO_GROW\s*\/\s*recoveryAcceleration\)\)/, 'advisor can only shorten the healthy-evidence count with a floor of two');
+requirePattern(worker, /Math\.min\(ceiling,\s*this\.targetConcurrency\s*\+\s*1\)/, 'recovery still grows by exactly one permit and never above the live ceiling');
+requirePattern(worker, /Math\.floor\(this\.targetConcurrency\s*\/\s*2\)/, 'measured DB pressure still controls multiplicative contraction');
 
 // Existing authority split remains intact: Antenna senses, Beam routes, Quanti Comp computes.
 requirePattern(antenna, /executionAuthority:\s*false/, 'Sovereign Antenna remains non-executing');
@@ -44,14 +58,16 @@ requirePattern(auction, /executionAuthority:\s*false/, 'provider auction remains
 requirePattern(quanti, /QuantiParallelismGovernor/, 'Quanti Comp retains heavy-compute parallelism authority');
 requirePattern(beam, /computeAuthority:\s*'quanti-comp'/, 'Beam delegates compute execution to Quanti Comp');
 
-// Governance may observe the fused snapshot but cannot derive execution authority from it.
-requirePattern(governance, /getCryptaraResourceIntelligenceSnapshot/, 'governance installs/observes fused resource intelligence');
+// Governance installs the advisor only after critical persistence has entered the
+// Cryptara-governed lane; no resource signal becomes execution authority.
+requirePattern(governance, /stageManager\.restorePersistence[\s\S]{0,2200}installCryptaraResourceIntelligenceAdvisor\(\)/, 'resource advisor installs after critical governance restoration');
+requirePattern(governance, /getCryptaraResourceIntelligenceSnapshot/, 'governance observes fused resource intelligence');
 forbidPattern(governance, /resourceIntelligence[^\n]{0,160}(execute|SUBMIT_TX|executionAuthority\s*:\s*true)/i, 'resource intelligence grants execution authority');
 
 // Reference frameworks remain reference-only, never runtime vocabulary.
-for (const [name, source] of Object.entries({ intelligence, antenna, auction, quanti, beam, governance })) {
+for (const [name, source] of Object.entries({ intelligence, worker, antenna, auction, quanti, beam, governance })) {
   forbidPattern(source, /\bhyperscope\b/i, `${name} embeds Hyperscope into runtime code`);
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds enhancements-list vocabulary into runtime code`);
 }
 
-console.log('[cryptara-resource-intelligence] Antenna sensing + Quanti Comp resource telemetry + Cryptara DB admission fusion verified as call-free advisory intelligence');
+console.log('[cryptara-resource-intelligence] call-free Antenna + Quanti Comp telemetry drives only bounded already-healthy additive DB recovery; authority boundaries preserved');
