@@ -4,7 +4,10 @@ import {
   assertCoinbaseSpotTradeReady,
   coinbasePrivateRequest,
 } from '../intelligence/coinbase-advanced-trade-authority.js';
-import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
+import {
+  getCachedCoinbaseAdvancedProductId,
+  getCoinbaseAdvancedProductConstraints,
+} from '../intelligence/coinbase-advanced-market-data.js';
 import { validateCoinbaseOrderAgainstProduct } from './coinbase-product-policy.js';
 import type {
   ExecutionFill,
@@ -17,12 +20,15 @@ export interface CoinbaseOrderRequest {
   side: 'buy' | 'sell';
   quantity: number;
   price: number;
+  /** Exact live Coinbase product id; production resolves this from live metadata. */
+  productId?: string;
 }
 
 export interface CoinbaseOrderReceipt {
   venue: 'coinbase';
   orderId: string;
   symbol: string;
+  productId?: string;
   side: 'buy' | 'sell';
   requestedQuantity: number;
   submittedAt: number;
@@ -40,12 +46,26 @@ function positive(value: unknown): number | null {
   return parsed !== null && parsed > 0 ? parsed : null;
 }
 
+function explicitProductId(value: unknown): string | null {
+  const raw = String(value ?? '').trim().toUpperCase().replace(/[\/_]/g, '-');
+  const parts = raw.split('-').filter(Boolean);
+  if (parts.length !== 2 || parts.some(part => !/^[A-Z0-9]+$/.test(part))) return null;
+  return `${parts[0]}-${parts[1]}`;
+}
+
 /**
- * Serialize the already-validated numeric value without imposing a second,
- * undocumented decimal-place limit. Number#toString is canonical but may emit
- * exponent notation for small increments; Coinbase order amounts are sent as
- * plain decimal strings, so expand exponent notation exactly at this boundary.
+ * Compatibility boundary for legacy synchronous callers. This never infers a
+ * product from a quote-currency suffix: it succeeds only for an explicit product
+ * id or a product identity already resolved from fresh Coinbase metadata.
  */
+export function coinbaseProductId(symbol: string): string {
+  const explicit = explicitProductId(symbol);
+  if (explicit) return explicit;
+  const cached = getCachedCoinbaseAdvancedProductId(symbol);
+  if (!cached) throw new Error(`Coinbase product id for ${symbol} is not present in the live metadata cache`);
+  return cached;
+}
+
 export function coinbaseDecimalString(value: number): string {
   if (!Number.isFinite(value) || value <= 0) throw new Error('Coinbase order values must be finite and positive');
   const canonical = value.toString().toLowerCase();
@@ -60,12 +80,6 @@ export function coinbaseDecimalString(value: number): string {
   if (decimalIndex <= 0) return `0.${'0'.repeat(-decimalIndex)}${digits}`;
   if (decimalIndex >= digits.length) return `${digits}${'0'.repeat(decimalIndex - digits.length)}`;
   return `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
-}
-
-export function coinbaseProductId(symbol: string): string {
-  const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
-  if (!match) throw new Error(`Unsupported Coinbase spot symbol: ${symbol}`);
-  return `${match[1]}-${match[2]}`;
 }
 
 function timestamp(value: unknown): number | null {
@@ -94,9 +108,6 @@ export function parseCoinbaseFills(payload: any, orderId: string): ExecutionFill
     .map((fill: any) => ({
       quantity: positive(fill?.size) || 0,
       price: positive(fill?.price) || 0,
-      // Advanced Trade commission is quoted in the product quote currency for
-      // spot fills. Keep the asset explicit so realized economics can fail closed
-      // if a future response changes currency semantics.
       feeAmount: finite(fill?.commission),
       feeAsset: typeof fill?.product_id === 'string'
         ? fill.product_id.trim().toUpperCase().split('-')[1] || null
@@ -113,9 +124,9 @@ function aggregateFee(fills: ExecutionFill[], fallback: unknown): number | null 
   return fills.reduce((sum, fill) => sum + (fill.feeAmount || 0), 0);
 }
 
-function aggregateFeeAsset(fills: ExecutionFill[], productId: string): string | null {
+function aggregateFeeAsset(fills: ExecutionFill[], productId: string | null): string | null {
   const assets = fills.map(fill => fill.feeAsset).filter((value): value is string => Boolean(value));
-  if (assets.length === 0) return productId.split('-')[1] || null;
+  if (assets.length === 0) return productId?.split('-')[1] || null;
   const first = assets[0].toUpperCase();
   return assets.every(asset => asset.toUpperCase() === first) ? first : null;
 }
@@ -129,10 +140,13 @@ export function parseCoinbaseOrderSettlement(input: {
   const row = input.orderPayload?.order;
   if (!row) throw new Error(`Coinbase returned no order state for ${input.receipt.orderId}`);
   const requestedQuantity = positive(row?.order_configuration?.sor_limit_ioc?.base_size)
+    ?? positive(row?.order_configuration?.limit_limit_fok?.base_size)
+    ?? positive(row?.order_configuration?.limit_limit_gtc?.base_size)
     ?? input.receipt.requestedQuantity;
   const filledQuantity = Math.max(0, finite(row?.filled_size) ?? 0);
   const averageFillPrice = positive(row?.average_filled_price);
-  const productId = typeof row?.product_id === 'string' ? row.product_id.trim().toUpperCase() : coinbaseProductId(input.receipt.symbol);
+  const rowProductId = typeof row?.product_id === 'string' ? explicitProductId(row.product_id) : null;
+  const productId = rowProductId || explicitProductId(input.receipt.productId) || null;
   const fills = parseCoinbaseFills(input.fillsPayload || {}, input.receipt.orderId);
   const classification = classify(row, requestedQuantity);
   const totalFee = aggregateFee(fills, row?.total_fees);
@@ -179,23 +193,14 @@ async function readCoinbaseBalances(requester: CoinbasePrivateRequester): Promis
   return output;
 }
 
-/**
- * Settlement-safe Coinbase Advanced Trade spot adapter. Authenticated permission
- * checks happen before live submission, every terminal order is queried through
- * Advanced Trade, and balances are exposed to the canonical inventory ledger so
- * Coinbase can participate only when real spendable inventory is reconciled.
- */
 export class CoinbaseSpotSettlementAdapter {
   constructor(private readonly requester: CoinbasePrivateRequester = coinbasePrivateRequest) {}
 
   async submit(request: CoinbaseOrderRequest): Promise<CoinbaseOrderReceipt> {
+    let productId = explicitProductId(request.productId);
     if (this.requester === coinbasePrivateRequest) {
       await assertCoinbaseSpotTradeReady();
-      // Re-read current public product constraints immediately before a live
-      // authenticated order. The planning path already normalizes quantity;
-      // this assertion protects against metadata/state changes between scan and
-      // submission. Injected requesters remain deterministic for isolated tests.
-      const constraints = await getCoinbaseAdvancedProductConstraints(request.symbol);
+      const constraints = await getCoinbaseAdvancedProductConstraints(request.symbol, true);
       const constraintCheck = validateCoinbaseOrderAgainstProduct(
         { quantity: request.quantity, price: request.price },
         constraints,
@@ -203,12 +208,17 @@ export class CoinbaseSpotSettlementAdapter {
       if (!constraintCheck.valid) {
         throw new Error(`Coinbase order violates current product constraints: ${constraintCheck.reason}`);
       }
+      productId = constraints.productId;
     }
+    if (!productId) {
+      throw new Error('Coinbase injected settlement requester requires an explicit exact productId; product IDs are not inferred from quote suffixes');
+    }
+
     const submittedAt = Date.now();
     const payload = await this.requester('/api/v3/brokerage/orders', 'POST', {
       body: {
         client_order_id: randomUUID(),
-        product_id: coinbaseProductId(request.symbol),
+        product_id: productId,
         side: request.side.toUpperCase(),
         order_configuration: {
           sor_limit_ioc: {
@@ -226,6 +236,7 @@ export class CoinbaseSpotSettlementAdapter {
       venue: 'coinbase',
       orderId: String(payload.success_response.order_id),
       symbol: request.symbol,
+      productId,
       side: request.side,
       requestedQuantity: request.quantity,
       submittedAt,

@@ -1,5 +1,11 @@
-import { cexOrderBookStreams } from './cex-order-book-stream.js';
-import { getCachedCexFeeEvidence, resolveCexFeeEvidence, type CexFeeEvidence } from './cex-fee-resolver.js';
+import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
+import { cexOrderBookStreams, type CexStreamVenue, type StreamOrderBookQuote } from './cex-order-book-stream.js';
+import {
+  getCachedCexFeeEvidence,
+  resolveCexFeeEvidence,
+  type CexFeeEvidence,
+  type CexFeeVenue,
+} from './cex-fee-resolver.js';
 import { observeAriesQueueEcho } from './aries-microstructure.js';
 
 export type CexLegMode = 'maker' | 'taker';
@@ -7,8 +13,8 @@ export type CexFourMode = 'MM' | 'MT' | 'TM' | 'TT';
 
 export interface CexModeEconomics {
   symbol: string;
-  buyVenue: 'kraken' | 'okx';
-  sellVenue: 'kraken' | 'okx';
+  buyVenue: CexFeeVenue;
+  sellVenue: CexFeeVenue;
   mode: CexFourMode;
   buyMode: CexLegMode;
   sellMode: CexLegMode;
@@ -43,7 +49,7 @@ function authenticatedFee(evidence: CexFeeEvidence | null, mode: CexLegMode): nu
   return null;
 }
 
-async function evidence(venue: 'kraken' | 'okx', symbol: string): Promise<CexFeeEvidence | null> {
+async function evidence(venue: CexFeeVenue, symbol: string): Promise<CexFeeEvidence | null> {
   return getCachedCexFeeEvidence(venue, symbol) || await resolveCexFeeEvidence(venue, symbol).catch(() => null);
 }
 
@@ -80,7 +86,10 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
 }
 
 /**
- * Measures all TT/MT/TM/MM price-and-fee topologies on the same fresh books.
+ * Measures all TT/MT/TM/MM price-and-fee topologies across every currently
+ * executable CEX venue on the same fresh evidence surface. Coinbase, Kraken and
+ * OKX are peers here; venue-specific API details live below this layer.
+ *
  * Negative modes inside a bounded observation envelope are retained so the BPS
  * optimizer can learn the exact recovery gap instead of seeing only winners.
  * Maker modes additionally expose queue-risk and authenticated fee-evidence
@@ -93,31 +102,46 @@ export async function evaluateCexFourModeMatrix(input: {
 }): Promise<CexModeEconomics[]> {
   const symbol = input.symbol.trim().toUpperCase();
   const maxQuoteAgeMs = Math.max(250, Math.min(15_000, Number(input.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000)));
-  const [kraken, okx, krakenFee, okxFee] = await Promise.all([
-    cexOrderBookStreams.getQuote('kraken', symbol, maxQuoteAgeMs).catch(() => null),
-    cexOrderBookStreams.getQuote('okx', symbol, maxQuoteAgeMs).catch(() => null),
-    evidence('kraken', symbol),
-    evidence('okx', symbol),
-  ]);
-  if (!kraken || !okx) return [];
-  const books = { kraken, okx } as const;
-  const fees = { kraken: krakenFee, okx: okxFee } as const;
+  const venues = getActiveExecutableQuoteVenues() as CexFeeVenue[];
+  if (venues.length < 2) return [];
+
+  const observations = await Promise.all(venues.map(async venue => {
+    const [book, fee] = await Promise.all([
+      cexOrderBookStreams.getQuote(venue as CexStreamVenue, symbol, maxQuoteAgeMs).catch(() => null),
+      evidence(venue, symbol),
+    ]);
+    return { venue, book, fee };
+  }));
+
+  const books = new Map<CexFeeVenue, StreamOrderBookQuote>();
+  const fees = new Map<CexFeeVenue, CexFeeEvidence>();
+  for (const observation of observations) {
+    if (observation.book) books.set(observation.venue, observation.book);
+    if (observation.fee) fees.set(observation.venue, observation.fee);
+  }
+
+  const usableVenues = venues.filter(venue => books.has(venue) && fees.has(venue));
+  if (usableVenues.length < 2) return [];
+
   const ttlMs = Math.max(2_000, Math.min(30_000, Number(process.env.CRYPTO_ARBITRAGE_MAKER_TTL_MS || 30_000)));
   const feeFreshnessHalfLifeMs = Math.max(5_000, Math.min(30 * 60_000, Number(process.env.CRYPTOCRAWL_CEX_FEE_FRESHNESS_HALF_LIFE_MS || 300_000)));
   const floorBps = observationFloorBps();
   const output: CexModeEconomics[] = [];
 
-  for (const buyVenue of ['kraken', 'okx'] as const) {
-    for (const sellVenue of ['kraken', 'okx'] as const) {
+  for (const buyVenue of usableVenues) {
+    for (const sellVenue of usableVenues) {
       if (buyVenue === sellVenue) continue;
-      const buyBook = books[buyVenue];
-      const sellBook = books[sellVenue];
+      const buyBook = books.get(buyVenue)!;
+      const sellBook = books.get(sellVenue)!;
+      const buyFee = fees.get(buyVenue)!;
+      const sellFee = fees.get(sellVenue)!;
+
       for (const candidate of modes()) {
         const buyPrice = candidate.buyMode === 'maker' ? buyBook.bid : buyBook.ask;
         const sellPrice = candidate.sellMode === 'maker' ? sellBook.ask : sellBook.bid;
         if (!(buyPrice > 0) || !(sellPrice > buyPrice)) continue;
-        const buyFeeBps = authenticatedFee(fees[buyVenue], candidate.buyMode);
-        const sellFeeBps = authenticatedFee(fees[sellVenue], candidate.sellMode);
+        const buyFeeBps = authenticatedFee(buyFee, candidate.buyMode);
+        const sellFeeBps = authenticatedFee(sellFee, candidate.sellMode);
         if (buyFeeBps === null || sellFeeBps === null) continue;
         const grossSpreadBps = (sellPrice - buyPrice) / buyPrice * 10_000;
         const combinedFeeBps = buyFeeBps + sellFeeBps;
@@ -143,7 +167,7 @@ export async function evaluateCexFourModeMatrix(input: {
           ? 0
           : Math.max(0, grossSpreadBps) * (1 - makerFillProbability);
         const now = Date.now();
-        const feeEvidenceAgeMs = Math.max(0, now - Math.min(fees[buyVenue]!.observedAt, fees[sellVenue]!.observedAt));
+        const feeEvidenceAgeMs = Math.max(0, now - Math.min(buyFee.observedAt, sellFee.observedAt));
         const feeFreshnessScore = Number(Math.pow(0.5, feeEvidenceAgeMs / feeFreshnessHalfLifeMs).toFixed(6));
         const staleEvidencePenaltyBps = Math.max(0, combinedFeeBps) * (1 - feeFreshnessScore);
         const riskAdjustedBpsToBreakEven = economicallyPositive

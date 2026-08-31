@@ -1,5 +1,9 @@
 import type { VerifiedArbitragePlan, QuoteVenue } from '../arbitrage/arbitrage-verifier.js';
-import { resolveCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
+import {
+  getCoinbaseAdvancedProductBook,
+  getCoinbaseAdvancedProductConstraints,
+} from '../intelligence/coinbase-advanced-market-data.js';
+import { resolveCexFeeEvidence, type CexFeeEvidence, type CexFeeVenue } from '../intelligence/cex-fee-resolver.js';
 import { getOkxExecutionRestBaseUrl } from '../intelligence/cex-private-authority.js';
 import { cexOrderBookStreams, type StreamOrderBookQuote } from '../intelligence/cex-order-book-stream.js';
 import {
@@ -12,7 +16,10 @@ import {
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { floorToIncrement } from './coinbase-product-policy.js';
 import { getSpotProductConstraints } from './cex-spot-product-policy.js';
-import { getCryptaraDynamicMakerCanaryDecision } from './cryptara-dynamic-canary-controller.js';
+import {
+  getCryptaraDynamicMakerCanaryDecision,
+  type DynamicMakerCanaryDecision,
+} from './cryptara-dynamic-canary-controller.js';
 
 export type MakerLegMode = 'maker';
 export type MakerRecoveryStrategy = 'stablecoin_post_only' | 'volatile_spread_post_only';
@@ -29,7 +36,8 @@ type MakerExecutionMetadata = {
   canaryProofSamples: number;
   canaryConfidenceScore: number;
   canarySizingAuthority: 'bootstrap' | 'cryptara_realized_evidence';
-  volatileMinGrossSpreadBps: number | null;
+  /** Compatibility telemetry only. Artificial maker BPS floors are retired. */
+  volatileMinGrossSpreadBps: null;
   queueEcho: {
     buyFillProbability: number;
     sellFillProbability: number;
@@ -70,7 +78,7 @@ export type StablecoinMakerPlan = MakerRecoveryPlan & {
 };
 
 type Book = {
-  venue: 'kraken' | 'okx';
+  venue: CexFeeVenue;
   symbol: string;
   bid: number;
   bidQty: number;
@@ -81,17 +89,19 @@ type Book = {
   quote: StreamOrderBookQuote;
 };
 
-type MakerCanaryProof = {
-  samples: number;
-  wins: number;
-  winRate: number | null;
-  ceilingUsd: number;
-  confidenceScore: number;
-  sizingAuthority: 'bootstrap' | 'cryptara_realized_evidence';
+type MakerCanaryProof = DynamicMakerCanaryDecision;
+
+type MakerProductConstraints = {
+  quoteAsset: string;
+  baseIncrement: number;
+  baseMinSize: number;
+  quoteMinSize: number | null;
 };
 
 const STABLECOIN_SYMBOLS = new Set(['USDGUSDT', 'USDCUSDT', 'DAIUSDT', 'RLUSDUSDT']);
+const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
 const DEFAULT_TTL_MS = 30_000;
+const CEX_VENUES: readonly CexFeeVenue[] = ['coinbase', 'kraken', 'okx'] as const;
 
 function finitePositive(value: unknown): number | null {
   const parsed = Number(value);
@@ -112,15 +122,7 @@ function authenticatedMakerFeeBps(evidence: CexFeeEvidence | null): number | nul
 }
 
 function makerCanaryProof(): MakerCanaryProof {
-  const decision = getCryptaraDynamicMakerCanaryDecision();
-  return {
-    samples: decision.samples,
-    wins: decision.wins,
-    winRate: decision.winRate,
-    ceilingUsd: decision.ceilingUsd,
-    confidenceScore: decision.confidenceScore,
-    sizingAuthority: decision.sizingAuthority,
-  };
+  return getCryptaraDynamicMakerCanaryDecision();
 }
 
 export function getDynamicMakerCanaryStatus(): MakerCanaryProof {
@@ -130,10 +132,6 @@ export function getDynamicMakerCanaryStatus(): MakerCanaryProof {
 function maxCanaryUsd(requested: number): { amount: number; proof: MakerCanaryProof } {
   const proof = makerCanaryProof();
   return { amount: Math.min(requested, proof.ceilingUsd), proof };
-}
-
-function volatileMinGrossSpreadBps(): number {
-  return finiteBoundedEnv('CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS', 70, 10, 2_000);
 }
 
 function minMeasuredJointFillProbability(): number {
@@ -165,7 +163,7 @@ function syntheticQuote(book: Omit<Book, 'quote'>): StreamOrderBookQuote {
   };
 }
 
-async function streamBook(venue: 'kraken' | 'okx', symbol: string, maxAgeMs: number): Promise<Book | null> {
+async function streamBook(venue: CexFeeVenue, symbol: string, maxAgeMs: number): Promise<Book | null> {
   const quote = await cexOrderBookStreams.getQuote(venue, symbol, maxAgeMs).catch(() => null);
   if (!quote) return null;
   const bidQty = finitePositive(quote.depth.bids[0]?.quantity);
@@ -184,10 +182,33 @@ async function streamBook(venue: 'kraken' | 'okx', symbol: string, maxAgeMs: num
   };
 }
 
+async function coinbaseBook(symbol: string, maxAgeMs: number): Promise<Book | null> {
+  const stream = await streamBook('coinbase', symbol, maxAgeMs);
+  if (stream) return stream;
+  const book = await getCoinbaseAdvancedProductBook(symbol).catch(() => null);
+  if (!book) return null;
+  const bidQty = finitePositive(book.bids[0]?.quantity);
+  const askQty = finitePositive(book.asks[0]?.quantity);
+  if (!bidQty || !askQty) return null;
+  const base = {
+    venue: 'coinbase' as const,
+    symbol,
+    bid: book.bid,
+    bidQty,
+    ask: book.ask,
+    askQty,
+    observedAt: book.observedAt,
+    authority: 'rest_fallback' as const,
+  };
+  return { ...base, quote: syntheticQuote(base) };
+}
+
 async function krakenBook(symbol: string, maxAgeMs: number): Promise<Book | null> {
   const stream = await streamBook('kraken', symbol, maxAgeMs);
   if (stream) return stream;
-  const payload = await fetchJsonWithRetry<any>(`https://api.kraken.com/0/public/Depth?pair=${encodeURIComponent(symbol)}&count=5`, {
+  const constraints = await getSpotProductConstraints('kraken', symbol).catch(() => null);
+  if (!constraints) return null;
+  const payload = await fetchJsonWithRetry<any>(`https://api.kraken.com/0/public/Depth?pair=${encodeURIComponent(constraints.exchangeSymbol)}&count=5`, {
     init: { headers: { accept: 'application/json' } }, maxRetries: 1, baseDelayMs: 100, maxDelayMs: 400, timeoutMs: 2_000,
   });
   const key = Object.keys(payload?.result || {})[0];
@@ -204,10 +225,10 @@ async function krakenBook(symbol: string, maxAgeMs: number): Promise<Book | null
 async function okxBook(symbol: string, maxAgeMs: number): Promise<Book | null> {
   const stream = await streamBook('okx', symbol, maxAgeMs);
   if (stream) return stream;
-  const match = symbol.match(/^([A-Z0-9]+)(USDT|USDC|USD)$/);
-  if (!match) return null;
+  const constraints = await getSpotProductConstraints('okx', symbol).catch(() => null);
+  if (!constraints) return null;
   const baseUrl = await getOkxExecutionRestBaseUrl();
-  const payload = await fetchJsonWithRetry<any>(`${baseUrl}/api/v5/market/books?instId=${encodeURIComponent(`${match[1]}-${match[2]}`)}&sz=5`, {
+  const payload = await fetchJsonWithRetry<any>(`${baseUrl}/api/v5/market/books?instId=${encodeURIComponent(constraints.exchangeSymbol)}&sz=5`, {
     init: { headers: { accept: 'application/json' } }, maxRetries: 1, baseDelayMs: 100, maxDelayMs: 400, timeoutMs: 2_000,
   });
   const row = payload?.data?.[0];
@@ -218,6 +239,33 @@ async function okxBook(symbol: string, maxAgeMs: number): Promise<Book | null> {
   if (!bid || !bidQty || !ask || !askQty) return null;
   const base = { venue: 'okx' as const, symbol, bid, bidQty, ask, askQty, observedAt: Date.now(), authority: 'rest_fallback' as const };
   return { ...base, quote: syntheticQuote(base) };
+}
+
+async function venueBook(venue: CexFeeVenue, symbol: string, maxAgeMs: number): Promise<Book | null> {
+  if (venue === 'coinbase') return coinbaseBook(symbol, maxAgeMs);
+  if (venue === 'kraken') return krakenBook(symbol, maxAgeMs);
+  return okxBook(symbol, maxAgeMs);
+}
+
+async function makerProductConstraints(venue: CexFeeVenue, symbol: string): Promise<MakerProductConstraints | null> {
+  if (venue === 'coinbase') {
+    const constraints = await getCoinbaseAdvancedProductConstraints(symbol).catch(() => null);
+    if (!constraints || constraints.isDisabled || constraints.tradingDisabled || constraints.cancelOnly || constraints.auctionMode || constraints.viewOnly) return null;
+    return {
+      quoteAsset: constraints.quoteAsset,
+      baseIncrement: constraints.baseIncrement,
+      baseMinSize: constraints.baseMinSize,
+      quoteMinSize: constraints.quoteMinSize,
+    };
+  }
+  const constraints = await getSpotProductConstraints(venue, symbol).catch(() => null);
+  if (!constraints) return null;
+  return {
+    quoteAsset: constraints.quoteAsset,
+    baseIncrement: constraints.baseIncrement,
+    baseMinSize: constraints.baseMinSize,
+    quoteMinSize: constraints.quoteMinSize,
+  };
 }
 
 function ttlMs(): number {
@@ -238,32 +286,32 @@ async function evaluateMakerCandidate(input: {
   const symbol = input.symbol.trim().toUpperCase();
   const stablecoin = STABLECOIN_SYMBOLS.has(symbol);
   if (input.requireStablecoin && !stablecoin) return null;
-  if (!(input.notionalUsd > 0) || !/^([A-Z0-9]+)(USDT|USDC|USD)$/.test(symbol)) return null;
+  if (!(input.notionalUsd > 0) || !symbol) return null;
 
-  const [kraken, okx, krakenFee, okxFee] = await Promise.all([
-    krakenBook(symbol, input.maxQuoteAgeMs).catch(() => null),
-    okxBook(symbol, input.maxQuoteAgeMs).catch(() => null),
-    resolveCexFeeEvidence('kraken', symbol).catch(() => null),
-    resolveCexFeeEvidence('okx', symbol).catch(() => null),
-  ]);
-  if (!kraken || !okx) return null;
-  const books = [kraken, okx];
-  const fees: Record<'kraken' | 'okx', CexFeeEvidence | null> = { kraken: krakenFee, okx: okxFee };
+  const observations = await Promise.all(CEX_VENUES.map(async venue => {
+    const [book, fee] = await Promise.all([
+      venueBook(venue, symbol, input.maxQuoteAgeMs).catch(() => null),
+      resolveCexFeeEvidence(venue, symbol).catch(() => null),
+    ]);
+    return { venue, book, fee };
+  }));
+  const books = observations.flatMap(value => value.book ? [value.book] : []);
+  const fees = new Map<CexFeeVenue, CexFeeEvidence>();
+  for (const observation of observations) if (observation.fee) fees.set(observation.venue, observation.fee);
+  if (books.length < 2) return null;
+
   const now = Date.now();
-  const volatileFloorBps = stablecoin ? null : volatileMinGrossSpreadBps();
   const configuredTtlMs = ttlMs();
   const participation = queueParticipationFraction();
 
-  // Feed both venues into one rolling microstructure history before route selection.
-  observeAriesQueueEcho(kraken.quote, 'buy', configuredTtlMs, participation);
-  observeAriesQueueEcho(okx.quote, 'buy', configuredTtlMs, participation);
+  for (const book of books) observeAriesQueueEcho(book.quote, 'buy', configuredTtlMs, participation);
 
   let best: MakerRecoveryPlan | null = null;
   for (const buy of books) {
     for (const sell of books) {
       if (buy.venue === sell.venue) continue;
-      const buyEvidence = fees[buy.venue];
-      const sellEvidence = fees[sell.venue];
+      const buyEvidence = fees.get(buy.venue) || null;
+      const sellEvidence = fees.get(sell.venue) || null;
       const buyFeeBps = authenticatedMakerFeeBps(buyEvidence);
       const sellFeeBps = authenticatedMakerFeeBps(sellEvidence);
       if (buyFeeBps === null || sellFeeBps === null) continue;
@@ -273,8 +321,10 @@ async function evaluateMakerCandidate(input: {
       if (!(sellPrice > buyPrice)) continue;
       const grossSpreadBps = ((sellPrice - buyPrice) / buyPrice) * 10_000;
       const feeFloorBps = buyFeeBps + sellFeeBps;
+      // No arbitrary BPS floor: authenticated fee clearance plus final real
+      // net-profit dollars, measured queue/stress, liquidity and governance are
+      // the economic/safety criteria.
       if (!(grossSpreadBps > feeFloorBps)) continue;
-      if (volatileFloorBps !== null && grossSpreadBps < volatileFloorBps) continue;
 
       const buyQueue = observeAriesQueueEcho(buy.quote, 'buy', configuredTtlMs, participation);
       const sellQueue = observeAriesQueueEcho(sell.quote, 'sell', configuredTtlMs, participation);
@@ -287,12 +337,23 @@ async function evaluateMakerCandidate(input: {
       const causal = estimateAriesVenueLeadLag(symbol, buy.venue, sell.venue);
 
       const [buyConstraints, sellConstraints] = await Promise.all([
-        getSpotProductConstraints(buy.venue, symbol).catch(() => null),
-        getSpotProductConstraints(sell.venue, symbol).catch(() => null),
+        makerProductConstraints(buy.venue, symbol),
+        makerProductConstraints(sell.venue, symbol),
       ]);
       if (!buyConstraints || !sellConstraints) continue;
+      const quoteAsset = buyConstraints.quoteAsset.trim().toUpperCase();
+      if (quoteAsset !== sellConstraints.quoteAsset.trim().toUpperCase()) continue;
+      if (!USD_NORMALIZED_QUOTES.has(quoteAsset)) continue;
+
       const commonIncrement = Math.max(buyConstraints.baseIncrement, sellConstraints.baseIncrement);
       const canary = maxCanaryUsd(input.notionalUsd);
+      const parentCeilingUsd = canary.amount;
+      if (!(parentCeilingUsd > 0)) continue;
+
+      // Queue participation and Kelly may tighten total safe exposure beneath the
+      // active ladder/canary ceiling. Venue single-order maxima are deliberately
+      // absent here: the canonical hyper-hybrid executor applies them only when
+      // partitioning this measured parent into legal child orders.
       const queueQty = Math.min(buy.bidQty, sell.askQty) * participation;
       const queueLiquidityUsd = Math.max(0, queueQty * buyPrice);
       const atrFraction = Math.max(buyQueue.atrFraction, sellQueue.atrFraction);
@@ -304,14 +365,14 @@ async function evaluateMakerCandidate(input: {
         confidence: kellyConfidence,
         atrFraction,
         hurstExponent,
-        capitalUsd: canary.amount,
+        capitalUsd: parentCeilingUsd,
         kellyFraction: finiteBoundedEnv('CRYPTO_ARBITRAGE_FRACTIONAL_KELLY', 0.25, 0.05, 0.50),
         liquidityCapUsd: queueLiquidityUsd,
-        governanceCapUsd: canary.amount,
+        governanceCapUsd: parentCeilingUsd,
         maxFractionOfCapital: finiteBoundedEnv('CRYPTO_ARBITRAGE_KELLY_MAX_FRACTION', 0.20, 0.01, 0.50),
       });
       const kellyApplied = queueAuthority === 'measured_history' && canary.proof.samples >= 5 && kelly.recommendedNotionalUsd > 0;
-      const sizingUsd = kellyApplied ? Math.min(canary.amount, kelly.recommendedNotionalUsd) : canary.amount;
+      const sizingUsd = kellyApplied ? Math.min(parentCeilingUsd, kelly.recommendedNotionalUsd) : parentCeilingUsd;
       const requestedQty = Math.min(sizingUsd / buyPrice, queueQty);
       const baseQty = floorToIncrement(requestedQty, commonIncrement);
       if (!(baseQty > 0) || baseQty < buyConstraints.baseMinSize || baseQty < sellConstraints.baseMinSize) continue;
@@ -376,7 +437,7 @@ async function evaluateMakerCandidate(input: {
           canaryProofSamples: canary.proof.samples,
           canaryConfidenceScore: canary.proof.confidenceScore,
           canarySizingAuthority: canary.proof.sizingAuthority,
-          volatileMinGrossSpreadBps: volatileFloorBps,
+          volatileMinGrossSpreadBps: null,
           queueEcho: {
             buyFillProbability: buyQueue.fillProbabilityWithinTtl,
             sellFillProbability: sellQueue.fillProbabilityWithinTtl,
@@ -409,7 +470,6 @@ async function evaluateMakerCandidate(input: {
   return best;
 }
 
-/** Stablecoin-only compatibility entry point retained for existing callers/tests. */
 export async function evaluateStablecoinMakerCandidate(input: {
   symbol: string;
   notionalUsd: number;
@@ -419,9 +479,10 @@ export async function evaluateStablecoinMakerCandidate(input: {
 }
 
 /**
- * Maker recovery for any measured Kraken/OKX spot pair. Stablecoins need only
- * clear authenticated maker fees; volatile pairs additionally require a wide
- * gross spread before Queue-Echo, stress, product, canary and governance gates.
+ * Maker recovery across every canonical executable CEX venue. Product discovery
+ * is universal; executable USD P&L remains fail-closed until the quote currency
+ * has authoritative USD normalization. There is no arbitrary BPS admission floor:
+ * strict positive all-in net dollars plus measured execution/risk evidence governs.
  */
 export async function evaluateMakerRecoveryCandidate(input: {
   symbol: string;

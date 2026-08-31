@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import {
-  coinbaseAdvancedProductId,
+  canonicalCoinbaseSymbol,
   parseCoinbaseAdvancedProductBook,
 } from '../../server/services/cryptocrawl/intelligence/coinbase-advanced-market-data.js';
 
-assert.equal(coinbaseAdvancedProductId('BTCUSD'), 'BTC-USD');
-assert.equal(coinbaseAdvancedProductId('ethusdc'), 'ETH-USDC');
-assert.throws(() => coinbaseAdvancedProductId('BTC-EUR'), /Unsupported Coinbase Advanced Trade spot symbol/);
+assert.equal(canonicalCoinbaseSymbol('BTC-USD'), 'BTCUSD');
+assert.equal(canonicalCoinbaseSymbol('eth/usdc'), 'ETHUSDC');
+assert.equal(canonicalCoinbaseSymbol('BTC-EUR'), 'BTCEUR');
+assert.throws(() => canonicalCoinbaseSymbol('BTC EUR'), /Unsupported Coinbase Advanced Trade spot symbol/);
 
 const observedAt = Date.parse('2026-08-27T12:00:00.000Z');
 const book = parseCoinbaseAdvancedProductBook({
@@ -33,6 +34,17 @@ assert.equal(book.ask, 101);
 assert.equal(book.bids.length, 2);
 assert.equal(book.asks.length, 2);
 assert.equal(book.observedAt, observedAt);
+
+const eurBook = parseCoinbaseAdvancedProductBook({
+  pricebook: {
+    product_id: 'BTC-EUR',
+    bids: [{ price: '90', size: '1' }],
+    asks: [{ price: '91', size: '1' }],
+  },
+}, 'BTC-EUR');
+assert.equal(eurBook.productId, 'BTC-EUR');
+assert.equal(eurBook.symbol, 'BTCEUR');
+
 assert.throws(() => parseCoinbaseAdvancedProductBook({
   pricebook: { product_id: 'ETH-USD', bids: [{ price: '100', size: '1' }], asks: [{ price: '101', size: '1' }] },
 }, 'BTCUSD'), /product mismatch/);
