@@ -9,10 +9,13 @@ const funding = fs.readFileSync('server/services/cryptocrawl/discovery/funding-r
 const positiveProfit = fs.readFileSync('server/services/cryptocrawl/runtime/positive-profit-capture-wiring.ts', 'utf8');
 const zeroX = fs.readFileSync('server/services/cryptocrawl/intelligence/market-data-providers.ts', 'utf8');
 
-// Volatile maker recovery is a first-class executable adapter path, not a
-// stablecoin-only type boundary. Admission still keeps the volatile spread floor.
+// Volatile maker recovery remains a first-class executable adapter path, but no
+// arbitrary BPS floor may override strict positive all-in dollar economics.
 assert.match(makerStrategy, /'volatile_spread_post_only'/);
-assert.match(makerStrategy, /CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS/);
+assert.doesNotMatch(makerStrategy, /CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS/);
+assert.doesNotMatch(makerStrategy, /grossSpreadBps\s*<\s*volatileFloorBps/);
+assert.match(makerStrategy, /volatileMinGrossSpreadBps:\s*null/);
+assert.match(makerStrategy, /CEX_VENUES[^=]*=\s*\['coinbase',\s*'kraken',\s*'okx'\]/);
 assert.match(makerAdapters, /type \{ MakerRecoveryPlan \}/);
 assert.match(makerAdapters, /createPostOnlyMakerAdapters\(plan: MakerRecoveryPlan\)/);
 assert.doesNotMatch(barrier, /outside the installed Kraken\/OKX stablecoin post-only path/);
@@ -26,7 +29,6 @@ assert.match(coinbase, /Coinbase private authentication failed/);
 
 // A measured 401/403 must fail closed and open a bounded account-level cooldown,
 // preventing the same invalid authority from being hammered once per symbol.
-// The circuit must never introduce configured fee fallback or bypass permissions.
 assert.match(coinbase, /AUTH_FAILURE_COOLDOWN_MS/);
 assert.match(coinbase, /CoinbasePrivateAuthError/);
 assert.match(coinbase, /CoinbaseAuthCircuitOpenError/);
@@ -38,9 +40,7 @@ assert.match(coinbase, /Private authentication circuit opened after authoritativ
 assert.match(coinbase, /assertCoinbaseSpotTradeReady/);
 assert.doesNotMatch(coinbase, /configuredFee|configured_override/);
 
-// Recovery logging is transition-based rather than success-request-based. One
-// failure epoch must produce at most one recovery message while preserving the
-// historical failure counter/timestamp for diagnostics.
+// Recovery logging is transition-based rather than success-request-based.
 assert.match(coinbase, /let authRecoveryLoggedFailureCount = 0/);
 assert.match(coinbase, /authFailureCount > authRecoveryLoggedFailureCount/);
 assert.match(coinbase, /authRecoveryLoggedFailureCount = authFailureCount/);
@@ -69,6 +69,8 @@ assert.match(positiveProfit, /0X_API_KEY/);
 console.log(JSON.stringify({
   postAriesRuntimeRecovery: 'verified',
   volatileMakerAdapterGeneralized: true,
+  arbitraryMakerBpsFloor: false,
+  canonicalMakerVenues: ['coinbase', 'kraken', 'okx'],
   staleStablecoinOnlyBarrierRemoved: true,
   coinbaseCanonicalKeyNamePreferred: true,
   coinbase401DiagnosticsImproved: true,
