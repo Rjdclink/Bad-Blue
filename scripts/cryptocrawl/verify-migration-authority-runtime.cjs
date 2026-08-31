@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..', '..');
 const read = relativePath => fs.readFileSync(path.join(root, relativePath), 'utf8');
 
+const db = read('server/db.ts');
 const reconciler = read('server/migrations/reconcileAppSchema.ts');
 const numberedRunner = read('server/migrations/runMigrations.ts');
 const hotPathMigration = read('server/migrations/023_cryptocrawler_hot_path_schema_authority.sql');
@@ -23,8 +24,18 @@ assert.match(reconciler, /coordinator\s*=\s*await\s+coordinationPool\.connect\(\
 assert.doesNotMatch(reconciler, /coordinator\s*=\s*await\s+pool\.connect\(\)/);
 assert.match(reconciler, /SELECT pg_try_advisory_lock\(hashtext\(\$1\)\) AS acquired/);
 
+// Supavisor transaction mode cannot retain session-level settings. The ordinary
+// 6543 lane keeps node-postgres client-side query_timeout, while server-side
+// statement_timeout remains available only on session/direct fallback and the
+// dedicated session-capable coordination lane.
+assert.match(db, /\.\.\.\(ordinaryUsesTransactionPool\s*\?\s*\{\}\s*:\s*\{\s*statement_timeout:\s*30000\s*\}\)/);
+assert.match(db, /query_timeout:\s*30000/);
+assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}statement_timeout:\s*15000/);
+assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}query_timeout:\s*15000/);
+
 // Startup owns only the new CryptoCrawler authority migrations; it does not
-// blindly replay the entire legacy numbered migration history.
+// blindly replay the entire legacy numbered migration history. The same session
+// client that owns the migration advisory lock executes the migration DDL.
 for (const migration of [
   '023_cryptocrawler_hot_path_schema_authority.sql',
   '024_cryptocrawler_funding_lifecycle.sql',
@@ -33,6 +44,9 @@ for (const migration of [
   assert.ok(dockerfile.includes(`/app/server/migrations/${migration} ./dist/migrations/${migration}`), `production image must ship ${migration}`);
 }
 assert.match(reconciler, /runCryptocrawlerAuthorityMigration/);
+assert.match(reconciler, /await\s+coordinator\.query\(sql\)/);
+assert.doesNotMatch(reconciler, /await\s+pool\.query\(sql\)/);
+assert.match(reconciler, /const\s+outcome\s*=\s*await\s+step\.run\(coordinator\)/);
 assert.match(reconciler, /path\.resolve\(process\.cwd\(\), 'dist', 'migrations', file\)/);
 assert.match(reconciler, /path\.resolve\(process\.cwd\(\), 'server', 'migrations', file\)/);
 
@@ -93,4 +107,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: authority migrations are session-coordinated and production-shipped, global app availability remains independent, and every production CryptoCrawler lifecycle entry verifies the migration-owned schema before discovery/execution');
+console.log('[migration-authority-runtime] PASS: authority migrations and session settings stay on session-capable connections, transaction-mode ordinary traffic remains stateless, global app availability remains independent, and every production CryptoCrawler lifecycle entry verifies migration-owned schema before discovery/execution');
