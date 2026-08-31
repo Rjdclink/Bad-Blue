@@ -78,20 +78,30 @@ class ExecutionResourceScheduler {
     || process.env.HOSTNAME?.trim()
     || `process-${process.pid}-${randomUUID()}`;
   private readonly localUsage = new Map<string, number>();
-  private tableReady: Promise<boolean> | null = null;
+  private tableProbeInFlight: Promise<boolean> | null = null;
+  private tableReadyUntil = 0;
+  private tableRetryAfter = 0;
   private cleanupInFlight: Promise<void> | null = null;
   private lastCleanupAt = 0;
 
   private async ensureTable(): Promise<boolean> {
     if (!isDatabaseConfigured) return false;
-    if (this.tableReady) return this.tableReady;
-    this.tableReady = (async () => {
-      try {
-        const result = await pool.query(
-          `SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`,
-        );
+    const now = Date.now();
+    if (this.tableReadyUntil > now) return true;
+    if (now < this.tableRetryAfter) return false;
+    if (this.tableProbeInFlight) return this.tableProbeInFlight;
+
+    const retryMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
+    const readyTtlMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
+    const probe = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
+      .then(result => {
         const ready = result.rows?.[0]?.ready === true;
-        if (!ready) {
+        if (ready) {
+          this.tableReadyUntil = Date.now() + readyTtlMs;
+          this.tableRetryAfter = 0;
+        } else {
+          this.tableReadyUntil = 0;
+          this.tableRetryAfter = Date.now() + retryMs;
           logger.error('[ResourceScheduler] Migration-owned distributed lease table is missing', {
             component: 'ExecutionResourceScheduler',
             table: `public.${TABLE}`,
@@ -100,15 +110,23 @@ class ExecutionResourceScheduler {
           });
         }
         return ready;
-      } catch (error) {
+      })
+      .catch(error => {
+        this.tableReadyUntil = 0;
+        this.tableRetryAfter = Date.now() + retryMs;
         logger.error('[ResourceScheduler] Distributed lease table availability check failed', {
           component: 'ExecutionResourceScheduler',
+          retryAfterMs: retryMs,
           error: error instanceof Error ? error.message : String(error),
         });
         return false;
-      }
-    })();
-    return this.tableReady;
+      })
+      .finally(() => {
+        if (this.tableProbeInFlight === probe) this.tableProbeInFlight = null;
+      });
+
+    this.tableProbeInFlight = probe;
+    return probe;
   }
 
   private maybeCleanupExpiredLeases(): void {
