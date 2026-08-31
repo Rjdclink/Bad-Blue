@@ -70,6 +70,8 @@ requirePattern(rpiCapability, /rpiMinPxBand/, 'RPI minimum price-band evidence i
 requirePattern(rpiCapability, /Math\.max\(1_000/, 'OKX SPOT RPI $1,000 minimum notional remains a hard floor');
 requirePattern(rpiCapability, /permissionState\s*===\s*'2'/, 'RPI maker execution requires maker permission state');
 requirePattern(rpiCapability, /executableFeeAdvantage/, 'RPI is eligible only when it improves authenticated maker economics');
+requirePattern(rpiCapability, /\.\.\.capability\.rpiBookBids,\s*\.\.\.capability\.rpiBookAsks/, 'RPI level spacing counts the complete organic price-level surface on both sides of the book');
+requirePattern(rpiCapability, /return\s+bandPass\s*\|\|\s*levelPass\s*;/, 'OKX independent RPI spacing conditions are applied disjunctively rather than requiring both');
 forbidPattern(rpiCapability, /\(USDT\|USDC\|USD\)/, 'RPI capability implementing an independent stablecoin quote parser');
 
 // Standard maker and RPI compete inside one canonical maker strategy. RPI never
@@ -102,4 +104,4 @@ requirePattern(rpiAdvisory, /from '\.\/okx-rpi-capability\.js'/, 'RPI advisory c
 requirePattern(rpiAdvisory, /await import\('\.\.\/integration\/cex-four-mode-observability-wiring\.js'\)/, 'four-mode advisory dependency is lazy and non-authoritative');
 requirePattern(rpiAdvisory, /executionAuthority:\s*false/, 'RPI advisory never grants execution authority');
 
-console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, authenticated OKX RPI maker, and safe RPI-taker depth observability invariants passed');
+console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, authenticated OKX RPI maker with correct independent spacing semantics, and safe RPI-taker depth observability invariants passed');
