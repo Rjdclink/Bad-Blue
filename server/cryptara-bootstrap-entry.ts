@@ -1,22 +1,17 @@
-// Production bootstrap wrapper: establish the cheapest possible resource-control
-// surface before the application is allowed to initialize its normal runtime.
+// Production bootstrap wrapper: establish the Cryptara data plane before normal
+// application runtime is allowed to acquire authoritative-primary connections.
 //
-// 1) reconcileAppSchema imports db.ts and applies Railway's one-client rollout
-//    headroom guard at module evaluation time, but performs no database query.
-// 2) Cryptara installs its existing ordinary-pool admission proxy against that
-//    already-contracted primary pool. It creates no connection itself.
-// 3) HyperBridge starts the already-existing auxiliary overflow lane single-flight
-//    and we wait only for that overflow admission result before loading index.ts.
-// 4) A verified overflow lane is a head start, not a process-wide primary veto.
-//    The existing Cryptara admission governor remains the sole primary acquisition
-//    control, so index.ts can perform its one bounded primary probe and the
-//    canonical runtime can later re-check authoritative schema without a locally
-//    manufactured permanent failure.
-// 5) Overflow remains auxiliary-only. Primary execution/governance/settlement
-//    authority stays fail-closed whenever the authoritative primary is unavailable.
-//
-// If overflow is unavailable, the established bounded primary startup path remains
-// available as the fallback data plane. The wrapper itself never queries primary.
+// 1) reconcileAppSchema imports db.ts and applies Railway rollout headroom without
+//    performing a query.
+// 2) Cryptara installs the existing admission governor.
+// 3) HyperBridge verifies the existing overflow Supabase lane first.
+// 4) When overflow is ready, pg.Pool primary acquisitions are intercepted before
+//    index.ts loads. Legacy application callers are routed through the process-local
+//    overflow-primary gateway; the gateway then uses the existing primary pool.
+//    No third pool/config alias is created and primary authority is unchanged.
+// 5) index.ts treats verified overflow as the normal proxy data plane and performs
+//    zero direct primary health/recovery probes. Necessary primary information is
+//    obtained only behind overflow/bridge/worker routing.
 await import('./migrations/reconcileAppSchema.js');
 
 const { installCryptaraSuperWorkerAdmission } = await import(
@@ -35,9 +30,72 @@ await startCryptaraHyperBridgeBootstrap();
 const overflowBootstrap = getCryptaraHyperBridgeBootstrapSnapshot();
 
 if (overflowBootstrap.state === 'ready') {
-  console.log(
-    '[CRYPTARA][HYPER-BRIDGE][BOOTSTRAP] verified overflow head-start active; primary remains bounded by Cryptara admission and retains sole authoritative execution/governance/settlement role',
+  const { pool, coordinationPool } = await import('./db.js');
+  const {
+    isCryptaraOverflowPrimaryGatewayContext,
+    runThroughCryptaraOverflowPrimaryGateway,
+  } = await import(
+    './services/cryptocrawl/integration/cryptara-overflow-primary-gateway.js'
   );
+
+  const prototype: any = Object.getPrototypeOf(pool);
+  const PRIMARY_GATEWAY_PATCH = Symbol.for('badblue.cryptara.overflowPrimaryGatewayConnect');
+
+  if (!prototype[PRIMARY_GATEWAY_PATCH]) {
+    const previousConnect = prototype.connect as (...args: any[]) => any;
+    const primaryConnectionStrings = new Set(
+      [pool, coordinationPool]
+        .map((candidate: any) => String(candidate?.options?.connectionString || '').trim())
+        .filter(Boolean),
+    );
+    const primaryApplicationNames = new Set(
+      [pool, coordinationPool]
+        .map((candidate: any) => String(candidate?.options?.application_name || '').trim())
+        .filter(Boolean),
+    );
+    let routedPrimaryAcquisitions = 0;
+
+    prototype.connect = function cryptaraOverflowPrimaryGatewayConnect(
+      this: any,
+      callback?: (...args: any[]) => void,
+    ): any {
+      const connectionString = String(this?.options?.connectionString || '').trim();
+      const applicationName = String(this?.options?.application_name || '').trim();
+      const targetsPrimary =
+        this === pool ||
+        this === coordinationPool ||
+        (connectionString.length > 0 && primaryConnectionStrings.has(connectionString)) ||
+        (applicationName.length > 0 && primaryApplicationNames.has(applicationName));
+
+      if (!targetsPrimary || isCryptaraOverflowPrimaryGatewayContext()) {
+        return typeof callback === 'function'
+          ? previousConnect.call(this, callback)
+          : previousConnect.call(this);
+      }
+
+      routedPrimaryAcquisitions += 1;
+      if (
+        routedPrimaryAcquisitions <= 4 ||
+        (routedPrimaryAcquisitions & (routedPrimaryAcquisitions - 1)) === 0
+      ) {
+        console.log(
+          `[CRYPTARA][OVERFLOW-GATEWAY] primary pool acquisition #${routedPrimaryAcquisitions} intercepted; route=application->overflow/bridge->primary; direct-application-primary=0`,
+        );
+      }
+
+      return runThroughCryptaraOverflowPrimaryGateway(
+        'legacy_application_primary_acquisition',
+        () => typeof callback === 'function'
+          ? previousConnect.call(this, callback)
+          : previousConnect.call(this),
+      );
+    };
+
+    prototype[PRIMARY_GATEWAY_PATCH] = true;
+    console.log(
+      '[CRYPTARA][OVERFLOW-GATEWAY] ACTIVE: verified overflow is the sole application gateway to primary; direct primary health/recovery probes are disabled',
+    );
+  }
 }
 
 await import('./index.js');
