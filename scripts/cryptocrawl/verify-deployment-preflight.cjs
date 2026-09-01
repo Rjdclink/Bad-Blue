@@ -17,6 +17,7 @@ require('./verify-free-tier-startup-gate.cjs');
 require('./verify-cryptara-supabase-admission-worker.cjs');
 require('./verify-cryptara-supabase-comp-switch.cjs');
 require('./verify-cryptara-supabase-overflow.cjs');
+require('./verify-cryptara-supabase-hyper-bridge.cjs');
 require('./verify-cryptara-resource-intelligence.cjs');
 require('./verify-cryptara-super-worker.cjs');
 require('./verify-supabase-background-pressure.cjs');
@@ -27,4 +28,4 @@ require('./verify-aave-liquidation-profit-integrity.cjs');
 require('./verify-topology-execution-integrity.cjs');
 require('./verify-cross-chain-funding-route-truth.cjs');
 
-console.log('[deployment-preflight] safety, measured-profitability, provider-mesh, CEX modernization, resource/BPS coordination, migration authority, Railway config compatibility, Cryptara-first free-tier startup admission, adaptive Supabase admission + normal/comp switching, optional cache-only secondary Supabase overflow, unified Cryptara Super Worker shared-information/QuantiComp proxy control, startup schema fan-out, Antenna+QuantiComp resource intelligence, batched adaptive background pressure control, duplicate-free runtime initialization, live product discovery, DEX atomic profitability, exact Aave liquidation/terminal profit integrity, topology integrity, cross-chain/funding route truth, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] safety, measured-profitability, provider-mesh, CEX modernization, resource/BPS coordination, migration authority, Railway config compatibility, Cryptara-first free-tier startup admission, adaptive Supabase admission + normal/comp switching, optional secondary Supabase overflow, zero-wait HyperBridge write-behind/coalescing/batching, unified Cryptara Super Worker shared-information/QuantiComp proxy control, startup schema fan-out, Antenna+QuantiComp resource intelligence, batched adaptive background pressure control, duplicate-free runtime initialization, live product discovery, DEX atomic profitability, exact Aave liquidation/terminal profit integrity, topology integrity, cross-chain/funding route truth, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
