@@ -6,7 +6,7 @@ import { setTreasuryRestartSweepBarrier } from '../governance/treasury-execution
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 
 const SYSTEM_KEY = 'cryptocrawler';
-const HEARTBEAT_MS = 15_000;
+const HEARTBEAT_MS = 60_000;
 const TERMINAL_GRACE_SECONDS = 180;
 const RAILWAY_DEPLOYMENT_ID = (process.env.RAILWAY_DEPLOYMENT_ID || '').trim();
 const RAILWAY_SERVICE_ID = (process.env.RAILWAY_SERVICE_ID || '').trim();
@@ -28,6 +28,7 @@ type VaultSecretSpec = {
 
 let timer: NodeJS.Timeout | null = null;
 let heartbeatInFlight: Promise<void> | null = null;
+let lifecycleStarted = false;
 let signalInstalled = false;
 let workerSecretsSynchronized = false;
 let consecutiveHeartbeatFailures = 0;
@@ -205,8 +206,24 @@ function logHeartbeatFailure(error: unknown): void {
   });
 }
 
+function nextHeartbeatDelayMs(): number {
+  return Math.max(HEARTBEAT_MS, heartbeatDegradedUntil - Date.now());
+}
+
+function scheduleHeartbeat(): void {
+  if (!lifecycleStarted || timer) return;
+  timer = setTimeout(() => {
+    timer = null;
+    void heartbeatOnce()
+      .catch(logHeartbeatFailure)
+      .finally(() => scheduleHeartbeat());
+  }, nextHeartbeatDelayMs());
+  timer.unref?.();
+}
+
 export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
-  if (!isDatabaseConfigured || timer) return;
+  if (!isDatabaseConfigured || lifecycleStarted) return;
+  lifecycleStarted = true;
   if (!DESTINATION) {
     logger.warn('[Treasury] MetaMask payout wallet is not configured; payouts and restart drain fail closed', {
       component: 'TerminalTreasuryLifecycle', destinationVariable: 'CRYPTO_PROFIT_WALLET_ADDRESS',
@@ -218,12 +235,11 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     signalInstalled = true;
   }
 
-  // Install the retry heartbeat before the first database attempt. A transient
-  // startup outage must not permanently disable secret synchronization or the
-  // restart-drain lifecycle for this otherwise healthy Railway process.
-  timer = setInterval(() => void heartbeatOnce().catch(logHeartbeatFailure), HEARTBEAT_MS);
-  timer.unref?.();
+  // Perform one startup proof, then schedule only after completion. A transient
+  // outage cannot permanently disable retry, and a slow query cannot overlap a
+  // second heartbeat or generate periodic no-op pressure during its backoff.
   await heartbeatOnce().catch(logHeartbeatFailure);
+  scheduleHeartbeat();
 
   logger.info('[Treasury] Persistent treasury lifecycle online', {
     component: 'TerminalTreasuryLifecycle',
@@ -236,6 +252,8 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     workerSecretSynchronizationRetryable: true,
     workerSecretsSynchronized,
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
+    steadyHeartbeatMs: HEARTBEAT_MS,
+    heartbeatScheduling: 'completion_aware_one_shot',
     runtimePolicy: 'first_three_fixed_60_percent_then_persisted_dynamic_55_to_65_percent_eth_payout_remainder_retained_restart_drains_remaining_treasury',
     successorCancelsRestartSweep: false,
     successorNewExposureBlockedDuringSweep: true,
@@ -269,7 +287,8 @@ export async function markTerminalSweepCandidate(signal: string): Promise<void> 
 }
 
 export function stopTerminalTreasuryLifecycle(): void {
-  if (timer) clearInterval(timer);
+  lifecycleStarted = false;
+  if (timer) clearTimeout(timer);
   timer = null;
   workerSecretsSynchronized = false;
   if (signalInstalled) {
