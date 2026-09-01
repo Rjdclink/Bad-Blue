@@ -16,6 +16,7 @@ function forbidPattern(source, pattern, description) {
 
 const intelligence = read('server/services/cryptocrawl/integration/cryptara-resource-intelligence.ts');
 const worker = read('server/services/cryptocrawl/integration/cryptara-supabase-admission-worker.ts');
+const superWorker = read('server/services/cryptocrawl/integration/cryptara-super-worker.ts');
 const antenna = read('server/services/cryptocrawl/intelligence/sovereign-antenna-quality.ts');
 const auction = read('server/services/cryptocrawl/intelligence/provider-quality-auction.ts');
 const quanti = read('server/services/quantiComp/index.ts');
@@ -59,16 +60,21 @@ requirePattern(auction, /executionAuthority:\s*false/, 'provider auction remains
 requirePattern(quanti, /QuantiParallelismGovernor/, 'Quanti Comp retains heavy-compute parallelism authority');
 requirePattern(beam, /computeAuthority:\s*'quanti-comp'/, 'Beam delegates compute execution to Quanti Comp');
 
-// Governance installs the advisor only after critical persistence has entered the
-// Cryptara-governed lane; no resource signal becomes execution authority.
-requirePattern(governance, /stageManager\.restorePersistence[\s\S]{0,2200}installCryptaraResourceIntelligenceAdvisor\(\)/, 'resource advisor installs after critical governance restoration');
-requirePattern(governance, /getCryptaraResourceIntelligenceSnapshot/, 'governance observes fused resource intelligence');
+// The Super Worker is the sole governance-facing resource-control surface. It
+// delegates Antenna/QuantiComp intelligence to the existing bounded advisor.
+requirePattern(superWorker, /activateCryptaraSuperWorkerIntelligence/, 'Super Worker exposes resource-intelligence activation');
+requirePattern(superWorker, /installCryptaraResourceIntelligenceAdvisor/, 'Super Worker delegates to the existing bounded resource advisor');
+requirePattern(superWorker, /authority:\s*'resource_proxy_only'/, 'Super Worker remains proxy-only');
+requirePattern(superWorker, /executionAuthority:\s*false/, 'Super Worker remains non-executing');
+requirePattern(governance, /stageManager\.restorePersistence[\s\S]{0,2600}activateCryptaraSuperWorkerIntelligence\(\)/, 'resource advisor activates after critical governance restoration');
+requirePattern(governance, /getCryptaraResourceIntelligenceSnapshot/, 'governance still observes fused resource intelligence');
+requirePattern(governance, /getCryptaraSuperWorkerSnapshot/, 'governance observes the unified Super Worker surface');
 forbidPattern(governance, /resourceIntelligence[^\n]{0,160}(execute|SUBMIT_TX|executionAuthority\s*:\s*true)/i, 'resource intelligence grants execution authority');
 
 // Reference frameworks remain reference-only, never runtime vocabulary.
-for (const [name, source] of Object.entries({ intelligence, worker, antenna, auction, quanti, beam, governance })) {
+for (const [name, source] of Object.entries({ intelligence, worker, superWorker, antenna, auction, quanti, beam, governance })) {
   forbidPattern(source, /\bhyperscope\b/i, `${name} embeds Hyperscope into runtime code`);
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds enhancements-list vocabulary into runtime code`);
 }
 
-console.log('[cryptara-resource-intelligence] call-free Antenna + Quanti Comp telemetry drives only bounded already-healthy additive DB recovery; authority boundaries preserved');
+console.log('[cryptara-resource-intelligence] call-free Antenna + Quanti Comp telemetry drives only bounded already-healthy additive DB recovery through the unified Cryptara Super Worker; authority boundaries preserved');
