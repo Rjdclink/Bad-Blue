@@ -665,47 +665,30 @@ httpServer = createServer(app);
     });
   });
 
-  // Verified overflow is the normal application data plane. There is no direct
-  // primary readiness/recovery probe here. Legacy primary acquisitions are already
-  // intercepted by cryptara-bootstrap-entry.ts and routed through overflow gateway.
+  // Overflow is the sole application-facing data plane. A missing, incomplete,
+  // or not-yet-activated storefront fails closed. Startup must never probe,
+  // recover, authenticate against, or fall back to Primary.
   try {
     overflowDatabaseReady = await waitForOverflowBootstrapReadiness();
 
-    if (overflowDatabaseReady) {
-      databaseInitialized = true;
-      databaseRuntimeMode = 'overflow_proxy';
-      startupTrace('overflow_proxy_mode_activated', {
-        overflowConnected: true,
+    if (!overflowDatabaseReady) {
+      startupTrace('overflow_storefront_not_active', {
+        overflowConnected: false,
         directPrimaryProbes: 0,
-        primaryAccess: 'overflow_gateway_only',
+        primaryFallbackAllowed: false,
       });
-      console.log('[STARTUP] ✓ Overflow proxy data plane active; direct primary probes=0; necessary primary access routes only through overflow/bridge/workers');
-    } else {
-      const primaryReady = await initializeDatabase();
-      if (!primaryReady) {
-        throw new Error('Neither verified overflow proxy nor primary fallback established a usable startup data plane');
-      }
-
-      databaseInitialized = true;
-      databaseRuntimeMode = 'primary';
-
-      await runMigrations();
-
-      const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
-      await initializeGovernance();
-
-      // Schema verification is global application telemetry. A degraded/missing
-      // CryptoCrawler authority object must not take down unrelated LegalWhat
-      // availability; CryptoCrawler lifecycle entry independently verifies and
-      // fails closed on its migration-owned authority schema before execution.
-      const { runStartupSchemaVerification } = await import('./db');
-      const schemaReady = await runStartupSchemaVerification();
-      if (!schemaReady) {
-        backgroundInitializationError = 'Startup schema verification reported degraded database schema';
-        startupTrace('database_schema_degraded');
-        console.warn('[STARTUP] ⚠ Production schema verification reported degraded state; scoped runtime authorities remain fail-closed');
-      }
+      throw new Error('Overflow storefront is not verified and active; Primary fallback is prohibited');
     }
+
+    databaseInitialized = true;
+    databaseRuntimeMode = 'overflow_proxy';
+    startupTrace('overflow_storefront_mode_activated', {
+      overflowConnected: true,
+      directPrimaryProbes: 0,
+      primaryFallbackAllowed: false,
+      primaryAccess: 'private_overflow_intercom_only',
+    });
+    console.log('[STARTUP] ✓ Overflow storefront active; application Primary probes/fallbacks=0');
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error);
     startupTrace('core_initialization_failed', { error: startupError });
@@ -795,12 +778,13 @@ startupTrace('routes_registration_completed');
     
     isFullyInitialized = true;
     if (databaseRuntimeMode === 'overflow_proxy') {
-      startupTrace('application_ready_overflow_proxy', {
+      startupTrace('application_ready_overflow_storefront', {
         overflowConnected: true,
         directPrimaryProbes: 0,
-        primaryAccess: 'overflow_gateway_only',
+        primaryFallbackAllowed: false,
+        primaryAccess: 'private_overflow_intercom_only',
       });
-      console.log('[STARTUP] ✓ Server ready on overflow proxy data plane; bridge/workers active; direct primary probes=0');
+      console.log('[STARTUP] ✓ Server ready on Overflow storefront; application Primary probes/fallbacks=0');
     } else {
       startupTrace('application_ready');
       console.log('[STARTUP] ✓ Server fully initialized and ready');

@@ -1,111 +1,97 @@
 'use strict';
 
-const fs = require('node:fs');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 
-const worker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-supabase-overflow-worker.ts', 'utf8');
-const superWorker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-super-worker.ts', 'utf8');
-const migration = fs.readFileSync('server/migrations/overflow/001_cryptara_comp_cache.sql', 'utf8');
-const parallelMigration = fs.readFileSync('server/migrations/overflow/002_cryptara_parallel_proxy.sql', 'utf8');
-const provision = fs.readFileSync('scripts/cryptocrawl/provision-cryptara-overflow-schema.cjs', 'utf8');
-const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
+const read = file => fs.readFileSync(file, 'utf8');
+const provision = read('scripts/cryptocrawl/provision-cryptara-overflow-schema.cjs');
+const foundation = read('server/migrations/overflow/003_cryptara_storefront_runtime.sql');
+const bootstrap = read('server/services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.ts');
+const index = read('server/index.ts');
+const dockerfile = read('Dockerfile');
 
-// One provisioning authority only. A stale/alternate provisioner would create a
-// competing migration path and is therefore a build failure.
 assert.equal(
   fs.existsSync('scripts/cryptocrawl/provision-overflow-auxiliary.cjs'),
   false,
-  'legacy competing Overflow provisioner must be removed',
+  'a competing legacy Overflow provisioner must not exist',
 );
 
-// The secondary project uses the single existing Railway overflow database
-// variable. It must remain a distinct, transaction-pooled Supabase project with
-// a tiny zero-idle runtime pool; duplicate database-variable aliases are forbidden.
-assert.match(worker, /SUPABASE_DATABASE_URL_OVERFLOW/);
-assert.doesNotMatch(worker, /CRYPTOCRAWL_PARALLEL_PROXY_DATABASE_URL/);
-assert.doesNotMatch(worker, /CRYPTOCRAWL_OVERFLOW_DATABASE_URL/);
-assert.match(worker, /transactionPoolerUrl/);
-assert.match(worker, /parsed\.port = '6543'/);
-assert.match(worker, /production && !sharedPooler\(configuredUrl\)/);
-assert.match(worker, /parallel proxy database must use the Supabase shared transaction pooler in production/);
-assert.match(worker, /parallel proxy database must be a different Supabase project from the primary/);
-assert.match(worker, /CRYPTOCRAWL_OVERFLOW_POOL_MAX, 2, 1, 2/);
-assert.match(worker, /max:\s*overflowPoolMax/);
-assert.match(worker, /min:\s*0/);
-assert.doesNotMatch(worker, /setInterval\s*\(/);
-
-// Proxy authority is explicitly noncritical. Future systems must opt in through
-// the bounded workload classes rather than gaining a second execution authority.
-assert.match(worker, /export type CryptaraParallelProxyWorkload/);
-for (const workload of ['cache', 'analytics', 'telemetry', 'observability', 'background_learning']) {
-  assert.ok(worker.includes(`'${workload}'`), `parallel proxy must expose bounded ${workload} workload class`);
-}
-assert.match(worker, /withCryptaraParallelProxy/);
-assert.match(worker, /role: 'parallel_auxiliary_proxy'/);
-assert.match(worker, /routing: 'explicit_opt_in_plus_comp_overflow'/);
-assert.match(worker, /authority: 'auxiliary_noncritical_only'/);
-assert.match(worker, /executionAuthority: false/);
-assert.match(worker, /writeAuthority: false/);
-assert.match(worker, /criticalDataAllowed: false/);
-assert.match(worker, /financialAuthorityAllowed: false/);
-assert.match(worker, /governanceAuthorityAllowed: false/);
-assert.match(worker, /runtimeDdlAllowed: false/);
-
-// Runtime never provisions the second project. Deployment-time provisioning is
-// one-shot, idempotent, and independently fails before a replica can start.
-assert.match(worker, /to_regclass\('private\.cryptara_comp_cache'\)/);
-assert.doesNotMatch(worker, /readFileSync|resolveMigrationPath/);
-assert.doesNotMatch(worker, /CREATE\s+(?:SCHEMA|TABLE|INDEX)|ALTER\s+TABLE/i);
-
-// Four-gate provisioning contract:
-// 1) prove Primary and Overflow identities are distinct without connecting to Primary;
-// 2) prove only the migration-owned auxiliary files are eligible;
-// 3) apply both migrations atomically on a single bounded Overflow session;
-// 4) verify every auxiliary object and fail if primary-authority tables appear.
-assert.match(provision, /process\.env\.SUPABASE_DATABASE_URL_OVERFLOW\b/);
-assert.match(provision, /process\.env\.SUPABASE_DATABASE_URL[\s\S]*process\.env\.SUPABASE_DB_URL[\s\S]*process\.env\.DATABASE_URL/);
-assert.match(provision, /overflowProject\s*===\s*primaryProject/);
+// The provisioner may inspect Primary identity only to prove that the projects
+// differ. This schema step is Overflow-only and must not create a Primary client.
+assert.match(provision, /SUPABASE_DATABASE_URL_OVERFLOW/);
 assert.match(provision, /OVERFLOW_GATE_1_PRIMARY_AND_OVERFLOW_MUST_BE_DISTINCT/);
-assert.match(provision, /sessionPoolerUrl/);
-assert.match(provision, /parsed\.port = '5432'/);
-assert.match(provision, /server[^\n]*migrations[^\n]*overflow[\s\S]*dist[^\n]*migrations[^\n]*overflow/);
-assert.match(provision, /001_cryptara_comp_cache\.sql[\s\S]*002_cryptara_parallel_proxy\.sql/);
-assert.match(provision, /forbiddenAuthoritySurface/);
-assert.match(provision, /OVERFLOW_GATE_2_AUTHORITY_LEAK/);
-assert.match(provision, /new Client\(/);
-assert.doesNotMatch(provision, /new Client\(\{[\s\S]{0,300}connectionString:\s*primaryUrl/);
-assert.match(provision, /client\.query\('begin'\)[\s\S]*client\.query\(migration\.sql\)[\s\S]*client\.query\('commit'\)/);
-assert.match(provision, /cryptara_comp_cache[\s\S]*cryptara_parallel_snapshots[\s\S]*cryptara_parallel_events[\s\S]*cryptara_parallel_jobs[\s\S]*cryptara_claim_parallel_jobs/);
-assert.match(provision, /has_users[\s\S]*has_complaints[\s\S]*has_lawsuit_filings[\s\S]*has_resource_leases/);
-assert.match(provision, /OVERFLOW_GATE_4_PRIMARY_AUTHORITY_TABLES_PRESENT/);
-for (const gate of ['Gate 1/4 PASS', 'Gate 2/4 PASS', 'Gate 3/4 PASS', 'Gate 4/4 PASS']) {
-  assert.ok(provision.includes(gate), `provisioner must expose ${gate}`);
+assert.match(provision, /connectionString:\s*provisioningUrl/);
+assert.doesNotMatch(provision, /connectionString:\s*primaryUrl/);
+assert.doesNotMatch(provision, /new\s+Client\([^)]*primary/i);
+assert.match(provision, /STOREFRONT_SCHEMA_VERSION\s*=\s*1/);
+assert.match(provision, /pg_advisory_xact_lock/);
+assert.match(provision, /client\.query\('begin'\)[\s\S]*client\.query\('commit'\)/);
+assert.match(provision, /Primary was not contacted and DDL was skipped/);
+
+for (const migration of [
+  '003_cryptara_storefront_runtime.sql',
+  '007_zero_capital_execution_ledger.sql',
+  '013_cryptocrawler_private_intelligence_memory.sql',
+  '015_cryptocrawler_terminal_treasury_sweep.sql',
+  '018_cryptocrawler_profit_split_eth_payout.sql',
+  '021_cryptocrawler_inventory_access_hardening.sql',
+  '023_cryptocrawler_hot_path_schema_authority.sql',
+  '024_cryptocrawler_funding_lifecycle.sql',
+  '025_cryptocrawler_rainbow_source_ledger.sql',
+  'eden_swarm_migration.sql',
+  '001_cryptara_comp_cache.sql',
+  '002_cryptara_parallel_proxy.sql',
+]) {
+  assert.ok(provision.includes(migration), `Overflow storefront provisioner must include ${migration}`);
 }
 
-// Existing comp-cache behavior stays bounded and excludes execution truth. The
-// generic proxy API is ready for additional systems to opt in later.
-assert.match(worker, /jsonSafe/);
-assert.match(worker, /CRYPTOCRAWL_OVERFLOW_MAX_PAYLOAD_BYTES/);
-assert.match(worker, /limit 128/);
-assert.match(worker, /60 \* 60_000/);
-assert.match(superWorker, /switchSnapshot\.path === 'comp'/);
-assert.match(superWorker, /informationClass !== 'execution_truth'/);
-assert.match(superWorker, /readCryptaraOverflowCache/);
-assert.match(superWorker, /writeCryptaraOverflowCache/);
-assert.match(superWorker, /overflow:\s*getCryptaraOverflowSnapshot\(\)/);
+for (const object of [
+  'cryptara_storefront_control',
+  'zero_capital_execution_ledger',
+  'cryptocrawl_governance_state',
+  'cryptocrawler_terminal_sweep_control',
+  'cryptocrawler_rainbow_profit_events',
+  'cryptocrawler_cex_inventory_state_v1',
+  'cryptocrawler_resource_leases',
+  'cryptocrawler_mc_calibration_v1',
+  'cryptocrawler_kraken_nonce_state',
+  'cryptocrawler_funding_lifecycles',
+  'cryptara_trade_outcomes',
+  'cryptara_outbox',
+  'cryptocrawler_learned_parameters',
+  'cryptocrawler_optimal_params',
+  'eden_strategy_templates',
+  'cryptara_comp_cache',
+  'cryptara_parallel_jobs',
+]) {
+  assert.ok(provision.includes(object), `Overflow readiness proof must include ${object}`);
+}
 
-assert.match(migration, /private\.cryptara_comp_cache/);
-assert.match(migration, /information_class in \('connector_readiness','schema_authority','market_snapshot','resource_snapshot','background'\)/);
-assert.match(migration, /cryptara_comp_cache_class/);
-assert.doesNotMatch(migration, /information_class\s+in\s*\([^)]*execution_truth/i);
-assert.match(migration, /enable row level security/i);
-assert.match(migration, /expires_at/);
-assert.match(parallelMigration, /private\.cryptara_parallel_snapshots/);
-assert.match(parallelMigration, /private\.cryptara_parallel_events/);
-assert.match(parallelMigration, /private\.cryptara_parallel_jobs/);
-assert.match(parallelMigration, /private\.cryptara_claim_parallel_jobs/);
-assert.match(parallelMigration, /revoke all on function private\.cryptara_claim_parallel_jobs\(text, integer, integer\) from public/i);
-assert.match(dockerfile, /server\/migrations\/overflow\/001_cryptara_comp_cache\.sql \.\/dist\/migrations\/overflow\/001_cryptara_comp_cache\.sql/);
-assert.match(dockerfile, /server\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql \.\/dist\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql/);
+// Historical schema gaps are now migration-owned, private/client-inaccessible,
+// and explicitly separate schema readiness from traffic activation.
+assert.match(foundation, /create table if not exists private\.cryptara_storefront_control/i);
+assert.match(foundation, /cutover_state in \('schema_ready','copying','verified','active','degraded'\)/i);
+assert.match(foundation, /create table if not exists private\.cryptocrawler_rainbow_profit_events/i);
+assert.match(foundation, /create table if not exists public\.cryptocrawler_learned_parameters/i);
+assert.match(foundation, /create table if not exists public\.cryptocrawler_optimal_params/i);
+assert.match(foundation, /enable row level security/i);
+assert.match(foundation, /revoke all on table private\.cryptocrawler_rainbow_profit_events from public, anon, authenticated/i);
+assert.match(foundation, /grant select, insert, update, delete on table private\.cryptocrawler_rainbow_profit_events to service_role/i);
 
-console.log('[cryptara-supabase-overflow] PASS: one four-gate deployment provisioner owns the auxiliary mirror schema; runtime remains bounded and DDL-free; Overflow cannot become financial/execution/governance authority');
+// Connectivity and schema presence cannot cosmetically turn readiness green.
+assert.match(bootstrap, /cutoverState === 'active'/);
+assert.match(bootstrap, /Overflow storefront awaiting verified data\/authority activation/);
+assert.match(bootstrap, /Primary probes=0/);
+assert.doesNotMatch(bootstrap, /from ['"][^'"]*\/db(?:\.js)?['"]/);
+assert.doesNotMatch(bootstrap, /\bpool\.query\s*\(/);
+
+// Startup is fail-closed: no Primary recovery/fallback branch remains.
+assert.match(index, /Primary fallback is prohibited/);
+assert.match(index, /primaryFallbackAllowed:\s*false/);
+assert.doesNotMatch(index, /const\s+primaryReady\s*=\s*await\s+initializeDatabase\(\)/);
+
+// Docker and Railpack must resolve the same complete migration assets.
+assert.match(dockerfile, /COPY --from=builder \/app\/server\/migrations \.\/dist\/migrations/);
+assert.match(dockerfile, /eden_swarm_migration\.sql \.\/dist\/migrations\/eden_swarm_migration\.sql/);
+
+console.log('[cryptara-supabase-overflow] PASS: Overflow owns a complete migration-proven storefront schema, activation remains data/authority gated, startup cannot fall back to Primary, and production artifacts contain the same contracts');

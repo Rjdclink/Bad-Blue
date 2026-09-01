@@ -79,18 +79,11 @@ RUN rm -rf node_modules || true && \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 
-# CryptoCrawler runtime DDL remains migration-owned. The runtime image must carry
-# every startup-owned idempotent CryptoCrawler migration because the production
-# stage intentionally does not copy the TypeScript source tree.
-COPY --from=builder /app/server/migrations/023_cryptocrawler_hot_path_schema_authority.sql ./dist/migrations/023_cryptocrawler_hot_path_schema_authority.sql
-COPY --from=builder /app/server/migrations/024_cryptocrawler_funding_lifecycle.sql ./dist/migrations/024_cryptocrawler_funding_lifecycle.sql
-COPY --from=builder /app/server/migrations/025_cryptocrawler_rainbow_source_ledger.sql ./dist/migrations/025_cryptocrawler_rainbow_source_ledger.sql
-
-# Optional secondary-Supabase migrations are bundled for explicit provisioning of
-# that separate project later. Runtime only verifies their objects and never runs
-# DDL against the auxiliary database.
-COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
-COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
+# The Overflow storefront is provisioned from migration-owned contracts before
+# runtime activation. The production image must contain the complete ordered
+# CryptoCrawler migration set, not only the latest authority additions.
+COPY --from=builder /app/server/migrations ./dist/migrations
+COPY --from=builder /app/db/migrations/eden_swarm_migration.sql ./dist/migrations/eden_swarm_migration.sql
 
 # Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts
