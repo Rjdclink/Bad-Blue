@@ -76,13 +76,13 @@ assert(railwayExample.includes('NEVER point CRYPTOCRAWL_COORDINATION_DATABASE_UR
 assert(feeResolver.includes('const feeInFlight = new Map'), 'canonical fee resolver must retain single-flight requests');
 assert(feeResolver.includes('const feeCache = new Map'), 'canonical fee resolver must retain shared process cache');
 
-// The existing BPS optimizer already consumes maker savings. Four-mode economics
-// must now publish the exact authenticated TT -> maker/hybrid fee reduction while
-// retaining the pre-existing primary mode ordering.
+// Four-mode economics publishes the canonical maker savings surface. The adaptive
+// policy predates that field and already consumes the same authenticated TT
+// baseline through measuredMakerSavings; preserve that working behavior here.
 assert(fourMode.includes('makerFeeSavingsVsTakerBps'), 'four-mode economics must publish measured maker BPS savings');
 assert(fourMode.includes('ttCombinedFeeBps - combinedFeeBps'), 'maker BPS savings must be computed against the same venue-pair TT fee baseline');
 assert(fourMode.includes('return left.bpsToBreakEven - right.bpsToBreakEven\n    || left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven'), 'maker-savings activation must not replace the original primary Four-Mode break-even ordering');
-assert(adaptivePolicy.includes('makerFeeSavingsVsTakerBps'), 'adaptive profitability policy must consume measured maker savings');
+assert(adaptivePolicy.includes('function measuredMakerSavings') && adaptivePolicy.includes('takerFeeByRoute(input.latestModes)') && adaptivePolicy.includes('makerSavingsBoost'), 'adaptive profitability policy must consume measured authenticated TT-to-maker savings');
 
 // Market ordering may use current measured BPS recovery and provider quality only
 // as advisory priority. Rotation/exploration and execution authority stay separate.
