@@ -1,10 +1,10 @@
 import logger from '../../../logger.js';
-import { requireCryptocrawlerAuthoritySchema } from '../../../migrations/reconcileAppSchema.js';
 import { installCanonicalWalletConfiguration } from '../core/wallet-identity.js';
 import {
   createCryptoCrawlerCoreLifecycle,
   type CryptoCrawlerCoreLifecycle,
 } from './core-runtime-lifecycle.js';
+import { ensureCryptocrawlOverflowRuntimeSchema } from './cryptocrawl-overflow-runtime-schema.js';
 import { ensureZeroCapitalRealizedProfitWiring } from './zero-capital-realized-profit-wiring.js';
 
 let lifecyclePromise: Promise<CryptoCrawlerCoreLifecycle> | null = null;
@@ -128,10 +128,11 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
  */
 export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   // Global application readiness remains independent from CryptoCrawler-specific
-  // schema, but production discovery/execution cannot start until every
-  // migration-owned execution authority is observable.
+  // schema. Production discovery/execution is admitted only after the complete
+  // Overflow-owned execution/governance/settlement schema verifies. Primary is
+  // cold/archive state and must never be a synchronous runtime prerequisite.
   if (process.env.NODE_ENV === 'production') {
-    await requireCryptocrawlerAuthoritySchema(2);
+    await ensureCryptocrawlOverflowRuntimeSchema();
   }
   ensureCanonicalWalletConfiguration();
   ensureZeroCapitalRealizedProfitWiring();
@@ -169,7 +170,8 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     rainbowProfitBridgeScheduled: true,
     canonicalWalletArchitectureInstalled: true,
     fundingRateDiscovery: 'owned_by_unified_parallel_controller',
-    authoritySchemaGate: 'production_migration_owned_runtime_start_required',
+    authoritySchemaGate: 'overflow_migration_owned_runtime_start_required',
+    primaryRuntimePrerequisite: false,
   });
 }
 
