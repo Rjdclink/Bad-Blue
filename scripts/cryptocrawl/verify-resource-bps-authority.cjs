@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, '..', '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const exists = relative => fs.existsSync(path.join(root, relative));
 
+const runtimeDb = read('server/services/cryptocrawl/runtime/cryptocrawl-runtime-database.ts');
 const coordination = read('server/services/cryptocrawl/runtime/database-coordination.ts');
 const cexPrivate = read('server/services/cryptocrawl/intelligence/cex-private-authority.ts');
 const evmSigner = read('server/services/cryptocrawl/execution/evm-signer-lane.ts');
@@ -18,13 +19,13 @@ const marketUniverse = read('server/services/cryptocrawl/discovery/market-univer
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
 const railwayExample = read('.env.railway.example');
 
-// Session-level ownership must live on a dedicated bounded lane, never the
-// transaction pooler or an unbounded blocking advisory lock.
-assert(coordination.includes('CRYPTOCRAWL_COORDINATION_POOL_MAX'), 'coordination pool must be explicitly bounded');
-assert(coordination.includes("databasePort(connectionString) === 6543"), 'transaction-pooler port must be rejected for session advisory locks');
+// Session-level ownership must live on the single dedicated Overflow runtime lane,
+// never the transaction pooler or an unbounded blocking advisory lock.
+assert(runtimeDb.includes('CRYPTOCRAWL_OVERFLOW_COORDINATION_POOL_MAX') && runtimeDb.includes('CRYPTOCRAWL_COORDINATION_POOL_MAX'), 'Overflow coordination pool must be explicitly bounded at its canonical owner');
+assert(runtimeDb.includes('coordinationUsesTransactionPool') && runtimeDb.includes('transaction pool port 6543 is not allowed'), 'transaction-pooler port must be rejected for Overflow session advisory locks');
 assert(coordination.includes('pg_try_advisory_lock(hashtextextended($1, 0))'), 'coordination must use bounded try-lock acquisition with a 64-bit key');
 assert(coordination.includes('Timed out acquiring CryptoCrawler coordination lock'), 'coordination lock wait must be bounded');
-assert(coordination.includes('DATABASE_SSL_CERT'), 'coordination TLS must retain the canonical custom CA path');
+assert(runtimeDb.includes('DATABASE_SSL_CERT'), 'Overflow coordination TLS must retain the canonical custom CA path');
 
 // Kraken schema is migration-owned; runtime verifies instead of performing DDL.
 assert(hotPathMigration.includes('private.cryptocrawler_kraken_nonce_state'), 'Kraken durable nonce state must remain migration-owned');
