@@ -1,6 +1,11 @@
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  isCryptaraParallelProxyConfigured,
+  readCryptaraParallelSnapshot,
+  writeCryptaraParallelSnapshot,
+} from '../integration/cryptara-supabase-overflow-worker.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 
 export interface RainbowProfitSourceSnapshot {
@@ -15,6 +20,8 @@ export interface RainbowProfitSourceSnapshot {
   transactionHash: string | null;
   recordedAt: number;
 }
+
+const PARALLEL_PROXY_TOPIC = 'rainbow-profit-source';
 
 function unique(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.map(value => String(value || '').trim().toUpperCase()).filter(Boolean))];
@@ -59,8 +66,23 @@ class RainbowProfitSourceLedger {
     if (!feedback.settlement || feedback.settlement.terminal !== true || feedback.settlement.settlementConfirmed !== true) return;
     const realized = Number(feedback.realizedProfitUsd ?? feedback.settlement.realized.netProfitUsd);
     if (feedback.success !== true || !Number.isFinite(realized) || realized <= 0) return;
-    if (!isDatabaseConfigured) return;
     const source = sourceSnapshot(feedback);
+
+    // This is secondary metadata, not payout/treasury authority. Prefer the
+    // auxiliary read-model store so profitable terminal events do not add another
+    // write to the trading database when the second project is available.
+    if (isCryptaraParallelProxyConfigured) {
+      const proxied = await writeCryptaraParallelSnapshot({
+        key: source.eventId,
+        workload: 'observability',
+        topic: PARALLEL_PROXY_TOPIC,
+        payload: source,
+        observedAt: source.recordedAt,
+      });
+      if (proxied.used) return;
+    }
+
+    if (!isDatabaseConfigured) return;
     await withCryptaraSupabasePriority('low', () => pool.query(
       `INSERT INTO private.cryptocrawler_rainbow_profit_sources
         (event_id, execution_source, strategy, symbol, chain, venue_or_route, venues, assets, transaction_hash, recorded_at)
@@ -91,6 +113,15 @@ class RainbowProfitSourceLedger {
   }
 
   async get(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
+    if (isCryptaraParallelProxyConfigured) {
+      const proxied = await readCryptaraParallelSnapshot<RainbowProfitSourceSnapshot>(
+        'observability',
+        eventId,
+        PARALLEL_PROXY_TOPIC,
+      );
+      if (proxied.used && proxied.value?.payload) return proxied.value.payload;
+    }
+
     if (!isDatabaseConfigured) return null;
     const result = await withCryptaraSupabasePriority('low', () => pool.query(
       `SELECT event_id, execution_source, strategy, symbol, chain, venue_or_route, venues, assets, transaction_hash,
