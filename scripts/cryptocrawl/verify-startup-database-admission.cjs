@@ -61,6 +61,14 @@ forbidPattern(migrations, /const\s+restore\s*=\s*setTimeout\([\s\S]{0,500}option
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker admission arm must delegate to the existing Cryptara DB governor');
 requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,700}releaseRollingDeploymentPoolHeadroom\('cryptara_super_worker_admission_installed'\)[\s\S]{0,700}stageManager\.restorePersistence/, 'rollout headroom must release only after Super Worker admission is installed and before governed persistence');
 
+// Railway PR environments inherit base variables, including an external Supabase
+// URL. Non-production Railway boots must therefore verify schema without running
+// migration DDL against the production primary database.
+requirePattern(migrations, /function\s+startupSchemaMutationAllowed\(\)[\s\S]{0,900}RAILWAY_ENVIRONMENT_NAME[\s\S]{0,350}environmentName\s*===\s*'production'/, 'only the Railway production environment may mutate schema at startup');
+requirePattern(migrations, /if\s*\(!startupSchemaMutationAllowed\(\)\)[\s\S]{0,1600}requireCryptocrawlerAuthoritySchema\(1\)[\s\S]{0,900}return\s+verificationOnly/, 'Railway non-production environments must return from a verification-only path before migration coordination');
+requirePattern(migrations, /verification-only; no schema DDL executed/, 'preview mutation suppression must be explicit in startup telemetry');
+forbidPattern(migrations, /ALLOW_[A-Z_]*(?:PREVIEW|PR)[A-Z_]*MIGRATION|FORCE_[A-Z_]*MIGRATION/, 'preview schema-mutation safety must not be bypassable by a new environment override');
+
 // Startup already proves the migration-owned lease table/function. That exact
 // truth must seed the runtime shared broker instead of causing a duplicate query.
 requirePattern(migrations, /to_regprocedure\(\$5\)::text\s+AS\s+resource_slot_claimant/i, 'startup schema proof includes the resource-slot claimant');
