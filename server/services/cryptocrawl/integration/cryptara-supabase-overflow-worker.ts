@@ -126,16 +126,11 @@ export interface CryptaraParallelStoredArtifact<T = unknown> {
   expiresAt: number | null;
 }
 
-const configuredRawUrl = optionalUrl(
-  process.env.CRYPTOCRAWL_PARALLEL_PROXY_DATABASE_URL
-    || process.env.CRYPTOCRAWL_OVERFLOW_DATABASE_URL,
-);
+const configuredRawUrl = optionalUrl(process.env.SUPABASE_DATABASE_URL_OVERFLOW);
 const configuredUrl = configuredRawUrl ? transactionPoolerUrl(configuredRawUrl) : '';
-const configuredSource = process.env.CRYPTOCRAWL_PARALLEL_PROXY_DATABASE_URL?.trim()
-  ? 'CRYPTOCRAWL_PARALLEL_PROXY_DATABASE_URL'
-  : process.env.CRYPTOCRAWL_OVERFLOW_DATABASE_URL?.trim()
-    ? 'CRYPTOCRAWL_OVERFLOW_DATABASE_URL'
-    : null;
+const configuredSource = process.env.SUPABASE_DATABASE_URL_OVERFLOW?.trim()
+  ? 'SUPABASE_DATABASE_URL_OVERFLOW'
+  : null;
 const primaryUrl = primaryDatabaseUrl();
 const overflowProject = projectIdentity(configuredUrl);
 const primaryProject = projectIdentity(primaryUrl);
