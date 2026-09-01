@@ -1,4 +1,8 @@
 import { quantiDataFabric } from '../../quantiComp/dataFabric.js';
+import {
+  getCryptaraSupabaseCompSwitchSnapshot,
+  type CryptaraSupabaseCompSwitchSnapshot,
+} from './cryptara-supabase-comp-switch.js';
 
 export type CryptaraInformationClass =
   | 'execution_truth'
@@ -55,6 +59,7 @@ export interface CryptaraSuperWorkerSnapshot {
   executionAuthority: false;
   admissionInstalled: boolean;
   intelligenceActive: boolean;
+  supabaseDataPath: CryptaraSupabaseCompSwitchSnapshot;
   information: {
     retainedEntries: number;
     retainedBytes: number;
@@ -67,6 +72,9 @@ export interface CryptaraSuperWorkerSnapshot {
     upstreamCallsAvoided: number;
     loadFailures: number;
     evictions: number;
+    normalPathRequests: number;
+    compPathRequests: number;
+    compFreshnessExtensions: number;
     activeConsumers: Record<string, number>;
   };
   dataFabric: ReturnType<typeof quantiDataFabric.getStatus>;
@@ -121,11 +129,28 @@ class CryptaraSharedInformationBroker {
   private coalescedRequests = 0;
   private loadFailures = 0;
   private evictions = 0;
+  private normalPathRequests = 0;
+  private compPathRequests = 0;
+  private compFreshnessExtensions = 0;
 
-  private effectiveFreshMs(informationClass: CryptaraInformationClass, requested: unknown): number {
+  private effectiveFreshMs(
+    informationClass: CryptaraInformationClass,
+    requested: unknown,
+    switchSnapshot: CryptaraSupabaseCompSwitchSnapshot,
+  ): number {
     const fallback = CLASS_DEFAULT_FRESH_MS[informationClass];
     const maximum = CLASS_MAX_FRESH_MS[informationClass];
-    return boundedInt(requested, fallback, 0, maximum);
+    const normalFreshMs = boundedInt(requested, fallback, 0, maximum);
+
+    // Explicit zero retention is always absolute, and execution truth can never
+    // become reusable merely because Supabase is under pressure.
+    if (normalFreshMs <= 0 || informationClass === 'execution_truth') return normalFreshMs;
+    if (switchSnapshot.path !== 'comp') return normalFreshMs;
+
+    const multiplier = Math.max(1, switchSnapshot.policy.sharedFreshnessMultiplier);
+    const compFreshMs = Math.min(maximum, Math.max(normalFreshMs, Math.ceil(normalFreshMs * multiplier)));
+    if (compFreshMs > normalFreshMs) this.compFreshnessExtensions += 1;
+    return compFreshMs;
   }
 
   private estimateBytes(value: unknown, explicit?: number): number {
@@ -219,6 +244,10 @@ class CryptaraSharedInformationBroker {
       throw new Error(`CRYPTARA_SUPER_WORKER_CONSUMER_NOT_ALLOWED:${request.consumer}`);
     }
 
+    const switchSnapshot = getCryptaraSupabaseCompSwitchSnapshot();
+    if (switchSnapshot.path === 'comp') this.compPathRequests += 1;
+    else this.normalPathRequests += 1;
+
     const now = Date.now();
     this.cleanupExpired(now);
     const cached = this.cache.get(request.key) as CacheEntry<T> | undefined;
@@ -232,7 +261,7 @@ class CryptaraSharedInformationBroker {
     if (!pending) {
       source = 'origin';
       this.originLoads += 1;
-      const freshForMs = this.effectiveFreshMs(request.informationClass, request.freshForMs);
+      const freshForMs = this.effectiveFreshMs(request.informationClass, request.freshForMs, switchSnapshot);
       pending = Promise.resolve()
         .then(() => this.runLoader(request))
         .then(value => {
@@ -279,7 +308,14 @@ class CryptaraSharedInformationBroker {
   }
 
   prime<T>(input: CryptaraSharedInformationPrime<T>): void {
-    const freshForMs = this.effectiveFreshMs(input.informationClass, input.freshForMs);
+    // Priming represents already-verified truth. Keep the caller's semantic TTL;
+    // pressure-mode extension is reserved for origin acquisitions that it avoids.
+    const freshForMs = boundedInt(
+      input.freshForMs,
+      CLASS_DEFAULT_FRESH_MS[input.informationClass],
+      0,
+      CLASS_MAX_FRESH_MS[input.informationClass],
+    );
     if (freshForMs <= 0) return;
     const now = Date.now();
     this.cleanupExpired(now);
@@ -322,6 +358,9 @@ class CryptaraSharedInformationBroker {
       upstreamCallsAvoided: this.cacheHits + this.coalescedRequests,
       loadFailures: this.loadFailures,
       evictions: this.evictions,
+      normalPathRequests: this.normalPathRequests,
+      compPathRequests: this.compPathRequests,
+      compFreshnessExtensions: this.compFreshnessExtensions,
       activeConsumers: Object.fromEntries(this.activeConsumers.entries()),
     };
   }
@@ -382,6 +421,7 @@ export function getCryptaraSuperWorkerSnapshot(): CryptaraSuperWorkerSnapshot {
     executionAuthority: false,
     admissionInstalled,
     intelligenceActive,
+    supabaseDataPath: getCryptaraSupabaseCompSwitchSnapshot(),
     information: informationBroker.snapshot(),
     dataFabric: quantiDataFabric.getStatus(),
   };
