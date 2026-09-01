@@ -11,8 +11,8 @@ const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v1';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
-// external sweeper schedule. State/functions are mirrored without creating a
-// second independent payout scheduler.
+// external sweeper schedule. The safe support functions from 016 are mirrored in
+// overflow/004 without creating a second independent payout scheduler.
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
   '007_zero_capital_execution_ledger.sql',
@@ -33,6 +33,7 @@ const MIGRATIONS = [
   '023_cryptocrawler_hot_path_schema_authority.sql',
   '024_cryptocrawler_funding_lifecycle.sql',
   '025_cryptocrawler_rainbow_source_ledger.sql',
+  'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
 const REQUIRED_TABLES = [
@@ -73,6 +74,8 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_treasury_worker_claim(text,integer)',
   'public.cryptocrawler_treasury_worker_release(text)',
   'public.cryptocrawler_terminal_sweep_truth_guard()',
+  'public.cryptocrawler_terminal_sweep_secret(text)',
+  'public.cryptocrawler_terminal_sweep_finalize_events(uuid)',
   'public.cryptocrawler_okx_treasury_spendable(text)',
   'public.cryptocrawler_profit_payout_batch_confirm(text,text,text)',
   'public.cryptocrawler_treasury_claim_okx_liquidity(text,text,numeric)',
