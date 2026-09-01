@@ -3,9 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import pg from 'pg';
 import {
-  getDatabaseUrl,
   isPostgresConnectionString,
-  isProduction,
   isSupabasePostgresConnectionString,
   isSupabaseProjectUrl,
 } from '../../../config.js';
@@ -23,6 +21,14 @@ function boundedInt(raw: unknown, fallback: number, minimum: number, maximum: nu
 
 function optionalUrl(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function primaryDatabaseUrl(): string {
+  return optionalUrl(
+    process.env.SUPABASE_DATABASE_URL
+      || process.env.SUPABASE_DB_URL
+      || process.env.DATABASE_URL,
+  );
 }
 
 function parsedPostgresUrl(url: string): URL | null {
@@ -100,15 +106,16 @@ export interface CryptaraOverflowCacheHit<T = unknown> {
 
 const configuredRawUrl = optionalUrl(process.env.CRYPTOCRAWL_OVERFLOW_DATABASE_URL);
 const configuredUrl = configuredRawUrl ? transactionPoolerUrl(configuredRawUrl) : '';
-const primaryUrl = optionalUrl(getDatabaseUrl());
+const primaryUrl = primaryDatabaseUrl();
 const overflowProject = projectIdentity(configuredUrl);
 const primaryProject = projectIdentity(primaryUrl);
+const production = process.env.NODE_ENV === 'production';
 let configurationError: string | null = null;
 
 if (configuredUrl) {
   if (isSupabaseProjectUrl(configuredUrl) || !isPostgresConnectionString(configuredUrl)) {
     configurationError = 'overflow URL must be a Postgres connection string';
-  } else if (isProduction() && !isSupabasePostgresConnectionString(configuredUrl)) {
+  } else if (production && !isSupabasePostgresConnectionString(configuredUrl)) {
     configurationError = 'overflow database must remain Supabase-bound in production';
   } else if (sharedPooler(configuredUrl) && parsedPostgresUrl(configuredUrl)?.port !== '6543') {
     configurationError = 'overflow shared-pooler connection must use transaction mode port 6543';
@@ -246,10 +253,13 @@ export async function writeCryptaraOverflowCache(
   value: unknown,
   freshForMs: number,
 ): Promise<boolean> {
-  if (!overflowPool || Date.now() < cooldownUntil || freshForMs <= 0 || !jsonSafe(value) || !await ensureSchema()) {
-    if (value !== undefined && !jsonSafe(value)) skippedUnsupported += 1;
+  if (!overflowPool || Date.now() < cooldownUntil || freshForMs <= 0) return false;
+  const safePayload = jsonSafe(value);
+  if (!safePayload) {
+    skippedUnsupported += 1;
     return false;
   }
+  if (!await ensureSchema()) return false;
   let serialized: string;
   try {
     serialized = JSON.stringify(value);
