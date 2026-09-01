@@ -14,10 +14,12 @@ function forbidPattern(source, pattern, description) {
 
 const bootstrap = read('server/cryptara-bootstrap-entry.ts');
 const bridgeBootstrap = read('server/services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.ts');
+const overflowSuperWorker = read('server/services/cryptocrawl/integration/cryptara-overflow-super-worker.ts');
 const overflow = read('server/services/cryptocrawl/integration/cryptara-supabase-overflow-worker.ts');
 
-// Exact startup order: pool contraction -> admission governor -> auxiliary bridge
-// head-start -> server entry -> authoritative primary probe.
+// Exact startup order: primary pool contraction -> primary admission governor ->
+// local overflow Super Worker -> asynchronous overflow head-start -> server entry ->
+// authoritative primary probe. The local worker starts before any remote overflow I/O.
 requirePattern(
   bootstrap,
   /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*void\s+startCryptaraHyperBridgeBootstrap\(\)[\s\S]*import\('\.\/index\.js'\)/,
@@ -26,7 +28,12 @@ requirePattern(
 forbidPattern(
   bootstrap,
   /await\s+startCryptaraHyperBridgeBootstrap\(\)/,
-  'HyperBridge head-start must not add remote I/O latency to the critical startup path',
+  'overflow head-start must not add remote I/O latency to critical startup',
+);
+requirePattern(
+  bridgeBootstrap,
+  /startCryptaraOverflowSuperWorker\(\)[\s\S]{0,900}withCryptaraParallelProxy\('observability'/,
+  'dedicated overflow Super Worker must be online before the remote overflow probe',
 );
 
 // Reuse-only law: one existing overflow pool/configuration, one single-flight probe,
@@ -35,7 +42,8 @@ requirePattern(bridgeBootstrap, /withCryptaraParallelProxy\('observability'/, 'b
 requirePattern(bridgeBootstrap, /if\s*\(probeInFlight\)\s*return\s+probeInFlight/, 'bootstrap probe must be single-flight');
 requirePattern(bridgeBootstrap, /SELECT 1 AS hyper_bridge_ready/, 'bootstrap must use one minimal auxiliary admission probe');
 requirePattern(bridgeBootstrap, /state\s*=\s*'not_configured'/, 'missing overflow configuration must degrade locally instead of blocking startup');
-requirePattern(bridgeBootstrap, /primary authority remains unchanged/, 'bootstrap must preserve primary authority on auxiliary failure');
+requirePattern(bridgeBootstrap, /no primary probe was issued by overflow worker/, 'overflow failure must never trigger a primary companion probe');
+requirePattern(overflowSuperWorker, /primaryDatabaseCalls:\s*0\s+as\s+const/, 'overflow Super Worker must advertise zero primary DB calls');
 forbidPattern(bridgeBootstrap, /\bnew\s+Pool\s*\(/, 'bootstrap must not create another PostgreSQL pool');
 forbidPattern(bridgeBootstrap, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap must not add polling or wall-clock retry loops');
 forbidPattern(
@@ -44,6 +52,7 @@ forbidPattern(
   'bootstrap must not duplicate connection-variable authority',
 );
 forbidPattern(bridgeBootstrap, /from\s+['"][^'"]*\/db(?:\.js)?['"]|\bpool\.query\s*\(/, 'bootstrap must not touch the authoritative primary pool');
+forbidPattern(overflowSuperWorker, /from\s+['"][^'"]*\/db(?:\.js)?['"]|\bpool\.query\s*\(|\bnew\s+Pool\s*\(/, 'overflow Super Worker must not touch/create a DB pool');
 requirePattern(overflow, /SUPABASE_DATABASE_URL_OVERFLOW/, 'existing overflow worker remains the sole overflow connection-variable authority');
 
-console.log('[hyper-bridge-bootstrap] PASS: existing overflow lane starts single-flight before the authoritative primary probe, adds no awaited startup I/O, creates no new pool/config alias/timer, and preserves primary critical authority');
+console.log('[hyper-bridge-bootstrap] PASS: dedicated overflow Super Worker starts locally before all remote overflow work and before the primary probe; overflow head-start is single-flight/non-blocking, creates no new pool/config/timer, and cannot issue a primary companion query');
