@@ -86,6 +86,10 @@ COPY --from=builder /app/server/migrations/023_cryptocrawler_hot_path_schema_aut
 COPY --from=builder /app/server/migrations/024_cryptocrawler_funding_lifecycle.sql ./dist/migrations/024_cryptocrawler_funding_lifecycle.sql
 COPY --from=builder /app/server/migrations/025_cryptocrawler_rainbow_source_ledger.sql ./dist/migrations/025_cryptocrawler_rainbow_source_ledger.sql
 
+# Optional secondary-Supabase comp cache is a separate non-authoritative migration.
+# It is applied lazily only when CRYPTOCRAWL_OVERFLOW_DATABASE_URL is configured.
+COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
+
 # Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
