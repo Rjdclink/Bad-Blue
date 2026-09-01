@@ -240,11 +240,17 @@ class CryptaraSharedInformationBroker {
           };
           if (freshForMs > 0) {
             const previous = this.cache.get(request.key);
-            if (previous && previous.readers === 0) this.removeEntry(previous);
-            this.cache.set(request.key, entry);
-            this.retainedBytes += entry.bytes;
-            this.peakRetainedEntries = Math.max(this.peakRetainedEntries, this.cache.size);
-            this.enforceBounds();
+            // Never overwrite the accounting of an older generation while a
+            // consumer still has it pinned. Deliver the new generation now but
+            // keep it ephemeral until the old lease drains; the next request can
+            // then retain a fresh canonical generation without hidden memory.
+            if (!previous || previous.readers === 0) {
+              if (previous) this.removeEntry(previous);
+              this.cache.set(request.key, entry);
+              this.retainedBytes += entry.bytes;
+              this.peakRetainedEntries = Math.max(this.peakRetainedEntries, this.cache.size);
+              this.enforceBounds();
+            }
           }
           return entry;
         })
