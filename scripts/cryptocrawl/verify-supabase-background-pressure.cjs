@@ -31,9 +31,13 @@ requirePattern(rainbow, /setTimeout\s*\([\s\S]{0,500}refreshAndSchedule/, 'Rainb
 forbidPattern(outbox, /setInterval\s*\(/, 'Outbox idle polling must be adaptive one-shot scheduling');
 requirePattern(outbox, /CRYPTARA_OUTBOX_IDLE_POLL_MAX_MS/, 'Outbox idle polling has a bounded adaptive ceiling');
 requirePattern(outbox, /idleDelayMs\s*\*\s*2/, 'Outbox exponentially reduces empty poll traffic');
-requirePattern(outbox, /kickPending[\s\S]{0,1200}schedule\(0\)/, 'Outbox preserves an immediate wake even when terminal evidence arrives during an active drain');
+requirePattern(outbox, /policy\.backgroundPollMultiplier/, 'Outbox lengthens background cadence when the Supabase comp path is active');
+requirePattern(outbox, /kickPending[\s\S]{0,1600}schedule\(0\)/, 'Outbox preserves an immediate wake even when terminal evidence arrives during an active drain');
 requirePattern(outbox, /enqueueTerminalOutcome[\s\S]{0,3000}withCryptaraSupabasePriority\('high'/, 'Durable terminal-event enqueue outranks background persistence');
-requirePattern(outbox, /claimOne[\s\S]{0,1200}withCryptaraSupabasePriority\('low'/, 'Background outbox claims use low-priority admission');
+requirePattern(outbox, /claimBatch[\s\S]{0,1800}withCryptaraSupabasePriority\('low'/, 'Background outbox claims use one low-priority bounded batch');
+requirePattern(outbox, /for update skip locked[\s\S]{0,500}limit \$2/i, 'Batched claims preserve SKIP LOCKED multi-worker safety');
+requirePattern(outbox, /with persisted as[\s\S]{0,2600}update private\.cryptara_outbox/i, 'Terminal learning write and queue completion are one atomic DB statement');
+forbidPattern(outbox, /private async claimOne/, 'Outbox must not regress to one claim query per row');
 requirePattern(outbox, /CRYPTARA_OUTBOX_METRICS_INTERVAL_MS/, 'Outbox metrics are rate-limited independently of queue authority');
 requirePattern(outbox, /databaseBackoffMs[\s\S]{0,900}jitterMs/, 'Outbox database failure retries use bounded jitter');
 
@@ -51,4 +55,4 @@ requirePattern(intelligenceMigration, /private\.cryptara_trade_outcomes/i, 'Trad
 requirePattern(treasuryMigration, /cryptocrawler_terminal_sweep_control/i, 'Treasury lifecycle control remains migration-owned');
 requirePattern(profitMigration, /cryptocrawler_rainbow_profit_events/i, 'Rainbow profit storage remains migration-owned');
 
-console.log('[supabase-background-pressure] adaptive idle scheduling, collapsed observability/treasury round trips, priority separation, jitter, and migration ownership verified');
+console.log('[supabase-background-pressure] adaptive comp-mode cadence, batched claims, atomic learning completion, collapsed observability/treasury round trips, priority separation, jitter, and migration ownership verified');
