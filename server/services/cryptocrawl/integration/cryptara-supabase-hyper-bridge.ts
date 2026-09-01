@@ -16,20 +16,20 @@ import {
   getCryptaraOverflowSuperWorkerSnapshot,
   requestCryptaraOverflowSuperWorker,
   shareCryptaraOverflowInformationWithPrimaryWorker,
-  shareCryptaraPrimaryInformationWithOverflowWorker,
 } from './cryptara-overflow-super-worker.js';
+import { runThroughCryptaraOverflowPrimaryGateway } from './cryptara-overflow-primary-gateway.js';
 
 /**
- * HyperBridge joins the existing primary and overflow data planes without creating
- * a third database, pool, authority, or configuration surface.
+ * HyperBridge is the application-facing information fabric for overflow mode.
  *
- * The two Super Workers share one process-local coherence directory. A value learned
- * by either worker is published into that directory and can be reused by the other
- * without another database request. Overflow-preferred reads therefore never hedge
- * or probe the primary database: local shared state is checked first, then only the
- * existing overflow lane is queried. Normal primary behavior remains primary-first.
+ * Every bridge read follows one path:
+ * application -> shared worker coherence -> overflow Supabase -> (only on a real
+ * miss) authoritative primary through the overflow-primary gateway.
  *
- * Critical execution/governance/treasury/settlement truth is not accepted here.
+ * There is no application -> primary branch, no speculative primary hedge, and no
+ * primary health/recovery polling. The overflow Super Worker single-flights each
+ * key, so simultaneous consumers share one upstream acquisition. Primary remains
+ * authoritative; bridge/overflow/workers own transport, reuse and deduplication.
  */
 
 export type CryptaraHyperBridgePersistedTarget = 'overflow' | 'primary_fallback';
@@ -60,10 +60,11 @@ export interface CryptaraHyperBridgeReadInput<T> {
   key: string;
   workload: CryptaraParallelProxyWorkload;
   topic: string;
+  /** Authoritative upstream loader. HyperBridge never invokes this directly. */
   primary: () => Promise<T | null>;
   overflow: () => Promise<T | null>;
   isUsable?: (value: T | null) => boolean;
-  /** Auxiliary datasets may prefer overflow even while the primary is healthy. */
+  /** Kept for compatibility; overflow remains the application-facing lane. */
   normalPreference?: CryptaraHyperBridgeReadPreference;
   /** Maximum local worker-to-worker reuse window for this derived value. */
   sharedFreshForMs?: number;
@@ -109,6 +110,7 @@ const MAX_SHARED_FRESH_MS = 5_000;
 const EWMA_ALPHA = 0.20;
 
 const laneTelemetry: Record<'primary' | 'overflow', LaneTelemetry> = {
+  // Direct bridge-to-primary is structurally disabled; retained for snapshot API compatibility.
   primary: { attempts: 0, wins: 0, failures: 0, ewmaLatencyMs: 0 },
   overflow: { attempts: 0, wins: 0, failures: 0, ewmaLatencyMs: 0 },
 };
@@ -232,27 +234,22 @@ async function runOverflowWorkerLane<T>(
   input: CryptaraHyperBridgeReadInput<T>,
   freshForMs: number,
 ): Promise<LaneResult<T>> {
-  const before = getCryptaraOverflowSuperWorkerSnapshot().localSharedHits;
+  const before = getCryptaraOverflowSuperWorkerSnapshot();
   const result = await runReadLane('overflow', () => requestCryptaraOverflowSuperWorker({
     key: input.key,
     workload: input.workload,
     topic: input.topic,
     loadOverflow: input.overflow,
+    loadPrimaryUpstream: input.primary,
     isUsable: input.isUsable,
     freshForMs,
   }));
-  if (getCryptaraOverflowSuperWorkerSnapshot().localSharedHits > before) workerSharedReads += 1;
+  const after = getCryptaraOverflowSuperWorkerSnapshot();
+  if (after.localSharedHits > before.localSharedHits) workerSharedReads += 1;
+  if (after.primaryUpstreamLoads > before.primaryUpstreamLoads) {
+    overflowFallbackReads += after.primaryUpstreamLoads - before.primaryUpstreamLoads;
+  }
   return result;
-}
-
-function sharePrimaryRead<T>(input: CryptaraHyperBridgeReadInput<T>, value: T, freshForMs: number): void {
-  shareCryptaraPrimaryInformationWithOverflowWorker({
-    key: input.key,
-    workload: input.workload,
-    topic: input.topic,
-    value,
-    freshForMs,
-  });
 }
 
 /**
@@ -318,14 +315,9 @@ function notePersistedSnapshotFresh(entry: SnapshotQueueEntry): void {
 }
 
 /**
- * Read routing follows one rule: no duplicate remote work.
- *
- * - normal + primary preference: primary first; a successful primary read is shared
- *   locally with the overflow Super Worker for future reuse.
- * - comp or overflow-preferred: dedicated overflow Super Worker only. It checks the
- *   shared local coherence directory, then overflow. It never pings primary.
- * - normal primary failure may fall back to overflow because the primary attempt has
- *   already failed; the two remote lanes are never launched together.
+ * Every read enters the overflow worker. That worker checks shared coherence and
+ * overflow first, then performs at most one single-flight primary upstream load on
+ * a real miss. No direct bridge-to-primary lane exists in either normal or comp.
  */
 export async function readCryptaraHyperBridge<T>(
   input: CryptaraHyperBridgeReadInput<T>,
@@ -337,37 +329,17 @@ export async function readCryptaraHyperBridge<T>(
   if (!ALLOWED_READ_WORKLOADS.has(input.workload)) throw new Error('CRYPTARA_HYPER_BRIDGE_WORKLOAD_NOT_ALLOWED');
 
   routedReads += 1;
+  primarySuppressedReads += 1;
   cleanFreshDirectory();
   const dataPath = getCryptaraSupabaseCompSwitchSnapshot().path;
-  const overflowPreferred = dataPath === 'comp' || input.normalPreference === 'overflow';
-  const overflowAvailable = isCryptaraParallelProxyConfigured;
   const id = readIdentity(input);
   const knownFresh = (replicaFreshUntil.get(id) || 0) > Date.now();
   const freshForMs = sharedFreshMs(input, id);
+  if (knownFresh) knownFreshOverflowReads += 1;
 
-  if (overflowPreferred) {
-    primarySuppressedReads += 1;
-    if (knownFresh) knownFreshOverflowReads += 1;
-    const overflow = await runOverflowWorkerLane(input, freshForMs);
-    const overflowWin = readWin(input, overflow, false, dataPath);
-    if (overflowWin) return overflowWin;
-    readMisses += 1;
-    return { value: null, lane: 'none', raced: false, dataPath };
-  }
-
-  const primary = await runReadLane('primary', input.primary);
-  const primaryWin = readWin(input, primary, false, dataPath);
-  if (primaryWin) {
-    if (primaryWin.value !== null) sharePrimaryRead(input, primaryWin.value, freshForMs);
-    return primaryWin;
-  }
-
-  if (overflowAvailable) {
-    overflowFallbackReads += 1;
-    const overflow = await runOverflowWorkerLane(input, freshForMs);
-    const overflowWin = readWin(input, overflow, false, dataPath);
-    if (overflowWin) return overflowWin;
-  }
+  const overflow = await runOverflowWorkerLane(input, freshForMs);
+  const overflowWin = readWin(input, overflow, false, dataPath);
+  if (overflowWin) return overflowWin;
 
   readMisses += 1;
   return { value: null, lane: 'none', raced: false, dataPath };
@@ -384,7 +356,10 @@ function scheduleFlush(): void {
 
 async function persistFallback(entry: QueueHooks): Promise<boolean> {
   if (!entry.fallback) return false;
-  await entry.fallback();
+  await runThroughCryptaraOverflowPrimaryGateway(
+    'hyper_bridge_primary_write_fallback',
+    entry.fallback,
+  );
   primaryFallbackWrites += 1;
   entry.onPersisted?.('primary_fallback');
   return true;
@@ -438,8 +413,8 @@ async function persistEventBatch(entries: EventQueueEntry[]): Promise<void> {
     lastFailure = error instanceof Error ? error.message : String(error);
   }
 
-  // Fallback is deliberately sequential. If auxiliary storage is unavailable,
-  // derived writes must not create a burst against the already-scarce primary DB.
+  // Fallback is deliberately sequential and still enters primary only through the
+  // overflow-primary gateway, so an auxiliary failure cannot create direct DB work.
   for (const entry of entries) {
     try {
       if (await persistFallback(entry)) continue;
@@ -537,7 +512,7 @@ export function getCryptaraHyperBridgeSnapshot() {
   return {
     role: 'supabase_hyper_bridge' as const,
     baseOfOperations: 'cryptara_local_shared_information_fabric' as const,
-    routing: 'dual_super_worker_shared_coherence_no_duplicate_remote_reads' as const,
+    routing: 'application_to_shared_worker_to_overflow_then_primary_gateway_on_miss' as const,
     authority: 'auxiliary_transport_only' as const,
     writeAuthority: false as const,
     executionAuthority: false as const,
@@ -547,6 +522,7 @@ export function getCryptaraHyperBridgeSnapshot() {
     callerWaitsForRemoteIo: false as const,
     createsDatabasePool: false as const,
     createsConfigurationAliases: false as const,
+    directPrimaryReadLane: false as const,
     overflowConfigured: isCryptaraParallelProxyConfigured,
     overflowCooldownMs: overflow.cooldownMs,
     localReadPlane: {
@@ -568,6 +544,7 @@ export function getCryptaraHyperBridgeSnapshot() {
       readMisses,
       primary: {
         ...laneTelemetry.primary,
+        direct: false as const,
         ewmaLatencyMs: Number(laneTelemetry.primary.ewmaLatencyMs.toFixed(2)),
       },
       overflow: {
