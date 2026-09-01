@@ -26,8 +26,8 @@ requirePattern(index, /function\s+databaseRetryDelayMs[\s\S]*Math\.random/, 'dat
 requirePattern(index, /function\s+databaseErrorText[\s\S]*\.cause/, 'database admission classification must inspect wrapped driver causes');
 requirePattern(index, /function\s+isDatabaseAdmissionPressureError[\s\S]{0,1400}08006[\s\S]{0,180}timeoutContext/, '08006 must be pressure only when accompanied by timeout/termination context');
 requirePattern(index, /function\s+startupDatabaseAdmissionBudgetMs[\s\S]{0,1200}RAILWAY_HEALTHCHECK_TIMEOUT_SEC[\s\S]{0,1000}reserveMs/, 'startup database admission must consume only a bounded portion of the Railway readiness window');
-requirePattern(index, /function\s+retryDatabaseProbeWithinBudget[\s\S]{0,1200}while\s*\(Date\.now\(\)\s*-\s*startedAt\s*<\s*budgetMs\)/, 'startup must retry one database admission probe until the elapsed-time budget is exhausted');
-requirePattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2200}await\s+db\.execute\('SELECT 1'\)[\s\S]{0,2200}databaseRetryDelayMs\(attempt\)/, 'startup admission must use a single serialized probe with jitter between attempts');
+requirePattern(index, /function\s+retryDatabaseProbeWithinBudget[\s\S]{0,1200}while\s*\(Date\.now\(\)\s*-\s*startedAt\s*<\s*budgetMs\)/, 'startup must retain bounded primary admission retry when overflow is unavailable');
+requirePattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2200}await\s+db\.execute\('SELECT 1'\)[\s\S]{0,2200}databaseRetryDelayMs\(attempt\)/, 'primary fallback admission must use a single serialized probe with jitter between attempts');
 forbidPattern(index, /retryDatabaseProbeWithinBudget[\s\S]{0,2600}Promise\.all\s*\(/, 'startup database recovery must not fan out parallel probes');
 requirePattern(index, /function\s+isPermanentDatabaseStartupError[\s\S]{0,900}28p01[\s\S]{0,900}password authentication failed/, 'permanent authentication/configuration failures must be classified separately from pressure');
 requirePattern(index, /isPermanentDatabaseStartupError\(error\)\s*\|\|\s*isLocalPoolFailure\(error\)[\s\S]{0,100}throw\s+error/, 'permanent/local pool failures must fail out of the pressure retry loop instead of burning the full readiness budget');
@@ -42,9 +42,18 @@ requirePattern(index, /else\s+if\s*\(isPermanentDatabaseStartupError\(lastError\
 requirePattern(index, /Unknown transient database\/network failure; pool reset suppressed to avoid reconnect amplification/i, 'unknown transient network faults must suppress pool recreation');
 requirePattern(index, /localPoolFailure:\s*isLocalPoolFailure\(lastError\)/, 'startup telemetry must distinguish proven local pool failure from upstream/transient failure');
 
-requirePattern(index, /const\s+databaseReady\s*=\s*await\s+initializeDatabase\(\)[\s\S]*startupTrace\('routes_import_started'\)/, 'database/migration admission must complete before the heavyweight route graph imports');
-requirePattern(index, /isFullyInitialized\s*&&\s*databaseInitialized[\s\S]*res\.status\(200\)/, 'strict readiness must explicitly require database initialization');
-requirePattern(index, /const\s+schemaReady\s*=\s*await\s+runStartupSchemaVerification\(\)/, 'startup must retain production schema telemetry');
+// HyperBridge establishes the auxiliary data plane first. A verified overflow lane
+// gets exactly one primary readiness probe; only an unavailable overflow lane may
+// enter the longer primary admission loop. The route graph is imported only after
+// one of those two startup data planes has been selected.
+requirePattern(index, /overflowDatabaseReady\s*=\s*await\s+waitForOverflowBootstrapReadiness\(\)[\s\S]{0,1400}if\s*\(overflowDatabaseReady\)\s*\{[\s\S]{0,500}primaryReady\s*=\s*await\s+probePrimaryDatabaseOnce\(\)[\s\S]{0,500}else\s*\{[\s\S]{0,500}primaryReady\s*=\s*await\s+initializeDatabase\(\)/, 'verified overflow must be evaluated before primary and must suppress the long primary retry path');
+requirePattern(index, /function\s+probePrimaryDatabaseOnce[\s\S]{0,900}await\s+db\.execute\('SELECT 1'\)/, 'overflow-ready startup may issue only one bounded primary readiness probe');
+forbidPattern(index, /function\s+probePrimaryDatabaseOnce[\s\S]{0,1400}retryDatabaseProbeWithinBudget\s*\(/, 'overflow-ready startup must never enter the long primary retry loop');
+requirePattern(index, /else\s+if\s*\(overflowDatabaseReady\)[\s\S]{0,1000}databaseRuntimeMode\s*=\s*'overflow_degraded'[\s\S]{0,1000}executionAuthority:\s*false[\s\S]{0,500}governanceAuthority:\s*false[\s\S]{0,500}settlementAuthority:\s*false/, 'overflow degraded mode must explicitly retain zero execution/governance/settlement authority');
+requirePattern(index, /overflow_degraded_mode_activated[\s\S]*startupTrace\('routes_import_started'\)/, 'startup data-plane selection must complete before the heavyweight route graph imports');
+requirePattern(index, /const\s+usableDataPlane\s*=\s*databaseInitialized\s*\|\|\s*overflowDatabaseReady[\s\S]{0,400}isFullyInitialized\s*&&\s*usableDataPlane[\s\S]{0,200}res\.status\(200\)/, 'strict readiness must require either verified primary or verified overflow data plane');
+requirePattern(index, /if\s*\(databaseInitialized\)\s*\{[\s\S]{0,300}await\s+initializeServices\(\)[\s\S]{0,400}else\s*\{[\s\S]{0,400}background_services_skipped_overflow_degraded/, 'primary-authoritative background services must stay disabled in overflow degraded mode');
+requirePattern(index, /const\s+schemaReady\s*=\s*await\s+runStartupSchemaVerification\(\)/, 'startup must retain production schema telemetry when primary is available');
 forbidPattern(index, /if\s*\(!schemaReady\)\s*\{\s*throw\s+new\s+Error/, 'CryptoCrawler-specific/degraded schema telemetry must not globally take down LegalWhat');
 requirePattern(db, /await\s+db\.execute\('SELECT 1'\)[\s\S]*await\s+coordinationPool\.query\('SELECT 1'\)/, 'pool reset verification must restore lanes sequentially rather than opening both concurrently');
 forbidPattern(db, /Promise\.all\(\[\s*db\.execute\('SELECT 1'\),\s*coordinationPool\.query\('SELECT 1'\)/, 'pool reset must not probe ordinary and coordination lanes concurrently');
