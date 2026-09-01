@@ -45,7 +45,11 @@ for (const migration of [
   '025_cryptocrawler_rainbow_source_ledger.sql',
 ]) {
   assert.ok(reconciler.includes(migration), `startup reconciler must apply ${migration}`);
-  assert.ok(dockerfile.includes(`/app/server/migrations/${migration} ./dist/migrations/${migration}`), `production image must ship ${migration}`);
+  assert.ok(
+    dockerfile.includes('/app/server/migrations ./dist/migrations')
+      || dockerfile.includes(`/app/server/migrations/${migration} ./dist/migrations/${migration}`),
+    `production image must ship ${migration}`,
+  );
 }
 assert.match(reconciler, /runCryptocrawlerAuthorityMigration/);
 assert.match(reconciler, /await\s+coordinator\.query\(sql\)/);
