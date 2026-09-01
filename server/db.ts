@@ -106,8 +106,6 @@ const sessionFallbackPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_SESSION_FA
 const mainPoolMax = ordinaryUsesTransactionPool
   ? requestedMainPoolMax
   : Math.min(requestedMainPoolMax, sessionFallbackPoolMax);
-const configuredSteadyMainPoolMax = boundedPoolInt(process.env.BADBLUE_DATABASE_POOL_MAX, mainPoolMax, 1, mainPoolMax);
-const rolloutHeadroomWindowMs = boundedPoolInt(process.env.BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS, 90_000, 30_000, 300_000);
 const coordinationPoolMax = boundedPoolInt(process.env.CRYPTOCRAWL_COORDINATION_POOL_MAX, 1, 1, 2);
 
 if (transactionDatabaseUrl) {
@@ -302,33 +300,14 @@ console.log(`[DATABASE] Connection pools created - ordinary max=${mainPoolMax}, 
 
 export let db = drizzle(pool, { schema });
 
-// Reset lock to prevent concurrent pool resets
+// Reset lock to prevent concurrent pool resets. A reset always preserves the live
+// effective ordinary ceiling; only the governed rollout handoff may expand it.
 let resetInProgress: Promise<void> | null = null;
-let resetCapacityRestoreTimer: NodeJS.Timeout | null = null;
-
-function scheduleResetPoolCapacityRestore(): void {
-  if (!isProduction && !isRailway) return;
-  if (resetCapacityRestoreTimer) clearTimeout(resetCapacityRestoreTimer);
-  const remainingMs = Math.max(0, rolloutHeadroomWindowMs - Math.floor(process.uptime() * 1000));
-  if (remainingMs <= 0) {
-    const options = (pool as any)?.options;
-    if (options) options.max = configuredSteadyMainPoolMax;
-    return;
-  }
-  resetCapacityRestoreTimer = setTimeout(() => {
-    resetCapacityRestoreTimer = null;
-    const options = (pool as any)?.options;
-    if (!options) return;
-    options.max = configuredSteadyMainPoolMax;
-    console.log(`[DATABASE] Reset pool rollout headroom released (steady max=${options.max})`);
-  }, remainingMs);
-  resetCapacityRestoreTimer.unref?.();
-}
 
 /**
  * Reset the database connection pool and Drizzle instance
- * Used by Worker auto-repair to recover from connection failures
- * Thread-safe: prevents concurrent resets
+ * Used by Worker auto-repair to recover from positively identified local pool failures.
+ * Thread-safe: prevents concurrent resets.
  */
 export async function resetPool(): Promise<void> {
   if (resetInProgress) {
@@ -340,9 +319,8 @@ export async function resetPool(): Promise<void> {
   resetInProgress = (async () => {
     try {
       console.log('[DATABASE] Resetting connection pools...');
-      // Preserve any rollout contraction already applied to the live ordinary
-      // pool. A recovery path must never silently re-expand client concurrency
-      // while Supabase is under admission pressure.
+      // Preserve the current effective max exactly. There is intentionally no
+      // wall-clock restore here: an unready/reset replica must never self-expand.
       const previousEffectiveMainMax = effectivePoolMax(pool, mainPoolMax);
 
       try {
@@ -364,7 +342,6 @@ export async function resetPool(): Promise<void> {
       coordinationPool = new Pool(getCoordinationPoolConfig());
       attachPoolErrorHandlers();
       db = drizzle(pool, { schema });
-      scheduleResetPoolCapacityRestore();
 
       // Restore the ordinary lane first. Only after it is admitted do we verify
       // the session-capable coordination lane. Parallel probes double connection
@@ -372,7 +349,7 @@ export async function resetPool(): Promise<void> {
       await db.execute('SELECT 1');
       await coordinationPool.query('SELECT 1');
 
-      console.log('[DATABASE] ✓ Pool reset successful - ordinary and coordination connections restored');
+      console.log('[DATABASE] ✓ Pool reset successful - ordinary and coordination connections restored at preserved capacity');
     } catch (error) {
       console.error('[DATABASE] ❌ Pool reset failed:', error);
       throw error;
