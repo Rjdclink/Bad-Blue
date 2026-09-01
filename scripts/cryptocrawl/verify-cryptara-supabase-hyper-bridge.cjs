@@ -88,6 +88,12 @@ requirePattern(bridge, /criticalDataAllowed:\s*false/, 'critical derived data re
 requirePattern(superWorker, /private readonly inFlight = new Map<string, Promise<CacheEntry>>\(\)/, 'primary Super Worker single-flight remains intact');
 requirePattern(superWorker, /execution_truth:\s*0/, 'execution truth remains zero-retention');
 
+// Cold Primary source rows are durable read-through fills, not process-only cache.
+requirePattern(sourceLedger, /function\s+enqueueOverflowSourceMirror[\s\S]{0,700}enqueueCryptaraHyperBridgeSnapshot/, 'source ledger has one bounded Overflow mirror helper');
+requirePattern(sourceLedger, /const\s+source:\s*RainbowProfitSourceSnapshot\s*=\s*\{[\s\S]{0,1100}enqueueOverflowSourceMirror\(source\);[\s\S]{0,120}return\s+source;/, 'Primary cold-read hit is queued back into Overflow before returning');
+requirePattern(sourceLedger, /enqueueOverflowSourceMirror\(source,\s*\(\)\s*=>\s*persistPrimarySource\(source\)\)/, 'new terminal source writes retain the established bounded Primary fallback');
+forbidPattern(sourceLedger, /enqueueOverflowSourceMirror\(source,\s*\(\)\s*=>\s*persistPrimarySource\(source\)\)[\s\S]{0,900}async\s+function\s+readPrimarySource/, 'cold-read mirror must not inherit a redundant Primary fallback');
+
 requirePattern(sourceLedger, /enqueueCryptaraHyperBridgeSnapshot/, 'Rainbow source metadata publishes through HyperBridge');
 requirePattern(sourceLedger, /readCryptaraHyperBridge<RainbowProfitSourceSnapshot>/, 'Rainbow source metadata reads through HyperBridge');
 requirePattern(observability, /readCryptaraHyperBridge<RainbowProfitSnapshot>/, 'Rainbow observability reads through HyperBridge');
@@ -99,4 +105,4 @@ for (const [name, source] of Object.entries({ bridge, overflowWorker, sourceLedg
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds enhancement-list vocabulary into runtime code`);
 }
 
-console.log('[supabase-hyper-bridge] PASS: all information reads enter shared/overflow worker first, primary is fetched on-demand only through overflow gateway, duplicate upstream work is coalesced, no direct bridge primary lane exists, writes remain bounded, and authority remains primary');
+console.log('[supabase-hyper-bridge] PASS: all information reads enter shared/overflow worker first, primary is fetched on-demand only through overflow gateway, Primary-only source rows are durably backfilled into Overflow, duplicate upstream work is coalesced, no direct bridge primary lane exists, writes remain bounded, and authority remains primary');
