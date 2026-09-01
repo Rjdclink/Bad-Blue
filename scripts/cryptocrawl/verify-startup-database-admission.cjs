@@ -41,25 +41,29 @@ requirePattern(index, /else\s+if\s*\(isPermanentDatabaseStartupError\(lastError\
 requirePattern(index, /Unknown transient database\/network failure; pool reset suppressed to avoid reconnect amplification/i, 'unknown transient network faults must suppress pool recreation');
 requirePattern(index, /localPoolFailure:\s*isLocalPoolFailure\(lastError\)/, 'startup telemetry must distinguish proven local pool failure from upstream/transient failure');
 
-// Verified overflow is the normal data plane: no primary health/recovery probe,
-// no degraded waiting state, and services continue. Primary access behind that
-// point is intercepted by the overflow gateway before index.ts loads.
-requirePattern(index, /overflowDatabaseReady\s*=\s*await\s+waitForOverflowBootstrapReadiness\(\)[\s\S]{0,900}if\s*\(overflowDatabaseReady\)\s*\{[\s\S]{0,700}databaseInitialized\s*=\s*true[\s\S]{0,500}databaseRuntimeMode\s*=\s*'overflow_proxy'/, 'verified overflow must become the normal initialized proxy data plane');
-requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,400}directPrimaryProbes:\s*0[\s\S]{0,400}primaryAccess:\s*'overflow_gateway_only'/, 'overflow startup telemetry must prove zero direct primary probes and gateway-only primary access');
-forbidPattern(index, /probePrimaryDatabaseOnce/, 'overflow mode must not contain a one-off direct primary startup probe');
-requirePattern(index, /if\s*\(overflowDatabaseReady\)[\s\S]{0,1200}else\s*\{[\s\S]{0,500}const\s+primaryReady\s*=\s*await\s+initializeDatabase\(\)/, 'long primary admission is reachable only when overflow is unavailable');
-requirePattern(index, /overflow_proxy_mode_activated[\s\S]*startupTrace\('routes_import_started'\)/, 'overflow data-plane selection must complete before heavyweight route import');
-requirePattern(index, /const\s+usableDataPlane\s*=\s*databaseInitialized\s*\|\|\s*overflowDatabaseReady[\s\S]{0,400}isFullyInitialized\s*&&\s*usableDataPlane[\s\S]{0,200}res\.status\(200\)/, 'strict readiness must require an initialized primary or verified overflow data plane');
-requirePattern(index, /if\s*\(databaseInitialized\)\s*\{[\s\S]{0,300}await\s+initializeServices\(\)/, 'overflow proxy mode must initialize the actual application/worker services');
-forbidPattern(index, /background_services_skipped_overflow_degraded|until primary recovery|overflow_degraded/, 'overflow must not be treated as temporary degraded recovery mode');
+// Verified Overflow is the normal information data plane: no Primary health/recovery
+// probe, no degraded waiting state, and services continue. Primary acquisitions
+// behind that point are intercepted by the governed gateway before index.ts loads.
+requirePattern(index, /overflowDatabaseReady\s*=\s*await\s+waitForOverflowBootstrapReadiness\(\)[\s\S]{0,900}if\s*\(overflowDatabaseReady\)\s*\{[\s\S]{0,700}databaseInitialized\s*=\s*true[\s\S]{0,500}databaseRuntimeMode\s*=\s*'overflow_proxy'/, 'verified Overflow must become the normal initialized proxy data plane');
+requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,400}directPrimaryProbes:\s*0[\s\S]{0,400}primaryAccess:\s*'overflow_gateway_only'/, 'Overflow startup telemetry must prove zero direct Primary probes and gateway-only logical Primary access');
+forbidPattern(index, /probePrimaryDatabaseOnce/, 'Overflow mode must not contain a one-off direct Primary startup probe');
+requirePattern(index, /if\s*\(overflowDatabaseReady\)[\s\S]{0,1200}else\s*\{[\s\S]{0,500}const\s+primaryReady\s*=\s*await\s+initializeDatabase\(\)/, 'long Primary admission is reachable only when Overflow is unavailable');
+requirePattern(index, /overflow_proxy_mode_activated[\s\S]*startupTrace\('routes_import_started'\)/, 'Overflow data-plane selection must complete before heavyweight route import');
+requirePattern(index, /const\s+usableDataPlane\s*=\s*databaseInitialized\s*\|\|\s*overflowDatabaseReady[\s\S]{0,400}isFullyInitialized\s*&&\s*usableDataPlane[\s\S]{0,200}res\.status\(200\)/, 'strict readiness must require an initialized Primary or verified Overflow data plane');
+requirePattern(index, /if\s*\(databaseInitialized\)\s*\{[\s\S]{0,300}await\s+initializeServices\(\)/, 'Overflow proxy mode must initialize the actual application/worker services');
+forbidPattern(index, /background_services_skipped_overflow_degraded|until primary recovery|overflow_degraded/, 'Overflow must not be treated as temporary degraded recovery mode');
 
-requirePattern(bootstrap, /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*cryptaraOverflowPrimaryGatewayConnect[\s\S]*import\('\.\/index\.js'\)/, 'primary pool interception must be installed before index.ts loads');
-requirePattern(bootstrap, /runThroughCryptaraOverflowPrimaryGateway[\s\S]{0,1200}legacy_application_primary_acquisition/, 'legacy primary acquisitions must be routed through overflow gateway');
-requirePattern(gateway, /routing:\s*'application_to_overflow_bridge_to_primary'/, 'gateway routing must explicitly model application -> overflow/bridge -> primary');
-requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway must expose zero direct application primary calls');
+requirePattern(bootstrap, /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*cryptaraOverflowPrimaryGatewayConnect[\s\S]*import\('\.\/index\.js'\)/, 'Primary pool interception must be installed before index.ts loads');
+requirePattern(bootstrap, /runThroughCryptaraOverflowPrimaryGateway[\s\S]{0,1200}legacy_application_primary_acquisition/, 'legacy Primary acquisitions must be routed through the governed Overflow gateway');
+requirePattern(gateway, /routing:\s*'application_to_local_overflow_then_governed_primary_on_miss'/, 'gateway routing must explicitly model local/Overflow first then governed Primary on miss');
+requirePattern(gateway, /primaryTransport:\s*'existing_application_primary_pool'\s+as\s+const/, 'gateway must truthfully expose the existing application Primary pool as upstream transport');
+requirePattern(gateway, /remoteDatabaseRelay:\s*false\s+as\s+const/, 'gateway must not claim a database-to-database relay that does not exist');
+requirePattern(gateway, /ungovernedApplicationPrimaryAcquisitions:\s*0\s+as\s+const/, 'gateway must expose zero ungoverned application Primary acquisitions');
+requirePattern(gateway, /governedPrimaryUpstreamOperations:\s*routedOperations/, 'gateway must expose governed Primary upstream traffic');
+forbidPattern(gateway, /directApplicationPrimaryCalls/, 'ambiguous zero-Primary gateway telemetry must remain removed');
 requirePattern(gateway, /createsDatabasePool:\s*false\s+as\s+const/, 'gateway must not create a third pool');
 
-requirePattern(index, /const\s+schemaReady\s*=\s*await\s+runStartupSchemaVerification\(\)/, 'startup must retain production schema telemetry in the overflow-unavailable primary fallback path');
+requirePattern(index, /const\s+schemaReady\s*=\s*await\s+runStartupSchemaVerification\(\)/, 'startup must retain production schema telemetry in the overflow-unavailable Primary fallback path');
 forbidPattern(index, /if\s*\(!schemaReady\)\s*\{\s*throw\s+new\s+Error/, 'CryptoCrawler-specific/degraded schema telemetry must not globally take down LegalWhat');
 requirePattern(db, /await\s+db\.execute\('SELECT 1'\)[\s\S]*await\s+coordinationPool\.query\('SELECT 1'\)/, 'pool reset verification must restore lanes sequentially rather than opening both concurrently');
 forbidPattern(db, /Promise\.all\(\[\s*db\.execute\('SELECT 1'\),\s*coordinationPool\.query\('SELECT 1'\)/, 'pool reset must not probe ordinary and coordination lanes concurrently');
