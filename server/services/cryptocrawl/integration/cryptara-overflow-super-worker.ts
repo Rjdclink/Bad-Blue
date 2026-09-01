@@ -7,17 +7,19 @@ import {
   isCryptaraParallelProxyConfigured,
   type CryptaraParallelProxyWorkload,
 } from './cryptara-supabase-overflow-worker.js';
+import { runThroughCryptaraOverflowPrimaryGateway } from './cryptara-overflow-primary-gateway.js';
 
 /**
  * Dedicated control worker for the overflow Supabase lane.
  *
- * It does not create another cache, database pool, timer, or authority surface.
- * The primary and overflow workers communicate through the existing process-local
- * Cryptara shared-information broker. That broker is the coherence directory:
- * either worker can publish a fresh non-authoritative value and the other sees it
- * without a database round trip. A request routed to overflow therefore performs
- * a local shared-memory lookup first and, on a miss, talks only to overflow.
- * It never contacts the authoritative primary database as part of an overflow read.
+ * The worker is the information gateway: local shared coherence first, overflow
+ * Supabase second, and only on a genuine miss may it obtain the requested value
+ * from authoritative primary through the overflow-primary gateway. The primary
+ * result is immediately shared back into the local worker directory so duplicate
+ * callers do not repeat the upstream request.
+ *
+ * It creates no database pool, timer, or authority surface. Primary remains the
+ * authority; overflow/bridge/worker owns transport and deduplication only.
  */
 
 const LOCAL_ONLY_MISS = 'CRYPTARA_OVERFLOW_SUPER_WORKER_LOCAL_ONLY_MISS';
@@ -28,6 +30,8 @@ export type CryptaraOverflowSuperWorkerRequest<T> = {
   workload: CryptaraParallelProxyWorkload;
   topic: string;
   loadOverflow: () => Promise<T | null>;
+  /** Called only after local + overflow miss; execution occurs inside overflow gateway context. */
+  loadPrimaryUpstream?: () => Promise<T | null>;
   isUsable?: (value: T | null) => boolean;
   freshForMs?: number;
   estimatedBytes?: number;
@@ -48,6 +52,9 @@ let localSharedHits = 0;
 let overflowLoads = 0;
 let coalescedOverflowLoads = 0;
 let overflowMisses = 0;
+let primaryUpstreamLoads = 0;
+let primaryUpstreamHits = 0;
+let primaryUpstreamMisses = 0;
 let primaryToOverflowShares = 0;
 let overflowToPrimaryShares = 0;
 let loadFailures = 0;
@@ -78,8 +85,7 @@ async function readLocalSharedOnly<T>(request: CryptaraOverflowSuperWorkerReques
       consumer: 'cryptara-overflow-super-worker',
       informationClass: informationClassFor(request.workload),
       // Zero requested freshness deliberately disables the broker's own overflow
-      // lookup on a cache miss. This turns the existing broker into a local-only
-      // coherence directory; no primary or overflow DB request is emitted here.
+      // lookup on a cache miss. This is a local-only coherence lookup.
       freshForMs: 0,
       loader: () => {
         throw new Error(LOCAL_ONLY_MISS);
@@ -109,7 +115,7 @@ function share<T>(input: ShareInput<T>): void {
 export function startCryptaraOverflowSuperWorker(): void {
   if (started) return;
   started = true;
-  console.log('[CRYPTARA][OVERFLOW-SUPER-WORKER] dedicated overflow worker online; coherence=shared-local-broker, primary-db-calls=0');
+  console.log('[CRYPTARA][OVERFLOW-SUPER-WORKER] dedicated overflow worker online; coherence=shared-local-broker, primary-upstream=on-demand-through-overflow-gateway, direct-application-primary=0');
 }
 
 /** Primary worker -> overflow worker: local memory only, no database request. */
@@ -125,9 +131,9 @@ export function shareCryptaraOverflowInformationWithPrimaryWorker<T>(input: Shar
 }
 
 /**
- * Local shared state first, then one single-flight overflow acquisition.
- * There is intentionally no primary fallback here. Critical/authoritative callers
- * do not enter this worker; they continue to use the original primary authorities.
+ * One single-flight information path per key:
+ * shared local -> overflow Supabase -> authoritative primary through overflow gateway.
+ * Primary is never contacted speculatively or as a health/recovery probe.
  */
 export async function requestCryptaraOverflowSuperWorker<T>(
   request: CryptaraOverflowSuperWorkerRequest<T>,
@@ -138,30 +144,50 @@ export async function requestCryptaraOverflowSuperWorker<T>(
 
   const local = await readLocalSharedOnly(request);
   if (usable(request, local)) return local;
-  if (!isCryptaraParallelProxyConfigured) {
-    overflowMisses += 1;
-    return null;
-  }
 
   const id = sharedKey(request.workload, request.topic, request.key);
   let pending = inFlight.get(id) as Promise<T | null> | undefined;
   if (!pending) {
     pending = Promise.resolve()
       .then(async () => {
-        overflowLoads += 1;
-        const value = await request.loadOverflow();
-        if (usable(request, value) && value !== null) {
-          shareCryptaraOverflowInformationWithPrimaryWorker({
-            key: request.key,
-            workload: request.workload,
-            topic: request.topic,
-            value,
-            freshForMs: request.freshForMs,
-            estimatedBytes: request.estimatedBytes,
-          });
-          return value;
+        if (isCryptaraParallelProxyConfigured) {
+          overflowLoads += 1;
+          const overflowValue = await request.loadOverflow();
+          if (usable(request, overflowValue) && overflowValue !== null) {
+            shareCryptaraOverflowInformationWithPrimaryWorker({
+              key: request.key,
+              workload: request.workload,
+              topic: request.topic,
+              value: overflowValue,
+              freshForMs: request.freshForMs,
+              estimatedBytes: request.estimatedBytes,
+            });
+            return overflowValue;
+          }
+          overflowMisses += 1;
         }
-        overflowMisses += 1;
+
+        if (request.loadPrimaryUpstream) {
+          primaryUpstreamLoads += 1;
+          const primaryValue = await runThroughCryptaraOverflowPrimaryGateway(
+            `overflow_worker_fill:${request.workload}:${request.topic.trim()}`,
+            request.loadPrimaryUpstream,
+          );
+          if (usable(request, primaryValue) && primaryValue !== null) {
+            primaryUpstreamHits += 1;
+            shareCryptaraPrimaryInformationWithOverflowWorker({
+              key: request.key,
+              workload: request.workload,
+              topic: request.topic,
+              value: primaryValue,
+              freshForMs: request.freshForMs,
+              estimatedBytes: request.estimatedBytes,
+            });
+            return primaryValue;
+          }
+          primaryUpstreamMisses += 1;
+        }
+
         return null;
       })
       .catch(error => {
@@ -184,8 +210,10 @@ export function getCryptaraOverflowSuperWorkerSnapshot() {
     started,
     configured: isCryptaraParallelProxyConfigured,
     coherence: 'shared_local_broker' as const,
-    authority: 'auxiliary_noncritical_only' as const,
-    primaryDatabaseCalls: 0 as const,
+    routing: 'local_then_overflow_then_primary_through_gateway' as const,
+    authority: 'transport_only' as const,
+    directApplicationPrimaryCalls: 0 as const,
+    primaryDatabaseCalls: primaryUpstreamLoads,
     createsDatabasePool: false as const,
     createsDuplicateCache: false as const,
     inFlight: inFlight.size,
@@ -193,6 +221,9 @@ export function getCryptaraOverflowSuperWorkerSnapshot() {
     overflowLoads,
     coalescedOverflowLoads,
     overflowMisses,
+    primaryUpstreamLoads,
+    primaryUpstreamHits,
+    primaryUpstreamMisses,
     primaryToOverflowShares,
     overflowToPrimaryShares,
     loadFailures,
