@@ -50,7 +50,9 @@ assert.doesNotMatch(worker, /readFileSync|resolveMigrationPath/);
 assert.doesNotMatch(worker, /CREATE\s+(?:SCHEMA|TABLE|INDEX)|ALTER\s+TABLE/i);
 assert.match(provision, /process\.env\.SUPABASE_DATABASE_URL_OVERFLOW\b/);
 assert.doesNotMatch(provision, /process\.env\.(?:SUPABASE_DATABASE_URL|SUPABASE_DB_URL|DATABASE_URL)\b/);
-assert.match(provision, /MIGRATIONS[\s\S]*001_cryptara_comp_cache\.sql[\s\S]*002_cryptara_parallel_proxy\.sql/);
+assert.match(provision, /dist\/migrations\/overflow\/001_cryptara_comp_cache\.sql/);
+assert.match(provision, /dist\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql/);
+assert.doesNotMatch(provision, /['"]server\/migrations\/overflow\//);
 assert.match(provision, /parsed\.port === '6543'[\s\S]*parsed\.port = '5432'/);
 assert.match(provision, /max:\s*1/);
 assert.match(provision, /min:\s*0/);
@@ -84,4 +86,4 @@ assert.match(parallelMigration, /revoke all on function private\.cryptara_claim_
 assert.match(dockerfile, /server\/migrations\/overflow\/001_cryptara_comp_cache\.sql \.\/dist\/migrations\/overflow\/001_cryptara_comp_cache\.sql/);
 assert.match(dockerfile, /server\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql \.\/dist\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql/);
 
-console.log('[cryptara-supabase-overflow] PASS: the second Supabase remains an auxiliary-only, bounded, transaction-pooled runtime lane; its migration-owned schemas are provisioned once at deployment, verified before readiness, and forbidden from financial/execution/governance authority');
+console.log('[cryptara-supabase-overflow] PASS: the second Supabase remains an auxiliary-only, bounded, transaction-pooled runtime lane; its migration-owned schemas are provisioned once at deployment from packaged artifacts, verified before readiness, and forbidden from financial/execution/governance authority');
