@@ -18,28 +18,23 @@ const overflowSuperWorker = read('server/services/cryptocrawl/integration/crypta
 const overflow = read('server/services/cryptocrawl/integration/cryptara-supabase-overflow-worker.ts');
 
 // Exact startup order: primary pool contraction -> primary admission governor ->
-// dedicated overflow Super Worker/probe -> verified overflow decision -> local
-// primary-network silence -> server entry. When overflow is ready, index.ts cannot
-// create primary PostgreSQL I/O even if a legacy primary readiness call is reached.
+// dedicated overflow Super Worker/probe -> verified overflow decision -> server
+// entry. Overflow is a head-started auxiliary data plane; primary remains bounded
+// by the existing Cryptara admission governor instead of a process-wide veto.
 requirePattern(
   bootstrap,
-  /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*await\s+startCryptaraHyperBridgeBootstrap\(\)[\s\S]*overflowBootstrap[\s\S]*PRIMARY-SILENCE[\s\S]*import\('\.\/index\.js'\)/,
-  'verified overflow must be resolved and primary silence installed before index.ts loads',
+  /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*await\s+startCryptaraHyperBridgeBootstrap\(\)[\s\S]*overflowBootstrap[\s\S]*import\('\.\/index\.js'\)/,
+  'verified overflow must be resolved before index.ts loads',
 );
 requirePattern(
   bootstrap,
-  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]{0,2600}Object\.getPrototypeOf\(pool\)[\s\S]{0,2600}prototype\.connect\s*=\s*function\s+cryptaraPrimarySilenceConnect/,
-  'overflow-ready startup must install a process-wide pg.Pool primary acquisition veto',
+  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]{0,1200}verified overflow head-start active/,
+  'overflow-ready startup must preserve an explicit auxiliary head-start without changing primary authority',
 );
-requirePattern(
+forbidPattern(
   bootstrap,
-  /targetsPrimary[\s\S]{0,1800}CRYPTARA_PRIMARY_NETWORK_SILENCED_OVERFLOW_ACTIVE[\s\S]{0,1200}Promise\.reject\(error\)/,
-  'primary ordinary/coordination acquisitions must fail locally before network I/O',
-);
-requirePattern(
-  bootstrap,
-  /primaryConnectionStrings[\s\S]{0,1000}primaryApplicationNames[\s\S]{0,1600}!targetsPrimary[\s\S]{0,500}previousConnect\.call/,
-  'the silence guard must discriminate primary pools and leave overflow/non-primary pools untouched',
+  /PRIMARY-SILENCE|CRYPTARA_PRIMARY_NETWORK_SILENCED_OVERFLOW_ACTIVE|cryptaraPrimarySilenceConnect|Object\.getPrototypeOf\(pool\)/,
+  'bootstrap must not install a process-wide primary acquisition veto that prevents authoritative recovery',
 );
 requirePattern(
   bridgeBootstrap,
@@ -66,10 +61,9 @@ forbidPattern(bridgeBootstrap, /from\s+['"][^'"]*\/db(?:\.js)?['"]|\bpool\.query
 forbidPattern(overflowSuperWorker, /from\s+['"][^'"]*\/db(?:\.js)?['"]|\bpool\.query\s*\(|\bnew\s+Pool\s*\(/, 'overflow Super Worker must not touch/create a DB pool');
 requirePattern(overflow, /SUPABASE_DATABASE_URL_OVERFLOW/, 'existing overflow worker remains the sole overflow connection-variable authority');
 
-// The wrapper may inspect primary Pool metadata only after overflow is ready. It
-// must not perform a primary query itself, create another pool, or add a poller.
-forbidPattern(bootstrap, /\bpool\.query\s*\(|\bdb\.execute\s*\(|\bnew\s+Pool\s*\(/, 'primary silence wrapper must remain query-free and pool-free');
-forbidPattern(bootstrap, /setInterval\s*\(|setTimeout\s*\(/, 'primary silence wrapper must not add recovery polling');
-requirePattern(bootstrap, /primary network I\/O=0/, 'runtime telemetry must explicitly report zero primary network I/O when vetoing an acquisition');
+// The wrapper itself stays query-free/pool-free and adds no polling. Primary
+// recovery remains the responsibility of the already-governed server/runtime path.
+forbidPattern(bootstrap, /\bpool\.query\s*\(|\bdb\.execute\s*\(|\bnew\s+Pool\s*\(/, 'bootstrap wrapper must remain query-free and pool-free');
+forbidPattern(bootstrap, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap wrapper must not add recovery polling');
 
-console.log('[hyper-bridge-bootstrap] PASS: verified overflow starts first and installs a process-wide local primary acquisition veto; overflow/non-primary pools remain untouched, primary PostgreSQL I/O is zero while overflow is active, and all authority boundaries remain unchanged');
+console.log('[hyper-bridge-bootstrap] PASS: verified overflow starts first as an auxiliary head start, primary remains under existing bounded Cryptara admission for authoritative recovery, and all execution/financial/governance authority boundaries remain unchanged');
