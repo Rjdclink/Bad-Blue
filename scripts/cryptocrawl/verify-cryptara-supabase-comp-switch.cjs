@@ -44,18 +44,20 @@ requirePattern(resource, /observeCryptaraSupabaseCompSwitch\(database\)/, 'Anten
 requirePattern(resource, /dataPath\.path\s*===\s*'normal'[\s\S]{0,200}database\.mode\s*===\s*'recovering'/, 'recovery acceleration cannot outrun comp-mode DB recovery');
 
 requirePattern(outbox, /refreshCryptaraSupabaseCompSwitch/, 'background persistence refreshes the switch without a DB probe');
-requirePattern(outbox, /policy\.backgroundPollMultiplier/, 'comp mode reduces background polling frequency');
+requirePattern(outbox, /policy\.backgroundPollMultiplier/, 'comp mode stretches only database-failure recovery cadence');
+requirePattern(outbox, /idlePolling:\s*'quiescent_after_empty'/, 'outbox becomes quiet instead of repeatedly scanning an empty Primary queue');
+requirePattern(outbox, /next_retry\s+as[\s\S]{0,900}min\(visible_at\)/i, 'outbox schedules exact durable retry deadlines without empty polling');
 requirePattern(outbox, /claimBatch\(batchSize\)/, 'outbox claims bounded work as one batch');
 requirePattern(outbox, /for update skip locked[\s\S]{0,500}limit \$2/i, 'batched claim preserves multi-worker SKIP LOCKED semantics');
 requirePattern(outbox, /with persisted as[\s\S]{0,2600}update private\.cryptara_outbox/i, 'learning persistence and completion share one atomic statement');
-requirePattern(outbox, /New terminal truth is never deferred by comp mode/, 'terminal truth wakes immediately even in comp mode');
+requirePattern(outbox, /private kick\(\)[\s\S]{0,500}kickPending\s*=\s*true[\s\S]{0,500}schedule\(0\)/, 'terminal truth wakes immediately even in comp mode');
 
 requirePattern(rainbow, /refreshCryptaraSupabaseCompSwitch/, 'Rainbow observability refreshes switch state from local DB telemetry');
 requirePattern(rainbow, /policy\.observabilityMultiplier/, 'Rainbow becomes less chatty only in comp mode');
 requirePattern(rainbow, /withCryptaraSupabasePriority\('low'/, 'Rainbow remains low-priority observability');
 
 requirePattern(runtimeObservability, /supabasePath\.path\s*===\s*'comp'[\s\S]{0,180}canonicalIntelligenceOutbox\.getMetrics\(\)/, 'runtime heartbeat reuses cached DB metrics in comp mode');
-requirePattern(runtimeObservability, /canonicalIntelligenceOutbox\.refreshMetrics\(\)/, 'normal mode retains live outbox metrics refresh');
+requirePattern(runtimeObservability, /canonicalIntelligenceOutbox\.refreshMetrics\(\)/, 'normal mode retains bounded live outbox metrics refresh');
 requirePattern(runtimeObservability, /outboxMetricsSource:\s*supabasePath\.path\s*===\s*'comp'\s*\?\s*'cached'\s*:\s*'live_refresh'/, 'runtime telemetry proves which data path supplied DB metrics');
 
 requirePattern(distributedQuota, /refreshCryptaraSupabaseCompSwitch/, 'distributed quota consumes the same pressure switch');
@@ -66,4 +68,4 @@ requirePattern(distributedQuota, /Math\.ceil\(windowMs\s*\/\s*capacity\)/, 'comp
 requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*60_000/, 'treasury safety heartbeat remains one minute regardless of comp mode');
 forbidPattern(treasury, /observabilityMultiplier|backgroundPollMultiplier|sharedFreshnessMultiplier/, 'comp-mode cadence leaks into treasury safety timing');
 
-console.log('[supabase-comp-switch] PASS: pressure switches normal->comp across shared reads, quota and noncritical DB workers; healthy hysteresis restores normal mode; treasury/critical durability remain fixed and independent of comp cadence');
+console.log('[supabase-comp-switch] PASS: pressure switches normal->comp across shared reads, quota and noncritical DB workers; outbox is event-driven and quiescent with exact retry wake; healthy hysteresis restores normal mode; treasury/critical durability remain fixed and independent of comp cadence');
