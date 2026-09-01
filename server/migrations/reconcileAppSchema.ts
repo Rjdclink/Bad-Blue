@@ -38,6 +38,7 @@ type MigrationStep = {
 const CRYPTOCRAWL_AUTHORITY_MIGRATIONS = [
   '023_cryptocrawler_hot_path_schema_authority.sql',
   '024_cryptocrawler_funding_lifecycle.sql',
+  '025_cryptocrawler_rainbow_source_ledger.sql',
 ] as const;
 
 const CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES = [
@@ -84,9 +85,9 @@ async function runCryptocrawlerAuthorityMigration(
 }
 
 async function verifyCryptocrawlerAuthoritySchemaOnce(): Promise<void> {
-  // One query proves every current execution-critical relation plus the shared
-  // resource-slot claimant. The same proof primes the runtime lease cache below,
-  // so CEX/zero-capital/quota do not repeat this schema query after startup.
+  // One query proves every execution-critical relation plus the shared slot
+  // claimant. The same proof primes runtime lease and funding readiness so those
+  // workers do not pay duplicate schema probes after startup.
   const result = await pool.query(
     `SELECT
        to_regclass($1)::text AS resource_leases,
@@ -107,10 +108,12 @@ async function verifyCryptocrawlerAuthoritySchemaOnce(): Promise<void> {
     throw new Error(`required CryptoCrawler authority schema is absent: ${missingAuthority.join(', ')}`);
   }
 
-  const { primeResourceLeaseAuthorityReady } = await import(
-    '../services/cryptocrawl/execution/resource-lease-authority.js'
-  );
-  primeResourceLeaseAuthorityReady();
+  const [resourceAuthority, fundingAuthority] = await Promise.all([
+    import('../services/cryptocrawl/execution/resource-lease-authority.js'),
+    import('../services/cryptocrawl/execution/funding-position-lifecycle.js'),
+  ]);
+  resourceAuthority.primeResourceLeaseAuthorityReady();
+  fundingAuthority.primeFundingLifecycleStoreReady();
 }
 
 function schemaRetryDelayMs(attempt: number): number {
@@ -174,6 +177,13 @@ const migrationSteps: MigrationStep[] = [
     run: coordinator => {
       if (!coordinator) throw new Error('CryptoCrawler authority migration requires the session migration coordinator');
       return runCryptocrawlerAuthorityMigration(coordinator, '024_cryptocrawler_funding_lifecycle.sql');
+    },
+  },
+  {
+    name: 'CryptoCrawler Rainbow source-ledger schema authority',
+    run: coordinator => {
+      if (!coordinator) throw new Error('CryptoCrawler authority migration requires the session migration coordinator');
+      return runCryptocrawlerAuthorityMigration(coordinator, '025_cryptocrawler_rainbow_source_ledger.sql');
     },
   },
   { name: 'CryptoCrawler governance state', run: createCryptoGovernanceStateTable },
@@ -342,7 +352,7 @@ export async function runAllSchemaMigrations(options?: {
       results.push({
         name: 'CryptoCrawler authority schema readiness',
         success: true,
-        message: 'All execution-critical migration-owned tables/functions are present and shared lease readiness is primed.',
+        message: 'All execution-critical migration-owned tables/functions are present and shared lease/funding readiness is primed.',
       });
     } catch (error) {
       results.push(schemaFailureResult(error));
@@ -365,7 +375,7 @@ export async function runAllSchemaMigrations(options?: {
       fallback.push({
         name: 'CryptoCrawler authority schema readiness',
         success: true,
-        message: 'Coordinator unavailable, but required CryptoCrawler authority schema independently verified and lease readiness primed.',
+        message: 'Coordinator unavailable, but required CryptoCrawler authority schema independently verified and lease/funding readiness primed.',
       });
     } catch (schemaError) {
       fallback.push(schemaFailureResult(schemaError));
