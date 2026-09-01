@@ -33,7 +33,7 @@ forbidPattern(superWorker, /\bnew\s+Pool\s*\(|createClient\s*\(|\bfetch\s*\(|axi
 requirePattern(superWorker, /private readonly inFlight = new Map<string, Promise<CacheEntry>>\(\)/, 'single-flight origin map exists');
 requirePattern(superWorker, /this\.inFlight\.get\(request\.key\)/, 'identical in-flight requests share one origin');
 requirePattern(superWorker, /this\.coalescedRequests \+= 1/, 'coalesced requests are measured');
-requirePattern(superWorker, /upstreamCallsAvoided:\s*this\.cacheHits \+ this\.coalescedRequests/, 'avoided upstream calls are measured');
+requirePattern(superWorker, /upstreamCallsAvoided:[^\n]*this\.cacheHits[^\n]*this\.coalescedRequests[^\n]*getCryptaraOverflowSnapshot\(\)\.hits/, 'local and overflow cache avoidance is measured');
 requirePattern(superWorker, /entry\.readers \+= 1/, 'shared information is reference-counted');
 requirePattern(superWorker, /entry\.readers = Math\.max\(0, entry\.readers - 1\)/, 'reader lease release is reference-counted');
 requirePattern(superWorker, /entry\.expiresAt <= Date\.now\(\) && entry\.readers === 0/, 'expired information is evicted after the final reader releases');
@@ -41,6 +41,10 @@ requirePattern(superWorker, /cleanupExpired/, 'retention cleanup is event/lifecy
 forbidPattern(superWorker, /setTimeout\s*\(|setInterval\s*\(/, 'information retention depends on polling/timers');
 
 requirePattern(superWorker, /execution_truth:\s*0/, 'execution truth is never reused after the originating burst');
+requirePattern(superWorker, /informationClass !== 'execution_truth'/, 'overflow eligibility explicitly excludes execution truth');
+requirePattern(superWorker, /switchSnapshot\.path === 'comp'/, 'secondary cache is consulted only by the pressure/comp path');
+requirePattern(superWorker, /readCryptaraOverflowCache/, 'comp path can reuse secondary Supabase cache before origin');
+requirePattern(superWorker, /writeCryptaraOverflowCache/, 'comp path can seed secondary Supabase cache after a real origin load');
 requirePattern(superWorker, /connector_readiness:\s*5_000/, 'connector readiness has a hard maximum freshness window');
 requirePattern(superWorker, /schema_authority:\s*900_000/, 'schema authority retention is bounded');
 requirePattern(superWorker, /maxItems\?/, 'consumer-specific bounded information views are supported');
@@ -80,4 +84,4 @@ for (const [name, source] of Object.entries({ superWorker, readiness, masterPipe
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds enhancements-list vocabulary into runtime code`);
 }
 
-console.log('[cryptara-super-worker] single-flight shared information, bounded leases, QuantiComp reuse, startup schema short-circuit/fan-out, proxy-only authority, and duplicate-free connector readiness invariants passed');
+console.log('[cryptara-super-worker] single-flight shared information, bounded leases, comp-only secondary cache reuse, QuantiComp reuse, startup schema short-circuit/fan-out, proxy-only authority, and duplicate-free connector readiness invariants passed');
