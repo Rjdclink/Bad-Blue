@@ -47,7 +47,6 @@ import { killSwitch } from './kill-switch';
 import { composer } from './composer-interface';
 import { profitLadder } from './profit-ladder';
 import { GovernanceError } from './types.js';
-import { installCryptaraSupabaseAdmissionWorker } from '../integration/cryptara-supabase-admission-worker.js';
 
 /**
  * Dedicated bootstrap/recovery authority. This never grants ordinary trading
@@ -92,10 +91,16 @@ export function initializeGovernance(): Promise<void> {
 async function initializeGovernanceState(): Promise<void> {
   console.log('[GOVERNANCE] Initializing 6-Stage Deployment System...');
 
-  // Install the ordinary-lane governor before any governance persistence.
-  installCryptaraSupabaseAdmissionWorker();
+  // One Cryptara Super Worker surface owns resource flow by proxy. Its first arm
+  // installs the ordinary-lane admission governor before any governance DB work.
+  const {
+    activateCryptaraSuperWorkerIntelligence,
+    getCryptaraSuperWorkerSnapshot,
+    installCryptaraSuperWorkerAdmission,
+  } = await import('../integration/cryptara-super-worker.js');
+  await installCryptaraSuperWorkerAdmission();
   const { releaseRollingDeploymentPoolHeadroom } = await import('../../../migrations/reconcileAppSchema.js');
-  releaseRollingDeploymentPoolHeadroom('cryptara_worker_installed');
+  releaseRollingDeploymentPoolHeadroom('cryptara_super_worker_admission_installed');
   const restored = await stageManager.restorePersistence(new PostgresStageManagerStateStore());
 
   const persistedProfitLadder = stageManager.getProfitLadderState();
@@ -112,27 +117,27 @@ async function initializeGovernanceState(): Promise<void> {
   const { getCryptara } = await import('../../cryptara/index.js');
   getCryptara().restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
 
-  // Fuse already-measured DB, Quanti Comp and Antenna telemetry without issuing a
-  // database/provider call. The installed advisor can only shorten the evidence
-  // window before an additive +1 permit after DB telemetry is already healthy.
+  // After critical governance persistence is inside the worker lane, activate
+  // Antenna + QuantiComp advisory intelligence. It cannot grant DB or trade authority.
   try {
-    const {
-      getCryptaraResourceIntelligenceSnapshot,
-      installCryptaraResourceIntelligenceAdvisor,
-    } = await import('../integration/cryptara-resource-intelligence.js');
-    installCryptaraResourceIntelligenceAdvisor();
+    await activateCryptaraSuperWorkerIntelligence();
+    const { getCryptaraResourceIntelligenceSnapshot } = await import('../integration/cryptara-resource-intelligence.js');
     const resourceIntelligence = getCryptaraResourceIntelligenceSnapshot();
-    console.log('[GOVERNANCE] Cryptara resource intelligence:', {
+    const superWorker = getCryptaraSuperWorkerSnapshot();
+    console.log('[GOVERNANCE] Cryptara Super Worker:', {
       databaseMode: resourceIntelligence.database.mode,
       databasePressure: resourceIntelligence.database.pressureScore,
       computePressure: resourceIntelligence.compute.pressureScore,
       antennaQuality: resourceIntelligence.antenna.averageQuality,
       usefulParallelHeadroom: resourceIntelligence.usefulParallelHeadroom,
       recoveryAcceleration: resourceIntelligence.dbRecoveryAcceleration,
-      authority: resourceIntelligence.authority,
+      sharedInformationEntries: superWorker.information.retainedEntries,
+      upstreamCallsAvoided: superWorker.information.upstreamCallsAvoided,
+      dataFabricStateCells: superWorker.dataFabric.stateCells,
+      authority: superWorker.authority,
     });
   } catch (error) {
-    console.warn('[GOVERNANCE] Resource intelligence snapshot unavailable:', error instanceof Error ? error.message : String(error));
+    console.warn('[GOVERNANCE] Cryptara Super Worker intelligence unavailable:', error instanceof Error ? error.message : String(error));
   }
   
   const currentStage = stageManager.getCurrentStage();
