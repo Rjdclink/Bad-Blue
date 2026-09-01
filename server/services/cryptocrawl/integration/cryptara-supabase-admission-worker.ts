@@ -51,6 +51,11 @@ export interface CryptaraSupabaseAdmissionSnapshot {
   ewmaAcquireMs: number;
   ewmaHoldMs: number;
   pressureCooldownMs: number;
+  databaseDegraded: boolean;
+  databaseDegradedCooldownMs: number;
+  databaseFailureStreak: number;
+  deferredLowPriority: number;
+  databaseRecoveryAuthority: 'non_low_success_only';
   admissionFailures: number;
   peakQueued: number;
 }
@@ -71,6 +76,8 @@ const PRESSURE_HOLD_MS = Math.max(1_000, Math.min(60_000, Number(process.env.CRY
 const MIN_COOLDOWN_MS = Math.max(250, Math.min(10_000, Number(process.env.CRYPTARA_DB_MIN_COOLDOWN_MS || 1_500)));
 const MAX_COOLDOWN_MS = Math.max(MIN_COOLDOWN_MS, Math.min(30_000, Number(process.env.CRYPTARA_DB_MAX_COOLDOWN_MS || 6_000)));
 const HEALTHY_SUCCESSES_TO_GROW = Math.max(2, Math.min(32, Number(process.env.CRYPTARA_DB_HEALTHY_SUCCESSES_TO_GROW || 3)));
+const DATABASE_DEGRADED_MIN_MS = Math.max(15_000, Math.min(300_000, Number(process.env.CRYPTARA_DB_DEGRADED_MIN_MS || 60_000)));
+const DATABASE_DEGRADED_MAX_MS = Math.max(DATABASE_DEGRADED_MIN_MS, Math.min(900_000, Number(process.env.CRYPTARA_DB_DEGRADED_MAX_MS || 300_000)));
 
 let recoveryAdvisor: RecoveryAdvisor | null = null;
 
@@ -125,6 +132,18 @@ function isAdmissionPressureError(error: unknown): boolean {
     (text.includes('08006') && timeoutContext);
 }
 
+function isDatabaseUnavailableError(error: unknown): boolean {
+  if (!error) return false;
+  const text = errorText(error);
+  return isAdmissionPressureError(error) ||
+    text.includes('ecircuitbreaker') ||
+    text.includes('failed to retrieve database credentials') ||
+    text.includes('too many authentication failures') ||
+    text.includes('authentication query failed') ||
+    text.includes('auth_query') ||
+    text.includes('connection to database not available');
+}
+
 class CryptaraSupabaseResourceGovernor {
   private queue: Waiter[] = [];
   private nextWaiterId = 1;
@@ -135,6 +154,9 @@ class CryptaraSupabaseResourceGovernor {
   private healthySuccesses = 0;
   private pressureUntil = 0;
   private pressureResumeTimer: NodeJS.Timeout | null = null;
+  private databaseRecoveryPending = false;
+  private databaseDegradedUntil = 0;
+  private databaseFailureStreak = 0;
   private admissionFailures = 0;
   private peakQueued = 0;
   private lastMode: CryptaraSupabaseAdmissionSnapshot['mode'] = 'recovering';
@@ -149,7 +171,7 @@ class CryptaraSupabaseResourceGovernor {
 
   private mode(now = Date.now()): CryptaraSupabaseAdmissionSnapshot['mode'] {
     const stats = this.poolSnapshot();
-    if (now < this.pressureUntil || stats.waiting > 0) return 'pressure';
+    if (this.databaseRecoveryPending || now < this.pressureUntil || stats.waiting > 0) return 'pressure';
     if (this.targetConcurrency < Math.max(1, stats.max)) return 'recovering';
     return 'steady';
   }
@@ -193,6 +215,29 @@ class CryptaraSupabaseResourceGovernor {
       this.drain();
     }, delayMs);
     this.pressureResumeTimer.unref?.();
+  }
+
+  private databaseDegradedBackoffMs(): number {
+    const exponential = DATABASE_DEGRADED_MIN_MS * Math.pow(2, Math.max(0, this.databaseFailureStreak - 1));
+    const bounded = Math.min(DATABASE_DEGRADED_MAX_MS, Math.max(DATABASE_DEGRADED_MIN_MS, exponential));
+    const extra = Math.min(5_000, Math.max(500, Math.floor(bounded * 0.05)));
+    return jitterMs(bounded, Math.min(DATABASE_DEGRADED_MAX_MS, bounded + extra));
+  }
+
+  private markDatabaseDegraded(error: unknown): void {
+    this.databaseFailureStreak += 1;
+    const backoffMs = this.databaseDegradedBackoffMs();
+    this.databaseRecoveryPending = true;
+    this.databaseDegradedUntil = Math.max(this.databaseDegradedUntil, Date.now() + backoffMs);
+    console.warn(`[CRYPTARA][SUPABASE-WORKER] upstream database degraded; low-priority background admissions paused; recovery requires non-low success after ${Math.max(0, this.databaseDegradedUntil - Date.now())}ms floor; streak=${this.databaseFailureStreak}; reason=${errorText(error).slice(0, 240)}`);
+  }
+
+  private considerDatabaseRecovery(priority: CryptaraSupabasePriority): void {
+    if (!this.databaseRecoveryPending || priority === 'low' || Date.now() < this.databaseDegradedUntil) return;
+    this.databaseRecoveryPending = false;
+    this.databaseDegradedUntil = 0;
+    this.databaseFailureStreak = 0;
+    console.log(`[CRYPTARA][SUPABASE-WORKER] upstream database recovery proven by ${priority}-priority acquisition; releasing queued background work`);
   }
 
   private contract(reason: string): void {
@@ -254,13 +299,15 @@ class CryptaraSupabaseResourceGovernor {
   }
 
   private nextWaiterIndex(): number {
-    if (this.queue.length <= 1) return 0;
+    if (this.queue.length === 0) return -1;
     const now = Date.now();
-    let bestIndex = 0;
-    let bestRank = this.effectiveRank(this.queue[0], now);
-    for (let index = 1; index < this.queue.length; index += 1) {
-      const rank = this.effectiveRank(this.queue[index], now);
-      if (rank < bestRank || (rank === bestRank && this.queue[index].id < this.queue[bestIndex].id)) {
+    let bestIndex = -1;
+    let bestRank = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < this.queue.length; index += 1) {
+      const waiter = this.queue[index];
+      if (this.databaseRecoveryPending && waiter.priority === 'low') continue;
+      const rank = this.effectiveRank(waiter, now);
+      if (bestIndex < 0 || rank < bestRank || (rank === bestRank && waiter.id < this.queue[bestIndex].id)) {
         bestIndex = index;
         bestRank = rank;
       }
@@ -270,9 +317,10 @@ class CryptaraSupabaseResourceGovernor {
 
   private observeRelease(error: unknown, heldMs: number): void {
     if (heldMs > 0) this.ewmaHoldMs = this.updateEwma(this.ewmaHoldMs, heldMs);
-    if (isAdmissionPressureError(error)) {
+    if (isDatabaseUnavailableError(error)) {
       this.admissionFailures += 1;
-      this.contract('upstream_query_or_release_error');
+      this.markDatabaseDegraded(error);
+      this.contract('upstream_database_unavailable');
       return;
     }
     if (heldMs >= PRESSURE_HOLD_MS && this.queue.length > 0) {
@@ -304,6 +352,7 @@ class CryptaraSupabaseResourceGovernor {
 
     while (admitted < admissionBudget && this.queue.length > 0) {
       const index = this.nextWaiterIndex();
+      if (index < 0) break;
       const waiter = this.queue.splice(index, 1)[0];
       this.inFlight += 1;
       admitted += 1;
@@ -328,15 +377,19 @@ class CryptaraSupabaseResourceGovernor {
     });
   }
 
-  reportConnectionOutcome(acquireMs: number, error?: unknown): void {
+  reportConnectionOutcome(acquireMs: number, error: unknown, priority: CryptaraSupabasePriority): void {
     const duration = finiteNonNegative(acquireMs);
     this.ewmaAcquireMs = this.updateEwma(this.ewmaAcquireMs, duration);
-    if (isAdmissionPressureError(error)) {
+    if (isDatabaseUnavailableError(error)) {
       this.admissionFailures += 1;
+      this.markDatabaseDegraded(error);
       this.contract('connection_acquisition_error');
       return;
     }
-    if (!error) this.considerRecovery(duration);
+    if (!error) {
+      this.considerDatabaseRecovery(priority);
+      this.considerRecovery(duration);
+    }
   }
 
   snapshot(installed: boolean): CryptaraSupabaseAdmissionSnapshot {
@@ -356,6 +409,13 @@ class CryptaraSupabaseResourceGovernor {
       ewmaAcquireMs: Number(this.ewmaAcquireMs.toFixed(2)),
       ewmaHoldMs: Number(this.ewmaHoldMs.toFixed(2)),
       pressureCooldownMs: Math.max(0, this.pressureUntil - now),
+      databaseDegraded: this.databaseRecoveryPending,
+      databaseDegradedCooldownMs: Math.max(0, this.databaseDegradedUntil - now),
+      databaseFailureStreak: this.databaseFailureStreak,
+      deferredLowPriority: this.databaseRecoveryPending
+        ? this.queue.filter(waiter => waiter.priority === 'low').length
+        : 0,
+      databaseRecoveryAuthority: 'non_low_success_only',
       admissionFailures: this.admissionFailures,
       peakQueued: this.peakQueued,
     };
@@ -416,7 +476,7 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
           try {
             originalConnect.call(this, (error: unknown, client: any, release: (error?: unknown) => void) => {
               const acquireMs = Date.now() - acquisitionStartedAt;
-              governor.reportConnectionOutcome(acquireMs, error);
+              governor.reportConnectionOutcome(acquireMs, error, priority);
               if (error || !client) {
                 // The connection outcome already taught the governor about pressure;
                 // release only the worker permit here to avoid double contraction.
@@ -439,12 +499,12 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
         const acquisitionStartedAt = Date.now();
         try {
           const client = await originalConnect.call(this);
-          governor.reportConnectionOutcome(Date.now() - acquisitionStartedAt);
+          governor.reportConnectionOutcome(Date.now() - acquisitionStartedAt, undefined, priority);
           const release = client.release.bind(client);
           wrapClientRelease(client, release, permit, Date.now());
           return client;
         } catch (error) {
-          governor.reportConnectionOutcome(Date.now() - acquisitionStartedAt, error);
+          governor.reportConnectionOutcome(Date.now() - acquisitionStartedAt, error, priority);
           // See callback path above: report once, then return the permit without
           // re-classifying the same acquisition failure.
           permit.release(undefined, 0);
