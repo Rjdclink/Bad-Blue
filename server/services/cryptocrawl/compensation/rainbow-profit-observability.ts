@@ -2,6 +2,10 @@ import { createHash } from 'crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  getCryptaraSupabaseCompSwitchSnapshot,
+  refreshCryptaraSupabaseCompSwitch,
+} from '../integration/cryptara-supabase-comp-switch.js';
 
 export interface RainbowProfitSnapshot {
   observedAt: number;
@@ -66,16 +70,22 @@ class RainbowProfitObservability {
 
   private async refreshAndSchedule(): Promise<void> {
     try {
+      // Switch state is refreshed from already-measured DB-admission telemetry;
+      // this does not issue another Supabase query. The snapshot query below then
+      // follows the normal or comp cadence selected by Cryptara.
+      await refreshCryptaraSupabaseCompSwitch().catch(() => getCryptaraSupabaseCompSwitchSnapshot());
       await this.refresh();
     } finally {
       if (!this.running) return;
-      // One-shot scheduling prevents overlap/drift when Supabase is slow. There is
-      // never a second timer trying to create another observability query while a
-      // prior refresh is still occupying or waiting for ordinary-lane capacity.
+      // One-shot scheduling prevents overlap/drift when Supabase is slow. Comp
+      // mode makes observability less chatty without changing any payout/treasury
+      // or execution-critical cadence.
+      const policy = getCryptaraSupabaseCompSwitchSnapshot().policy;
+      const delayMs = Math.min(3_600_000, Math.max(INTERVAL_MS, Math.floor(INTERVAL_MS * policy.observabilityMultiplier)));
       this.timer = setTimeout(() => {
         this.timer = null;
         void this.refreshAndSchedule();
-      }, INTERVAL_MS);
+      }, delayMs);
       this.timer.unref?.();
     }
   }
