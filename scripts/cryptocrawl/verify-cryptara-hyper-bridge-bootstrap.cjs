@@ -45,8 +45,8 @@ requirePattern(bridgeBootstrap, /withCryptaraParallelProxy\('observability'/, 'b
 requirePattern(bridgeBootstrap, /if\s*\(probeInFlight\)\s*return\s+probeInFlight/, 'overflow bootstrap probe must be single-flight');
 requirePattern(
   bridgeBootstrap,
-  /current_database\(\)[\s\S]*has_comp_cache[\s\S]*has_parallel_snapshots[\s\S]*has_parallel_events[\s\S]*has_parallel_jobs[\s\S]*has_parallel_claimant/,
-  'bootstrap must prove the migration-owned auxiliary Overflow schema without touching primary',
+  /current_database\(\)[\s\S]*has_comp_cache[\s\S]*has_parallel_snapshots[\s\S]*has_parallel_events[\s\S]*has_parallel_jobs[\s\S]*has_parallel_claimant[\s\S]*has_users[\s\S]*has_complaints[\s\S]*has_lawsuit_filings[\s\S]*has_resource_leases/,
+  'bootstrap must prove the migration-owned auxiliary schema and verify primary-authority tables have not leaked into Overflow',
 );
 requirePattern(
   bridgeBootstrap,
@@ -55,18 +55,23 @@ requirePattern(
 );
 requirePattern(
   bridgeBootstrap,
-  /if\s*\(!auxiliarySchemaReady\)[\s\S]{0,500}state\s*=\s*'degraded'[\s\S]{0,500}overflow auxiliary schema incomplete/,
-  'connected-but-unprovisioned Overflow must remain degraded',
+  /authorityIsolationReady\s*=\s*!Object\.values\(primaryAuthorityTablesPresent\)\.some\(Boolean\)/,
+  'bootstrap must require primary-authority table isolation before declaring readiness',
 );
 requirePattern(
   bridgeBootstrap,
-  /if\s*\(!auxiliarySchemaReady\)[\s\S]{0,900}return;[\s\S]{0,500}state\s*=\s*'ready'/,
-  'ready state must be reachable only after the auxiliary schema gate passes',
+  /if\s*\(!auxiliarySchemaReady\s*\|\|\s*!authorityIsolationReady\)[\s\S]{0,700}state\s*=\s*'degraded'/,
+  'connected-but-unprovisioned or authority-contaminated Overflow must remain degraded',
 );
-forbidPattern(
+requirePattern(
   bridgeBootstrap,
-  /to_regclass\('public\.(?:users|complaints|lawsuit_filings|cryptocrawler_resource_leases)'\)/,
-  'Overflow readiness must not require authoritative application tables to be copied into the auxiliary project',
+  /overflow auxiliary schema incomplete[\s\S]{0,250}primary authority tables detected in overflow mirror/,
+  'readiness telemetry must distinguish missing auxiliary schema from authority contamination',
+);
+requirePattern(
+  bridgeBootstrap,
+  /if\s*\(!auxiliarySchemaReady\s*\|\|\s*!authorityIsolationReady\)[\s\S]{0,1200}return;[\s\S]{0,500}state\s*=\s*'ready'/,
+  'ready state must be reachable only after both Overflow readiness gates pass',
 );
 requirePattern(bridgeBootstrap, /state\s*=\s*'not_configured'/, 'missing overflow configuration must leave the primary fallback path available');
 requirePattern(bridgeBootstrap, /no primary probe was issued by overflow worker/, 'overflow bootstrap failure must never trigger a primary health probe');
@@ -101,4 +106,4 @@ forbidPattern(gateway, /\bnew\s+Pool\s*\(|\bpool\.query\s*\(/, 'gateway is trans
 forbidPattern(bootstrap, /\bpool\.query\s*\(|\bdb\.execute\s*\(|\bnew\s+Pool\s*\(/, 'bootstrap wrapper must remain query-free and pool-free');
 forbidPattern(bootstrap, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap wrapper must not add recovery polling');
 
-console.log('[hyper-bridge-bootstrap] PASS: Overflow connectivity is not readiness; the migration-owned auxiliary schema is required, authoritative application tables remain primary-owned, worker reads remain local->overflow->primary-on-miss, direct primary health/recovery probes are zero, and authority remains primary');
+console.log('[hyper-bridge-bootstrap] PASS: Overflow connectivity is not readiness; migration-owned auxiliary schema plus primary-authority isolation are required, worker reads remain local->overflow->primary-on-miss, direct primary health/recovery probes are zero, and authority remains primary');
