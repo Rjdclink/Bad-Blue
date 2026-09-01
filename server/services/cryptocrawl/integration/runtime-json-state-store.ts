@@ -6,7 +6,7 @@ export class RuntimeJsonStateStore<T> {
   }
 
   private async query(text: string, values: unknown[]) {
-    const { pool } = await import('../../../db.js');
+    const { pool } = await import('../runtime/cryptocrawl-runtime-database.js');
     return pool.query(text, values);
   }
 
