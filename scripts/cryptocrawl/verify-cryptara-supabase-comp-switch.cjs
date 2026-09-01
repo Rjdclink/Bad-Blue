@@ -14,6 +14,9 @@ const dataSwitch = read('server/services/cryptocrawl/integration/cryptara-supaba
 const superWorker = read('server/services/cryptocrawl/integration/cryptara-super-worker.ts');
 const resource = read('server/services/cryptocrawl/integration/cryptara-resource-intelligence.ts');
 const outbox = read('server/services/cryptocrawl/intelligence/canonical-intelligence-outbox.ts');
+const rainbow = read('server/services/cryptocrawl/compensation/rainbow-profit-observability.ts');
+const runtimeObservability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
+const treasury = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
 
 requirePattern(dataSwitch, /CryptaraSupabaseDataPath\s*=\s*'normal'\s*\|\s*'comp'/, 'switch has explicit normal and comp paths');
 requirePattern(dataSwitch, /signal\.mode\s*===\s*'pressure'/, 'admission pressure enters the comp path');
@@ -46,4 +49,17 @@ requirePattern(outbox, /for update skip locked[\s\S]{0,500}limit \$2/i, 'batched
 requirePattern(outbox, /with persisted as[\s\S]{0,2600}update private\.cryptara_outbox/i, 'learning persistence and completion share one atomic statement');
 requirePattern(outbox, /New terminal truth is never deferred by comp mode/, 'terminal truth wakes immediately even in comp mode');
 
-console.log('[supabase-comp-switch] PASS: measured pressure switches normal->comp, hysteretic recovery switches back, QuantiComp sharing expands safely, and critical work is never dropped');
+requirePattern(rainbow, /refreshCryptaraSupabaseCompSwitch/, 'Rainbow observability refreshes switch state from local DB telemetry');
+requirePattern(rainbow, /policy\.observabilityMultiplier/, 'Rainbow becomes less chatty only in comp mode');
+requirePattern(rainbow, /withCryptaraSupabasePriority\('low'/, 'Rainbow remains low-priority observability');
+
+requirePattern(runtimeObservability, /supabasePath\.path\s*===\s*'comp'[\s\S]{0,180}canonicalIntelligenceOutbox\.getMetrics\(\)/, 'runtime heartbeat reuses cached DB metrics in comp mode');
+requirePattern(runtimeObservability, /canonicalIntelligenceOutbox\.refreshMetrics\(\)/, 'normal mode retains live outbox metrics refresh');
+requirePattern(runtimeObservability, /outboxMetricsSource:\s*supabasePath\.path\s*===\s*'comp'\s*\?\s*'cached'\s*:\s*'live_refresh'/, 'runtime telemetry proves which data path supplied DB metrics');
+
+// Treasury is safety/settlement state. Comp mode may govern its scarce connection
+// admission, but must never lengthen its established heartbeat or suppress terminal intent.
+requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*15_000/, 'treasury safety heartbeat remains 15s regardless of comp mode');
+forbidPattern(treasury, /observabilityMultiplier|backgroundPollMultiplier|sharedFreshnessMultiplier/, 'comp-mode cadence leaks into treasury safety timing');
+
+console.log('[supabase-comp-switch] PASS: pressure switches normal->comp across shared reads and noncritical DB workers, healthy hysteresis restores normal mode, and treasury/critical durability remain unchanged');
