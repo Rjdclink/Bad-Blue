@@ -3,6 +3,12 @@ import {
   getCryptaraSupabaseCompSwitchSnapshot,
   type CryptaraSupabaseCompSwitchSnapshot,
 } from './cryptara-supabase-comp-switch.js';
+import {
+  getCryptaraOverflowSnapshot,
+  readCryptaraOverflowCache,
+  writeCryptaraOverflowCache,
+  type CryptaraOverflowInformationClass,
+} from './cryptara-supabase-overflow-worker.js';
 
 export type CryptaraInformationClass =
   | 'execution_truth'
@@ -60,6 +66,7 @@ export interface CryptaraSuperWorkerSnapshot {
   admissionInstalled: boolean;
   intelligenceActive: boolean;
   supabaseDataPath: CryptaraSupabaseCompSwitchSnapshot;
+  overflow: ReturnType<typeof getCryptaraOverflowSnapshot>;
   information: {
     retainedEntries: number;
     retainedBytes: number;
@@ -162,6 +169,16 @@ class CryptaraSharedInformationBroker {
     return 1_024;
   }
 
+  private overflowEligible(
+    informationClass: CryptaraInformationClass,
+    freshForMs: number,
+    switchSnapshot: CryptaraSupabaseCompSwitchSnapshot,
+  ): informationClass is CryptaraOverflowInformationClass {
+    return switchSnapshot.path === 'comp'
+      && freshForMs > 0
+      && informationClass !== 'execution_truth';
+  }
+
   private removeEntry(entry: CacheEntry): void {
     if (this.cache.get(entry.key) !== entry) return;
     this.cache.delete(entry.key);
@@ -260,13 +277,33 @@ class CryptaraSharedInformationBroker {
     let source: CryptaraInformationSource = 'single_flight';
     if (!pending) {
       source = 'origin';
-      this.originLoads += 1;
       const freshForMs = this.effectiveFreshMs(request.informationClass, request.freshForMs, switchSnapshot);
       pending = Promise.resolve()
-        .then(() => this.runLoader(request))
-        .then(value => {
+        .then(async () => {
+          if (this.overflowEligible(request.informationClass, freshForMs, switchSnapshot)) {
+            const overflowHit = await readCryptaraOverflowCache<T>(request.key, request.informationClass);
+            if (overflowHit && overflowHit.expiresAt > Date.now()) {
+              source = 'cache';
+              const loadedAt = Math.max(0, overflowHit.createdAt || Date.now());
+              return {
+                key: request.key,
+                value: overflowHit.value,
+                createdAt: loadedAt,
+                expiresAt: overflowHit.expiresAt,
+                lastAccessAt: Date.now(),
+                readers: 0,
+                bytes: this.estimateBytes(overflowHit.value, request.estimatedBytes),
+              } satisfies CacheEntry<T>;
+            }
+          }
+
+          this.originLoads += 1;
+          const value = await this.runLoader(request);
           const loadedAt = Date.now();
-          const entry: CacheEntry<T> = {
+          if (this.overflowEligible(request.informationClass, freshForMs, switchSnapshot)) {
+            void writeCryptaraOverflowCache(request.key, request.informationClass, value, freshForMs);
+          }
+          return {
             key: request.key,
             value,
             createdAt: loadedAt,
@@ -274,8 +311,10 @@ class CryptaraSharedInformationBroker {
             lastAccessAt: loadedAt,
             readers: 0,
             bytes: this.estimateBytes(value, request.estimatedBytes),
-          };
-          if (freshForMs > 0) {
+          } satisfies CacheEntry<T>;
+        })
+        .then(entry => {
+          if (entry.expiresAt > Date.now()) {
             const previous = this.cache.get(request.key);
             // Never overwrite the accounting of an older generation while a
             // consumer still has it pinned. Deliver the new generation now but
@@ -355,7 +394,7 @@ class CryptaraSharedInformationBroker {
       originLoads: this.originLoads,
       cacheHits: this.cacheHits,
       coalescedRequests: this.coalescedRequests,
-      upstreamCallsAvoided: this.cacheHits + this.coalescedRequests,
+      upstreamCallsAvoided: this.cacheHits + this.coalescedRequests + getCryptaraOverflowSnapshot().hits,
       loadFailures: this.loadFailures,
       evictions: this.evictions,
       normalPathRequests: this.normalPathRequests,
@@ -422,6 +461,7 @@ export function getCryptaraSuperWorkerSnapshot(): CryptaraSuperWorkerSnapshot {
     admissionInstalled,
     intelligenceActive,
     supabaseDataPath: getCryptaraSupabaseCompSwitchSnapshot(),
+    overflow: getCryptaraOverflowSnapshot(),
     information: informationBroker.snapshot(),
     dataFabric: quantiDataFabric.getStatus(),
   };
