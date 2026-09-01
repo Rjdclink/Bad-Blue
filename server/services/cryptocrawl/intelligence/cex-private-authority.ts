@@ -1,8 +1,12 @@
 import { createHash, createHmac } from 'crypto';
 import type { PoolClient } from 'pg';
 import logger from '../../../logger.js';
-import { coordinationPool, isDatabaseConfigured } from '../../../db.js';
-import { acquireDistributedApiQuota, getDistributedApiQuotaSnapshot } from '../execution/distributed-api-quota.js';
+import { isDatabaseConfigured } from '../../../db.js';
+import {
+  isCoordinationDatabaseConfigured,
+  queryCoordinationDatabase,
+  withDatabaseSessionAdvisoryLock,
+} from '../runtime/database-coordination.js';
 
 function finiteEnvNumber(name: string, fallback: number, min: number, max: number): number {
   const parsed = Number(process.env[name]);
@@ -13,8 +17,7 @@ function finiteEnvNumber(name: string, fallback: number, min: number, max: numbe
 const KRAKEN_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_KRAKEN_PRIVATE_TIMEOUT_MS || 12_000));
 const KRAKEN_DB_BREAKER_BASE_MS = finiteEnvNumber('CRYPTO_KRAKEN_DB_BREAKER_BASE_MS', 5_000, 1_000, 60_000);
 const KRAKEN_DB_BREAKER_MAX_MS = finiteEnvNumber('CRYPTO_KRAKEN_DB_BREAKER_MAX_MS', 60_000, 5_000, 300_000);
-const KRAKEN_LOCK_MAX_WAIT_MS = finiteEnvNumber('CRYPTO_KRAKEN_LOCK_MAX_WAIT_MS', 1_500, 100, 10_000);
-const KRAKEN_LOCK_POLL_MS = finiteEnvNumber('CRYPTO_KRAKEN_LOCK_POLL_MS', 75, 20, 500);
+const KRAKEN_LOCK_ACQUIRE_TIMEOUT_MS = finiteEnvNumber('CRYPTO_KRAKEN_LOCK_ACQUIRE_TIMEOUT_MS', 6_000, 250, 30_000);
 const OKX_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_OKX_PRIVATE_TIMEOUT_MS || 12_000));
 const OKX_REGION_CACHE_MS = Math.max(60_000, Number(process.env.CRYPTO_OKX_REGION_CACHE_MS || 3_600_000));
 const OKX_FEE_MIN_INTERVAL_MS = Math.max(425, Number(process.env.CRYPTO_OKX_FEE_MIN_INTERVAL_MS || 450));
@@ -24,6 +27,8 @@ const OKX_RATE_RETRY_BASE_MS = finiteEnvNumber('CRYPTO_OKX_RATE_RETRY_BASE_MS', 
 const OKX_RATE_RETRY_MAX_MS = finiteEnvNumber('CRYPTO_OKX_RATE_RETRY_MAX_MS', 30_000, 1_000, 120_000);
 const OKX_RATE_MAX_RETRIES = Math.floor(finiteEnvNumber('CRYPTO_OKX_RATE_MAX_RETRIES', 5, 0, 8));
 const OKX_RATE_BREAKER_MS = finiteEnvNumber('CRYPTO_OKX_RATE_BREAKER_MS', 30_000, 1_000, 300_000);
+const OKX_DISTRIBUTED_RATE_LOCK_TIMEOUT_MS = finiteEnvNumber('CRYPTO_OKX_DISTRIBUTED_RATE_LOCK_TIMEOUT_MS', 7_500, 500, 30_000);
+const OKX_REPLICA_SAFETY_FACTOR = Math.floor(finiteEnvNumber('CRYPTO_OKX_REPLICA_SAFETY_FACTOR', 4, 1, 16));
 
 function credential(name: string): string | null {
   const raw = process.env[name];
@@ -41,6 +46,10 @@ function requireCredential(name: string): string {
   const value = credential(name);
   if (!value) throw new Error(`${name} is not visible to the private CEX authority`);
   return value;
+}
+
+function fingerprint(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -69,6 +78,10 @@ async function parseJson(response: Response, provider: string): Promise<any> {
   return payload;
 }
 
+function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
 // ============================================================================
 // KRAKEN — one nonce/signing/serialization authority per API key
 // ============================================================================
@@ -91,6 +104,13 @@ class KrakenLockBusyError extends Error {
   }
 }
 
+class KrakenPostCoordinationError extends Error {
+  constructor(readonly causeError: unknown) {
+    super(causeError instanceof Error ? causeError.message : String(causeError));
+    this.name = 'KrakenPostCoordinationError';
+  }
+}
+
 function nextKrakenNonce(): string {
   const nonce = Math.max(Date.now(), krakenLastNonce + 1);
   krakenLastNonce = nonce;
@@ -108,10 +128,6 @@ function serializeKrakenPrivate<T>(operation: () => Promise<T>): Promise<T> {
   const run = krakenPrivateTail.catch(() => undefined).then(operation);
   krakenPrivateTail = run.then(() => undefined, () => undefined);
   return run;
-}
-
-function krakenKeyFingerprint(apiKey: string): string {
-  return createHash('sha256').update(apiKey).digest('hex');
 }
 
 function krakenDatabaseBackoffMs(): number {
@@ -144,21 +160,23 @@ function recordKrakenDatabaseSuccess(): void {
 
 function assertKrakenDatabaseLaneAvailable(): void {
   const retryInMs = Math.max(0, krakenDbBreakerOpenUntil - Date.now());
-  if (retryInMs <= 0) return;
-  throw new Error(`Kraken distributed nonce database circuit open; fail-closed retry in ${retryInMs}ms`);
+  if (retryInMs > 0) {
+    throw new Error(`Kraken distributed nonce database circuit open; fail-closed retry in ${retryInMs}ms`);
+  }
 }
 
 async function ensureKrakenDistributedState(): Promise<void> {
   if (!isDatabaseConfigured) return;
   assertKrakenDatabaseLaneAvailable();
   if (krakenDistributedStateReady) return krakenDistributedStateReady;
+
   krakenDistributedStateReady = (async () => {
     try {
-      const result = await coordinationPool.query(
+      const result = await queryCoordinationDatabase(
         `SELECT to_regclass('private.cryptocrawler_kraken_nonce_state') IS NOT NULL AS ready`,
       );
       if (result.rows?.[0]?.ready !== true) {
-        throw new Error('Migration-owned private.cryptocrawler_kraken_nonce_state table is missing');
+        throw new Error('Migration-owned private.cryptocrawler_kraken_nonce_state is missing');
       }
       recordKrakenDatabaseSuccess();
     } catch (error) {
@@ -206,13 +224,10 @@ async function acquireKrakenDistributedLock(client: PoolClient, lockName: string
 }
 
 /**
- * Kraken nonces are an API-key-wide ordering domain, not a process-local one.
- * Hold a session advisory lock across nonce allocation AND the signed network
- * request so separate Railway replicas cannot allocate increasing nonces and
- * then transmit them out of order. Acquisition uses pg_try_advisory_lock with a
- * short bounded jittered wait; a busy lane fails closed instead of creating the
- * PostgreSQL advisory-lock wait queues seen in production. The session lock lives
- * on the tiny coordination pool rather than ordinary application query capacity.
+ * Kraken nonce ordering is API-key-wide. The same dedicated session lock covers
+ * durable nonce allocation and physical network submission, but schema ownership
+ * stays entirely with migrations. Bounded try-lock acquisition prevents a blocked
+ * replica from consuming an ordinary application DB session indefinitely.
  */
 async function withKrakenDistributedLane<T>(
   apiKey: string,
@@ -223,21 +238,10 @@ async function withKrakenDistributedLane<T>(
   await ensureKrakenDistributedState();
   assertKrakenDatabaseLaneAvailable();
 
-  const keyHash = krakenKeyFingerprint(apiKey);
+  const keyHash = fingerprint(apiKey);
   const lockName = `cryptocrawl:kraken-private:${keyHash}`;
-  let client: PoolClient;
   try {
-    client = await coordinationPool.connect();
-  } catch (error) {
-    recordKrakenDatabaseFailure(error);
-    throw error;
-  }
-  let locked = false;
-  try {
-    let nonce: string;
-    try {
-      await acquireKrakenDistributedLock(client, lockName);
-      locked = true;
+    return await withDatabaseSessionAdvisoryLock(lockName, async client => {
       const proposed = String(Math.max(Date.now(), krakenLastNonce + 1));
       const allocated = await client.query(
         `INSERT INTO private.cryptocrawler_kraken_nonce_state (key_hash, last_nonce, updated_at)
@@ -248,24 +252,25 @@ async function withKrakenDistributedLane<T>(
          RETURNING last_nonce`,
         [keyHash, proposed],
       );
-      nonce = String(allocated.rows[0]?.last_nonce || '');
+      const nonce = String(allocated.rows[0]?.last_nonce || '');
       if (!/^\d+$/.test(nonce)) throw new Error('Distributed Kraken nonce allocation failed');
       const numericNonce = Number(nonce);
       if (Number.isSafeInteger(numericNonce)) krakenLastNonce = Math.max(krakenLastNonce, numericNonce);
       recordKrakenDatabaseSuccess();
-    } catch (error) {
-      if (!(error instanceof KrakenLockBusyError)) recordKrakenDatabaseFailure(error);
-      throw error;
-    }
 
-    // Database safety has succeeded. Kraken/network errors from this point must
-    // not poison the database circuit breaker.
-    return await operation(nonce);
-  } finally {
-    if (locked) {
-      try { await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]); } catch { /* connection release also clears session lock */ }
-    }
-    client.release();
+      // Network/exchange failures occur after nonce authority is proven. Keep the
+      // session lock until submission finishes, but never misclassify those errors
+      // as database failures or open the database breaker.
+      try {
+        return await operation(nonce);
+      } catch (error) {
+        throw new KrakenPostCoordinationError(error);
+      }
+    }, { acquireTimeoutMs: KRAKEN_LOCK_ACQUIRE_TIMEOUT_MS });
+  } catch (error) {
+    if (error instanceof KrakenPostCoordinationError) throw error.causeError;
+    recordKrakenDatabaseFailure(error);
+    throw error;
   }
 }
 
@@ -381,6 +386,7 @@ interface OkxLaneSnapshot {
   consecutiveRateLimits: number;
   rateLimitCount: number;
   retryCount: number;
+  distributedPacing: boolean;
 }
 
 const OKX_LANE_POLICIES: Record<OkxPrivateLane, OkxLanePolicy> = {
@@ -446,13 +452,14 @@ function okxBaseUrlCandidates(): string[] {
 }
 
 function laneIntervalMs(lane: OkxPrivateLane): number {
-  if (lane === 'trade_fee') return OKX_FEE_MIN_INTERVAL_MS;
+  if (lane === 'trade_fee') {
+    if (!isDatabaseConfigured) return OKX_FEE_MIN_INTERVAL_MS;
+    return isCoordinationDatabaseConfigured
+      ? OKX_FEE_MIN_INTERVAL_MS
+      : OKX_FEE_MIN_INTERVAL_MS * OKX_REPLICA_SAFETY_FACTOR;
+  }
   if (lane === 'order_write' || lane === 'order_read') return OKX_ORDER_MIN_INTERVAL_MS;
   return OKX_ACCOUNT_READ_MIN_INTERVAL_MS;
-}
-
-function sleep(ms: number): Promise<void> {
-  return ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
 function refillLane(lane: OkxPrivateLane, now = Date.now()): void {
@@ -484,9 +491,24 @@ async function acquireOkxToken(lane: OkxPrivateLane): Promise<void> {
       return;
     }
     const msPerToken = policy.windowMs / policy.capacity;
-    const waitMs = Math.max(1, Math.ceil((1 - state.tokens) * msPerToken));
-    await sleep(waitMs);
+    await sleep(Math.max(1, Math.ceil((1 - state.tokens) * msPerToken)));
   }
+}
+
+async function executeStartedLaneOperation<T>(lane: OkxPrivateLane, operation: () => Promise<T>): Promise<T> {
+  const state = okxLanes[lane];
+  const intervalMs = laneIntervalMs(lane);
+  const waitMs = Math.max(0, state.lastStartedAt + intervalMs - Date.now());
+  if (waitMs > 0) await sleep(waitMs);
+  const startedAt = Date.now();
+  state.lastStartedAt = startedAt;
+  const result = await operation();
+
+  if (lane === 'trade_fee' && isCoordinationDatabaseConfigured) {
+    await sleep(Math.max(0, startedAt + OKX_FEE_MIN_INTERVAL_MS - Date.now()));
+  }
+  state.requestCount += 1;
+  return result;
 }
 
 function okxTradeFeeQuotaNamespace(): string {
@@ -509,13 +531,17 @@ function scheduleOkxLane<T>(lane: OkxPrivateLane, operation: () => Promise<T>): 
   const state = okxLanes[lane];
   const run = state.tail.catch(() => undefined).then(async () => {
     await acquireOkxToken(lane);
-    await acquireOkxDistributedQuota(lane);
-    const waitMs = Math.max(0, state.lastStartedAt + laneIntervalMs(lane) - Date.now());
-    if (waitMs > 0) await sleep(waitMs);
-    state.lastStartedAt = Date.now();
-    const result = await operation();
-    state.requestCount += 1;
-    return result;
+    if (lane !== 'trade_fee' || !isCoordinationDatabaseConfigured) {
+      return executeStartedLaneOperation(lane, operation);
+    }
+
+    const apiKey = requireCredential('OKX_API_KEY');
+    const lockName = `cryptocrawl:okx:trade-fee:${fingerprint(apiKey)}`;
+    return withDatabaseSessionAdvisoryLock(
+      lockName,
+      async () => executeStartedLaneOperation(lane, operation),
+      { acquireTimeoutMs: OKX_DISTRIBUTED_RATE_LOCK_TIMEOUT_MS },
+    );
   });
   state.tail = run.then(() => undefined, () => undefined);
   return run;
@@ -536,7 +562,6 @@ function headerDelayMs(response: Response): number | null {
     const parsedDate = Date.parse(retryAfter);
     if (Number.isFinite(parsedDate)) return Math.max(0, parsedDate - Date.now());
   }
-
   const remaining = Number(response.headers.get('OK-RateLimit-Remaining'));
   const resetRaw = response.headers.get('OK-RateLimit-Reset');
   if (Number.isFinite(remaining) && remaining <= 0 && resetRaw) {
@@ -577,6 +602,7 @@ function recordOkxRateLimit(lane: OkxPrivateLane, delayMs: number, error: OkxPri
     retryDelayMs: delayMs,
     consecutiveRateLimits: state.consecutiveRateLimits,
     breakerOpenUntil: state.breakerOpenUntil || null,
+    distributedTradeFeePacing: lane === 'trade_fee' && isCoordinationDatabaseConfigured,
   });
 }
 
@@ -635,10 +661,7 @@ async function authenticatedOkxRequestFromBase(
   return payload;
 }
 
-async function executeOkxWithAdaptiveRetry<T>(
-  lane: OkxPrivateLane,
-  operation: () => Promise<T>,
-): Promise<T> {
+async function executeOkxWithAdaptiveRetry<T>(lane: OkxPrivateLane, operation: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       const result = await scheduleOkxLane(lane, operation);
@@ -681,6 +704,7 @@ async function selectOkxRegion(): Promise<OkxRegionSnapshot> {
           component: 'CexPrivateAuthority',
           baseUrl,
           source: snapshot.source,
+          distributedTradeFeePacing: isCoordinationDatabaseConfigured,
         });
         return snapshot;
       } catch (error) {
@@ -749,6 +773,7 @@ export function getOkxPrivateAuthoritySnapshot(): {
         consecutiveRateLimits: state.consecutiveRateLimits,
         rateLimitCount: state.rateLimitCount,
         retryCount: state.retryCount,
+        distributedPacing: lane === 'trade_fee' && isCoordinationDatabaseConfigured,
       } satisfies OkxLaneSnapshot];
     }),
   ) as Record<OkxPrivateLane, OkxLaneSnapshot>;

@@ -14,6 +14,13 @@ export interface MarketUniversePerformanceHint {
   successRate: number;
   averageRealizedProfitUsd: number;
   averageSlippageBps: number | null;
+  measuredModeCount?: number;
+  closestRiskAdjustedGapBps?: number | null;
+  bestExpectedNetBps?: number | null;
+  bestRecoveryEfficiency?: number | null;
+  feeFreshnessScore?: number | null;
+  makerSavingsBps?: number | null;
+  providerQuality?: number | null;
 }
 
 export interface MarketUniverseEconomicHint {
@@ -35,12 +42,13 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
-function measuredPerformanceModifier(hint: MarketUniversePerformanceHint | undefined): number {
-  if (!hint || hint.sampleCount <= 0) return 0;
+function finiteOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
-  // Terminal realized evidence may influence search priority, never execution
-  // eligibility. Keep the modifier deliberately bounded so an old profitable pair
-  // cannot permanently starve broad market discovery.
+function terminalPerformanceModifier(hint: MarketUniversePerformanceHint | undefined): number {
+  if (!hint || hint.sampleCount <= 0) return 0;
   const confidence = clamp(hint.sampleCount / 20, 0, 1);
   const winEdge = clamp((hint.successRate - 0.5) * 2, -1, 1);
   const profitMagnitude = hint.averageRealizedProfitUsd === 0
@@ -53,22 +61,44 @@ function measuredPerformanceModifier(hint: MarketUniversePerformanceHint | undef
   const slippagePenalty = hint.averageSlippageBps === null
     ? 0
     : clamp(Math.max(0, hint.averageSlippageBps) / 50, 0, 1) * 0.5;
-
   return confidence * (2 * winEdge + 1.5 * profitMagnitude - slippagePenalty);
 }
 
-function measuredEconomicModifier(hint: MarketUniverseEconomicHint | undefined): number {
-  if (!hint || hint.observedModes <= 0) return 0;
-  const confidence = clamp(hint.observedModes / 12, 0.15, 1);
-  const positiveBonus = hint.positiveModes > 0
-    ? 2 + clamp((hint.bestPositiveBps || 0) / 10, 0, 1)
-    : 0;
-  const gapBonus = hint.closestRiskAdjustedGapBps === null
-    ? 0
-    : 2 / (1 + Math.max(0, hint.closestRiskAdjustedGapBps) / 10);
-  const freshnessBonus = hint.feeFreshnessScore === null ? 0 : clamp(hint.feeFreshnessScore, 0, 1) * 0.75;
-  const makerBonus = hint.makerFillProbability === null ? 0 : clamp(hint.makerFillProbability, 0, 1) * 0.50;
-  return clamp(confidence * (positiveBonus + gapBonus + freshnessBonus + makerBonus), 0, 4);
+/**
+ * Converts current measured BPS economics into a bounded search-priority signal.
+ * Exponential gap decay strongly favors candidates close to break-even while
+ * tanh keeps positive/negative BPS and maker savings from dominating indefinitely.
+ * This is ranking only: it never changes measured economics or eligibility.
+ */
+function currentEconomicModifier(hint: MarketUniversePerformanceHint | undefined): number {
+  if (!hint || (hint.measuredModeCount ?? 0) <= 0) return 0;
+  const gap = finiteOrNull(hint.closestRiskAdjustedGapBps);
+  const expected = finiteOrNull(hint.bestExpectedNetBps);
+  const recovery = finiteOrNull(hint.bestRecoveryEfficiency);
+  const freshness = finiteOrNull(hint.feeFreshnessScore);
+  const makerSavings = finiteOrNull(hint.makerSavingsBps);
+  const providerQuality = finiteOrNull(hint.providerQuality);
+
+  const proximity = gap === null ? 0 : Math.exp(-Math.max(0, gap) / 12);
+  const signedNet = expected === null ? 0 : Math.tanh(expected / 10);
+  const recoveryScore = recovery === null ? 0 : clamp(recovery / 1.25, 0, 1);
+  const freshnessScore = freshness === null ? 0 : clamp(freshness, 0, 1);
+  const makerScore = makerSavings === null ? 0 : Math.tanh(Math.max(0, makerSavings) / 15);
+  const providerScore = providerQuality === null ? 0.5 : clamp(providerQuality, 0, 1);
+  const evidenceConfidence = clamp((hint.measuredModeCount ?? 0) / 8, 0.25, 1);
+
+  return evidenceConfidence * (
+    4.5 * proximity
+    + 2.5 * signedNet
+    + 1.5 * recoveryScore
+    + 1.0 * freshnessScore
+    + 1.25 * makerScore
+    + 0.75 * providerScore
+  );
+}
+
+function measuredPerformanceModifier(hint: MarketUniversePerformanceHint | undefined): number {
+  return terminalPerformanceModifier(hint) + currentEconomicModifier(hint);
 }
 
 function score(
@@ -99,9 +129,9 @@ function rememberOrderedUniverse<T extends MarketUniverseCandidate>(ordered: T[]
 }
 
 /**
- * Installs an advisory provider for terminal realized pair performance. The
- * provider can only affect search ordering. It cannot remove a symbol, create an
- * opportunity, change deterministic economics, or grant execution authority.
+ * Installs an advisory provider for terminal outcomes plus current measured BPS
+ * recovery evidence. The provider can affect search ordering only: no symbol is
+ * removed, no opportunity is fabricated and no execution authority is granted.
  */
 export function setMarketUniversePerformanceProvider(
   provider: (() => ReadonlyMap<string, MarketUniversePerformanceHint>) | null,
@@ -109,36 +139,10 @@ export function setMarketUniversePerformanceProvider(
   performanceProvider = provider;
 }
 
-/**
- * Installs current measured BPS/evidence hints for search ordering only. These
- * hints never create economics, never exclude a symbol, and never bypass the
- * canonical verifier, governance, resource scheduler, execution or settlement.
- */
-export function setMarketUniverseEconomicProvider(
-  provider: (() => ReadonlyMap<string, MarketUniverseEconomicHint>) | null,
-): void {
-  economicProvider = provider;
-}
-
-/**
- * Returns the most recently consumed measured universe order without advancing
- * the rotation cursor. Downstream scanners use this to share the exact market
- * cycle selected by the provider boundary rather than consuming/rotating again.
- */
 export function getLastOrderedMarketUniverseSymbols(): string[] {
   return [...lastOrderedSymbols];
 }
 
-/**
- * Canonicalize, deduplicate, and quality-rank measured candidates without
- * advancing the rotation cursor. Cache/storage paths should use this function so
- * a refresh cannot accidentally rotate the search window more than once.
- *
- * Terminal realized pair performance and live measured economic distance are
- * bounded priority hints only. New or previously unprofitable pairs remain in
- * the universe and continue rotating through the search window, preserving
- * exploration and regime-change detection.
- */
 export function rankMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
   const performance = performanceProvider?.() || new Map<string, MarketUniversePerformanceHint>();
   const economics = economicProvider?.() || new Map<string, MarketUniverseEconomicHint>();
@@ -156,11 +160,9 @@ export function rankMeasuredMarketUniverse<T extends MarketUniverseCandidate>(as
 }
 
 /**
- * Produces a performance-focused but still rotating candidate order. When there
- * is measured terminal/economic evidence, a bounded prefix remains anchored so
- * limited scan budgets revisit the most promising markets more often. The rest
- * of the measured universe continues to rotate, preventing historical winners or
- * transient near-misses from starving new pairs or regime-change detection.
+ * Keeps a bounded performance/economic focus prefix while rotating the remainder.
+ * This concentrates scarce fee/depth work on the lowest measured BPS barriers but
+ * preserves exploration for regime changes and previously unseen symbols.
  */
 export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
   const ranked = rankMeasuredMarketUniverse(assets);

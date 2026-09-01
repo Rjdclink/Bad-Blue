@@ -1,5 +1,5 @@
-import type { PoolClient } from 'pg';
-import { coordinationPool, isDatabaseConfigured } from '../../../db.js';
+import { isDatabaseConfigured } from '../../../db.js';
+import { withDatabaseSessionAdvisoryLock } from '../runtime/database-coordination.js';
 
 const localTails = new Map<string, Promise<void>>();
 
@@ -66,15 +66,10 @@ async function acquireDistributedSignerLock(client: PoolClient, key: string): Pr
 }
 
 /**
- * One EVM account on one chain is one nonce-ordering domain. Hold a PostgreSQL
- * session advisory lock across nonce observation, signing and network submission
- * so separate Railway replicas cannot become independent nonce owners.
- *
- * Acquisition uses pg_try_advisory_lock with a bounded jittered wait. Busy lanes
- * fail closed instead of entering PostgreSQL's blocking advisory-lock wait queue.
- * Session-level coordination stays isolated from ordinary application queries by
- * the dedicated coordination pool. No durable nonce is pre-reserved here: a
- * process crash before broadcast must not create an artificial nonce gap.
+ * One EVM account on one chain is one nonce-ordering domain. The canonical
+ * coordination lane owns the bounded session advisory lock across nonce
+ * observation, signing and physical submission. No durable nonce is reserved
+ * before broadcast, so crash recovery cannot manufacture an artificial gap.
  */
 export async function withEvmSignerLane<T>(input: {
   chainId: number;
@@ -84,24 +79,16 @@ export async function withEvmSignerLane<T>(input: {
   const key = laneKey(input.chainId, input.walletAddress);
   return withLocalLane(key, async () => {
     if (!isDatabaseConfigured) return input.operation();
-
-    const client = await coordinationPool.connect();
-    let locked = false;
     try {
-      await acquireDistributedSignerLock(client, key);
-      locked = true;
-      return await input.operation();
+      return await withDatabaseSessionAdvisoryLock(
+        key,
+        async () => input.operation(),
+        {
+          acquireTimeoutMs: Math.max(250, Math.min(30_000, Number(process.env.CRYPTO_EVM_SIGNER_LOCK_TIMEOUT_MS || 6_000))),
+        },
+      );
     } catch (error) {
       throw new Error(`Distributed EVM signer lane failed closed for ${key}: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      if (locked) {
-        try {
-          await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]);
-        } catch {
-          // Releasing the PostgreSQL session also releases the advisory lock.
-        }
-      }
-      client.release();
     }
   });
 }

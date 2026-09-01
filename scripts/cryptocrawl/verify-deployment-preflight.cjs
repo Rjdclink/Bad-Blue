@@ -1,4 +1,4 @@
-// Established safety gates plus current measured-profitability behavior verifiers.
+// Established safety gates plus current measured-profitability/resource behavior verifiers.
 
 require('./verify-runtime-safety-invariants.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
@@ -28,5 +28,7 @@ require('./verify-dex-atomic-profit-path.cjs');
 require('./verify-aave-liquidation-profit-integrity.cjs');
 require('./verify-topology-execution-integrity.cjs');
 require('./verify-cross-chain-funding-route-truth.cjs');
+require('./verify-canonical-execution-family-completion.cjs');
+require('./verify-resource-bps-authority.cjs');
 
-console.log('[deployment-preflight] safety, measured-profitability, provider-mesh, CEX modernization, resource/BPS coordination, migration authority, Railway config compatibility, Cryptara-first free-tier startup admission, adaptive Supabase admission + normal/comp switching, optional secondary Supabase overflow, HyperBridge pre-probe single-flight bootstrap plus non-serial primary/overflow reads and zero-wait write-behind/coalescing/batching, unified Cryptara Super Worker shared-information/QuantiComp proxy control, startup schema fan-out, Antenna+QuantiComp resource intelligence, batched adaptive background pressure control, duplicate-free runtime initialization, live product discovery, DEX atomic profitability, exact Aave liquidation/terminal profit integrity, topology integrity, cross-chain/funding route truth, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] safety, measured-profitability, canonical execution-family, resource/BPS authority, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
