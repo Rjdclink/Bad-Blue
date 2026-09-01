@@ -14,6 +14,7 @@ const outfile = path.resolve(repoRoot, process.argv[3] || 'dist/index.js');
 const redirected = [];
 let canonicalGateApplied = false;
 let auxiliaryPoolUnified = false;
+let primaryConfigDependencyRemoved = false;
 
 function stripKnownExtension(value) {
   return value.replace(/\.(?:js|ts|mjs|cjs)$/, '');
@@ -61,25 +62,29 @@ const overflowAuthorityPlugin = {
       return { contents: source, loader: 'ts', resolveDir: path.dirname(args.path) };
     });
 
-    // The legacy auxiliary cache worker used to own a second pg.Pool to the same
-    // Overflow project. Production now shares the single ordinary Overflow pool.
+    // The legacy auxiliary cache worker used to own a second pg.Pool and inspect
+    // Primary configuration. Production shares the one ordinary Overflow pool and
+    // never consults Primary configuration as an Overflow readiness prerequisite.
     buildApi.onLoad({ filter: /cryptara-supabase-overflow-worker\.ts$/ }, async args => {
       if (path.resolve(args.path) !== overflowWorker) return null;
       let source = await fs.readFile(args.path, 'utf8');
       const pgImport = "import pg from 'pg';\n";
       const poolDestructure = "const { Pool } = pg;\n";
+      const primaryUrlPattern = /function primaryDatabaseUrl\(\): string \{[\s\S]*?\n\}/;
       const poolPattern = /\/\/ Separate from the authoritative pool[\s\S]*?const overflowPool = isCryptaraOverflowConfigured\s*\? new Pool\(\{[\s\S]*?\}\s*as any\)\s*:\s*null;/;
-      if (!source.includes(pgImport) || !source.includes(poolDestructure) || !poolPattern.test(source)) {
-        throw new Error('[OverflowAuthorityBuild] Legacy auxiliary Overflow pool shape changed; refusing an unverified build');
+      if (!source.includes(pgImport) || !source.includes(poolDestructure) || !primaryUrlPattern.test(source) || !poolPattern.test(source)) {
+        throw new Error('[OverflowAuthorityBuild] Legacy auxiliary Overflow worker shape changed; refusing an unverified build');
       }
       source = source
         .replace(pgImport, "import { pool as runtimeOverflowPool } from '../runtime/cryptocrawl-runtime-database.js';\n")
         .replace(poolDestructure, '')
+        .replace(primaryUrlPattern, "function primaryDatabaseUrl(): string { return ''; }")
         .replace(
           poolPattern,
           '// Auxiliary cache/proxy operations share the one ordinary Overflow runtime pool.\nconst overflowPool = isCryptaraOverflowConfigured ? runtimeOverflowPool : null;',
         );
       auxiliaryPoolUnified = true;
+      primaryConfigDependencyRemoved = true;
       return { contents: source, loader: 'ts', resolveDir: path.dirname(args.path) };
     });
   },
@@ -105,6 +110,9 @@ if (!canonicalGateApplied) {
 if (!auxiliaryPoolUnified) {
   throw new Error('[OverflowAuthorityBuild] Legacy auxiliary Overflow pool was not unified into the runtime pool');
 }
+if (!primaryConfigDependencyRemoved) {
+  throw new Error('[OverflowAuthorityBuild] Legacy Overflow worker still depends on Primary configuration');
+}
 if (redirected.length === 0) {
   throw new Error('[OverflowAuthorityBuild] No CryptoCrawler Primary DB imports were observed; routing proof is unexpectedly empty');
 }
@@ -118,8 +126,9 @@ await fs.writeFile(proofPath, JSON.stringify({
   primaryFallbackUsed: false,
   canonicalOverflowSchemaGateApplied: canonicalGateApplied,
   auxiliaryOverflowPoolUnified: auxiliaryPoolUnified,
+  primaryConfigDependencyRemoved,
   redirectedPrimaryDbImports: redirected,
   outputCount: Object.keys(result.metafile?.outputs || {}).length,
 }, null, 2));
 
-console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} CryptoCrawler server/db import(s) to Overflow; auxiliary pool unified; canonical schema gate applied; proof=${path.relative(repoRoot, proofPath)}`);
+console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} CryptoCrawler server/db import(s) to Overflow; auxiliary pool unified; Primary config dependency removed; canonical schema gate applied; proof=${path.relative(repoRoot, proofPath)}`);
