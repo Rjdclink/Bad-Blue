@@ -199,6 +199,26 @@ function finiteIntegerEnv(name: string, fallback: number, min: number, max: numb
   return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
+/**
+ * Railway PR environments inherit the base environment's variables. When the
+ * database is an external Supabase project, that means a preview can point at the
+ * same primary database as production. Never let those preview boots run DDL.
+ * They are verification-only; production remains the sole startup mutation lane.
+ */
+function startupSchemaMutationAllowed(): boolean {
+  const onRailway = Boolean(
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID ||
+    process.env.RAILWAY_ENVIRONMENT_ID,
+  );
+  if (!onRailway) return true;
+
+  const environmentName = String(
+    process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || '',
+  ).trim().toLowerCase();
+  return environmentName === 'production';
+}
+
 type RollingDeploymentHeadroomState = {
   options: any;
   steadyMax: number;
@@ -284,6 +304,31 @@ export async function runAllSchemaMigrations(options?: {
 }): Promise<SchemaMigrationResult[]> {
   const continueOnError = options?.continueOnError ?? true;
   const results: SchemaMigrationResult[] = [];
+
+  // Preview/staging Railway environments can inherit the production Supabase URL.
+  // Verification must remain useful, but schema mutation belongs to production
+  // only so repeated PR deploys cannot create catalog/lock/Disk-I/O amplification.
+  if (!startupSchemaMutationAllowed()) {
+    console.log('[Migration] Railway non-production environment detected; startup schema mutation disabled (verification-only)');
+    const verificationOnly: SchemaMigrationResult[] = [{
+      name: 'Startup migration policy',
+      success: true,
+      message: 'Railway non-production environment is verification-only; no schema DDL executed.',
+    }];
+    try {
+      await requireCryptocrawlerAuthoritySchema(1);
+      verificationOnly.push({
+        name: 'CryptoCrawler authority schema readiness',
+        success: true,
+        message: 'Required migration-owned CryptoCrawler authority schema verified without mutation.',
+      });
+    } catch (error) {
+      verificationOnly.push(schemaFailureResult(error));
+      if (!continueOnError) throw error;
+    }
+    return verificationOnly;
+  }
+
   let coordinator: any = null;
   let ownsMigrationLock = false;
 
