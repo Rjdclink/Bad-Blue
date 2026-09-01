@@ -1,10 +1,10 @@
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { enqueueCryptaraHyperBridgeSnapshot } from '../integration/cryptara-supabase-hyper-bridge.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import {
   isCryptaraParallelProxyConfigured,
   readCryptaraParallelSnapshot,
-  writeCryptaraParallelSnapshot,
 } from '../integration/cryptara-supabase-overflow-worker.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 
@@ -61,6 +61,37 @@ function sourceSnapshot(feedback: CryptaraExecutionFeedback): RainbowProfitSourc
   };
 }
 
+async function persistPrimarySource(source: RainbowProfitSourceSnapshot): Promise<void> {
+  if (!isDatabaseConfigured) return;
+  await withCryptaraSupabasePriority('low', () => pool.query(
+    `INSERT INTO private.cryptocrawler_rainbow_profit_sources
+      (event_id, execution_source, strategy, symbol, chain, venue_or_route, venues, assets, transaction_hash, recorded_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,to_timestamp($10/1000.0))
+     ON CONFLICT (event_id) DO UPDATE SET
+       execution_source=EXCLUDED.execution_source,
+       strategy=EXCLUDED.strategy,
+       symbol=EXCLUDED.symbol,
+       chain=EXCLUDED.chain,
+       venue_or_route=EXCLUDED.venue_or_route,
+       venues=EXCLUDED.venues,
+       assets=EXCLUDED.assets,
+       transaction_hash=COALESCE(EXCLUDED.transaction_hash, private.cryptocrawler_rainbow_profit_sources.transaction_hash),
+       recorded_at=EXCLUDED.recorded_at`,
+    [
+      source.eventId,
+      source.executionSource,
+      source.strategy,
+      source.symbol,
+      source.chain,
+      source.venueOrRoute,
+      JSON.stringify(source.venues),
+      JSON.stringify(source.assets),
+      source.transactionHash,
+      source.recordedAt,
+    ],
+  ));
+}
+
 class RainbowProfitSourceLedger {
   async recordTerminalSettlement(feedback: CryptaraExecutionFeedback): Promise<void> {
     if (!feedback.settlement || feedback.settlement.terminal !== true || feedback.settlement.settlementConfirmed !== true) return;
@@ -68,48 +99,25 @@ class RainbowProfitSourceLedger {
     if (feedback.success !== true || !Number.isFinite(realized) || realized <= 0) return;
     const source = sourceSnapshot(feedback);
 
-    // This is secondary metadata, not payout/treasury authority. Prefer the
-    // auxiliary read-model store so profitable terminal events do not add another
-    // write to the trading database when the second project is available.
+    // Secondary source metadata is non-authoritative. The HyperBridge accepts the
+    // write locally and returns immediately; remote overflow I/O is write-behind.
+    // If the auxiliary lane is absent/degraded, its bounded worker invokes this
+    // exact low-priority primary fallback without delaying terminal settlement.
     if (isCryptaraParallelProxyConfigured) {
-      const proxied = await writeCryptaraParallelSnapshot({
-        key: source.eventId,
-        workload: 'observability',
-        topic: PARALLEL_PROXY_TOPIC,
-        payload: source,
-        observedAt: source.recordedAt,
+      enqueueCryptaraHyperBridgeSnapshot({
+        artifact: {
+          key: source.eventId,
+          workload: 'observability',
+          topic: PARALLEL_PROXY_TOPIC,
+          payload: source,
+          observedAt: source.recordedAt,
+        },
+        fallback: () => persistPrimarySource(source),
       });
-      if (proxied.used) return;
+      return;
     }
 
-    if (!isDatabaseConfigured) return;
-    await withCryptaraSupabasePriority('low', () => pool.query(
-      `INSERT INTO private.cryptocrawler_rainbow_profit_sources
-        (event_id, execution_source, strategy, symbol, chain, venue_or_route, venues, assets, transaction_hash, recorded_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,to_timestamp($10/1000.0))
-       ON CONFLICT (event_id) DO UPDATE SET
-         execution_source=EXCLUDED.execution_source,
-         strategy=EXCLUDED.strategy,
-         symbol=EXCLUDED.symbol,
-         chain=EXCLUDED.chain,
-         venue_or_route=EXCLUDED.venue_or_route,
-         venues=EXCLUDED.venues,
-         assets=EXCLUDED.assets,
-         transaction_hash=COALESCE(EXCLUDED.transaction_hash, private.cryptocrawler_rainbow_profit_sources.transaction_hash),
-         recorded_at=EXCLUDED.recorded_at`,
-      [
-        source.eventId,
-        source.executionSource,
-        source.strategy,
-        source.symbol,
-        source.chain,
-        source.venueOrRoute,
-        JSON.stringify(source.venues),
-        JSON.stringify(source.assets),
-        source.transactionHash,
-        source.recordedAt,
-      ],
-    ));
+    await persistPrimarySource(source);
   }
 
   async get(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
