@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import {
+  getCryptaraSupabaseCompSwitchSnapshot,
+  refreshCryptaraSupabaseCompSwitch,
+} from '../integration/cryptara-supabase-comp-switch.js';
+import {
   RESOURCE_LEASE_TABLE as TABLE,
   claimResourceSlot,
   ensureResourceLeaseAuthority,
@@ -16,6 +20,8 @@ interface QuotaState {
   waits: number;
   waitMs: number;
   failures: number;
+  compLocalWaits: number;
+  avoidedDbReads: number;
   lastClaimAt: number;
 }
 
@@ -30,7 +36,15 @@ function boundedInt(value: unknown, fallback: number, minimum: number, maximum: 
 function stateFor(namespace: string): QuotaState {
   const current = states.get(namespace);
   if (current) return current;
-  const created: QuotaState = { claims: 0, waits: 0, waitMs: 0, failures: 0, lastClaimAt: 0 };
+  const created: QuotaState = {
+    claims: 0,
+    waits: 0,
+    waitMs: 0,
+    failures: 0,
+    compLocalWaits: 0,
+    avoidedDbReads: 0,
+    lastClaimAt: 0,
+  };
   states.set(namespace, created);
   return created;
 }
@@ -71,6 +85,8 @@ export async function acquireDistributedApiQuota(input: {
   while (Date.now() < deadline) {
     const client = await withCryptaraSupabasePriority('high', () => pool.connect());
     let claimed = false;
+    // A fair local approximation is always available. Healthy mode can replace it
+    // with the exact earliest expiry; comp mode intentionally saves that second read.
     let waitMs = Math.max(25, Math.ceil(windowMs / capacity));
     try {
       await client.query('BEGIN');
@@ -96,15 +112,24 @@ export async function acquireDistributedApiQuota(input: {
         return;
       }
 
-      const expiry = await client.query(
-        `SELECT GREATEST(25, LEAST($2::int,
-           COALESCE(CEIL(EXTRACT(EPOCH FROM (MIN(expires_at) - now())) * 1000)::int, $2::int))) AS wait_ms
-         FROM ${TABLE}
-         WHERE resource_key LIKE $1 AND expires_at > now()`,
-        [`api-quota:${namespace}:slot:%`, windowMs],
-      );
-      const suggested = Number(expiry.rows?.[0]?.wait_ms);
-      if (Number.isFinite(suggested) && suggested > 0) waitMs = Math.max(25, Math.min(windowMs, Math.ceil(suggested)));
+      const dataPath = await refreshCryptaraSupabaseCompSwitch()
+        .catch(() => getCryptaraSupabaseCompSwitchSnapshot());
+      if (dataPath.path === 'normal') {
+        const expiry = await client.query(
+          `SELECT GREATEST(25, LEAST($2::int,
+             COALESCE(CEIL(EXTRACT(EPOCH FROM (MIN(expires_at) - now())) * 1000)::int, $2::int))) AS wait_ms
+           FROM ${TABLE}
+           WHERE resource_key LIKE $1 AND expires_at > now()`,
+          [`api-quota:${namespace}:slot:%`, windowMs],
+        );
+        const suggested = Number(expiry.rows?.[0]?.wait_ms);
+        if (Number.isFinite(suggested) && suggested > 0) {
+          waitMs = Math.max(25, Math.min(windowMs, Math.ceil(suggested)));
+        }
+      } else {
+        state.compLocalWaits += 1;
+        state.avoidedDbReads += 1;
+      }
       await client.query('ROLLBACK');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch { /* ignore rollback failure */ }
