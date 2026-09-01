@@ -233,8 +233,8 @@ let rollingDeploymentHeadroom: RollingDeploymentHeadroomState | null = null;
  * Railway rolling deploys briefly run two application replicas. Budget the
  * ordinary application pool, dedicated session-coordination pools, and explicit
  * reserve together. Never expand beyond the canonical pool ceiling selected by
- * db.ts, and keep rollout startup intentionally narrow until Cryptara owns
- * admission.
+ * db.ts. The incoming ordinary lane stays hard-capped at one client until
+ * Cryptara owns admission.
  */
 function applyRollingDeploymentPoolHeadroom(): void {
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_ID) return;
@@ -259,17 +259,7 @@ function applyRollingDeploymentPoolHeadroom(): void {
     finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', safeSteadyDefault, 1, canonicalSteadyMax),
   );
   const steadyMax = Math.min(canonicalSteadyMax, requestedSteadyMax);
-
-  const remainingForIncomingReplica = Math.max(
-    1,
-    sessionPoolLimit - reservedSessions - steadyMax - (2 * coordinationPerReplica),
-  );
-  const safeRolloutDefault = Math.max(1, Math.min(3, remainingForIncomingReplica));
-  const rolloutMax = Math.min(
-    steadyMax,
-    remainingForIncomingReplica,
-    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', safeRolloutDefault, 1, 6),
-  );
+  const rolloutMax = 1;
   const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 0;
 
   options.max = rolloutMax;
