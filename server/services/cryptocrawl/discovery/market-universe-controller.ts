@@ -97,6 +97,20 @@ function currentEconomicModifier(hint: MarketUniversePerformanceHint | undefined
   );
 }
 
+function measuredEconomicModifier(hint: MarketUniverseEconomicHint | undefined): number {
+  if (!hint || hint.observedModes <= 0) return 0;
+  const confidence = clamp(hint.observedModes / 12, 0.15, 1);
+  const positiveBonus = hint.positiveModes > 0
+    ? 2 + clamp((hint.bestPositiveBps || 0) / 10, 0, 1)
+    : 0;
+  const gapBonus = hint.closestRiskAdjustedGapBps === null
+    ? 0
+    : 2 / (1 + Math.max(0, hint.closestRiskAdjustedGapBps) / 10);
+  const freshnessBonus = hint.feeFreshnessScore === null ? 0 : clamp(hint.feeFreshnessScore, 0, 1) * 0.75;
+  const makerBonus = hint.makerFillProbability === null ? 0 : clamp(hint.makerFillProbability, 0, 1) * 0.50;
+  return clamp(confidence * (positiveBonus + gapBonus + freshnessBonus + makerBonus), 0, 4);
+}
+
 function measuredPerformanceModifier(hint: MarketUniversePerformanceHint | undefined): number {
   return terminalPerformanceModifier(hint) + currentEconomicModifier(hint);
 }
@@ -137,6 +151,17 @@ export function setMarketUniversePerformanceProvider(
   provider: (() => ReadonlyMap<string, MarketUniversePerformanceHint>) | null,
 ): void {
   performanceProvider = provider;
+}
+
+/**
+ * Installs current measured BPS/evidence hints for search ordering only. These
+ * hints never create economics, never exclude a symbol, and never bypass the
+ * canonical verifier, governance, resource scheduler, execution or settlement.
+ */
+export function setMarketUniverseEconomicProvider(
+  provider: (() => ReadonlyMap<string, MarketUniverseEconomicHint>) | null,
+): void {
+  economicProvider = provider;
 }
 
 export function getLastOrderedMarketUniverseSymbols(): string[] {
