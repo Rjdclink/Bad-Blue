@@ -99,7 +99,11 @@ requirePattern(runtimeDb, /export\s+const\s+coordinationPool\s*=\s*new\s+Pool/, 
 forbidPattern(runtimeDb, /process\.env\.SUPABASE_DATABASE_URL(?!_OVERFLOW)/, 'runtime DB must not read Primary SUPABASE_DATABASE_URL');
 
 requirePattern(coordination, /from\s+['"]\.\/cryptocrawl-runtime-database\.js['"]/, 'coordination must consume the Overflow runtime DB pool');
-forbidPattern(coordination, /from\s+['"]pg['"]|new\s+(?:pg\.)?Pool\s*\(/, 'coordination must not create a second node-postgres pool');
+forbidPattern(
+  coordination,
+  /import\s+(?!type\b)[^;\n]*\sfrom\s+['"]pg['"]|require\s*\(\s*['"]pg['"]\s*\)|new\s+(?:pg\.)?Pool\s*\(/,
+  'coordination must not create or runtime-import a second node-postgres pool',
+);
 
 requirePattern(schema, /003_cryptocrawler_runtime_prerequisites\.sql/, 'Overflow schema must include runtime prerequisites');
 requirePattern(schema, /004_cryptocrawler_terminal_support\.sql/, 'Overflow schema must include terminal support functions without the scheduler');
