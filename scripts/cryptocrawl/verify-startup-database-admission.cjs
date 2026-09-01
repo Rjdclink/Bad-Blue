@@ -17,6 +17,7 @@ const index = read('server/index.ts');
 const db = read('server/db.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
 const governance = read('server/services/cryptocrawl/governance/index.ts');
+const superWorker = read('server/services/cryptocrawl/integration/cryptara-super-worker.ts');
 const leaseAuthority = read('server/services/cryptocrawl/execution/resource-lease-authority.ts');
 const stageState = read('server/services/cryptocrawl/governance/stage-state-store.ts');
 
@@ -56,13 +57,15 @@ requirePattern(migrations, /const\s+rolloutMax\s*=\s*1\s*;/, 'rolling deployment
 forbidPattern(migrations, /BADBLUE_DATABASE_ROLLOUT_POOL_MAX/, 'an environment override must not defeat the one-client rollout admission guard');
 requirePattern(migrations, /export\s+function\s+releaseRollingDeploymentPoolHeadroom[\s\S]{0,900}state\.options\.max\s*=\s*state\.steadyMax/, 'rollout ceiling must have an explicit governed release path');
 forbidPattern(migrations, /const\s+restore\s*=\s*setTimeout\([\s\S]{0,500}options\.max\s*=\s*steadyMax/, 'an unready deployment must never re-expand its database pool on a wall-clock timer');
-requirePattern(governance, /installCryptaraSupabaseAdmissionWorker\(\)[\s\S]{0,700}releaseRollingDeploymentPoolHeadroom\('cryptara_worker_installed'\)[\s\S]{0,700}stageManager\.restorePersistence/, 'rollout headroom must release only after Cryptara admission is installed and before governed persistence');
+requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker admission arm must delegate to the existing Cryptara DB governor');
+requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,700}releaseRollingDeploymentPoolHeadroom\('cryptara_super_worker_admission_installed'\)[\s\S]{0,700}stageManager\.restorePersistence/, 'rollout headroom must release only after Super Worker admission is installed and before governed persistence');
 
 // Startup already proves the migration-owned lease table/function. That exact
-// truth must seed the runtime shared cache instead of causing a duplicate query.
+// truth must seed the runtime shared broker instead of causing a duplicate query.
 requirePattern(migrations, /to_regprocedure\(\$5\)::text\s+AS\s+resource_slot_claimant/i, 'startup schema proof includes the resource-slot claimant');
 requirePattern(migrations, /primeResourceLeaseAuthorityReady/, 'startup schema proof primes the shared runtime lease authority');
 requirePattern(leaseAuthority, /export\s+function\s+primeResourceLeaseAuthorityReady/, 'shared lease authority accepts a trusted startup schema proof');
+requirePattern(leaseAuthority, /primeCryptaraSharedInformation/, 'trusted startup proof enters the unified Super Worker information broker');
 requirePattern(leaseAuthority, /authorityReadyUntil\s*=\s*Math\.max/, 'priming extends rather than shortens an existing readiness proof');
 
 requirePattern(migrations, /schemaRetryDelayMs[\s\S]*Math\.random/, 'migration/schema retry timing must include jitter');
