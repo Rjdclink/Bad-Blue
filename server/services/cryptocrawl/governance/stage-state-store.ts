@@ -44,7 +44,7 @@ export class PostgresStageManagerStateStore implements StageManagerStateStore {
   private lastSuccessfulFingerprint: string | null = null;
 
   private async query(text: string, values: unknown[]) {
-    const { pool } = await import('../../../db.js');
+    const { pool } = await import('../runtime/cryptocrawl-runtime-database.js');
     return withCryptaraSupabasePriority('critical', () => pool.query(text, values));
   }
 
@@ -80,7 +80,7 @@ export class PostgresStageManagerStateStore implements StageManagerStateStore {
     for (let attempt = 1; attempt <= SAVE_RETRIES; attempt += 1) {
       let client: any = null;
       try {
-        const { pool } = await import('../../../db.js');
+        const { pool } = await import('../runtime/cryptocrawl-runtime-database.js');
         client = await withCryptaraSupabasePriority('critical', () => pool.connect());
         await client.query('BEGIN');
         await client.query(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
