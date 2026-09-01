@@ -12,14 +12,16 @@ import { runThroughCryptaraOverflowPrimaryGateway } from './cryptara-overflow-pr
 /**
  * Dedicated control worker for the overflow Supabase lane.
  *
- * The worker is the information gateway: local shared coherence first, overflow
+ * The worker is the information gateway: local shared coherence first, Overflow
  * Supabase second, and only on a genuine miss may it obtain the requested value
- * from authoritative primary through the overflow-primary gateway. The primary
- * result is immediately shared back into the local worker directory so duplicate
- * callers do not repeat the upstream request.
+ * from authoritative Primary through the governed overflow-primary gateway. The
+ * Primary result is immediately shared back into the local worker directory so
+ * duplicate callers do not repeat the upstream request.
  *
  * It creates no database pool, timer, or authority surface. Primary remains the
- * authority; overflow/bridge/worker owns transport and deduplication only.
+ * authority; Overflow/bridge/worker owns transport ordering and deduplication only.
+ * The allowed miss path still uses the application's existing Primary pool; this
+ * worker does not pretend that a remote database-to-database relay already exists.
  */
 
 const LOCAL_ONLY_MISS = 'CRYPTARA_OVERFLOW_SUPER_WORKER_LOCAL_ONLY_MISS';
@@ -30,7 +32,7 @@ export type CryptaraOverflowSuperWorkerRequest<T> = {
   workload: CryptaraParallelProxyWorkload;
   topic: string;
   loadOverflow: () => Promise<T | null>;
-  /** Called only after local + overflow miss; execution occurs inside overflow gateway context. */
+  /** Called only after local + Overflow miss; execution occurs inside governed gateway context. */
   loadPrimaryUpstream?: () => Promise<T | null>;
   isUsable?: (value: T | null) => boolean;
   freshForMs?: number;
@@ -115,7 +117,7 @@ function share<T>(input: ShareInput<T>): void {
 export function startCryptaraOverflowSuperWorker(): void {
   if (started) return;
   started = true;
-  console.log('[CRYPTARA][OVERFLOW-SUPER-WORKER] dedicated overflow worker online; coherence=shared-local-broker, primary-upstream=on-demand-through-overflow-gateway, direct-application-primary=0');
+  console.log('[CRYPTARA][OVERFLOW-SUPER-WORKER] dedicated overflow worker online; coherence=shared-local-broker, route=local->overflow->governed-primary-on-miss, primary-transport=existing-application-pool, ungoverned-primary-acquisitions=0');
 }
 
 /** Primary worker -> overflow worker: local memory only, no database request. */
@@ -132,7 +134,7 @@ export function shareCryptaraOverflowInformationWithPrimaryWorker<T>(input: Shar
 
 /**
  * One single-flight information path per key:
- * shared local -> overflow Supabase -> authoritative primary through overflow gateway.
+ * shared local -> Overflow Supabase -> authoritative Primary through governed gateway.
  * Primary is never contacted speculatively or as a health/recovery probe.
  */
 export async function requestCryptaraOverflowSuperWorker<T>(
@@ -210,9 +212,12 @@ export function getCryptaraOverflowSuperWorkerSnapshot() {
     started,
     configured: isCryptaraParallelProxyConfigured,
     coherence: 'shared_local_broker' as const,
-    routing: 'local_then_overflow_then_primary_through_gateway' as const,
+    routing: 'local_then_overflow_then_governed_primary_on_miss' as const,
     authority: 'transport_only' as const,
-    directApplicationPrimaryCalls: 0 as const,
+    primaryTransport: 'existing_application_primary_pool' as const,
+    remoteDatabaseRelay: false as const,
+    ungovernedApplicationPrimaryAcquisitions: 0 as const,
+    governedPrimaryUpstreamOperations: primaryUpstreamLoads,
     primaryDatabaseCalls: primaryUpstreamLoads,
     createsDatabasePool: false as const,
     createsDuplicateCache: false as const,
