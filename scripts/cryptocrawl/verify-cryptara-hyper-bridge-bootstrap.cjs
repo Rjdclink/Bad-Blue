@@ -13,43 +13,39 @@ function forbidPattern(source, pattern, description) {
 }
 
 const bootstrap = read('server/cryptara-bootstrap-entry.ts');
+const index = read('server/index.ts');
 const bridgeBootstrap = read('server/services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.ts');
+const bridge = read('server/services/cryptocrawl/integration/cryptara-supabase-hyper-bridge.ts');
 const overflowSuperWorker = read('server/services/cryptocrawl/integration/cryptara-overflow-super-worker.ts');
+const gateway = read('server/services/cryptocrawl/integration/cryptara-overflow-primary-gateway.ts');
 const overflow = read('server/services/cryptocrawl/integration/cryptara-supabase-overflow-worker.ts');
 
-// Exact startup order: primary pool contraction -> primary admission governor ->
-// dedicated overflow Super Worker/probe -> verified overflow decision -> server
-// entry. Overflow is a head-started auxiliary data plane; primary remains bounded
-// by the existing Cryptara admission governor instead of a process-wide veto.
+// Exact startup order: admission governor -> overflow verification -> primary
+// acquisition gateway -> server entry. No primary health/recovery probe is allowed
+// when the verified overflow data plane exists.
 requirePattern(
   bootstrap,
-  /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*await\s+startCryptaraHyperBridgeBootstrap\(\)[\s\S]*overflowBootstrap[\s\S]*import\('\.\/index\.js'\)/,
-  'verified overflow must be resolved before index.ts loads',
+  /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*await\s+startCryptaraHyperBridgeBootstrap\(\)[\s\S]*overflowBootstrap[\s\S]*cryptaraOverflowPrimaryGatewayConnect[\s\S]*import\('\.\/index\.js'\)/,
+  'verified overflow and primary gateway interception must be installed before index.ts loads',
 );
 requirePattern(
   bootstrap,
-  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]{0,1200}verified overflow head-start active/,
-  'overflow-ready startup must preserve an explicit auxiliary head-start without changing primary authority',
+  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*runThroughCryptaraOverflowPrimaryGateway[\s\S]*legacy_application_primary_acquisition/,
+  'verified overflow must mediate legacy primary acquisitions',
 );
-forbidPattern(
-  bootstrap,
-  /PRIMARY-SILENCE|CRYPTARA_PRIMARY_NETWORK_SILENCED_OVERFLOW_ACTIVE|cryptaraPrimarySilenceConnect|Object\.getPrototypeOf\(pool\)/,
-  'bootstrap must not install a process-wide primary acquisition veto that prevents authoritative recovery',
-);
+requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,500}directPrimaryProbes:\s*0/, 'index startup must perform zero direct primary probes in overflow proxy mode');
+forbidPattern(index, /probePrimaryDatabaseOnce|overflow_degraded|until primary recovery/, 'overflow must not be modeled as temporary recovery failover');
+
 requirePattern(
   bridgeBootstrap,
   /startCryptaraOverflowSuperWorker\(\)[\s\S]{0,900}withCryptaraParallelProxy\('observability'/,
   'dedicated overflow Super Worker must be online before the remote overflow probe',
 );
-
-// Reuse-only law: one existing overflow pool/configuration, one single-flight probe,
-// no timer/poller, no new aliases, no primary companion query, no authority promotion.
 requirePattern(bridgeBootstrap, /withCryptaraParallelProxy\('observability'/, 'bootstrap must reuse the existing overflow worker');
-requirePattern(bridgeBootstrap, /if\s*\(probeInFlight\)\s*return\s+probeInFlight/, 'bootstrap probe must be single-flight');
-requirePattern(bridgeBootstrap, /SELECT 1 AS hyper_bridge_ready/, 'bootstrap must use one minimal auxiliary admission probe');
+requirePattern(bridgeBootstrap, /if\s*\(probeInFlight\)\s*return\s+probeInFlight/, 'overflow bootstrap probe must be single-flight');
+requirePattern(bridgeBootstrap, /SELECT 1 AS hyper_bridge_ready/, 'bootstrap may probe only the overflow Supabase lane');
 requirePattern(bridgeBootstrap, /state\s*=\s*'not_configured'/, 'missing overflow configuration must leave the primary fallback path available');
-requirePattern(bridgeBootstrap, /no primary probe was issued by overflow worker/, 'overflow failure must never trigger a primary companion probe');
-requirePattern(overflowSuperWorker, /primaryDatabaseCalls:\s*0\s+as\s+const/, 'overflow Super Worker must advertise zero primary DB calls');
+requirePattern(bridgeBootstrap, /no primary probe was issued by overflow worker/, 'overflow bootstrap failure must never trigger a primary health probe');
 forbidPattern(bridgeBootstrap, /\bnew\s+Pool\s*\(/, 'bootstrap must not create another PostgreSQL pool');
 forbidPattern(bridgeBootstrap, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap must not add polling or wall-clock retry loops');
 forbidPattern(
@@ -58,12 +54,23 @@ forbidPattern(
   'bootstrap must not duplicate connection-variable authority',
 );
 forbidPattern(bridgeBootstrap, /from\s+['"][^'"]*\/db(?:\.js)?['"]|\bpool\.query\s*\(/, 'overflow bootstrap must not touch the authoritative primary pool');
-forbidPattern(overflowSuperWorker, /from\s+['"][^'"]*\/db(?:\.js)?['"]|\bpool\.query\s*\(|\bnew\s+Pool\s*\(/, 'overflow Super Worker must not touch/create a DB pool');
 requirePattern(overflow, /SUPABASE_DATABASE_URL_OVERFLOW/, 'existing overflow worker remains the sole overflow connection-variable authority');
 
-// The wrapper itself stays query-free/pool-free and adds no polling. Primary
-// recovery remains the responsibility of the already-governed server/runtime path.
+// Worker + bridge law: every information read enters overflow first; primary is
+// allowed only as the worker's on-demand upstream fill after local/overflow miss.
+requirePattern(overflowSuperWorker, /loadPrimaryUpstream\?:[\s\S]{0,2600}loadOverflow\(\)[\s\S]{0,1800}runThroughCryptaraOverflowPrimaryGateway[\s\S]{0,500}loadPrimaryUpstream/, 'overflow worker must obtain primary data only after overflow miss through gateway');
+requirePattern(overflowSuperWorker, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'overflow worker must expose zero direct application primary calls');
+forbidPattern(overflowSuperWorker, /\bnew\s+Pool\s*\(|\bpool\.query\s*\(/, 'overflow Super Worker must not create/use a direct DB pool');
+requirePattern(bridge, /loadPrimaryUpstream:\s*input\.primary/, 'HyperBridge must hand primary loader to overflow worker rather than invoke it directly');
+forbidPattern(bridge, /runReadLane\('primary',\s*input\.primary\)/, 'HyperBridge must not retain a direct primary read branch');
+requirePattern(bridge, /runThroughCryptaraOverflowPrimaryGateway[\s\S]{0,500}hyper_bridge_primary_write_fallback/, 'primary write fallback must also pass through overflow gateway');
+
+requirePattern(gateway, /new\s+AsyncLocalStorage/, 'gateway must provide a process-local routing context');
+requirePattern(gateway, /createsDatabasePool:\s*false\s+as\s+const/, 'gateway must not create a third database pool');
+requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway must declare zero direct application primary calls');
+forbidPattern(gateway, /\bnew\s+Pool\s*\(|\bpool\.query\s*\(/, 'gateway is transport context only and must not own a DB pool/query');
+
 forbidPattern(bootstrap, /\bpool\.query\s*\(|\bdb\.execute\s*\(|\bnew\s+Pool\s*\(/, 'bootstrap wrapper must remain query-free and pool-free');
 forbidPattern(bootstrap, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap wrapper must not add recovery polling');
 
-console.log('[hyper-bridge-bootstrap] PASS: verified overflow starts first as an auxiliary head start, primary remains under existing bounded Cryptara admission for authoritative recovery, and all execution/financial/governance authority boundaries remain unchanged');
+console.log('[hyper-bridge-bootstrap] PASS: verified overflow starts first, all application primary acquisitions are mediated by overflow gateway, worker reads use local->overflow->primary-on-miss, direct primary health/recovery probes are zero, and authority remains primary');
