@@ -1,9 +1,9 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { enqueueCryptaraHyperBridgeEvent } from '../integration/cryptara-supabase-hyper-bridge.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import {
-  appendCryptaraParallelEvents,
   isCryptaraParallelProxyConfigured,
   readCryptaraParallelEvents,
 } from '../integration/cryptara-supabase-overflow-worker.js';
@@ -160,6 +160,7 @@ class MonteCarloCalibrationStore {
   private primaryTableReady: Promise<boolean> | null = null;
   private persistenceReady = false;
   private persistenceMode: PersistenceMode = 'memory';
+  private pendingBridgeWrites = 0;
   private readonly maxEntries = Math.max(128, Math.min(50_000, Number(process.env.CRYPTOCRAWL_MC_CALIBRATION_MAX || 10_000)));
 
   /** Startup already proved this exact primary relation; reuse that proof. */
@@ -197,6 +198,29 @@ class MonteCarloCalibrationStore {
   private ingest(observation: MonteCarloCalibrationObservation): void {
     if (!observation?.eventId) return;
     this.observations.set(observation.eventId, observation);
+  }
+
+  private async persistPrimaryObservation(observation: MonteCarloCalibrationObservation): Promise<void> {
+    if (!await this.ensurePrimaryTable()) {
+      throw new Error('MONTE_CARLO_CALIBRATION_PRIMARY_PERSISTENCE_UNAVAILABLE');
+    }
+    await withCryptaraSupabasePriority('low', () => pool.query(
+      `INSERT INTO ${TABLE} (event_id, observed_at, topology, venue_pair, symbol, chain, strategy, size_bucket, payload, model_version)
+       VALUES ($1, to_timestamp($2 / 1000.0), $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+       ON CONFLICT (event_id) DO NOTHING`,
+      [
+        observation.eventId,
+        observation.observedAt,
+        observation.topology,
+        observation.venuePair,
+        observation.symbol,
+        observation.chain,
+        observation.strategy,
+        observation.sizeBucket,
+        JSON.stringify(observation),
+        MODEL_VERSION,
+      ],
+    ));
   }
 
   async hydrate(): Promise<void> {
@@ -253,50 +277,54 @@ class MonteCarloCalibrationStore {
     this.ingest(observation);
     this.prune();
 
-    // Persist the already-derived observation directly to the secondary project;
-    // no primary read is needed to construct it. If secondary is absent/degraded,
-    // preserve the existing low-priority primary persistence behavior.
+    // The HyperBridge turns terminal calibration into zero-wait write-behind.
+    // Same-turn events batch into one overflow statement; on auxiliary failure the
+    // bridge falls back sequentially to the existing low-priority primary table.
+    // Learning never becomes settlement/execution authority and the measured
+    // observation is retained in memory even when both persistence lanes fail.
     if (isCryptaraParallelProxyConfigured) {
-      const proxied = await appendCryptaraParallelEvents<MonteCarloCalibrationObservation>([{
-        key: observation.eventId,
-        workload: 'background_learning',
-        topic: PARALLEL_PROXY_TOPIC,
-        payload: observation,
-        observedAt: observation.observedAt,
-      }]);
-      if (proxied.used) {
-        this.persistenceReady = true;
-        this.persistenceMode = 'parallel_proxy';
-        return { ...observation, provenance: [...observation.provenance] };
-      }
+      this.pendingBridgeWrites += 1;
+      let completed = false;
+      const complete = () => {
+        if (completed) return;
+        completed = true;
+        this.pendingBridgeWrites = Math.max(0, this.pendingBridgeWrites - 1);
+      };
+      enqueueCryptaraHyperBridgeEvent({
+        artifact: {
+          key: observation.eventId,
+          workload: 'background_learning',
+          topic: PARALLEL_PROXY_TOPIC,
+          payload: observation,
+          observedAt: observation.observedAt,
+        },
+        fallback: () => this.persistPrimaryObservation(observation),
+        onPersisted: target => {
+          complete();
+          this.persistenceReady = true;
+          this.persistenceMode = target === 'overflow' ? 'parallel_proxy' : 'primary';
+        },
+        onFailure: error => {
+          complete();
+          logger.warn('[MonteCarloCalibration] HyperBridge persistence failed; measured in-memory sample retained', {
+            component: 'MonteCarloCalibrationStore',
+            eventId: observation.eventId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
+      });
+      return { ...observation, provenance: [...observation.provenance] };
     }
 
-    if (await this.ensurePrimaryTable()) {
-      await withCryptaraSupabasePriority('low', () => pool.query(
-        `INSERT INTO ${TABLE} (event_id, observed_at, topology, venue_pair, symbol, chain, strategy, size_bucket, payload, model_version)
-         VALUES ($1, to_timestamp($2 / 1000.0), $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
-         ON CONFLICT (event_id) DO NOTHING`,
-        [
-          observation.eventId,
-          observation.observedAt,
-          observation.topology,
-          observation.venuePair,
-          observation.symbol,
-          observation.chain,
-          observation.strategy,
-          observation.sizeBucket,
-          JSON.stringify(observation),
-          MODEL_VERSION,
-        ],
-      )).then(() => {
-        this.persistenceReady = true;
-        this.persistenceMode = 'primary';
-      }).catch(error => {
-        logger.warn('[MonteCarloCalibration] Persistence write failed; measured in-memory sample retained', {
-          component: 'MonteCarloCalibrationStore',
-          eventId: observation.eventId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+    try {
+      await this.persistPrimaryObservation(observation);
+      this.persistenceReady = true;
+      this.persistenceMode = 'primary';
+    } catch (error) {
+      logger.warn('[MonteCarloCalibration] Persistence write failed; measured in-memory sample retained', {
+        component: 'MonteCarloCalibrationStore',
+        eventId: observation.eventId,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
     return { ...observation, provenance: [...observation.provenance] };
@@ -347,12 +375,13 @@ class MonteCarloCalibrationStore {
     };
   }
 
-  getMetrics(): { samples: number; modelVersion: string; persisted: boolean; persistenceMode: PersistenceMode } {
+  getMetrics(): { samples: number; modelVersion: string; persisted: boolean; persistenceMode: PersistenceMode; pendingBridgeWrites: number } {
     return {
       samples: this.observations.size,
       modelVersion: MODEL_VERSION,
       persisted: this.persistenceReady,
       persistenceMode: this.persistenceMode,
+      pendingBridgeWrites: this.pendingBridgeWrites,
     };
   }
 
