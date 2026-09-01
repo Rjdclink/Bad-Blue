@@ -31,20 +31,24 @@ requirePattern(rainbowSource, /withCryptaraSupabasePriority\('low'/, 'Rainbow so
 forbidPattern(rainbowSource, /CREATE\s+(?:SCHEMA|TABLE|INDEX)/i, 'Rainbow source metadata performs runtime DDL');
 requirePattern(rainbowSourceMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_rainbow_profit_sources/i, 'Rainbow source schema is migration-owned');
 
-forbidPattern(outbox, /setInterval\s*\(/, 'Outbox idle polling must be adaptive one-shot scheduling');
-requirePattern(outbox, /CRYPTARA_OUTBOX_IDLE_POLL_MAX_MS/, 'Outbox idle polling has a bounded adaptive ceiling');
-requirePattern(outbox, /idleDelayMs\s*\*\s*2/, 'Outbox exponentially reduces empty poll traffic');
-requirePattern(outbox, /policy\.backgroundPollMultiplier/, 'Outbox lengthens background cadence when the Supabase comp path is active');
-requirePattern(outbox, /kickPending[\s\S]{0,1600}schedule\(0\)/, 'Outbox preserves an immediate wake when terminal evidence arrives during an active drain');
+forbidPattern(outbox, /setInterval\s*\(/, 'Outbox must not use an unconditional polling interval');
+forbidPattern(outbox, /CRYPTARA_OUTBOX_IDLE_POLL_MAX_MS|idleDelayMs\s*\*\s*2/, 'Outbox must not regress to repeated empty queue polling');
+requirePattern(outbox, /idlePolling:\s*'quiescent_after_empty'/, 'Outbox explicitly declares quiescent idle behavior');
+requirePattern(outbox, /restartRecoveryScan:\s*true/, 'Outbox retains one restart recovery scan for durable orphan recovery');
+requirePattern(outbox, /scheduleKnownRetry[\s\S]{0,800}nextVisibleAt[\s\S]{0,800}schedule\(/, 'Outbox wakes at a known retry deadline instead of polling');
+requirePattern(outbox, /next_retry\s+as[\s\S]{0,900}min\(visible_at\)[\s\S]{0,1800}claimed_rows/i, 'Outbox discovers claimed work and the next durable retry in one Primary round trip');
+requirePattern(outbox, /kickPending[\s\S]{0,1800}schedule\(0\)/, 'Outbox preserves an immediate wake when terminal evidence arrives during an active drain');
 requirePattern(outbox, /enqueueTerminalOutcome[\s\S]{0,3600}withCryptaraSupabasePriority\('high'/, 'Durable terminal-event enqueue outranks background persistence');
 requirePattern(outbox, /with inserted as[\s\S]{0,1800}verified as[\s\S]{0,1400}source_event_id\s*=\s*\$2[\s\S]{0,400}schema_version\s*=\s*\$4/i, 'Duplicate durable handoff is validated in the same SQL round trip');
-requirePattern(outbox, /claimBatch[\s\S]{0,1800}withCryptaraSupabasePriority\('low'/, 'Background outbox claims use one low-priority bounded batch');
+requirePattern(outbox, /claimBatch[\s\S]{0,2600}withCryptaraSupabasePriority\('low'/, 'Background outbox claims use one low-priority bounded batch');
 requirePattern(outbox, /for update skip locked[\s\S]{0,500}limit \$2/i, 'Batched claims preserve SKIP LOCKED multi-worker safety');
 requirePattern(outbox, /Math\.max\(configuredLeaseMs,[\s\S]{0,180}limit[^\n]*15_000/, 'Batch lease scales with bounded batch width to prevent premature reclaim');
 requirePattern(outbox, /with persisted as[\s\S]{0,2600}update private\.cryptara_outbox/i, 'Terminal learning write and queue completion are one atomic DB statement');
 forbidPattern(outbox, /private async claimOne/, 'Outbox must not regress to one claim query per row');
 requirePattern(outbox, /CRYPTARA_OUTBOX_METRICS_INTERVAL_MS/, 'Outbox metrics are rate-limited independently of queue authority');
-requirePattern(outbox, /databaseBackoffMs[\s\S]{0,900}jitterMs/, 'Outbox database failure retries use bounded jitter');
+requirePattern(outbox, /lastMetricsRefreshAt[\s\S]{0,900}metricsIntervalMs\(\)[\s\S]{0,500}return this\.getMetrics\(\)/, 'Repeated observability calls reuse cached outbox metrics inside the metrics TTL');
+requirePattern(outbox, /metricsInFlight[\s\S]{0,1800}return this\.metricsInFlight/, 'Concurrent outbox metrics refreshes collapse to one Primary query');
+requirePattern(outbox, /databaseBackoffMs[\s\S]{0,1200}policy\.backgroundPollMultiplier[\s\S]{0,600}jitterMs/, 'Outbox database failure retries stretch with comp pressure and use bounded jitter');
 
 requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*60_000/, 'Treasury keeps one bounded one-minute safety heartbeat instead of four idle Primary writes per minute');
 forbidPattern(treasury, /setInterval\s*\(/, 'Treasury lifecycle must not use an unconditional interval poller');
@@ -61,4 +65,4 @@ requirePattern(intelligenceMigration, /private\.cryptara_trade_outcomes/i, 'Trad
 requirePattern(treasuryMigration, /cryptocrawler_terminal_sweep_control/i, 'Treasury lifecycle control remains migration-owned');
 requirePattern(profitMigration, /cryptocrawler_rainbow_profit_events/i, 'Rainbow profit storage remains migration-owned');
 
-console.log('[supabase-background-pressure] adaptive comp-mode cadence, migration-owned Rainbow source metadata, one-roundtrip validated enqueue, safe batched claims, atomic learning completion, collapsed observability/treasury round trips, completion-aware one-minute treasury liveness, priority separation, jitter, and migration ownership verified');
+console.log('[supabase-background-pressure] event-driven quiescent outbox, exact durable retry wake, single-flight metrics, migration-owned Rainbow source metadata, safe batched claims, atomic learning completion, completion-aware one-minute treasury liveness, priority separation, jitter, and migration ownership verified');
