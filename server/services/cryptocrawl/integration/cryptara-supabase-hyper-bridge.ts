@@ -12,21 +12,22 @@ import {
   type CryptaraSupabaseCompSwitchSnapshot,
 } from './cryptara-supabase-comp-switch.js';
 import { getCryptaraSuperWorkerSnapshot } from './cryptara-super-worker.js';
+import {
+  getCryptaraOverflowSuperWorkerSnapshot,
+  requestCryptaraOverflowSuperWorker,
+  shareCryptaraOverflowInformationWithPrimaryWorker,
+  shareCryptaraPrimaryInformationWithOverflowWorker,
+} from './cryptara-overflow-super-worker.js';
 
 /**
  * HyperBridge joins the existing primary and overflow data planes without creating
  * a third database, pool, authority, or configuration surface.
  *
- * Read-side hot state remains owned by the existing Cryptara Super Worker. This
- * module adds two latency controls around the already-authorized data planes:
- *   1) a local read router that uses known-fresh overflow replicas without a new
- *      intermediary hop and races both existing lanes only while freshness is
- *      unknown under pressure/overflow-preferred auxiliary reads;
- *   2) a latency-hiding write fabric for explicitly non-authoritative derived
- *      snapshots/events. Callers enqueue locally and never wait for remote overflow
- *      I/O. The bridge coalesces snapshot bursts, batches event bursts, writes to
- *      the existing overflow project, and invokes a caller-supplied primary
- *      low-priority fallback only when the auxiliary write is unavailable.
+ * The two Super Workers share one process-local coherence directory. A value learned
+ * by either worker is published into that directory and can be reused by the other
+ * without another database request. Overflow-preferred reads therefore never hedge
+ * or probe the primary database: local shared state is checked first, then only the
+ * existing overflow lane is queried. Normal primary behavior remains primary-first.
  *
  * Critical execution/governance/treasury/settlement truth is not accepted here.
  */
@@ -64,6 +65,8 @@ export interface CryptaraHyperBridgeReadInput<T> {
   isUsable?: (value: T | null) => boolean;
   /** Auxiliary datasets may prefer overflow even while the primary is healthy. */
   normalPreference?: CryptaraHyperBridgeReadPreference;
+  /** Maximum local worker-to-worker reuse window for this derived value. */
+  sharedFreshForMs?: number;
 }
 
 export interface CryptaraHyperBridgeReadResult<T> {
@@ -101,6 +104,8 @@ const SNAPSHOT_CONCURRENCY = 2;
 const EVENT_BATCH_MAX = 32;
 const MAX_FRESH_KEYS = 2_048;
 const MAX_LOCAL_REPLICA_FRESH_MS = 15 * 60_000;
+const DEFAULT_SHARED_FRESH_MS = 250;
+const MAX_SHARED_FRESH_MS = 5_000;
 const EWMA_ALPHA = 0.20;
 
 const laneTelemetry: Record<'primary' | 'overflow', LaneTelemetry> = {
@@ -127,6 +132,8 @@ let racedReads = 0;
 let knownFreshOverflowReads = 0;
 let overflowFallbackReads = 0;
 let readMisses = 0;
+let primarySuppressedReads = 0;
+let workerSharedReads = 0;
 
 function dataIdentity(workload: CryptaraParallelProxyWorkload, topic: string, key: string): string {
   return `${workload}\u0000${topic}\u0000${key}`;
@@ -179,6 +186,17 @@ function readUsable<T>(input: CryptaraHyperBridgeReadInput<T>, value: T | null):
   return input.isUsable ? input.isUsable(value) : value !== null;
 }
 
+function sharedFreshMs<T>(input: CryptaraHyperBridgeReadInput<T>, id: string): number {
+  const configured = Number(input.sharedFreshForMs);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(1, Math.min(MAX_SHARED_FRESH_MS, Math.trunc(configured)));
+  }
+  const knownUntil = replicaFreshUntil.get(id) || 0;
+  const remaining = knownUntil - Date.now();
+  if (remaining > 0) return Math.max(1, Math.min(MAX_SHARED_FRESH_MS, Math.trunc(remaining)));
+  return DEFAULT_SHARED_FRESH_MS;
+}
+
 async function runReadLane<T>(
   lane: 'primary' | 'overflow',
   operation: () => Promise<T | null>,
@@ -208,6 +226,33 @@ function readWin<T>(
   if (!result.ok || !readUsable(input, result.value)) return null;
   laneTelemetry[result.lane].wins += 1;
   return { value: result.value, lane: result.lane, raced, dataPath };
+}
+
+async function runOverflowWorkerLane<T>(
+  input: CryptaraHyperBridgeReadInput<T>,
+  freshForMs: number,
+): Promise<LaneResult<T>> {
+  const before = getCryptaraOverflowSuperWorkerSnapshot().localSharedHits;
+  const result = await runReadLane('overflow', () => requestCryptaraOverflowSuperWorker({
+    key: input.key,
+    workload: input.workload,
+    topic: input.topic,
+    loadOverflow: input.overflow,
+    isUsable: input.isUsable,
+    freshForMs,
+  }));
+  if (getCryptaraOverflowSuperWorkerSnapshot().localSharedHits > before) workerSharedReads += 1;
+  return result;
+}
+
+function sharePrimaryRead<T>(input: CryptaraHyperBridgeReadInput<T>, value: T, freshForMs: number): void {
+  shareCryptaraPrimaryInformationWithOverflowWorker({
+    key: input.key,
+    workload: input.workload,
+    topic: input.topic,
+    value,
+    freshForMs,
+  });
 }
 
 /**
@@ -242,6 +287,7 @@ export function invalidateCryptaraHyperBridgeReplica(input: {
 
 function notePersistedSnapshotFresh(entry: SnapshotQueueEntry): void {
   const persistedExpiry = Number(entry.artifact.expiresAt);
+  let freshForMs = Number(entry.replicaFreshForMs);
   if (Number.isFinite(persistedExpiry) && persistedExpiry > Date.now()) {
     noteCryptaraHyperBridgeReplicaFresh({
       key: entry.artifact.key,
@@ -249,27 +295,37 @@ function notePersistedSnapshotFresh(entry: SnapshotQueueEntry): void {
       topic: entry.artifact.topic,
       expiresAt: persistedExpiry,
     });
-    return;
+    freshForMs = Math.min(MAX_SHARED_FRESH_MS, Math.max(1, persistedExpiry - Date.now()));
+  } else if (Number.isFinite(freshForMs) && freshForMs > 0) {
+    const boundedFreshMs = Math.min(MAX_LOCAL_REPLICA_FRESH_MS, Math.max(1, Math.floor(freshForMs)));
+    noteCryptaraHyperBridgeReplicaFresh({
+      key: entry.artifact.key,
+      workload: entry.artifact.workload,
+      topic: entry.artifact.topic,
+      expiresAt: Date.now() + boundedFreshMs,
+    });
+  } else {
+    freshForMs = DEFAULT_SHARED_FRESH_MS;
   }
-  const requestedFreshMs = Number(entry.replicaFreshForMs);
-  if (!Number.isFinite(requestedFreshMs) || requestedFreshMs <= 0) return;
-  const boundedFreshMs = Math.min(MAX_LOCAL_REPLICA_FRESH_MS, Math.max(1, Math.floor(requestedFreshMs)));
-  noteCryptaraHyperBridgeReplicaFresh({
+
+  shareCryptaraOverflowInformationWithPrimaryWorker({
     key: entry.artifact.key,
     workload: entry.artifact.workload,
     topic: entry.artifact.topic,
-    expiresAt: Date.now() + boundedFreshMs,
+    value: entry.artifact.payload,
+    freshForMs,
   });
 }
 
 /**
- * Read-side routing has no intermediary service and creates no connection pool.
+ * Read routing follows one rule: no duplicate remote work.
  *
- * - normal + primary preference: primary exactly as before, overflow only fallback;
- * - comp or overflow-preferred + known-fresh replica: overflow directly;
- * - comp or overflow-preferred + unknown freshness: both existing lanes start in
- *   parallel and the first usable result wins, preventing a serial overflow miss
- *   from being placed in front of primary latency.
+ * - normal + primary preference: primary first; a successful primary read is shared
+ *   locally with the overflow Super Worker for future reuse.
+ * - comp or overflow-preferred: dedicated overflow Super Worker only. It checks the
+ *   shared local coherence directory, then overflow. It never pings primary.
+ * - normal primary failure may fall back to overflow because the primary attempt has
+ *   already failed; the two remote lanes are never launched together.
  */
 export async function readCryptaraHyperBridge<T>(
   input: CryptaraHyperBridgeReadInput<T>,
@@ -286,45 +342,29 @@ export async function readCryptaraHyperBridge<T>(
   const overflowPreferred = dataPath === 'comp' || input.normalPreference === 'overflow';
   const overflowAvailable = isCryptaraParallelProxyConfigured;
   const id = readIdentity(input);
-  const knownFresh = overflowAvailable && (replicaFreshUntil.get(id) || 0) > Date.now();
+  const knownFresh = (replicaFreshUntil.get(id) || 0) > Date.now();
+  const freshForMs = sharedFreshMs(input, id);
 
-  if (overflowPreferred && knownFresh) {
-    knownFreshOverflowReads += 1;
-    const overflow = await runReadLane('overflow', input.overflow);
+  if (overflowPreferred) {
+    primarySuppressedReads += 1;
+    if (knownFresh) knownFreshOverflowReads += 1;
+    const overflow = await runOverflowWorkerLane(input, freshForMs);
     const overflowWin = readWin(input, overflow, false, dataPath);
     if (overflowWin) return overflowWin;
-
-    replicaFreshUntil.delete(id);
-    overflowFallbackReads += 1;
-    const primary = await runReadLane('primary', input.primary);
-    const primaryWin = readWin(input, primary, false, dataPath);
-    if (primaryWin) return primaryWin;
     readMisses += 1;
     return { value: null, lane: 'none', raced: false, dataPath };
   }
 
-  if (overflowPreferred && overflowAvailable) {
-    racedReads += 1;
-    const primaryPromise = runReadLane('primary', input.primary);
-    const overflowPromise = runReadLane('overflow', input.overflow);
-    const first = await Promise.race([primaryPromise, overflowPromise]);
-    const firstWin = readWin(input, first, true, dataPath);
-    if (firstWin) return firstWin;
-
-    const second = await (first.lane === 'primary' ? overflowPromise : primaryPromise);
-    const secondWin = readWin(input, second, true, dataPath);
-    if (secondWin) return secondWin;
-    readMisses += 1;
-    return { value: null, lane: 'none', raced: true, dataPath };
-  }
-
   const primary = await runReadLane('primary', input.primary);
   const primaryWin = readWin(input, primary, false, dataPath);
-  if (primaryWin) return primaryWin;
+  if (primaryWin) {
+    if (primaryWin.value !== null) sharePrimaryRead(input, primaryWin.value, freshForMs);
+    return primaryWin;
+  }
 
   if (overflowAvailable) {
     overflowFallbackReads += 1;
-    const overflow = await runReadLane('overflow', input.overflow);
+    const overflow = await runOverflowWorkerLane(input, freshForMs);
     const overflowWin = readWin(input, overflow, false, dataPath);
     if (overflowWin) return overflowWin;
   }
@@ -336,8 +376,6 @@ export async function readCryptaraHyperBridge<T>(
 function scheduleFlush(): void {
   if (flushScheduled || flushInFlight) return;
   flushScheduled = true;
-  // Microtask scheduling hides all remote I/O from the publishing call while also
-  // allowing same-turn duplicate snapshots/events to collapse before PostgreSQL.
   queueMicrotask(() => {
     flushScheduled = false;
     void flushCryptaraHyperBridge();
@@ -391,8 +429,6 @@ async function persistEventBatch(entries: EventQueueEntry[]): Promise<void> {
       result = await appendCryptaraParallelEvents(entries.map(entry => entry.artifact));
     }
     if (result.used) {
-      // Event keys are idempotent. ON CONFLICT DO NOTHING means an already-present
-      // event is also durable success even when rowCount is below the batch width.
       overflowEventRows += Math.max(0, Number(result.value || 0));
       for (const entry of entries) entry.onPersisted?.('overflow');
       return;
@@ -402,7 +438,7 @@ async function persistEventBatch(entries: EventQueueEntry[]): Promise<void> {
     lastFailure = error instanceof Error ? error.message : String(error);
   }
 
-  // Fallback is deliberately sequential. If the auxiliary project is unavailable,
+  // Fallback is deliberately sequential. If auxiliary storage is unavailable,
   // derived writes must not create a burst against the already-scarce primary DB.
   for (const entry of entries) {
     try {
@@ -438,10 +474,6 @@ function takeEventBatch(): EventQueueEntry[] {
   return batch;
 }
 
-/**
- * Enqueue a latest-value read-model snapshot. Duplicate keys collapse to the most
- * recent observation before any network work begins.
- */
 export function enqueueCryptaraHyperBridgeSnapshot<T>(input: {
   artifact: CryptaraParallelArtifact<T>;
   fallback?: PrimaryFallback;
@@ -457,10 +489,6 @@ export function enqueueCryptaraHyperBridgeSnapshot<T>(input: {
   scheduleFlush();
 }
 
-/**
- * Enqueue immutable derived history. Duplicate event keys collapse safely because
- * both overflow and primary fallback stores are idempotent by event identity.
- */
 export function enqueueCryptaraHyperBridgeEvent<T>(input: {
   artifact: CryptaraParallelArtifact<T>;
   fallback?: PrimaryFallback;
@@ -482,10 +510,7 @@ export function enqueueCryptaraHyperBridgeEvent<T>(input: {
   scheduleFlush();
 }
 
-/**
- * One bounded pass. It never polls. If more work remains, another microtask is
- * scheduled, preserving event-loop fairness and same-turn coalescing.
- */
+/** One bounded pass, no polling. */
 export function flushCryptaraHyperBridge(): Promise<void> {
   if (flushInFlight) return flushInFlight;
   flushInFlight = (async () => {
@@ -505,13 +530,14 @@ export function flushCryptaraHyperBridge(): Promise<void> {
 export function getCryptaraHyperBridgeSnapshot() {
   const superWorker = getCryptaraSuperWorkerSnapshot();
   const overflow = getCryptaraParallelProxySnapshot();
+  const overflowSuperWorker = getCryptaraOverflowSuperWorkerSnapshot();
   let queuedEvents = 0;
   for (const group of eventGroups.values()) queuedEvents += group.size;
   cleanFreshDirectory();
   return {
     role: 'supabase_hyper_bridge' as const,
     baseOfOperations: 'cryptara_local_shared_information_fabric' as const,
-    routing: 'local_first_async_auxiliary_with_primary_fallback' as const,
+    routing: 'dual_super_worker_shared_coherence_no_duplicate_remote_reads' as const,
     authority: 'auxiliary_transport_only' as const,
     writeAuthority: false as const,
     executionAuthority: false as const,
@@ -529,11 +555,14 @@ export function getCryptaraHyperBridgeSnapshot() {
       activeLeases: superWorker.information.activeLeases,
       upstreamCallsAvoided: superWorker.information.upstreamCallsAvoided,
     },
+    workerCoherence: overflowSuperWorker,
     routedReadPlane: {
       dataPath: getCryptaraSupabaseCompSwitchSnapshot().path,
       knownFreshReplicaKeys: replicaFreshUntil.size,
       routedReads,
       racedReads,
+      primarySuppressedReads,
+      workerSharedReads,
       knownFreshOverflowReads,
       overflowFallbackReads,
       readMisses,
