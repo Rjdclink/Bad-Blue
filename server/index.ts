@@ -62,12 +62,16 @@ function startupTrace(event: string, details: Record<string, unknown> = {}): voi
   );
 }
 
+type DatabaseRuntimeMode = 'initializing' | 'primary' | 'overflow_degraded';
+
 let isReady = false;
-let isFullyInitialized = false; // Tracks full service initialization
+let isFullyInitialized = false; // Tracks full HTTP/application surface initialization
 let isShuttingDown = false;
 let startupError: string | null = null;
 let backgroundInitializationError: string | null = null;
 let databaseInitialized = false;
+let overflowDatabaseReady = false;
+let databaseRuntimeMode: DatabaseRuntimeMode = 'initializing';
 let httpServer: Server | null = null;
 
 startupTrace('express_created');
@@ -333,6 +337,58 @@ async function initializeDatabase(): Promise<boolean> {
   return false;
 }
 
+async function waitForOverflowBootstrapReadiness(): Promise<boolean> {
+  try {
+    const {
+      getCryptaraHyperBridgeBootstrapSnapshot,
+      startCryptaraHyperBridgeBootstrap,
+    } = await import('./services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.js');
+
+    await startCryptaraHyperBridgeBootstrap();
+    const snapshot = getCryptaraHyperBridgeBootstrapSnapshot();
+    const ready = snapshot.state === 'ready';
+    startupTrace('overflow_bootstrap_evaluated', {
+      ready,
+      state: snapshot.state,
+      configured: snapshot.configured,
+      latencyMs: snapshot.latencyMs,
+      reason: snapshot.reason,
+    });
+    return ready;
+  } catch (error) {
+    startupTrace('overflow_bootstrap_evaluation_failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    console.warn('[STARTUP] Overflow readiness evaluation failed:', error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function probePrimaryDatabaseOnce(): Promise<boolean> {
+  const startedAt = Date.now();
+  startupTrace('primary_single_probe_started');
+  try {
+    const { db } = await import('./db');
+    await db.execute('SELECT 1');
+    const latencyMs = Date.now() - startedAt;
+    console.log(`[STARTUP] ✓ Primary database verified in ${latencyMs}ms after overflow readiness`);
+    startupTrace('primary_single_probe_completed', { connected: true, latencyMs });
+    return true;
+  } catch (error) {
+    const latencyMs = Date.now() - startedAt;
+    console.warn(`[STARTUP] Primary database unavailable after one bounded probe (${latencyMs}ms); overflow degraded mode remains eligible:`, error instanceof Error ? error.message : error);
+    startupTrace('primary_single_probe_completed', {
+      connected: false,
+      latencyMs,
+      admissionPressure: isDatabaseAdmissionPressureError(error),
+      permanentFailure: isPermanentDatabaseStartupError(error),
+      localPoolFailure: isLocalPoolFailure(error),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
 async function runMigrations(): Promise<void> {
   startupTrace('migrations_started');
   console.log('[STARTUP] Stage 2: Running migrations...');
@@ -513,11 +569,13 @@ app.get("/api/health", (req, res) => {
     ? 'failed'
     : isFullyInitialized && databaseInitialized
       ? 'healthy'
-      : backgroundInitializationError || (isFullyInitialized && !databaseInitialized)
+      : isFullyInitialized && overflowDatabaseReady
         ? 'degraded'
-        : isReady
-          ? 'starting'
-          : 'initializing';
+        : backgroundInitializationError || (isFullyInitialized && !databaseInitialized)
+          ? 'degraded'
+          : isReady
+            ? 'starting'
+            : 'initializing';
 
   // Cheap runtime liveness intentionally does not wait on a database probe.
   // Railway deployment admission is the strict /api/ready endpoint below.
@@ -531,7 +589,11 @@ app.get("/api/health", (req, res) => {
     backgroundInitializationError,
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
-    database: { initialized: databaseInitialized },
+    database: {
+      initialized: databaseInitialized,
+      overflowReady: overflowDatabaseReady,
+      mode: databaseRuntimeMode,
+    },
     env: {
       stripeConfigured: !!process.env.STRIPE_SECRET_KEY,
       geminiConfigured: !!process.env.GEMINI_API_KEY,
@@ -558,15 +620,25 @@ app.get("/api/health", (req, res) => {
 startupTrace('health_route_registered');
 
 app.get("/api/ready", (_req, res) => {
-  // Railway promotes a deployment only after this endpoint returns 200.
-  // Database admission is explicit even though full initialization also depends on it.
-  if (isFullyInitialized && databaseInitialized && !isShuttingDown && !startupError) {
-    res.status(200).json({ ready: true, fullyInitialized: true, databaseInitialized: true });
+  // Railway may promote a verified overflow-degraded deployment, but this does
+  // not claim primary authority. Primary-only governance/execution services stay
+  // disabled until the authoritative database has actually been verified.
+  const usableDataPlane = databaseInitialized || overflowDatabaseReady;
+  if (isFullyInitialized && usableDataPlane && !isShuttingDown && !startupError) {
+    res.status(200).json({
+      ready: true,
+      fullyInitialized: true,
+      databaseInitialized,
+      overflowDatabaseReady,
+      databaseMode: databaseRuntimeMode,
+    });
   } else {
     res.status(503).json({ 
       ready: isReady,
       fullyInitialized: isFullyInitialized,
       databaseInitialized,
+      overflowDatabaseReady,
+      databaseMode: databaseRuntimeMode,
       shuttingDown: isShuttingDown,
       startupError,
     });
@@ -624,33 +696,56 @@ httpServer = createServer(app);
     });
   });
 
-  // Bootstrap admission is intentionally serialized before the heavyweight route
-  // graph is imported. Several route modules schedule autonomous/background work
-  // at module load; importing them before Stage 1 was proven caused optional DB
-  // consumers and CryptoCrawler admission probes to compete with the one query
-  // whose job was to establish database readiness.
+  // Decide the data plane before importing the heavyweight route graph. The
+  // overflow lane has already been head-started by cryptara-bootstrap-entry.ts.
+  // If it is verified, primary gets exactly one bounded readiness probe: healthy
+  // primary preserves the full authoritative startup; an unavailable primary
+  // immediately enters overflow-degraded readiness instead of hammering it for
+  // the full Railway admission window.
   try {
-    const databaseReady = await initializeDatabase();
-    if (!databaseReady) {
-      throw new Error('Database initialization did not establish a usable connection');
+    overflowDatabaseReady = await waitForOverflowBootstrapReadiness();
+
+    let primaryReady = false;
+    if (overflowDatabaseReady) {
+      primaryReady = await probePrimaryDatabaseOnce();
+    } else {
+      primaryReady = await initializeDatabase();
     }
-    databaseInitialized = true;
 
-    await runMigrations();
+    if (primaryReady) {
+      databaseInitialized = true;
+      databaseRuntimeMode = 'primary';
 
-    const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
-    await initializeGovernance();
+      await runMigrations();
 
-    // Schema verification is global application telemetry. A degraded/missing
-    // CryptoCrawler authority object must not take down unrelated LegalWhat
-    // availability; CryptoCrawler lifecycle entry independently verifies and
-    // fails closed on its migration-owned authority schema before execution.
-    const { runStartupSchemaVerification } = await import('./db');
-    const schemaReady = await runStartupSchemaVerification();
-    if (!schemaReady) {
-      backgroundInitializationError = 'Startup schema verification reported degraded database schema';
-      startupTrace('database_schema_degraded');
-      console.warn('[STARTUP] ⚠ Production schema verification reported degraded state; scoped runtime authorities remain fail-closed');
+      const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
+      await initializeGovernance();
+
+      // Schema verification is global application telemetry. A degraded/missing
+      // CryptoCrawler authority object must not take down unrelated LegalWhat
+      // availability; CryptoCrawler lifecycle entry independently verifies and
+      // fails closed on its migration-owned authority schema before execution.
+      const { runStartupSchemaVerification } = await import('./db');
+      const schemaReady = await runStartupSchemaVerification();
+      if (!schemaReady) {
+        backgroundInitializationError = 'Startup schema verification reported degraded database schema';
+        startupTrace('database_schema_degraded');
+        console.warn('[STARTUP] ⚠ Production schema verification reported degraded state; scoped runtime authorities remain fail-closed');
+      }
+    } else if (overflowDatabaseReady) {
+      databaseInitialized = false;
+      databaseRuntimeMode = 'overflow_degraded';
+      backgroundInitializationError = 'Primary Supabase unavailable; verified overflow degraded mode active; primary-authoritative services remain disabled';
+      startupTrace('overflow_degraded_mode_activated', {
+        primaryConnected: false,
+        overflowConnected: true,
+        executionAuthority: false,
+        governanceAuthority: false,
+        settlementAuthority: false,
+      });
+      console.warn('[STARTUP] ⚠ Primary unavailable; continuing with verified overflow degraded readiness. Primary-authoritative governance/execution/settlement services remain fail-closed.');
+    } else {
+      throw new Error('Neither primary database nor verified overflow lane established a usable startup data plane');
     }
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error);
@@ -665,7 +760,9 @@ startupTrace('routes_import_completed');
 startupTrace('routes_registration_started');
 await registerRoutes(app);
 startupTrace('routes_registration_completed');
-  // Heavy route-owned subsystems can now initialize against a proven database.
+  // The route surface may run with verified auxiliary data while the primary is
+  // unavailable, but autonomous primary-authoritative background services below
+  // are skipped in overflow-degraded mode.
   
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -734,11 +831,24 @@ startupTrace('routes_registration_completed');
   }
 
   try {
-    await initializeServices();
+    if (databaseInitialized) {
+      await initializeServices();
+    } else {
+      startupTrace('background_services_skipped_overflow_degraded');
+      console.warn('[STARTUP] ⚠ Skipping primary-authoritative background service initialization while operating on overflow degraded readiness');
+    }
     
     isFullyInitialized = true;
-    startupTrace('application_ready');
-    console.log('[STARTUP] ✓ Server fully initialized and ready');
+    if (databaseRuntimeMode === 'overflow_degraded') {
+      startupTrace('application_ready_degraded', {
+        primaryConnected: false,
+        overflowConnected: true,
+      });
+      console.warn('[STARTUP] ✓ Server ready in overflow-degraded mode; primary-authoritative actions remain unavailable until primary recovery');
+    } else {
+      startupTrace('application_ready');
+      console.log('[STARTUP] ✓ Server fully initialized and ready');
+    }
   } catch (error) {
     backgroundInitializationError = error instanceof Error ? error.message : String(error);
     startupTrace('background_initialization_failed', { error: backgroundInitializationError });
