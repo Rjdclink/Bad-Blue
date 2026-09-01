@@ -43,7 +43,8 @@ requirePattern(
 );
 requirePattern(bridgeBootstrap, /withCryptaraParallelProxy\('observability'/, 'bootstrap must reuse the existing overflow worker');
 requirePattern(bridgeBootstrap, /if\s*\(probeInFlight\)\s*return\s+probeInFlight/, 'overflow bootstrap probe must be single-flight');
-requirePattern(bridgeBootstrap, /SELECT 1 AS hyper_bridge_ready/, 'bootstrap may probe only the overflow Supabase lane');
+requirePattern(bridgeBootstrap, /current_database\(\)[\s\S]*public_base_tables[\s\S]*has_resource_leases[\s\S]*has_parallel_snapshots/, 'bootstrap must prove overflow identity and application/bridge schema without touching primary');
+requirePattern(bridgeBootstrap, /applicationSchemaReady:\s*Object\.values\(expectedApplicationTables\)\.every\(Boolean\)/, 'bootstrap must report whether overflow can serve the application schema');
 requirePattern(bridgeBootstrap, /state\s*=\s*'not_configured'/, 'missing overflow configuration must leave the primary fallback path available');
 requirePattern(bridgeBootstrap, /no primary probe was issued by overflow worker/, 'overflow bootstrap failure must never trigger a primary health probe');
 forbidPattern(bridgeBootstrap, /\bnew\s+Pool\s*\(/, 'bootstrap must not create another PostgreSQL pool');
