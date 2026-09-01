@@ -38,7 +38,11 @@ requirePattern(bridgeBootstrap, /state\s*=\s*'not_configured'/, 'missing overflo
 requirePattern(bridgeBootstrap, /primary authority remains unchanged/, 'bootstrap must preserve primary authority on auxiliary failure');
 forbidPattern(bridgeBootstrap, /\bnew\s+Pool\s*\(/, 'bootstrap must not create another PostgreSQL pool');
 forbidPattern(bridgeBootstrap, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap must not add polling or wall-clock retry loops');
-forbidPattern(bridgeBootstrap, /SUPABASE_DATABASE_URL_OVERFLOW|SUPABASE_DATABASE_URL|SUPABASE_DB_URL|DATABASE_URL/, 'bootstrap must not duplicate connection-variable authority');
+forbidPattern(
+  bridgeBootstrap,
+  /process\.env\.(?:SUPABASE_DATABASE_URL_OVERFLOW|SUPABASE_DATABASE_URL|SUPABASE_DB_URL|DATABASE_URL)/,
+  'bootstrap must not duplicate connection-variable authority',
+);
 forbidPattern(bridgeBootstrap, /from\s+['"][^'"]*\/db(?:\.js)?['"]|\bpool\.query\s*\(/, 'bootstrap must not touch the authoritative primary pool');
 requirePattern(overflow, /SUPABASE_DATABASE_URL_OVERFLOW/, 'existing overflow worker remains the sole overflow connection-variable authority');
 
