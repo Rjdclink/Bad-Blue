@@ -36,9 +36,9 @@ assert.match(db, /query_timeout:\s*30000/);
 assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}statement_timeout:\s*15000/);
 assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}query_timeout:\s*15000/);
 
-// Startup owns only the current CryptoCrawler authority migrations; it does not
-// blindly replay the entire legacy numbered migration history. The same session
-// client that owns the migration advisory lock executes the migration DDL.
+// Primary startup still owns the legacy/archive migration reconciliation for the
+// wider application. The CryptoCrawler hot runtime has its own verified Overflow
+// schema plane and must not depend on this reconciler synchronously.
 for (const migration of [
   '023_cryptocrawler_hot_path_schema_authority.sql',
   '024_cryptocrawler_funding_lifecycle.sql',
@@ -54,8 +54,9 @@ assert.match(reconciler, /const\s+outcome\s*=\s*await\s+step\.run\(coordinator\)
 assert.match(reconciler, /path\.resolve\(process\.cwd\(\), 'dist', 'migrations', file\)/);
 assert.match(reconciler, /path\.resolve\(process\.cwd\(\), 'server', 'migrations', file\)/);
 
-// Authority-schema truth is explicit and bounded, while global application
-// availability remains independent from CryptoCrawler-specific schema health.
+// Legacy/archive Primary schema truth remains explicit and bounded for paths that
+// still intentionally use Primary; unrelated application availability remains
+// independent from CryptoCrawler-specific schema health.
 assert.match(reconciler, /CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES/);
 for (const table of [
   'public.cryptocrawler_resource_leases',
@@ -94,16 +95,19 @@ assert.match(rainbowSourceMigration, /ENABLE ROW LEVEL SECURITY/);
 assert.doesNotMatch(rainbowSourceLedger, /CREATE\s+(?:SCHEMA|TABLE|INDEX)/i);
 assert.match(rainbowSourceLedger, /withCryptaraSupabasePriority\('low'/);
 
-// Overflow-ready startup installs canonical wiring without a direct primary health
-// probe or recovery poll. Execution-capable lifecycle entry points still retain the
-// migration-owned authority-schema gate; their pool acquisition is mediated by the
-// already-installed overflow gateway at runtime. If overflow is absent, the legacy
-// bounded primary fallback still verifies connectivity + schema before installing.
+// Overflow-ready canonical wiring installs without a direct Primary health probe.
+// The core execution lifecycle must now verify the complete Overflow schema and
+// must not synchronously invoke Primary's CryptoCrawler schema gate. The older
+// explicit admin start remains separately guarded until its own sequential cutover.
 assert.match(canonicalRuntime, /getCryptaraHyperBridgeBootstrapSnapshot/);
 assert.match(canonicalRuntime, /overflowBootstrap\.state === 'ready'[\s\S]{0,1000}directPrimaryProbe:\s*false[\s\S]{0,500}recoveryPolling:\s*false[\s\S]{0,500}installCanonicalRuntime\(\)/);
 assert.match(canonicalRuntime, /if \(isDatabaseConfigured\)[\s\S]{0,500}pool\.query\('SELECT 1'\)[\s\S]{0,260}requireCryptocrawlerAuthoritySchema\(2\)[\s\S]{0,220}installCanonicalRuntime\(\)/);
 assert.match(canonicalRuntime, /overflow_unavailable_primary_fallback_probe_failed/);
-assert.match(coreRuntime, /if \(process\.env\.NODE_ENV === 'production'\) \{\s*await requireCryptocrawlerAuthoritySchema\(2\);\s*\}/);
+assert.match(coreRuntime, /import\s*\{\s*ensureCryptocrawlOverflowRuntimeSchema\s*\}\s*from\s*'\.\/cryptocrawl-overflow-runtime-schema\.js'/);
+assert.match(coreRuntime, /if \(process\.env\.NODE_ENV === 'production'\) \{\s*await ensureCryptocrawlOverflowRuntimeSchema\(\);\s*\}/);
+assert.doesNotMatch(coreRuntime, /requireCryptocrawlerAuthoritySchema/);
+assert.match(coreRuntime, /authoritySchemaGate:\s*'overflow_migration_owned_runtime_start_required'/);
+assert.match(coreRuntime, /primaryRuntimePrerequisite:\s*false/);
 assert.match(adminApi, /if \(process\.env\.NODE_ENV === 'production'\) \{[\s\S]{0,180}await requireCryptocrawlerAuthoritySchema\(2\)/);
 const adminSchemaGate = adminApi.indexOf('await requireCryptocrawlerAuthoritySchema(2)');
 const adminPantheonClaim = adminApi.indexOf('notifyCryptocrawlerStarting()');
@@ -113,7 +117,7 @@ assert.ok(adminSchemaGate >= 0 && adminSchemaGate < adminPantheonClaim && adminP
 assert.match(adminApi, /executionAuthorityGranted:\s*false/);
 
 // Dev/test no-secret workflows must not be forced through production DB schema.
-assert.doesNotMatch(coreRuntime, /export async function ensureCryptoCrawlerCoreRuntime\(\): Promise<void> \{\s*await requireCryptocrawlerAuthoritySchema/);
+assert.doesNotMatch(coreRuntime, /export async function ensureCryptoCrawlerCoreRuntime\(\): Promise<void> \{\s*await ensureCryptocrawlOverflowRuntimeSchema/);
 assert.doesNotMatch(adminApi, /export async function startCryptoCrawlerRuntime\(\): Promise<CryptoCrawlerStartResult> \{\s*await requireCryptocrawlerAuthoritySchema/);
 
 // Rolling-deploy headroom may contract ordinary capacity, never expand past the
@@ -136,4 +140,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: authority migrations/session settings remain migration-owned, overflow-ready canonical wiring adds no direct health/recovery probe, execution-capable lifecycle entry points retain schema gates behind the overflow gateway, and the overflow-unavailable primary fallback remains bounded');
+console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for legacy/archive paths, Overflow-ready canonical wiring adds no direct Primary health/recovery probe, the core execution lifecycle is gated by the complete Overflow schema with no Primary runtime prerequisite, and the remaining explicit admin-start gate stays fail-closed pending its sequential cutover');
