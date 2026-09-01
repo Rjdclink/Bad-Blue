@@ -18,6 +18,7 @@ import { workloadRouter } from '../../computationalBeam/workloadRouter.js';
 import { getMeasuredEvolutionMetrics } from '../evolution/measured-execution-feedback.js';
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { orderBookEvolutionStore } from '../validation/order-book-evolution-store.js';
+import { getCryptaraSupabaseCompSwitchSnapshot } from './cryptara-supabase-comp-switch.js';
 import { resolveCoinStatsEnvironment } from '../runtime/environment-contract.js';
 import { getPerformanceEvidenceContract } from '../runtime/performance-evidence-contract.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
@@ -82,7 +83,14 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
   if (heartbeatRunning) return;
   heartbeatRunning = true;
   try {
-    const [alchemy, beam, intelligenceOutbox] = await Promise.all([
+    const supabasePath = getCryptaraSupabaseCompSwitchSnapshot();
+    // In comp mode the outbox worker already refreshes its metrics at the slower,
+    // pressure-aware cadence. Reuse that local truth here instead of adding an
+    // observability-only aggregate query every heartbeat.
+    const intelligenceOutbox = supabasePath.path === 'comp'
+      ? canonicalIntelligenceOutbox.getMetrics()
+      : await canonicalIntelligenceOutbox.refreshMetrics();
+    const [alchemy, beam] = await Promise.all([
       alchemyIntegration.readinessCheck({ strictLive: false }).catch(error => ({
         ready: false,
         active: false,
@@ -90,7 +98,6 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         detail: error instanceof Error ? error.message : String(error),
       })),
       Promise.resolve(workloadRouter.getSystemStatus()),
-      canonicalIntelligenceOutbox.refreshMetrics(),
     ]);
     const recentMinute = canonicalOpportunityState.getMetrics(60_000);
     const recentHour = canonicalOpportunityState.getMetrics(60 * 60_000);
@@ -154,6 +161,12 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       runtimeInvariants: invariantMonitor,
       performanceTruth,
       readiness,
+      supabaseDataPath: {
+        path: supabasePath.path,
+        reason: supabasePath.reason,
+        pressureScore: supabasePath.pressureScore,
+        outboxMetricsSource: supabasePath.path === 'comp' ? 'cached' : 'live_refresh',
+      },
       governance: {
         stage: stage.currentStage,
         paused: stage.isPaused,
@@ -297,6 +310,7 @@ export function ensureCryptoRuntimeObservability(): void {
   logger.info('[CryptoRuntime] Runtime observability installed', {
     component: 'CryptoRuntimeObservability',
     heartbeatMs: intervalMs,
+    supabaseCompCachedDbMetrics: true,
     runtimeAttestation: true,
     runtimeInvariantMonitor: true,
     durableLearningOutboxTelemetry: true,
