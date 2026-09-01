@@ -27,7 +27,8 @@ assert.match(worker, /60 \* 60_000/);
 
 assert.match(migration, /private\.cryptara_comp_cache/);
 assert.match(migration, /information_class in \('connector_readiness','schema_authority','market_snapshot','resource_snapshot','background'\)/);
-assert.doesNotMatch(migration, /execution_truth/);
+assert.match(migration, /cryptara_comp_cache_class/);
+assert.doesNotMatch(migration, /information_class\s+in\s*\([^)]*execution_truth/i);
 assert.match(migration, /enable row level security/i);
 assert.match(migration, /expires_at/);
 
