@@ -94,14 +94,16 @@ export function primeResourceLeaseAuthorityReady(ttlMs = authorityReadyTtlMs()):
 
 /**
  * One process-wide schema truth source for the migration-owned lease table and
- * slot-claim function. The Super Worker provides single-flight coalescing and
- * bounded freshness; this authority only defines what "ready" means.
+ * slot-claim function. The local readiness timestamp and the Super Worker broker
+ * represent the same proof; the timestamp prevents an avoidable DB probe if an
+ * otherwise valid broker entry is evicted under memory pressure.
  */
 export async function ensureResourceLeaseAuthority(
   priority: CryptaraSupabasePriority = 'high',
 ): Promise<boolean> {
   if (!isDatabaseConfigured) return false;
   const now = Date.now();
+  if (now < authorityReadyUntil) return true;
   if (now < authorityRetryAfter) return false;
   if (authorityProbeInFlight) return authorityProbeInFlight;
 
