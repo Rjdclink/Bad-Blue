@@ -13,13 +13,14 @@ async function main(): Promise<void> {
   const sharedKey = `verify:super-worker:shared:${Date.now()}`;
   let originLoads = 0;
   const consumers = Array.from({ length: 32 }, (_, index) => `consumer-${index}`);
+  const sharedFreshMs = 1_000;
 
   const leases = await Promise.all(consumers.map(consumer =>
     requestCryptaraSharedInformation({
       key: sharedKey,
       consumer,
       informationClass: 'resource_snapshot',
-      freshForMs: 80,
+      freshForMs: sharedFreshMs,
       maxItems: 2,
       loader: async () => {
         originLoads += 1;
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
     key: sharedKey,
     consumer: 'cache-reuser',
     informationClass: 'resource_snapshot',
-    freshForMs: 80,
+    freshForMs: sharedFreshMs,
     loader: async () => {
       originLoads += 1;
       return [99];
@@ -56,12 +57,12 @@ async function main(): Promise<void> {
   assert.equal(cachedLease.source, 'cache');
   cachedLease.release();
 
-  await sleep(90);
+  await sleep(sharedFreshMs + 100);
   const refreshedLease = await requestCryptaraSharedInformation({
     key: sharedKey,
     consumer: 'post-expiry',
     informationClass: 'resource_snapshot',
-    freshForMs: 80,
+    freshForMs: sharedFreshMs,
     loader: async () => {
       originLoads += 1;
       return [55];
