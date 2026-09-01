@@ -81,7 +81,7 @@ export async function withDatabaseSessionAdvisoryLock<T>(
       if (locked) break;
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
-        throw new Error(`Timed out acquiring CryptoCrawler Overflow coordination lock after ${acquireTimeoutMs}ms`);
+        throw new Error(`Timed out acquiring CryptoCrawler coordination lock (Overflow authority) after ${acquireTimeoutMs}ms`);
       }
       await sleep(Math.min(retryIntervalMs, remaining));
     }
