@@ -25,7 +25,7 @@ requirePattern(
 requirePattern(
   entry,
   /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*runThroughCryptaraOverflowPrimaryGateway[\s\S]*legacy_application_primary_acquisition/,
-  'verified overflow must become the sole application gateway to primary',
+  'verified overflow must establish the governed application-to-primary acquisition boundary',
 );
 requirePattern(index, /databaseRuntimeMode\s*=\s*'overflow_proxy'/, 'verified overflow must be a normal proxy runtime mode');
 requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,500}directPrimaryProbes:\s*0/, 'overflow startup must declare zero direct primary probes');
@@ -33,11 +33,15 @@ forbidPattern(index, /probePrimaryDatabaseOnce|overflow_degraded|until primary r
 requirePattern(migrations, /const\s+rolloutMax\s*=\s*1\s*;/, 'Railway primary fallback remains one ordinary DB client when overflow is absent');
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker delegates to the existing admission governor');
 requirePattern(gateway, /createsDatabasePool:\s*false\s+as\s+const/, 'overflow primary gateway must reuse existing primary pools rather than create another pool');
-requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway contract must expose zero direct application primary calls');
+requirePattern(gateway, /primaryTransport:\s*'existing_application_primary_pool'\s+as\s+const/, 'gateway must truthfully expose the existing Primary pool as upstream transport');
+requirePattern(gateway, /remoteDatabaseRelay:\s*false\s+as\s+const/, 'gateway must not falsely claim a database-to-database relay');
+requirePattern(gateway, /ungovernedApplicationPrimaryAcquisitions:\s*0\s+as\s+const/, 'gateway contract must expose zero ungoverned application Primary acquisitions');
+requirePattern(gateway, /governedPrimaryUpstreamOperations:\s*routedOperations/, 'governed Primary miss traffic must remain observable');
+forbidPattern(gateway, /directApplicationPrimaryCalls/, 'ambiguous zero-primary telemetry must not return');
 
 forbidPattern(entry, /\bpool\.query|\bdb\.execute|fetch\s*\(|axios|https?\.request/, 'bootstrap wrapper must not perform direct primary/provider work');
 forbidPattern(entry, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap wrapper must not add polling or recovery timers');
 
 requirePattern(dockerfile, /npm run build[\s\S]{0,600}npx esbuild server\/cryptara-bootstrap-entry\.ts[\s\S]{0,600}--outfile=dist\/index\.js[\s\S]{0,600}node scripts\/verify-build\.cjs/, 'Docker build emits and verifies the Cryptara-first production entry');
 
-console.log('[free-tier-startup] PASS: verified overflow becomes the application data plane, primary acquisitions route through overflow gateway, direct startup probes are zero, and no third pool/poller is introduced');
+console.log('[free-tier-startup] PASS: verified overflow becomes the application information plane, Primary acquisitions are governed and truthfully reported as using the existing pool, direct startup probes are zero, and no third pool/poller is introduced');
