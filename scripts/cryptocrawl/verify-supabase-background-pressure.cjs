@@ -13,6 +13,7 @@ const forbidPattern = (source, pattern, description) => {
 const rainbow = read('server/services/cryptocrawl/compensation/rainbow-profit-observability.ts');
 const rainbowSource = read('server/services/cryptocrawl/compensation/rainbow-profit-source-ledger.ts');
 const outbox = read('server/services/cryptocrawl/intelligence/canonical-intelligence-outbox.ts');
+const inventoryReadiness = read('server/services/cryptocrawl/integration/cex-inventory-readiness-wiring.ts');
 const treasury = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
 const outboxMigration = read('server/migrations/014_cryptocrawler_private_outbox.sql');
 const intelligenceMigration = read('server/migrations/013_cryptocrawler_private_intelligence_memory.sql');
@@ -50,6 +51,15 @@ requirePattern(outbox, /lastMetricsRefreshAt[\s\S]{0,900}metricsIntervalMs\(\)[\
 requirePattern(outbox, /metricsInFlight[\s\S]{0,1800}return this\.metricsInFlight/, 'Concurrent outbox metrics refreshes collapse to one Primary query');
 requirePattern(outbox, /databaseBackoffMs[\s\S]{0,1200}policy\.backgroundPollMultiplier[\s\S]{0,600}jitterMs/, 'Outbox database failure retries stretch with comp pressure and use bounded jitter');
 
+forbidPattern(inventoryReadiness, /setInterval\s*\(/, 'Inventory readiness must not use an unconditional interval poller');
+requirePattern(inventoryReadiness, /databaseBackoffUntil[\s\S]{0,2200}isDatabaseAuthorityFailure/, 'Inventory readiness owns one shared local database-pressure quiet window');
+requirePattern(inventoryReadiness, /failedVenues\.every\([\s\S]{0,180}isDatabaseAuthorityFailure/, 'Inventory backoff activates only when every failed venue reports database or authority degradation');
+requirePattern(inventoryReadiness, /retry in\\s\+\(\\d\+\)ms/i, 'Inventory backoff honors venue-provided database circuit retry hints');
+requirePattern(inventoryReadiness, /const delayMs = Math\.max\(intervalMs, databaseBackoffRemainingMs\(\)\)/, 'Inventory background scheduler sleeps through the shared database backoff window');
+requirePattern(inventoryReadiness, /if \(backoffRemainingMs > 0\)[\s\S]{0,500}return;/, 'On-demand inventory callers reuse cached fail-closed evidence during database backoff');
+requirePattern(inventoryReadiness, /refreshCexInventoryReadinessNow[\s\S]{0,300}await runRefresh\(\)/, 'Governance hydration reuses the exact same single-flight and backoff-aware boundary');
+requirePattern(inventoryReadiness, /stageManagerAuthorityPreserved:\s*true[\s\S]{0,250}executionAuthority:\s*false[\s\S]{0,120}syntheticBalancesAllowed:\s*false/, 'Inventory pressure reduction cannot grant execution authority or synthetic balance evidence');
+
 requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*60_000/, 'Treasury keeps one bounded one-minute safety heartbeat instead of four idle Primary writes per minute');
 forbidPattern(treasury, /setInterval\s*\(/, 'Treasury lifecycle must not use an unconditional interval poller');
 requirePattern(treasury, /function\s+scheduleHeartbeat[\s\S]{0,1200}setTimeout\s*\([\s\S]{0,700}scheduleHeartbeat\(\)/, 'Treasury safety liveness uses completion-aware one-shot scheduling');
@@ -65,4 +75,4 @@ requirePattern(intelligenceMigration, /private\.cryptara_trade_outcomes/i, 'Trad
 requirePattern(treasuryMigration, /cryptocrawler_terminal_sweep_control/i, 'Treasury lifecycle control remains migration-owned');
 requirePattern(profitMigration, /cryptocrawler_rainbow_profit_events/i, 'Rainbow profit storage remains migration-owned');
 
-console.log('[supabase-background-pressure] event-driven quiescent outbox, exact durable retry wake, single-flight metrics, migration-owned Rainbow source metadata, safe batched claims, atomic learning completion, completion-aware one-minute treasury liveness, priority separation, jitter, and migration ownership verified');
+console.log('[supabase-background-pressure] event-driven quiescent outbox, exact durable retry wake, single-flight metrics, migration-owned Rainbow source metadata, safe batched claims, atomic learning completion, database-aware quiet inventory proof, completion-aware one-minute treasury liveness, priority separation, jitter, and migration ownership verified');

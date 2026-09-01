@@ -30,6 +30,9 @@ export interface CexInventoryReadinessSnapshot {
 
 let timer: NodeJS.Timeout | null = null;
 let running: Promise<void> | null = null;
+let databaseBackoffUntil = 0;
+let databaseFailureStreak = 0;
+
 let latest: CexInventoryReadinessSnapshot = {
   observedAt: 0,
   running: false,
@@ -56,6 +59,58 @@ function baseRefreshMs(): number {
 function freshnessWindowMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_CEX_INVENTORY_FRESH_MS || 90_000);
   return Number.isFinite(parsed) ? Math.max(15_000, Math.min(600_000, Math.trunc(parsed))) : 90_000;
+}
+
+function databaseBackoffMinMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_CEX_INVENTORY_DB_BACKOFF_MIN_MS || 60_000);
+  return Number.isFinite(parsed) ? Math.max(15_000, Math.min(300_000, Math.trunc(parsed))) : 60_000;
+}
+
+function databaseBackoffMaxMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_CEX_INVENTORY_DB_BACKOFF_MAX_MS || 300_000);
+  return Number.isFinite(parsed)
+    ? Math.max(databaseBackoffMinMs(), Math.min(900_000, Math.trunc(parsed)))
+    : 300_000;
+}
+
+function isDatabaseAuthorityFailure(error: string): boolean {
+  return /(database circuit open|ecircuitbreaker|connection to database not available|connection terminated due to connection timeout|auth_query secret check timed out|authentication query failed|migration-owned lease authority is missing or unreachable|distributed api quota unavailable)/i.test(error);
+}
+
+function retryHintMs(error: string): number {
+  const match = error.match(/retry in\s+(\d+)ms/i);
+  if (!match) return 0;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
+}
+
+function databaseBackoffRemainingMs(now = Date.now()): number {
+  return Math.max(0, databaseBackoffUntil - now);
+}
+
+function updateDatabaseBackoff(
+  reconciledVenues: ExecutableCexVenue[],
+  failedVenues: Array<{ venue: ExecutableCexVenue; error: string }>,
+): number {
+  if (reconciledVenues.length > 0) {
+    databaseFailureStreak = 0;
+    databaseBackoffUntil = 0;
+    return 0;
+  }
+  if (failedVenues.length === 0 || !failedVenues.every(item => isDatabaseAuthorityFailure(item.error))) {
+    return 0;
+  }
+
+  databaseFailureStreak += 1;
+  const minMs = databaseBackoffMinMs();
+  const maxMs = databaseBackoffMaxMs();
+  const exponentialMs = Math.min(maxMs, minMs * (2 ** Math.min(6, databaseFailureStreak - 1)));
+  const retryHint = failedVenues.reduce((largest, item) => Math.max(largest, retryHintMs(item.error)), 0);
+  const baseDelayMs = Math.min(maxMs, Math.max(exponentialMs, retryHint));
+  const positiveJitterMs = Math.floor(Math.random() * Math.min(5_000, Math.max(500, Math.round(baseDelayMs * 0.05))));
+  const delayMs = Math.min(maxMs, baseDelayMs + positiveJitterMs);
+  databaseBackoffUntil = Date.now() + delayMs;
+  return delayMs;
 }
 
 function spendable(snapshot: ReturnType<typeof cexInventoryLedger.getSnapshots>[number]): number {
@@ -116,6 +171,7 @@ async function refreshOnce(): Promise<void> {
     }
   }));
 
+  const databasePressureBackoffMs = updateDatabaseBackoff(reconciledVenues, failedVenues);
   const metrics = currentMetrics();
   const next = nextRefreshIntervalMs();
   latest = {
@@ -129,12 +185,27 @@ async function refreshOnce(): Promise<void> {
     spendableAssets: metrics.spendableAssets,
     payoutReservedAssets: metrics.payoutReservedAssets,
     inventoryFreshnessShare: metrics.inventoryAssetCount > 0 ? metrics.inventoryFreshnessShare : null,
-    nextRefreshMs: next.intervalMs,
+    nextRefreshMs: Math.max(next.intervalMs, databasePressureBackoffMs),
     activeReadinessRules: next.activeRules,
     authority: 'authenticated_balance_readiness_only',
     executionAuthority: false,
     syntheticBalancesAllowed: false,
   };
+
+  if (databasePressureBackoffMs > 0) {
+    logger.warn('[CexInventoryReadiness] Database-dependent inventory proof entered quiet backoff', {
+      component: 'CexInventoryReadinessWiring',
+      databaseFailureStreak,
+      databasePressureBackoffMs,
+      configuredExecutableVenues: venues,
+      failedVenues: failedVenues.map(item => ({ venue: item.venue, error: item.error })),
+      cachedFailClosedEvidenceOnly: true,
+      boundedRecoveryProbe: true,
+      stageManagerAuthorityPreserved: true,
+      executionAuthority: false,
+      syntheticBalancesAllowed: false,
+    });
+  }
 
   logger.info('[CexInventoryReadiness] Authenticated execution inventory refreshed', {
     component: 'CexInventoryReadinessWiring',
@@ -151,6 +222,7 @@ async function refreshOnce(): Promise<void> {
     unreservedRetainedProfitAvailableToStrategies: true,
     inventoryFreshnessShare: latest.inventoryFreshnessShare,
     nextRefreshMs: latest.nextRefreshMs,
+    databasePressureBackoffMs,
     proactiveHydration: true,
     zeroInventoryBypass: false,
     executionAuthority: false,
@@ -161,16 +233,27 @@ async function refreshOnce(): Promise<void> {
 function scheduleNext(): void {
   if (process.env.NO_INTERVALS === 'true') return;
   const { intervalMs } = nextRefreshIntervalMs();
+  const delayMs = Math.max(intervalMs, databaseBackoffRemainingMs());
   timer = setTimeout(async () => {
     timer = null;
     await runRefresh();
     scheduleNext();
-  }, intervalMs);
+  }, delayMs);
   timer.unref?.();
 }
 
 async function runRefresh(): Promise<void> {
   if (running) return running;
+  const backoffRemainingMs = databaseBackoffRemainingMs();
+  if (backoffRemainingMs > 0) {
+    latest = {
+      ...latest,
+      running: false,
+      nextRefreshMs: Math.max(latest.nextRefreshMs, backoffRemainingMs),
+    };
+    return;
+  }
+
   latest = { ...latest, running: true };
   running = refreshOnce().catch(error => {
     logger.warn('[CexInventoryReadiness] Inventory hydration cycle failed closed', {
@@ -192,7 +275,9 @@ export function ensureCexInventoryReadinessWiring(): void {
     component: 'CexInventoryReadinessWiring',
     baseRefreshMs: baseRefreshMs(),
     freshnessWindowMs: freshnessWindowMs(),
-    privateRequestDeduplication: 'one_in_flight_cycle',
+    databaseBackoffMinMs: databaseBackoffMinMs(),
+    databaseBackoffMaxMs: databaseBackoffMaxMs(),
+    privateRequestDeduplication: 'one_in_flight_cycle_plus_database_quiet_window',
     liveExecutionPreparation: true,
     payoutReservationsProtectedFromNewOrders: true,
     automaticProfitPayoutRequiresExplicitOptIn: true,
@@ -206,8 +291,9 @@ export function ensureCexInventoryReadinessWiring(): void {
 
 /**
  * Bounded on-demand proof hydration for governance/readiness callers. Reuses the
- * exact same single-flight authenticated balance authority as the background
- * scheduler; it cannot synthesize balances or grant execution permission.
+ * exact same single-flight authenticated balance authority and database quiet
+ * window as the background scheduler; it cannot synthesize balances or grant
+ * execution permission.
  */
 export async function refreshCexInventoryReadinessNow(): Promise<CexInventoryReadinessSnapshot> {
   await runRefresh();
