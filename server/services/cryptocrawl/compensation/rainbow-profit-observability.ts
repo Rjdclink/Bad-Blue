@@ -1,6 +1,11 @@
 import { createHash } from 'crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
+import {
+  enqueueCryptaraHyperBridgeSnapshot,
+  noteCryptaraHyperBridgeReplicaFresh,
+  readCryptaraHyperBridge,
+} from '../integration/cryptara-supabase-hyper-bridge.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import {
   getCryptaraSupabaseCompSwitchSnapshot,
@@ -9,7 +14,6 @@ import {
 import {
   isCryptaraParallelProxyConfigured,
   readCryptaraParallelSnapshot,
-  writeCryptaraParallelSnapshot,
 } from '../integration/cryptara-supabase-overflow-worker.js';
 
 export interface RainbowProfitSnapshot {
@@ -97,113 +101,138 @@ class RainbowProfitObservability {
     }
   }
 
-  private async readParallelSnapshotUnderPressure(): Promise<RainbowProfitSnapshot | null> {
-    if (!isCryptaraParallelProxyConfigured || getCryptaraSupabaseCompSwitchSnapshot().path !== 'comp') return null;
+  private async readParallelSnapshot(): Promise<RainbowProfitSnapshot | null> {
+    if (!isCryptaraParallelProxyConfigured) return null;
     const proxied = await readCryptaraParallelSnapshot<RainbowProfitSnapshot>(
       'observability',
       PARALLEL_PROXY_KEY,
       PARALLEL_PROXY_TOPIC,
     );
-    const snapshot = proxied.used ? proxied.value?.payload : null;
+    const stored = proxied.used ? proxied.value : null;
+    const snapshot = stored?.payload ?? null;
     if (!snapshot || !Number.isFinite(snapshot.observedAt)) return null;
-    this.latest = { ...snapshot };
+    const expiresAt = Number(stored?.expiresAt);
+    if (Number.isFinite(expiresAt) && expiresAt > Date.now()) {
+      noteCryptaraHyperBridgeReplicaFresh({
+        key: PARALLEL_PROXY_KEY,
+        workload: 'observability',
+        topic: PARALLEL_PROXY_TOPIC,
+        expiresAt,
+      });
+    }
     return { ...snapshot };
   }
 
   private mirrorSnapshot(snapshot: RainbowProfitSnapshot): void {
     if (!isCryptaraParallelProxyConfigured) return;
-    void writeCryptaraParallelSnapshot({
-      key: PARALLEL_PROXY_KEY,
-      workload: 'observability',
-      topic: PARALLEL_PROXY_TOPIC,
-      payload: snapshot,
-      observedAt: snapshot.observedAt,
-      expiresAt: snapshot.observedAt + PARALLEL_PROXY_FRESH_MS,
-    }).catch(() => undefined);
+    enqueueCryptaraHyperBridgeSnapshot({
+      artifact: {
+        key: PARALLEL_PROXY_KEY,
+        workload: 'observability',
+        topic: PARALLEL_PROXY_TOPIC,
+        payload: snapshot,
+        observedAt: snapshot.observedAt,
+        expiresAt: snapshot.observedAt + PARALLEL_PROXY_FRESH_MS,
+      },
+    });
+  }
+
+  private async readPrimarySnapshot(): Promise<RainbowProfitSnapshot | null> {
+    if (!isDatabaseConfigured) return null;
+    const result = await withCryptaraSupabasePriority('low', () => pool.query(`
+      WITH summary AS (
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'queued')::int AS queued_events,
+          COUNT(*) FILTER (WHERE status = 'submitted')::int AS submitted_events,
+          COUNT(*) FILTER (WHERE status = 'confirmed')::int AS confirmed_events,
+          COALESCE(SUM(realized_profit_usd) FILTER (WHERE status = 'queued'), 0)::numeric AS queued_profit_usd,
+          COALESCE(SUM(realized_profit_usd) FILTER (WHERE status = 'submitted'), 0)::numeric AS submitted_profit_usd,
+          COALESCE(SUM(realized_profit_usd) FILTER (WHERE status = 'confirmed'), 0)::numeric AS confirmed_profit_usd,
+          MIN(created_at) FILTER (WHERE status = 'queued') AS oldest_queued_at
+        FROM private.cryptocrawler_rainbow_profit_events
+      ),
+      fees AS (
+        SELECT COALESCE(SUM(batch_fee), 0)::numeric AS confirmed_fees
+        FROM (
+          SELECT batch_id, MAX(payout_fee)::numeric AS batch_fee
+          FROM private.cryptocrawler_rainbow_profit_events
+          WHERE status = 'confirmed' AND batch_id IS NOT NULL AND payout_fee IS NOT NULL
+          GROUP BY batch_id
+        ) batches
+      ),
+      latest AS (
+        SELECT transaction_hash
+        FROM private.cryptocrawler_rainbow_profit_events
+        WHERE status = 'confirmed' AND transaction_hash IS NOT NULL AND transaction_hash <> ''
+        ORDER BY confirmed_at DESC NULLS LAST, updated_at DESC
+        LIMIT 1
+      )
+      SELECT summary.*, fees.confirmed_fees, latest.transaction_hash
+      FROM summary
+      CROSS JOIN fees
+      LEFT JOIN latest ON true
+    `));
+
+    const row = result.rows[0] || {};
+    const oldest = row.oldest_queued_at ? new Date(row.oldest_queued_at).getTime() : null;
+    const observedAt = Date.now();
+    const snapshot: RainbowProfitSnapshot = {
+      observedAt,
+      queuedProfitUsd: numeric(row.queued_profit_usd),
+      submittedProfitUsd: numeric(row.submitted_profit_usd),
+      confirmedProfitUsd: numeric(row.confirmed_profit_usd),
+      queuedEvents: numeric(row.queued_events),
+      submittedEvents: numeric(row.submitted_events),
+      confirmedEvents: numeric(row.confirmed_events),
+      oldestQueuedAgeMs: Number.isFinite(oldest) ? Math.max(0, observedAt - (oldest as number)) : null,
+      confirmedWithdrawalFees: numeric(row.confirmed_fees),
+      lastConfirmedTransactionHash: row.transaction_hash ? String(row.transaction_hash) : null,
+      destinationFingerprint: destinationFingerprint(),
+    };
+    this.mirrorSnapshot(snapshot);
+    return snapshot;
+  }
+
+  private logSnapshot(snapshot: RainbowProfitSnapshot): void {
+    const signature = JSON.stringify({
+      queuedProfitUsd: snapshot.queuedProfitUsd,
+      submittedProfitUsd: snapshot.submittedProfitUsd,
+      confirmedProfitUsd: snapshot.confirmedProfitUsd,
+      queuedEvents: snapshot.queuedEvents,
+      submittedEvents: snapshot.submittedEvents,
+      confirmedEvents: snapshot.confirmedEvents,
+      confirmedWithdrawalFees: snapshot.confirmedWithdrawalFees,
+      lastConfirmedTransactionHash: snapshot.lastConfirmedTransactionHash,
+    });
+    if (signature === this.lastSignature) return;
+    this.lastSignature = signature;
+    logger.info('[RainbowBridge] Profit lifecycle snapshot', {
+      component: 'RainbowProfitObservability',
+      ...snapshot,
+      lastConfirmedTransactionHash: snapshot.lastConfirmedTransactionHash
+        ? `${snapshot.lastConfirmedTransactionHash.slice(0, 10)}...`
+        : null,
+    });
   }
 
   private async refreshOnce(): Promise<RainbowProfitSnapshot | null> {
-    // Observability is explicitly non-authoritative. Under database pressure, a
-    // recent precomputed secondary read model is preferred over repeating the
-    // primary SUM/GROUP BY scan. Expiration is enforced in the secondary table.
-    const parallel = await this.readParallelSnapshotUnderPressure();
-    if (parallel) return parallel;
-
-    if (!isDatabaseConfigured) return null;
+    // Observability is non-authoritative. Normal mode preserves the established
+    // primary aggregate. Under pressure the HyperBridge uses a known-fresh overflow
+    // mirror directly; while mirror freshness is unknown it starts both existing
+    // lanes together so an overflow miss cannot become a serial latency hop.
     try {
-      const result = await withCryptaraSupabasePriority('low', () => pool.query(`
-        WITH summary AS (
-          SELECT
-            COUNT(*) FILTER (WHERE status = 'queued')::int AS queued_events,
-            COUNT(*) FILTER (WHERE status = 'submitted')::int AS submitted_events,
-            COUNT(*) FILTER (WHERE status = 'confirmed')::int AS confirmed_events,
-            COALESCE(SUM(realized_profit_usd) FILTER (WHERE status = 'queued'), 0)::numeric AS queued_profit_usd,
-            COALESCE(SUM(realized_profit_usd) FILTER (WHERE status = 'submitted'), 0)::numeric AS submitted_profit_usd,
-            COALESCE(SUM(realized_profit_usd) FILTER (WHERE status = 'confirmed'), 0)::numeric AS confirmed_profit_usd,
-            MIN(created_at) FILTER (WHERE status = 'queued') AS oldest_queued_at
-          FROM private.cryptocrawler_rainbow_profit_events
-        ),
-        fees AS (
-          SELECT COALESCE(SUM(batch_fee), 0)::numeric AS confirmed_fees
-          FROM (
-            SELECT batch_id, MAX(payout_fee)::numeric AS batch_fee
-            FROM private.cryptocrawler_rainbow_profit_events
-            WHERE status = 'confirmed' AND batch_id IS NOT NULL AND payout_fee IS NOT NULL
-            GROUP BY batch_id
-          ) batches
-        ),
-        latest AS (
-          SELECT transaction_hash
-          FROM private.cryptocrawler_rainbow_profit_events
-          WHERE status = 'confirmed' AND transaction_hash IS NOT NULL AND transaction_hash <> ''
-          ORDER BY confirmed_at DESC NULLS LAST, updated_at DESC
-          LIMIT 1
-        )
-        SELECT summary.*, fees.confirmed_fees, latest.transaction_hash
-        FROM summary
-        CROSS JOIN fees
-        LEFT JOIN latest ON true
-      `));
-
-      const row = result.rows[0] || {};
-      const oldest = row.oldest_queued_at ? new Date(row.oldest_queued_at).getTime() : null;
-      const observedAt = Date.now();
-      const snapshot: RainbowProfitSnapshot = {
-        observedAt,
-        queuedProfitUsd: numeric(row.queued_profit_usd),
-        submittedProfitUsd: numeric(row.submitted_profit_usd),
-        confirmedProfitUsd: numeric(row.confirmed_profit_usd),
-        queuedEvents: numeric(row.queued_events),
-        submittedEvents: numeric(row.submitted_events),
-        confirmedEvents: numeric(row.confirmed_events),
-        oldestQueuedAgeMs: Number.isFinite(oldest) ? Math.max(0, observedAt - (oldest as number)) : null,
-        confirmedWithdrawalFees: numeric(row.confirmed_fees),
-        lastConfirmedTransactionHash: row.transaction_hash ? String(row.transaction_hash) : null,
-        destinationFingerprint: destinationFingerprint(),
-      };
-      this.latest = snapshot;
-      this.mirrorSnapshot(snapshot);
-
-      const signature = JSON.stringify({
-        queuedProfitUsd: snapshot.queuedProfitUsd,
-        submittedProfitUsd: snapshot.submittedProfitUsd,
-        confirmedProfitUsd: snapshot.confirmedProfitUsd,
-        queuedEvents: snapshot.queuedEvents,
-        submittedEvents: snapshot.submittedEvents,
-        confirmedEvents: snapshot.confirmedEvents,
-        confirmedWithdrawalFees: snapshot.confirmedWithdrawalFees,
-        lastConfirmedTransactionHash: snapshot.lastConfirmedTransactionHash,
+      const bridged = await readCryptaraHyperBridge<RainbowProfitSnapshot>({
+        key: PARALLEL_PROXY_KEY,
+        workload: 'observability',
+        topic: PARALLEL_PROXY_TOPIC,
+        primary: () => this.readPrimarySnapshot(),
+        overflow: () => this.readParallelSnapshot(),
+        isUsable: snapshot => Boolean(snapshot && Number.isFinite(snapshot.observedAt)),
       });
-      if (signature !== this.lastSignature) {
-        this.lastSignature = signature;
-        logger.info('[RainbowBridge] Profit lifecycle snapshot', {
-          component: 'RainbowProfitObservability',
-          ...snapshot,
-          lastConfirmedTransactionHash: snapshot.lastConfirmedTransactionHash
-            ? `${snapshot.lastConfirmedTransactionHash.slice(0, 10)}...`
-            : null,
-        });
-      }
+      const snapshot = bridged.value;
+      if (!snapshot) return null;
+      this.latest = { ...snapshot };
+      this.logSnapshot(snapshot);
       return { ...snapshot };
     } catch (error) {
       logger.debug('[RainbowBridge] Profit lifecycle snapshot deferred', {

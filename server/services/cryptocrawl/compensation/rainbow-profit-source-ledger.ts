@@ -1,6 +1,10 @@
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
-import { enqueueCryptaraHyperBridgeSnapshot } from '../integration/cryptara-supabase-hyper-bridge.js';
+import {
+  enqueueCryptaraHyperBridgeSnapshot,
+  noteCryptaraHyperBridgeReplicaFresh,
+  readCryptaraHyperBridge,
+} from '../integration/cryptara-supabase-hyper-bridge.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import {
   isCryptaraParallelProxyConfigured,
@@ -22,6 +26,7 @@ export interface RainbowProfitSourceSnapshot {
 }
 
 const PARALLEL_PROXY_TOPIC = 'rainbow-profit-source';
+const REPLICA_ROUTE_FRESH_MS = 5 * 60_000;
 
 function unique(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.map(value => String(value || '').trim().toUpperCase()).filter(Boolean))];
@@ -92,6 +97,48 @@ async function persistPrimarySource(source: RainbowProfitSourceSnapshot): Promis
   ));
 }
 
+async function readPrimarySource(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
+  if (!isDatabaseConfigured) return null;
+  const result = await withCryptaraSupabasePriority('low', () => pool.query(
+    `SELECT event_id, execution_source, strategy, symbol, chain, venue_or_route, venues, assets, transaction_hash,
+            EXTRACT(EPOCH FROM recorded_at) * 1000 AS recorded_at_ms
+     FROM private.cryptocrawler_rainbow_profit_sources WHERE event_id=$1 LIMIT 1`,
+    [eventId],
+  ));
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    eventId: String(row.event_id),
+    executionSource: row.execution_source as CryptaraExecutionFeedback['source'],
+    strategy: String(row.strategy),
+    symbol: String(row.symbol),
+    chain: row.chain ? String(row.chain) : null,
+    venueOrRoute: row.venue_or_route ? String(row.venue_or_route) : null,
+    venues: Array.isArray(row.venues) ? row.venues.map(String) : [],
+    assets: Array.isArray(row.assets) ? row.assets.map(String) : [],
+    transactionHash: row.transaction_hash ? String(row.transaction_hash) : null,
+    recordedAt: Number(row.recorded_at_ms),
+  };
+}
+
+async function readOverflowSource(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
+  if (!isCryptaraParallelProxyConfigured) return null;
+  const proxied = await readCryptaraParallelSnapshot<RainbowProfitSourceSnapshot>(
+    'observability',
+    eventId,
+    PARALLEL_PROXY_TOPIC,
+  );
+  const value = proxied.used ? proxied.value?.payload ?? null : null;
+  if (!value) return null;
+  noteCryptaraHyperBridgeReplicaFresh({
+    key: eventId,
+    workload: 'observability',
+    topic: PARALLEL_PROXY_TOPIC,
+    expiresAt: Date.now() + REPLICA_ROUTE_FRESH_MS,
+  });
+  return value;
+}
+
 class RainbowProfitSourceLedger {
   async recordTerminalSettlement(feedback: CryptaraExecutionFeedback): Promise<void> {
     if (!feedback.settlement || feedback.settlement.terminal !== true || feedback.settlement.settlementConfirmed !== true) return;
@@ -112,6 +159,7 @@ class RainbowProfitSourceLedger {
           payload: source,
           observedAt: source.recordedAt,
         },
+        replicaFreshForMs: REPLICA_ROUTE_FRESH_MS,
         fallback: () => persistPrimarySource(source),
       });
       return;
@@ -121,36 +169,20 @@ class RainbowProfitSourceLedger {
   }
 
   async get(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
-    if (isCryptaraParallelProxyConfigured) {
-      const proxied = await readCryptaraParallelSnapshot<RainbowProfitSourceSnapshot>(
-        'observability',
-        eventId,
-        PARALLEL_PROXY_TOPIC,
-      );
-      if (proxied.used && proxied.value?.payload) return proxied.value.payload;
-    }
-
-    if (!isDatabaseConfigured) return null;
-    const result = await withCryptaraSupabasePriority('low', () => pool.query(
-      `SELECT event_id, execution_source, strategy, symbol, chain, venue_or_route, venues, assets, transaction_hash,
-              EXTRACT(EPOCH FROM recorded_at) * 1000 AS recorded_at_ms
-       FROM private.cryptocrawler_rainbow_profit_sources WHERE event_id=$1 LIMIT 1`,
-      [eventId],
-    ));
-    const row = result.rows[0];
-    if (!row) return null;
-    return {
-      eventId: String(row.event_id),
-      executionSource: row.execution_source as CryptaraExecutionFeedback['source'],
-      strategy: String(row.strategy),
-      symbol: String(row.symbol),
-      chain: row.chain ? String(row.chain) : null,
-      venueOrRoute: row.venue_or_route ? String(row.venue_or_route) : null,
-      venues: Array.isArray(row.venues) ? row.venues.map(String) : [],
-      assets: Array.isArray(row.assets) ? row.assets.map(String) : [],
-      transactionHash: row.transaction_hash ? String(row.transaction_hash) : null,
-      recordedAt: Number(row.recorded_at_ms),
-    };
+    // This derived metadata is overflow-native when the auxiliary project exists.
+    // First access after a cold process races overflow and primary so a missing
+    // overflow row cannot add a serial delay; successful overflow persistence/read
+    // then pins routing to the auxiliary lane locally for subsequent lookups.
+    const bridged = await readCryptaraHyperBridge<RainbowProfitSourceSnapshot>({
+      key: eventId,
+      workload: 'observability',
+      topic: PARALLEL_PROXY_TOPIC,
+      normalPreference: 'overflow',
+      primary: () => readPrimarySource(eventId),
+      overflow: () => readOverflowSource(eventId),
+      isUsable: value => Boolean(value?.eventId),
+    });
+    return bridged.value;
   }
 }
 
