@@ -34,7 +34,10 @@ export interface FixedResourceClaimInput {
 
 let authorityReadyUntil = 0;
 let authorityRetryAfter = 0;
-let authorityRequestsInFlight = 0;
+// This is only a view of the one Super Worker request promise. It owns no value
+// cache or database call and exists so callers can observe whether this authority
+// currently has a shared request in flight.
+let authorityProbeInFlight: Promise<boolean> | null = null;
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
@@ -97,58 +100,65 @@ export async function ensureResourceLeaseAuthority(
   if (!isDatabaseConfigured) return false;
   const now = Date.now();
   if (now < authorityRetryAfter) return false;
+  if (authorityProbeInFlight) return authorityProbeInFlight;
 
   const retryMs = authorityRetryMs();
   const readyTtlMs = authorityReadyTtlMs();
-  authorityRequestsInFlight += 1;
-  try {
-    const lease = await requestCryptaraSharedInformation<boolean>({
-      key: RESOURCE_LEASE_AUTHORITY_INFO_KEY,
-      consumer: 'resource-lease-authority',
-      allowedConsumers: ['resource-lease-authority'],
-      informationClass: 'schema_authority',
-      freshForMs: readyTtlMs,
-      databasePriority: priority,
-      estimatedBytes: 8,
-      loader: async () => {
-        const result = await pool.query(
-          `SELECT
-             to_regclass('public.${RESOURCE_LEASE_TABLE}') IS NOT NULL AS table_ready,
-             to_regprocedure('private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)') IS NOT NULL AS claim_function_ready`,
-        );
-        const ready = result.rows?.[0]?.table_ready === true && result.rows?.[0]?.claim_function_ready === true;
-        if (!ready) {
-          logger.error('[ResourceLeaseAuthority] Migration-owned lease authority is missing', {
-            component: 'ResourceLeaseAuthority',
-            table: `public.${RESOURCE_LEASE_TABLE}`,
-            function: RESOURCE_SLOT_CLAIM_FUNCTION,
-            runtimeDdlAllowed: false,
-            executionAuthorityGranted: false,
-          });
-          throw new Error('RESOURCE_LEASE_AUTHORITY_MISSING');
-        }
-        return true;
-      },
-    });
-
+  const probe = (async (): Promise<boolean> => {
     try {
-      authorityReadyUntil = Math.max(authorityReadyUntil, lease.expiresAt);
-      authorityRetryAfter = 0;
-      return lease.value === true;
-    } finally {
-      lease.release();
+      const lease = await requestCryptaraSharedInformation<boolean>({
+        key: RESOURCE_LEASE_AUTHORITY_INFO_KEY,
+        consumer: 'resource-lease-authority',
+        allowedConsumers: ['resource-lease-authority'],
+        informationClass: 'schema_authority',
+        freshForMs: readyTtlMs,
+        databasePriority: priority,
+        estimatedBytes: 8,
+        loader: async () => {
+          const result = await pool.query(
+            `SELECT
+               to_regclass('public.${RESOURCE_LEASE_TABLE}') IS NOT NULL AS table_ready,
+               to_regprocedure('private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)') IS NOT NULL AS claim_function_ready`,
+          );
+          const ready = result.rows?.[0]?.table_ready === true && result.rows?.[0]?.claim_function_ready === true;
+          if (!ready) {
+            logger.error('[ResourceLeaseAuthority] Migration-owned lease authority is missing', {
+              component: 'ResourceLeaseAuthority',
+              table: `public.${RESOURCE_LEASE_TABLE}`,
+              function: RESOURCE_SLOT_CLAIM_FUNCTION,
+              runtimeDdlAllowed: false,
+              executionAuthorityGranted: false,
+            });
+            throw new Error('RESOURCE_LEASE_AUTHORITY_MISSING');
+          }
+          return true;
+        },
+      });
+
+      try {
+        authorityReadyUntil = Math.max(authorityReadyUntil, lease.expiresAt);
+        authorityRetryAfter = 0;
+        return lease.value === true;
+      } finally {
+        lease.release();
+      }
+    } catch (error) {
+      authorityReadyUntil = 0;
+      authorityRetryAfter = Date.now() + retryMs;
+      logger.error('[ResourceLeaseAuthority] Lease authority verification failed closed', {
+        component: 'ResourceLeaseAuthority',
+        retryAfterMs: retryMs,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     }
-  } catch (error) {
-    authorityReadyUntil = 0;
-    authorityRetryAfter = Date.now() + retryMs;
-    logger.error('[ResourceLeaseAuthority] Lease authority verification failed closed', {
-      component: 'ResourceLeaseAuthority',
-      retryAfterMs: retryMs,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return false;
+  })();
+
+  authorityProbeInFlight = probe;
+  try {
+    return await probe;
   } finally {
-    authorityRequestsInFlight = Math.max(0, authorityRequestsInFlight - 1);
+    if (authorityProbeInFlight === probe) authorityProbeInFlight = null;
   }
 }
 
@@ -203,7 +213,7 @@ export function getResourceLeaseAuthorityCacheSnapshot(): {
   const now = Date.now();
   return {
     ready: authorityReadyUntil > now,
-    probeInFlight: authorityRequestsInFlight > 0,
+    probeInFlight: authorityProbeInFlight !== null,
     readyForMs: Math.max(0, authorityReadyUntil - now),
     retryInMs: Math.max(0, authorityRetryAfter - now),
   };
