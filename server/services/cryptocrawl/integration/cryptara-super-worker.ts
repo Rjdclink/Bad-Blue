@@ -40,6 +40,14 @@ export interface CryptaraSharedInformationRequest<T, R = T> {
   estimatedBytes?: number;
 }
 
+export interface CryptaraSharedInformationPrime<T> {
+  key: string;
+  informationClass: CryptaraInformationClass;
+  value: T;
+  freshForMs?: number;
+  estimatedBytes?: number;
+}
+
 export interface CryptaraSuperWorkerSnapshot {
   governor: 'cryptara';
   authority: 'resource_proxy_only';
@@ -270,6 +278,29 @@ class CryptaraSharedInformationBroker {
     return this.lease(entry, request, source);
   }
 
+  prime<T>(input: CryptaraSharedInformationPrime<T>): void {
+    const freshForMs = this.effectiveFreshMs(input.informationClass, input.freshForMs);
+    if (freshForMs <= 0) return;
+    const now = Date.now();
+    this.cleanupExpired(now);
+    const previous = this.cache.get(input.key);
+    if (previous?.readers) return;
+    if (previous) this.removeEntry(previous);
+    const entry: CacheEntry<T> = {
+      key: input.key,
+      value: input.value,
+      createdAt: now,
+      expiresAt: now + freshForMs,
+      lastAccessAt: now,
+      readers: 0,
+      bytes: this.estimateBytes(input.value, input.estimatedBytes),
+    };
+    this.cache.set(input.key, entry);
+    this.retainedBytes += entry.bytes;
+    this.peakRetainedEntries = Math.max(this.peakRetainedEntries, this.cache.size);
+    this.enforceBounds();
+  }
+
   invalidate(key: string): void {
     const entry = this.cache.get(key);
     if (!entry) return;
@@ -324,6 +355,10 @@ export function requestCryptaraSharedInformation<T, R = T>(
   request: CryptaraSharedInformationRequest<T, R>,
 ): Promise<CryptaraInformationLease<R>> {
   return informationBroker.request(request);
+}
+
+export function primeCryptaraSharedInformation<T>(input: CryptaraSharedInformationPrime<T>): void {
+  informationBroker.prime(input);
 }
 
 export function invalidateCryptaraSharedInformation(key: string): void {
