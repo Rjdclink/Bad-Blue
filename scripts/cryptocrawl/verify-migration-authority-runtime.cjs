@@ -25,7 +25,7 @@ const dockerfile = read('Dockerfile');
 assert.match(reconciler, /import\s*\{\s*coordinationPool,\s*pool\s*\}\s*from\s*'\.\.\/db'/);
 assert.match(reconciler, /coordinator\s*=\s*await\s+coordinationPool\.connect\(\)/);
 assert.doesNotMatch(reconciler, /coordinator\s*=\s*await\s+pool\.connect\(\)/);
-assert.match(reconciler, /SELECT pg_try_advisory_lock\(hashtext\(\$1\)\) AS acquired/);
+assert.match(reconciler, /SELECT pg_try_advisory_lock\(hashtextextended\(\$1, 0\)\) AS acquired/);
 
 // Supavisor transaction mode cannot retain session-level settings. The ordinary
 // 6543 lane keeps node-postgres client-side query_timeout, while server-side
