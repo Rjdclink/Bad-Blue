@@ -16,6 +16,7 @@ const resource = read('server/services/cryptocrawl/integration/cryptara-resource
 const outbox = read('server/services/cryptocrawl/intelligence/canonical-intelligence-outbox.ts');
 const rainbow = read('server/services/cryptocrawl/compensation/rainbow-profit-observability.ts');
 const runtimeObservability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
+const distributedQuota = read('server/services/cryptocrawl/execution/distributed-api-quota.ts');
 const treasury = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
 
 requirePattern(dataSwitch, /CryptaraSupabaseDataPath\s*=\s*'normal'\s*\|\s*'comp'/, 'switch has explicit normal and comp paths');
@@ -57,9 +58,12 @@ requirePattern(runtimeObservability, /supabasePath\.path\s*===\s*'comp'[\s\S]{0,
 requirePattern(runtimeObservability, /canonicalIntelligenceOutbox\.refreshMetrics\(\)/, 'normal mode retains live outbox metrics refresh');
 requirePattern(runtimeObservability, /outboxMetricsSource:\s*supabasePath\.path\s*===\s*'comp'\s*\?\s*'cached'\s*:\s*'live_refresh'/, 'runtime telemetry proves which data path supplied DB metrics');
 
-// Treasury is safety/settlement state. Comp mode may govern its scarce connection
-// admission, but must never lengthen its established heartbeat or suppress terminal intent.
+requirePattern(distributedQuota, /refreshCryptaraSupabaseCompSwitch/, 'distributed quota consumes the same pressure switch');
+requirePattern(distributedQuota, /dataPath\.path\s*===\s*'normal'[\s\S]{0,1200}MIN\(expires_at\)/i, 'healthy quota path retains exact earliest-expiry timing');
+requirePattern(distributedQuota, /else\s*\{[\s\S]{0,180}compLocalWaits\s*\+=\s*1[\s\S]{0,120}avoidedDbReads\s*\+=\s*1/, 'comp quota path uses local timing and records avoided DB reads');
+requirePattern(distributedQuota, /Math\.ceil\(windowMs\s*\/\s*capacity\)/, 'comp quota fallback uses bounded fair local wait estimate');
+
 requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*15_000/, 'treasury safety heartbeat remains 15s regardless of comp mode');
 forbidPattern(treasury, /observabilityMultiplier|backgroundPollMultiplier|sharedFreshnessMultiplier/, 'comp-mode cadence leaks into treasury safety timing');
 
-console.log('[supabase-comp-switch] PASS: pressure switches normal->comp across shared reads and noncritical DB workers, healthy hysteresis restores normal mode, and treasury/critical durability remain unchanged');
+console.log('[supabase-comp-switch] PASS: pressure switches normal->comp across shared reads, quota and noncritical DB workers; healthy hysteresis restores normal mode; treasury/critical durability remain unchanged');
