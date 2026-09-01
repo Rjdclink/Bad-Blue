@@ -46,7 +46,10 @@ forbidPattern(outbox, /private async claimOne/, 'Outbox must not regress to one 
 requirePattern(outbox, /CRYPTARA_OUTBOX_METRICS_INTERVAL_MS/, 'Outbox metrics are rate-limited independently of queue authority');
 requirePattern(outbox, /databaseBackoffMs[\s\S]{0,900}jitterMs/, 'Outbox database failure retries use bounded jitter');
 
-requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*15_000/, 'Treasury safety heartbeat cadence remains unchanged');
+requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*60_000/, 'Treasury keeps one bounded one-minute safety heartbeat instead of four idle Primary writes per minute');
+forbidPattern(treasury, /setInterval\s*\(/, 'Treasury lifecycle must not use an unconditional interval poller');
+requirePattern(treasury, /function\s+scheduleHeartbeat[\s\S]{0,1200}setTimeout\s*\([\s\S]{0,700}scheduleHeartbeat\(\)/, 'Treasury safety liveness uses completion-aware one-shot scheduling');
+requirePattern(treasury, /Math\.max\(HEARTBEAT_MS,\s*heartbeatDegradedUntil\s*-\s*Date\.now\(\)\)/, 'Treasury scheduler sleeps through the active database backoff window');
 requirePattern(treasury, /SELECT\s+id,\s*name\s+FROM\s+vault\.secrets\s+WHERE\s+name\s*=\s*ANY/i, 'Vault ids are resolved in one lookup per synchronization pass');
 requirePattern(treasury, /WITH\s+state\s+AS\s+MATERIALIZED[\s\S]{0,3500}RETURNING\s+state\.desired_state\s+AS\s+prior_state/i, 'Treasury state read and permitted heartbeat transition share one row-locked SQL round trip');
 forbidPattern(treasury, /async\s+function\s+readTreasuryState/, 'Treasury must not reintroduce a separate steady-state read query');
@@ -58,4 +61,4 @@ requirePattern(intelligenceMigration, /private\.cryptara_trade_outcomes/i, 'Trad
 requirePattern(treasuryMigration, /cryptocrawler_terminal_sweep_control/i, 'Treasury lifecycle control remains migration-owned');
 requirePattern(profitMigration, /cryptocrawler_rainbow_profit_events/i, 'Rainbow profit storage remains migration-owned');
 
-console.log('[supabase-background-pressure] adaptive comp-mode cadence, migration-owned Rainbow source metadata, one-roundtrip validated enqueue, safe batched claims, atomic learning completion, collapsed observability/treasury round trips, priority separation, jitter, and migration ownership verified');
+console.log('[supabase-background-pressure] adaptive comp-mode cadence, migration-owned Rainbow source metadata, one-roundtrip validated enqueue, safe batched claims, atomic learning completion, collapsed observability/treasury round trips, completion-aware one-minute treasury liveness, priority separation, jitter, and migration ownership verified');
