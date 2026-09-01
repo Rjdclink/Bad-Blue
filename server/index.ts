@@ -435,28 +435,14 @@ async function initializeServices(): Promise<void> {
     console.warn('[STARTUP] ⚠ LegalWhat Worker failed:', error?.message ?? error);
   }
 
-  // Initialize Sub-Agent Web Harvester for daily officer data collection
-  try {
-    const { subAgentHarvester } = await import('./subAgentWebHarvester');
-    await subAgentHarvester.initialize();
-    console.log('[STARTUP] ✓ Sub-Agent Web Harvester initialized (daily 2:30 UTC)');
-  } catch (error: any) {
-    console.warn('[STARTUP] ⚠ Sub-Agent Web Harvester failed:', error?.message ?? error);
-  }
-
-  // Initialize Sub-Agent Harvester with failover logging and population priority
+  // One canonical officer-data harvester owns the shared session manager, priority
+  // queue, and timer. Its own defaults carry the current bounded 36h/7-search policy.
   try {
     const { initializeHarvester } = await import('./subAgentHarvester');
-    await initializeHarvester({
-      dailyHarvestHourUTC: 3,
-      dailyHarvestMinuteUTC: 0,
-      maxSearchesPerCycle: 15,
-      highPopulationThreshold: 100000,
-      mediumPopulationThreshold: 25000
-    });
-    console.log('[STARTUP] ✓ Sub-Agent Harvester initialized (daily 3:00 UTC)');
+    await initializeHarvester();
+    console.log('[STARTUP] ✓ Canonical Sub-Agent Harvester initialized (36h adaptive interval)');
   } catch (error: any) {
-    console.warn('[STARTUP] ⚠ Sub-Agent Harvester failed:', error?.message ?? error);
+    console.warn('[STARTUP] ⚠ Canonical Sub-Agent Harvester failed:', error?.message ?? error);
   }
 
   // Initialize Unified Maintenance Worker for weekly system maintenance
