@@ -4,14 +4,12 @@
 // 1) reconcileAppSchema imports db.ts and applies Railway rollout headroom without
 //    performing a query.
 // 2) Cryptara installs the existing admission governor.
-// 3) HyperBridge verifies the existing overflow Supabase lane first.
-// 4) When overflow is ready, pg.Pool primary acquisitions are intercepted before
-//    index.ts loads. Legacy application callers are routed through the process-local
-//    overflow-primary gateway; the gateway then uses the existing primary pool.
-//    No third pool/config alias is created and primary authority is unchanged.
-// 5) index.ts treats verified overflow as the normal proxy data plane and performs
-//    zero direct primary health/recovery probes. Necessary primary information is
-//    obtained only behind overflow/bridge/worker routing.
+// 3) HyperBridge verifies the overflow Supabase lane first.
+// 4) The complete CryptoCrawler execution/governance/settlement schema is then
+//    provisioned and verified on Overflow before CryptoCrawler runtime evaluation.
+// 5) Legacy non-CryptoCrawler primary acquisitions remain observable behind the
+//    overflow-primary gateway; CryptoCrawler owns a separate Overflow runtime DB
+//    plane and must not use these primary pools as execution authority.
 await import('./migrations/reconcileAppSchema.js');
 
 const { installCryptaraSuperWorkerAdmission } = await import(
@@ -30,6 +28,21 @@ await startCryptaraHyperBridgeBootstrap();
 const overflowBootstrap = getCryptaraHyperBridgeBootstrapSnapshot();
 
 if (overflowBootstrap.state === 'ready') {
+  const { ensureCryptocrawlOverflowRuntimeSchema } = await import(
+    './services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.js'
+  );
+  try {
+    await ensureCryptocrawlOverflowRuntimeSchema();
+    console.log(
+      '[CRYPTARA][OVERFLOW-AUTHORITY] READY: complete CryptoCrawler runtime schema verified on Overflow; Primary is not a CryptoCrawler runtime prerequisite',
+    );
+  } catch (error) {
+    console.error(
+      '[CRYPTARA][OVERFLOW-AUTHORITY] DEGRADED: Overflow transport is reachable but complete CryptoCrawler authority schema is not ready; execution remains fail-closed',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
   const { pool, coordinationPool } = await import('./db.js');
   const {
     isCryptaraOverflowPrimaryGatewayContext,
@@ -79,7 +92,7 @@ if (overflowBootstrap.state === 'ready') {
         (routedPrimaryAcquisitions & (routedPrimaryAcquisitions - 1)) === 0
       ) {
         console.log(
-          `[CRYPTARA][OVERFLOW-GATEWAY] primary pool acquisition #${routedPrimaryAcquisitions} intercepted; route=application->overflow/bridge->primary; direct-application-primary=0`,
+          `[CRYPTARA][OVERFLOW-GATEWAY] legacy primary pool acquisition #${routedPrimaryAcquisitions} intercepted; route=application->overflow/bridge->primary; direct-application-primary=0`,
         );
       }
 
@@ -93,7 +106,7 @@ if (overflowBootstrap.state === 'ready') {
 
     prototype[PRIMARY_GATEWAY_PATCH] = true;
     console.log(
-      '[CRYPTARA][OVERFLOW-GATEWAY] ACTIVE: verified overflow is the sole application gateway to primary; direct primary health/recovery probes are disabled',
+      '[CRYPTARA][OVERFLOW-GATEWAY] ACTIVE: legacy Primary access remains gateway-observable; CryptoCrawler runtime authority is Overflow-only',
     );
   }
 }
