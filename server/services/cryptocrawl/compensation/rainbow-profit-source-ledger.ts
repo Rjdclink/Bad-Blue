@@ -66,6 +66,24 @@ function sourceSnapshot(feedback: CryptaraExecutionFeedback): RainbowProfitSourc
   };
 }
 
+function enqueueOverflowSourceMirror(
+  source: RainbowProfitSourceSnapshot,
+  fallback?: () => Promise<void>,
+): void {
+  if (!isCryptaraParallelProxyConfigured) return;
+  enqueueCryptaraHyperBridgeSnapshot({
+    artifact: {
+      key: source.eventId,
+      workload: 'observability',
+      topic: PARALLEL_PROXY_TOPIC,
+      payload: source,
+      observedAt: source.recordedAt,
+    },
+    replicaFreshForMs: REPLICA_ROUTE_FRESH_MS,
+    fallback,
+  });
+}
+
 async function persistPrimarySource(source: RainbowProfitSourceSnapshot): Promise<void> {
   if (!isDatabaseConfigured) return;
   await withCryptaraSupabasePriority('low', () => pool.query(
@@ -107,7 +125,7 @@ async function readPrimarySource(eventId: string): Promise<RainbowProfitSourceSn
   ));
   const row = result.rows[0];
   if (!row) return null;
-  return {
+  const source: RainbowProfitSourceSnapshot = {
     eventId: String(row.event_id),
     executionSource: row.execution_source as CryptaraExecutionFeedback['source'],
     strategy: String(row.strategy),
@@ -119,6 +137,13 @@ async function readPrimarySource(eventId: string): Promise<RainbowProfitSourceSn
     transactionHash: row.transaction_hash ? String(row.transaction_hash) : null,
     recordedAt: Number(row.recorded_at_ms),
   };
+
+  // Cold-read repair: if this row existed only on authoritative Primary, seed the
+  // same non-authoritative read model into Overflow. No Primary fallback is attached
+  // because the authoritative row already exists; an Overflow write failure must
+  // never generate a redundant Primary write.
+  enqueueOverflowSourceMirror(source);
+  return source;
 }
 
 async function readOverflowSource(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
@@ -147,21 +172,11 @@ class RainbowProfitSourceLedger {
     const source = sourceSnapshot(feedback);
 
     // Secondary source metadata is non-authoritative. The HyperBridge accepts the
-    // write locally and returns immediately; remote overflow I/O is write-behind.
+    // write locally and returns immediately; remote Overflow I/O is write-behind.
     // If the auxiliary lane is absent/degraded, its bounded worker invokes this
-    // exact low-priority primary fallback without delaying terminal settlement.
+    // exact low-priority Primary fallback without delaying terminal settlement.
     if (isCryptaraParallelProxyConfigured) {
-      enqueueCryptaraHyperBridgeSnapshot({
-        artifact: {
-          key: source.eventId,
-          workload: 'observability',
-          topic: PARALLEL_PROXY_TOPIC,
-          payload: source,
-          observedAt: source.recordedAt,
-        },
-        replicaFreshForMs: REPLICA_ROUTE_FRESH_MS,
-        fallback: () => persistPrimarySource(source),
-      });
+      enqueueOverflowSourceMirror(source, () => persistPrimarySource(source));
       return;
     }
 
@@ -169,10 +184,10 @@ class RainbowProfitSourceLedger {
   }
 
   async get(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
-    // This derived metadata is overflow-native when the auxiliary project exists.
-    // First access after a cold process races overflow and primary so a missing
-    // overflow row cannot add a serial delay; successful overflow persistence/read
-    // then pins routing to the auxiliary lane locally for subsequent lookups.
+    // Every read enters Overflow first. A genuine Overflow miss may fetch the
+    // authoritative Primary row through the gateway; that cold-read result is then
+    // queued back into Overflow so future processes can satisfy the same lookup
+    // without repeating Primary I/O.
     const bridged = await readCryptaraHyperBridge<RainbowProfitSourceSnapshot>({
       key: eventId,
       workload: 'observability',
