@@ -62,7 +62,7 @@ function startupTrace(event: string, details: Record<string, unknown> = {}): voi
   );
 }
 
-type DatabaseRuntimeMode = 'initializing' | 'primary' | 'overflow_degraded';
+type DatabaseRuntimeMode = 'initializing' | 'primary' | 'overflow_proxy';
 
 let isReady = false;
 let isFullyInitialized = false; // Tracks full HTTP/application surface initialization
@@ -274,9 +274,8 @@ async function retryDatabaseProbeWithinBudget(): Promise<void> {
       const remainingMs = Math.max(0, budgetMs - elapsedMs);
       if (remainingMs <= 0) break;
 
-      // One admission attempt at a time with full jitter. Under measured upstream
-      // pressure this intentionally avoids parallel probes, pool recreation and a
-      // synchronized retry cadence across Railway replicas.
+      // This path exists only when overflow is unavailable. With verified overflow,
+      // startup never enters this primary admission loop.
       const waitTime = Math.min(databaseRetryDelayMs(attempt), remainingMs);
       console.log(`[RETRY] Database admission ${admissionPressure ? 'pressure' : 'transient failure'}; jittering ${waitTime}ms (${remainingMs}ms budget remaining)`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
@@ -290,7 +289,7 @@ async function retryDatabaseProbeWithinBudget(): Promise<void> {
 
 async function initializeDatabase(): Promise<boolean> {
   startupTrace('database_initialization_started');
-  console.log('[STARTUP] Stage 1: Database connection...');
+  console.log('[STARTUP] Stage 1: Database connection (overflow-unavailable fallback only)...');
   
   let lastError: unknown = null;
   try {
@@ -326,7 +325,7 @@ async function initializeDatabase(): Promise<boolean> {
     console.warn('[STARTUP] Unknown transient database/network failure; pool reset suppressed to avoid reconnect amplification');
   }
 
-  console.warn('[STARTUP] Database unavailable; deployment remains unready while the previous Railway deployment can continue serving');
+  console.warn('[STARTUP] Database unavailable and overflow is unavailable; deployment remains unready');
   startupTrace('database_initialization_completed', {
     connected: false,
     admissionPressure: isDatabaseAdmissionPressureError(lastError),
@@ -360,31 +359,6 @@ async function waitForOverflowBootstrapReadiness(): Promise<boolean> {
       error: error instanceof Error ? error.message : String(error),
     });
     console.warn('[STARTUP] Overflow readiness evaluation failed:', error instanceof Error ? error.message : String(error));
-    return false;
-  }
-}
-
-async function probePrimaryDatabaseOnce(): Promise<boolean> {
-  const startedAt = Date.now();
-  startupTrace('primary_single_probe_started');
-  try {
-    const { db } = await import('./db');
-    await db.execute('SELECT 1');
-    const latencyMs = Date.now() - startedAt;
-    console.log(`[STARTUP] ✓ Primary database verified in ${latencyMs}ms after overflow readiness`);
-    startupTrace('primary_single_probe_completed', { connected: true, latencyMs });
-    return true;
-  } catch (error) {
-    const latencyMs = Date.now() - startedAt;
-    console.warn(`[STARTUP] Primary database unavailable after one bounded probe (${latencyMs}ms); overflow degraded mode remains eligible:`, error instanceof Error ? error.message : error);
-    startupTrace('primary_single_probe_completed', {
-      connected: false,
-      latencyMs,
-      admissionPressure: isDatabaseAdmissionPressureError(error),
-      permanentFailure: isPermanentDatabaseStartupError(error),
-      localPoolFailure: isLocalPoolFailure(error),
-      error: error instanceof Error ? error.message : String(error),
-    });
     return false;
   }
 }
@@ -569,13 +543,11 @@ app.get("/api/health", (req, res) => {
     ? 'failed'
     : isFullyInitialized && databaseInitialized
       ? 'healthy'
-      : isFullyInitialized && overflowDatabaseReady
+      : backgroundInitializationError || (isFullyInitialized && !databaseInitialized)
         ? 'degraded'
-        : backgroundInitializationError || (isFullyInitialized && !databaseInitialized)
-          ? 'degraded'
-          : isReady
-            ? 'starting'
-            : 'initializing';
+        : isReady
+          ? 'starting'
+          : 'initializing';
 
   // Cheap runtime liveness intentionally does not wait on a database probe.
   // Railway deployment admission is the strict /api/ready endpoint below.
@@ -620,9 +592,6 @@ app.get("/api/health", (req, res) => {
 startupTrace('health_route_registered');
 
 app.get("/api/ready", (_req, res) => {
-  // Railway may promote a verified overflow-degraded deployment, but this does
-  // not claim primary authority. Primary-only governance/execution services stay
-  // disabled until the authoritative database has actually been verified.
   const usableDataPlane = databaseInitialized || overflowDatabaseReady;
   if (isFullyInitialized && usableDataPlane && !isShuttingDown && !startupError) {
     res.status(200).json({
@@ -696,23 +665,27 @@ httpServer = createServer(app);
     });
   });
 
-  // Decide the data plane before importing the heavyweight route graph. The
-  // overflow lane has already been head-started by cryptara-bootstrap-entry.ts.
-  // If it is verified, primary gets exactly one bounded readiness probe: healthy
-  // primary preserves the full authoritative startup; an unavailable primary
-  // immediately enters overflow-degraded readiness instead of hammering it for
-  // the full Railway admission window.
+  // Verified overflow is the normal application data plane. There is no direct
+  // primary readiness/recovery probe here. Legacy primary acquisitions are already
+  // intercepted by cryptara-bootstrap-entry.ts and routed through overflow gateway.
   try {
     overflowDatabaseReady = await waitForOverflowBootstrapReadiness();
 
-    let primaryReady = false;
     if (overflowDatabaseReady) {
-      primaryReady = await probePrimaryDatabaseOnce();
+      databaseInitialized = true;
+      databaseRuntimeMode = 'overflow_proxy';
+      startupTrace('overflow_proxy_mode_activated', {
+        overflowConnected: true,
+        directPrimaryProbes: 0,
+        primaryAccess: 'overflow_gateway_only',
+      });
+      console.log('[STARTUP] ✓ Overflow proxy data plane active; direct primary probes=0; necessary primary access routes only through overflow/bridge/workers');
     } else {
-      primaryReady = await initializeDatabase();
-    }
+      const primaryReady = await initializeDatabase();
+      if (!primaryReady) {
+        throw new Error('Neither verified overflow proxy nor primary fallback established a usable startup data plane');
+      }
 
-    if (primaryReady) {
       databaseInitialized = true;
       databaseRuntimeMode = 'primary';
 
@@ -732,20 +705,6 @@ httpServer = createServer(app);
         startupTrace('database_schema_degraded');
         console.warn('[STARTUP] ⚠ Production schema verification reported degraded state; scoped runtime authorities remain fail-closed');
       }
-    } else if (overflowDatabaseReady) {
-      databaseInitialized = false;
-      databaseRuntimeMode = 'overflow_degraded';
-      backgroundInitializationError = 'Primary Supabase unavailable; verified overflow degraded mode active; primary-authoritative services remain disabled';
-      startupTrace('overflow_degraded_mode_activated', {
-        primaryConnected: false,
-        overflowConnected: true,
-        executionAuthority: false,
-        governanceAuthority: false,
-        settlementAuthority: false,
-      });
-      console.warn('[STARTUP] ⚠ Primary unavailable; continuing with verified overflow degraded readiness. Primary-authoritative governance/execution/settlement services remain fail-closed.');
-    } else {
-      throw new Error('Neither primary database nor verified overflow lane established a usable startup data plane');
     }
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error);
@@ -760,9 +719,8 @@ startupTrace('routes_import_completed');
 startupTrace('routes_registration_started');
 await registerRoutes(app);
 startupTrace('routes_registration_completed');
-  // The route surface may run with verified auxiliary data while the primary is
-  // unavailable, but autonomous primary-authoritative background services below
-  // are skipped in overflow-degraded mode.
+  // With overflow proxy mode active, route and worker code may request primary
+  // information normally; the bootstrap gateway prevents direct primary acquisition.
   
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -833,18 +791,16 @@ startupTrace('routes_registration_completed');
   try {
     if (databaseInitialized) {
       await initializeServices();
-    } else {
-      startupTrace('background_services_skipped_overflow_degraded');
-      console.warn('[STARTUP] ⚠ Skipping primary-authoritative background service initialization while operating on overflow degraded readiness');
     }
     
     isFullyInitialized = true;
-    if (databaseRuntimeMode === 'overflow_degraded') {
-      startupTrace('application_ready_degraded', {
-        primaryConnected: false,
+    if (databaseRuntimeMode === 'overflow_proxy') {
+      startupTrace('application_ready_overflow_proxy', {
         overflowConnected: true,
+        directPrimaryProbes: 0,
+        primaryAccess: 'overflow_gateway_only',
       });
-      console.warn('[STARTUP] ✓ Server ready in overflow-degraded mode; primary-authoritative actions remain unavailable until primary recovery');
+      console.log('[STARTUP] ✓ Server ready on overflow proxy data plane; bridge/workers active; direct primary probes=0');
     } else {
       startupTrace('application_ready');
       console.log('[STARTUP] ✓ Server fully initialized and ready');
