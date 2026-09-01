@@ -58,7 +58,11 @@ requirePattern(overflow, /SUPABASE_DATABASE_URL_OVERFLOW/, 'existing overflow wo
 
 // Worker + bridge law: every information read enters overflow first; primary is
 // allowed only as the worker's on-demand upstream fill after local/overflow miss.
-requirePattern(overflowSuperWorker, /loadPrimaryUpstream\?:[\s\S]{0,2600}loadOverflow\(\)[\s\S]{0,1800}runThroughCryptaraOverflowPrimaryGateway[\s\S]{0,500}loadPrimaryUpstream/, 'overflow worker must obtain primary data only after overflow miss through gateway');
+requirePattern(
+  overflowSuperWorker,
+  /const\s+overflowValue\s*=\s*await\s+request\.loadOverflow\(\)[\s\S]*if\s*\(request\.loadPrimaryUpstream\)[\s\S]*runThroughCryptaraOverflowPrimaryGateway\([\s\S]*request\.loadPrimaryUpstream/,
+  'overflow worker must obtain primary data only after overflow miss through gateway',
+);
 requirePattern(overflowSuperWorker, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'overflow worker must expose zero direct application primary calls');
 forbidPattern(overflowSuperWorker, /\bnew\s+Pool\s*\(|\bpool\.query\s*\(/, 'overflow Super Worker must not create/use a direct DB pool');
 requirePattern(bridge, /loadPrimaryUpstream:\s*input\.primary/, 'HyperBridge must hand primary loader to overflow worker rather than invoke it directly');
