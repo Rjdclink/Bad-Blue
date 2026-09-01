@@ -5,9 +5,12 @@ const path = require('node:path');
 const pg = require('pg');
 
 const { Pool } = pg;
+// Railway pre-deploy executes inside the final image. Dockerfile intentionally
+// copies the migration-owned Overflow DDL into dist/migrations/overflow and does
+// not keep the source server/ tree in the runtime image.
 const MIGRATIONS = [
-  'server/migrations/overflow/001_cryptara_comp_cache.sql',
-  'server/migrations/overflow/002_cryptara_parallel_proxy.sql',
+  'dist/migrations/overflow/001_cryptara_comp_cache.sql',
+  'dist/migrations/overflow/002_cryptara_parallel_proxy.sql',
 ];
 
 function configuredOverflowUrl() {
