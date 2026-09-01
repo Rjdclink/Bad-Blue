@@ -6,6 +6,11 @@ import {
   getCryptaraSupabaseCompSwitchSnapshot,
   refreshCryptaraSupabaseCompSwitch,
 } from '../integration/cryptara-supabase-comp-switch.js';
+import {
+  isCryptaraParallelProxyConfigured,
+  readCryptaraParallelSnapshot,
+  writeCryptaraParallelSnapshot,
+} from '../integration/cryptara-supabase-overflow-worker.js';
 
 export interface RainbowProfitSnapshot {
   observedAt: number;
@@ -22,6 +27,14 @@ export interface RainbowProfitSnapshot {
 }
 
 const INTERVAL_MS = boundedEnv('CRYPTO_RAINBOW_OBSERVABILITY_INTERVAL_MS', 60_000, 15_000, 3_600_000);
+const PARALLEL_PROXY_FRESH_MS = boundedEnv(
+  'CRYPTO_RAINBOW_PARALLEL_PROXY_FRESH_MS',
+  Math.max(5 * 60_000, INTERVAL_MS * 4),
+  60_000,
+  30 * 60_000,
+);
+const PARALLEL_PROXY_KEY = 'rainbow-profit-observability:latest';
+const PARALLEL_PROXY_TOPIC = 'rainbow-profit-observability';
 const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
 
 function boundedEnv(name: string, fallback: number, min: number, max: number): number {
@@ -70,16 +83,10 @@ class RainbowProfitObservability {
 
   private async refreshAndSchedule(): Promise<void> {
     try {
-      // Switch state is refreshed from already-measured DB-admission telemetry;
-      // this does not issue another Supabase query. The snapshot query below then
-      // follows the normal or comp cadence selected by Cryptara.
       await refreshCryptaraSupabaseCompSwitch().catch(() => getCryptaraSupabaseCompSwitchSnapshot());
       await this.refresh();
     } finally {
       if (!this.running) return;
-      // One-shot scheduling prevents overlap/drift when Supabase is slow. Comp
-      // mode makes observability less chatty without changing any payout/treasury
-      // or execution-critical cadence.
       const policy = getCryptaraSupabaseCompSwitchSnapshot().policy;
       const delayMs = Math.min(3_600_000, Math.max(INTERVAL_MS, Math.floor(INTERVAL_MS * policy.observabilityMultiplier)));
       this.timer = setTimeout(() => {
@@ -90,12 +97,40 @@ class RainbowProfitObservability {
     }
   }
 
+  private async readParallelSnapshotUnderPressure(): Promise<RainbowProfitSnapshot | null> {
+    if (!isCryptaraParallelProxyConfigured || getCryptaraSupabaseCompSwitchSnapshot().path !== 'comp') return null;
+    const proxied = await readCryptaraParallelSnapshot<RainbowProfitSnapshot>(
+      'observability',
+      PARALLEL_PROXY_KEY,
+      PARALLEL_PROXY_TOPIC,
+    );
+    const snapshot = proxied.used ? proxied.value?.payload : null;
+    if (!snapshot || !Number.isFinite(snapshot.observedAt)) return null;
+    this.latest = { ...snapshot };
+    return { ...snapshot };
+  }
+
+  private mirrorSnapshot(snapshot: RainbowProfitSnapshot): void {
+    if (!isCryptaraParallelProxyConfigured) return;
+    void writeCryptaraParallelSnapshot({
+      key: PARALLEL_PROXY_KEY,
+      workload: 'observability',
+      topic: PARALLEL_PROXY_TOPIC,
+      payload: snapshot,
+      observedAt: snapshot.observedAt,
+      expiresAt: snapshot.observedAt + PARALLEL_PROXY_FRESH_MS,
+    }).catch(() => undefined);
+  }
+
   private async refreshOnce(): Promise<RainbowProfitSnapshot | null> {
+    // Observability is explicitly non-authoritative. Under database pressure, a
+    // recent precomputed secondary read model is preferred over repeating the
+    // primary SUM/GROUP BY scan. Expiration is enforced in the secondary table.
+    const parallel = await this.readParallelSnapshotUnderPressure();
+    if (parallel) return parallel;
+
     if (!isDatabaseConfigured) return null;
     try {
-      // This used to issue three concurrent queries every refresh. Collapse the
-      // same snapshot into one SQL round trip and classify it as low-priority
-      // observability so governance/settlement persistence always wins pressure.
       const result = await withCryptaraSupabasePriority('low', () => pool.query(`
         WITH summary AS (
           SELECT
@@ -147,6 +182,7 @@ class RainbowProfitObservability {
         destinationFingerprint: destinationFingerprint(),
       };
       this.latest = snapshot;
+      this.mirrorSnapshot(snapshot);
 
       const signature = JSON.stringify({
         queuedProfitUsd: snapshot.queuedProfitUsd,
@@ -170,8 +206,6 @@ class RainbowProfitObservability {
       }
       return { ...snapshot };
     } catch (error) {
-      // Table creation belongs to the bridge itself. During first startup the
-      // observer may run before that initialization completes; retry next cycle.
       logger.debug('[RainbowBridge] Profit lifecycle snapshot deferred', {
         component: 'RainbowProfitObservability',
         error: error instanceof Error ? error.message : String(error),
