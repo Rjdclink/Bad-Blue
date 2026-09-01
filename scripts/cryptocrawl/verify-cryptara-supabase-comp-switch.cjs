@@ -63,7 +63,7 @@ requirePattern(distributedQuota, /dataPath\.path\s*===\s*'normal'[\s\S]{0,1200}M
 requirePattern(distributedQuota, /else\s*\{[\s\S]{0,180}compLocalWaits\s*\+=\s*1[\s\S]{0,120}avoidedDbReads\s*\+=\s*1/, 'comp quota path uses local timing and records avoided DB reads');
 requirePattern(distributedQuota, /Math\.ceil\(windowMs\s*\/\s*capacity\)/, 'comp quota fallback uses bounded fair local wait estimate');
 
-requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*15_000/, 'treasury safety heartbeat remains 15s regardless of comp mode');
+requirePattern(treasury, /const\s+HEARTBEAT_MS\s*=\s*60_000/, 'treasury safety heartbeat remains one minute regardless of comp mode');
 forbidPattern(treasury, /observabilityMultiplier|backgroundPollMultiplier|sharedFreshnessMultiplier/, 'comp-mode cadence leaks into treasury safety timing');
 
-console.log('[supabase-comp-switch] PASS: pressure switches normal->comp across shared reads, quota and noncritical DB workers; healthy hysteresis restores normal mode; treasury/critical durability remain unchanged');
+console.log('[supabase-comp-switch] PASS: pressure switches normal->comp across shared reads, quota and noncritical DB workers; healthy hysteresis restores normal mode; treasury/critical durability remain fixed and independent of comp cadence');
