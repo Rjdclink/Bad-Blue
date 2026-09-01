@@ -19,6 +19,7 @@ const requireFragments = (source, fragments, description) => {
 };
 
 const worker = read('server/services/cryptocrawl/integration/cryptara-supabase-admission-worker.ts');
+const superWorker = read('server/services/cryptocrawl/integration/cryptara-super-worker.ts');
 const governance = read('server/services/cryptocrawl/governance/index.ts');
 const stageState = read('server/services/cryptocrawl/governance/stage-state-store.ts');
 const executionLedger = read('server/services/cryptocrawl/execution/adapters/stage4-execution-ledger.ts');
@@ -82,8 +83,10 @@ requirePattern(worker, /authority:\s*'resource_admission_only'/, 'resource-only 
 requirePattern(worker, /writeAuthority:\s*false/, 'worker has no independent write authority');
 requirePattern(worker, /executionAuthority:\s*false/, 'worker has no execution authority');
 
-// Install after migration admission but before governance persistence and heavyweight route import.
-requirePattern(governance, /installCryptaraSupabaseAdmissionWorker\(\)[\s\S]{0,500}stageManager\.restorePersistence/, 'worker is installed before governance persistence begins');
+// Governance talks only to the Super Worker surface; its admission arm delegates
+// to the existing ordinary-lane worker before governance persistence begins.
+requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker admission arm delegates to the existing Cryptara DB governor');
+requirePattern(governance, /installCryptaraSuperWorkerAdmission\(\)[\s\S]{0,500}stageManager\.restorePersistence/, 'Super Worker admission is installed before governance persistence begins');
 requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,160}pool\.query/, 'governance reads use critical resource priority');
 requirePattern(stageState, /withCryptaraSupabasePriority\('critical',[\s\S]{0,160}pool\.connect/, 'governance transactions use critical resource priority');
 requirePattern(executionLedger, /function\s+highPriorityQuery[\s\S]{0,260}withCryptaraSupabasePriority\('high',[\s\S]{0,120}pool\.query/, 'Stage-4 execution ledger persistence receives high resource priority');
@@ -99,6 +102,8 @@ requireFragments(leaseAuthority, [
   'let authorityReadyUntil = 0;',
   'let authorityRetryAfter = 0;',
   'if (authorityProbeInFlight) return authorityProbeInFlight;',
+  'requestCryptaraSharedInformation<boolean>({',
+  "informationClass: 'schema_authority'",
   "withCryptaraSupabasePriority(priority, () => pool.query(",
   "to_regclass('public.${RESOURCE_LEASE_TABLE}')",
   "to_regprocedure('private.cryptocrawler_claim_resource_slot",
@@ -106,7 +111,8 @@ requireFragments(leaseAuthority, [
   'SELECT ${RESOURCE_SLOT_CLAIM_FUNCTION}',
   'export async function claimFixedResource(',
   'WHERE ${RESOURCE_LEASE_TABLE}.expires_at <= now()',
-], 'lease-table/function readiness and atomic claim implementation are single-source and single-flight');
+], 'lease-table/function readiness is Super Worker coalesced while atomic claims remain single-source');
+requirePattern(leaseAuthority, /primeCryptaraSharedInformation\s*\(\{[\s\S]{0,280}informationClass:\s*'schema_authority'/, 'startup schema proof primes the same Super Worker truth source');
 forbidPattern(leaseAuthority, /\bnew\s+Pool\s*\(/, 'shared lease authority creating an independent pool');
 
 requireFragments(resourceScheduler, [
@@ -182,4 +188,4 @@ requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}IN
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
-console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission, full effective startup capacity, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, single-flight shared lease authority across CEX/zero-capital/quota, server-side slot call coalescing, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned persistence invariants passed');
+console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission through the unified Cryptara Super Worker, full effective startup capacity, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, Super Worker single-flight shared lease authority across CEX/zero-capital/quota, server-side slot call coalescing, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned persistence invariants passed');
