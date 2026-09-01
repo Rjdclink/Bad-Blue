@@ -11,39 +11,33 @@ const forbidPattern = (source, pattern, description) => {
 };
 
 const entry = read('server/cryptara-bootstrap-entry.ts');
+const index = read('server/index.ts');
+const gateway = read('server/services/cryptocrawl/integration/cryptara-overflow-primary-gateway.ts');
 const dockerfile = read('Dockerfile');
 const superWorker = read('server/services/cryptocrawl/integration/cryptara-super-worker.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
 
-// Production must contract the primary pool and install Cryptara before any normal
-// server evaluation. HyperBridge then proves the overflow lane. A verified overflow
-// lane is an auxiliary head start; the existing Cryptara admission governor remains
-// responsible for bounded primary recovery and authoritative access.
 requirePattern(
   entry,
-  /import\('\.\/migrations\/reconcileAppSchema\.js'\)[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*overflowBootstrap[\s\S]*import\('\.\/index\.js'\)/,
-  'rollout contraction, Cryptara admission, and overflow decision must precede normal server evaluation',
+  /import\('\.\/migrations\/reconcileAppSchema\.js'\)[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*overflowBootstrap[\s\S]*cryptaraOverflowPrimaryGatewayConnect[\s\S]*import\('\.\/index\.js'\)/,
+  'rollout contraction, Cryptara admission, overflow verification and primary gateway interception must precede normal server evaluation',
 );
 requirePattern(
   entry,
-  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]{0,1200}verified overflow head-start active/,
-  'verified overflow must be explicitly treated as an auxiliary head start',
+  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*runThroughCryptaraOverflowPrimaryGateway[\s\S]*legacy_application_primary_acquisition/,
+  'verified overflow must become the sole application gateway to primary',
 );
-forbidPattern(
-  entry,
-  /PRIMARY-SILENCE|CRYPTARA_PRIMARY_NETWORK_SILENCED_OVERFLOW_ACTIVE|cryptaraPrimarySilenceConnect/,
-  'overflow startup must not permanently veto bounded authoritative primary recovery',
-);
-requirePattern(migrations, /const\s+rolloutMax\s*=\s*1\s*;/, 'Railway startup remains one ordinary DB client when primary fallback is needed');
+requirePattern(index, /databaseRuntimeMode\s*=\s*'overflow_proxy'/, 'verified overflow must be a normal proxy runtime mode');
+requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,500}directPrimaryProbes:\s*0/, 'overflow startup must declare zero direct primary probes');
+forbidPattern(index, /probePrimaryDatabaseOnce|overflow_degraded|until primary recovery/, 'overflow must not be temporary failover or directly probe primary');
+requirePattern(migrations, /const\s+rolloutMax\s*=\s*1\s*;/, 'Railway primary fallback remains one ordinary DB client when overflow is absent');
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker delegates to the existing admission governor');
+requirePattern(gateway, /createsDatabasePool:\s*false\s+as\s+const/, 'overflow primary gateway must reuse existing primary pools rather than create another pool');
+requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway contract must expose zero direct application primary calls');
 
-// The wrapper may probe only the existing overflow worker. It must not itself
-// issue primary SQL, create a new DB pool, call external HTTP directly, or poll.
-forbidPattern(entry, /\bpool\.query|\bdb\.execute|\bnew\s+Pool\s*\(|fetch\s*\(|axios|https?\.request/, 'bootstrap wrapper must not perform direct primary/provider work');
+forbidPattern(entry, /\bpool\.query|\bdb\.execute|fetch\s*\(|axios|https?\.request/, 'bootstrap wrapper must not perform direct primary/provider work');
 forbidPattern(entry, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap wrapper must not add polling or recovery timers');
 
-// Railway's final dist/index.js must be the wrapper-bundled entry and must still
-// pass the established final build verifier.
 requirePattern(dockerfile, /npm run build[\s\S]{0,600}npx esbuild server\/cryptara-bootstrap-entry\.ts[\s\S]{0,600}--outfile=dist\/index\.js[\s\S]{0,600}node scripts\/verify-build\.cjs/, 'Docker build emits and verifies the Cryptara-first production entry');
 
-console.log('[free-tier-startup] PASS: primary fallback remains contracted/governed, verified overflow head-starts before index.ts without self-blocking authoritative recovery, and the wrapper adds no direct primary/provider work or polling');
+console.log('[free-tier-startup] PASS: verified overflow becomes the application data plane, primary acquisitions route through overflow gateway, direct startup probes are zero, and no third pool/poller is introduced');
