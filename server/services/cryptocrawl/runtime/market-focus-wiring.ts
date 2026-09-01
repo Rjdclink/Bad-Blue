@@ -1,7 +1,9 @@
 import logger from '../../../logger.js';
 import { getMeasuredEvolutionSamples } from '../evolution/measured-execution-feedback.js';
 import {
+  setMarketUniverseEconomicProvider,
   setMarketUniversePerformanceProvider,
+  type MarketUniverseEconomicHint,
   type MarketUniversePerformanceHint,
 } from '../discovery/market-universe-controller.js';
 import { canonicalizeCexSymbol } from '../discovery/symbol-registry.js';
@@ -86,6 +88,48 @@ function buildPairPerformanceHints(): ReadonlyMap<string, MarketUniversePerforma
   return hints;
 }
 
+function buildPairEconomicHints(): ReadonlyMap<string, MarketUniverseEconomicHint> {
+  const grouped = new Map<string, ReturnType<typeof getCexFourModeSnapshot>>();
+  for (const mode of getCexFourModeSnapshot()) {
+    const canonical = canonicalizeCexSymbol(mode.symbol);
+    if (!canonical) continue;
+    const rows = grouped.get(canonical.symbol) || [];
+    rows.push(mode);
+    grouped.set(canonical.symbol, rows);
+  }
+
+  const hints = new Map<string, MarketUniverseEconomicHint>();
+  for (const [symbol, rows] of grouped.entries()) {
+    const positives = rows.filter(row => row.economicallyPositive);
+    const negativeGaps = rows
+      .filter(row => !row.economicallyPositive && Number.isFinite(row.riskAdjustedBpsToBreakEven))
+      .map(row => row.riskAdjustedBpsToBreakEven);
+    const freshness = rows
+      .map(row => Number(row.feeFreshnessScore))
+      .filter(Number.isFinite);
+    const makerProbabilities = rows
+      .map(row => row.makerFillProbability)
+      .filter((value): value is number => value !== null && Number.isFinite(value));
+
+    hints.set(symbol, {
+      symbol,
+      observedModes: rows.length,
+      positiveModes: positives.length,
+      closestRiskAdjustedGapBps: negativeGaps.length > 0 ? Math.min(...negativeGaps) : null,
+      bestPositiveBps: positives.length > 0
+        ? Math.max(...positives.map(row => Math.max(row.expectedFeeAdjustedBps, row.netAfterExchangeFeesBps)))
+        : null,
+      feeFreshnessScore: freshness.length > 0
+        ? freshness.reduce((sum, value) => sum + value, 0) / freshness.length
+        : null,
+      makerFillProbability: makerProbabilities.length > 0
+        ? Math.max(...makerProbabilities)
+        : null,
+    });
+  }
+  return hints;
+}
+
 /**
  * Market focus now fuses terminal realized evidence with the current measured
  * TT/MT/TM/MM BPS surface and provider quality. It remains advisory search
@@ -96,6 +140,7 @@ export function ensureMarketFocusWiring(): void {
   if (installed) return;
   installed = true;
   setMarketUniversePerformanceProvider(buildPairPerformanceHints);
+  setMarketUniverseEconomicProvider(buildPairEconomicHints);
   void ensureTokenContractDirectory().catch(error => {
     logger.warn('[MarketFocus] Token-contract identity warmup degraded without blocking market focus', {
       component: 'MarketFocus',

@@ -62,12 +62,16 @@ function startupTrace(event: string, details: Record<string, unknown> = {}): voi
   );
 }
 
+type DatabaseRuntimeMode = 'initializing' | 'primary' | 'overflow_proxy';
+
 let isReady = false;
-let isFullyInitialized = false; // Tracks full service initialization
+let isFullyInitialized = false; // Tracks full HTTP/application surface initialization
 let isShuttingDown = false;
 let startupError: string | null = null;
 let backgroundInitializationError: string | null = null;
 let databaseInitialized = false;
+let overflowDatabaseReady = false;
+let databaseRuntimeMode: DatabaseRuntimeMode = 'initializing';
 let httpServer: Server | null = null;
 
 startupTrace('express_created');
@@ -167,66 +171,195 @@ async function gracefulShutdown(signal: string): Promise<void> {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-async function retryAsync<T>(
-  fn: () => Promise<T>,
-  maxRetries: number = 3,
-  delayMs: number = 1000,
-  backoffMultiplier: number = 2
-): Promise<T> {
-  let lastError: Error | undefined;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+function databaseRetryDelayMs(attempt: number, baseMs: number = 2_000, maxMs: number = 12_000): number {
+  const exponent = Math.min(8, Math.max(0, attempt - 1));
+  const capMs = Math.min(maxMs, baseMs * Math.pow(2, exponent));
+  const floorMs = Math.min(500, Math.max(100, Math.floor(capMs / 4)));
+  return floorMs + Math.floor(Math.random() * Math.max(1, capMs - floorMs + 1));
+}
+
+function databaseErrorText(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: any = error;
+  for (let depth = 0; depth < 6 && current != null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (current instanceof Error && current.message) parts.push(current.message);
+    else if (typeof current === 'string') parts.push(current);
+    if (current && typeof current === 'object' && current.code) parts.push(String(current.code));
+    current = current && typeof current === 'object' ? current.cause : null;
+  }
+  if (parts.length === 0) parts.push(String(error ?? ''));
+  return parts.join(' | ').toLowerCase();
+}
+
+function isDatabaseAdmissionPressureError(error: unknown): boolean {
+  const message = databaseErrorText(error);
+  const timeoutContext = message.includes('timeout') || message.includes('timed out') || message.includes('connection terminated');
+  return (
+    message.includes('53300') || // PostgreSQL too_many_connections
+    message.includes('57p03') || // cannot_connect_now / transient admission failure
+    message.includes('etimedout') ||
+    message.includes('connection timeout') ||
+    message.includes('connection terminated due to connection timeout') ||
+    message.includes('failed to connect to database: {:error, :timeout}') ||
+    message.includes('too many connections') ||
+    message.includes('too many clients') ||
+    message.includes('remaining connection slots') ||
+    message.includes('max_client_conn') ||
+    message.includes('database is overloaded') ||
+    message.includes('timeout expired') ||
+    (message.includes('08006') && timeoutContext)
+  );
+}
+
+function isPermanentDatabaseStartupError(error: unknown): boolean {
+  const message = databaseErrorText(error);
+  return (
+    message.includes('28p01') || // invalid_password
+    message.includes('28000') || // invalid_authorization_specification
+    message.includes('3d000') || // invalid_catalog_name
+    message.includes('password authentication failed') ||
+    message.includes('database does not exist') ||
+    message.includes('invalid connection string')
+  );
+}
+
+function isLocalPoolFailure(error: unknown): boolean {
+  const message = databaseErrorText(error);
+  return (
+    message.includes('cannot use a pool after calling end') ||
+    message.includes('pool is closed') ||
+    message.includes('client was closed and is not queryable')
+  );
+}
+
+function startupDatabaseAdmissionBudgetMs(): number {
+  const railwayHealthcheckSeconds = Number(process.env.RAILWAY_HEALTHCHECK_TIMEOUT_SEC || 300);
+  const healthcheckMs = Number.isFinite(railwayHealthcheckSeconds) && railwayHealthcheckSeconds > 0
+    ? railwayHealthcheckSeconds * 1_000
+    : 300_000;
+  const reserveMs = Math.min(60_000, Math.max(30_000, Math.floor(healthcheckMs * 0.20)));
+  const defaultBudgetMs = Math.max(30_000, healthcheckMs - reserveMs);
+  const configuredBudgetMs = Number(process.env.BADBLUE_DATABASE_ADMISSION_BUDGET_MS || defaultBudgetMs);
+  const safeUpperBoundMs = Math.max(30_000, healthcheckMs - 15_000);
+  return Math.max(30_000, Math.min(safeUpperBoundMs, Number.isFinite(configuredBudgetMs) ? configuredBudgetMs : defaultBudgetMs));
+}
+
+async function retryDatabaseProbeWithinBudget(): Promise<void> {
+  const budgetMs = startupDatabaseAdmissionBudgetMs();
+  const startedAt = Date.now();
+  let attempt = 0;
+  let lastError: unknown = null;
+
+  while (Date.now() - startedAt < budgetMs) {
+    attempt += 1;
     try {
-      return await fn();
+      const { db } = await import('./db');
+      await db.execute('SELECT 1');
+      if (attempt > 1) {
+        console.log(`[RETRY] Database admission recovered on attempt ${attempt} after ${Date.now() - startedAt}ms`);
+      }
+      return;
     } catch (error: any) {
       lastError = error;
-      console.warn(`[RETRY] Attempt ${attempt}/${maxRetries} failed:`, error?.message ?? error);
-      
-      if (attempt < maxRetries) {
-        const waitTime = delayMs * Math.pow(backoffMultiplier, attempt - 1);
-        console.log(`[RETRY] Waiting ${waitTime}ms before retry...`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
+      const elapsedMs = Date.now() - startedAt;
+      const admissionPressure = isDatabaseAdmissionPressureError(error);
+      console.warn(`[RETRY] Database probe ${attempt} failed after ${elapsedMs}ms:`, error?.message ?? error);
+
+      if (isPermanentDatabaseStartupError(error) || isLocalPoolFailure(error)) {
+        throw error;
       }
+
+      const remainingMs = Math.max(0, budgetMs - elapsedMs);
+      if (remainingMs <= 0) break;
+
+      // This path exists only when overflow is unavailable. With verified overflow,
+      // startup never enters this primary admission loop.
+      const waitTime = Math.min(databaseRetryDelayMs(attempt), remainingMs);
+      console.log(`[RETRY] Database admission ${admissionPressure ? 'pressure' : 'transient failure'}; jittering ${waitTime}ms (${remainingMs}ms budget remaining)`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
-  
-  throw lastError;
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`database admission budget exhausted after ${budgetMs}ms`);
 }
 
 async function initializeDatabase(): Promise<boolean> {
   startupTrace('database_initialization_started');
-  console.log('[STARTUP] Stage 1: Database connection...');
+  console.log('[STARTUP] Stage 1: Database connection (overflow-unavailable fallback only)...');
   
+  let lastError: unknown = null;
   try {
-    await retryAsync(async () => {
-      const { db } = await import('./db');
-      await db.execute('SELECT 1');
-    }, 3, 2000);
+    await retryDatabaseProbeWithinBudget();
     console.log('[STARTUP] ✓ Database connection verified');
     startupTrace('database_initialization_completed', { connected: true, recovered: false });
     return true;
   } catch (error: any) {
-    console.error('[STARTUP] ❌ Database connection failed after retries:', error?.message ?? error);
-    console.log('[STARTUP] Attempting pool reset...');
-    
+    lastError = error;
+    console.error('[STARTUP] ❌ Database admission window ended:', error?.message ?? error);
+  }
+
+  // Recreate pools only when the local node-postgres pool itself is positively
+  // known to be closed/corrupt. Upstream overload, auth/config failures and
+  // unknown transient network errors must never create a two-lane reconnect burst.
+  if (isLocalPoolFailure(lastError)) {
+    console.log('[STARTUP] Local pool failure detected; attempting one bounded pool reset...');
     try {
       const { resetPool } = await import('./db');
       await resetPool();
-      
-      const { db } = await import('./db');
-      await db.execute('SELECT 1');
       console.log('[STARTUP] ✓ Database pool reset successful');
       startupTrace('database_initialization_completed', { connected: true, recovered: true });
       return true;
     } catch (resetError: any) {
+      lastError = resetError;
       console.error('[STARTUP] ❌ Database pool reset failed:', resetError?.message ?? resetError);
-      console.warn('[STARTUP] Starting with degraded database connectivity');
-      startupTrace('database_initialization_completed', {
-        connected: false,
-        error: resetError?.message ?? String(resetError),
-      });
-      return false;
     }
+  } else if (isDatabaseAdmissionPressureError(lastError)) {
+    console.warn('[STARTUP] Database admission pressure detected; skipping pool reset to avoid connection churn');
+  } else if (isPermanentDatabaseStartupError(lastError)) {
+    console.error('[STARTUP] Permanent database configuration/authentication failure; pool reset suppressed');
+  } else {
+    console.warn('[STARTUP] Unknown transient database/network failure; pool reset suppressed to avoid reconnect amplification');
+  }
+
+  console.warn('[STARTUP] Database unavailable and overflow is unavailable; deployment remains unready');
+  startupTrace('database_initialization_completed', {
+    connected: false,
+    admissionPressure: isDatabaseAdmissionPressureError(lastError),
+    permanentFailure: isPermanentDatabaseStartupError(lastError),
+    localPoolFailure: isLocalPoolFailure(lastError),
+    error: lastError instanceof Error ? lastError.message : String(lastError),
+  });
+  return false;
+}
+
+async function waitForOverflowBootstrapReadiness(): Promise<boolean> {
+  try {
+    const {
+      getCryptaraHyperBridgeBootstrapSnapshot,
+      startCryptaraHyperBridgeBootstrap,
+    } = await import('./services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.js');
+
+    await startCryptaraHyperBridgeBootstrap();
+    const snapshot = getCryptaraHyperBridgeBootstrapSnapshot();
+    const ready = snapshot.state === 'ready';
+    startupTrace('overflow_bootstrap_evaluated', {
+      ready,
+      state: snapshot.state,
+      configured: snapshot.configured,
+      latencyMs: snapshot.latencyMs,
+      reason: snapshot.reason,
+    });
+    return ready;
+  } catch (error) {
+    startupTrace('overflow_bootstrap_evaluation_failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    console.warn('[STARTUP] Overflow readiness evaluation failed:', error instanceof Error ? error.message : String(error));
+    return false;
   }
 }
 
@@ -302,28 +435,14 @@ async function initializeServices(): Promise<void> {
     console.warn('[STARTUP] ⚠ LegalWhat Worker failed:', error?.message ?? error);
   }
 
-  // Initialize Sub-Agent Web Harvester for daily officer data collection
-  try {
-    const { subAgentHarvester } = await import('./subAgentWebHarvester');
-    await subAgentHarvester.initialize();
-    console.log('[STARTUP] ✓ Sub-Agent Web Harvester initialized (daily 2:30 UTC)');
-  } catch (error: any) {
-    console.warn('[STARTUP] ⚠ Sub-Agent Web Harvester failed:', error?.message ?? error);
-  }
-
-  // Initialize Sub-Agent Harvester with failover logging and population priority
+  // One canonical officer-data harvester owns the shared session manager, priority
+  // queue, and timer. Its own defaults carry the current bounded 36h/7-search policy.
   try {
     const { initializeHarvester } = await import('./subAgentHarvester');
-    await initializeHarvester({
-      dailyHarvestHourUTC: 3,
-      dailyHarvestMinuteUTC: 0,
-      maxSearchesPerCycle: 15,
-      highPopulationThreshold: 100000,
-      mediumPopulationThreshold: 25000
-    });
-    console.log('[STARTUP] ✓ Sub-Agent Harvester initialized (daily 3:00 UTC)');
+    await initializeHarvester();
+    console.log('[STARTUP] ✓ Canonical Sub-Agent Harvester initialized (36h adaptive interval)');
   } catch (error: any) {
-    console.warn('[STARTUP] ⚠ Sub-Agent Harvester failed:', error?.message ?? error);
+    console.warn('[STARTUP] ⚠ Canonical Sub-Agent Harvester failed:', error?.message ?? error);
   }
 
   // Initialize Unified Maintenance Worker for weekly system maintenance
@@ -416,8 +535,8 @@ app.get("/api/health", (req, res) => {
           ? 'starting'
           : 'initializing';
 
-  // Railway liveness must not wait on a database probe. Core database readiness
-  // is recorded by startup initialization and strict readiness remains /api/ready.
+  // Cheap runtime liveness intentionally does not wait on a database probe.
+  // Railway deployment admission is the strict /api/ready endpoint below.
   const httpStatus = isReady && !startupError ? 200 : 503;
 
   res.status(httpStatus).json({
@@ -428,7 +547,11 @@ app.get("/api/health", (req, res) => {
     backgroundInitializationError,
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
-    database: { initialized: databaseInitialized },
+    database: {
+      initialized: databaseInitialized,
+      overflowReady: overflowDatabaseReady,
+      mode: databaseRuntimeMode,
+    },
     env: {
       stripeConfigured: !!process.env.STRIPE_SECRET_KEY,
       geminiConfigured: !!process.env.GEMINI_API_KEY,
@@ -455,15 +578,24 @@ app.get("/api/health", (req, res) => {
 startupTrace('health_route_registered');
 
 app.get("/api/ready", (_req, res) => {
-  // /api/ready returns 200 only when FULLY initialized (all migrations + services)
-  // /api/health is the Railway liveness endpoint; this endpoint is strict readiness.
-  if (isFullyInitialized && !isShuttingDown && !startupError) {
-    res.status(200).json({ ready: true, fullyInitialized: true });
+  const usableDataPlane = databaseInitialized || overflowDatabaseReady;
+  if (isFullyInitialized && usableDataPlane && !isShuttingDown && !startupError) {
+    res.status(200).json({
+      ready: true,
+      fullyInitialized: true,
+      databaseInitialized,
+      overflowDatabaseReady,
+      databaseMode: databaseRuntimeMode,
+    });
   } else {
     res.status(503).json({ 
-      ready: isReady, 
+      ready: isReady,
       fullyInitialized: isFullyInitialized,
-      shuttingDown: isShuttingDown 
+      databaseInitialized,
+      overflowDatabaseReady,
+      databaseMode: databaseRuntimeMode,
+      shuttingDown: isShuttingDown,
+      startupError,
     });
   }
 });
@@ -519,13 +651,62 @@ httpServer = createServer(app);
     });
   });
 
+  // Verified overflow is the normal application data plane. There is no direct
+  // primary readiness/recovery probe here. Legacy primary acquisitions are already
+  // intercepted by cryptara-bootstrap-entry.ts and routed through overflow gateway.
+  try {
+    overflowDatabaseReady = await waitForOverflowBootstrapReadiness();
+
+    if (overflowDatabaseReady) {
+      databaseInitialized = true;
+      databaseRuntimeMode = 'overflow_proxy';
+      startupTrace('overflow_proxy_mode_activated', {
+        overflowConnected: true,
+        directPrimaryProbes: 0,
+        primaryAccess: 'overflow_gateway_only',
+      });
+      console.log('[STARTUP] ✓ Overflow proxy data plane active; direct primary probes=0; necessary primary access routes only through overflow/bridge/workers');
+    } else {
+      const primaryReady = await initializeDatabase();
+      if (!primaryReady) {
+        throw new Error('Neither verified overflow proxy nor primary fallback established a usable startup data plane');
+      }
+
+      databaseInitialized = true;
+      databaseRuntimeMode = 'primary';
+
+      await runMigrations();
+
+      const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
+      await initializeGovernance();
+
+      // Schema verification is global application telemetry. A degraded/missing
+      // CryptoCrawler authority object must not take down unrelated LegalWhat
+      // availability; CryptoCrawler lifecycle entry independently verifies and
+      // fails closed on its migration-owned authority schema before execution.
+      const { runStartupSchemaVerification } = await import('./db');
+      const schemaReady = await runStartupSchemaVerification();
+      if (!schemaReady) {
+        backgroundInitializationError = 'Startup schema verification reported degraded database schema';
+        startupTrace('database_schema_degraded');
+        console.warn('[STARTUP] ⚠ Production schema verification reported degraded state; scoped runtime authorities remain fail-closed');
+      }
+    }
+  } catch (error) {
+    startupError = error instanceof Error ? error.message : String(error);
+    startupTrace('core_initialization_failed', { error: startupError });
+    console.error('[STARTUP] ❌ Core initialization failed:', error);
+    return;
+  }
+
 startupTrace('routes_import_started');
 const { registerRoutes } = await import("./routes");
 startupTrace('routes_import_completed');
 startupTrace('routes_registration_started');
 await registerRoutes(app);
 startupTrace('routes_registration_completed');
-  // Routes may initialize optional subsystems; keep Railway liveness independent.
+  // With overflow proxy mode active, route and worker code may request primary
+  // information normally; the bootstrap gateway prevents direct primary acquisition.
   
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -593,44 +774,28 @@ startupTrace('routes_registration_completed');
     startupTrace('static_serving_completed');
   }
 
-(async () => {
-    
-  // Continue initialization after binding; /api/ready remains unavailable until it completes.
-    try {
-      // Database and migrations are required before the application is fully ready.
-      const databaseReady = await initializeDatabase();
-      if (!databaseReady) {
-        throw new Error('Database initialization did not establish a usable connection');
-      }
-      databaseInitialized = true;
-      
-      await runMigrations();
-
-      const { initializeGovernance } = await import('./services/cryptocrawl/governance/index.js');
-      await initializeGovernance();
-      
-      // Run startup schema verification to confirm correct database connection
-      const { runStartupSchemaVerification } = await import('./db');
-      await runStartupSchemaVerification();
-    } catch (error) {
-      startupError = error instanceof Error ? error.message : String(error);
-      startupTrace('core_initialization_failed', { error: startupError });
-      console.error('[STARTUP] ❌ Core initialization failed:', error);
-      return;
-    }
-
-    try {
+  try {
+    if (databaseInitialized) {
       await initializeServices();
-      
-      isFullyInitialized = true;
+    }
+    
+    isFullyInitialized = true;
+    if (databaseRuntimeMode === 'overflow_proxy') {
+      startupTrace('application_ready_overflow_proxy', {
+        overflowConnected: true,
+        directPrimaryProbes: 0,
+        primaryAccess: 'overflow_gateway_only',
+      });
+      console.log('[STARTUP] ✓ Server ready on overflow proxy data plane; bridge/workers active; direct primary probes=0');
+    } else {
       startupTrace('application_ready');
       console.log('[STARTUP] ✓ Server fully initialized and ready');
-    } catch (error) {
-      backgroundInitializationError = error instanceof Error ? error.message : String(error);
-      startupTrace('background_initialization_failed', { error: backgroundInitializationError });
-      console.error('[STARTUP] ⚠ Background initialization failed:', error);
     }
-  })();
+  } catch (error) {
+    backgroundInitializationError = error instanceof Error ? error.message : String(error);
+    startupTrace('background_initialization_failed', { error: backgroundInitializationError });
+    console.error('[STARTUP] ⚠ Background initialization failed:', error);
+  }
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error);
     startupTrace('bootstrap_failed_before_listening', { error: startupError });

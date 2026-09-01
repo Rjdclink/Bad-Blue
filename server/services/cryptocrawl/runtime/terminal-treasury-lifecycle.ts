@@ -3,6 +3,7 @@ import { isDatabaseConfigured, pool } from '../../../db.js';
 import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
 import { resolveExecutionWalletAddress, resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
 import { setTreasuryRestartSweepBarrier } from '../governance/treasury-execution-barrier.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 
 const SYSTEM_KEY = 'cryptocrawler';
 const HEARTBEAT_MS = 15_000;
@@ -18,6 +19,13 @@ const FALLBACK_DESTINATION = EXECUTION_WALLET_DESTINATION && EXECUTION_WALLET_DE
 
 type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 'MANUAL_REVIEW';
 
+type VaultSecretSpec = {
+  name: string;
+  value: string;
+  optional: boolean;
+  description: string;
+};
+
 let timer: NodeJS.Timeout | null = null;
 let heartbeatInFlight: Promise<void> | null = null;
 let signalInstalled = false;
@@ -25,10 +33,20 @@ let workerSecretsSynchronized = false;
 let consecutiveHeartbeatFailures = 0;
 let heartbeatDegradedUntil = 0;
 
+function highPriorityQuery(text: string, values: unknown[] = []) {
+  return withCryptaraSupabasePriority('high', () => pool.query(text, values));
+}
+
+function criticalPriorityQuery(text: string, values: unknown[] = []) {
+  return withCryptaraSupabasePriority('critical', () => pool.query(text, values));
+}
+
 function databaseBackoffMs(): number {
   const baseMs = Math.max(HEARTBEAT_MS, Number(process.env.CRYPTOCRAWL_TREASURY_DB_BACKOFF_BASE_MS || HEARTBEAT_MS));
   const maxMs = Math.max(baseMs, Number(process.env.CRYPTOCRAWL_TREASURY_DB_BACKOFF_MAX_MS || 120_000));
-  return Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, consecutiveHeartbeatFailures - 1)));
+  const capMs = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, consecutiveHeartbeatFailures - 1)));
+  const floorMs = Math.max(HEARTBEAT_MS, Math.floor(capMs / 2));
+  return floorMs + Math.floor(Math.random() * Math.max(1, capMs - floorMs + 1));
 }
 
 const sigtermCandidateListener = (): void => {
@@ -41,52 +59,87 @@ const sigtermCandidateListener = (): void => {
   });
 };
 
-async function upsertVaultSecret(name: string, value: string): Promise<void> {
-  if (!value) return;
-  const existing = await pool.query('SELECT id FROM vault.secrets WHERE name=$1 LIMIT 1', [name]);
-  const id = existing.rows[0]?.id ? String(existing.rows[0].id) : '';
-  if (id) {
-    await pool.query('SELECT vault.update_secret($1::uuid, $2, $3, $4)', [
-      id, value, name, 'CryptoCrawler treasury worker secret synchronized from Railway runtime',
-    ]);
-  } else {
-    await pool.query('SELECT vault.create_secret($1, $2, $3)', [
-      value, name, 'CryptoCrawler treasury worker secret synchronized from Railway runtime',
-    ]);
-  }
-}
-
-async function syncOptionalVaultSecret(name: string, value: string): Promise<void> {
-  const existing = await pool.query('SELECT id FROM vault.secrets WHERE name=$1 LIMIT 1', [name]);
-  const id = existing.rows[0]?.id ? String(existing.rows[0].id) : '';
-  if (id) {
-    await pool.query('SELECT vault.update_secret($1::uuid, $2, $3, $4)', [
-      id, value, name, 'CryptoCrawler optional treasury worker secret synchronized from Railway runtime',
-    ]);
-  } else if (value) {
-    await pool.query('SELECT vault.create_secret($1, $2, $3)', [
-      value, name, 'CryptoCrawler optional treasury worker secret synchronized from Railway runtime',
-    ]);
-  }
-}
-
 async function syncWorkerSecrets(): Promise<void> {
-  const secrets: Array<[string, string]> = [
-    ['cryptocrawler_okx_api_key', (process.env.OKX_API_KEY || '').trim()],
-    ['cryptocrawler_okx_api_secret', (process.env.OKX_API_SECRET || '').trim()],
-    ['cryptocrawler_okx_api_passphrase', (process.env.OKX_API_PASSPHRASE || '').trim()],
-    ['cryptocrawler_profit_wallet', DESTINATION],
-    ['cryptocrawler_supabase_url', (process.env.SUPABASE_URL || '').trim()],
-    ['cryptocrawler_supabase_service_key', (process.env.SUPABASE_SERVICE_KEY || '').trim()],
+  const requiredDescription = 'CryptoCrawler treasury worker secret synchronized from Railway runtime';
+  const optionalDescription = 'CryptoCrawler optional treasury worker secret synchronized from Railway runtime';
+  const secrets: VaultSecretSpec[] = [
+    { name: 'cryptocrawler_okx_api_key', value: (process.env.OKX_API_KEY || '').trim(), optional: false, description: requiredDescription },
+    { name: 'cryptocrawler_okx_api_secret', value: (process.env.OKX_API_SECRET || '').trim(), optional: false, description: requiredDescription },
+    { name: 'cryptocrawler_okx_api_passphrase', value: (process.env.OKX_API_PASSPHRASE || '').trim(), optional: false, description: requiredDescription },
+    { name: 'cryptocrawler_profit_wallet', value: DESTINATION, optional: false, description: requiredDescription },
+    { name: 'cryptocrawler_supabase_url', value: (process.env.SUPABASE_URL || '').trim(), optional: false, description: requiredDescription },
+    { name: 'cryptocrawler_supabase_service_key', value: (process.env.SUPABASE_SERVICE_KEY || '').trim(), optional: false, description: requiredDescription },
+    { name: 'cryptocrawler_fallback_wallet', value: FALLBACK_DESTINATION, optional: true, description: optionalDescription },
   ];
-  for (const [name, value] of secrets) await upsertVaultSecret(name, value);
-  await syncOptionalVaultSecret('cryptocrawler_fallback_wallet', FALLBACK_DESTINATION);
+
+  // Resolve all current Vault ids in one acquisition rather than one SELECT per
+  // secret. Writes remain serialized so Vault mutation load is bounded and a
+  // partially failed sync can safely retry from durable state on the next beat.
+  const existing = await highPriorityQuery(
+    'SELECT id, name FROM vault.secrets WHERE name = ANY($1::text[])',
+    [secrets.map(secret => secret.name)],
+  );
+  const ids = new Map<string, string>(
+    existing.rows
+      .filter(row => row?.name && row?.id)
+      .map(row => [String(row.name), String(row.id)]),
+  );
+
+  for (const secret of secrets) {
+    const id = ids.get(secret.name) || '';
+    if (id) {
+      // Preserve the prior optional-secret rule: an existing fallback is updated
+      // even to an empty value so stale fallback authority cannot survive config.
+      if (!secret.optional && !secret.value) continue;
+      await highPriorityQuery('SELECT vault.update_secret($1::uuid, $2, $3, $4)', [
+        id, secret.value, secret.name, secret.description,
+      ]);
+      continue;
+    }
+
+    if (!secret.value) continue;
+    await highPriorityQuery('SELECT vault.create_secret($1, $2, $3)', [
+      secret.value, secret.name, secret.description,
+    ]);
+  }
 }
 
-async function readTreasuryState(): Promise<TreasuryState> {
-  const result = await pool.query(
-    `SELECT desired_state FROM public.cryptocrawler_terminal_sweep_control WHERE system_key=$1`,
-    [SYSTEM_KEY],
+/**
+ * Read the pre-heartbeat treasury state and apply the permitted successor update
+ * in one PostgreSQL round trip. The state CTE is materialized and row-locked so
+ * the returned value remains the state observed before a possible SWEPT->RUNNING
+ * transition; sweep/manual-review states are read but never heartbeat-updated.
+ */
+async function heartbeatTreasuryState(): Promise<TreasuryState> {
+  const result = await highPriorityQuery(
+    `WITH state AS MATERIALIZED (
+       SELECT desired_state
+       FROM public.cryptocrawler_terminal_sweep_control
+       WHERE system_key=$1
+       FOR UPDATE
+     ), updated AS (
+       UPDATE public.cryptocrawler_terminal_sweep_control AS control
+       SET desired_state = CASE WHEN state.desired_state='SWEPT' THEN 'RUNNING' ELSE control.desired_state END,
+           terminal_epoch = CASE WHEN state.desired_state='SWEPT' THEN NULL ELSE control.terminal_epoch END,
+           terminal_detection_not_before = CASE WHEN state.desired_state='SWEPT' THEN NULL ELSE control.terminal_detection_not_before END,
+           intent_source = CASE WHEN state.desired_state='SWEPT' THEN 'successor_after_confirmed_restart_sweep' ELSE control.intent_source END,
+           active_successor_deployment_id=NULLIF($2,''),
+           last_observed_deployment_id=NULLIF($2,''),
+           last_observed_deployment_status='SUCCESS',
+           last_seen_active_at=now(),
+           destination_address=COALESCE(NULLIF($3,''), control.destination_address),
+           last_error = CASE WHEN state.desired_state='SWEPT' THEN NULL ELSE control.last_error END,
+           updated_at=now()
+       FROM state
+       WHERE control.system_key=$1
+         AND state.desired_state IN ('RUNNING','SWEPT')
+       RETURNING state.desired_state AS prior_state
+     )
+     SELECT prior_state AS desired_state FROM updated
+     UNION ALL
+     SELECT desired_state FROM state WHERE desired_state NOT IN ('RUNNING','SWEPT')
+     LIMIT 1`,
+    [SYSTEM_KEY, RAILWAY_DEPLOYMENT_ID, DESTINATION],
   );
   return String(result.rows[0]?.desired_state || 'RUNNING') as TreasuryState;
 }
@@ -106,7 +159,7 @@ async function heartbeatOnce(): Promise<void> {
         workerSecretsSynchronized = true;
       }
 
-      const state = await readTreasuryState();
+      const state = await heartbeatTreasuryState();
 
       if (state === 'TERMINATE_AND_SWEEP' || state === 'SWEEPING') {
         // A successor process must not cancel the previous deployment's restart
@@ -126,42 +179,8 @@ async function heartbeatOnce(): Promise<void> {
         return;
       }
 
-      if (state === 'SWEPT') {
-        // The restart drain is complete. A surviving/new deployment can now
-        // reopen the lifecycle for future trading and future restart drains.
-        await pool.query(
-          `UPDATE public.cryptocrawler_terminal_sweep_control
-           SET desired_state='RUNNING',
-               terminal_epoch=NULL,
-               terminal_detection_not_before=NULL,
-               intent_source='successor_after_confirmed_restart_sweep',
-               active_successor_deployment_id=NULLIF($2,''),
-               last_observed_deployment_id=NULLIF($2,''),
-               last_observed_deployment_status='SUCCESS',
-               last_seen_active_at=now(),
-               destination_address=COALESCE(NULLIF($3,''), destination_address),
-               last_error=NULL,
-               updated_at=now()
-           WHERE system_key=$1 AND desired_state='SWEPT'`,
-          [SYSTEM_KEY, RAILWAY_DEPLOYMENT_ID, DESTINATION],
-        );
-        setTreasuryRestartSweepBarrier(false);
-        consecutiveHeartbeatFailures = 0;
-        heartbeatDegradedUntil = 0;
-        return;
-      }
-
-      await pool.query(
-        `UPDATE public.cryptocrawler_terminal_sweep_control
-         SET active_successor_deployment_id=NULLIF($2,''),
-             last_observed_deployment_id=NULLIF($2,''),
-             last_observed_deployment_status='SUCCESS',
-             last_seen_active_at=now(),
-             destination_address=COALESCE(NULLIF($3,''), destination_address),
-             updated_at=now()
-         WHERE system_key=$1 AND desired_state='RUNNING'`,
-        [SYSTEM_KEY, RAILWAY_DEPLOYMENT_ID, DESTINATION],
-      );
+      // RUNNING is heartbeated in the same query. SWEPT is atomically reopened to
+      // RUNNING by that query before this barrier is cleared.
       setTreasuryRestartSweepBarrier(false);
       consecutiveHeartbeatFailures = 0;
       heartbeatDegradedUntil = 0;
@@ -224,12 +243,14 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     singlePayoutAuthority: 'supabase_worker_okx_only',
     fallbackActivation: 'confirmed_primary_withdrawal_terminal_failure_only',
     staleFallbackSecretAllowed: false,
+    steadyHeartbeatRoundTrips: 1,
+    vaultLookupRoundTripsPerSync: 1,
   });
 }
 
 export async function markTerminalSweepCandidate(signal: string): Promise<void> {
   if (!isDatabaseConfigured || signal !== 'SIGTERM' || !RAILWAY_DEPLOYMENT_ID) return;
-  await pool.query(
+  await criticalPriorityQuery(
     `UPDATE public.cryptocrawler_terminal_sweep_control
      SET desired_state='TERMINATE_AND_SWEEP',
          terminal_epoch=gen_random_uuid(),

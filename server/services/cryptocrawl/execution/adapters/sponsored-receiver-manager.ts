@@ -127,6 +127,26 @@ export class SponsoredReceiverManager {
     if (uniqueAddresses.size === 1) process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER = Object.values(byChain)[0];
   }
 
+  private async receiverIdentity(input: {
+    chain: SupportedExecutionChain;
+    provider: providers.JsonRpcProvider;
+    owner: string;
+  }): Promise<{ chainId: number; vault: string; owner: string; predictedAddress: string; initCode: string }> {
+    const vault = resolveSponsoredReceiverVault(input.chain);
+    if (!vault) throw new Error(`${input.chain} has no configured Balancer-compatible flash-loan vault`);
+    const network = await input.provider.getNetwork();
+    const owner = requireAddress('receiver owner', input.owner);
+    const artifact = await this.loadArtifact();
+    const constructorArgs = ethers.utils.defaultAbiCoder.encode(['address', 'address'], [vault, owner]);
+    const initCode = ethers.utils.hexConcat([artifact.bytecode, constructorArgs]);
+    const predictedAddress = ethers.utils.getCreate2Address(
+      DEFAULT_CREATE2_DEPLOYER,
+      RECEIVER_SALT,
+      ethers.utils.keccak256(initCode),
+    );
+    return { chainId: network.chainId, vault, owner, predictedAddress, initCode };
+  }
+
   private async verifyReceiver(provider: providers.JsonRpcProvider, address: string, owner: string, vault: string): Promise<void> {
     const code = await provider.getCode(address);
     if (code === '0x') throw new Error(`Receiver bytecode is missing at ${address}`);
@@ -139,115 +159,128 @@ export class SponsoredReceiverManager {
     if (actualVault.toLowerCase() !== vault.toLowerCase()) throw new Error(`Receiver Balancer vault mismatch at ${address}`);
   }
 
+  /**
+   * Read-only receiver inspection. It computes the same deterministic CREATE2
+   * address as deployment, verifies bytecode/owner/vault if already deployed,
+   * and never broadcasts a transaction or mutates on-chain permissions.
+   */
+  async inspectExistingReceiver(input: {
+    chain: SupportedExecutionChain;
+    provider: providers.JsonRpcProvider;
+    owner: string;
+  }): Promise<SponsoredReceiverRecord | null> {
+    const cached = this.records.get(input.chain);
+    if (cached) {
+      await this.verifyReceiver(input.provider, cached.address, cached.owner, cached.vault);
+      return { ...cached };
+    }
+
+    const identity = await this.receiverIdentity(input);
+    const code = await input.provider.getCode(identity.predictedAddress);
+    if (code === '0x') return null;
+    await this.verifyReceiver(input.provider, identity.predictedAddress, identity.owner, identity.vault);
+    const record: SponsoredReceiverRecord = {
+      chain: input.chain,
+      chainId: identity.chainId,
+      address: identity.predictedAddress,
+      vault: identity.vault,
+      owner: identity.owner,
+      factory: DEFAULT_CREATE2_DEPLOYER,
+      createdAt: Date.now(),
+    };
+    this.records.set(input.chain, record);
+    this.publishRegistry();
+    return { ...record };
+  }
+
   async ensureReceiver(input: {
     chain: SupportedExecutionChain;
     provider: providers.JsonRpcProvider;
     wallet: Wallet;
     fundingMode: ReceiverFundingMode;
   }): Promise<SponsoredReceiverRecord> {
-    const existing = this.records.get(input.chain);
-    if (existing) return existing;
+    const inspected = await this.inspectExistingReceiver({
+      chain: input.chain,
+      provider: input.provider,
+      owner: input.wallet.address,
+    });
+    if (inspected) return inspected;
 
-    const vault = resolveSponsoredReceiverVault(input.chain);
-    if (!vault) throw new Error(`${input.chain} has no configured Balancer-compatible flash-loan vault`);
-    const network = await input.provider.getNetwork();
-    const owner = requireAddress('receiver owner', input.wallet.address);
-    const artifact = await this.loadArtifact();
-    const constructorArgs = ethers.utils.defaultAbiCoder.encode(['address', 'address'], [vault, owner]);
-    const initCode = ethers.utils.hexConcat([artifact.bytecode, constructorArgs]);
-    const predictedAddress = ethers.utils.getCreate2Address(DEFAULT_CREATE2_DEPLOYER, RECEIVER_SALT, ethers.utils.keccak256(initCode));
-
-    const existingCode = await input.provider.getCode(predictedAddress);
-    let deploymentTransactionHash: string | undefined;
-    if (existingCode === '0x') {
-      const factoryCode = await input.provider.getCode(DEFAULT_CREATE2_DEPLOYER);
-      if (factoryCode === '0x') throw new Error(`${input.chain} does not have the verified Foundry CREATE2 deployer at ${DEFAULT_CREATE2_DEPLOYER}`);
-      const factoryCodeHash = ethers.utils.keccak256(factoryCode);
-      if (factoryCodeHash.toLowerCase() !== DEFAULT_CREATE2_DEPLOYER_CODE_HASH.toLowerCase()) {
-        throw new Error(`${input.chain} CREATE2 deployer code hash is not the verified Foundry implementation`);
-      }
-
-      const deploymentData = ethers.utils.hexConcat([RECEIVER_SALT, initCode]);
-      await input.provider.call({ from: owner, to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: 0 });
-      requireZeroCapitalInfrastructureDeploymentAllowed({
-        chain: input.chain,
-        operation: 'receiver_deployment',
-      });
-
-      if (input.fundingMode === 'sponsored') {
-        const sponsorReadiness = this.sponsor.getReadiness();
-        if (!sponsorReadiness.ready) throw new Error(sponsorReadiness.reason || 'Alchemy Gas Manager is not ready');
-        const sponsored = await this.sponsor.execute({
-          wallet: input.wallet,
-          chainId: network.chainId,
-          calls: [{ to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: BigNumber.from(0) }],
-          timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_DEPLOY_TIMEOUT_MS || 90_000)),
-        });
-        deploymentTransactionHash = sponsored.transactionHash;
-      } else {
-        deploymentTransactionHash = await withEvmSignerLane({
-          chainId: network.chainId,
-          walletAddress: owner,
-          operation: async () => {
-            const transaction = await input.wallet.sendTransaction({
-              to: DEFAULT_CREATE2_DEPLOYER,
-              data: deploymentData,
-              value: BigNumber.from(0),
-            });
-            const receipt = await transaction.wait(1);
-            if (!receipt || receipt.status !== 1) throw new Error(`Native receiver deployment reverted on ${input.chain}`);
-            return transaction.hash;
-          },
-        });
-      }
+    const identity = await this.receiverIdentity({
+      chain: input.chain,
+      provider: input.provider,
+      owner: input.wallet.address,
+    });
+    const factoryCode = await input.provider.getCode(DEFAULT_CREATE2_DEPLOYER);
+    if (factoryCode === '0x') throw new Error(`${input.chain} does not have the verified Foundry CREATE2 deployer at ${DEFAULT_CREATE2_DEPLOYER}`);
+    const factoryCodeHash = ethers.utils.keccak256(factoryCode);
+    if (factoryCodeHash.toLowerCase() !== DEFAULT_CREATE2_DEPLOYER_CODE_HASH.toLowerCase()) {
+      throw new Error(`${input.chain} CREATE2 deployer code hash is not the verified Foundry implementation`);
     }
 
-    await this.verifyReceiver(input.provider, predictedAddress, owner, vault);
+    const deploymentData = ethers.utils.hexConcat([RECEIVER_SALT, identity.initCode]);
+    await input.provider.call({ from: identity.owner, to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: 0 });
+    requireZeroCapitalInfrastructureDeploymentAllowed({
+      chain: input.chain,
+      operation: 'receiver_deployment',
+    });
+
+    let deploymentTransactionHash: string | undefined;
+    if (input.fundingMode === 'sponsored') {
+      const sponsorReadiness = this.sponsor.getReadiness();
+      if (!sponsorReadiness.ready) throw new Error(sponsorReadiness.reason || 'Alchemy Gas Manager is not ready');
+      const sponsored = await this.sponsor.execute({
+        wallet: input.wallet,
+        chainId: identity.chainId,
+        calls: [{ to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: BigNumber.from(0) }],
+        timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_DEPLOY_TIMEOUT_MS || 90_000)),
+      });
+      deploymentTransactionHash = sponsored.transactionHash;
+    } else {
+      deploymentTransactionHash = await withEvmSignerLane({
+        chainId: identity.chainId,
+        walletAddress: identity.owner,
+        operation: async () => {
+          const transaction = await input.wallet.sendTransaction({
+            to: DEFAULT_CREATE2_DEPLOYER,
+            data: deploymentData,
+            value: BigNumber.from(0),
+          });
+          const receipt = await transaction.wait(1);
+          if (!receipt || receipt.status !== 1) throw new Error(`Native receiver deployment reverted on ${input.chain}`);
+          return transaction.hash;
+        },
+      });
+    }
+
+    await this.verifyReceiver(input.provider, identity.predictedAddress, identity.owner, identity.vault);
     const record: SponsoredReceiverRecord = {
       chain: input.chain,
-      chainId: network.chainId,
-      address: predictedAddress,
-      vault,
-      owner,
+      chainId: identity.chainId,
+      address: identity.predictedAddress,
+      vault: identity.vault,
+      owner: identity.owner,
       factory: DEFAULT_CREATE2_DEPLOYER,
       deploymentTransactionHash,
       createdAt: Date.now(),
     };
     this.records.set(input.chain, record);
     this.publishRegistry();
-    return record;
+    return { ...record };
   }
 
-  async buildMissingPermissionCalls(input: {
-    chain: SupportedExecutionChain;
+  /** Read-only computation of setup calls for explicit targets/tokens. */
+  async buildMissingExplicitPermissionCalls(input: {
     receiver: string;
     provider: providers.JsonRpcProvider;
-    routes: ConfiguredZeroCapitalRoute[];
+    targets: readonly string[];
+    approvalTokens: readonly string[];
   }): Promise<SponsoredCall[]> {
     const receiver = requireAddress('receiver', input.receiver);
     const admin = new Contract(receiver, RECEIVER_ADMIN_ABI, input.provider);
     const iface = new ethers.utils.Interface(RECEIVER_ADMIN_ABI);
-    const targets = new Set<string>();
-    const approvalTokens = new Set<string>();
-
-    for (const route of input.routes) {
-      if (route.chain !== input.chain) continue;
-      for (const leg of route.legs) {
-        const built = buildSwapCallFromLeg(input.chain, receiver, {
-          protocol: leg.protocol,
-          chain: input.chain,
-          tokenIn: leg.tokenIn,
-          tokenOut: leg.tokenOut,
-          amountIn: '1',
-          minAmountOut: '1',
-          feeTier: leg.feeTier,
-          recipient: receiver,
-          deadlineBufferSeconds: 90,
-        });
-        targets.add(ethers.utils.getAddress(built.target));
-        approvalTokens.add(ethers.utils.getAddress(built.approvalToken));
-      }
-    }
+    const targets = [...new Set(input.targets.map(target => requireAddress('allowed target', target)))];
+    const approvalTokens = [...new Set(input.approvalTokens.map(token => requireAddress('allowed approval token', token)))];
 
     const calls: SponsoredCall[] = [];
     for (const target of targets) {
@@ -259,6 +292,42 @@ export class SponsoredReceiverManager {
       if (!allowed) calls.push({ to: receiver, data: iface.encodeFunctionData('setAllowedApprovalToken', [token, true]) });
     }
     return calls;
+  }
+
+  async buildMissingPermissionCalls(input: {
+    chain: SupportedExecutionChain;
+    receiver: string;
+    provider: providers.JsonRpcProvider;
+    routes: ConfiguredZeroCapitalRoute[];
+  }): Promise<SponsoredCall[]> {
+    const targets = new Set<string>();
+    const approvalTokens = new Set<string>();
+
+    for (const route of input.routes) {
+      if (route.chain !== input.chain) continue;
+      for (const leg of route.legs) {
+        const built = buildSwapCallFromLeg(input.chain, input.receiver, {
+          protocol: leg.protocol,
+          chain: input.chain,
+          tokenIn: leg.tokenIn,
+          tokenOut: leg.tokenOut,
+          amountIn: '1',
+          minAmountOut: '1',
+          feeTier: leg.feeTier,
+          recipient: input.receiver,
+          deadlineBufferSeconds: 90,
+        });
+        targets.add(ethers.utils.getAddress(built.target));
+        approvalTokens.add(ethers.utils.getAddress(built.approvalToken));
+      }
+    }
+
+    return this.buildMissingExplicitPermissionCalls({
+      receiver: input.receiver,
+      provider: input.provider,
+      targets: [...targets],
+      approvalTokens: [...approvalTokens],
+    });
   }
 }
 

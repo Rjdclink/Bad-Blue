@@ -19,20 +19,21 @@ const telemetry = read('server/services/cryptocrawl/integration/telemetry-bootst
 const faucetWiring = read('server/services/cryptocrawl/faucet/concurrent-execution-wiring.ts');
 const rpcFallbackPolicy = read('server/services/cryptocrawl/runtime/rpc-fallback-admission-policy.ts');
 
-requireText(core, "import('../discovery/opportunity-graph.js')", 'core runtime lazily resolves canonical discovery');
+requireText(core, "import('../discovery/multi-topology-discovery-controller.js')", 'core runtime lazily resolves unified canonical discovery');
 requireText(core, "import('../execution/canonical-execution-scheduler.js')", 'core runtime lazily resolves canonical scheduler');
 forbidText(core, "from '../execution/canonical-execution-scheduler.js'", 'core runtime must not create a static execution/governance/telemetry import cycle');
-requireText(core, 'createCryptoCrawlerCoreLifecycle', 'core runtime delegates lifecycle state to one authority');
-requireText(lifecycle, 'dependencies.startDiscovery();', 'core lifecycle starts canonical discovery');
-requireText(lifecycle, 'dependencies.startScheduler();', 'core lifecycle starts canonical scheduler');
+requireText(core, 'createCryptoCrawlerCoreLifecycle', 'core runtime delegates lifecycle state to one idempotent coordinator');
+requireText(lifecycle, 'dependencies.startDiscovery();', 'core lifecycle starts canonical discovery singleton');
+requireText(lifecycle, 'dependencies.startScheduler();', 'core lifecycle starts canonical scheduler singleton');
 requireText(lifecycle, 'dependencies.stopScheduler();', 'core lifecycle stops scheduler before discovery');
-requireText(lifecycle, 'dependencies.stopDiscovery();', 'core lifecycle stops canonical discovery');
+requireText(lifecycle, 'dependencies.stopDiscovery();', 'core lifecycle stops canonical discovery singleton');
 
 requireText(telemetry, 'const coreStart = ensureCryptoCrawlerCoreRuntime();', 'telemetry requests canonical core startup');
 requireText(telemetry, 'await coreStart;', 'telemetry awaits canonical core before optional provider bootstrap');
 requireText(telemetry, 'CRYPTOCRAWL_ALLOW_PUBLIC_ANKR_FALLBACK', 'anonymous public Ankr fallback requires explicit opt-in');
 requireText(telemetry, 'admitAnkrFallback', 'telemetry uses RPC fallback admission policy');
-forbidText(telemetry, 'measuredOpportunityGraph.start()', 'telemetry must not own a second discovery lifecycle');
+forbidText(telemetry, 'multiTopologyDiscoveryController.start()', 'telemetry must not own a second discovery lifecycle');
+forbidText(telemetry, 'canonicalExecutionScheduler.start()', 'telemetry must not own scheduler startup');
 
 const coreStartIndex = telemetry.indexOf('await coreStart;');
 const rpcStartIndex = telemetry.indexOf('await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);');
@@ -41,7 +42,7 @@ if (coreStartIndex < 0 || rpcStartIndex < 0 || coreStartIndex >= rpcStartIndex) 
 }
 
 forbidText(faucetWiring, 'canonicalExecutionScheduler.start()', 'faucet compatibility wiring must not own scheduler startup');
-requireText(faucetWiring, "lifecycleOwner: 'CryptoCoreRuntime'", 'faucet wiring declares canonical scheduler lifecycle owner');
+requireText(faucetWiring, "lifecycleOwner: 'CryptoCoreRuntime'", 'faucet wiring declares bounded core scheduler lifecycle coordinator');
 
 requireText(rpcFallbackPolicy, 'allowAnonymousPublicFallback', 'RPC fallback policy receives explicit public-fallback permission');
 requireText(rpcFallbackPolicy, 'if (!input.allowAnonymousPublicFallback || !publicUrl) return null;', 'anonymous public RPC fallback fails closed by default');
@@ -55,7 +56,7 @@ if (failures.length) {
 }
 
 console.log('[verify-core-topology-wiring] PASS');
-console.log(' - canonical CEX discovery and scheduler have one lifecycle authority');
+console.log(' - canonical discovery and scheduler resolve to the unified singleton authorities');
 console.log(' - core startup precedes optional RPC/Alchemy/0x telemetry');
-console.log(' - core runtime avoids static scheduler/execution/governance import cycles');
+console.log(' - telemetry and faucet compatibility code cannot start competing lifecycles');
 console.log(' - anonymous public Ankr fallback is opt-in');

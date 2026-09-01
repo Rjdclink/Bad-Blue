@@ -7,6 +7,8 @@ import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../ru
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
 import { executeVerifiedArbitragePlan } from './index.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
+import { measuredTopologyExecutionAdapter, type MeasuredTopologyDispatchResult } from './measured-topology-execution-adapter.js';
+import { routeRecentMeasuredOpportunities } from './unified-execution-router.js';
 
 export type CanonicalSchedulerIdleReason =
   | 'not_started'
@@ -30,6 +32,7 @@ export interface CanonicalExecutionSchedulerStats {
   lastEligibleCandidateCount: number;
   lastDispatchCandidateCount: number;
   lastResourceQualifiedCount: number;
+  lastMeasuredTopologyDispatchCount: number;
   resourceUsage: Record<string, number>;
 }
 
@@ -161,6 +164,7 @@ class CanonicalExecutionScheduler {
   private lastEligibleCandidateCount = 0;
   private lastDispatchCandidateCount = 0;
   private lastResourceQualifiedCount = 0;
+  private lastMeasuredTopologyDispatchCount = 0;
 
   start(): void {
     if (this.started) return;
@@ -173,10 +177,12 @@ class CanonicalExecutionScheduler {
       boundedJitterFraction: dispatchJitterFraction(),
       dispatchBatchLimit: dispatchBatchLimit(),
       ownerId: executionResourceScheduler.getOwnerId(),
-      authority: 'canonical_eligible_opportunities',
+      authority: 'canonical_eligible_opportunities_and_admitted_measured_topologies',
       schedulingObjective: 'expected_profit_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration',
       cadenceObjective: 'desynchronize_work_reduce_rate_and_resource_contention_without_weakening_freshness',
       terminalCalibrationAuthority: 'scheduling_only_confirmed_settlement_evidence',
+      measuredTopologyExecutionAdapter: true,
+      discoveryExecutionAuthority: false,
       legacyBusinessCapsAuthoritative: false,
       distributedResourceLeases: true,
       runtimeInvariantQuarantine: true,
@@ -215,6 +221,7 @@ class CanonicalExecutionScheduler {
       lastEligibleCandidateCount: this.lastEligibleCandidateCount,
       lastDispatchCandidateCount: this.lastDispatchCandidateCount,
       lastResourceQualifiedCount: this.lastResourceQualifiedCount,
+      lastMeasuredTopologyDispatchCount: this.lastMeasuredTopologyDispatchCount,
       resourceUsage: executionResourceScheduler.getLocalUsage(),
     };
   }
@@ -243,6 +250,45 @@ class CanonicalExecutionScheduler {
     this.lastEligibleCandidateCount = eligible;
     this.lastDispatchCandidateCount = dispatchable;
     this.lastResourceQualifiedCount = resourceQualified;
+  }
+
+  private applyMeasuredTopologyResults(results: readonly MeasuredTopologyDispatchResult[]): boolean {
+    this.lastMeasuredTopologyDispatchCount = results.filter(result => result.dispatched).length;
+    let dispatched = false;
+    for (const result of results) {
+      if (!result.dispatched) continue;
+      dispatched = true;
+      this.attempts++;
+      if (result.settlementConfirmed) {
+        if (result.success) this.settled++;
+        else this.failed++;
+      } else if (result.error) {
+        this.failed++;
+      } else {
+        this.pending++;
+      }
+    }
+    if (dispatched) {
+      this.lastDispatchAt = Date.now();
+      this.lastIdleReason = null;
+    }
+    return dispatched;
+  }
+
+  private async dispatchMeasuredTopologies(): Promise<boolean> {
+    try {
+      const routed = routeRecentMeasuredOpportunities(1024);
+      const results = await measuredTopologyExecutionAdapter.dispatch(routed);
+      return this.applyMeasuredTopologyResults(results);
+    } catch (error) {
+      this.lastMeasuredTopologyDispatchCount = 0;
+      logger.error('[ExecutionScheduler] Measured topology adapter failed closed', {
+        component: 'CanonicalExecutionScheduler',
+        error: error instanceof Error ? error.message : String(error),
+        schedulingAuthorityChanged: false,
+      });
+      return false;
+    }
   }
 
   private async runDispatch(): Promise<void> {
@@ -274,12 +320,16 @@ class CanonicalExecutionScheduler {
       return;
     }
 
+    // All non-CEX measured topology dispatch occurs under this canonical scheduler
+    // tick. The adapter owns no interval/timer and cannot be called by discovery.
+    const measuredTopologyDispatched = await this.dispatchMeasuredTopologies();
+
     const retryWindowMs = Math.max(1_000, Number(process.env.CRYPTOCRAWL_EXECUTION_RETRY_WINDOW_MS || 10_000));
     const now = Date.now();
     const eligibleCandidates = currentCandidates();
     this.lastEligibleCandidateCount = eligibleCandidates.length;
     if (eligibleCandidates.length === 0) {
-      this.setIdle('no_eligible_candidates');
+      if (!measuredTopologyDispatched) this.setIdle('no_eligible_candidates');
       return;
     }
 
@@ -289,7 +339,7 @@ class CanonicalExecutionScheduler {
     ).slice(0, dispatchBatchLimit());
     this.lastDispatchCandidateCount = candidates.length;
     if (candidates.length === 0) {
-      this.setIdle('candidate_retry_window', eligibleCandidates.length, 0, 0);
+      if (!measuredTopologyDispatched) this.setIdle('candidate_retry_window', eligibleCandidates.length, 0, 0);
       return;
     }
 
@@ -315,7 +365,7 @@ class CanonicalExecutionScheduler {
     }
     this.lastResourceQualifiedCount = selected.length;
     if (selected.length === 0) {
-      this.setIdle('no_resource_qualified_candidates', eligibleCandidates.length, candidates.length, 0);
+      if (!measuredTopologyDispatched) this.setIdle('no_resource_qualified_candidates', eligibleCandidates.length, candidates.length, 0);
       return;
     }
 

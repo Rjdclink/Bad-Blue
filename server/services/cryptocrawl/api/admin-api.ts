@@ -2,6 +2,7 @@ import express from 'express';
 import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
+import { requireCryptocrawlerAuthoritySchema } from '../../../migrations/reconcileAppSchema.js';
 import { getCryptocrawlGovernance, initializeGovernance } from '../governance/index.js';
 import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
@@ -437,6 +438,26 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
       lifecycle: systemState.lifecycle,
       },
     };
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    try {
+      await requireCryptocrawlerAuthoritySchema(2);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      systemState.lastError = message;
+      return {
+        success: false,
+        status: 503,
+        payload: {
+          success: false,
+          error: message,
+          lifecycle: systemState.lifecycle,
+          executionAuthorityGranted: false,
+          schemaAuthority: 'migration_owned_runtime_start_required',
+        },
+      };
+    }
   }
 
   try {

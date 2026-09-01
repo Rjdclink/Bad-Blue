@@ -9,15 +9,14 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "npm start"
-healthcheckPath = "/api/health"
+# Deployment admission must use strict readiness. /api/health remains the cheap
+# runtime liveness endpoint, but it intentionally goes 200 as soon as HTTP binds.
+# Railway must not promote a new replica until database initialization, migrations,
+# governance/schema verification, routes and background services are complete.
+healthcheckPath = "/api/ready"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
-region = "us-east1"
-
-[services.web]
-name = "badblue-web"
-port = 5000
 
 # Environment variables should be configured in Railway dashboard
 # Required environment variables:

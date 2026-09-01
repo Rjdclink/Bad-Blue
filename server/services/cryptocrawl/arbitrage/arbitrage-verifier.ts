@@ -156,6 +156,10 @@ export type VerifyManyRequest = Omit<VerifyRequest, 'symbol' | 'minNetProfitUsd'
 
 const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
 const QUOTE_REQUEST_CACHE_TTL_MS = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_QUOTE_CACHE_MS || 2000));
+const ECONOMIC_BARRIER_HYDRATION_BUDGET = Math.max(
+  1,
+  Math.min(12, Math.floor(Number(process.env.CRYPTO_ARBITRAGE_BARRIER_HYDRATION_SYMBOLS || 6))),
+);
 const quoteRequestCache = new Map<string, { payload: any; expiresAt: number }>();
 const quoteRequestInFlight = new Map<string, Promise<any>>();
 
@@ -365,13 +369,21 @@ function currentFreshQuotes(quotes: readonly TopOfBookQuote[], maxQuoteAgeMs: nu
   return quotes.filter(quote => Number.isFinite(quote.timestamp) && quote.timestamp <= now && now - quote.timestamp <= maxQuoteAgeMs);
 }
 
-function hasPositiveRawCrossVenueEdge(quotes: readonly TopOfBookQuote[]): boolean {
+function bestRawCrossVenueSpreadBps(quotes: readonly TopOfBookQuote[]): number | null {
+  let best = Number.NEGATIVE_INFINITY;
   for (const buy of quotes) {
     for (const sell of quotes) {
-      if (buy.venue !== sell.venue && Number.isFinite(buy.ask) && Number.isFinite(sell.bid) && sell.bid > buy.ask) return true;
+      if (buy.venue === sell.venue || !Number.isFinite(buy.ask) || !Number.isFinite(sell.bid) || buy.ask <= 0) continue;
+      const spread = ((sell.bid - buy.ask) / buy.ask) * 10_000;
+      if (Number.isFinite(spread)) best = Math.max(best, spread);
     }
   }
-  return false;
+  return Number.isFinite(best) ? best : null;
+}
+
+function hasPositiveRawCrossVenueEdge(quotes: readonly TopOfBookQuote[]): boolean {
+  const best = bestRawCrossVenueSpreadBps(quotes);
+  return best !== null && best > 0;
 }
 
 export class ArbitrageVerifier {
@@ -535,6 +547,7 @@ export class ArbitrageVerifier {
       const plans = new Map<string, VerifiedArbitragePlan | null>();
       const prefetchedQuotes = new Map<string, TopOfBookQuote[]>();
       const rawEdgeSurvivors = new Set<string>();
+      const rawSpreadBySymbol = new Map<string, number>();
       const concurrency = Math.max(1, Math.min(symbols.length || 1, capacity.workerConcurrency, 8));
       let cursor = 0;
 
@@ -554,8 +567,14 @@ export class ArbitrageVerifier {
             const quotes = await fetchQuotes(symbol, req.maxQuoteAgeMs);
             prefetchedQuotes.set(symbol, quotes);
             const freshQuotes = this.recordQuoteValidation(symbol, quotes, req.maxQuoteAgeMs);
-            if (freshQuotes.length >= 2 && hasPositiveRawCrossVenueEdge(freshQuotes)) rawEdgeSurvivors.add(symbol);
-            else plans.set(symbol, null);
+            if (freshQuotes.length >= 2) {
+              const rawSpreadBps = bestRawCrossVenueSpreadBps(freshQuotes);
+              if (rawSpreadBps !== null) rawSpreadBySymbol.set(symbol, rawSpreadBps);
+              if (rawSpreadBps !== null && rawSpreadBps > 0) rawEdgeSurvivors.add(symbol);
+              else plans.set(symbol, null);
+            } else {
+              plans.set(symbol, null);
+            }
           } catch (error) {
             prefetchedQuotes.set(symbol, []);
             plans.set(symbol, null);
@@ -568,14 +587,21 @@ export class ArbitrageVerifier {
       });
       await Promise.all(quoteWorkers);
 
-      const feePrime = await primeCexFeeEvidence([...rawEdgeSurvivors]);
-      const survivorSymbols = symbols.filter(symbol => rawEdgeSurvivors.has(symbol));
+      const nearMissSymbols = [...rawSpreadBySymbol.entries()]
+        .filter(([symbol]) => !rawEdgeSurvivors.has(symbol))
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, ECONOMIC_BARRIER_HYDRATION_BUDGET)
+        .map(([symbol]) => symbol);
+      const economicsHydrationSet = new Set([...rawEdgeSurvivors, ...nearMissSymbols]);
+      const economicsSymbols = symbols.filter(symbol => economicsHydrationSet.has(symbol));
+
+      const feePrime = await primeCexFeeEvidence(economicsSymbols);
       cursor = 0;
-      const economicsWorkers = Array.from({ length: Math.min(concurrency, Math.max(1, survivorSymbols.length)) }, async () => {
+      const economicsWorkers = Array.from({ length: Math.min(concurrency, Math.max(1, economicsSymbols.length)) }, async () => {
         while (true) {
           const index = cursor++;
-          if (index >= survivorSymbols.length) return;
-          const symbol = survivorSymbols[index];
+          if (index >= economicsSymbols.length) return;
+          const symbol = economicsSymbols[index];
           try {
             plans.set(symbol, await this.evaluateSymbolOnce({ ...req, symbol }, prefetchedQuotes.get(symbol) || []));
           } catch (error) {
@@ -609,14 +635,17 @@ export class ArbitrageVerifier {
         unexploredFraction: capacity.unexploredFraction,
         concurrency,
         durationMs: Date.now() - startedAt,
-        rawEdgeSurvivors: survivorSymbols.length,
-        cheapPrefilterRejected: symbols.length - survivorSymbols.length,
+        rawEdgeSurvivors: rawEdgeSurvivors.size,
+        nearMissBarriersHydrated: nearMissSymbols.length,
+        economicsHydrationSymbols: economicsSymbols.length,
+        cheapPrefilterRejected: symbols.length - rawEdgeSurvivors.size,
         positivePlans: [...plans.values()].filter(plan => plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0).length,
         searchDensityPerMinute: capacity.searchDensityPerMinute,
         verifiedPositivePerMinute: capacity.verifiedPositivePerMinute,
         capacityReason: capacity.reason,
         feePrime,
         quoteTransportPolicy: 'coinbase_kraken_okx_websocket_first_with_exact_rest_fallback',
+        economicBarrierPolicy: 'raw_positive_plus_bounded_best_near_misses',
         executableFeeAuthority: 'authenticated_venue_evidence_only',
         configuredOrRequestFeeOverridesExecutable: false,
         nonUsdNormalizedQuoteExecutionAuthority: false,
@@ -636,7 +665,8 @@ export class ArbitrageVerifier {
     const quotes = prefetchedQuotes ? [...prefetchedQuotes] : await fetchQuotes(symbol, req.maxQuoteAgeMs);
     const freshQuotes = this.recordQuoteValidation(symbol, quotes, req.maxQuoteAgeMs);
     const now = Date.now();
-    if (freshQuotes.length < 2 || !hasPositiveRawCrossVenueEdge(freshQuotes)) return null;
+    if (freshQuotes.length < 2) return null;
+    const rawPositive = hasPositiveRawCrossVenueEdge(freshQuotes);
 
     let gasUsd = 0;
     if (req.gas?.enabled) {
@@ -694,6 +724,10 @@ export class ArbitrageVerifier {
     } else {
       this.crossVenueFeeContexts.delete(symbol);
     }
+
+    // Near-miss hydration exists only to measure distance to profitability. It
+    // must never turn a non-positive raw market edge into an executable plan.
+    if (!rawPositive) return null;
 
     const quantityFractions = [0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
     let bestPlan: VerifiedArbitragePlan | null = null;

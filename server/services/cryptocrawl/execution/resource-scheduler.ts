@@ -1,7 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import logger from '../../../logger.js';
-import { isDatabaseConfigured, pool } from '../../../db.js';
+import {
+  getCoordinationPoolStats,
+  getPoolStats,
+  isDatabaseConfigured,
+  pool,
+} from '../../../db.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  RESOURCE_LEASE_TABLE as TABLE,
+  claimFixedResource,
+  claimResourceSlot,
+  ensureResourceLeaseAuthority,
+} from './resource-lease-authority.js';
 
 export interface ExecutionResourceLease {
   leaseId: string;
@@ -13,17 +25,30 @@ export interface ExecutionResourceLease {
   release: (options?: { retainOpportunityUntilExpiry?: boolean }) => Promise<void>;
 }
 
+export interface ExecutionResourcePressureSnapshot {
+  ordinaryDbPressure: number;
+  coordinationDbPressure: number;
+  hardAdmissionPressure: boolean;
+  effectiveGlobalCapacityMultiplier: number;
+}
+
 interface ResourcePoolSpec {
   prefix: string;
   capacity: number;
 }
 
-const TABLE = 'cryptocrawler_resource_leases';
-
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
   const normalized = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
   return Math.max(minimum, Math.min(maximum, normalized));
+}
+
+function highPriorityQuery(text: string, values: unknown[] = []) {
+  return withCryptaraSupabasePriority('high', () => pool.query(text, values));
+}
+
+function lowPriorityQuery(text: string, values: unknown[] = []) {
+  return withCryptaraSupabasePriority('low', () => pool.query(text, values));
 }
 
 function configuredVenueCapacity(venue: string): number {
@@ -37,50 +62,45 @@ function splitSpotSymbol(symbol: string): { base: string; quote: string } | null
   return match ? { base: match[1], quote: match[2] } : null;
 }
 
+function poolPressure(stats: { total: number; idle: number; waiting: number; max: number }): number {
+  if (stats.max <= 0) return 1;
+  const active = Math.max(0, stats.total - stats.idle);
+  const occupancy = Math.max(0, Math.min(1, active / stats.max));
+  const waiting = stats.waiting > 0 ? Math.min(1, 0.70 + stats.waiting / Math.max(1, stats.max)) : 0;
+  const noIdle = active > 0 && stats.idle === 0 ? 0.80 : 0;
+  return Math.max(occupancy * 0.70, waiting, noIdle);
+}
+
+export function getExecutionResourcePressureSnapshot(): ExecutionResourcePressureSnapshot {
+  const ordinary = getPoolStats();
+  const coordination = getCoordinationPoolStats();
+  const ordinaryPressure = poolPressure(ordinary);
+  const coordinationPressure = poolPressure(coordination);
+  const hardAdmissionPressure = (ordinary.waiting > 0 && ordinary.idle === 0)
+    || (coordination.waiting > 0 && coordination.idle === 0);
+  const combined = Math.max(ordinaryPressure, coordinationPressure);
+  return {
+    ordinaryDbPressure: Number(ordinaryPressure.toFixed(6)),
+    coordinationDbPressure: Number(coordinationPressure.toFixed(6)),
+    hardAdmissionPressure,
+    effectiveGlobalCapacityMultiplier: combined >= 0.90 ? 0.25 : combined >= 0.75 ? 0.50 : combined >= 0.60 ? 0.75 : 1,
+  };
+}
+
 class ExecutionResourceScheduler {
   private readonly ownerId = process.env.RAILWAY_REPLICA_ID?.trim()
     || process.env.HOSTNAME?.trim()
     || `process-${process.pid}-${randomUUID()}`;
   private readonly localUsage = new Map<string, number>();
-  private tableReady: Promise<boolean> | null = null;
   private cleanupInFlight: Promise<void> | null = null;
   private lastCleanupAt = 0;
-
-  private async ensureTable(): Promise<boolean> {
-    if (!isDatabaseConfigured) return false;
-    if (this.tableReady) return this.tableReady;
-    this.tableReady = (async () => {
-      try {
-        const result = await pool.query(
-          `SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`,
-        );
-        const ready = result.rows?.[0]?.ready === true;
-        if (!ready) {
-          logger.error('[ResourceScheduler] Migration-owned distributed lease table is missing', {
-            component: 'ExecutionResourceScheduler',
-            table: `public.${TABLE}`,
-            executionAuthorityGranted: false,
-            runtimeDdlAllowed: false,
-          });
-        }
-        return ready;
-      } catch (error) {
-        logger.error('[ResourceScheduler] Distributed lease table availability check failed', {
-          component: 'ExecutionResourceScheduler',
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return false;
-      }
-    })();
-    return this.tableReady;
-  }
 
   private maybeCleanupExpiredLeases(): void {
     if (!isDatabaseConfigured || this.cleanupInFlight) return;
     const intervalMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_LEASE_CLEANUP_MS, 60_000, 10_000, 600_000);
     if (Date.now() - this.lastCleanupAt < intervalMs) return;
     this.lastCleanupAt = Date.now();
-    this.cleanupInFlight = pool.query(`DELETE FROM ${TABLE} WHERE expires_at <= now()`)
+    this.cleanupInFlight = lowPriorityQuery(`DELETE FROM ${TABLE} WHERE expires_at <= now()`)
       .then(() => undefined)
       .catch(error => {
         logger.warn('[ResourceScheduler] Background expired-lease cleanup deferred', {
@@ -109,11 +129,12 @@ class ExecutionResourceScheduler {
     }
   }
 
-  private resourceSpecs(plan: VerifiedArbitragePlan): ResourcePoolSpec[] {
+  private resourceSpecs(plan: VerifiedArbitragePlan, pressure: ExecutionResourcePressureSnapshot): ResourcePoolSpec[] {
     const emergencyCeiling = boundedInt(process.env.CRYPTOCRAWL_EXECUTION_EMERGENCY_CEILING, 64, 1, 128);
+    const effectiveGlobalCapacity = Math.max(1, Math.floor(emergencyCeiling * pressure.effectiveGlobalCapacityMultiplier));
     const settlementCapacity = boundedInt(process.env.CRYPTOCRAWL_SETTLEMENT_CONCURRENCY, 16, 1, 64);
     const specs: ResourcePoolSpec[] = [
-      { prefix: 'cex:global', capacity: emergencyCeiling },
+      { prefix: 'cex:global', capacity: effectiveGlobalCapacity },
       { prefix: 'cex:settlement', capacity: settlementCapacity },
       { prefix: `cex:venue:${plan.buyVenue}`, capacity: configuredVenueCapacity(plan.buyVenue) },
       { prefix: `cex:venue:${plan.sellVenue}`, capacity: configuredVenueCapacity(plan.sellVenue) },
@@ -121,6 +142,10 @@ class ExecutionResourceScheduler {
 
     if (plan.buyVenue === 'kraken' || plan.sellVenue === 'kraken') {
       specs.push({ prefix: 'cex:nonce:kraken-account', capacity: 1 });
+    }
+
+    if (plan.buyVenue === 'okx' || plan.sellVenue === 'okx') {
+      specs.push({ prefix: 'cex:private:okx-account', capacity: boundedInt(process.env.CRYPTOCRAWL_OKX_PRIVATE_EXECUTION_CONCURRENCY, 2, 1, 8) });
     }
 
     const pair = splitSpotSymbol(plan.symbol);
@@ -137,29 +162,6 @@ class ExecutionResourceScheduler {
     return [...dedup.values()];
   }
 
-  private async claimResource(
-    client: any,
-    resourceKey: string,
-    leaseId: string,
-    opportunityId: string,
-    expiresAt: number,
-  ): Promise<boolean> {
-    const result = await client.query(
-      `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
-       VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-       ON CONFLICT (resource_key) DO UPDATE
-       SET lease_id = EXCLUDED.lease_id,
-           owner_id = EXCLUDED.owner_id,
-           opportunity_id = EXCLUDED.opportunity_id,
-           acquired_at = now(),
-           expires_at = EXCLUDED.expires_at
-       WHERE ${TABLE}.expires_at <= now()
-       RETURNING resource_key`,
-      [resourceKey, leaseId, this.ownerId, opportunityId, expiresAt],
-    );
-    return result.rowCount === 1;
-  }
-
   private async acquireDistributed(
     leaseId: string,
     opportunityId: string,
@@ -167,34 +169,42 @@ class ExecutionResourceScheduler {
     expiresAt: number,
   ): Promise<string[] | null> {
     if (!isDatabaseConfigured) return [];
-    if (!await this.ensureTable()) return null;
+    if (!await ensureResourceLeaseAuthority('high')) return null;
 
-    const client = await pool.connect();
+    const client = await withCryptaraSupabasePriority('high', () => pool.connect());
     const acquired: string[] = [];
     try {
       await client.query('BEGIN');
 
       const fixedOpportunityKey = `cex:opportunity:${opportunityId}`;
-      if (!await this.claimResource(client, fixedOpportunityKey, leaseId, opportunityId, expiresAt)) {
+      const fixed = await claimFixedResource(client, {
+        resourceKey: fixedOpportunityKey,
+        leaseId,
+        ownerId: this.ownerId,
+        opportunityId,
+        expiresAt,
+      });
+      if (!fixed) {
         await client.query('ROLLBACK');
         return null;
       }
       acquired.push(fixedOpportunityKey);
 
       for (const spec of specs) {
-        let claimed: string | null = null;
-        for (let slot = 0; slot < spec.capacity; slot++) {
-          const resourceKey = `${spec.prefix}:slot:${slot}`;
-          if (await this.claimResource(client, resourceKey, leaseId, opportunityId, expiresAt)) {
-            claimed = resourceKey;
-            acquired.push(resourceKey);
-            break;
-          }
-        }
+        const claimed = await claimResourceSlot(client, {
+          prefix: spec.prefix,
+          capacity: spec.capacity,
+          startSlot: Math.floor(Math.random() * spec.capacity),
+          leaseId,
+          ownerId: this.ownerId,
+          opportunityId,
+          expiresAt,
+        });
         if (!claimed) {
           await client.query('ROLLBACK');
           return null;
         }
+        acquired.push(claimed);
       }
 
       await client.query('COMMIT');
@@ -226,7 +236,25 @@ class ExecutionResourceScheduler {
       return null;
     }
 
-    const specs = this.resourceSpecs(plan);
+    const pressure = getExecutionResourcePressureSnapshot();
+    const needsCoordination = plan.buyVenue === 'kraken' || plan.sellVenue === 'kraken';
+    const ordinary = getPoolStats();
+    const coordination = getCoordinationPoolStats();
+    const hardForPlan = (ordinary.waiting > 0 && ordinary.idle === 0)
+      || (needsCoordination && coordination.waiting > 0 && coordination.idle === 0);
+    if (hardForPlan) {
+      logger.warn('[ResourceScheduler] New execution admission deferred under hard database pressure', {
+        component: 'ExecutionResourceScheduler',
+        opportunityId,
+        pressure,
+        needsCoordination,
+        executionAuthorityGranted: false,
+        settlementOrFlatteningBlocked: false,
+      });
+      return null;
+    }
+
+    const specs = this.resourceSpecs(plan, pressure);
     if (!this.reserveLocal(specs)) return null;
 
     const leaseId = randomUUID();
@@ -258,13 +286,13 @@ class ExecutionResourceScheduler {
         try {
           if (isDatabaseConfigured && distributedResources.length > 0) {
             if (retainOpportunityUntilExpiry) {
-              await pool.query(
+              await highPriorityQuery(
                 `DELETE FROM ${TABLE}
                  WHERE lease_id = $1 AND owner_id = $2 AND resource_key <> $3`,
                 [leaseId, this.ownerId, `cex:opportunity:${opportunityId}`],
               );
             } else {
-              await pool.query(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]);
+              await highPriorityQuery(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]);
             }
           }
         } catch (error) {

@@ -14,6 +14,9 @@ const AUTH_FAILURE_COOLDOWN_MS = Math.max(
   5_000,
   Math.min(300_000, Number(process.env.CRYPTO_COINBASE_AUTH_FAILURE_COOLDOWN_MS || 60_000)),
 );
+const RATE_RETRY_BASE_MS = Math.max(100, Math.min(10_000, Number(process.env.CRYPTO_COINBASE_RATE_RETRY_BASE_MS || 500)));
+const RATE_RETRY_MAX_MS = Math.max(RATE_RETRY_BASE_MS, Math.min(60_000, Number(process.env.CRYPTO_COINBASE_RATE_RETRY_MAX_MS || 15_000)));
+const RATE_MAX_READ_RETRIES = Math.max(0, Math.min(5, Math.floor(Number(process.env.CRYPTO_COINBASE_RATE_MAX_READ_RETRIES || 3))));
 
 export interface CoinbaseKeyPermissions {
   canView: boolean;
@@ -37,6 +40,10 @@ export interface CoinbasePrivateAuthoritySnapshot {
   lastAuthFailureAt: number | null;
   authCooldownUntil: number | null;
   authCircuitOpen: boolean;
+  rateLimitCount: number;
+  rateRetryCount: number;
+  rateCooldownUntil: number | null;
+  rateCircuitOpen: boolean;
 }
 
 interface CoinbaseCredentialPair {
@@ -59,6 +66,13 @@ export class CoinbaseAuthCircuitOpenError extends Error {
   }
 }
 
+export class CoinbaseRateLimitError extends Error {
+  constructor(readonly retryAt: number, readonly path: string) {
+    super(`Coinbase private rate limit is active for ${path} until ${new Date(retryAt).toISOString()}`);
+    this.name = 'CoinbaseRateLimitError';
+  }
+}
+
 let permissionsCache: { expiresAt: number; value: CoinbaseKeyPermissions } | null = null;
 let permissionsInFlight: Promise<CoinbaseKeyPermissions> | null = null;
 let requestCount = 0;
@@ -68,6 +82,9 @@ let authFailureCount = 0;
 let authRecoveryLoggedFailureCount = 0;
 let lastAuthFailureAt: number | null = null;
 let authCooldownUntil: number | null = null;
+let rateLimitCount = 0;
+let rateRetryCount = 0;
+let rateCooldownUntil: number | null = null;
 
 function normalizeCredential(raw: string | undefined): string | null {
   if (!raw) return null;
@@ -222,11 +239,51 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
 function assertCoinbaseAuthCircuitClosed(now = Date.now()): void {
   if (authCooldownUntil !== null && authCooldownUntil > now) {
     throw new CoinbaseAuthCircuitOpenError(authCooldownUntil);
   }
   if (authCooldownUntil !== null && authCooldownUntil <= now) authCooldownUntil = null;
+}
+
+function rateLimitDelayMs(response: Response, attempt: number): number {
+  const retryAfter = response.headers.get('retry-after');
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(RATE_RETRY_MAX_MS, Math.max(50, Math.ceil(seconds * 1_000)));
+    const parsedDate = Date.parse(retryAfter);
+    if (Number.isFinite(parsedDate)) return Math.min(RATE_RETRY_MAX_MS, Math.max(50, parsedDate - Date.now()));
+  }
+  const ceiling = Math.min(RATE_RETRY_MAX_MS, RATE_RETRY_BASE_MS * (2 ** Math.max(0, attempt)));
+  return Math.max(50, Math.floor(Math.random() * Math.max(51, ceiling)));
+}
+
+async function waitForCoinbaseRateCooldown(): Promise<void> {
+  const now = Date.now();
+  if (rateCooldownUntil === null || rateCooldownUntil <= now) {
+    if (rateCooldownUntil !== null && rateCooldownUntil <= now) rateCooldownUntil = null;
+    return;
+  }
+  await sleep(rateCooldownUntil - now);
+}
+
+function recordCoinbaseRateLimit(path: string, response: Response, attempt: number): number {
+  const delayMs = rateLimitDelayMs(response, attempt);
+  rateLimitCount += 1;
+  rateCooldownUntil = Math.max(rateCooldownUntil || 0, Date.now() + delayMs);
+  logger.warn('[Coinbase] Private API rate limit observed; bounded cooldown applied', {
+    component: 'CoinbaseAdvancedTradeAuthority',
+    path,
+    status: response.status,
+    retryDelayMs: delayMs,
+    rateLimitCount,
+    automaticWriteRetryAllowed: false,
+  });
+  return delayMs;
 }
 
 function recordCoinbaseAuthFailure(status: 401 | 403): CoinbasePrivateAuthError {
@@ -273,41 +330,62 @@ export async function coinbasePrivateRequest(
 ): Promise<any> {
   if (!path.startsWith('/api/v3/brokerage/')) throw new Error(`Unsupported Coinbase private path: ${path}`);
   assertCoinbaseAuthCircuitClosed();
-  const url = new URL(path, COINBASE_ORIGIN);
-  appendQuery(url, options.query);
-  const jwt = createCoinbaseRestJwt(method, path);
-  const body = method === 'POST' && options.body !== undefined ? JSON.stringify(options.body) : undefined;
-  const response = await fetchWithTimeout(url.toString(), {
-    method,
-    headers: {
-      accept: 'application/json',
-      Authorization: `Bearer ${jwt}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body,
-  }, options.timeoutMs ?? REQUEST_TIMEOUT_MS);
-  const text = await response.text();
-  let payload: any;
-  try {
-    payload = text ? JSON.parse(text) : {};
-  } catch {
+
+  const maxAttempts = method === 'GET' ? RATE_MAX_READ_RETRIES + 1 : 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await waitForCoinbaseRateCooldown();
+    assertCoinbaseAuthCircuitClosed();
+
+    const url = new URL(path, COINBASE_ORIGIN);
+    appendQuery(url, options.query);
+    const jwt = createCoinbaseRestJwt(method, path);
+    const body = method === 'POST' && options.body !== undefined ? JSON.stringify(options.body) : undefined;
+    const response = await fetchWithTimeout(url.toString(), {
+      method,
+      headers: {
+        accept: 'application/json',
+        Authorization: `Bearer ${jwt}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body,
+    }, options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+
+    if (response.status === 429) {
+      const delayMs = recordCoinbaseRateLimit(path, response, attempt);
+      if (method === 'GET' && attempt + 1 < maxAttempts) {
+        rateRetryCount += 1;
+        await sleep(delayMs);
+        continue;
+      }
+      throw new CoinbaseRateLimitError(Date.now() + delayMs, path);
+    }
+
+    const text = await response.text();
+    let payload: any;
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      if (response.status === 401 || response.status === 403) {
+        throw recordCoinbaseAuthFailure(response.status);
+      }
+      throw new Error(`Coinbase private endpoint returned non-JSON (${response.status})`);
+    }
     if (response.status === 401 || response.status === 403) {
       throw recordCoinbaseAuthFailure(response.status);
     }
-    throw new Error(`Coinbase private endpoint returned non-JSON (${response.status})`);
+    if (!response.ok || payload?.error) {
+      const code = payload?.error_response?.error || payload?.error || payload?.code || response.status;
+      const message = payload?.error_response?.message || payload?.message || payload?.error_details || '';
+      throw new Error(`Coinbase private endpoint failed (${response.status}) code=${String(code)}${message ? ` message=${String(message)}` : ''}`);
+    }
+    recordCoinbaseAuthenticatedSuccess();
+    rateCooldownUntil = null;
+    requestCount += 1;
+    lastRequestAt = Date.now();
+    return payload;
   }
-  if (response.status === 401 || response.status === 403) {
-    throw recordCoinbaseAuthFailure(response.status);
-  }
-  if (!response.ok || payload?.error) {
-    const code = payload?.error_response?.error || payload?.error || payload?.code || response.status;
-    const message = payload?.error_response?.message || payload?.message || payload?.error_details || '';
-    throw new Error(`Coinbase private endpoint failed (${response.status}) code=${String(code)}${message ? ` message=${String(message)}` : ''}`);
-  }
-  recordCoinbaseAuthenticatedSuccess();
-  requestCount += 1;
-  lastRequestAt = Date.now();
-  return payload;
+
+  throw new Error(`Coinbase private request exhausted bounded retry budget for ${path}`);
 }
 
 export async function getCoinbaseKeyPermissions(forceRefresh = false): Promise<CoinbaseKeyPermissions> {
@@ -364,5 +442,9 @@ export function getCoinbasePrivateAuthoritySnapshot(): CoinbasePrivateAuthorityS
     lastAuthFailureAt,
     authCooldownUntil: authCooldownUntil && authCooldownUntil > now ? authCooldownUntil : null,
     authCircuitOpen: Boolean(authCooldownUntil && authCooldownUntil > now),
+    rateLimitCount,
+    rateRetryCount,
+    rateCooldownUntil: rateCooldownUntil && rateCooldownUntil > now ? rateCooldownUntil : null,
+    rateCircuitOpen: Boolean(rateCooldownUntil && rateCooldownUntil > now),
   };
 }

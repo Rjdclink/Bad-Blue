@@ -10,9 +10,6 @@
 
 import logger from '../../../logger.js';
 import { getCryptara } from '../../cryptara/index.js';
-import { multiProviderRpcManager } from '../api/blockchain-providers.js';
-import { TradingViewEngine } from '../babel/tradingview-integration.js';
-import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import {
   assessCanonicalExecutionEnvironment,
   getCanonicalExecutionCapabilities,
@@ -20,6 +17,7 @@ import {
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
 import { ensureCanonicalCryptoCrawlerRuntimeWiring } from './canonical-runtime-wiring.js';
 import { ensureCryptaraAssessmentWiring } from './cryptara-assessment-wiring.js';
+import { getCryptaraSharedConnectorReadiness } from './cryptara-shared-readiness.js';
 
 type ReadinessIssue = {
   id: string;
@@ -95,22 +93,15 @@ class MasterPipeline {
 
     for (let passNumber = 1; passNumber <= requestedPasses; passNumber++) {
       const issues: ReadinessIssue[] = [];
-      const [tradingView, alchemy, cryptaraReadiness] = await Promise.all([
-        TradingViewEngine.checkReadiness({ strictLive: strictConnectors }),
-        alchemyIntegration.readinessCheck({ strictLive: strictConnectors }),
-        cryptara.validateLiveSignalReadiness({ strictLive: strictConnectors }),
-      ]);
-
-      try {
-        await multiProviderRpcManager.initialize(['ethereum']);
-      } catch (error) {
-        issues.push({
-          id: 'rpc-initialize',
-          severity: 'block',
-          detail: error instanceof Error ? error.message : String(error),
-          remediation: 'Restore a chain-verified configured RPC provider before claiming live readiness.',
-        });
-      }
+      // One Cryptara-owned acquisition supplies TradingView, Alchemy and shared RPC
+      // readiness. The Super Worker coalesces simultaneous identical requests and
+      // fans this canonical result out instead of probing each provider twice.
+      const cryptaraReadiness = await getCryptaraSharedConnectorReadiness(cryptara, {
+        strictLive: strictConnectors,
+        consumer: 'master-pipeline-deployment-readiness',
+      });
+      const tradingView = cryptaraReadiness.tradingView;
+      const alchemy = cryptaraReadiness.alchemy;
 
       if (initializationError) {
         issues.push({
@@ -126,6 +117,14 @@ class MasterPipeline {
           severity: strictConnectors ? 'block' : 'warn',
           detail: tradingView.detail,
           remediation: 'Restore live TradingView evidence or keep the runtime in non-live posture.',
+        });
+      }
+      if (!cryptaraReadiness.rpc.ready) {
+        issues.push({
+          id: 'rpc-initialize',
+          severity: 'block',
+          detail: cryptaraReadiness.rpc.detail,
+          remediation: 'Restore a chain-verified configured RPC provider before claiming live readiness.',
         });
       }
       if (!cryptaraReadiness.liveSignalReady) {

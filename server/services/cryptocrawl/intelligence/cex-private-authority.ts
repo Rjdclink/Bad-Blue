@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'crypto';
+import type { PoolClient } from 'pg';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured } from '../../../db.js';
 import {
@@ -92,6 +93,16 @@ let krakenDistributedStateReady: Promise<void> | null = null;
 let krakenDbFailureCount = 0;
 let krakenDbBreakerOpenUntil = 0;
 let krakenDbLastError: string | null = null;
+let krakenLockContentionCount = 0;
+let krakenLockTimeoutCount = 0;
+let krakenLastLockWaitMs = 0;
+
+class KrakenLockBusyError extends Error {
+  constructor(readonly waitedMs: number) {
+    super(`Kraken distributed nonce lane busy after ${waitedMs}ms; fail-closed and retry on a later hydration cycle`);
+    this.name = 'KrakenLockBusyError';
+  }
+}
 
 class KrakenPostCoordinationError extends Error {
   constructor(readonly causeError: unknown) {
@@ -177,6 +188,39 @@ async function ensureKrakenDistributedState(): Promise<void> {
     throw error;
   });
   return krakenDistributedStateReady;
+}
+
+async function acquireKrakenDistributedLock(client: PoolClient, lockName: string): Promise<void> {
+  const startedAt = Date.now();
+  const deadline = startedAt + KRAKEN_LOCK_MAX_WAIT_MS;
+  while (true) {
+    const result = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS locked', [lockName]);
+    if (result.rows?.[0]?.locked === true) {
+      krakenLastLockWaitMs = Math.max(0, Date.now() - startedAt);
+      return;
+    }
+
+    krakenLockContentionCount += 1;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      krakenLockTimeoutCount += 1;
+      krakenLastLockWaitMs = Math.max(0, Date.now() - startedAt);
+      logger.warn('[CEX Private] Kraken distributed nonce lane busy; request deferred without blocking an advisory-lock wait queue', {
+        component: 'CexPrivateAuthority',
+        waitedMs: krakenLastLockWaitMs,
+        contentionCount: krakenLockContentionCount,
+        timeoutCount: krakenLockTimeoutCount,
+        blockingAdvisoryLockUsed: false,
+        localNonceFallbackAllowed: false,
+      });
+      throw new KrakenLockBusyError(krakenLastLockWaitMs);
+    }
+
+    const pollMs = Math.min(KRAKEN_LOCK_POLL_MS, remainingMs);
+    const lowMs = Math.max(10, Math.floor(pollMs / 2));
+    const jitterMs = Math.floor(Math.random() * Math.max(1, pollMs - lowMs + 1));
+    await new Promise(resolve => setTimeout(resolve, Math.min(remainingMs, lowMs + jitterMs)));
+  }
 }
 
 /**
@@ -268,6 +312,9 @@ export function getKrakenPrivateAuthoritySnapshot(): {
   databaseBreakerOpenUntil: number;
   databaseConsecutiveFailures: number;
   databaseLastError: string | null;
+  lockContentionCount: number;
+  lockTimeoutCount: number;
+  lastLockWaitMs: number;
 } {
   return {
     lastNonce: krakenLastNonce,
@@ -275,6 +322,9 @@ export function getKrakenPrivateAuthoritySnapshot(): {
     databaseBreakerOpenUntil: krakenDbBreakerOpenUntil,
     databaseConsecutiveFailures: krakenDbFailureCount,
     databaseLastError: krakenDbLastError,
+    lockContentionCount: krakenLockContentionCount,
+    lockTimeoutCount: krakenLockTimeoutCount,
+    lastLockWaitMs: krakenLastLockWaitMs,
   };
 }
 
@@ -341,8 +391,10 @@ interface OkxLaneSnapshot {
 
 const OKX_LANE_POLICIES: Record<OkxPrivateLane, OkxLanePolicy> = {
   trade_fee: {
-    capacity: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_CAPACITY', 5, 1, 20),
-    windowMs: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_WINDOW_MS', 2_000, 500, 60_000),
+    // OKX documents this endpoint at 5 requests / 2 seconds per User ID.
+    // Never let an environment override expand beyond the venue's authority.
+    capacity: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_CAPACITY', 5, 1, 5),
+    windowMs: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_WINDOW_MS', 2_000, 2_000, 60_000),
     priority: 10,
   },
   order_write: {
@@ -457,6 +509,22 @@ async function executeStartedLaneOperation<T>(lane: OkxPrivateLane, operation: (
   }
   state.requestCount += 1;
   return result;
+}
+
+function okxTradeFeeQuotaNamespace(): string {
+  const apiKey = requireCredential('OKX_API_KEY');
+  return `okx:trade_fee:${createHash('sha256').update(apiKey).digest('hex').slice(0, 24)}`;
+}
+
+async function acquireOkxDistributedQuota(lane: OkxPrivateLane): Promise<void> {
+  if (lane !== 'trade_fee' || !isDatabaseConfigured) return;
+  const policy = OKX_LANE_POLICIES.trade_fee;
+  await acquireDistributedApiQuota({
+    namespace: okxTradeFeeQuotaNamespace(),
+    capacity: policy.capacity,
+    windowMs: policy.windowMs,
+    maxWaitMs: Math.max(10_000, policy.windowMs * 5),
+  });
 }
 
 function scheduleOkxLane<T>(lane: OkxPrivateLane, operation: () => Promise<T>): Promise<T> {
@@ -685,6 +753,7 @@ export function getOkxPrivateAuthoritySnapshot(): {
   regionSource: OkxRegionSnapshot['source'] | null;
   regionExpiresAt: number | null;
   lanes: Record<OkxPrivateLane, OkxLaneSnapshot>;
+  distributedQuota: ReturnType<typeof getDistributedApiQuotaSnapshot>;
 } {
   const lanes = Object.fromEntries(
     (Object.keys(okxLanes) as OkxPrivateLane[]).map(lane => {
@@ -714,5 +783,6 @@ export function getOkxPrivateAuthoritySnapshot(): {
     regionSource: okxRegion?.source || null,
     regionExpiresAt: okxRegion?.expiresAt || null,
     lanes,
+    distributedQuota: getDistributedApiQuotaSnapshot(),
   };
 }

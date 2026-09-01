@@ -23,9 +23,20 @@ export interface MarketUniversePerformanceHint {
   providerQuality?: number | null;
 }
 
+export interface MarketUniverseEconomicHint {
+  symbol: string;
+  observedModes: number;
+  positiveModes: number;
+  closestRiskAdjustedGapBps: number | null;
+  bestPositiveBps: number | null;
+  feeFreshnessScore: number | null;
+  makerFillProbability: number | null;
+}
+
 let rotationCursor = 0;
 let lastOrderedSymbols: string[] = [];
 let performanceProvider: (() => ReadonlyMap<string, MarketUniversePerformanceHint>) | null = null;
+let economicProvider: (() => ReadonlyMap<string, MarketUniverseEconomicHint>) | null = null;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
@@ -93,6 +104,7 @@ function measuredPerformanceModifier(hint: MarketUniversePerformanceHint | undef
 function score(
   candidate: MarketUniverseCandidate,
   performance: ReadonlyMap<string, MarketUniversePerformanceHint>,
+  economics: ReadonlyMap<string, MarketUniverseEconomicHint>,
 ): number {
   const volume = Number.isFinite(candidate.volume24hUsd) && (candidate.volume24hUsd || 0) > 0
     ? Math.log10((candidate.volume24hUsd || 0) + 1)
@@ -104,7 +116,11 @@ function score(
     ? 1 / Math.sqrt(candidate.marketCapRank || 1)
     : 0;
   const canonical = canonicalizeCexSymbol(candidate.symbol)?.symbol || candidate.symbol.trim().toUpperCase();
-  return volume * 2 + cap * 0.35 + rank + measuredPerformanceModifier(performance.get(canonical));
+  return volume * 2
+    + cap * 0.35
+    + rank
+    + measuredPerformanceModifier(performance.get(canonical))
+    + measuredEconomicModifier(economics.get(canonical));
 }
 
 function rememberOrderedUniverse<T extends MarketUniverseCandidate>(ordered: T[]): T[] {
@@ -129,15 +145,18 @@ export function getLastOrderedMarketUniverseSymbols(): string[] {
 
 export function rankMeasuredMarketUniverse<T extends MarketUniverseCandidate>(assets: readonly T[]): T[] {
   const performance = performanceProvider?.() || new Map<string, MarketUniversePerformanceHint>();
+  const economics = economicProvider?.() || new Map<string, MarketUniverseEconomicHint>();
   const bySymbol = new Map<string, T>();
   for (const asset of assets) {
     const canonical = canonicalizeCexSymbol(asset.symbol);
     if (!canonical || !isUsefulArbitrageSymbol(canonical.symbol)) continue;
     const normalized = { ...asset, symbol: canonical.symbol } as T;
     const existing = bySymbol.get(canonical.symbol);
-    if (!existing || score(normalized, performance) > score(existing, performance)) bySymbol.set(canonical.symbol, normalized);
+    if (!existing || score(normalized, performance, economics) > score(existing, performance, economics)) {
+      bySymbol.set(canonical.symbol, normalized);
+    }
   }
-  return [...bySymbol.values()].sort((left, right) => score(right, performance) - score(left, performance));
+  return [...bySymbol.values()].sort((left, right) => score(right, performance, economics) - score(left, performance, economics));
 }
 
 /**
@@ -155,9 +174,11 @@ export function orderMeasuredMarketUniverse<T extends MarketUniverseCandidate>(a
     Math.max(1, Number.isFinite(configuredWindow) ? Math.floor(configuredWindow) : ranked.length),
   );
   const performance = performanceProvider?.() || new Map<string, MarketUniversePerformanceHint>();
+  const economics = economicProvider?.() || new Map<string, MarketUniverseEconomicHint>();
   const configuredFocusFraction = Number(process.env.CRYPTO_MARKET_PERFORMANCE_FOCUS_FRACTION || 0.25);
   const focusFraction = clamp(Number.isFinite(configuredFocusFraction) ? configuredFocusFraction : 0.25, 0, 0.5);
-  const focusCount = performance.size > 0 && windowSize > 1
+  const hasMeasuredFocus = performance.size > 0 || economics.size > 0;
+  const focusCount = hasMeasuredFocus && windowSize > 1
     ? Math.min(windowSize - 1, Math.max(1, Math.floor(windowSize * focusFraction)))
     : 0;
   const focus = ranked.slice(0, focusCount);
