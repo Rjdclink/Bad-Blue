@@ -28,18 +28,13 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Build application (requires dev dependencies). The normal build first proves the
-# source tree. Then overwrite only the production server entry with the Cryptara-
-# first wrapper so rollout headroom + admission control exist before SELECT 1.
+# Build application (requires dev dependencies). The normal build proves the full
+# source tree. The deployed server bundle is then rebuilt through the mandatory
+# CryptoCrawler Overflow authority router so every reachable CryptoCrawler import
+# of server/db resolves to Overflow and canonical runtime install requires the
+# complete Overflow schema proof.
 RUN npm run build && \
-    npx esbuild server/cryptara-bootstrap-entry.ts \
-      --bundle \
-      --platform=node \
-      --target=node20 \
-      --outfile=dist/index.js \
-      --format=esm \
-      --packages=external \
-      --define:process.env.NODE_ENV="'production'" && \
+    node scripts/cryptocrawl/build-server-overflow-authority.mjs server/cryptara-bootstrap-entry.ts dist/index.js && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
 
