@@ -1,6 +1,9 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
-import type { CryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  withCryptaraSupabasePriority,
+  type CryptaraSupabasePriority,
+} from '../integration/cryptara-supabase-admission-worker.js';
 import {
   primeCryptaraSharedInformation,
   requestCryptaraSharedInformation,
@@ -112,14 +115,13 @@ export async function ensureResourceLeaseAuthority(
         allowedConsumers: ['resource-lease-authority'],
         informationClass: 'schema_authority',
         freshForMs: readyTtlMs,
-        databasePriority: priority,
         estimatedBytes: 8,
         loader: async () => {
-          const result = await pool.query(
+          const result = await withCryptaraSupabasePriority(priority, () => pool.query(
             `SELECT
                to_regclass('public.${RESOURCE_LEASE_TABLE}') IS NOT NULL AS table_ready,
                to_regprocedure('private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)') IS NOT NULL AS claim_function_ready`,
-          );
+          ));
           const ready = result.rows?.[0]?.table_ready === true && result.rows?.[0]?.claim_function_ready === true;
           if (!ready) {
             logger.error('[ResourceLeaseAuthority] Migration-owned lease authority is missing', {
