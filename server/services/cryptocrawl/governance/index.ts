@@ -115,7 +115,10 @@ async function initializeGovernanceState(): Promise<void> {
     profitLadder.markCapitalUnavailable();
   }
   const { getCryptara } = await import('../../cryptara/index.js');
-  getCryptara().restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
+  const cryptara = getCryptara();
+  cryptara.restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
+  const { installCryptaraSharedConnectorReadinessProxy } = await import('../integration/cryptara-shared-readiness.js');
+  installCryptaraSharedConnectorReadinessProxy(cryptara);
 
   // After critical governance persistence is inside the worker lane, activate
   // Antenna + QuantiComp advisory intelligence. It cannot grant DB or trade authority.
