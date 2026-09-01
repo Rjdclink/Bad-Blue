@@ -12,6 +12,8 @@
 //    plane and must not use these primary pools as execution authority.
 await import('./migrations/reconcileAppSchema.js');
 
+process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false';
+
 const { installCryptaraSuperWorkerAdmission } = await import(
   './services/cryptocrawl/integration/cryptara-super-worker.js'
 );
@@ -33,10 +35,12 @@ if (overflowBootstrap.state === 'ready') {
   );
   try {
     await ensureCryptocrawlOverflowRuntimeSchema();
+    process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'true';
     console.log(
       '[CRYPTARA][OVERFLOW-AUTHORITY] READY: complete CryptoCrawler runtime schema verified on Overflow; Primary is not a CryptoCrawler runtime prerequisite',
     );
   } catch (error) {
+    process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false';
     console.error(
       '[CRYPTARA][OVERFLOW-AUTHORITY] DEGRADED: Overflow transport is reachable but complete CryptoCrawler authority schema is not ready; execution remains fail-closed',
       error instanceof Error ? error.message : String(error),
