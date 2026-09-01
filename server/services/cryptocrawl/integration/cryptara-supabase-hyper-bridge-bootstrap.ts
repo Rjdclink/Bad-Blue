@@ -32,10 +32,8 @@ type OverflowSchemaSnapshot = {
   serverVersion: number;
   publicBaseTables: number;
   privateBaseTables: number;
-  expectedApplicationTables: Record<string, boolean>;
   expectedBridgeTables: Record<string, boolean>;
-  applicationSchemaReady: boolean;
-  bridgeSchemaReady: boolean;
+  auxiliarySchemaReady: boolean;
 };
 
 let state: CryptaraHyperBridgeBootstrapState = 'idle';
@@ -48,9 +46,9 @@ let probeInFlight: Promise<void> | null = null;
 
 /**
  * Start the dedicated overflow control worker before either remote database lane.
- * The worker itself is local-only and therefore adds no network latency. After it
- * is online, the existing overflow transport receives one single-flight head-start
- * probe while the caller continues immediately toward normal bootstrap.
+ * The worker itself is local-only and therefore adds no network latency. The
+ * remote Overflow lane is considered operational only when its migration-owned
+ * auxiliary schema is present; mere TCP/Postgres connectivity is not readiness.
  */
 export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
   if (probeInFlight) return probeInFlight;
@@ -81,40 +79,43 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
       current_setting('server_version_num')::integer as server_version,
       (select count(*)::integer from information_schema.tables where table_schema='public' and table_type='BASE TABLE') as public_base_tables,
       (select count(*)::integer from information_schema.tables where table_schema='private' and table_type='BASE TABLE') as private_base_tables,
-      to_regclass('public.users') is not null as has_users,
-      to_regclass('public.complaints') is not null as has_complaints,
-      to_regclass('public.lawsuit_filings') is not null as has_lawsuit_filings,
-      to_regclass('public.cryptocrawler_resource_leases') is not null as has_resource_leases,
       to_regclass('private.cryptara_comp_cache') is not null as has_comp_cache,
-      to_regclass('private.cryptara_parallel_snapshots') is not null as has_parallel_snapshots`));
+      to_regclass('private.cryptara_parallel_snapshots') is not null as has_parallel_snapshots,
+      to_regclass('private.cryptara_parallel_events') is not null as has_parallel_events,
+      to_regclass('private.cryptara_parallel_jobs') is not null as has_parallel_jobs,
+      to_regprocedure('private.cryptara_claim_parallel_jobs(text,integer,integer)') is not null as has_parallel_claimant`));
     latencyMs = Date.now() - probeStartedAt;
     completedAt = Date.now();
 
     if (result.used && result.value?.rows?.[0]) {
       const row = result.value.rows[0];
-      const expectedApplicationTables = {
-        users: row.has_users === true,
-        complaints: row.has_complaints === true,
-        lawsuit_filings: row.has_lawsuit_filings === true,
-        cryptocrawler_resource_leases: row.has_resource_leases === true,
-      };
       const expectedBridgeTables = {
         cryptara_comp_cache: row.has_comp_cache === true,
         cryptara_parallel_snapshots: row.has_parallel_snapshots === true,
+        cryptara_parallel_events: row.has_parallel_events === true,
+        cryptara_parallel_jobs: row.has_parallel_jobs === true,
+        cryptara_claim_parallel_jobs: row.has_parallel_claimant === true,
       };
+      const auxiliarySchemaReady = Object.values(expectedBridgeTables).every(Boolean);
       overflowSchema = {
         databaseName: String(row.database_name || ''),
         serverVersion: Number(row.server_version || 0),
         publicBaseTables: Number(row.public_base_tables || 0),
         privateBaseTables: Number(row.private_base_tables || 0),
-        expectedApplicationTables,
         expectedBridgeTables,
-        applicationSchemaReady: Object.values(expectedApplicationTables).every(Boolean),
-        bridgeSchemaReady: Object.values(expectedBridgeTables).every(Boolean),
+        auxiliarySchemaReady,
       };
+
+      if (!auxiliarySchemaReady) {
+        state = 'degraded';
+        reason = 'overflow auxiliary schema incomplete';
+        console.warn(`[CRYPTARA][HYPER-BRIDGE][BOOTSTRAP] overflow connected but not operational; ${reason}; schema=${JSON.stringify(overflowSchema)}; no primary probe was issued by overflow worker`);
+        return;
+      }
+
       state = 'ready';
       reason = null;
-      console.log(`[CRYPTARA][HYPER-BRIDGE][BOOTSTRAP] overflow lane ready in ${latencyMs}ms; worker coherence remains local/no-primary-ping; schema=${JSON.stringify(overflowSchema)}`);
+      console.log(`[CRYPTARA][HYPER-BRIDGE][BOOTSTRAP] overflow lane operational in ${latencyMs}ms; worker coherence remains local/no-primary-ping; schema=${JSON.stringify(overflowSchema)}`);
       return;
     }
 
