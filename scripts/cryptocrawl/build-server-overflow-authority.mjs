@@ -7,11 +7,13 @@ const cryptoRoot = path.resolve(repoRoot, 'server/services/cryptocrawl');
 const rootDbBase = path.resolve(repoRoot, 'server/db');
 const overflowDb = path.resolve(cryptoRoot, 'runtime/cryptocrawl-runtime-database.ts');
 const canonicalRuntime = path.resolve(cryptoRoot, 'integration/canonical-runtime-wiring.ts');
+const overflowWorker = path.resolve(cryptoRoot, 'integration/cryptara-supabase-overflow-worker.ts');
 
 const entry = path.resolve(repoRoot, process.argv[2] || 'server/index.ts');
 const outfile = path.resolve(repoRoot, process.argv[3] || 'dist/index.js');
 const redirected = [];
 let canonicalGateApplied = false;
+let auxiliaryPoolUnified = false;
 
 function stripKnownExtension(value) {
   return value.replace(/\.(?:js|ts|mjs|cjs)$/, '');
@@ -25,6 +27,9 @@ function isUnder(child, parent) {
 const overflowAuthorityPlugin = {
   name: 'cryptocrawl-overflow-runtime-authority',
   setup(buildApi) {
+    // Any CryptoCrawler-originated import of the application DB module is resolved
+    // to the dedicated Overflow runtime DB. LegalWhat and the rest of the app keep
+    // their original Primary database wiring.
     buildApi.onResolve({ filter: /^\./ }, args => {
       if (!args.importer || !isUnder(path.resolve(args.importer), cryptoRoot)) return null;
       const resolved = stripKnownExtension(path.resolve(path.dirname(args.importer), args.path));
@@ -36,21 +41,46 @@ const overflowAuthorityPlugin = {
       return { path: overflowDb };
     });
 
+    // Canonical runtime installation must require both transport readiness and the
+    // complete migration/schema proof produced by the Overflow authority module.
     buildApi.onLoad({ filter: /canonical-runtime-wiring\.ts$/ }, async args => {
       if (path.resolve(args.path) !== canonicalRuntime) return null;
-      const original = await fs.readFile(args.path, 'utf8');
-      const needle = "if (overflowBootstrap.state === 'ready') {";
-      const replacement = "if (overflowBootstrap.state === 'ready' && process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY === 'true') {";
-      const occurrences = original.split(needle).length - 1;
-      if (occurrences !== 1) {
-        throw new Error(`[OverflowAuthorityBuild] Expected exactly one canonical Overflow install gate, found ${occurrences}`);
+      let source = await fs.readFile(args.path, 'utf8');
+      const importNeedle = "import { getCryptaraHyperBridgeBootstrapSnapshot } from './cryptara-supabase-hyper-bridge-bootstrap.js';";
+      const importReplacement = `${importNeedle}\nimport { getCryptocrawlOverflowRuntimeSchemaSnapshot } from '../runtime/cryptocrawl-overflow-runtime-schema.js';`;
+      const gateNeedle = "if (overflowBootstrap.state === 'ready') {";
+      const gateReplacement = "if (overflowBootstrap.state === 'ready' && getCryptocrawlOverflowRuntimeSchemaSnapshot().ready) {";
+      if (source.split(importNeedle).length - 1 !== 1) {
+        throw new Error('[OverflowAuthorityBuild] Canonical schema snapshot import anchor is missing or duplicated');
       }
+      if (source.split(gateNeedle).length - 1 !== 1) {
+        throw new Error('[OverflowAuthorityBuild] Canonical Overflow install gate is missing or duplicated');
+      }
+      source = source.replace(importNeedle, importReplacement).replace(gateNeedle, gateReplacement);
       canonicalGateApplied = true;
-      return {
-        contents: original.replace(needle, replacement),
-        loader: 'ts',
-        resolveDir: path.dirname(args.path),
-      };
+      return { contents: source, loader: 'ts', resolveDir: path.dirname(args.path) };
+    });
+
+    // The legacy auxiliary cache worker used to own a second pg.Pool to the same
+    // Overflow project. Production now shares the single ordinary Overflow pool.
+    buildApi.onLoad({ filter: /cryptara-supabase-overflow-worker\.ts$/ }, async args => {
+      if (path.resolve(args.path) !== overflowWorker) return null;
+      let source = await fs.readFile(args.path, 'utf8');
+      const pgImport = "import pg from 'pg';\n";
+      const poolDestructure = "const { Pool } = pg;\n";
+      const poolPattern = /\/\/ Separate from the authoritative pool[\s\S]*?const overflowPool = isCryptaraOverflowConfigured\s*\? new Pool\(\{[\s\S]*?\}\s*as any\)\s*:\s*null;/;
+      if (!source.includes(pgImport) || !source.includes(poolDestructure) || !poolPattern.test(source)) {
+        throw new Error('[OverflowAuthorityBuild] Legacy auxiliary Overflow pool shape changed; refusing an unverified build');
+      }
+      source = source
+        .replace(pgImport, "import { pool as runtimeOverflowPool } from '../runtime/cryptocrawl-runtime-database.js';\n")
+        .replace(poolDestructure, '')
+        .replace(
+          poolPattern,
+          '// Auxiliary cache/proxy operations share the one ordinary Overflow runtime pool.\nconst overflowPool = isCryptaraOverflowConfigured ? runtimeOverflowPool : null;',
+        );
+      auxiliaryPoolUnified = true;
+      return { contents: source, loader: 'ts', resolveDir: path.dirname(args.path) };
     });
   },
 };
@@ -72,6 +102,9 @@ const result = await build({
 if (!canonicalGateApplied) {
   throw new Error('[OverflowAuthorityBuild] Canonical CryptoCrawler runtime gate was not included in the server bundle');
 }
+if (!auxiliaryPoolUnified) {
+  throw new Error('[OverflowAuthorityBuild] Legacy auxiliary Overflow pool was not unified into the runtime pool');
+}
 if (redirected.length === 0) {
   throw new Error('[OverflowAuthorityBuild] No CryptoCrawler Primary DB imports were observed; routing proof is unexpectedly empty');
 }
@@ -84,8 +117,9 @@ await fs.writeFile(proofPath, JSON.stringify({
   authority: 'SUPABASE_DATABASE_URL_OVERFLOW',
   primaryFallbackUsed: false,
   canonicalOverflowSchemaGateApplied: canonicalGateApplied,
+  auxiliaryOverflowPoolUnified: auxiliaryPoolUnified,
   redirectedPrimaryDbImports: redirected,
   outputCount: Object.keys(result.metafile?.outputs || {}).length,
 }, null, 2));
 
-console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} CryptoCrawler server/db import(s) to Overflow; canonical schema gate applied; proof=${path.relative(repoRoot, proofPath)}`);
+console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} CryptoCrawler server/db import(s) to Overflow; auxiliary pool unified; canonical schema gate applied; proof=${path.relative(repoRoot, proofPath)}`);
