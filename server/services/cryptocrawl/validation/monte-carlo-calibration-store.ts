@@ -2,6 +2,11 @@ import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  appendCryptaraParallelEvents,
+  isCryptaraParallelProxyConfigured,
+  readCryptaraParallelEvents,
+} from '../integration/cryptara-supabase-overflow-worker.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import type { MonteCarloTopology } from './monte-carlo-policy.js';
 
@@ -45,6 +50,9 @@ export interface MonteCarloCalibrationSampleSet {
 
 const TABLE = 'cryptocrawler_mc_calibration_v1';
 const MODEL_VERSION = 'mc-calibration-v1';
+const PARALLEL_PROXY_TOPIC = 'monte-carlo-calibration-v1';
+
+type PersistenceMode = 'memory' | 'primary' | 'parallel_proxy';
 
 function finite(value: unknown): number | null {
   const parsed = Number(value);
@@ -149,56 +157,86 @@ function toObservation(feedback: CryptaraExecutionFeedback): MonteCarloCalibrati
 class MonteCarloCalibrationStore {
   private readonly observations = new Map<string, MonteCarloCalibrationObservation>();
   private hydratePromise: Promise<void> | null = null;
-  private tableReady: Promise<boolean> | null = null;
+  private primaryTableReady: Promise<boolean> | null = null;
   private persistenceReady = false;
+  private persistenceMode: PersistenceMode = 'memory';
   private readonly maxEntries = Math.max(128, Math.min(50_000, Number(process.env.CRYPTOCRAWL_MC_CALIBRATION_MAX || 10_000)));
 
-  private async ensureTable(): Promise<boolean> {
+  /** Startup already proved this exact primary relation; reuse that proof. */
+  primePrimaryReady(): void {
+    this.primaryTableReady = Promise.resolve(true);
+  }
+
+  private async ensurePrimaryTable(): Promise<boolean> {
     if (!isDatabaseConfigured) return false;
-    if (this.tableReady) return this.tableReady;
-    this.tableReady = (async () => {
+    if (this.primaryTableReady) return this.primaryTableReady;
+    this.primaryTableReady = (async () => {
       try {
-        // Migration 023 owns this schema. Runtime calibration must never acquire
-        // DDL locks or create indexes on the hot path; verify the migration-owned
-        // relation once, then use ordinary DML through the shared admission lane.
         const result = await withCryptaraSupabasePriority('low', () =>
           pool.query('SELECT to_regclass($1::text) AS relation', [`public.${TABLE}`]),
         );
-        this.persistenceReady = typeof result.rows?.[0]?.relation === 'string';
-        if (!this.persistenceReady) {
-          logger.warn('[MonteCarloCalibration] Migration-owned persistence table unavailable; retaining measured in-memory calibration', {
+        const ready = typeof result.rows?.[0]?.relation === 'string';
+        if (!ready) {
+          logger.warn('[MonteCarloCalibration] Migration-owned primary persistence table unavailable; retaining measured in-memory calibration', {
             component: 'MonteCarloCalibrationStore',
             table: TABLE,
           });
         }
-        return this.persistenceReady;
+        return ready;
       } catch (error) {
-        this.persistenceReady = false;
-        logger.warn('[MonteCarloCalibration] Persistence unavailable; retaining measured in-memory calibration', {
+        logger.warn('[MonteCarloCalibration] Primary persistence unavailable; retaining measured in-memory calibration', {
           component: 'MonteCarloCalibrationStore',
           error: error instanceof Error ? error.message : String(error),
         });
         return false;
       }
     })();
-    return this.tableReady;
+    return this.primaryTableReady;
+  }
+
+  private ingest(observation: MonteCarloCalibrationObservation): void {
+    if (!observation?.eventId) return;
+    this.observations.set(observation.eventId, observation);
   }
 
   async hydrate(): Promise<void> {
     if (this.hydratePromise) return this.hydratePromise;
     this.hydratePromise = (async () => {
-      if (!await this.ensureTable()) return;
+      // Derived historical calibration is an ideal CQRS/read-model workload. If
+      // the optional second project is provisioned, the potentially large startup
+      // history read never touches the trading database.
+      if (isCryptaraParallelProxyConfigured) {
+        const proxied = await readCryptaraParallelEvents<MonteCarloCalibrationObservation>(
+          'background_learning',
+          PARALLEL_PROXY_TOPIC,
+          this.maxEntries,
+        );
+        if (proxied.used) {
+          for (const item of proxied.value || []) this.ingest(item.payload);
+          this.persistenceReady = true;
+          this.persistenceMode = 'parallel_proxy';
+          logger.info('[MonteCarloCalibration] Calibration hydrated from parallel proxy', {
+            component: 'MonteCarloCalibrationStore',
+            samples: this.observations.size,
+            modelVersion: MODEL_VERSION,
+            primaryDatabaseRead: false,
+          });
+          return;
+        }
+      }
+
+      if (!await this.ensurePrimaryTable()) return;
       const result = await withCryptaraSupabasePriority('low', () =>
         pool.query(`SELECT payload FROM ${TABLE} ORDER BY observed_at DESC LIMIT $1`, [this.maxEntries]),
       );
-      for (const row of result.rows) {
-        const observation = row.payload as MonteCarloCalibrationObservation;
-        if (observation?.eventId) this.observations.set(observation.eventId, observation);
-      }
+      for (const row of result.rows) this.ingest(row.payload as MonteCarloCalibrationObservation);
+      this.persistenceReady = true;
+      this.persistenceMode = 'primary';
       logger.info('[MonteCarloCalibration] Measured terminal calibration hydrated', {
         component: 'MonteCarloCalibrationStore',
         samples: this.observations.size,
         modelVersion: MODEL_VERSION,
+        persistenceMode: this.persistenceMode,
       });
     })().catch(error => {
       logger.warn('[MonteCarloCalibration] Hydration failed closed', {
@@ -212,9 +250,28 @@ class MonteCarloCalibrationStore {
   async recordTerminal(feedback: CryptaraExecutionFeedback): Promise<MonteCarloCalibrationObservation | null> {
     const observation = toObservation(feedback);
     if (!observation) return null;
-    this.observations.set(observation.eventId, observation);
+    this.ingest(observation);
     this.prune();
-    if (await this.ensureTable()) {
+
+    // Persist the already-derived observation directly to the secondary project;
+    // no primary read is needed to construct it. If secondary is absent/degraded,
+    // preserve the existing low-priority primary persistence behavior.
+    if (isCryptaraParallelProxyConfigured) {
+      const proxied = await appendCryptaraParallelEvents<MonteCarloCalibrationObservation>([{
+        key: observation.eventId,
+        workload: 'background_learning',
+        topic: PARALLEL_PROXY_TOPIC,
+        payload: observation,
+        observedAt: observation.observedAt,
+      }]);
+      if (proxied.used) {
+        this.persistenceReady = true;
+        this.persistenceMode = 'parallel_proxy';
+        return { ...observation, provenance: [...observation.provenance] };
+      }
+    }
+
+    if (await this.ensurePrimaryTable()) {
       await withCryptaraSupabasePriority('low', () => pool.query(
         `INSERT INTO ${TABLE} (event_id, observed_at, topology, venue_pair, symbol, chain, strategy, size_bucket, payload, model_version)
          VALUES ($1, to_timestamp($2 / 1000.0), $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
@@ -231,7 +288,10 @@ class MonteCarloCalibrationStore {
           JSON.stringify(observation),
           MODEL_VERSION,
         ],
-      )).catch(error => {
+      )).then(() => {
+        this.persistenceReady = true;
+        this.persistenceMode = 'primary';
+      }).catch(error => {
         logger.warn('[MonteCarloCalibration] Persistence write failed; measured in-memory sample retained', {
           component: 'MonteCarloCalibrationStore',
           eventId: observation.eventId,
@@ -287,8 +347,13 @@ class MonteCarloCalibrationStore {
     };
   }
 
-  getMetrics(): { samples: number; modelVersion: string; persisted: boolean } {
-    return { samples: this.observations.size, modelVersion: MODEL_VERSION, persisted: this.persistenceReady };
+  getMetrics(): { samples: number; modelVersion: string; persisted: boolean; persistenceMode: PersistenceMode } {
+    return {
+      samples: this.observations.size,
+      modelVersion: MODEL_VERSION,
+      persisted: this.persistenceReady,
+      persistenceMode: this.persistenceMode,
+    };
   }
 
   private prune(): void {
@@ -298,4 +363,10 @@ class MonteCarloCalibrationStore {
   }
 }
 
-export const monteCarloCalibrationStore = new MonteCarloCalibrationStore();
+const monteCarloCalibrationStoreSingleton = new MonteCarloCalibrationStore();
+
+export function primeMonteCarloCalibrationPrimaryReady(): void {
+  monteCarloCalibrationStoreSingleton.primePrimaryReady();
+}
+
+export const monteCarloCalibrationStore = monteCarloCalibrationStoreSingleton;
