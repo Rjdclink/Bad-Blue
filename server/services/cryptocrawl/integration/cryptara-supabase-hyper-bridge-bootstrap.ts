@@ -22,8 +22,20 @@ type BootstrapSnapshot = {
   completedAt: number;
   latencyMs: number;
   reason: string | null;
+  overflowSchema: OverflowSchemaSnapshot | null;
   inFlight: boolean;
   overflowWorker: ReturnType<typeof getCryptaraOverflowSuperWorkerSnapshot>;
+};
+
+type OverflowSchemaSnapshot = {
+  databaseName: string;
+  serverVersion: number;
+  publicBaseTables: number;
+  privateBaseTables: number;
+  expectedApplicationTables: Record<string, boolean>;
+  expectedBridgeTables: Record<string, boolean>;
+  applicationSchemaReady: boolean;
+  bridgeSchemaReady: boolean;
 };
 
 let state: CryptaraHyperBridgeBootstrapState = 'idle';
@@ -31,6 +43,7 @@ let startedAt = 0;
 let completedAt = 0;
 let latencyMs = 0;
 let reason: string | null = null;
+let overflowSchema: OverflowSchemaSnapshot | null = null;
 let probeInFlight: Promise<void> | null = null;
 
 /**
@@ -47,6 +60,7 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
   completedAt = 0;
   latencyMs = 0;
   reason = null;
+  overflowSchema = null;
 
   if (!isCryptaraParallelProxyConfigured) {
     state = 'not_configured';
@@ -62,16 +76,45 @@ export function startCryptaraHyperBridgeBootstrap(): Promise<void> {
 
   probeInFlight = (async () => {
     const probeStartedAt = Date.now();
-    const result = await withCryptaraParallelProxy('observability', query =>
-      query('SELECT 1 AS hyper_bridge_ready'),
-    );
+    const result = await withCryptaraParallelProxy('observability', query => query(`select
+      current_database() as database_name,
+      current_setting('server_version_num')::integer as server_version,
+      (select count(*)::integer from information_schema.tables where table_schema='public' and table_type='BASE TABLE') as public_base_tables,
+      (select count(*)::integer from information_schema.tables where table_schema='private' and table_type='BASE TABLE') as private_base_tables,
+      to_regclass('public.users') is not null as has_users,
+      to_regclass('public.complaints') is not null as has_complaints,
+      to_regclass('public.lawsuit_filings') is not null as has_lawsuit_filings,
+      to_regclass('public.cryptocrawler_resource_leases') is not null as has_resource_leases,
+      to_regclass('private.cryptara_comp_cache') is not null as has_comp_cache,
+      to_regclass('private.cryptara_parallel_snapshots') is not null as has_parallel_snapshots`));
     latencyMs = Date.now() - probeStartedAt;
     completedAt = Date.now();
 
-    if (result.used && Number(result.value?.rows?.[0]?.hyper_bridge_ready) === 1) {
+    if (result.used && result.value?.rows?.[0]) {
+      const row = result.value.rows[0];
+      const expectedApplicationTables = {
+        users: row.has_users === true,
+        complaints: row.has_complaints === true,
+        lawsuit_filings: row.has_lawsuit_filings === true,
+        cryptocrawler_resource_leases: row.has_resource_leases === true,
+      };
+      const expectedBridgeTables = {
+        cryptara_comp_cache: row.has_comp_cache === true,
+        cryptara_parallel_snapshots: row.has_parallel_snapshots === true,
+      };
+      overflowSchema = {
+        databaseName: String(row.database_name || ''),
+        serverVersion: Number(row.server_version || 0),
+        publicBaseTables: Number(row.public_base_tables || 0),
+        privateBaseTables: Number(row.private_base_tables || 0),
+        expectedApplicationTables,
+        expectedBridgeTables,
+        applicationSchemaReady: Object.values(expectedApplicationTables).every(Boolean),
+        bridgeSchemaReady: Object.values(expectedBridgeTables).every(Boolean),
+      };
       state = 'ready';
       reason = null;
-      console.log(`[CRYPTARA][HYPER-BRIDGE][BOOTSTRAP] overflow lane ready in ${latencyMs}ms; worker coherence remains local/no-primary-ping`);
+      console.log(`[CRYPTARA][HYPER-BRIDGE][BOOTSTRAP] overflow lane ready in ${latencyMs}ms; worker coherence remains local/no-primary-ping; schema=${JSON.stringify(overflowSchema)}`);
       return;
     }
 
@@ -97,6 +140,7 @@ export function getCryptaraHyperBridgeBootstrapSnapshot(): BootstrapSnapshot {
     completedAt,
     latencyMs,
     reason,
+    overflowSchema,
     inFlight: state === 'probing',
     overflowWorker: getCryptaraOverflowSuperWorkerSnapshot(),
   };
