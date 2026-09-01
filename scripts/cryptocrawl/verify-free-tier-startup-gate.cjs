@@ -38,6 +38,10 @@ requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gate
 forbidPattern(entry, /\bpool\.query|\bdb\.execute|fetch\s*\(|axios|https?\.request/, 'bootstrap wrapper must not perform direct primary/provider work');
 forbidPattern(entry, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap wrapper must not add polling or recovery timers');
 
-requirePattern(dockerfile, /npm run build[\s\S]{0,600}npx esbuild server\/cryptara-bootstrap-entry\.ts[\s\S]{0,600}--outfile=dist\/index\.js[\s\S]{0,600}node scripts\/verify-build\.cjs/, 'Docker build emits and verifies the Cryptara-first production entry');
+requirePattern(
+  dockerfile,
+  /npm run build[\s\S]{0,800}node scripts\/cryptocrawl\/build-server-overflow-authority\.mjs server\/cryptara-bootstrap-entry\.ts dist\/index\.js[\s\S]{0,800}node scripts\/verify-build\.cjs/,
+  'Docker build emits the Cryptara-first production entry through the Overflow-authority router and verifies the result',
+);
 
 console.log('[free-tier-startup] PASS: verified overflow becomes the application data plane, primary acquisitions route through overflow gateway, direct startup probes are zero, and no third pool/poller is introduced');
