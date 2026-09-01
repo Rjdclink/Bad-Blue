@@ -36,20 +36,46 @@ const MIGRATIONS = [
 ] as const;
 
 const REQUIRED_TABLES = [
-  'public.crypto_governance_state',
+  'public.zero_capital_execution_ledger',
+  'public.zero_capital_capital_state',
+  'public.zero_capital_capital_events',
+  'public.railway_bootstrap_budget_events',
+  'public.railway_bootstrap_budget_reservations',
+  'public.cryptocrawl_governance_state',
+  'public.zero_capital_native_gas_funding_attempts',
   'public.cryptocrawler_resource_leases',
   'public.cryptocrawler_mc_calibration_v1',
   'private.cryptocrawler_kraken_nonce_state',
-  'public.cryptocrawler_funding_positions',
-  'public.cryptocrawler_funding_settlements',
+  'private.cryptocrawler_funding_lifecycles',
   'public.cryptocrawler_terminal_sweep_control',
   'public.cryptocrawler_terminal_sweep_legs',
   'public.cryptocrawler_profit_payout_jobs',
   'public.cryptocrawler_profit_payout_batches',
+  'public.cryptocrawler_profit_payout_batch_allocations',
+  'public.cryptocrawler_payout_asset_reservations',
+  'public.cryptocrawler_payout_execution_reservations',
+  'public.cryptocrawler_cex_inventory_state_v1',
+  'public.cryptocrawler_cex_inventory_reservations_v1',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
+  'private.cryptara_decision_events',
+  'private.cryptara_market_regimes',
+  'private.cryptara_metric_samples',
+  'private.cryptara_state_snapshots',
+  'private.cryptara_patterns',
   'private.cryptara_outbox',
+  'private.cryptocrawler_overflow_runtime_meta',
+] as const;
+
+const REQUIRED_FUNCTIONS = [
+  'private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)',
+  'public.cryptocrawler_treasury_worker_claim(text,integer)',
+  'public.cryptocrawler_treasury_worker_release(text)',
+  'public.cryptocrawler_terminal_sweep_truth_guard()',
+  'public.cryptocrawler_okx_treasury_spendable(text)',
+  'public.cryptocrawler_profit_payout_batch_confirm(text,text,text)',
+  'public.cryptocrawler_treasury_claim_okx_liquidity(text,text,numeric)',
 ] as const;
 
 let schemaReady = false;
@@ -74,25 +100,28 @@ async function migrationRoot(): Promise<string> {
 }
 
 async function verifyRequiredObjects(client: any): Promise<void> {
-  const result = await client.query(
+  const tableResult = await client.query(
     `SELECT name, to_regclass(name) IS NOT NULL AS ready
      FROM unnest($1::text[]) AS name`,
     [REQUIRED_TABLES],
   );
-  const missing = result.rows
+  const missingTables = tableResult.rows
     .filter((row: any) => row?.ready !== true)
     .map((row: any) => String(row?.name || 'unknown'));
-  if (missing.length > 0) {
-    throw new Error(`Overflow CryptoCrawler runtime schema incomplete: ${missing.join(', ')}`);
+  if (missingTables.length > 0) {
+    throw new Error(`Overflow CryptoCrawler runtime schema incomplete: ${missingTables.join(', ')}`);
   }
 
   const functionResult = await client.query(
-    `SELECT to_regprocedure(
-       'private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)'
-     ) IS NOT NULL AS resource_claim_ready`,
+    `SELECT name, to_regprocedure(name) IS NOT NULL AS ready
+     FROM unnest($1::text[]) AS name`,
+    [REQUIRED_FUNCTIONS],
   );
-  if (functionResult.rows?.[0]?.resource_claim_ready !== true) {
-    throw new Error('Overflow CryptoCrawler resource-slot authority function is missing');
+  const missingFunctions = functionResult.rows
+    .filter((row: any) => row?.ready !== true)
+    .map((row: any) => String(row?.name || 'unknown'));
+  if (missingFunctions.length > 0) {
+    throw new Error(`Overflow CryptoCrawler runtime functions incomplete: ${missingFunctions.join(', ')}`);
   }
 }
 
@@ -138,6 +167,7 @@ async function provision(): Promise<void> {
       schemaVersion: SCHEMA_VERSION,
       migrationCount: MIGRATIONS.length,
       requiredTableCount: REQUIRED_TABLES.length,
+      requiredFunctionCount: REQUIRED_FUNCTIONS.length,
       duplicateTerminalSchedulerInstalled: false,
       primaryFallbackUsed: false,
     });
@@ -185,6 +215,7 @@ export function getCryptocrawlOverflowRuntimeSchemaSnapshot() {
     lastError,
     migrationCount: MIGRATIONS.length,
     requiredTables: [...REQUIRED_TABLES],
+    requiredFunctions: [...REQUIRED_FUNCTIONS],
     duplicateTerminalSchedulerInstalled: false as const,
   };
 }
