@@ -28,8 +28,18 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Build application (requires dev dependencies)
+# Build application (requires dev dependencies). The normal build first proves the
+# source tree. Then overwrite only the production server entry with the Cryptara-
+# first wrapper so rollout headroom + admission control exist before SELECT 1.
 RUN npm run build && \
+    npx esbuild server/cryptara-bootstrap-entry.ts \
+      --bundle \
+      --platform=node \
+      --target=node20 \
+      --outfile=dist/index.js \
+      --format=esm \
+      --packages=external \
+      --define:process.env.NODE_ENV="'production'" && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
 
