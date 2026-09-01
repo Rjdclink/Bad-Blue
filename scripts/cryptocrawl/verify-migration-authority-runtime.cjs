@@ -94,11 +94,15 @@ assert.match(rainbowSourceMigration, /ENABLE ROW LEVEL SECURITY/);
 assert.doesNotMatch(rainbowSourceLedger, /CREATE\s+(?:SCHEMA|TABLE|INDEX)/i);
 assert.match(rainbowSourceLedger, /withCryptaraSupabasePriority\('low'/);
 
-// The actual production lifecycle boundaries—not global LegalWhat readiness—must
-// consume the one migration-owned schema authority before discovery/execution.
-assert.match(canonicalRuntime, /requireCryptocrawlerAuthoritySchema/);
-assert.match(canonicalRuntime, /pool\.query\('SELECT 1'\)[\s\S]{0,180}requireCryptocrawlerAuthoritySchema\(2\)[\s\S]{0,180}installCanonicalRuntime\(\)/);
-assert.match(canonicalRuntime, /database_or_authority_schema_admission_probe_failed/);
+// Overflow-ready startup installs canonical wiring without a direct primary health
+// probe or recovery poll. Execution-capable lifecycle entry points still retain the
+// migration-owned authority-schema gate; their pool acquisition is mediated by the
+// already-installed overflow gateway at runtime. If overflow is absent, the legacy
+// bounded primary fallback still verifies connectivity + schema before installing.
+assert.match(canonicalRuntime, /getCryptaraHyperBridgeBootstrapSnapshot/);
+assert.match(canonicalRuntime, /overflowBootstrap\.state === 'ready'[\s\S]{0,1000}directPrimaryProbe:\s*false[\s\S]{0,500}recoveryPolling:\s*false[\s\S]{0,500}installCanonicalRuntime\(\)/);
+assert.match(canonicalRuntime, /if \(isDatabaseConfigured\)[\s\S]{0,500}pool\.query\('SELECT 1'\)[\s\S]{0,260}requireCryptocrawlerAuthoritySchema\(2\)[\s\S]{0,220}installCanonicalRuntime\(\)/);
+assert.match(canonicalRuntime, /overflow_unavailable_primary_fallback_probe_failed/);
 assert.match(coreRuntime, /if \(process\.env\.NODE_ENV === 'production'\) \{\s*await requireCryptocrawlerAuthoritySchema\(2\);\s*\}/);
 assert.match(adminApi, /if \(process\.env\.NODE_ENV === 'production'\) \{[\s\S]{0,180}await requireCryptocrawlerAuthoritySchema\(2\)/);
 const adminSchemaGate = adminApi.indexOf('await requireCryptocrawlerAuthoritySchema(2)');
@@ -132,4 +136,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: authority migrations and session settings stay on session-capable connections, funding startup proof is reused, common funding opens avoid the pre-read, Rainbow source metadata has no runtime DDL, transaction-mode ordinary traffic remains stateless, and every production CryptoCrawler lifecycle entry verifies execution-critical migration-owned schema before discovery/execution');
+console.log('[migration-authority-runtime] PASS: authority migrations/session settings remain migration-owned, overflow-ready canonical wiring adds no direct health/recovery probe, execution-capable lifecycle entry points retain schema gates behind the overflow gateway, and the overflow-unavailable primary fallback remains bounded');
