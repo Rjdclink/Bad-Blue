@@ -8,11 +8,12 @@ const superWorker = fs.readFileSync('server/services/cryptocrawl/integration/cry
 const migration = fs.readFileSync('server/migrations/overflow/001_cryptara_comp_cache.sql', 'utf8');
 const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 
-// The secondary project is optional and may be supplied under the new parallel-
-// proxy name or the old overflow compatibility name. It must remain a distinct,
-// transaction-pooled Supabase project with a tiny zero-idle pool.
-assert.match(worker, /CRYPTOCRAWL_PARALLEL_PROXY_DATABASE_URL/);
-assert.match(worker, /CRYPTOCRAWL_OVERFLOW_DATABASE_URL/);
+// The secondary project uses the single existing Railway overflow database
+// variable. It must remain a distinct, transaction-pooled Supabase project with
+// a tiny zero-idle pool; duplicate database-variable aliases are forbidden.
+assert.match(worker, /SUPABASE_DATABASE_URL_OVERFLOW/);
+assert.doesNotMatch(worker, /CRYPTOCRAWL_PARALLEL_PROXY_DATABASE_URL/);
+assert.doesNotMatch(worker, /CRYPTOCRAWL_OVERFLOW_DATABASE_URL/);
 assert.match(worker, /transactionPoolerUrl/);
 assert.match(worker, /parsed\.port = '6543'/);
 assert.match(worker, /production && !sharedPooler\(configuredUrl\)/);
@@ -66,4 +67,4 @@ assert.match(migration, /enable row level security/i);
 assert.match(migration, /expires_at/);
 assert.match(dockerfile, /server\/migrations\/overflow\/001_cryptara_comp_cache\.sql \.\/dist\/migrations\/overflow\/001_cryptara_comp_cache\.sql/);
 
-console.log('[cryptara-supabase-overflow] PASS: optional second Supabase is a bounded parallel auxiliary proxy, transaction-pooled, zero-idle, runtime-DDL-free, explicit-opt-in for noncritical systems, comp-cache capable, and forbidden from financial/execution/governance authority');
+console.log('[cryptara-supabase-overflow] PASS: optional second Supabase uses the single existing overflow database variable and remains a bounded parallel auxiliary proxy, transaction-pooled, zero-idle, runtime-DDL-free, explicit-opt-in for noncritical systems, comp-cache capable, and forbidden from financial/execution/governance authority');
