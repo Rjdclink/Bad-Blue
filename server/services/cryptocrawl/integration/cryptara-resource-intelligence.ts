@@ -4,11 +4,14 @@ import {
   getCryptaraSupabaseAdmissionSnapshot,
   setCryptaraSupabaseRecoveryAdvisor,
 } from './cryptara-supabase-admission-worker.js';
+import { observeCryptaraSupabaseCompSwitch } from './cryptara-supabase-comp-switch.js';
 
 export interface CryptaraResourceIntelligenceSnapshot {
   observedAt: number;
   database: {
     mode: 'steady' | 'recovering' | 'pressure';
+    dataPath: 'normal' | 'comp';
+    switchReason: string;
     pressureScore: number;
     targetConcurrency: number;
     inFlight: number;
@@ -54,6 +57,7 @@ function fixed(value: number): number {
  */
 export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntelligenceSnapshot {
   const database = getCryptaraSupabaseAdmissionSnapshot();
+  const dataPath = observeCryptaraSupabaseCompSwitch(database);
   const parallelism = quantiParallelismGovernor.getStatus();
   const quantiStatus = quantiComp.getStatus();
   const auction = getProviderQualityAuctionSnapshot();
@@ -80,6 +84,7 @@ export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntel
     poolOccupancy * 0.65,
     queuePressure,
     latencyPressure * 0.80,
+    dataPath.pressureScore,
   ));
 
   const computeUtilization = clamp01(parallelism.utilization);
@@ -112,9 +117,10 @@ export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntel
   );
 
   // This advisory can only accelerate additive recovery after DB telemetry itself
-  // is clean. It can never force a contraction, skip a pressure cooldown or open
-  // more permits than the worker's live pool ceiling.
-  const dbRecoveryAcceleration = database.mode === 'recovering'
+  // is clean. Comp mode must first gather healthy evidence and switch back to the
+  // normal path; it can never use compute/provider health to outrun DB recovery.
+  const dbRecoveryAcceleration = dataPath.path === 'normal'
+    && database.mode === 'recovering'
     && databasePressure < 0.35
     && database.pool.waiting === 0
     ? Math.max(1, Math.min(1.5, 1 + usefulParallelHeadroom * 0.5))
@@ -124,6 +130,8 @@ export function getCryptaraResourceIntelligenceSnapshot(): CryptaraResourceIntel
     observedAt: Date.now(),
     database: {
       mode: database.mode,
+      dataPath: dataPath.path,
+      switchReason: dataPath.reason,
       pressureScore: fixed(databasePressure),
       targetConcurrency: database.targetConcurrency,
       inFlight: database.inFlight,
