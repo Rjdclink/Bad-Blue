@@ -11,6 +11,8 @@ const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 assert.match(worker, /CRYPTOCRAWL_OVERFLOW_DATABASE_URL/);
 assert.match(worker, /transactionPoolerUrl/);
 assert.match(worker, /parsed\.port = '6543'/);
+assert.match(worker, /production && !sharedPooler\(configuredUrl\)/);
+assert.match(worker, /overflow database must use the Supabase shared transaction pooler in production/);
 assert.match(worker, /overflow database must be a different Supabase project from the primary/);
 assert.match(worker, /CRYPTOCRAWL_OVERFLOW_POOL_MAX, 2, 1, 2/);
 assert.match(worker, /max:\s*overflowPoolMax/);
