@@ -1,9 +1,14 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
-import { withCryptaraSupabasePriority, type CryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import type { CryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  primeCryptaraSharedInformation,
+  requestCryptaraSharedInformation,
+} from '../integration/cryptara-super-worker.js';
 
 export const RESOURCE_LEASE_TABLE = 'cryptocrawler_resource_leases';
 export const RESOURCE_SLOT_CLAIM_FUNCTION = 'private.cryptocrawler_claim_resource_slot';
+const RESOURCE_LEASE_AUTHORITY_INFO_KEY = 'cryptara:schema-authority:resource-leases';
 
 type LeaseClient = {
   query: (text: string, values?: unknown[]) => Promise<any>;
@@ -27,9 +32,9 @@ export interface FixedResourceClaimInput {
   expiresAt: number;
 }
 
-let authorityProbeInFlight: Promise<boolean> | null = null;
 let authorityReadyUntil = 0;
 let authorityRetryAfter = 0;
+let authorityRequestsInFlight = 0;
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
@@ -65,69 +70,86 @@ function authorityReadyTtlMs(): number {
 
 /**
  * Reuse an exact schema proof already obtained by startup migration verification.
- * This performs no database work. It only prevents CEX, zero-capital and quota
- * callers from asking Supabase the identical table/function question again.
+ * The Cryptara Super Worker becomes the shared process-wide truth source, so CEX,
+ * zero-capital and quota consumers do not perform another readiness query.
  */
 export function primeResourceLeaseAuthorityReady(ttlMs = authorityReadyTtlMs()): void {
   const boundedTtlMs = boundedInt(ttlMs, authorityReadyTtlMs(), 30_000, 900_000);
   authorityReadyUntil = Math.max(authorityReadyUntil, Date.now() + boundedTtlMs);
   authorityRetryAfter = 0;
+  primeCryptaraSharedInformation({
+    key: RESOURCE_LEASE_AUTHORITY_INFO_KEY,
+    informationClass: 'schema_authority',
+    value: true,
+    freshForMs: boundedTtlMs,
+    estimatedBytes: 8,
+  });
 }
 
 /**
- * One process-wide, single-flight truth source for the migration-owned lease
- * table and slot-claim function. Every execution topology consumes this same
- * cached answer instead of independently asking Supabase the same schema question.
+ * One process-wide schema truth source for the migration-owned lease table and
+ * slot-claim function. The Super Worker provides single-flight coalescing and
+ * bounded freshness; this authority only defines what "ready" means.
  */
 export async function ensureResourceLeaseAuthority(
   priority: CryptaraSupabasePriority = 'high',
 ): Promise<boolean> {
   if (!isDatabaseConfigured) return false;
   const now = Date.now();
-  if (authorityReadyUntil > now) return true;
   if (now < authorityRetryAfter) return false;
-  if (authorityProbeInFlight) return authorityProbeInFlight;
 
   const retryMs = authorityRetryMs();
   const readyTtlMs = authorityReadyTtlMs();
-  const probe = withCryptaraSupabasePriority(priority, () => pool.query(
-    `SELECT
-       to_regclass('public.${RESOURCE_LEASE_TABLE}') IS NOT NULL AS table_ready,
-       to_regprocedure('private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)') IS NOT NULL AS claim_function_ready`,
-  ))
-    .then(result => {
-      const ready = result.rows?.[0]?.table_ready === true && result.rows?.[0]?.claim_function_ready === true;
-      if (ready) {
-        primeResourceLeaseAuthorityReady(readyTtlMs);
-      } else {
-        authorityReadyUntil = 0;
-        authorityRetryAfter = Date.now() + retryMs;
-        logger.error('[ResourceLeaseAuthority] Migration-owned lease authority is missing', {
-          component: 'ResourceLeaseAuthority',
-          table: `public.${RESOURCE_LEASE_TABLE}`,
-          function: RESOURCE_SLOT_CLAIM_FUNCTION,
-          runtimeDdlAllowed: false,
-          executionAuthorityGranted: false,
-        });
-      }
-      return ready;
-    })
-    .catch(error => {
-      authorityReadyUntil = 0;
-      authorityRetryAfter = Date.now() + retryMs;
-      logger.error('[ResourceLeaseAuthority] Lease authority verification failed closed', {
-        component: 'ResourceLeaseAuthority',
-        retryAfterMs: retryMs,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    })
-    .finally(() => {
-      if (authorityProbeInFlight === probe) authorityProbeInFlight = null;
+  authorityRequestsInFlight += 1;
+  try {
+    const lease = await requestCryptaraSharedInformation<boolean>({
+      key: RESOURCE_LEASE_AUTHORITY_INFO_KEY,
+      consumer: 'resource-lease-authority',
+      allowedConsumers: ['resource-lease-authority'],
+      informationClass: 'schema_authority',
+      freshForMs: readyTtlMs,
+      databasePriority: priority,
+      estimatedBytes: 8,
+      loader: async () => {
+        const result = await pool.query(
+          `SELECT
+             to_regclass('public.${RESOURCE_LEASE_TABLE}') IS NOT NULL AS table_ready,
+             to_regprocedure('private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)') IS NOT NULL AS claim_function_ready`,
+        );
+        const ready = result.rows?.[0]?.table_ready === true && result.rows?.[0]?.claim_function_ready === true;
+        if (!ready) {
+          logger.error('[ResourceLeaseAuthority] Migration-owned lease authority is missing', {
+            component: 'ResourceLeaseAuthority',
+            table: `public.${RESOURCE_LEASE_TABLE}`,
+            function: RESOURCE_SLOT_CLAIM_FUNCTION,
+            runtimeDdlAllowed: false,
+            executionAuthorityGranted: false,
+          });
+          throw new Error('RESOURCE_LEASE_AUTHORITY_MISSING');
+        }
+        return true;
+      },
     });
 
-  authorityProbeInFlight = probe;
-  return probe;
+    try {
+      authorityReadyUntil = Math.max(authorityReadyUntil, lease.expiresAt);
+      authorityRetryAfter = 0;
+      return lease.value === true;
+    } finally {
+      lease.release();
+    }
+  } catch (error) {
+    authorityReadyUntil = 0;
+    authorityRetryAfter = Date.now() + retryMs;
+    logger.error('[ResourceLeaseAuthority] Lease authority verification failed closed', {
+      component: 'ResourceLeaseAuthority',
+      retryAfterMs: retryMs,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  } finally {
+    authorityRequestsInFlight = Math.max(0, authorityRequestsInFlight - 1);
+  }
 }
 
 /** One client round trip for an entire bounded slot domain. */
@@ -181,7 +203,7 @@ export function getResourceLeaseAuthorityCacheSnapshot(): {
   const now = Date.now();
   return {
     ready: authorityReadyUntil > now,
-    probeInFlight: authorityProbeInFlight !== null,
+    probeInFlight: authorityRequestsInFlight > 0,
     readyForMs: Math.max(0, authorityReadyUntil - now),
     retryInMs: Math.max(0, authorityRetryAfter - now),
   };
