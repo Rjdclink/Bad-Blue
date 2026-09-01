@@ -12,6 +12,9 @@ const reconciler = read('server/migrations/reconcileAppSchema.ts');
 const numberedRunner = read('server/migrations/runMigrations.ts');
 const hotPathMigration = read('server/migrations/023_cryptocrawler_hot_path_schema_authority.sql');
 const fundingMigration = read('server/migrations/024_cryptocrawler_funding_lifecycle.sql');
+const rainbowSourceMigration = read('server/migrations/025_cryptocrawler_rainbow_source_ledger.sql');
+const fundingLifecycle = read('server/services/cryptocrawl/execution/funding-position-lifecycle.ts');
+const rainbowSourceLedger = read('server/services/cryptocrawl/compensation/rainbow-profit-source-ledger.ts');
 const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
 const adminApi = read('server/services/cryptocrawl/api/admin-api.ts');
@@ -33,12 +36,13 @@ assert.match(db, /query_timeout:\s*30000/);
 assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}statement_timeout:\s*15000/);
 assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}query_timeout:\s*15000/);
 
-// Startup owns only the new CryptoCrawler authority migrations; it does not
+// Startup owns only the current CryptoCrawler authority migrations; it does not
 // blindly replay the entire legacy numbered migration history. The same session
 // client that owns the migration advisory lock executes the migration DDL.
 for (const migration of [
   '023_cryptocrawler_hot_path_schema_authority.sql',
   '024_cryptocrawler_funding_lifecycle.sql',
+  '025_cryptocrawler_rainbow_source_ledger.sql',
 ]) {
   assert.ok(reconciler.includes(migration), `startup reconciler must apply ${migration}`);
   assert.ok(dockerfile.includes(`/app/server/migrations/${migration} ./dist/migrations/${migration}`), `production image must ship ${migration}`);
@@ -68,6 +72,27 @@ assert.match(reconciler, /CryptoCrawler remains fail-closed until authority sche
 assert.match(reconciler, /schemaFailureResult\(error\)/);
 assert.doesNotMatch(reconciler, /if \(error instanceof CryptocrawlerAuthoritySchemaError\) throw error/);
 assert.match(reconciler, /Report the fault without taking down unrelated services/);
+
+// Startup's one authority proof must be reused by the funding worker, and the
+// common healthy funding-open path must not pre-read before claiming the partial
+// unique opportunity key.
+assert.match(reconciler, /primeFundingLifecycleStoreReady\(\)/);
+assert.match(fundingLifecycle, /export function primeFundingLifecycleStoreReady/);
+assert.match(fundingLifecycle, /primeStoreReady\(/);
+assert.match(fundingLifecycle, /insertOpeningIfAbsent/);
+assert.match(fundingLifecycle, /ON CONFLICT DO NOTHING[\s\S]{0,160}RETURNING lifecycle_id/);
+const openingClaimIndex = fundingLifecycle.indexOf('insertOpeningIfAbsent(lifecycleId, plan)');
+const conflictReadIndex = fundingLifecycle.indexOf('findActiveByOpportunity(plan.opportunityId)', openingClaimIndex);
+assert.ok(openingClaimIndex >= 0 && conflictReadIndex > openingClaimIndex,
+  'funding lifecycle must claim first and only read on the rare active-opportunity conflict path');
+
+// Secondary Rainbow source metadata is also migration-owned. Runtime may record
+// and read rows through Cryptara admission, but it may never run DDL.
+assert.match(rainbowSourceMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_rainbow_profit_sources/);
+assert.match(rainbowSourceMigration, /CREATE INDEX IF NOT EXISTS idx_rainbow_profit_source_route/);
+assert.match(rainbowSourceMigration, /ENABLE ROW LEVEL SECURITY/);
+assert.doesNotMatch(rainbowSourceLedger, /CREATE\s+(?:SCHEMA|TABLE|INDEX)/i);
+assert.match(rainbowSourceLedger, /withCryptaraSupabasePriority\('low'/);
 
 // The actual production lifecycle boundaries—not global LegalWhat readiness—must
 // consume the one migration-owned schema authority before discovery/execution.
@@ -107,4 +132,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: authority migrations and session settings stay on session-capable connections, transaction-mode ordinary traffic remains stateless, global app availability remains independent, and every production CryptoCrawler lifecycle entry verifies migration-owned schema before discovery/execution');
+console.log('[migration-authority-runtime] PASS: authority migrations and session settings stay on session-capable connections, funding startup proof is reused, common funding opens avoid the pre-read, Rainbow source metadata has no runtime DDL, transaction-mode ordinary traffic remains stateless, and every production CryptoCrawler lifecycle entry verifies execution-critical migration-owned schema before discovery/execution');
