@@ -7,8 +7,16 @@ const worker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara
 const superWorker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-super-worker.ts', 'utf8');
 const migration = fs.readFileSync('server/migrations/overflow/001_cryptara_comp_cache.sql', 'utf8');
 const parallelMigration = fs.readFileSync('server/migrations/overflow/002_cryptara_parallel_proxy.sql', 'utf8');
-const provision = fs.readFileSync('scripts/cryptocrawl/provision-overflow-auxiliary.cjs', 'utf8');
+const provision = fs.readFileSync('scripts/cryptocrawl/provision-cryptara-overflow-schema.cjs', 'utf8');
 const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
+
+// One provisioning authority only. A stale/alternate provisioner would create a
+// competing migration path and is therefore a build failure.
+assert.equal(
+  fs.existsSync('scripts/cryptocrawl/provision-overflow-auxiliary.cjs'),
+  false,
+  'legacy competing Overflow provisioner must be removed',
+);
 
 // The secondary project uses the single existing Railway overflow database
 // variable. It must remain a distinct, transaction-pooled Supabase project with
@@ -43,22 +51,36 @@ assert.match(worker, /financialAuthorityAllowed: false/);
 assert.match(worker, /governanceAuthorityAllowed: false/);
 assert.match(worker, /runtimeDdlAllowed: false/);
 
-// Runtime never provisions the second project. Its cache/parallel schemas are
-// checked only; deployment-time provisioning is one-shot and isolated from runtime.
+// Runtime never provisions the second project. Deployment-time provisioning is
+// one-shot, idempotent, and independently fails before a replica can start.
 assert.match(worker, /to_regclass\('private\.cryptara_comp_cache'\)/);
 assert.doesNotMatch(worker, /readFileSync|resolveMigrationPath/);
 assert.doesNotMatch(worker, /CREATE\s+(?:SCHEMA|TABLE|INDEX)|ALTER\s+TABLE/i);
+
+// Four-gate provisioning contract:
+// 1) prove Primary and Overflow identities are distinct without connecting to Primary;
+// 2) prove only the migration-owned auxiliary files are eligible;
+// 3) apply both migrations atomically on a single bounded Overflow session;
+// 4) verify every auxiliary object and fail if primary-authority tables appear.
 assert.match(provision, /process\.env\.SUPABASE_DATABASE_URL_OVERFLOW\b/);
-assert.doesNotMatch(provision, /process\.env\.(?:SUPABASE_DATABASE_URL|SUPABASE_DB_URL|DATABASE_URL)\b/);
-assert.match(provision, /dist\/migrations\/overflow\/001_cryptara_comp_cache\.sql/);
-assert.match(provision, /dist\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql/);
-assert.doesNotMatch(provision, /['"]server\/migrations\/overflow\//);
-assert.match(provision, /parsed\.port === '6543'[\s\S]*parsed\.port = '5432'/);
-assert.match(provision, /max:\s*1/);
-assert.match(provision, /min:\s*0/);
-assert.match(provision, /client\.query\('BEGIN'\)[\s\S]*client\.query\(sql\)[\s\S]*client\.query\('COMMIT'\)/);
+assert.match(provision, /process\.env\.SUPABASE_DATABASE_URL[\s\S]*process\.env\.SUPABASE_DB_URL[\s\S]*process\.env\.DATABASE_URL/);
+assert.match(provision, /overflowProject\s*===\s*primaryProject/);
+assert.match(provision, /OVERFLOW_GATE_1_PRIMARY_AND_OVERFLOW_MUST_BE_DISTINCT/);
+assert.match(provision, /sessionPoolerUrl/);
+assert.match(provision, /parsed\.port = '5432'/);
+assert.match(provision, /server[^\n]*migrations[^\n]*overflow[\s\S]*dist[^\n]*migrations[^\n]*overflow/);
+assert.match(provision, /001_cryptara_comp_cache\.sql[\s\S]*002_cryptara_parallel_proxy\.sql/);
+assert.match(provision, /forbiddenAuthoritySurface/);
+assert.match(provision, /OVERFLOW_GATE_2_AUTHORITY_LEAK/);
+assert.match(provision, /new Client\(/);
+assert.doesNotMatch(provision, /new Client\(\{[\s\S]{0,300}connectionString:\s*primaryUrl/);
+assert.match(provision, /client\.query\('begin'\)[\s\S]*client\.query\(migration\.sql\)[\s\S]*client\.query\('commit'\)/);
 assert.match(provision, /cryptara_comp_cache[\s\S]*cryptara_parallel_snapshots[\s\S]*cryptara_parallel_events[\s\S]*cryptara_parallel_jobs[\s\S]*cryptara_claim_parallel_jobs/);
-assert.doesNotMatch(provision, /public\.(?:users|complaints|lawsuit_filings|cryptocrawler_resource_leases)/);
+assert.match(provision, /has_users[\s\S]*has_complaints[\s\S]*has_lawsuit_filings[\s\S]*has_resource_leases/);
+assert.match(provision, /OVERFLOW_GATE_4_PRIMARY_AUTHORITY_TABLES_PRESENT/);
+for (const gate of ['Gate 1/4 PASS', 'Gate 2/4 PASS', 'Gate 3/4 PASS', 'Gate 4/4 PASS']) {
+  assert.ok(provision.includes(gate), `provisioner must expose ${gate}`);
+}
 
 // Existing comp-cache behavior stays bounded and excludes execution truth. The
 // generic proxy API is ready for additional systems to opt in later.
@@ -86,4 +108,4 @@ assert.match(parallelMigration, /revoke all on function private\.cryptara_claim_
 assert.match(dockerfile, /server\/migrations\/overflow\/001_cryptara_comp_cache\.sql \.\/dist\/migrations\/overflow\/001_cryptara_comp_cache\.sql/);
 assert.match(dockerfile, /server\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql \.\/dist\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql/);
 
-console.log('[cryptara-supabase-overflow] PASS: the second Supabase remains an auxiliary-only, bounded, transaction-pooled runtime lane; its migration-owned schemas are provisioned once at deployment from packaged artifacts, verified before readiness, and forbidden from financial/execution/governance authority');
+console.log('[cryptara-supabase-overflow] PASS: one four-gate deployment provisioner owns the auxiliary mirror schema; runtime remains bounded and DDL-free; Overflow cannot become financial/execution/governance authority');
