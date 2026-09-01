@@ -189,9 +189,6 @@ class CanonicalIntelligenceOutbox {
       this.metrics.dataPath = getCryptaraSupabaseCompSwitchSnapshot().path;
     }
 
-    // Any wake that scheduled this cycle is now being consumed. If another event
-    // arrives while the drain is active, kick() sets this flag again and the
-    // post-drain check below immediately schedules another pass.
     this.kickPending = false;
     const now = Date.now();
     if (now < this.degradedUntil) {
@@ -215,17 +212,12 @@ class CanonicalIntelligenceOutbox {
     }
 
     if (processed > 0) {
-      // Work was present: reset to the fast lane. If a complete batch was drained,
-      // run again immediately so throughput is not reduced while backlog exists.
       this.idleDelayMs = this.activePollMs();
       const batchSize = this.batchSize();
       this.schedule(processed >= batchSize ? 0 : this.activePollMs());
       return;
     }
 
-    // No ready durable work: exponentially reduce empty SELECT traffic until the
-    // bounded idle ceiling. New terminal evidence calls kick(), so active work is
-    // never forced to wait for the idle backoff to expire.
     this.idleDelayMs = Math.min(
       this.maxIdlePollMs(),
       Math.max(this.activePollMs(), this.idleDelayMs > 0 ? this.idleDelayMs * 2 : this.activePollMs()),
@@ -255,13 +247,28 @@ class CanonicalIntelligenceOutbox {
       },
       feedback: structuredClone(feedback),
     };
+    // Insert or prove the exact immutable duplicate in one SQL round trip. This
+    // preserves the former collision validation without paying a second SELECT.
     const result = await withCryptaraSupabasePriority('high', () => pool.query(
-      `insert into private.cryptara_outbox (
-         outbox_id, source_event_id, job_kind, schema_version, dedupe_key, status,
-         attempt_count, visible_at, payload
-       ) values ($1, $2, $3, $4, $5, 'pending', 0, now(), $6::jsonb)
-       on conflict (dedupe_key) do nothing
-       returning outbox_id`,
+      `with inserted as (
+         insert into private.cryptara_outbox (
+           outbox_id, source_event_id, job_kind, schema_version, dedupe_key, status,
+           attempt_count, visible_at, payload
+         ) values ($1, $2, $3, $4, $5, 'pending', 0, now(), $6::jsonb)
+         on conflict (dedupe_key) do nothing
+         returning outbox_id
+       ), verified as (
+         select outbox_id from inserted
+         union all
+         select outbox_id
+           from private.cryptara_outbox
+          where dedupe_key = $5
+            and source_event_id = $2
+            and job_kind = $3
+            and schema_version = $4
+          limit 1
+       )
+       select outbox_id from verified limit 1`,
       [
         outboxId,
         outcome.eventId,
@@ -271,16 +278,9 @@ class CanonicalIntelligenceOutbox {
         JSON.stringify(payload),
       ],
     ));
-    if ((result.rowCount || 0) > 0) {
-      this.kick();
-      return true;
-    }
-
-    // A collision on this private deterministic key can only represent the same
-    // source event + schema version generated above. Idempotency is durable success;
-    // avoid paying a second SELECT merely to rediscover the unique-row guarantee.
-    this.kick();
-    return true;
+    const durable = (result.rowCount || 0) > 0;
+    if (durable) this.kick();
+    return durable;
   }
 
   getMetrics(): IntelligenceOutboxMetrics {
@@ -347,16 +347,12 @@ class CanonicalIntelligenceOutbox {
     const batchSize = this.batchSize();
     let processed = 0;
     try {
-      // Claim the whole bounded batch with one PostgreSQL statement instead of one
-      // round trip per row. SKIP LOCKED preserves multi-worker safety.
       const rows = await this.claimBatch(batchSize);
       for (const row of rows) {
         processed += 1;
         await this.process(row);
       }
 
-      // Metrics are observability, not queue authority. Refresh at a bounded low
-      // frequency instead of adding one aggregate query to every empty poll.
       if (Date.now() - this.lastMetricsRefreshAt >= this.metricsIntervalMs()) {
         const metrics = await this.refreshMetrics();
         if (metrics.lastError) throw new Error(metrics.lastError);
@@ -382,7 +378,11 @@ class CanonicalIntelligenceOutbox {
   }
 
   private async claimBatch(limit: number): Promise<ClaimedOutboxRow[]> {
-    const leaseMs = Math.max(5_000, Number(process.env.CRYPTARA_OUTBOX_LEASE_MS || 30_000));
+    const configuredLeaseMs = Math.max(5_000, Number(process.env.CRYPTARA_OUTBOX_LEASE_MS || 30_000));
+    // A batch is marked processing at once but completed sequentially. Scale the
+    // stale-recovery window with bounded batch width so a healthy second worker
+    // cannot reclaim the tail of the same batch merely because Supabase is slow.
+    const leaseMs = Math.max(configuredLeaseMs, Math.min(300_000, Math.max(1, limit) * 15_000));
     const result = await withCryptaraSupabasePriority('low', () => pool.query(
       `with candidates as (
          select outbox_id
@@ -446,8 +446,6 @@ class CanonicalIntelligenceOutbox {
 
   private async persistTerminalOutcome(payload: TerminalOutcomeOutboxPayload, outboxId: string): Promise<void> {
     const { outcome, feedback } = payload;
-    // Data-modifying CTE keeps durable learning + queue completion in one atomic
-    // PostgreSQL statement. If persistence fails, completion cannot commit.
     await withCryptaraSupabasePriority('low', () => pool.query(
       `with persisted as (
          insert into private.cryptara_trade_outcomes (
