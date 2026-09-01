@@ -6,11 +6,13 @@ const assert = require('node:assert/strict');
 const worker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-supabase-overflow-worker.ts', 'utf8');
 const superWorker = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-super-worker.ts', 'utf8');
 const migration = fs.readFileSync('server/migrations/overflow/001_cryptara_comp_cache.sql', 'utf8');
+const parallelMigration = fs.readFileSync('server/migrations/overflow/002_cryptara_parallel_proxy.sql', 'utf8');
+const provision = fs.readFileSync('scripts/cryptocrawl/provision-overflow-auxiliary.cjs', 'utf8');
 const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 
 // The secondary project uses the single existing Railway overflow database
 // variable. It must remain a distinct, transaction-pooled Supabase project with
-// a tiny zero-idle pool; duplicate database-variable aliases are forbidden.
+// a tiny zero-idle runtime pool; duplicate database-variable aliases are forbidden.
 assert.match(worker, /SUPABASE_DATABASE_URL_OVERFLOW/);
 assert.doesNotMatch(worker, /CRYPTOCRAWL_PARALLEL_PROXY_DATABASE_URL/);
 assert.doesNotMatch(worker, /CRYPTOCRAWL_OVERFLOW_DATABASE_URL/);
@@ -41,11 +43,20 @@ assert.match(worker, /financialAuthorityAllowed: false/);
 assert.match(worker, /governanceAuthorityAllowed: false/);
 assert.match(worker, /runtimeDdlAllowed: false/);
 
-// Runtime never provisions the second project. Its cache schema is checked only;
-// setup/migration happens later when the auxiliary project is intentionally wired.
+// Runtime never provisions the second project. Its cache/parallel schemas are
+// checked only; deployment-time provisioning is one-shot and isolated from runtime.
 assert.match(worker, /to_regclass\('private\.cryptara_comp_cache'\)/);
 assert.doesNotMatch(worker, /readFileSync|resolveMigrationPath/);
 assert.doesNotMatch(worker, /CREATE\s+(?:SCHEMA|TABLE|INDEX)|ALTER\s+TABLE/i);
+assert.match(provision, /SUPABASE_DATABASE_URL_OVERFLOW/);
+assert.doesNotMatch(provision, /SUPABASE_DATABASE_URL(?!_OVERFLOW)|SUPABASE_DB_URL|DATABASE_URL/);
+assert.match(provision, /MIGRATIONS[\s\S]*001_cryptara_comp_cache\.sql[\s\S]*002_cryptara_parallel_proxy\.sql/);
+assert.match(provision, /parsed\.port === '6543'[\s\S]*parsed\.port = '5432'/);
+assert.match(provision, /max:\s*1/);
+assert.match(provision, /min:\s*0/);
+assert.match(provision, /client\.query\('BEGIN'\)[\s\S]*client\.query\(sql\)[\s\S]*client\.query\('COMMIT'\)/);
+assert.match(provision, /cryptara_comp_cache[\s\S]*cryptara_parallel_snapshots[\s\S]*cryptara_parallel_events[\s\S]*cryptara_parallel_jobs[\s\S]*cryptara_claim_parallel_jobs/);
+assert.doesNotMatch(provision, /public\.(?:users|complaints|lawsuit_filings|cryptocrawler_resource_leases)/);
 
 // Existing comp-cache behavior stays bounded and excludes execution truth. The
 // generic proxy API is ready for additional systems to opt in later.
@@ -65,6 +76,12 @@ assert.match(migration, /cryptara_comp_cache_class/);
 assert.doesNotMatch(migration, /information_class\s+in\s*\([^)]*execution_truth/i);
 assert.match(migration, /enable row level security/i);
 assert.match(migration, /expires_at/);
+assert.match(parallelMigration, /private\.cryptara_parallel_snapshots/);
+assert.match(parallelMigration, /private\.cryptara_parallel_events/);
+assert.match(parallelMigration, /private\.cryptara_parallel_jobs/);
+assert.match(parallelMigration, /private\.cryptara_claim_parallel_jobs/);
+assert.match(parallelMigration, /revoke all on function private\.cryptara_claim_parallel_jobs\(text, integer, integer\) from public/i);
 assert.match(dockerfile, /server\/migrations\/overflow\/001_cryptara_comp_cache\.sql \.\/dist\/migrations\/overflow\/001_cryptara_comp_cache\.sql/);
+assert.match(dockerfile, /server\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql \.\/dist\/migrations\/overflow\/002_cryptara_parallel_proxy\.sql/);
 
-console.log('[cryptara-supabase-overflow] PASS: optional second Supabase uses the single existing overflow database variable and remains a bounded parallel auxiliary proxy, transaction-pooled, zero-idle, runtime-DDL-free, explicit-opt-in for noncritical systems, comp-cache capable, and forbidden from financial/execution/governance authority');
+console.log('[cryptara-supabase-overflow] PASS: the second Supabase remains an auxiliary-only, bounded, transaction-pooled runtime lane; its migration-owned schemas are provisioned once at deployment, verified before readiness, and forbidden from financial/execution/governance authority');
