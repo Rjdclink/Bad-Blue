@@ -117,6 +117,8 @@ if (configuredUrl) {
     configurationError = 'overflow URL must be a Postgres connection string';
   } else if (production && !isSupabasePostgresConnectionString(configuredUrl)) {
     configurationError = 'overflow database must remain Supabase-bound in production';
+  } else if (production && !sharedPooler(configuredUrl)) {
+    configurationError = 'overflow database must use the Supabase shared transaction pooler in production';
   } else if (sharedPooler(configuredUrl) && parsedPostgresUrl(configuredUrl)?.port !== '6543') {
     configurationError = 'overflow shared-pooler connection must use transaction mode port 6543';
   } else if (overflowProject && primaryProject && overflowProject === primaryProject) {
