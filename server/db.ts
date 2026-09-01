@@ -233,6 +233,11 @@ function attachPoolErrorHandlers(): void {
 
 attachPoolErrorHandlers();
 
+function effectivePoolMax(targetPool: any, fallback: number): number {
+  const configured = Number(targetPool?.options?.max);
+  return Number.isFinite(configured) ? Math.max(1, Math.trunc(configured)) : fallback;
+}
+
 /**
  * Get current connection pool statistics for monitoring
  * Useful for debugging connection pool exhaustion issues
@@ -247,7 +252,7 @@ export function getPoolStats(): {
     total: pool.totalCount,
     idle: pool.idleCount,
     waiting: pool.waitingCount,
-    max: mainPoolMax,
+    max: effectivePoolMax(pool, mainPoolMax),
   };
 }
 
@@ -261,7 +266,7 @@ export function getCoordinationPoolStats(): {
     total: coordinationPool.totalCount,
     idle: coordinationPool.idleCount,
     waiting: coordinationPool.waitingCount,
-    max: coordinationPoolMax,
+    max: effectivePoolMax(coordinationPool, coordinationPoolMax),
   };
 }
 
@@ -295,13 +300,14 @@ console.log(`[DATABASE] Connection pools created - ordinary max=${mainPoolMax}, 
 
 export let db = drizzle(pool, { schema });
 
-// Reset lock to prevent concurrent pool resets
+// Reset lock to prevent concurrent pool resets. A reset always preserves the live
+// effective ordinary ceiling; only the governed rollout handoff may expand it.
 let resetInProgress: Promise<void> | null = null;
 
 /**
  * Reset the database connection pool and Drizzle instance
- * Used by Worker auto-repair to recover from connection failures
- * Thread-safe: prevents concurrent resets
+ * Used by Worker auto-repair to recover from positively identified local pool failures.
+ * Thread-safe: prevents concurrent resets.
  */
 export async function resetPool(): Promise<void> {
   if (resetInProgress) {
@@ -313,6 +319,9 @@ export async function resetPool(): Promise<void> {
   resetInProgress = (async () => {
     try {
       console.log('[DATABASE] Resetting connection pools...');
+      // Preserve the current effective max exactly. There is intentionally no
+      // wall-clock restore here: an unready/reset replica must never self-expand.
+      const previousEffectiveMainMax = effectivePoolMax(pool, mainPoolMax);
 
       try {
         await Promise.allSettled([pool.end(), coordinationPool.end()]);
@@ -327,17 +336,20 @@ export async function resetPool(): Promise<void> {
         throw new Error('Database URL not available for pool reset');
       }
 
-      pool = new Pool(getPoolConfig());
+      const nextMainConfig = getPoolConfig();
+      nextMainConfig.max = Math.min(mainPoolMax, previousEffectiveMainMax);
+      pool = new Pool(nextMainConfig);
       coordinationPool = new Pool(getCoordinationPoolConfig());
       attachPoolErrorHandlers();
       db = drizzle(pool, { schema });
 
-      await Promise.all([
-        db.execute('SELECT 1'),
-        coordinationPool.query('SELECT 1'),
-      ]);
+      // Restore the ordinary lane first. Only after it is admitted do we verify
+      // the session-capable coordination lane. Parallel probes double connection
+      // demand at exactly the point where reset is trying to recover capacity.
+      await db.execute('SELECT 1');
+      await coordinationPool.query('SELECT 1');
 
-      console.log('[DATABASE] ✓ Pool reset successful - ordinary and coordination connections restored');
+      console.log('[DATABASE] ✓ Pool reset successful - ordinary and coordination connections restored at preserved capacity');
     } catch (error) {
       console.error('[DATABASE] ❌ Pool reset failed:', error);
       throw error;

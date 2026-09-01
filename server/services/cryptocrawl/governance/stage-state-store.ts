@@ -1,3 +1,5 @@
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+
 export interface StageManagerPersistedSnapshot {
   state: unknown;
   stateHistory: unknown;
@@ -43,7 +45,7 @@ export class PostgresStageManagerStateStore implements StageManagerStateStore {
 
   private async query(text: string, values: unknown[]) {
     const { pool } = await import('../../../db.js');
-    return pool.query(text, values);
+    return withCryptaraSupabasePriority('critical', () => pool.query(text, values));
   }
 
   async load(): Promise<StageManagerPersistedSnapshot | null> {
@@ -79,7 +81,7 @@ export class PostgresStageManagerStateStore implements StageManagerStateStore {
       let client: any = null;
       try {
         const { pool } = await import('../../../db.js');
-        client = await pool.connect();
+        client = await withCryptaraSupabasePriority('critical', () => pool.connect());
         await client.query('BEGIN');
         await client.query(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
         await client.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT_MS}ms'`);

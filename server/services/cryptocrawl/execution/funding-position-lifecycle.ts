@@ -76,6 +76,10 @@ function bounded(raw: unknown, fallback: number, min: number, max: number): numb
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
 }
 
+function fundingStoreReadyTtlMs(): number {
+  return bounded(process.env.CRYPTOCRAWL_FUNDING_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
+}
+
 function parseJson<T>(raw: unknown): T | null {
   if (!raw) return null;
   if (typeof raw === 'object') return raw as T;
@@ -95,6 +99,13 @@ class FundingPositionLifecycle {
 
   getRegisteredVenues(): FundingExecutionPlan['venue'][] {
     return [...this.adapters.keys()];
+  }
+
+  /** Reuse startup's exact schema proof instead of paying another readiness query. */
+  primeStoreReady(ttlMs = fundingStoreReadyTtlMs()): void {
+    const boundedTtlMs = bounded(ttlMs, fundingStoreReadyTtlMs(), 30_000, 900_000);
+    this.tableReadyUntil = Math.max(this.tableReadyUntil, Date.now() + boundedTtlMs);
+    this.tableRetryAfter = 0;
   }
 
   /**
@@ -117,19 +128,30 @@ class FundingPositionLifecycle {
       return { success: false, settlementConfirmed: false, status: 'rejected', error: 'REJECT_FUNDING_LIFECYCLE_STORE_UNAVAILABLE' };
     }
 
-    const existing = await this.findActiveByOpportunity(plan.opportunityId);
-    if (existing) {
+    // The partial unique index on active opportunity_id is the concurrency
+    // authority. Healthy opens now cost one DB statement instead of a pre-read
+    // plus insert. Only the rare conflict path performs a read to return the
+    // already-active lifecycle to the caller.
+    const lifecycleId = `funding:${randomUUID()}`;
+    const inserted = await this.insertOpeningIfAbsent(lifecycleId, plan);
+    if (!inserted) {
+      const existing = await this.findActiveByOpportunity(plan.opportunityId);
+      if (existing) {
+        return {
+          success: existing.status === 'open',
+          settlementConfirmed: false,
+          status: existing.status === 'failed' ? 'failed' : 'opened',
+          lifecycleId: existing.lifecycleId,
+          error: existing.status === 'open' ? undefined : 'FUNDING_OPPORTUNITY_ALREADY_ACTIVE',
+        };
+      }
       return {
-        success: existing.status === 'open',
+        success: false,
         settlementConfirmed: false,
-        status: existing.status === 'failed' ? 'failed' : 'opened',
-        lifecycleId: existing.lifecycleId,
-        error: existing.status === 'open' ? undefined : 'FUNDING_OPPORTUNITY_ALREADY_ACTIVE',
+        status: 'rejected',
+        error: 'FUNDING_OPPORTUNITY_ALREADY_ACTIVE',
       };
     }
-
-    const lifecycleId = `funding:${randomUUID()}`;
-    await this.persist(lifecycleId, plan, 'opening', null);
 
     let receipt: FundingOpenReceipt;
     try {
@@ -262,7 +284,7 @@ class FundingPositionLifecycle {
     if (this.tableReadyUntil > now) return true;
     if (now < this.tableRetryAfter) return false;
     if (this.tableProbeInFlight) return this.tableProbeInFlight;
-    const readyTtlMs = bounded(process.env.CRYPTOCRAWL_FUNDING_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
+    const readyTtlMs = fundingStoreReadyTtlMs();
     const retryMs = bounded(process.env.CRYPTOCRAWL_FUNDING_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
     const probe = pool.query(`SELECT to_regclass('${TABLE}') IS NOT NULL AS ready`)
       .then(result => {
@@ -297,6 +319,25 @@ class FundingPositionLifecycle {
       });
     this.tableProbeInFlight = probe;
     return probe;
+  }
+
+  private async insertOpeningIfAbsent(lifecycleId: string, plan: FundingExecutionPlan): Promise<boolean> {
+    const result = await pool.query(
+      `INSERT INTO ${TABLE}
+        (lifecycle_id, opportunity_id, venue, symbol, status, expected_net_profit_usd, plan, last_error, updated_at)
+       VALUES ($1,$2,$3,$4,'opening',$5,$6::jsonb,NULL,now())
+       ON CONFLICT DO NOTHING
+       RETURNING lifecycle_id`,
+      [
+        lifecycleId,
+        plan.opportunityId,
+        plan.venue,
+        plan.symbol,
+        plan.expectedNetProfitUsd,
+        JSON.stringify(plan),
+      ],
+    );
+    return result.rowCount === 1;
   }
 
   private async findActiveByOpportunity(opportunityId: string): Promise<StoredLifecycle | null> {
@@ -340,4 +381,11 @@ class FundingPositionLifecycle {
   }
 }
 
-export const fundingPositionLifecycle = new FundingPositionLifecycle();
+const fundingPositionLifecycleSingleton = new FundingPositionLifecycle();
+
+/** Startup migration verification already proved this exact table exists. */
+export function primeFundingLifecycleStoreReady(ttlMs = fundingStoreReadyTtlMs()): void {
+  fundingPositionLifecycleSingleton.primeStoreReady(ttlMs);
+}
+
+export const fundingPositionLifecycle = fundingPositionLifecycleSingleton;

@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  RESOURCE_LEASE_TABLE as TABLE,
+  claimFixedResource,
+  claimResourceSlot,
+  ensureResourceLeaseAuthority,
+} from './resource-lease-authority.js';
 
 export interface ZeroCapitalResourceLease {
   leaseId: string;
@@ -40,10 +47,6 @@ export interface MeasuredAtomicResourceRequest {
 
 type ResourcePoolSpec = { prefix: string; capacity: number };
 
-// One migration-owned lease table is shared by CEX and atomic execution. Resource
-// prefixes keep ownership domains disjoint while avoiding duplicate schema/runtime DDL.
-const TABLE = 'cryptocrawler_resource_leases';
-
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
   const normalized = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
@@ -69,54 +72,6 @@ class ZeroCapitalResourceScheduler {
     || process.env.HOSTNAME?.trim()
     || `process-${process.pid}-${randomUUID()}`;
   private readonly localUsage = new Map<string, number>();
-  private tableProbeInFlight: Promise<boolean> | null = null;
-  private tableReadyUntil = 0;
-  private tableRetryAfter = 0;
-
-  private async ensureTable(): Promise<boolean> {
-    if (!isDatabaseConfigured) return false;
-    const now = Date.now();
-    if (this.tableReadyUntil > now) return true;
-    if (now < this.tableRetryAfter) return false;
-    if (this.tableProbeInFlight) return this.tableProbeInFlight;
-
-    const retryMs = boundedInt(process.env.ZERO_CAPITAL_RESOURCE_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
-    const readyTtlMs = boundedInt(process.env.ZERO_CAPITAL_RESOURCE_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
-    const probe = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
-      .then(result => {
-        const ready = result.rows?.[0]?.ready === true;
-        if (ready) {
-          this.tableReadyUntil = Date.now() + readyTtlMs;
-          this.tableRetryAfter = 0;
-        } else {
-          this.tableReadyUntil = 0;
-          this.tableRetryAfter = Date.now() + retryMs;
-          logger.error('[ZeroCapitalScheduler] Migration-owned resource lease table is missing', {
-            component: 'ZeroCapitalResourceScheduler',
-            table: `public.${TABLE}`,
-            runtimeDdlAllowed: false,
-            executionAuthorityGranted: false,
-          });
-        }
-        return ready;
-      })
-      .catch(error => {
-        this.tableReadyUntil = 0;
-        this.tableRetryAfter = Date.now() + retryMs;
-        logger.error('[ZeroCapitalScheduler] Resource lease table verification failed closed', {
-          component: 'ZeroCapitalResourceScheduler',
-          retryAfterMs: retryMs,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return false;
-      })
-      .finally(() => {
-        if (this.tableProbeInFlight === probe) this.tableProbeInFlight = null;
-      });
-
-    this.tableProbeInFlight = probe;
-    return probe;
-  }
 
   private specsFor(chainRaw: string, protocols: readonly string[], fundingMode: string): ResourcePoolSpec[] {
     const chain = chainRaw.trim().toLowerCase();
@@ -201,58 +156,41 @@ class ZeroCapitalResourceScheduler {
     expiresAt: number,
   ): Promise<string[] | null> {
     if (!isDatabaseConfigured) return [];
-    if (!await this.ensureTable()) return null;
-    const client = await pool.connect();
+    if (!await ensureResourceLeaseAuthority('high')) return null;
+
+    const client = await withCryptaraSupabasePriority('high', () => pool.connect());
     const acquired: string[] = [];
     try {
       await client.query('BEGIN');
       const idempotency = `zero:opportunity:${opportunityId}`;
-      const fixed = await client.query(
-        `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
-         VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-         ON CONFLICT (resource_key) DO UPDATE
-         SET lease_id = EXCLUDED.lease_id,
-             owner_id = EXCLUDED.owner_id,
-             opportunity_id = EXCLUDED.opportunity_id,
-             acquired_at = now(),
-             expires_at = EXCLUDED.expires_at
-         WHERE ${TABLE}.expires_at <= now()
-         RETURNING resource_key`,
-        [idempotency, leaseId, this.ownerId, opportunityId, expiresAt],
-      );
-      if (fixed.rowCount !== 1) {
+      const fixed = await claimFixedResource(client, {
+        resourceKey: idempotency,
+        leaseId,
+        ownerId: this.ownerId,
+        opportunityId,
+        expiresAt,
+      });
+      if (!fixed) {
         await client.query('ROLLBACK');
         return null;
       }
       acquired.push(idempotency);
 
       for (const spec of specs) {
-        let claimed: string | null = null;
-        for (let slot = 0; slot < spec.capacity; slot++) {
-          const key = `${spec.prefix}:slot:${slot}`;
-          const result = await client.query(
-            `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
-             VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-             ON CONFLICT (resource_key) DO UPDATE
-             SET lease_id = EXCLUDED.lease_id,
-                 owner_id = EXCLUDED.owner_id,
-                 opportunity_id = EXCLUDED.opportunity_id,
-                 acquired_at = now(),
-                 expires_at = EXCLUDED.expires_at
-             WHERE ${TABLE}.expires_at <= now()
-             RETURNING resource_key`,
-            [key, leaseId, this.ownerId, opportunityId, expiresAt],
-          );
-          if (result.rowCount === 1) {
-            claimed = key;
-            acquired.push(key);
-            break;
-          }
-        }
+        const claimed = await claimResourceSlot(client, {
+          prefix: spec.prefix,
+          capacity: spec.capacity,
+          startSlot: Math.floor(Math.random() * spec.capacity),
+          leaseId,
+          ownerId: this.ownerId,
+          opportunityId,
+          expiresAt,
+        });
         if (!claimed) {
           await client.query('ROLLBACK');
           return null;
         }
+        acquired.push(claimed);
       }
       await client.query('COMMIT');
       return acquired;
@@ -304,7 +242,9 @@ class ZeroCapitalResourceScheduler {
         released = true;
         try {
           if (isDatabaseConfigured && resources.length > 0) {
-            await pool.query(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]);
+            await withCryptaraSupabasePriority('high', () =>
+              pool.query(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]),
+            );
           }
         } catch (error) {
           logger.error('[ZeroCapitalScheduler] Lease release failed; TTL remains fail-safe', {

@@ -1,6 +1,11 @@
 import { pool } from '../../../db.js';
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  getCryptaraSupabaseCompSwitchSnapshot,
+  refreshCryptaraSupabaseCompSwitch,
+} from '../integration/cryptara-supabase-comp-switch.js';
 import type { DurableTerminalOutcome } from './canonical-intelligence-repository.js';
 
 const OUTBOX_SCHEMA_VERSION = 'cryptara-outbox-v1';
@@ -25,6 +30,7 @@ interface ClaimedOutboxRow {
 
 export interface IntelligenceOutboxMetrics {
   running: boolean;
+  dataPath: 'normal' | 'comp';
   pending: number;
   processing: number;
   retry: number;
@@ -38,6 +44,17 @@ export interface IntelligenceOutboxMetrics {
   lastError: string | null;
   authority: 'background_persistence_only';
   executionDependency: false;
+}
+
+function boundedMs(raw: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(raw);
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(minimum, Math.min(maximum, Math.floor(value)));
+}
+
+function jitterMs(baseMs: number): number {
+  const floor = Math.max(50, Math.floor(baseMs * 0.50));
+  return floor + Math.floor(Math.random() * Math.max(1, baseMs - floor + 1));
 }
 
 function deterministicOutboxId(sourceEventId: string): string {
@@ -64,11 +81,15 @@ function terminalPayload(value: unknown): value is TerminalOutcomeOutboxPayload 
 
 class CanonicalIntelligenceOutbox {
   private timer: NodeJS.Timeout | null = null;
-  private cycleInFlight: Promise<void> | null = null;
+  private cycleInFlight: Promise<number> | null = null;
+  private kickPending = false;
   private consecutiveCycleFailures = 0;
   private degradedUntil = 0;
+  private idleDelayMs = 0;
+  private lastMetricsRefreshAt = 0;
   private metrics: IntelligenceOutboxMetrics = {
     running: false,
+    dataPath: 'normal',
     pending: 0,
     processing: 0,
     retry: 0,
@@ -84,28 +105,124 @@ class CanonicalIntelligenceOutbox {
     executionDependency: false,
   };
 
+  private batchSize(): number {
+    return Math.max(1, Math.min(32, Number(process.env.CRYPTARA_OUTBOX_BATCH_SIZE || 8)));
+  }
+
+  private activePollMs(): number {
+    const baseMs = boundedMs(process.env.CRYPTARA_OUTBOX_POLL_MS, 2_000, 250, 30_000);
+    const policy = getCryptaraSupabaseCompSwitchSnapshot().policy;
+    return Math.min(30_000, Math.max(baseMs, Math.floor(baseMs * policy.backgroundPollMultiplier)));
+  }
+
+  private maxIdlePollMs(): number {
+    const baseMs = boundedMs(process.env.CRYPTARA_OUTBOX_IDLE_POLL_MAX_MS, 30_000, this.activePollMs(), 300_000);
+    const policy = getCryptaraSupabaseCompSwitchSnapshot().policy;
+    return Math.min(300_000, Math.max(baseMs, Math.floor(baseMs * policy.backgroundPollMultiplier)));
+  }
+
+  private metricsIntervalMs(): number {
+    const baseMs = boundedMs(process.env.CRYPTARA_OUTBOX_METRICS_INTERVAL_MS, 30_000, 5_000, 300_000);
+    const policy = getCryptaraSupabaseCompSwitchSnapshot().policy;
+    return Math.min(300_000, Math.max(baseMs, Math.floor(baseMs * policy.observabilityMultiplier)));
+  }
+
   start(): void {
-    if (this.timer) return;
-    const intervalMs = Math.max(500, Number(process.env.CRYPTARA_OUTBOX_POLL_MS || 2_000));
+    if (this.metrics.running) return;
     this.metrics.running = true;
-    void this.runCycle();
-    this.timer = setInterval(() => void this.runCycle(), intervalMs);
-    this.timer.unref?.();
-    logger.info('[IntelligenceOutbox] Restart-safe background worker started', {
+    this.metrics.dataPath = getCryptaraSupabaseCompSwitchSnapshot().path;
+    this.idleDelayMs = this.activePollMs();
+    this.kickPending = false;
+    this.schedule(0);
+    logger.info('[IntelligenceOutbox] Restart-safe adaptive background worker started', {
       component: 'CanonicalIntelligenceOutbox',
-      intervalMs,
+      activePollMs: this.activePollMs(),
+      maxIdlePollMs: this.maxIdlePollMs(),
+      metricsIntervalMs: this.metricsIntervalMs(),
+      dataPath: this.metrics.dataPath,
       authority: this.metrics.authority,
       executionDependency: false,
       durableDedupe: true,
       staleLeaseRecovery: true,
-      databaseFailureBackoff: 'bounded_exponential',
+      batchedClaims: true,
+      atomicPersistAndComplete: true,
+      idlePolling: 'adaptive_one_shot',
+      databaseFailureBackoff: 'bounded_exponential_jitter',
     });
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
     this.metrics.running = false;
+    this.kickPending = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  private schedule(delayMs: number): void {
+    if (!this.metrics.running) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.runScheduledCycle();
+    }, Math.max(0, delayMs));
+    this.timer.unref?.();
+  }
+
+  private kick(): void {
+    if (!this.metrics.running) return;
+    // New terminal truth is never deferred by comp mode. Wake immediately; the
+    // DB admission governor still controls how many scarce DB permits it receives.
+    this.idleDelayMs = this.activePollMs();
+    this.kickPending = true;
+    if (this.cycleInFlight) return;
+    this.kickPending = false;
+    this.schedule(0);
+  }
+
+  private async runScheduledCycle(): Promise<void> {
+    // Refresh only from already-measured admission telemetry. This call performs no
+    // database query; it selects normal vs comp policy for the upcoming cycle.
+    try {
+      const switchSnapshot = await refreshCryptaraSupabaseCompSwitch();
+      this.metrics.dataPath = switchSnapshot.path;
+    } catch {
+      this.metrics.dataPath = getCryptaraSupabaseCompSwitchSnapshot().path;
+    }
+
+    this.kickPending = false;
+    const now = Date.now();
+    if (now < this.degradedUntil) {
+      this.schedule(Math.max(1, this.degradedUntil - now));
+      return;
+    }
+
+    const processed = await this.runCycle();
+    if (!this.metrics.running) return;
+
+    if (this.kickPending) {
+      this.kickPending = false;
+      this.idleDelayMs = this.activePollMs();
+      this.schedule(0);
+      return;
+    }
+
+    if (this.degradedUntil > Date.now()) {
+      this.schedule(Math.max(1, this.degradedUntil - Date.now()));
+      return;
+    }
+
+    if (processed > 0) {
+      this.idleDelayMs = this.activePollMs();
+      const batchSize = this.batchSize();
+      this.schedule(processed >= batchSize ? 0 : this.activePollMs());
+      return;
+    }
+
+    this.idleDelayMs = Math.min(
+      this.maxIdlePollMs(),
+      Math.max(this.activePollMs(), this.idleDelayMs > 0 ? this.idleDelayMs * 2 : this.activePollMs()),
+    );
+    this.schedule(jitterMs(this.idleDelayMs));
   }
 
   async enqueueTerminalOutcome(
@@ -130,13 +247,28 @@ class CanonicalIntelligenceOutbox {
       },
       feedback: structuredClone(feedback),
     };
-    const result = await pool.query(
-      `insert into private.cryptara_outbox (
-         outbox_id, source_event_id, job_kind, schema_version, dedupe_key, status,
-         attempt_count, visible_at, payload
-       ) values ($1, $2, $3, $4, $5, 'pending', 0, now(), $6::jsonb)
-       on conflict (dedupe_key) do nothing
-       returning outbox_id`,
+    // Insert or prove the exact immutable duplicate in one SQL round trip. This
+    // preserves the former collision validation without paying a second SELECT.
+    const result = await withCryptaraSupabasePriority('high', () => pool.query(
+      `with inserted as (
+         insert into private.cryptara_outbox (
+           outbox_id, source_event_id, job_kind, schema_version, dedupe_key, status,
+           attempt_count, visible_at, payload
+         ) values ($1, $2, $3, $4, $5, 'pending', 0, now(), $6::jsonb)
+         on conflict (dedupe_key) do nothing
+         returning outbox_id
+       ), verified as (
+         select outbox_id from inserted
+         union all
+         select outbox_id
+           from private.cryptara_outbox
+          where dedupe_key = $5
+            and source_event_id = $2
+            and job_kind = $3
+            and schema_version = $4
+          limit 1
+       )
+       select outbox_id from verified limit 1`,
       [
         outboxId,
         outcome.eventId,
@@ -145,22 +277,10 @@ class CanonicalIntelligenceOutbox {
         outboxId,
         JSON.stringify(payload),
       ],
-    );
-    if ((result.rowCount || 0) > 0) return true;
-
-    // A duplicate enqueue is also durable success when the exact immutable event
-    // is already present. Do not mistake idempotency for a failed handoff.
-    const existing = await pool.query(
-      `select 1
-         from private.cryptara_outbox
-        where dedupe_key = $1
-          and source_event_id = $2
-          and job_kind = $3
-          and schema_version = $4
-        limit 1`,
-      [outboxId, outcome.eventId, TERMINAL_JOB_KIND, OUTBOX_SCHEMA_VERSION],
-    );
-    return (existing.rowCount || 0) > 0;
+    ));
+    const durable = (result.rowCount || 0) > 0;
+    if (durable) this.kick();
+    return durable;
   }
 
   getMetrics(): IntelligenceOutboxMetrics {
@@ -169,7 +289,7 @@ class CanonicalIntelligenceOutbox {
 
   async refreshMetrics(): Promise<IntelligenceOutboxMetrics> {
     try {
-      const result = await pool.query(
+      const result = await withCryptaraSupabasePriority('low', () => pool.query(
         `select
            count(*) filter (where status = 'pending')::int as pending,
            count(*) filter (where status = 'processing')::int as processing,
@@ -181,10 +301,11 @@ class CanonicalIntelligenceOutbox {
              where status in ('pending','retry') and visible_at <= now()
            ))) * 1000 as oldest_ready_age_ms
          from private.cryptara_outbox`,
-      );
+      ));
       const row = result.rows[0] || {};
       this.metrics = {
         ...this.metrics,
+        dataPath: getCryptaraSupabaseCompSwitchSnapshot().path,
         pending: Number(row.pending || 0),
         processing: Number(row.processing || 0),
         retry: Number(row.retry || 0),
@@ -197,9 +318,11 @@ class CanonicalIntelligenceOutbox {
         lastMetricsAt: Date.now(),
         lastError: null,
       };
+      this.lastMetricsRefreshAt = Date.now();
     } catch (error) {
       this.metrics.lastError = error instanceof Error ? error.message : String(error);
       this.metrics.lastMetricsAt = Date.now();
+      this.lastMetricsRefreshAt = Date.now();
     }
     return this.getMetrics();
   }
@@ -207,11 +330,12 @@ class CanonicalIntelligenceOutbox {
   private databaseBackoffMs(): number {
     const baseMs = Math.max(1_000, Number(process.env.CRYPTARA_OUTBOX_DB_BACKOFF_BASE_MS || 2_000));
     const maxMs = Math.max(baseMs, Number(process.env.CRYPTARA_OUTBOX_DB_BACKOFF_MAX_MS || 60_000));
-    return Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, this.consecutiveCycleFailures - 1)));
+    const cap = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, this.consecutiveCycleFailures - 1)));
+    return jitterMs(cap);
   }
 
-  private runCycle(): Promise<void> {
-    if (Date.now() < this.degradedUntil) return Promise.resolve();
+  private runCycle(): Promise<number> {
+    if (Date.now() < this.degradedUntil) return Promise.resolve(0);
     if (this.cycleInFlight) return this.cycleInFlight;
     this.cycleInFlight = this.drainCycle().finally(() => {
       this.cycleInFlight = null;
@@ -219,18 +343,23 @@ class CanonicalIntelligenceOutbox {
     return this.cycleInFlight;
   }
 
-  private async drainCycle(): Promise<void> {
-    const batchSize = Math.max(1, Math.min(32, Number(process.env.CRYPTARA_OUTBOX_BATCH_SIZE || 8)));
+  private async drainCycle(): Promise<number> {
+    const batchSize = this.batchSize();
+    let processed = 0;
     try {
-      for (let index = 0; index < batchSize; index++) {
-        const row = await this.claimOne();
-        if (!row) break;
+      const rows = await this.claimBatch(batchSize);
+      for (const row of rows) {
+        processed += 1;
         await this.process(row);
       }
-      const metrics = await this.refreshMetrics();
-      if (metrics.lastError) throw new Error(metrics.lastError);
+
+      if (Date.now() - this.lastMetricsRefreshAt >= this.metricsIntervalMs()) {
+        const metrics = await this.refreshMetrics();
+        if (metrics.lastError) throw new Error(metrics.lastError);
+      }
       this.consecutiveCycleFailures = 0;
       this.degradedUntil = 0;
+      return processed;
     } catch (error) {
       this.metrics.lastError = error instanceof Error ? error.message : String(error);
       this.consecutiveCycleFailures += 1;
@@ -242,14 +371,20 @@ class CanonicalIntelligenceOutbox {
         executionBlocked: false,
         consecutiveCycleFailures: this.consecutiveCycleFailures,
         databaseRetryInMs: backoffMs,
+        dataPath: this.metrics.dataPath,
       });
+      return processed;
     }
   }
 
-  private async claimOne(): Promise<ClaimedOutboxRow | null> {
-    const leaseMs = Math.max(5_000, Number(process.env.CRYPTARA_OUTBOX_LEASE_MS || 30_000));
-    const result = await pool.query(
-      `with candidate as (
+  private async claimBatch(limit: number): Promise<ClaimedOutboxRow[]> {
+    const configuredLeaseMs = Math.max(5_000, Number(process.env.CRYPTARA_OUTBOX_LEASE_MS || 30_000));
+    // A batch is marked processing at once but completed sequentially. Scale the
+    // stale-recovery window with bounded batch width so a healthy second worker
+    // cannot reclaim the tail of the same batch merely because Supabase is slow.
+    const leaseMs = Math.max(configuredLeaseMs, Math.min(300_000, Math.max(1, limit) * 15_000));
+    const result = await withCryptaraSupabasePriority('low', () => pool.query(
+      `with candidates as (
          select outbox_id
            from private.cryptara_outbox
           where (
@@ -261,30 +396,29 @@ class CanonicalIntelligenceOutbox {
           )
           order by created_at asc
           for update skip locked
-          limit 1
+          limit $2
        )
        update private.cryptara_outbox as outbox
           set status = 'processing',
               locked_at = now(),
               attempt_count = outbox.attempt_count + 1,
               last_error = null
-         from candidate
-        where outbox.outbox_id = candidate.outbox_id
+         from candidates
+        where outbox.outbox_id = candidates.outbox_id
        returning outbox.outbox_id, outbox.source_event_id, outbox.job_kind,
                  outbox.schema_version, outbox.attempt_count, outbox.payload`,
-      [leaseMs],
-    );
-    if ((result.rowCount || 0) === 0) return null;
-    const row = result.rows[0];
+      [leaseMs, Math.max(1, Math.min(32, Math.floor(limit)))],
+    ));
+    if ((result.rowCount || 0) === 0) return [];
     this.metrics.lastClaimAt = Date.now();
-    return {
+    return result.rows.map(row => ({
       outboxId: String(row.outbox_id),
       sourceEventId: String(row.source_event_id),
       jobKind: String(row.job_kind),
       schemaVersion: String(row.schema_version),
       attemptCount: Number(row.attempt_count),
       payload: row.payload,
-    };
+    }));
   }
 
   private async process(row: ClaimedOutboxRow): Promise<void> {
@@ -302,13 +436,7 @@ class CanonicalIntelligenceOutbox {
         throw new Error('Durable outbox source event does not match terminal outcome identity');
       }
 
-      await this.persistTerminalOutcome(row.payload);
-      await pool.query(
-        `update private.cryptara_outbox
-            set status = 'completed', completed_at = now(), locked_at = null, last_error = null
-          where outbox_id = $1 and status = 'processing'`,
-        [row.outboxId],
-      );
+      await this.persistTerminalOutcome(row.payload, row.outboxId);
       this.metrics.lastCompletedAt = Date.now();
       this.metrics.lastError = null;
     } catch (error) {
@@ -316,18 +444,24 @@ class CanonicalIntelligenceOutbox {
     }
   }
 
-  private async persistTerminalOutcome(payload: TerminalOutcomeOutboxPayload): Promise<void> {
+  private async persistTerminalOutcome(payload: TerminalOutcomeOutboxPayload, outboxId: string): Promise<void> {
     const { outcome, feedback } = payload;
-    await pool.query(
-      `insert into private.cryptara_trade_outcomes (
-         event_id, opportunity_id, observed_at, settled_at, topology, symbol, chain, strategy,
-         success, terminal, settlement_confirmed, realized_profit_usd, realized_fee_usd,
-         realized_slippage_bps, latency_ms, model_version, config_version, provenance,
-         source_event_ids, payload
-       ) values (
-         $1, $2, to_timestamp($3 / 1000.0), to_timestamp($4 / 1000.0), $5, $6, $7, $8,
-         $9, true, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb
-       ) on conflict (event_id) do nothing`,
+    await withCryptaraSupabasePriority('low', () => pool.query(
+      `with persisted as (
+         insert into private.cryptara_trade_outcomes (
+           event_id, opportunity_id, observed_at, settled_at, topology, symbol, chain, strategy,
+           success, terminal, settlement_confirmed, realized_profit_usd, realized_fee_usd,
+           realized_slippage_bps, latency_ms, model_version, config_version, provenance,
+           source_event_ids, payload
+         ) values (
+           $1, $2, to_timestamp($3 / 1000.0), to_timestamp($4 / 1000.0), $5, $6, $7, $8,
+           $9, true, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb
+         ) on conflict (event_id) do nothing
+         returning event_id
+       )
+       update private.cryptara_outbox
+          set status = 'completed', completed_at = now(), locked_at = null, last_error = null
+        where outbox_id = $20 and status = 'processing'`,
       [
         outcome.eventId,
         outcome.opportunityId,
@@ -348,8 +482,9 @@ class CanonicalIntelligenceOutbox {
         outcome.provenance,
         outcome.sourceEventIds,
         JSON.stringify({ feedback, terminalEventId: outcome.eventId, outboxSchemaVersion: OUTBOX_SCHEMA_VERSION }),
+        outboxId,
       ],
-    );
+    ));
   }
 
   private async failOrRetry(row: ClaimedOutboxRow, error: unknown): Promise<void> {
@@ -358,9 +493,10 @@ class CanonicalIntelligenceOutbox {
     const baseBackoffMs = Math.max(250, Number(process.env.CRYPTARA_OUTBOX_RETRY_BASE_MS || 1_000));
     const maxBackoffMs = Math.max(baseBackoffMs, Number(process.env.CRYPTARA_OUTBOX_RETRY_MAX_MS || 60_000));
     const exhausted = row.attemptCount >= maxAttempts;
-    const backoffMs = Math.min(maxBackoffMs, baseBackoffMs * Math.pow(2, Math.max(0, row.attemptCount - 1)));
+    const capMs = Math.min(maxBackoffMs, baseBackoffMs * Math.pow(2, Math.max(0, row.attemptCount - 1)));
+    const backoffMs = jitterMs(capMs);
 
-    await pool.query(
+    await withCryptaraSupabasePriority('low', () => pool.query(
       `update private.cryptara_outbox
           set status = $2,
               visible_at = case when $2 = 'retry'
@@ -372,7 +508,7 @@ class CanonicalIntelligenceOutbox {
               completed_at = case when $2 = 'failed' then now() else completed_at end
         where outbox_id = $1 and status = 'processing'`,
       [row.outboxId, exhausted ? 'failed' : 'retry', backoffMs, message.slice(0, 2_000)],
-    );
+    ));
     this.metrics.lastError = message;
     logger.warn('[IntelligenceOutbox] Background job did not complete', {
       component: 'CanonicalIntelligenceOutbox',
@@ -385,6 +521,7 @@ class CanonicalIntelligenceOutbox {
       retryInMs: exhausted ? null : backoffMs,
       error: message,
       executionBlocked: false,
+      dataPath: this.metrics.dataPath,
     });
   }
 }

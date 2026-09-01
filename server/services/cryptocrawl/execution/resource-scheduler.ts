@@ -7,6 +7,13 @@ import {
   pool,
 } from '../../../db.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  RESOURCE_LEASE_TABLE as TABLE,
+  claimFixedResource,
+  claimResourceSlot,
+  ensureResourceLeaseAuthority,
+} from './resource-lease-authority.js';
 
 export interface ExecutionResourceLease {
   leaseId: string;
@@ -30,12 +37,18 @@ interface ResourcePoolSpec {
   capacity: number;
 }
 
-const TABLE = 'cryptocrawler_resource_leases';
-
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
   const normalized = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
   return Math.max(minimum, Math.min(maximum, normalized));
+}
+
+function highPriorityQuery(text: string, values: unknown[] = []) {
+  return withCryptaraSupabasePriority('high', () => pool.query(text, values));
+}
+
+function lowPriorityQuery(text: string, values: unknown[] = []) {
+  return withCryptaraSupabasePriority('low', () => pool.query(text, values));
 }
 
 function configuredVenueCapacity(venue: string): number {
@@ -79,63 +92,15 @@ class ExecutionResourceScheduler {
     || process.env.HOSTNAME?.trim()
     || `process-${process.pid}-${randomUUID()}`;
   private readonly localUsage = new Map<string, number>();
-  private tableProbeInFlight: Promise<boolean> | null = null;
-  private tableReadyUntil = 0;
-  private tableRetryAfter = 0;
   private cleanupInFlight: Promise<void> | null = null;
   private lastCleanupAt = 0;
-
-  private async ensureTable(): Promise<boolean> {
-    if (!isDatabaseConfigured) return false;
-    const now = Date.now();
-    if (this.tableReadyUntil > now) return true;
-    if (now < this.tableRetryAfter) return false;
-    if (this.tableProbeInFlight) return this.tableProbeInFlight;
-
-    const retryMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
-    const readyTtlMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
-    const probe = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
-      .then(result => {
-        const ready = result.rows?.[0]?.ready === true;
-        if (ready) {
-          this.tableReadyUntil = Date.now() + readyTtlMs;
-          this.tableRetryAfter = 0;
-        } else {
-          this.tableReadyUntil = 0;
-          this.tableRetryAfter = Date.now() + retryMs;
-          logger.error('[ResourceScheduler] Migration-owned distributed lease table is missing', {
-            component: 'ExecutionResourceScheduler',
-            table: `public.${TABLE}`,
-            executionAuthorityGranted: false,
-            runtimeDdlAllowed: false,
-          });
-        }
-        return ready;
-      })
-      .catch(error => {
-        this.tableReadyUntil = 0;
-        this.tableRetryAfter = Date.now() + retryMs;
-        logger.error('[ResourceScheduler] Distributed lease table availability check failed', {
-          component: 'ExecutionResourceScheduler',
-          retryAfterMs: retryMs,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return false;
-      })
-      .finally(() => {
-        if (this.tableProbeInFlight === probe) this.tableProbeInFlight = null;
-      });
-
-    this.tableProbeInFlight = probe;
-    return probe;
-  }
 
   private maybeCleanupExpiredLeases(): void {
     if (!isDatabaseConfigured || this.cleanupInFlight) return;
     const intervalMs = boundedInt(process.env.CRYPTOCRAWL_RESOURCE_LEASE_CLEANUP_MS, 60_000, 10_000, 600_000);
     if (Date.now() - this.lastCleanupAt < intervalMs) return;
     this.lastCleanupAt = Date.now();
-    this.cleanupInFlight = pool.query(`DELETE FROM ${TABLE} WHERE expires_at <= now()`)
+    this.cleanupInFlight = lowPriorityQuery(`DELETE FROM ${TABLE} WHERE expires_at <= now()`)
       .then(() => undefined)
       .catch(error => {
         logger.warn('[ResourceScheduler] Background expired-lease cleanup deferred', {
@@ -197,29 +162,6 @@ class ExecutionResourceScheduler {
     return [...dedup.values()];
   }
 
-  private async claimResource(
-    client: any,
-    resourceKey: string,
-    leaseId: string,
-    opportunityId: string,
-    expiresAt: number,
-  ): Promise<boolean> {
-    const result = await client.query(
-      `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
-       VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-       ON CONFLICT (resource_key) DO UPDATE
-       SET lease_id = EXCLUDED.lease_id,
-           owner_id = EXCLUDED.owner_id,
-           opportunity_id = EXCLUDED.opportunity_id,
-           acquired_at = now(),
-           expires_at = EXCLUDED.expires_at
-       WHERE ${TABLE}.expires_at <= now()
-       RETURNING resource_key`,
-      [resourceKey, leaseId, this.ownerId, opportunityId, expiresAt],
-    );
-    return result.rowCount === 1;
-  }
-
   private async acquireDistributed(
     leaseId: string,
     opportunityId: string,
@@ -227,34 +169,42 @@ class ExecutionResourceScheduler {
     expiresAt: number,
   ): Promise<string[] | null> {
     if (!isDatabaseConfigured) return [];
-    if (!await this.ensureTable()) return null;
+    if (!await ensureResourceLeaseAuthority('high')) return null;
 
-    const client = await pool.connect();
+    const client = await withCryptaraSupabasePriority('high', () => pool.connect());
     const acquired: string[] = [];
     try {
       await client.query('BEGIN');
 
       const fixedOpportunityKey = `cex:opportunity:${opportunityId}`;
-      if (!await this.claimResource(client, fixedOpportunityKey, leaseId, opportunityId, expiresAt)) {
+      const fixed = await claimFixedResource(client, {
+        resourceKey: fixedOpportunityKey,
+        leaseId,
+        ownerId: this.ownerId,
+        opportunityId,
+        expiresAt,
+      });
+      if (!fixed) {
         await client.query('ROLLBACK');
         return null;
       }
       acquired.push(fixedOpportunityKey);
 
       for (const spec of specs) {
-        let claimed: string | null = null;
-        for (let slot = 0; slot < spec.capacity; slot++) {
-          const resourceKey = `${spec.prefix}:slot:${slot}`;
-          if (await this.claimResource(client, resourceKey, leaseId, opportunityId, expiresAt)) {
-            claimed = resourceKey;
-            acquired.push(resourceKey);
-            break;
-          }
-        }
+        const claimed = await claimResourceSlot(client, {
+          prefix: spec.prefix,
+          capacity: spec.capacity,
+          startSlot: Math.floor(Math.random() * spec.capacity),
+          leaseId,
+          ownerId: this.ownerId,
+          opportunityId,
+          expiresAt,
+        });
         if (!claimed) {
           await client.query('ROLLBACK');
           return null;
         }
+        acquired.push(claimed);
       }
 
       await client.query('COMMIT');
@@ -336,13 +286,13 @@ class ExecutionResourceScheduler {
         try {
           if (isDatabaseConfigured && distributedResources.length > 0) {
             if (retainOpportunityUntilExpiry) {
-              await pool.query(
+              await highPriorityQuery(
                 `DELETE FROM ${TABLE}
                  WHERE lease_id = $1 AND owner_id = $2 AND resource_key <> $3`,
                 [leaseId, this.ownerId, `cex:opportunity:${opportunityId}`],
               );
             } else {
-              await pool.query(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]);
+              await highPriorityQuery(`DELETE FROM ${TABLE} WHERE lease_id = $1 AND owner_id = $2`, [leaseId, this.ownerId]);
             }
           }
         } catch (error) {

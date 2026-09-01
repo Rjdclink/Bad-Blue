@@ -30,6 +30,8 @@ jobs:
         run: node scripts/cryptocrawl/verify-clean-house.cjs
       - name: Verify CryptoCrawler no-regression opportunity pipeline
         run: node scripts/cryptocrawl/verify-no-regression-opportunity-pipeline.cjs
+      - name: Verify startup database admission controls
+        run: node scripts/cryptocrawl/verify-startup-database-admission.cjs
       - name: Verify CryptoCrawler deployment preflight
         env:
           NO_EXECUTION: 'true'

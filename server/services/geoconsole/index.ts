@@ -30,8 +30,8 @@ import {
   LocationAnomaly,
   DataSourceSummary,
 } from './types';
-import { InputFusionEngine } from './inputFusionEngine';
-import { MonteCarloPathEngine } from './monteCarloPathEngine';
+import { InputFusionEngine, inputFusionEngine } from './inputFusionEngine';
+import { MonteCarloPathEngine, monteCarloPathEngine } from './monteCarloPathEngine';
 import { createLogger } from '../../logger';
 
 const log = createLogger('HybridGeoconsole');
@@ -94,9 +94,13 @@ export class HybridGeoconsole extends EventEmitter {
     orchestrationConfig?: Partial<GeoconsoleOrchestrationConfig>
   ) {
     super();
-    
-    this.inputFusionEngine = new InputFusionEngine(fusionConfig);
-    this.monteCarloEngine = new MonteCarloPathEngine(monteCarloConfig);
+
+    // The engine modules already own canonical default instances. Reuse those for
+    // the default HybridGeoconsole instead of constructing a second identical pair
+    // during route import. Explicit custom configs still receive isolated engines,
+    // preserving configurability and test injection semantics.
+    this.inputFusionEngine = fusionConfig ? new InputFusionEngine(fusionConfig) : inputFusionEngine;
+    this.monteCarloEngine = monteCarloConfig ? new MonteCarloPathEngine(monteCarloConfig) : monteCarloPathEngine;
     this.timelineConfig = { ...DEFAULT_TIMELINE_CONFIG, ...timelineConfig };
     this.orchestrationConfig = { ...DEFAULT_ORCHESTRATION_CONFIG, ...orchestrationConfig };
     

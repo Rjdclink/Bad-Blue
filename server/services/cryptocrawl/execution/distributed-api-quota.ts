@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { isDatabaseConfigured, pool } from '../../../db.js';
-import logger from '../../../logger.js';
+import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  getCryptaraSupabaseCompSwitchSnapshot,
+  refreshCryptaraSupabaseCompSwitch,
+} from '../integration/cryptara-supabase-comp-switch.js';
+import {
+  RESOURCE_LEASE_TABLE as TABLE,
+  claimResourceSlot,
+  ensureResourceLeaseAuthority,
+} from './resource-lease-authority.js';
 
-const TABLE = 'cryptocrawler_resource_leases';
 const ownerId = process.env.RAILWAY_REPLICA_ID?.trim()
   || process.env.HOSTNAME?.trim()
   || `process-${process.pid}`;
@@ -12,13 +20,12 @@ interface QuotaState {
   waits: number;
   waitMs: number;
   failures: number;
+  compLocalWaits: number;
+  avoidedDbReads: number;
   lastClaimAt: number;
 }
 
 const states = new Map<string, QuotaState>();
-let tableProbeInFlight: Promise<boolean> | null = null;
-let tableReadyUntil = 0;
-let tableReadyRetryAfter = 0;
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
@@ -29,56 +36,30 @@ function boundedInt(value: unknown, fallback: number, minimum: number, maximum: 
 function stateFor(namespace: string): QuotaState {
   const current = states.get(namespace);
   if (current) return current;
-  const created: QuotaState = { claims: 0, waits: 0, waitMs: 0, failures: 0, lastClaimAt: 0 };
+  const created: QuotaState = {
+    claims: 0,
+    waits: 0,
+    waitMs: 0,
+    failures: 0,
+    compLocalWaits: 0,
+    avoidedDbReads: 0,
+    lastClaimAt: 0,
+  };
   states.set(namespace, created);
   return created;
 }
 
-async function ensureLeaseTable(): Promise<boolean> {
-  if (!isDatabaseConfigured) return false;
-  const now = Date.now();
-  if (tableReadyUntil > now) return true;
-  if (now < tableReadyRetryAfter) return false;
-  if (tableProbeInFlight) return tableProbeInFlight;
-
-  const retryMs = boundedInt(process.env.CRYPTOCRAWL_API_QUOTA_TABLE_RETRY_MS, 5_000, 1_000, 60_000);
-  const readyTtlMs = boundedInt(process.env.CRYPTOCRAWL_API_QUOTA_TABLE_READY_TTL_MS, 300_000, 30_000, 900_000);
-  const probe = pool.query(`SELECT to_regclass('public.${TABLE}') IS NOT NULL AS ready`)
-    .then(result => {
-      const ready = result.rows?.[0]?.ready === true;
-      if (ready) {
-        tableReadyUntil = Date.now() + readyTtlMs;
-        tableReadyRetryAfter = 0;
-      } else {
-        tableReadyUntil = 0;
-        tableReadyRetryAfter = Date.now() + retryMs;
-      }
-      return ready;
-    })
-    .catch(error => {
-      tableReadyUntil = 0;
-      tableReadyRetryAfter = Date.now() + retryMs;
-      logger.warn('[DistributedApiQuota] Lease table availability check failed', {
-        component: 'DistributedApiQuota',
-        retryAfterMs: retryMs,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    })
-    .finally(() => {
-      if (tableProbeInFlight === probe) tableProbeInFlight = null;
-    });
-
-  tableProbeInFlight = probe;
-  return probe;
+function quotaRetryDelayMs(baseMs: number, remainingMs: number): number {
+  const boundedBase = Math.max(25, Math.min(baseMs, remainingMs));
+  const extra = Math.floor(Math.random() * Math.max(1, Math.ceil(boundedBase * 0.25) + 1));
+  return Math.max(1, Math.min(remainingMs, boundedBase + extra));
 }
 
 /**
  * Claims one cluster-wide request slot for a sliding-window-like API quota using
- * the existing migration-owned resource-lease table. Slots are intentionally not
- * released early: each claim remains occupied for windowMs, providing a
- * conservative upper bound across Railway replicas without creating another
- * authority or schema.
+ * the existing migration-owned resource-lease table. All lease users share one
+ * schema/function readiness cache, so quota admission cannot duplicate the same
+ * Supabase readiness probe already performed by CEX or zero-capital execution.
  */
 export async function acquireDistributedApiQuota(input: {
   namespace: string;
@@ -95,43 +76,34 @@ export async function acquireDistributedApiQuota(input: {
   const maxWaitMs = boundedInt(input.maxWaitMs, Math.max(windowMs * 3, 5_000), windowMs, 300_000);
   const state = stateFor(namespace);
 
-  if (!await ensureLeaseTable()) {
+  if (!await ensureResourceLeaseAuthority('high')) {
     state.failures += 1;
-    throw new Error(`Distributed API quota unavailable: public.${TABLE} is missing or unreachable`);
+    throw new Error('Distributed API quota unavailable: migration-owned lease authority is missing or unreachable');
   }
 
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
-    const client = await pool.connect();
+    const client = await withCryptaraSupabasePriority('high', () => pool.connect());
     let claimed = false;
+    // A fair local approximation is always available. Healthy mode can replace it
+    // with the exact earliest expiry; comp mode intentionally saves that second read.
     let waitMs = Math.max(25, Math.ceil(windowMs / capacity));
     try {
       await client.query('BEGIN');
       const leaseId = randomUUID();
       const expiresAt = Date.now() + windowMs;
-      const startSlot = Math.floor(Math.random() * capacity);
+      const prefix = `api-quota:${namespace}`;
 
-      for (let offset = 0; offset < capacity; offset++) {
-        const slot = (startSlot + offset) % capacity;
-        const resourceKey = `api-quota:${namespace}:slot:${slot}`;
-        const result = await client.query(
-          `INSERT INTO ${TABLE} (resource_key, lease_id, owner_id, opportunity_id, expires_at)
-           VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-           ON CONFLICT (resource_key) DO UPDATE
-           SET lease_id = EXCLUDED.lease_id,
-               owner_id = EXCLUDED.owner_id,
-               opportunity_id = EXCLUDED.opportunity_id,
-               acquired_at = now(),
-               expires_at = EXCLUDED.expires_at
-           WHERE ${TABLE}.expires_at <= now()
-           RETURNING resource_key`,
-          [resourceKey, leaseId, ownerId, `api-quota:${namespace}`, expiresAt],
-        );
-        if (result.rowCount === 1) {
-          claimed = true;
-          break;
-        }
-      }
+      const resourceKey = await claimResourceSlot(client, {
+        prefix,
+        capacity,
+        startSlot: Math.floor(Math.random() * capacity),
+        leaseId,
+        ownerId,
+        opportunityId: `api-quota:${namespace}`,
+        expiresAt,
+      });
+      claimed = resourceKey !== null;
 
       if (claimed) {
         await client.query('COMMIT');
@@ -140,15 +112,24 @@ export async function acquireDistributedApiQuota(input: {
         return;
       }
 
-      const expiry = await client.query(
-        `SELECT GREATEST(25, LEAST($2::int,
-           COALESCE(CEIL(EXTRACT(EPOCH FROM (MIN(expires_at) - now())) * 1000)::int, $2::int))) AS wait_ms
-         FROM ${TABLE}
-         WHERE resource_key LIKE $1 AND expires_at > now()`,
-        [`api-quota:${namespace}:slot:%`, windowMs],
-      );
-      const suggested = Number(expiry.rows?.[0]?.wait_ms);
-      if (Number.isFinite(suggested) && suggested > 0) waitMs = Math.max(25, Math.min(windowMs, Math.ceil(suggested)));
+      const dataPath = await refreshCryptaraSupabaseCompSwitch()
+        .catch(() => getCryptaraSupabaseCompSwitchSnapshot());
+      if (dataPath.path === 'normal') {
+        const expiry = await client.query(
+          `SELECT GREATEST(25, LEAST($2::int,
+             COALESCE(CEIL(EXTRACT(EPOCH FROM (MIN(expires_at) - now())) * 1000)::int, $2::int))) AS wait_ms
+           FROM ${TABLE}
+           WHERE resource_key LIKE $1 AND expires_at > now()`,
+          [`api-quota:${namespace}:slot:%`, windowMs],
+        );
+        const suggested = Number(expiry.rows?.[0]?.wait_ms);
+        if (Number.isFinite(suggested) && suggested > 0) {
+          waitMs = Math.max(25, Math.min(windowMs, Math.ceil(suggested)));
+        }
+      } else {
+        state.compLocalWaits += 1;
+        state.avoidedDbReads += 1;
+      }
       await client.query('ROLLBACK');
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch { /* ignore rollback failure */ }
@@ -160,7 +141,7 @@ export async function acquireDistributedApiQuota(input: {
 
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
-    const sleepMs = Math.min(waitMs, remaining);
+    const sleepMs = quotaRetryDelayMs(waitMs, remaining);
     state.waits += 1;
     state.waitMs += sleepMs;
     await new Promise(resolve => setTimeout(resolve, sleepMs));

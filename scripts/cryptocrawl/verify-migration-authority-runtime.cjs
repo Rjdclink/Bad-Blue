@@ -12,6 +12,9 @@ const reconciler = read('server/migrations/reconcileAppSchema.ts');
 const numberedRunner = read('server/migrations/runMigrations.ts');
 const hotPathMigration = read('server/migrations/023_cryptocrawler_hot_path_schema_authority.sql');
 const fundingMigration = read('server/migrations/024_cryptocrawler_funding_lifecycle.sql');
+const rainbowSourceMigration = read('server/migrations/025_cryptocrawler_rainbow_source_ledger.sql');
+const fundingLifecycle = read('server/services/cryptocrawl/execution/funding-position-lifecycle.ts');
+const rainbowSourceLedger = read('server/services/cryptocrawl/compensation/rainbow-profit-source-ledger.ts');
 const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
 const adminApi = read('server/services/cryptocrawl/api/admin-api.ts');
@@ -33,12 +36,13 @@ assert.match(db, /query_timeout:\s*30000/);
 assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}statement_timeout:\s*15000/);
 assert.match(db, /getCoordinationPoolConfig[\s\S]{0,900}query_timeout:\s*15000/);
 
-// Startup owns only the new CryptoCrawler authority migrations; it does not
+// Startup owns only the current CryptoCrawler authority migrations; it does not
 // blindly replay the entire legacy numbered migration history. The same session
 // client that owns the migration advisory lock executes the migration DDL.
 for (const migration of [
   '023_cryptocrawler_hot_path_schema_authority.sql',
   '024_cryptocrawler_funding_lifecycle.sql',
+  '025_cryptocrawler_rainbow_source_ledger.sql',
 ]) {
   assert.ok(reconciler.includes(migration), `startup reconciler must apply ${migration}`);
   assert.ok(dockerfile.includes(`/app/server/migrations/${migration} ./dist/migrations/${migration}`), `production image must ship ${migration}`);
@@ -69,11 +73,36 @@ assert.match(reconciler, /schemaFailureResult\(error\)/);
 assert.doesNotMatch(reconciler, /if \(error instanceof CryptocrawlerAuthoritySchemaError\) throw error/);
 assert.match(reconciler, /Report the fault without taking down unrelated services/);
 
-// The actual production lifecycle boundaries—not global LegalWhat readiness—must
-// consume the one migration-owned schema authority before discovery/execution.
-assert.match(canonicalRuntime, /requireCryptocrawlerAuthoritySchema/);
-assert.match(canonicalRuntime, /pool\.query\('SELECT 1'\)[\s\S]{0,180}requireCryptocrawlerAuthoritySchema\(2\)[\s\S]{0,180}installCanonicalRuntime\(\)/);
-assert.match(canonicalRuntime, /database_or_authority_schema_admission_probe_failed/);
+// Startup's one authority proof must be reused by the funding worker, and the
+// common healthy funding-open path must not pre-read before claiming the partial
+// unique opportunity key.
+assert.match(reconciler, /primeFundingLifecycleStoreReady\(\)/);
+assert.match(fundingLifecycle, /export function primeFundingLifecycleStoreReady/);
+assert.match(fundingLifecycle, /primeStoreReady\(/);
+assert.match(fundingLifecycle, /insertOpeningIfAbsent/);
+assert.match(fundingLifecycle, /ON CONFLICT DO NOTHING[\s\S]{0,160}RETURNING lifecycle_id/);
+const openingClaimIndex = fundingLifecycle.indexOf('insertOpeningIfAbsent(lifecycleId, plan)');
+const conflictReadIndex = fundingLifecycle.indexOf('findActiveByOpportunity(plan.opportunityId)', openingClaimIndex);
+assert.ok(openingClaimIndex >= 0 && conflictReadIndex > openingClaimIndex,
+  'funding lifecycle must claim first and only read on the rare active-opportunity conflict path');
+
+// Secondary Rainbow source metadata is also migration-owned. Runtime may record
+// and read rows through Cryptara admission, but it may never run DDL.
+assert.match(rainbowSourceMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_rainbow_profit_sources/);
+assert.match(rainbowSourceMigration, /CREATE INDEX IF NOT EXISTS idx_rainbow_profit_source_route/);
+assert.match(rainbowSourceMigration, /ENABLE ROW LEVEL SECURITY/);
+assert.doesNotMatch(rainbowSourceLedger, /CREATE\s+(?:SCHEMA|TABLE|INDEX)/i);
+assert.match(rainbowSourceLedger, /withCryptaraSupabasePriority\('low'/);
+
+// Overflow-ready startup installs canonical wiring without a direct primary health
+// probe or recovery poll. Execution-capable lifecycle entry points still retain the
+// migration-owned authority-schema gate; their pool acquisition is mediated by the
+// already-installed overflow gateway at runtime. If overflow is absent, the legacy
+// bounded primary fallback still verifies connectivity + schema before installing.
+assert.match(canonicalRuntime, /getCryptaraHyperBridgeBootstrapSnapshot/);
+assert.match(canonicalRuntime, /overflowBootstrap\.state === 'ready'[\s\S]{0,1000}directPrimaryProbe:\s*false[\s\S]{0,500}recoveryPolling:\s*false[\s\S]{0,500}installCanonicalRuntime\(\)/);
+assert.match(canonicalRuntime, /if \(isDatabaseConfigured\)[\s\S]{0,500}pool\.query\('SELECT 1'\)[\s\S]{0,260}requireCryptocrawlerAuthoritySchema\(2\)[\s\S]{0,220}installCanonicalRuntime\(\)/);
+assert.match(canonicalRuntime, /overflow_unavailable_primary_fallback_probe_failed/);
 assert.match(coreRuntime, /if \(process\.env\.NODE_ENV === 'production'\) \{\s*await requireCryptocrawlerAuthoritySchema\(2\);\s*\}/);
 assert.match(adminApi, /if \(process\.env\.NODE_ENV === 'production'\) \{[\s\S]{0,180}await requireCryptocrawlerAuthoritySchema\(2\)/);
 const adminSchemaGate = adminApi.indexOf('await requireCryptocrawlerAuthoritySchema(2)');
@@ -107,4 +136,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: authority migrations and session settings stay on session-capable connections, transaction-mode ordinary traffic remains stateless, global app availability remains independent, and every production CryptoCrawler lifecycle entry verifies migration-owned schema before discovery/execution');
+console.log('[migration-authority-runtime] PASS: authority migrations/session settings remain migration-owned, overflow-ready canonical wiring adds no direct health/recovery probe, execution-capable lifecycle entry points retain schema gates behind the overflow gateway, and the overflow-unavailable primary fallback remains bounded');

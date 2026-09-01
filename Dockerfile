@@ -28,8 +28,18 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Build application (requires dev dependencies)
+# Build application (requires dev dependencies). The normal build first proves the
+# source tree. Then overwrite only the production server entry with the Cryptara-
+# first wrapper so rollout headroom + admission control exist before SELECT 1.
 RUN npm run build && \
+    npx esbuild server/cryptara-bootstrap-entry.ts \
+      --bundle \
+      --platform=node \
+      --target=node20 \
+      --outfile=dist/index.js \
+      --format=esm \
+      --packages=external \
+      --define:process.env.NODE_ENV="'production'" && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
 
@@ -50,7 +60,6 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure Playwright to skip browser downloads (using playwright-core)
-# Browser connection will use BROWSER_WS_ENDPOINT env var at runtime
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -70,11 +79,18 @@ RUN rm -rf node_modules || true && \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 
-# CryptoCrawler execution-critical DDL remains migration-owned. The runtime image
-# must carry the two idempotent authority migrations because the production stage
-# intentionally does not copy the TypeScript source tree.
+# CryptoCrawler runtime DDL remains migration-owned. The runtime image must carry
+# every startup-owned idempotent CryptoCrawler migration because the production
+# stage intentionally does not copy the TypeScript source tree.
 COPY --from=builder /app/server/migrations/023_cryptocrawler_hot_path_schema_authority.sql ./dist/migrations/023_cryptocrawler_hot_path_schema_authority.sql
 COPY --from=builder /app/server/migrations/024_cryptocrawler_funding_lifecycle.sql ./dist/migrations/024_cryptocrawler_funding_lifecycle.sql
+COPY --from=builder /app/server/migrations/025_cryptocrawler_rainbow_source_ledger.sql ./dist/migrations/025_cryptocrawler_rainbow_source_ledger.sql
+
+# Optional secondary-Supabase migrations are bundled for explicit provisioning of
+# that separate project later. Runtime only verifies their objects and never runs
+# DDL against the auxiliary database.
+COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
+COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
 
 # Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts

@@ -38,6 +38,7 @@ type MigrationStep = {
 const CRYPTOCRAWL_AUTHORITY_MIGRATIONS = [
   '023_cryptocrawler_hot_path_schema_authority.sql',
   '024_cryptocrawler_funding_lifecycle.sql',
+  '025_cryptocrawler_rainbow_source_ledger.sql',
 ] as const;
 
 const CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES = [
@@ -46,6 +47,9 @@ const CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES = [
   'private.cryptocrawler_kraken_nonce_state',
   'private.cryptocrawler_funding_lifecycles',
 ] as const;
+
+const CRYPTOCRAWL_RESOURCE_SLOT_FUNCTION_SIGNATURE =
+  'private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)';
 
 export class CryptocrawlerAuthoritySchemaError extends Error {
   constructor(message: string) {
@@ -81,20 +85,41 @@ async function runCryptocrawlerAuthorityMigration(
 }
 
 async function verifyCryptocrawlerAuthoritySchemaOnce(): Promise<void> {
+  // One query proves every execution-critical relation plus the shared slot
+  // claimant. The same proof primes runtime lease and funding readiness so those
+  // workers do not pay duplicate schema probes after startup.
   const result = await pool.query(
     `SELECT
        to_regclass($1)::text AS resource_leases,
        to_regclass($2)::text AS mc_calibration,
        to_regclass($3)::text AS kraken_nonce,
-       to_regclass($4)::text AS funding_lifecycles`,
-    [...CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES],
+       to_regclass($4)::text AS funding_lifecycles,
+       to_regprocedure($5)::text AS resource_slot_claimant`,
+    [...CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES, CRYPTOCRAWL_RESOURCE_SLOT_FUNCTION_SIGNATURE],
   );
   const row = result.rows?.[0] || {};
   const observed = [row.resource_leases, row.mc_calibration, row.kraken_nonce, row.funding_lifecycles];
   const missing = CRYPTOCRAWL_REQUIRED_AUTHORITY_TABLES.filter((_, index) => !observed[index]);
-  if (missing.length > 0) {
-    throw new Error(`required CryptoCrawler authority schema is absent: ${missing.join(', ')}`);
+  if (missing.length > 0 || !row.resource_slot_claimant) {
+    const missingAuthority = [
+      ...missing,
+      ...(!row.resource_slot_claimant ? [CRYPTOCRAWL_RESOURCE_SLOT_FUNCTION_SIGNATURE] : []),
+    ];
+    throw new Error(`required CryptoCrawler authority schema is absent: ${missingAuthority.join(', ')}`);
   }
+
+  const [resourceAuthority, fundingAuthority] = await Promise.all([
+    import('../services/cryptocrawl/execution/resource-lease-authority.js'),
+    import('../services/cryptocrawl/execution/funding-position-lifecycle.js'),
+  ]);
+  resourceAuthority.primeResourceLeaseAuthorityReady();
+  fundingAuthority.primeFundingLifecycleStoreReady();
+}
+
+function schemaRetryDelayMs(attempt: number): number {
+  const capMs = Math.min(4_000, 500 * Math.max(1, attempt));
+  const floorMs = Math.min(250, Math.max(50, Math.floor(capMs / 4)));
+  return floorMs + Math.floor(Math.random() * Math.max(1, capMs - floorMs + 1));
 }
 
 export async function requireCryptocrawlerAuthoritySchema(maxAttempts = 6): Promise<void> {
@@ -106,7 +131,7 @@ export async function requireCryptocrawlerAuthoritySchema(maxAttempts = 6): Prom
     } catch (error) {
       lastError = error;
       if (attempt < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        await new Promise(resolve => setTimeout(resolve, schemaRetryDelayMs(attempt)));
       }
     }
   }
@@ -154,6 +179,13 @@ const migrationSteps: MigrationStep[] = [
       return runCryptocrawlerAuthorityMigration(coordinator, '024_cryptocrawler_funding_lifecycle.sql');
     },
   },
+  {
+    name: 'CryptoCrawler Rainbow source-ledger schema authority',
+    run: coordinator => {
+      if (!coordinator) throw new Error('CryptoCrawler authority migration requires the session migration coordinator');
+      return runCryptocrawlerAuthorityMigration(coordinator, '025_cryptocrawler_rainbow_source_ledger.sql');
+    },
+  },
   { name: 'CryptoCrawler governance state', run: createCryptoGovernanceStateTable },
   { name: 'Remove legacy CryptoCrawler Flashbots auth secret table', run: removeCryptocrawlFlashbotsAuthIdentityTable },
   { name: 'Free Access for All Users', run: runFreeAccessMigration },
@@ -168,9 +200,41 @@ function finiteIntegerEnv(name: string, fallback: number, min: number, max: numb
 }
 
 /**
- * Railway performs overlapping rolling deploys. Never expand the canonical pool
- * capacity chosen by db.ts here: this helper may temporarily contract ordinary
- * capacity during rollout, but it cannot override the session-fallback hard cap.
+ * Railway PR environments inherit the base environment's variables. When the
+ * database is an external Supabase project, that means a preview can point at the
+ * same primary database as production. Never let those preview boots run DDL.
+ * They are verification-only; production remains the sole startup mutation lane.
+ */
+function startupSchemaMutationAllowed(): boolean {
+  const onRailway = Boolean(
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID ||
+    process.env.RAILWAY_ENVIRONMENT_ID,
+  );
+  if (!onRailway) return true;
+
+  const environmentName = String(
+    process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || '',
+  ).trim().toLowerCase();
+  return environmentName === 'production';
+}
+
+type RollingDeploymentHeadroomState = {
+  options: any;
+  steadyMax: number;
+  originalMin: number;
+  rolloutMax: number;
+  activatedAt: number;
+};
+
+let rollingDeploymentHeadroom: RollingDeploymentHeadroomState | null = null;
+
+/**
+ * Railway keeps the previous deployment active until the incoming deployment is
+ * healthy. Startup itself is serialized before route import, so more than one
+ * ordinary DB client cannot increase useful bootstrap throughput. Hold exactly
+ * one ordinary slot until Cryptara owns admission; this prevents incidental work
+ * or stale environment overrides from defeating rollout headroom.
  */
 function applyRollingDeploymentPoolHeadroom(): void {
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_ID) return;
@@ -185,26 +249,52 @@ function applyRollingDeploymentPoolHeadroom(): void {
     canonicalSteadyMax,
   );
   const steadyMax = Math.min(canonicalSteadyMax, requestedSteadyMax);
-  const rolloutMax = Math.min(
-    steadyMax,
-    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', Math.min(5, steadyMax), 1, steadyMax),
-  );
-  const rolloutWindowMs = finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_HEADROOM_MS', 90_000, 30_000, 300_000);
+  const rolloutMax = 1;
   const originalMin = Number.isFinite(Number(options.min)) ? Number(options.min) : 0;
 
   options.max = rolloutMax;
   options.min = 0;
   options.connectionTimeoutMillis = Math.min(Number(options.connectionTimeoutMillis) || 12_000, 12_000);
   options.idleTimeoutMillis = Math.min(Number(options.idleTimeoutMillis) || 20_000, 20_000);
+  rollingDeploymentHeadroom = {
+    options,
+    steadyMax,
+    originalMin,
+    rolloutMax,
+    activatedAt: Date.now(),
+  };
 
-  const restore = setTimeout(() => {
-    options.max = steadyMax;
-    options.min = originalMin;
-    console.log(`[DATABASE] Rolling-deploy headroom released (steady max=${options.max}, min=${options.min})`);
-  }, rolloutWindowMs);
-  restore.unref?.();
+  console.log(`[DATABASE] Rolling-deploy admission guard active (rollout max=${rolloutMax}, steady max=${steadyMax}, canonical max=${canonicalSteadyMax}, release=cryptara_worker_installed)`);
+}
 
-  console.log(`[DATABASE] Rolling-deploy pool headroom active (rollout max=${rolloutMax}, steady max=${steadyMax}, canonical max=${canonicalSteadyMax}, windowMs=${rolloutWindowMs})`);
+/**
+ * Restore the ordinary pool ceiling only after all subsequent pool acquisition is
+ * governed by Cryptara. Cryptara starts from the rollout ceiling and then grows
+ * additively from measured successful admissions, so this restores the ceiling
+ * without creating a connection burst.
+ */
+export function releaseRollingDeploymentPoolHeadroom(reason = 'cryptara_worker_installed'): void {
+  const state = rollingDeploymentHeadroom;
+  if (!state) return;
+  rollingDeploymentHeadroom = null;
+  state.options.max = state.steadyMax;
+  state.options.min = state.originalMin;
+  console.log(`[DATABASE] Rolling-deploy admission guard released (reason=${reason}, rollout max=${state.rolloutMax}, steady max=${state.steadyMax}, heldMs=${Date.now() - state.activatedAt})`);
+}
+
+export function getRollingDeploymentPoolHeadroomSnapshot(): {
+  active: boolean;
+  rolloutMax: number | null;
+  steadyMax: number | null;
+  heldMs: number;
+} {
+  const state = rollingDeploymentHeadroom;
+  return {
+    active: state !== null,
+    rolloutMax: state?.rolloutMax ?? null,
+    steadyMax: state?.steadyMax ?? null,
+    heldMs: state ? Math.max(0, Date.now() - state.activatedAt) : 0,
+  };
 }
 
 applyRollingDeploymentPoolHeadroom();
@@ -214,6 +304,31 @@ export async function runAllSchemaMigrations(options?: {
 }): Promise<SchemaMigrationResult[]> {
   const continueOnError = options?.continueOnError ?? true;
   const results: SchemaMigrationResult[] = [];
+
+  // Preview/staging Railway environments can inherit the production Supabase URL.
+  // Verification must remain useful, but schema mutation belongs to production
+  // only so repeated PR deploys cannot create catalog/lock/Disk-I/O amplification.
+  if (!startupSchemaMutationAllowed()) {
+    console.log('[Migration] Railway non-production environment detected; startup schema mutation disabled (verification-only)');
+    const verificationOnly: SchemaMigrationResult[] = [{
+      name: 'Startup migration policy',
+      success: true,
+      message: 'Railway non-production environment is verification-only; no schema DDL executed.',
+    }];
+    try {
+      await requireCryptocrawlerAuthoritySchema(1);
+      verificationOnly.push({
+        name: 'CryptoCrawler authority schema readiness',
+        success: true,
+        message: 'Required migration-owned CryptoCrawler authority schema verified without mutation.',
+      });
+    } catch (error) {
+      verificationOnly.push(schemaFailureResult(error));
+      if (!continueOnError) throw error;
+    }
+    return verificationOnly;
+  }
+
   let coordinator: any = null;
   let ownsMigrationLock = false;
 
@@ -282,7 +397,7 @@ export async function runAllSchemaMigrations(options?: {
       results.push({
         name: 'CryptoCrawler authority schema readiness',
         success: true,
-        message: 'All execution-critical migration-owned tables are present.',
+        message: 'All execution-critical migration-owned tables/functions are present and shared lease/funding readiness is primed.',
       });
     } catch (error) {
       results.push(schemaFailureResult(error));
@@ -305,7 +420,7 @@ export async function runAllSchemaMigrations(options?: {
       fallback.push({
         name: 'CryptoCrawler authority schema readiness',
         success: true,
-        message: 'Coordinator unavailable, but required CryptoCrawler authority schema independently verified.',
+        message: 'Coordinator unavailable, but required CryptoCrawler authority schema independently verified and lease/funding readiness primed.',
       });
     } catch (schemaError) {
       fallback.push(schemaFailureResult(schemaError));

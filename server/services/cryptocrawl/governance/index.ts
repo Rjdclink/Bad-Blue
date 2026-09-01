@@ -91,7 +91,18 @@ export function initializeGovernance(): Promise<void> {
 async function initializeGovernanceState(): Promise<void> {
   console.log('[GOVERNANCE] Initializing 6-Stage Deployment System...');
 
+  // One Cryptara Super Worker surface owns resource flow by proxy. Its first arm
+  // installs the ordinary-lane admission governor before any governance DB work.
+  const {
+    activateCryptaraSuperWorkerIntelligence,
+    getCryptaraSuperWorkerSnapshot,
+    installCryptaraSuperWorkerAdmission,
+  } = await import('../integration/cryptara-super-worker.js');
+  await installCryptaraSuperWorkerAdmission();
+  const { releaseRollingDeploymentPoolHeadroom } = await import('../../../migrations/reconcileAppSchema.js');
+  releaseRollingDeploymentPoolHeadroom('cryptara_super_worker_admission_installed');
   const restored = await stageManager.restorePersistence(new PostgresStageManagerStateStore());
+
   const persistedProfitLadder = stageManager.getProfitLadderState();
   if (persistedProfitLadder) {
     profitLadder.importState(persistedProfitLadder);
@@ -104,7 +115,33 @@ async function initializeGovernanceState(): Promise<void> {
     profitLadder.markCapitalUnavailable();
   }
   const { getCryptara } = await import('../../cryptara/index.js');
-  getCryptara().restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
+  const cryptara = getCryptara();
+  cryptara.restoreExecutionHistory(stageManager.getCryptaraExecutionEvidence());
+  const { installCryptaraSharedConnectorReadinessProxy } = await import('../integration/cryptara-shared-readiness.js');
+  installCryptaraSharedConnectorReadinessProxy(cryptara);
+
+  // After critical governance persistence is inside the worker lane, activate
+  // Antenna + QuantiComp advisory intelligence. It cannot grant DB or trade authority.
+  try {
+    await activateCryptaraSuperWorkerIntelligence();
+    const { getCryptaraResourceIntelligenceSnapshot } = await import('../integration/cryptara-resource-intelligence.js');
+    const resourceIntelligence = getCryptaraResourceIntelligenceSnapshot();
+    const superWorker = getCryptaraSuperWorkerSnapshot();
+    console.log('[GOVERNANCE] Cryptara Super Worker:', {
+      databaseMode: resourceIntelligence.database.mode,
+      databasePressure: resourceIntelligence.database.pressureScore,
+      computePressure: resourceIntelligence.compute.pressureScore,
+      antennaQuality: resourceIntelligence.antenna.averageQuality,
+      usefulParallelHeadroom: resourceIntelligence.usefulParallelHeadroom,
+      recoveryAcceleration: resourceIntelligence.dbRecoveryAcceleration,
+      sharedInformationEntries: superWorker.information.retainedEntries,
+      upstreamCallsAvoided: superWorker.information.upstreamCallsAvoided,
+      dataFabricStateCells: superWorker.dataFabric.stateCells,
+      authority: superWorker.authority,
+    });
+  } catch (error) {
+    console.warn('[GOVERNANCE] Cryptara Super Worker intelligence unavailable:', error instanceof Error ? error.message : String(error));
+  }
   
   const currentStage = stageManager.getCurrentStage();
   const stageConfig = stageManager.getStageConfig();
