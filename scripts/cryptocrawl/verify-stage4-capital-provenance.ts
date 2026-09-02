@@ -6,7 +6,7 @@ const scope = 'verification';
 assert.equal((await store.getOrCreate(scope)).lifecycle, 'ZERO');
 await store.markZeroGasExecutionReady(scope);
 await store.markAtomicExecutionPending(scope, 'europa:proof');
-const funded = await store.recordVerifiedBootstrapProfit({
+const bootstrapProof = {
   scope,
   executionKey: 'europa:proof',
   transactionHash: '0x' + 'ab'.repeat(32),
@@ -16,10 +16,25 @@ const funded = await store.recordVerifiedBootstrapProfit({
   zeroMonetaryGasVerified: true,
   zeroExternalNativeCapitalVerified: true,
   zeroExternalInputCapitalVerified: true,
-});
+};
+const funded = await store.recordVerifiedBootstrapProfit(bootstrapProof);
 assert.equal(funded.lifecycle, 'SELF_FUNDED');
 assert.equal(funded.generation, 1);
 assert.equal(funded.internallyGeneratedBalance, '42');
+
+const replayedBootstrap = await store.recordVerifiedBootstrapProfit(bootstrapProof);
+assert.equal(replayedBootstrap.lifecycle, 'SELF_FUNDED');
+assert.equal(replayedBootstrap.generation, 1);
+assert.equal(replayedBootstrap.internallyGeneratedBalance, '42');
+
+await assert.rejects(
+  () => store.recordVerifiedBootstrapProfit({
+    ...bootstrapProof,
+    executionKey: 'europa:different-proof',
+    transactionHash: '0x' + 'ac'.repeat(32),
+  }),
+  /already SELF_FUNDED from a different proof/,
+);
 
 const afterFunding = await store.recordNativeGasFundingSettlement({
   scope,
