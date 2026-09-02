@@ -46,9 +46,10 @@ assert.doesNotMatch(allocation, /CREATE\s+TABLE|ALTER\s+TABLE|CREATE\s+INDEX/i, 
 assert.match(placement, /\['zero-capital', 'system-capital'\]\.includes\(parts\[0\]\)/, 'physical placement must accept legacy zero-capital bootstrap and generic system-generated capital provenance');
 assert.match(placement, /scope\.tokenAddress/, 'physical placement must bind the token contract encoded by SELF_FUNDED provenance');
 assert.match(placement, /venue === 'coinbase'/, 'physical CEX placement must reject Coinbase');
-assert.match(placement, /const contractSuffix = String\(entry\?\.ctAddr/, 'OKX currency admission must inspect authenticated contract identity');
-assert.doesNotMatch(placement, /contractSuffix\.length === 6/, 'OKX Get currencies returns a full contract address and must not be restricted to a six-character suffix');
-assert.match(placement, /tokenAddress\.endsWith\(String\(entry\?\.ctAddr/, 'OKX deposit-address contract identity must be checked using the documented last-six contract suffix');
+assert.match(placement, /const contractAddress = String\(entry\?\.ctAddr/, 'OKX currency admission must inspect authenticated full contract identity');
+assert.match(placement, /return contractAddress === tokenAddress && canDeposit/, 'OKX Get currencies full contract address must exactly match the SELF_FUNDED token contract');
+assert.match(placement, /const contractSuffix = String\(entry\?\.ctAddr/, 'OKX deposit-address admission must inspect the documented contract suffix');
+assert.match(placement, /contractSuffix\.length === 6 && tokenAddress\.endsWith\(contractSuffix\)/, 'OKX deposit-address identity must use only the documented last-six contract suffix');
 assert.match(placement, /canDep/, 'OKX network admission must require deposits enabled');
 assert.match(placement, /authenticatedDepositAccount/, 'OKX placement must preserve whether the authenticated deposit beneficiary is Funding or Trading');
 assert.match(placement, /depositAccount !== '6' && depositAccount !== '18'/, 'OKX placement must reject unknown beneficiary account identifiers');
