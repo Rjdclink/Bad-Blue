@@ -95,14 +95,16 @@ assert.match(rainbowSourceMigration, /ENABLE ROW LEVEL SECURITY/);
 assert.doesNotMatch(rainbowSourceLedger, /CREATE\s+(?:SCHEMA|TABLE|INDEX)/i);
 assert.match(rainbowSourceLedger, /withCryptaraSupabasePriority\('low'/);
 
-// Overflow-ready canonical wiring installs without a direct Primary health probe.
-// The core execution lifecycle must now verify the complete Overflow schema and
-// must not synchronously invoke Primary's CryptoCrawler schema gate. The older
-// explicit admin start remains separately guarded until its own sequential cutover.
+// Overflow-ready canonical wiring is fail-closed on Overflow readiness and has no
+// alternate Primary health/schema admission path. The core execution lifecycle
+// likewise verifies the complete Overflow schema before production start. The
+// older explicit admin-start gate remains separately guarded until its own
+// sequential cutover.
 assert.match(canonicalRuntime, /getCryptaraHyperBridgeBootstrapSnapshot/);
-assert.match(canonicalRuntime, /overflowBootstrap\.state === 'ready'[\s\S]{0,1000}directPrimaryProbe:\s*false[\s\S]{0,500}recoveryPolling:\s*false[\s\S]{0,500}installCanonicalRuntime\(\)/);
-assert.match(canonicalRuntime, /if \(isDatabaseConfigured\)[\s\S]{0,500}pool\.query\('SELECT 1'\)[\s\S]{0,260}requireCryptocrawlerAuthoritySchema\(2\)[\s\S]{0,220}installCanonicalRuntime\(\)/);
-assert.match(canonicalRuntime, /overflow_unavailable_primary_fallback_probe_failed/);
+assert.match(canonicalRuntime, /overflowBootstrap\.state === 'ready'[\s\S]{0,1000}directPrimaryProbe:\s*false[\s\S]{0,500}primaryFallback:\s*false[\s\S]{0,500}installCanonicalRuntime\(\)/);
+assert.match(canonicalRuntime, /Overflow authority not ready; runtime remains fail-closed without Primary fallback/);
+assert.match(canonicalRuntime, /scheduleCanonicalRuntimeInstall\(canonicalRuntimeOverflowRetryMs\(\), 'overflow_authority_not_ready'\)/);
+assert.doesNotMatch(canonicalRuntime, /from\s+['"]\.\.\/\.\.\/\.\.\/db\.js['"]|requireCryptocrawlerAuthoritySchema|pool\.query\('SELECT 1'\)|overflow_unavailable_primary_fallback_probe_failed/);
 assert.match(coreRuntime, /import\s*\{\s*ensureCryptocrawlOverflowRuntimeSchema\s*\}\s*from\s*'\.\/cryptocrawl-overflow-runtime-schema\.js'/);
 assert.match(coreRuntime, /if \(process\.env\.NODE_ENV === 'production'\) \{\s*await ensureCryptocrawlOverflowRuntimeSchema\(\);\s*\}/);
 assert.doesNotMatch(coreRuntime, /requireCryptocrawlerAuthoritySchema/);
@@ -140,4 +142,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for legacy/archive paths, Overflow-ready canonical wiring adds no direct Primary health/recovery probe, the core execution lifecycle is gated by the complete Overflow schema with no Primary runtime prerequisite, and the remaining explicit admin-start gate stays fail-closed pending its sequential cutover');
+console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for legacy/archive paths, canonical runtime admission is Overflow-only with no Primary probe/fallback, the core execution lifecycle is gated by the complete Overflow schema, and the remaining explicit admin-start gate stays fail-closed pending its sequential cutover');
