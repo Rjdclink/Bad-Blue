@@ -4,6 +4,7 @@ import {
   pool as primaryPool,
 } from '../../../db.js';
 import { runThroughCryptaraOverflowPrimaryGateway } from './cryptara-overflow-primary-gateway.js';
+import { withCryptaraSupabaseAdmission } from './cryptara-supabase-admission-worker.js';
 
 let archiveQueries = 0;
 let archiveFailures = 0;
@@ -16,7 +17,9 @@ let lastOperationAt = 0;
  * Primary is not a hot runtime, execution, settlement, governance, lease, nonce,
  * inventory, or payout authority. Workers may use this module only for explicit
  * archival writes and historical lookups, and every operation remains observable
- * through the Overflow/Bridge Primary gateway.
+ * through the Overflow/Bridge Primary gateway. Archive work always enters the
+ * shared Cryptara COMP/admission queue at LOW rank, so hot/critical work wins and
+ * Primary cannot become an ungoverned burst lane.
  */
 export const isCryptaraPrimaryArchiveConfigured = isPrimaryDatabaseConfigured;
 
@@ -35,9 +38,11 @@ export async function queryCryptaraPrimaryArchive(
   lastOperationAt = Date.now();
 
   try {
-    return await runThroughCryptaraOverflowPrimaryGateway(
-      `primary_archive:${normalizedOperation}`,
-      () => primaryPool.query(text, values as any[]),
+    return await withCryptaraSupabaseAdmission('low', () =>
+      runThroughCryptaraOverflowPrimaryGateway(
+        `primary_archive:${normalizedOperation}`,
+        () => primaryPool.query(text, values as any[]),
+      ),
     );
   } catch (error) {
     archiveFailures += 1;
@@ -48,7 +53,9 @@ export async function queryCryptaraPrimaryArchive(
 export function getCryptaraPrimaryArchiveWorkerSnapshot() {
   return {
     role: 'primary_cold_archive_worker' as const,
-    communicationPath: 'worker_to_bridge_gateway_to_primary' as const,
+    communicationPath: 'worker_to_comp_rank_to_bridge_gateway_to_primary' as const,
+    admissionPriority: 'low' as const,
+    compGoverned: true as const,
     hotRuntimeAuthority: false as const,
     executionAuthority: false as const,
     financialAuthority: false as const,
