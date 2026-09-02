@@ -106,21 +106,37 @@ function canonicalKrakenAsset(value: unknown): string | null {
   return canonicalAsset(asset);
 }
 
+// Exchange tickers are transport labels, not globally unique asset identities.
+// These aliases are backed by the venues' own asset/listing documentation and
+// prevent economically unrelated products from becoming false-positive spreads.
+const VERIFIED_VENUE_ASSET_ALIASES: Readonly<Record<ConstrainedSpotVenue, Readonly<Record<string, string>>>> = Object.freeze({
+  kraken: Object.freeze({ LUNA: 'LUNC', UST: 'USTC' }),
+  okx: Object.freeze({ LIT: 'LIGHTER', LUNA: 'WLUNA' }),
+});
+
+function canonicalVenueAsset(venue: ConstrainedSpotVenue, value: unknown): string | null {
+  const asset = venue === 'kraken' ? canonicalKrakenAsset(value) : canonicalAsset(value);
+  return asset ? VERIFIED_VENUE_ASSET_ALIASES[venue][asset] || asset : null;
+}
+
 type ProductIdentity = { symbol: string; baseAsset: string; quoteAsset: string };
 
-function canonicalPair(baseInput: unknown, quoteInput: unknown, kraken = false): ProductIdentity | null {
-  const normalize = kraken ? canonicalKrakenAsset : canonicalAsset;
-  const baseAsset = normalize(baseInput);
-  const quoteAsset = normalize(quoteInput);
+function canonicalPair(
+  baseInput: unknown,
+  quoteInput: unknown,
+  venue?: ConstrainedSpotVenue,
+): ProductIdentity | null {
+  const baseAsset = venue ? canonicalVenueAsset(venue, baseInput) : canonicalAsset(baseInput);
+  const quoteAsset = venue ? canonicalVenueAsset(venue, quoteInput) : canonicalAsset(quoteInput);
   if (!baseAsset || !quoteAsset) return null;
   return { symbol: `${baseAsset}${quoteAsset}`, baseAsset, quoteAsset };
 }
 
-function canonicalDelimitedPair(value: unknown, kraken = false): ProductIdentity | null {
+function canonicalDelimitedPair(value: unknown, venue?: ConstrainedSpotVenue): ProductIdentity | null {
   const raw = String(value ?? '').trim().toUpperCase();
   if (!raw) return null;
   const parts = raw.split(/[\/_-]/).filter(Boolean);
-  return parts.length === 2 ? canonicalPair(parts[0], parts[1], kraken) : null;
+  return parts.length === 2 ? canonicalPair(parts[0], parts[1], venue) : null;
 }
 
 function canonicalLookupSymbol(value: string): string | null {
@@ -134,15 +150,15 @@ function canonicalLookupSymbol(value: string): string | null {
 }
 
 function canonicalKrakenProduct(row: Record<string, unknown>): ProductIdentity | null {
-  const fromFields = canonicalPair(row.base, row.quote, true);
+  const fromFields = canonicalPair(row.base, row.quote, 'kraken');
   if (fromFields) return fromFields;
-  return canonicalDelimitedPair(row.wsname, true);
+  return canonicalDelimitedPair(row.wsname, 'kraken');
 }
 
 function canonicalOkxProduct(raw: Record<string, unknown>): ProductIdentity | null {
-  const fromFields = canonicalPair(raw.baseCcy, raw.quoteCcy);
+  const fromFields = canonicalPair(raw.baseCcy, raw.quoteCcy, 'okx');
   if (fromFields) return fromFields;
-  return canonicalDelimitedPair(raw.instId);
+  return canonicalDelimitedPair(raw.instId, 'okx');
 }
 
 function powerOfTenIncrement(decimals: unknown): number | null {

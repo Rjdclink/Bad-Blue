@@ -127,4 +127,20 @@ if (/\n\s+multiTopology,\n/.test(runtimeObservability)) {
   throw new Error('runtime heartbeat contains unbounded multi-topology candidate telemetry');
 }
 
-console.log('[runtime-safety-invariants] PASS: strict positive economics, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, single/dual zero-capital repricing, and bounded production observability invariants preserved');
+
+// 8) Candidate eligibility uses semantic venue-asset identity, not ticker text
+// alone, before unrelated products can become a profitable CEX plan.
+requireAll('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
+  'const VERIFIED_VENUE_ASSET_ALIASES',
+  "kraken: Object.freeze({ LUNA: 'LUNC', UST: 'USTC' })",
+  "okx: Object.freeze({ LIT: 'LIGHTER', LUNA: 'WLUNA' })",
+  'function canonicalVenueAsset(',
+  "canonicalPair(row.base, row.quote, 'kraken')",
+  "canonicalPair(raw.baseCcy, raw.quoteCcy, 'okx')",
+]);
+forbid('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
+  'canonicalPair(row.base, row.quote, true)',
+  'canonicalPair(raw.baseCcy, raw.quoteCcy);',
+]);
+
+console.log('[runtime-safety-invariants] PASS: strict positive economics, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, single/dual zero-capital repricing, bounded production observability, and semantic venue-asset identity invariants preserved');
