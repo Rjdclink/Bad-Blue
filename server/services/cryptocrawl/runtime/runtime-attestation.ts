@@ -116,7 +116,16 @@ export function getCryptoCrawlerRuntimeAttestation(): RuntimeAttestation {
 }
 
 export function isRuntimeIdentitySafe(attestation = getCryptoCrawlerRuntimeAttestation()): boolean {
-  return attestation.state !== 'mismatch';
+  const railwayRuntime = Boolean(
+    attestation.railwayCommitSha
+      || attestation.deploymentId
+      || attestation.serviceId
+      || attestation.environmentId,
+  );
+  // Railway is an execution environment, so non-mismatch is insufficient:
+  // the independently embedded artifact SHA must agree with deployment metadata.
+  // Local/non-Railway tooling may remain usable when identity is unknown/partial.
+  return railwayRuntime ? attestation.state === 'verified' : attestation.state !== 'mismatch';
 }
 
 export function isRuntimeIdentityVerified(attestation = getCryptoCrawlerRuntimeAttestation()): boolean {
