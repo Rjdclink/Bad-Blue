@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { BigNumber, Contract, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
@@ -19,6 +20,7 @@ const SUPPORTED_SOURCE_CHAINS = new Set<RpcSupportedChain>([
 ]);
 
 type CexCapitalVenue = 'okx' | 'kraken';
+type OkxDepositAccount = '6' | '18';
 type AllocationRow = {
   allocation_id: string;
   capital_scope: string;
@@ -61,8 +63,8 @@ function positiveBaseUnits(label: string, value: string): bigint {
 
 function parseCapitalScope(scope: string): { chain: RpcSupportedChain; tokenAddress: string; recipient: string } {
   const parts = scope.trim().split(':');
-  if (parts.length !== 4 || parts[0] !== 'zero-capital') {
-    throw new Error('CEX placement requires a canonical zero-capital SELF_FUNDED scope');
+  if (parts.length !== 4 || !['zero-capital', 'system-capital'].includes(parts[0])) {
+    throw new Error('CEX placement requires canonical system-generated capital provenance with chain/token/recipient identity');
   }
   const chain = parts[1] as RpcSupportedChain;
   if (!SUPPORTED_SOURCE_CHAINS.has(chain)) {
@@ -73,6 +75,13 @@ function parseCapitalScope(scope: string): { chain: RpcSupportedChain; tokenAddr
     tokenAddress: canonicalAddress('capital scope token', parts[2]),
     recipient: canonicalAddress('capital scope recipient', parts[3]),
   };
+}
+
+function okxTransferClientId(allocationId: string, transactionHash: string): string {
+  return createHash('sha256')
+    .update(`cryptocrawl:okx:funding-to-trading:${allocationId}:${transactionHash.toLowerCase()}`)
+    .digest('hex')
+    .slice(0, 32);
 }
 
 async function loadAllocation(allocationId: string): Promise<AllocationRow> {
@@ -124,13 +133,17 @@ function requirePlacementAllocation(row: AllocationRow): {
   };
 }
 
-async function resolveOkxDeposit(row: AllocationRow, tokenAddress: string): Promise<{ address: string; chain: string }> {
+async function resolveOkxDeposit(row: AllocationRow, tokenAddress: string): Promise<{
+  address: string;
+  chain: string;
+  depositAccount: OkxDepositAccount;
+}> {
   const asset = row.source_asset.toUpperCase();
   const currencies = await okxPrivateRequest('/api/v5/asset/currencies', 'GET', { ccy: asset }, { lane: 'account_read' });
   const matching = currencies.data.filter((entry: any) => {
-    const contract = String(entry?.ctAddr || '').trim().toLowerCase();
+    const contractSuffix = String(entry?.ctAddr || '').trim().toLowerCase();
     const canDeposit = entry?.canDep === true || String(entry?.canDep).toLowerCase() === 'true';
-    return contract === tokenAddress && canDeposit;
+    return tokenAddress.endsWith(contractSuffix) && contractSuffix.length === 6 && canDeposit;
   });
   if (matching.length !== 1) {
     throw new Error(`OKX deposit network cannot be proven uniquely from source token contract ${tokenAddress}; matches=${matching.length}`);
@@ -144,14 +157,22 @@ async function resolveOkxDeposit(row: AllocationRow, tokenAddress: string): Prom
       throw new Error(`OKX deposit amount is below the authenticated network minimum: required=${minimum.toString()} requested=${row.source_amount_base_units}`);
     }
   }
+
   const addresses = await okxPrivateRequest('/api/v5/asset/deposit-address', 'GET', { ccy: asset }, { lane: 'account_read' });
-  const candidates = addresses.data.filter((entry: any) => String(entry?.chain || '').trim() === chain);
-  if (candidates.length < 1) throw new Error(`OKX returned no deposit address for authenticated chain ${chain}`);
+  const candidates = addresses.data.filter((entry: any) =>
+    String(entry?.chain || '').trim() === chain &&
+    tokenAddress.endsWith(String(entry?.ctAddr || '').trim().toLowerCase()),
+  );
+  if (candidates.length < 1) throw new Error(`OKX returned no contract-compatible deposit address for authenticated chain ${chain}`);
   const preferred = candidates.find((entry: any) => entry?.selected === true || String(entry?.selected).toLowerCase() === 'true') || candidates[0];
   const address = canonicalAddress('OKX deposit address', String(preferred?.addr || ''));
-  const tag = String(preferred?.tag || preferred?.memo || '').trim();
-  if (tag) throw new Error('OKX deposit network requires a tag/memo; tagged ERC20 placement is not implemented and fails closed');
-  return { address, chain };
+  const tag = String(preferred?.tag || preferred?.memo || preferred?.pmtId || '').trim();
+  if (tag) throw new Error('OKX deposit network requires a tag/memo/payment ID; tagged ERC20 placement is not implemented and fails closed');
+  const depositAccount = String(preferred?.to || '').trim();
+  if (depositAccount !== '6' && depositAccount !== '18') {
+    throw new Error(`OKX deposit address returned unsupported beneficiary account ${depositAccount || 'missing'}`);
+  }
+  return { address, chain, depositAccount };
 }
 
 async function persistPreparedPlacement(input: {
@@ -179,6 +200,18 @@ async function persistPreparedPlacement(input: {
   throw new Error('System-capital placement could not atomically bind the prepared transaction to the reserved allocation');
 }
 
+async function mergePlacementEvidence(allocationId: string, evidence: Record<string, unknown>): Promise<void> {
+  const result = await pool.query(
+    `UPDATE ${SYSTEM_CAPITAL_TABLE}
+     SET placement_evidence=COALESCE(placement_evidence, '{}'::jsonb) || $2::jsonb,
+         updated_at=now()
+     WHERE allocation_id=$1 AND status='PLACEMENT_PENDING'
+     RETURNING allocation_id`,
+    [allocationId, JSON.stringify(evidence)],
+  );
+  if (result.rowCount !== 1) throw new Error(`Pending system-capital placement ${allocationId} is no longer mutable`);
+}
+
 async function preparePersistAndBroadcastOkxTransfer(input: {
   row: AllocationRow;
   chain: RpcSupportedChain;
@@ -187,6 +220,7 @@ async function preparePersistAndBroadcastOkxTransfer(input: {
   sourceAmount: bigint;
   depositAddress: string;
   authenticatedExchangeChain: string;
+  authenticatedDepositAccount: OkxDepositAccount;
 }): Promise<string> {
   const privateKey = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY);
   if (!privateKey) throw new Error('WALLET_PRIVATE_KEY is required for system-capital placement');
@@ -256,6 +290,7 @@ async function preparePersistAndBroadcastOkxTransfer(input: {
           venue: 'okx',
           depositAddress: input.depositAddress,
           authenticatedExchangeChain: input.authenticatedExchangeChain,
+          authenticatedDepositAccount: input.authenticatedDepositAccount,
           authenticatedSourceTokenContract: input.tokenAddress,
           sourceAsset: input.row.source_asset.toUpperCase(),
           sourceAssetDecimals: input.row.source_asset_decimals,
@@ -297,6 +332,7 @@ async function preparePersistAndBroadcastOkxTransfer(input: {
 async function okxDepositConfirmation(row: AllocationRow, transactionHash: string, authenticatedChain: string, depositAddress: string): Promise<{
   confirmed: boolean;
   deliveredBaseUnits?: string;
+  creditedAmount?: string;
   evidence: Record<string, unknown>;
 }> {
   const asset = row.destination_asset.toUpperCase();
@@ -317,13 +353,14 @@ async function okxDepositConfirmation(row: AllocationRow, transactionHash: strin
     throw new Error('OKX deposit history returned an invalid credited amount');
   }
   const deliveredBaseUnits = ethers.utils.parseUnits(amount, row.destination_asset_decimals).toString();
-  const to = String(candidate.to || '').trim().toLowerCase();
-  if (to && /^0x[a-f0-9]{40}$/.test(to) && to !== depositAddress.toLowerCase()) {
+  const toAddress = String(candidate.to || '').trim().toLowerCase();
+  if (toAddress && /^0x[a-f0-9]{40}$/.test(toAddress) && toAddress !== depositAddress.toLowerCase()) {
     throw new Error('OKX deposit history destination does not match the authenticated deposit address');
   }
   return {
     confirmed: state === '2',
     deliveredBaseUnits,
+    creditedAmount: amount,
     evidence: {
       venue: 'okx',
       transactionHash,
@@ -338,6 +375,137 @@ async function okxDepositConfirmation(row: AllocationRow, transactionHash: strin
   };
 }
 
+async function ensureOkxTradingAccountCredit(input: {
+  row: AllocationRow;
+  transactionHash: string;
+  depositAccount: OkxDepositAccount;
+  creditedAmount: string;
+  deliveredBaseUnits: string;
+}): Promise<{ confirmed: boolean; evidence: Record<string, unknown> }> {
+  if (input.depositAccount === '18') {
+    return {
+      confirmed: true,
+      evidence: {
+        okxTradingAccountCredit: 'direct_deposit',
+        okxDepositBeneficiaryAccount: '18',
+        okxInternalTransferRequired: false,
+      },
+    };
+  }
+
+  const clientId = okxTransferClientId(input.row.allocation_id, input.transactionHash);
+  const expectedBaseUnits = BigInt(input.deliveredBaseUnits);
+  let stateRows: any[] = [];
+  try {
+    const state = await okxPrivateRequest(
+      '/api/v5/asset/transfer-state',
+      'GET',
+      { clientId, type: '0' },
+      { lane: 'account_read' },
+    );
+    stateRows = state.data;
+  } catch {
+    // A missing transfer is expected on the first reconciliation pass. The
+    // deterministic clientId is the idempotency identity for submission.
+    stateRows = [];
+  }
+
+  if (stateRows.length === 0) {
+    try {
+      const submitted = await okxPrivateRequest(
+        '/api/v5/asset/transfer',
+        'POST',
+        {
+          ccy: input.row.destination_asset.toUpperCase(),
+          amt: input.creditedAmount,
+          from: '6',
+          to: '18',
+          type: '0',
+          clientId,
+        },
+        { lane: 'order_write' },
+      );
+      const transfer = submitted.data[0];
+      await mergePlacementEvidence(input.row.allocation_id, {
+        okxDepositBeneficiaryAccount: '6',
+        okxInternalTransferRequired: true,
+        okxInternalTransferClientId: clientId,
+        okxInternalTransferId: transfer?.transId ? String(transfer.transId) : null,
+        okxInternalTransferRequestedAmount: input.creditedAmount,
+        okxInternalTransferRequestedBaseUnits: input.deliveredBaseUnits,
+      });
+    } catch (error) {
+      // The transfer request may have succeeded while the response was lost, or
+      // the deterministic clientId may already exist. Resolve truth from the
+      // state endpoint rather than issuing a second client identity.
+      logger.warn('[SystemCapitalPlacement] OKX funding-to-trading transfer submission requires state reconciliation', {
+        component: 'SystemCapitalPlacement',
+        allocationId: input.row.allocation_id,
+        transactionHash: input.transactionHash,
+        clientId,
+        error: error instanceof Error ? error.message : String(error),
+        duplicateTransferClientIdAllowed: false,
+      });
+    }
+
+    const state = await okxPrivateRequest(
+      '/api/v5/asset/transfer-state',
+      'GET',
+      { clientId, type: '0' },
+      { lane: 'account_read' },
+    );
+    stateRows = state.data;
+  }
+
+  const transfer = stateRows[0];
+  if (!transfer) {
+    return {
+      confirmed: false,
+      evidence: {
+        okxDepositBeneficiaryAccount: '6',
+        okxInternalTransferRequired: true,
+        okxInternalTransferClientId: clientId,
+        okxInternalTransferState: 'unresolved',
+      },
+    };
+  }
+  const state = String(transfer.state || '').trim().toLowerCase();
+  const from = String(transfer.from || '').trim();
+  const to = String(transfer.to || '').trim();
+  const ccy = String(transfer.ccy || '').trim().toUpperCase();
+  const amount = String(transfer.amt || '').trim();
+  if (from !== '6' || to !== '18' || ccy !== input.row.destination_asset.toUpperCase()) {
+    throw new Error('OKX internal transfer state does not match the expected Funding-to-Trading capital movement');
+  }
+  const observedBaseUnits = BigInt(ethers.utils.parseUnits(amount, input.row.destination_asset_decimals).toString());
+  if (observedBaseUnits !== expectedBaseUnits) {
+    throw new Error(`OKX internal transfer amount mismatch: expected=${expectedBaseUnits.toString()} observed=${observedBaseUnits.toString()}`);
+  }
+  await mergePlacementEvidence(input.row.allocation_id, {
+    okxDepositBeneficiaryAccount: '6',
+    okxInternalTransferRequired: true,
+    okxInternalTransferClientId: clientId,
+    okxInternalTransferId: transfer.transId ? String(transfer.transId) : null,
+    okxInternalTransferState: state,
+    okxInternalTransferAmount: amount,
+    okxInternalTransferBaseUnits: observedBaseUnits.toString(),
+  });
+  if (state === 'failed') throw new Error('OKX Funding-to-Trading transfer reached terminal failed state');
+  return {
+    confirmed: state === 'success',
+    evidence: {
+      okxDepositBeneficiaryAccount: '6',
+      okxInternalTransferRequired: true,
+      okxInternalTransferClientId: clientId,
+      okxInternalTransferId: transfer.transId ? String(transfer.transId) : null,
+      okxInternalTransferState: state,
+      okxInternalTransferAmount: amount,
+      okxInternalTransferBaseUnits: observedBaseUnits.toString(),
+      okxTradingAccountCredit: state === 'success' ? 'confirmed' : 'pending',
+    },
+  };
+}
+
 async function reconcileOkxPlacement(row: AllocationRow): Promise<CexSystemCapitalPlacementResult> {
   const validated = requirePlacementAllocation(row);
   const txHash = String(row.placement_reference || '').trim().toLowerCase();
@@ -345,7 +513,11 @@ async function reconcileOkxPlacement(row: AllocationRow): Promise<CexSystemCapit
   const evidence = row.placement_evidence || {};
   const authenticatedChain = String(evidence.authenticatedExchangeChain || '').trim();
   const depositAddress = canonicalAddress('persisted OKX deposit address', String(evidence.depositAddress || ''));
+  const depositAccount = String(evidence.authenticatedDepositAccount || '').trim();
   if (!authenticatedChain) throw new Error('PLACEMENT_PENDING OKX allocation has no authenticated exchange-chain identity');
+  if (depositAccount !== '6' && depositAccount !== '18') {
+    throw new Error('PLACEMENT_PENDING OKX allocation has no authenticated Funding/Trading beneficiary account');
+  }
 
   await multiProviderRpcManager.initialize([validated.chain]);
   const { http: provider } = await multiProviderRpcManager.getProvider(validated.chain, 'receipts');
@@ -364,14 +536,32 @@ async function reconcileOkxPlacement(row: AllocationRow): Promise<CexSystemCapit
   }
 
   const deposit = await okxDepositConfirmation(row, txHash, authenticatedChain, depositAddress);
-  if (!deposit.confirmed || !deposit.deliveredBaseUnits) {
+  if (!deposit.confirmed || !deposit.deliveredBaseUnits || !deposit.creditedAmount) {
     return {
       allocationId: row.allocation_id,
       venue: 'okx',
       status: 'PLACEMENT_PENDING',
       transactionHash: txHash,
       deliveredAmountBaseUnits: deposit.deliveredBaseUnits,
-      reason: 'On-chain transfer is confirmed, but OKX has not yet reached terminal credited/unlocked deposit state 2',
+      reason: 'On-chain transfer is confirmed, but OKX has not yet reached terminal deposit state 2',
+    };
+  }
+
+  const tradingCredit = await ensureOkxTradingAccountCredit({
+    row,
+    transactionHash: txHash,
+    depositAccount: depositAccount as OkxDepositAccount,
+    creditedAmount: deposit.creditedAmount,
+    deliveredBaseUnits: deposit.deliveredBaseUnits,
+  });
+  if (!tradingCredit.confirmed) {
+    return {
+      allocationId: row.allocation_id,
+      venue: 'okx',
+      status: 'PLACEMENT_PENDING',
+      transactionHash: txHash,
+      deliveredAmountBaseUnits: deposit.deliveredBaseUnits,
+      reason: 'OKX deposit is successful, but Funding-to-Trading settlement has not yet reached transfer-state=success',
     };
   }
 
@@ -381,9 +571,11 @@ async function reconcileOkxPlacement(row: AllocationRow): Promise<CexSystemCapit
     placementEvidence: {
       ...evidence,
       ...deposit.evidence,
+      ...tradingCredit.evidence,
       onchainReceiptStatus: receipt.status,
       blockNumber: receipt.blockNumber,
       settlementConfirmed: true,
+      tradingAccountSpendableAuthority: true,
     },
     deliveredAmountBaseUnits: deposit.deliveredBaseUnits,
   });
@@ -403,7 +595,7 @@ export async function placeReservedCexSystemCapital(allocationId: string): Promi
     return { allocationId, venue: validated.venue, status: 'PLACED', transactionHash: row.placement_reference || undefined };
   }
   if (validated.venue === 'kraken') {
-    throw new Error('Kraken CEX seeding remains fail-closed until its authenticated funding method proves the exact source token contract and exchange-side deposit status by transaction hash');
+    throw new Error('Kraken CEX seeding remains fail-closed until its authenticated funding method proves exact source-network compatibility and exchange-side deposit status by transaction hash');
   }
   if (row.status === 'PLACEMENT_PENDING') return reconcileOkxPlacement(row);
 
@@ -416,6 +608,7 @@ export async function placeReservedCexSystemCapital(allocationId: string): Promi
     sourceAmount: validated.sourceAmount,
     depositAddress: deposit.address,
     authenticatedExchangeChain: deposit.chain,
+    authenticatedDepositAccount: deposit.depositAccount,
   });
   row = await loadAllocation(allocationId);
   if (String(row.placement_reference || '').toLowerCase() !== transactionHash) {
