@@ -43,7 +43,8 @@ assert.match(allocation, /delivered_amount_base_units=\$2/, 'placement must reco
 assert.match(allocation, /remaining_destination_base_units/, 'placed system-owned capital must track remaining destination ownership');
 assert.doesNotMatch(allocation, /CREATE\s+TABLE|ALTER\s+TABLE|CREATE\s+INDEX/i, 'runtime allocation code must not own schema DDL');
 
-assert.match(placement, /zero-capital:\$\{input\.chain\.toLowerCase\(\)\}/, 'system-capital scope must preserve source chain/token identity');
+assert.match(placement, /parts\.length !== 4 \|\| parts\[0\] !== 'zero-capital'/, 'physical placement must parse the canonical zero-capital chain/token/recipient scope');
+assert.match(placement, /scope\.tokenAddress/, 'physical placement must bind the token contract encoded by SELF_FUNDED provenance');
 assert.match(placement, /venue === 'coinbase'/, 'physical CEX placement must reject Coinbase');
 assert.match(placement, /ctAddr/, 'OKX network admission must verify the authenticated exchange token contract');
 assert.match(placement, /canDep/, 'OKX network admission must require deposits enabled');
