@@ -8,6 +8,8 @@ function read(path) {
 const hierarchy = read('server/services/cryptocrawl/core/capital-hierarchy.ts');
 const hierarchyTest = read('server/services/cryptocrawl/testing/verify-capital-hierarchy.ts');
 const inventory = read('server/services/cryptocrawl/execution/cex-inventory-ledger.ts');
+const resourceScheduler = read('server/services/cryptocrawl/execution/resource-scheduler.ts');
+const cexExecutor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
 const provenance = read('server/services/cryptocrawl/execution/adapters/stage4-capital-provenance.ts');
 const allocation = read('server/services/cryptocrawl/execution/system-capital-allocation-ledger.ts');
 const placement = read('server/services/cryptocrawl/execution/cex-system-capital-placement.ts');
@@ -35,6 +37,15 @@ assert.match(inventory, /const systemOwnedSpendable =/, 'CEX admission must calc
 assert.match(inventory, /Math\.min\(physicalSpendable, systemOwnedSpendable\)/, 'CEX reservation must be capped by both physical and system-owned capacity');
 assert.match(inventory, /!isDatabaseConfigured \|\| !await this\.ensureTables\(\)/, 'live CEX reservation must fail closed without durable Overflow state');
 assert.match(inventory, /operatorBalanceAuthorityGranted:\s*false/, 'reservation rejection telemetry must explicitly deny operator-balance authority');
+
+assert.match(resourceScheduler, /getProfitLadderNotionalAuthority/, 'resource admission must bind the canonical Profit Ladder notional authority');
+assert.match(resourceScheduler, /plan\.notionalUsd > notionalAuthority\.maxNotionalUsd/, 'resource admission must reject exposure above the unlocked Profit Ladder rung');
+assert.match(resourceScheduler, /resourceLeaseCreated:\s*false/, 'rejected Profit Ladder exposure must not consume scarce resource leases');
+assert.match(cexExecutor, /REJECT_PROFIT_LADDER_NOTIONAL/, 'the live CEX executor must independently prevent direct callers from bypassing the same Profit Ladder authority');
+assert.match(cexExecutor, /applyTerminalSystemOwnedSettlements/, 'terminal production CEX orders must flow into exact system-owned lot settlement');
+assert.match(cexExecutor, /getExactSystemCapitalOrderAssetDeltas/, 'terminal ownership must be reconstructed from authenticated exact exchange evidence');
+assert.match(cexExecutor, /cex_system_capital_settlement_persistence_failed/, 'ownership persistence failure must pause further execution rather than fall back to operator funds');
+assert.match(cexExecutor, /operatorBalanceFallbackUsed:\s*false/, 'terminal accounting failure telemetry must explicitly deny operator-balance fallback');
 
 assert.match(provenance, /recordVerifiedRetainedProfit/, 'verified retained profit must accumulate in canonical SELF_FUNDED provenance');
 assert.match(provenance, /SELECT \* FROM zero_capital_capital_state WHERE scope = \$1 FOR UPDATE/, 'capital provenance mutation must lock its canonical source row');
@@ -76,12 +87,16 @@ assert.match(placement, /tradingAccountSpendableAuthority:\s*true/, 'PLACED OKX 
 assert.match(exactDecimal, /bigint/, 'exact CEX settlement arithmetic must use integer-backed decimal math');
 assert.doesNotMatch(exactDecimal, /parseFloat\(|Number\(/, 'exact CEX settlement arithmetic must not pass through floating point');
 assert.match(exactSettlement, /\/api\/v5\/trade\/fills/, 'exact OKX ownership evidence must come from authenticated fill records');
+assert.match(exactSettlement, /\/0\/private\/QueryTrades/, 'exact Kraken ownership evidence must come from authenticated trade/fill records');
+assert.match(exactSettlement, /quote_currency_fee_semantics_from_current_kraken_spot_execution_schema/, 'Kraken exact settlement must bind current quote-currency fee semantics');
 assert.match(exactSettlement, /seen\.has\(tradeId\)/, 'exact fill evidence must deduplicate trade IDs');
 assert.match(exactSettlement, /compareExactDecimals\(summedFill, accumulatedFillDecimal\)/, 'enumerated fills must exactly equal authenticated accumulated fill quantity');
-assert.match(exactSettlement, /if \(feeAsset\) addDelta\(assetDeltas, feeAsset, feeDecimal\)/, 'authenticated fee/rebate currency must be applied as an exact asset delta');
-assert.match(exactSettlement, /Kraken exact system-capital fill transformation remains fail-closed/, 'Kraken must not transform ownership until exact fee-asset semantics are proven');
+assert.match(exactSettlement, /if \(feeAsset\) addDelta\(assetDeltas, feeAsset, feeDecimal\)/, 'authenticated OKX fee/rebate currency must be applied as an exact asset delta');
+assert.match(exactSettlement, /addDelta\(assetDeltas, quoteAsset, negateExactDecimal\(feeDecimal\)\)/, 'Kraken quote-currency fees must debit exact system-owned quote inventory');
+assert.doesNotMatch(exactSettlement, /Kraken exact system-capital fill transformation remains fail-closed/, 'Kraken exact ownership transformation must no longer be left unwired');
 
 assert.match(lotLedger, /SYSTEM_CAPITAL_PROVENANCE_DEFICIT/, 'unowned trade or fee debit must be a hard provenance deficit');
+assert.match(lotLedger, /venue: 'okx' \| 'kraken'/, 'the exact ownership ledger must support both system-owned execution venues');
 assert.match(lotLedger, /WHERE venue=\$1 AND asset=\$2 AND status='ACTIVE'/, 'lot consumption must lock only active system-owned inventory');
 assert.match(lotLedger, /FOR UPDATE/, 'CEX ownership mutation must lock consumed lots transactionally');
 const debitIndex = lotLedger.indexOf('// Debit first.');
@@ -102,4 +117,4 @@ assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_lots/, 'Ove
 assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_settlements/, 'Overflow runtime admission must require settlement idempotency state');
 assert.match(dockerfile, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'production image must bundle the physical CEX ownership migration');
 
-console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; system-earned capital has one physical CEX ownership authority, exact fill/fee transformations, and exchange-confirmed placement');
+console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; Profit Ladder binds live CEX size and exact Kraken/OKX terminal fills transform only system-owned inventory');
