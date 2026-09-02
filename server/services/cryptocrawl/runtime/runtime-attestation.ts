@@ -19,6 +19,10 @@ export interface RuntimeAttestation {
 }
 
 const CONFIG_SCHEMA_VERSION = 'cryptocrawler-runtime-v1';
+// These exact property reads are replaced by esbuild and become immutable
+// artifact metadata. They are independent from Railway's runtime variables.
+const EMBEDDED_SOURCE_SHA = process.env.CRYPTOCRAWLER_BUILD_SOURCE_SHA;
+const EMBEDDED_BUILD_TIMESTAMP = process.env.CRYPTOCRAWLER_BUNDLE_BUILD_TIMESTAMP;
 
 function visible(name: string): string | null {
   const value = process.env[name]?.trim();
@@ -44,6 +48,7 @@ function sameCommit(left: string, right: string): boolean {
 export function getCryptoCrawlerRuntimeAttestation(): RuntimeAttestation {
   const railwayCommitSha = normalizeSha(visible('RAILWAY_GIT_COMMIT_SHA'));
   const sourceCandidates = [
+    normalizeSha(EMBEDDED_SOURCE_SHA || null),
     normalizeSha(visible('CRYPTOCRAWLER_SOURCE_SHA')),
     normalizeSha(visible('SOURCE_VERSION')),
     normalizeSha(visible('GIT_COMMIT')),
@@ -54,7 +59,7 @@ export function getCryptoCrawlerRuntimeAttestation(): RuntimeAttestation {
   const mismatches: string[] = [];
 
   if (railwayCommitSha) evidence.push('railway_git_commit_sha');
-  if (sourceCandidates.length > 0) evidence.push('source_sha');
+  if (sourceCandidates.length > 0) evidence.push(EMBEDDED_SOURCE_SHA ? 'embedded_build_source_sha' : 'source_sha');
 
   for (const candidate of sourceCandidates.slice(1)) {
     if (sourceSha && !sameCommit(sourceSha, candidate)) {
@@ -73,7 +78,9 @@ export function getCryptoCrawlerRuntimeAttestation(): RuntimeAttestation {
   const environmentName = visible('RAILWAY_ENVIRONMENT_NAME') || visible('RAILWAY_ENVIRONMENT');
   const replicaId = visible('RAILWAY_REPLICA_ID');
   const region = visible('RAILWAY_REPLICA_REGION') || visible('RAILWAY_REGION');
-  const buildTimestamp = visible('CRYPTOCRAWLER_BUILD_TIMESTAMP') || visible('BUILD_TIMESTAMP');
+  const buildTimestamp = EMBEDDED_BUILD_TIMESTAMP
+    || visible('CRYPTOCRAWLER_BUILD_TIMESTAMP')
+    || visible('BUILD_TIMESTAMP');
 
   if (deploymentId) evidence.push('railway_deployment_id');
   if (serviceId || serviceName) evidence.push('railway_service_identity');
