@@ -55,7 +55,7 @@ export interface UnpauseRequest {
 export interface AdvisoryCycleResult { cycleId: string; timestamp: number; }
 export interface SignalAnalysis { pair: string; exchange: string; signal: 'bullish' | 'bearish' | 'neutral'; confidence: number; reasoning: string[]; }
 export interface ArbitragePath { id: string; buyExchange: string; sellExchange: string; pair: string; expectedProfit: number; fees: number; slippage: number; latency: number; netProfit: number; feasibility: number; }
-export interface Recommendation { action: 'execute' | 'skip' | 'wait' | 'investigate'; target: string; reasoning: string; confidence: number; humanApprovalRequired: boolean; }
+export interface Recommendation { action: 'execute' | 'skip' | 'wait' | 'investigate'; target: string; reasoning: string[]; confidence: number; humanApprovalRequired: boolean; }
 export interface MonteCarloValidation { simulations: number; expectedProfit: number; confidenceInterval: [number, number]; winRate: number; maxDrawdown: number; sharpeRatio: number; approval: 'approved' | 'conditional' | 'rejected'; conditions?: string[]; }
 export interface RiskFactor { factor: string; severity: number; description: string; }
 export interface RiskAssessment { overallRisk: 'low' | 'medium' | 'high' | 'critical'; factors: RiskFactor[]; mitigations: string[]; }
@@ -70,10 +70,10 @@ export interface ProfitLadderTier {
 }
 
 const MODE_BY_STAGE: Record<StageNumber, SystemMode> = {
-  1: 'advisory', 2: 'proof_based', 3: 'dry_run', 4: 'limited_autonomy', 5: 'supervised', 6: 'conditional',
+  1: 'proof_based', 2: 'proof_based', 3: 'dry_run', 4: 'limited_autonomy', 5: 'supervised', 6: 'conditional',
 };
 const AUTHORITY_BY_STAGE: Record<StageNumber, StageConfig['executionAuthority']> = {
-  1: 'none', 2: 'limited', 3: 'limited', 4: 'conditional', 5: 'supervised', 6: 'autonomous',
+  1: 'limited', 2: 'limited', 3: 'limited', 4: 'conditional', 5: 'supervised', 6: 'autonomous',
 };
 
 export const PROFIT_LADDER: ProfitLadderTier[] = [
@@ -141,12 +141,8 @@ export class StageGovernor extends EventEmitter {
   }
 
   canExecute(): { allowed: boolean; reason: string } {
-    const state = stageManager.getState();
     const gate = stageManager.canProceed();
     if (!gate.allowed) return { allowed: false, reason: gate.reason || 'Governance denied execution' };
-    if (state.currentStage === ManagedStage.STAGE_1_CONSTRAINED_PILOT) {
-      return { allowed: false, reason: 'Stage 1: Advisory only - no execution authority' };
-    }
     if (!stageManager.canExecuteTrades()) return { allowed: false, reason: 'Execution is not authorized for the current stage' };
     return { allowed: true, reason: 'Execution permitted within current stage bounds' };
   }
