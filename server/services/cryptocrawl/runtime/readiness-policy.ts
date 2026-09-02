@@ -74,7 +74,9 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
       scope: 'identity',
       detail: input.runtimeIdentityMismatch
         ? 'runtime source/deployment identity mismatch detected'
-        : 'process is running and runtime identity has no detected mismatch',
+        : input.runtimeIdentitySafe
+          ? 'process is running and runtime identity satisfies this environment\'s admission policy'
+          : 'runtime identity lacks independently verified build/deployment agreement',
     },
     CONFIG_READY: {
       ready: input.centralizedExecutionConfigured,
