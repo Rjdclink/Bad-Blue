@@ -14,6 +14,7 @@ import { getCexScanCapacity, type ScanCapacityDecision } from './scan-capacity-p
 
 export interface MeasuredOpportunityGraphCycle {
   cycleId: string;
+  cycleTrigger: 'continuous_scan' | 'positive_observation_revalidation';
   startedAt: number;
   completedAt: number;
   topology: 'CEX_CEX';
@@ -115,6 +116,7 @@ async function runBounded<T, R>(items: readonly T[], concurrency: number, worker
 class MeasuredOpportunityGraph {
   private timer: NodeJS.Timeout | null = null;
   private scanInFlight: Promise<MeasuredOpportunityGraphCycle> | null = null;
+  private targetedScans = new Map<string, Promise<MeasuredOpportunityGraphCycle>>();
   private latestCycle: MeasuredOpportunityGraphCycle | null = null;
   private running = false;
 
@@ -124,6 +126,25 @@ class MeasuredOpportunityGraph {
       this.scanInFlight = null;
     });
     this.scanInFlight = promise;
+    return promise;
+  }
+
+  async revalidateSymbols(symbolsInput: readonly string[]): Promise<MeasuredOpportunityGraphCycle> {
+    const symbols = [...new Set(symbolsInput.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))].slice(0, 16);
+    if (symbols.length === 0) return this.scanOnce();
+    const signature = symbols.sort().join(',');
+    const existing = this.targetedScans.get(signature);
+    if (existing) return existing;
+
+    // A positive observation is short-lived. It must not coalesce into an older
+    // full-universe scan that began before the observation existed.
+    const promise = this.runCycle({
+      symbols,
+      trigger: 'positive_observation_revalidation',
+    }).finally(() => {
+      this.targetedScans.delete(signature);
+    });
+    this.targetedScans.set(signature, promise);
     return promise;
   }
 
@@ -193,9 +214,13 @@ class MeasuredOpportunityGraph {
     };
   }
 
-  private async runCycle(): Promise<MeasuredOpportunityGraphCycle> {
+  private async runCycle(options?: {
+    symbols?: readonly string[];
+    trigger?: MeasuredOpportunityGraphCycle['cycleTrigger'];
+  }): Promise<MeasuredOpportunityGraphCycle> {
     const startedAt = Date.now();
-    const cycleId = `cex-graph:${startedAt}`;
+    const cycleTrigger = options?.trigger || 'continuous_scan';
+    const cycleId = `cex-graph:${cycleTrigger}:${startedAt}`;
     const errors: string[] = [];
     const configuredSymbol = (process.env.CRYPTO_ARBITRAGE_SYMBOL || 'ETHUSDT').trim().toUpperCase();
     const maxNotionalUsd = positiveFinite(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD, 200);
@@ -203,9 +228,11 @@ class MeasuredOpportunityGraph {
 
     const universe = await marketDataProviders.discoverUniverse();
     const symbols = uniqueSymbols(configuredSymbol, universe);
-    const capacity = getCexScanCapacity(symbols.length);
-    const formationSelection = selectCexFormationSymbols(symbols, capacity.symbolBudget, configuredSymbol);
-    const selected = formationSelection.symbols;
+    const selectionCapacity = getCexScanCapacity(symbols.length);
+    const formationSelection = selectCexFormationSymbols(symbols, selectionCapacity.symbolBudget, configuredSymbol);
+    const targetedSymbols = [...new Set((options?.symbols || []).map(symbol => symbol.trim().toUpperCase()).filter(Boolean))];
+    const selected = targetedSymbols.length > 0 ? targetedSymbols : formationSelection.symbols;
+    const capacity = targetedSymbols.length > 0 ? getCexScanCapacity(selected.length) : selectionCapacity;
 
     const publicDiscoveryPromise = scanPublicCexUniverse(selected).catch(error => {
       errors.push(`public_cex_discovery:${error instanceof Error ? error.message : String(error)}`);
@@ -333,13 +360,14 @@ class MeasuredOpportunityGraph {
     const completedAt = Date.now();
     const cycle: MeasuredOpportunityGraphCycle = {
       cycleId,
+      cycleTrigger,
       startedAt,
       completedAt,
       topology: 'CEX_CEX',
       universeAssets: universe.length,
       selectedSymbols: selected.length,
-      formationExplorationSymbols: formationSelection.exploration.length,
-      formationExploitationSymbols: formationSelection.exploitation.length,
+      formationExplorationSymbols: targetedSymbols.length > 0 ? selected.length : formationSelection.exploration.length,
+      formationExploitationSymbols: targetedSymbols.length > 0 ? 0 : formationSelection.exploitation.length,
       evaluatedSymbols: evaluated.length,
       publicDiscoveryObservations: publicDiscovery.observations.length,
       publicDiscoveryVenues: new Set(publicDiscovery.observations.map(observation => observation.venue)).size,
@@ -376,6 +404,7 @@ class MeasuredOpportunityGraph {
     logger.info('[OpportunityGraph] Measured CEX edge-formation cycle completed', {
       component: 'MeasuredOpportunityGraph',
       cycleId,
+      cycleTrigger,
       durationMs: completedAt - startedAt,
       nextScanIntervalMs: cycle.capacity.recommendedIntervalMs,
       universeAssets: cycle.universeAssets,
