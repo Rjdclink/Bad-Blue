@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
 import { getSettlementProfitCalibrationSnapshot } from '../learning/settlement-profit-calibrator.js';
@@ -53,15 +54,15 @@ function dispatchBatchLimit(): number {
 }
 
 function baseDispatchIntervalMs(): number {
-  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_MS, 750, 250, 10_000);
+  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_MS, 250, 100, 10_000);
 }
 
 function dispatchJitterFraction(): number {
-  return boundedNumber(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_JITTER_FRACTION, 0.15, 0, 0.35);
+  return boundedNumber(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_JITTER_FRACTION, 0.05, 0, 0.35);
 }
 
 function maxDispatchIntervalMs(): number {
-  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_MAX_MS, 2500, 500, 10_000);
+  return boundedInt(process.env.CRYPTOCRAWL_EXECUTION_DISPATCH_MAX_MS, 1000, 250, 10_000);
 }
 
 function idleCadenceMultiplier(reason: CanonicalSchedulerIdleReason | null): number {
@@ -76,7 +77,7 @@ function nextDispatchDelayMs(reason: CanonicalSchedulerIdleReason | null): numbe
   const base = baseDispatchIntervalMs() * idleCadenceMultiplier(reason);
   const jitter = dispatchJitterFraction();
   const randomFactor = jitter > 0 ? 1 + ((Math.random() * 2 - 1) * jitter) : 1;
-  return Math.max(250, Math.min(maxDispatchIntervalMs(), Math.round(base * randomFactor)));
+  return Math.max(100, Math.min(maxDispatchIntervalMs(), Math.round(base * randomFactor)));
 }
 
 function isLiveExecutionPosture(): boolean {
@@ -101,7 +102,7 @@ function terminalCalibrationFactor(candidate: Candidate): number {
 }
 
 function candidatePriority(candidate: Candidate, maxQuoteAgeMs: number): number {
-  const probability = Math.max(0, Math.min(1, candidate.assessment?.probabilityOfProfitableExecution ?? 0));
+  const probability = Math.max(0.25, Math.min(1, candidate.assessment?.probabilityOfProfitableExecution ?? 1));
   const expectedProfit = Math.max(0, candidate.plan.netProfitUsd) * probability;
   const freshness = Math.max(0.05, Math.min(1, 1 - candidate.plan.quoteAgeMs / Math.max(1, maxQuoteAgeMs)));
   const notional = Math.max(1, candidate.plan.notionalUsd);
@@ -119,7 +120,6 @@ function currentCandidates(): Candidate[] {
     .filter((snapshot): snapshot is Candidate => !!snapshot.plan)
     .filter(snapshot => snapshot.status === 'eligible')
     .filter(snapshot => runtimeInvariantMonitor.evaluate(snapshot).allowed)
-    .filter(snapshot => snapshot.assessment?.recommendation === 'consider')
     .filter(snapshot => Number.isFinite(snapshot.plan.netProfitUsd) && snapshot.plan.netProfitUsd > 0)
     .filter(snapshot => snapshot.plan.quoteAgeMs <= maxQuoteAgeMs)
     .filter(snapshot => now - snapshot.observedAt <= maxQuoteAgeMs)
@@ -128,11 +128,7 @@ function currentCandidates(): Candidate[] {
     .sort((left, right) => {
       const priorityDelta = candidatePriority(right, maxQuoteAgeMs) - candidatePriority(left, maxQuoteAgeMs);
       if (priorityDelta !== 0) return priorityDelta;
-      const leftProbability = left.assessment?.probabilityOfProfitableExecution ?? 0;
-      const rightProbability = right.assessment?.probabilityOfProfitableExecution ?? 0;
-      const leftValue = left.plan.netProfitUsd * leftProbability;
-      const rightValue = right.plan.netProfitUsd * rightProbability;
-      if (rightValue !== leftValue) return rightValue - leftValue;
+      if (right.plan.netProfitUsd !== left.plan.netProfitUsd) return right.plan.netProfitUsd - left.plan.netProfitUsd;
       return (right.assessment?.rankScore ?? -Infinity) - (left.assessment?.rankScore ?? -Infinity);
     });
 }
@@ -153,6 +149,9 @@ class CanonicalExecutionScheduler {
   private timer: NodeJS.Timeout | null = null;
   private started = false;
   private dispatchInFlight: Promise<void> | null = null;
+  private eligibleUnsubscribe: (() => void) | null = null;
+  private immediateWakeScheduled = false;
+  private immediateWakeRequested = false;
   private readonly activeOpportunityIds = new Set<string>();
   private readonly lastAttemptAt = new Map<string, number>();
   private attempts = 0;
@@ -169,6 +168,7 @@ class CanonicalExecutionScheduler {
   start(): void {
     if (this.started) return;
     this.started = true;
+    this.eligibleUnsubscribe = measuredCandidateRegistry.onEligible(candidate => this.requestImmediateDispatch(candidate));
     this.scheduleNextDispatch();
     logger.info('[ExecutionScheduler] Canonical execution scheduler started', {
       component: 'CanonicalExecutionScheduler',
@@ -178,8 +178,9 @@ class CanonicalExecutionScheduler {
       dispatchBatchLimit: dispatchBatchLimit(),
       ownerId: executionResourceScheduler.getOwnerId(),
       authority: 'canonical_eligible_opportunities_and_admitted_measured_topologies',
-      schedulingObjective: 'expected_profit_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration',
-      cadenceObjective: 'desynchronize_work_reduce_rate_and_resource_contention_without_weakening_freshness',
+      schedulingObjective: 'positive_all_in_net_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration',
+      cadenceObjective: 'event_driven_eligibility_wake_with_low_latency_poll_fallback',
+      eligibleWakeAuthority: 'measured_candidate_registry',
       terminalCalibrationAuthority: 'scheduling_only_confirmed_settlement_evidence',
       measuredTopologyExecutionAdapter: true,
       discoveryExecutionAuthority: false,
@@ -194,6 +195,9 @@ class CanonicalExecutionScheduler {
 
   stop(): void {
     this.started = false;
+    this.eligibleUnsubscribe?.();
+    this.eligibleUnsubscribe = null;
+    this.immediateWakeRequested = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.lastIdleReason = 'not_started';
@@ -224,6 +228,33 @@ class CanonicalExecutionScheduler {
       lastMeasuredTopologyDispatchCount: this.lastMeasuredTopologyDispatchCount,
       resourceUsage: executionResourceScheduler.getLocalUsage(),
     };
+  }
+
+  private requestImmediateDispatch(candidate: MeasuredCandidate): void {
+    if (!this.started || candidate.expiresAt <= Date.now()) return;
+    this.immediateWakeRequested = true;
+    if (this.immediateWakeScheduled) return;
+    this.immediateWakeScheduled = true;
+    queueMicrotask(async () => {
+      try {
+        while (this.started && this.immediateWakeRequested) {
+          this.immediateWakeRequested = false;
+          const joinedExistingDispatch = this.dispatchInFlight !== null;
+          await this.dispatchOnce();
+          if (joinedExistingDispatch && this.started) this.immediateWakeRequested = true;
+        }
+      } catch (error) {
+        logger.error('[ExecutionScheduler] Immediate eligible-candidate wake failed closed', {
+          component: 'CanonicalExecutionScheduler',
+          opportunityId: candidate.opportunityId,
+          topology: candidate.topology,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        this.immediateWakeScheduled = false;
+        if (this.started && this.immediateWakeRequested) this.requestImmediateDispatch(candidate);
+      }
+    });
   }
 
   private scheduleNextDispatch(): void {
@@ -320,11 +351,9 @@ class CanonicalExecutionScheduler {
       return;
     }
 
-    // All non-CEX measured topology dispatch occurs under this canonical scheduler
-    // tick. The adapter owns no interval/timer and cannot be called by discovery.
     const measuredTopologyDispatched = await this.dispatchMeasuredTopologies();
 
-    const retryWindowMs = Math.max(1_000, Number(process.env.CRYPTOCRAWL_EXECUTION_RETRY_WINDOW_MS || 10_000));
+    const retryWindowMs = Math.max(250, Number(process.env.CRYPTOCRAWL_EXECUTION_RETRY_WINDOW_MS || 1_000));
     const now = Date.now();
     const eligibleCandidates = currentCandidates();
     this.lastEligibleCandidateCount = eligibleCandidates.length;
