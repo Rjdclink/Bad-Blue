@@ -97,11 +97,13 @@ assert.match(exactDecimal, /bigint/, 'exact CEX settlement arithmetic must use i
 assert.doesNotMatch(exactDecimal, /parseFloat\(|Number\(/, 'exact CEX settlement arithmetic must not pass through floating point');
 assert.match(exactSettlement, /\/api\/v5\/trade\/fills/, 'exact OKX ownership evidence must come from authenticated fill records');
 assert.match(exactSettlement, /\/0\/private\/QueryTrades/, 'exact Kraken ownership evidence must come from authenticated trade/fill records');
-assert.match(exactSettlement, /quote_currency_fee_semantics_from_current_kraken_spot_execution_schema/, 'Kraken exact settlement must bind current quote-currency fee semantics');
+assert.match(exactSettlement, /query_trades_batched_at_20/, 'Kraken exact fill evidence must respect the private QueryTrades transaction-id batch limit');
+assert.match(exactSettlement, /quote_currency_signed_fee_or_rebate_semantics/, 'Kraken exact settlement must preserve signed quote-currency fee and maker-rebate semantics');
+assert.match(exactSettlement, /const feeDecimal = exactSignedDecimal\(raw\.fee/, 'Kraken exact settlement must accept authenticated negative maker rebates as well as positive fees');
 assert.match(exactSettlement, /seen\.has\(tradeId\)/, 'exact fill evidence must deduplicate trade IDs');
 assert.match(exactSettlement, /compareExactDecimals\(summedFill, accumulatedFillDecimal\)/, 'enumerated fills must exactly equal authenticated accumulated fill quantity');
 assert.match(exactSettlement, /if \(feeAsset\) addDelta\(assetDeltas, feeAsset, feeDecimal\)/, 'authenticated OKX fee/rebate currency must be applied as an exact asset delta');
-assert.match(exactSettlement, /addDelta\(assetDeltas, quoteAsset, negateExactDecimal\(feeDecimal\)\)/, 'Kraken quote-currency fees must debit exact system-owned quote inventory');
+assert.match(exactSettlement, /compareExactDecimals\(feeDecimal, '0'\) !== 0\) addDelta\(assetDeltas, quoteAsset, negateExactDecimal\(feeDecimal\)\)/, 'Kraken signed fee must debit charges and credit maker rebates in exact quote inventory');
 assert.doesNotMatch(exactSettlement, /Kraken exact system-capital fill transformation remains fail-closed/, 'Kraken exact ownership transformation must no longer be left unwired');
 
 assert.match(lotLedger, /SYSTEM_CAPITAL_PROVENANCE_DEFICIT/, 'unowned trade or fee debit must be a hard provenance deficit');
@@ -126,4 +128,4 @@ assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_lots/, 'Ove
 assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_settlements/, 'Overflow runtime admission must require settlement idempotency state');
 assert.match(dockerfile, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'production image must bundle the physical CEX ownership migration');
 
-console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; Profit Ladder binds taker and maker CEX size, and exact Kraken/OKX terminal fills transform only system-owned inventory');
+console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; Profit Ladder binds taker and maker CEX size, and exact Kraken/OKX terminal fills including maker rebates transform only system-owned inventory');
