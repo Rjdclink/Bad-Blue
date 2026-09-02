@@ -49,11 +49,20 @@ const FEE_CACHE_TTL_MS = Math.max(5_000, Number(process.env.CRYPTO_ARBITRAGE_FEE
 const REQUEST_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_TIMEOUT_MS || 8_000));
 const UNAVAILABLE_TTL_MS = Math.max(5_000, Math.min(300_000, Number(process.env.CRYPTO_CEX_FEE_UNAVAILABLE_TTL_MS || 60_000)));
 const TRANSIENT_RETRY_MS = Math.max(500, Math.min(10_000, Number(process.env.CRYPTO_CEX_FEE_TRANSIENT_RETRY_MS || 2_500)));
+const KRAKEN_FEE_MIN_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.CRYPTO_KRAKEN_FEE_MIN_INTERVAL_MS);
+  return Number.isFinite(parsed) ? Math.max(2_000, Math.min(30_000, Math.trunc(parsed))) : 2_500;
+})();
+const KRAKEN_FEE_RATE_COOLDOWN_MS = (() => {
+  const parsed = Number(process.env.CRYPTO_KRAKEN_FEE_RATE_COOLDOWN_MS);
+  return Number.isFinite(parsed) ? Math.max(10_000, Math.min(300_000, Math.trunc(parsed))) : 40_000;
+})();
 const OKX_PER_INSTRUMENT_BUDGET = Math.max(1, Math.min(4, Math.floor(Number(process.env.CRYPTO_OKX_FEE_PER_INSTRUMENT_BUDGET || 2))));
 const feeCache = new Map<string, CexFeeEvidence>();
 const feeInFlight = new Map<string, Promise<CexFeeEvidence | null>>();
 const feeUnavailableUntil = new Map<string, { until: number; reason: string }>();
 const feeTransientRetryUntil = new Map<string, { until: number; reason: string }>();
+let krakenFeeRequestNotBefore = 0;
 let okxPerInstrumentCursor = 0;
 
 function finiteNumber(value: unknown): number | null {
@@ -145,12 +154,27 @@ function markTransientRetry(venue: CexFeeVenue, symbol: string, reason: string, 
   if (!existing || existing.until < until) feeTransientRetryUntil.set(key, { until, reason });
 }
 
-function markTransientRetryMany(venue: CexFeeVenue, symbols: readonly string[], reason: string): void {
-  for (const symbol of symbols) markTransientRetry(venue, symbol, reason);
+function markTransientRetryMany(venue: CexFeeVenue, symbols: readonly string[], reason: string, ttlMs = TRANSIENT_RETRY_MS): void {
+  for (const symbol of symbols) markTransientRetry(venue, symbol, reason, ttlMs);
 }
 
 function clearTransientRetry(venue: CexFeeVenue, symbol: string): void {
   feeTransientRetryUntil.delete(cacheKey(venue, symbol));
+}
+
+function krakenFeeGateRemainingMs(): number {
+  return Math.max(0, krakenFeeRequestNotBefore - Date.now());
+}
+
+function holdKrakenFeeRequests(delayMs: number): void {
+  krakenFeeRequestNotBefore = Math.max(krakenFeeRequestNotBefore, Date.now() + Math.max(0, delayMs));
+}
+
+function suppressKrakenFeeRequestWhileGated(symbols: readonly string[]): boolean {
+  const remainingMs = krakenFeeGateRemainingMs();
+  if (remainingMs <= 0) return false;
+  markTransientRetryMany('kraken', symbols, 'kraken_account_fee_gate_active', remainingMs);
+  return true;
 }
 
 function readFreshCache(venue: CexFeeVenue, symbol: string, maxAgeMs = FEE_CACHE_TTL_MS): CexFeeEvidence | null {
@@ -271,6 +295,7 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
     markTransientRetryMany('kraken', symbols, 'credentials_temporarily_unavailable');
     return output;
   }
+  if (suppressKrakenFeeRequestWhileGated(symbols)) return output;
 
   const resolved: Array<{ symbol: string; constraints: SpotProductConstraints }> = [];
   const unsupportedSymbols: string[] = [];
@@ -296,12 +321,34 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
     }
   }
   if (resolved.length === 0) return output;
+  if (suppressKrakenFeeRequestWhileGated(resolved.map(entry => entry.symbol))) return output;
 
   const requestPairs = [...new Set(resolved.map(entry => entry.constraints.exchangeSymbol))];
-  const result = await krakenPrivateRequest('/0/private/TradeVolume', {
-    pair: requestPairs.join(','),
-    'fee-info': 'true',
-  }, { timeoutMs: REQUEST_TIMEOUT_MS });
+  holdKrakenFeeRequests(KRAKEN_FEE_MIN_INTERVAL_MS);
+  let result: Record<string, any>;
+  try {
+    result = await krakenPrivateRequest('/0/private/TradeVolume', {
+      pair: requestPairs.join(','),
+      'fee-info': 'true',
+    }, { timeoutMs: REQUEST_TIMEOUT_MS });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('EAPI:Rate limit exceeded')) {
+      holdKrakenFeeRequests(KRAKEN_FEE_RATE_COOLDOWN_MS);
+      markTransientRetryMany('kraken', resolved.map(entry => entry.symbol), 'kraken_account_rate_limit_cooldown', KRAKEN_FEE_RATE_COOLDOWN_MS);
+      logger.warn('[CEX Fees] Kraken account rate limit engaged one account-wide fee cooldown', {
+        component: 'CexFeeResolver',
+        symbols: resolved.length,
+        cooldownMs: KRAKEN_FEE_RATE_COOLDOWN_MS,
+        minimumSuccessIntervalMs: KRAKEN_FEE_MIN_INTERVAL_MS,
+        accountWidePrivateCounter: true,
+        immediatePerSymbolRetryAllowed: false,
+        failClosed: true,
+      });
+      return output;
+    }
+    throw error;
+  }
   const fees = result.fees && typeof result.fees === 'object' ? result.fees : {};
   const makerFees = result.fees_maker && typeof result.fees_maker === 'object' ? result.fees_maker : {};
   const observedAt = Date.now();
