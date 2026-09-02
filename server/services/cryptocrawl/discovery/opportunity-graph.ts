@@ -64,12 +64,13 @@ function opportunityId(plan: VerifiedArbitragePlan): string {
 }
 
 function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observedAt: number, maxQuoteAgeMs: number): void {
+  const measuredDepth = plan.liquidity.status === 'measured';
   measuredCandidateRegistry.record({
     opportunityId: opportunityId(plan),
     topology: 'CEX_CEX',
     observedAt,
     expiresAt: observedAt + Math.max(1, maxQuoteAgeMs - Math.min(maxQuoteAgeMs, plan.quoteAgeMs)),
-    status: 'deterministic_positive',
+    status: measuredDepth ? 'eligible' : 'deterministic_positive',
     assets: [plan.symbol],
     venues: [plan.buyVenue, plan.sellVenue],
     chains: ['cex'],
@@ -78,8 +79,8 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
       { source: 'direct_exchange_quotes', venue: plan.sellVenue, symbol: plan.symbol, observedAt: observedAt - plan.quoteAgeMs, bid: plan.sellBid, executable: true },
     ],
     depth: {
-      status: plan.liquidity.status === 'measured' ? 'measured' : 'unavailable',
-      detail: plan.liquidity.status === 'measured' ? plan.liquidity.source.join(',') : 'Measured executable depth unavailable',
+      status: measuredDepth ? 'measured' : 'unavailable',
+      detail: measuredDepth ? plan.liquidity.source.join(',') : 'Measured executable depth unavailable',
     },
     economics: {
       grossProfitUsd: plan.grossProfitUsd,
@@ -92,9 +93,17 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
     },
     quoteAgeMs: plan.quoteAgeMs,
     executableCapability: true,
-    executionCapabilityReason: 'Verified CEX plan uses a settlement-safe centralized executor; MC, governance, inventory and resource locks still control admission',
+    executionCapabilityReason: 'Verified CEX plan uses a settlement-safe centralized executor; governance, inventory and resource locks still control execution',
     missingInformation: [],
-    provenance: ['measured_opportunity_graph', 'formation_attention_scheduler', 'direct_exchange_quotes', 'authenticated_fee_evidence', 'depth_aware_notional_search', 'deterministic_positive_net'],
+    provenance: [
+      'measured_opportunity_graph',
+      'formation_attention_scheduler',
+      'direct_exchange_quotes',
+      'authenticated_fee_evidence',
+      'depth_aware_notional_search',
+      'deterministic_positive_net',
+      ...(measuredDepth ? ['positive_all_in_net_execution_eligible'] : []),
+    ],
   });
 }
 
@@ -136,8 +145,6 @@ class MeasuredOpportunityGraph {
     const existing = this.targetedScans.get(signature);
     if (existing) return existing;
 
-    // A positive observation is short-lived. It must not coalesce into an older
-    // full-universe scan that began before the observation existed.
     const promise = this.runCycle({
       symbols,
       trigger: 'positive_observation_revalidation',
@@ -170,7 +177,7 @@ class MeasuredOpportunityGraph {
       topology: 'CEX_CEX',
       scanAttention: 'formation_probability_plus_value_of_information',
       scanAttentionAuthority: 'advisory_only',
-      candidateAuthority: 'measured_candidate_registry',
+      candidateAuthority: 'measured_candidate_registry_positive_all_in_net',
       syntheticEvidenceAllowed: false,
       executionPausedDuringLowActivity: false,
     });
@@ -262,10 +269,6 @@ class MeasuredOpportunityGraph {
       selected.length / Math.max(1, symbols.length),
     );
 
-    // Raw public BBOs are measured search evidence. Register only symbols with
-    // two or more independently observed venues, and keep them explicitly
-    // non-executable with unknown economics. This makes the CEX_CEX discovery
-    // funnel truthful without allowing discovery-only venues into execution.
     const observedCandidateTtlMs = Math.max(
       500,
       Number(process.env.CRYPTOCRAWL_PUBLIC_BBO_CACHE_MS || 1_500),
@@ -289,7 +292,7 @@ class MeasuredOpportunityGraph {
       24,
     ));
     const assessmentCandidates = positivePlans.slice(0, maxAssessments);
-    let eligibleCandidates = 0;
+    let eligibleCandidates = positivePlans.filter(plan => plan.liquidity.status === 'measured').length;
 
     if (assessmentCandidates.length > 0) {
       const cryptara = getCryptara();
@@ -339,15 +342,14 @@ class MeasuredOpportunityGraph {
                 ...providerStatuses.map(status => `provider:${status.provider}:${status.state}`),
               ],
             });
-            if (assessment.recommendation === 'consider' && plan.netProfitUsd > 0) {
-              eligibleCandidates++;
-              measuredCandidateRegistry.updateStatus(id, 'eligible', {
-                provenance: [...technicalEvidence.provenance, 'Cryptara:consider', 'monte_carlo:approved_or_complete'],
-              });
-            } else {
-              measuredCandidateRegistry.updateStatus(id, 'blocked', {
-                missingInformation: assessment.missingInformation,
-                provenance: [...technicalEvidence.provenance, `Cryptara:${assessment.recommendation}`],
+            const current = measuredCandidateRegistry.get(id);
+            if (current) {
+              measuredCandidateRegistry.updateStatus(id, current.status, {
+                provenance: [
+                  ...technicalEvidence.provenance,
+                  `Cryptara:advisory_${assessment.recommendation}`,
+                  'advisory_assessment_execution_veto:false',
+                ],
               });
             }
           } catch (error) {
