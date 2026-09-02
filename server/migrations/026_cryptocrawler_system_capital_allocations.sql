@@ -1,0 +1,43 @@
+-- Durable retained/system-capital allocation state.
+-- This is accounting/settlement authority only: Cryptara + Profit Ladder +
+-- governance remain the strategy/notional/execution authorities.
+
+CREATE TABLE IF NOT EXISTS public.cryptocrawler_system_capital_allocations (
+  allocation_id text PRIMARY KEY,
+  idempotency_key text NOT NULL UNIQUE,
+  capital_scope text NOT NULL REFERENCES public.zero_capital_capital_state(scope),
+  opportunity_id text,
+  strategy text NOT NULL,
+  destination_kind text NOT NULL CHECK (destination_kind IN ('cex','onchain_strategy','native_gas','other_strategy')),
+  destination_venue text,
+  source_chain text NOT NULL,
+  source_asset text NOT NULL,
+  source_recipient text NOT NULL,
+  destination_chain text,
+  destination_asset text NOT NULL,
+  amount_base_units numeric(78,0) NOT NULL CHECK (amount_base_units > 0),
+  remaining_base_units numeric(78,0) NOT NULL CHECK (remaining_base_units >= 0 AND remaining_base_units <= amount_base_units),
+  status text NOT NULL CHECK (status IN ('RESERVED','PLACEMENT_PENDING','PLACED','CONSUMED','RELEASED','FAILED')),
+  placement_reference text,
+  placement_evidence jsonb,
+  terminal_reference text,
+  terminal_evidence jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_capital_allocations_scope_status
+  ON public.cryptocrawler_system_capital_allocations(capital_scope, status, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_system_capital_allocations_destination
+  ON public.cryptocrawler_system_capital_allocations(destination_kind, destination_venue, destination_asset, status);
+
+CREATE INDEX IF NOT EXISTS idx_system_capital_allocations_strategy
+  ON public.cryptocrawler_system_capital_allocations(strategy, status, updated_at);
+
+ALTER TABLE public.cryptocrawler_system_capital_allocations ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.cryptocrawler_system_capital_allocations FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_system_capital_allocations TO service_role;
+
+COMMENT ON TABLE public.cryptocrawler_system_capital_allocations IS
+  'Exact base-unit retained/system-capital reservations and settlement-confirmed placements. Does not rank strategies or grant execution authority.';
