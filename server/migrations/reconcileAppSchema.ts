@@ -200,44 +200,63 @@ function finiteIntegerEnv(name: string, fallback: number, min: number, max: numb
 }
 
 /**
+ * Railway PR environments inherit the base environment's variables. When the
+ * database is an external Supabase project, that means a preview can point at the
+ * same primary database as production. Never let those preview boots run DDL.
+ * They are verification-only; production remains the sole startup mutation lane.
+ */
+function startupSchemaMutationAllowed(): boolean {
+  const onRailway = Boolean(
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID ||
+    process.env.RAILWAY_ENVIRONMENT_ID,
+  );
+  if (!onRailway) return true;
+
+  const environmentName = String(
+    process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || '',
+  ).trim().toLowerCase();
+  return environmentName === 'production';
+}
+
+type RollingDeploymentHeadroomState = {
+  options: any;
+  steadyMax: number;
+  originalMin: number;
+  rolloutMax: number;
+  activatedAt: number;
+};
+
+let rollingDeploymentHeadroom: RollingDeploymentHeadroomState | null = null;
+
+/**
  * Railway rolling deploys briefly run two application replicas. Budget the
- * existing shared application Pool together with the dedicated CryptoCrawler
- * session-coordination pools and an explicit control-plane reserve. This keeps
- * the existing single application-pool authority while preventing the overlap
- * window from consuming every Supavisor session slot.
+ * ordinary application pool, dedicated session-coordination pools, and explicit
+ * reserve together. Never expand beyond the canonical pool ceiling selected by
+ * db.ts. The incoming ordinary lane stays hard-capped at one client until
+ * Cryptara owns admission.
  */
 function applyRollingDeploymentPoolHeadroom(): void {
   if (process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_SERVICE_ID) return;
   const options = (pool as any)?.options;
   if (!options) return;
 
-  const existingSteadyMax = Math.max(2, Math.trunc(Number(options.max) || 8));
+  const canonicalSteadyMax = Math.max(1, Math.trunc(Number(options.max) || 1));
   const sessionPoolLimit = finiteIntegerEnv('BADBLUE_DATABASE_SESSION_POOL_LIMIT', 15, 8, 200);
   const reservedSessions = finiteIntegerEnv('BADBLUE_DATABASE_SESSION_RESERVE', 2, 1, Math.max(1, sessionPoolLimit - 4));
   const coordinationPerReplica = finiteIntegerEnv('CRYPTOCRAWL_COORDINATION_POOL_MAX', 2, 1, 4);
 
-  // A default steady pool of six on a 15-session pool leaves enough capacity for
-  // one rolling replica, two coordination lanes per replica, and two spare slots.
-  const safeSteadyDefault = Math.max(2, Math.min(
-    existingSteadyMax,
+  const safeSteadyDefault = Math.max(1, Math.min(
+    canonicalSteadyMax,
     Math.floor((sessionPoolLimit - reservedSessions) / 2),
   ));
   const maximumSteadyWithinBudget = Math.max(
-    2,
+    1,
     sessionPoolLimit - reservedSessions - (2 * coordinationPerReplica) - 1,
   );
-  const requestedSteady = finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', safeSteadyDefault, 2, 12);
-  const steadyMax = Math.min(requestedSteady, maximumSteadyWithinBudget);
-
-  const remainingForIncomingReplica = Math.max(
-    1,
-    sessionPoolLimit - reservedSessions - steadyMax - (2 * coordinationPerReplica),
-  );
-  const safeRolloutDefault = Math.max(1, Math.min(3, remainingForIncomingReplica));
-  const rolloutMax = Math.min(
-    steadyMax,
-    remainingForIncomingReplica,
-    finiteIntegerEnv('BADBLUE_DATABASE_ROLLOUT_POOL_MAX', safeRolloutDefault, 1, 6),
+  const requestedSteadyMax = Math.min(
+    maximumSteadyWithinBudget,
+    finiteIntegerEnv('BADBLUE_DATABASE_POOL_MAX', safeSteadyDefault, 1, canonicalSteadyMax),
   );
   const steadyMax = Math.min(canonicalSteadyMax, requestedSteadyMax);
   const rolloutMax = 1;
@@ -255,7 +274,7 @@ function applyRollingDeploymentPoolHeadroom(): void {
     activatedAt: Date.now(),
   };
 
-  console.log(`[DATABASE] Rolling-deploy admission guard active (rollout max=${rolloutMax}, steady max=${steadyMax}, canonical max=${canonicalSteadyMax}, release=cryptara_worker_installed)`);
+  console.log(`[DATABASE] Rolling-deploy admission guard active (rollout max=${rolloutMax}, steady max=${steadyMax}, canonical max=${canonicalSteadyMax}, sessionLimit=${sessionPoolLimit}, reserved=${reservedSessions}, coordinationPerReplica=${coordinationPerReplica}, release=cryptara_worker_installed)`);
 }
 
 /**
@@ -273,7 +292,19 @@ export function releaseRollingDeploymentPoolHeadroom(reason = 'cryptara_worker_i
   console.log(`[DATABASE] Rolling-deploy admission guard released (reason=${reason}, rollout max=${state.rolloutMax}, steady max=${state.steadyMax}, heldMs=${Date.now() - state.activatedAt})`);
 }
 
-  console.log(`[DATABASE] Rolling-deploy pool headroom active (rollout max=${rolloutMax}, steady max=${steadyMax}, sessionLimit=${sessionPoolLimit}, reserved=${reservedSessions}, coordinationPerReplica=${coordinationPerReplica}, windowMs=${rolloutWindowMs})`);
+export function getRollingDeploymentPoolHeadroomSnapshot(): {
+  active: boolean;
+  rolloutMax: number | null;
+  steadyMax: number | null;
+  heldMs: number;
+} {
+  const state = rollingDeploymentHeadroom;
+  return {
+    active: state !== null,
+    rolloutMax: state?.rolloutMax ?? null,
+    steadyMax: state?.steadyMax ?? null,
+    heldMs: state ? Math.max(0, Date.now() - state.activatedAt) : 0,
+  };
 }
 
 applyRollingDeploymentPoolHeadroom();

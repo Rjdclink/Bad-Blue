@@ -1,19 +1,10 @@
-import pg, { type PoolClient, type QueryResult } from 'pg';
+import type { PoolClient, QueryResult } from 'pg';
 import logger from '../../../logger.js';
-import { getDatabaseUrl } from '../../../config.js';
-import { isDatabaseConfigured } from '../../../db.js';
-
-const { Pool } = pg;
-
-function finiteEnvNumber(name: string, fallback: number, min: number, max: number): number {
-  const parsed = Number(process.env[name]);
-  const value = Number.isFinite(parsed) ? parsed : fallback;
-  return Math.max(min, Math.min(max, value));
-}
-
-function configuredCoordinationUrl(): string {
-  return (process.env.CRYPTOCRAWL_COORDINATION_DATABASE_URL || '').trim() || getDatabaseUrl();
-}
+import {
+  coordinationPool,
+  getCoordinationPoolStats,
+  isDatabaseConfigured,
+} from './cryptocrawl-runtime-database.js';
 
 function databasePort(connectionString: string): number | null {
   try {
@@ -26,62 +17,15 @@ function databasePort(connectionString: string): number | null {
   }
 }
 
-function transactionPoolerUnsupported(connectionString: string): boolean {
-  return databasePort(connectionString) === 6543;
-}
+const coordinationUrl = String((coordinationPool as any)?.options?.connectionString || '').trim();
+const connectionPort = coordinationUrl ? databasePort(coordinationUrl) : null;
+const transactionPoolerUnsupported = connectionPort === 6543;
 
-const coordinationUrl = configuredCoordinationUrl();
 export const isCoordinationDatabaseConfigured = Boolean(
   isDatabaseConfigured
   && coordinationUrl
-  && !transactionPoolerUnsupported(coordinationUrl),
+  && !transactionPoolerUnsupported,
 );
-
-const COORDINATION_POOL_MAX = Math.trunc(finiteEnvNumber(
-  'CRYPTOCRAWL_COORDINATION_POOL_MAX',
-  2,
-  1,
-  4,
-));
-const COORDINATION_CONNECTION_TIMEOUT_MS = Math.trunc(finiteEnvNumber(
-  'CRYPTOCRAWL_COORDINATION_CONNECTION_TIMEOUT_MS',
-  5_000,
-  500,
-  30_000,
-));
-const COORDINATION_IDLE_TIMEOUT_MS = Math.trunc(finiteEnvNumber(
-  'CRYPTOCRAWL_COORDINATION_IDLE_TIMEOUT_MS',
-  10_000,
-  1_000,
-  60_000,
-));
-
-const coordinationPool = new Pool({
-  connectionString: isCoordinationDatabaseConfigured
-    ? coordinationUrl
-    : 'postgresql://127.0.0.1:1/cryptocrawl-coordination-disabled',
-  max: COORDINATION_POOL_MAX,
-  min: 0,
-  connectionTimeoutMillis: isCoordinationDatabaseConfigured ? COORDINATION_CONNECTION_TIMEOUT_MS : 250,
-  idleTimeoutMillis: COORDINATION_IDLE_TIMEOUT_MS,
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 5_000,
-  ssl: process.env.PGSSLMODE !== 'disable' ? {
-    rejectUnauthorized: false,
-    ...(process.env.DATABASE_SSL_CERT ? { ca: process.env.DATABASE_SSL_CERT } : {}),
-  } : false,
-  statement_timeout: 10_000,
-  query_timeout: 10_000,
-  application_name: 'cryptocrawl-coordination',
-});
-
-coordinationPool.on('error', error => {
-  logger.warn('[DatabaseCoordination] Idle coordination client failed', {
-    component: 'DatabaseCoordination',
-    error: error instanceof Error ? error.message : String(error),
-    failClosed: true,
-  });
-});
 
 let invalidModeLogged = false;
 
@@ -89,16 +33,17 @@ function assertCoordinationDatabaseAvailable(): void {
   if (isCoordinationDatabaseConfigured) return;
   if (!invalidModeLogged) {
     invalidModeLogged = true;
-    logger.error('[DatabaseCoordination] Session-capable database lane unavailable', {
+    logger.error('[DatabaseCoordination] Overflow session-capable database lane unavailable', {
       component: 'DatabaseCoordination',
       databaseConfigured: isDatabaseConfigured,
-      connectionPort: coordinationUrl ? databasePort(coordinationUrl) : null,
-      transactionPoolerUnsupported: coordinationUrl ? transactionPoolerUnsupported(coordinationUrl) : false,
-      requiredConnectionMode: 'direct_or_session_pooler',
+      connectionPort,
+      transactionPoolerUnsupported,
+      requiredConnectionMode: 'overflow_direct_or_session_pooler',
+      primaryFallbackUsed: false,
       executionAuthorityGranted: false,
     });
   }
-  throw new Error('CryptoCrawler coordination database requires a direct or session-pooler PostgreSQL connection; transaction pooler port 6543 cannot own session advisory locks');
+  throw new Error('CryptoCrawler Overflow coordination database requires a direct or session-pooler PostgreSQL connection; transaction pooler port 6543 cannot own session advisory locks');
 }
 
 function sleep(ms: number): Promise<void> {
@@ -111,10 +56,9 @@ export interface CoordinationLockOptions {
 }
 
 /**
- * Owns the session-level PostgreSQL lock primitive used by distributed execution
- * authorities. Acquisition is bounded and uses try-lock polling so an overloaded
- * database cannot accumulate an unbounded queue of blocked sessions. The lock is
- * held on one dedicated coordination client for the complete critical section.
+ * Single session-level PostgreSQL lock primitive for every CryptoCrawler runtime
+ * authority. The client comes from the one Overflow coordination pool owned by
+ * cryptocrawl-runtime-database.ts; this module never creates a second pool.
  */
 export async function withDatabaseSessionAdvisoryLock<T>(
   lockName: string,
@@ -137,7 +81,7 @@ export async function withDatabaseSessionAdvisoryLock<T>(
       if (locked) break;
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
-        throw new Error(`Timed out acquiring CryptoCrawler coordination lock after ${acquireTimeoutMs}ms`);
+        throw new Error(`Timed out acquiring CryptoCrawler coordination lock (Overflow authority) after ${acquireTimeoutMs}ms`);
       }
       await sleep(Math.min(retryIntervalMs, remaining));
     }
@@ -170,14 +114,19 @@ export function getDatabaseCoordinationSnapshot(): {
   idle: number;
   waiting: number;
   max: number;
+  authority: 'overflow_runtime_database';
+  primaryFallbackUsed: false;
 } {
+  const stats = getCoordinationPoolStats();
   return {
     configured: isCoordinationDatabaseConfigured,
-    connectionPort: coordinationUrl ? databasePort(coordinationUrl) : null,
-    transactionPoolerUnsupported: coordinationUrl ? transactionPoolerUnsupported(coordinationUrl) : false,
-    total: coordinationPool.totalCount,
-    idle: coordinationPool.idleCount,
-    waiting: coordinationPool.waitingCount,
-    max: COORDINATION_POOL_MAX,
+    connectionPort,
+    transactionPoolerUnsupported,
+    total: stats.total,
+    idle: stats.idle,
+    waiting: stats.waiting,
+    max: stats.max,
+    authority: 'overflow_runtime_database',
+    primaryFallbackUsed: false,
   };
 }

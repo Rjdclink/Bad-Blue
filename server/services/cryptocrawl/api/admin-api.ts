@@ -2,7 +2,7 @@ import express from 'express';
 import {pipeline} from '../integration/master-pipeline';
 import { gasOracle, balanceMonitor, networkHealth } from '../bridge';
 import { zeroCapitalEngine } from '../core/zero-capital-engine';
-import { requireCryptocrawlerAuthoritySchema } from '../../../migrations/reconcileAppSchema.js';
+import { ensureCryptocrawlOverflowRuntimeSchema } from '../runtime/cryptocrawl-overflow-runtime-schema.js';
 import { getCryptocrawlGovernance, initializeGovernance } from '../governance/index.js';
 import { stageManager } from '../governance/stage-management.js';
 import { GovernanceError } from '../governance/types.js';
@@ -442,7 +442,7 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
 
   if (process.env.NODE_ENV === 'production') {
     try {
-      await requireCryptocrawlerAuthoritySchema(2);
+      await ensureCryptocrawlOverflowRuntimeSchema();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       systemState.lastError = message;
@@ -454,7 +454,7 @@ export async function startCryptoCrawlerRuntime(): Promise<CryptoCrawlerStartRes
           error: message,
           lifecycle: systemState.lifecycle,
           executionAuthorityGranted: false,
-          schemaAuthority: 'migration_owned_runtime_start_required',
+          schemaAuthority: 'overflow_migration_owned_runtime_start_required',
         },
       };
     }
@@ -726,8 +726,12 @@ router.post('/emergency', async (req, res) => {
       });
     }
     case 'withdraw_all':
-      // Implement emergency withdrawal
-      return res.json({success: true, message: 'Emergency withdrawal initiated'});
+      return res.status(409).json({
+        success: false,
+        withdrawalInitiated: false,
+        error: 'Manual withdraw_all is not an authoritative payout path. Profitable terminal settlements are paid only through the single governed terminal sweeper/payout lifecycle.',
+        payoutAuthority: 'single_independent_supabase_worker_okx_only',
+      });
     default:
       return res.status(400).json({error: 'Unknown emergency action'});
   }

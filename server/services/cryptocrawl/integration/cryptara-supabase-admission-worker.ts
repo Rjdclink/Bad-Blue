@@ -3,17 +3,20 @@ import pg from 'pg';
 import { getPoolStats, pool } from '../../../db.js';
 
 /**
- * Cryptara-owned resource governor for the ordinary Supabase transaction lane.
+ * Cryptara-owned resource governor for CryptoCrawler database work.
  *
  * Boundary rules:
  * - creates no database pool and consumes no connection by itself;
  * - never touches the session-capable coordination pool;
  * - never grants execution, governance, profitability, or write authority;
  * - queues rather than drops work, so pressure reduction cannot remove capability;
- * - adapts only from measured local pool/acquisition outcomes.
+ * - adapts only from measured local pool/acquisition outcomes;
+ * - the hot Overflow ordinary pool is governed automatically;
+ * - explicit cold-archive work may join the same ranked permit queue without
+ *   registering or globally intercepting the application's Primary pool.
  *
  * The worker gates Pool.connect() for the live exported ordinary pool. Because
- * node-postgres Pool.query() also acquires through Pool.connect(), existing
+ * node-postgres Pool.query() also acquires through Pool.connect(), existing hot
  * callers automatically share one admission surface without invasive rewrites.
  */
 
@@ -463,7 +466,7 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
 }
 
 /**
- * Explicit priority is optional. Existing pool users are governed automatically;
+ * Explicit priority is optional. Existing hot-pool users are governed automatically;
  * critical callers can use this helper without receiving any new DB authority.
  */
 export function withCryptaraSupabasePriority<T>(
@@ -471,6 +474,30 @@ export function withCryptaraSupabasePriority<T>(
   task: () => T,
 ): T {
   return priorityContext.run(priority, task);
+}
+
+/**
+ * Join the same ranked Cryptara admission queue for a deliberately explicit task
+ * that does not use the automatically governed hot pool (for example a Primary
+ * cold-archive query). This does not register or patch the task's underlying pool,
+ * so unrelated application database traffic and session/coordination pools remain
+ * untouched. Work is queued, never dropped.
+ */
+export async function withCryptaraSupabaseAdmission<T>(
+  priority: CryptaraSupabasePriority,
+  task: () => Promise<T> | T,
+): Promise<T> {
+  const permit = await governor.acquire(priority);
+  const startedAt = Date.now();
+  let failure: unknown;
+  try {
+    return await priorityContext.run(priority, task);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    permit.release(failure, Date.now() - startedAt);
+  }
 }
 
 /**

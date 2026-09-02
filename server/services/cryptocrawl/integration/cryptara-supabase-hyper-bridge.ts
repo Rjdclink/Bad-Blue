@@ -20,16 +20,17 @@ import {
 import { runThroughCryptaraOverflowPrimaryGateway } from './cryptara-overflow-primary-gateway.js';
 
 /**
- * HyperBridge is the application-facing information fabric for overflow mode.
+ * HyperBridge is the application-facing information fabric for Overflow mode.
  *
  * Every bridge read follows one path:
- * application -> shared worker coherence -> overflow Supabase -> (only on a real
- * miss) authoritative primary through the overflow-primary gateway.
+ * application -> shared worker coherence -> Overflow hot state. An optional
+ * Primary loader may be supplied only for an explicit cold/archive lookup after a
+ * true Overflow miss; normal live reads do not have a Primary loader.
  *
- * There is no application -> primary branch, no speculative primary hedge, and no
- * primary health/recovery polling. The overflow Super Worker single-flights each
- * key, so simultaneous consumers share one upstream acquisition. Primary remains
- * authoritative; bridge/overflow/workers own transport, reuse and deduplication.
+ * There is no application -> Primary branch, no speculative Primary hedge, and no
+ * Primary health/recovery polling. The Overflow Super Worker single-flights each
+ * key, so simultaneous consumers share one upstream acquisition. Overflow owns
+ * hot runtime/control state; Primary is cold archive memory only.
  */
 
 export type CryptaraHyperBridgePersistedTarget = 'overflow' | 'primary_fallback';
@@ -60,11 +61,11 @@ export interface CryptaraHyperBridgeReadInput<T> {
   key: string;
   workload: CryptaraParallelProxyWorkload;
   topic: string;
-  /** Authoritative upstream loader. HyperBridge never invokes this directly. */
-  primary: () => Promise<T | null>;
+  /** Optional cold/archive loader. HyperBridge never invokes this directly. */
+  primary?: () => Promise<T | null>;
   overflow: () => Promise<T | null>;
   isUsable?: (value: T | null) => boolean;
-  /** Kept for compatibility; overflow remains the application-facing lane. */
+  /** Kept for compatibility; Overflow remains the application-facing lane. */
   normalPreference?: CryptaraHyperBridgeReadPreference;
   /** Maximum local worker-to-worker reuse window for this derived value. */
   sharedFreshForMs?: number;
@@ -110,7 +111,7 @@ const MAX_SHARED_FRESH_MS = 5_000;
 const EWMA_ALPHA = 0.20;
 
 const laneTelemetry: Record<'primary' | 'overflow', LaneTelemetry> = {
-  // Direct bridge-to-primary is structurally disabled; retained for snapshot API compatibility.
+  // Direct bridge-to-Primary is structurally disabled; retained for snapshot API compatibility.
   primary: { attempts: 0, wins: 0, failures: 0, ewmaLatencyMs: 0 },
   overflow: { attempts: 0, wins: 0, failures: 0, ewmaLatencyMs: 0 },
 };
@@ -253,7 +254,7 @@ async function runOverflowWorkerLane<T>(
 }
 
 /**
- * Record that the exact overflow key was successfully persisted/read and remains
+ * Record that the exact Overflow key was successfully persisted/read and remains
  * semantically reusable until expiresAt. This directory is local only and bounded;
  * it never becomes durable truth or an execution authority.
  */
@@ -315,9 +316,9 @@ function notePersistedSnapshotFresh(entry: SnapshotQueueEntry): void {
 }
 
 /**
- * Every read enters the overflow worker. That worker checks shared coherence and
- * overflow first, then performs at most one single-flight primary upstream load on
- * a real miss. No direct bridge-to-primary lane exists in either normal or comp.
+ * Every read enters the Overflow worker. That worker checks shared coherence and
+ * Overflow first. A Primary upstream loader exists only when the caller explicitly
+ * requested a cold/archive lookup; otherwise a live miss remains a miss.
  */
 export async function readCryptaraHyperBridge<T>(
   input: CryptaraHyperBridgeReadInput<T>,
@@ -413,8 +414,9 @@ async function persistEventBatch(entries: EventQueueEntry[]): Promise<void> {
     lastFailure = error instanceof Error ? error.message : String(error);
   }
 
-  // Fallback is deliberately sequential and still enters primary only through the
-  // overflow-primary gateway, so an auxiliary failure cannot create direct DB work.
+  // Compatibility fallback is deliberately sequential and still enters Primary
+  // only through the Overflow/Bridge gateway. New hot-state publishers should not
+  // configure it; explicit archive retention uses the Primary archive worker.
   for (const entry of entries) {
     try {
       if (await persistFallback(entry)) continue;
@@ -512,8 +514,10 @@ export function getCryptaraHyperBridgeSnapshot() {
   return {
     role: 'supabase_hyper_bridge' as const,
     baseOfOperations: 'cryptara_local_shared_information_fabric' as const,
-    routing: 'application_to_shared_worker_to_overflow_then_primary_gateway_on_miss' as const,
-    authority: 'auxiliary_transport_only' as const,
+    routing: 'application_to_shared_worker_to_overflow_then_explicit_primary_archive_on_miss' as const,
+    authority: 'transport_only' as const,
+    hotRuntimeAuthority: 'overflow' as const,
+    primaryRole: 'cold_archive_only' as const,
     writeAuthority: false as const,
     executionAuthority: false as const,
     financialAuthorityAllowed: false as const,
@@ -545,6 +549,7 @@ export function getCryptaraHyperBridgeSnapshot() {
       primary: {
         ...laneTelemetry.primary,
         direct: false as const,
+        role: 'archive_only' as const,
         ewmaLatencyMs: Number(laneTelemetry.primary.ewmaLatencyMs.toFixed(2)),
       },
       overflow: {

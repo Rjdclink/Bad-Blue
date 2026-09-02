@@ -3,6 +3,10 @@ import type { PoolClient } from 'pg';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured } from '../../../db.js';
 import {
+  acquireDistributedApiQuota,
+  getDistributedApiQuotaSnapshot,
+} from '../execution/distributed-api-quota.js';
+import {
   isCoordinationDatabaseConfigured,
   queryCoordinationDatabase,
   withDatabaseSessionAdvisoryLock,

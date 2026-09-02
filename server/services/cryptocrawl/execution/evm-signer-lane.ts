@@ -1,4 +1,5 @@
-import { isDatabaseConfigured } from '../../../db.js';
+import type { PoolClient } from 'pg';
+import { isDatabaseConfigured } from '../runtime/cryptocrawl-runtime-database.js';
 import { withDatabaseSessionAdvisoryLock } from '../runtime/database-coordination.js';
 
 const localTails = new Map<string, Promise<void>>();
@@ -67,7 +68,7 @@ async function acquireDistributedSignerLock(client: PoolClient, key: string): Pr
 
 /**
  * One EVM account on one chain is one nonce-ordering domain. The canonical
- * coordination lane owns the bounded session advisory lock across nonce
+ * Overflow coordination lane owns the bounded session advisory lock across nonce
  * observation, signing and physical submission. No durable nonce is reserved
  * before broadcast, so crash recovery cannot manufacture an artificial gap.
  */

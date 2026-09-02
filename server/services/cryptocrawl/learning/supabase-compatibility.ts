@@ -35,39 +35,36 @@ function deriveProjectUrl(databaseUrl: string | null): string | null {
 }
 
 /**
- * The canonical CryptoCrawler learning authority persists through PostgreSQL.
- * DeepLearningStore is a legacy/optional Supabase-js mirror. Normalize the
- * server-side Supabase aliases before that legacy module is evaluated so it can
- * reuse already-provisioned backend credentials instead of falsely reporting
- * that the whole learning system is memory-only.
+ * The canonical CryptoCrawler learning authority persists through the dedicated
+ * Overflow PostgreSQL plane. DeepLearningStore is a legacy/optional Supabase-js
+ * mirror; normalize it to the Overflow project before that legacy module is
+ * evaluated so no learning path silently binds itself back to Primary.
  */
 export function normalizeLegacySupabaseLearningEnvironment(): void {
-  const existingUrl = clean(process.env.SUPABASE_URL);
-  const url = existingUrl
-    || clean(process.env.PUBLIC_SUPABASE_URL)
-    || clean(process.env.VITE_SUPABASE_URL)
-    || clean(process.env.NEXT_PUBLIC_SUPABASE_URL)
-    || deriveProjectUrl(clean(process.env.SUPABASE_DATABASE_URL));
+  const overflowDatabaseUrl = clean(process.env.SUPABASE_DATABASE_URL_OVERFLOW);
+  const existingUrl = clean(process.env.SUPABASE_URL_OVERFLOW);
+  const url = existingUrl || deriveProjectUrl(overflowDatabaseUrl);
 
-  const existingAnon = clean(process.env.SUPABASE_ANON_KEY);
-  const serviceRole = clean(process.env.SUPABASE_SERVICE_ROLE_KEY)
-    || clean(process.env.SUPABASE_SERVICE_KEY);
-  const key = existingAnon || serviceRole;
+  const publishableKey = clean(process.env.SUPABASE_PUBLISHABLE_KEY_OVERFLOW);
+  const secretKey = clean(process.env.SUPABASE_SECRET_KEY_OVERFLOW);
+  const key = publishableKey || secretKey;
 
-  if (!existingUrl && url) process.env.SUPABASE_URL = url;
-  if (!existingAnon && key) process.env.SUPABASE_ANON_KEY = key;
+  // These generic aliases are process-local compatibility inputs consumed by the
+  // legacy mirror only. Their source of truth is always the Overflow variables.
+  if (url) process.env.SUPABASE_URL = url;
+  if (key) process.env.SUPABASE_ANON_KEY = key;
 
-  logger.info('[LearningPersistence] Legacy Supabase-js mirror environment normalized', {
+  logger.info('[LearningPersistence] Legacy Supabase-js mirror environment normalized to Overflow', {
     component: 'SupabaseLearningCompatibility',
-    canonicalLearningPersistence: clean(process.env.SUPABASE_DATABASE_URL) ? 'postgresql' : 'not_configured',
-    legacyMirrorUrlAvailable: Boolean(process.env.SUPABASE_URL),
-    legacyMirrorKeyAvailable: Boolean(process.env.SUPABASE_ANON_KEY),
-    legacyMirrorCredentialSource: existingAnon
-      ? 'anon_key'
-      : serviceRole
-        ? 'server_service_key'
+    canonicalLearningPersistence: overflowDatabaseUrl ? 'overflow_postgresql' : 'not_configured',
+    legacyMirrorUrlAvailable: Boolean(url),
+    legacyMirrorKeyAvailable: Boolean(key),
+    legacyMirrorCredentialSource: publishableKey
+      ? 'overflow_publishable_key'
+      : secretKey
+        ? 'overflow_secret_key'
         : 'none',
-    databaseUrlUsedOnlyForProjectUrlDerivation: !existingUrl && Boolean(url),
+    primaryCredentialFallbackUsed: false,
     secretValuesLogged: false,
   });
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isDatabaseConfigured, pool } from '../../../db.js';
+import { isDatabaseConfigured, pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import {
   getCryptaraSupabaseCompSwitchSnapshot,
@@ -57,9 +57,9 @@ function quotaRetryDelayMs(baseMs: number, remainingMs: number): number {
 
 /**
  * Claims one cluster-wide request slot for a sliding-window-like API quota using
- * the existing migration-owned resource-lease table. All lease users share one
+ * the migration-owned Overflow resource-lease table. All lease users share one
  * schema/function readiness cache, so quota admission cannot duplicate the same
- * Supabase readiness probe already performed by CEX or zero-capital execution.
+ * readiness probe already performed by CEX or zero-capital execution.
  */
 export async function acquireDistributedApiQuota(input: {
   namespace: string;
@@ -85,8 +85,6 @@ export async function acquireDistributedApiQuota(input: {
   while (Date.now() < deadline) {
     const client = await withCryptaraSupabasePriority('high', () => pool.connect());
     let claimed = false;
-    // A fair local approximation is always available. Healthy mode can replace it
-    // with the exact earliest expiry; comp mode intentionally saves that second read.
     let waitMs = Math.max(25, Math.ceil(windowMs / capacity));
     try {
       await client.query('BEGIN');

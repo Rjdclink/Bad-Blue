@@ -24,6 +24,7 @@ function forbidFile(relativePath, description) {
 }
 
 const db = read('server/db.ts');
+const coordination = read('server/services/cryptocrawl/runtime/database-coordination.ts');
 const privateAuthority = read('server/services/cryptocrawl/intelligence/cex-private-authority.ts');
 const coinbasePrivate = read('server/services/cryptocrawl/intelligence/coinbase-advanced-trade-authority.ts');
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
@@ -85,11 +86,11 @@ requirePattern(leaseAuthority, /to_regprocedure\('private\.cryptocrawler_claim_r
 requirePattern(leaseAuthority, /export\s+async\s+function\s+claimResourceSlot\s*\(/, 'shared lease authority owns the one-call slot claimant');
 
 // Solution 3 — Kraken ordering, OKX User-ID quota, Coinbase private resilience.
-requirePattern(privateAuthority, /coordinationPool\.query\([\s\S]{0,220}cryptocrawler_kraken_nonce_state/, 'Kraken nonce state is verified through coordination lane');
-requirePattern(privateAuthority, /client\s*=\s*await\s+coordinationPool\.connect\(\)/, 'Kraken session advisory lock consumes only coordination capacity');
-requirePattern(privateAuthority, /pg_try_advisory_lock\(hashtext\(\$1\)\)/, 'Kraken advisory acquisition is non-blocking at PostgreSQL');
-requirePattern(privateAuthority, /CRYPTO_KRAKEN_LOCK_MAX_WAIT_MS/, 'Kraken cross-replica contention wait is bounded');
-requirePattern(privateAuthority, /krakenLockTimeoutCount/, 'Kraken bounded lock contention is observable');
+requirePattern(privateAuthority, /queryCoordinationDatabase\([\s\S]{0,220}cryptocrawler_kraken_nonce_state/, 'Kraken nonce state is verified through canonical coordination lane');
+requirePattern(privateAuthority, /withDatabaseSessionAdvisoryLock\(lockName/, 'Kraken session advisory lock uses canonical coordination capacity');
+requirePattern(coordination, /pg_try_advisory_lock\(hashtextextended\(\$1,\s*0\)\)/, 'Kraken advisory acquisition is non-blocking at PostgreSQL through canonical coordination');
+requirePattern(privateAuthority, /CRYPTO_KRAKEN_LOCK_ACQUIRE_TIMEOUT_MS/, 'Kraken cross-replica contention wait is bounded');
+requirePattern(coordination, /Timed out acquiring CryptoCrawler coordination lock/, 'Kraken bounded lock contention fails closed through canonical coordination authority');
 forbidPattern(privateAuthority, /SELECT\s+pg_advisory_lock\(/, 'Kraken creates a blocking advisory-lock wait queue');
 forbidPattern(privateAuthority, /CREATE\s+SCHEMA\s+IF\s+NOT\s+EXISTS/i, 'Kraken runtime creates schemas');
 forbidPattern(privateAuthority, /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS/i, 'Kraken runtime creates nonce tables');
@@ -102,10 +103,10 @@ requirePattern(distributedQuota, /claimResourceSlot\(client,\s*\{/, 'distributed
 forbidPattern(distributedQuota, /tableProbeInFlight|tableReadyUntil|tableRetryAfter|to_regclass\(/, 'distributed quota reintroduces a duplicate lease readiness cache/probe');
 requirePattern(hotPathMigration, /WHERE\s+leases\.expires_at\s*<=\s*now\(\)/, 'expired quota/resource slots remain atomically reclaimable in the migration-owned claimant');
 forbidPattern(distributedQuota, /CREATE\s+(TABLE|SCHEMA)/i, 'distributed quota creates runtime schema');
-requirePattern(evmSigner, /coordinationPool\.connect\(\)/, 'EVM signer uses coordination pool');
-requirePattern(evmSigner, /pg_try_advisory_lock\(hashtext\(\$1\)\)/, 'EVM signer advisory acquisition is non-blocking at PostgreSQL');
-requirePattern(evmSigner, /CRYPTOCRAWL_EVM_SIGNER_LOCK_MAX_WAIT_MS/, 'EVM signer cross-replica contention wait is bounded');
-requirePattern(evmSigner, /distributedLockTimeoutCount/, 'EVM signer lock contention is observable');
+requirePattern(evmSigner, /withDatabaseSessionAdvisoryLock/, 'EVM signer uses canonical coordination authority');
+requirePattern(coordination, /pg_try_advisory_lock\(hashtextextended\(\$1,\s*0\)\)/, 'EVM signer advisory acquisition is non-blocking at PostgreSQL through canonical coordination');
+requirePattern(evmSigner, /CRYPTO_EVM_SIGNER_LOCK_TIMEOUT_MS/, 'EVM signer cross-replica contention wait is bounded');
+requirePattern(coordination, /Timed out acquiring CryptoCrawler coordination lock/, 'EVM signer bounded lock contention fails closed through canonical coordination authority');
 forbidPattern(evmSigner, /SELECT\s+pg_advisory_lock\(/, 'EVM signer creates a blocking advisory-lock wait queue');
 forbidPattern(evmSigner, /\bpool\.connect\(\)/, 'EVM signer consumes ordinary query pool');
 requirePattern(coinbasePrivate, /response\.status\s*===\s*429/, 'Coinbase private authority handles HTTP 429 explicitly');
@@ -204,7 +205,7 @@ requirePattern(canonicalScheduler, /measuredTopologyExecutionAdapter\.dispatch/,
 forbidFile('server/services/cryptocrawl/execution/measured-topology-execution-scheduler.ts', 'duplicate topology scheduler exists');
 
 // Analysis/reference frameworks must never become runtime architecture.
-for (const [name, source] of Object.entries({ db, privateAuthority, coinbasePrivate, feeResolver, productPolicy, arbitrageVerifier, evmSigner, distributedQuota, resources, zeroResources, leaseAuthority, makerDiscovery, makerAdmission, marginal, hyperdynamic, mesh, universe, marketFocus, reactor, dexDiscovery, dexExecutor, dexAdapter, discoveryController, canonicalScheduler, adaptiveProfit, residualReplan })) {
+for (const [name, source] of Object.entries({ db, coordination, privateAuthority, coinbasePrivate, feeResolver, productPolicy, arbitrageVerifier, evmSigner, distributedQuota, resources, zeroResources, leaseAuthority, makerDiscovery, makerAdmission, marginal, hyperdynamic, mesh, universe, marketFocus, reactor, dexDiscovery, dexExecutor, dexAdapter, discoveryController, canonicalScheduler, adaptiveProfit, residualReplan })) {
   forbidPattern(source, /\bhyperscope\b/i, `${name} embeds Hyperscope reference vocabulary into runtime code`);
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds the enhancements list into runtime code`);
 }

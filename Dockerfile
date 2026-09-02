@@ -28,18 +28,13 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Build application (requires dev dependencies). The normal build first proves the
-# source tree. Then overwrite only the production server entry with the Cryptara-
-# first wrapper so rollout headroom + admission control exist before SELECT 1.
+# Build application (requires dev dependencies). The normal build proves the full
+# source tree. The deployed server bundle is then rebuilt through the mandatory
+# CryptoCrawler Overflow authority router so every reachable CryptoCrawler import
+# of server/db resolves to Overflow and canonical runtime install requires the
+# complete Overflow schema proof.
 RUN npm run build && \
-    npx esbuild server/cryptara-bootstrap-entry.ts \
-      --bundle \
-      --platform=node \
-      --target=node20 \
-      --outfile=dist/index.js \
-      --format=esm \
-      --packages=external \
-      --define:process.env.NODE_ENV="'production'" && \
+    node scripts/cryptocrawl/build-server-overflow-authority.mjs server/cryptara-bootstrap-entry.ts dist/index.js && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
 
@@ -79,18 +74,36 @@ RUN rm -rf node_modules || true && \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 
-# CryptoCrawler runtime DDL remains migration-owned. The runtime image must carry
-# every startup-owned idempotent CryptoCrawler migration because the production
-# stage intentionally does not copy the TypeScript source tree.
+# CryptoCrawler Overflow is a complete runtime authority plane. Bundle every
+# idempotent state/schema migration required by runtime execution, governance,
+# learning, settlement and payout state. 016 is intentionally omitted because it
+# installs pg_cron/pg_net and an active external payout scheduler; mirroring state
+# must never create a second independent transaction scheduler.
+COPY --from=builder /app/server/migrations/007_zero_capital_execution_ledger.sql ./dist/migrations/007_zero_capital_execution_ledger.sql
+COPY --from=builder /app/server/migrations/008_zero_capital_capital_provenance.sql ./dist/migrations/008_zero_capital_capital_provenance.sql
+COPY --from=builder /app/server/migrations/009_railway_bootstrap_budget.sql ./dist/migrations/009_railway_bootstrap_budget.sql
+COPY --from=builder /app/server/migrations/010_cryptocrawl_governance_state.sql ./dist/migrations/010_cryptocrawl_governance_state.sql
+COPY --from=builder /app/server/migrations/011_zero_capital_native_gas_funding.sql ./dist/migrations/011_zero_capital_native_gas_funding.sql
+COPY --from=builder /app/server/migrations/012_zero_capital_profit_recipient_proof.sql ./dist/migrations/012_zero_capital_profit_recipient_proof.sql
+COPY --from=builder /app/server/migrations/013_cryptocrawler_private_intelligence_memory.sql ./dist/migrations/013_cryptocrawler_private_intelligence_memory.sql
+COPY --from=builder /app/server/migrations/014_cryptocrawler_private_outbox.sql ./dist/migrations/014_cryptocrawler_private_outbox.sql
+COPY --from=builder /app/server/migrations/015_cryptocrawler_terminal_treasury_sweep.sql ./dist/migrations/015_cryptocrawler_terminal_treasury_sweep.sql
+COPY --from=builder /app/server/migrations/017_cryptocrawler_terminal_sweep_truth_guard.sql ./dist/migrations/017_cryptocrawler_terminal_sweep_truth_guard.sql
+COPY --from=builder /app/server/migrations/018_cryptocrawler_profit_split_eth_payout.sql ./dist/migrations/018_cryptocrawler_profit_split_eth_payout.sql
+COPY --from=builder /app/server/migrations/019_cryptocrawler_dynamic_payout_strategy.sql ./dist/migrations/019_cryptocrawler_dynamic_payout_strategy.sql
+COPY --from=builder /app/server/migrations/020_cryptocrawler_trade_safe_payout_liquidity.sql ./dist/migrations/020_cryptocrawler_trade_safe_payout_liquidity.sql
+COPY --from=builder /app/server/migrations/021_cryptocrawler_inventory_access_hardening.sql ./dist/migrations/021_cryptocrawler_inventory_access_hardening.sql
+COPY --from=builder /app/server/migrations/022_cryptocrawler_payout_destination_fallback.sql ./dist/migrations/022_cryptocrawler_payout_destination_fallback.sql
 COPY --from=builder /app/server/migrations/023_cryptocrawler_hot_path_schema_authority.sql ./dist/migrations/023_cryptocrawler_hot_path_schema_authority.sql
 COPY --from=builder /app/server/migrations/024_cryptocrawler_funding_lifecycle.sql ./dist/migrations/024_cryptocrawler_funding_lifecycle.sql
 COPY --from=builder /app/server/migrations/025_cryptocrawler_rainbow_source_ledger.sql ./dist/migrations/025_cryptocrawler_rainbow_source_ledger.sql
 
-# Optional secondary-Supabase migrations are bundled for explicit provisioning of
-# that separate project later. Runtime only verifies their objects and never runs
-# DDL against the auxiliary database.
+# Overflow-only prerequisites complete migration gaps found by the repository-wide
+# authority audit without enabling duplicate schedulers or browser/API access.
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
+COPY --from=builder /app/server/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql ./dist/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql
+COPY --from=builder /app/server/migrations/overflow/004_cryptocrawler_terminal_support.sql ./dist/migrations/overflow/004_cryptocrawler_terminal_support.sql
 
 # Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts

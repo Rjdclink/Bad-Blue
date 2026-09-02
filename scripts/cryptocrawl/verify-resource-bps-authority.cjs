@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, '..', '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const exists = relative => fs.existsSync(path.join(root, relative));
 
+const runtimeDb = read('server/services/cryptocrawl/runtime/cryptocrawl-runtime-database.ts');
 const coordination = read('server/services/cryptocrawl/runtime/database-coordination.ts');
 const cexPrivate = read('server/services/cryptocrawl/intelligence/cex-private-authority.ts');
 const evmSigner = read('server/services/cryptocrawl/execution/evm-signer-lane.ts');
@@ -18,13 +19,13 @@ const marketUniverse = read('server/services/cryptocrawl/discovery/market-univer
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
 const railwayExample = read('.env.railway.example');
 
-// Session-level ownership must live on a dedicated bounded lane, never the
-// transaction pooler or an unbounded blocking advisory lock.
-assert(coordination.includes('CRYPTOCRAWL_COORDINATION_POOL_MAX'), 'coordination pool must be explicitly bounded');
-assert(coordination.includes("databasePort(connectionString) === 6543"), 'transaction-pooler port must be rejected for session advisory locks');
+// Session-level ownership must live on the single dedicated Overflow runtime lane,
+// never the transaction pooler or an unbounded blocking advisory lock.
+assert(runtimeDb.includes('CRYPTOCRAWL_OVERFLOW_COORDINATION_POOL_MAX') && runtimeDb.includes('CRYPTOCRAWL_COORDINATION_POOL_MAX'), 'Overflow coordination pool must be explicitly bounded at its canonical owner');
+assert(runtimeDb.includes('coordinationUsesTransactionPool') && runtimeDb.includes('transaction pool port 6543 is not allowed'), 'transaction-pooler port must be rejected for Overflow session advisory locks');
 assert(coordination.includes('pg_try_advisory_lock(hashtextextended($1, 0))'), 'coordination must use bounded try-lock acquisition with a 64-bit key');
 assert(coordination.includes('Timed out acquiring CryptoCrawler coordination lock'), 'coordination lock wait must be bounded');
-assert(coordination.includes('DATABASE_SSL_CERT'), 'coordination TLS must retain the canonical custom CA path');
+assert(runtimeDb.includes('DATABASE_SSL_CERT'), 'Overflow coordination TLS must retain the canonical custom CA path');
 
 // Kraken schema is migration-owned; runtime verifies instead of performing DDL.
 assert(hotPathMigration.includes('private.cryptocrawler_kraken_nonce_state'), 'Kraken durable nonce state must remain migration-owned');
@@ -45,6 +46,8 @@ assert(cexPrivate.includes('distributedTradeFeePacing'), 'OKX distributed fee pa
 assert(cexPrivate.includes('OKX_REPLICA_SAFETY_FACTOR'), 'OKX fee lane must have a conservative fail-safe when coordination is unavailable');
 assert(cexPrivate.includes("if (!isDatabaseConfigured) return OKX_FEE_MIN_INTERVAL_MS"), 'no-database tests/dev must retain the original bounded local fee cadence');
 assert(cexPrivate.includes("lane !== 'trade_fee' || !isCoordinationDatabaseConfigured"), 'non-fee OKX lanes must remain independent from fee coordination');
+assert(cexPrivate.includes("from '../execution/distributed-api-quota.js'"), 'OKX private authority must bind the distributed quota module it references');
+assert(cexPrivate.includes('acquireDistributedApiQuota') && cexPrivate.includes('getDistributedApiQuotaSnapshot'), 'OKX distributed quota identifiers must be statically bound so observability cannot crash runtime');
 
 // The existing rolling-deploy pool authority must budget application sessions,
 // coordination sessions and reserve headroom together instead of creating a second governor.
@@ -75,13 +78,13 @@ assert(railwayExample.includes('NEVER point CRYPTOCRAWL_COORDINATION_DATABASE_UR
 assert(feeResolver.includes('const feeInFlight = new Map'), 'canonical fee resolver must retain single-flight requests');
 assert(feeResolver.includes('const feeCache = new Map'), 'canonical fee resolver must retain shared process cache');
 
-// The existing BPS optimizer already consumes maker savings. Four-mode economics
-// must now publish the exact authenticated TT -> maker/hybrid fee reduction while
-// retaining the pre-existing primary mode ordering.
+// Four-mode economics publishes the canonical maker savings surface. The adaptive
+// policy predates that field and already consumes the same authenticated TT
+// baseline through measuredMakerSavings; preserve that working behavior here.
 assert(fourMode.includes('makerFeeSavingsVsTakerBps'), 'four-mode economics must publish measured maker BPS savings');
 assert(fourMode.includes('ttCombinedFeeBps - combinedFeeBps'), 'maker BPS savings must be computed against the same venue-pair TT fee baseline');
 assert(fourMode.includes('return left.bpsToBreakEven - right.bpsToBreakEven\n    || left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven'), 'maker-savings activation must not replace the original primary Four-Mode break-even ordering');
-assert(adaptivePolicy.includes('makerFeeSavingsVsTakerBps'), 'adaptive profitability policy must consume measured maker savings');
+assert(adaptivePolicy.includes('function measuredMakerSavings') && adaptivePolicy.includes('takerFeeByRoute(input.latestModes)') && adaptivePolicy.includes('makerSavingsBoost'), 'adaptive profitability policy must consume measured authenticated TT-to-maker savings');
 
 // Market ordering may use current measured BPS recovery and provider quality only
 // as advisory priority. Rotation/exploration and execution authority stay separate.

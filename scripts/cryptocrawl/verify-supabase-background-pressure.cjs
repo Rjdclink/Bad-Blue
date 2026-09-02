@@ -12,6 +12,8 @@ const forbidPattern = (source, pattern, description) => {
 
 const rainbow = read('server/services/cryptocrawl/compensation/rainbow-profit-observability.ts');
 const rainbowSource = read('server/services/cryptocrawl/compensation/rainbow-profit-source-ledger.ts');
+const primaryArchiveWorker = read('server/services/cryptocrawl/integration/cryptara-primary-archive-worker.ts');
+const admissionWorker = read('server/services/cryptocrawl/integration/cryptara-supabase-admission-worker.ts');
 const outbox = read('server/services/cryptocrawl/intelligence/canonical-intelligence-outbox.ts');
 const treasury = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
 const outboxMigration = read('server/migrations/014_cryptocrawler_private_outbox.sql');
@@ -27,7 +29,18 @@ forbidPattern(rainbow, /setInterval\s*\(/, 'Rainbow observability must not sched
 requirePattern(rainbow, /setTimeout\s*\([\s\S]{0,500}refreshAndSchedule/, 'Rainbow uses completion-aware one-shot scheduling');
 requirePattern(rainbow, /policy\.observabilityMultiplier/, 'Rainbow cadence follows comp-mode pressure policy');
 
-requirePattern(rainbowSource, /withCryptaraSupabasePriority\('low'/, 'Rainbow source metadata uses low-priority Cryptara admission');
+// Hot Rainbow source metadata lives on Overflow. The ledger itself must not own
+// database admission. Its explicit cold-archive path delegates to the sole
+// Primary archive worker, which joins the same Cryptara permit queue at LOW rank.
+// This keeps Primary archive work behind COMP without reopening a generic Primary
+// pool path or creating another governor.
+forbidPattern(rainbowSource, /withCryptaraSupabasePriority|withCryptaraSupabaseAdmission/, 'Rainbow source ledger must not own a second admission path');
+requirePattern(rainbowSource, /queryCryptaraPrimaryArchive/, 'Rainbow source metadata delegates historical persistence/lookups to the Primary archive worker');
+requirePattern(primaryArchiveWorker, /withCryptaraSupabaseAdmission\('low'/, 'Primary archive worker uses low-priority Cryptara admission');
+requirePattern(primaryArchiveWorker, /runThroughCryptaraOverflowPrimaryGateway/, 'Primary archive worker remains behind the Bridge gateway');
+requirePattern(primaryArchiveWorker, /compGoverned:\s*true/, 'Primary archive worker declares COMP governance');
+requirePattern(admissionWorker, /export async function withCryptaraSupabaseAdmission/, 'shared explicit admission primitive exists for cold archive work');
+requirePattern(admissionWorker, /const permit = await governor\.acquire\(priority\)/, 'explicit archive admission consumes the existing ranked permit queue');
 forbidPattern(rainbowSource, /CREATE\s+(?:SCHEMA|TABLE|INDEX)/i, 'Rainbow source metadata performs runtime DDL');
 requirePattern(rainbowSourceMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_rainbow_profit_sources/i, 'Rainbow source schema is migration-owned');
 
@@ -58,4 +71,4 @@ requirePattern(intelligenceMigration, /private\.cryptara_trade_outcomes/i, 'Trad
 requirePattern(treasuryMigration, /cryptocrawler_terminal_sweep_control/i, 'Treasury lifecycle control remains migration-owned');
 requirePattern(profitMigration, /cryptocrawler_rainbow_profit_events/i, 'Rainbow profit storage remains migration-owned');
 
-console.log('[supabase-background-pressure] adaptive comp-mode cadence, migration-owned Rainbow source metadata, one-roundtrip validated enqueue, safe batched claims, atomic learning completion, collapsed observability/treasury round trips, priority separation, jitter, and migration ownership verified');
+console.log('[supabase-background-pressure] adaptive comp-mode cadence, LOW-ranked COMP-governed Primary archive metadata, migration-owned Rainbow source schema, one-roundtrip validated enqueue, safe batched claims, atomic learning completion, collapsed observability/treasury round trips, priority separation, jitter, and migration ownership verified');

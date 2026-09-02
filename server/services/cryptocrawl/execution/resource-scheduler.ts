@@ -5,7 +5,7 @@ import {
   getPoolStats,
   isDatabaseConfigured,
   pool,
-} from '../../../db.js';
+} from '../runtime/cryptocrawl-runtime-database.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import {
@@ -211,9 +211,10 @@ class ExecutionResourceScheduler {
       return acquired;
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch { /* ignore rollback failure */ }
-      logger.error('[ResourceScheduler] Distributed resource acquisition failed closed', {
+      logger.error('[ResourceScheduler] Overflow distributed resource acquisition failed closed', {
         component: 'ExecutionResourceScheduler',
         opportunityId,
+        primaryFallbackUsed: false,
         error: error instanceof Error ? error.message : String(error),
       });
       return null;
@@ -243,7 +244,7 @@ class ExecutionResourceScheduler {
     const hardForPlan = (ordinary.waiting > 0 && ordinary.idle === 0)
       || (needsCoordination && coordination.waiting > 0 && coordination.idle === 0);
     if (hardForPlan) {
-      logger.warn('[ResourceScheduler] New execution admission deferred under hard database pressure', {
+      logger.warn('[ResourceScheduler] New execution admission deferred under hard Overflow database pressure', {
         component: 'ExecutionResourceScheduler',
         opportunityId,
         pressure,

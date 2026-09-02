@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import logger from '../../../logger.js';
-import { isDatabaseConfigured, pool } from '../../../db.js';
+import { isDatabaseConfigured, pool } from '../runtime/cryptocrawl-runtime-database.js';
 import {
   enqueueCryptaraHyperBridgeSnapshot,
   noteCryptaraHyperBridgeReplicaFresh,
@@ -137,7 +137,7 @@ class RainbowProfitObservability {
     });
   }
 
-  private async readPrimarySnapshot(): Promise<RainbowProfitSnapshot | null> {
+  private async readOverflowAuthoritySnapshot(): Promise<RainbowProfitSnapshot | null> {
     if (!isDatabaseConfigured) return null;
     const result = await withCryptaraSupabasePriority('low', () => pool.query(`
       WITH summary AS (
@@ -216,17 +216,16 @@ class RainbowProfitObservability {
   }
 
   private async refreshOnce(): Promise<RainbowProfitSnapshot | null> {
-    // Observability is non-authoritative. Normal mode preserves the established
-    // primary aggregate. Under pressure the HyperBridge uses a known-fresh overflow
-    // mirror directly; while mirror freshness is unknown it starts both existing
-    // lanes together so an overflow miss cannot become a serial latency hop.
+    // Payout/settlement observability is hot runtime state. It may use the bounded
+    // Overflow artifact replica first, but a miss resolves only against the
+    // canonical Overflow runtime database. Primary is cold/archive memory and is
+    // never a live payout/settlement fallback.
     try {
       const bridged = await readCryptaraHyperBridge<RainbowProfitSnapshot>({
         key: PARALLEL_PROXY_KEY,
         workload: 'observability',
         topic: PARALLEL_PROXY_TOPIC,
-        primary: () => this.readPrimarySnapshot(),
-        overflow: () => this.readParallelSnapshot(),
+        overflow: async () => (await this.readParallelSnapshot()) ?? this.readOverflowAuthoritySnapshot(),
         isUsable: snapshot => Boolean(snapshot && Number.isFinite(snapshot.observedAt)),
       });
       const snapshot = bridged.value;

@@ -1,5 +1,5 @@
 import logger from '../../../logger.js';
-import { isDatabaseConfigured, pool } from '../../../db.js';
+import { isDatabaseConfigured, pool } from '../runtime/cryptocrawl-runtime-database.js';
 import {
   withCryptaraSupabasePriority,
   type CryptaraSupabasePriority,
@@ -37,9 +37,6 @@ export interface FixedResourceClaimInput {
 
 let authorityReadyUntil = 0;
 let authorityRetryAfter = 0;
-// This is only a view of the one Super Worker request promise. It owns no value
-// cache or database call and exists so callers can observe whether this authority
-// currently has a shared request in flight.
 let authorityProbeInFlight: Promise<boolean> | null = null;
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
@@ -74,11 +71,6 @@ function authorityReadyTtlMs(): number {
   ]), 300_000, 30_000, 900_000);
 }
 
-/**
- * Reuse an exact schema proof already obtained by startup migration verification.
- * The Cryptara Super Worker becomes the shared process-wide truth source, so CEX,
- * zero-capital and quota consumers do not perform another readiness query.
- */
 export function primeResourceLeaseAuthorityReady(ttlMs = authorityReadyTtlMs()): void {
   const boundedTtlMs = boundedInt(ttlMs, authorityReadyTtlMs(), 30_000, 900_000);
   authorityReadyUntil = Math.max(authorityReadyUntil, Date.now() + boundedTtlMs);
@@ -92,12 +84,6 @@ export function primeResourceLeaseAuthorityReady(ttlMs = authorityReadyTtlMs()):
   });
 }
 
-/**
- * One process-wide schema truth source for the migration-owned lease table and
- * slot-claim function. The local readiness timestamp and the Super Worker broker
- * represent the same proof; the timestamp prevents an avoidable DB probe if an
- * otherwise valid broker entry is evicted under memory pressure.
- */
 export async function ensureResourceLeaseAuthority(
   priority: CryptaraSupabasePriority = 'high',
 ): Promise<boolean> {
@@ -126,11 +112,12 @@ export async function ensureResourceLeaseAuthority(
           ));
           const ready = result.rows?.[0]?.table_ready === true && result.rows?.[0]?.claim_function_ready === true;
           if (!ready) {
-            logger.error('[ResourceLeaseAuthority] Migration-owned lease authority is missing', {
+            logger.error('[ResourceLeaseAuthority] Overflow migration-owned lease authority is missing', {
               component: 'ResourceLeaseAuthority',
               table: `public.${RESOURCE_LEASE_TABLE}`,
               function: RESOURCE_SLOT_CLAIM_FUNCTION,
               runtimeDdlAllowed: false,
+              primaryFallbackUsed: false,
               executionAuthorityGranted: false,
             });
             throw new Error('RESOURCE_LEASE_AUTHORITY_MISSING');
@@ -149,9 +136,10 @@ export async function ensureResourceLeaseAuthority(
     } catch (error) {
       authorityReadyUntil = 0;
       authorityRetryAfter = Date.now() + retryMs;
-      logger.error('[ResourceLeaseAuthority] Lease authority verification failed closed', {
+      logger.error('[ResourceLeaseAuthority] Overflow lease authority verification failed closed', {
         component: 'ResourceLeaseAuthority',
         retryAfterMs: retryMs,
+        primaryFallbackUsed: false,
         error: error instanceof Error ? error.message : String(error),
       });
       return false;
@@ -166,7 +154,6 @@ export async function ensureResourceLeaseAuthority(
   }
 }
 
-/** One client round trip for an entire bounded slot domain. */
 export async function claimResourceSlot(
   client: LeaseClient,
   input: ResourceSlotClaimInput,
@@ -187,7 +174,6 @@ export async function claimResourceSlot(
   return resourceKey ? String(resourceKey) : null;
 }
 
-/** Fixed idempotency resources retain the same atomic expired-lease takeover. */
 export async function claimFixedResource(
   client: LeaseClient,
   input: FixedResourceClaimInput,
