@@ -25,6 +25,13 @@ const KRAKEN_LOCK_ACQUIRE_TIMEOUT_MS = finiteEnvNumber('CRYPTO_KRAKEN_LOCK_ACQUI
 const OKX_TIMEOUT_MS = Math.max(3_000, Number(process.env.CRYPTO_OKX_PRIVATE_TIMEOUT_MS || 12_000));
 const OKX_REGION_CACHE_MS = Math.max(60_000, Number(process.env.CRYPTO_OKX_REGION_CACHE_MS || 3_600_000));
 const OKX_FEE_MIN_INTERVAL_MS = Math.max(425, Number(process.env.CRYPTO_OKX_FEE_MIN_INTERVAL_MS || 450));
+const OKX_FEE_STARTUP_GRACE_MS = finiteEnvNumber(
+  'CRYPTO_OKX_FEE_STARTUP_GRACE_MS',
+  process.env.RAILWAY_PROJECT_ID ? 15_000 : 0,
+  0,
+  60_000,
+);
+const OKX_FEE_STARTUP_READY_AT = Date.now() + OKX_FEE_STARTUP_GRACE_MS;
 const OKX_ORDER_MIN_INTERVAL_MS = Math.max(0, Number(process.env.CRYPTO_OKX_ORDER_MIN_INTERVAL_MS || 0));
 const OKX_ACCOUNT_READ_MIN_INTERVAL_MS = Math.max(0, Number(process.env.CRYPTO_OKX_ACCOUNT_READ_MIN_INTERVAL_MS || 0));
 const OKX_RATE_RETRY_BASE_MS = finiteEnvNumber('CRYPTO_OKX_RATE_RETRY_BASE_MS', 1_000, 100, 30_000);
@@ -479,6 +486,9 @@ function refillLane(lane: OkxPrivateLane, now = Date.now()): void {
 async function acquireOkxToken(lane: OkxPrivateLane): Promise<void> {
   const state = okxLanes[lane];
   const policy = OKX_LANE_POLICIES[lane];
+  if (lane === 'trade_fee') {
+    await sleep(Math.max(0, OKX_FEE_STARTUP_READY_AT - Date.now()));
+  }
   while (true) {
     const now = Date.now();
     if (state.breakerOpenUntil > now) {
