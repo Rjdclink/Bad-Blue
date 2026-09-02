@@ -155,9 +155,17 @@ async function evaluateHybridCandidate(input: {
   symbol: string;
   notionalUsd: number;
   maxQuoteAgeMs: number;
+  diagnostics?: Map<string, number>;
 }): Promise<HybridCexRecoveryPlan | null> {
+  const reject = (reason: string): void => {
+    if (!input.diagnostics) return;
+    input.diagnostics.set(reason, (input.diagnostics.get(reason) || 0) + 1);
+  };
   const symbol = input.symbol.trim().toUpperCase();
-  if (!(input.notionalUsd > 0) || !hasUsdNormalizedExecutionEconomics(symbol)) return null;
+  if (!(input.notionalUsd > 0) || !hasUsdNormalizedExecutionEconomics(symbol)) {
+    reject('unsupported_quote_or_notional');
+    return null;
+  }
 
   const observations = await Promise.all(HYBRID_VENUES.map(async venue => {
     const [quote, fee] = await Promise.all([
@@ -171,16 +179,24 @@ async function evaluateHybridCandidate(input: {
   const fees = new Map<HybridVenue, CexFeeEvidence>();
   for (const observation of observations) {
     if (observation.quote) books.set(observation.venue, { venue: observation.venue, quote: observation.quote });
+    else reject(`quote_unavailable:${observation.venue}`);
     if (observation.fee) fees.set(observation.venue, observation.fee);
+    else reject(`authenticated_fee_unavailable:${observation.venue}`);
   }
   const usable = HYBRID_VENUES.filter(venue => books.has(venue) && fees.has(venue));
-  if (usable.length < 2) return null;
+  if (usable.length < 2) {
+    reject('fewer_than_two_usable_venues');
+    return null;
+  }
 
   const now = Date.now();
   const ttlMs = Math.max(2_000, Math.min(30_000, Number(process.env.CRYPTO_ARBITRAGE_MAKER_TTL_MS || 30_000)));
   const canary = getDynamicMakerCanaryStatus();
   const notionalCap = Math.min(input.notionalUsd, canary.ceilingUsd);
-  if (!(notionalCap > 0)) return null;
+  if (!(notionalCap > 0)) {
+    reject('canary_notional_unavailable');
+    return null;
+  }
   const minMakerFill = bounded(process.env.CRYPTO_ARBITRAGE_HYBRID_MIN_MAKER_FILL_PROBABILITY, 0.20, 0.05, 0.95);
   const minStressPersistence = bounded(process.env.CRYPTO_ARBITRAGE_HYBRID_MIN_STRESS_PERSISTENCE, 0.35, 0.05, 0.95);
 
@@ -196,11 +212,17 @@ async function evaluateHybridCandidate(input: {
       for (const candidate of hybridModes()) {
         const buyPrice = executionPrice(buyBook, 'buy', candidate.buyMode);
         const sellPrice = executionPrice(sellBook, 'sell', candidate.sellMode);
-        if (!(buyPrice > 0) || !(sellPrice > buyPrice)) continue;
+        if (!(buyPrice > 0) || !(sellPrice > buyPrice)) {
+          reject('no_crossed_spread');
+          continue;
+        }
 
         const buyFeeBps = authenticatedFeeBps(buyEvidence, candidate.buyMode);
         const sellFeeBps = authenticatedFeeBps(sellEvidence, candidate.sellMode);
-        if (buyFeeBps === null || sellFeeBps === null) continue;
+        if (buyFeeBps === null || sellFeeBps === null) {
+          reject('authenticated_mode_fee_unavailable');
+          continue;
+        }
 
         const makerSide = candidate.buyMode === 'maker' ? 'buy' as const : 'sell' as const;
         const makerVenue = makerSide === 'buy' ? buyVenue : sellVenue;
@@ -208,43 +230,70 @@ async function evaluateHybridCandidate(input: {
         const makerBook = books.get(makerVenue)!.quote;
         const queue = observeAriesQueueEcho(makerBook, makerSide, ttlMs, 0.02);
         const measuredQueue = queue.orderArrivalRatePerSecond > 0 && queue.queueClearSeconds !== null;
-        if (measuredQueue && queue.fillProbabilityWithinTtl < minMakerFill) continue;
+        if (measuredQueue && queue.fillProbabilityWithinTtl < minMakerFill) {
+          reject('measured_maker_fill_below_threshold');
+          continue;
+        }
 
         const grossSpreadBps = ((sellPrice - buyPrice) / buyPrice) * 10_000;
         const stress = stressTestAriesSpread(grossSpreadBps, buyVenue, sellVenue, symbol);
-        if (stress.paths > 0 && stress.persistenceProbability < minStressPersistence) continue;
+        if (stress.paths > 0 && stress.persistenceProbability < minStressPersistence) {
+          reject('stress_persistence_below_threshold');
+          continue;
+        }
 
         const [buyConstraints, sellConstraints] = await Promise.all([
           productConstraints(buyVenue, symbol),
           productConstraints(sellVenue, symbol),
         ]);
-        if (!buyConstraints || !sellConstraints) continue;
+        if (!buyConstraints || !sellConstraints) {
+          reject('product_constraints_unavailable');
+          continue;
+        }
 
         const buyQty = topQuantity(buyBook, 'buy', candidate.buyMode);
         const sellQty = topQuantity(sellBook, 'sell', candidate.sellMode);
-        if (!(buyQty > 0) || !(sellQty > 0)) continue;
+        if (!(buyQty > 0) || !(sellQty > 0)) {
+          reject('top_depth_unavailable');
+          continue;
+        }
         const commonIncrement = Math.max(buyConstraints.baseIncrement, sellConstraints.baseIncrement);
         // The parent remains the full measured/ladder-authorized target. Current
         // venue single-order maxima are enforced later by the canonical child
         // splitter and must never silently redefine the parent strategy size.
         const requestedQty = Math.min(notionalCap / buyPrice, buyQty, sellQty);
         const baseQty = floorToIncrement(requestedQty, commonIncrement);
-        if (!(baseQty > 0) || baseQty < buyConstraints.baseMinSize || baseQty < sellConstraints.baseMinSize) continue;
+        if (!(baseQty > 0) || baseQty < buyConstraints.baseMinSize || baseQty < sellConstraints.baseMinSize) {
+          reject('rounded_or_minimum_size');
+          continue;
+        }
 
         const buyNotional = baseQty * buyPrice;
         const sellNotional = baseQty * sellPrice;
-        if (buyConstraints.quoteMinSize !== null && buyNotional < buyConstraints.quoteMinSize) continue;
-        if (sellConstraints.quoteMinSize !== null && sellNotional < sellConstraints.quoteMinSize) continue;
+        if (buyConstraints.quoteMinSize !== null && buyNotional < buyConstraints.quoteMinSize) {
+          reject('buy_minimum_notional');
+          continue;
+        }
+        if (sellConstraints.quoteMinSize !== null && sellNotional < sellConstraints.quoteMinSize) {
+          reject('sell_minimum_notional');
+          continue;
+        }
 
         const buyFeeUsd = buyNotional * buyFeeBps / 10_000;
         const sellFeeUsd = sellNotional * sellFeeBps / 10_000;
         const grossProfitUsd = sellNotional - buyNotional;
         const totalCostsUsd = buyFeeUsd + sellFeeUsd;
         const netProfitUsd = grossProfitUsd - totalCostsUsd;
-        if (!(netProfitUsd > 0)) continue;
+        if (!(netProfitUsd > 0)) {
+          reject('all_in_net_not_positive');
+          continue;
+        }
 
         const quoteAgeMs = Math.max(now - buyBook.timestamp, now - sellBook.timestamp);
-        if (quoteAgeMs > input.maxQuoteAgeMs) continue;
+        if (quoteAgeMs > input.maxQuoteAgeMs) {
+          reject('quote_stale');
+          continue;
+        }
 
         const plan: HybridCexRecoveryPlan = {
           symbol,
@@ -575,15 +624,26 @@ export function ensureHybridCexExecutionWiring(): void {
 
     let hybridPositive = 0;
     let hybridSelected = 0;
+    const hybridRejectionReasons = new Map<string, number>();
+    const hybridRejectionsBySymbol = new Map<string, Record<string, number>>();
     const concurrency = Math.max(1, Math.min(16, Number(process.env.CRYPTO_ARBITRAGE_HYBRID_BATCH_CONCURRENCY || 8)));
     await runBounded(governedSymbols, concurrency, async symbol => {
       const before = plans.get(symbol) ?? null;
+      const diagnostics = new Map<string, number>();
       const hybrid = await evaluateHybridCandidate({
         symbol,
         notionalUsd: Number(request.notionalUsd || 0),
         maxQuoteAgeMs: Math.max(250, Number(request.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000)),
+        diagnostics,
       });
-      if (!hybrid) return;
+      if (!hybrid) {
+        const reasons = Object.fromEntries([...diagnostics.entries()].sort((left, right) => right[1] - left[1]));
+        hybridRejectionsBySymbol.set(symbol, reasons);
+        for (const [reason, count] of diagnostics) {
+          hybridRejectionReasons.set(reason, (hybridRejectionReasons.get(reason) || 0) + count);
+        }
+        return;
+      }
       hybridPositive++;
       const selected = betterPlan(before, hybrid);
       if (selected === hybrid) { plans.set(symbol, hybrid); hybridSelected++; }
@@ -592,6 +652,9 @@ export function ensureHybridCexExecutionWiring(): void {
     logger.info('[HybridCEX] MT/TM canonical comparison completed', {
       component: 'HybridCexExecutionWiring', symbolsRequested: symbols.length,
       governedSymbols: governedSymbols.length, hybridPositive, hybridSelected,
+      hybridRejected: governedSymbols.length - hybridPositive,
+      hybridRejectionReasons: Object.fromEntries([...hybridRejectionReasons.entries()].sort((left, right) => right[1] - left[1])),
+      hybridRejectionsBySymbol: Object.fromEntries([...hybridRejectionsBySymbol.entries()].slice(0, 16)),
       venues: HYBRID_VENUES,
       executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
       executionSequence: 'maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
