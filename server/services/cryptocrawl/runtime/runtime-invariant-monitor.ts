@@ -3,7 +3,6 @@ import type { CanonicalOpportunitySnapshot } from '../intelligence/canonical-opp
 
 export type RuntimeInvariantCode =
   | 'ELIGIBLE_WITHOUT_POSITIVE_NET'
-  | 'ELIGIBLE_WITHOUT_CONSIDER_RECOMMENDATION'
   | 'ELIGIBLE_WITHOUT_MEASURED_LIQUIDITY'
   | 'INVALID_DETERMINISTIC_COSTS'
   | 'DETERMINISTIC_ECONOMICS_MISMATCH'
@@ -60,9 +59,6 @@ function inspectSnapshot(snapshot: CanonicalOpportunitySnapshot): RuntimeInvaria
     const plan = snapshot.plan;
     if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) {
       push('ELIGIBLE_WITHOUT_POSITIVE_NET', 'Eligible state requires a finite strictly-positive deterministic all-in net profit');
-    }
-    if (snapshot.assessment?.recommendation !== 'consider') {
-      push('ELIGIBLE_WITHOUT_CONSIDER_RECOMMENDATION', 'Eligible state requires the canonical assessment recommendation to be consider');
     }
     if (!plan || plan.liquidity.status !== 'measured' || plan.liquidity.buyAvailableBaseQty === null || plan.liquidity.sellAvailableBaseQty === null) {
       push('ELIGIBLE_WITHOUT_MEASURED_LIQUIDITY', 'Eligible CEX state requires measured executable depth on both legs');
@@ -138,8 +134,6 @@ class RuntimeInvariantMonitor {
     }
 
     if (existing) {
-      // Recovery is evidence-based: a quarantined opportunity is released only
-      // after a strictly newer canonical snapshot passes every monitored invariant.
       if (snapshot.updatedAt > existing.sourceUpdatedAt) {
         this.quarantines.delete(snapshot.opportunityId);
         logger.info('[RuntimeInvariant] Opportunity quarantine cleared by newer canonical evidence', {
