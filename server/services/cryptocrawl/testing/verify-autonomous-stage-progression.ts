@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { getCryptara, type CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { profitLadder } from '../governance/profit-ladder.js';
 import {
   Stage,
   stageManager,
   type AutomaticAdvancementEvidence,
+  type PersistedCryptaraExecutionEvidence,
 } from '../governance/stage-management.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -14,7 +14,7 @@ function createTerminalFeedback(
   sequence: number,
   realizedProfitUsd: number,
   timestamp: number,
-): CryptaraExecutionFeedback {
+): PersistedCryptaraExecutionEvidence {
   return {
     source: 'manual',
     opportunityId: `autonomous-stage-test-${sequence}`,
@@ -49,28 +49,34 @@ function createTerminalFeedback(
       receiptStatus: null,
       provenance: ['test:terminal_confirmed'],
     } as any,
-  } as CryptaraExecutionFeedback;
+  } as PersistedCryptaraExecutionEvidence;
 }
 
 function evidence(): AutomaticAdvancementEvidence {
-  const ranking = getCryptara().getPerformanceRanking();
+  const state = stageManager.getState();
   const progress = profitLadder.getProgressSummary();
   return {
     evaluatedAt: Date.now(),
     marketGate: { decision: 'ALLOW', evaluatedAt: Date.now(), reasons: [] },
     cryptara: {
-      evaluatedAt: ranking.evaluatedAt,
-      sampleCount: ranking.sampleCount,
-      successfulExecutions: ranking.successfulExecutions,
-      successRate: ranking.successRate,
-      averageNetProfitUsd: ranking.averageNetProfitUsd,
-      averageSlippageBps: ranking.averageSlippageBps,
-      preferredChains: ranking.preferredChains,
-      preferredExecutionModes: ranking.directive.preferredExecutionModes,
-      riskBudget: ranking.directive.riskBudget,
-      notionalMultiplier: ranking.directive.notionalMultiplier,
-      maxSlippageBps: ranking.directive.maxSlippageBps,
-      chainPerformance: ranking.chains,
+      evaluatedAt: Date.now(),
+      sampleCount: state.proofMetrics.totalTrades,
+      successfulExecutions: state.proofMetrics.winningTrades,
+      successRate: state.proofMetrics.successRate,
+      averageNetProfitUsd: state.proofMetrics.avgProfitPerTrade,
+      averageSlippageBps: state.currentStage === Stage.STAGE_1_CONSTRAINED_PILOT ? null : 4,
+      preferredChains: ['polygon'],
+      preferredExecutionModes: ['standard', 'zero_capital'],
+      riskBudget: 'balanced',
+      notionalMultiplier: 1,
+      maxSlippageBps: 20,
+      chainPerformance: [{
+        chain: 'polygon',
+        netRealizedProfitUsd: state.totalProfitUSD,
+        successfulExecutions: state.proofMetrics.winningTrades,
+        totalExecutions: state.proofMetrics.totalTrades,
+        rankingScore: 1,
+      }],
     },
     profitLadder: {
       currentTierId: progress.currentTierId,
@@ -81,7 +87,7 @@ function evidence(): AutomaticAdvancementEvidence {
   };
 }
 
-function injectTerminalEvidence(feedback: CryptaraExecutionFeedback): void {
+function injectTerminalEvidence(feedback: PersistedCryptaraExecutionEvidence): void {
   const state = (stageManager as any).state;
   state.cryptaraExecutionEvidence.push({
     source: feedback.source,
@@ -122,8 +128,6 @@ function makeRealizedTierReady(nowRef: { value: number }, sequenceRef: { value: 
   const totalSamples = 100;
   const days = Math.max(tier.daysRequiredAtTarget, 7);
   let remaining = totalSamples;
-  const cryptara = getCryptara();
-
   for (let day = 0; day < days; day += 1) {
     nowRef.value += DAY_MS;
     const daysRemaining = days - day;
@@ -141,7 +145,6 @@ function makeRealizedTierReady(nowRef: { value: number }, sequenceRef: { value: 
         nowRef.value - 10_000 + sample,
       );
       injectTerminalEvidence(feedback);
-      cryptara.recordExecutionResult(feedback);
     }
 
     // Caller-supplied summary metrics are deliberately non-authoritative.
