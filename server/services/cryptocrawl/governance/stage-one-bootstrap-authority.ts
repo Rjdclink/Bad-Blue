@@ -3,11 +3,44 @@ import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { evaluateAutomaticStageProgression } from './automatic-stage-progression.js';
 import { hydrateStageOneAdvancementEvidence } from './stage-one-evidence-hydrator.js';
-import { stageManager, type AutomaticAdvancementEvidence, type AutomaticAdvancementResult } from './stage-management.js';
+import {
+  Stage,
+  STAGE_CONFIGS,
+  stageManager,
+  type AutomaticAdvancementEvidence,
+  type AutomaticAdvancementResult,
+} from './stage-management.js';
 
 const appliedValidationEvidence = new Set<string>();
 let timer: NodeJS.Timeout | null = null;
+let eligibleUnsubscribe: (() => void) | null = null;
 let cycleInFlight: Promise<void> | null = null;
+
+/**
+ * Stage progression is a bounded scaling policy, not a profitability veto.
+ * Stage 1 is therefore a constrained live pilot: strictly-positive executable
+ * opportunities may run while later stages widen size/scope from terminal proof.
+ *
+ * STAGE_CONFIGS is the canonical object StageManager itself references, so this
+ * changes the canonical policy seen by every existing governance/risk caller;
+ * no execution path bypasses StageManager.
+ */
+function installStageOnePositiveExecutionPolicy(): void {
+  const config = STAGE_CONFIGS[Stage.STAGE_1_CONSTRAINED_PILOT];
+  config.description = 'Constrained live pilot - verified positive execution only';
+  config.canExecuteTrades = true;
+  config.allowedChains = ['polygon', 'arbitrum', 'europa'];
+  config.minDailyProfit = 0;
+  config.maxDailyProfit = 200;
+  config.maxPositionSizeUSD = 100;
+  config.maxDrawdownPercent = 5;
+  config.autonomyLevel = 'limited';
+}
+
+// Apply at module initialization. canonical-runtime-wiring imports this module
+// before runtime installation/startup, and StageManager retains the same shared
+// StageConfig object reference.
+installStageOnePositiveExecutionPolicy();
 
 function validationWindowMs(): number {
   const configured = Number(process.env.CRYPTO_STAGE_ONE_LIVE_VALIDATION_WINDOW_MS || 5_000);
@@ -87,10 +120,6 @@ function stageOneFoundationLadderEvidence(evidence: AutomaticAdvancementEvidence
         'stage_one_bootstrap: foundation tier advances from verified live-system proof; realized-profit criteria begin after the first governed terminal execution',
       ],
     },
-    // Tier 0 is the foundation tier. Its own ProfitLadder implementation advances
-    // from StageManager proof metrics rather than realized-profit thresholds. This
-    // evidence only aligns the automatic advancement snapshot with that existing
-    // Tier-0 rule; the actual ProfitLadder.advanceToNextTier() still executes.
     profitLadder: {
       currentTierId: 0,
       readyForNextTier: true,
@@ -102,10 +131,6 @@ function stageOneFoundationLadderEvidence(evidence: AutomaticAdvancementEvidence
 async function attemptStageOneBootstrap(): Promise<AutomaticAdvancementResult | null> {
   if (stageManager.getState().currentStage !== 1) return null;
 
-  // Refresh the normal market/risk/ranking evidence first. The initial automatic
-  // evidence may still report Tier-0 not-ready before the new live validations
-  // are reflected; the foundation snapshot below aligns that evidence with the
-  // ProfitLadder's existing StageManager-proof Tier-0 rule.
   await evaluateAutomaticStageProgression().catch(error => {
     logger.debug('[StageOneBootstrap] Normal progression refresh remained blocked', {
       component: 'StageOneBootstrapAuthority',
@@ -143,10 +168,6 @@ async function cycle(): Promise<void> {
   const work = (async (): Promise<void> => {
     if (stageManager.getState().currentStage !== 1) return;
 
-    // Missing evidence remains a blocker, but Stage 1 now actively asks the
-    // canonical proof producers for fresh market/inventory evidence before it
-    // decides that information is absent. Single-flight guards in both producers
-    // prevent this 750ms loop from creating duplicate network work.
     await hydrateStageOneAdvancementEvidence().catch(error => {
       logger.debug('[StageOneBootstrap] Proactive evidence hydration remained incomplete', {
         component: 'StageOneBootstrapAuthority',
@@ -176,12 +197,19 @@ async function cycle(): Promise<void> {
 export function ensureStageOneBootstrapAuthority(): void {
   if (timer) return;
   const intervalMs = Math.max(250, Math.min(5_000, Number(process.env.CRYPTO_STAGE_ONE_BOOTSTRAP_EVALUATION_MS || 750)));
+  eligibleUnsubscribe = measuredCandidateRegistry.onEligible(candidate => {
+    if (candidate.expiresAt > Date.now() && stageManager.getState().currentStage === 1) void cycle();
+  });
   timer = setInterval(() => void cycle(), intervalMs);
   timer.unref?.();
   void cycle();
   logger.info('[StageOneBootstrap] Current-evidence foundation authority installed', {
     component: 'StageOneBootstrapAuthority',
     intervalMs,
+    stageOneCanExecuteTrades: stageManager.canExecuteTrades(),
+    stageOnePolicy: 'constrained_live_positive_execution',
+    executionWake: 'eligible_candidate_event_driven',
+    pollingRole: 'fallback_progression_only',
     validationSource: 'fresh_eligible_executable_candidates_after_proactive_hydration',
     supportedBootstrapTopologies: ['CEX_CEX', 'MAKER_CEX', 'ZERO_CAPITAL_ATOMIC'],
     priorTerminalHistoryRequired: false,
