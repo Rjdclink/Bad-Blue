@@ -506,13 +506,17 @@ async function executeStartedLaneOperation<T>(lane: OkxPrivateLane, operation: (
   if (waitMs > 0) await sleep(waitMs);
   const startedAt = Date.now();
   state.lastStartedAt = startedAt;
-  const result = await operation();
-
-  if (lane === 'trade_fee' && isCoordinationDatabaseConfigured) {
-    await sleep(Math.max(0, startedAt + OKX_FEE_MIN_INTERVAL_MS - Date.now()));
+  try {
+    return await operation();
+  } finally {
+    // A rejected request still consumes the venue's rate window. Keep the
+    // distributed lock for the complete pacing interval on both success and
+    // failure so a 50011 cannot create an immediate cluster-wide retry burst.
+    if (lane === 'trade_fee' && isCoordinationDatabaseConfigured) {
+      await sleep(Math.max(0, startedAt + OKX_FEE_MIN_INTERVAL_MS - Date.now()));
+    }
+    state.requestCount += 1;
   }
-  state.requestCount += 1;
-  return result;
 }
 
 function okxTradeFeeQuotaNamespace(): string {
@@ -535,6 +539,10 @@ function scheduleOkxLane<T>(lane: OkxPrivateLane, operation: () => Promise<T>): 
   const state = okxLanes[lane];
   const run = state.tail.catch(() => undefined).then(async () => {
     await acquireOkxToken(lane);
+    // The Overflow lease table is the cluster-wide quota authority. Local
+    // buckets protect one process; this claim prevents replicas and concurrent
+    // subsystems from exceeding OKX's user-ID-wide trade-fee window.
+    await acquireOkxDistributedQuota(lane);
     if (lane !== 'trade_fee' || !isCoordinationDatabaseConfigured) {
       return executeStartedLaneOperation(lane, operation);
     }
