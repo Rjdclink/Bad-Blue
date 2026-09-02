@@ -76,14 +76,34 @@ function canonicalAsset(value: unknown): string | null {
   return asset || null;
 }
 
+// Exchange tickers are transport labels, not globally unique asset identities.
+// Coinbase VELO-USD is Velodrome Finance, while OKX VELO-* is Velo Protocol.
+// Keep the transport product id unchanged, but expose a collision-free canonical
+// base identity so unrelated listings can never form an executable spread.
+const VERIFIED_COINBASE_ASSET_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  VELO: 'VELODROME',
+});
+
+function canonicalCoinbaseAsset(value: unknown): string | null {
+  const asset = canonicalAsset(value);
+  return asset ? VERIFIED_COINBASE_ASSET_ALIASES[asset] || asset : null;
+}
+
 function parseCoinbaseProductId(productIdInput: unknown): { productId: string; baseAsset: string; quoteAsset: string; symbol: string } | null {
   const productId = String(productIdInput ?? '').trim().toUpperCase();
   const parts = productId.split('-').filter(Boolean);
   if (parts.length !== 2) return null;
-  const baseAsset = canonicalAsset(parts[0]);
+  const transportBaseAsset = canonicalAsset(parts[0]);
+  const transportQuoteAsset = canonicalAsset(parts[1]);
+  const baseAsset = canonicalCoinbaseAsset(parts[0]);
   const quoteAsset = canonicalAsset(parts[1]);
-  if (!baseAsset || !quoteAsset) return null;
-  return { productId: `${baseAsset}-${quoteAsset}`, baseAsset, quoteAsset, symbol: `${baseAsset}${quoteAsset}` };
+  if (!transportBaseAsset || !transportQuoteAsset || !baseAsset || !quoteAsset) return null;
+  return {
+    productId: `${transportBaseAsset}-${transportQuoteAsset}`,
+    baseAsset,
+    quoteAsset,
+    symbol: `${baseAsset}${quoteAsset}`,
+  };
 }
 
 export function canonicalCoinbaseSymbol(symbolInput: string): string {

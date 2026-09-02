@@ -29,6 +29,7 @@ require('./verify-cryptara-super-worker.cjs');
 require('./verify-supabase-background-pressure.cjs');
 require('./verify-runtime-initialization-efficiency.cjs');
 require('./verify-product-discovery-coverage.cjs');
+require('./verify-cross-venue-asset-identity.cjs');
 require('./verify-dex-atomic-profit-path.cjs');
 require('./verify-aave-liquidation-profit-integrity.cjs');
 require('./verify-topology-execution-integrity.cjs');
