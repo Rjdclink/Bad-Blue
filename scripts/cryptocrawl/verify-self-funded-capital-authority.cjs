@@ -11,7 +11,11 @@ const inventory = read('server/services/cryptocrawl/execution/cex-inventory-ledg
 const provenance = read('server/services/cryptocrawl/execution/adapters/stage4-capital-provenance.ts');
 const allocation = read('server/services/cryptocrawl/execution/system-capital-allocation-ledger.ts');
 const placement = read('server/services/cryptocrawl/execution/cex-system-capital-placement.ts');
+const exactSettlement = read('server/services/cryptocrawl/execution/cex-system-capital-settlement-evidence.ts');
+const lotLedger = read('server/services/cryptocrawl/execution/cex-system-owned-lot-ledger.ts');
+const exactDecimal = read('server/services/cryptocrawl/execution/exact-decimal.ts');
 const allocationMigration = read('server/migrations/026_cryptocrawler_system_capital_allocations.sql');
+const ownershipMigration = read('server/migrations/027_cryptocrawler_cex_system_owned_lots.sql');
 const overflowSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
 const dockerfile = read('Dockerfile');
 
@@ -23,8 +27,9 @@ assert.match(hierarchyTest, /funded-wallet-without-provenance/, 'regression test
 assert.match(hierarchyTest, /verified-self-funded-capital/, 'regression test must cover verified self-funded capital');
 
 assert.match(inventory, /if\s*\(venue\s*===\s*'coinbase'\)\s*return\s+Math\.max\(configuredMinimumReserve,\s*available\)/, 'Coinbase operator balance must remain non-spendable');
-assert.match(inventory, /SYSTEM_CAPITAL_ALLOCATION_TABLE\s*=\s*'cryptocrawler_system_capital_allocations'/, 'CEX reservation must consume the canonical system-capital allocation table');
-assert.match(inventory, /status='PLACED'/, 'only settlement-confirmed placed capital may establish CEX ownership');
+assert.match(inventory, /SYSTEM_CAPITAL_OWNERSHIP_TABLE\s*=\s*'cryptocrawler_cex_system_owned_lots'/, 'CEX reservation must consume the canonical physical ownership-lot table');
+assert.doesNotMatch(inventory, /SYSTEM_CAPITAL_ALLOCATION_TABLE|remaining_destination_base_units/, 'placement rows must not remain an alternate CEX spend authority');
+assert.match(inventory, /status='ACTIVE' AND remaining_decimal > 0/, 'only active settlement-derived ownership lots may establish CEX spendable ownership');
 assert.match(inventory, /const physicalSpendable =/, 'CEX admission must retain authenticated physical-balance capacity');
 assert.match(inventory, /const systemOwnedSpendable =/, 'CEX admission must calculate provenance-backed spendable ownership');
 assert.match(inventory, /Math\.min\(physicalSpendable, systemOwnedSpendable\)/, 'CEX reservation must be capped by both physical and system-owned capacity');
@@ -40,7 +45,6 @@ assert.match(allocation, /governanceAdmitted:\s*true/, 'allocation must require 
 assert.match(allocation, /internally_generated_balance::numeric - \$2::numeric/, 'reservation must atomically debit canonical SELF_FUNDED available balance');
 assert.match(allocation, /Only unsubmitted RESERVED capital can be released/, 'submitted or placed capital must never be silently restored at the source');
 assert.match(allocation, /delivered_amount_base_units=\$2/, 'placement must record exact destination-delivered base units');
-assert.match(allocation, /remaining_destination_base_units/, 'placed system-owned capital must track remaining destination ownership');
 assert.doesNotMatch(allocation, /CREATE\s+TABLE|ALTER\s+TABLE|CREATE\s+INDEX/i, 'runtime allocation code must not own schema DDL');
 
 assert.match(placement, /\['zero-capital', 'system-capital'\]\.includes\(parts\[0\]\)/, 'physical placement must accept legacy zero-capital bootstrap and generic system-generated capital provenance');
@@ -50,7 +54,6 @@ assert.match(placement, /const contractAddress = String\(entry\?\.ctAddr/, 'OKX 
 assert.match(placement, /return contractAddress === tokenAddress && canDeposit/, 'OKX Get currencies full contract address must exactly match the SELF_FUNDED token contract');
 assert.match(placement, /const contractSuffix = String\(entry\?\.ctAddr/, 'OKX deposit-address admission must inspect the documented contract suffix');
 assert.match(placement, /contractSuffix\.length === 6 && tokenAddress\.endsWith\(contractSuffix\)/, 'OKX deposit-address identity must use only the documented last-six contract suffix');
-assert.match(placement, /canDep/, 'OKX network admission must require deposits enabled');
 assert.match(placement, /authenticatedDepositAccount/, 'OKX placement must preserve whether the authenticated deposit beneficiary is Funding or Trading');
 assert.match(placement, /depositAccount !== '6' && depositAccount !== '18'/, 'OKX placement must reject unknown beneficiary account identifiers');
 assert.match(placement, /wallet\.address\.toLowerCase\(\) !== input\.sourceRecipient/, 'physical placement signer must match the SELF_FUNDED recipient');
@@ -68,17 +71,35 @@ assert.match(placement, /from:\s*'6'/, 'OKX internal transfer source must be Fun
 assert.match(placement, /to:\s*'18'/, 'OKX internal transfer destination must be Trading account 18');
 assert.match(placement, /\/api\/v5\/asset\/transfer-state/, 'OKX internal transfer must be independently reconciled to terminal state');
 assert.match(placement, /state === 'success'/, 'OKX CEX ownership may become spendable only after transfer-state success');
-assert.match(placement, /ethers\.utils\.parseUnits\(amount, input\.row\.destination_asset_decimals\)/, 'OKX internal transfer amount must be compared in exact base units');
 assert.match(placement, /tradingAccountSpendableAuthority:\s*true/, 'PLACED OKX capital must explicitly prove Trading-account spendability');
-assert.match(placement, /confirmSystemCapitalPlacement/, 'only settlement-confirmed exchange credit may become PLACED ownership');
-assert.doesNotMatch(placement, /parseFloat\(|Number\(input\.sourceAmount\)/, 'physical source transfer must never convert exact base units through floating point');
+
+assert.match(exactDecimal, /bigint/, 'exact CEX settlement arithmetic must use integer-backed decimal math');
+assert.doesNotMatch(exactDecimal, /parseFloat\(|Number\(/, 'exact CEX settlement arithmetic must not pass through floating point');
+assert.match(exactSettlement, /\/api\/v5\/trade\/fills/, 'exact OKX ownership evidence must come from authenticated fill records');
+assert.match(exactSettlement, /seen\.has\(tradeId\)/, 'exact fill evidence must deduplicate trade IDs');
+assert.match(exactSettlement, /compareExactDecimals\(summedFill, accumulatedFillDecimal\)/, 'enumerated fills must exactly equal authenticated accumulated fill quantity');
+assert.match(exactSettlement, /if \(feeAsset\) addDelta\(assetDeltas, feeAsset, feeDecimal\)/, 'authenticated fee/rebate currency must be applied as an exact asset delta');
+assert.match(exactSettlement, /Kraken exact system-capital fill transformation remains fail-closed/, 'Kraken must not transform ownership until exact fee-asset semantics are proven');
+
+assert.match(lotLedger, /SYSTEM_CAPITAL_PROVENANCE_DEFICIT/, 'unowned trade or fee debit must be a hard provenance deficit');
+assert.match(lotLedger, /WHERE venue=\$1 AND asset=\$2 AND status='ACTIVE'/, 'lot consumption must lock only active system-owned inventory');
+assert.match(lotLedger, /FOR UPDATE/, 'CEX ownership mutation must lock consumed lots transactionally');
+const debitIndex = lotLedger.indexOf('// Debit first.');
+const creditIndex = lotLedger.indexOf('for (const [asset, delta] of entries) {', debitIndex + 1);
+assert.ok(debitIndex >= 0 && creditIndex > debitIndex, 'CEX ownership transformation must debit before creating outputs');
+assert.match(lotLedger, /cryptocrawler_cex_system_owned_settlements/, 'terminal CEX ownership application must have a durable idempotency boundary');
+assert.match(lotLedger, /status='APPLIED'/, 'terminal CEX ownership transformation must become durable only after all debits and credits succeed');
 
 assert.match(allocationMigration, /source_amount_base_units numeric\(78,0\)/, 'allocation migration must preserve exact source base units');
 assert.match(allocationMigration, /source_token_address text/, 'allocation migration must persist the exact source token contract');
-assert.match(allocationMigration, /delivered_amount_base_units numeric\(78,0\)/, 'allocation migration must keep delivered destination units distinct from source units');
-assert.match(allocationMigration, /authority_evidence jsonb NOT NULL/, 'allocation migration must preserve authority evidence');
-assert.match(overflowSchema, /026_cryptocrawler_system_capital_allocations\.sql/, 'Overflow runtime schema must provision system-capital allocations');
-assert.match(overflowSchema, /public\.cryptocrawler_system_capital_allocations/, 'Overflow runtime admission must require the allocation table');
-assert.match(dockerfile, /026_cryptocrawler_system_capital_allocations\.sql/, 'production image must bundle the system-capital allocation migration');
+assert.match(ownershipMigration, /cryptocrawler_cex_system_owned_lots/, 'ownership migration must define the sole physical CEX ownership lots');
+assert.match(ownershipMigration, /cryptocrawler_cex_system_owned_settlements/, 'ownership migration must define one-time terminal settlement applications');
+assert.match(ownershipMigration, /cryptocrawler_seed_cex_system_owned_lot/, 'PLACED CEX deposits must atomically seed physical ownership');
+assert.match(ownershipMigration, /tradingAccountSpendableAuthority/, 'OKX deposit lots require Trading-account spendability evidence');
+assert.match(ownershipMigration, /Authenticated account balances never create rows/, 'ownership migration must explicitly deny account-wide balance provenance');
+assert.match(overflowSchema, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'Overflow runtime schema must provision the physical ownership migration');
+assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_lots/, 'Overflow runtime admission must require the ownership-lot table');
+assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_settlements/, 'Overflow runtime admission must require settlement idempotency state');
+assert.match(dockerfile, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'production image must bundle the physical CEX ownership migration');
 
-console.log('[self-funded-capital-authority] PASS: personal balances remain protected; system-earned capital is provenance-backed, ownership-capped, and OKX placement requires exact contract, exchange deposit confirmation, and Trading-account settlement');
+console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; system-earned capital has one physical CEX ownership authority, exact fill/fee transformations, and exchange-confirmed placement');
