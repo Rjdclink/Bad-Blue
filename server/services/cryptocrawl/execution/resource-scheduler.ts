@@ -7,6 +7,7 @@ import {
   pool,
 } from '../runtime/cryptocrawl-runtime-database.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import {
   RESOURCE_LEASE_TABLE as TABLE,
@@ -225,6 +226,32 @@ class ExecutionResourceScheduler {
 
   async acquireCexPlan(plan: VerifiedArbitragePlan, opportunityId: string): Promise<ExecutionResourceLease | null> {
     if (!Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) return null;
+
+    // Profit Ladder is the one authority for NEW exposure size. Bind it before
+    // scarce resource/inventory leasing so the canonical live scheduler cannot
+    // bypass the currently unlocked capital rung.
+    const notionalAuthority = getProfitLadderNotionalAuthority();
+    if (
+      !Number.isFinite(plan.notionalUsd) || plan.notionalUsd <= 0 ||
+      !notionalAuthority.aligned ||
+      !(notionalAuthority.maxNotionalUsd > 0) ||
+      plan.notionalUsd > notionalAuthority.maxNotionalUsd + 1e-9
+    ) {
+      logger.info('[ResourceScheduler] CEX opportunity rejected by canonical Profit Ladder notional authority', {
+        component: 'ExecutionResourceScheduler',
+        opportunityId,
+        requestedNotionalUsd: plan.notionalUsd,
+        profitLadderMaxNotionalUsd: notionalAuthority.maxNotionalUsd,
+        profitLadderRung: notionalAuthority.rungKey,
+        stage: notionalAuthority.stage,
+        tierId: notionalAuthority.tierId,
+        stageTierAligned: notionalAuthority.aligned,
+        authority: notionalAuthority.authority,
+        resourceLeaseCreated: false,
+      });
+      return null;
+    }
+
     const maxQuoteAgeMs = boundedInt(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS, 5_000, 250, 15_000);
     if (!Number.isFinite(plan.quoteAgeMs) || plan.quoteAgeMs < 0 || plan.quoteAgeMs >= maxQuoteAgeMs) {
       logger.info('[ResourceScheduler] Stale CEX opportunity rejected before scarce resource leasing', {
