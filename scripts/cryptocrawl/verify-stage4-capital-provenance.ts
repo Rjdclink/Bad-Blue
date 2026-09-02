@@ -36,6 +36,27 @@ await assert.rejects(
   /already SELF_FUNDED from a different proof/,
 );
 
+const retainedProof = {
+  scope,
+  executionKey: 'europa:retained:1',
+  transactionHash: '0x' + 'bc'.repeat(32),
+  chain: 'europa',
+  asset: 'USDC',
+  retainedProfit: '8',
+  settlementReceiptVerified: true,
+  profitRecipientDeltaVerified: true,
+  sourceRecipient: '0x' + '11'.repeat(20),
+  sourceRecipientBalanceBeforeBaseUnits: '100',
+  sourceRecipientBalanceAfterBaseUnits: '108',
+};
+const accumulated = await store.recordVerifiedRetainedProfit(retainedProof);
+assert.equal(accumulated.lifecycle, 'SELF_FUNDED');
+assert.equal(accumulated.generation, 1);
+assert.equal(accumulated.internallyGeneratedBalance, '50');
+
+const replayedRetained = await store.recordVerifiedRetainedProfit(retainedProof);
+assert.equal(replayedRetained.internallyGeneratedBalance, '50');
+
 const afterFunding = await store.recordNativeGasFundingSettlement({
   scope,
   sourceAsset: 'USDC',
@@ -50,7 +71,7 @@ const afterFunding = await store.recordNativeGasFundingSettlement({
   reimbursementVerified: true,
 });
 assert.equal(afterFunding.lifecycle, 'SELF_FUNDED');
-assert.equal(afterFunding.internallyGeneratedBalance, '32');
+assert.equal(afterFunding.internallyGeneratedBalance, '40');
 
 const replayedFunding = await store.recordNativeGasFundingSettlement({
   scope,
@@ -65,13 +86,13 @@ const replayedFunding = await store.recordNativeGasFundingSettlement({
   reimbursementRequired: false,
   reimbursementVerified: true,
 });
-assert.equal(replayedFunding.internallyGeneratedBalance, '32');
+assert.equal(replayedFunding.internallyGeneratedBalance, '40');
 
 await assert.rejects(
   () => store.recordNativeGasFundingSettlement({
     scope,
     sourceAsset: 'USDC',
-    sourceProceedsAllocatedBaseUnits: '40',
+    sourceProceedsAllocatedBaseUnits: '50',
     destinationChain: 'polygon',
     destinationTransactionHash: '0x' + 'ef'.repeat(32),
     destinationReceiptVerified: true,
