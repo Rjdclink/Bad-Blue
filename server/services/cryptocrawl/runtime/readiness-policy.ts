@@ -5,7 +5,8 @@ export interface CryptoRuntimeReadinessInput {
   coreMarketDataReady: boolean;
   criticalRpcReady: boolean;
   graphReady: boolean;
-  observedOpportunities: number;
+  discoveryEvidenceCount: number;
+  canonicalObservedOpportunities: number;
   schedulerRunning: boolean;
   noExecutionGuardEnabled: boolean;
   liveExecutionEnabled: boolean;
@@ -86,9 +87,12 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
       detail: `coreCexMarketData=${input.coreMarketDataReady}; blockchainRpc=${input.criticalRpcReady} (RPC is topology-local and not required for core CEX discovery)`,
     },
     DISCOVERY_READY: {
-      ready: input.graphReady && input.observedOpportunities > 0,
+      // Discovery answers whether measured search is running and producing
+      // evidence. Candidate profitability is intentionally owned by
+      // CANDIDATE_READY and must not make discovery itself appear broken.
+      ready: input.graphReady && input.discoveryEvidenceCount > 0,
       scope: 'discovery',
-      detail: `graphFresh=${input.graphReady}; canonicalObserved=${input.observedOpportunities}`,
+      detail: `graphFresh=${input.graphReady}; discoveryEvidence=${input.discoveryEvidenceCount}; canonicalObserved=${input.canonicalObservedOpportunities}`,
     },
     EXECUTION_CAPABILITY_READY: {
       ready: executionCapabilityReady,
