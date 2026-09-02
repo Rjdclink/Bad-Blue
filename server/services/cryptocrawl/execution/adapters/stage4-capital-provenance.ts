@@ -80,6 +80,14 @@ function assertValidTransition(current: CapitalLifecycle, next: CapitalLifecycle
   }
 }
 
+function sameBootstrapProof(state: CapitalProvenanceState, proof: VerifiedBootstrapProfit): boolean {
+  return state.originTransactionHash?.toLowerCase() === proof.transactionHash.toLowerCase()
+    && state.latestExecutionKey === proof.executionKey
+    && state.asset === proof.asset
+    && state.chain === proof.chain
+    && state.internallyGeneratedBalance === proof.residualProfit;
+}
+
 export class InMemoryStage4CapitalProvenanceStore implements Stage4CapitalProvenanceStore {
   private readonly states = new Map<string, CapitalProvenanceState>();
   private readonly fundingSettlements = new Set<string>();
@@ -108,6 +116,31 @@ export class InMemoryStage4CapitalProvenanceStore implements Stage4CapitalProven
 
   async recordVerifiedBootstrapProfit(proof: VerifiedBootstrapProfit): Promise<CapitalProvenanceState> {
     requireVerifiedProof(proof);
+    const current = await this.getOrCreate(proof.scope);
+    if (current.lifecycle === 'SELF_FUNDED') {
+      if (sameBootstrapProof(current, proof)) return current;
+      throw new Error('Bootstrap capital provenance is already SELF_FUNDED from a different proof');
+    }
+    if (current.lifecycle === 'FIRST_PROFIT_VERIFIED') {
+      const candidate = {
+        ...current,
+        asset: proof.asset,
+        chain: proof.chain,
+        originTransactionHash: proof.transactionHash,
+        latestExecutionKey: proof.executionKey,
+        internallyGeneratedBalance: proof.residualProfit,
+      };
+      if (!sameBootstrapProof(candidate, proof)) {
+        throw new Error('FIRST_PROFIT_VERIFIED state does not match the retried bootstrap proof');
+      }
+      return this.transition(proof.scope, 'SELF_FUNDED', { generation: current.generation + 1 });
+    }
+    if (current.lifecycle !== 'ATOMIC_EXECUTION_PENDING') {
+      throw new Error(`Bootstrap profit requires ATOMIC_EXECUTION_PENDING provenance, received ${current.lifecycle}`);
+    }
+    if (current.latestExecutionKey && current.latestExecutionKey !== proof.executionKey) {
+      throw new Error('Bootstrap proof execution key does not match the pending capital provenance');
+    }
     const first = await this.transition(proof.scope, 'FIRST_PROFIT_VERIFIED', {
       asset: proof.asset,
       chain: proof.chain,
@@ -222,23 +255,99 @@ export class PostgresStage4CapitalProvenanceStore implements Stage4CapitalProven
 
   async recordVerifiedBootstrapProfit(proof: VerifiedBootstrapProfit): Promise<CapitalProvenanceState> {
     requireVerifiedProof(proof);
-    const initial = await this.transition(proof.scope, 'FIRST_PROFIT_VERIFIED', {
-      asset: proof.asset,
-      chain: proof.chain,
-      originTransactionHash: proof.transactionHash,
-      latestExecutionKey: proof.executionKey,
-      internallyGeneratedBalance: proof.residualProfit,
-      sourceRecipient: proof.sourceRecipient,
-      sourceRecipientBalanceBeforeBaseUnits: proof.sourceRecipientBalanceBeforeBaseUnits,
-      sourceRecipientBalanceAfterBaseUnits: proof.sourceRecipientBalanceAfterBaseUnits,
-    });
-    const funded = await this.transition(proof.scope, 'SELF_FUNDED', { generation: initial.generation + 1 });
-    await this.query(
-      `INSERT INTO zero_capital_capital_events (event_id, scope, lifecycle, generation, asset, amount, chain, transaction_hash, execution_key)
-       VALUES ($1, $2, 'SELF_FUNDED', $3, $4, $5, $6, $7, $8)`,
-      [crypto.randomUUID(), funded.scope, funded.generation, proof.asset, proof.residualProfit, proof.chain, proof.transactionHash, proof.executionKey],
-    );
-    return funded;
+    const { pool } = await import('../../../../db.js');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO zero_capital_capital_state (scope, lifecycle, generation, internally_generated_balance)
+         VALUES ($1, 'ZERO', 0, '0') ON CONFLICT (scope) DO NOTHING`,
+        [proof.scope],
+      );
+      const currentResult = await client.query(
+        'SELECT * FROM zero_capital_capital_state WHERE scope = $1 FOR UPDATE',
+        [proof.scope],
+      );
+      if (!currentResult.rows[0]) throw new Error(`Capital provenance state ${proof.scope} could not be loaded`);
+      let current = fromRow(currentResult.rows[0]);
+
+      const existingEvent = await client.query(
+        'SELECT execution_key, transaction_hash FROM zero_capital_capital_events WHERE scope = $1 AND execution_key = $2',
+        [proof.scope, proof.executionKey],
+      );
+      if (existingEvent.rows[0]) {
+        if (String(existingEvent.rows[0].transaction_hash || '').toLowerCase() !== proof.transactionHash.toLowerCase()) {
+          throw new Error('Bootstrap execution key is already bound to a different transaction hash');
+        }
+        await client.query('COMMIT');
+        return current;
+      }
+
+      if (current.lifecycle === 'SELF_FUNDED') {
+        if (!sameBootstrapProof(current, proof)) {
+          throw new Error('Bootstrap capital provenance is already SELF_FUNDED from a different proof');
+        }
+      } else {
+        if (current.lifecycle === 'FIRST_PROFIT_VERIFIED') {
+          const candidate = {
+            ...current,
+            asset: proof.asset,
+            chain: proof.chain,
+            originTransactionHash: proof.transactionHash,
+            latestExecutionKey: proof.executionKey,
+            internallyGeneratedBalance: proof.residualProfit,
+          };
+          if (!sameBootstrapProof(candidate, proof)) {
+            throw new Error('FIRST_PROFIT_VERIFIED state does not match the retried bootstrap proof');
+          }
+        } else {
+          if (current.lifecycle !== 'ATOMIC_EXECUTION_PENDING') {
+            throw new Error(`Bootstrap profit requires ATOMIC_EXECUTION_PENDING provenance, received ${current.lifecycle}`);
+          }
+          if (current.latestExecutionKey && current.latestExecutionKey !== proof.executionKey) {
+            throw new Error('Bootstrap proof execution key does not match the pending capital provenance');
+          }
+          assertValidTransition(current.lifecycle, 'FIRST_PROFIT_VERIFIED');
+          const first = await client.query(
+            `UPDATE zero_capital_capital_state
+             SET lifecycle='FIRST_PROFIT_VERIFIED', asset=$2, internally_generated_balance=$3, chain=$4,
+                 origin_transaction_hash=$5, latest_execution_key=$6, source_recipient=$7,
+                 source_recipient_balance_before_base_units=$8, source_recipient_balance_after_base_units=$9,
+                 updated_at=NOW()
+             WHERE scope=$1
+             RETURNING *`,
+            [proof.scope, proof.asset, proof.residualProfit, proof.chain, proof.transactionHash, proof.executionKey,
+              proof.sourceRecipient || null, proof.sourceRecipientBalanceBeforeBaseUnits || null,
+              proof.sourceRecipientBalanceAfterBaseUnits || null],
+          );
+          current = fromRow(first.rows[0]);
+        }
+
+        assertValidTransition(current.lifecycle, 'SELF_FUNDED');
+        const funded = await client.query(
+          `UPDATE zero_capital_capital_state
+           SET lifecycle='SELF_FUNDED', generation=generation + 1, updated_at=NOW()
+           WHERE scope=$1
+           RETURNING *`,
+          [proof.scope],
+        );
+        current = fromRow(funded.rows[0]);
+      }
+
+      await client.query(
+        `INSERT INTO zero_capital_capital_events (event_id, scope, lifecycle, generation, asset, amount, chain, transaction_hash, execution_key)
+         VALUES ($1, $2, 'SELF_FUNDED', $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (scope, execution_key) WHERE execution_key IS NOT NULL DO NOTHING`,
+        [crypto.randomUUID(), current.scope, current.generation, proof.asset, proof.residualProfit, proof.chain, proof.transactionHash, proof.executionKey],
+      );
+      await client.query('COMMIT');
+      return current;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async recordNativeGasFundingSettlement(proof: VerifiedNativeGasFundingSettlement): Promise<CapitalProvenanceState> {
