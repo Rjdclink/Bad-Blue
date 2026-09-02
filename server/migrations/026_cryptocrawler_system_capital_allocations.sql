@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_system_capital_allocations (
   capital_scope text NOT NULL REFERENCES public.zero_capital_capital_state(scope),
   opportunity_id text,
   strategy text NOT NULL,
+  authority_reference text NOT NULL,
+  authority_evidence jsonb NOT NULL,
   destination_kind text NOT NULL CHECK (destination_kind IN ('cex','onchain_strategy','native_gas','other_strategy')),
   destination_venue text,
   source_chain text NOT NULL,
@@ -50,4 +52,4 @@ REVOKE ALL ON TABLE public.cryptocrawler_system_capital_allocations FROM PUBLIC,
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_system_capital_allocations TO service_role;
 
 COMMENT ON TABLE public.cryptocrawler_system_capital_allocations IS
-  'Exact base-unit retained/system-capital reservations and settlement-confirmed placements. Source reservation and delivered destination amounts remain distinct; this table does not rank strategies or grant execution authority.';
+  'Exact base-unit retained/system-capital reservations and settlement-confirmed placements. Source reservation and delivered destination amounts remain distinct; authority evidence is preserved but this table does not rank strategies or grant execution authority.';
