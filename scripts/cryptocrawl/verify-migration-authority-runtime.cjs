@@ -15,6 +15,8 @@ const fundingMigration = read('server/migrations/024_cryptocrawler_funding_lifec
 const rainbowSourceMigration = read('server/migrations/025_cryptocrawler_rainbow_source_ledger.sql');
 const fundingLifecycle = read('server/services/cryptocrawl/execution/funding-position-lifecycle.ts');
 const rainbowSourceLedger = read('server/services/cryptocrawl/compensation/rainbow-profit-source-ledger.ts');
+const primaryArchiveWorker = read('server/services/cryptocrawl/integration/cryptara-primary-archive-worker.ts');
+const admissionWorker = read('server/services/cryptocrawl/integration/cryptara-supabase-admission-worker.ts');
 const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
 const adminApi = read('server/services/cryptocrawl/api/admin-api.ts');
@@ -87,13 +89,25 @@ const conflictReadIndex = fundingLifecycle.indexOf('findActiveByOpportunity(plan
 assert.ok(openingClaimIndex >= 0 && conflictReadIndex > openingClaimIndex,
   'funding lifecycle must claim first and only read on the rare active-opportunity conflict path');
 
-// Secondary Rainbow source metadata is also migration-owned. Runtime may record
-// and read rows through Cryptara admission, but it may never run DDL.
+// Secondary Rainbow source metadata is migration-owned. Hot state is Overflow;
+// the ledger itself may not acquire a DB lane directly. Its explicit Primary cold
+// archive path must enter the same Cryptara ranked queue at LOW priority and then
+// cross the Bridge gateway. The generic helper must queue rather than only label
+// the operation, otherwise Primary would bypass COMP despite the priority name.
 assert.match(rainbowSourceMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_rainbow_profit_sources/);
 assert.match(rainbowSourceMigration, /CREATE INDEX IF NOT EXISTS idx_rainbow_profit_source_route/);
 assert.match(rainbowSourceMigration, /ENABLE ROW LEVEL SECURITY/);
 assert.doesNotMatch(rainbowSourceLedger, /CREATE\s+(?:SCHEMA|TABLE|INDEX)/i);
-assert.match(rainbowSourceLedger, /withCryptaraSupabasePriority\('low'/);
+assert.doesNotMatch(rainbowSourceLedger, /withCryptaraSupabasePriority|withCryptaraSupabaseAdmission/);
+assert.match(rainbowSourceLedger, /queryCryptaraPrimaryArchive/);
+assert.match(primaryArchiveWorker, /withCryptaraSupabaseAdmission\('low'/);
+assert.match(primaryArchiveWorker, /runThroughCryptaraOverflowPrimaryGateway/);
+assert.match(primaryArchiveWorker, /admissionPriority:\s*'low'/);
+assert.match(primaryArchiveWorker, /compGoverned:\s*true/);
+assert.match(admissionWorker, /export async function withCryptaraSupabaseAdmission/);
+assert.match(admissionWorker, /const permit = await governor\.acquire\(priority\)/);
+assert.match(admissionWorker, /permit\.release\(failure, Date\.now\(\) - startedAt\)/);
+assert.match(admissionWorker, /if \(this !== pool\)[\s\S]{0,220}originalConnect\.call\(this/);
 
 // All production CryptoCrawler lifecycle entry points are fail-closed on the
 // complete Overflow schema and have no alternate Primary health/schema admission
@@ -149,4 +163,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for archive/wider-application paths, canonical and explicit admin runtime admission are Overflow-only with no Primary probe/schema fallback, both production lifecycle entry points fail closed on the complete Overflow schema, and legacy admin withdrawal cannot claim or bypass governed payout authority');
+console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for archive/wider-application paths, Primary cold archive work is LOW-ranked through the shared Cryptara COMP admission queue, canonical and explicit admin runtime admission are Overflow-only with no Primary probe/schema fallback, both production lifecycle entry points fail closed on the complete Overflow schema, and legacy admin withdrawal cannot claim or bypass governed payout authority');
