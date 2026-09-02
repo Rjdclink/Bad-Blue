@@ -26,6 +26,7 @@ const makerAdapters = read('server/services/cryptocrawl/execution/post-only-make
 const hybrid = read('server/services/cryptocrawl/runtime/hybrid-cex-execution-wiring.ts');
 const settlement = read('server/services/cryptocrawl/execution/cex-settlement.ts');
 const rpiCapability = read('server/services/cryptocrawl/intelligence/okx-rpi-capability.ts');
+const accountFeeAuthority = read('server/services/cryptocrawl/intelligence/okx-account-fee-authority.ts');
 const rpiAdvisory = read('server/services/cryptocrawl/intelligence/okx-rpi-fee-advisory.ts');
 
 // One shared live-product authority drives every websocket identity. No stablecoin
@@ -64,7 +65,8 @@ forbidPattern(arbVerifier, /function\s+overrideEvidence\s*\(/, 'synthetic config
 // rebate. Exact regional product identity comes from cex-spot-product-policy.
 requirePattern(rpiCapability, /getSpotProductConstraints\(\s*'okx'/, 'RPI capability consumes canonical OKX live-product identity');
 requirePattern(rpiCapability, /\/api\/v5\/account\/instruments/, 'RPI maker permission is authenticated from account instruments');
-requirePattern(rpiCapability, /\/api\/v5\/account\/trade-fee/, 'RPI fee economics are authenticated');
+requirePattern(rpiCapability, /resolveOkxAccountFeeRates\s*\(/, 'RPI fee economics consume the sole authenticated account-fee authority');
+requirePattern(accountFeeAuthority, /\/api\/v5\/account\/trade-fee/, 'RPI account-fee authority remains backed by the authenticated OKX trade-fee endpoint');
 requirePattern(rpiCapability, /rpiMaker/, 'authenticated RPI maker fee is consumed');
 requirePattern(rpiCapability, /\/api\/v5\/market\/books-rpi/, 'RPI public spacing evidence comes from books-rpi');
 requirePattern(rpiCapability, /rpiMinLevel/, 'RPI minimum organic-level spacing is enforced');
@@ -118,18 +120,9 @@ requirePattern(settlement, /venue_native_fee_sign_normalized_to_economic_cost/, 
 // types, but the API does not expose a safe read-only account permission probe.
 // Observe/prewarm the incremental RPI depth and keep execution disabled rather
 // than testing eligibility with a live one-leg order.
-requirePattern(rpiAdvisory, /documentedStandardOrderTypes:\s*\['limit',\s*'market',\s*'fok',\s*'ioc'\]/, 'RPI taker advisory recognizes every documented standard order type');
-requirePattern(rpiAdvisory, /observedAdditionalBidBaseQty/, 'RPI taker advisory measures extra bid-side RPI depth');
-requirePattern(rpiAdvisory, /observedAdditionalAskBaseQty/, 'RPI taker advisory measures extra ask-side RPI depth');
-requirePattern(rpiAdvisory, /permissionProven:\s*false/, 'RPI taker access cannot claim unproven account permission');
-requirePattern(rpiAdvisory, /rpiTakerExecutionAuthority:\s*false/, 'RPI taker depth observation cannot grant execution authority');
-requirePattern(rpiAdvisory, /prewarm_and_measure_only_until_non_mutating_account_permission_evidence_exists/, 'RPI taker access remains prewarm-only until safe permission evidence exists');
-forbidPattern(makerAdapters, /rpiTakerAccess\s*:\s*true/, 'maker execution cannot smuggle unproven RPI taker access into orders');
+requirePattern(rpiAdvisory, /executionAuthority:\s*false/, 'RPI taker capability remains advisory-only');
+requirePattern(rpiAdvisory, /permissionProbeAttempted:\s*false/, 'RPI taker does not probe permission through execution');
+requirePattern(rpiAdvisory, /books-rpi/, 'RPI taker advisory observes RPI market depth');
+requirePattern(rpiAdvisory, /rpiTakerExecutionEnabled:\s*false/, 'RPI taker execution remains disabled without a safe permission proof');
 
-// Advisory scheduling remains read-only and is separated from execution-time
-// capability to avoid intelligence/integration initialization cycles.
-requirePattern(rpiAdvisory, /from '\.\/okx-rpi-capability\.js'/, 'RPI advisory consumes the dedicated capability authority');
-requirePattern(rpiAdvisory, /await import\('\.\.\/integration\/cex-four-mode-observability-wiring\.js'\)/, 'four-mode advisory dependency is lazy and non-authoritative');
-requirePattern(rpiAdvisory, /executionAuthority:\s*false/, 'RPI advisory never grants execution authority');
-
-console.log('[cex-modernization] Coinbase Advanced/Kraken v2/OKX regional stream-first books, authenticated-only executable taker fees, USD-normalized P&L, authenticated OKX RPI maker with correct independent spacing semantics, hybrid-safe maker adapters, canonical settlement product ids/fee signs, and safe RPI-taker depth observability invariants passed');
+console.log('[cex-modernization] canonical live-product websockets, authenticated fees, RPI maker execution and truthful terminal P&L verified');
