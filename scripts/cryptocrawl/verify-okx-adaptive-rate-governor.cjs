@@ -17,6 +17,8 @@ must(source, "CRYPTO_OKX_FEE_BUCKET_WINDOW_MS', 2_000", 'official fee bucket win
 must(source, "CRYPTO_OKX_ORDER_BUCKET_CAPACITY', 60", 'protected order-write bucket');
 must(source, 'tokens: OKX_LANE_POLICIES[lane].capacity', 'token bucket starts full');
 must(source, 'await acquireOkxToken(lane);', 'token acquisition before private request');
+must(source, 'await acquireOkxDistributedQuota(lane);', 'Overflow cluster-wide quota before every trade-fee attempt');
+must(source, "} finally {\n    // A rejected request still consumes the venue's rate window.", 'failed requests retain distributed pacing');
 must(source, "['429', '50011', '51071', '50061']", 'explicit OKX rate-limit codes only');
 must(source, 'Math.random() * ceiling', 'full jitter backoff');
 must(source, 'state.consecutiveRateLimits >= 5', 'circuit breaker threshold');
