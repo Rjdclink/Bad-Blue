@@ -38,7 +38,9 @@ mustNot(source, "error instanceof TypeError &&", 'no network-error order replay'
 must(accountFeeAuthority, "lane: 'trade_fee'", 'fee lookups retain dedicated lane through the sole account-fee authority');
 must(fees, 'byGroup', 'fee group batching retained');
 must(fees, 'FEE_CACHE_TTL_MS', 'fee cache retained');
-must(settlement, "lane: 'order_write'", 'settlement order writes retain protected lane');
-must(settlement, "lane: 'order_read'", 'settlement order reads retain protected lane');
+must(source, "if (method === 'POST') return 'order_write';", 'POST settlement requests infer the protected order-write lane');
+must(source, "return 'order_read';", 'GET settlement requests infer the protected order-read lane');
+must(settlement, "this.privateRequest('/api/v5/trade/order', 'POST'", 'settlement order writes preserve POST routing');
+must(settlement, "this.privateRequest('/api/v5/trade/order', 'GET'", 'settlement order reads preserve GET routing');
 
 console.log('PASS OKX adaptive private rate governor wiring');
