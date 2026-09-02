@@ -37,7 +37,11 @@ assert.match(wiring, /'0X_API_KEY'/);
 assert.match(wiring, /canonicalAlias: 'ZEROX_API_KEY'/);
 assert.match(wiring, /normalizeZeroXCredentialAliases\(\)/);
 assert.match(marketData, /https:\/\/api\.0x\.org\/swap\/allowance-holder\/\$\{policy\.endpoint\}/);
-assert.match(marketData, /'0x-api-key': apiKey/);
+assert.match(marketData, /'0x-api-key': candidate\.apiKey/);
+assert.match(marketData, /'ZERO_EX_API_KEY'/);
+assert.match(marketData, /'ZERO_CAPITAL_ZEROX_API_KEY'/);
+assert.match(marketData, /isZeroXAuthenticationOrEntitlementFailure/);
+assert.match(marketData, /activeZeroXCredentialSource/);
 assert.match(marketData, /'0x-version': 'v2'/);
 
 // No impossible flash-loan-to-CEX coupling: zero-capital execution stays atomic
