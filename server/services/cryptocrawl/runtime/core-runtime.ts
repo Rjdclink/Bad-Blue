@@ -6,6 +6,10 @@ import {
   type CryptoCrawlerCoreLifecycle,
 } from './core-runtime-lifecycle.js';
 import { ensureCryptocrawlOverflowRuntimeSchema } from './cryptocrawl-overflow-runtime-schema.js';
+import {
+  ensureSystemCapitalPlacementReconciliation,
+  stopSystemCapitalPlacementReconciliation,
+} from './system-capital-placement-wiring.js';
 import { ensureZeroCapitalRealizedProfitWiring } from './zero-capital-realized-profit-wiring.js';
 
 let lifecyclePromise: Promise<CryptoCrawlerCoreLifecycle> | null = null;
@@ -141,6 +145,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   started = lifecycle.isStarted();
   scheduleCoinbaseReadinessProbe();
   scheduleRainbowProfitBridge();
+  ensureSystemCapitalPlacementReconciliation();
 
   if (!changed) return;
   logger.info('[CryptoCoreRuntime] Canonical core runtime started', {
@@ -169,6 +174,8 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     lowLatencyExecutionCorrectnessPolicyInstalled: true,
     marketFocusPolicyInstalled: true,
     zeroCapitalRealizedProfitPolicyInstalledBeforeLifecycle: true,
+    systemCapitalPlacementReconciliation: 'core_owned_pending_hash_reconciliation_only',
+    systemCapitalPlacementCreatesAllocations: false,
     coinbaseReadinessProbeScheduled: true,
     rainbowProfitBridgeScheduled: true,
     canonicalWalletArchitectureInstalled: true,
@@ -179,6 +186,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
 }
 
 export async function stopCryptoCrawlerCoreRuntime(): Promise<void> {
+  stopSystemCapitalPlacementReconciliation();
   if (!lifecyclePromise) {
     started = false;
     return;
