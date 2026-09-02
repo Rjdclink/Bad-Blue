@@ -121,8 +121,21 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const coinStatsEnvironment = resolveCoinStatsEnvironment();
     const rpcSnapshot = blockchainProviderSnapshot();
     const criticalRpcReady = rpcSnapshot.some(chain => chain.providers.some(provider => provider.http === 'healthy'));
-    const graphFreshMs = Math.max(15_000, Number(process.env.CRYPTOCRAWL_OPPORTUNITY_GRAPH_FRESH_MS || 30_000));
+    const configuredGraphFreshMs = Math.max(15_000, Number(process.env.CRYPTOCRAWL_OPPORTUNITY_GRAPH_FRESH_MS || 30_000));
+    const graphCycleDurationMs = graph ? Math.max(0, graph.completedAt - graph.startedAt) : 0;
+    // A completed cycle remains fresh through one measured cycle duration plus
+    // its adaptive rescan delay and a heartbeat scheduling margin. A fixed 30s
+    // window incorrectly marked healthy 37-114s scans stale while they ran.
+    const measuredGraphFreshMs = graph
+      ? graphCycleDurationMs + Math.max(1_000, graph.capacity.recommendedIntervalMs) + 15_000
+      : 0;
+    const graphFreshMs = Math.max(configuredGraphFreshMs, Math.min(300_000, measuredGraphFreshMs));
     const graphReady = !!graph && graph.completedAt >= Date.now() - graphFreshMs && graph.evaluatedSymbols > 0;
+    const discoveryEvidenceCount = Math.max(
+      candidateMetrics.observed,
+      graph?.observedCandidatesRegistered ?? 0,
+      graph?.publicDiscoveryObservations ?? 0,
+    );
     const inventory = cexInventoryLedger.getSnapshots();
     const rebalance = inventoryRebalancer.getStatus();
     const mcCalibration = monteCarloCalibrationStore.getMetrics();
@@ -138,7 +151,8 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       coreMarketDataReady,
       criticalRpcReady,
       graphReady,
-      observedOpportunities: recentMinute.observedOpportunities,
+      discoveryEvidenceCount,
+      canonicalObservedOpportunities: recentMinute.observedOpportunities,
       schedulerRunning: scheduler.running,
       noExecutionGuardEnabled: execution.noExecutionGuardEnabled,
       liveExecutionEnabled: execution.liveExecutionEnabled,
@@ -153,7 +167,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       zeroCapitalExecutionEnabled,
     });
 
-    readiness.DISCOVERY_READY.detail += `; selectedSymbols=${graph?.selectedSymbols ?? 0}; multiTopologyObserved=${candidateMetrics.observed}`;
+    readiness.DISCOVERY_READY.detail += `; freshnessThresholdMs=${graphFreshMs}; lastCycleDurationMs=${graphCycleDurationMs}; selectedSymbols=${graph?.selectedSymbols ?? 0}; multiTopologyObserved=${candidateMetrics.observed}`;
 
     logger.info('[CryptoRuntime] Authoritative runtime heartbeat', {
       component: 'CryptoRuntimeObservability',
@@ -178,9 +192,13 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       discovery: {
         cex: graph ? {
           cycleId: graph.cycleId,
+          cycleTrigger: graph.cycleTrigger,
           topology: graph.topology,
           startedAt: graph.startedAt,
           completedAt: graph.completedAt,
+          cycleDurationMs: graphCycleDurationMs,
+          freshnessThresholdMs: graphFreshMs,
+          discoveryEvidenceCount,
           universeAssets: graph.universeAssets,
           selectedSymbols: graph.selectedSymbols,
           evaluatedSymbols: graph.evaluatedSymbols,
