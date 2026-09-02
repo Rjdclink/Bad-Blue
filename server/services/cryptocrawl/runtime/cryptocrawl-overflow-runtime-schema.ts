@@ -61,6 +61,7 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_cex_inventory_reservations_v1',
   'public.cryptocrawler_system_capital_allocations',
   'public.cryptocrawler_cex_system_owned_lots',
+  'public.cryptocrawler_cex_system_owned_settlements',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
