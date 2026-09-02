@@ -10,7 +10,10 @@ import { createPostOnlyMakerAdapters } from '../execution/post-only-maker-adapte
 import { getMakerLifecycleTraceId } from '../execution/maker-lifecycle-trace.js';
 import { isMakerRecoveryPlan } from '../execution/stablecoin-maker-strategy.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
-import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
+import {
+  getProfitLadderNotionalAuthority,
+  type ProfitLadderNotionalAuthoritySnapshot,
+} from '../governance/profit-ladder-notional-authority.js';
 import { getMakerPaperProofStats } from '../intelligence/maker-microstructure-proof.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 
@@ -82,12 +85,12 @@ async function persistMakerSystemOwnedSettlement(
   plan: VerifiedArbitragePlan,
   result: ArbitrageExecutionResult,
   traceId: string,
+  notionalAuthority: ProfitLadderNotionalAuthoritySnapshot,
 ): Promise<void> {
   const orders = (result.orders || []).filter(order => order.terminal && (order.filledQuantity ?? 0) > 0);
   if (orders.length === 0) return;
-  const notionalAuthority = getProfitLadderNotionalAuthority();
   if (!notionalAuthority.aligned || !(notionalAuthority.maxNotionalUsd > 0) || plan.notionalUsd > notionalAuthority.maxNotionalUsd + 1e-9) {
-    throw new Error(`Maker terminal settlement no longer has aligned Profit Ladder authority for notional ${plan.notionalUsd}`);
+    throw new Error(`Maker admission-time Profit Ladder proof does not authorize notional ${plan.notionalUsd}`);
   }
   const authority = {
     strategySelectionAuthority: 'cryptara' as const,
@@ -101,6 +104,7 @@ async function persistMakerSystemOwnedSettlement(
     stage: notionalAuthority.stage,
     tierId: notionalAuthority.tierId,
     makerLifecycleTraceId: traceId,
+    admissionEvaluatedAt: notionalAuthority.evaluatedAt,
   };
 
   for (const order of orders) {
@@ -186,12 +190,13 @@ export function ensureStablecoinMakerExecutionWiring(): void {
       settlementTimeoutMs: ttl.ttlMs,
       pollIntervalMs,
     });
+    const admissionNotionalAuthority = getProfitLadderNotionalAuthority();
     const startedAt = Date.now();
     try {
       const result = await executor.execute(plan);
       if (process.env.NODE_ENV === 'production') {
         try {
-          await persistMakerSystemOwnedSettlement(plan, result, traceId);
+          await persistMakerSystemOwnedSettlement(plan, result, traceId, admissionNotionalAuthority);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           getCryptocrawlGovernance().pause('system', 'cex_system_capital_settlement_persistence_failed');
