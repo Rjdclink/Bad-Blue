@@ -137,6 +137,16 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       graph?.publicDiscoveryObservations ?? 0,
     );
     const inventory = cexInventoryLedger.getSnapshots();
+    const spendableInventory = inventory.filter(snapshot => {
+      const spendable = snapshot.available
+        - snapshot.reserved
+        - snapshot.payoutReserved
+        - snapshot.pendingOrder
+        - snapshot.pendingTransfer
+        - snapshot.minimumReserve;
+      return Number.isFinite(spendable) && spendable > 0;
+    });
+    const spendableInventoryVenues = new Set(spendableInventory.map(snapshot => snapshot.venue)).size;
     const rebalance = inventoryRebalancer.getStatus();
     const mcCalibration = monteCarloCalibrationStore.getMetrics();
     const bookEvolution = orderBookEvolutionStore.getStatus();
@@ -158,6 +168,8 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       liveExecutionEnabled: execution.liveExecutionEnabled,
       liveExecutionConfirmed: execution.liveExecutionConfirmed,
       reconciledInventoryAssets: inventory.length,
+      spendableInventoryAssets: spendableInventory.length,
+      spendableInventoryVenues,
       eligibleCandidates: candidateMetrics.eligible,
       eligibleCexCandidates: candidateMetrics.byTopology.CEX_CEX.eligible,
       eligibleZeroCapitalCandidates: candidateMetrics.byTopology.ZERO_CAPITAL_ATOMIC.eligible,
@@ -280,6 +292,11 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       venues: getVenueCapabilities(),
       inventory: {
         reconciled: inventory,
+        readiness: {
+          spendableAssets: spendableInventory.length,
+          spendableVenues: spendableInventoryVenues,
+          crossVenuePotentiallyRoutable: spendableInventory.length > 0 && spendableInventoryVenues >= 2,
+        },
         rebalance,
         zeroCapitalResourcesAreCexInventory: false,
       },
