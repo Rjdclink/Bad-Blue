@@ -13,6 +13,12 @@ import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/du
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
 import { withEvmSignerLane } from '../execution/evm-signer-lane.js';
 import { evaluateZeroCapitalRealizedProfit } from '../execution/zero-capital-realized-profit-policy.js';
+import {
+  persistVerifiedSponsoredProfit,
+  prepareSponsoredSystemCapital,
+  releaseFailedSponsoredBootstrap,
+  type SponsoredSystemCapitalAttempt,
+} from './system-capital-provenance.js';
 
 const ERC20_BALANCE_ABI = ['function balanceOf(address account) view returns (uint256)'];
 const activeProfitBoundaries = new WeakSet<object>();
@@ -93,16 +99,49 @@ async function executeWithProfitProvenanceBoundary(
     };
   }
 
-  const invoke = () => delegate(opportunity, funding);
-  const result = funding?.mode === 'native'
-    ? await withEvmSignerLane({
-        chainId: network.chainId,
-        walletAddress: wallet.address,
-        operation: invoke,
-      })
-    : await invoke();
+  let systemCapitalAttempt: SponsoredSystemCapitalAttempt | null = null;
+  if (funding?.mode === 'sponsored') {
+    try {
+      systemCapitalAttempt = await prepareSponsoredSystemCapital({
+        chain: opportunity.chain,
+        inputToken: opportunity.inputToken,
+        profitRecipient,
+        opportunityId: opportunity.id,
+      });
+    } catch (error) {
+      throw new Error(`SYSTEM_CAPITAL_PROVENANCE_PREP_FAILED:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
-  if (!result?.txHash || result.receiptStatus !== 1 || typeof result.profit !== 'bigint') return result;
+  const invoke = () => delegate(opportunity, funding);
+  let result: any;
+  try {
+    result = funding?.mode === 'native'
+      ? await withEvmSignerLane({
+          chainId: network.chainId,
+          walletAddress: wallet.address,
+          operation: invoke,
+        })
+      : await invoke();
+  } catch (error) {
+    await releaseFailedSponsoredBootstrap(systemCapitalAttempt).catch(() => undefined);
+    throw error;
+  }
+
+  if (!result?.txHash) {
+    await releaseFailedSponsoredBootstrap(systemCapitalAttempt).catch(() => undefined);
+    return { ...result, systemCapitalAttempt };
+  }
+  if (result.receiptStatus === 0) {
+    await releaseFailedSponsoredBootstrap(systemCapitalAttempt).catch(() => undefined);
+    return { ...result, systemCapitalAttempt };
+  }
+  if (result.receiptStatus !== 1 || typeof result.profit !== 'bigint') {
+    // A submitted transaction without terminal proof stays pending. Releasing the
+    // capital lifecycle here could allow a duplicate attempt while the first hash
+    // is still capable of settling.
+    return { ...result, systemCapitalAttempt };
+  }
 
   let recipientEnding: bigint;
   try {
@@ -116,6 +155,7 @@ async function executeWithProfitProvenanceBoundary(
       profitVerified: false,
       profitRecipient,
       profitRecipientStartingInputBalance: recipientStarting,
+      systemCapitalAttempt,
       error: `Terminal receiver profit event exists but operational profit-recipient ending balance is unavailable: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -130,6 +170,7 @@ async function executeWithProfitProvenanceBoundary(
       profitRecipient,
       profitRecipientStartingInputBalance: recipientStarting,
       profitRecipientEndingInputBalance: recipientEnding,
+      systemCapitalAttempt,
       error: `Terminal receiver profit event does not equal operational profit-recipient token delta: event=${result.profit.toString()} delta=${recipientDelta.toString()}`,
     };
   }
@@ -139,6 +180,7 @@ async function executeWithProfitProvenanceBoundary(
     profitRecipient,
     profitRecipientStartingInputBalance: recipientStarting,
     profitRecipientEndingInputBalance: recipientEnding,
+    systemCapitalAttempt,
   };
 }
 
@@ -206,6 +248,95 @@ function reconcileAllInResult(opportunity: ZeroCapitalOpportunity, result: any):
   })();
 }
 
+async function persistSystemCapitalIfVerified(
+  opportunity: ZeroCapitalOpportunity,
+  funding: any,
+  result: any,
+): Promise<any> {
+  const attempt = result?.systemCapitalAttempt as SponsoredSystemCapitalAttempt | null | undefined;
+  if (funding?.mode !== 'sponsored' || !attempt) return result;
+
+  if (result.economicsVerified === true && result.success === false) {
+    await releaseFailedSponsoredBootstrap(attempt).catch(() => undefined);
+    return result;
+  }
+
+  if (
+    result.success !== true ||
+    result.profitVerified !== true ||
+    result.receiptStatus !== 1 ||
+    typeof result.profit !== 'bigint' ||
+    typeof result.profitRecipient !== 'string' ||
+    typeof result.profitRecipientStartingInputBalance !== 'bigint' ||
+    typeof result.profitRecipientEndingInputBalance !== 'bigint' ||
+    typeof result.txHash !== 'string'
+  ) return result;
+
+  const retainedProfitBaseUnits = result.profitRecipientEndingInputBalance - result.profitRecipientStartingInputBalance;
+  if (retainedProfitBaseUnits <= 0n || retainedProfitBaseUnits !== result.profit) {
+    getCryptocrawlGovernance().pause('system', 'zero_capital_system_capital_delta_mismatch');
+    return {
+      ...result,
+      capitalProvenanceVerified: false,
+      error: `Verified sponsored settlement cannot enter reusable capital: retained delta=${retainedProfitBaseUnits.toString()} all-in profit=${result.profit.toString()}`,
+    };
+  }
+
+  try {
+    const capital = await persistVerifiedSponsoredProfit(attempt, {
+      transactionHash: result.txHash,
+      chain: opportunity.chain,
+      asset: opportunity.inputAssetSymbol,
+      retainedProfitBaseUnits,
+      sourceRecipient: result.profitRecipient,
+      sourceRecipientBalanceBeforeBaseUnits: result.profitRecipientStartingInputBalance,
+      sourceRecipientBalanceAfterBaseUnits: result.profitRecipientEndingInputBalance,
+    });
+    const normalized = result.normalized
+      ? {
+          ...result.normalized,
+          provenance: [...new Set([...(result.normalized.provenance || []), 'durable_self_funded_capital_provenance'])],
+        }
+      : result.normalized;
+    logger.info('[ZeroCapitalEngine] Verified sponsored profit credited to reusable system capital', {
+      component: 'ZeroCapitalEngine',
+      opportunityId: opportunity.id,
+      chain: opportunity.chain,
+      asset: opportunity.inputAssetSymbol,
+      capitalScope: attempt.scope,
+      capitalLifecycle: capital.lifecycle,
+      generation: capital.generation,
+      retainedProfitBaseUnits: retainedProfitBaseUnits.toString(),
+      systemCapitalBalanceBaseUnits: capital.internallyGeneratedBalance,
+      operatorBalanceAuthorityGranted: false,
+    });
+    return {
+      ...result,
+      normalized,
+      capitalProvenanceVerified: true,
+      systemCapitalScope: attempt.scope,
+      systemCapitalBalanceBaseUnits: capital.internallyGeneratedBalance,
+    };
+  } catch (error) {
+    getCryptocrawlGovernance().pause('system', 'zero_capital_system_capital_persistence_failed');
+    logger.error('[ZeroCapitalEngine] Real profit settled but durable system-capital credit failed; execution paused', {
+      component: 'ZeroCapitalEngine',
+      opportunityId: opportunity.id,
+      chain: opportunity.chain,
+      transactionHash: result.txHash,
+      capitalScope: attempt.scope,
+      error: error instanceof Error ? error.message : String(error),
+      settlementTruthPreserved: true,
+      newExecutionPaused: true,
+    });
+    return {
+      ...result,
+      capitalProvenanceVerified: false,
+      error: `Trade settled profit successfully, but reusable capital persistence failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 /**
  * Install terminal profit reconciliation around the CURRENT instance execution
  * stack, not only the class prototype. Provider-specific and dual-provider
@@ -226,12 +357,17 @@ export function ensureZeroCapitalRealizedProfitWiring(): void {
         try {
           result = await executeWithProfitProvenanceBoundary(target, delegate, opportunity, funding);
         } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.startsWith('SYSTEM_CAPITAL_PROVENANCE_PREP_FAILED:')) {
+            getCryptocrawlGovernance().pause('system', 'zero_capital_system_capital_preparation_failed');
+          }
           return {
             success: false,
-            error: `Zero-capital receiver profit-provenance boundary failed closed: ${error instanceof Error ? error.message : String(error)}`,
+            error: `Zero-capital receiver profit-provenance boundary failed closed: ${message}`,
           };
         }
-        return await reconcileAllInResult(opportunity, result);
+        const reconciled = await reconcileAllInResult(opportunity, result);
+        return persistSystemCapitalIfVerified(opportunity, funding, reconciled);
       } finally {
         activeProfitBoundaries.delete(opportunity as object);
       }
@@ -282,6 +418,7 @@ export function ensureZeroCapitalRealizedProfitWiring(): void {
     reentrantCapturedWrappersBypassDuplicateBoundary: true,
     receiverEventClassifiedAs: 'gross_profit_only_after_zero_starting_balance',
     operationalProfitRecipientDeltaRequired: true,
+    sponsoredProfitRequiresDurableSelfFundedCapitalProvenance: true,
     nativeSubmissionDistributedSignerLane: true,
     actualNativeReceiptGasSubtracted: true,
     liveNativeUsdPriceRequiredForNativeFunding: true,
