@@ -46,6 +46,8 @@ assert(cexPrivate.includes('distributedTradeFeePacing'), 'OKX distributed fee pa
 assert(cexPrivate.includes('OKX_REPLICA_SAFETY_FACTOR'), 'OKX fee lane must have a conservative fail-safe when coordination is unavailable');
 assert(cexPrivate.includes("if (!isDatabaseConfigured) return OKX_FEE_MIN_INTERVAL_MS"), 'no-database tests/dev must retain the original bounded local fee cadence');
 assert(cexPrivate.includes("lane !== 'trade_fee' || !isCoordinationDatabaseConfigured"), 'non-fee OKX lanes must remain independent from fee coordination');
+assert(cexPrivate.includes("from '../execution/distributed-api-quota.js'"), 'OKX private authority must bind the distributed quota module it references');
+assert(cexPrivate.includes('acquireDistributedApiQuota') && cexPrivate.includes('getDistributedApiQuotaSnapshot'), 'OKX distributed quota identifiers must be statically bound so observability cannot crash runtime');
 
 // The existing rolling-deploy pool authority must budget application sessions,
 // coordination sessions and reserve headroom together instead of creating a second governor.
