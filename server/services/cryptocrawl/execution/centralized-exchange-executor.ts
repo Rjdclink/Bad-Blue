@@ -1,8 +1,14 @@
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import {
+  getProfitLadderNotionalAuthority,
+  type ProfitLadderNotionalAuthoritySnapshot,
+} from '../governance/profit-ladder-notional-authority.js';
 import logger from '../../../logger.js';
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { cexInventoryLedger, type InventoryRequirement, type InventoryVenue } from './cex-inventory-ledger.js';
+import { getExactSystemCapitalOrderAssetDeltas } from './cex-system-capital-settlement-evidence.js';
+import { applyExactCexSystemOwnedSettlement } from './cex-system-owned-lot-ledger.js';
 import { parallelMonteCarloPool } from './adapters/parallel-monte-carlo-pool.js';
 import {
   createProductionCexSettlementAdapters,
@@ -229,6 +235,42 @@ async function reconcileTerminalBalances(result: ArbitrageExecutionResult): Prom
   }));
 }
 
+async function applyTerminalSystemOwnedSettlements(
+  plan: VerifiedArbitragePlan,
+  result: ArbitrageExecutionResult,
+  notionalAuthority: ProfitLadderNotionalAuthoritySnapshot,
+): Promise<void> {
+  const terminalFilledOrders = (result.orders || []).filter(order => order.terminal && (order.filledQuantity ?? 0) > 0);
+  if (terminalFilledOrders.length === 0) return;
+
+  const reference = `${opportunityIdentity(plan)}:profit-ladder:${notionalAuthority.rungKey}:${notionalAuthority.evaluatedAt}`;
+  const authority = {
+    strategySelectionAuthority: 'cryptara' as const,
+    notionalAuthority: 'profit_ladder' as const,
+    executionAuthority: 'stage_manager' as const,
+    governanceAdmitted: true as const,
+    reference,
+    profitLadderRung: notionalAuthority.rungKey,
+    profitLadderMaxNotionalUsd: notionalAuthority.maxNotionalUsd,
+    admittedParentNotionalUsd: plan.notionalUsd,
+    stage: notionalAuthority.stage,
+    tierId: notionalAuthority.tierId,
+  };
+
+  for (const order of terminalFilledOrders) {
+    if (order.venue === 'coinbase') {
+      throw new Error(`SYSTEM_CAPITAL_PROVENANCE_DEFICIT:coinbase:${order.symbol}:Coinbase operator balance cannot acquire system-owned execution authority`);
+    }
+    const evidence = await getExactSystemCapitalOrderAssetDeltas(order);
+    await applyExactCexSystemOwnedSettlement({
+      evidence,
+      opportunityId: opportunityIdentity(plan),
+      strategy: 'verified_cex_arbitrage',
+      authority,
+    });
+  }
+}
+
 export class CentralizedExchangeExecutor {
   constructor(private readonly options: CentralizedExchangeExecutorOptions = {}) {}
 
@@ -246,6 +288,21 @@ export class CentralizedExchangeExecutor {
     }
     if (!Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) {
       return rejectPlan('REJECT_NEGATIVE_NET_EDGE: verified all-in net profit must be positive before live CEX submission');
+    }
+
+    // Profit Ladder is the sole NEW-exposure size authority. Check it again at
+    // the live executor boundary so direct callers cannot bypass scheduler/resource
+    // admission while preserving the same authority rather than inventing another cap.
+    const notionalAuthority = getProfitLadderNotionalAuthority();
+    if (
+      !Number.isFinite(plan.notionalUsd) || plan.notionalUsd <= 0 ||
+      !notionalAuthority.aligned ||
+      !(notionalAuthority.maxNotionalUsd > 0) ||
+      plan.notionalUsd > notionalAuthority.maxNotionalUsd + 1e-9
+    ) {
+      return rejectPlan(
+        `REJECT_PROFIT_LADDER_NOTIONAL: requested=${plan.notionalUsd} max=${notionalAuthority.maxNotionalUsd} rung=${notionalAuthority.rungKey} aligned=${notionalAuthority.aligned}`,
+      );
     }
 
     const executionAdmissionStartedAt = Date.now();
@@ -406,6 +463,39 @@ export class CentralizedExchangeExecutor {
         executeChild: this.options.childExecutor,
       }));
       await reconcileTerminalBalances(result);
+
+      // Injected adapters are test/simulation seams and must never mutate durable
+      // capital ownership. Production orders are re-read from the authenticated
+      // exchange after terminalization before any owned lots are consumed/created.
+      if (!this.options.adapters && process.env.NODE_ENV === 'production') {
+        try {
+          await applyTerminalSystemOwnedSettlements(plan, result, notionalAuthority);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          getCryptocrawlGovernance().pause('system', 'cex_system_capital_settlement_persistence_failed');
+          logger.error('[CEX Executor] Terminal trade truth preserved but system-capital ownership persistence failed; further trading paused', {
+            component: 'CentralizedExchangeExecutor',
+            symbol: plan.symbol,
+            buyVenue: plan.buyVenue,
+            sellVenue: plan.sellVenue,
+            status: result.status,
+            settlementConfirmed: result.settlementConfirmed,
+            error: message,
+            operatorBalanceFallbackUsed: false,
+          });
+          return {
+            ...result,
+            error: result.error || `CEX_SYSTEM_CAPITAL_ACCOUNTING_FAILED:${message}`,
+            normalized: result.normalized
+              ? {
+                  ...result.normalized,
+                  provenance: [...new Set([...result.normalized.provenance, 'cex_system_capital_accounting_failed_fail_closed'])],
+                  error: result.normalized.error || `System-capital ownership persistence failed after terminal settlement: ${message}`,
+                }
+              : result.normalized,
+          };
+        }
+      }
       return result;
     } finally {
       await inventory.reservation.release();
