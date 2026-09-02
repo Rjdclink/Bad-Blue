@@ -243,7 +243,7 @@ export async function getExactKrakenOrderAssetDeltas(order: NormalizedOrderSettl
       const quantityDecimal = requirePositiveExactDecimal(String(raw.vol || ''), `Kraken fill ${tradeId} quantity`);
       const priceDecimal = requirePositiveExactDecimal(String(raw.price || ''), `Kraken fill ${tradeId} price`);
       const quoteConsideration = requirePositiveExactDecimal(String(raw.cost || ''), `Kraken fill ${tradeId} cost`);
-      const feeDecimal = requireNonNegativeExactDecimal(String(raw.fee ?? '0'), `Kraken fill ${tradeId} fee`);
+      const feeDecimal = exactSignedDecimal(raw.fee, `Kraken fill ${tradeId} fee`);
 
       if (order.side === 'buy') {
         addDelta(assetDeltas, baseAsset, quantityDecimal);
@@ -252,7 +252,10 @@ export async function getExactKrakenOrderAssetDeltas(order: NormalizedOrderSettl
         addDelta(assetDeltas, baseAsset, negateExactDecimal(quantityDecimal));
         addDelta(assetDeltas, quoteAsset, quoteConsideration);
       }
-      if (compareExactDecimals(feeDecimal, '0') > 0) addDelta(assetDeltas, quoteAsset, negateExactDecimal(feeDecimal));
+      // Kraken spot fees are expressed in quote currency. A positive fee is a
+      // cost, while current maker-rebate schedules can produce a negative fee;
+      // negating the signed fee therefore debits charges and credits rebates.
+      if (compareExactDecimals(feeDecimal, '0') !== 0) addDelta(assetDeltas, quoteAsset, negateExactDecimal(feeDecimal));
 
       summedFill = addExactDecimals(summedFill, quantityDecimal);
       fills.push({
@@ -260,7 +263,7 @@ export async function getExactKrakenOrderAssetDeltas(order: NormalizedOrderSettl
         quantityDecimal,
         priceDecimal,
         feeDecimal,
-        feeAsset: compareExactDecimals(feeDecimal, '0') > 0 ? quoteAsset : null,
+        feeAsset: compareExactDecimals(feeDecimal, '0') !== 0 ? quoteAsset : null,
         liquidityRole: raw.maker === true ? 'maker' : raw.maker === false ? 'taker' : 'unknown',
       });
     }
@@ -292,7 +295,7 @@ export async function getExactKrakenOrderAssetDeltas(order: NormalizedOrderSettl
       'trade_transaction_id_deduplicated',
       'exact_decimal_asset_deltas',
       'enumerated_fill_sum_matches_vol_exec',
-      'quote_currency_fee_semantics_from_current_kraken_spot_execution_schema',
+      'quote_currency_signed_fee_or_rebate_semantics',
     ],
   };
 }
