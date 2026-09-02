@@ -145,8 +145,6 @@ export async function getExactOkxOrderAssetDeltas(order: NormalizedOrderSettleme
       addDelta(assetDeltas, baseAsset, negateExactDecimal(quantityDecimal));
       addDelta(assetDeltas, quoteAsset, quoteConsideration);
     }
-    // OKX documents fee as a signed account effect: negative is a fee charge,
-    // positive is a maker rebate. Preserve it exactly in feeCcy.
     if (feeAsset) addDelta(assetDeltas, feeAsset, feeDecimal);
 
     summedFill = addExactDecimals(summedFill, quantityDecimal);
@@ -209,7 +207,7 @@ export async function getExactKrakenOrderAssetDeltas(order: NormalizedOrderSettl
   }
   const accumulatedFillDecimal = requireNonNegativeExactDecimal(String(orderRow.vol_exec ?? '0'), 'Kraken accumulated fill');
   const tradeIds = Array.isArray(orderRow.trades)
-    ? orderRow.trades.map((value: unknown) => String(value || '').trim()).filter(Boolean)
+    ? [...new Set(orderRow.trades.map((value: unknown) => String(value || '').trim()).filter(Boolean))]
     : [];
 
   const fills: ExactCexFillEvidence[] = [];
@@ -219,13 +217,18 @@ export async function getExactKrakenOrderAssetDeltas(order: NormalizedOrderSettl
   let summedFill = '0';
 
   if (tradeIds.length > 0) {
-    const trades = await krakenPrivateRequest(
-      '/0/private/QueryTrades',
-      { txid: tradeIds.join(','), trades: 'false' },
-      { timeoutMs: 12_000 },
-    );
+    const tradeRows: Record<string, unknown> = {};
+    for (let offset = 0; offset < tradeIds.length; offset += 20) {
+      const batch = tradeIds.slice(offset, offset + 20);
+      const response = await krakenPrivateRequest(
+        '/0/private/QueryTrades',
+        { txid: batch.join(','), trades: 'false' },
+        { timeoutMs: 12_000 },
+      );
+      Object.assign(tradeRows, response || {});
+    }
     const seen = new Set<string>();
-    for (const [tradeTxId, rawValue] of Object.entries(trades || {})) {
+    for (const [tradeTxId, rawValue] of Object.entries(tradeRows)) {
       const raw = rawValue as Record<string, unknown>;
       if (String(raw.ordertxid || '') !== order.orderId) continue;
       const tradeId = String(tradeTxId || '').trim();
@@ -249,9 +252,6 @@ export async function getExactKrakenOrderAssetDeltas(order: NormalizedOrderSettl
         addDelta(assetDeltas, baseAsset, negateExactDecimal(quantityDecimal));
         addDelta(assetDeltas, quoteAsset, quoteConsideration);
       }
-      // Kraken's current spot execution schema states that fees are expressed in
-      // quote currency. QueryTrades supplies exact decimal fee and cost values,
-      // so quote ownership is debited without floating-point inference.
       if (compareExactDecimals(feeDecimal, '0') > 0) addDelta(assetDeltas, quoteAsset, negateExactDecimal(feeDecimal));
 
       summedFill = addExactDecimals(summedFill, quantityDecimal);
@@ -288,6 +288,7 @@ export async function getExactKrakenOrderAssetDeltas(order: NormalizedOrderSettl
     provenance: [
       'kraken_authenticated_order_state',
       'kraken_authenticated_trade_fills',
+      'query_trades_batched_at_20',
       'trade_transaction_id_deduplicated',
       'exact_decimal_asset_deltas',
       'enumerated_fill_sum_matches_vol_exec',
