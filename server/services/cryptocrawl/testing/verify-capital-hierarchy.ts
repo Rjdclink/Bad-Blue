@@ -54,26 +54,52 @@ async function validateThroughBeam(label: string, source: string, approved: bool
 }
 
 async function main(): Promise<void> {
-  const wallet = selectCapitalSource([chainSnapshot(true, true)], { europaEligible: true, flashbotsEligible: true });
-  assert.equal(wallet.source, 'wallet');
-  await validateThroughBeam('wallet-sufficient', wallet.source, true);
+  const protectedExternalWallet = selectCapitalSource([chainSnapshot(true, true)], {
+    selfFundedEligible: false,
+    selfFundedReason: 'no durable SELF_FUNDED provenance',
+    europaEligible: true,
+    flashbotsEligible: true,
+  });
+  assert.equal(protectedExternalWallet.source, 'europa-zero-capital');
+  assert.equal(protectedExternalWallet.walletSufficient, true);
+  assert.match(protectedExternalWallet.reasons.join(' '), /external\/operator capital remains protected/i);
+  await validateThroughBeam('funded-wallet-without-provenance', protectedExternalWallet.source, true);
 
-  const europa = selectCapitalSource([chainSnapshot(false, false)], { europaEligible: true, flashbotsEligible: false });
+  const selfFunded = selectCapitalSource([chainSnapshot(true, true)], {
+    selfFundedEligible: true,
+    europaEligible: true,
+    flashbotsEligible: true,
+  });
+  assert.equal(selfFunded.source, 'self-funded');
+  await validateThroughBeam('verified-self-funded-capital', selfFunded.source, true);
+
+  const europa = selectCapitalSource([chainSnapshot(false, false)], {
+    selfFundedEligible: false,
+    europaEligible: true,
+    flashbotsEligible: false,
+  });
   assert.equal(europa.source, 'europa-zero-capital');
   await validateThroughBeam('wallet-insufficient-europa', europa.source, true);
 
-  const flashbots = selectCapitalSource([chainSnapshot(false, false)], { europaEligible: false, flashbotsEligible: true });
+  const flashbots = selectCapitalSource([chainSnapshot(false, false)], {
+    selfFundedEligible: false,
+    europaEligible: false,
+    flashbotsEligible: true,
+  });
   assert.equal(flashbots.source, 'flashbots-zero-capital');
   await validateThroughBeam('wallet-insufficient-flashbots', flashbots.source, true);
 
-  const deferred = selectCapitalSource([chainSnapshot(false, false)], {
+  const deferred = selectCapitalSource([chainSnapshot(true, true)], {
+    selfFundedEligible: false,
+    selfFundedReason: 'no durable SELF_FUNDED provenance',
     europaEligible: false,
     flashbotsEligible: false,
     europaReason: 'Europa readiness is unavailable',
     flashbotsReason: 'Flashbots sponsorship is unavailable',
   });
   assert.equal(deferred.source, 'defer');
-  await validateThroughBeam('neither-capital-path', deferred.source, false);
+  assert.equal(deferred.walletSufficient, true);
+  await validateThroughBeam('unproven-wallet-and-no-zero-capital-path', deferred.source, false);
 
   const increased = calculateProgressivePositionSize({
     requestedNotionalUsd: 50,
@@ -88,7 +114,7 @@ async function main(): Promise<void> {
   }, favorableContext);
   assert.equal(increased.approved, true);
   assert.equal(increased.proposedNotionalUsd, 50);
-  await validateThroughBeam('favorable-realized-performance', 'wallet', increased.approved);
+  await validateThroughBeam('favorable-realized-performance', 'self-funded', increased.approved);
 
   const reduced = calculateProgressivePositionSize({
     requestedNotionalUsd: 50,
@@ -106,9 +132,10 @@ async function main(): Promise<void> {
   await validateThroughBeam('adverse-performance', 'defer', reduced.approved);
 
   console.log(JSON.stringify({
-    wallet: { source: wallet.source, reason: wallet.reasons },
-    europa: { source: europa.source, reason: europa.reasons },
-    deferred: { source: deferred.source, reason: deferred.reasons },
+    protectedExternalWallet: { source: protectedExternalWallet.source, reasons: protectedExternalWallet.reasons },
+    selfFunded: { source: selfFunded.source, reasons: selfFunded.reasons },
+    europa: { source: europa.source, reasons: europa.reasons },
+    deferred: { source: deferred.source, reasons: deferred.reasons },
     favorable: { proposedNotionalUsd: increased.proposedNotionalUsd, reason: increased.reasons },
     adverse: { proposedNotionalUsd: reduced.proposedNotionalUsd, reason: reduced.reasons },
   }, null, 2));
