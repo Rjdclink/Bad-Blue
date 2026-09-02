@@ -95,11 +95,9 @@ assert.match(rainbowSourceMigration, /ENABLE ROW LEVEL SECURITY/);
 assert.doesNotMatch(rainbowSourceLedger, /CREATE\s+(?:SCHEMA|TABLE|INDEX)/i);
 assert.match(rainbowSourceLedger, /withCryptaraSupabasePriority\('low'/);
 
-// Overflow-ready canonical wiring is fail-closed on Overflow readiness and has no
-// alternate Primary health/schema admission path. The core execution lifecycle
-// likewise verifies the complete Overflow schema before production start. The
-// older explicit admin-start gate remains separately guarded until its own
-// sequential cutover.
+// All production CryptoCrawler lifecycle entry points are fail-closed on the
+// complete Overflow schema and have no alternate Primary health/schema admission
+// path. Primary remains archive/wider-application state, never a hot runtime gate.
 assert.match(canonicalRuntime, /getCryptaraHyperBridgeBootstrapSnapshot/);
 assert.match(canonicalRuntime, /overflowBootstrap\.state === 'ready'[\s\S]{0,1000}directPrimaryProbe:\s*false[\s\S]{0,500}primaryFallback:\s*false[\s\S]{0,500}installCanonicalRuntime\(\)/);
 assert.match(canonicalRuntime, /Overflow authority not ready; runtime remains fail-closed without Primary fallback/);
@@ -110,17 +108,20 @@ assert.match(coreRuntime, /if \(process\.env\.NODE_ENV === 'production'\) \{\s*a
 assert.doesNotMatch(coreRuntime, /requireCryptocrawlerAuthoritySchema/);
 assert.match(coreRuntime, /authoritySchemaGate:\s*'overflow_migration_owned_runtime_start_required'/);
 assert.match(coreRuntime, /primaryRuntimePrerequisite:\s*false/);
-assert.match(adminApi, /if \(process\.env\.NODE_ENV === 'production'\) \{[\s\S]{0,180}await requireCryptocrawlerAuthoritySchema\(2\)/);
-const adminSchemaGate = adminApi.indexOf('await requireCryptocrawlerAuthoritySchema(2)');
+assert.match(adminApi, /import\s*\{\s*ensureCryptocrawlOverflowRuntimeSchema\s*\}\s*from\s*'\.\.\/runtime\/cryptocrawl-overflow-runtime-schema\.js'/);
+assert.match(adminApi, /if \(process\.env\.NODE_ENV === 'production'\) \{[\s\S]{0,180}await ensureCryptocrawlOverflowRuntimeSchema\(\)/);
+assert.doesNotMatch(adminApi, /requireCryptocrawlerAuthoritySchema|reconcileAppSchema/);
+assert.match(adminApi, /schemaAuthority:\s*'overflow_migration_owned_runtime_start_required'/);
+const adminSchemaGate = adminApi.indexOf('await ensureCryptocrawlOverflowRuntimeSchema()');
 const adminPantheonClaim = adminApi.indexOf('notifyCryptocrawlerStarting()');
 const adminZeroCapitalStart = adminApi.indexOf('await zeroCapitalEngine.start({');
 assert.ok(adminSchemaGate >= 0 && adminSchemaGate < adminPantheonClaim && adminPantheonClaim < adminZeroCapitalStart,
-  'explicit runtime start must verify authority schema before claiming lifecycle ownership or starting zero-capital execution');
+  'explicit runtime start must verify Overflow authority schema before claiming lifecycle ownership or starting zero-capital execution');
 assert.match(adminApi, /executionAuthorityGranted:\s*false/);
 
 // Dev/test no-secret workflows must not be forced through production DB schema.
 assert.doesNotMatch(coreRuntime, /export async function ensureCryptoCrawlerCoreRuntime\(\): Promise<void> \{\s*await ensureCryptocrawlOverflowRuntimeSchema/);
-assert.doesNotMatch(adminApi, /export async function startCryptoCrawlerRuntime\(\): Promise<CryptoCrawlerStartResult> \{\s*await requireCryptocrawlerAuthoritySchema/);
+assert.doesNotMatch(adminApi, /export async function startCryptoCrawlerRuntime\(\): Promise<CryptoCrawlerStartResult> \{\s*await ensureCryptocrawlOverflowRuntimeSchema/);
 
 // Rolling-deploy headroom may contract ordinary capacity, never expand past the
 // canonical hard ceiling already selected by db.ts.
@@ -142,4 +143,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for legacy/archive paths, canonical runtime admission is Overflow-only with no Primary probe/fallback, the core execution lifecycle is gated by the complete Overflow schema, and the remaining explicit admin-start gate stays fail-closed pending its sequential cutover');
+console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for archive/wider-application paths, canonical and explicit admin runtime admission are Overflow-only with no Primary probe/schema fallback, and both production lifecycle entry points fail closed on the complete Overflow schema');
