@@ -18,6 +18,7 @@ for (const token of [
   'const EMBEDDED_SOURCE_SHA = process.env.CRYPTOCRAWLER_BUILD_SOURCE_SHA',
   'const EMBEDDED_BUILD_TIMESTAMP = process.env.CRYPTOCRAWLER_BUNDLE_BUILD_TIMESTAMP',
   "'embedded_build_source_sha'",
+  "return railwayRuntime ? attestation.state === 'verified' : attestation.state !== 'mismatch'",
 ]) {
   if (!runtime.includes(token)) throw new Error(`FAIL runtime attestation missing ${token}`);
 }
