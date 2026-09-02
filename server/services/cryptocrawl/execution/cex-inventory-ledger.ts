@@ -70,6 +70,15 @@ function environmentNumber(prefix: string, venue: InventoryVenue, asset: string)
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+function executionMinimumReserve(venue: InventoryVenue, available: number, configuredMinimumReserve: number): number {
+  // Coinbase is connected for authenticated market/fee/settlement evidence, but
+  // pre-existing operator balances are not CryptoCrawler capital. Until a durable
+  // provenance ledger can prove a Coinbase unit was created by CryptoCrawler, the
+  // entire authenticated Coinbase balance remains protected from order reservation.
+  if (venue === 'coinbase') return Math.max(configuredMinimumReserve, available);
+  return configuredMinimumReserve;
+}
+
 function cloneSnapshot(snapshot: InventorySnapshot): InventorySnapshot {
   return { ...snapshot };
 }
@@ -234,6 +243,7 @@ class CexInventoryLedger {
     const payoutReservedByAsset = await this.payoutReserves(venue);
     for (const [asset, available] of merged) {
       const policy = this.policy(venue, asset);
+      const minimumReserve = executionMinimumReserve(venue, available, policy.minimumReserve);
       const key = this.key(venue, asset);
       const previous = this.local.get(key);
       this.local.set(key, {
@@ -245,7 +255,7 @@ class CexInventoryLedger {
         pendingOrder: previous?.pendingOrder || 0,
         pendingTransfer: previous?.pendingTransfer || 0,
         target: policy.target,
-        minimumReserve: policy.minimumReserve,
+        minimumReserve,
         maximumVenueExposure: policy.maximumVenueExposure,
         lastReconciliationAt: now,
       });
@@ -258,6 +268,7 @@ class CexInventoryLedger {
         await client.query(`DELETE FROM ${RESERVATION_TABLE} WHERE expires_at <= now()`);
         for (const [asset, available] of merged) {
           const policy = this.policy(venue, asset);
+          const minimumReserve = executionMinimumReserve(venue, available, policy.minimumReserve);
           const payoutReserved = payoutReservedByAsset.get(asset) || 0;
           await client.query(
             `INSERT INTO ${STATE_TABLE}
@@ -270,7 +281,7 @@ class CexInventoryLedger {
                minimum_reserve=EXCLUDED.minimum_reserve,
                maximum_venue_exposure=EXCLUDED.maximum_venue_exposure,
                reconciled_at=EXCLUDED.reconciled_at`,
-            [venue, asset, available, payoutReserved, policy.target, policy.minimumReserve, policy.maximumVenueExposure, now],
+            [venue, asset, available, payoutReserved, policy.target, minimumReserve, policy.maximumVenueExposure, now],
           );
         }
         await client.query('COMMIT');
