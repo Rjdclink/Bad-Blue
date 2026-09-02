@@ -23,7 +23,7 @@ function cexOpportunityId(plan: { buyVenue: string; sellVenue: string; symbol: s
   return `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`;
 }
 
-function measuredZeroCapitalFallbackReady(
+function measuredZeroCapitalExecutionReady(
   opportunity: ZeroCapitalOpportunity,
   candidate: MeasuredCandidate,
 ): { allowed: boolean; reason: string; maxSlippageBps: number } {
@@ -35,7 +35,6 @@ function measuredZeroCapitalFallbackReady(
   const maxSlippageBps = Math.max(1, Math.min(configuredMaxSlippage, directiveMaxSlippage));
   const deterministicNetProfitUsd = Number(candidate.economics.deterministicNetProfitUsd);
   const netProfitBps = Number(candidate.economics.netProfitBps);
-  const expectedNetProfitUsd = Number(opportunity.expectedProfit) / (10 ** Math.max(0, Math.min(18, opportunity.inputTokenDecimals)));
   const provenance = new Set(candidate.provenance);
 
   if (candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return { allowed: false, reason: 'wrong_topology', maxSlippageBps };
@@ -57,31 +56,18 @@ function measuredZeroCapitalFallbackReady(
   if (!provenance.has('direct_contract_quotes') || !provenance.has('measured_all_in_economics') || !provenance.has('synthetic_evidence:false')) {
     return { allowed: false, reason: 'measured_route_provenance_incomplete', maxSlippageBps };
   }
-  if (!directive.preferredExecutionModes.includes('zero_capital')) {
-    return { allowed: false, reason: 'cryptara_zero_capital_mode_not_preferred', maxSlippageBps };
-  }
-  if (directive.riskBudget === 'defensive' && !directive.preferredChains.includes(opportunity.chain)) {
-    return { allowed: false, reason: 'cryptara_defensive_chain_filter', maxSlippageBps };
-  }
   if (opportunity.expectedSlippageBps > maxSlippageBps) {
     return { allowed: false, reason: 'bounded_slippage_limit_exceeded', maxSlippageBps };
-  }
-  if (!Number.isFinite(expectedNetProfitUsd) || expectedNetProfitUsd < directive.minimumNetProfitUsd) {
-    return { allowed: false, reason: 'cryptara_minimum_net_profit_not_met', maxSlippageBps };
   }
 
   return {
     allowed: true,
-    reason: directive.maxSlippageBps > 0
-      ? 'measured_atomic_evidence_complete_technical_signal_advisory_only'
-      : 'measured_atomic_evidence_complete_cold_start_slippage_uses_configured_bound',
+    reason: 'measured_atomic_execution_evidence_complete_positive_all_in_net',
     maxSlippageBps,
   };
 }
 
 export function ensureDynamicProfitabilityAdmissionWiring(): void {
-  // Profitability admission is also the canonical bootstrap point for advisory
-  // BPS rescue and exact decomposition. Neither subsystem can grant execution.
   ensureEconomicTransformationWiring();
   ensureBpsDecompositionObservability();
   ensureZeroCapitalRecoveryObservability();
@@ -103,7 +89,7 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
       }
       const decision = routeMeasuredOpportunity(candidate);
       if (!decision.admitted) {
-        logger.info('[UnifiedExecutionRouter] CEX opportunity rejected by adaptive admission', {
+        logger.info('[UnifiedExecutionRouter] CEX opportunity rejected by hard execution admission', {
           component: 'DynamicProfitabilityAdmissionWiring',
           opportunityId: candidate.opportunityId,
           path: decision.path,
@@ -117,7 +103,7 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
           success: false,
           status: 'rejected',
           settlementConfirmed: false,
-          error: `REJECT_DYNAMIC_PROFITABILITY_SCORE: ${decision.reasons.join('; ')}`,
+          error: `REJECT_EXECUTION_EVIDENCE: ${decision.reasons.join('; ')}`,
         };
       }
       return originalExecute(plan);
@@ -133,44 +119,39 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
       const current = measuredCandidateRegistry.get(opportunity.id);
       if (!current) return false;
 
-      const fallback = cryptaraAllowed
-        ? { allowed: false, reason: 'cryptara_primary_gate_allowed', maxSlippageBps: 0 }
-        : measuredZeroCapitalFallbackReady(opportunity, current);
-      if (!cryptaraAllowed && !fallback.allowed) return false;
+      const executionReady = measuredZeroCapitalExecutionReady(opportunity, current);
+      if (!executionReady.allowed) return false;
 
-      if (fallback.allowed) {
-        logger.info('[UnifiedExecutionRouter] Measured zero-capital candidate retained despite advisory technical-feed veto', {
+      if (!cryptaraAllowed) {
+        logger.info('[UnifiedExecutionRouter] Measured zero-capital candidate retained despite advisory Cryptara veto', {
           component: 'DynamicProfitabilityAdmissionWiring',
           opportunityId: opportunity.id,
           chain: opportunity.chain,
           deterministicNetProfitUsd: current.economics.deterministicNetProfitUsd,
           netProfitBps: current.economics.netProfitBps,
           expectedSlippageBps: opportunity.expectedSlippageBps,
-          maxSlippageBps: fallback.maxSlippageBps,
-          reason: fallback.reason,
+          maxSlippageBps: executionReady.maxSlippageBps,
+          reason: executionReady.reason,
+          cryptaraExecutionAuthority: false,
           tradingViewExecutionAuthority: false,
-          executionMonteCarloStillRequired: true,
           terminalSettlementStillRequired: true,
         });
       }
 
-      // Cryptara's normal gate or the narrow measured-evidence fallback is the
-      // point at which a deterministic-positive atomic candidate may become
-      // eligible. Execution-time Beam/Monte Carlo, governance, resource locks and
-      // terminal settlement remain mandatory and are not bypassed here.
+      // Deterministic positive all-in economics plus complete executable evidence
+      // is the eligibility authority. Cryptara remains advisory/ranking evidence.
       const eligible = measuredCandidateRegistry.updateStatus(opportunity.id, 'eligible', {
         provenance: [
-          cryptaraAllowed
-            ? 'unified_execution_router:cryptara_current_evidence_approved'
-            : 'unified_execution_router:measured_zero_capital_advisory_fallback',
-          ...(fallback.allowed ? [fallback.reason] : []),
+          'unified_execution_router:measured_positive_execution_authority',
+          executionReady.reason,
+          cryptaraAllowed ? 'Cryptara:advisory_allow' : 'Cryptara:advisory_veto_ignored_for_execution',
         ],
       });
       if (!eligible) return false;
 
       const decision = routeMeasuredOpportunity(eligible);
       if (!decision.admitted) {
-        logger.info('[UnifiedExecutionRouter] Zero-capital opportunity rejected by adaptive admission', {
+        logger.info('[UnifiedExecutionRouter] Zero-capital opportunity rejected by hard execution admission', {
           component: 'DynamicProfitabilityAdmissionWiring',
           opportunityId: opportunity.id,
           path: decision.path,
@@ -186,11 +167,12 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     };
   }
 
-  logger.info('[UnifiedExecutionRouter] Dynamic profitability admission wiring installed', {
+  logger.info('[UnifiedExecutionRouter] Positive-net execution admission wiring installed', {
     component: 'DynamicProfitabilityAdmissionWiring',
-    formula: '(NetProfitUSD / ExecutionRisk) * ConfidenceLevel',
+    hardAdmissionAuthority: 'deterministic_positive_all_in_net_plus_complete_current_execution_evidence',
+    adaptiveProfitabilityThresholdAuthority: 'ranking_and_sizing_only',
+    cryptaraExecutionAuthority: false,
     coldStartHistoricalProofRequired: false,
-    thresholdAuthority: 'adaptive_terminal_outcomes',
     bpsRescuePortfolio: 'measured_cost_decomposition_plus_decay_scheduling',
     bpsDecomposition: 'exact_measured_cross_topology_telemetry',
     zeroCapitalRecoveryTelemetry: 'exact_measured_gap_distribution',
