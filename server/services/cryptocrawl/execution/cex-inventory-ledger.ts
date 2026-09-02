@@ -46,7 +46,7 @@ export interface InventoryRebalanceRecommendation {
 
 const STATE_TABLE = 'cryptocrawler_cex_inventory_state_v1';
 const RESERVATION_TABLE = 'cryptocrawler_cex_inventory_reservations_v1';
-const SYSTEM_CAPITAL_ALLOCATION_TABLE = 'cryptocrawler_system_capital_allocations';
+const SYSTEM_CAPITAL_OWNERSHIP_TABLE = 'cryptocrawler_cex_system_owned_lots';
 const PAYOUT_RESERVE_TABLE = 'cryptocrawler_payout_asset_reservations';
 const PAYOUT_EXECUTION_RESERVE_TABLE = 'cryptocrawler_payout_execution_reservations';
 const PAYOUT_ACTIVE_STATUSES = "('HELD','IN_FLIGHT','MANUAL_REVIEW')";
@@ -111,24 +111,24 @@ class CexInventoryLedger {
           `SELECT
              to_regclass($1) IS NOT NULL AS state_present,
              to_regclass($2) IS NOT NULL AS reservation_present,
-             to_regclass($3) IS NOT NULL AS system_capital_present,
+             to_regclass($3) IS NOT NULL AS system_ownership_present,
              EXISTS (
                SELECT 1 FROM information_schema.columns
                WHERE table_schema='public' AND table_name=$4 AND column_name='payout_reserved'
              ) AS payout_column_present`,
-          [`public.${STATE_TABLE}`, `public.${RESERVATION_TABLE}`, `public.${SYSTEM_CAPITAL_ALLOCATION_TABLE}`, STATE_TABLE],
+          [`public.${STATE_TABLE}`, `public.${RESERVATION_TABLE}`, `public.${SYSTEM_CAPITAL_OWNERSHIP_TABLE}`, STATE_TABLE],
         );
         const row = result.rows[0] || {};
         const ready = row.state_present === true &&
           row.reservation_present === true &&
-          row.system_capital_present === true &&
+          row.system_ownership_present === true &&
           row.payout_column_present === true;
         if (!ready) {
-          logger.error('[InventoryLedger] Durable inventory/system-capital schema is missing; live reservation fails closed', {
+          logger.error('[InventoryLedger] Durable inventory/system-ownership schema is missing; live reservation fails closed', {
             component: 'CexInventoryLedger',
             stateTablePresent: row.state_present === true,
             reservationTablePresent: row.reservation_present === true,
-            systemCapitalTablePresent: row.system_capital_present === true,
+            systemOwnershipTablePresent: row.system_ownership_present === true,
             payoutReservedColumnPresent: row.payout_column_present === true,
             runtimeSchemaMutationAllowed: false,
           });
@@ -156,41 +156,20 @@ class CexInventoryLedger {
     venue: InventoryVenue,
     asset: string,
   ): Promise<number> {
-    // Personal Coinbase assets remain excluded even if a future allocation row is
-    // malformed or misclassified. Coinbase can still provide authenticated evidence.
+    // Account-wide exchange balances never create ownership. Coinbase is always
+    // excluded; Kraken/OKX authority comes solely from ACTIVE system-owned lots.
     if (venue === 'coinbase') return 0;
     const result = await client.query(
-      `SELECT destination_asset_decimals AS decimals,
-              COALESCE(SUM(remaining_destination_base_units),0)::text AS base_units
-       FROM ${SYSTEM_CAPITAL_ALLOCATION_TABLE}
-       WHERE destination_kind='cex'
-         AND lower(destination_venue)=lower($1)
-         AND upper(destination_asset)=upper($2)
-         AND status='PLACED'
-         AND remaining_destination_base_units > 0
-       GROUP BY destination_asset_decimals`,
+      `SELECT COALESCE(SUM(remaining_decimal),0)::text AS amount_decimal
+       FROM ${SYSTEM_CAPITAL_OWNERSHIP_TABLE}
+       WHERE venue=$1 AND asset=$2 AND status='ACTIVE' AND remaining_decimal > 0`,
       [venue, canonicalAsset(asset)],
     );
-    if (result.rowCount === 0) return 0;
-    if (result.rowCount !== 1) {
-      throw new Error(`system_capital_decimals_inconsistent:${venue}:${canonicalAsset(asset)}`);
+    const amount = Number(result.rows[0]?.amount_decimal || 0);
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error(`system_owned_inventory_unrepresentable:${venue}:${canonicalAsset(asset)}`);
     }
-    const decimals = Number(result.rows[0].decimals);
-    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
-      throw new Error(`system_capital_decimals_invalid:${venue}:${canonicalAsset(asset)}`);
-    }
-    let baseUnits: bigint;
-    try {
-      baseUnits = BigInt(String(result.rows[0].base_units || '0'));
-    } catch {
-      throw new Error(`system_capital_base_units_invalid:${venue}:${canonicalAsset(asset)}`);
-    }
-    if (baseUnits <= 0n) return 0;
-    const decimalAmount = Number(baseUnits) / (10 ** decimals);
-    if (!Number.isFinite(decimalAmount) || decimalAmount < 0) {
-      throw new Error(`system_capital_amount_unrepresentable:${venue}:${canonicalAsset(asset)}`);
-    }
-    return decimalAmount;
+    return amount;
   }
 
   private async payoutReservedForAsset(
@@ -386,7 +365,7 @@ class CexInventoryLedger {
     let durable = false;
 
     // Live CEX execution is never authorized from process-local balance telemetry.
-    // Without durable Overflow inventory + system-capital provenance, fail closed.
+    // Without durable Overflow inventory + system-owned provenance, fail closed.
     if (!isDatabaseConfigured || !await this.ensureTables()) {
       this.releaseLocal(requirements);
       return null;
