@@ -37,6 +37,20 @@ export interface VerifiedBootstrapProfit {
   sourceRecipientBalanceAfterBaseUnits?: string;
 }
 
+export interface VerifiedRetainedProfit {
+  scope: string;
+  executionKey: string;
+  transactionHash: string;
+  chain: string;
+  asset: string;
+  retainedProfit: string;
+  settlementReceiptVerified: boolean;
+  profitRecipientDeltaVerified: boolean;
+  sourceRecipient: string;
+  sourceRecipientBalanceBeforeBaseUnits: string;
+  sourceRecipientBalanceAfterBaseUnits: string;
+}
+
 export interface VerifiedNativeGasFundingSettlement {
   scope: string;
   sourceAsset: string;
@@ -56,6 +70,7 @@ export interface Stage4CapitalProvenanceStore {
   markZeroGasExecutionReady(scope: string): Promise<CapitalProvenanceState>;
   markAtomicExecutionPending(scope: string, executionKey: string): Promise<CapitalProvenanceState>;
   recordVerifiedBootstrapProfit(proof: VerifiedBootstrapProfit): Promise<CapitalProvenanceState>;
+  recordVerifiedRetainedProfit(proof: VerifiedRetainedProfit): Promise<CapitalProvenanceState>;
   recordNativeGasFundingSettlement(proof: VerifiedNativeGasFundingSettlement): Promise<CapitalProvenanceState>;
   markRecoveryRequired(scope: string): Promise<CapitalProvenanceState>;
 }
@@ -88,8 +103,21 @@ function sameBootstrapProof(state: CapitalProvenanceState, proof: VerifiedBootst
     && state.internallyGeneratedBalance === proof.residualProfit;
 }
 
+function requireCompatibleRetainedProfitState(state: CapitalProvenanceState, proof: VerifiedRetainedProfit): void {
+  if (state.lifecycle !== 'SELF_FUNDED') {
+    throw new Error(`Retained profit requires SELF_FUNDED capital provenance, received ${state.lifecycle}`);
+  }
+  if (state.asset !== proof.asset || state.chain !== proof.chain) {
+    throw new Error('Retained profit asset/chain does not match the SELF_FUNDED capital scope');
+  }
+  if (state.sourceRecipient && state.sourceRecipient.toLowerCase() !== proof.sourceRecipient.toLowerCase()) {
+    throw new Error('Retained profit recipient does not match the SELF_FUNDED capital scope');
+  }
+}
+
 export class InMemoryStage4CapitalProvenanceStore implements Stage4CapitalProvenanceStore {
   private readonly states = new Map<string, CapitalProvenanceState>();
+  private readonly retainedProfits = new Set<string>();
   private readonly fundingSettlements = new Set<string>();
 
   async getOrCreate(scope: string): Promise<CapitalProvenanceState> {
@@ -154,6 +182,25 @@ export class InMemoryStage4CapitalProvenanceStore implements Stage4CapitalProven
     return this.transition(first.scope, 'SELF_FUNDED', { generation: first.generation + 1 });
   }
 
+  async recordVerifiedRetainedProfit(proof: VerifiedRetainedProfit): Promise<CapitalProvenanceState> {
+    requireVerifiedRetainedProfit(proof);
+    const current = await this.getOrCreate(proof.scope);
+    const eventKey = `${proof.scope}:${proof.executionKey}`;
+    if (this.retainedProfits.has(eventKey)) return current;
+    requireCompatibleRetainedProfitState(current, proof);
+    const next: CapitalProvenanceState = {
+      ...current,
+      internallyGeneratedBalance: (BigInt(current.internallyGeneratedBalance) + BigInt(proof.retainedProfit)).toString(),
+      latestExecutionKey: proof.executionKey,
+      sourceRecipient: proof.sourceRecipient,
+      sourceRecipientBalanceBeforeBaseUnits: proof.sourceRecipientBalanceBeforeBaseUnits,
+      sourceRecipientBalanceAfterBaseUnits: proof.sourceRecipientBalanceAfterBaseUnits,
+    };
+    this.states.set(proof.scope, next);
+    this.retainedProfits.add(eventKey);
+    return { ...next };
+  }
+
   async recordNativeGasFundingSettlement(proof: VerifiedNativeGasFundingSettlement): Promise<CapitalProvenanceState> {
     requireVerifiedFundingSettlement(proof);
     const current = await this.getOrCreate(proof.scope);
@@ -192,6 +239,27 @@ function requireVerifiedProof(proof: VerifiedBootstrapProfit): void {
   }
   if (!/^0x[a-fA-F0-9]{64}$/.test(proof.transactionHash)) {
     throw new Error('Bootstrap profit requires a transaction hash');
+  }
+}
+
+function requireVerifiedRetainedProfit(proof: VerifiedRetainedProfit): void {
+  requirePositiveInteger('retainedProfit', proof.retainedProfit);
+  if (!proof.settlementReceiptVerified || !proof.profitRecipientDeltaVerified) {
+    throw new Error('Retained profit requires a confirmed receipt and verified profit-recipient balance delta');
+  }
+  if (!/^0x[a-fA-F0-9]{64}$/.test(proof.transactionHash)) {
+    throw new Error('Retained profit requires a transaction hash');
+  }
+  let before: bigint;
+  let after: bigint;
+  try {
+    before = BigInt(proof.sourceRecipientBalanceBeforeBaseUnits);
+    after = BigInt(proof.sourceRecipientBalanceAfterBaseUnits);
+  } catch {
+    throw new Error('Retained profit recipient balance evidence must be integer strings');
+  }
+  if (before < 0n || after < before || after - before !== BigInt(proof.retainedProfit)) {
+    throw new Error('Retained profit recipient balance delta does not match retained profit base units');
   }
 }
 
@@ -342,6 +410,62 @@ export class PostgresStage4CapitalProvenanceStore implements Stage4CapitalProven
       );
       await client.query('COMMIT');
       return current;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async recordVerifiedRetainedProfit(proof: VerifiedRetainedProfit): Promise<CapitalProvenanceState> {
+    requireVerifiedRetainedProfit(proof);
+    const { pool } = await import('../../../../db.js');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const currentResult = await client.query(
+        'SELECT * FROM zero_capital_capital_state WHERE scope = $1 FOR UPDATE',
+        [proof.scope],
+      );
+      if (!currentResult.rows[0]) throw new Error(`Capital provenance state ${proof.scope} could not be loaded`);
+      const current = fromRow(currentResult.rows[0]);
+      const existingEvent = await client.query(
+        'SELECT transaction_hash FROM zero_capital_capital_events WHERE scope = $1 AND execution_key = $2',
+        [proof.scope, proof.executionKey],
+      );
+      if (existingEvent.rows[0]) {
+        if (String(existingEvent.rows[0].transaction_hash || '').toLowerCase() !== proof.transactionHash.toLowerCase()) {
+          throw new Error('Retained-profit execution key is already bound to a different transaction hash');
+        }
+        await client.query('COMMIT');
+        return current;
+      }
+      requireCompatibleRetainedProfitState(current, proof);
+      const updated = await client.query(
+        `UPDATE zero_capital_capital_state
+         SET internally_generated_balance = (internally_generated_balance::numeric + $2::numeric)::text,
+             latest_execution_key=$3,
+             source_recipient=$4,
+             source_recipient_balance_before_base_units=$5,
+             source_recipient_balance_after_base_units=$6,
+             updated_at=NOW()
+         WHERE scope=$1 AND lifecycle='SELF_FUNDED'
+         RETURNING *`,
+        [proof.scope, proof.retainedProfit, proof.executionKey, proof.sourceRecipient,
+          proof.sourceRecipientBalanceBeforeBaseUnits, proof.sourceRecipientBalanceAfterBaseUnits],
+      );
+      if (!updated.rows[0]) throw new Error('Retained-profit credit lost SELF_FUNDED authority while locked');
+      const next = fromRow(updated.rows[0]);
+      await client.query(
+        `INSERT INTO zero_capital_capital_events (event_id, scope, lifecycle, generation, asset, amount, chain, transaction_hash, execution_key)
+         VALUES ($1, $2, 'SELF_FUNDED', $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (scope, execution_key) WHERE execution_key IS NOT NULL DO NOTHING`,
+        [crypto.randomUUID(), proof.scope, next.generation, proof.asset, proof.retainedProfit,
+          proof.chain, proof.transactionHash, proof.executionKey],
+      );
+      await client.query('COMMIT');
+      return next;
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
