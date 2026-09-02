@@ -1,8 +1,6 @@
 import logger from '../../../logger.js';
-import {
-  krakenPrivateRequest,
-  okxPrivateRequest,
-} from './cex-private-authority.js';
+import { krakenPrivateRequest } from './cex-private-authority.js';
+import { resolveOkxAccountFeeRates } from './okx-account-fee-authority.js';
 import { assertCoinbaseSpotTradeReady } from './coinbase-advanced-trade-authority.js';
 import { getCoinbaseSpotFeeEvidence } from './coinbase-fee-evidence.js';
 import {
@@ -360,42 +358,21 @@ async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | 
   return batch.get(normalizeSymbolInput(symbol)) || null;
 }
 
-function selectOkxFeeRates(row: any, groupId: string | null): { taker: number; maker: number | null } | null {
-  const groups = Array.isArray(row?.feeGroup) ? row.feeGroup : [];
-  const group = groupId
-    ? groups.find((candidate: any) => String(candidate?.groupId ?? '') === groupId)
-    : groups.length === 1 ? groups[0] : null;
-  const taker = finiteNumber(group?.taker ?? row?.taker);
-  if (taker === null) return null;
-  return { taker, maker: finiteNumber(group?.maker ?? row?.maker) };
-}
-
-function okxEvidence(symbol: string, rates: { taker: number; maker: number | null }, observedAt: number): CexFeeEvidence {
-  return {
-    venue: 'okx',
-    symbol,
-    takerFeeBps: Math.max(0, -rates.taker * 10_000),
-    makerFeeBps: rates.maker !== null && rates.maker < 0 ? -rates.maker * 10_000 : null,
-    makerRebateBps: rates.maker !== null && rates.maker > 0 ? rates.maker * 10_000 : null,
-    source: 'okx_account_trade_fee',
-    observedAt,
-  };
-}
-
 async function fetchOkxFeeRates(
   queryParameters: Record<string, string>,
   expectedGroupId: string | null,
 ): Promise<{ rates: { taker: number; maker: number | null }; observedAt: number }> {
-  const { data } = await okxPrivateRequest(
-    '/api/v5/account/trade-fee',
-    'GET',
-    { instType: 'SPOT', ...queryParameters },
-    { timeoutMs: REQUEST_TIMEOUT_MS, lane: 'trade_fee' },
-  );
-  const row = data[0];
-  const rates = selectOkxFeeRates(row, expectedGroupId);
-  if (!rates) throw new Error('OKX trade-fee response did not contain applicable fee-group evidence');
-  return { rates, observedAt: Date.now() };
+  const result = await resolveOkxAccountFeeRates({
+    instType: 'SPOT',
+    groupId: queryParameters.groupId,
+    instId: queryParameters.instId,
+    expectedGroupId,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+  });
+  return {
+    rates: { taker: result.taker, maker: result.maker },
+    observedAt: result.observedAt,
+  };
 }
 
 async function fetchOkxFeeEvidenceFromConstraint(symbol: string, constraints: SpotProductConstraints): Promise<CexFeeEvidence | null> {
