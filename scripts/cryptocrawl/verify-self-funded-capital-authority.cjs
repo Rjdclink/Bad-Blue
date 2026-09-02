@@ -20,7 +20,14 @@ assert.match(hierarchy, /walletSufficient\s*&&\s*alternatives\.selfFundedEligibl
 assert.match(hierarchy, /external\/operator capital remains protected/, 'unproven external capital must be explicitly protected');
 assert.match(hierarchyTest, /funded-wallet-without-provenance/, 'regression test must cover a funded external wallet');
 assert.match(hierarchyTest, /verified-self-funded-capital/, 'regression test must cover verified self-funded capital');
-assert.match(inventory, /if\s*\(venue\s*===\s*'coinbase'\)\s*return\s+Math\.max\(configuredMinimumReserve,\s*available\)/, 'Coinbase operator balance must remain non-spendable until durable provenance exists');
+assert.match(inventory, /if\s*\(venue\s*===\s*'coinbase'\)\s*return\s+Math\.max\(configuredMinimumReserve,\s*available\)/, 'Coinbase operator balance must remain non-spendable');
+assert.match(inventory, /SYSTEM_CAPITAL_ALLOCATION_TABLE\s*=\s*'cryptocrawler_system_capital_allocations'/, 'CEX reservation must consume the canonical system-capital allocation table');
+assert.match(inventory, /status='PLACED'/, 'only settlement-confirmed placed capital may establish CEX ownership');
+assert.match(inventory, /const physicalSpendable =/, 'CEX admission must retain authenticated physical-balance capacity');
+assert.match(inventory, /const systemOwnedSpendable =/, 'CEX admission must calculate provenance-backed spendable ownership');
+assert.match(inventory, /Math\.min\(physicalSpendable, systemOwnedSpendable\)/, 'CEX reservation must be capped by both physical and system-owned capacity');
+assert.match(inventory, /!isDatabaseConfigured \|\| !await this\.ensureTables\(\)/, 'live CEX reservation must fail closed without durable Overflow state');
+assert.match(inventory, /operatorBalanceAuthorityGranted:\s*false/, 'reservation rejection telemetry must explicitly deny operator-balance authority');
 
 assert.match(provenance, /recordVerifiedRetainedProfit/, 'verified retained profit must accumulate in canonical SELF_FUNDED provenance');
 assert.match(provenance, /SELECT \* FROM zero_capital_capital_state WHERE scope = \$1 FOR UPDATE/, 'capital provenance mutation must lock its canonical source row');
@@ -41,4 +48,4 @@ assert.match(overflowSchema, /026_cryptocrawler_system_capital_allocations\.sql/
 assert.match(overflowSchema, /public\.cryptocrawler_system_capital_allocations/, 'Overflow runtime admission must require the allocation table');
 assert.match(dockerfile, /026_cryptocrawler_system_capital_allocations\.sql/, 'production image must bundle the system-capital allocation migration');
 
-console.log('[self-funded-capital-authority] PASS: raw wallet authority removed; verified retained capital is provenance-backed, allocation-locked, and operator Coinbase inventory remains protected');
+console.log('[self-funded-capital-authority] PASS: raw wallet authority removed; verified retained capital is provenance-backed, allocation-locked, and every CEX reservation is capped by settlement-confirmed system ownership');
