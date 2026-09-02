@@ -103,6 +103,7 @@ COPY --from=builder /app/server/migrations/023_cryptocrawler_hot_path_schema_aut
 COPY --from=builder /app/server/migrations/024_cryptocrawler_funding_lifecycle.sql ./dist/migrations/024_cryptocrawler_funding_lifecycle.sql
 COPY --from=builder /app/server/migrations/025_cryptocrawler_rainbow_source_ledger.sql ./dist/migrations/025_cryptocrawler_rainbow_source_ledger.sql
 COPY --from=builder /app/server/migrations/026_cryptocrawler_system_capital_allocations.sql ./dist/migrations/026_cryptocrawler_system_capital_allocations.sql
+COPY --from=builder /app/server/migrations/027_cryptocrawler_cex_system_owned_lots.sql ./dist/migrations/027_cryptocrawler_cex_system_owned_lots.sql
 
 # Overflow-only prerequisites complete migration gaps found by the repository-wide
 # authority audit without enabling duplicate schedulers or browser/API access.
