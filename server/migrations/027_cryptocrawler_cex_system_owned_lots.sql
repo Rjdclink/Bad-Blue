@@ -32,6 +32,23 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_cex_system_owned_lots (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.cryptocrawler_cex_system_owned_settlements (
+  settlement_reference text PRIMARY KEY,
+  venue text NOT NULL CHECK (venue IN ('kraken','okx')),
+  order_id text NOT NULL,
+  opportunity_id text,
+  strategy text,
+  status text NOT NULL CHECK (status IN ('APPLYING','APPLIED','QUARANTINED')),
+  asset_deltas jsonb NOT NULL,
+  consumed_lot_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_lot_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  settlement_evidence jsonb NOT NULL,
+  applied_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (venue, order_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_cex_system_owned_lots_inventory
   ON public.cryptocrawler_cex_system_owned_lots(venue, asset, status, updated_at)
   WHERE remaining_decimal > 0;
@@ -42,9 +59,15 @@ CREATE INDEX IF NOT EXISTS idx_cex_system_owned_lots_origin
 CREATE INDEX IF NOT EXISTS idx_cex_system_owned_lots_opportunity
   ON public.cryptocrawler_cex_system_owned_lots(opportunity_id, strategy, created_at);
 
+CREATE INDEX IF NOT EXISTS idx_cex_system_owned_settlements_opportunity
+  ON public.cryptocrawler_cex_system_owned_settlements(opportunity_id, strategy, applied_at);
+
 ALTER TABLE public.cryptocrawler_cex_system_owned_lots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cryptocrawler_cex_system_owned_settlements ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.cryptocrawler_cex_system_owned_lots FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.cryptocrawler_cex_system_owned_settlements FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_cex_system_owned_lots TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_cex_system_owned_settlements TO service_role;
 
 -- Placement confirmation and physical ownership creation must be atomic. The
 -- trigger never reads account-wide exchange balances: it can only mint a lot
@@ -73,9 +96,6 @@ BEGIN
     RAISE EXCEPTION 'PLACED CEX allocation requires exact delivered base units and decimals';
   END IF;
 
-  -- OKX is spendable only after the deposit is in Trading (directly or through
-  -- a terminal Funding->Trading transfer). Kraken will use equivalent exchange
-  -- settlement evidence when its placement path is enabled.
   spendable_authority := COALESCE((NEW.placement_evidence->>'tradingAccountSpendableAuthority')::boolean, false);
   IF lower(NEW.destination_venue) = 'okx' AND spendable_authority IS DISTINCT FROM true THEN
     RAISE EXCEPTION 'OKX PLACED allocation lacks Trading-account spendability evidence';
@@ -162,3 +182,5 @@ ON CONFLICT (idempotency_key) DO NOTHING;
 
 COMMENT ON TABLE public.cryptocrawler_cex_system_owned_lots IS
   'Exact decimal ownership lots for system-generated CEX capital. Authenticated account balances never create rows; only settlement-confirmed system deposits/trades/rebates/funding outcomes may create ownership.';
+COMMENT ON TABLE public.cryptocrawler_cex_system_owned_settlements IS
+  'Idempotency boundary for exact CEX ownership transformations. A terminal order may consume/create system-owned lots at most once.';
