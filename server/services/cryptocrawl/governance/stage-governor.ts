@@ -55,7 +55,7 @@ export interface UnpauseRequest {
 export interface AdvisoryCycleResult { cycleId: string; timestamp: number; }
 export interface SignalAnalysis { pair: string; exchange: string; signal: 'bullish' | 'bearish' | 'neutral'; confidence: number; reasoning: string[]; }
 export interface ArbitragePath { id: string; buyExchange: string; sellExchange: string; pair: string; expectedProfit: number; fees: number; slippage: number; latency: number; netProfit: number; feasibility: number; }
-export interface Recommendation { action: 'execute' | 'skip' | 'wait' | 'investigate'; target: string; reasoning: string[]; confidence: number; humanApprovalRequired: boolean; }
+export interface Recommendation { action: 'execute' | 'skip' | 'wait' | 'investigate'; target: string; reasoning: string; confidence: number; humanApprovalRequired: boolean; }
 export interface MonteCarloValidation { simulations: number; expectedProfit: number; confidenceInterval: [number, number]; winRate: number; maxDrawdown: number; sharpeRatio: number; approval: 'approved' | 'conditional' | 'rejected'; conditions?: string[]; }
 export interface RiskFactor { factor: string; severity: number; description: string; }
 export interface RiskAssessment { overallRisk: 'low' | 'medium' | 'high' | 'critical'; factors: RiskFactor[]; mitigations: string[]; }
