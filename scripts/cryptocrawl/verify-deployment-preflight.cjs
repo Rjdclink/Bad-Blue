@@ -2,6 +2,8 @@
 
 require('./verify-overflow-complete-runtime-authority.cjs');
 require('./verify-runtime-safety-invariants.cjs');
+require('./verify-runtime-build-attestation.cjs');
+require('./verify-okx-adaptive-rate-governor.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
 require('./verify-substantial-profitability-batch9.cjs');
 require('./verify-cryptara-sovereign-cortex.cjs');
