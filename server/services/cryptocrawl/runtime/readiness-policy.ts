@@ -12,6 +12,8 @@ export interface CryptoRuntimeReadinessInput {
   liveExecutionEnabled: boolean;
   liveExecutionConfirmed: boolean;
   reconciledInventoryAssets: number;
+  spendableInventoryAssets: number;
+  spendableInventoryVenues: number;
   eligibleCandidates: number;
   eligibleCexCandidates: number;
   eligibleZeroCapitalCandidates: number;
@@ -58,13 +60,13 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
     && input.centralizedExecutionConfigured
     && input.schedulerRunning;
 
-  const inventoryReady = input.reconciledInventoryAssets > 0;
+  const inventoryReady = input.spendableInventoryAssets > 0 && input.spendableInventoryVenues >= 2;
   const zeroCapitalResourceReady = input.zeroCapitalExecutionEnabled && input.initialGasReady && input.criticalRpcReady;
   const cexCandidateReady = input.eligibleCexCandidates > 0;
   const governanceReady = input.stageCanExecute;
   const cexResourceReady = inventoryReady;
   const tradingReady = executionCapabilityReady && governanceReady && cexCandidateReady && cexResourceReady;
-  const tradingDetail = `runtimeIdentitySafe=${input.runtimeIdentitySafe}; canonicalCexCapability=${executionCapabilityReady}; governance=${governanceReady}; cexCandidate=${cexCandidateReady}; cexInventory=${cexResourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Zero-capital resources never substitute for CEX inventory. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`;
+  const tradingDetail = `runtimeIdentitySafe=${input.runtimeIdentitySafe}; canonicalCexCapability=${executionCapabilityReady}; governance=${governanceReady}; cexCandidate=${cexCandidateReady}; cexInventory=${cexResourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; spendableInventoryAssets=${input.spendableInventoryAssets}; spendableInventoryVenues=${input.spendableInventoryVenues}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Zero-capital resources never substitute for CEX inventory. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`;
 
   return {
     APP_READY: {
@@ -102,7 +104,7 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
     INVENTORY_READY: {
       ready: inventoryReady,
       scope: 'resource',
-      detail: `reconciledCexInventoryAssets=${input.reconciledInventoryAssets}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. These are separate topology resources.`,
+      detail: `reconciledCexInventoryAssets=${input.reconciledInventoryAssets}; spendableCexInventoryAssets=${input.spendableInventoryAssets}; spendableCexInventoryVenues=${input.spendableInventoryVenues}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Generic CEX inventory readiness requires positive spendable capital on at least two venues; candidate admission still requires the exact buy-quote and sell-base assets.`,
     },
     CANDIDATE_READY: {
       ready: cexCandidateReady,
