@@ -8,6 +8,7 @@ const rootDbBase = path.resolve(repoRoot, 'server/db');
 const overflowDb = path.resolve(cryptoRoot, 'runtime/cryptocrawl-runtime-database.ts');
 const canonicalRuntime = path.resolve(cryptoRoot, 'integration/canonical-runtime-wiring.ts');
 const overflowWorker = path.resolve(cryptoRoot, 'integration/cryptara-supabase-overflow-worker.ts');
+const terminalTreasury = path.resolve(cryptoRoot, 'runtime/terminal-treasury-lifecycle.ts');
 
 const entry = path.resolve(repoRoot, process.argv[2] || 'server/index.ts');
 const outfile = path.resolve(repoRoot, process.argv[3] || 'dist/index.js');
@@ -15,6 +16,8 @@ const redirected = [];
 let canonicalGateApplied = false;
 let auxiliaryPoolUnified = false;
 let primaryConfigDependencyRemoved = false;
+let overflowAdapterSemanticsCorrected = false;
+let treasuryWorkerOverflowBound = false;
 
 function stripKnownExtension(value) {
   return value.replace(/\.(?:js|ts|mjs|cjs)$/, '');
@@ -62,9 +65,11 @@ const overflowAuthorityPlugin = {
       return { contents: source, loader: 'ts', resolveDir: path.dirname(args.path) };
     });
 
-    // The legacy auxiliary cache worker used to own a second pg.Pool and inspect
-    // Primary configuration. Production shares the one ordinary Overflow pool and
-    // never consults Primary configuration as an Overflow readiness prerequisite.
+    // The legacy cache/artifact adapter used to own a second pg.Pool, inspect
+    // Primary configuration, and describe the entire Overflow project as an
+    // auxiliary/noncritical authority. Production shares the one ordinary
+    // Overflow pool. The adapter itself remains non-authoritative, while the
+    // Overflow project is the canonical hot runtime/control plane.
     buildApi.onLoad({ filter: /cryptara-supabase-overflow-worker\.ts$/ }, async args => {
       if (path.resolve(args.path) !== overflowWorker) return null;
       let source = await fs.readFile(args.path, 'utf8');
@@ -72,8 +77,17 @@ const overflowAuthorityPlugin = {
       const poolDestructure = "const { Pool } = pg;\n";
       const primaryUrlPattern = /function primaryDatabaseUrl\(\): string \{[\s\S]*?\n\}/;
       const poolPattern = /\/\/ Separate from the authoritative pool[\s\S]*?const overflowPool = isCryptaraOverflowConfigured\s*\? new Pool\(\{[\s\S]*?\}\s*as any\)\s*:\s*null;/;
-      if (!source.includes(pgImport) || !source.includes(poolDestructure) || !primaryUrlPattern.test(source) || !poolPattern.test(source)) {
-        throw new Error('[OverflowAuthorityBuild] Legacy auxiliary Overflow worker shape changed; refusing an unverified build');
+      const legacyLog = "console.log(`[CRYPTARA][PARALLEL-PROXY] Optional secondary Supabase configured (pool max=${overflowPoolMax}, authority=auxiliary_noncritical_only)`);";
+      const correctedLog = "console.log(`[CRYPTARA][OVERFLOW-ADAPTER] artifact adapter configured on canonical Overflow hot plane (project=${overflowProject || 'unknown'}, sharedRuntimePool=true, adapterIndependentAuthority=false)`);";
+      const legacyAuthority = "authority: 'auxiliary_noncritical_only' as const,";
+      const correctedAuthority = "authority: 'canonical_overflow_runtime_control_plane' as const,\n    scope: 'artifact_adapter_only' as const,\n    overflowControlPlaneAuthority: true as const,\n    adapterIndependentAuthority: false as const,";
+      if (!source.includes(pgImport)
+        || !source.includes(poolDestructure)
+        || !primaryUrlPattern.test(source)
+        || !poolPattern.test(source)
+        || !source.includes(legacyLog)
+        || !source.includes(legacyAuthority)) {
+        throw new Error('[OverflowAuthorityBuild] Legacy Overflow adapter shape changed; refusing an unverified build');
       }
       source = source
         .replace(pgImport, "import { pool as runtimeOverflowPool } from '../runtime/cryptocrawl-runtime-database.js';\n")
@@ -81,10 +95,32 @@ const overflowAuthorityPlugin = {
         .replace(primaryUrlPattern, "function primaryDatabaseUrl(): string { return ''; }")
         .replace(
           poolPattern,
-          '// Auxiliary cache/proxy operations share the one ordinary Overflow runtime pool.\nconst overflowPool = isCryptaraOverflowConfigured ? runtimeOverflowPool : null;',
-        );
+          '// Cache/artifact compatibility operations share the one canonical Overflow runtime pool.\nconst overflowPool = isCryptaraOverflowConfigured ? runtimeOverflowPool : null;',
+        )
+        .replace(legacyLog, correctedLog)
+        .replace(legacyAuthority, correctedAuthority);
       auxiliaryPoolUnified = true;
       primaryConfigDependencyRemoved = true;
+      overflowAdapterSemanticsCorrected = true;
+      return { contents: source, loader: 'ts', resolveDir: path.dirname(args.path) };
+    });
+
+    // Treasury state, payout jobs, retained-capital reservations and worker
+    // coordination are hot CryptoCrawler state. The one terminal worker endpoint
+    // and its authorization secret therefore resolve from Overflow-specific
+    // configuration before they are synchronized into the Overflow Vault.
+    buildApi.onLoad({ filter: /terminal-treasury-lifecycle\.ts$/ }, async args => {
+      if (path.resolve(args.path) !== terminalTreasury) return null;
+      let source = await fs.readFile(args.path, 'utf8');
+      const urlNeedle = "{ name: 'cryptocrawler_supabase_url', value: (process.env.SUPABASE_URL || '').trim(), optional: false, description: requiredDescription },";
+      const urlReplacement = "{ name: 'cryptocrawler_supabase_url', value: (process.env.SUPABASE_URL_OVERFLOW || '').trim(), optional: false, description: requiredDescription },";
+      const keyNeedle = "{ name: 'cryptocrawler_supabase_service_key', value: (process.env.SUPABASE_SERVICE_KEY || '').trim(), optional: false, description: requiredDescription },";
+      const keyReplacement = "{ name: 'cryptocrawler_supabase_service_key', value: (process.env.SUPABASE_SECRET_KEY_OVERFLOW || '').trim(), optional: false, description: requiredDescription },";
+      if (source.split(urlNeedle).length - 1 !== 1 || source.split(keyNeedle).length - 1 !== 1) {
+        throw new Error('[OverflowAuthorityBuild] Treasury worker endpoint/key anchors are missing or duplicated');
+      }
+      source = source.replace(urlNeedle, urlReplacement).replace(keyNeedle, keyReplacement);
+      treasuryWorkerOverflowBound = true;
       return { contents: source, loader: 'ts', resolveDir: path.dirname(args.path) };
     });
   },
@@ -108,10 +144,16 @@ if (!canonicalGateApplied) {
   throw new Error('[OverflowAuthorityBuild] Canonical CryptoCrawler runtime gate was not included in the server bundle');
 }
 if (!auxiliaryPoolUnified) {
-  throw new Error('[OverflowAuthorityBuild] Legacy auxiliary Overflow pool was not unified into the runtime pool');
+  throw new Error('[OverflowAuthorityBuild] Legacy Overflow adapter pool was not unified into the runtime pool');
 }
 if (!primaryConfigDependencyRemoved) {
-  throw new Error('[OverflowAuthorityBuild] Legacy Overflow worker still depends on Primary configuration');
+  throw new Error('[OverflowAuthorityBuild] Legacy Overflow adapter still depends on Primary configuration');
+}
+if (!overflowAdapterSemanticsCorrected) {
+  throw new Error('[OverflowAuthorityBuild] Legacy Overflow adapter still misstates the Overflow control-plane authority');
+}
+if (!treasuryWorkerOverflowBound) {
+  throw new Error('[OverflowAuthorityBuild] Treasury worker endpoint/authorization is not bound to Overflow');
 }
 if (redirected.length === 0) {
   throw new Error('[OverflowAuthorityBuild] No CryptoCrawler Primary DB imports were observed; routing proof is unexpectedly empty');
@@ -127,8 +169,12 @@ await fs.writeFile(proofPath, JSON.stringify({
   canonicalOverflowSchemaGateApplied: canonicalGateApplied,
   auxiliaryOverflowPoolUnified: auxiliaryPoolUnified,
   primaryConfigDependencyRemoved,
+  overflowAdapterSemanticsCorrected,
+  treasuryWorkerOverflowBound,
+  treasuryWorkerUrlVariable: 'SUPABASE_URL_OVERFLOW',
+  treasuryWorkerSecretVariable: 'SUPABASE_SECRET_KEY_OVERFLOW',
   redirectedPrimaryDbImports: redirected,
   outputCount: Object.keys(result.metafile?.outputs || {}).length,
 }, null, 2));
 
-console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} CryptoCrawler server/db import(s) to Overflow; auxiliary pool unified; Primary config dependency removed; canonical schema gate applied; proof=${path.relative(repoRoot, proofPath)}`);
+console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} CryptoCrawler server/db import(s) to Overflow; adapter pool unified; adapter semantics corrected; treasury worker bound to Overflow; Primary config dependency removed; canonical schema gate applied; proof=${path.relative(repoRoot, proofPath)}`);
