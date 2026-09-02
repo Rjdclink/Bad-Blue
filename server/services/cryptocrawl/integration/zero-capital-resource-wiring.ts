@@ -203,7 +203,7 @@ async function prepareGraphlessPermissions(
   positiveRouteIds: Set<string>,
 ): Promise<Set<string>> {
   const eligible = new Set(positiveRouteIds);
-  if (!target.executionEnabled || positiveRouteIds.size === 0) return eligible;
+  if (!target.executionEligible || positiveRouteIds.size === 0) return eligible;
   const graphless = getCachedGraphlessDynamicRouteTemplates(chain as any)
     .filter(route => positiveRouteIds.has(route.id));
   if (graphless.length === 0) return eligible;
@@ -256,7 +256,7 @@ async function simulateGraphlessAtomicOpportunity(
   opportunity: ZeroCapitalOpportunity,
 ): Promise<{ ready: boolean; reason: string }> {
   if (!opportunity.id.startsWith('graphless-')) return { ready: true, reason: 'existing_route' };
-  if (!target.executionEnabled) return { ready: false, reason: 'execution_not_enabled_for_exact_simulation' };
+  if (!target.executionEligible) return { ready: false, reason: 'execution_not_eligible_for_exact_simulation' };
   const receiver = target.receiverManager.getReceiver(chain);
   const wallet = target.executionWallets.get(chain);
   if (!receiver || !wallet) return { ready: false, reason: 'receiver_or_wallet_unavailable' };
@@ -322,6 +322,9 @@ export function ensureZeroCapitalResourceWiring(): void {
           ...(!receiverReady ? ['verified_funded_receiver'] : []),
         ],
       });
+      if (positive && executableCapability && target.executionEligible) {
+        await target.isAllowedByCryptara(opportunity);
+      }
     }
 
     // Bind discovery economics to the same live funding authority used at
@@ -377,7 +380,7 @@ export function ensureZeroCapitalResourceWiring(): void {
 
       if (!positive) continue;
       if (target.executionEligible && !executableCapability) continue;
-      if (target.executionEnabled && !await target.isAllowedByCryptara(opportunity)) continue;
+      if (target.executionEligible && !await target.isAllowedByCryptara(opportunity)) continue;
       dynamic.push(opportunity);
     }
 
