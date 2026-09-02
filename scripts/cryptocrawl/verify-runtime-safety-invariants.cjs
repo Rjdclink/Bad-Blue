@@ -113,4 +113,18 @@ requireAll('server/services/cryptocrawl/integration/zero-capital-flash-provider-
   'nonPositiveProviderRepriceExecutable: false',
 ]);
 
-console.log('[runtime-safety-invariants] PASS: strict positive economics, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, and single/dual zero-capital repricing invariants preserved');
+// 7) Runtime heartbeat preserves actionable routing evidence without serializing
+// every full candidate decision through console and file transports.
+const runtimeObservability = requireAll('server/services/cryptocrawl/integration/runtime-observability.ts', [
+  'function summarizeMultiTopologyCycle(',
+  'blockedReasonCounts',
+  'highestScoring: cycle.routedOpportunities.slice(0, 12)',
+  'multiTopology: summarizeMultiTopologyCycle(multiTopology)',
+  'fullCandidateDecisionsLogged: false',
+  'boundedMultiTopologyHeartbeat: true',
+]);
+if (/\n\s+multiTopology,\n/.test(runtimeObservability)) {
+  throw new Error('runtime heartbeat contains unbounded multi-topology candidate telemetry');
+}
+
+console.log('[runtime-safety-invariants] PASS: strict positive economics, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, single/dual zero-capital repricing, and bounded production observability invariants preserved');

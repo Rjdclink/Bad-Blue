@@ -79,6 +79,73 @@ function executionConfiguration() {
   };
 }
 
+function summarizeMultiTopologyCycle(
+  cycle: ReturnType<typeof multiTopologyDiscoveryController.getLatestCycle>,
+) {
+  if (!cycle) return null;
+
+  let admitted = 0;
+  const blockedReasonCounts: Record<string, number> = {};
+  for (const decision of cycle.routedOpportunities) {
+    if (decision.admitted) admitted += 1;
+    for (const reason of decision.reasons) {
+      if (!reason.startsWith('blocked:')) continue;
+      blockedReasonCounts[reason] = (blockedReasonCounts[reason] || 0) + 1;
+    }
+  }
+
+  return {
+    cycleId: cycle.cycleId,
+    startedAt: cycle.startedAt,
+    completedAt: cycle.completedAt,
+    candidateCounts: {
+      cex: cycle.cexCandidates,
+      dex: cycle.dexCandidates,
+      crossChain: cycle.crossChainCandidates,
+      mempool: cycle.mempoolCandidates,
+      liquidation: cycle.liquidationCandidates,
+      maker: cycle.makerCandidates,
+      funding: cycle.fundingCandidates,
+    },
+    durationMsByTopology: cycle.durationMsByTopology,
+    scanPriorities: cycle.scanPriorities,
+    admissionPolicy: cycle.admissionPolicy,
+    assemblyPolicy: cycle.assemblyPolicy,
+    routedOpportunities: {
+      evaluated: cycle.routedOpportunities.length,
+      admitted,
+      blocked: cycle.routedOpportunities.length - admitted,
+      blockedReasonCounts: Object.fromEntries(
+        Object.entries(blockedReasonCounts)
+          .sort((left, right) => right[1] - left[1])
+          .slice(0, 24),
+      ),
+      highestScoring: cycle.routedOpportunities.slice(0, 12).map(decision => ({
+        opportunityId: decision.opportunityId,
+        topology: decision.topology,
+        path: decision.path,
+        admitted: decision.admitted,
+        profitabilityScore: decision.score.profitabilityScore,
+        executionRisk: decision.score.executionRisk,
+        confidenceLevel: decision.score.confidenceLevel,
+        reasons: decision.reasons.filter(reason => reason.startsWith('blocked:')).slice(0, 8),
+      })),
+    },
+    compositePlan: cycle.compositePlan ? {
+      planId: cycle.compositePlan.planId,
+      selectedLegCount: cycle.compositePlan.selectedLegCount,
+      selectedExecutionPath: cycle.compositePlan.selectedExecutionPath,
+      executionMode: cycle.compositePlan.executionMode,
+      notionalWeightedNetProfitBps: cycle.compositePlan.notionalWeightedNetProfitBps,
+      sharedPrincipalStackedBps: cycle.compositePlan.sharedPrincipalStackedBps,
+      exactCompositeSimulation: cycle.compositePlan.exactCompositeSimulation,
+    } : null,
+    registry: cycle.registry,
+    errors: cycle.errors.slice(0, 12),
+    fullCandidateDecisionsLogged: false,
+  };
+}
+
 export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
   if (heartbeatRunning) return;
   heartbeatRunning = true;
@@ -221,7 +288,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
           economicBarrier,
           errors: graph.errors,
         } : null,
-        multiTopology,
+        multiTopology: summarizeMultiTopologyCycle(multiTopology),
         candidateRegistry: candidateMetrics,
       },
       opportunities: {
@@ -367,6 +434,7 @@ export function ensureCryptoRuntimeObservability(): void {
     measuredOpportunityGraphTelemetry: true,
     cexEconomicBarrierTelemetry: true,
     multiTopologyCandidateTelemetry: true,
+    boundedMultiTopologyHeartbeat: true,
     inventoryTelemetry: true,
     monteCarloCalibrationTelemetry: true,
     orderBookEvolutionTelemetry: true,
