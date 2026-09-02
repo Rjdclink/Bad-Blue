@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 1;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v1';
+const SCHEMA_VERSION = 2;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v2';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
@@ -33,6 +33,7 @@ const MIGRATIONS = [
   '023_cryptocrawler_hot_path_schema_authority.sql',
   '024_cryptocrawler_funding_lifecycle.sql',
   '025_cryptocrawler_rainbow_source_ledger.sql',
+  '026_cryptocrawler_system_capital_allocations.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -57,6 +58,7 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_payout_execution_reservations',
   'public.cryptocrawler_cex_inventory_state_v1',
   'public.cryptocrawler_cex_inventory_reservations_v1',
+  'public.cryptocrawler_system_capital_allocations',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
