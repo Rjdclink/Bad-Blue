@@ -119,6 +119,12 @@ assert.ok(adminSchemaGate >= 0 && adminSchemaGate < adminPantheonClaim && adminP
   'explicit runtime start must verify Overflow authority schema before claiming lifecycle ownership or starting zero-capital execution');
 assert.match(adminApi, /executionAuthorityGranted:\s*false/);
 
+// A legacy emergency endpoint must never claim that funds moved when it owns no
+// withdrawal authority. Terminal settlement/payout remains single-authority and
+// no manual admin action may bypass retained-capital or payout reservations.
+assert.doesNotMatch(adminApi, /Emergency withdrawal initiated|Implement emergency withdrawal/);
+assert.match(adminApi, /case 'withdraw_all':[\s\S]{0,500}status\(409\)[\s\S]{0,300}withdrawalInitiated:\s*false[\s\S]{0,500}single_independent_supabase_worker_okx_only/);
+
 // Dev/test no-secret workflows must not be forced through production DB schema.
 assert.doesNotMatch(coreRuntime, /export async function ensureCryptoCrawlerCoreRuntime\(\): Promise<void> \{\s*await ensureCryptocrawlOverflowRuntimeSchema/);
 assert.doesNotMatch(adminApi, /export async function startCryptoCrawlerRuntime\(\): Promise<CryptoCrawlerStartResult> \{\s*await ensureCryptocrawlOverflowRuntimeSchema/);
@@ -143,4 +149,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for archive/wider-application paths, canonical and explicit admin runtime admission are Overflow-only with no Primary probe/schema fallback, and both production lifecycle entry points fail closed on the complete Overflow schema');
+console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for archive/wider-application paths, canonical and explicit admin runtime admission are Overflow-only with no Primary probe/schema fallback, both production lifecycle entry points fail closed on the complete Overflow schema, and legacy admin withdrawal cannot claim or bypass governed payout authority');
