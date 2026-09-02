@@ -85,6 +85,9 @@ let schemaReady = false;
 let schemaInFlight: Promise<void> | null = null;
 let lastError: string | null = null;
 let verifiedAt = 0;
+let durableFastPathHits = 0;
+let migrationRuns = 0;
+let lastProvisionMode: 'none' | 'durable_fast_path' | 'migration_repair' = 'none';
 
 async function migrationRoot(): Promise<string> {
   const candidates = [
@@ -128,9 +131,49 @@ async function verifyRequiredObjects(client: any): Promise<void> {
   }
 }
 
+async function durableSchemaIsReady(client: any): Promise<boolean> {
+  const meta = await client.query(
+    `SELECT to_regclass('private.cryptocrawler_overflow_runtime_meta') IS NOT NULL AS meta_exists`,
+  );
+  if (meta.rows?.[0]?.meta_exists !== true) return false;
+
+  const state = await client.query(
+    `SELECT schema_version, schema_ready
+     FROM private.cryptocrawler_overflow_runtime_meta
+     WHERE system_key='cryptocrawler'
+     LIMIT 1`,
+  );
+  const row = state.rows?.[0];
+  return Number(row?.schema_version) === SCHEMA_VERSION && row?.schema_ready === true;
+}
+
+async function runMigrations(client: any): Promise<void> {
+  const root = await migrationRoot();
+  migrationRuns += 1;
+  lastProvisionMode = 'migration_repair';
+  for (const relativePath of MIGRATIONS) {
+    const sql = await readFile(path.join(root, relativePath), 'utf8');
+    await client.query(sql);
+  }
+}
+
+async function markVerified(client: any): Promise<void> {
+  await client.query(
+    `INSERT INTO private.cryptocrawler_overflow_runtime_meta
+       (system_key, schema_version, schema_ready, verified_at, last_error, updated_at)
+     VALUES ('cryptocrawler', $1, true, now(), NULL, now())
+     ON CONFLICT (system_key) DO UPDATE
+     SET schema_version=EXCLUDED.schema_version,
+         schema_ready=true,
+         verified_at=now(),
+         last_error=NULL,
+         updated_at=now()`,
+    [SCHEMA_VERSION],
+  );
+}
+
 async function provision(): Promise<void> {
   assertCryptocrawlRuntimeDatabaseAvailable();
-  const root = await migrationRoot();
   const client = await coordinationPool.connect();
   let locked = false;
   try {
@@ -143,24 +186,33 @@ async function provision(): Promise<void> {
       throw new Error('Overflow CryptoCrawler schema authority is currently owned by another replica');
     }
 
-    for (const relativePath of MIGRATIONS) {
-      const sql = await readFile(path.join(root, relativePath), 'utf8');
-      await client.query(sql);
+    // Durable fast path: a fresh Railway replica/process must not replay twenty
+    // idempotent DDL migrations merely because its process-local cache is empty.
+    // The durable version marker is cheap to read; required objects are still
+    // verified before runtime admission so drift/corruption fails closed.
+    let durableReady = false;
+    try {
+      durableReady = await durableSchemaIsReady(client);
+      if (durableReady) {
+        await verifyRequiredObjects(client);
+        durableFastPathHits += 1;
+        lastProvisionMode = 'durable_fast_path';
+      }
+    } catch (error) {
+      logger.warn('[CryptoCrawlerOverflowSchema] Durable schema marker/object verification requires repair; migrations will run once', {
+        component: 'CryptoCrawlerOverflowRuntimeSchema',
+        schemaVersion: SCHEMA_VERSION,
+        error: error instanceof Error ? error.message : String(error),
+        primaryFallbackUsed: false,
+      });
+      durableReady = false;
     }
 
-    await verifyRequiredObjects(client);
-    await client.query(
-      `INSERT INTO private.cryptocrawler_overflow_runtime_meta
-         (system_key, schema_version, schema_ready, verified_at, last_error, updated_at)
-       VALUES ('cryptocrawler', $1, true, now(), NULL, now())
-       ON CONFLICT (system_key) DO UPDATE
-       SET schema_version=EXCLUDED.schema_version,
-           schema_ready=true,
-           verified_at=now(),
-           last_error=NULL,
-           updated_at=now()`,
-      [SCHEMA_VERSION],
-    );
+    if (!durableReady) {
+      await runMigrations(client);
+      await verifyRequiredObjects(client);
+      await markVerified(client);
+    }
 
     schemaReady = true;
     lastError = null;
@@ -168,6 +220,9 @@ async function provision(): Promise<void> {
     logger.info('[CryptoCrawlerOverflowSchema] Complete runtime authority schema verified on Overflow', {
       component: 'CryptoCrawlerOverflowRuntimeSchema',
       schemaVersion: SCHEMA_VERSION,
+      provisionMode: lastProvisionMode,
+      durableFastPathHits,
+      migrationRuns,
       migrationCount: MIGRATIONS.length,
       requiredTableCount: REQUIRED_TABLES.length,
       requiredFunctionCount: REQUIRED_FUNCTIONS.length,
@@ -216,6 +271,9 @@ export function getCryptocrawlOverflowRuntimeSchemaSnapshot() {
     inFlight: schemaInFlight !== null,
     verifiedAt,
     lastError,
+    provisionMode: lastProvisionMode,
+    durableFastPathHits,
+    migrationRuns,
     migrationCount: MIGRATIONS.length,
     requiredTables: [...REQUIRED_TABLES],
     requiredFunctions: [...REQUIRED_FUNCTIONS],
