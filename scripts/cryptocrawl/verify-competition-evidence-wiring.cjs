@@ -63,8 +63,10 @@ requireText(cryptaraCex, 'economicsChanged: false', 'Cryptara topology correctio
 requireText(runtime, "import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';", 'canonical runtime must import CEX topology correction');
 requireText(runtime, 'ensureCryptaraCexEvidenceWiring();', 'canonical runtime must install CEX topology correction');
 requireOrder(runtime, 'ensureCryptaraCexEvidenceWiring();', 'multiTopologyDiscoveryController.start();', 'CEX topology correction must install before the canonical discovery controller can assess candidates');
-requireText(runtime, "cexCompetitionEvidence: 'topology_not_applicable_without_synthetic_zero'", 'runtime must attest CEX competition applicability semantics');
-requireText(runtime, 'cexCompetitionEvidenceExecutionAuthority: false', 'competition applicability correction cannot become execution authority');
+requireText(runtime, "historicalProofRequiredBeforeFirstExecution: false", 'runtime must preserve no-history bootstrap authority');
+requireText(runtime, "stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history'", 'runtime must preserve fresh-current-evidence Stage-1 bootstrap semantics');
+requireText(runtime, "executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'", 'runtime must preserve strict positive all-in economics');
+requireText(runtime, 'cryptaraCortexExecutionAuthority: false', 'Cryptara advisory intelligence cannot become execution authority');
 requireText(runtime, 'executionAuthorityGranted: false', 'canonical runtime wiring itself cannot grant execution authority');
 
-console.log('[competition-evidence-wiring] PASS — CEX assessment is bootstrap-aware before topology correction, competition/mempool evidence is topology-aware, missing evidence is never fabricated, Cryptara correction is installed before discovery, and scheduler authority remains singular');
+console.log('[competition-evidence-wiring] PASS — CEX assessment is bootstrap-aware before topology correction, competition/mempool evidence is topology-aware, first-trade history is non-blocking, missing evidence is never fabricated, and execution authority remains singular');
