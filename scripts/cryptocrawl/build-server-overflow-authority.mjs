@@ -6,6 +6,7 @@ const repoRoot = process.cwd();
 const cryptoRoot = path.resolve(repoRoot, 'server/services/cryptocrawl');
 const rootDbBase = path.resolve(repoRoot, 'server/db');
 const overflowDb = path.resolve(cryptoRoot, 'runtime/cryptocrawl-runtime-database.ts');
+const primaryArchiveWorker = path.resolve(cryptoRoot, 'integration/cryptara-primary-archive-worker.ts');
 const canonicalRuntime = path.resolve(cryptoRoot, 'integration/canonical-runtime-wiring.ts');
 const overflowWorker = path.resolve(cryptoRoot, 'integration/cryptara-supabase-overflow-worker.ts');
 const terminalTreasury = path.resolve(cryptoRoot, 'runtime/terminal-treasury-lifecycle.ts');
@@ -13,6 +14,7 @@ const terminalTreasury = path.resolve(cryptoRoot, 'runtime/terminal-treasury-lif
 const entry = path.resolve(repoRoot, process.argv[2] || 'server/index.ts');
 const outfile = path.resolve(repoRoot, process.argv[3] || 'dist/index.js');
 const redirected = [];
+const primaryArchiveImports = [];
 let canonicalGateApplied = false;
 let auxiliaryPoolUnified = false;
 let primaryConfigDependencyRemoved = false;
@@ -31,13 +33,23 @@ function isUnder(child, parent) {
 const overflowAuthorityPlugin = {
   name: 'cryptocrawl-overflow-runtime-authority',
   setup(buildApi) {
-    // Any CryptoCrawler-originated import of the application DB module is resolved
-    // to the dedicated Overflow runtime DB. LegalWhat and the rest of the app keep
-    // their original Primary database wiring.
+    // All CryptoCrawler-originated imports of the application DB module resolve to
+    // the dedicated Overflow runtime DB except the one explicit cold-archive
+    // worker. That worker reuses the existing Primary pool through the observable
+    // Bridge/gateway and is forbidden from hot/runtime authority.
     buildApi.onResolve({ filter: /^\./ }, args => {
-      if (!args.importer || !isUnder(path.resolve(args.importer), cryptoRoot)) return null;
+      if (!args.importer) return null;
+      const importer = path.resolve(args.importer);
+      if (!isUnder(importer, cryptoRoot)) return null;
       const resolved = stripKnownExtension(path.resolve(path.dirname(args.importer), args.path));
       if (resolved !== rootDbBase) return null;
+      if (importer === primaryArchiveWorker) {
+        primaryArchiveImports.push({
+          importer: path.relative(repoRoot, args.importer).replaceAll(path.sep, '/'),
+          specifier: args.path,
+        });
+        return null;
+      }
       redirected.push({
         importer: path.relative(repoRoot, args.importer).replaceAll(path.sep, '/'),
         specifier: args.path,
@@ -156,7 +168,10 @@ if (!treasuryWorkerOverflowBound) {
   throw new Error('[OverflowAuthorityBuild] Treasury worker endpoint/authorization is not bound to Overflow');
 }
 if (redirected.length === 0) {
-  throw new Error('[OverflowAuthorityBuild] No CryptoCrawler Primary DB imports were observed; routing proof is unexpectedly empty');
+  throw new Error('[OverflowAuthorityBuild] No hot CryptoCrawler Primary DB imports were observed; routing proof is unexpectedly empty');
+}
+if (primaryArchiveImports.length !== 1 || primaryArchiveImports[0]?.importer !== 'server/services/cryptocrawl/integration/cryptara-primary-archive-worker.ts') {
+  throw new Error(`[OverflowAuthorityBuild] Expected exactly one explicit Primary archive DB import, observed ${JSON.stringify(primaryArchiveImports)}`);
 }
 
 const proofPath = path.resolve(repoRoot, 'dist/cryptocrawl-overflow-authority-build-proof.json');
@@ -174,7 +189,9 @@ await fs.writeFile(proofPath, JSON.stringify({
   treasuryWorkerUrlVariable: 'SUPABASE_URL_OVERFLOW',
   treasuryWorkerSecretVariable: 'SUPABASE_SECRET_KEY_OVERFLOW',
   redirectedPrimaryDbImports: redirected,
+  primaryArchiveDbImports: primaryArchiveImports,
+  primaryArchiveRole: 'cold_storage_only',
   outputCount: Object.keys(result.metafile?.outputs || {}).length,
 }, null, 2));
 
-console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} CryptoCrawler server/db import(s) to Overflow; adapter pool unified; adapter semantics corrected; treasury worker bound to Overflow; Primary config dependency removed; canonical schema gate applied; proof=${path.relative(repoRoot, proofPath)}`);
+console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} hot CryptoCrawler server/db import(s) to Overflow; explicit Primary archive imports=${primaryArchiveImports.length}; adapter pool unified; adapter semantics corrected; treasury worker bound to Overflow; Primary config dependency removed; canonical schema gate applied; proof=${path.relative(repoRoot, proofPath)}`);
