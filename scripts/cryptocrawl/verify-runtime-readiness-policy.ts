@@ -8,7 +8,8 @@ const base = {
   coreMarketDataReady: true,
   criticalRpcReady: true,
   graphReady: true,
-  observedOpportunities: 10,
+  discoveryEvidenceCount: 10,
+  canonicalObservedOpportunities: 0,
   schedulerRunning: true,
   noExecutionGuardEnabled: false,
   liveExecutionEnabled: true,
@@ -30,6 +31,21 @@ assert.equal(readiness.CANDIDATE_READY.ready, false);
 assert.equal(readiness.GOVERNANCE_READY.ready, false);
 assert.equal(readiness.EXECUTION_READY.ready, false);
 assert.equal(readiness.TRADING_READY.ready, false);
+assert.equal(readiness.DISCOVERY_READY.ready, true);
+assert.match(readiness.DISCOVERY_READY.detail, /discoveryEvidence=10/);
+
+// Discovery evidence is independent from the later canonical candidate funnel.
+// Canonical observations cannot substitute for raw measured discovery, and a
+// lack of profitable canonical candidates cannot make active discovery red.
+readiness = computeCryptoRuntimeReadiness({
+  ...base,
+  discoveryEvidenceCount: 0,
+  canonicalObservedOpportunities: 10,
+});
+assert.equal(readiness.DISCOVERY_READY.ready, false);
+
+readiness = computeCryptoRuntimeReadiness(base);
+assert.equal(readiness.DISCOVERY_READY.ready, true);
 
 // Canonical CEX trading can become ready only when an eligible CEX candidate,
 // reconciled CEX inventory, executable governance and live capability all agree.
