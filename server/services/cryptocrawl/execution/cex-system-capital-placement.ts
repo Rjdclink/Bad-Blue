@@ -141,9 +141,9 @@ async function resolveOkxDeposit(row: AllocationRow, tokenAddress: string): Prom
   const asset = row.source_asset.toUpperCase();
   const currencies = await okxPrivateRequest('/api/v5/asset/currencies', 'GET', { ccy: asset }, { lane: 'account_read' });
   const matching = currencies.data.filter((entry: any) => {
-    const contractSuffix = String(entry?.ctAddr || '').trim().toLowerCase();
+    const contractAddress = String(entry?.ctAddr || '').trim().toLowerCase();
     const canDeposit = entry?.canDep === true || String(entry?.canDep).toLowerCase() === 'true';
-    return tokenAddress.endsWith(contractSuffix) && contractSuffix.length === 6 && canDeposit;
+    return contractAddress === tokenAddress && canDeposit;
   });
   if (matching.length !== 1) {
     throw new Error(`OKX deposit network cannot be proven uniquely from source token contract ${tokenAddress}; matches=${matching.length}`);
@@ -159,10 +159,10 @@ async function resolveOkxDeposit(row: AllocationRow, tokenAddress: string): Prom
   }
 
   const addresses = await okxPrivateRequest('/api/v5/asset/deposit-address', 'GET', { ccy: asset }, { lane: 'account_read' });
-  const candidates = addresses.data.filter((entry: any) =>
-    String(entry?.chain || '').trim() === chain &&
-    tokenAddress.endsWith(String(entry?.ctAddr || '').trim().toLowerCase()),
-  );
+  const candidates = addresses.data.filter((entry: any) => {
+    const contractSuffix = String(entry?.ctAddr || '').trim().toLowerCase();
+    return String(entry?.chain || '').trim() === chain && contractSuffix.length === 6 && tokenAddress.endsWith(contractSuffix);
+  });
   if (candidates.length < 1) throw new Error(`OKX returned no contract-compatible deposit address for authenticated chain ${chain}`);
   const preferred = candidates.find((entry: any) => entry?.selected === true || String(entry?.selected).toLowerCase() === 'true') || candidates[0];
   const address = canonicalAddress('OKX deposit address', String(preferred?.addr || ''));
@@ -405,8 +405,6 @@ async function ensureOkxTradingAccountCredit(input: {
     );
     stateRows = state.data;
   } catch {
-    // A missing transfer is expected on the first reconciliation pass. The
-    // deterministic clientId is the idempotency identity for submission.
     stateRows = [];
   }
 
@@ -435,9 +433,6 @@ async function ensureOkxTradingAccountCredit(input: {
         okxInternalTransferRequestedBaseUnits: input.deliveredBaseUnits,
       });
     } catch (error) {
-      // The transfer request may have succeeded while the response was lost, or
-      // the deterministic clientId may already exist. Resolve truth from the
-      // state endpoint rather than issuing a second client identity.
       logger.warn('[SystemCapitalPlacement] OKX funding-to-trading transfer submission requires state reconciliation', {
         component: 'SystemCapitalPlacement',
         allocationId: input.row.allocation_id,
