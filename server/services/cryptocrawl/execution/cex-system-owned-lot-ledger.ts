@@ -19,7 +19,7 @@ export interface CexSystemCapitalSettlementAuthority {
 
 export interface AppliedCexOwnershipSettlement {
   settlementReference: string;
-  venue: 'okx';
+  venue: 'okx' | 'kraken';
   orderId: string;
   opportunityId?: string;
   strategy?: string;
@@ -71,7 +71,7 @@ async function existingSettlement(client: any, reference: string): Promise<Appli
   }
   return {
     settlementReference: String(row.settlement_reference),
-    venue: String(row.venue) as 'okx',
+    venue: String(row.venue) as 'okx' | 'kraken',
     orderId: String(row.order_id),
     opportunityId: row.opportunity_id ? String(row.opportunity_id) : undefined,
     strategy: row.strategy ? String(row.strategy) : undefined,
@@ -82,7 +82,7 @@ async function existingSettlement(client: any, reference: string): Promise<Appli
   };
 }
 
-async function consumeSystemOwnedAsset(client: any, venue: 'okx', asset: string, amount: string): Promise<string[]> {
+async function consumeSystemOwnedAsset(client: any, venue: 'okx' | 'kraken', asset: string, amount: string): Promise<string[]> {
   let remaining = requirePositiveExactDecimal(amount, `${venue}:${asset} system-owned debit`);
   const lots = await client.query(
     `SELECT lot_id::text, remaining_decimal::text
@@ -178,7 +178,9 @@ export async function applyExactCexSystemOwnedSettlement(input: {
   assertCryptocrawlRuntimeDatabaseAvailable();
   requireAuthority(input.authority);
   const evidence = input.evidence;
-  if (evidence.venue !== 'okx') throw new Error(`Unsupported exact CEX ownership venue ${evidence.venue}`);
+  if (evidence.venue !== 'okx' && evidence.venue !== 'kraken') {
+    throw new Error(`Unsupported exact CEX ownership venue ${evidence.venue}`);
+  }
 
   const client = await pool.connect();
   try {
