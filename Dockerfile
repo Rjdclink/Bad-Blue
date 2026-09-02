@@ -2,6 +2,11 @@
 # Build stage - for compiling the application and installing browsers
 FROM node:20-bookworm-slim AS builder
 
+# Railway provides Git metadata to Docker builds through build arguments. Keep
+# this build-only so the immutable source SHA is compiled into the artifact and
+# is never sourced from a mutable runtime variable.
+ARG RAILWAY_GIT_COMMIT_SHA
+
 WORKDIR /app
 
 # Install build dependencies for native modules and Playwright browser installation
@@ -111,7 +116,7 @@ COPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
 COPY --from=builder /app/artifacts/cryptocrawl ./artifacts/cryptocrawl
 COPY --from=builder /app/server/services/cryptocrawl/config/chains.json ./config/chains.json
 
-# Expose application port (Railway will use PORT env var)
+# Expose application port
 EXPOSE 5000
 
 # Create non-root user for security
