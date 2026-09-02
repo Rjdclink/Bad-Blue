@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { getCryptocrawlGovernance } from '../../server/services/cryptocrawl/governance/governance.js';
+import { getAdaptiveProfitOperatingEnvelope } from '../../server/services/cryptocrawl/governance/adaptive-profit-operating-envelope.js';
 import '../../server/services/cryptocrawl/governance/stage-one-bootstrap-authority.js';
 import { Stage, stageManager } from '../../server/services/cryptocrawl/governance/stage-management.js';
 
@@ -8,12 +9,14 @@ assert.equal(stageManager.getCurrentStage(), Stage.STAGE_1_CONSTRAINED_PILOT);
 assert.equal(governance.getState().stage, stageManager.getCurrentStage());
 assert.equal(stageManager.isAutomaticallyActivated(), true);
 assert.equal(stageManager.canExecuteTrades(), true);
+assert.equal(getAdaptiveProfitOperatingEnvelope().newExposureAllowed, true);
 assert.equal(stageManager.getStageConfig().maxPositionSizeUSD, 100);
 assert.equal(stageManager.getStageConfig().maxDailyProfit, 200);
 assert.ok(stageManager.getStageConfig().allowedChains.includes('polygon'));
 
-// Stage 1 is now a constrained live pilot. Canonical governance must permit a
-// supported-chain live action while pause/kill/envelope safety remains intact.
+// Stage 1 is now a constrained live pilot. Canonical governance and the adaptive
+// envelope must both honor StageManager execution authority while pause/kill/envelope
+// safety remains intact.
 governance.requireAllowed('ADVISE', { chain: 'europa' });
 governance.requireAllowed('SUBMIT_TX', { chain: 'polygon' });
 
