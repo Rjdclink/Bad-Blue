@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { computeCryptoRuntimeReadiness } from '../../server/services/cryptocrawl/runtime/readiness-policy.js';
 
 const base = {
@@ -135,5 +136,13 @@ readiness = computeCryptoRuntimeReadiness({
 assert.equal(readiness.EXECUTION_CAPABILITY_READY.ready, false);
 assert.equal(readiness.EXECUTION_READY.ready, false);
 assert.equal(readiness.TRADING_READY.ready, false);
+
+const observability = readFileSync(
+  'server/services/cryptocrawl/integration/runtime-observability.ts',
+  'utf8',
+);
+assert.match(observability, /graphCycleDurationMs \+ Math\.max\(1_000, graph\.capacity\.recommendedIntervalMs\) \+ 15_000/);
+assert.match(observability, /discoveryEvidenceCount = Math\.max/);
+assert.doesNotMatch(observability, /observedOpportunities: recentMinute\.observedOpportunities/);
 
 console.log('CryptoCrawler runtime readiness policy verification passed');
