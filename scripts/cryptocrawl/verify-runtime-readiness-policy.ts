@@ -16,6 +16,8 @@ const base = {
   liveExecutionEnabled: true,
   liveExecutionConfirmed: true,
   reconciledInventoryAssets: 0,
+  spendableInventoryAssets: 0,
+  spendableInventoryVenues: 0,
   eligibleCandidates: 0,
   eligibleCexCandidates: 0,
   eligibleZeroCapitalCandidates: 0,
@@ -53,6 +55,8 @@ assert.equal(readiness.DISCOVERY_READY.ready, true);
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   reconciledInventoryAssets: 4,
+  spendableInventoryAssets: 2,
+  spendableInventoryVenues: 2,
   eligibleCandidates: 1,
   eligibleCexCandidates: 1,
   stageCanExecute: true,
@@ -72,6 +76,8 @@ readiness = computeCryptoRuntimeReadiness({
   runtimeIdentitySafe: false,
   runtimeIdentityMismatch: true,
   reconciledInventoryAssets: 4,
+  spendableInventoryAssets: 2,
+  spendableInventoryVenues: 2,
   eligibleCandidates: 1,
   eligibleCexCandidates: 1,
   stageCanExecute: true,
@@ -82,6 +88,16 @@ assert.equal(readiness.EXECUTION_CAPABILITY_READY.ready, false);
 assert.equal(readiness.EXECUTION_READY.ready, false);
 assert.equal(readiness.TRADING_READY.ready, false);
 assert.match(readiness.EXECUTION_CAPABILITY_READY.detail, /runtimeIdentitySafe=false/);
+
+// Balance rows on only one venue are not cross-venue inventory readiness.
+readiness = computeCryptoRuntimeReadiness({
+  ...base,
+  reconciledInventoryAssets: 5,
+  spendableInventoryAssets: 1,
+  spendableInventoryVenues: 1,
+});
+assert.equal(readiness.INVENTORY_READY.ready, false);
+assert.match(readiness.INVENTORY_READY.detail, /spendableCexInventoryVenues=1/);
 
 // Zero-capital gas readiness is a separate topology and must never make a CEX
 // candidate appear resource-ready when reconciled CEX inventory is absent.
@@ -127,6 +143,8 @@ assert.match(readiness.DATA_READY.detail, /not required for core CEX discovery/)
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   reconciledInventoryAssets: 4,
+  spendableInventoryAssets: 2,
+  spendableInventoryVenues: 2,
   eligibleCandidates: 1,
   eligibleCexCandidates: 1,
   stageCanExecute: true,
