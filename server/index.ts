@@ -437,12 +437,16 @@ async function initializeServices(): Promise<void> {
 
   // One canonical officer-data harvester owns the shared session manager, priority
   // queue, and timer. Its own defaults carry the current bounded 36h/7-search policy.
-  try {
-    const { initializeHarvester } = await import('./subAgentHarvester');
-    await initializeHarvester();
-    console.log('[STARTUP] ✓ Canonical Sub-Agent Harvester initialized (36h adaptive interval)');
-  } catch (error: any) {
-    console.warn('[STARTUP] ⚠ Canonical Sub-Agent Harvester failed:', error?.message ?? error);
+  if (process.env.SUBAGENT_ENABLE_OFFICER_SEARCH === 'true') {
+    try {
+      const { initializeHarvester } = await import('./subAgentHarvester');
+      await initializeHarvester();
+      console.log('[STARTUP] ✓ Canonical Sub-Agent Harvester initialized (36h adaptive interval)');
+    } catch (error: any) {
+      console.warn('[STARTUP] ⚠ Canonical Sub-Agent Harvester failed:', error?.message ?? error);
+    }
+  } else {
+    console.log('[STARTUP] ✓ Canonical Sub-Agent Harvester disabled by SUBAGENT_ENABLE_OFFICER_SEARCH');
   }
 
   // Initialize Unified Maintenance Worker for weekly system maintenance
