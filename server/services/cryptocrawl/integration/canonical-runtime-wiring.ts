@@ -1,6 +1,4 @@
 import logger from '../../../logger.js';
-import { isDatabaseConfigured, pool } from '../../../db.js';
-import { requireCryptocrawlerAuthoritySchema } from '../../../migrations/reconcileAppSchema.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
@@ -52,7 +50,6 @@ import { ensureDualProviderZeroCapitalExecutionWiring } from './dual-provider-ze
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
-let installProbeInFlight: Promise<void> | null = null;
 let installRetryTimer: NodeJS.Timeout | null = null;
 let zeroCapitalStartPromise: Promise<void> | null = null;
 let zeroCapitalRetryTimer: NodeJS.Timeout | null = null;
@@ -68,7 +65,7 @@ function canonicalRuntimeStartupGraceMs(): number {
   return Number.isFinite(configured) ? Math.max(5_000, Math.min(120_000, Math.trunc(configured))) : 30_000;
 }
 
-function canonicalRuntimeDatabaseRetryMs(): number {
+function canonicalRuntimeOverflowRetryMs(): number {
   const configured = Number(process.env.CRYPTOCRAWL_RUNTIME_DATABASE_RETRY_MS || 5_000);
   return Number.isFinite(configured) ? Math.max(1_000, Math.min(30_000, Math.trunc(configured))) : 5_000;
 }
@@ -252,7 +249,7 @@ function installCanonicalRuntime(): void {
     alchemyStandardTokenReads: 'public_rpc_first_then_enhanced_api_fallback',
     localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
-    startupAdmission: 'production_grace_then_overflow_proxy_without_primary_probe_or_primary_fallback_when_overflow_absent',
+    startupAdmission: 'production_grace_then_overflow_authority_only_no_primary_probe_or_fallback',
     startupGraceMs: canonicalRuntimeStartupGraceMs(),
   });
 }
@@ -274,7 +271,7 @@ function scheduleCanonicalRuntimeInstall(delayMs: number, reason: string): void 
 }
 
 export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
-  if (installed || installProbeInFlight) return;
+  if (installed) return;
 
   if (process.env.NODE_ENV === 'production') {
     const graceRemainingMs = Math.max(0, canonicalRuntimeStartupGraceMs() - Math.floor(process.uptime() * 1_000));
@@ -285,11 +282,12 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
 
     const overflowBootstrap = getCryptaraHyperBridgeBootstrapSnapshot();
     if (overflowBootstrap.state === 'ready') {
-      logger.info('[CryptoRuntimeStartup] Overflow proxy active; installing canonical runtime with direct primary admission/recovery probes disabled', {
+      logger.info('[CryptoRuntimeStartup] Overflow authority ready; installing canonical runtime with all Primary admission/recovery paths disabled', {
         component: 'CanonicalCryptoCrawlerRuntimeWiring',
-        dataPlane: 'overflow_proxy',
-        primaryAccess: 'overflow_gateway_only',
+        dataPlane: 'overflow_authority',
+        primaryRuntimePrerequisite: false,
         directPrimaryProbe: false,
+        primaryFallback: false,
         recoveryPolling: false,
         executionAuthorityGranted: false,
       });
@@ -297,27 +295,18 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
       return;
     }
 
-    // This legacy fallback is reachable only when overflow is unavailable.
-    if (isDatabaseConfigured) {
-      installProbeInFlight = pool.query('SELECT 1')
-        .then(() => requireCryptocrawlerAuthoritySchema(2))
-        .then(() => {
-          installCanonicalRuntime();
-        })
-        .catch(error => {
-          logger.warn('[CryptoRuntimeStartup] Primary fallback database/schema admission unavailable; runtime remains deferred because overflow is unavailable', {
-            component: 'CanonicalCryptoCrawlerRuntimeWiring',
-            error: error instanceof Error ? error.message : String(error),
-            exchangeRequestsDuringDeferral: false,
-            executionAuthorityGranted: false,
-          });
-          scheduleCanonicalRuntimeInstall(canonicalRuntimeDatabaseRetryMs(), 'overflow_unavailable_primary_fallback_probe_failed');
-        })
-        .finally(() => {
-          installProbeInFlight = null;
-        });
-      return;
-    }
+    logger.warn('[CryptoRuntimeStartup] Overflow authority not ready; runtime remains fail-closed without Primary fallback', {
+      component: 'CanonicalCryptoCrawlerRuntimeWiring',
+      overflowState: overflowBootstrap.state,
+      overflowReason: overflowBootstrap.reason,
+      primaryRuntimePrerequisite: false,
+      directPrimaryProbe: false,
+      primaryFallback: false,
+      exchangeRequestsDuringDeferral: false,
+      executionAuthorityGranted: false,
+    });
+    scheduleCanonicalRuntimeInstall(canonicalRuntimeOverflowRetryMs(), 'overflow_authority_not_ready');
+    return;
   }
 
   installCanonicalRuntime();
