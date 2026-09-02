@@ -121,8 +121,10 @@ requirePattern(settlement, /venue_native_fee_sign_normalized_to_economic_cost/, 
 // Observe/prewarm the incremental RPI depth and keep execution disabled rather
 // than testing eligibility with a live one-leg order.
 requirePattern(rpiAdvisory, /executionAuthority:\s*false/, 'RPI taker capability remains advisory-only');
-requirePattern(rpiAdvisory, /permissionProbeAttempted:\s*false/, 'RPI taker does not probe permission through execution');
-requirePattern(rpiAdvisory, /books-rpi/, 'RPI taker advisory observes RPI market depth');
-requirePattern(rpiAdvisory, /rpiTakerExecutionEnabled:\s*false/, 'RPI taker execution remains disabled without a safe permission proof');
+requirePattern(rpiAdvisory, /permissionProven:\s*false/, 'RPI taker permission remains unproven without a mutating probe');
+requirePattern(rpiAdvisory, /rpiTakerPolicy:\s*'prewarm_and_measure_only_until_non_mutating_account_permission_evidence_exists'/, 'RPI taker stays prewarm-and-measure only');
+requirePattern(rpiAdvisory, /observedAdditionalBidBaseQty[\s\S]{0,220}observedAdditionalAskBaseQty/, 'RPI taker advisory consumes measured incremental RPI depth');
+requirePattern(rpiAdvisory, /rpiTakerExecutionAuthority:\s*false/, 'RPI taker execution remains disabled without safe permission proof');
+forbidPattern(rpiAdvisory, /\/api\/v5\/trade\/order|okxPrivateRequest\s*\(/, 'RPI taker advisory issuing a live private order probe');
 
 console.log('[cex-modernization] canonical live-product websockets, authenticated fees, RPI maker execution and truthful terminal P&L verified');
