@@ -726,8 +726,12 @@ router.post('/emergency', async (req, res) => {
       });
     }
     case 'withdraw_all':
-      // Implement emergency withdrawal
-      return res.json({success: true, message: 'Emergency withdrawal initiated'});
+      return res.status(409).json({
+        success: false,
+        withdrawalInitiated: false,
+        error: 'Manual withdraw_all is not an authoritative payout path. Profitable terminal settlements are paid only through the single governed terminal sweeper/payout lifecycle.',
+        payoutAuthority: 'single_independent_supabase_worker_okx_only',
+      });
     default:
       return res.status(400).json({error: 'Unknown emergency action'});
   }
