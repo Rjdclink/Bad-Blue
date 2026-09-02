@@ -21,6 +21,19 @@ let primaryConfigDependencyRemoved = false;
 let overflowAdapterSemanticsCorrected = false;
 let treasuryWorkerOverflowBound = false;
 
+function normalizedSha(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^[0-9a-f]{7,40}$/.test(normalized) ? normalized : '';
+}
+
+const sourceSha = [
+  process.env.RAILWAY_GIT_COMMIT_SHA,
+  process.env.SOURCE_VERSION,
+  process.env.GIT_COMMIT,
+  process.env.COMMIT_SHA,
+].map(normalizedSha).find(Boolean) || '';
+const buildTimestamp = new Date().toISOString();
+
 function stripKnownExtension(value) {
   return value.replace(/\.(?:js|ts|mjs|cjs)$/, '');
 }
@@ -146,7 +159,11 @@ const result = await build({
   outfile,
   format: 'esm',
   packages: 'external',
-  define: { 'process.env.NODE_ENV': "'production'" },
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production'),
+    'process.env.CRYPTOCRAWLER_BUILD_SOURCE_SHA': JSON.stringify(sourceSha),
+    'process.env.CRYPTOCRAWLER_BUNDLE_BUILD_TIMESTAMP': JSON.stringify(buildTimestamp),
+  },
   plugins: [overflowAuthorityPlugin],
   metafile: true,
   logLevel: 'info',
@@ -181,6 +198,9 @@ await fs.writeFile(proofPath, JSON.stringify({
   outfile: path.relative(repoRoot, outfile).replaceAll(path.sep, '/'),
   authority: 'SUPABASE_DATABASE_URL_OVERFLOW',
   primaryFallbackUsed: false,
+  sourceSha: sourceSha || null,
+  buildTimestamp,
+  sourceAttestation: sourceSha ? 'railway_or_ci_git_metadata' : 'local_build_without_git_metadata',
   canonicalOverflowSchemaGateApplied: canonicalGateApplied,
   auxiliaryOverflowPoolUnified: auxiliaryPoolUnified,
   primaryConfigDependencyRemoved,
@@ -194,4 +214,4 @@ await fs.writeFile(proofPath, JSON.stringify({
   outputCount: Object.keys(result.metafile?.outputs || {}).length,
 }, null, 2));
 
-console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} hot CryptoCrawler server/db import(s) to Overflow; explicit Primary archive imports=${primaryArchiveImports.length}; adapter pool unified; adapter semantics corrected; treasury worker bound to Overflow; Primary config dependency removed; canonical schema gate applied; proof=${path.relative(repoRoot, proofPath)}`);
+console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} hot CryptoCrawler server/db import(s) to Overflow; explicit Primary archive imports=${primaryArchiveImports.length}; adapter pool unified; adapter semantics corrected; treasury worker bound to Overflow; Primary config dependency removed; canonical schema gate applied; sourceSha=${sourceSha || 'unavailable'}; buildTimestamp=${buildTimestamp}; proof=${path.relative(repoRoot, proofPath)}`);
