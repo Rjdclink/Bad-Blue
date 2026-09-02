@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 2;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v2';
+const SCHEMA_VERSION = 3;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v3';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
@@ -34,6 +34,7 @@ const MIGRATIONS = [
   '024_cryptocrawler_funding_lifecycle.sql',
   '025_cryptocrawler_rainbow_source_ledger.sql',
   '026_cryptocrawler_system_capital_allocations.sql',
+  '027_cryptocrawler_cex_system_owned_lots.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -59,6 +60,7 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_cex_inventory_state_v1',
   'public.cryptocrawler_cex_inventory_reservations_v1',
   'public.cryptocrawler_system_capital_allocations',
+  'public.cryptocrawler_cex_system_owned_lots',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
@@ -73,6 +75,7 @@ const REQUIRED_TABLES = [
 
 const REQUIRED_FUNCTIONS = [
   'private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)',
+  'private.cryptocrawler_seed_cex_system_owned_lot()',
   'public.cryptocrawler_treasury_worker_claim(text,integer)',
   'public.cryptocrawler_treasury_worker_release(text)',
   'public.cryptocrawler_terminal_sweep_truth_guard()',
