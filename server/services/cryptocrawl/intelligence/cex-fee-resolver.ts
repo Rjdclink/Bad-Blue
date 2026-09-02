@@ -358,6 +358,18 @@ async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | 
   return batch.get(normalizeSymbolInput(symbol)) || null;
 }
 
+function okxEvidence(symbol: string, rates: { taker: number; maker: number | null }, observedAt: number): CexFeeEvidence {
+  return {
+    venue: 'okx',
+    symbol,
+    takerFeeBps: Math.max(0, -rates.taker * 10_000),
+    makerFeeBps: rates.maker !== null && rates.maker < 0 ? -rates.maker * 10_000 : null,
+    makerRebateBps: rates.maker !== null && rates.maker > 0 ? rates.maker * 10_000 : null,
+    source: 'okx_account_trade_fee',
+    observedAt,
+  };
+}
+
 async function fetchOkxFeeRates(
   queryParameters: Record<string, string>,
   expectedGroupId: string | null,
