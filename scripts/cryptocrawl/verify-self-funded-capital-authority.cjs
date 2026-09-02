@@ -10,6 +10,7 @@ const hierarchyTest = read('server/services/cryptocrawl/testing/verify-capital-h
 const inventory = read('server/services/cryptocrawl/execution/cex-inventory-ledger.ts');
 const resourceScheduler = read('server/services/cryptocrawl/execution/resource-scheduler.ts');
 const cexExecutor = read('server/services/cryptocrawl/execution/centralized-exchange-executor.ts');
+const makerExecution = read('server/services/cryptocrawl/runtime/stablecoin-maker-execution-wiring.ts');
 const provenance = read('server/services/cryptocrawl/execution/adapters/stage4-capital-provenance.ts');
 const allocation = read('server/services/cryptocrawl/execution/system-capital-allocation-ledger.ts');
 const placement = read('server/services/cryptocrawl/execution/cex-system-capital-placement.ts');
@@ -46,6 +47,14 @@ assert.match(cexExecutor, /applyTerminalSystemOwnedSettlements/, 'terminal produ
 assert.match(cexExecutor, /getExactSystemCapitalOrderAssetDeltas/, 'terminal ownership must be reconstructed from authenticated exact exchange evidence');
 assert.match(cexExecutor, /cex_system_capital_settlement_persistence_failed/, 'ownership persistence failure must pause further execution rather than fall back to operator funds');
 assert.match(cexExecutor, /operatorBalanceFallbackUsed:\s*false/, 'terminal accounting failure telemetry must explicitly deny operator-balance fallback');
+
+assert.match(makerExecution, /persistMakerSystemOwnedSettlement/, 'production maker fills must not bypass system-owned settlement accounting');
+assert.match(makerExecution, /const admissionNotionalAuthority = getProfitLadderNotionalAuthority\(\)/, 'maker ownership must retain the Profit Ladder proof observed before submission');
+assert.match(makerExecution, /persistMakerSystemOwnedSettlement\(plan, result, traceId, admissionNotionalAuthority\)/, 'maker settlement must use admission-time notional authority rather than a post-trade rung');
+assert.match(makerExecution, /getExactSystemCapitalOrderAssetDeltas/, 'maker ownership must be reconstructed from the same exact authenticated exchange evidence');
+assert.match(makerExecution, /applyExactCexSystemOwnedSettlement/, 'maker fills must land in the canonical ownership-lot ledger');
+assert.match(makerExecution, /cex_system_capital_settlement_persistence_failed/, 'maker ownership persistence failure must pause further trading');
+assert.match(makerExecution, /operatorBalanceFallbackUsed:\s*false/, 'maker accounting must never fall back to operator balances');
 
 assert.match(provenance, /recordVerifiedRetainedProfit/, 'verified retained profit must accumulate in canonical SELF_FUNDED provenance');
 assert.match(provenance, /SELECT \* FROM zero_capital_capital_state WHERE scope = \$1 FOR UPDATE/, 'capital provenance mutation must lock its canonical source row');
@@ -117,4 +126,4 @@ assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_lots/, 'Ove
 assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_settlements/, 'Overflow runtime admission must require settlement idempotency state');
 assert.match(dockerfile, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'production image must bundle the physical CEX ownership migration');
 
-console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; Profit Ladder binds live CEX size and exact Kraken/OKX terminal fills transform only system-owned inventory');
+console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; Profit Ladder binds taker and maker CEX size, and exact Kraken/OKX terminal fills transform only system-owned inventory');
