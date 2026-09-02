@@ -12,18 +12,28 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_system_capital_allocations (
   destination_venue text,
   source_chain text NOT NULL,
   source_asset text NOT NULL,
+  source_asset_decimals integer NOT NULL CHECK (source_asset_decimals BETWEEN 0 AND 36),
   source_recipient text NOT NULL,
+  source_amount_base_units numeric(78,0) NOT NULL CHECK (source_amount_base_units > 0),
   destination_chain text,
   destination_asset text NOT NULL,
-  amount_base_units numeric(78,0) NOT NULL CHECK (amount_base_units > 0),
-  remaining_base_units numeric(78,0) NOT NULL CHECK (remaining_base_units >= 0 AND remaining_base_units <= amount_base_units),
+  destination_asset_decimals integer NOT NULL CHECK (destination_asset_decimals BETWEEN 0 AND 36),
+  delivered_amount_base_units numeric(78,0) CHECK (delivered_amount_base_units IS NULL OR delivered_amount_base_units > 0),
+  remaining_destination_base_units numeric(78,0) CHECK (
+    remaining_destination_base_units IS NULL OR
+    (remaining_destination_base_units >= 0 AND delivered_amount_base_units IS NOT NULL AND remaining_destination_base_units <= delivered_amount_base_units)
+  ),
   status text NOT NULL CHECK (status IN ('RESERVED','PLACEMENT_PENDING','PLACED','CONSUMED','RELEASED','FAILED')),
   placement_reference text,
   placement_evidence jsonb,
   terminal_reference text,
   terminal_evidence jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (
+    (status IN ('RESERVED','PLACEMENT_PENDING','RELEASED','FAILED')) OR
+    (status IN ('PLACED','CONSUMED') AND delivered_amount_base_units IS NOT NULL AND remaining_destination_base_units IS NOT NULL)
+  )
 );
 
 CREATE INDEX IF NOT EXISTS idx_system_capital_allocations_scope_status
@@ -40,4 +50,4 @@ REVOKE ALL ON TABLE public.cryptocrawler_system_capital_allocations FROM PUBLIC,
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_system_capital_allocations TO service_role;
 
 COMMENT ON TABLE public.cryptocrawler_system_capital_allocations IS
-  'Exact base-unit retained/system-capital reservations and settlement-confirmed placements. Does not rank strategies or grant execution authority.';
+  'Exact base-unit retained/system-capital reservations and settlement-confirmed placements. Source reservation and delivered destination amounts remain distinct; this table does not rank strategies or grant execution authority.';
