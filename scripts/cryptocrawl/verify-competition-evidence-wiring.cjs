@@ -45,9 +45,13 @@ forbidText(compatibility, 'performDimensionalReasoning', 'legacy Cain reasoning 
 forbidText(compatibility, 'canonicalExecutionScheduler.start()', 'compatibility layer cannot reintroduce duplicate scheduler startup authority');
 
 // CEX topology applicability is installed directly by canonical runtime before
-// measured discovery starts. It removes only the inapplicable mempool completeness
-// penalty and must not alter economics, Monte Carlo, or execution authority.
+// measured discovery starts. It must first install the canonical bootstrap-aware
+// Cryptara assessment stack, then remove only the inapplicable mempool completeness
+// penalty without altering economics, Monte Carlo, or execution authority.
 requireText(cryptaraCex, "CEX_EXECUTION_VENUES = new Set(['coinbase', 'kraken', 'okx'])", 'Cryptara CEX applicability must cover every implemented executable CEX venue');
+requireText(cryptaraCex, "import { ensureCryptaraAssessmentWiring } from './cryptara-assessment-wiring.js';", 'CEX topology adapter must depend on the canonical bootstrap-aware assessment stack');
+requireText(cryptaraCex, 'const instance = ensureCryptaraAssessmentWiring();', 'CEX topology adapter must install canonical assessment before wrapping it');
+forbidText(cryptaraCex, 'const instance = getCryptara();', 'CEX topology adapter cannot wrap an un-wired base Cryptara singleton');
 requireText(cryptaraCex, ".filter(item => item !== 'mempool_evidence')", 'Cryptara must remove only the CEX-inapplicable mempool completeness penalty');
 requireText(cryptaraCex, "'not_applicable:mempool_evidence'", 'Cryptara correction must preserve explicit topology provenance');
 requireText(cryptaraCex, 'canonicalOpportunityState.get(context.opportunityId)', 'canonical Monte Carlo state must be read before corrected snapshot overwrite');
@@ -63,4 +67,4 @@ requireText(runtime, "cexCompetitionEvidence: 'topology_not_applicable_without_s
 requireText(runtime, 'cexCompetitionEvidenceExecutionAuthority: false', 'competition applicability correction cannot become execution authority');
 requireText(runtime, 'executionAuthorityGranted: false', 'canonical runtime wiring itself cannot grant execution authority');
 
-console.log('[competition-evidence-wiring] PASS — CEX competition/mempool evidence is topology-aware, missing evidence is never fabricated, Cryptara correction is installed before discovery, and scheduler authority remains singular');
+console.log('[competition-evidence-wiring] PASS — CEX assessment is bootstrap-aware before topology correction, competition/mempool evidence is topology-aware, missing evidence is never fabricated, Cryptara correction is installed before discovery, and scheduler authority remains singular');
