@@ -1,11 +1,13 @@
-import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import {
   enqueueCryptaraHyperBridgeSnapshot,
   noteCryptaraHyperBridgeReplicaFresh,
   readCryptaraHyperBridge,
 } from '../integration/cryptara-supabase-hyper-bridge.js';
-import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import {
+  isCryptaraPrimaryArchiveConfigured,
+  queryCryptaraPrimaryArchive,
+} from '../integration/cryptara-primary-archive-worker.js';
 import {
   isCryptaraParallelProxyConfigured,
   readCryptaraParallelSnapshot,
@@ -66,10 +68,7 @@ function sourceSnapshot(feedback: CryptaraExecutionFeedback): RainbowProfitSourc
   };
 }
 
-function enqueueOverflowSourceMirror(
-  source: RainbowProfitSourceSnapshot,
-  fallback?: () => Promise<void>,
-): void {
+function enqueueOverflowSourceMirror(source: RainbowProfitSourceSnapshot): void {
   if (!isCryptaraParallelProxyConfigured) return;
   enqueueCryptaraHyperBridgeSnapshot({
     artifact: {
@@ -80,13 +79,12 @@ function enqueueOverflowSourceMirror(
       observedAt: source.recordedAt,
     },
     replicaFreshForMs: REPLICA_ROUTE_FRESH_MS,
-    fallback,
   });
 }
 
-async function persistPrimarySource(source: RainbowProfitSourceSnapshot): Promise<void> {
-  if (!isDatabaseConfigured) return;
-  await withCryptaraSupabasePriority('low', () => pool.query(
+async function persistPrimaryArchiveSource(source: RainbowProfitSourceSnapshot): Promise<void> {
+  if (!isCryptaraPrimaryArchiveConfigured) return;
+  await queryCryptaraPrimaryArchive(
     `INSERT INTO private.cryptocrawler_rainbow_profit_sources
       (event_id, execution_source, strategy, symbol, chain, venue_or_route, venues, assets, transaction_hash, recorded_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,to_timestamp($10/1000.0))
@@ -112,17 +110,19 @@ async function persistPrimarySource(source: RainbowProfitSourceSnapshot): Promis
       source.transactionHash,
       source.recordedAt,
     ],
-  ));
+    'rainbow_profit_source_write',
+  );
 }
 
-async function readPrimarySource(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
-  if (!isDatabaseConfigured) return null;
-  const result = await withCryptaraSupabasePriority('low', () => pool.query(
+async function readPrimaryArchiveSource(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
+  if (!isCryptaraPrimaryArchiveConfigured) return null;
+  const result = await queryCryptaraPrimaryArchive(
     `SELECT event_id, execution_source, strategy, symbol, chain, venue_or_route, venues, assets, transaction_hash,
             EXTRACT(EPOCH FROM recorded_at) * 1000 AS recorded_at_ms
      FROM private.cryptocrawler_rainbow_profit_sources WHERE event_id=$1 LIMIT 1`,
     [eventId],
-  ));
+    'rainbow_profit_source_lookup',
+  );
   const row = result.rows[0];
   if (!row) return null;
   const source: RainbowProfitSourceSnapshot = {
@@ -138,10 +138,8 @@ async function readPrimarySource(eventId: string): Promise<RainbowProfitSourceSn
     recordedAt: Number(row.recorded_at_ms),
   };
 
-  // Cold-read repair: if this row existed only on authoritative Primary, seed the
-  // same non-authoritative read model into Overflow. No Primary fallback is attached
-  // because the authoritative row already exists; an Overflow write failure must
-  // never generate a redundant Primary write.
+  // Historical Primary hit is immediately rehydrated into Overflow so repeated
+  // runtime lookups stay on the hot plane instead of repeatedly touching archive.
   enqueueOverflowSourceMirror(source);
   return source;
 }
@@ -171,29 +169,28 @@ class RainbowProfitSourceLedger {
     if (feedback.success !== true || !Number.isFinite(realized) || realized <= 0) return;
     const source = sourceSnapshot(feedback);
 
-    // Secondary source metadata is non-authoritative. The HyperBridge accepts the
-    // write locally and returns immediately; remote Overflow I/O is write-behind.
-    // If the auxiliary lane is absent/degraded, its bounded worker invokes this
-    // exact low-priority Primary fallback without delaying terminal settlement.
-    if (isCryptaraParallelProxyConfigured) {
-      enqueueOverflowSourceMirror(source, () => persistPrimarySource(source));
-      return;
+    // Overflow is the live source. Primary is cold memory. Publish hot state first,
+    // then archive the immutable settlement-source metadata asynchronously through
+    // the sole Primary archive worker/Bridge gateway. Archive latency can never
+    // block terminal settlement or become execution authority.
+    enqueueOverflowSourceMirror(source);
+    if (isCryptaraPrimaryArchiveConfigured) {
+      queueMicrotask(() => {
+        void persistPrimaryArchiveSource(source).catch(() => undefined);
+      });
     }
-
-    await persistPrimarySource(source);
   }
 
   async get(eventId: string): Promise<RainbowProfitSourceSnapshot | null> {
-    // Every read enters Overflow first. A genuine Overflow miss may fetch the
-    // authoritative Primary row through the gateway; that cold-read result is then
-    // queued back into Overflow so future processes can satisfy the same lookup
-    // without repeating Primary I/O.
+    // Every lookup enters Overflow first. Only a genuine historical miss may ask
+    // the explicit Primary archive worker; an archive hit is then rehydrated into
+    // Overflow so future reads stay on the hot plane.
     const bridged = await readCryptaraHyperBridge<RainbowProfitSourceSnapshot>({
       key: eventId,
       workload: 'observability',
       topic: PARALLEL_PROXY_TOPIC,
       normalPreference: 'overflow',
-      primary: () => readPrimarySource(eventId),
+      primary: () => readPrimaryArchiveSource(eventId),
       overflow: () => readOverflowSource(eventId),
       isUsable: value => Boolean(value?.eventId),
     });
