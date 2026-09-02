@@ -62,7 +62,7 @@ requireText(cryptaraCex, 'economicsChanged: false', 'Cryptara topology correctio
 
 requireText(runtime, "import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';", 'canonical runtime must import CEX topology correction');
 requireText(runtime, 'ensureCryptaraCexEvidenceWiring();', 'canonical runtime must install CEX topology correction');
-requireOrder(runtime, 'ensureCryptaraCexEvidenceWiring();', 'measuredOpportunityGraph.start();', 'CEX topology correction must install before measured discovery can assess candidates');
+requireOrder(runtime, 'ensureCryptaraCexEvidenceWiring();', 'multiTopologyDiscoveryController.start();', 'CEX topology correction must install before the canonical discovery controller can assess candidates');
 requireText(runtime, "cexCompetitionEvidence: 'topology_not_applicable_without_synthetic_zero'", 'runtime must attest CEX competition applicability semantics');
 requireText(runtime, 'cexCompetitionEvidenceExecutionAuthority: false', 'competition applicability correction cannot become execution authority');
 requireText(runtime, 'executionAuthorityGranted: false', 'canonical runtime wiring itself cannot grant execution authority');
