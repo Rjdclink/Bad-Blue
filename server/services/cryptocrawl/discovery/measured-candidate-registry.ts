@@ -110,6 +110,7 @@ export interface MeasuredCandidateMetrics {
 }
 
 type EligibleCandidateListener = (candidate: MeasuredCandidate) => void;
+type CandidateUpdateListener = (candidate: MeasuredCandidate) => void;
 
 function clone(candidate: MeasuredCandidate): MeasuredCandidate {
   return {
@@ -176,11 +177,21 @@ function isNearBreakEven(candidate: MeasuredCandidate): boolean {
 class MeasuredCandidateRegistry {
   private readonly candidates = new Map<string, MeasuredCandidate>();
   private readonly eligibleListeners = new Set<EligibleCandidateListener>();
+  private readonly updateListeners = new Set<CandidateUpdateListener>();
   private readonly maxEntries = Math.max(512, Math.min(20_000, Number(process.env.CRYPTOCRAWL_CANDIDATE_REGISTRY_MAX || 4096)));
 
   onEligible(listener: EligibleCandidateListener): () => void {
     this.eligibleListeners.add(listener);
     return () => this.eligibleListeners.delete(listener);
+  }
+
+  /**
+   * Parallel evidence-acquisition hook. Listeners receive immutable snapshots and
+   * cannot mutate registry state or obtain execution authority from this callback.
+   */
+  onUpdate(listener: CandidateUpdateListener): () => void {
+    this.updateListeners.add(listener);
+    return () => this.updateListeners.delete(listener);
   }
 
   record(input: Omit<MeasuredCandidate, 'updatedAt'>): MeasuredCandidate {
@@ -206,6 +217,7 @@ class MeasuredCandidateRegistry {
     };
     this.candidates.set(next.opportunityId, next);
     this.prune();
+    this.notifyUpdate(next);
     this.notifyEligible(previous, next);
     return clone(next);
   }
@@ -236,6 +248,7 @@ class MeasuredCandidateRegistry {
     if (patch?.quoteAgeMs !== undefined) next.quoteAgeMs = patch.quoteAgeMs;
     if (patch?.depth) next.depth = { ...patch.depth };
     this.candidates.set(opportunityId, next);
+    this.notifyUpdate(next);
     this.notifyEligible(previous, next);
     return clone(next);
   }
@@ -316,6 +329,16 @@ class MeasuredCandidateRegistry {
         averageAllInCostBps: average(allInCostBps),
       },
     };
+  }
+
+  private notifyUpdate(next: MeasuredCandidate): void {
+    if (this.updateListeners.size === 0) return;
+    const snapshot = clone(next);
+    queueMicrotask(() => {
+      for (const listener of this.updateListeners) {
+        try { listener(clone(snapshot)); } catch { /* acquisition listeners cannot corrupt candidate state */ }
+      }
+    });
   }
 
   private notifyEligible(previous: MeasuredCandidate | undefined, next: MeasuredCandidate): void {
