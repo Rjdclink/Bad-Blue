@@ -52,9 +52,8 @@ function coarseSizes(route: ConfiguredZeroCapitalRoute): number[] {
   );
   const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd;
 
-  // Stage 1 may independently quote a bounded shadow curve but cannot execute.
-  // Once execution is authorized, the current Profit Ladder rung—not the legacy
-  // StageManager position field or Stage-1 discovery setting—owns the search cap.
+  // Discovery may remain bounded while execution is paused, but once execution
+  // is authorized the Profit Ladder is the sole notional ceiling.
   const maximumNotionalUsd = stageCanExecute
     ? Math.max(seedUsd, ladderMaxNotionalUsd)
     : stageOneDiscoveryCeiling;
@@ -137,7 +136,7 @@ function refinementPriority(opportunity: ZeroCapitalOpportunity): number {
  * then the closest measured near-break-even candidates are refined. A strictly
  * better negative BPS measurement may replace the coarse observation for learning,
  * but it remains non-executable until later measured provider economics make it
- * positive and all downstream gates pass.
+ * positive and all downstream hard facts pass.
  */
 export function ensureZeroCapitalSizeRefinementWiring(): void {
   const target = zeroCapitalEngine as unknown as {
@@ -145,7 +144,6 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     configuredRoutes: ConfiguredZeroCapitalRoute[];
     executionEnabled: boolean;
     fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
-    isAllowedByCryptara: (opportunity: ZeroCapitalOpportunity) => Promise<boolean>;
   };
   if (installed.has(target) || refinementBudget() === 0) return;
   installed.add(target);
@@ -207,11 +205,6 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
       }
 
       const refined = target.fromQuotedRoute(best, blockTimestampFromOpportunity(opportunity));
-      const cryptaraAllowed = !target.executionEnabled || await target.isAllowedByCryptara(refined);
-      if (!cryptaraAllowed) {
-        output.push(opportunity);
-        continue;
-      }
       output.push(refined);
       improved += 1;
       if (opportunity.expectedProfit <= 0n && refined.expectedProfit > 0n) rescuedPositive += 1;
@@ -242,7 +235,7 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
         negativeObservationExecutionAuthority: false,
         profitInterpolationUsed: false,
         downstreamFlashProviderRepricingPreserved: true,
-        cryptaraRecheckedAfterSizeChange: true,
+        duplicateAdvisoryAllowGate: false,
         noAlchemySpecificDependency: true,
       });
     }
@@ -254,9 +247,9 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     baseRefinementCandidatesPerRoute: refinementBudget(),
     baseMaxRoutesPerScan: maxRefinedRoutesPerScan(),
     hyperdynamicBpsSizing: true,
-    stage1ShadowDiscoveryCeilingUsd: Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000),
-    stage1ShadowDiscoveryExecutionAuthority: false,
-    stage2PlusDiscoveryBoundedByProfitLadder: true,
+    pausedDiscoveryCeilingUsd: Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000),
+    pausedDiscoveryExecutionAuthority: false,
+    liveDiscoveryBoundedByProfitLadder: true,
     legacyStagePositionCapAuthoritative: false,
     independentFreshQuotesRequired: true,
     strictMeasuredImprovementRequired: true,
@@ -264,7 +257,7 @@ export function ensureZeroCapitalSizeRefinementWiring(): void {
     negativeSelectionObjective: 'closest_measured_bps_to_break_even',
     nearBreakEvenObservationRefinement: true,
     negativeObservationExecutionAuthority: false,
-    cryptaraAuthorityPreserved: true,
+    duplicateAdvisoryAllowGate: false,
     providerEconomicsAuthorityPreserved: true,
   });
 }
