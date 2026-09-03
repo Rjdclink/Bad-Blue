@@ -73,6 +73,8 @@ assert(hyperHybrid.includes('oneBoundedParallelBatch: true'), 'parallel-batch te
 assert(hyperHybrid.includes('sequentialChildWaves: false'), 'sequential-wave behavior must remain disabled');
 assert(hyperHybrid.includes('parallel_batch_capacity_residual') && hyperHybrid.includes('require_fresh_replan'), 'unadmitted residual notional must require a fresh replan');
 assert(hyperHybrid.includes('persistHyperHybridPartialProfit({'), 'partial successful children must reach durable profit accounting');
+assert(hyperHybrid.includes('const singleAdapters = input.useProductionFok ? fokAdapters(input.adapters) : input.adapters;'), 'unsplit production CEX execution must retain venue-native FOK semantics when production FOK is selected');
+assert(hyperHybrid.includes('adapters: singleAdapters'), 'single-child production execution must actually consume the FOK adapter set');
 assert(!hyperHybrid.includes("match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/"), 'hyper-hybrid OKX child submission must not reintroduce a local stablecoin-only symbol parser');
 
 assert(partialProfitAccounting.includes('if (input.parentSucceeded) return;'), 'full parent success must not be double-counted by partial accounting');
@@ -95,4 +97,4 @@ assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensure
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
 
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, one-batch parallel CEX splitting, anti-rank-gaming partial accounting, treasury invariants, and isolated runtime protections preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, treasury invariants, and isolated runtime protections preserved');
