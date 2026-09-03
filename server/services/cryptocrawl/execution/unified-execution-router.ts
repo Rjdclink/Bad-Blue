@@ -138,7 +138,15 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   // Missing/unknown/stale evidence is a reacquisition condition, not a veto.
   const hardVetoReasons: string[] = [];
   if (deterministicNegative) hardVetoReasons.push('blocked:verified_negative_all_in_net');
-  if (!pathAvailable) hardVetoReasons.push('blocked:no_authoritative_execution_path');
+  if (!pathAvailable) {
+    if (candidate.topology === 'FUNDING_ARBITRAGE') {
+      hardVetoReasons.push('blocked:funding_lifecycle_adapter_unavailable');
+    } else if (candidate.topology === 'MEMPOOL_BACKRUN') {
+      hardVetoReasons.push('blocked:exact_post_victim_backrun_compiler_unavailable');
+    } else {
+      hardVetoReasons.push('blocked:no_authoritative_execution_path');
+    }
+  }
 
   const evidenceReacquisitionRequired = deterministicZero
     || !Number.isFinite(deterministicNet)
