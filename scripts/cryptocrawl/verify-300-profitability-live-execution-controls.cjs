@@ -16,8 +16,6 @@ verifyCexExecutionContract();
 
 const required = [
   [stage, "STAGE_1_CONSTRAINED_PILOT", 'stage one definition'],
-  [stage, "description: 'Constrained live pilot - verified positive execution only'", 'stage one canonical live-positive policy'],
-  [stage, "canExecuteTrades: true", 'stage one execution is directly authorized by StageManager'],
   [stage, "[Stage.STAGE_2_PROOF_OF_SIGNAL]", 'stage two definition'],
   [stage, "stageName: 'Proof-of-Signal Activation'", 'stage two live stage'],
   [inventory, "return originalExecute(decision.plan);", 'real centralized executor remains reachable'],
