@@ -5,6 +5,7 @@ function must(condition, message) { if (!condition) throw new Error(`[research-b
 function has(text, needle, message) { must(text.includes(needle), message); }
 
 const tactics = read('server/services/cryptocrawl/optimization/research-bps-execution-tactics.ts');
+const superEngine = read('server/services/cryptocrawl/optimization/bps-reduction-super-engine.ts');
 const wiring = read('server/services/cryptocrawl/integration/economic-transformation-wiring.ts');
 const economic = read('server/services/cryptocrawl/optimization/economic-transformation-engine.ts');
 const residual = read('server/services/cryptocrawl/discovery/cex-residual-replan.ts');
@@ -24,11 +25,40 @@ has(tactics, "syntheticEconomicsAllowed: false", 'research tactics must not manu
 has(tactics, "driver === 'exchange_fees'", 'fee-dominated cases must be explicitly distinguished');
 has(tactics, 'Percentage fees are not improved by blindly shrinking size', 'percentage-fee gap must not be disguised by notional shrinkage');
 
+has(superEngine, 'practicalAnomalyPolicy', 'super engine must convert anomaly research into bounded practical retry timing');
+has(superEngine, "edge > 100) return { attempts: 3, delaysMs: [0, 50, 100]", 'large anomalies must receive immediate three-pass reacquisition');
+has(superEngine, "edge >= 50) return { attempts: 2, delaysMs: [50, 200]", 'medium anomalies must receive bounded two-pass reacquisition');
+has(superEngine, "attempts: 1, delaysMs: [100]", 'small anomalies must receive one delayed confirmation');
+has(superEngine, 'venueWeights(candidate', 'super engine must score measured venue consensus quality');
+has(superEngine, 'learnedHalfLifeMs(candidate', 'super engine must learn/estimate symbol edge half-life');
+has(superEngine, 'Math.min(edge / 3, 5, expectedDecayBps / 2)', 'marketable-limit concession advisory must retain the hard 5 BPS cap');
+has(superEngine, "availableExecutionModes: candidate.topology === 'CEX_CEX'", 'CEX super plan must evaluate TT/MT/TM/MM surfaces');
+has(superEngine, 'buildAttribution(candidate)', 'BPS attribution ledger must decompose measured costs');
+has(superEngine, "key: 'maker_latency_control'", 'maker/latency tactic synergy bundle must exist');
+has(superEngine, "key: 'size_route_settlement'", 'size/routing/settlement tactic synergy bundle must exist');
+has(superEngine, "key: 'near_miss_learning'", 'near-miss learning tactic synergy bundle must exist');
+has(superEngine, 'updateRealizedGovernor(candidate)', 'realized BPS must feed the closed-loop governor');
+has(superEngine, 'accuracy >= 0.90', 'high realized prediction accuracy must earn bounded resource reinforcement');
+has(superEngine, 'accuracy < 0.70', 'low realized prediction accuracy must reduce bounded resource allocation');
+has(superEngine, 'allocationMultiplier', 'closed-loop governor must expose bounded tactic allocation');
+has(superEngine, "hardwareAccelerationPolicy: 'quanti_comp_backend_eligible_only'", 'hardware/backend acceleration must remain Quanti Comp controlled');
+has(superEngine, "authority: 'adaptive_bps_measurement_revalidation_and_scheduling_only'", 'super engine authority must remain measurement/revalidation/scheduling only');
+has(superEngine, 'executionAuthority: false', 'super engine must not acquire execution authority');
+has(superEngine, 'syntheticEconomicsAllowed: false', 'super engine must not manufacture profitability');
+
 has(wiring, 'installObservedCandidateRevalidationHook', 'observed CEX candidates must be intercepted for potential recheck');
 has(wiring, 'queueAnomalyRevalidation(recorded)', 'raw positive observations must trigger reassessment');
 has(wiring, 'getRawCrossVenueEdge(candidate)', 'anomaly trigger must use measured cross-venue quote evidence');
+has(wiring, 'buildBpsReductionSuperPlan', 'economic transformation wiring must consume the BPS super engine');
+has(wiring, 'recordBpsCandidateAttribution(recorded)', 'registry records must feed BPS attribution');
+has(wiring, 'recordBpsCandidateAttribution(updated)', 'terminal status updates must feed realized BPS learning');
+has(wiring, 'recordBpsRevalidationOutcome(superPlan, cycle)', 'anomaly canonical results must train revalidation scheduling');
+has(wiring, 'recordBpsRevalidationOutcome(superPlan, canonicalCycle)', 'transformation canonical results must train revalidation scheduling');
+has(wiring, 'effectivePriorityScore', 'super-engine priority must alter actual recovery scheduling');
+has(wiring, 'monteCarloSearchMultiplier', 'super-engine allocation must alter Quanti/Monte Carlo search effort');
+has(wiring, 'superPlan.residualNotionalFractions', 'super-engine nonlinear notional probes must reach the existing residual replanner');
+has(wiring, 'fraction > 0 && fraction < 1', 'residual replans must remain true smaller-size probes');
 has(wiring, 'measuredOpportunityGraph.revalidateSymbols([symbol])', 'anomaly and transformation paths must reacquire canonical exact-symbol evidence');
-has(wiring, 'attempts', 'anomaly reassessment must support bounded retries');
 has(wiring, 'cryptara_and_monte_carlo_if_deterministic_positive', 'critical evidence path must include Cryptara/Monte Carlo after deterministic positivity');
 has(wiring, 'queueOperationalTransformation', 'portfolio advice must be converted into operational work');
 has(wiring, 'runResearchBpsQuantiMonteCarlo', 'operational transformations must consume Quanti Comp Monte Carlo ranking');
@@ -48,5 +78,6 @@ has(mc, 'deterministic all-in net profit must be positive first', 'authoritative
 must(!wiring.includes('centralizedExchangeExecutor'), 'transformation wiring must not submit CEX orders itself');
 must(!wiring.includes('executeVerifiedArbitragePlan'), 'transformation wiring must not bypass canonical execution scheduler');
 must(!tactics.includes('process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION ='), 'research tactics must not enable live execution posture');
+must(!superEngine.includes('process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION ='), 'super engine must not enable live execution posture');
 
-console.log('[research-bps-transform-reassessment] PASS: 25 new tactics, Quanti Comp + Monte Carlo planning, bounded anomaly reacquisition, operational transform revalidation, exact residual replans, and canonical execution authority retained');
+console.log('[research-bps-transform-reassessment] PASS: 25 tactics plus practical adaptive super engine, attribution ledger, synergy bundles, realized-outcome governor, Quanti/Monte Carlo scheduling, bounded anomaly reacquisition, canonical transform revalidation, exact residual replans, and canonical execution authority retained');
