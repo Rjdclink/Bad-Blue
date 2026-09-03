@@ -11,6 +11,11 @@ const source = {
   compatibility: read('server/services/cryptocrawl/optimization/dynamic-execution-path-selector.ts'),
   admission: read('server/services/cryptocrawl/integration/dynamic-profitability-admission-wiring.ts'),
   discovery: read('server/services/cryptocrawl/discovery/multi-topology-discovery-controller.ts'),
+  cexGraph: read('server/services/cryptocrawl/discovery/opportunity-graph.ts'),
+  cexPositiveRevalidation: read('server/services/cryptocrawl/integration/cex-four-mode-observability-wiring.ts'),
+  cexTimingGuard: read('server/services/cryptocrawl/integration/cross-venue-timing-guard-wiring.ts'),
+  arbitrageVerifier: read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts'),
+  riskGovernor: read('server/services/cryptocrawl/governance/risk-governor.ts'),
   liquidation: read('server/services/cryptocrawl/discovery/liquidation-opportunity-generator.ts'),
   stack: read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts'),
   compositeRegistry: read('server/services/cryptocrawl/optimization/zero-capital-composite-evidence-registry.ts'),
@@ -31,8 +36,9 @@ const source = {
 };
 
 const failures = [];
+const normalizeRequiredText = value => value.replace(/\s+/g, ' ').trim();
 const requireText = (key, text, label) => {
-  if (!source[key].includes(text)) failures.push(`missing ${label}: ${text}`);
+  if (!normalizeRequiredText(source[key]).includes(normalizeRequiredText(text))) failures.push(`missing ${label}: ${text}`);
 };
 const forbid = (key, pattern, label) => {
   if (pattern.test(source[key])) failures.push(`forbidden ${label}: ${pattern}`);
@@ -79,6 +85,23 @@ const required = [
   ['admission', 'originalIsAllowedByCryptara(opportunity)', 'zero-capital live admission wiring'],
   ['admission', 'coldStartHistoricalProofRequired: false', 'no historical-proof prerequisite'],
   ['admission', 'terminalSettlementStillRequiredAfterExecution: true', 'post-execution settlement invariant'],
+
+  // Rare/high-profit opportunities are never rejected for magnitude alone. An
+  // advisory positive observation must trigger bounded canonical revalidation,
+  // then the normal exact evidence and settlement-safe execution gates decide.
+  ['cexPositiveRevalidation', 'triggerCanonicalPositiveRevalidation(positive)', 'positive CEX observation revalidation trigger'],
+  ['cexPositiveRevalidation', 'measuredOpportunityGraph.revalidateSymbols(symbols)', 'exact-symbol canonical revalidation'],
+  ['cexPositiveRevalidation', 'canonicalRevalidationRequired: true', 'positive observation requires canonical revalidation'],
+  ['cexPositiveRevalidation', "authority: 'scheduling_trigger_only'", 'advisory observation cannot execute directly'],
+  ['cexGraph', "trigger: 'positive_observation_revalidation'", 'bounded positive-observation revalidation cycle'],
+  ['cexGraph', 'arbitrageVerifier.evaluateMany({', 'canonical revalidation uses exact arbitrage verifier'],
+  ['cexGraph', 'authenticated_fee_evidence', 'canonical revalidation requires authenticated fees'],
+  ['cexGraph', 'depth_aware_notional_search', 'canonical revalidation requires measured depth-aware size'],
+  ['cexTimingGuard', 'synchronized executable books are unavailable', 'execution fails closed without synchronized books'],
+  ['cexTimingGuard', 'fullEconomicsRequoteStillDownstream: true', 'fresh synchronized edge still receives full economic requote'],
+  ['arbitrageVerifier', 'if (!bestPlan || candidate.netProfitUsd > bestPlan.netProfitUsd) bestPlan = candidate;', 'highest verified positive net plan is retained'],
+  ['riskGovernor', 'Profit magnitude is never an execution ceiling', 'risk governor has no profit magnitude ceiling'],
+  ['riskGovernor', 'reject high profit merely * for being high', 'anomaly detection cannot reject high profit by magnitude'],
 
   ['discovery', 'Promise.allSettled([', 'parallel topology launch'],
   ['discovery', 'measuredOpportunityGraph.scanOnce()', 'unified CEX discovery topology'],
@@ -172,6 +195,8 @@ forbid('assembler', /sharedPrincipalStackedBps:\s*arithmeticLegBpsSum/, 'arithme
 forbid('liquidation', /deterministicNetProfitUsd:\s*[1-9]/, 'invented liquidation profit');
 forbid('providerEconomics', /availableLiquidity:\s*Number\.POSITIVE_INFINITY/, 'assumed infinite provider liquidity');
 forbid('router', /admitted:\s*deterministicPositive\s*&&\s*completeCurrentEvidence\s*&&\s*aboveAdaptiveThreshold/, 'adaptive threshold independent execution veto');
+forbid('arbitrageVerifier', /MAX_(?:NET_)?PROFIT|MAX_PROFIT_BPS|MAX_SPREAD_BPS|UNREALISTIC_(?:PROFIT|SPREAD)/i, 'profit/spread magnitude execution ceiling');
+forbid('riskGovernor', /estimatedProfitUSD\s*>\s*[1-9][0-9]*/, 'risk rejection based on high estimated profit magnitude');
 
 if (failures.length) {
   console.error('Unified multi-leg adaptive engine verification FAILED');
@@ -184,6 +209,8 @@ console.log(' - all measured discovery sources launch in parallel without a fixe
 console.log(' - UnifiedExecutionRouter remains the sole ProfitabilityScore authority');
 console.log(' - cold start requires current evidence, not historical profit history');
 console.log(' - adaptive score/confidence remain ranking telemetry and cannot independently veto complete positive-net execution');
+console.log(' - rare/high-profit CEX observations trigger canonical fresh revalidation instead of a profit-magnitude veto');
+console.log(' - canonical CEX revalidation still requires synchronized books, authenticated fees, measured depth and all-in positive economics');
 console.log(' - Stage 1 cannot directly submit trades or fabricate terminal settlement history');
 console.log(' - terminal outcomes remain the learning and realized-profit authority');
 console.log(' - Balancer, Aave and dual-provider permission changes invalidate stale quotes and require immediate fresh re-quote');
