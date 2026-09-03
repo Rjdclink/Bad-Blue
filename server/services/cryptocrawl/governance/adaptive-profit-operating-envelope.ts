@@ -179,7 +179,10 @@ export function getAdaptiveProfitOperatingEnvelope(now = Date.now()): AdaptivePr
   const notionalAuthority = getProfitLadderNotionalAuthority(now);
   const stageMaxPositionUsd = Math.max(0, Number(stage.maxPositionSizeUSD) || 0);
   const ladderMaxNotionalUsd = notionalAuthority.maxNotionalUsd;
-  const recommendedMaxNotionalUsd = state.currentStage === 1 ? 0 : ladderMaxNotionalUsd;
+  // Stage 1 is now a constrained live positive-execution pilot. Its sizing must
+  // consume the same Profit Ladder authority as every later stage; a Stage-1-only
+  // zero here would recreate a parallel sizing policy and suppress measured search.
+  const recommendedMaxNotionalUsd = ladderMaxNotionalUsd;
 
   return {
     evaluatedAt: now,
