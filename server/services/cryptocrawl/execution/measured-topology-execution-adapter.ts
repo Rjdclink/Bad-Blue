@@ -139,6 +139,17 @@ function predictedFeeUsd(candidate: ReturnType<typeof measuredCandidateRegistry.
     .reduce((sum, value) => sum + Math.max(0, value), 0);
 }
 
+function recordAdvisoryMissingInformation(topology: string, opportunityId: string, missingInformation: readonly string[]): void {
+  if (missingInformation.length === 0) return;
+  logger.debug('[MeasuredTopologyAdapter] Missing information retained as parallel advisory evidence', {
+    component: 'MeasuredTopologyExecutionAdapter',
+    topology,
+    opportunityId,
+    missingInformation,
+    executionAuthority: false,
+  });
+}
+
 class MeasuredTopologyExecutionAdapter {
   private readonly inFlight = new Set<string>();
   private readonly terminalApplied = new Set<string>();
@@ -146,9 +157,7 @@ class MeasuredTopologyExecutionAdapter {
   private liveExecutionEnabled(): boolean {
     return process.env.NO_EXECUTION !== 'true'
       && process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
-      && process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK'
-      && process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true'
-      && process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK';
+      && process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
   }
 
   async dispatch(decisions: readonly UnifiedExecutionDecision[]): Promise<MeasuredTopologyDispatchResult[]> {
@@ -444,8 +453,9 @@ class MeasuredTopologyExecutionAdapter {
     if (!candidate || candidate.topology !== 'DEX_ATOMIC' || candidate.status !== 'eligible' || !candidate.executableCapability) {
       return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_CANDIDATE_NOT_CURRENTLY_ELIGIBLE' };
     }
-    if (candidate.missingInformation.length > 0 || candidate.expiresAt <= Date.now()) {
-      return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_CURRENT_EVIDENCE_INCOMPLETE_OR_EXPIRED' };
+    recordAdvisoryMissingInformation(candidate.topology, candidate.opportunityId, candidate.missingInformation);
+    if (candidate.expiresAt <= Date.now()) {
+      return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_CURRENT_EVIDENCE_EXPIRED' };
     }
     const chain = asSupportedChain(candidate.chains[0]);
     if (!chain) {
@@ -523,8 +533,9 @@ class MeasuredTopologyExecutionAdapter {
     if (!candidate || candidate.topology !== 'LIQUIDATION' || candidate.status !== 'eligible' || !candidate.executableCapability) {
       return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'AAVE_LIQUIDATION_CANDIDATE_NOT_CURRENTLY_ELIGIBLE' };
     }
-    if (candidate.missingInformation.length > 0 || candidate.expiresAt <= Date.now()) {
-      return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'AAVE_LIQUIDATION_CURRENT_EVIDENCE_INCOMPLETE_OR_EXPIRED' };
+    recordAdvisoryMissingInformation(candidate.topology, candidate.opportunityId, candidate.missingInformation);
+    if (candidate.expiresAt <= Date.now()) {
+      return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'AAVE_LIQUIDATION_CURRENT_EVIDENCE_EXPIRED' };
     }
     const chain = asLiquidationChain(candidate.chains[0]);
     if (!chain) {
