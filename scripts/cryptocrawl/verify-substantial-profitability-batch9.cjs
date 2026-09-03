@@ -103,7 +103,9 @@ if (source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2') || sourc
 if (!source.zero.includes('getProfitLadderNotionalAuthority().maxNotionalUsd') || source.zero.includes('ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD')) {
   throw new Error('[substantial-profitability-batch9] Profit Ladder must remain the sole live zero-capital rescue notional ceiling');
 }
-if (!source.core.includes('getTokenUsdPrice') || !source.core.includes('inputTokenUsdPrice')) {
+if (!source.core.includes('resolveInputAssetUsdPrice') ||
+    !source.core.includes('inputAssetUsdPrice = await this.resolveInputAssetUsdPrice(opportunity)') ||
+    !source.core.includes('this.tokenAmountToUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals, inputAssetUsdPrice)')) {
   throw new Error('[substantial-profitability-batch9] pre-trade zero-capital USD economics must use live input-token valuation');
 }
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
