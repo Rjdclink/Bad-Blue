@@ -101,7 +101,7 @@ const required = [
   ['cexTimingGuard', 'fullEconomicsRequoteStillDownstream: true', 'fresh synchronized edge still receives full economic requote'],
   ['arbitrageVerifier', 'if (!bestPlan || candidate.netProfitUsd > bestPlan.netProfitUsd) bestPlan = candidate;', 'highest verified positive net plan is retained'],
   ['riskGovernor', 'Profit magnitude is never an execution ceiling', 'risk governor has no profit magnitude ceiling'],
-  ['riskGovernor', 'reject high profit merely for being high', 'anomaly detection cannot reject high profit by magnitude'],
+  ['riskGovernor', 'reject high profit merely * for being high', 'anomaly detection cannot reject high profit by magnitude'],
 
   ['discovery', 'Promise.allSettled([', 'parallel topology launch'],
   ['discovery', 'measuredOpportunityGraph.scanOnce()', 'unified CEX discovery topology'],
