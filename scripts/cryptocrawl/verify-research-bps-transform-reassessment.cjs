@@ -6,6 +6,8 @@ function has(text, needle, message) { must(text.includes(needle), message); }
 
 const tactics = read('server/services/cryptocrawl/optimization/research-bps-execution-tactics.ts');
 const superEngine = read('server/services/cryptocrawl/optimization/bps-reduction-super-engine.ts');
+const mesh = read('server/services/cryptocrawl/integration/bps-compression-mesh.ts');
+const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const wiring = read('server/services/cryptocrawl/integration/economic-transformation-wiring.ts');
 const economic = read('server/services/cryptocrawl/optimization/economic-transformation-engine.ts');
 const residual = read('server/services/cryptocrawl/discovery/cex-residual-replan.ts');
@@ -50,6 +52,15 @@ has(superEngine, "authority: 'adaptive_bps_measurement_revalidation_and_scheduli
 has(superEngine, 'executionAuthority: false', 'super engine must not acquire execution authority');
 has(superEngine, 'syntheticEconomicsAllowed: false', 'super engine must not manufacture profitability');
 
+has(mesh, "if (value === null || value === undefined || typeof value === 'boolean') return null", 'BPS compression mesh must preserve null/boolean economics as unknown');
+has(mesh, "if (typeof value === 'string' && value.trim() === '') return null", 'BPS compression mesh must preserve blank economics as unknown');
+has(economic, "if (value === null || value === undefined || typeof value === 'boolean') return null", 'transformation engine must preserve null/boolean economics as unknown');
+has(economic, "if (typeof value === 'string' && value.trim() === '') return null", 'transformation engine must preserve blank economics as unknown');
+has(scheduler, 'getBpsReductionSuperEngineSnapshot', 'canonical hot-lane scheduler must consume Super Engine decay learning');
+has(scheduler, 'bpsDecayUrgencyFactor', 'canonical hot-lane scheduler must apply bounded learned decay urgency');
+has(scheduler, 'return 1 + urgency * 0.5', 'BPS scheduling overlay must be boost-only and bounded');
+has(scheduler, 'bpsSuperEngineExecutionAuthority: false', 'Super Engine scheduling integration must retain zero execution authority');
+
 has(wiring, 'installObservedCandidateRevalidationHook', 'observed CEX candidates must be intercepted for potential recheck');
 has(wiring, 'queueAnomalyRevalidation(recorded)', 'raw positive observations must trigger reassessment');
 has(wiring, 'getRawCrossVenueEdge(candidate)', 'anomaly trigger must use measured cross-venue quote evidence');
@@ -84,4 +95,4 @@ must(!wiring.includes('executeVerifiedArbitragePlan'), 'transformation wiring mu
 must(!tactics.includes('process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION ='), 'research tactics must not enable live execution posture');
 must(!superEngine.includes('process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION ='), 'super engine must not enable live execution posture');
 
-console.log('[research-bps-transform-reassessment] PASS: 25 tactics plus practical adaptive super engine, attribution ledger, synergy bundles, realized-outcome governor, Quanti/Monte Carlo scheduling, bounded anomaly reacquisition, canonical transform revalidation, exact residual replans, and canonical execution authority retained');
+console.log('[research-bps-transform-reassessment] PASS: 25 tactics plus practical adaptive super engine, attribution ledger, synergy bundles, realized-outcome governor, Quanti/Monte Carlo scheduling, bounded anomaly reacquisition, canonical transform revalidation, exact residual replans, canonical hot-lane decay scheduling, unknown-economics preservation, and canonical execution authority retained');
