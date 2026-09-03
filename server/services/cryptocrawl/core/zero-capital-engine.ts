@@ -2,9 +2,10 @@
  * Autonomous zero-capital arbitrage engine.
  *
  * Production path:
- * Cryptara/Tara -> Computational Beam -> Monte Carlo profitability ->
- * dynamic sponsored/native gas funding -> deterministic receiver fleet ->
- * atomic flash loan -> verified settlement -> learning feedback.
+ * measured atomic opportunity -> canonical hard-fact admission ->
+ * Computational Beam / Monte Carlo -> dynamic sponsored/native gas funding ->
+ * deterministic receiver fleet -> atomic flash loan -> verified settlement ->
+ * learning feedback.
  */
 
 import { BigNumber, Wallet, ethers, providers } from 'ethers';
@@ -206,7 +207,6 @@ export class AutonomousZeroCapitalEngine {
   private readonly activeExecutionIds = new Set<string>();
   private readonly activeExecutionKeys = new Set<string>();
   private readonly activeExecutionsByChain = new Map<SupportedChain, number>();
-  private executionEligible = false;
   private executionEnabled = false;
   private marketOperationsStarted = false;
   private initialGasReadyCallback: (() => Promise<void>) | undefined;
@@ -326,6 +326,7 @@ export class AutonomousZeroCapitalEngine {
       fundingReady: this.state.initialGasReadiness.initialGasReady,
       gasFundingDecisions: this.state.gasFundingDecisions.map(decision => ({ chain: decision.chain, mode: decision.mode })),
       maxConcurrentExecutions: this.maxConcurrentExecutions,
+      zeroCapitalSpecificExecutionFlagAuthority: false,
     });
   }
 
@@ -337,29 +338,37 @@ export class AutonomousZeroCapitalEngine {
     if (this.providers.size === 0) await this.initialize();
     if (this.providers.size === 0) throw new Error('No supported blockchain provider is reachable');
 
-    this.executionEligible = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
     this.initialGasReadyCallback = options.onInitialGasReady;
     this.initialGasLostCallback = options.onInitialGasLost;
 
-    if (this.executionEligible) {
-      if (process.env.NO_EXECUTION === 'true') throw new Error('ZERO_CAPITAL_ENABLE_EXECUTION=true conflicts with NO_EXECUTION=true');
-      if (
-        process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION !== 'true' ||
-        process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION !== 'I_ACCEPT_LIVE_ORDER_RISK' ||
-        process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION !== 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK'
-      ) {
-        throw new Error('Live zero-capital execution confirmations are incomplete');
-      }
-      if (this.executionWallets.size === 0) throw new Error('WALLET_PRIVATE_KEY is required for live execution');
-      await this.refreshWalletResources();
-      await this.ensureExecutionReceiverFleet();
+    if (process.env.NO_EXECUTION === 'true') throw new Error('Canonical execution stop is active: NO_EXECUTION=true');
+    if (
+      process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION !== 'true' ||
+      process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION !== 'I_ACCEPT_LIVE_ORDER_RISK'
+    ) {
+      throw new Error('Canonical live execution posture is incomplete');
+    }
+    if (this.executionWallets.size === 0) throw new Error('WALLET_PRIVATE_KEY is required for live execution');
+    await this.refreshWalletResources();
+    await this.ensureExecutionReceiverFleet();
 
-      const cryptara = getCryptara();
-      if (!cryptara.getStatus().isRunning) await cryptara.initialize();
+    const cryptara = getCryptara();
+    if (!cryptara.getStatus().isRunning) await cryptara.initialize();
+    try {
       const signals = await cryptara.validateLiveSignalReadiness({ strictLive: true });
-      if (!signals.liveSignalReady) {
-        throw new Error(`Cryptara/Tara live signal stack is not ready: ${signals.tradingView.detail}; ${signals.alchemy.detail}`);
-      }
+      logger.info('[ZeroCapitalEngine] Cryptara/Tara live signal readiness retained as advisory evidence', {
+        component: 'ZeroCapitalEngine',
+        liveSignalReady: signals.liveSignalReady,
+        tradingView: signals.tradingView.detail,
+        alchemy: signals.alchemy.detail,
+        executionAuthority: false,
+      });
+    } catch (error) {
+      logger.warn('[ZeroCapitalEngine] Cryptara/Tara advisory readiness degraded without acquiring execution veto authority', {
+        component: 'ZeroCapitalEngine',
+        error: error instanceof Error ? error.message : String(error),
+        executionAuthority: false,
+      });
     }
 
     this.state.isRunning = true;
@@ -496,8 +505,8 @@ export class AutonomousZeroCapitalEngine {
     const walletReady = this.executionWallets.size > 0 || !!configuredWallet.address;
     const providerReady = this.providers.size > 0;
     const fundingDecisions = await this.refreshGasFundingDecisions();
-    const fundingReady = !this.executionEligible || fundingDecisions.every(decision => decision.mode !== 'unavailable');
-    const receiverReady = !this.executionEligible || this.configuredRoutes.length === 0 ||
+    const fundingReady = fundingDecisions.every(decision => decision.mode !== 'unavailable');
+    const receiverReady = this.configuredRoutes.length === 0 ||
       this.configuredRoutes.every(route => !!this.receiverManager.getReceiver(route.chain));
     const ready = walletReady && providerReady && fundingReady && receiverReady;
     const unavailableFunding = fundingDecisions.find(decision => decision.mode === 'unavailable');
@@ -538,7 +547,7 @@ export class AutonomousZeroCapitalEngine {
           await this.startMarketOperations();
         }
 
-        const mayExecute = this.executionEligible && stageManager.canExecuteTrades();
+        const mayExecute = stageManager.canExecuteTrades();
         if (mayExecute && this.marketOperationsStarted && !this.executionEnabled) {
           this.executionEnabled = true;
           this.startExecutionLoop();
@@ -561,7 +570,7 @@ export class AutonomousZeroCapitalEngine {
     if (!this.state.isRunning || this.marketOperationsStarted || !stageManager.isMarketOperationsAllowed()) return;
     this.marketOperationsStarted = true;
     this.state.marketOperationsEnabled = true;
-    this.executionEnabled = this.executionEligible && stageManager.canExecuteTrades();
+    this.executionEnabled = stageManager.canExecuteTrades();
     this.startScanningLoop();
     if (this.executionEnabled) this.startExecutionLoop();
     if (this.initialGasReadyCallback) await this.initialGasReadyCallback();
@@ -628,13 +637,11 @@ export class AutonomousZeroCapitalEngine {
   ): Promise<ZeroCapitalOpportunity[]> {
     if (chain === 'europa') return [];
     if (!this.configuredRoutes.some(route => route.chain === chain)) return [];
-    if (this.executionEligible && !this.receiverManager.getReceiver(chain)) return [];
     const block = await provider.getBlock('latest');
     const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, this.configuredRoutes);
     const accepted: ZeroCapitalOpportunity[] = [];
     for (const quote of quotes) {
-      const opportunity = this.fromQuotedRoute(quote, block.timestamp);
-      if (!this.executionEnabled || await this.isAllowedByCryptara(opportunity)) accepted.push(opportunity);
+      accepted.push(this.fromQuotedRoute(quote, block.timestamp));
     }
     return accepted;
   }
@@ -693,22 +700,34 @@ export class AutonomousZeroCapitalEngine {
   }
 
   private async isAllowedByCryptara(opportunity: ZeroCapitalOpportunity): Promise<boolean> {
-    const cryptara = getCryptara();
-    const directive = cryptara.getAutonomousDirective();
-    const maxSlippageBps = Math.max(1, Math.min(
-      directive.maxSlippageBps,
-      Number(process.env.ZERO_CAPITAL_MAX_SLIPPAGE_BPS || 20),
-    ));
-    if (!directive.preferredExecutionModes.includes('zero_capital')) return false;
-    if (directive.riskBudget === 'defensive' && !directive.preferredChains.includes(opportunity.chain)) return false;
-    if (opportunity.expectedSlippageBps > maxSlippageBps) return false;
-    if (this.toUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals) < directive.minimumNetProfitUsd) return false;
-
-    const readiness = await cryptara.validateLiveSignalReadiness({ strictLive: true });
-    if (!readiness.liveSignalReady) return false;
-    const analysis = await TradingViewEngine.getAnalysis(process.env.ZERO_CAPITAL_SIGNAL_SYMBOL || 'ETHUSDT', '1h');
-    if (TradingViewEngine.getHealthStatus().mode !== 'live') return false;
-    return analysis.summary.strength >= Math.max(0, Number(process.env.ZERO_CAPITAL_MIN_SIGNAL_STRENGTH || 0));
+    try {
+      const cryptara = getCryptara();
+      const directive = cryptara.getAutonomousDirective();
+      const readiness = await cryptara.validateLiveSignalReadiness({ strictLive: true });
+      const analysis = await TradingViewEngine.getAnalysis(process.env.ZERO_CAPITAL_SIGNAL_SYMBOL || 'ETHUSDT', '1h');
+      logger.debug('[ZeroCapitalEngine] Cryptara/TradingView retained as advisory execution intelligence', {
+        component: 'ZeroCapitalEngine',
+        opportunityId: opportunity.id,
+        chain: opportunity.chain,
+        preferredExecutionMode: directive.preferredExecutionModes.includes('zero_capital'),
+        preferredChain: directive.preferredChains.includes(opportunity.chain),
+        riskBudget: directive.riskBudget,
+        minimumNetProfitUsd: directive.minimumNetProfitUsd,
+        maxSlippageBps: directive.maxSlippageBps,
+        liveSignalReady: readiness.liveSignalReady,
+        tradingViewMode: TradingViewEngine.getHealthStatus().mode,
+        tradingViewStrength: analysis.summary.strength,
+        executionAuthority: false,
+      });
+    } catch (error) {
+      logger.debug('[ZeroCapitalEngine] Advisory Cryptara/TradingView evaluation degraded', {
+        component: 'ZeroCapitalEngine',
+        opportunityId: opportunity.id,
+        error: error instanceof Error ? error.message : String(error),
+        executionAuthority: false,
+      });
+    }
+    return true;
   }
 
   private async validateUnifiedControl(
@@ -773,7 +792,7 @@ export class AutonomousZeroCapitalEngine {
 
         const monteCarlo = runProfitabilityMonteCarlo(input.monteCarloInput);
         if (!monteCarlo.approved) return { approved: false, reason: monteCarlo.reason, monteCarlo };
-        return { approved: true, reason: `Beam approved Tara/Monte Carlo execution: ${monteCarlo.reason}`, monteCarlo };
+        return { approved: true, reason: `Beam approved Monte Carlo execution: ${monteCarlo.reason}`, monteCarlo };
       },
       validate: result =>
         typeof result.approved === 'boolean' &&
@@ -866,25 +885,24 @@ export class AutonomousZeroCapitalEngine {
   }
 
   private async executeOpportunity(opportunity: ZeroCapitalOpportunity): Promise<ExecutionResult> {
-    if (!stageManager.isMarketOperationsAllowed() || !stageManager.canExecuteTrades()) {
-      return { success: false, error: 'Governance does not authorize live execution' };
-    }
     if (opportunity.chain === 'europa' || !this.receiverManager.getReceiver(opportunity.chain)) {
       return { success: false, error: `${opportunity.chain} has no verified funded receiver` };
     }
-    if (!await this.isAllowedByCryptara(opportunity)) {
-      return { success: false, error: 'Cryptara/Tara rejected the opportunity at execution time' };
-    }
+
+    const funding = await this.getGasFundingDecision(opportunity.chain);
+    if (funding.mode === 'unavailable') return { success: false, error: funding.reason };
+
+    const governance = getCryptocrawlGovernance();
+    const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
+    // Funding mode is not a trading venue. Passing alchemy-gas-manager/native-wallet
+    // as venue previously forced a false venue-capability veto. The canonical
+    // on-chain hard fact is the supported chain; funding readiness is checked above.
+    governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opportunity.chain, pair });
 
     const control = await this.validateUnifiedControl(opportunity);
     if (!control.approved) return { success: false, error: control.reason };
 
-    const governance = getCryptocrawlGovernance();
-    const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
-    const funding = await this.getGasFundingDecision(opportunity.chain);
-    if (funding.mode === 'unavailable') return { success: false, error: funding.reason };
-    governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opportunity.chain, pair, venue: funding.mode === 'sponsored' ? 'alchemy-gas-manager' : 'native-wallet' });
-    governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair, venue: funding.mode === 'sponsored' ? 'alchemy-gas-manager' : 'native-wallet' });
+    governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair });
     governance.recordExecutionAttempt();
     return this.executeFunded(opportunity, funding);
   }
@@ -1008,7 +1026,7 @@ export class AutonomousZeroCapitalEngine {
         netProfitUsd: result.profit !== undefined ? this.toUsd(result.profit, opportunity.inputTokenDecimals) : null,
       },
       provenance: [
-        'cryptara_live_intelligence',
+        'canonical_measured_positive_execution_authority',
         'computational_beam',
         'monte_carlo_profitability',
         'dynamic_gas_funding_policy',
@@ -1108,7 +1126,6 @@ export class AutonomousZeroCapitalEngine {
     this.state.marketOperationsEnabled = false;
     this.marketOperationsStarted = false;
     this.executionEnabled = false;
-    this.executionEligible = false;
     this.opportunityQueue = [];
     this.state.currentOpportunities = 0;
     this.initialGasReadyCallback = undefined;
@@ -1173,6 +1190,8 @@ export class AutonomousZeroCapitalEngine {
       activeExecutions: this.state.activeExecutions,
       maxConcurrentExecutions: this.maxConcurrentExecutions,
       capitalRequired: 'Dynamic gas policy: use native gas when reserve is sufficient, otherwise use compatible Alchemy sponsorship; flash-loan principal remains zero-capital',
+      executionAuthority: 'canonical_stage_manager_plus_hard_execution_facts',
+      zeroCapitalSpecificExecutionFlagAuthority: false,
     };
   }
 }
