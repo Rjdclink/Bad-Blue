@@ -36,8 +36,9 @@ const source = {
 };
 
 const failures = [];
+const normalizeRequiredText = value => value.replace(/\s+/g, ' ').trim();
 const requireText = (key, text, label) => {
-  if (!source[key].includes(text)) failures.push(`missing ${label}: ${text}`);
+  if (!normalizeRequiredText(source[key]).includes(normalizeRequiredText(text))) failures.push(`missing ${label}: ${text}`);
 };
 const forbid = (key, pattern, label) => {
   if (pattern.test(source[key])) failures.push(`forbidden ${label}: ${pattern}`);
