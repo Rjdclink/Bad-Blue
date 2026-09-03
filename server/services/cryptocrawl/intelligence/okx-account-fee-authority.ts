@@ -10,8 +10,9 @@ export interface OkxAccountFeeRates {
   taker: number;
   maker: number | null;
   rpiMaker: number | null;
+  zeroFeeGroup: boolean;
   observedAt: number;
-  source: 'okx_authenticated_account_fee';
+  source: 'okx_authenticated_account_fee' | 'okx_live_spot_zero_fee_group';
 }
 
 export interface ResolveOkxAccountFeeOptions {
@@ -32,6 +33,7 @@ const DEFAULT_TIMEOUT_MS = Math.max(
   3_000,
   Math.min(15_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_TIMEOUT_MS || 8_000)),
 );
+const OKX_SPOT_ZERO_FEE_GROUP_ID = '11';
 const feeCache = new Map<string, { expiresAt: number; value: OkxAccountFeeRates }>();
 const feeInFlight = new Map<string, Promise<OkxAccountFeeRates>>();
 let requestCount = 0;
@@ -93,12 +95,24 @@ function selectRates(row: any, expectedGroupId: string | null): {
   };
 }
 
+function isLiveSpotZeroFeeGroup(options: ResolveOkxAccountFeeOptions, selectedGroupId: string | null): boolean {
+  if (options.instType !== 'SPOT') return false;
+  const expected = String(options.expectedGroupId || '').trim();
+  return expected === OKX_SPOT_ZERO_FEE_GROUP_ID && selectedGroupId === OKX_SPOT_ZERO_FEE_GROUP_ID;
+}
+
 /**
  * Sole semantic authority for authenticated OKX account fee reads.
  *
  * The transport authority owns user-wide pacing. This layer owns product/group
  * identity, response selection, TTL caching and in-flight coalescing so SPOT,
  * RPI and funding consumers cannot independently fan out the same private read.
+ *
+ * OKX's account trade-fee endpoint does not represent promotional zero-fee spot
+ * products. The canonical regional live-product directory supplies fee group 11
+ * (Spot zero) as `expectedGroupId`; only that exact live group is allowed to
+ * override ordinary account rates to zero. No symbol list or static promotion is
+ * assumed, and other stablecoin groups remain account-fee priced.
  */
 export async function resolveOkxAccountFeeRates(
   options: ResolveOkxAccountFeeOptions,
@@ -132,16 +146,18 @@ export async function resolveOkxAccountFeeRates(
     if (!selected) {
       throw new Error('OKX trade-fee response did not contain the requested fee-group evidence');
     }
+    const zeroFeeGroup = isLiveSpotZeroFeeGroup(options, selected.groupId);
     const value: OkxAccountFeeRates = {
       instType: options.instType,
       selector: selector.name,
       selectorValue: selector.value,
       groupId: selected.groupId,
-      taker: selected.taker,
-      maker: selected.maker,
+      taker: zeroFeeGroup ? 0 : selected.taker,
+      maker: zeroFeeGroup ? 0 : selected.maker,
       rpiMaker: selected.rpiMaker,
+      zeroFeeGroup,
       observedAt: Date.now(),
-      source: 'okx_authenticated_account_fee',
+      source: zeroFeeGroup ? 'okx_live_spot_zero_fee_group' : 'okx_authenticated_account_fee',
     };
     feeCache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, value });
     if (feeCache.size > 256) {
@@ -164,6 +180,7 @@ export function getOkxAccountFeeAuthoritySnapshot(): {
   requestCount: number;
   cacheHitCount: number;
   coalescedCount: number;
+  liveSpotZeroFeeGroupId: string;
 } {
   return {
     cacheTtlMs: CACHE_TTL_MS,
@@ -172,5 +189,6 @@ export function getOkxAccountFeeAuthoritySnapshot(): {
     requestCount,
     cacheHitCount,
     coalescedCount,
+    liveSpotZeroFeeGroupId: OKX_SPOT_ZERO_FEE_GROUP_ID,
   };
 }
