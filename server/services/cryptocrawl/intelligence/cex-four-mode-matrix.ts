@@ -1,4 +1,5 @@
 import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
+import { getCoinbaseAdvancedProductConstraints } from './coinbase-advanced-market-data.js';
 import { cexOrderBookStreams, type CexStreamVenue, type StreamOrderBookQuote } from './cex-order-book-stream.js';
 import {
   getCachedCexFeeEvidence,
@@ -7,6 +8,10 @@ import {
   type CexFeeVenue,
 } from './cex-fee-resolver.js';
 import { observeAriesQueueEcho } from './aries-microstructure.js';
+import { calibrateMakerFillProbability } from './maker-terminal-calibration.js';
+import { observeLiquidityResilience, type LiquidityResilienceSnapshot } from './liquidity-resilience.js';
+import { evaluateMakerTickQueueJump } from './maker-tick-queue-optimizer.js';
+import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 
 export type CexLegMode = 'maker' | 'taker';
 export type CexFourMode = 'MM' | 'MT' | 'TM' | 'TT';
@@ -28,6 +33,11 @@ export interface CexModeEconomics {
   recoveryEfficiency: number;
   makerLegCount: number;
   makerFillProbability: number | null;
+  makerCalibrationSamples: number;
+  makerCalibrationMultiplier: number;
+  makerQueueJumpAvailable: boolean;
+  makerQueueJumpValueBps: number;
+  takerLiquidityResilienceScore: number | null;
   queueRiskPenaltyBps: number;
   feeEvidenceAgeMs: number;
   feeFreshnessScore: number;
@@ -55,6 +65,19 @@ async function evidence(venue: CexFeeVenue, symbol: string, maxAgeMs: number): P
     || await resolveCexFeeEvidence(venue, symbol, { maxAgeMs }).catch(() => null);
 }
 
+async function tickSize(venue: CexFeeVenue, symbol: string): Promise<number | null> {
+  try {
+    if (venue === 'coinbase') {
+      const constraints = await getCoinbaseAdvancedProductConstraints(symbol);
+      return Number.isFinite(constraints.priceIncrement) && constraints.priceIncrement > 0 ? constraints.priceIncrement : null;
+    }
+    const constraints = await getSpotProductConstraints(venue, symbol);
+    return Number.isFinite(constraints.priceIncrement) && constraints.priceIncrement > 0 ? constraints.priceIncrement : null;
+  } catch {
+    return null;
+  }
+}
+
 function modes(): Array<{ mode: CexFourMode; buyMode: CexLegMode; sellMode: CexLegMode }> {
   return [
     { mode: 'MM', buyMode: 'maker', sellMode: 'maker' },
@@ -75,6 +98,8 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
   if (positiveDelta !== 0) return positiveDelta;
   if (left.economicallyPositive && right.economicallyPositive) {
     return right.expectedFeeAdjustedBps - left.expectedFeeAdjustedBps
+      || (right.takerLiquidityResilienceScore ?? 0.5) - (left.takerLiquidityResilienceScore ?? 0.5)
+      || right.makerQueueJumpValueBps - left.makerQueueJumpValueBps
       || right.makerFeeSavingsVsTakerBps - left.makerFeeSavingsVsTakerBps
       || right.feeFreshnessScore - left.feeFreshnessScore
       || right.netAfterExchangeFeesBps - left.netAfterExchangeFeesBps
@@ -82,6 +107,8 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
   }
   return left.bpsToBreakEven - right.bpsToBreakEven
     || left.riskAdjustedBpsToBreakEven - right.riskAdjustedBpsToBreakEven
+    || right.makerQueueJumpValueBps - left.makerQueueJumpValueBps
+    || (right.takerLiquidityResilienceScore ?? 0.5) - (left.takerLiquidityResilienceScore ?? 0.5)
     || right.makerFeeSavingsVsTakerBps - left.makerFeeSavingsVsTakerBps
     || right.feeFreshnessScore - left.feeFreshnessScore
     || right.recoveryEfficiency - left.recoveryEfficiency
@@ -97,11 +124,12 @@ function compareModes(left: CexModeEconomics, right: CexModeEconomics): number {
  * Negative modes inside a bounded observation envelope are retained so the BPS
  * optimizer can learn the exact recovery gap instead of seeing only winners.
  * Maker modes additionally expose queue-risk, authenticated fee-evidence freshness,
- * and exact authenticated fee savings relative to the same venue-pair TT baseline.
- * These are advisory and never change measured fees or grant execution authority.
- * Positive observations are scheduling triggers only; canonical execution still
- * requires depth-aware all-in revalidation, inventory, governance, product
- * constraints, and terminal settlement.
+ * terminal-calibrated fill probability and one-tick queue-jump potential. Taker
+ * legs expose measured depth-replenishment resilience. These additions alter only
+ * ranking/search pressure; they never change authenticated fees, fabricate BPS,
+ * or grant execution authority. Positive observations are scheduling triggers only;
+ * canonical execution still requires depth-aware all-in revalidation, inventory,
+ * governance, product constraints, and terminal settlement.
  */
 export async function evaluateCexFourModeMatrix(input: {
   symbol: string;
@@ -115,18 +143,29 @@ export async function evaluateCexFourModeMatrix(input: {
   if (venues.length < 2) return [];
 
   const observations = await Promise.all(venues.map(async venue => {
-    const [book, fee] = await Promise.all([
+    const [book, fee, productTickSize] = await Promise.all([
       cexOrderBookStreams.getQuote(venue as CexStreamVenue, symbol, maxQuoteAgeMs).catch(() => null),
       evidence(venue, symbol, maxFeeAgeMs),
+      tickSize(venue, symbol),
     ]);
-    return { venue, book, fee };
+    return {
+      venue,
+      book,
+      fee,
+      tickSize: productTickSize,
+      resilience: book ? observeLiquidityResilience(book) : null,
+    };
   }));
 
   const books = new Map<CexFeeVenue, StreamOrderBookQuote>();
   const fees = new Map<CexFeeVenue, CexFeeEvidence>();
+  const tickSizes = new Map<CexFeeVenue, number>();
+  const resilience = new Map<CexFeeVenue, LiquidityResilienceSnapshot>();
   for (const observation of observations) {
     if (observation.book) books.set(observation.venue, observation.book);
     if (observation.fee) fees.set(observation.venue, observation.fee);
+    if (observation.tickSize !== null) tickSizes.set(observation.venue, observation.tickSize);
+    if (observation.resilience) resilience.set(observation.venue, observation.resilience);
   }
 
   const usableVenues = venues.filter(venue => books.has(venue) && fees.has(venue));
@@ -171,12 +210,69 @@ export async function evaluateCexFourModeMatrix(input: {
           : grossSpreadBps > 0 ? 2 : 0;
 
         const makerProbabilities: number[] = [];
-        if (candidate.buyMode === 'maker') makerProbabilities.push(observeAriesQueueEcho(buyBook, 'buy', ttlMs, 0.02).fillProbabilityWithinTtl);
-        if (candidate.sellMode === 'maker') makerProbabilities.push(observeAriesQueueEcho(sellBook, 'sell', ttlMs, 0.02).fillProbabilityWithinTtl);
+        const calibrationMultipliers: number[] = [];
+        let makerCalibrationSamples = 0;
+        let makerQueueJumpAvailable = false;
+        let makerQueueJumpValueBps = 0;
+
+        if (candidate.buyMode === 'maker') {
+          const raw = observeAriesQueueEcho(buyBook, 'buy', ttlMs, 0.02).fillProbabilityWithinTtl;
+          const calibrated = calibrateMakerFillProbability({
+            venue: buyVenue as CexStreamVenue,
+            symbol,
+            side: 'buy',
+            rawFillProbability: raw,
+          });
+          makerProbabilities.push(calibrated.probability);
+          calibrationMultipliers.push(calibrated.calibration.calibrationMultiplier);
+          makerCalibrationSamples += calibrated.calibration.sampleCount;
+          const venueTick = tickSizes.get(buyVenue);
+          if (venueTick) {
+            const decision = evaluateMakerTickQueueJump({ quote: buyBook, side: 'buy', tickSize: venueTick, rawFillProbability: calibrated.probability });
+            makerQueueJumpAvailable ||= decision.queueJumpPotential;
+            makerQueueJumpValueBps += decision.expectedQueueValueBps;
+          }
+        }
+        if (candidate.sellMode === 'maker') {
+          const raw = observeAriesQueueEcho(sellBook, 'sell', ttlMs, 0.02).fillProbabilityWithinTtl;
+          const calibrated = calibrateMakerFillProbability({
+            venue: sellVenue as CexStreamVenue,
+            symbol,
+            side: 'sell',
+            rawFillProbability: raw,
+          });
+          makerProbabilities.push(calibrated.probability);
+          calibrationMultipliers.push(calibrated.calibration.calibrationMultiplier);
+          makerCalibrationSamples += calibrated.calibration.sampleCount;
+          const venueTick = tickSizes.get(sellVenue);
+          if (venueTick) {
+            const decision = evaluateMakerTickQueueJump({ quote: sellBook, side: 'sell', tickSize: venueTick, rawFillProbability: calibrated.probability });
+            makerQueueJumpAvailable ||= decision.queueJumpPotential;
+            makerQueueJumpValueBps += decision.expectedQueueValueBps;
+          }
+        }
+
         const makerLegCount = makerProbabilities.length;
         const makerFillProbability = makerLegCount > 0
           ? makerProbabilities.reduce((product, value) => product * Math.max(0, Math.min(1, value)), 1)
           : null;
+        const makerCalibrationMultiplier = calibrationMultipliers.length > 0
+          ? calibrationMultipliers.reduce((sum, value) => sum + value, 0) / calibrationMultipliers.length
+          : 1;
+
+        const takerResilienceScores: number[] = [];
+        if (candidate.buyMode === 'taker') {
+          const row = resilience.get(buyVenue);
+          if (row) takerResilienceScores.push(row.ask.resilienceScore);
+        }
+        if (candidate.sellMode === 'taker') {
+          const row = resilience.get(sellVenue);
+          if (row) takerResilienceScores.push(row.bid.resilienceScore);
+        }
+        const takerLiquidityResilienceScore = takerResilienceScores.length > 0
+          ? takerResilienceScores.reduce((sum, value) => sum + value, 0) / takerResilienceScores.length
+          : null;
+
         const expectedFeeAdjustedBps = makerFillProbability === null
           ? netAfterExchangeFeesBps
           : netAfterExchangeFeesBps * makerFillProbability;
@@ -207,6 +303,11 @@ export async function evaluateCexFourModeMatrix(input: {
           recoveryEfficiency,
           makerLegCount,
           makerFillProbability,
+          makerCalibrationSamples,
+          makerCalibrationMultiplier,
+          makerQueueJumpAvailable,
+          makerQueueJumpValueBps,
+          takerLiquidityResilienceScore,
           queueRiskPenaltyBps,
           feeEvidenceAgeMs,
           feeFreshnessScore,
