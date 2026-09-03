@@ -6,6 +6,7 @@ const files = {
   policy: 'server/services/cryptocrawl/optimization/adaptive-profitability-search-policy.ts',
   cex: 'server/services/cryptocrawl/integration/cex-four-mode-observability-wiring.ts',
   zero: 'server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts',
+  core: 'server/services/cryptocrawl/core/zero-capital-engine.ts',
   maker: 'server/services/cryptocrawl/runtime/stablecoin-maker-execution-wiring.ts',
   transform: 'server/services/cryptocrawl/optimization/economic-transformation-engine.ts',
   transformWiring: 'server/services/cryptocrawl/integration/economic-transformation-wiring.ts',
@@ -92,8 +93,18 @@ for (const [fileKey, pattern, name] of behaviors) {
   }
 }
 
-if (!source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2();')) {
-  throw new Error('[substantial-profitability-batch9] zero-capital profitability rescue v2 is not canonically wired');
+if (!source.core.includes("import { runZeroCapitalProfitabilityRescueV2 } from '../integration/zero-capital-profitability-rescue-v2.js';") ||
+    !source.core.includes('return runZeroCapitalProfitabilityRescueV2({')) {
+  throw new Error('[substantial-profitability-batch9] zero-capital profitability rescue v2 must be invoked directly by the canonical core scan');
+}
+if (source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2') || source.zero.includes('target.scanChain =')) {
+  throw new Error('[substantial-profitability-batch9] retired zero-capital rescue installer/scan mutation must not return');
+}
+if (!source.zero.includes('getProfitLadderNotionalAuthority().maxNotionalUsd') || source.zero.includes('ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD')) {
+  throw new Error('[substantial-profitability-batch9] Profit Ladder must remain the sole live zero-capital rescue notional ceiling');
+}
+if (!source.core.includes('getTokenUsdPrice') || !source.core.includes('inputTokenUsdPrice')) {
+  throw new Error('[substantial-profitability-batch9] pre-trade zero-capital USD economics must use live input-token valuation');
 }
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
   throw new Error('[substantial-profitability-batch9] active CEX quote topology must remain restricted to fully implemented Coinbase/Kraken/OKX paths');
@@ -104,5 +115,9 @@ if (!source.venue.includes('settlementVerification: true')) {
 if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/profitability-recovery-batch9.ts'))) {
   throw new Error('[substantial-profitability-batch9] obsolete signal-count batch must not exist');
 }
+if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-capital-size-refinement-wiring.ts')) ||
+    fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-capital-joint-provider-size-wiring.ts'))) {
+  throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
+}
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; shared BPS zero-capital sizing is operational, current-cycle near-edge cadence is required, telemetry fields are not counted as enhancements, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital BPS rescue is core-direct with Profit Ladder as sole live size ceiling and live USD valuation, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
