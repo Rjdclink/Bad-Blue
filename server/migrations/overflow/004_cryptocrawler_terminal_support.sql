@@ -2,6 +2,11 @@
 -- This deliberately contains no pg_cron schedule and no pg_net side effect. The
 -- transaction worker/scheduler cutover is a separate authority decision so schema
 -- mirroring can never create two independent payout schedulers.
+--
+-- The payout-aware terminal finalizer is owned by
+-- 018_cryptocrawler_profit_split_eth_payout.sql. Do not redefine it here: doing
+-- so would overwrite the newer payout/job/retained-capital accounting semantics
+-- after they have already been installed on Overflow.
 
 CREATE OR REPLACE FUNCTION public.cryptocrawler_terminal_sweep_secret(p_name text)
 RETURNS text
@@ -19,37 +24,3 @@ $$;
 
 REVOKE ALL ON FUNCTION public.cryptocrawler_terminal_sweep_secret(text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.cryptocrawler_terminal_sweep_secret(text) TO service_role;
-
-CREATE OR REPLACE FUNCTION public.cryptocrawler_terminal_sweep_finalize_events(p_epoch uuid)
-RETURNS integer
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, private, pg_temp
-AS $$
-DECLARE
-  changed integer := 0;
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM public.cryptocrawler_terminal_sweep_control
-    WHERE system_key='cryptocrawler'
-      AND terminal_epoch=p_epoch
-      AND desired_state='SWEPT'
-  ) THEN
-    RAISE EXCEPTION 'terminal epoch is not authoritatively swept';
-  END IF;
-
-  UPDATE private.cryptocrawler_rainbow_profit_events
-  SET status='confirmed',
-      batch_id=COALESCE(batch_id, 'terminal:' || p_epoch::text),
-      confirmed_at=COALESCE(confirmed_at, now()),
-      updated_at=now(),
-      last_error=NULL
-  WHERE status='queued';
-  GET DIAGNOSTICS changed = ROW_COUNT;
-  RETURN changed;
-END;
-$$;
-
-REVOKE ALL ON FUNCTION public.cryptocrawler_terminal_sweep_finalize_events(uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.cryptocrawler_terminal_sweep_finalize_events(uuid) TO service_role;
