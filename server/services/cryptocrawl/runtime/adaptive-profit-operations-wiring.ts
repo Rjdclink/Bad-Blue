@@ -25,24 +25,18 @@ function mark<T extends Function>(fn: T): T {
 /** Exact/single-plan evaluation never increases the caller's requested size. */
 function boundedNotional(requested: number): number {
   const envelope = getAdaptiveProfitOperatingEnvelope();
-  if (envelope.stage <= 1 || !(envelope.recommendedMaxNotionalUsd > 0)) return requested;
+  if (!(envelope.recommendedMaxNotionalUsd > 0)) return requested;
   return Math.min(requested, envelope.recommendedMaxNotionalUsd);
 }
 
 /**
  * Batch evaluation is discovery-only in the canonical runtime. Let the existing
- * depth-aware verifier search its local size curve up to the current profit-ladder
- * ceiling without adding market-data requests. Stage 1 may measure a larger
- * shadow-live ceiling; actual execution authority is decided downstream by
- * StageManager plus canonical admission and settlement gates.
+ * depth-aware verifier search its local size curve up to the current Profit Ladder
+ * ceiling without adding market-data requests. The ladder remains the sole sizing
+ * authority in every stage; StageManager still decides whether execution is allowed.
  */
 function discoveryBoundedNotional(requested: number): number {
   const envelope = getAdaptiveProfitOperatingEnvelope();
-  if (envelope.stage <= 1) {
-    const configured = Number(process.env.CRYPTO_STAGE1_CEX_DISCOVERY_MAX_NOTIONAL_USD || 1_000);
-    const discoveryCeiling = Number.isFinite(configured) && configured > 0 ? configured : 1_000;
-    return Math.max(requested, discoveryCeiling);
-  }
   if (!(envelope.recommendedMaxNotionalUsd > 0)) return requested;
   return Math.max(1e-6, envelope.recommendedMaxNotionalUsd);
 }
@@ -63,10 +57,9 @@ function planWithinOperatingEnvelope(plan: VerifiedArbitragePlan): boolean {
   const envelope = getAdaptiveProfitOperatingEnvelope();
   const impact = Number(plan.expectedPriceImpactBps ?? plan.expectedSlippageBps);
   if (Number.isFinite(impact) && impact > envelope.maxExpectedSlippageBps + 1e-9) return false;
-  if (envelope.stage > 1) {
-    if (!envelope.newExposureAllowed) return false;
-    if (plan.notionalUsd > envelope.recommendedMaxNotionalUsd + 1e-9) return false;
-  }
+  if (!envelope.newExposureAllowed) return false;
+  if (!(envelope.recommendedMaxNotionalUsd > 0)) return false;
+  if (plan.notionalUsd > envelope.recommendedMaxNotionalUsd + 1e-9) return false;
   return Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0;
 }
 
@@ -84,7 +77,7 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     const underlyingEvaluateOnce = verifier.evaluateOnce.bind(verifier);
     verifier.evaluateOnce = mark(async (request: any): Promise<VerifiedArbitragePlan | null> => {
       const envelope = getAdaptiveProfitOperatingEnvelope();
-      if (envelope.stage > 1 && !envelope.newExposureAllowed) return null;
+      if (!envelope.newExposureAllowed) return null;
       const requested = Number(request?.notionalUsd || 0);
       const initialBound = requested > 0 ? boundedNotional(requested) : requested;
       let plan = await underlyingEvaluateOnce({ ...request, notionalUsd: initialBound });
@@ -118,7 +111,7 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
       capacity?: ScanCapacityDecision,
     ): Promise<Map<string, VerifiedArbitragePlan | null>> => {
       const envelope = getAdaptiveProfitOperatingEnvelope();
-      if (envelope.stage > 1 && !envelope.newExposureAllowed) {
+      if (!envelope.newExposureAllowed) {
         return new Map<string, VerifiedArbitragePlan | null>(
           symbols.map(symbol => [symbol.trim().toUpperCase(), null] as [string, VerifiedArbitragePlan | null]),
         );
@@ -203,8 +196,7 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     maxExpectedSlippageBps: envelope.maxExpectedSlippageBps,
     recommendedCycleBudget: envelope.recommendedCycleBudget,
     performanceDegraded: envelope.performanceDegraded,
-    discoveryNotionalPolicy: 'stage1_shadow_measurement_ceiling_then_full_current_profit_ladder_ceiling',
-    stage1CexDiscoveryMaxNotionalUsd: discoveryBoundedNotional(positiveFinite(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD, 200)),
+    discoveryNotionalPolicy: 'current_profit_ladder_ceiling_all_stages',
     stage1DiscoveryExecutionAuthority: false,
     evaluateOnceCanIncreaseCallerNotional: false,
     verifierDepthCurveReusedWithoutExtraMarketDataRequests: true,
@@ -219,9 +211,4 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     terminalSettlementAuthorityPreserved: true,
     exchangeSurveillanceThresholdAssumed: false,
   });
-}
-
-function positiveFinite(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
