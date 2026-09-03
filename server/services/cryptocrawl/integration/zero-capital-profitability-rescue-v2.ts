@@ -12,6 +12,7 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import {
   buildBpsReductionSuperPlan,
   recordBpsRevalidationOutcome,
@@ -143,7 +144,8 @@ function candidateSizes(
   context: ZeroCapitalBpsRescueContext | null,
 ): number[] {
   const currentUsd = Math.max(0.01, usdFromBaseUnits(opportunity.flashLoanAmount, route.inputTokenDecimals));
-  const ceiling = bounded(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD, 1_000, currentUsd, 10_000);
+  const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd;
+  const ceiling = Math.max(currentUsd, ladderMaxNotionalUsd);
   const maxCandidates = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_SIZE_CANDIDATES, 7, 3, 12));
   return [...new Set(candidateFactors(opportunity, context)
     .slice(0, maxCandidates)
@@ -219,12 +221,6 @@ function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1000);
 }
 
-/**
- * Canonical, directly-invoked BPS profitability rescue. It owns no lifecycle,
- * execution, or enable switch and never mutates AutonomousZeroCapitalEngine.
- * Every replacement is independently and freshly requoted with measured provider
- * fees/liquidity and must strictly improve the original measured opportunity.
- */
 export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProfitabilityRescueInput): Promise<ZeroCapitalOpportunity[]> {
   const { chain, provider, opportunities, configuredRoutes, fromQuotedRoute } = input;
   if (chain === 'europa' || opportunities.length === 0) return [...opportunities];
@@ -339,6 +335,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
     bpsPriorityAuthority: 'shared_bps_super_engine_effective_priority_score',
     bpsResidualNotionalAuthority: 'shared_bps_super_engine_residual_notional_fractions_plus_fixed_cost_dilution_probes',
+    liveNotionalCeilingAuthority: 'profit_ladder_only',
     inputTokenDecimalsAuthoritative: true,
     providerFreshnessRequired: true,
     providerLiquidityHeadroomRequired: true,
