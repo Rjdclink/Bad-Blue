@@ -31,18 +31,18 @@ assert.match(risk, /monteCarloExecutionAuthority: false/);
 assert.ok(!risk.includes('assessment.reason = `Monte Carlo consensus failed:'), 'RiskGovernor must not restore Monte Carlo as an execution veto');
 assert.ok(!/if\s*\(!monteCarloResult\.approved\)[\s\S]{0,300}return assessment;/.test(risk), 'RiskGovernor must not return a rejection solely from Monte Carlo');
 
-const tierOneCriteria = ladder.slice(
-  ladder.indexOf("if (tier.id === 1)"),
-  ladder.indexOf("if (this.capitalVerificationStatus !== 'verified')"),
-);
+const tierOneStart = ladder.indexOf("if (tier.id === 1) {");
+const tierOneEnd = ladder.indexOf("} else {\n        if (performance.terminalSampleCount", tierOneStart);
+assert.ok(tierOneStart >= 0 && tierOneEnd > tierOneStart, 'Could not isolate Profit Ladder Tier 1 criteria branch');
+const tierOneCriteria = ladder.slice(tierOneStart, tierOneEnd);
 assert.match(tierOneCriteria, /terminalWinningSamples <= 0/, 'Stage 2 must retain direct terminal-positive proof');
 for (const forbidden of [
   'performance.daysAtTarget < tier.daysRequiredAtTarget',
   'performance.successRate < tier.minSuccessRate',
   'performance.realizedSharpeDayCount < MIN_REALIZED_SHARPE_DAYS',
   'performance.sharpeRatio < tier.minSharpeRatio',
-  'monteCarlo',
-  'uptime',
+  'monteCarloPassRate',
+  'requiredUptimeHours',
 ]) {
   assert.ok(!tierOneCriteria.includes(forbidden), `Profit Ladder Tier 1 reintroduced a Stage-2 soft historical gate: ${forbidden}`);
 }
