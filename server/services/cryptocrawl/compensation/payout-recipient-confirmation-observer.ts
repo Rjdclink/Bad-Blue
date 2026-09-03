@@ -14,6 +14,8 @@ const ETHEREUM_RPC_URL = (
   || (process.env.ALCHEMY_API_KEY ? `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}` : '')
 ).trim();
 
+type DestinationMode = 'primary' | 'fallback';
+
 interface PendingBatch {
   batch_id: string;
   payout_amount_eth: string | number;
@@ -21,12 +23,57 @@ interface PendingBatch {
   withdrawal_client_id: string | null;
   transaction_hash: string | null;
   destination_hash: string;
-  destination_mode: 'primary' | 'fallback';
+  destination_mode: DestinationMode;
 }
 
-function destinationFor(batch: PendingBatch): string {
-  if (batch.destination_mode === 'fallback') return FALLBACK_DESTINATION;
+interface PendingTerminalLeg {
+  leg_id: string;
+  amount: string | number;
+  withdrawal_id: string | null;
+  client_id: string | null;
+  transaction_hash: string | null;
+  destination_hash: string;
+  destination_mode: DestinationMode;
+}
+
+interface ProofTarget {
+  amountEth: string | number;
+  withdrawalId: string | null;
+  clientId: string | null;
+  transactionHash: string | null;
+  destinationMode: DestinationMode;
+}
+
+interface RecipientProof {
+  destinationHash: string;
+  amountEth: number;
+  transactionHash: string;
+  blockNumber: string;
+}
+
+function destinationFor(mode: DestinationMode): string {
+  if (mode === 'fallback') return FALLBACK_DESTINATION;
   return PRIMARY_DESTINATION;
+}
+
+function batchTarget(batch: PendingBatch): ProofTarget {
+  return {
+    amountEth: batch.payout_amount_eth,
+    withdrawalId: batch.withdrawal_id,
+    clientId: batch.withdrawal_client_id,
+    transactionHash: batch.transaction_hash,
+    destinationMode: batch.destination_mode,
+  };
+}
+
+function terminalLegTarget(leg: PendingTerminalLeg): ProofTarget {
+  return {
+    amountEth: leg.amount,
+    withdrawalId: leg.withdrawal_id,
+    clientId: leg.client_id,
+    transactionHash: leg.transaction_hash,
+    destinationMode: leg.destination_mode,
+  };
 }
 
 function sameAddress(a: unknown, b: unknown): boolean {
@@ -53,15 +100,15 @@ function destinationFingerprint(address: string): string {
   return createHash('sha256').update(address.toLowerCase()).digest('hex').slice(0, 16);
 }
 
-async function okxWithdrawalHistory(batch: PendingBatch): Promise<any | null> {
+async function okxWithdrawalHistory(target: ProofTarget): Promise<any | null> {
   const apiKey = (process.env.OKX_API_KEY || '').trim();
   const apiSecret = (process.env.OKX_API_SECRET || '').trim();
   const passphrase = (process.env.OKX_API_PASSPHRASE || '').trim();
   if (!apiKey || !apiSecret || !passphrase) throw new Error('OKX read credentials unavailable for payout confirmation');
 
-  const query = batch.withdrawal_id
-    ? new URLSearchParams({ wdId: batch.withdrawal_id }).toString()
-    : new URLSearchParams({ clientId: batch.withdrawal_client_id || '' }).toString();
+  const query = target.withdrawalId
+    ? new URLSearchParams({ wdId: target.withdrawalId }).toString()
+    : new URLSearchParams({ clientId: target.clientId || '' }).toString();
   if (!query || query.endsWith('=')) return null;
 
   const path = `/api/v5/asset/withdrawal-history?${query}`;
@@ -81,9 +128,9 @@ async function okxWithdrawalHistory(batch: PendingBatch): Promise<any | null> {
     throw new Error(`OKX withdrawal-history read failed (${response.status}/${String(body?.code ?? 'unknown')})`);
   }
   const rows = Array.isArray(body?.data) ? body.data : [];
-  return rows.find((row: any) => batch.withdrawal_id
-    ? String(row?.wdId || '') === batch.withdrawal_id
-    : String(row?.clientId || '') === batch.withdrawal_client_id) || rows[0] || null;
+  return rows.find((row: any) => target.withdrawalId
+    ? String(row?.wdId || '') === target.withdrawalId
+    : String(row?.clientId || '') === target.clientId) || rows[0] || null;
 }
 
 async function ethereumRpc(method: string, params: unknown[]): Promise<any> {
@@ -98,27 +145,24 @@ async function ethereumRpc(method: string, params: unknown[]): Promise<any> {
   return body.result;
 }
 
-async function verifyBatch(batch: PendingBatch): Promise<{
-  destinationHash: string;
-  amountEth: number;
-  transactionHash: string;
-  blockNumber: string;
-} | null> {
-  const destination = destinationFor(batch);
-  if (!/^0x[0-9a-fA-F]{40}$/.test(destination)) throw new Error(`payout ${batch.destination_mode} destination unavailable`);
+async function verifyTarget(target: ProofTarget, label: string): Promise<RecipientProof | null> {
+  const destination = destinationFor(target.destinationMode);
+  if (!/^0x[0-9a-fA-F]{40}$/.test(destination)) {
+    throw new Error(`${label} ${target.destinationMode} destination unavailable`);
+  }
 
-  const record = await okxWithdrawalHistory(batch);
+  const record = await okxWithdrawalHistory(target);
   if (!record) return null;
   const state = String(record.state ?? '');
   if (state !== '2') return null;
 
-  const txId = String(record.txId || batch.transaction_hash || '').trim();
+  const txId = String(record.txId || target.transactionHash || '').trim();
   if (!/^0x[0-9a-fA-F]{64}$/.test(txId)) return null;
   if (String(record.ccy || '').toUpperCase() !== 'ETH') throw new Error('recipient mismatch: completed withdrawal is not ETH');
   if (!ethereumMainnetChain(record.chain)) throw new Error('recipient mismatch: completed withdrawal is not Ethereum mainnet');
   if (!sameAddress(record.to, destination)) throw new Error('recipient mismatch: OKX receiving address differs from intended payout address');
 
-  const expectedWei = decimalEthToWei(batch.payout_amount_eth);
+  const expectedWei = decimalEthToWei(target.amountEth);
   if (decimalEthToWei(record.amt) !== expectedWei) throw new Error('amount mismatch: OKX withdrawal differs from payout obligation');
 
   const [transaction, receipt, finalized] = await Promise.all([
@@ -137,19 +181,32 @@ async function verifyBatch(batch: PendingBatch): Promise<{
 
   return {
     destinationHash: destinationFingerprint(destination),
-    amountEth: Number(batch.payout_amount_eth),
+    amountEth: Number(target.amountEth),
     transactionHash: txId,
     blockNumber: String(receipt.blockNumber),
   };
 }
 
-async function markManualReview(batchId: string, message: string): Promise<void> {
+async function markBatchManualReview(batchId: string, message: string): Promise<void> {
   await withCryptaraSupabasePriority('critical', () => pool.query(
     `UPDATE public.cryptocrawler_profit_payout_batches
      SET status='MANUAL_REVIEW', last_error=$2, updated_at=now()
      WHERE batch_id=$1 AND status='SUBMITTED'`,
     [batchId, message.slice(0, 1000)],
   ));
+}
+
+async function markTerminalLegManualReview(legId: string, message: string): Promise<void> {
+  await withCryptaraSupabasePriority('critical', () => pool.query(
+    `UPDATE public.cryptocrawler_terminal_sweep_legs
+     SET status='MANUAL_REVIEW', last_error=$2, updated_at=now()
+     WHERE leg_id=$1::uuid AND status='SUBMITTED'`,
+    [legId, message.slice(0, 1000)],
+  ));
+}
+
+function proofFailureIsTerminal(message: string): boolean {
+  return /recipient mismatch|amount mismatch|transaction recipient mismatch|transaction failed/i.test(message);
 }
 
 class PayoutRecipientConfirmationObserver {
@@ -194,6 +251,11 @@ class PayoutRecipientConfirmationObserver {
 
   private async reconcile(): Promise<void> {
     if (!isDatabaseConfigured || !PRIMARY_DESTINATION || !ETHEREUM_RPC_URL) return;
+    await this.reconcilePayoutBatches();
+    await this.reconcileTerminalSweepLegs();
+  }
+
+  private async reconcilePayoutBatches(): Promise<void> {
     const result = await withCryptaraSupabasePriority('high', () => pool.query(
       `SELECT batch_id, payout_amount_eth, withdrawal_id, withdrawal_client_id,
               transaction_hash, destination_hash, destination_mode
@@ -206,7 +268,7 @@ class PayoutRecipientConfirmationObserver {
 
     for (const row of result.rows as PendingBatch[]) {
       try {
-        const proof = await verifyBatch(row);
+        const proof = await verifyTarget(batchTarget(row), 'payout');
         if (!proof) continue;
         await withCryptaraSupabasePriority('critical', () => pool.query(
           `UPDATE public.cryptocrawler_profit_payout_batches
@@ -233,12 +295,66 @@ class PayoutRecipientConfirmationObserver {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (/recipient mismatch|amount mismatch|transaction recipient mismatch|transaction failed/i.test(message)) {
-          await markManualReview(row.batch_id, `Recipient confirmation failed closed: ${message}`);
+        if (proofFailureIsTerminal(message)) {
+          await markBatchManualReview(row.batch_id, `Recipient confirmation failed closed: ${message}`);
         } else {
           logger.debug('[Treasury] Payout recipient proof not ready', {
             component: 'PayoutRecipientConfirmationObserver',
             batchId: row.batch_id,
+            error: message,
+          });
+        }
+      }
+    }
+  }
+
+  private async reconcileTerminalSweepLegs(): Promise<void> {
+    const result = await withCryptaraSupabasePriority('high', () => pool.query(
+      `SELECT leg_id::text, amount, withdrawal_id, client_id,
+              transaction_hash, destination_hash, destination_mode
+       FROM public.cryptocrawler_terminal_sweep_legs
+       WHERE status='SUBMITTED'
+         AND asset='ETH'
+         AND recipient_confirmed_at IS NULL
+       ORDER BY submitted_at ASC NULLS LAST, created_at ASC
+       LIMIT 8`,
+    ));
+
+    for (const row of result.rows as PendingTerminalLeg[]) {
+      try {
+        const proof = await verifyTarget(terminalLegTarget(row), 'terminal sweep');
+        if (!proof) continue;
+        await withCryptaraSupabasePriority('critical', () => pool.query(
+          `UPDATE public.cryptocrawler_terminal_sweep_legs
+           SET destination_hash=$2,
+               recipient_confirmed_destination_hash=$2,
+               recipient_confirmed_amount_eth=$3,
+               recipient_confirmed_transaction_hash=$4,
+               recipient_confirmed_block_number=$5,
+               recipient_confirmation_source='okx_withdrawal_history+ethereum_finalized_rpc',
+               recipient_confirmed_at=now(),
+               last_error=NULL,
+               updated_at=now()
+           WHERE leg_id=$1::uuid AND status='SUBMITTED' AND recipient_confirmed_at IS NULL`,
+          [row.leg_id, proof.destinationHash, proof.amountEth, proof.transactionHash, proof.blockNumber],
+        ));
+        logger.info('[Treasury] Terminal sweep recipient independently confirmed', {
+          component: 'PayoutRecipientConfirmationObserver',
+          legId: row.leg_id,
+          destinationMode: row.destination_mode,
+          amountEth: proof.amountEth,
+          transactionHash: `${proof.transactionHash.slice(0, 10)}...`,
+          ethereumFinalized: true,
+          moneyMovingAuthority: false,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (proofFailureIsTerminal(message)) {
+          await markTerminalLegManualReview(row.leg_id, `Recipient confirmation failed closed: ${message}`);
+        } else {
+          logger.debug('[Treasury] Terminal sweep recipient proof not ready', {
+            component: 'PayoutRecipientConfirmationObserver',
+            legId: row.leg_id,
             error: message,
           });
         }
