@@ -61,12 +61,13 @@ has(scheduler, 'bpsDecayUrgencyFactor', 'canonical hot-lane scheduler must apply
 has(scheduler, 'return 1 + urgency * 0.5', 'BPS scheduling overlay must be boost-only and bounded');
 has(scheduler, 'bpsSuperEngineExecutionAuthority: false', 'Super Engine scheduling integration must retain zero execution authority');
 
-has(wiring, 'installObservedCandidateRevalidationHook', 'observed CEX candidates must be intercepted for potential recheck');
-has(wiring, 'queueAnomalyRevalidation(recorded)', 'raw positive observations must trigger reassessment');
+has(wiring, 'installCandidateBpsSubscription', 'measured candidates must enter reassessment through the registry subscription rather than a patched registry method');
+has(wiring, 'measuredCandidateRegistry.onUpdate(candidate =>', 'canonical registry updates must drive BPS attribution and observed-positive reassessment');
+has(wiring, 'queueAnomalyRevalidation(candidate);', 'raw positive observations must trigger bounded fresh reassessment');
 has(wiring, 'getRawCrossVenueEdge(candidate)', 'anomaly trigger must use measured cross-venue quote evidence');
 has(wiring, 'buildBpsReductionSuperPlan', 'economic transformation wiring must consume the BPS super engine');
-has(wiring, 'recordBpsCandidateAttribution(recorded)', 'registry records must feed BPS attribution');
-has(wiring, 'recordBpsCandidateAttribution(updated)', 'terminal status updates must feed realized BPS learning');
+has(wiring, 'recordBpsCandidateAttribution(candidate)', 'canonical registry updates must feed BPS attribution exactly through the shared candidate path');
+has(wiring, "sourceAuthority: 'measured_candidate_registry.canonicalBps'", 'registry canonical BPS must remain the attribution source authority');
 has(wiring, 'recordBpsRevalidationOutcome(superPlan, cycle)', 'anomaly canonical results must train revalidation scheduling');
 has(wiring, 'recordBpsRevalidationOutcome(superPlan, canonicalCycle)', 'transformation canonical results must train revalidation scheduling');
 has(wiring, 'effectivePriorityScore', 'super-engine priority must alter actual recovery scheduling');
@@ -74,12 +75,12 @@ has(wiring, 'monteCarloSearchMultiplier', 'super-engine allocation must alter Qu
 has(wiring, 'superPlan.residualNotionalFractions', 'super-engine nonlinear notional probes must reach the existing residual replanner');
 has(wiring, 'fraction > 0 && fraction < 1', 'residual replans must remain true smaller-size probes');
 has(wiring, 'measuredOpportunityGraph.revalidateSymbols([symbol])', 'anomaly and transformation paths must reacquire canonical exact-symbol evidence');
-has(wiring, 'cryptara_and_monte_carlo_if_deterministic_positive', 'critical evidence path must include Cryptara/Monte Carlo after deterministic positivity');
+has(wiring, 'runResearchBpsQuantiMonteCarlo(candidate, effectiveResearchPlan)', 'critical transformation work must retain Quanti/Monte Carlo ranking without gaining execution authority');
 has(wiring, 'queueOperationalTransformation', 'portfolio advice must be converted into operational work');
 has(wiring, 'runResearchBpsQuantiMonteCarlo', 'operational transformations must consume Quanti Comp Monte Carlo ranking');
 has(wiring, 'queueCexResidualReplan', 'non-linear execution-cost transformations must generate exact smaller-notional fresh replans');
 has(wiring, 'queueCexNearMissRecovery', 'CEX four-mode near misses must be promoted from logging to fresh recovery work');
-has(wiring, 'percentageFeeGapNotPretendedAwayByShrinkingSize: true', 'fee-dominated BPS must not be cosmetically reduced');
+has(wiring, 'exactFreshRequoteRequired: true', 'transformation work must require fresh canonical economics instead of cosmetically shrinking fee gaps');
 has(wiring, 'executionAuthority: false', 'transformation wiring must not execute directly');
 
 has(economic, "authority: 'optimization_advisory_only'", 'original transformation advice remains advisory');
@@ -95,4 +96,4 @@ must(!wiring.includes('executeVerifiedArbitragePlan'), 'transformation wiring mu
 must(!tactics.includes('process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION ='), 'research tactics must not enable live execution posture');
 must(!superEngine.includes('process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION ='), 'super engine must not enable live execution posture');
 
-console.log('[research-bps-transform-reassessment] PASS: 25 tactics plus practical adaptive super engine, attribution ledger, synergy bundles, realized-outcome governor, Quanti/Monte Carlo scheduling, bounded anomaly reacquisition, canonical transform revalidation, exact residual replans, canonical hot-lane decay scheduling, unknown-economics preservation, and canonical execution authority retained');
+console.log('[research-bps-transform-reassessment] PASS: 25 tactics plus practical adaptive super engine, registry-owned attribution, synergy bundles, realized-outcome governor, Quanti/Monte Carlo scheduling, bounded anomaly reacquisition, canonical transform revalidation, exact residual replans, canonical hot-lane decay scheduling, unknown-economics preservation, and canonical execution authority retained');
