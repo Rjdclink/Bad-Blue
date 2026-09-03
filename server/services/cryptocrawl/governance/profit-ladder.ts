@@ -2,8 +2,10 @@
  * PROFIT LADDER SYSTEM
  *
  * Progressive profit-tier tracking. StageManager remains the stage-progression
- * authority; the ladder may only claim performance readiness from realized,
- * terminal-confirmed execution evidence.
+ * authority. Tier 1 / Stage 2 has no arbitrary historical-performance barrier:
+ * one terminal-confirmed positive realized settlement plus hard capital/drawdown
+ * facts is sufficient to prove signal and permit the next scale step. Later tiers
+ * may still use realized performance history for supervised scale progression.
  */
 
 import { EventEmitter } from 'events';
@@ -80,6 +82,8 @@ export const PROFIT_TIERS: Record<number, ProfitTier> = {
     maxPositionSizeUSD: 100,
     maxDrawdownPercent: 5,
     maxDailyLossUSD: 200,
+    // Retained as roadmap/telemetry fields only for Tier 1. They do not gate
+    // Stage 2 advancement.
     daysRequiredAtTarget: 7,
     minSuccessRate: 0.65,
     minSharpeRatio: 1.2,
@@ -181,8 +185,8 @@ export interface TierPerformance {
   bestDayProfit: number;
   worstDayProfit: number;
 
-  // These are REALIZED metrics only. Monte Carlo/projection metrics cannot
-  // satisfy the profit ladder.
+  // These are REALIZED metrics only. Tier 1 records them as telemetry; later
+  // supervised scaling tiers may use them for advancement.
   successRate: number;
   sharpeRatio: number;
   maxDrawdown: number;
@@ -235,6 +239,7 @@ export class ProfitLadder extends EventEmitter {
       tier: this.currentTier.name,
       targetProfit: this.currentTier.targetDailyProfitUSD,
       realizedEvidenceRequired: true,
+      stageTwoSoftHistoricalGateAuthority: false,
     });
   }
 
@@ -336,7 +341,11 @@ export class ProfitLadder extends EventEmitter {
       from: previousTier.name,
       to: this.currentTier.name,
       targetProfit: this.currentTier.targetDailyProfitUSD,
-      authority: previousTier.id === 0 ? 'stage_manager_foundation_proof' : 'terminal_realized_performance',
+      authority: previousTier.id === 0
+        ? 'stage_manager_foundation_proof'
+        : previousTier.id === 1
+          ? 'terminal_positive_plus_hard_scale_facts'
+          : 'terminal_realized_performance',
     });
     this.emit('tier-advanced', {
       previousTier: previousTier.id,
@@ -348,9 +357,8 @@ export class ProfitLadder extends EventEmitter {
 
   /**
    * Reconcile one UTC day. The historic arguments remain for source compatibility,
-   * but advancement metrics are deliberately rebuilt from StageManager's persisted
-   * terminal-confirmed settlements. Predicted/simulated values cannot satisfy the
-   * ladder merely because a caller supplies them here.
+   * but metrics are deliberately rebuilt from StageManager's persisted terminal-
+   * confirmed settlements. Predicted/simulated values cannot manufacture evidence.
    */
   recordDailyPerformance(
     _profit: number,
@@ -390,8 +398,6 @@ export class ProfitLadder extends EventEmitter {
     performance.lastReconciledAt = now;
     performance.lastReconciledDay = dayKey;
 
-    // A target day must contain terminal-confirmed realized evidence. A zero
-    // target must never turn a no-trade day into advancement evidence.
     if (newTerminal.length > 0 && realizedDailyProfit >= this.currentTier.targetDailyProfitUSD) {
       performance.daysAtTarget += 1;
     }
@@ -409,6 +415,7 @@ export class ProfitLadder extends EventEmitter {
       daysAtTarget: performance.daysAtTarget,
       realizedSuccessRate: performance.successRate,
       realizedSharpeRatio: performance.sharpeRatio,
+      stageTwoHistoricalMetricsAuthority: this.currentTier.id === 1 ? false : undefined,
     });
 
     this.emit('performance-recorded', {
@@ -430,9 +437,8 @@ export class ProfitLadder extends EventEmitter {
     const blockers: string[] = [];
 
     if (tier.id === 0) {
-      // Stage 1 cannot execute trades. Foundation exit therefore mirrors the
-      // StageManager's verified live-signal/infrastructure proof; it must never
-      // be inferred from the tier's descriptive zero profit thresholds.
+      // Foundation exit mirrors StageManager's verified live-signal/infrastructure
+      // proof and is independent of profit-tier descriptive zero thresholds.
       const stageState = stageManager.getState();
       if (stageState.currentStage !== Stage.STAGE_1_CONSTRAINED_PILOT) {
         blockers.push(`Foundation tier is misaligned with StageManager stage ${stageState.currentStage}`);
@@ -441,32 +447,40 @@ export class ProfitLadder extends EventEmitter {
         blockers.push('StageManager foundation proof metrics are not complete');
       }
     } else {
-      if (performance.terminalSampleCount <= 0) {
-        blockers.push('No terminal-confirmed realized settlement samples for this tier');
-      }
+      if (tier.id === 1) {
+        // Stage 2 / Proof-of-Signal deliberately has no trade-count, days-at-
+        // target, win-rate, Sharpe, Monte Carlo, or uptime requirement. One
+        // terminal-confirmed positive realized settlement proves the signal;
+        // capital and drawdown below are hard scale/resource facts only.
+        if (performance.terminalWinningSamples <= 0) {
+          blockers.push('No terminal-confirmed positive realized settlement for Stage 2 proof-of-signal');
+        }
+      } else {
+        if (performance.terminalSampleCount <= 0) {
+          blockers.push('No terminal-confirmed realized settlement samples for this tier');
+        }
 
-      // Zero thresholds on an actual realized-profit tier are configuration
-      // errors, not automatic passes.
-      if (!Number.isFinite(tier.daysRequiredAtTarget) || tier.daysRequiredAtTarget <= 0) {
-        blockers.push('Invalid profit-ladder configuration: daysRequiredAtTarget must be > 0');
-      }
-      if (!Number.isFinite(tier.minSuccessRate) || tier.minSuccessRate <= 0) {
-        blockers.push('Invalid profit-ladder configuration: minSuccessRate must be > 0');
-      }
-      if (!Number.isFinite(tier.minSharpeRatio) || tier.minSharpeRatio <= 0) {
-        blockers.push('Invalid profit-ladder configuration: minSharpeRatio must be > 0');
-      }
+        if (!Number.isFinite(tier.daysRequiredAtTarget) || tier.daysRequiredAtTarget <= 0) {
+          blockers.push('Invalid profit-ladder configuration: daysRequiredAtTarget must be > 0');
+        }
+        if (!Number.isFinite(tier.minSuccessRate) || tier.minSuccessRate <= 0) {
+          blockers.push('Invalid profit-ladder configuration: minSuccessRate must be > 0');
+        }
+        if (!Number.isFinite(tier.minSharpeRatio) || tier.minSharpeRatio <= 0) {
+          blockers.push('Invalid profit-ladder configuration: minSharpeRatio must be > 0');
+        }
 
-      if (performance.daysAtTarget < tier.daysRequiredAtTarget) {
-        blockers.push(`Need ${tier.daysRequiredAtTarget - performance.daysAtTarget} more realized days at target`);
-      }
-      if (performance.successRate < tier.minSuccessRate) {
-        blockers.push(`Realized success rate ${(performance.successRate * 100).toFixed(1)}% < ${(tier.minSuccessRate * 100).toFixed(1)}%`);
-      }
-      if (performance.realizedSharpeDayCount < MIN_REALIZED_SHARPE_DAYS) {
-        blockers.push(`Need ${MIN_REALIZED_SHARPE_DAYS - performance.realizedSharpeDayCount} more realized daily samples before Sharpe is meaningful`);
-      } else if (performance.sharpeRatio < tier.minSharpeRatio) {
-        blockers.push(`Realized Sharpe ratio ${performance.sharpeRatio.toFixed(2)} < ${tier.minSharpeRatio.toFixed(2)}`);
+        if (performance.daysAtTarget < tier.daysRequiredAtTarget) {
+          blockers.push(`Need ${tier.daysRequiredAtTarget - performance.daysAtTarget} more realized days at target`);
+        }
+        if (performance.successRate < tier.minSuccessRate) {
+          blockers.push(`Realized success rate ${(performance.successRate * 100).toFixed(1)}% < ${(tier.minSuccessRate * 100).toFixed(1)}%`);
+        }
+        if (performance.realizedSharpeDayCount < MIN_REALIZED_SHARPE_DAYS) {
+          blockers.push(`Need ${MIN_REALIZED_SHARPE_DAYS - performance.realizedSharpeDayCount} more realized daily samples before Sharpe is meaningful`);
+        } else if (performance.sharpeRatio < tier.minSharpeRatio) {
+          blockers.push(`Realized Sharpe ratio ${performance.sharpeRatio.toFixed(2)} < ${tier.minSharpeRatio.toFixed(2)}`);
+        }
       }
 
       if (this.capitalVerificationStatus !== 'verified') {
@@ -491,6 +505,19 @@ export class ProfitLadder extends EventEmitter {
           tier: tier.name,
           stage: stageManager.getCurrentStage(),
         });
+      } else if (tier.id === 1) {
+        log.info('Stage 2 proof-of-signal verified without soft historical gates', {
+          tier: tier.name,
+          terminalPositiveSettlements: performance.terminalWinningSamples,
+          verifiedCapitalUsd: this.currentCapitalUSD,
+          realizedMaxDrawdown: performance.maxDrawdown,
+          tradeCountAuthority: false,
+          daysAtTargetAuthority: false,
+          successRateAuthority: false,
+          sharpeAuthority: false,
+          monteCarloAuthority: false,
+          uptimeAuthority: false,
+        });
       } else {
         log.info('Tier advancement criteria MET from terminal realized evidence', {
           tier: tier.name,
@@ -502,7 +529,11 @@ export class ProfitLadder extends EventEmitter {
       }
       this.emit('advancement-criteria-met', {
         tierId: tier.id,
-        evidenceAuthority: tier.id === 0 ? 'stage_manager_foundation_proof' : 'terminal_realized_settlements',
+        evidenceAuthority: tier.id === 0
+          ? 'stage_manager_foundation_proof'
+          : tier.id === 1
+            ? 'terminal_positive_plus_hard_scale_facts'
+            : 'terminal_realized_settlements',
         performance,
         timestamp: Date.now(),
       });
@@ -714,6 +745,7 @@ export class ProfitLadder extends EventEmitter {
       capital: this.currentCapitalUSD,
       capitalVerificationStatus: this.capitalVerificationStatus,
       terminalEvidenceAuthority: true,
+      stageTwoSoftHistoricalGateAuthority: false,
     });
   }
 }

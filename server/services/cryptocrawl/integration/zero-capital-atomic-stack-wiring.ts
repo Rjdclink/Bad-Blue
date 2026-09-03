@@ -157,8 +157,6 @@ async function exactSimulateStack(input: {
   const allowedGas = BigInt(Math.floor(Number(blockGasLimit) * maxBlockFraction));
   if (estimatedGas > allowedGas) throw new Error(`composite gas ${estimatedGas} exceeds bounded block fraction ${allowedGas}`);
 
-  // Stacking is promoted only if current measured duplicate-cost reuse makes the
-  // combined economics strictly better than executing the same cycles separately.
   const individualGasUnits = input.opportunities.reduce((sum, opportunity) => sum + opportunity.gasEstimate, 0n);
   const individualGasCost = input.opportunities.reduce(
     (sum, opportunity) => sum + (opportunity.estimatedGasCostInInputToken || 0n),
@@ -263,14 +261,34 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
 
   const originalAssessment = target.isAllowedByCryptara.bind(target);
   target.isAllowedByCryptara = async (opportunity): Promise<boolean> => {
-    const allowed = await originalAssessment(opportunity);
+    const canonicalPositive = opportunity.expectedProfit > 0n;
     const candidate = measuredCandidateRegistry.get(opportunity.id);
-    if (allowed && candidate?.executableCapability && opportunity.expectedProfit > 0n) {
+    if (canonicalPositive && candidate?.executableCapability) {
       measuredCandidateRegistry.updateStatus(opportunity.id, 'eligible', {
-        provenance: ['Cryptara:consider', 'zero_capital_assessment_eligible'],
+        provenance: ['canonical_positive_all_in_net', 'zero_capital_hard_facts_eligible'],
       });
     }
-    return allowed;
+
+    void originalAssessment(opportunity)
+      .then(allowed => {
+        const current = measuredCandidateRegistry.get(opportunity.id);
+        if (!current) return;
+        measuredCandidateRegistry.updateStatus(opportunity.id, current.status, {
+          provenance: [allowed
+            ? 'Cryptara:advisory_consider'
+            : 'Cryptara:advisory_reject_non_veto'],
+        });
+      })
+      .catch(error => {
+        logger.debug('[ZeroCapitalStack] Parallel Cryptara advisory degraded', {
+          component: 'ZeroCapitalAtomicStackWiring',
+          opportunityId: opportunity.id,
+          error: error instanceof Error ? error.message : String(error),
+          executionAuthority: false,
+        });
+      });
+
+    return canonicalPositive;
   };
 
   const originalScan = target.scanChain.bind(target);
@@ -279,43 +297,55 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     for (const opportunity of opportunities) zeroCapitalRouteEvidenceRegistry.record(opportunity);
     if (chain === 'europa' || opportunities.length < 2) return opportunities;
 
-    const wallet = target.executionWallets.get(chain);
-    if (!wallet) return opportunities;
-    const compositeCapability = await verifyFlashLoanReceiverCapability({
-      kind: 'balancer_composite_v2',
-      chain,
-      provider,
-      expectedOwner: wallet.address,
-    }).catch(() => null);
-    if (!compositeCapability) return opportunities;
-
-    const byInputToken = new Map<string, ZeroCapitalOpportunity[]>();
-    for (const opportunity of opportunities) {
-      if (opportunity.expectedProfit <= 0n) continue;
-      const key = opportunity.inputToken.toLowerCase();
-      const list = byInputToken.get(key) || [];
-      list.push(opportunity);
-      byInputToken.set(key, list);
-    }
-
-    for (const group of byInputToken.values()) {
-      const stack = chooseStack(group);
-      if (stack.length < 2) continue;
-      await exactSimulateStack({
+    void (async () => {
+      const wallet = target.executionWallets.get(chain);
+      if (!wallet) return;
+      const compositeCapability = await verifyFlashLoanReceiverCapability({
+        kind: 'balancer_composite_v2',
         chain,
         provider,
-        wallet,
-        receiver: compositeCapability.address,
-        opportunities: stack,
-      }).catch(error => {
-        logger.debug('[ZeroCapitalStack] Composite V2 exact simulation rejected', {
-          component: 'ZeroCapitalAtomicStackWiring',
+        expectedOwner: wallet.address,
+      }).catch(() => null);
+      if (!compositeCapability) return;
+
+      const byInputToken = new Map<string, ZeroCapitalOpportunity[]>();
+      for (const opportunity of opportunities) {
+        if (opportunity.expectedProfit <= 0n) continue;
+        const key = opportunity.inputToken.toLowerCase();
+        const list = byInputToken.get(key) || [];
+        list.push(opportunity);
+        byInputToken.set(key, list);
+      }
+
+      for (const group of byInputToken.values()) {
+        const stack = chooseStack(group);
+        if (stack.length < 2) continue;
+        await exactSimulateStack({
           chain,
-          opportunityIds: stack.map(opportunity => opportunity.id),
-          error: error instanceof Error ? error.message : String(error),
+          provider,
+          wallet,
+          receiver: compositeCapability.address,
+          opportunities: stack,
+        }).catch(error => {
+          logger.debug('[ZeroCapitalStack] Composite V2 exact simulation rejected', {
+            component: 'ZeroCapitalAtomicStackWiring',
+            chain,
+            opportunityIds: stack.map(opportunity => opportunity.id),
+            error: error instanceof Error ? error.message : String(error),
+            executionAuthority: false,
+          });
         });
+      }
+    })().catch(error => {
+      logger.debug('[ZeroCapitalStack] Parallel advisory optimization failed', {
+        component: 'ZeroCapitalAtomicStackWiring',
+        chain,
+        error: error instanceof Error ? error.message : String(error),
+        individualExecutionAffected: false,
+        executionAuthority: false,
       });
-    }
+    });
+
     return opportunities;
   };
 
@@ -331,6 +361,9 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     measuredCompositionBenefitRequired: true,
     combinedProfitMustExceedIndividualProfitSum: true,
     realizedAttributionBeforeCompositeExecutionRequired: true,
+    cryptaraAssessmentAuthority: 'parallel_advisory_only',
+    parallelAdvisoryOnly: true,
+    individualOpportunityCriticalPathBlocked: false,
     executionAuthority: false,
   });
 }

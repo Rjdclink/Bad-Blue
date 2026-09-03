@@ -44,6 +44,8 @@ export interface VerifiedRetainedProfit {
   chain: string;
   asset: string;
   retainedProfit: string;
+  grossProfit?: string;
+  payoutReserved?: string;
   settlementReceiptVerified: boolean;
   profitRecipientDeltaVerified: boolean;
   sourceRecipient: string;
@@ -78,6 +80,12 @@ export interface Stage4CapitalProvenanceStore {
 function requirePositiveInteger(label: string, value: string): void {
   if (!/^\d+$/.test(value) || BigInt(value) <= 0n) {
     throw new Error(`${label} must be a positive integer string in base units`);
+  }
+}
+
+function requireNonNegativeInteger(label: string, value: string): void {
+  if (!/^\d+$/.test(value) || BigInt(value) < 0n) {
+    throw new Error(`${label} must be a non-negative integer string in base units`);
   }
 }
 
@@ -244,6 +252,13 @@ function requireVerifiedProof(proof: VerifiedBootstrapProfit): void {
 
 function requireVerifiedRetainedProfit(proof: VerifiedRetainedProfit): void {
   requirePositiveInteger('retainedProfit', proof.retainedProfit);
+  const grossProfit = proof.grossProfit ?? proof.retainedProfit;
+  const payoutReserved = proof.payoutReserved ?? '0';
+  requirePositiveInteger('grossProfit', grossProfit);
+  requireNonNegativeInteger('payoutReserved', payoutReserved);
+  if (BigInt(proof.retainedProfit) + BigInt(payoutReserved) !== BigInt(grossProfit)) {
+    throw new Error('Retained profit plus payout-reserved units must equal gross settled profit');
+  }
   if (!proof.settlementReceiptVerified || !proof.profitRecipientDeltaVerified) {
     throw new Error('Retained profit requires a confirmed receipt and verified profit-recipient balance delta');
   }
@@ -258,8 +273,8 @@ function requireVerifiedRetainedProfit(proof: VerifiedRetainedProfit): void {
   } catch {
     throw new Error('Retained profit recipient balance evidence must be integer strings');
   }
-  if (before < 0n || after < before || after - before !== BigInt(proof.retainedProfit)) {
-    throw new Error('Retained profit recipient balance delta does not match retained profit base units');
+  if (before < 0n || after < before || after - before !== BigInt(grossProfit)) {
+    throw new Error('Retained profit recipient balance delta does not match gross settled profit base units');
   }
 }
 

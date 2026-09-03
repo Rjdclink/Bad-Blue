@@ -36,8 +36,12 @@ export interface RuntimeInvariantMonitorSnapshot {
   }>;
 }
 
+function finiteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 function finiteNonNegative(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  return finiteNumber(value) && value >= 0;
 }
 
 function economicsTolerance(...values: number[]): number {
@@ -65,16 +69,26 @@ function inspectSnapshot(snapshot: CanonicalOpportunitySnapshot): RuntimeInvaria
     }
 
     if (plan) {
-      const requiredCosts = [
+      // Exchange fees are signed canonical economics: positive values are costs,
+      // negative values are authenticated rebates/refunds. Aggregate totalCostsUsd
+      // is therefore also allowed to be negative when rebates exceed other costs.
+      const signedCosts = [
         plan.costs.buyFeeUsd,
         plan.costs.sellFeeUsd,
-        plan.costs.gasUsd,
-        plan.costs.bridgeFeeUsd,
         plan.costs.totalCostsUsd,
       ];
-      if (plan.costs.transferFeeUsd !== undefined) requiredCosts.push(plan.costs.transferFeeUsd);
-      if (!requiredCosts.every(finiteNonNegative) || !Number.isFinite(plan.grossProfitUsd) || !Number.isFinite(plan.netProfitUsd)) {
-        push('INVALID_DETERMINISTIC_COSTS', 'Eligible deterministic economics contain a missing, negative, or non-finite required cost/value');
+      const nonNegativeCosts = [
+        plan.costs.gasUsd,
+        plan.costs.bridgeFeeUsd,
+      ];
+      if (plan.costs.transferFeeUsd !== undefined) nonNegativeCosts.push(plan.costs.transferFeeUsd);
+      if (
+        !signedCosts.every(finiteNumber)
+        || !nonNegativeCosts.every(finiteNonNegative)
+        || !Number.isFinite(plan.grossProfitUsd)
+        || !Number.isFinite(plan.netProfitUsd)
+      ) {
+        push('INVALID_DETERMINISTIC_COSTS', 'Eligible deterministic economics contain a missing/non-finite value or a negative non-rebatable transport/gas cost');
       } else {
         const expectedNet = plan.grossProfitUsd - plan.costs.totalCostsUsd;
         const tolerance = economicsTolerance(plan.grossProfitUsd, plan.costs.totalCostsUsd, plan.netProfitUsd);

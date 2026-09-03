@@ -41,6 +41,12 @@ export interface CredentialValidation {
 export enum TaskType {
   WEBSOCKET_PING = 'websocket_ping',
   BASIC_PARSING = 'basic_parsing',
+  ORDER_BOOK_FRAME = 'order_book_frame',
+  ORDER_BOOK_APPLY = 'order_book_apply',
+  TRADE_STREAM = 'trade_stream',
+  STREAM_LIVENESS = 'stream_liveness',
+  FRESHNESS_VALIDATION = 'freshness_validation',
+  FEE_RESOLUTION = 'fee_resolution',
   MONTE_CARLO = 'monte_carlo',
   ML_PREDICTION = 'ml_prediction',
   ARBITRAGE_SCAN = 'arbitrage_scan',

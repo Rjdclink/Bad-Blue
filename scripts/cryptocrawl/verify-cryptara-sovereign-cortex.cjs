@@ -163,8 +163,11 @@ for (const token of requiredPrefetch) {
 if (profitOps.includes('getCryptaraAdaptiveStrategySnapshot') || profitOps.includes('notionalBias')) {
   throw new Error('[cryptara-sovereign-cortex] profit-ladder sizing must not retain dead Cryptara notional-bias authority');
 }
-if (!profitOps.includes("discoveryNotionalPolicy: 'stage1_shadow_measurement_ceiling_then_full_current_profit_ladder_ceiling'")) {
-  throw new Error('[cryptara-sovereign-cortex] cleaned profit-ladder discovery ceiling invariant missing');
+if (!profitOps.includes("discoveryNotionalPolicy: 'current_profit_ladder_ceiling_all_stages'")) {
+  throw new Error('[cryptara-sovereign-cortex] unified profit-ladder discovery ceiling invariant missing');
+}
+for (const forbidden of ['stage1_shadow_measurement_ceiling', 'CRYPTO_STAGE1_CEX_DISCOVERY_MAX_NOTIONAL_USD']) {
+  if (profitOps.includes(forbidden)) throw new Error(`[cryptara-sovereign-cortex] duplicate Stage-1 notional authority regression: ${forbidden}`);
 }
 
 const rankedImplementedCex = prefetch.includes("const fallback: CexStreamVenue[] = ['coinbase', 'kraken', 'okx']")
@@ -174,8 +177,13 @@ if (!rankedImplementedCex) {
   throw new Error('[cryptara-sovereign-cortex] missing bounded Coinbase/Kraken/OKX predictive-prefetch invariant');
 }
 
-if (!runtime.includes('ensureCryptaraSovereignCortexWiring();')) throw new Error('[cryptara-sovereign-cortex] canonical cortex wiring missing');
-if (!runtime.includes('ensureCryptaraPredictivePrefetchWiring();')) throw new Error('[cryptara-sovereign-cortex] canonical predictive prefetch wiring missing');
+const isolatedCortexWiring = runtime.includes("install('cryptara_sovereign_cortex'")
+  && runtime.includes('ensureCryptaraSovereignCortexWiring()');
+const isolatedPrefetchWiring = runtime.includes("install('cryptara_predictive_prefetch'")
+  && runtime.includes('ensureCryptaraPredictivePrefetchWiring()');
+if (!isolatedCortexWiring) throw new Error('[cryptara-sovereign-cortex] isolated canonical cortex wiring missing');
+if (!isolatedPrefetchWiring) throw new Error('[cryptara-sovereign-cortex] isolated canonical predictive prefetch wiring missing');
+if (!runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false')) throw new Error('[cryptara-sovereign-cortex] component isolation global-shutdown boundary missing');
 if (!runtime.includes('cryptaraCortexExecutionAuthority: false')) throw new Error('[cryptara-sovereign-cortex] runtime execution-authority boundary missing');
 
-console.log('[cryptara-sovereign-cortex] PASS: terminal-only rank evidence, Strategist-minimum proven prefetch edits, ordered market/profit priorities, zero-retry parallel cognition, and bounded predictive prefetch invariants preserved');
+console.log('[cryptara-sovereign-cortex] PASS: terminal-only rank evidence, Strategist-minimum proven prefetch edits, ordered market/profit priorities, zero-retry parallel cognition, unified Profit Ladder sizing, isolated runtime wiring, and bounded predictive prefetch invariants preserved');

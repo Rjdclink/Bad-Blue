@@ -165,7 +165,7 @@ function verifyCexExecutionContract() {
   // admitted only because receipt gas is terminally converted and subtracted.
   requirePattern(gasFunding, /mode:\s*'native'/, 'sufficient native reserve can use terminal-accounted native gas execution');
   requirePattern(gasFunding, /actual receipt gas is terminally converted and subtracted/, 'native funding explicitly depends on terminal gas accounting');
-  requirePattern(canonicalRuntime, /ensureZeroCapitalRealizedProfitWiring\(\);[\s\S]{0,240}ensureDynamicRpcProviderWiring\(\)[\s\S]{0,160}startCanonicalZeroCapitalRuntime/, 'realized-profit wiring is installed before zero-capital lifecycle start');
+  requirePattern(canonicalRuntime, /install\('zero_capital_realized_profit',\s*\(\)\s*=>\s*ensureZeroCapitalRealizedProfitWiring\(\)\);[\s\S]{0,420}install\('dynamic_rpc_provider',[\s\S]{0,420}ensureDynamicRpcProviderWiring\(\)[\s\S]{0,240}startCanonicalZeroCapitalRuntime/, 'realized-profit wiring is installed before zero-capital lifecycle start');
   requirePattern(coreRuntime, /ensureZeroCapitalRealizedProfitWiring\(\);/, 'core lifecycle reasserts the same idempotent realized-profit authority synchronously');
   forbidPattern(coreRuntime, /scheduleZeroCapitalProfitWiring|zeroCapitalRealizedProfitPolicyScheduled/, 'deferred duplicate realized-profit authority scheduling');
   requirePattern(zeroResource, /discoverDynamicZeroCapitalQuotes\(chain,\s*provider,\s*funding\.mode\)/, 'dynamic quote economics consume the live gas-funding decision');

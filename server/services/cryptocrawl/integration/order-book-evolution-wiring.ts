@@ -64,14 +64,20 @@ async function observeOnce(): Promise<void> {
     const venues = getActiveExecutableQuoteVenues();
     const plan = adaptivePlan();
     const symbols = getLastOrderedMarketUniverseSymbols().slice(0, plan.symbolLimit);
-    // Interleave venues per symbol so every request batch contains both Kraken
-    // and OKX whenever both are executable. Provider quality may change attention
-    // and cadence, but it never removes an executable venue from observation.
+    // Interleave venues per symbol so every request batch contains all executable
+    // venues. Provider quality may change attention/cadence, never trade authority.
     const tasks = symbols.flatMap(symbol => venues.map(venue => async () => {
       const startedAt = Date.now();
       try {
         const quote = await cexOrderBookStreams.getQuote(venue, symbol, plan.maxAgeMs);
-        recordAntennaProviderObservation({ venue, latencyMs: Math.max(0, Date.now() - startedAt), outcome: quote ? 'quote' : 'miss' });
+        const receivedAt = Date.now();
+        recordAntennaProviderObservation({
+          venue,
+          latencyMs: Math.max(0, receivedAt - startedAt),
+          sourceAgeMs: quote ? Math.max(0, receivedAt - quote.timestamp) : undefined,
+          outcome: quote ? 'quote' : 'miss',
+          observedAt: receivedAt,
+        });
         if (quote) orderBookEvolutionStore.record(quote);
       } catch (error) {
         recordAntennaProviderObservation({ venue, latencyMs: Math.max(0, Date.now() - startedAt), outcome: 'failure' });
@@ -113,6 +119,7 @@ async function observeOnce(): Promise<void> {
         computeSearchPlan: getComputationalSearchPlan(),
         allExecutableVenuesStillObservedSimultaneously: true,
         providerAuctionAuthority: auction.authority,
+        sourceAgeMeasuredSeparatelyFromLocalLookupLatency: true,
         executionAuthority: false,
       });
     }
@@ -142,8 +149,9 @@ export function ensureOrderBookEvolutionWiring(): void {
     computePressureAware: true,
     computeSearchAllocationAware: true,
     providerFailureLatencyAware: true,
+    sourceTimestampAgeAware: true,
     boundedRequestBatches: requestBatchSize(),
-    providerQualityTelemetry: 'measured_latency_hit_rate_failure_rate_recency',
+    providerQualityTelemetry: 'measured_local_lookup_latency_source_age_hit_rate_failure_rate_recency',
     providerAuction: 'measured_quality_weighted_attention_advisory_only',
     allExecutableVenuesStillObservedSimultaneously: true,
     syntheticTransitions: false,

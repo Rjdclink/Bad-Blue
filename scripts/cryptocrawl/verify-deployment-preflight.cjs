@@ -2,9 +2,15 @@
 
 require('./verify-overflow-complete-runtime-authority.cjs');
 require('./verify-runtime-safety-invariants.cjs');
+require('./verify-runtime-component-isolation.cjs');
 require('./verify-runtime-build-attestation.cjs');
 require('./verify-okx-adaptive-rate-governor.cjs');
 require('./verify-okx-account-fee-authority.cjs');
+require('./verify-bps-rebate-refund-truth.cjs');
+require('./verify-inventory-intent-netting.cjs');
+require('./verify-antenna-production-hot-path.cjs');
+require('./verify-stage-soft-gate-retirement.cjs');
+require('./verify-bps-order-control-revalidation.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
 require('./verify-substantial-profitability-batch9.cjs');
 require('./verify-cryptara-sovereign-cortex.cjs');
@@ -38,4 +44,4 @@ require('./verify-canonical-execution-family-completion.cjs');
 require('./verify-resource-bps-authority.cjs');
 require('./verify-payout-recipient-truth.cjs');
 
-console.log('[deployment-preflight] complete Overflow runtime authority, safety, measured-profitability, canonical execution-family, resource/BPS authority, recipient-bound payout truth, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] complete Overflow runtime authority, safety, per-component runtime failure isolation, measured-profitability, signed rebate/refund BPS truth, single-consumption inventory netting, Stage-2+ soft-gate retirement, advisory-only Monte Carlo, measured order-control latency revalidation, real Antenna hot-path acceleration with single market-data/execution authority, canonical execution-family, resource/BPS authority, recipient-bound payout truth, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');

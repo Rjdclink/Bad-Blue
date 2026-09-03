@@ -31,6 +31,27 @@ export interface MeasuredQuoteEvidence {
   provenance?: string[];
 }
 
+export interface CanonicalBpsEconomics {
+  measuredAt: number;
+  notionalUsd: number | null;
+  grossBps: number | null;
+  /** Signed economic exchange fee: positive = cost, negative = realized/quoted rebate or refund. */
+  exchangeFeeBps: number | null;
+  slippageBps: number | null;
+  impactBps: number | null;
+  gasBps: number | null;
+  bridgeBps: number | null;
+  flashLoanFeeBps: number | null;
+  relayBps: number | null;
+  allInCostBps: number | null;
+  breakEvenBps: number | null;
+  netBps: number | null;
+  bpsToBreakEven: number | null;
+  realizedNetBps: number | null;
+  source: 'measured_candidate_registry';
+  syntheticEconomicsAllowed: false;
+}
+
 export interface MeasuredCandidate {
   opportunityId: string;
   topology: MeasuredOpportunityTopology;
@@ -49,6 +70,7 @@ export interface MeasuredCandidate {
   economics: {
     grossProfitUsd: number | null;
     deterministicNetProfitUsd: number | null;
+    /** Signed economic exchange fee in USD: positive = cost, negative = rebate/refund. */
     feeUsd: number | null;
     gasUsd: number | null;
     bridgeUsd: number | null;
@@ -66,12 +88,19 @@ export interface MeasuredCandidate {
     bpsToBreakEven?: number | null;
     realizedNetProfitBps?: number | null;
   };
+  canonicalBps: CanonicalBpsEconomics;
   quoteAgeMs: number | null;
   executableCapability: boolean;
   executionCapabilityReason: string;
   missingInformation: string[];
   provenance: string[];
 }
+
+export type MeasuredCandidateUpdatePatch = Partial<Pick<MeasuredCandidate,
+  'economics' | 'missingInformation' | 'provenance' | 'executableCapability' | 'executionCapabilityReason' | 'quoteAgeMs' | 'depth'>> & {
+  replaceMissingInformation?: boolean;
+  resolvedMissingInformation?: readonly string[];
+};
 
 export interface MeasuredCandidateMetrics {
   windowMs: number;
@@ -101,6 +130,63 @@ export interface MeasuredCandidateMetrics {
 }
 
 type EligibleCandidateListener = (candidate: MeasuredCandidate) => void;
+type CandidateUpdateListener = (candidate: MeasuredCandidate) => void;
+
+type CandidateRecordInput = Omit<MeasuredCandidate, 'updatedAt' | 'canonicalBps'>;
+
+function finite(value: unknown): number | null {
+  if (value === null || value === undefined || typeof value === 'boolean') return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function measuredNotionalUsd(economics: MeasuredCandidate['economics']): number | null {
+  const direct = finite(economics.notionalUsd);
+  if (direct !== null && direct > 0) return direct;
+  const grossBps = finite(economics.grossProfitBps);
+  const grossUsd = finite(economics.grossProfitUsd);
+  if (grossBps !== null && grossBps !== 0 && grossUsd !== null) {
+    const inferred = grossUsd / grossBps * 10_000;
+    return Number.isFinite(inferred) && inferred > 0 ? inferred : null;
+  }
+  return null;
+}
+
+function measuredUsdToBps(valueUsd: unknown, notionalUsd: number | null): number | null {
+  const value = finite(valueUsd);
+  if (value === null || notionalUsd === null || notionalUsd <= 0) return null;
+  return Math.max(0, value) / notionalUsd * 10_000;
+}
+
+function measuredSignedUsdToBps(valueUsd: unknown, notionalUsd: number | null): number | null {
+  const value = finite(valueUsd);
+  if (value === null || notionalUsd === null || notionalUsd <= 0) return null;
+  return value / notionalUsd * 10_000;
+}
+
+function buildCanonicalBps(economics: MeasuredCandidate['economics'], measuredAt: number): CanonicalBpsEconomics {
+  const notionalUsd = measuredNotionalUsd(economics);
+  return {
+    measuredAt,
+    notionalUsd,
+    grossBps: finite(economics.grossProfitBps),
+    exchangeFeeBps: measuredSignedUsdToBps(economics.feeUsd, notionalUsd),
+    slippageBps: finite(economics.expectedSlippageBps),
+    impactBps: finite(economics.expectedPriceImpactBps),
+    gasBps: finite(economics.gasCostBps) ?? measuredUsdToBps(economics.gasUsd, notionalUsd),
+    bridgeBps: measuredUsdToBps(economics.bridgeUsd, notionalUsd),
+    flashLoanFeeBps: finite(economics.flashLoanFeeBps),
+    relayBps: finite(economics.relayCostBps),
+    allInCostBps: finite(economics.allInCostBps),
+    breakEvenBps: finite(economics.breakEvenBps),
+    netBps: finite(economics.netProfitBps),
+    bpsToBreakEven: finite(economics.bpsToBreakEven),
+    realizedNetBps: finite(economics.realizedNetProfitBps),
+    source: 'measured_candidate_registry',
+    syntheticEconomicsAllowed: false,
+  };
+}
 
 function clone(candidate: MeasuredCandidate): MeasuredCandidate {
   return {
@@ -111,6 +197,7 @@ function clone(candidate: MeasuredCandidate): MeasuredCandidate {
     rawQuotes: candidate.rawQuotes.map(quote => ({ ...quote, provenance: quote.provenance ? [...quote.provenance] : undefined })),
     depth: { ...candidate.depth },
     economics: { ...candidate.economics },
+    canonicalBps: { ...candidate.canonicalBps },
     missingInformation: [...candidate.missingInformation],
     provenance: [...candidate.provenance],
   };
@@ -158,15 +245,16 @@ function average(values: number[]): number | null {
 }
 
 function isNearBreakEven(candidate: MeasuredCandidate): boolean {
-  const net = candidate.economics.netProfitBps;
-  if (candidate.topology !== 'ZERO_CAPITAL_ATOMIC' || net === null || net === undefined || !Number.isFinite(net) || net > 0) return false;
-  const floor = candidate.economics.discoveryFloorBps;
-  return floor === null || floor === undefined || !Number.isFinite(floor) || net >= floor;
+  const net = candidate.canonicalBps.netBps;
+  if (net === null || !Number.isFinite(net) || net > 0) return false;
+  const floor = finite(candidate.economics.discoveryFloorBps);
+  return floor === null || net >= floor;
 }
 
 class MeasuredCandidateRegistry {
   private readonly candidates = new Map<string, MeasuredCandidate>();
   private readonly eligibleListeners = new Set<EligibleCandidateListener>();
+  private readonly updateListeners = new Set<CandidateUpdateListener>();
   private readonly maxEntries = Math.max(512, Math.min(20_000, Number(process.env.CRYPTOCRAWL_CANDIDATE_REGISTRY_MAX || 4096)));
 
   onEligible(listener: EligibleCandidateListener): () => void {
@@ -174,22 +262,30 @@ class MeasuredCandidateRegistry {
     return () => this.eligibleListeners.delete(listener);
   }
 
-  record(input: Omit<MeasuredCandidate, 'updatedAt'>): MeasuredCandidate {
+  onUpdate(listener: CandidateUpdateListener): () => void {
+    this.updateListeners.add(listener);
+    return () => this.updateListeners.delete(listener);
+  }
+
+  record(input: CandidateRecordInput): MeasuredCandidate {
     if (!input.opportunityId.trim()) throw new Error('Measured candidate requires opportunityId');
     if (!Number.isFinite(input.observedAt) || input.observedAt <= 0) throw new Error('Measured candidate requires observedAt');
     if (!Number.isFinite(input.expiresAt) || input.expiresAt < input.observedAt) throw new Error('Measured candidate requires a valid expiration');
     const previous = this.candidates.get(input.opportunityId);
+    const updatedAt = Date.now();
+    const economics = { ...input.economics };
     const next: MeasuredCandidate = {
       ...input,
-      updatedAt: Date.now(),
+      updatedAt,
       assets: [...new Set(input.assets.map(value => value.trim()).filter(Boolean))],
       venues: [...new Set(input.venues.map(value => value.trim()).filter(Boolean))],
       chains: [...new Set(input.chains.map(value => value.trim()).filter(Boolean))],
       rawQuotes: input.rawQuotes.map(quote => ({ ...quote, provenance: quote.provenance ? [...quote.provenance] : undefined })),
       depth: { ...input.depth },
-      economics: { ...input.economics },
+      economics,
+      canonicalBps: buildCanonicalBps(economics, updatedAt),
       missingInformation: [...new Set(input.missingInformation)],
-      provenance: [...new Set(input.provenance)],
+      provenance: [...new Set([...input.provenance, 'canonical_bps:measured_candidate_registry'])],
       status: previous && previous.observedAt === input.observedAt &&
         previous.status === 'eligible' && !['blocked', 'expired'].includes(input.status)
         ? 'eligible'
@@ -197,25 +293,40 @@ class MeasuredCandidateRegistry {
     };
     this.candidates.set(next.opportunityId, next);
     this.prune();
+    this.notifyUpdate(next);
     this.notifyEligible(previous, next);
     return clone(next);
   }
 
-  updateStatus(opportunityId: string, status: MeasuredCandidateStatus, patch?: Partial<Pick<MeasuredCandidate,
-    'economics' | 'missingInformation' | 'provenance' | 'executableCapability' | 'executionCapabilityReason' | 'quoteAgeMs' | 'depth'>>): MeasuredCandidate | null {
+  updateStatus(
+    opportunityId: string,
+    status: MeasuredCandidateStatus,
+    patch?: MeasuredCandidateUpdatePatch,
+  ): MeasuredCandidate | null {
     const previous = this.candidates.get(opportunityId);
     if (!previous) return null;
     const next = clone(previous);
     next.status = status;
     next.updatedAt = Date.now();
     if (patch?.economics) next.economics = { ...patch.economics };
-    if (patch?.missingInformation) next.missingInformation = [...new Set([...previous.missingInformation, ...patch.missingInformation])];
+    next.canonicalBps = buildCanonicalBps(next.economics, next.updatedAt);
+    if (patch?.replaceMissingInformation) {
+      next.missingInformation = [...new Set((patch.missingInformation || []).map(item => item.trim()).filter(Boolean))];
+    } else if (patch?.missingInformation) {
+      next.missingInformation = [...new Set([...previous.missingInformation, ...patch.missingInformation])];
+    }
+    if (patch?.resolvedMissingInformation?.length) {
+      const resolved = new Set(patch.resolvedMissingInformation.map(item => item.trim()).filter(Boolean));
+      next.missingInformation = next.missingInformation.filter(item => !resolved.has(item));
+    }
     if (patch?.provenance) next.provenance = [...new Set([...previous.provenance, ...patch.provenance])];
+    next.provenance = [...new Set([...next.provenance, 'canonical_bps:measured_candidate_registry'])];
     if (patch?.executableCapability !== undefined) next.executableCapability = patch.executableCapability;
     if (patch?.executionCapabilityReason !== undefined) next.executionCapabilityReason = patch.executionCapabilityReason;
     if (patch?.quoteAgeMs !== undefined) next.quoteAgeMs = patch.quoteAgeMs;
     if (patch?.depth) next.depth = { ...patch.depth };
     this.candidates.set(opportunityId, next);
+    this.notifyUpdate(next);
     this.notifyEligible(previous, next);
     return clone(next);
   }
@@ -261,18 +372,17 @@ class MeasuredCandidateRegistry {
     ) as Array<{ item: string; count: number }>;
     const zeroCapitalWithBps = recent.filter(candidate =>
       candidate.topology === 'ZERO_CAPITAL_ATOMIC' &&
-      candidate.economics.netProfitBps !== null &&
-      candidate.economics.netProfitBps !== undefined &&
-      Number.isFinite(candidate.economics.netProfitBps),
+      candidate.canonicalBps.netBps !== null &&
+      Number.isFinite(candidate.canonicalBps.netBps),
     );
     const nearBreakEven = zeroCapitalWithBps.filter(isNearBreakEven);
-    const positiveBps = zeroCapitalWithBps.filter(candidate => Number(candidate.economics.netProfitBps) > 0);
+    const positiveBps = zeroCapitalWithBps.filter(candidate => Number(candidate.canonicalBps.netBps) > 0);
     const bpsToBreakEven = nearBreakEven
-      .map(candidate => candidate.economics.bpsToBreakEven)
-      .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
+      .map(candidate => candidate.canonicalBps.bpsToBreakEven)
+      .filter((value): value is number => value !== null && Number.isFinite(value));
     const allInCostBps = zeroCapitalWithBps
-      .map(candidate => candidate.economics.allInCostBps)
-      .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
+      .map(candidate => candidate.canonicalBps.allInCostBps)
+      .filter((value): value is number => value !== null && Number.isFinite(value));
 
     return {
       windowMs,
@@ -290,12 +400,22 @@ class MeasuredCandidateRegistry {
         nearBreakEven: nearBreakEven.length,
         positive: positiveBps.length,
         bestNetProfitBps: zeroCapitalWithBps.length > 0
-          ? Math.max(...zeroCapitalWithBps.map(candidate => Number(candidate.economics.netProfitBps)))
+          ? Math.max(...zeroCapitalWithBps.map(candidate => Number(candidate.canonicalBps.netBps)))
           : null,
         averageBpsToBreakEven: average(bpsToBreakEven),
         averageAllInCostBps: average(allInCostBps),
       },
     };
+  }
+
+  private notifyUpdate(next: MeasuredCandidate): void {
+    if (this.updateListeners.size === 0) return;
+    const snapshot = clone(next);
+    queueMicrotask(() => {
+      for (const listener of this.updateListeners) {
+        try { listener(clone(snapshot)); } catch { /* acquisition listeners cannot corrupt candidate state */ }
+      }
+    });
   }
 
   private notifyEligible(previous: MeasuredCandidate | undefined, next: MeasuredCandidate): void {

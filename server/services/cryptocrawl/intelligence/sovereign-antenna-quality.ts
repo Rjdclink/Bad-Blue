@@ -8,6 +8,8 @@ export interface AntennaProviderQualitySnapshot {
   failures: number;
   averageLatencyMs: number;
   p95LatencyMs: number | null;
+  averageSourceAgeMs: number;
+  p95SourceAgeMs: number | null;
   hitRate: number;
   failureRate: number;
   lastObservedAt: number | null;
@@ -16,6 +18,7 @@ export interface AntennaProviderQualitySnapshot {
   sampleConfidence: number;
   qualityScore: number;
   confidenceAdjustedQualityScore: number;
+  sourceAgeIncludedInQuality: true;
   executionAuthority: false;
 }
 
@@ -25,6 +28,7 @@ type MutableVenueQuality = {
   misses: number;
   failures: number;
   latenciesMs: number[];
+  sourceAgesMs: number[];
   lastObservedAt: number | null;
 };
 
@@ -40,6 +44,7 @@ function stateFor(venue: CexStreamVenue): MutableVenueQuality {
     misses: 0,
     failures: 0,
     latenciesMs: [],
+    sourceAgesMs: [],
     lastObservedAt: null,
   };
   states.set(venue, created);
@@ -63,9 +68,15 @@ function confidenceTargetSamples(): number {
   return Number.isFinite(parsed) ? Math.max(4, Math.min(512, Math.trunc(parsed))) : 32;
 }
 
+function pushBounded(target: number[], value: number): void {
+  target.push(value);
+  if (target.length > MAX_LATENCY_SAMPLES) target.splice(0, target.length - MAX_LATENCY_SAMPLES);
+}
+
 export function recordAntennaProviderObservation(input: {
   venue: CexStreamVenue;
   latencyMs: number;
+  sourceAgeMs?: number;
   outcome: 'quote' | 'miss' | 'failure';
   observedAt?: number;
 }): void {
@@ -74,24 +85,30 @@ export function recordAntennaProviderObservation(input: {
   if (input.outcome === 'quote') state.usableQuotes += 1;
   else if (input.outcome === 'miss') state.misses += 1;
   else state.failures += 1;
-  if (Number.isFinite(input.latencyMs) && input.latencyMs >= 0) {
-    state.latenciesMs.push(input.latencyMs);
-    if (state.latenciesMs.length > MAX_LATENCY_SAMPLES) {
-      state.latenciesMs.splice(0, state.latenciesMs.length - MAX_LATENCY_SAMPLES);
-    }
-  }
+  if (Number.isFinite(input.latencyMs) && input.latencyMs >= 0) pushBounded(state.latenciesMs, input.latencyMs);
+  if (Number.isFinite(input.sourceAgeMs) && Number(input.sourceAgeMs) >= 0) pushBounded(state.sourceAgesMs, Number(input.sourceAgeMs));
   state.lastObservedAt = input.observedAt ?? Date.now();
 }
 
+function average(values: readonly number[]): number {
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
 function snapshot(venue: CexStreamVenue, state: MutableVenueQuality): AntennaProviderQualitySnapshot {
-  const averageLatencyMs = state.latenciesMs.length > 0
-    ? state.latenciesMs.reduce((sum, value) => sum + value, 0) / state.latenciesMs.length
-    : 0;
+  const averageLatencyMs = average(state.latenciesMs);
   const p95LatencyMs = percentile(state.latenciesMs, 0.95);
+  const averageSourceAgeMs = average(state.sourceAgesMs);
+  const p95SourceAgeMs = percentile(state.sourceAgesMs, 0.95);
   const hitRate = state.requests > 0 ? state.usableQuotes / state.requests : 0;
   const failureRate = state.requests > 0 ? state.failures / state.requests : 0;
-  const latencyBasis = p95LatencyMs ?? averageLatencyMs;
-  const latencyScore = state.latenciesMs.length === 0
+  // getQuote() can be nearly free because the WebSocket book is in memory. The
+  // economically relevant latency is therefore the worse of retrieval latency
+  // and the source timestamp age of the quote itself.
+  const latencyBasis = Math.max(
+    p95LatencyMs ?? averageLatencyMs,
+    p95SourceAgeMs ?? averageSourceAgeMs,
+  );
+  const latencyScore = state.latenciesMs.length === 0 && state.sourceAgesMs.length === 0
     ? 0
     : 1 / (1 + latencyBasis / 100);
   const observationAgeMs = state.lastObservedAt === null ? null : Math.max(0, Date.now() - state.lastObservedAt);
@@ -102,10 +119,8 @@ function snapshot(venue: CexStreamVenue, state: MutableVenueQuality): AntennaPro
   const baseQuality = Math.max(0, Math.min(1,
     hitRate * 0.60 + latencyScore * 0.25 + (1 - failureRate) * 0.15,
   ));
-  // Historical quality is still exposed separately, while the provider auction
-  // uses a confidence-adjusted score so a lucky one-sample provider cannot outrank
-  // a well-measured source. This remains advisory and never suppresses simultaneous
-  // observation of executable venues.
+  // Quality changes attention/cadence only. It never suppresses an executable
+  // venue or becomes an independent trade-admission authority.
   const qualityScore = Number((baseQuality * recencyScore).toFixed(4));
   const confidenceAdjustedQualityScore = Number((qualityScore * (0.25 + 0.75 * sampleConfidence)).toFixed(4));
   return {
@@ -116,6 +131,8 @@ function snapshot(venue: CexStreamVenue, state: MutableVenueQuality): AntennaPro
     failures: state.failures,
     averageLatencyMs: Number(averageLatencyMs.toFixed(2)),
     p95LatencyMs,
+    averageSourceAgeMs: Number(averageSourceAgeMs.toFixed(2)),
+    p95SourceAgeMs,
     hitRate: Number(hitRate.toFixed(4)),
     failureRate: Number(failureRate.toFixed(4)),
     lastObservedAt: state.lastObservedAt,
@@ -124,6 +141,7 @@ function snapshot(venue: CexStreamVenue, state: MutableVenueQuality): AntennaPro
     sampleConfidence: Number(sampleConfidence.toFixed(4)),
     qualityScore,
     confidenceAdjustedQualityScore,
+    sourceAgeIncludedInQuality: true,
     executionAuthority: false,
   };
 }

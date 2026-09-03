@@ -50,8 +50,8 @@ async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
         retainedCapitalInventoryReserved: false,
         payoutCapitalProtectedFromNewTrades: Boolean(allocation.payoutSourceVenue && allocation.payoutSourceAsset),
       });
-      void rainbowProfitBridge.wake('terminal_profit_recorded');
     }
+    if (allocation) void rainbowProfitBridge.wake('terminal_profit_recorded');
     void rainbowProfitObservability.refresh();
   } catch (error) {
     logger.warn('[Treasury] Realized-profit allocation deferred', {

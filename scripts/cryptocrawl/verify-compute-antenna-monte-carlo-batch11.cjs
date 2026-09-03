@@ -59,11 +59,13 @@ const required = [
   ['prefetch', 'inFlight.has(normalized)', 'per-symbol prefetch duplicate collapse'],
   ['prefetch', 'executionAuthority: false', 'prefetch cannot authorize execution'],
   ['canonical', "import { ensureComputationalReactorWiring }", 'reactor canonical import'],
-  ['canonical', 'ensureComputationalReactorWiring();', 'reactor canonical installation'],
+  ['canonical', "install('computational_reactor', () => ensureComputationalReactorWiring())", 'reactor isolated canonical installation'],
   ['canonical', "executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'", 'strict positive economics preserved'],
   ['canonical', 'cexHybridExecutionAuthority: true', 'implemented hybrid execution authority declared'],
-  ['canonical', 'ensureHybridCexExecutionWiring();', 'hybrid execution installed canonically'],
-  ['canonical', 'ensureStageProofMetricsWiring();', 'realized stage proof metrics installed canonically'],
+  ['canonical', "install('hybrid_cex_execution', () => ensureHybridCexExecutionWiring())", 'hybrid execution installed through isolated canonical wiring'],
+  ['canonical', "install('stage_proof_metrics', () => ensureStageProofMetricsWiring())", 'realized stage proof telemetry installed through isolated canonical wiring'],
+  ['canonical', "runtimeComponentIsolation: 'per_component_retry_without_global_runtime_shutdown'", 'component-fault isolation is explicit'],
+  ['canonical', 'runtimeComponentIsolationGlobalShutdownAuthority: false', 'isolated components cannot globally stop runtime'],
   ['hybrid', "export type HybridCexMode = 'MT' | 'TM'", 'hybrid scope limited to MT/TM'],
   ['hybrid', 'createPostOnlyMakerAdapters', 'maker leg uses existing authenticated post-only adapters'],
   ['hybrid', 'createProductionCexSettlementAdapters', 'taker hedge uses existing canonical settlement adapters'],
@@ -81,11 +83,12 @@ const required = [
   ['fourModeWiring', 'coalescedIntoOlderFullScan: false', 'positive revalidation cannot reuse a pre-observation full scan'],
   ['graph', 'positive_observation_revalidation', 'targeted canonical cycle is explicitly identified'],
   ['graph', 'private targetedScans = new Map', 'duplicate targeted revalidations are bounded'],
-  ['stageProof', 'realizedSharpe(profits)', 'realized profit history drives Sharpe'],
-  ['stageProof', 'realizedMaxDrawdown(profits)', 'realized profit history drives drawdown'],
-  ['stageProof', 'monteCarloValidation', 'executed canonical Monte Carlo is validated against terminal outcome'],
-  ['stageProof', 'stageThresholdsChanged: false', 'stage thresholds are not weakened'],
-  ['stageProof', 'tradeCountRequirementChanged: false', 'trade-count requirement is not weakened'],
+  ['stageProof', 'realizedSharpe(profits)', 'realized profit history remains available as telemetry'],
+  ['stageProof', 'realizedMaxDrawdown(profits)', 'realized profit history remains available as telemetry'],
+  ['stageProof', 'monteCarloValidation', 'executed canonical Monte Carlo is calibrated against terminal outcome'],
+  ['stageProof', 'stageTwoSoftHistoricalGateRetired: true', 'Stage 2 soft historical gate retirement is explicit'],
+  ['stageProof', 'stageManagerHistoricalMetricsAdvancementAuthority: false', 'StageManager historical metrics cannot regain advancement authority'],
+  ['stageProof', 'monteCarloExecutionAuthority: false', 'Monte Carlo outcome calibration cannot regain execution authority'],
   ['timing', 'isHybridCexRecoveryPlan(plan)', 'cross-venue timing guard recognizes hybrid mode'],
   ['timing', "mode: 'TT' | 'MT' | 'TM' | 'MM'", 'timing guard preserves TT/MT/TM and includes MM'],
   ['timing', "supportedModes: ['TT', 'MT', 'TM', 'MM']", 'runtime timing telemetry declares all four CEX modes'],
@@ -107,6 +110,8 @@ const forbidden = [
   ['canonical', 'alchemyPaidPendingStreamDefault: true', 'paid pending stream default-on'],
   ['stageProof', 'm.totalTrades =', 'synthetic trade-count advancement'],
   ['stageProof', 'requiredUptimeHours', 'stage-proof bridge must not rewrite uptime requirement'],
+  ['stageProof', 'stageThresholdsChanged: false', 'stale claim that Stage 2 historical thresholds remain authoritative'],
+  ['stageProof', 'tradeCountRequirementChanged: false', 'stale claim that the Stage 2 trade-count requirement remains authoritative'],
   ['fourMode', 'sequential_partial_fill_safe_hybrid_executor', 'stale four-mode claim that the installed hybrid executor is missing'],
   ['fourMode', 'fresh_taker_requote_after_maker_fill', 'stale four-mode claim that installed fresh hedge re-quote is missing'],
 ];
@@ -114,4 +119,4 @@ for (const [fileKey, token, name] of forbidden) {
   if (source[fileKey].includes(token)) throw new Error(`[compute-antenna-monte-carlo-batch11] forbidden regression: ${name}`);
 }
 
-console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, adaptive Antenna scheduling, canonical TT/MT/TM/MM execution timing, realized stage-proof metrics, and retained safety boundaries verified');
+console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, adaptive Antenna scheduling, isolated canonical component startup, TT/MT/TM/MM execution timing, advisory-only realized/Monte-Carlo stage telemetry, and retained hard safety boundaries verified');

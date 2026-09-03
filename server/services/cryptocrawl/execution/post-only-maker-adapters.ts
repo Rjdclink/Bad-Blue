@@ -5,6 +5,10 @@ import {
   coinbasePrivateRequest,
 } from '../intelligence/coinbase-advanced-trade-authority.js';
 import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
+import {
+  getCexOrderControlHealthSnapshot,
+  recordCexOrderControlLatency,
+} from '../intelligence/cex-order-control-health.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
 import {
@@ -27,6 +31,7 @@ import { getMakerLifecycleTraceId } from './maker-lifecycle-trace.js';
 import type { MakerOrderStyle, MakerRecoveryPlan } from './stablecoin-maker-strategy.js';
 
 const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
+const orderControlRevalidationCooldownUntil = new Map<string, number>();
 
 type SharedMakerPlan = VerifiedArbitragePlan & {
   makerExecution?: MakerRecoveryPlan['makerExecution'];
@@ -46,6 +51,60 @@ function okxGatewayLatencyMs(payload: any): number | null {
   const outTime = Number(payload?.outTime);
   if (!Number.isFinite(inTime) || !Number.isFinite(outTime) || outTime < inTime) return null;
   return (outTime - inTime) / 1_000;
+}
+
+function orderControlLatencyBudgetMs(): number {
+  const quoteMaxAgeMs = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
+  return Math.max(100, Math.min(1_000, quoteMaxAgeMs * 0.10));
+}
+
+function scheduleMeasuredControlLatencyRevalidation(
+  venue: ExecutableCexVenue,
+  symbolRaw: string,
+): void {
+  const symbol = symbolRaw.trim().toUpperCase();
+  if (!symbol) return;
+  const health = getCexOrderControlHealthSnapshot().venues.find(row => row.venue === venue);
+  const p95 = health?.clientP95Ms;
+  const budgetMs = orderControlLatencyBudgetMs();
+  // A few real observations are required before the control plane can alter
+  // scheduling. This is deliberately not an economic/BPS penalty or veto.
+  if (!health || health.sampleCount < 4 || p95 === null || p95 <= budgetMs) return;
+  const key = `${venue}:${symbol}`;
+  const now = Date.now();
+  if ((orderControlRevalidationCooldownUntil.get(key) || 0) > now) return;
+  const cooldownMs = Math.max(500, Math.min(5_000, Math.round(p95 * 2)));
+  orderControlRevalidationCooldownUntil.set(key, now + cooldownMs);
+
+  void import('../discovery/opportunity-graph.js')
+    .then(({ measuredOpportunityGraph }) => measuredOpportunityGraph.revalidateSymbols([symbol]))
+    .then(cycle => {
+      logger.info('[MakerRecovery] Measured order-control latency triggered exact-symbol BPS revalidation', {
+        component: 'PostOnlyMakerAdapters',
+        venue,
+        symbol,
+        clientP95Ms: p95,
+        controlLatencyBudgetMs: budgetMs,
+        samples: health.sampleCount,
+        cycleId: cycle.cycleId,
+        deterministicPositive: cycle.deterministicPositive,
+        eligibleCandidates: cycle.eligibleCandidates,
+        schedulingAuthority: 'measured_order_control_revalidation_only',
+        economicBpsAuthority: false,
+        executionAuthority: false,
+      });
+    })
+    .catch(error => {
+      logger.debug('[MakerRecovery] Order-control latency revalidation degraded without affecting execution', {
+        component: 'PostOnlyMakerAdapters',
+        venue,
+        symbol,
+        clientP95Ms: p95,
+        error: error instanceof Error ? error.message : String(error),
+        economicBpsAuthority: false,
+        executionAuthority: false,
+      });
+    });
 }
 
 function makerOrderStyle(plan: SharedMakerPlan, venue: ExecutableCexVenue, side: 'buy' | 'sell'): {
@@ -76,12 +135,19 @@ function makerOrderStyle(plan: SharedMakerPlan, venue: ExecutableCexVenue, side:
 function recordLatency(input: {
   traceId: string;
   venue: ExecutableCexVenue;
-  operation: 'submit' | 'cancel';
+  operation: 'submit' | 'query' | 'cancel';
   symbol: string;
   clientRoundTripMs: number;
   gatewayProcessingMs?: number | null;
   orderStyle?: MakerOrderStyle;
 }): void {
+  recordCexOrderControlLatency({
+    venue: input.venue,
+    operation: input.operation,
+    clientRoundTripMs: input.clientRoundTripMs,
+    gatewayProcessingMs: input.gatewayProcessingMs,
+  });
+  scheduleMeasuredControlLatencyRevalidation(input.venue, input.symbol);
   logger.info('[MakerRecovery] Maker order latency evidence', {
     component: 'PostOnlyMakerAdapters',
     traceId: input.traceId,
@@ -91,6 +157,9 @@ function recordLatency(input: {
     orderStyle: input.orderStyle ?? 'post_only',
     clientRoundTripMs: input.clientRoundTripMs,
     gatewayProcessingMs: input.gatewayProcessingMs ?? null,
+    bpsSchedulingEvidenceRecorded: true,
+    measuredLatencyCanTriggerCanonicalRevalidation: true,
+    economicBpsAuthority: false,
     executionAuthorityChanged: false,
   });
 }
@@ -212,7 +281,12 @@ function wrapMakerSubmit(
         submittedAt,
       };
     },
-    query: order => delegate.query(order),
+    async query(order) {
+      const startedAt = Date.now();
+      const result = await delegate.query(order);
+      recordLatency({ traceId, venue, operation: 'query', symbol: order.symbol, clientRoundTripMs: Date.now() - startedAt });
+      return result;
+    },
     async cancel(order) {
       const startedAt = Date.now();
       const result = await delegate.cancel(order);
@@ -231,7 +305,9 @@ function wrapMakerSubmit(
  * authenticated fee economics and submit-time product permission, minimum
  * notional, visible RPI spacing, fresh book and fee evidence still support the
  * same-or-better economics. There is no silent downgrade from RPI to standard
- * maker because that could invalidate plan P&L.
+ * maker because that could invalidate plan P&L. Measured submit/query/cancel
+ * round-trip latency is retained only as BPS revalidation scheduling evidence;
+ * it never fabricates a BPS cost, finalizes settlement, or owns execution.
  */
 export function createPostOnlyMakerAdapters(plan: SharedMakerPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();

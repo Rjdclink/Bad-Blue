@@ -56,7 +56,6 @@ type ZeroCapitalRuntime = {
     currentOpportunities: number;
     maxConcurrentExecutions: number;
   };
-  executionEligible: boolean;
   executionEnabled: boolean;
   opportunityQueue: ZeroCapitalOpportunity[];
   activeExecutionIds: Set<string>;
@@ -203,7 +202,7 @@ async function prepareGraphlessPermissions(
   positiveRouteIds: Set<string>,
 ): Promise<Set<string>> {
   const eligible = new Set(positiveRouteIds);
-  if (!target.executionEligible || positiveRouteIds.size === 0) return eligible;
+  if (positiveRouteIds.size === 0) return eligible;
   const graphless = getCachedGraphlessDynamicRouteTemplates(chain as any)
     .filter(route => positiveRouteIds.has(route.id));
   if (graphless.length === 0) return eligible;
@@ -236,6 +235,7 @@ async function prepareGraphlessPermissions(
       fundingMode: funding.mode,
       onlyPositiveRoutesPrepared: true,
       requiresFreshRequote: calls.length > 0,
+      duplicateExecutionEligibilityAuthority: false,
     });
   } catch (error) {
     for (const route of graphless) eligible.delete(route.id);
@@ -256,7 +256,6 @@ async function simulateGraphlessAtomicOpportunity(
   opportunity: ZeroCapitalOpportunity,
 ): Promise<{ ready: boolean; reason: string }> {
   if (!opportunity.id.startsWith('graphless-')) return { ready: true, reason: 'existing_route' };
-  if (!target.executionEligible) return { ready: false, reason: 'execution_not_eligible_for_exact_simulation' };
   const receiver = target.receiverManager.getReceiver(chain);
   const wallet = target.executionWallets.get(chain);
   if (!receiver || !wallet) return { ready: false, reason: 'receiver_or_wallet_unavailable' };
@@ -282,6 +281,42 @@ async function simulateGraphlessAtomicOpportunity(
   }
 }
 
+function runGraphlessSimulationAdvisory(
+  target: ZeroCapitalRuntime,
+  chain: SupportedChain,
+  provider: providers.JsonRpcProvider,
+  opportunity: ZeroCapitalOpportunity,
+): void {
+  void simulateGraphlessAtomicOpportunity(target, chain, provider, opportunity)
+    .then(simulation => {
+      const current = measuredCandidateRegistry.get(opportunity.id);
+      if (current) {
+        measuredCandidateRegistry.updateStatus(opportunity.id, current.status, {
+          provenance: [simulation.ready
+            ? 'exact_receiver_call_simulation:advisory_success'
+            : `exact_receiver_call_simulation:advisory_failure:${simulation.reason}`],
+        });
+      }
+      logger.debug('[ZeroCapitalWiring] Parallel graphless simulation completed', {
+        component: 'ZeroCapitalResourceWiring',
+        chain,
+        opportunityId: opportunity.id,
+        ready: simulation.ready,
+        reason: simulation.reason,
+        executionAuthority: false,
+      });
+    })
+    .catch(error => {
+      logger.debug('[ZeroCapitalWiring] Parallel graphless simulation degraded', {
+        component: 'ZeroCapitalResourceWiring',
+        chain,
+        opportunityId: opportunity.id,
+        error: error instanceof Error ? error.message : String(error),
+        executionAuthority: false,
+      });
+    });
+}
+
 export function ensureZeroCapitalResourceWiring(): void {
   const target = zeroCapitalEngine as unknown as ZeroCapitalRuntime;
   if (installed.has(target)) return;
@@ -302,6 +337,7 @@ export function ensureZeroCapitalResourceWiring(): void {
     const receiverReady = !!target.receiverManager.getReceiver(chain);
     const funding = await target.getGasFundingDecision(chain);
     const fundingReady = funding.mode !== 'unavailable';
+    const admittedConfigured: ZeroCapitalOpportunity[] = [];
     for (const opportunity of configured) {
       const positive = opportunity.expectedProfit > 0n;
       const executableCapability = positive && receiverReady && fundingReady;
@@ -315,23 +351,23 @@ export function ensureZeroCapitalResourceWiring(): void {
           : !fundingReady
             ? `Measured configured atomic route is deterministic-positive, but live gas funding is unavailable: ${funding.reason}`
             : receiverReady
-              ? 'Measured configured atomic route is deterministic-positive with live gas funding; Cryptara/Monte Carlo/governance remain required before execution'
+              ? 'Measured configured atomic route is deterministic-positive with live gas funding and receiver; canonical hard-fact admission remains required before execution'
               : 'Measured configured atomic route is deterministic-positive, but no verified funded receiver is registered on the chain',
         missingInformation: !positive || executableCapability ? [] : [
           ...(!fundingReady ? ['live_gas_funding'] : []),
           ...(!receiverReady ? ['verified_funded_receiver'] : []),
         ],
       });
-      if (positive && executableCapability && target.executionEligible) {
-        await target.isAllowedByCryptara(opportunity);
-      }
+      if (!positive || !executableCapability) continue;
+      if (!await target.isAllowedByCryptara(opportunity)) continue;
+      admittedConfigured.push(opportunity);
     }
 
     // Bind discovery economics to the same live funding authority used at
     // execution. Only an actual sponsored funding decision may zero user gas;
     // native/unavailable modes retain measured native-gas economics.
     const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode);
-    if (dynamicQuotes.length === 0) return configured;
+    if (dynamicQuotes.length === 0) return admittedConfigured;
     const positiveRouteIds = new Set(dynamicQuotes
       .filter(quote => quote.executablePositive && quote.netProfit > 0n)
       .map(quote => quote.id));
@@ -346,12 +382,7 @@ export function ensureZeroCapitalResourceWiring(): void {
       }
       const positive = quote.executablePositive && opportunity.expectedProfit > 0n;
       const permissionReady = positive && permissionEligibleIds.has(quote.id);
-      const simulation = positive && permissionReady
-        ? await simulateGraphlessAtomicOpportunity(target, chain, provider, opportunity)
-        : { ready: false, reason: positive ? 'dynamic_route_permissions_require_fresh_requote' : 'near_break_even_observation_only' };
-      const exactSimulationRequired = positive && quote.id.startsWith('graphless-') && target.executionEligible;
-      const simulationReady = !exactSimulationRequired || simulation.ready;
-      const executableCapability = positive && fundingReady && receiverReady && permissionReady && simulationReady;
+      const executableCapability = positive && fundingReady && receiverReady && permissionReady;
       recordZeroCapitalCandidate({
         opportunity,
         chain,
@@ -362,30 +393,28 @@ export function ensureZeroCapitalResourceWiring(): void {
           ? `Measured near-break-even route retained for optimization only; ${quote.bpsToBreakEven} BPS remains to strict positive break-even`
           : !fundingReady
             ? `Measured deterministic-positive route has no currently usable gas funding: ${funding.reason}`
-            : executableCapability
-              ? 'Measured atomic route has live gas funding, receiver, route permissions and required exact simulation; Cryptara/Monte Carlo/governance remain required before execution'
-              : !receiverReady
-                ? 'Measured deterministic-positive route has no verified funded receiver on the chain'
-                : !permissionReady
-                  ? 'Measured deterministic-positive route requires fresh quoting after dynamic receiver permissions'
-                  : `Measured deterministic-positive route exact atomic simulation is not ready: ${simulation.reason}`,
+            : !receiverReady
+              ? 'Measured deterministic-positive route has no verified funded receiver on the chain'
+              : !permissionReady
+                ? 'Measured deterministic-positive route requires fresh quoting after dynamic receiver permissions'
+                : 'Measured atomic route is deterministic-positive with live funding, receiver and route permissions; simulation runs in parallel and has no execution veto authority',
         missingInformation: !positive || executableCapability ? [] : [
           ...(!fundingReady ? ['live_gas_funding'] : []),
           ...(!receiverReady ? ['verified_funded_receiver'] : []),
           ...(!permissionReady ? ['fresh_quote_after_dynamic_route_permissions'] : []),
-          ...(permissionReady && !simulationReady ? ['exact_atomic_simulation'] : []),
         ],
-        simulationReady: simulation.ready,
       });
 
-      if (!positive) continue;
-      if (target.executionEligible && !executableCapability) continue;
-      if (target.executionEligible && !await target.isAllowedByCryptara(opportunity)) continue;
+      if (positive && permissionReady && quote.id.startsWith('graphless-')) {
+        runGraphlessSimulationAdvisory(target, chain, provider, opportunity);
+      }
+      if (!positive || !executableCapability) continue;
+      if (!await target.isAllowedByCryptara(opportunity)) continue;
       dynamic.push(opportunity);
     }
 
     const deduped = new Map<string, ZeroCapitalOpportunity>();
-    for (const opportunity of [...configured, ...dynamic]) {
+    for (const opportunity of [...admittedConfigured, ...dynamic]) {
       const key = target.executionKey(opportunity);
       const previous = deduped.get(key);
       if (!previous || opportunity.expectedProfit > previous.expectedProfit) deduped.set(key, opportunity);
@@ -509,12 +538,14 @@ export function ensureZeroCapitalResourceWiring(): void {
     graphlessDexDiscovery: true,
     newApiKeysRequired: false,
     configuredRoutesRemainSupported: true,
-    executionAdmission: 'resource_leases',
+    executionAdmission: 'canonical_hard_facts_then_resource_leases',
+    duplicateExecutionEligibilityAuthority: false,
     globalValueSemantics: 'emergency_ceiling_only',
     nearBreakEvenObservation: true,
     bpsEvidencePropagated: true,
     sponsoredEconomicsAuthority: 'live_gas_funding_decision_only',
+    simulationAuthority: 'parallel_advisory_only',
     scheduler: zeroCapitalResourceScheduler.getTelemetry(),
-    safety: ['governance', 'positive_net', 'receiver', 'dynamic_route_permissions', 'fresh_requote_after_permission_change', 'exact_atomic_simulation', 'wallet_nonce', 'chain', 'provider', 'protocol', 'gas_sponsor'],
+    safety: ['governance', 'positive_net', 'receiver', 'dynamic_route_permissions', 'fresh_requote_after_permission_change', 'wallet_nonce', 'chain', 'provider', 'protocol', 'gas_sponsor'],
   });
 }

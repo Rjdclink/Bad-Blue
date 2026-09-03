@@ -1,10 +1,7 @@
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
-import {
-  zeroCapitalEngine,
-  type SupportedChain,
-  type ZeroCapitalOpportunity,
-} from '../core/zero-capital-engine.js';
+import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import {
   calculateMeasuredFlashLoanFee,
   measureFlashLoanProviders,
@@ -15,8 +12,28 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
+import {
+  buildBpsReductionSuperPlan,
+  recordBpsRevalidationOutcome,
+  type BpsReductionSuperPlan,
+} from '../optimization/bps-reduction-super-engine.js';
+import { adviseEconomicTransformations } from '../optimization/economic-transformation-engine.js';
+import { buildResearchBpsExecutionPlan } from '../optimization/research-bps-execution-tactics.js';
+import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 
-const installed = new WeakSet<object>();
+type ZeroCapitalBpsRescueContext = {
+  plan: BpsReductionSuperPlan;
+  dominantCostDriver: string;
+};
+
+export interface ZeroCapitalProfitabilityRescueInput {
+  chain: SupportedChain;
+  provider: providers.JsonRpcProvider;
+  opportunities: readonly ZeroCapitalOpportunity[];
+  configuredRoutes: readonly ConfiguredZeroCapitalRoute[];
+  fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
+}
 
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const value = Number(raw);
@@ -85,22 +102,52 @@ function adjustForProvider(quote: QuotedZeroCapitalRoute, evidence: FlashLoanPro
   };
 }
 
-function candidateFactors(opportunity: ZeroCapitalOpportunity): number[] {
+function bpsRescueContext(opportunity: ZeroCapitalOpportunity): ZeroCapitalBpsRescueContext | null {
+  const candidate = measuredCandidateRegistry.get(opportunity.id);
+  if (!candidate) return null;
+  const advice = adviseEconomicTransformations(candidate);
+  const researchPlan = buildResearchBpsExecutionPlan(candidate, advice);
+  return {
+    plan: buildBpsReductionSuperPlan(candidate, advice, researchPlan, null, getBpsCompressionMeshSnapshot()),
+    dominantCostDriver: advice.dominantCostDriver,
+  };
+}
+
+function candidateFactors(opportunity: ZeroCapitalOpportunity, context: ZeroCapitalBpsRescueContext | null): number[] {
+  const sharedResidualFractions = context?.plan.residualNotionalFractions
+    .filter(fraction => Number.isFinite(fraction) && fraction > 0 && fraction < 1) ?? [];
   const gap = Math.max(0, -opportunity.netProfitBps);
   const gasPressureBps = opportunity.flashLoanAmount > 0n
     ? Number((opportunity.estimatedExecutionCostInInputToken * 10_000n) / opportunity.flashLoanAmount)
     : 0;
-  if (gap <= 5) return [0.5, 0.7, 0.85, 1, 1.15, 1.3, 1.5, 1.8, 2.2];
-  if (gap <= 15) return [0.4, 0.6, 0.8, 1, 1.25, 1.5, 2, 2.5, 3];
-  if (gasPressureBps >= 25) return [0.75, 1, 1.5, 2, 3, 4, 5, 6, 8];
-  return [0.35, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5];
+
+  let local: number[];
+  if (context?.dominantCostDriver === 'slippage_impact' || context?.dominantCostDriver === 'latency_decay') {
+    local = [1, 0.85, 0.7, 0.5, 0.35];
+  } else if (context?.dominantCostDriver === 'gas' || context?.dominantCostDriver === 'relay' || context?.dominantCostDriver === 'bridge') {
+    local = [1, 1.25, 1.5, 2, 3, 4, 5, 6, 8];
+  } else if (gap <= 5) {
+    local = [0.5, 0.7, 0.85, 1, 1.15, 1.3, 1.5, 1.8, 2.2];
+  } else if (gap <= 15) {
+    local = [0.4, 0.6, 0.8, 1, 1.25, 1.5, 2, 2.5, 3];
+  } else if (gasPressureBps >= 25) {
+    local = [0.75, 1, 1.5, 2, 3, 4, 5, 6, 8];
+  } else {
+    local = [0.35, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5];
+  }
+  return [...new Set([...sharedResidualFractions, ...local])];
 }
 
-function candidateSizes(opportunity: ZeroCapitalOpportunity, route: ConfiguredZeroCapitalRoute): number[] {
+function candidateSizes(
+  opportunity: ZeroCapitalOpportunity,
+  route: ConfiguredZeroCapitalRoute,
+  context: ZeroCapitalBpsRescueContext | null,
+): number[] {
   const currentUsd = Math.max(0.01, usdFromBaseUnits(opportunity.flashLoanAmount, route.inputTokenDecimals));
-  const ceiling = bounded(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD, 1_000, currentUsd, 10_000);
+  const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd;
+  const ceiling = Math.max(currentUsd, ladderMaxNotionalUsd);
   const maxCandidates = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_SIZE_CANDIDATES, 7, 3, 12));
-  return [...new Set(candidateFactors(opportunity)
+  return [...new Set(candidateFactors(opportunity, context)
     .slice(0, maxCandidates)
     .map(factor => Math.max(0.01, Math.min(ceiling, currentUsd * factor))))]
     .sort((a, b) => a - b);
@@ -127,20 +174,29 @@ function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZe
     && candidate.netProfitBps > original.netProfitBps;
 }
 
-function rescuePriority(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
+function rescuePriority(opportunity: ZeroCapitalOpportunity, context: ZeroCapitalBpsRescueContext | null, now = Date.now()): number {
   if (opportunity.expectedProfit > 0n || opportunity.expiresAt <= now) return Number.NEGATIVE_INFINITY;
   const ageMs = Math.max(0, now - opportunity.timestamp);
   const agePenalty = Math.exp(-ageMs / bounded(process.env.ZERO_CAPITAL_RESCUE_HALF_LIFE_MS, 15_000, 1_000, 120_000));
   const gap = Math.max(0.01, Math.abs(opportunity.netProfitBps));
   const confidence = Math.max(0.05, Math.min(1, opportunity.confidence));
-  return (1 / gap) * confidence * agePenalty;
+  const basePriority = (1 / gap) * confidence * agePenalty;
+  const superPriority = context?.plan.effectivePriorityScore;
+  return superPriority !== undefined && Number.isFinite(superPriority) && superPriority > 0
+    ? basePriority * superPriority
+    : basePriority;
 }
 
 function selectRescueIds(opportunities: readonly ZeroCapitalOpportunity[], routes: readonly ConfiguredZeroCapitalRoute[]): Set<string> {
   const maxRoutes = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_ROUTES, 6, 1, 16));
+  const contexts = new Map<string, ZeroCapitalBpsRescueContext | null>();
+  const contextFor = (item: ZeroCapitalOpportunity) => {
+    if (!contexts.has(item.id)) contexts.set(item.id, bpsRescueContext(item));
+    return contexts.get(item.id) ?? null;
+  };
   const ranked = opportunities
     .filter(item => item.expectedProfit <= 0n && item.expiresAt > Date.now())
-    .sort((a, b) => rescuePriority(b) - rescuePriority(a));
+    .sort((a, b) => rescuePriority(b, contextFor(b)) - rescuePriority(a, contextFor(a)));
   const selected: string[] = [];
   const families = new Set<string>();
   for (const item of ranked) {
@@ -165,119 +221,134 @@ function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1000);
 }
 
-export function ensureZeroCapitalProfitabilityRescueV2(): void {
-  const target = zeroCapitalEngine as unknown as {
-    scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
-    configuredRoutes: ConfiguredZeroCapitalRoute[];
-    fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
-  };
-  if (installed.has(target) || process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_V2_ENABLED === 'false') return;
-  installed.add(target);
+export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProfitabilityRescueInput): Promise<ZeroCapitalOpportunity[]> {
+  const { chain, provider, opportunities, configuredRoutes, fromQuotedRoute } = input;
+  if (chain === 'europa' || opportunities.length === 0) return [...opportunities];
+  const rescueIds = selectRescueIds(opportunities, configuredRoutes);
+  if (rescueIds.size === 0) return [...opportunities];
 
-  const originalScan = target.scanChain.bind(target);
-  target.scanChain = async (chain, provider) => {
-    const opportunities = await originalScan(chain, provider);
-    if (chain === 'europa' || opportunities.length === 0) return opportunities;
-    const rescueIds = selectRescueIds(opportunities, target.configuredRoutes);
-    if (rescueIds.size === 0) return opportunities;
+  const maxQuoteLatencyMs = bounded(process.env.ZERO_CAPITAL_RESCUE_MAX_QUOTE_LATENCY_MS, 2_500, 250, 10_000);
+  const totalQuoteBudget = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET, 42, 6, 96));
+  let remainingQuoteBudget = totalQuoteBudget;
+  let improved = 0;
+  let positivesRecovered = 0;
+  let staleProviderEvidenceRejected = 0;
+  let insufficientLiquidityRejected = 0;
+  let bpsSuperEngineCandidates = 0;
+  let bpsSuperEnginePositiveRecoveries = 0;
+  const bpsDrivers = new Map<string, number>();
+  const output: ZeroCapitalOpportunity[] = [];
 
-    const maxQuoteLatencyMs = bounded(process.env.ZERO_CAPITAL_RESCUE_MAX_QUOTE_LATENCY_MS, 2_500, 250, 10_000);
-    const totalQuoteBudget = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET, 42, 6, 96));
-    let remainingQuoteBudget = totalQuoteBudget;
-    let improved = 0;
-    let positivesRecovered = 0;
-    let staleProviderEvidenceRejected = 0;
-    let insufficientLiquidityRejected = 0;
-    const output: ZeroCapitalOpportunity[] = [];
-
-    for (const opportunity of opportunities) {
-      if (!rescueIds.has(opportunity.id) || remainingQuoteBudget <= 0 || opportunity.expiresAt <= Date.now()) {
-        output.push(opportunity);
-        continue;
-      }
-      const route = routeForOpportunity(target.configuredRoutes, opportunity);
-      if (!route) {
-        output.push(opportunity);
-        continue;
-      }
-
-      try {
-        const providerEvidence = (await measureFlashLoanProviders({ chain: chain as any, provider, asset: opportunity.inputToken }))
-          .filter(item => providerFresh(item));
-        staleProviderEvidenceRejected += Math.max(0, 2 - providerEvidence.length);
-        if (providerEvidence.length === 0) {
-          output.push(opportunity);
-          continue;
-        }
-
-        let best: QuotedZeroCapitalRoute | null = null;
-        const sizes = candidateSizes(opportunity, route).slice(0, remainingQuoteBudget);
-        remainingQuoteBudget -= sizes.length;
-        const settled = await Promise.allSettled(sizes.map(sizeUsd =>
-          quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(sizeUsd, route.inputTokenDecimals) }, provider),
-        ));
-
-        for (const result of settled) {
-          if (result.status !== 'fulfilled' || !result.value || result.value.quoteLatencyMs > maxQuoteLatencyMs) continue;
-          let providerUsable = false;
-          for (const evidence of providerEvidence) {
-            if (!providerUsableForAmount(evidence, result.value.amountIn)) {
-              insufficientLiquidityRejected += 1;
-              continue;
-            }
-            providerUsable = true;
-            const adjusted = adjustForProvider(result.value, evidence);
-            if (adjusted) best = quoteBetter(best, adjusted);
-          }
-          if (!providerUsable) continue;
-        }
-
-        if (!best || !strictImprovement(opportunity, best)) {
-          output.push(opportunity);
-          continue;
-        }
-        const refined = target.fromQuotedRoute(best, blockTimestamp(opportunity));
-        refined.expiresAt = Math.min(refined.expiresAt, opportunity.expiresAt);
-        output.push(refined);
-        improved += 1;
-        if (best.netProfit > 0n) positivesRecovered += 1;
-      } catch (error) {
-        output.push(opportunity);
-        logger.debug('[ZeroCapitalProfitabilityRescueV2] Rescue degraded; original candidate retained', {
-          component: 'ZeroCapitalProfitabilityRescueV2',
-          chain,
-          opportunityId: opportunity.id,
-          error: error instanceof Error ? error.message : String(error),
-          executionAuthorityChanged: false,
-        });
-      }
+  for (const opportunity of opportunities) {
+    if (!rescueIds.has(opportunity.id) || remainingQuoteBudget <= 0 || opportunity.expiresAt <= Date.now()) {
+      output.push(opportunity);
+      continue;
+    }
+    const route = routeForOpportunity(configuredRoutes, opportunity);
+    if (!route) {
+      output.push(opportunity);
+      continue;
     }
 
-    logger.info('[ZeroCapitalProfitabilityRescueV2] Measured rescue pass completed', {
-      component: 'ZeroCapitalProfitabilityRescueV2',
-      chain,
-      rescueRoutes: rescueIds.size,
-      totalQuoteBudget,
-      remainingQuoteBudget,
-      improved,
-      positivesRecovered,
-      staleProviderEvidenceRejected,
-      insufficientLiquidityRejected,
-      inputTokenDecimalsAuthoritative: true,
-      expiredCandidatesSkipped: true,
-      quoteLatencyBounded: true,
-      providerFreshnessRequired: true,
-      providerLiquidityHeadroomRequired: true,
-      providerUtilizationBounded: true,
-      adaptiveGapAwareSizing: true,
-      routeFamilyDiversity: true,
-      positiveRanking: 'highest_absolute_net_profit',
-      negativeRanking: 'closest_measured_bps_to_break_even',
-      strictImprovementRequired: true,
-      existingPositiveNeverReplacedByNegative: true,
-      syntheticEconomics: false,
-      executionAuthority: false,
-    });
-    return output;
-  };
+    const bpsContext = bpsRescueContext(opportunity);
+    if (bpsContext) {
+      bpsSuperEngineCandidates += 1;
+      bpsDrivers.set(bpsContext.dominantCostDriver, (bpsDrivers.get(bpsContext.dominantCostDriver) || 0) + 1);
+    }
+
+    try {
+      const providerEvidence = (await measureFlashLoanProviders({ chain: chain as any, provider, asset: opportunity.inputToken }))
+        .filter(item => providerFresh(item));
+      staleProviderEvidenceRejected += Math.max(0, 2 - providerEvidence.length);
+      if (providerEvidence.length === 0) {
+        output.push(opportunity);
+        if (bpsContext) recordBpsRevalidationOutcome(bpsContext.plan, { deterministicPositive: 0, eligibleCandidates: 0 });
+        continue;
+      }
+
+      let best: QuotedZeroCapitalRoute | null = null;
+      const sizes = candidateSizes(opportunity, route, bpsContext).slice(0, remainingQuoteBudget);
+      remainingQuoteBudget -= sizes.length;
+      const settled = await Promise.allSettled(sizes.map(sizeUsd =>
+        quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(sizeUsd, route.inputTokenDecimals) }, provider),
+      ));
+
+      for (const result of settled) {
+        if (result.status !== 'fulfilled' || !result.value || result.value.quoteLatencyMs > maxQuoteLatencyMs) continue;
+        let providerUsable = false;
+        for (const evidence of providerEvidence) {
+          if (!providerUsableForAmount(evidence, result.value.amountIn)) {
+            insufficientLiquidityRejected += 1;
+            continue;
+          }
+          providerUsable = true;
+          const adjusted = adjustForProvider(result.value, evidence);
+          if (adjusted) best = quoteBetter(best, adjusted);
+        }
+        if (!providerUsable) continue;
+      }
+
+      if (bpsContext) {
+        recordBpsRevalidationOutcome(bpsContext.plan, {
+          deterministicPositive: best?.netProfit && best.netProfit > 0n ? 1 : 0,
+          eligibleCandidates: 0,
+        });
+      }
+
+      if (!best || !strictImprovement(opportunity, best)) {
+        output.push(opportunity);
+        continue;
+      }
+      const refined = fromQuotedRoute(best, blockTimestamp(opportunity));
+      refined.expiresAt = Math.min(refined.expiresAt, opportunity.expiresAt);
+      output.push(refined);
+      improved += 1;
+      if (best.netProfit > 0n) {
+        positivesRecovered += 1;
+        if (bpsContext) bpsSuperEnginePositiveRecoveries += 1;
+      }
+    } catch (error) {
+      output.push(opportunity);
+      if (bpsContext) recordBpsRevalidationOutcome(bpsContext.plan, { deterministicPositive: 0, eligibleCandidates: 0 });
+      logger.debug('[ZeroCapitalProfitabilityRescueV2] Rescue degraded; original candidate retained', {
+        component: 'ZeroCapitalProfitabilityRescueV2',
+        chain,
+        opportunityId: opportunity.id,
+        error: error instanceof Error ? error.message : String(error),
+        executionAuthorityChanged: false,
+      });
+    }
+  }
+
+  logger.info('[ZeroCapitalProfitabilityRescueV2] Canonical measured rescue pass completed', {
+    component: 'ZeroCapitalProfitabilityRescueV2',
+    chain,
+    rescueRoutes: rescueIds.size,
+    totalQuoteBudget,
+    remainingQuoteBudget,
+    improved,
+    positivesRecovered,
+    staleProviderEvidenceRejected,
+    insufficientLiquidityRejected,
+    bpsSuperEngineCandidates,
+    bpsSuperEnginePositiveRecoveries,
+    bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
+    bpsPriorityAuthority: 'shared_bps_super_engine_effective_priority_score',
+    bpsResidualNotionalAuthority: 'shared_bps_super_engine_residual_notional_fractions_plus_fixed_cost_dilution_probes',
+    liveNotionalCeilingAuthority: 'profit_ladder_only',
+    inputTokenDecimalsAuthoritative: true,
+    providerFreshnessRequired: true,
+    providerLiquidityHeadroomRequired: true,
+    providerUtilizationBounded: true,
+    adaptiveGapAwareSizing: true,
+    routeFamilyDiversity: true,
+    strictImprovementRequired: true,
+    existingPositiveNeverReplacedByNegative: true,
+    freshExactRequoteRequired: true,
+    registryMethodMutation: false,
+    independentEnableSwitch: false,
+    syntheticEconomics: false,
+    executionAuthority: false,
+  });
+  return output;
 }

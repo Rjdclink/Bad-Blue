@@ -3,7 +3,6 @@ import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filt
 import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
-import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
@@ -39,9 +38,6 @@ import { ensurePredictionMarketDiscoveryWiring } from './prediction-market-disco
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 import { ensureZeroCapitalShadowPriorityWiring } from './zero-capital-shadow-priority-wiring.js';
-import { ensureZeroCapitalSizeRefinementWiring } from './zero-capital-size-refinement-wiring.js';
-import { ensureZeroCapitalJointProviderSizeWiring } from './zero-capital-joint-provider-size-wiring.js';
-import { ensureZeroCapitalProfitabilityRescueV2 } from './zero-capital-profitability-rescue-v2.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
 import { ensureZeroCapitalDynamicAttemptBarrierWiring } from './zero-capital-dynamic-attempt-barrier-wiring.js';
@@ -55,9 +51,28 @@ let zeroCapitalStartPromise: Promise<void> | null = null;
 let zeroCapitalRetryTimer: NodeJS.Timeout | null = null;
 let zeroCapitalStartAttempts = 0;
 
+type RuntimeComponentStatus = 'pending' | 'ready' | 'degraded';
+type RuntimeComponentInstaller = () => void | Promise<void>;
+
+interface RuntimeComponentState {
+  status: RuntimeComponentStatus;
+  attempts: number;
+  lastAttemptAt: number | null;
+  lastReadyAt: number | null;
+  lastError: string | null;
+}
+
+const runtimeComponentStates = new Map<string, RuntimeComponentState>();
+const runtimeComponentRetryTimers = new Map<string, NodeJS.Timeout>();
+
 function zeroCapitalRetryDelayMs(): number {
   const configured = Number(process.env.ZERO_CAPITAL_RUNTIME_START_RETRY_MS || 15_000);
   return Number.isFinite(configured) ? Math.max(2_500, Math.min(120_000, Math.trunc(configured))) : 15_000;
+}
+
+function runtimeComponentRetryDelayMs(): number {
+  const configured = Number(process.env.CRYPTOCRAWL_COMPONENT_RETRY_MS || 10_000);
+  return Number.isFinite(configured) ? Math.max(1_000, Math.min(120_000, Math.trunc(configured))) : 10_000;
 }
 
 function canonicalRuntimeStartupGraceMs(): number {
@@ -72,6 +87,102 @@ function canonicalRuntimeOverflowRetryMs(): number {
 
 function paidAlchemyPendingEvidenceExplicitlyEnabled(): boolean {
   return process.env.ALCHEMY_FILTERED_PENDING_ENABLED?.trim().toLowerCase() === 'true';
+}
+
+function currentComponentState(name: string): RuntimeComponentState {
+  return runtimeComponentStates.get(name) || {
+    status: 'pending',
+    attempts: 0,
+    lastAttemptAt: null,
+    lastReadyAt: null,
+    lastError: null,
+  };
+}
+
+function scheduleRuntimeComponentRetry(name: string, installer: RuntimeComponentInstaller): void {
+  if (runtimeComponentRetryTimers.has(name)) return;
+  const retryMs = runtimeComponentRetryDelayMs();
+  const timer = setTimeout(() => {
+    runtimeComponentRetryTimers.delete(name);
+    installRuntimeComponent(name, installer);
+  }, retryMs);
+  timer.unref?.();
+  runtimeComponentRetryTimers.set(name, timer);
+}
+
+function installRuntimeComponent(name: string, installer: RuntimeComponentInstaller): void {
+  const previous = currentComponentState(name);
+  const attempt = previous.attempts + 1;
+  runtimeComponentStates.set(name, {
+    ...previous,
+    status: 'pending',
+    attempts: attempt,
+    lastAttemptAt: Date.now(),
+  });
+
+  const markReady = () => {
+    runtimeComponentStates.set(name, {
+      status: 'ready',
+      attempts: attempt,
+      lastAttemptAt: Date.now(),
+      lastReadyAt: Date.now(),
+      lastError: null,
+    });
+    const retryTimer = runtimeComponentRetryTimers.get(name);
+    if (retryTimer) clearTimeout(retryTimer);
+    runtimeComponentRetryTimers.delete(name);
+  };
+
+  const markDegraded = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    runtimeComponentStates.set(name, {
+      status: 'degraded',
+      attempts: attempt,
+      lastAttemptAt: Date.now(),
+      lastReadyAt: previous.lastReadyAt,
+      lastError: message,
+    });
+    logger.error('[CryptoRuntimeIsolation] Component degraded without stopping unrelated runtime components', {
+      component: 'CanonicalCryptoCrawlerRuntimeWiring',
+      runtimeComponent: name,
+      attempts: attempt,
+      error: message,
+      retryInMs: runtimeComponentRetryDelayMs(),
+      globalRuntimeShutdownAuthority: false,
+      unrelatedComponentsContinue: true,
+      failedComponentExecutionAuthorityGranted: false,
+    });
+    scheduleRuntimeComponentRetry(name, installer);
+  };
+
+  try {
+    const result = installer();
+    if (result && typeof (result as Promise<void>).then === 'function') {
+      void Promise.resolve(result).then(markReady).catch(markDegraded);
+      return;
+    }
+    markReady();
+  } catch (error) {
+    markDegraded(error);
+  }
+}
+
+export function getCanonicalRuntimeComponentIsolationSnapshot() {
+  const components = [...runtimeComponentStates.entries()]
+    .map(([name, state]) => ({ name, ...state }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    observedAt: Date.now(),
+    totalComponents: components.length,
+    readyComponents: components.filter(component => component.status === 'ready').length,
+    degradedComponents: components.filter(component => component.status === 'degraded').length,
+    pendingComponents: components.filter(component => component.status === 'pending').length,
+    components,
+    failureIsolation: 'per_component_retry_without_global_runtime_shutdown' as const,
+    globalRuntimeShutdownAuthority: false as const,
+    independentComponentsContinue: true as const,
+    hardSafetyRemainsLocalFailClosed: true as const,
+  };
 }
 
 function startCanonicalZeroCapitalRuntime(): void {
@@ -89,7 +200,8 @@ function startCanonicalZeroCapitalRuntime(): void {
         lifecycleOwner: 'AutonomousZeroCapitalEngine',
         receiverFleetInitialization: true,
         dynamicGraphlessScanning: true,
-        liveExecutionRequested: process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true',
+        liveExecutionRequested: process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true' && process.env.NO_EXECUTION !== 'true',
+        zeroCapitalSpecificExecutionFlagAuthority: false,
         startAttempts: zeroCapitalStartAttempts,
         syntheticExecution: false,
       });
@@ -115,53 +227,53 @@ function installCanonicalRuntime(): void {
   if (installed) return;
   installed = true;
 
-  ensureStageProfitCapRetirement();
-  logZeroCapitalReadinessDiagnostics();
-  ensureComputationalReactorWiring();
-  ensureLearningLifecycleWiring();
-  ensureMonteCarloCalibrationWiring();
-  ensureOracleEvidenceWiring();
-  ensureDynamicScalePressureWiring();
-  ensureZeroCapitalResourceWiring();
-  ensureZeroCapitalShadowPriorityWiring();
-  ensureZeroCapitalSizeRefinementWiring();
-  ensureZeroCapitalJointProviderSizeWiring();
-  ensureZeroCapitalProfitabilityRescueV2();
-  ensureZeroCapitalFlashProviderWiring();
-  ensureProviderSpecificZeroCapitalExecutionWiring();
-  ensureDualProviderZeroCapitalExecutionWiring();
-  ensureZeroCapitalAtomicStackWiring();
-  ensureZeroCapitalDynamicAttemptBarrierWiring();
-  ensureAlchemyStandardRpcFirstWiring();
+  const install = installRuntimeComponent;
 
-  // Terminal realized-profit reconciliation must exist before the engine can
-  // select native funding or broadcast any zero-capital transaction. The wiring
-  // is idempotent, so every lifecycle entry point can safely reassert it.
-  ensureZeroCapitalRealizedProfitWiring();
-  void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
+  install('zero_capital_readiness_diagnostics', () => logZeroCapitalReadinessDiagnostics());
+  install('computational_reactor', () => ensureComputationalReactorWiring());
+  install('learning_lifecycle', () => ensureLearningLifecycleWiring());
+  install('monte_carlo_calibration', () => ensureMonteCarloCalibrationWiring());
+  install('oracle_evidence', () => ensureOracleEvidenceWiring());
+  install('dynamic_scale_pressure', () => ensureDynamicScalePressureWiring());
+  install('zero_capital_resource', () => ensureZeroCapitalResourceWiring());
+  install('zero_capital_shadow_priority', () => ensureZeroCapitalShadowPriorityWiring());
+  install('zero_capital_flash_provider', () => ensureZeroCapitalFlashProviderWiring());
+  install('provider_specific_zero_capital_execution', () => ensureProviderSpecificZeroCapitalExecutionWiring());
+  install('dual_provider_zero_capital_execution', () => ensureDualProviderZeroCapitalExecutionWiring());
+  install('zero_capital_atomic_stack', () => ensureZeroCapitalAtomicStackWiring());
+  install('zero_capital_dynamic_attempt_barrier', () => ensureZeroCapitalDynamicAttemptBarrierWiring());
+  install('alchemy_standard_rpc_first', () => ensureAlchemyStandardRpcFirstWiring());
+  install('zero_capital_realized_profit', () => ensureZeroCapitalRealizedProfitWiring());
+  install('dynamic_rpc_provider', async () => {
+    try {
+      await ensureDynamicRpcProviderWiring();
+    } finally {
+      startCanonicalZeroCapitalRuntime();
+    }
+  });
 
-  ensureOrderBookEvolutionWiring();
-  ensureCexFourModeObservabilityWiring();
-  ensureCryptaraCexEvidenceWiring();
-  ensureCryptaraSovereignCortexWiring();
-  ensureCryptaraPredictivePrefetchWiring();
-  ensureStablecoinMakerExecutionWiring();
-  ensureHybridCexExecutionWiring();
-  ensureStageProofMetricsWiring();
-  ensureAuthenticatedFeeTierOptimizationWiring();
-  ensureAdaptiveProfitOperationsWiring();
-  ensureCexInventoryReadinessWiring();
-  ensureExecutionReadinessProfitabilityWiring();
-  ensureInventoryConstrainedCexExecutionWiring();
-  ensureCrossVenueTimingGuardWiring();
-  ensureMeasuredCandidateExpiryGuardWiring();
-  ensureDynamicProfitabilityAdmissionWiring();
-  ensureStageOneBootstrapAuthority();
-  void canonicalIntelligenceRepository.hydrate();
-  ensureCanonicalIntelligenceOutbox();
+  install('order_book_evolution', () => ensureOrderBookEvolutionWiring());
+  install('cex_four_mode_observability', () => ensureCexFourModeObservabilityWiring());
+  install('cryptara_cex_evidence', () => ensureCryptaraCexEvidenceWiring());
+  install('cryptara_sovereign_cortex', () => ensureCryptaraSovereignCortexWiring());
+  install('cryptara_predictive_prefetch', () => ensureCryptaraPredictivePrefetchWiring());
+  install('stablecoin_maker_execution', () => ensureStablecoinMakerExecutionWiring());
+  install('hybrid_cex_execution', () => ensureHybridCexExecutionWiring());
+  install('stage_proof_metrics', () => ensureStageProofMetricsWiring());
+  install('authenticated_fee_tier_optimization', () => ensureAuthenticatedFeeTierOptimizationWiring());
+  install('adaptive_profit_operations', () => ensureAdaptiveProfitOperationsWiring());
+  install('cex_inventory_readiness', () => ensureCexInventoryReadinessWiring());
+  install('execution_readiness_profitability', () => ensureExecutionReadinessProfitabilityWiring());
+  install('inventory_constrained_cex_execution', () => ensureInventoryConstrainedCexExecutionWiring());
+  install('cross_venue_timing_guard', () => ensureCrossVenueTimingGuardWiring());
+  install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring());
+  install('dynamic_profitability_admission', () => ensureDynamicProfitabilityAdmissionWiring());
+  install('stage_one_bootstrap_authority', () => ensureStageOneBootstrapAuthority());
+  install('canonical_intelligence_repository_hydrate', () => canonicalIntelligenceRepository.hydrate());
+  install('canonical_intelligence_outbox', () => ensureCanonicalIntelligenceOutbox());
 
   if (paidAlchemyPendingEvidenceExplicitlyEnabled()) {
-    ensureFilteredAlchemyPendingStream();
+    install('filtered_alchemy_pending_stream', () => ensureFilteredAlchemyPendingStream());
   } else {
     logger.info('[AlchemyCostContainment] Paid filtered pending stream withheld', {
       component: 'CanonicalCryptoCrawlerRuntimeWiring',
@@ -171,13 +283,13 @@ function installCanonicalRuntime(): void {
     });
   }
 
-  ensureFilteredMempoolObservability();
-  ensureZeroXBudgetObservability();
-  ensureAcrossBridgeObservability();
-  ensurePredictionMarketDiscoveryWiring();
-  multiTopologyDiscoveryController.start();
-  logLegacyIntelligenceQuarantine();
-  ensureCryptoRuntimeObservability();
+  install('filtered_mempool_observability', () => ensureFilteredMempoolObservability());
+  install('zero_x_budget_observability', () => ensureZeroXBudgetObservability());
+  install('across_bridge_observability', () => ensureAcrossBridgeObservability());
+  install('prediction_market_discovery', () => ensurePredictionMarketDiscoveryWiring());
+  install('multi_topology_discovery_controller', () => multiTopologyDiscoveryController.start());
+  install('legacy_intelligence_quarantine_log', () => logLegacyIntelligenceQuarantine());
+  install('crypto_runtime_observability', () => ensureCryptoRuntimeObservability());
 
   logger.info('Canonical CryptoCrawler runtime wiring installed', {
     component: 'CanonicalCryptoCrawlerRuntimeWiring',
@@ -231,9 +343,12 @@ function installCanonicalRuntime(): void {
     predictionMarketExecutionAuthority: false,
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
-    zeroCapitalRuntimeLifecycle: 'terminal_realized_profit_authority_then_cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
-    zeroCapitalSizeOptimization: 'coarse_independent_quotes_plus_bounded_fresh_local_refinement_plus_exact_provider_size_rescue_plus_profitability_rescue_v2',
-    zeroCapitalProfitabilityRescue: 'decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
+    zeroCapitalRuntimeLifecycle: 'terminal_realized_profit_authority_then_cost_safe_rpc_mesh_then_single_canonical_hard_fact_governance_then_fail_closed_retry',
+    zeroCapitalSizeOptimization: 'canonical_scan_direct_bps_rescue_with_exact_provider_fee_liquidity_and_fresh_notional_requotes',
+    zeroCapitalDuplicateSizeOptimizerOwners: 0,
+    zeroCapitalProfitabilityRescue: 'canonical_scan_direct_call_decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
+    zeroCapitalProfitabilityRescueInstallerAuthority: false,
+    zeroCapitalPredictiveUsdEconomics: 'live_input_asset_price_required_before_monte_carlo_and_position_sizing',
     zeroCapitalFlashLoanEconomics: 'measured_single_provider_fee_liquidity_plus_combined_aave_balancer_liquidity_rescue',
     zeroCapitalProviderExecution: 'verified_balancer_aave_or_dual_receiver_permission_binding',
     zeroCapitalProviderMesh: 'balancer_or_aave_or_balancer_outer_plus_nested_aave_when_combined_liquidity_unlocks_exact_size',
@@ -249,6 +364,9 @@ function installCanonicalRuntime(): void {
     alchemyStandardTokenReads: 'public_rpc_first_then_enhanced_api_fallback',
     localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
+    runtimeComponentIsolation: 'per_component_retry_without_global_runtime_shutdown',
+    runtimeComponentIsolationGlobalShutdownAuthority: false,
+    runtimeComponentIsolationHardSafetyScope: 'failed_component_or_candidate_only',
     startupAdmission: 'production_grace_then_overflow_authority_only_no_primary_probe_or_fallback',
     startupGraceMs: canonicalRuntimeStartupGraceMs(),
   });

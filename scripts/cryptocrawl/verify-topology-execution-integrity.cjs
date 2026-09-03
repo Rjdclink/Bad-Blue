@@ -18,29 +18,26 @@ const mempoolCapability = read('server/services/cryptocrawl/discovery/mempool-ca
 const router = read('server/services/cryptocrawl/execution/unified-execution-router.ts');
 const rebalance = read('server/services/cryptocrawl/execution/inventory-rebalance-executor.ts');
 
-// Inventory-constrained CEX: authenticated balances + exact resized requote.
 assert(inventory.includes('reconcilePairBalances(plan)'), 'inventory execution must reconcile authenticated balances');
 assert(inventory.includes('arbitrageVerifier.evaluateOnce({'), 'inventory resize must use a fresh canonical requote');
 assert(inventory.includes('refreshed.netProfitUsd <= 0'), 'resized CEX plan must remain strictly positive after measured costs');
 assert(inventory.includes('REJECT_BALANCE_UNVERIFIED'), 'unverified inventory must fail closed');
 
-// Maker: live authority can come only from the existing measured post-only evaluator.
 assert(makerDiscovery.includes('evaluateMakerRecoveryCandidate({'), 'maker discovery must ask the canonical measured maker evaluator');
 assert(makerDiscovery.includes("status: 'eligible'"), 'fully measured maker plans must be representable as eligible');
 assert(makerDiscovery.includes('executableCapability: true'), 'fully measured maker plan must expose execution capability');
 assert(makerDiscovery.includes("'post_only:true'"), 'maker promotion must preserve post-only semantics');
 assert(makerDiscovery.includes("'taker_fallback:false'"), 'maker promotion must forbid implicit taker fallback');
 assert(makerRuntime.includes('createPostOnlyMakerAdapters(plan)'), 'maker live execution must use post-only adapters');
-assert(runtime.includes('ensureStablecoinMakerExecutionWiring();'), 'canonical runtime must install maker execution wiring');
+assert(runtime.includes("install('stablecoin_maker_execution', () => ensureStablecoinMakerExecutionWiring())"), 'canonical runtime must install maker execution wiring through an isolated component');
+assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'maker wiring failure must not own global runtime shutdown');
 
-// Cross-chain: refresh, simulate, submit, then terminal Across destination/refund proof.
 assert(across.includes('getAcrossBridgeQuote({'), 'Across execution must refresh the quote immediately before signing');
 assert(across.includes('simulationSuccess !== true'), 'Across execution must reject an unsimulated quote');
 assert(across.includes('freshExecutionPayload'), 'Across execution must fetch a fresh transaction payload');
 assert(across.includes('getAcrossDepositSettlementEvidence({'), 'Across execution must bind provider status to terminal receipt evidence');
 assert(across.includes('destinationReceiptVerified'), 'successful bridge settlement must require destination receipt verification');
 
-// Liquidation: exact measured Aave state, full atomic simulation, positive all-in economics and terminal receipt proof.
 assert(liquidation.includes('getUserAccountData'), 'liquidation must re-read Aave account health');
 assert(liquidation.includes('getUserReserveData'), 'liquidation must inspect reserve-level debt/collateral');
 assert(liquidation.includes('measureAaveV3FlashLoanEconomics'), 'liquidation must measure current flash-loan economics');
@@ -50,7 +47,6 @@ assert(liquidation.includes('provider.estimateGas('), 'liquidation must measure 
 assert(liquidation.includes('deterministicNetProfitUsd'), 'liquidation must calculate deterministic all-in economics');
 assert(liquidation.includes('settlementConfirmed: true'), 'liquidation must expose terminal confirmed receipt outcomes');
 
-// Funding: migration-owned durable state machine; never block the canonical scheduler for a funding window.
 assert(fundingMigration.includes('private.cryptocrawler_funding_lifecycles'), 'funding lifecycle schema must be migration-owned');
 assert(funding.includes("const TABLE = 'private.cryptocrawler_funding_lifecycles'"), 'funding runtime must use the migration-owned lifecycle table');
 assert(!funding.includes('CREATE TABLE'), 'funding runtime must not own DDL');
@@ -64,7 +60,6 @@ assert(funding.includes('settlement.spotClosed') && funding.includes('settlement
 assert(funding.includes('settlement.realizedNetProfitUsd !== null'), 'funding learning must require measured terminal net P&L');
 assert(router.includes('funding_lifecycle_adapter_unavailable'), 'router must fail closed when no funding venue lifecycle adapter is registered');
 
-// MEV: strict executor exists, but routing must remain unavailable until an exact post-victim compiler exists.
 assert(mev.includes('sandwichOrFrontrun: false'), 'MEV execution must remain backrun-only');
 assert(mev.includes('signedBackrunTransaction'), 'MEV executor must accept exact signed backrun bytes');
 assert(mev.includes('MultiRelaySubmitter'), 'backrun must use relay simulation/submission authority');
@@ -74,7 +69,6 @@ assert(mempoolCapability.includes('executableBackrunEvidence: false'), 'pending-
 assert(router.includes("case 'MEMPOOL_BACKRUN':"), 'router must explicitly handle backrun topology');
 assert(router.includes('exact_post_victim_backrun_compiler_unavailable'), 'router must fail closed until the canonical backrun compiler exists');
 
-// Rebalancing: adapter-bound live transfers with governance and terminal destination settlement.
 assert(rebalance.includes('registerAdapter'), 'rebalancing must have an explicit settlement adapter registry');
 assert(rebalance.includes("requireAllowed('SUBMIT_TX'"), 'rebalancing must pass live governance');
 assert(rebalance.includes('settlementConfirmed === true && last.successful === true'), 'rebalancing must require terminal successful settlement');
@@ -84,4 +78,4 @@ for (const [name, source] of Object.entries({ across, liquidation, funding, mev,
   assert(!source.includes('syntheticProfit'), `${name} must not introduce synthetic profit authority`);
 }
 
-console.log('[topology-execution-integrity] PASS: inventory, maker, cross-chain, liquidation, funding, MEV fail-closed compiler boundary, and rebalancing invariants are preserved');
+console.log('[topology-execution-integrity] PASS: inventory, isolated maker runtime, cross-chain, liquidation, funding, MEV fail-closed compiler boundary, and rebalancing invariants are preserved');

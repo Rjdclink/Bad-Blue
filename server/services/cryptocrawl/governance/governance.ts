@@ -30,10 +30,19 @@ function isExpired(envelope: ExecutionEnvelope, at: number): boolean {
   return at >= envelope.expiresAt;
 }
 
+function isLiveExecutionAction(action: GovernanceAction): boolean {
+  return action === 'EXECUTE_OPPORTUNITY' || action === 'SUBMIT_TX';
+}
+
 /**
- * Canonical execution-envelope facade. StageManager owns the mutable stage,
- * pause, anomaly, and kill-switch state. Stage progression controls bounded
- * scale/scope; it does not independently veto a fully evidenced positive trade.
+ * Canonical execution-envelope facade. StageManager owns mutable stage, pause,
+ * anomaly, and kill-switch state. Stage progression controls scaling evidence;
+ * it does not independently veto a fully evidenced positive trade.
+ *
+ * Live execution has exactly one governance decision below. Manual envelopes
+ * remain useful for non-trading administrative actions, but envelope expiry,
+ * mismatch, quota, or stage telemetry may not globally pause or veto an
+ * otherwise-valid market execution.
  */
 export class CryptocrawlGovernance {
   private activeEnvelope: ExecutionEnvelope | null = null;
@@ -65,7 +74,13 @@ export class CryptocrawlGovernance {
   async setStage(stage: CryptocrawlStage, actor: GovernanceActor, reason = 'stage_change'): Promise<void> {
     const currentStage = stageManager.getCurrentStage() as CryptocrawlStage;
     if (stage === currentStage) {
-      this.pause(actor, `stage=${stage}:${reason}`);
+      logger.info('[Governance] Same-stage request is a no-op', {
+        component: 'CryptocrawlGovernance',
+        actor,
+        stage,
+        reason,
+        globalPauseApplied: false,
+      });
       return;
     }
     const result = await stageManager.requestStageAdvancement(actor, stage as ManagedStage);
@@ -164,8 +179,8 @@ export class CryptocrawlGovernance {
     logger.error('[Governance] KILL-SWITCH engaged through canonical StageManager', { component: 'CryptocrawlGovernance', actor, reason });
   }
 
-  completeAdvisoryCycle(actor: GovernanceActor, reason = 'advisory_cycle_complete'): void {
-    if (this.getState().stage === 1 && !stageManager.isAutomaticallyActivated()) this.pause(actor, reason);
+  completeAdvisoryCycle(_actor: GovernanceActor, _reason = 'advisory_cycle_complete'): void {
+    // Telemetry only.
   }
 
   requireBootstrapSettlementAllowed(context: { chain: string; pair: string; venue: string }): void {
@@ -192,6 +207,11 @@ export class CryptocrawlGovernance {
   }
 
   requireAllowed(action: GovernanceAction, context?: { chain?: string; pair?: string; venue?: string }): void {
+    if (isLiveExecutionAction(action)) {
+      this.requireCanonicalLiveExecutionAllowed(action, context);
+      return;
+    }
+
     const at = nowMs();
     const state = this.getState();
     if (state.killSwitch.engaged) {
@@ -203,6 +223,7 @@ export class CryptocrawlGovernance {
     if (state.paused) {
       throw new GovernanceError('PAUSED', 'System is paused', { stage: state.stage, pauseReason: state.pauseReason });
     }
+
     const envelope = this.activeEnvelope;
     if (!envelope) {
       if (stageManager.isAutomaticallyActivated()) {
@@ -212,15 +233,20 @@ export class CryptocrawlGovernance {
       throw new GovernanceError('NO_ACTIVE_ENVELOPE', 'No active envelope (UNPAUSE required)', { stage: state.stage });
     }
     if (isExpired(envelope, at)) {
-      this.pause('system', 'envelope_expired');
-      throw new GovernanceError('ENVELOPE_EXPIRED', 'Active envelope has expired', { envelopeId: envelope.id, expiresAt: envelope.expiresAt });
+      this.clearEnvelope();
+      throw new GovernanceError('ENVELOPE_EXPIRED', 'Active envelope has expired', {
+        envelopeId: envelope.id,
+        expiresAt: envelope.expiresAt,
+        globalPauseApplied: false,
+      });
     }
     if (envelope.stage !== state.stage) {
-      this.pause('system', 'envelope_stage_mismatch');
-      throw new GovernanceError('STAGE_VIOLATION', 'Active envelope stage mismatch', { currentStage: state.stage, envelopeStage: envelope.stage });
-    }
-    if ((action === 'EXECUTE_OPPORTUNITY' || action === 'SUBMIT_TX') && !state.killSwitch.armed) {
-      throw new GovernanceError('KILL_SWITCH_NOT_ARMED', 'Kill-switch must be armed before any live action', { stage: state.stage, action });
+      this.clearEnvelope();
+      throw new GovernanceError('STAGE_VIOLATION', 'Active envelope stage mismatch', {
+        currentStage: state.stage,
+        envelopeStage: envelope.stage,
+        globalPauseApplied: false,
+      });
     }
     if (!envelope.allowedActions.includes(action)) {
       throw new GovernanceError('ACTION_NOT_ALLOWED', 'Action not allowed by envelope', { action, envelopeId: envelope.id, allowedActions: envelope.allowedActions });
@@ -237,8 +263,11 @@ export class CryptocrawlGovernance {
       throw new GovernanceError('CONSTRAINT_VIOLATION', 'Venue not allowed by envelope', { venue: context.venue, allowedVenues: venues, envelopeId: envelope.id });
     }
     if (typeof maxExecutions === 'number' && maxExecutions >= 0 && this.executionsInEnvelope >= maxExecutions) {
-      this.pause('system', 'envelope_max_executions_reached');
-      throw new GovernanceError('CONSTRAINT_VIOLATION', 'Envelope maxExecutions reached; system paused', { envelopeId: envelope.id, maxExecutions });
+      throw new GovernanceError('CONSTRAINT_VIOLATION', 'Envelope maxExecutions reached for this administrative envelope', {
+        envelopeId: envelope.id,
+        maxExecutions,
+        globalPauseApplied: false,
+      });
     }
   }
 
@@ -255,48 +284,72 @@ export class CryptocrawlGovernance {
     this.executionsInEnvelope = 0;
   }
 
+  private requireCanonicalLiveExecutionAllowed(
+    action: GovernanceAction,
+    context?: { chain?: string; pair?: string; venue?: string },
+  ): void {
+    const state = stageManager.getState();
+    const config = stageManager.getStageConfig();
+    const gate = stageManager.canProceed();
+    if (!gate.allowed) {
+      throw new GovernanceError(
+        state.killSwitchActive ? 'KILL_SWITCH_ENGAGED' : 'PAUSED',
+        gate.reason || 'Canonical StageManager denied live execution',
+        { stage: state.currentStage, action },
+      );
+    }
+    if (!stageManager.canExecuteTrades()) {
+      throw new GovernanceError('STAGE_VIOLATION', 'Canonical stage execution authority is disabled', {
+        stage: state.currentStage,
+        action,
+      });
+    }
+    if (!config.killSwitchArmed) {
+      throw new GovernanceError('KILL_SWITCH_NOT_ARMED', 'Kill-switch must be armed before any live action', {
+        stage: state.currentStage,
+        action,
+      });
+    }
+
+    if (context?.venue) {
+      const capability = getVenueCapabilities().find(candidate => candidate.venue === context.venue);
+      if (!capability || !capability.enabled || !capability.liveExecution || !capability.settlementVerification) {
+        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Venue is outside settlement-safe automatic execution scope', {
+          venue: context.venue,
+          stage: state.currentStage,
+        });
+      }
+      return;
+    }
+
+    if (!context?.chain) {
+      throw new GovernanceError('CONSTRAINT_VIOLATION', 'Live execution requires an explicit supported chain or settlement-safe CEX venue context', {
+        stage: state.currentStage,
+        action,
+      });
+    }
+
+    // A stage's allowedChains list is scope telemetry for progression, not a
+    // second live-execution authority. The strategy executor owns the hard chain
+    // facts: provider, funding, receiver/permissions, product/route support and
+    // terminal settlement capability.
+  }
+
   private requireAutomaticActivationAllowed(
     action: GovernanceAction,
     context?: { chain?: string; pair?: string; venue?: string },
   ): void {
     const state = stageManager.getState();
     const config = stageManager.getStageConfig();
-    if ((action === 'EXECUTE_OPPORTUNITY' || action === 'SUBMIT_TX') && !stageManager.canExecuteTrades()) {
-      throw new GovernanceError('STAGE_VIOLATION', 'Canonical stage execution authority is disabled', { stage: state.currentStage, action });
-    }
-    if ((action === 'EXECUTE_OPPORTUNITY' || action === 'SUBMIT_TX') && !config.killSwitchArmed) {
-      throw new GovernanceError('KILL_SWITCH_NOT_ARMED', 'Kill-switch must be armed before any live action', { stage: state.currentStage, action });
+    if (isLiveExecutionAction(action)) {
+      this.requireCanonicalLiveExecutionAllowed(action, context);
+      return;
     }
     if (action === 'PERSIST_LONG_TERM_MEMORY' && state.currentStage < 4) {
       throw new GovernanceError('STAGE_VIOLATION', 'Long-term memory remains unavailable before Stage 4', { stage: state.currentStage });
     }
     if (action === 'EVOLVE_STRATEGY' && !config.canSelfExpand) {
       throw new GovernanceError('ACTION_NOT_ALLOWED', 'Evolution lock remains active for this stage', { stage: state.currentStage });
-    }
-    if (action === 'EXECUTE_OPPORTUNITY' || action === 'SUBMIT_TX') {
-      if (context?.venue) {
-        const capability = getVenueCapabilities().find(candidate => candidate.venue === context.venue);
-        if (!capability || !capability.enabled || !capability.liveExecution || !capability.settlementVerification) {
-          throw new GovernanceError('CONSTRAINT_VIOLATION', 'Venue is outside settlement-safe automatic execution scope', {
-            venue: context.venue,
-            stage: state.currentStage,
-          });
-        }
-        return;
-      }
-      if (!context?.chain) {
-        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Automatic execution requires an explicit supported chain or settlement-safe CEX venue context', {
-          stage: state.currentStage,
-          action,
-        });
-      }
-      if (!config.allowedChains.includes(context.chain)) {
-        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Chain is outside automatic stage scope', {
-          chain: context.chain,
-          allowedChains: config.allowedChains,
-          stage: state.currentStage,
-        });
-      }
     }
   }
 }

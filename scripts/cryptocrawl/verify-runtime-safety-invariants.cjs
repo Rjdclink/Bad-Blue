@@ -26,21 +26,34 @@ function forbid(relativePath, forbiddenFragments) {
   }
 }
 
-// 1) Unified execution remains fail-closed and strictly positive on measured
-// all-in economics. Adaptive intelligence may rank/size but cannot independently
-// veto a deterministic positive opportunity with complete execution evidence.
+// 1) Unified execution remains strictly positive on measured all-in economics.
+// Missing/advisory evidence is reacquired and scored, but cannot independently
+// veto a deterministic positive candidate. Strategy-specific hard requirements
+// remain with the canonical executor for that strategy.
 const unifiedRouter = requireAll('server/services/cryptocrawl/execution/unified-execution-router.ts', [
-  "const deterministicPositive = Number(candidate.economics.deterministicNetProfitUsd) > 0;",
-  "candidate.status === 'eligible'",
-  'candidate.executableCapability',
-  'candidate.missingInformation.length === 0',
-  "candidate.depth.status !== 'unavailable'",
-  'candidate.expiresAt > Date.now()',
-  "admitted: deterministicPositive && completeCurrentEvidence && path !== 'UNAVAILABLE'",
+  'export interface AdvisoryEvidenceScores',
+  'advisoryOnly: true',
+  'const deterministicPositive = Number.isFinite(deterministicNet) && deterministicNet > 0;',
+  'const deterministicNegative = Number.isFinite(deterministicNet) && deterministicNet < 0;',
+  "hardVetoReasons.push('blocked:verified_negative_all_in_net')",
+  "hardVetoReasons.push('blocked:no_authoritative_execution_path')",
+  'const evidenceReacquisitionRequired = deterministicZero',
+  'candidate.missingInformation.length > 0;',
   'advisory:adaptive_profitability_or_confidence_below_ranking_threshold',
+  'const admitted = deterministicPositive',
+  '&& pathAvailable',
+  '&& candidate.executableCapability',
+  '&& fresh',
+  '&& depthReady;',
 ]);
-if (unifiedRouter.includes("admitted: deterministicPositive && completeCurrentEvidence && aboveAdaptiveThreshold && path !== 'UNAVAILABLE'")) {
-  throw new Error('unified execution router reintroduced adaptive score/confidence as an independent execution veto');
+for (const forbidden of [
+  "admitted: deterministicPositive && completeCurrentEvidence && aboveAdaptiveThreshold && path !== 'UNAVAILABLE'",
+  "admitted: deterministicPositive && completeCurrentEvidence && path !== 'UNAVAILABLE'",
+  'candidate.missingInformation.length === 0',
+]) {
+  if (unifiedRouter.includes(forbidden)) {
+    throw new Error(`unified execution router reintroduced a duplicate/advisory execution veto: ${forbidden}`);
+  }
 }
 
 // 2) Cryptara CEX topology correction is limited to implemented execution venues.
@@ -147,4 +160,4 @@ forbid('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
   'canonicalPair(raw.baseCcy, raw.quoteCcy);',
 ]);
 
-console.log('[runtime-safety-invariants] PASS: strict positive economics, complete execution evidence, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, measured zero-capital repricing, bounded production observability, and semantic venue-asset identity invariants preserved');
+console.log('[runtime-safety-invariants] PASS: strict positive economics, advisory evidence scoring with active reacquisition, no duplicate missing-information veto, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, measured zero-capital repricing, bounded production observability, and semantic venue-asset identity invariants preserved');

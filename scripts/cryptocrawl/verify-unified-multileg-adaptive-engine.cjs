@@ -73,22 +73,25 @@ const required = [
   ['router', "'FLASH_LOAN_LIQUIDATION'", 'liquidation route'],
   ['router', "'SPOT_PERP_FUNDING'", 'funding route'],
   ['router', "'MEV_ATOMIC'", 'MEV route'],
-  ['router', "candidate.status === 'eligible'", 'eligible-only execution routing'],
-  ['router', 'candidate.missingInformation.length === 0', 'complete-evidence routing'],
-  ['router', "admitted: deterministicPositive && completeCurrentEvidence && path !== 'UNAVAILABLE'", 'combined canonical admission gate'],
+  ['router', 'export interface AdvisoryEvidenceScores', 'advisory evidence score surface'],
+  ['router', 'advisoryOnly: true', 'evidence scoring cannot execute or veto independently'],
+  ['router', 'const deterministicPositive = Number.isFinite(deterministicNet) && deterministicNet > 0;', 'strict positive deterministic admission floor'],
+  ['router', 'const evidenceReacquisitionRequired = deterministicZero', 'unknown/zero evidence is reacquired'],
+  ['router', 'const admitted = deterministicPositive', 'positive-net canonical router admission'],
+  ['router', '&& pathAvailable', 'authoritative path requirement'],
+  ['router', '&& candidate.executableCapability', 'execution capability requirement'],
+  ['router', '&& fresh', 'freshness requirement'],
+  ['router', '&& depthReady;', 'depth readiness requirement'],
   ['router', 'advisory:adaptive_profitability_or_confidence_below_ranking_threshold', 'adaptive threshold advisory-only telemetry'],
   ['compatibility', 'routeMeasuredOpportunity(candidate)', 'compatibility selector delegates to unified router'],
   ['compatibility', 'score: routed.score.profitabilityScore', 'compatibility selector uses sole score authority'],
   ['compatibility', 'scoring_authority=UnifiedExecutionRouter:ProfitabilityScore', 'explicit sole scoring authority'],
 
   ['admission', 'originalExecute(plan)', 'CEX live admission wiring'],
-  ['admission', 'originalIsAllowedByCryptara(opportunity)', 'zero-capital live admission wiring'],
-  ['admission', 'coldStartHistoricalProofRequired: false', 'no historical-proof prerequisite'],
+  ['admission', 'zeroCapitalAdmissionMonkeyPatchInstalled: false', 'zero-capital duplicate admission authority removed'],
+  ['stageOneBootstrap', 'terminalHistoryRequired: false', 'no historical-profit prerequisite for Stage 1 live validation'],
   ['admission', 'terminalSettlementStillRequiredAfterExecution: true', 'post-execution settlement invariant'],
 
-  // Rare/high-profit opportunities are never rejected for magnitude alone. An
-  // advisory positive observation must trigger bounded canonical revalidation,
-  // then the normal exact evidence and settlement-safe execution gates decide.
   ['cexPositiveRevalidation', 'triggerCanonicalPositiveRevalidation(positive)', 'positive CEX observation revalidation trigger'],
   ['cexPositiveRevalidation', 'measuredOpportunityGraph.revalidateSymbols(symbols)', 'exact-symbol canonical revalidation'],
   ['cexPositiveRevalidation', 'canonicalRevalidationRequired: true', 'positive observation requires canonical revalidation'],
@@ -132,7 +135,8 @@ const required = [
 
   ['stageOneBootstrap', "candidate.status !== 'eligible'", 'Stage 1 eligible-only validation'],
   ['stageOneBootstrap', '!candidate.executableCapability', 'Stage 1 execution-capability requirement'],
-  ['stageOneBootstrap', 'candidate.missingInformation.length > 0', 'Stage 1 complete-evidence requirement'],
+  ['stageOneBootstrap', "candidate.depth.status === 'unavailable'", 'Stage 1 measured-depth requirement'],
+  ['stageOneBootstrap', 'candidate.rawQuotes.some(quote => quote.executable === false)', 'Stage 1 executable-quote requirement'],
   ['stageOneBootstrap', "candidate.topology !== 'CEX_CEX' && candidate.topology !== 'MAKER_CEX' && candidate.topology !== 'ZERO_CAPITAL_ATOMIC'", 'Stage 1 bounded bootstrap topologies include fully measured maker CEX'],
   ['stageOneBootstrap', 'candidate.economics.deterministicNetProfitUsd', 'Stage 1 positive economics'],
   ['stageOneBootstrap', 'stageManager.recordLiveValidation', 'Stage 1 uses canonical live-validation API'],
@@ -141,10 +145,10 @@ const required = [
   ['stageOneBootstrap', 'readyForNextTier: true', 'Stage 1 foundation evidence alignment'],
   ['stageOneBootstrap', 'foundationProfitLadderStillAdvances: true', 'Stage 1 keeps actual ladder advancement'],
   ['stageOneBootstrap', 'state.currentStage !== 1', 'Stage 1-only authority boundary'],
-  ['stageOneBootstrap', 'terminalSettlementStillRequiredAfterExecution: true', 'Stage 1 post-execution settlement invariant'],
+  ['stageOneBootstrap', 'terminalSettlementRequiredAfterExecution: true', 'Stage 1 post-execution settlement invariant'],
   ['stageManager', 'm.liveValidationSamples >= 3', 'StageManager still requires multiple live validations'],
   ['stageManager', 'm.liveValidationPassRate >= 0.8', 'StageManager still requires validation pass rate'],
-  ['profitLadder', "previousTier.id === 0 ? 'stage_manager_foundation_proof' : 'terminal_realized_performance'", 'Tier 0 foundation proof authority'],
+  ['profitLadder', "authority: previousTier.id === 0 ? 'stage_manager_foundation_proof' : previousTier.id === 1 ? 'terminal_positive_plus_hard_scale_facts' : 'terminal_realized_performance'", 'tier authority preserves Foundation, Stage-2 hard-fact proof, and later terminal-realized progression'],
   ['profitLadder', 'StageManager foundation proof metrics are not complete', 'Tier 0 checks StageManager proof'],
   ['canonicalRuntime', 'ensureStageOneBootstrapAuthority()', 'Stage 1 bootstrap installed in canonical runtime'],
 
@@ -189,11 +193,14 @@ forbid('stageOneBootstrap', /sendTransaction\s*\(/, 'Stage 1 direct transaction 
 forbid('stageOneBootstrap', /executeVerifiedArbitragePlan\s*\(/, 'Stage 1 direct CEX execution');
 forbid('stageOneBootstrap', /executeFunded\s*\(/, 'Stage 1 direct zero-capital execution');
 forbid('stageOneBootstrap', /recordExecutionEvidence\s*\(/, 'Stage 1 synthetic terminal evidence');
+forbid('admission', /originalIsAllowedByCryptara/, 'zero-capital duplicate admission monkey-patch');
 forbid('providerExecution', /foundry_create2_receiver/, 'Balancer provenance on Aave settlement');
 forbid('assembler', /executionAuthority:\s*true/, 'composite direct execution authority');
 forbid('assembler', /sharedPrincipalStackedBps:\s*arithmeticLegBpsSum/, 'arithmetic BPS promoted as shared-principal BPS');
 forbid('liquidation', /deterministicNetProfitUsd:\s*[1-9]/, 'invented liquidation profit');
 forbid('providerEconomics', /availableLiquidity:\s*Number\.POSITIVE_INFINITY/, 'assumed infinite provider liquidity');
+forbid('router', /candidate\.missingInformation\.length\s*===\s*0/, 'missing-information registry veto');
+forbid('router', /admitted:\s*deterministicPositive\s*&&\s*completeCurrentEvidence/, 'duplicate complete-evidence execution authority');
 forbid('router', /admitted:\s*deterministicPositive\s*&&\s*completeCurrentEvidence\s*&&\s*aboveAdaptiveThreshold/, 'adaptive threshold independent execution veto');
 forbid('arbitrageVerifier', /MAX_(?:NET_)?PROFIT|MAX_PROFIT_BPS|MAX_SPREAD_BPS|UNREALISTIC_(?:PROFIT|SPREAD)/i, 'profit/spread magnitude execution ceiling');
 forbid('riskGovernor', /estimatedProfitUSD\s*>\s*[1-9][0-9]*/, 'risk rejection based on high estimated profit magnitude');
@@ -207,12 +214,12 @@ if (failures.length) {
 console.log('Unified multi-leg adaptive engine verification PASSED');
 console.log(' - all measured discovery sources launch in parallel without a fixed source priority');
 console.log(' - UnifiedExecutionRouter remains the sole ProfitabilityScore authority');
-console.log(' - cold start requires current evidence, not historical profit history');
-console.log(' - adaptive score/confidence remain ranking telemetry and cannot independently veto complete positive-net execution');
+console.log(' - cold start requires current executable evidence, not historical profit history');
+console.log(' - Cryptara/TradingView scoring and optional missing evidence remain ranking/reacquisition telemetry, not independent execution vetoes');
 console.log(' - rare/high-profit CEX observations trigger canonical fresh revalidation instead of a profit-magnitude veto');
 console.log(' - canonical CEX revalidation still requires synchronized books, authenticated fees, measured depth and all-in positive economics');
-console.log(' - Stage 1 cannot directly submit trades or fabricate terminal settlement history');
+console.log(' - Stage 1 can execute only through canonical executors and cannot directly submit trades or fabricate terminal settlement history');
 console.log(' - terminal outcomes remain the learning and realized-profit authority');
 console.log(' - Balancer, Aave and dual-provider permission changes invalidate stale quotes and require immediate fresh re-quote');
 console.log(' - provider economics remain bound to verified provider-specific receivers');
-console.log(' - incomplete execution paths remain fail closed');
+console.log(' - incomplete hard execution paths remain fail closed');

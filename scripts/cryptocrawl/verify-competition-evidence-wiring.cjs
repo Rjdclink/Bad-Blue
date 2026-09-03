@@ -44,10 +44,10 @@ forbidText(compatibility, 'target.makeOpenDecision', 'retired compatibility laye
 forbidText(compatibility, 'performDimensionalReasoning', 'legacy Cain reasoning cannot gate CEX execution');
 forbidText(compatibility, 'canonicalExecutionScheduler.start()', 'compatibility layer cannot reintroduce duplicate scheduler startup authority');
 
-// CEX topology applicability is installed directly by canonical runtime before
-// measured discovery starts. It must first install the canonical bootstrap-aware
-// Cryptara assessment stack, then remove only the inapplicable mempool completeness
-// penalty without altering economics, Monte Carlo, or execution authority.
+// CEX topology applicability is installed by the canonical runtime as an isolated
+// retryable component before measured discovery starts. A failure in this adapter
+// must not prevent unrelated runtime components from starting, while candidates
+// dependent on the missing correction remain locally fail-closed.
 requireText(cryptaraCex, "CEX_EXECUTION_VENUES = new Set(['coinbase', 'kraken', 'okx'])", 'Cryptara CEX applicability must cover every implemented executable CEX venue');
 requireText(cryptaraCex, "import { ensureCryptaraAssessmentWiring } from './cryptara-assessment-wiring.js';", 'CEX topology adapter must depend on the canonical bootstrap-aware assessment stack');
 requireText(cryptaraCex, 'const instance = ensureCryptaraAssessmentWiring();', 'CEX topology adapter must install canonical assessment before wrapping it');
@@ -61,12 +61,17 @@ requireText(cryptaraCex, 'monteCarloChanged: false', 'Cryptara CEX correction mu
 requireText(cryptaraCex, 'economicsChanged: false', 'Cryptara topology correction must not alter deterministic economics');
 
 requireText(runtime, "import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';", 'canonical runtime must import CEX topology correction');
-requireText(runtime, 'ensureCryptaraCexEvidenceWiring();', 'canonical runtime must install CEX topology correction');
-requireOrder(runtime, 'ensureCryptaraCexEvidenceWiring();', 'multiTopologyDiscoveryController.start();', 'CEX topology correction must install before the canonical discovery controller can assess candidates');
+const cexInstall = "install('cryptara_cex_evidence', () => ensureCryptaraCexEvidenceWiring())";
+const discoveryInstall = "install('multi_topology_discovery_controller', () => multiTopologyDiscoveryController.start())";
+requireText(runtime, cexInstall, 'canonical runtime must install CEX topology correction through isolated component wiring');
+requireText(runtime, discoveryInstall, 'canonical runtime must install discovery through isolated component wiring');
+requireOrder(runtime, cexInstall, discoveryInstall, 'CEX topology correction must be registered before the canonical discovery controller can assess candidates');
+requireText(runtime, "runtimeComponentIsolation: 'per_component_retry_without_global_runtime_shutdown'", 'runtime must preserve per-component fault isolation');
+requireText(runtime, 'runtimeComponentIsolationGlobalShutdownAuthority: false', 'CEX topology component failure cannot own global runtime shutdown');
 requireText(runtime, "historicalProofRequiredBeforeFirstExecution: false", 'runtime must preserve no-history bootstrap authority');
 requireText(runtime, "stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history'", 'runtime must preserve fresh-current-evidence Stage-1 bootstrap semantics');
 requireText(runtime, "executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'", 'runtime must preserve strict positive all-in economics');
 requireText(runtime, 'cryptaraCortexExecutionAuthority: false', 'Cryptara advisory intelligence cannot become execution authority');
 requireText(runtime, 'executionAuthorityGranted: false', 'canonical runtime wiring itself cannot grant execution authority');
 
-console.log('[competition-evidence-wiring] PASS — CEX assessment is bootstrap-aware before topology correction, competition/mempool evidence is topology-aware, first-trade history is non-blocking, missing evidence is never fabricated, and execution authority remains singular');
+console.log('[competition-evidence-wiring] PASS — CEX assessment is bootstrap-aware, topology correction and discovery are isolated in canonical order, competition/mempool evidence is topology-aware, first-trade history is non-blocking, missing evidence is never fabricated, and one component failure cannot globally stop unrelated runtime paths');
