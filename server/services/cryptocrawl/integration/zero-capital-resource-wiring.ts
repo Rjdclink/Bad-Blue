@@ -281,6 +281,42 @@ async function simulateGraphlessAtomicOpportunity(
   }
 }
 
+function runGraphlessSimulationAdvisory(
+  target: ZeroCapitalRuntime,
+  chain: SupportedChain,
+  provider: providers.JsonRpcProvider,
+  opportunity: ZeroCapitalOpportunity,
+): void {
+  void simulateGraphlessAtomicOpportunity(target, chain, provider, opportunity)
+    .then(simulation => {
+      const current = measuredCandidateRegistry.get(opportunity.id);
+      if (current) {
+        measuredCandidateRegistry.updateStatus(opportunity.id, current.status, {
+          provenance: [simulation.ready
+            ? 'exact_receiver_call_simulation:advisory_success'
+            : `exact_receiver_call_simulation:advisory_failure:${simulation.reason}`],
+        });
+      }
+      logger.debug('[ZeroCapitalWiring] Parallel graphless simulation completed', {
+        component: 'ZeroCapitalResourceWiring',
+        chain,
+        opportunityId: opportunity.id,
+        ready: simulation.ready,
+        reason: simulation.reason,
+        executionAuthority: false,
+      });
+    })
+    .catch(error => {
+      logger.debug('[ZeroCapitalWiring] Parallel graphless simulation degraded', {
+        component: 'ZeroCapitalResourceWiring',
+        chain,
+        opportunityId: opportunity.id,
+        error: error instanceof Error ? error.message : String(error),
+        executionAuthority: false,
+      });
+    });
+}
+
 export function ensureZeroCapitalResourceWiring(): void {
   const target = zeroCapitalEngine as unknown as ZeroCapitalRuntime;
   if (installed.has(target)) return;
@@ -346,12 +382,7 @@ export function ensureZeroCapitalResourceWiring(): void {
       }
       const positive = quote.executablePositive && opportunity.expectedProfit > 0n;
       const permissionReady = positive && permissionEligibleIds.has(quote.id);
-      const simulation = positive && permissionReady
-        ? await simulateGraphlessAtomicOpportunity(target, chain, provider, opportunity)
-        : { ready: false, reason: positive ? 'dynamic_route_permissions_require_fresh_requote' : 'near_break_even_observation_only' };
-      const exactSimulationRequired = positive && quote.id.startsWith('graphless-');
-      const simulationReady = !exactSimulationRequired || simulation.ready;
-      const executableCapability = positive && fundingReady && receiverReady && permissionReady && simulationReady;
+      const executableCapability = positive && fundingReady && receiverReady && permissionReady;
       recordZeroCapitalCandidate({
         opportunity,
         chain,
@@ -362,22 +393,21 @@ export function ensureZeroCapitalResourceWiring(): void {
           ? `Measured near-break-even route retained for optimization only; ${quote.bpsToBreakEven} BPS remains to strict positive break-even`
           : !fundingReady
             ? `Measured deterministic-positive route has no currently usable gas funding: ${funding.reason}`
-            : executableCapability
-              ? 'Measured atomic route has live gas funding, receiver, route permissions and required exact simulation; canonical hard-fact admission remains required before execution'
-              : !receiverReady
-                ? 'Measured deterministic-positive route has no verified funded receiver on the chain'
-                : !permissionReady
-                  ? 'Measured deterministic-positive route requires fresh quoting after dynamic receiver permissions'
-                  : `Measured deterministic-positive route exact atomic simulation is not ready: ${simulation.reason}`,
+            : !receiverReady
+              ? 'Measured deterministic-positive route has no verified funded receiver on the chain'
+              : !permissionReady
+                ? 'Measured deterministic-positive route requires fresh quoting after dynamic receiver permissions'
+                : 'Measured atomic route is deterministic-positive with live funding, receiver and route permissions; simulation runs in parallel and has no execution veto authority',
         missingInformation: !positive || executableCapability ? [] : [
           ...(!fundingReady ? ['live_gas_funding'] : []),
           ...(!receiverReady ? ['verified_funded_receiver'] : []),
           ...(!permissionReady ? ['fresh_quote_after_dynamic_route_permissions'] : []),
-          ...(permissionReady && !simulationReady ? ['exact_atomic_simulation'] : []),
         ],
-        simulationReady: simulation.ready,
       });
 
+      if (positive && permissionReady && quote.id.startsWith('graphless-')) {
+        runGraphlessSimulationAdvisory(target, chain, provider, opportunity);
+      }
       if (!positive || !executableCapability) continue;
       if (!await target.isAllowedByCryptara(opportunity)) continue;
       dynamic.push(opportunity);
@@ -514,7 +544,8 @@ export function ensureZeroCapitalResourceWiring(): void {
     nearBreakEvenObservation: true,
     bpsEvidencePropagated: true,
     sponsoredEconomicsAuthority: 'live_gas_funding_decision_only',
+    simulationAuthority: 'parallel_advisory_only',
     scheduler: zeroCapitalResourceScheduler.getTelemetry(),
-    safety: ['governance', 'positive_net', 'receiver', 'dynamic_route_permissions', 'fresh_requote_after_permission_change', 'exact_atomic_simulation', 'wallet_nonce', 'chain', 'provider', 'protocol', 'gas_sponsor'],
+    safety: ['governance', 'positive_net', 'receiver', 'dynamic_route_permissions', 'fresh_requote_after_permission_change', 'wallet_nonce', 'chain', 'provider', 'protocol', 'gas_sponsor'],
   });
 }
