@@ -5,6 +5,7 @@ require('./verify-runtime-safety-invariants.cjs');
 require('./verify-runtime-build-attestation.cjs');
 require('./verify-okx-adaptive-rate-governor.cjs');
 require('./verify-okx-account-fee-authority.cjs');
+require('./verify-bps-rebate-refund-truth.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
 require('./verify-substantial-profitability-batch9.cjs');
 require('./verify-cryptara-sovereign-cortex.cjs');
@@ -38,4 +39,4 @@ require('./verify-canonical-execution-family-completion.cjs');
 require('./verify-resource-bps-authority.cjs');
 require('./verify-payout-recipient-truth.cjs');
 
-console.log('[deployment-preflight] complete Overflow runtime authority, safety, measured-profitability, canonical execution-family, resource/BPS authority, recipient-bound payout truth, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] complete Overflow runtime authority, safety, measured-profitability, signed rebate/refund BPS truth, canonical execution-family, resource/BPS authority, recipient-bound payout truth, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
