@@ -13,6 +13,11 @@ const RAILWAY_SERVICE_ID = (process.env.RAILWAY_SERVICE_ID || '').trim();
 const RAILWAY_ENVIRONMENT_ID = (process.env.RAILWAY_ENVIRONMENT_ID || '').trim();
 const DESTINATION = resolvePrimaryProfitPayoutAddress() || '';
 const FALLBACK_DESTINATION = resolvePayoutFallbackAddress() || '';
+const ETHEREUM_RPC_URL = (
+  process.env.ETHEREUM_RPC_URL
+  || process.env.ETHEREM_RPC_URL
+  || (process.env.ALCHEMY_API_KEY ? `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}` : '')
+).trim();
 
 type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 'MANUAL_REVIEW';
 
@@ -64,6 +69,7 @@ async function syncWorkerSecrets(): Promise<void> {
     { name: 'cryptocrawler_okx_api_secret', value: (process.env.OKX_API_SECRET || '').trim(), optional: false, description: requiredDescription },
     { name: 'cryptocrawler_okx_api_passphrase', value: (process.env.OKX_API_PASSPHRASE || '').trim(), optional: false, description: requiredDescription },
     { name: 'cryptocrawler_profit_wallet', value: DESTINATION, optional: false, description: requiredDescription },
+    { name: 'cryptocrawler_ethereum_rpc_url', value: ETHEREUM_RPC_URL, optional: false, description: requiredDescription },
     { name: 'cryptocrawler_supabase_url', value: (process.env.SUPABASE_URL || '').trim(), optional: false, description: requiredDescription },
     { name: 'cryptocrawler_supabase_service_key', value: (process.env.SUPABASE_SERVICE_KEY || '').trim(), optional: false, description: requiredDescription },
     { name: 'cryptocrawler_fallback_wallet', value: FALLBACK_DESTINATION, optional: true, description: optionalDescription },
@@ -190,6 +196,12 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
       primaryDestinationSource: 'WALLET_PRIVATE_KEY-derived public Ethereum address',
     });
   }
+  if (!ETHEREUM_RPC_URL) {
+    logger.warn('[Treasury] Ethereum payout confirmation RPC is not configured; payout confirmation fails closed', {
+      component: 'TerminalTreasuryLifecycle',
+      acceptedSources: ['ETHEREUM_RPC_URL', 'ETHEREM_RPC_URL', 'ALCHEMY_API_KEY'],
+    });
+  }
 
   if (!signalInstalled && RAILWAY_DEPLOYMENT_ID) {
     process.prependListener('SIGTERM', sigtermCandidateListener);
@@ -209,6 +221,8 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     primaryPayoutSource: 'WALLET_PRIVATE_KEY-derived public Ethereum address',
     fallbackPayoutConfigured: Boolean(FALLBACK_DESTINATION),
     fallbackResolutionPolicy: 'CRYPTO_PAYOUT_WALLET_ADDRESS_then_CRYPTO_PROFIT_WALLET_ADDRESS_if_distinct',
+    recipientConfirmationRpcConfigured: Boolean(ETHEREUM_RPC_URL),
+    recipientConfirmationPolicy: 'okx_recipient_and_amount_plus_finalized_ethereum_transaction',
     workerSecretSynchronizationRetryable: true,
     workerSecretsSynchronized,
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
