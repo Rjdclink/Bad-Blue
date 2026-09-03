@@ -188,22 +188,27 @@ function reconcileAllInResult(opportunity: ZeroCapitalOpportunity, result: any):
   if (!result?.txHash || result.receiptStatus !== 1 || typeof result.profit !== 'bigint') return result;
   return (async () => {
     const grossProfitBaseUnits = result.profit as bigint;
+    const inputSymbol = String(opportunity.inputAssetSymbol || '').trim().toUpperCase();
+    const nativeSymbol = result.zeroMonetaryGasVerified ? null : NATIVE_SYMBOL[opportunity.chain] || null;
+    const requestedSymbols = [...new Set([inputSymbol, nativeSymbol].filter((value): value is string => Boolean(value)))];
+    let inputTokenUsdPrice: number | null = null;
     let nativeUsdPrice: number | null = null;
-    if (!result.zeroMonetaryGasVerified) {
-      const nativeSymbol = NATIVE_SYMBOL[opportunity.chain];
-      if (nativeSymbol) {
-        try {
-          const prices = await coinGeckoPriceClient.getLiveSymbolPrices([nativeSymbol]);
-          nativeUsdPrice = prices.get(nativeSymbol) ?? null;
-        } catch {
-          nativeUsdPrice = null;
-        }
+
+    if (requestedSymbols.length > 0) {
+      try {
+        const prices = await coinGeckoPriceClient.getLiveSymbolPrices(requestedSymbols);
+        inputTokenUsdPrice = inputSymbol ? prices.get(inputSymbol) ?? null : null;
+        nativeUsdPrice = nativeSymbol ? prices.get(nativeSymbol) ?? null : null;
+      } catch {
+        inputTokenUsdPrice = null;
+        nativeUsdPrice = null;
       }
     }
 
     const economics = evaluateZeroCapitalRealizedProfit({
       grossProfitBaseUnits,
       inputTokenDecimals: opportunity.inputTokenDecimals,
+      inputTokenUsdPrice,
       sponsoredExecution: result.zeroMonetaryGasVerified === true,
       nativeFeeWei: typeof result.nativeFeeWei === 'bigint' ? result.nativeFeeWei : 0n,
       nativeUsdPrice,
@@ -222,6 +227,10 @@ function reconcileAllInResult(opportunity: ZeroCapitalOpportunity, result: any):
       component: 'ZeroCapitalEngine',
       opportunityId: opportunity.id,
       chain: opportunity.chain,
+      inputAssetSymbol: inputSymbol || null,
+      inputTokenUsdPrice,
+      nativeAssetSymbol: nativeSymbol,
+      nativeUsdPrice,
       sponsoredExecution: result.zeroMonetaryGasVerified === true,
       grossProfitUsd: economics.grossProfitUsd,
       realizedGasUsd: economics.gasUsd,
@@ -421,7 +430,9 @@ export function ensureZeroCapitalRealizedProfitWiring(): void {
     sponsoredProfitRequiresDurableSelfFundedCapitalProvenance: true,
     nativeSubmissionDistributedSignerLane: true,
     actualNativeReceiptGasSubtracted: true,
+    liveInputTokenUsdPriceRequiredForTerminalRealizedProfit: true,
     liveNativeUsdPriceRequiredForNativeFunding: true,
+    settlementPriceRequestsDeduplicatedBySymbol: true,
     sponsoredUserGasCost: 0,
     realizedLossesIncludedInCumulativeProfit: true,
     unknownRealizedCostBlocksLearning: true,
