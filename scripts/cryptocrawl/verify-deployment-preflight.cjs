@@ -36,5 +36,6 @@ require('./verify-topology-execution-integrity.cjs');
 require('./verify-cross-chain-funding-route-truth.cjs');
 require('./verify-canonical-execution-family-completion.cjs');
 require('./verify-resource-bps-authority.cjs');
+require('./verify-payout-recipient-truth.cjs');
 
-console.log('[deployment-preflight] complete Overflow runtime authority, safety, measured-profitability, canonical execution-family, resource/BPS authority, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] complete Overflow runtime authority, safety, measured-profitability, canonical execution-family, resource/BPS authority, recipient-bound payout truth, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
