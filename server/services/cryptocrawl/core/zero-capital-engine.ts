@@ -3,7 +3,7 @@
  *
  * Production path:
  * measured atomic opportunity -> canonical hard-fact admission ->
- * Computational Beam / Monte Carlo -> dynamic sponsored/native gas funding ->
+ * parallel Computational Beam / Monte Carlo advisory -> dynamic sponsored/native gas funding ->
  * deterministic receiver fleet -> atomic flash loan -> verified settlement ->
  * learning feedback.
  */
@@ -762,6 +762,7 @@ export class AutonomousZeroCapitalEngine {
     const executionCostUsd = this.tokenAmountToUsd(opportunity.estimatedExecutionCostInInputToken, opportunity.inputTokenDecimals, inputAssetUsdPrice);
     const grossProfitUsd = this.tokenAmountToUsd(opportunity.grossProfit, opportunity.inputTokenDecimals, inputAssetUsdPrice);
     const funding = await this.getGasFundingDecision(opportunity.chain);
+    const receiverReady = !!this.receiverManager.getReceiver(opportunity.chain);
 
     recordProfitEstimate({
       opportunityId: opportunity.id,
@@ -786,7 +787,19 @@ export class AutonomousZeroCapitalEngine {
       zeroCapitalAvailable: funding.mode !== 'unavailable',
     });
 
-    if (!computationalBeam.isOperational()) await computationalBeam.initialize();
+    if (!(expectedNetProfitUsd > 0)) {
+      return { approved: false, reason: 'Canonical all-in net profit is not positive' };
+    }
+    if (funding.mode === 'unavailable') {
+      return { approved: false, reason: funding.reason };
+    }
+    if (!receiverReady) {
+      return { approved: false, reason: 'No verified funded receiver is registered on the route chain' };
+    }
+    if (!sizing.approved || sizing.proposedNotionalUsd <= 0) {
+      return { approved: false, reason: 'Profit Ladder position sizing rejected the trade' };
+    }
+
     const workload: ComputeWorkload<
       {
         monteCarloInput: {
@@ -798,11 +811,8 @@ export class AutonomousZeroCapitalEngine {
           quoteLatencyMs: number;
           confidence: number;
         };
-        positionApproved: boolean;
-        fundingReady: boolean;
-        receiverReady: boolean;
       },
-      { approved: boolean; reason: string; monteCarlo?: MonteCarloProfitabilityResult }
+      MonteCarloProfitabilityResult
     > = {
       id: `beam-tara-monte-carlo:${opportunity.id}`,
       type: 'MONTE_CARLO_EXECUTION_VALIDATION',
@@ -816,37 +826,53 @@ export class AutonomousZeroCapitalEngine {
           quoteLatencyMs: opportunity.quoteLatencyMs,
           confidence: opportunity.confidence,
         },
-        positionApproved: sizing.approved && sizing.proposedNotionalUsd > 0,
-        fundingReady: funding.mode !== 'unavailable',
-        receiverReady: !!this.receiverManager.getReceiver(opportunity.chain),
       },
       timeoutMs: Math.max(1000, Number(process.env.ZERO_CAPITAL_BEAM_VALIDATION_TIMEOUT_MS || 10_000)),
-      execute: input => {
-        if (!input.fundingReady) return { approved: false, reason: funding.reason };
-        if (!input.receiverReady) return { approved: false, reason: 'No verified sponsored receiver is registered on the route chain' };
-        if (!input.positionApproved) return { approved: false, reason: 'Profit Ladder position sizing rejected the trade' };
-
-        const monteCarlo = runProfitabilityMonteCarlo(input.monteCarloInput);
-        if (!monteCarlo.approved) return { approved: false, reason: monteCarlo.reason, monteCarlo };
-        return { approved: true, reason: `Beam approved Monte Carlo execution: ${monteCarlo.reason}`, monteCarlo };
-      },
+      execute: input => runProfitabilityMonteCarlo(input.monteCarloInput),
       validate: result =>
         typeof result.approved === 'boolean' &&
         typeof result.reason === 'string' &&
-        (result.monteCarlo === undefined || typeof result.monteCarlo.profitableProbability === 'number'),
+        typeof result.profitableProbability === 'number',
     };
 
-    const beam = await computationalBeam.executeCrawlerTask(
-      CrawlerStrategy.ARBITRAGE,
-      {
-        opportunityId: opportunity.id,
-        expectedNetProfitUsd,
-        expectedSlippageBps: opportunity.expectedSlippageBps,
-        confidence: opportunity.confidence,
-      },
-      { timeout: workload.timeoutMs, workload },
-    );
-    return beam.result as { approved: boolean; reason: string; monteCarlo?: MonteCarloProfitabilityResult };
+    void (async (): Promise<void> => {
+      try {
+        if (!computationalBeam.isOperational()) await computationalBeam.initialize();
+        const beam = await computationalBeam.executeCrawlerTask(
+          CrawlerStrategy.ARBITRAGE,
+          {
+            opportunityId: opportunity.id,
+            expectedNetProfitUsd,
+            expectedSlippageBps: opportunity.expectedSlippageBps,
+            confidence: opportunity.confidence,
+          },
+          { timeout: workload.timeoutMs, workload },
+        );
+        const monteCarlo = beam.result as MonteCarloProfitabilityResult;
+        logger.debug('[ZeroCapitalEngine] Parallel Monte Carlo advisory completed', {
+          component: 'ZeroCapitalEngine',
+          opportunityId: opportunity.id,
+          chain: opportunity.chain,
+          profitableProbability: monteCarlo.profitableProbability,
+          simulationApproved: monteCarlo.approved,
+          reason: monteCarlo.reason,
+          executionAuthority: false,
+        });
+      } catch (error) {
+        logger.debug('[ZeroCapitalEngine] Parallel Monte Carlo advisory degraded', {
+          component: 'ZeroCapitalEngine',
+          opportunityId: opportunity.id,
+          chain: opportunity.chain,
+          error: error instanceof Error ? error.message : String(error),
+          executionAuthority: false,
+        });
+      }
+    })();
+
+    return {
+      approved: true,
+      reason: 'Canonical hard facts approved; Monte Carlo runs in parallel as advisory evidence only',
+    };
   }
 
   private startExecutionLoop(): void {
@@ -1065,8 +1091,8 @@ export class AutonomousZeroCapitalEngine {
       provenance: [
         'canonical_measured_positive_execution_authority',
         'live_input_token_usd_price',
-        'computational_beam',
-        'monte_carlo_profitability',
+        'computational_beam_advisory',
+        'monte_carlo_advisory_parallel',
         'dynamic_gas_funding_policy',
         ...(result.zeroMonetaryGasVerified ? ['alchemy_gas_manager', 'eip7702_smart_wallet', 'erc4337_user_operation'] : ['native_wallet_gas']),
         'foundry_create2_receiver',
@@ -1226,6 +1252,7 @@ export class AutonomousZeroCapitalEngine {
       zeroCapitalSpecificExecutionFlagAuthority: false,
       zeroCapitalBpsRescueAuthority: 'canonical_scan_direct_call',
       tokenUnitEqualsUsdAssumption: false,
+      monteCarloExecutionAuthority: false,
     };
   }
 }
