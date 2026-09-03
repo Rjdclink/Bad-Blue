@@ -27,8 +27,9 @@ assert.match(registry, /zeroCapitalBps:/);
 assert.match(registry, /nearBreakEven:/);
 
 // Near-break-even observations never become execution-preparation work. Only a
-// strict positive with concrete funding/receiver/permission/simulation facts can
-// enter canonical admission.
+// strict positive with concrete funding/receiver/permission facts can enter
+// canonical admission. Generic missing-information and simulation state are not
+// independent execution authorities.
 assert.match(wiring, /\.filter\(quote => quote\.executablePositive && quote\.netProfit > 0n\)/);
 assert.match(wiring, /status: positive \? 'deterministic_positive' : 'enriched'/);
 assert.match(wiring, /near_break_even_observation_only/);
@@ -36,15 +37,37 @@ assert.match(wiring, /if \(!positive \|\| !executableCapability\) continue;/);
 assert.match(wiring, /executableCapability: positive && input\.executableCapability/);
 assert.match(wiring, /zeroCapitalDiscoveryFloorBps\(\)/);
 
-// Candidate execution-capability truth consumes the same current gas funding
-// facts as dispatch. A positive candidate with a missing hard fact is retained as
-// measured evidence but cannot advertise itself executable.
+// Candidate execution-capability truth consumes the same current gas funding,
+// verified receiver, and route-permission facts as dispatch. Exact simulation
+// runs in parallel and cannot downgrade an otherwise hard-fact-ready positive.
 assert.match(wiring, /const fundingReady = funding\.mode !== 'unavailable';/);
 assert.match(wiring, /const executableCapability = positive && receiverReady && fundingReady;/);
-assert.match(wiring, /const executableCapability = positive && fundingReady && receiverReady && permissionReady && simulationReady;/);
-assert.match(wiring, /const exactSimulationRequired = positive && quote\.id\.startsWith\('graphless-'\);/);
+assert.match(wiring, /const executableCapability = positive && fundingReady && receiverReady && permissionReady;/);
+assert.doesNotMatch(wiring, /executableCapability\s*=\s*[^;]*simulationReady/);
+assert.doesNotMatch(wiring, /exactSimulationRequired/);
+assert.doesNotMatch(wiring, /\['exact_atomic_simulation'\]/);
+assert.match(wiring, /function runGraphlessSimulationAdvisory/);
+assert.match(wiring, /runGraphlessSimulationAdvisory\(target, chain, provider, opportunity\)/);
+assert.match(wiring, /simulationAuthority: 'parallel_advisory_only'/);
+assert.match(wiring, /executionAuthority: false/);
 assert.match(wiring, /live_gas_funding/);
 assert.match(wiring, /if \(funding\.mode === 'unavailable'\) continue;/);
+
+// Monte Carlo / Computational Beam is useful advisory intelligence, but it may
+// never acquire a second execution veto. Canonical hard facts are checked first,
+// then MC runs detached/parallel while execution proceeds.
+assert.match(engine, /if \(!\(expectedNetProfitUsd > 0\)\)/);
+assert.match(engine, /if \(funding\.mode === 'unavailable'\)/);
+assert.match(engine, /if \(!receiverReady\)/);
+assert.match(engine, /if \(!sizing\.approved \|\| sizing\.proposedNotionalUsd <= 0\)/);
+assert.match(engine, /void \(async \(\): Promise<void> => \{/);
+assert.match(engine, /Parallel Monte Carlo advisory completed/);
+assert.match(engine, /simulationApproved: monteCarlo\.approved/);
+assert.match(engine, /executionAuthority: false/);
+assert.match(engine, /Canonical hard facts approved; Monte Carlo runs in parallel as advisory evidence only/);
+assert.match(engine, /monteCarloExecutionAuthority: false/);
+assert.doesNotMatch(engine, /if \(!monteCarlo\.approved\) return \{ approved: false/);
+assert.doesNotMatch(engine, /return beam\.result as \{ approved: boolean/);
 
 // The deleted global zero-capital enable flag must never regain independent veto
 // authority. StageManager + candidate hard facts are the execution authority.
@@ -98,6 +121,9 @@ console.log(JSON.stringify({
   nearBreakEvenClassification: 'enriched_observation_only',
   positiveExecutionFloorPreserved: true,
   gasFundingExecutionTruthBound: true,
+  simulationExecutionAuthority: false,
+  monteCarloExecutionAuthority: false,
+  advisoryWorkRunsInParallel: true,
   dynamicScaleUse: 'bounded_search_pressure_only',
   realizedProfitabilityAuthorityPreserved: true,
 }, null, 2));
