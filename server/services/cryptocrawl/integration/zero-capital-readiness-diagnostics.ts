@@ -21,6 +21,8 @@ export function logZeroCapitalReadinessDiagnostics(): void {
     const allRoutes = [...new Map([...configured, ...dynamic].map(route => [route.id, route])).values()];
     const eligible = allRoutes.filter(route => route.chain !== 'europa' && supportsSponsoredReceiverChain(route.chain));
     const receiverRecords = getSponsoredReceiverManager().getRecords();
+    const canonicalExecutionRequested = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
+      && process.env.NO_EXECUTION !== 'true';
 
     logger.info('[ZeroCapitalDiagnostics] Route ownership and runtime readiness', {
       component: 'ZeroCapitalDiagnostics',
@@ -31,7 +33,8 @@ export function logZeroCapitalReadinessDiagnostics(): void {
       routeChains: [...new Set(eligible.map(route => route.chain))],
       flashLoanExecutionOwner: 'AutonomousZeroCapitalEngine',
       genericExecutionFlashLoanOwner: false,
-      zeroCapitalExecutionEnabled: process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true',
+      canonicalExecutionRequested,
+      zeroCapitalSpecificExecutionFlagAuthority: false,
       runtimeVerifiedReceivers: receiverRecords.length,
       runtimeReceiverChains: receiverRecords.map(record => record.chain),
       receiverEnvironmentHintPresent: !!(
@@ -42,6 +45,7 @@ export function logZeroCapitalReadinessDiagnostics(): void {
       dynamicRouteDiscoveryPresent: dynamic.length > 0,
       routeAuthority: 'explicit_plus_dynamic_measured_routes',
       receiverAuthority: 'deterministic_runtime_deploy_and_verify',
+      executionAuthority: 'canonical_stage_manager_plus_hard_execution_facts',
       zeroXReadOnlyConfigured: !!process.env.ZEROX_API_KEY?.trim(),
       zeroXStaticPairConfigured: !!(
         process.env.ZEROX_CHAIN_ID?.trim() &&
