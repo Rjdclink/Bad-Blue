@@ -148,7 +148,7 @@ const required = [
   ['stageOneBootstrap', 'terminalSettlementRequiredAfterExecution: true', 'Stage 1 post-execution settlement invariant'],
   ['stageManager', 'm.liveValidationSamples >= 3', 'StageManager still requires multiple live validations'],
   ['stageManager', 'm.liveValidationPassRate >= 0.8', 'StageManager still requires validation pass rate'],
-  ['profitLadder', "previousTier.id === 0 ? 'stage_manager_foundation_proof' : 'terminal_realized_performance'", 'Tier 0 foundation proof authority'],
+  ['profitLadder', "authority: previousTier.id === 0 ? 'stage_manager_foundation_proof' : previousTier.id === 1 ? 'terminal_positive_plus_hard_scale_facts' : 'terminal_realized_performance'", 'tier authority preserves Foundation, Stage-2 hard-fact proof, and later terminal-realized progression'],
   ['profitLadder', 'StageManager foundation proof metrics are not complete', 'Tier 0 checks StageManager proof'],
   ['canonicalRuntime', 'ensureStageOneBootstrapAuthority()', 'Stage 1 bootstrap installed in canonical runtime'],
 
