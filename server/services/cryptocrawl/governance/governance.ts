@@ -35,14 +35,14 @@ function isLiveExecutionAction(action: GovernanceAction): boolean {
 }
 
 /**
- * Canonical execution-envelope facade. StageManager owns the mutable stage,
- * pause, anomaly, and kill-switch state. Stage progression controls bounded
- * scale/scope; it does not independently veto a fully evidenced positive trade.
+ * Canonical execution-envelope facade. StageManager owns mutable stage, pause,
+ * anomaly, and kill-switch state. Stage progression controls scaling evidence;
+ * it does not independently veto a fully evidenced positive trade.
  *
  * Live execution has exactly one governance decision below. Manual envelopes
  * remain useful for non-trading administrative actions, but envelope expiry,
- * mismatch, or quota exhaustion may not globally pause otherwise-valid market
- * execution.
+ * mismatch, quota, or stage telemetry may not globally pause or veto an
+ * otherwise-valid market execution.
  */
 export class CryptocrawlGovernance {
   private activeEnvelope: ExecutionEnvelope | null = null;
@@ -180,8 +180,7 @@ export class CryptocrawlGovernance {
   }
 
   completeAdvisoryCycle(_actor: GovernanceActor, _reason = 'advisory_cycle_complete'): void {
-    // Advisory-cycle completion is telemetry only. It is never independent
-    // authority to pause a market runtime that otherwise satisfies hard facts.
+    // Telemetry only.
   }
 
   requireBootstrapSettlementAllowed(context: { chain: string; pair: string; venue: string }): void {
@@ -329,13 +328,11 @@ export class CryptocrawlGovernance {
         action,
       });
     }
-    if (!config.allowedChains.includes(context.chain)) {
-      throw new GovernanceError('CONSTRAINT_VIOLATION', 'Chain is outside canonical stage scope', {
-        chain: context.chain,
-        allowedChains: config.allowedChains,
-        stage: state.currentStage,
-      });
-    }
+
+    // A stage's allowedChains list is scope telemetry for progression, not a
+    // second live-execution authority. The strategy executor owns the hard chain
+    // facts: provider, funding, receiver/permissions, product/route support and
+    // terminal settlement capability.
   }
 
   private requireAutomaticActivationAllowed(
