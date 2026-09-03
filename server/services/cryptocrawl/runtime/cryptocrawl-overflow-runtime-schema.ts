@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 3;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v3';
+const SCHEMA_VERSION = 4;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v4';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
@@ -35,6 +35,7 @@ const MIGRATIONS = [
   '025_cryptocrawler_rainbow_source_ledger.sql',
   '026_cryptocrawler_system_capital_allocations.sql',
   '027_cryptocrawler_cex_system_owned_lots.sql',
+  '028_cryptocrawler_payout_recipient_confirmation.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -192,10 +193,6 @@ async function provision(): Promise<void> {
       throw new Error('Overflow CryptoCrawler schema authority is currently owned by another replica');
     }
 
-    // Durable fast path: a fresh Railway replica/process must not replay twenty
-    // idempotent DDL migrations merely because its process-local cache is empty.
-    // The durable version marker is cheap to read; required objects are still
-    // verified before runtime admission so drift/corruption fails closed.
     let durableReady = false;
     try {
       durableReady = await durableSchemaIsReady(client);
