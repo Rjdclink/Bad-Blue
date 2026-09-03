@@ -5,6 +5,14 @@ Governing law: absolutely no regression. Preserve hard safety, deterministic eco
 Objective:
 Implement the second 15-solution BPS-efficiency package, targeting >=35 BPS de-overlapped estimated capability improvement while allowing only measured realized savings into canonical economics.
 
+Working branch:
+repair/cryptocrawl-bps-efficiency-wave2-20260903
+
+Starting production baseline:
+- develop baseline before checkpoint work: 597709d32c08358fadb08b6c021518c2fe7ae58a
+- `/can` and the wave-2 marker were created on develop first; implementation changes continue only on the repair branch until verified.
+- Existing RPI advisory, OKX sequence continuity, maker microprice/imbalance shadow model, measured order-control latency, Stage-2 soft-gate retirement, FOK semantics, Aave/Balancer zero-capital provider mesh, and rebate/refund canonical truth must be reused rather than duplicated.
+
 Target enhancements:
 1. Exchange-side opportunity expiration / stale-order rejection.
 2. Kraken L3 queue intelligence.
@@ -12,7 +20,7 @@ Target enhancements:
 4. Tick-vs-queue-jump optimizer.
 5. Executable OKX RPI dual-surface routing.
 6. RPI automatic price-spacing normalization.
-7. Gateway-to-matching-engine latency attribution.
+7. Gateway-to-matching-engine / order-control latency attribution.
 8. Hot-standby market-data handover.
 9. Two-speed CRYPTARA controller: slow global optimizer + fast local revalidation.
 10. Liquidity replenishment/resilience predictor.
@@ -22,11 +30,46 @@ Target enhancements:
 14. Shadow-to-terminal microstructure calibration.
 15. Organic fee-tier trajectory optimizer; never wash trade or execute uneconomically for volume.
 
-Starting production baseline:
-- develop head: 597709d32c08358fadb08b6c021518c2fe7ae58a
-- Existing BPS research tactics and canonical authority boundaries must be reused rather than duplicated.
-- Existing RPI advisory, OKX sequence continuity, maker microprice/imbalance shadow model, measured order-control latency, Stage-2 soft-gate retirement, FOK semantics, Aave/Balancer zero-capital provider mesh, and rebate/refund canonical truth already exist.
+Milestone 0 — checkpoint created.
+Status: COMPLETE.
 
-Milestone 0 — checkpoint created before implementation.
-Status: STARTED.
-Next action: inspect exact existing execution, fee, order-control, RPI, market-data, maker microstructure, and BPS authority files; implement smallest compatible production slices with verifier coverage; update this file after each verified milestone.
+Milestone 1 — low-regression BPS efficiency foundation.
+Status: IMPLEMENTED ON BRANCH; BUILD/CI VERIFICATION STILL REQUIRED.
+Commits through: 10d6be47719d34e72d4188374fb3175dec2cfa50
+
+Implemented:
+- #6 OKX RPI price-spacing race hardening: existing fresh permission/notional/spacing/fee checks remain fail-closed, but valid RPI requests now use `rpiPxRound: true` so OKX can round outward to the nearest non-marketable compliant level if book state changes while the request is in flight. No silent RPI->standard-maker downgrade was introduced.
+- #7 order-control latency decomposition foundation: submit/query/cancel p95 values are measured separately; OKX gateway processing remains measured; client-minus-gateway residual is measured as outside-gateway transport/queue/client overhead and is explicitly NOT mislabeled as matching-engine latency. No synthetic BPS penalty added.
+- #10 measured liquidity resilience model: top-five bid/ask depth refill/depletion EWMAs and estimated refill timing are retained as advisory ranking evidence only.
+- #14 realized maker terminal calibration: actual terminal fill fraction, terminal latency and prediction error calibrate the existing Aries/shadow maker fill probability after a minimum sample floor. Terminal orders are deduplicated. Calibration has no execution or canonical-BPS authority.
+- #4 tick-vs-queue-jump foundation: one-tick non-marketable queue-jump opportunities are valued for search/ranking only; the estimate is never injected into measured net BPS.
+- CEX TT/MT/TM/MM matrix now consumes terminal calibration, liquidity resilience and queue-jump intelligence while preserving `netAfterExchangeFeesBps = grossSpreadBps - combinedFeeBps` and authenticated fee truth.
+- New deployment-preflight verifier `verify-bps-efficiency-wave2-foundation.cjs` gates these authority boundaries and no-regression invariants.
+
+Files added:
+- server/services/cryptocrawl/intelligence/maker-terminal-calibration.ts
+- server/services/cryptocrawl/intelligence/liquidity-resilience.ts
+- server/services/cryptocrawl/intelligence/maker-tick-queue-optimizer.ts
+- scripts/cryptocrawl/verify-bps-efficiency-wave2-foundation.cjs
+
+Files changed:
+- server/services/cryptocrawl/intelligence/cex-order-control-health.ts
+- server/services/cryptocrawl/execution/post-only-maker-adapters.ts
+- server/services/cryptocrawl/intelligence/cex-four-mode-matrix.ts
+- scripts/cryptocrawl/verify-deployment-preflight.cjs
+
+Still not implemented / next sequence:
+A. Run branch diff/static review and CI/build; repair any type/verifier regression before expanding scope.
+B. #1 wire exchange-side OKX `expTime` stale-request deadline through shared private authority and every live OKX order-write path (normal IOC, FOK child, maker/RPI) without affecting unsupported endpoints.
+C. #3 Kraken queue-preserving amend: add exact current-product/queue-safe amend path with no cancel/reinsert fallback unless economics are freshly revalidated.
+D. #2 Kraken L3 queue evidence: add bounded L3 feed as advisory queue truth with L2 fallback; no execution dependency until live evidence proves stable.
+E. #5 finish RPI dual-surface competition beyond maker-side current support; taker access remains non-executable until account permission can be proven without unsafe live probing.
+F. #8 hot-standby market-data handover using existing sequence continuity and proactive reconnect mechanisms.
+G. #9 two-speed controller: global scan remains discovery authority; local exact-symbol controller receives event/near-miss priority without parallel economics/execution authority.
+H. #11 cross-impact multi-asset scheduling/risk evidence.
+I. #12 order-book vs RFQ/Convert measured execution auction, only where live executable quote + settlement adapters exist.
+J. #13 synchronized multi-leg WebSocket dispatch, preserving FOK/IOC and terminal-fill hedge semantics.
+K. #15 authenticated organic fee-tier trajectory; future tier value may rank otherwise-profitable trades but can never make an unprofitable trade eligible and can never incentivize wash/self trading.
+
+Resume rule:
+Start by verifying Milestone 1 against current branch HEAD. Do not redo research or rewrite existing systems. Make the smallest necessary correction if verification fails. Then continue B -> K one authority-safe slice at a time. Update `/can` immediately after each verified milestone and again before stopping.
