@@ -21,7 +21,7 @@ import { getClosestCexNearMissesBySymbol } from './cex-four-mode-observability-w
 
 let timer: NodeJS.Timeout | null = null;
 let latest: EconomicTransformationAdvice[] = [];
-let recordHookInstalled = false;
+let candidateSubscription: (() => void) | null = null;
 const actionInFlight = new Map<string, Promise<void>>();
 const actionCooldownUntil = new Map<string, number>();
 const anomalyInFlight = new Map<string, Promise<void>>();
@@ -59,6 +59,10 @@ function candidateSymbol(candidate: MeasuredCandidate): string | null {
   return quoteSymbol || null;
 }
 
+function isCexTopology(candidate: MeasuredCandidate): boolean {
+  return candidate.topology === 'CEX_CEX' || candidate.topology === 'MAKER_CEX';
+}
+
 function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
   if (candidate.topology !== 'CEX_CEX' || candidate.status !== 'observed') return;
   const edge = getRawCrossVenueEdge(candidate);
@@ -68,13 +72,7 @@ function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
   if (anomalyInFlight.has(symbol) || (anomalyCooldownUntil.get(symbol) || 0) > Date.now()) return;
 
   const researchPlan = buildResearchBpsExecutionPlan(candidate, null);
-  const superPlan = buildBpsReductionSuperPlan(
-    candidate,
-    null,
-    researchPlan,
-    null,
-    getBpsCompressionMeshSnapshot(),
-  );
+  const superPlan = buildBpsReductionSuperPlan(candidate, null, researchPlan, null, getBpsCompressionMeshSnapshot());
   const attempts = Math.max(1, superPlan.anomalyPolicy.attempts);
   const delays = superPlan.anomalyPolicy.delaysMs.length > 0 ? superPlan.anomalyPolicy.delaysMs : [0];
   const task = (async () => {
@@ -96,21 +94,9 @@ function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
         attempts,
         adaptiveRetryDelaysMs: superPlan.anomalyPolicy.delaysMs,
         minimumConsensusVenues: superPlan.anomalyPolicy.minimumConsensusVenues,
-        venueConsensusWeights: superPlan.venueConsensusWeights,
-        learnedEdgeHalfLifeMs: superPlan.learnedEdgeHalfLifeMs,
-        expectedDecayBps: superPlan.expectedDecayBps,
-        advisoryMaxConcessionBps: superPlan.advisoryMaxConcessionBps,
         canonicalDeterministicPositive: cycle.deterministicPositive,
         canonicalEligibleCandidates: cycle.eligibleCandidates,
         canonicalCycleId: cycle.cycleId,
-        criticalEvidenceAcquisition: [
-          'fresh_executable_books',
-          'authenticated_fee_evidence',
-          'product_constraints',
-          'depth_aware_notional',
-          'deterministic_all_in_economics',
-          'cryptara_and_monte_carlo_if_deterministic_positive',
-        ],
         anomalyDiscardedWithoutRecheck: false,
         observationExecutionAuthority: false,
       });
@@ -131,28 +117,18 @@ function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
   anomalyInFlight.set(symbol, task);
 }
 
-function installObservedCandidateRevalidationHook(): void {
-  if (recordHookInstalled) return;
-  recordHookInstalled = true;
-  const registry = measuredCandidateRegistry as any;
-  const originalRecord = registry.record.bind(registry);
-  const originalUpdateStatus = registry.updateStatus.bind(registry);
-  registry.record = (input: any): MeasuredCandidate => {
-    const recorded = originalRecord(input);
-    recordBpsCandidateAttribution(recorded);
-    queueAnomalyRevalidation(recorded);
-    return recorded;
-  };
-  registry.updateStatus = (...args: any[]): MeasuredCandidate | null => {
-    const updated = originalUpdateStatus(...args);
-    if (updated) recordBpsCandidateAttribution(updated);
-    return updated;
-  };
-  logger.info('[EconomicTransformation] Positive raw-observation reassessment hook installed', {
+function installCandidateBpsSubscription(): void {
+  if (candidateSubscription) return;
+  for (const candidate of measuredCandidateRegistry.getRecent(4096)) recordBpsCandidateAttribution(candidate);
+  candidateSubscription = measuredCandidateRegistry.onUpdate(candidate => {
+    recordBpsCandidateAttribution(candidate);
+    queueAnomalyRevalidation(candidate);
+  });
+  logger.info('[EconomicTransformation] Canonical candidate BPS subscription installed', {
     component: 'EconomicTransformationWiring',
-    trigger: 'any_measured_cross_venue_raw_edge_greater_than_zero',
-    reacquisition: 'bounded_exact_symbol_canonical_revalidation',
-    bpsAttributionLedger: true,
+    sourceAuthority: 'measured_candidate_registry.canonicalBps',
+    registryMethodMutation: false,
+    allTopologiesAttributed: true,
     realizedOutcomeGovernorFeedback: true,
     anomalyDiscardWithoutRecheck: false,
     executionAuthority: false,
@@ -169,11 +145,9 @@ function nextResidualFraction(symbol: string, fractions: readonly number[]): num
 
 function queueOperationalTransformation(candidate: MeasuredCandidate, advice: EconomicTransformationAdvice): void {
   if (candidate.expiresAt <= Date.now()) return;
-  if (candidate.topology !== 'CEX_CEX' && candidate.topology !== 'MAKER_CEX') return;
   const key = candidate.opportunityId;
   if (actionInFlight.has(key) || (actionCooldownUntil.get(key) || 0) > Date.now()) return;
   const symbol = candidateSymbol(candidate);
-  if (!symbol) return;
 
   const task = (async () => {
     const researchPlan = buildResearchBpsExecutionPlan(candidate, advice);
@@ -194,6 +168,7 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
         component: 'EconomicTransformationWiring',
         opportunityId: candidate.opportunityId,
         symbol,
+        topology: candidate.topology,
         error: error instanceof Error ? error.message : String(error),
         executionAuthority: false,
       });
@@ -208,14 +183,14 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
     );
 
     let canonicalCycle: Awaited<ReturnType<typeof measuredOpportunityGraph.revalidateSymbols>> | null = null;
-    if (effectiveResearchPlan.canonicalRevalidationRequested) {
+    if (isCexTopology(candidate) && symbol && effectiveResearchPlan.canonicalRevalidationRequested) {
       canonicalCycle = await measuredOpportunityGraph.revalidateSymbols([symbol]);
       recordBpsRevalidationOutcome(superPlan, canonicalCycle);
     }
 
-    const parentNotionalUsd = Number(candidate.economics.notionalUsd || 0);
-    const fraction = nextResidualFraction(symbol, superPlan.residualNotionalFractions);
-    if (fraction !== null && parentNotionalUsd > 0 && fraction > 0 && fraction < 1) {
+    const parentNotionalUsd = Number(candidate.canonicalBps.notionalUsd || 0);
+    const fraction = symbol ? nextResidualFraction(symbol, superPlan.residualNotionalFractions) : null;
+    if (isCexTopology(candidate) && symbol && fraction !== null && parentNotionalUsd > 0 && fraction > 0 && fraction < 1) {
       queueCexResidualReplan({
         symbol,
         remainingNotionalUsd: parentNotionalUsd * fraction,
@@ -226,7 +201,9 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
     logger.info('[EconomicTransformation] Measured transformation converted into adaptive BPS super-engine work', {
       component: 'EconomicTransformationWiring',
       opportunityId: candidate.opportunityId,
+      topology: candidate.topology,
       symbol,
+      canonicalBps: candidate.canonicalBps,
       dominantCostDriver: advice.dominantCostDriver,
       deficiencyClass: superPlan.deficiencyClass,
       bpsToBreakEven: advice.bpsToBreakEven,
@@ -254,6 +231,11 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
         samples: mc.samples,
         authority: mc.authority,
       } : null,
+      topologySpecificActuator: isCexTopology(candidate)
+        ? 'canonical_cex_revalidation_and_residual_replan'
+        : candidate.topology === 'ZERO_CAPITAL_ATOMIC'
+          ? 'zero_capital_profitability_rescue_v2_exact_requote'
+          : 'unified_router_plus_topology_discovery_reacquisition',
       canonicalRevalidationRequested: effectiveResearchPlan.canonicalRevalidationRequested,
       canonicalDeterministicPositive: canonicalCycle?.deterministicPositive ?? null,
       canonicalEligibleCandidates: canonicalCycle?.eligibleCandidates ?? null,
@@ -266,6 +248,7 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
     logger.warn('[EconomicTransformation] Operational transformation failed closed', {
       component: 'EconomicTransformationWiring',
       opportunityId: candidate.opportunityId,
+      topology: candidate.topology,
       symbol,
       error: error instanceof Error ? error.message : String(error),
       executionAuthority: false,
@@ -300,23 +283,11 @@ function queueCexNearMissRecovery(): void {
       logger.info('[EconomicTransformation] CEX near-miss portfolio promoted from logging to fresh recovery work', {
         component: 'EconomicTransformationWiring',
         symbols,
-        nearMisses: nearMisses.slice(0, 12).map(item => ({
-          symbol: item.symbol,
-          mode: item.mode,
-          buyVenue: item.buyVenue,
-          sellVenue: item.sellVenue,
-          combinedFeeBps: item.combinedFeeBps,
-          grossSpreadBps: item.grossSpreadBps,
-          bpsToBreakEven: item.bpsToBreakEven,
-          riskAdjustedBpsToBreakEven: Number((item as any).riskAdjustedBpsToBreakEven ?? item.bpsToBreakEven),
-          recoveryEfficiency: item.recoveryEfficiency,
-        })),
+        nearMisses: nearMisses.slice(0, 12),
         canonicalDeterministicPositive: cycle.deterministicPositive,
         canonicalEligibleCandidates: cycle.eligibleCandidates,
         canonicalCycleId: cycle.cycleId,
         makerHybridFreshComparisonIncluded: true,
-        smallerExactNotionalProbeOnlyWhenNonlinearRiskBurdenExists: true,
-        percentageFeeGapNotPretendedAwayByShrinkingSize: true,
         executionAuthority: false,
       });
     })
@@ -425,16 +396,7 @@ function refresh(): void {
       superEngineEventTriggers: item.superPlan.eventTriggers,
       transformations: item.advice.transformations,
     })),
-    cexModeRescueAttention: cexNearMisses.map(item => ({
-      symbol: item.symbol,
-      mode: item.mode,
-      buyVenue: item.buyVenue,
-      sellVenue: item.sellVenue,
-      combinedFeeBps: item.combinedFeeBps,
-      grossSpreadBps: item.grossSpreadBps,
-      bpsToBreakEven: item.bpsToBreakEven,
-      recoveryEfficiency: item.recoveryEfficiency,
-    })),
+    cexModeRescueAttention: cexNearMisses,
     cexRescueObjective: 'smallest_exact_bps_gap_per_symbol_then_fresh_transform_revalidation',
     portfolioDiversityAuthority: 'search_scheduling_only',
     cexRescueAuthority: 'canonical_revalidation_and_residual_replan_only',
@@ -453,7 +415,7 @@ export function getEconomicTransformationSnapshot(): EconomicTransformationAdvic
 
 export function ensureEconomicTransformationWiring(): void {
   if (timer || process.env.CRYPTOCRAWL_ECONOMIC_TRANSFORMATION_ENABLED === 'false') return;
-  installObservedCandidateRevalidationHook();
+  installCandidateBpsSubscription();
   refresh();
   if (process.env.NO_INTERVALS !== 'true') {
     const intervalMs = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTOCRAWL_ECONOMIC_TRANSFORMATION_INTERVAL_MS || 15_000)));
