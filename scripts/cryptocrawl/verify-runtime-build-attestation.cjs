@@ -8,13 +8,29 @@ const runtime = fs.readFileSync('server/services/cryptocrawl/runtime/runtime-att
 if (pkg.scripts['build:server'] !== 'node scripts/cryptocrawl/build-server-overflow-authority.mjs server/index.ts dist/index.js') {
   throw new Error('FAIL server build does not use the attested Overflow-authority builder');
 }
-for (const token of [
-  'ARG RAILWAY_GIT_COMMIT_SHA',
-  'RUN npm run build',
-  'node scripts/cryptocrawl/build-server-overflow-authority.mjs server/cryptara-bootstrap-entry.ts dist/index.js',
-]) {
-  if (!docker.includes(token)) throw new Error(`FAIL Docker build attestation missing ${token}`);
+
+if (!docker.includes('ARG RAILWAY_GIT_COMMIT_SHA')) {
+  throw new Error('FAIL Docker build attestation missing ARG RAILWAY_GIT_COMMIT_SHA');
 }
+
+// Dockerfile RUN instructions may span continuation lines and may prepend
+// additional fail-closed production verifiers. Verify the semantic build chain
+// rather than requiring the obsolete exact text "RUN npm run build".
+const dockerInstructions = docker
+  .replace(/\\\r?\n\s*/g, ' ')
+  .split(/\r?\n/)
+  .map(line => line.trim())
+  .filter(Boolean);
+
+const attestedBuildRun = dockerInstructions.find(line =>
+  line.startsWith('RUN ') &&
+  line.includes('npm run build') &&
+  line.includes('node scripts/cryptocrawl/build-server-overflow-authority.mjs server/cryptara-bootstrap-entry.ts dist/index.js')
+);
+if (!attestedBuildRun) {
+  throw new Error('FAIL Docker build attestation missing logical RUN with npm run build plus mandatory Overflow-authority server rebuild');
+}
+
 for (const token of [
   'process.env.RAILWAY_GIT_COMMIT_SHA',
   "'process.env.CRYPTOCRAWLER_BUILD_SOURCE_SHA'",
@@ -38,4 +54,4 @@ for (const token of [
   if (!runtime.includes(token)) throw new Error(`FAIL runtime attestation missing ${token}`);
 }
 
-console.log('PASS Railway Docker build receives Git SHA, immutable embedded source identity is authoritative, mutable legacy aliases cannot override it, and Railway execution remains fail-closed unless deployment identity verifies');
+console.log('PASS Railway Docker build receives Git SHA, logical build chain runs the application build plus mandatory Overflow-authority server rebuild, immutable embedded source identity is authoritative, mutable legacy aliases cannot override it, and Railway execution remains fail-closed unless deployment identity verifies');
