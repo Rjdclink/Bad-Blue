@@ -75,7 +75,7 @@ export function resolveConfiguredWalletAddress(environment: NodeJS.ProcessEnv = 
   return resolveExecutionWalletAddress(environment);
 }
 
-/** Legacy explicit terminal address resolver retained for compatibility. */
+/** Legacy payout-address resolver. After canonical bootstrap this is repaired to primary. */
 export function resolveTerminalPayoutAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
   try {
     return normalizeEvmAddress('CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS);
@@ -95,7 +95,8 @@ export function resolvePrimaryProfitPayoutAddress(environment: NodeJS.ProcessEnv
 
 /**
  * Independent Railway-address redundancy. Prefer CRYPTO_PAYOUT_WALLET_ADDRESS;
- * retain CRYPTO_PROFIT_WALLET_ADDRESS as a legacy explicit-address fallback.
+ * preserve any distinct legacy CRYPTO_PROFIT_WALLET_ADDRESS before canonical
+ * bootstrap repairs that legacy name to the signer-derived primary address.
  * A duplicate of the primary recipient is not a redundancy and resolves to null.
  */
 export function resolvePayoutFallbackAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
@@ -104,6 +105,7 @@ export function resolvePayoutFallbackAddress(environment: NodeJS.ProcessEnv = pr
 
   for (const [name, raw] of [
     ['CRYPTO_PAYOUT_WALLET_ADDRESS', environment.CRYPTO_PAYOUT_WALLET_ADDRESS],
+    ['CRYPTOCRAWL_RAILWAY_PAYOUT_FALLBACK_ADDRESS', environment.CRYPTOCRAWL_RAILWAY_PAYOUT_FALLBACK_ADDRESS],
     ['CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS],
   ] as const) {
     try {
@@ -147,12 +149,10 @@ export function assertConfiguredWalletAddress(privateKey: string, configuredAddr
 
 /**
  * Establish one operational signer/wallet identity while preserving legacy env
- * names only as in-process aliases for older bridge code. Any historical alias
- * value is repaired to the WALLET_PRIVATE_KEY-derived address. The deprecated
- * duplicate signer/public-key variables are never read as authority.
- *
- * Explicit payout-address variables are deliberately excluded from signer
- * identity. They are payout destinations only and never signing authority.
+ * names only as in-process aliases for older bridge/payout code. Any historical
+ * operational alias is repaired to the WALLET_PRIVATE_KEY-derived address. A
+ * distinct explicit Railway payout address is preserved first as fallback-only
+ * metadata so compatibility repair cannot erase the redundancy.
  */
 export function installCanonicalWalletConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
@@ -166,6 +166,7 @@ export function installCanonicalWalletConfiguration(
   }
 
   const primaryPayoutAddress = resolvePrimaryProfitPayoutAddress(environment);
+  const fallbackPayoutAddress = resolvePayoutFallbackAddress(environment);
   const terminalPayoutReason = !primaryPayoutAddress
     ? 'WALLET_PRIVATE_KEY is unavailable or invalid; primary realized-profit payout remains disabled while observation may continue'
     : undefined;
@@ -185,10 +186,16 @@ export function installCanonicalWalletConfiguration(
   const bridgeAliasInstalled = environment.BRIDGE_WALLET_ADDRESS?.trim() !== executionAddress;
   const acrossAliasInstalled = environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS?.trim() !== executionAddress;
 
-  // Compatibility only: existing bridge code still reads these names, but they
-  // can no longer represent a second wallet or signer identity.
+  if (fallbackPayoutAddress && fallbackPayoutAddress.toLowerCase() !== executionAddress.toLowerCase()) {
+    environment.CRYPTOCRAWL_RAILWAY_PAYOUT_FALLBACK_ADDRESS = fallbackPayoutAddress;
+  }
+
+  // Compatibility only: existing code that still reads historical wallet names
+  // cannot disagree with the canonical signer-derived primary recipient. The
+  // preserved fallback above remains separate and has no signing authority.
   environment.BRIDGE_WALLET_ADDRESS = executionAddress;
   environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS = executionAddress;
+  environment.CRYPTO_PROFIT_WALLET_ADDRESS = executionAddress;
 
   return {
     executionAddress,
