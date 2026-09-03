@@ -38,8 +38,6 @@ import { ensurePredictionMarketDiscoveryWiring } from './prediction-market-disco
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
 import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 import { ensureZeroCapitalShadowPriorityWiring } from './zero-capital-shadow-priority-wiring.js';
-import { ensureZeroCapitalSizeRefinementWiring } from './zero-capital-size-refinement-wiring.js';
-import { ensureZeroCapitalJointProviderSizeWiring } from './zero-capital-joint-provider-size-wiring.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
 import { ensureZeroCapitalDynamicAttemptBarrierWiring } from './zero-capital-dynamic-attempt-barrier-wiring.js';
@@ -122,8 +120,6 @@ function installCanonicalRuntime(): void {
   ensureDynamicScalePressureWiring();
   ensureZeroCapitalResourceWiring();
   ensureZeroCapitalShadowPriorityWiring();
-  ensureZeroCapitalSizeRefinementWiring();
-  ensureZeroCapitalJointProviderSizeWiring();
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureDualProviderZeroCapitalExecutionWiring();
@@ -226,7 +222,8 @@ function installCanonicalRuntime(): void {
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
     zeroCapitalRuntimeLifecycle: 'terminal_realized_profit_authority_then_cost_safe_rpc_mesh_then_single_canonical_hard_fact_governance_then_fail_closed_retry',
-    zeroCapitalSizeOptimization: 'canonical_scan_direct_bps_rescue_then_bounded_fresh_refinement_and_exact_provider_size_rescue',
+    zeroCapitalSizeOptimization: 'canonical_scan_direct_bps_rescue_with_exact_provider_fee_liquidity_and_fresh_notional_requotes',
+    zeroCapitalDuplicateSizeOptimizerOwners: 0,
     zeroCapitalProfitabilityRescue: 'canonical_scan_direct_call_decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
     zeroCapitalProfitabilityRescueInstallerAuthority: false,
     zeroCapitalPredictiveUsdEconomics: 'live_input_asset_price_required_before_monte_carlo_and_position_sizing',
