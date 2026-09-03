@@ -55,12 +55,12 @@ assert(dynamicRoutes.includes('truePositiveQuotes = quotes.filter(quote => quote
 assert(dynamicRoutes.includes('state.measuredQuotes += quotes.length'), 'measured quote count must reflect actual measured quotes');
 assert(atomicSize.includes('profit > 0n') && atomicSize.includes('bestPositive'), 'atomic size optimizer must prefer strict-positive measured dollar profit');
 assert(atomicSize.includes('bpsToBreakEven') && atomicSize.includes('bestNearMiss'), 'all-negative atomic size fallback must preserve the closest measured BPS near miss only');
-assert(zeroCapitalSizing.includes("ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000"), 'zero-capital Stage-1 discovery must retain a bounded shadow sizing ceiling');
-assert(zeroCapitalSizing.includes('const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd'), 'Stage2+ zero-capital sizing must consume the single profit-ladder notional authority');
-assert(zeroCapitalSizing.includes('stageCanExecute') && zeroCapitalSizing.includes('? Math.max(seedUsd, ladderMaxNotionalUsd)') && zeroCapitalSizing.includes(': stageOneDiscoveryCeiling;'), 'Stage-1 shadow measurement must remain separate while executable sizing follows the ladder');
+assert(zeroCapitalSizing.includes("ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000"), 'paused/non-executable zero-capital discovery must retain a bounded measurement ceiling');
+assert(zeroCapitalSizing.includes('const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd'), 'live zero-capital sizing must consume the single Profit Ladder notional authority');
+assert(zeroCapitalSizing.includes('stageCanExecute') && zeroCapitalSizing.includes('? Math.max(seedUsd, ladderMaxNotionalUsd)') && zeroCapitalSizing.includes(': stageOneDiscoveryCeiling;'), 'live sizing must use Profit Ladder while only paused measurement uses the bounded discovery ceiling');
 assert(!zeroCapitalSizing.includes('stage.maxPositionSizeUSD'), 'legacy StageManager position caps must not remain a zero-capital notional authority');
-assert(zeroCapitalSizing.includes('stage1ShadowDiscoveryExecutionAuthority: false'), 'Stage-1 zero-capital shadow sizing must never grant execution authority');
-assert(zeroCapitalSizing.includes('stage2PlusDiscoveryBoundedByProfitLadder: true'), 'Stage2+ discovery must remain bounded by the current profit ladder');
+assert(zeroCapitalSizing.includes('pausedDiscoveryExecutionAuthority: false'), 'paused zero-capital measurement sizing must never grant execution authority');
+assert(zeroCapitalSizing.includes('liveDiscoveryBoundedByProfitLadder: true'), 'all live zero-capital discovery must remain bounded by the current Profit Ladder');
 assert(zeroCapitalSizing.includes('legacyStagePositionCapAuthoritative: false'), 'zero-capital telemetry must explicitly retire the legacy stage position cap');
 assert(zeroCapitalSizing.includes('negativeObservationExecutionAuthority: false'), 'negative zero-capital observations must remain non-executable');
 assert(zeroCapitalSizing.includes('profitInterpolationUsed: false'), 'zero-capital refinement must use independently quoted economics rather than interpolation');
@@ -107,4 +107,4 @@ assert(runtime.includes('ensureMeasuredCandidateExpiryGuardWiring();'), 'candida
 assert(runtime.includes('ensureZeroCapitalSizeRefinementWiring();'), 'zero-capital size refinement wiring must be installed');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
 
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single profit-ladder notional authority through $100M, one-batch parallel CEX splitting with residual replanning, anti-rank-gaming partial profit accounting, compounding-first retained-profit authority, and strict quote truth invariants preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder live-notional authority through $100M, bounded non-authoritative paused discovery, one-batch parallel CEX splitting with residual replanning, anti-rank-gaming partial profit accounting, compounding-first retained-profit authority, and strict quote truth invariants preserved');
