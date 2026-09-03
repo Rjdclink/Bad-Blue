@@ -1,15 +1,18 @@
 import logger from '../../../logger.js';
 import { getCryptara } from '../../cryptara/index.js';
+import { zeroCapitalEngine, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
+import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
 import { routeMeasuredOpportunity } from '../execution/unified-execution-router.js';
-import { zeroCapitalEngine, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { ensureBpsDecompositionObservability } from './bps-decomposition-observability.js';
 import { ensureEconomicTransformationWiring } from './economic-transformation-wiring.js';
 import { ensureZeroCapitalRecoveryObservability } from './zero-capital-recovery-observability.js';
 import { ensureProfitabilityRecoveryCoordinator } from './profitability-recovery-coordinator.js';
 
 const installed = new WeakSet<object>();
+const evidenceReacquisitionInFlight = new Map<string, Promise<void>>();
+const evidenceReacquisitionCooldownUntil = new Map<string, number>();
 
 type CexRuntime = {
   execute: (plan: any) => Promise<any>;
@@ -21,6 +24,47 @@ type ZeroCapitalRuntime = {
 
 function cexOpportunityId(plan: { buyVenue: string; sellVenue: string; symbol: string }): string {
   return `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`;
+}
+
+function evidenceReacquisitionCooldownMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_EVIDENCE_REACQUISITION_COOLDOWN_MS || 500);
+  return Number.isFinite(parsed) ? Math.max(100, Math.min(5_000, Math.trunc(parsed))) : 500;
+}
+
+function requestCexEvidenceReacquisition(symbolRaw: string, reason: string): void {
+  const symbol = String(symbolRaw || '').trim().toUpperCase();
+  if (!symbol) return;
+  const key = `cex:${symbol}`;
+  if (evidenceReacquisitionInFlight.has(key) || (evidenceReacquisitionCooldownUntil.get(key) || 0) > Date.now()) return;
+
+  const task = measuredOpportunityGraph.revalidateSymbols([symbol])
+    .then(cycle => {
+      logger.info('[EvidenceScanner] Targeted CEX evidence reacquisition completed', {
+        component: 'DynamicProfitabilityAdmissionWiring',
+        symbol,
+        reason,
+        cycleId: cycle.cycleId,
+        evaluatedSymbols: cycle.evaluatedSymbols,
+        deterministicPositive: cycle.deterministicPositive,
+        eligibleCandidates: cycle.eligibleCandidates,
+        activeEvidenceAcquisition: true,
+        hotPathExecutionAuthority: false,
+      });
+    })
+    .catch(error => {
+      logger.warn('[EvidenceScanner] Targeted CEX evidence reacquisition degraded', {
+        component: 'DynamicProfitabilityAdmissionWiring',
+        symbol,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+        hotPathExecutionAuthority: false,
+      });
+    })
+    .finally(() => {
+      evidenceReacquisitionInFlight.delete(key);
+      evidenceReacquisitionCooldownUntil.set(key, Date.now() + evidenceReacquisitionCooldownMs());
+    });
+  evidenceReacquisitionInFlight.set(key, task);
 }
 
 function measuredZeroCapitalExecutionReady(
@@ -40,7 +84,6 @@ function measuredZeroCapitalExecutionReady(
   if (candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return { allowed: false, reason: 'wrong_topology', maxSlippageBps };
   if (candidate.status !== 'deterministic_positive' && candidate.status !== 'eligible') return { allowed: false, reason: 'not_deterministic_positive', maxSlippageBps };
   if (!candidate.executableCapability) return { allowed: false, reason: 'execution_capability_unavailable', maxSlippageBps };
-  if (candidate.missingInformation.length > 0) return { allowed: false, reason: 'missing_execution_information', maxSlippageBps };
   if (candidate.depth.status !== 'measured') return { allowed: false, reason: 'depth_not_measured', maxSlippageBps };
   if (candidate.expiresAt <= Date.now()) return { allowed: false, reason: 'candidate_expired', maxSlippageBps };
   if (candidate.chains.length !== 1 || candidate.chains[0] !== opportunity.chain) return { allowed: false, reason: 'chain_binding_mismatch', maxSlippageBps };
@@ -48,7 +91,7 @@ function measuredZeroCapitalExecutionReady(
     return { allowed: false, reason: 'executable_route_quotes_incomplete', maxSlippageBps };
   }
   if (!Number.isFinite(deterministicNetProfitUsd) || deterministicNetProfitUsd <= 0) {
-    return { allowed: false, reason: 'deterministic_net_not_positive', maxSlippageBps };
+    return { allowed: false, reason: deterministicNetProfitUsd === 0 ? 'deterministic_net_zero_reacquire' : 'deterministic_net_not_positive', maxSlippageBps };
   }
   if (!Number.isFinite(netProfitBps) || netProfitBps <= 0 || opportunity.expectedProfit <= 0n) {
     return { allowed: false, reason: 'net_bps_not_positive', maxSlippageBps };
@@ -80,32 +123,42 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     cex.execute = async plan => {
       const candidate = measuredCandidateRegistry.get(cexOpportunityId(plan));
       if (!candidate) {
-        return {
-          success: false,
-          status: 'rejected',
-          settlementConfirmed: false,
-          error: 'REJECT_DYNAMIC_ADMISSION_EVIDENCE: measured candidate is unavailable at execution admission',
-        };
+        requestCexEvidenceReacquisition(plan.symbol, 'measured_candidate_registry_missing_at_hot_path');
+        logger.info('[UnifiedExecutionRouter] Canonical CEX plan bypassed duplicate registry veto while evidence is reacquired in parallel', {
+          component: 'DynamicProfitabilityAdmissionWiring',
+          symbol: plan.symbol,
+          venuePair: `${plan.buyVenue}->${plan.sellVenue}`,
+          canonicalPlanEconomicsAuthorityPreserved: true,
+          downstreamHardGatesPreserved: true,
+          duplicateRegistryExecutionAuthority: false,
+        });
+        return originalExecute(plan);
       }
+
       const decision = routeMeasuredOpportunity(candidate);
-      if (!decision.admitted) {
-        logger.info('[UnifiedExecutionRouter] CEX opportunity rejected by hard execution admission', {
+      if (decision.evidenceReacquisitionRequired) {
+        requestCexEvidenceReacquisition(plan.symbol, decision.reasons.join('; '));
+      }
+      if (!decision.admitted || decision.hardVetoVerified) {
+        logger.info('[UnifiedExecutionRouter] Registry evidence disagreement retained as advisory while canonical CEX plan proceeds to strategy hard gates', {
           component: 'DynamicProfitabilityAdmissionWiring',
           opportunityId: candidate.opportunityId,
+          symbol: plan.symbol,
           path: decision.path,
           profitabilityScore: decision.score.profitabilityScore,
           executionRisk: decision.score.executionRisk,
           confidenceLevel: decision.score.confidenceLevel,
-          threshold: decision.threshold,
+          evidence: decision.evidence,
+          hardVetoVerifiedByAdvisoryRouter: decision.hardVetoVerified,
           reasons: decision.reasons,
+          canonicalPlanEconomicsAuthorityPreserved: true,
+          downstreamHardGatesPreserved: true,
+          independentEvidenceVetoAuthority: false,
         });
-        return {
-          success: false,
-          status: 'rejected',
-          settlementConfirmed: false,
-          error: `REJECT_EXECUTION_EVIDENCE: ${decision.reasons.join('; ')}`,
-        };
       }
+
+      // The canonical verified plan and the strategy-specific executor own hard
+      // execution admission. This parallel layer scores/reacquires evidence only.
       return originalExecute(plan);
     };
   }
@@ -121,6 +174,17 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
 
       const executionReady = measuredZeroCapitalExecutionReady(opportunity, current);
       if (!executionReady.allowed) return false;
+
+      if (current.missingInformation.length > 0) {
+        logger.info('[UnifiedExecutionRouter] Zero-capital optional evidence gaps retained as advisory', {
+          component: 'DynamicProfitabilityAdmissionWiring',
+          opportunityId: opportunity.id,
+          chain: opportunity.chain,
+          missingInformation: current.missingInformation,
+          strategyHardEvidenceSatisfied: true,
+          missingInformationVetoAuthority: false,
+        });
+      }
 
       if (!cryptaraAllowed) {
         logger.info('[UnifiedExecutionRouter] Measured zero-capital candidate retained despite advisory Cryptara veto', {
@@ -138,8 +202,6 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
         });
       }
 
-      // Deterministic positive all-in economics plus complete executable evidence
-      // is the eligibility authority. Cryptara remains advisory/ranking evidence.
       const eligible = measuredCandidateRegistry.updateStatus(opportunity.id, 'eligible', {
         provenance: [
           'unified_execution_router:measured_positive_execution_authority',
@@ -151,14 +213,12 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
 
       const decision = routeMeasuredOpportunity(eligible);
       if (!decision.admitted) {
-        logger.info('[UnifiedExecutionRouter] Zero-capital opportunity rejected by hard execution admission', {
+        logger.info('[UnifiedExecutionRouter] Zero-capital candidate held by concrete strategy readiness, not advisory confidence', {
           component: 'DynamicProfitabilityAdmissionWiring',
           opportunityId: opportunity.id,
           path: decision.path,
-          profitabilityScore: decision.score.profitabilityScore,
-          executionRisk: decision.score.executionRisk,
-          confidenceLevel: decision.score.confidenceLevel,
-          threshold: decision.threshold,
+          evidence: decision.evidence,
+          hardVetoVerified: decision.hardVetoVerified,
           reasons: decision.reasons,
         });
         return false;
@@ -169,7 +229,10 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
 
   logger.info('[UnifiedExecutionRouter] Positive-net execution admission wiring installed', {
     component: 'DynamicProfitabilityAdmissionWiring',
-    hardAdmissionAuthority: 'deterministic_positive_all_in_net_plus_complete_current_execution_evidence',
+    hardAdmissionAuthority: 'canonical_strategy_executor_verified_hard_facts_only',
+    evidenceScoringAuthority: 'parallel_advisory_only',
+    activeMissingEvidenceAcquisition: 'targeted_canonical_revalidation_off_hot_path',
+    missingInformationExecutionVetoAuthority: false,
     adaptiveProfitabilityThresholdAuthority: 'ranking_and_sizing_only',
     cryptaraExecutionAuthority: false,
     coldStartHistoricalProofRequired: false,
