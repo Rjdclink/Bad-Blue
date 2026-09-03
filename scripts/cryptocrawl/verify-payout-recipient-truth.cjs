@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const read = path => fs.readFileSync(path, 'utf8');
 
 const wallet = read('server/services/cryptocrawl/core/wallet-identity.ts');
+const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
+const retainedLedger = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
 const lifecycle = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
 const observer = read('server/services/cryptocrawl/compensation/payout-recipient-confirmation-observer.ts');
 const rainbowWiring = read('server/services/cryptocrawl/runtime/rainbow-profit-bridge-wiring.ts');
@@ -19,7 +21,20 @@ const docker = read('Dockerfile');
 assert.match(wallet, /resolvePrimaryProfitPayoutAddress/);
 assert.match(wallet, /walletFromPrivateKey\(privateKey\)\.address/);
 assert.match(wallet, /CRYPTO_PAYOUT_WALLET_ADDRESS/);
+assert.match(wallet, /CRYPTOCRAWL_RAILWAY_PAYOUT_FALLBACK_ADDRESS/);
 assert.match(wallet, /candidate\.toLowerCase\(\) !== primaryLower/);
+assert.match(wallet, /environment\.CRYPTO_PROFIT_WALLET_ADDRESS = executionAddress/);
+
+// Legacy payout readers are safe only if canonical wallet bootstrap repairs their
+// alias before the treasury module is dynamically imported. Lock that ordering so
+// a future refactor cannot silently point ledger fingerprints at a stale address.
+assert.match(retainedLedger, /process\.env\.CRYPTO_PROFIT_WALLET_ADDRESS/);
+const walletBootstrapCall = coreRuntime.indexOf('  ensureCanonicalWalletConfiguration();');
+const treasuryScheduleCall = coreRuntime.indexOf('  scheduleRainbowProfitBridge();');
+assert.ok(walletBootstrapCall >= 0, 'canonical wallet bootstrap call must exist');
+assert.ok(treasuryScheduleCall >= 0, 'treasury schedule call must exist');
+assert.ok(walletBootstrapCall < treasuryScheduleCall, 'canonical wallet bootstrap must run before treasury wiring is scheduled');
+assert.match(coreRuntime, /void import\('\.\/rainbow-profit-bridge-wiring\.js'\)/);
 
 // Railway synchronizes the primary/fallback recipients and read-only Ethereum RPC
 // into the one Overflow treasury authority. No private key becomes a destination.
@@ -103,6 +118,8 @@ console.log(JSON.stringify({
   fallbackPayout: 'Railway explicit Ethereum address',
   payoutAsset: 'ETH',
   recipientProof: 'OKX withdrawal + finalized Ethereum RPC',
+  canonicalWalletBootstrapBeforeTreasuryImport: true,
+  legacyLedgerDestinationAliasRepairedToPrimary: true,
   recipientObserverStartedByCanonicalTreasuryWiring: true,
   payoutWakeAuthority: 'Overflow only',
   primaryPayoutControlPlaneFallback: false,
