@@ -6,6 +6,8 @@ const read = path => fs.readFileSync(path, 'utf8');
 const wallet = read('server/services/cryptocrawl/core/wallet-identity.ts');
 const lifecycle = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
 const observer = read('server/services/cryptocrawl/compensation/payout-recipient-confirmation-observer.ts');
+const rainbowWiring = read('server/services/cryptocrawl/runtime/rainbow-profit-bridge-wiring.ts');
+const payoutWakeBridge = read('server/services/cryptocrawl/compensation/rainbow-profit-bridge.ts');
 const payouts = read('supabase/functions/cryptocrawler-terminal-sweeper/payouts.ts');
 const payoutMigration = read('server/migrations/018_cryptocrawler_profit_split_eth_payout.sql');
 const waitGuard = read('server/migrations/031_cryptocrawler_payout_confirmation_wait.sql');
@@ -26,6 +28,23 @@ assert.match(lifecycle, /resolvePayoutFallbackAddress/);
 assert.match(lifecycle, /cryptocrawler_profit_wallet/);
 assert.match(lifecycle, /cryptocrawler_fallback_wallet/);
 assert.doesNotMatch(lifecycle, /cryptocrawler_profit_wallet[^\n]*WALLET_PRIVATE_KEY/);
+
+// The independent recipient observer is not dead code: canonical treasury wiring
+// starts/stops it with the same lifecycle that records realized-profit obligations.
+assert.match(rainbowWiring, /payoutRecipientConfirmationObserver\.start\(\)/);
+assert.match(rainbowWiring, /payoutRecipientConfirmationObserver\.stop\(\)/);
+assert.match(rainbowWiring, /retainedProfitLedger\.recordTerminalSettlement/);
+
+// The payout wake-up client is Overflow-only. A missing Overflow endpoint/key must
+// fail closed rather than falling back to general/Primary Supabase authority.
+assert.match(payoutWakeBridge, /process\.env\.SUPABASE_URL_OVERFLOW/);
+assert.match(payoutWakeBridge, /process\.env\.SUPABASE_SECRET_KEY_OVERFLOW/);
+assert.match(payoutWakeBridge, /process\.env\.SUPABASE_SERVICEROLE_OVERFLOW_KEY/);
+assert.doesNotMatch(payoutWakeBridge, /process\.env\.SUPABASE_URL\s*\|\|/);
+assert.doesNotMatch(payoutWakeBridge, /process\.env\.SUPABASE_SERVICE_KEY/);
+assert.doesNotMatch(payoutWakeBridge, /process\.env\.SUPABASE_SECRET_KEY\s*\|\|/);
+assert.doesNotMatch(payoutWakeBridge, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
+assert.match(payoutWakeBridge, /primaryFallbackUsed: false/);
 
 // Independent proof must bind OKX withdrawal truth to finalized Ethereum truth.
 assert.match(observer, /eth_getTransactionByHash/);
@@ -84,6 +103,9 @@ console.log(JSON.stringify({
   fallbackPayout: 'Railway explicit Ethereum address',
   payoutAsset: 'ETH',
   recipientProof: 'OKX withdrawal + finalized Ethereum RPC',
+  recipientObserverStartedByCanonicalTreasuryWiring: true,
+  payoutWakeAuthority: 'Overflow only',
+  primaryPayoutControlPlaneFallback: false,
   pendingUntilRecipientProof: true,
   mismatchedRecipientFailsClosed: true,
   mismatchedAmountFailsClosed: true,
