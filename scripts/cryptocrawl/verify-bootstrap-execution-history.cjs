@@ -33,13 +33,15 @@ must(progression, /Execution evidence requires a terminal normalized settlement/
 
 must(executor, /plan\.netProfitUsd\)\s*\|\|\s*plan\.netProfitUsd\s*<=\s*0/, 'strict positive all-in net profit remains required');
 must(executor, /acquireMeasuredInventory\s*\(\s*plan\s*,\s*adapters\s*\)/, 'measured inventory is reconciled before execution admission');
-must(executor, /empiricalCalibrationAvailable\s*=\s*calibration\.samples\s*>\s*0/, 'empirical calibration authority begins after real samples exist');
-must(executor, /coldStartMeasuredBootstrap\s*=\s*!empiricalCalibrationAvailable/, 'cold-start path is explicit');
-must(executor, /plan\.liquidity\.status\s*===\s*'measured'/, 'cold-start requires measured liquidity');
-must(executor, /liquidityCoverage\s*>=\s*1/, 'cold-start requires full measured quantity coverage');
-must(executor, /!monteCarlo\.approved\s*&&\s*empiricalCalibrationAvailable/, 'empirical Monte Carlo retains veto authority');
-must(executor, /!monteCarlo\.approved\s*&&\s*!coldStartMeasuredBootstrap/, 'incomplete cold-start evidence still fails closed');
+must(executor, /calibration\.samples/, 'terminal calibration history remains available to advisory Monte Carlo');
+must(executor, /plan\.liquidity\.status\s*!==\s*'measured'/, 'measured liquidity remains a hard deterministic input upstream');
+must(executor, /void parallelMonteCarloPool\.run/, 'Monte Carlo runs concurrently off the CEX critical path');
+must(executor, /monteCarloExecutionAuthority:\s*false/, 'Monte Carlo explicitly has no current execution authority');
+must(executor, /currentPlanAdmissionAuthority:\s*'deterministic_positive_all_in_economics_plus_hard_execution_facts'/, 'deterministic current facts own CEX admission');
 must(executor, /requireAllowed\s*\(\s*'SUBMIT_TX'/, 'canonical governance still controls parent execution admission');
+must(executor, /REJECT_STALE_QUOTE/, 'fresh quote evidence remains a hard execution requirement');
+mustNot(executor, /REJECT_MC(?:_COMPUTE|_COLD_START_EVIDENCE)?:/, 'Monte Carlo cannot reject a current deterministic-positive CEX plan');
+mustNot(executor, /await\s+parallelMonteCarloPool\.run/, 'CEX execution cannot wait for Monte Carlo before submission');
 mustNot(executor, /calibration\.samples\s*===\s*0[^\n]*return rejectPlan/, 'zero history alone cannot reject the first measured trade');
 
-console.log('[verify-bootstrap-execution-history] PASS: Stage-1 bootstrap is canonical live-positive across standard CEX, fully measured maker CEX, and topology-ready zero-capital evidence; no historical-profit prerequisite exists, and shared PR482 execution contract preserves parent/child/product/settlement truth');
+console.log('[verify-bootstrap-execution-history] PASS: Stage-1 bootstrap is canonical live-positive across standard CEX, fully measured maker CEX, and topology-ready zero-capital evidence; no historical-profit prerequisite exists, Monte Carlo is parallel advisory only, and shared PR482 execution contract preserves parent/child/product/settlement truth');
