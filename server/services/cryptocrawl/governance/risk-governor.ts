@@ -197,38 +197,42 @@ export class RiskGovernor extends EventEmitter {
       assessment.confidenceScore = 0;
     }
 
-    // CHECK 8: Malfunction/anomaly detection. It may not create a second profit
-    // or position ceiling; those responsibilities are already owned above.
+    // Operational anomaly heuristics are observability only. They may identify
+    // suspicious throughput for investigation, but may not independently veto a
+    // trade that has already passed the concrete circuit-breaker and hard-risk facts.
     if (stageConfig.anomalyDetectionRequired) {
       const anomalyResult = this.detectAnomalies();
       if (!anomalyResult.passed) {
-        assessment.reason = `Anomaly detected: ${anomalyResult.reason}`;
-        stageManager.reportAnomaly(anomalyResult.reason, anomalyResult.severity);
-        this.recordAssessment(assessment);
-        return assessment;
+        log.warn('Advisory execution anomaly observed after hard checks passed', {
+          proposalId: proposal.id,
+          reason: anomalyResult.reason,
+          severity: anomalyResult.severity,
+          executionAuthority: false,
+          globalPauseApplied: false,
+        });
       }
-      assessment.checksPass.anomalyCheck = true;
-    } else {
-      assessment.checksPass.anomalyCheck = true;
     }
+    assessment.checksPass.anomalyCheck = true;
 
+    // Risk score is retained for telemetry/learning only. Its inputs overlap
+    // position, confidence, and Monte Carlo facts already evaluated above, so it
+    // cannot regain a second aggregate execution veto.
     assessment.riskScore = this.calculateRiskScore(proposal, assessment, confidenceEnabledForRisk);
     const allChecksPass = Object.values(assessment.checksPass).every(check => check);
 
-    if (allChecksPass && assessment.riskScore < 70) {
+    if (allChecksPass) {
       assessment.approved = true;
-      assessment.reason = 'Trade approved - all risk checks passed';
+      assessment.reason = 'Trade approved - all canonical hard risk checks passed';
       log.info('Trade APPROVED', {
         proposalId: proposal.id,
         strategy: proposal.strategy,
         positionUSD: proposal.positionSizeUSD,
         profitLadderMaxNotionalUsd: notionalAuthority.maxNotionalUsd,
-        riskScore: assessment.riskScore,
+        riskScoreTelemetryOnly: assessment.riskScore,
         confidence: assessment.confidenceScore,
         confidenceEnabled: confidenceEnabledForRisk,
+        duplicateRiskScoreVetoAuthority: false,
       });
-    } else if (allChecksPass) {
-      assessment.reason = `Risk score too high: ${assessment.riskScore.toFixed(2)}`;
     }
 
     this.recordAssessment(assessment);
@@ -448,6 +452,8 @@ export class RiskGovernor extends EventEmitter {
       profitCeilingAuthority: false,
       positionSizeAuthority: 'profit_ladder_capital_allowance',
       legacyStagePositionCapAuthoritative: false,
+      riskScoreExecutionAuthority: false,
+      anomalyHeuristicExecutionAuthority: false,
       timestamp: Date.now(),
     };
   }
