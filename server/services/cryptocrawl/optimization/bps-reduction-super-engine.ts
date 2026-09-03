@@ -107,8 +107,6 @@ const attributionLedger = new Map<string, BpsAttributionRow>();
 const MAX_LEDGER_ROWS = 4096;
 
 function finite(value: unknown): number | null {
-  // Unknown economics stay unknown. Number(null), Number(''), and Number(false)
-  // are all zero, so coercing them would fabricate measured/realized BPS.
   if (value === null || value === undefined || typeof value === 'boolean') return null;
   if (typeof value === 'string' && value.trim() === '') return null;
   const parsed = Number(value);
@@ -125,40 +123,23 @@ function symbolOf(candidate: MeasuredCandidate): string | null {
     || null;
 }
 
-function notionalUsd(candidate: MeasuredCandidate): number | null {
-  const direct = finite(candidate.economics.notionalUsd);
-  if (direct !== null && direct > 0) return direct;
-  const grossBps = finite(candidate.economics.grossProfitBps);
-  const grossUsd = finite(candidate.economics.grossProfitUsd);
-  if (grossBps !== null && grossUsd !== null && grossBps !== 0) {
-    const inferred = grossUsd / grossBps * 10_000;
-    return Number.isFinite(inferred) && inferred > 0 ? inferred : null;
-  }
-  return null;
-}
-
-function usdToBps(valueUsd: unknown, notional: number | null): number | null {
-  const value = finite(valueUsd);
-  return value !== null && notional !== null && notional > 0 ? Math.max(0, value) / notional * 10_000 : null;
-}
-
 function buildAttribution(candidate: MeasuredCandidate): BpsAttributionRow {
-  const notional = notionalUsd(candidate);
+  const canonical = candidate.canonicalBps;
   return {
     opportunityId: candidate.opportunityId,
     symbol: symbolOf(candidate),
     observedAt: candidate.observedAt,
-    grossBps: finite(candidate.economics.grossProfitBps),
-    exchangeFeeBps: usdToBps(candidate.economics.feeUsd, notional),
-    slippageBps: finite(candidate.economics.expectedSlippageBps),
-    impactBps: finite(candidate.economics.expectedPriceImpactBps),
-    gasBps: finite(candidate.economics.gasCostBps) ?? usdToBps(candidate.economics.gasUsd, notional),
-    bridgeBps: usdToBps(candidate.economics.bridgeUsd, notional),
+    grossBps: canonical.grossBps,
+    exchangeFeeBps: canonical.exchangeFeeBps,
+    slippageBps: canonical.slippageBps,
+    impactBps: canonical.impactBps,
+    gasBps: canonical.gasBps,
+    bridgeBps: canonical.bridgeBps,
     latencyDecayBps: null,
     adverseSelectionBps: null,
     queueLossBps: null,
-    netBps: finite(candidate.economics.netProfitBps),
-    realizedNetBps: finite(candidate.economics.realizedNetProfitBps),
+    netBps: canonical.netBps,
+    realizedNetBps: canonical.realizedNetBps,
   };
 }
 
@@ -282,6 +263,29 @@ function synergyBundles(activeIds: readonly number[]): BpsSynergyBundle[] {
   }));
 }
 
+function counterfactualsFor(candidate: MeasuredCandidate): string[] {
+  const common = ['twenty_five_percent_less_notional', 'lower_latency_revalidation'];
+  if (candidate.topology === 'CEX_CEX' || candidate.topology === 'MAKER_CEX') {
+    return [...common, 'second_best_venue', 'maker_vs_taker_mode', 'prepositioned_inventory'];
+  }
+  if (candidate.topology === 'ZERO_CAPITAL_ATOMIC') {
+    return [...common, 'alternate_flash_provider', 'alternate_route_or_pool', 'sponsored_gas_path'];
+  }
+  if (candidate.topology === 'CROSS_CHAIN') {
+    return [...common, 'same_chain_alternative', 'alternate_bridge_path', 'prepositioned_inventory'];
+  }
+  if (candidate.topology === 'DEX_ATOMIC' || candidate.topology === 'MEMPOOL_BACKRUN') {
+    return [...common, 'alternate_route_or_pool', 'direct_submission_path', 'gas_sponsorship_or_batching'];
+  }
+  if (candidate.topology === 'LIQUIDATION') {
+    return [...common, 'alternate_flash_provider', 'alternate_collateral_route', 'gas_sponsorship_or_batching'];
+  }
+  if (candidate.topology === 'FUNDING_ARBITRAGE') {
+    return [...common, 'alternate_venue_pair', 'maker_entry_mode', 'prepositioned_inventory'];
+  }
+  return common;
+}
+
 function tacticState(key: string): TacticOutcomeState {
   const existing = tacticOutcome.get(key);
   if (existing) return existing;
@@ -303,11 +307,10 @@ function allocationMultiplier(keys: readonly string[]): number {
 }
 
 function updateRealizedGovernor(candidate: MeasuredCandidate): void {
-  const realized = finite(candidate.economics.realizedNetProfitBps);
+  const realized = finite(candidate.canonicalBps.realizedNetBps);
   if (realized === null) return;
   const plan = opportunityPlans.get(candidate.opportunityId);
-  if (!plan) return;
-  if (plan.predictedNetBps === null) return;
+  if (!plan || plan.predictedNetBps === null) return;
   const error = Math.abs(realized - plan.predictedNetBps);
   const denominator = Math.max(1, Math.abs(plan.predictedNetBps));
   const accuracy = clamp(1 - error / denominator, 0, 1);
@@ -406,13 +409,7 @@ export function buildBpsReductionSuperPlan(
     cvarBudgetBps,
     deficiencyClass: deficiencyClass(candidate, advice),
     eventTriggers,
-    counterfactuals: [
-      'second_best_venue',
-      'twenty_five_percent_less_notional',
-      'maker_vs_taker_mode',
-      'lower_latency_revalidation',
-      'prepositioned_inventory',
-    ],
+    counterfactuals: counterfactualsFor(candidate),
     synergyBundles: bundles,
     governorMultiplier: Number(governorMultiplier.toFixed(8)),
     effectivePriorityScore: Number(effectivePriorityScore.toFixed(8)),
@@ -425,7 +422,7 @@ export function buildBpsReductionSuperPlan(
   };
 
   opportunityPlans.set(candidate.opportunityId, {
-    predictedNetBps: finite(candidate.economics.netProfitBps),
+    predictedNetBps: candidate.canonicalBps.netBps,
     tacticKeys: [...research.activeTacticKeys],
   });
   return result;
@@ -442,6 +439,8 @@ export function getBpsReductionSuperEngineSnapshot() {
     realizedRows: realized.length,
     tacticStates,
     edgeHalfLife: [...edgeLife.entries()].map(([symbol, state]) => ({ symbol, ...state })),
+    canonicalBpsAuthority: 'measured_candidate_registry' as const,
+    allTopologiesConsumeCanonicalBps: true as const,
     authority: 'measurement_learning_and_scheduling_only' as const,
     executionAuthority: false as const,
     syntheticEconomicsAllowed: false as const,
