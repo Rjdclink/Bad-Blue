@@ -107,7 +107,7 @@ async function refreshDerivedProofMetrics(input: {
     monteCarloSimulations,
   });
 
-  logger.info('[StageProofMetrics] Realized progression metrics refreshed', {
+  logger.info('[StageProofMetrics] Realized telemetry refreshed without soft advancement authority', {
     component: 'StageProofMetricsWiring',
     stage: state.currentStage,
     stageActivatedAt: state.activatedAt ?? null,
@@ -118,11 +118,11 @@ async function refreshDerivedProofMetrics(input: {
     monteCarloProbabilityOfProfit: mc.probabilityOfProfit,
     monteCarloPassRate,
     monteCarloSimulations,
-    metricWindowAuthority: 'current_stage_terminal_execution_history_only',
-    monteCarloFieldAuthority: 'executed_canonical_mc_decision_validated_by_terminal_realized_outcome',
-    thresholdsChanged: false,
-    tradeCountRequirementChanged: false,
-    uptimeRequirementChanged: false,
+    metricWindowAuthority: 'current_stage_terminal_execution_history_telemetry_only',
+    monteCarloFieldAuthority: 'terminal_outcome_calibration_telemetry_only',
+    stageManagerHistoricalMetricsAdvancementAuthority: false,
+    stageTwoHistoricalMetricsAdvancementAuthority: false,
+    monteCarloExecutionAuthority: false,
   });
 }
 
@@ -141,23 +141,26 @@ export function ensureStageProofMetricsWiring(): void {
   const original = target.recordExecutionEvidence.bind(target);
   target.recordExecutionEvidence = async input => {
     await refreshDerivedProofMetrics(input).catch(error => {
-      logger.warn('[StageProofMetrics] Derived progression metric refresh degraded; existing stage gates remain fail-closed', {
+      logger.warn('[StageProofMetrics] Derived telemetry refresh degraded; canonical hard stage facts remain authoritative', {
         component: 'StageProofMetricsWiring',
         error: error instanceof Error ? error.message : String(error),
         stage: stageManager.getCurrentStage(),
+        executionAuthority: false,
       });
     });
     return original(input);
   };
 
-  logger.info('[StageProofMetrics] Automatic progression metric bridge installed', {
+  logger.info('[StageProofMetrics] Automatic progression telemetry bridge installed', {
     component: 'StageProofMetricsWiring',
-    realizedSharpe: true,
-    realizedMaxDrawdown: true,
-    metricWindow: 'current_stage_terminal_execution_history_only',
-    monteCarloPassRate: 'canonical_pretrade_mc_decision_validated_against_terminal_realized_outcome',
+    realizedSharpeTelemetry: true,
+    realizedMaxDrawdownTelemetry: true,
+    metricWindow: 'current_stage_terminal_execution_history_telemetry_only',
+    monteCarloPassRate: 'terminal_outcome_calibration_telemetry_only',
     stageOneBootstrapChanged: false,
-    stageThresholdsChanged: false,
+    stageTwoSoftHistoricalGateRetired: true,
+    stageManagerHistoricalMetricsAdvancementAuthority: false,
+    monteCarloExecutionAuthority: false,
     executionAuthorityChanged: false,
   });
 }
