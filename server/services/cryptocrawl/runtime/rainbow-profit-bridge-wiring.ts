@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { payoutRecipientConfirmationObserver } from '../compensation/payout-recipient-confirmation-observer.js';
 import { ensureRainbowMakerFuelReserve, stopRainbowMakerFuelReserve } from '../compensation/rainbow-maker-fuel-reserve.js';
 import { retainedProfitLedger } from '../compensation/retained-profit-ledger.js';
 import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
@@ -20,9 +21,6 @@ function latestTerminalFeedback(): CryptaraExecutionFeedback | null {
 
 async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
   try {
-    // The allocation transaction is the payout source of truth. Source metadata
-    // is secondary observability and must never prevent a durable payout job from
-    // being woken after it was successfully created.
     const allocation = await retainedProfitLedger.recordTerminalSettlement(feedback);
     try {
       await rainbowProfitSourceLedger.recordTerminalSettlement(feedback);
@@ -70,6 +68,7 @@ export function ensureRainbowProfitBridgeWiring(): void {
 
   ensureRainbowMakerFuelReserve();
   rainbowProfitObservability.start();
+  payoutRecipientConfirmationObserver.start();
   void ensureTerminalTreasuryLifecycle().catch(error => {
     logger.warn('[Treasury] Persistent lifecycle unavailable; treasury actions remain fail-closed', {
       component: 'RainbowProfitBridgeWiring',
@@ -79,7 +78,7 @@ export function ensureRainbowProfitBridgeWiring(): void {
 
   // Replay remains safe because terminalFeedbackIdentity plus the database
   // primary key makes allocation exactly-once. A pre-existing job is not paid a
-  // second time; the independent cron worker handles any durable backlog.
+  // second time; the independent worker handles any durable backlog.
   for (const evidence of stageManager.getState().cryptaraExecutionEvidence) {
     if (evidence.settlement?.terminal === true) {
       void capture(evidence as unknown as CryptaraExecutionFeedback);
@@ -102,9 +101,11 @@ export function ensureRainbowProfitBridgeWiring(): void {
     allocationPolicy: 'first_three_fixed_60_40_hourly_then_persisted_bounded_55_65_payout',
     dynamicDelayPolicyMinutes: [30, 90],
     payoutAuthority: 'single_independent_supabase_worker_okx_only',
+    recipientConfirmationAuthority: 'railway_read_only_okx_plus_finalized_ethereum_proof',
+    recipientConfirmationMovesFunds: false,
     immediateWakePlusCronFallback: true,
-    primaryPayoutDestination: 'CRYPTO_PROFIT_WALLET_ADDRESS',
-    fallbackPayoutDestination: 'WALLET_PRIVATE_KEY-derived public Ethereum address after confirmed terminal primary failure only',
+    primaryPayoutDestination: 'WALLET_PRIVATE_KEY-derived public Ethereum address',
+    fallbackPayoutDestination: 'Railway explicit Ethereum payout address after confirmed terminal primary failure only',
     ambiguousWithdrawalFailureActivatesFallback: false,
     payoutAsset: 'ETH',
     payoutNetwork: 'ethereum_mainnet_only',
@@ -122,6 +123,7 @@ export function stopRainbowProfitBridgeWiring(): void {
   listener = null;
   installed = false;
   stopTerminalTreasuryLifecycle();
+  payoutRecipientConfirmationObserver.stop();
   rainbowProfitObservability.stop();
   stopRainbowMakerFuelReserve();
 }
