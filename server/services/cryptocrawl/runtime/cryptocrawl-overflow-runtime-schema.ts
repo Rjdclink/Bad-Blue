@@ -6,13 +6,15 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 7;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v7';
+const SCHEMA_VERSION = 8;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v8';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
 // external sweeper schedule. The safe support functions from 016 are mirrored in
-// overflow/004 without creating a second independent payout scheduler.
+// overflow/004 without creating a second independent payout scheduler. The
+// payout-aware finalizer remains owned by migration 018 and is not overridden by
+// Overflow support wiring.
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
   '007_zero_capital_execution_ledger.sql',
