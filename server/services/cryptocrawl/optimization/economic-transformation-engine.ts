@@ -42,18 +42,10 @@ export interface EconomicTransformationAdvice {
 }
 
 function finite(value: unknown): number | null {
-  // Economic transformation may prioritize work, but it may never manufacture
-  // a zero-BPS observation from absent evidence. Unknown remains unknown until
-  // the evidence acquisition/revalidation path measures it.
   if (value === null || value === undefined || typeof value === 'boolean') return null;
   if (typeof value === 'string' && value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function nonNegative(value: unknown): number | null {
-  const parsed = finite(value);
-  return parsed !== null && parsed >= 0 ? parsed : null;
 }
 
 function quoteLifetimeMs(candidate: MeasuredCandidate): number {
@@ -70,27 +62,22 @@ function latencyDecayBps(candidate: MeasuredCandidate): number | null {
   const lifetime = quoteLifetimeMs(candidate);
   if (ageMs <= lifetime * 0.25) return null;
   const pressure = Math.min(1, ageMs / lifetime);
-  const gross = Math.abs(finite(candidate.economics.grossProfitBps) ?? finite(candidate.economics.netProfitBps) ?? 0);
+  const gross = Math.abs(candidate.canonicalBps.grossBps ?? candidate.canonicalBps.netBps ?? 0);
   return Math.max(0.01, gross * pressure);
 }
 
 function dominant(candidate: MeasuredCandidate): { driver: EconomicCostDriver; bps: number | null } {
+  const canonical = candidate.canonicalBps;
+  const slippageImpact = canonical.slippageBps === null && canonical.impactBps === null
+    ? null
+    : (canonical.slippageBps || 0) + (canonical.impactBps || 0);
   const costs: Array<[EconomicCostDriver, number | null]> = [
-    ['exchange_fees', candidate.economics.feeUsd !== null && candidate.economics.notionalUsd
-      ? candidate.economics.feeUsd / candidate.economics.notionalUsd * 10_000
-      : null],
-    ['gas', nonNegative(candidate.economics.gasCostBps)],
-    ['flash_premium', nonNegative(candidate.economics.flashLoanFeeBps)],
-    ['relay', nonNegative(candidate.economics.relayCostBps)],
-    ['slippage_impact', (() => {
-      const slippage = nonNegative(candidate.economics.expectedSlippageBps);
-      const impact = nonNegative(candidate.economics.expectedPriceImpactBps);
-      if (slippage === null && impact === null) return null;
-      return (slippage || 0) + (impact || 0);
-    })()],
-    ['bridge', candidate.economics.bridgeUsd !== null && candidate.economics.notionalUsd
-      ? candidate.economics.bridgeUsd / candidate.economics.notionalUsd * 10_000
-      : null],
+    ['exchange_fees', canonical.exchangeFeeBps],
+    ['gas', canonical.gasBps],
+    ['flash_premium', canonical.flashLoanFeeBps],
+    ['relay', canonical.relayBps],
+    ['slippage_impact', slippageImpact],
+    ['bridge', canonical.bridgeBps],
     ['latency_decay', latencyDecayBps(candidate)],
   ];
   const measured = costs.filter((entry): entry is [EconomicCostDriver, number] => entry[1] !== null && Number.isFinite(entry[1]));
@@ -130,14 +117,14 @@ function evidenceCompleteness(candidate: MeasuredCandidate): number {
 }
 
 /**
- * Converts measured cost decomposition into a bounded transformation search hint.
- * It never changes candidate economics or execution eligibility. Exact re-quotes,
- * provider fees, governance, Cryptara and terminal settlement remain authoritative.
+ * Reads the single registry-owned canonical BPS snapshot and converts it into a
+ * bounded transformation-search hint. It never recalculates execution economics,
+ * changes eligibility, or obtains execution authority.
  */
 export function adviseEconomicTransformations(candidate: MeasuredCandidate): EconomicTransformationAdvice {
   const cost = dominant(candidate);
-  const netProfitBps = finite(candidate.economics.netProfitBps);
-  const bpsToBreakEven = nonNegative(candidate.economics.bpsToBreakEven)
+  const netProfitBps = finite(candidate.canonicalBps.netBps);
+  const bpsToBreakEven = finite(candidate.canonicalBps.bpsToBreakEven)
     ?? (netProfitBps !== null && netProfitBps < 0 ? Math.abs(netProfitBps) : null);
   const requiredRecoveryBps = bpsToBreakEven;
   const dominantCostCoverageRatio = requiredRecoveryBps !== null && requiredRecoveryBps > 0 && cost.bps !== null
@@ -172,10 +159,9 @@ export function adviseEconomicTransformations(candidate: MeasuredCandidate): Eco
     authority: 'optimization_advisory_only',
     executionAuthority: false,
     provenance: [
-      'measured_candidate_cost_decomposition',
+      'canonical_bps:measured_candidate_registry',
       'measured_break_even_gap',
-      'relay_cost_included_when_measured',
-      'quote_latency_decay_penalty',
+      'quote_latency_decay_penalty_advisory_only',
       'evidence_completeness_weighted',
       'freshness_weighted',
       'dominant_cost_coverage_scheduling_hint',
