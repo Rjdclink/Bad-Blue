@@ -2,6 +2,20 @@ CRYPTARA BPS EFFICIENCY IMPLEMENTATION CHECKPOINT
 
 Governing law: absolutely no regression. Preserve hard safety, deterministic economics, single canonical BPS authority, single canonical execution authority, measured/realized truth, and fail-closed behavior where financial correctness requires it.
 
+Blueprint operating rule — ACTIVE:
+- Treat the BPS blueprint as a living research layer, not a one-time research artifact.
+- Before each implementation slice, refresh the broad public-web evidence relevant to that slice, then compare it against the current repo so existing mechanisms are reused rather than duplicated.
+- Scope is intentionally extremely broad across public exchange documentation, market microstructure, execution algorithms, routing, queue priority, fee/rebate structures, RFQ/auction/solver execution, latency/control-plane research, DEX/MEV/private execution, market-data resilience, cross-impact, settlement and related BPS-reduction subjects.
+- Never fabricate classified/private material or claim literal coverage of pages inaccessible to public search. Only evidence that can actually be retrieved is eligible for the blueprint.
+- Any newly discovered enhancement must be screened for applicability, overlap, authority conflicts, regression risk and whether it improves measured/realized economics. Beneficial non-regressive additions may be incorporated.
+
+Fresh blueprint refresh — 2026-09-03:
+- OKX changed post-only/RPI WebSocket order semantics so `state: live` is emitted only after successful book entry, with ~1 ms extra delay; failed crossing post-only/RPI orders now emit canceled without a prior live event. Terminal/order-state logic must use this behavior rather than treating initial receipt as book entry.
+- OKX `books-rpi` now exposes consolidated organic + RPI depth with seqId/prevSeqId continuity and 100 ms WS updates; this should be the canonical RPI depth surface where RPI economics are evaluated.
+- OKX RPI visibility/spacing rules now exclude hidden opposite-side RPI from cross/level checks; `rpiPxRound` rounds beyond the first visible opposite-side RPI.
+- `rpiTakerAccess` now applies to limit/market/FOK/IOC and can be amended, but executable use remains gated on authenticated account permission and exact economics.
+These findings are now part of the blueprint and must be reflected in slices #5/#6/#8/#13 without creating a second BPS or execution authority.
+
 Objective:
 Implement the second 15-solution BPS-efficiency package, targeting >=35 BPS de-overlapped estimated capability improvement while allowing only measured realized savings into canonical economics.
 
@@ -34,8 +48,27 @@ Milestone 0 — checkpoint created.
 Status: COMPLETE.
 
 Milestone 1 — low-regression BPS efficiency foundation.
-Status: IMPLEMENTED ON BRANCH; BUILD/CI VERIFICATION STILL REQUIRED.
-Commits through: 10d6be47719d34e72d4188374fb3175dec2cfa50
+Status: IMPLEMENTED ON BRANCH; BUILD REACHED NEW WAVE-2 VERIFIER AND PASSED IT; ONE LEGACY RPI STATIC VERIFIER STRING REMAINS TO ALIGN.
+Commits through: f5cde5dad5debd6b19c1634cb0071e3b1a79db45
+
+Verified in Railway build before the static seam:
+- payout-recipient truth PASS
+- runtime-safety-invariants PASS
+- runtime-component-isolation PASS
+- deployment source-identity fail-closed invariant PASS
+- OKX adaptive private rate governor PASS
+- OKX authenticated fee authority PASS
+- BPS rebate/refund truth PASS
+- inventory intent netting PASS
+- Antenna production hot path PASS
+- Stage-2 soft-gate retirement PASS
+- BPS order-control revalidation PASS
+- NEW `[bps-efficiency-wave2-foundation] PASS`
+- profitability recovery / substantial profitability / sovereign cortex / compute-Antenna-MC / remaining-seventeen / competition evidence / 300-profitability / Aave-Balancer mesh all passed before the seam.
+
+Current blocker:
+- Legacy static verifier `verify-cex-websocket-rpi-modernization.cjs` expects a particular comment-string shape proving that an RPI plan cannot silently downgrade to a worse standard-maker fee.
+- Runtime semantics themselves remain fail-closed and the new wave-2 foundation verifier passed. Repair the verifier/comment alignment only; do not weaken the semantic invariant.
 
 Implemented:
 - #6 OKX RPI price-spacing race hardening: existing fresh permission/notional/spacing/fee checks remain fail-closed, but valid RPI requests now use `rpiPxRound: true` so OKX can round outward to the nearest non-marketable compliant level if book state changes while the request is in flight. No silent RPI->standard-maker downgrade was introduced.
@@ -59,17 +92,17 @@ Files changed:
 - scripts/cryptocrawl/verify-deployment-preflight.cjs
 
 Still not implemented / next sequence:
-A. Run branch diff/static review and CI/build; repair any type/verifier regression before expanding scope.
+A. Repair only the legacy RPI verifier/comment formatting seam, rerun branch build, then continue only if green.
 B. #1 wire exchange-side OKX `expTime` stale-request deadline through shared private authority and every live OKX order-write path (normal IOC, FOK child, maker/RPI) without affecting unsupported endpoints.
 C. #3 Kraken queue-preserving amend: add exact current-product/queue-safe amend path with no cancel/reinsert fallback unless economics are freshly revalidated.
 D. #2 Kraken L3 queue evidence: add bounded L3 feed as advisory queue truth with L2 fallback; no execution dependency until live evidence proves stable.
-E. #5 finish RPI dual-surface competition beyond maker-side current support; taker access remains non-executable until account permission can be proven without unsafe live probing.
-F. #8 hot-standby market-data handover using existing sequence continuity and proactive reconnect mechanisms.
+E. #5 finish RPI dual-surface competition beyond maker-side current support; incorporate current `books-rpi` visibility and `rpiTakerAccess` semantics; taker execution remains gated on authenticated permission and measured economics.
+F. #8 hot-standby market-data handover using existing sequence continuity and proactive reconnect mechanisms, including current OKX seqId/prevSeqId RPI continuity.
 G. #9 two-speed controller: global scan remains discovery authority; local exact-symbol controller receives event/near-miss priority without parallel economics/execution authority.
 H. #11 cross-impact multi-asset scheduling/risk evidence.
 I. #12 order-book vs RFQ/Convert measured execution auction, only where live executable quote + settlement adapters exist.
-J. #13 synchronized multi-leg WebSocket dispatch, preserving FOK/IOC and terminal-fill hedge semantics.
+J. #13 synchronized multi-leg WebSocket dispatch, preserving FOK/IOC and terminal-fill hedge semantics and current exchange order-state semantics.
 K. #15 authenticated organic fee-tier trajectory; future tier value may rank otherwise-profitable trades but can never make an unprofitable trade eligible and can never incentivize wash/self trading.
 
 Resume rule:
-Start by verifying Milestone 1 against current branch HEAD. Do not redo research or rewrite existing systems. Make the smallest necessary correction if verification fails. Then continue B -> K one authority-safe slice at a time. Update `/can` immediately after each verified milestone and again before stopping.
+Start by checking the living BPS blueprint for the exact slice being modified, then verify the current branch HEAD. Do not redo irrelevant research or rewrite existing systems. Make the smallest necessary correction if verification fails. Continue one authority-safe slice at a time. Update `/can` immediately after each verified milestone and again before stopping.
