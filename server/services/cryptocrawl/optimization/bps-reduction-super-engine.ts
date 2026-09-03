@@ -351,7 +351,6 @@ export function buildBpsReductionSuperPlan(
   monteCarlo: ResearchBpsMonteCarloResult | null,
   mesh: BpsSuperEngineMeshInput | null,
 ): BpsReductionSuperPlan {
-  recordBpsCandidateAttribution(candidate);
   const symbol = symbolOf(candidate);
   const halfLifeMs = learnedHalfLifeMs(candidate);
   const edge = getRawCrossVenueEdge(candidate)?.grossEdgeBps ?? null;
@@ -381,7 +380,7 @@ export function buildBpsReductionSuperPlan(
     || advice?.dominantCostDriver === 'bridge'
     || advice?.dominantCostDriver === 'flash_premium';
   const residualNotionalFractions = nonlinearDriver
-    ? [...new Set([...research.residualNotionalFractions, 0.25, 0.50, 1.0])].sort((a, b) => b - a)
+    ? [...new Set([...research.residualNotionalFractions, 0.25, 0.50])].sort((a, b) => b - a)
     : [...research.residualNotionalFractions];
   const eventTriggers: string[] = [];
   if (quoteAge > halfLifeMs / 2) eventTriggers.push('quote_age_exceeds_half_of_learned_edge_half_life');
