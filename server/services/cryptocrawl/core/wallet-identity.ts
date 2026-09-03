@@ -75,6 +75,7 @@ export function resolveConfiguredWalletAddress(environment: NodeJS.ProcessEnv = 
   return resolveExecutionWalletAddress(environment);
 }
 
+/** Legacy explicit terminal address resolver retained for compatibility. */
 export function resolveTerminalPayoutAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
   try {
     return normalizeEvmAddress('CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS);
@@ -84,25 +85,34 @@ export function resolveTerminalPayoutAddress(environment: NodeJS.ProcessEnv = pr
 }
 
 /**
- * Resolve the independent Ethereum payout redundancy without ever treating a
- * private key as an address value. Prefer the explicit Railway payout address
- * when it is valid and distinct from the MetaMask destination; otherwise use
- * the canonical WALLET_PRIVATE_KEY-derived public execution address. A duplicate
- * destination is not a redundancy and therefore resolves to null.
+ * Primary realized-profit payout destination. The private key is never exposed or
+ * transmitted; only its canonical public Ethereum address is used as the recipient.
+ */
+export function resolvePrimaryProfitPayoutAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
+  const privateKey = normalizePrivateKey(environment.WALLET_PRIVATE_KEY);
+  return privateKey ? walletFromPrivateKey(privateKey).address : null;
+}
+
+/**
+ * Independent Railway-address redundancy. Prefer CRYPTO_PAYOUT_WALLET_ADDRESS;
+ * retain CRYPTO_PROFIT_WALLET_ADDRESS as a legacy explicit-address fallback.
+ * A duplicate of the primary recipient is not a redundancy and resolves to null.
  */
 export function resolvePayoutFallbackAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
-  const primary = resolveTerminalPayoutAddress(environment);
+  const primary = resolvePrimaryProfitPayoutAddress(environment);
   const primaryLower = primary?.toLowerCase() || '';
 
-  try {
-    const explicitFallback = normalizeEvmAddress('CRYPTO_PAYOUT_WALLET_ADDRESS', environment.CRYPTO_PAYOUT_WALLET_ADDRESS);
-    if (explicitFallback && explicitFallback.toLowerCase() !== primaryLower) return explicitFallback;
-  } catch {
-    // An invalid explicit fallback never overrides the canonical execution-wallet fallback.
+  for (const [name, raw] of [
+    ['CRYPTO_PAYOUT_WALLET_ADDRESS', environment.CRYPTO_PAYOUT_WALLET_ADDRESS],
+    ['CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS],
+  ] as const) {
+    try {
+      const candidate = normalizeEvmAddress(name, raw);
+      if (candidate && candidate.toLowerCase() !== primaryLower) return candidate;
+    } catch {
+      // Invalid redundancy values never override the canonical signer-derived primary.
+    }
   }
-
-  const execution = resolveExecutionWalletAddress(environment).address;
-  if (execution && execution.toLowerCase() !== primaryLower) return execution;
   return null;
 }
 
@@ -141,8 +151,8 @@ export function assertConfiguredWalletAddress(privateKey: string, configuredAddr
  * value is repaired to the WALLET_PRIVATE_KEY-derived address. The deprecated
  * duplicate signer/public-key variables are never read as authority.
  *
- * CRYPTO_PROFIT_WALLET_ADDRESS is deliberately excluded: it is the terminal
- * cash-out destination, never an operational trading/bridge signer identity.
+ * Explicit payout-address variables are deliberately excluded from signer
+ * identity. They are payout destinations only and never signing authority.
  */
 export function installCanonicalWalletConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
@@ -155,16 +165,15 @@ export function installCanonicalWalletConfiguration(
     throw new Error('WALLET_PRIVATE_KEY is not a valid 32-byte EVM private key');
   }
 
-  const rawTerminalPayout = environment.CRYPTO_PROFIT_WALLET_ADDRESS?.trim();
-  const terminalPayoutAddress = resolveTerminalPayoutAddress(environment);
-  const terminalPayoutReason = rawTerminalPayout && !terminalPayoutAddress
-    ? 'CRYPTO_PROFIT_WALLET_ADDRESS is not a valid 20-byte EVM address; terminal sweep remains disabled while trading can continue'
+  const primaryPayoutAddress = resolvePrimaryProfitPayoutAddress(environment);
+  const terminalPayoutReason = !primaryPayoutAddress
+    ? 'WALLET_PRIVATE_KEY is unavailable or invalid; primary realized-profit payout remains disabled while observation may continue'
     : undefined;
 
   if (!privateKey) {
     return {
       executionAddress: resolveExecutionWalletAddress(environment).address,
-      terminalPayoutAddress,
+      terminalPayoutAddress: primaryPayoutAddress,
       terminalPayoutReason,
       bridgeAliasInstalled: false,
       acrossAliasInstalled: false,
@@ -183,7 +192,7 @@ export function installCanonicalWalletConfiguration(
 
   return {
     executionAddress,
-    terminalPayoutAddress,
+    terminalPayoutAddress: primaryPayoutAddress,
     terminalPayoutReason,
     bridgeAliasInstalled,
     acrossAliasInstalled,
