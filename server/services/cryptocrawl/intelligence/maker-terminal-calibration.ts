@@ -40,6 +40,10 @@ function key(venue: CexStreamVenue, symbol: string, side: 'buy' | 'sell'): strin
   return `${venue}:${symbol.trim().toUpperCase()}:${side}`;
 }
 
+function terminalOrderKey(venue: CexStreamVenue, orderId: string): string {
+  return `${venue}:${orderId}`;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -48,17 +52,18 @@ function ewma(previous: number | null, value: number): number {
   return previous === null ? value : previous + EWMA_ALPHA * (value - previous);
 }
 
-function pruneTerminalOrderIds(now = Date.now()): void {
+function pruneTerminalOrderIds(): void {
   if (terminalOrderIds.size <= MAX_TERMINAL_ORDER_IDS) return;
   const ordered = [...terminalOrderIds.entries()].sort((left, right) => left[1] - right[1]);
-  for (const [orderId] of ordered.slice(0, terminalOrderIds.size - MAX_TERMINAL_ORDER_IDS)) {
-    terminalOrderIds.delete(orderId);
+  for (const [orderKey] of ordered.slice(0, terminalOrderIds.size - MAX_TERMINAL_ORDER_IDS)) {
+    terminalOrderIds.delete(orderKey);
   }
 }
 
 export function recordMakerTerminalCalibration(input: MakerTerminalCalibrationObservation): void {
   const symbol = input.symbol.trim().toUpperCase();
-  if (!symbol || !input.orderId || terminalOrderIds.has(input.orderId)) return;
+  const dedupeKey = terminalOrderKey(input.venue, input.orderId);
+  if (!symbol || !input.orderId || terminalOrderIds.has(dedupeKey)) return;
   if (!(input.requestedQuantity > 0) || !Number.isFinite(input.filledQuantity)) return;
   if (!Number.isFinite(input.submittedAt) || !Number.isFinite(input.terminalAt) || input.terminalAt < input.submittedAt) return;
 
@@ -96,7 +101,7 @@ export function recordMakerTerminalCalibration(input: MakerTerminalCalibrationOb
     calibrationMultiplier: multiplier,
     lastObservedAt: Date.now(),
   });
-  terminalOrderIds.set(input.orderId, Date.now());
+  terminalOrderIds.set(dedupeKey, Date.now());
   pruneTerminalOrderIds();
 }
 
