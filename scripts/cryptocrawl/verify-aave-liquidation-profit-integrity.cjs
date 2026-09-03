@@ -61,9 +61,9 @@ requirePattern(realizedProfit, /activeProfitBoundaries/, 'captured wrapper stack
 requirePattern(realizedProfit, /target\.executeFunded\s*=\s*wrapped/, 'terminal reconciliation wraps the current instance execution stack');
 forbidPattern(realizedProfit, /CRYPTO_PROFIT_WALLET_ADDRESS/, 'terminal payout address is not an operational profit-attribution authority');
 
-const providerSpecificIndex = canonicalRuntime.indexOf('ensureProviderSpecificZeroCapitalExecutionWiring();');
-const dualProviderIndex = canonicalRuntime.indexOf('ensureDualProviderZeroCapitalExecutionWiring();');
-const realizedIndex = canonicalRuntime.indexOf('ensureZeroCapitalRealizedProfitWiring();');
+const providerSpecificIndex = canonicalRuntime.indexOf("install('provider_specific_zero_capital_execution', () => ensureProviderSpecificZeroCapitalExecutionWiring());");
+const dualProviderIndex = canonicalRuntime.indexOf("install('dual_provider_zero_capital_execution', () => ensureDualProviderZeroCapitalExecutionWiring());");
+const realizedIndex = canonicalRuntime.indexOf("install('zero_capital_realized_profit', () => ensureZeroCapitalRealizedProfitWiring());");
 if (providerSpecificIndex < 0 || dualProviderIndex < 0 || realizedIndex < 0 || realizedIndex < providerSpecificIndex || realizedIndex < dualProviderIndex) {
   throw new Error('[liquidation-profit-integrity] terminal realized-profit boundary must be reasserted after provider-specific and dual-provider wrappers');
 }
