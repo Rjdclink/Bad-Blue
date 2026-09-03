@@ -1,7 +1,7 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
-import { resolveExecutionWalletAddress, resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
+import { resolvePayoutFallbackAddress, resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
 import { setTreasuryRestartSweepBarrier } from '../governance/treasury-execution-barrier.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 
@@ -12,10 +12,7 @@ const RAILWAY_DEPLOYMENT_ID = (process.env.RAILWAY_DEPLOYMENT_ID || '').trim();
 const RAILWAY_SERVICE_ID = (process.env.RAILWAY_SERVICE_ID || '').trim();
 const RAILWAY_ENVIRONMENT_ID = (process.env.RAILWAY_ENVIRONMENT_ID || '').trim();
 const DESTINATION = resolveTerminalPayoutAddress() || '';
-const EXECUTION_WALLET_DESTINATION = resolveExecutionWalletAddress().address || '';
-const FALLBACK_DESTINATION = EXECUTION_WALLET_DESTINATION && EXECUTION_WALLET_DESTINATION.toLowerCase() !== DESTINATION.toLowerCase()
-  ? EXECUTION_WALLET_DESTINATION
-  : '';
+const FALLBACK_DESTINATION = resolvePayoutFallbackAddress() || '';
 
 type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 'MANUAL_REVIEW';
 
@@ -153,7 +150,7 @@ async function heartbeatOnce(): Promise<void> {
       // Secret synchronization is part of the durable heartbeat rather than a
       // one-shot startup precondition. A transient Supabase timeout therefore
       // cannot permanently leave the independent worker without current Railway
-      // credentials or the WALLET_PRIVATE_KEY-derived public fallback address.
+      // credentials or the configured public fallback address.
       if (!workerSecretsSynchronized) {
         await syncWorkerSecrets();
         workerSecretsSynchronized = true;
@@ -232,7 +229,8 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     environmentIdPresent: Boolean(RAILWAY_ENVIRONMENT_ID),
     terminalPayoutConfigured: Boolean(DESTINATION),
     fallbackPayoutConfigured: Boolean(FALLBACK_DESTINATION),
-    fallbackDerivedFromCanonicalExecutionWallet: Boolean(FALLBACK_DESTINATION),
+    explicitRailwayFallbackConfigured: Boolean((process.env.CRYPTO_PAYOUT_WALLET_ADDRESS || '').trim()),
+    fallbackResolutionPolicy: 'CRYPTO_PAYOUT_WALLET_ADDRESS_then_WALLET_PRIVATE_KEY_derived_public_address_if_distinct',
     workerSecretSynchronizationRetryable: true,
     workerSecretsSynchronized,
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
