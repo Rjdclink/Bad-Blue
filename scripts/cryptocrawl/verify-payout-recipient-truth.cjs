@@ -7,8 +7,11 @@ const wallet = read('server/services/cryptocrawl/core/wallet-identity.ts');
 const lifecycle = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
 const observer = read('server/services/cryptocrawl/compensation/payout-recipient-confirmation-observer.ts');
 const payouts = read('supabase/functions/cryptocrawler-terminal-sweeper/payouts.ts');
+const payoutMigration = read('server/migrations/018_cryptocrawler_profit_split_eth_payout.sql');
 const waitGuard = read('server/migrations/031_cryptocrawler_payout_confirmation_wait.sql');
+const overflowSupport = read('server/migrations/overflow/004_cryptocrawler_terminal_support.sql');
 const schema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
+const docker = read('Dockerfile');
 
 // Primary payout is the public Ethereum address derived from WALLET_PRIVATE_KEY.
 assert.match(wallet, /resolvePrimaryProfitPayoutAddress/);
@@ -51,11 +54,29 @@ assert.match(waitGuard, /confirmation transaction hash mismatch/);
 assert.match(waitGuard, /confirmation recipient mismatch/);
 assert.match(waitGuard, /confirmed recipient amount is below/);
 
+// The payout-aware finalizer has one owner. Overflow support must not replace it
+// after migration 018 has installed the durable payout/job/retained-capital logic.
+assert.match(payoutMigration, /CREATE OR REPLACE FUNCTION public\.cryptocrawler_terminal_sweep_finalize_events/);
+assert.match(payoutMigration, /cryptocrawler_profit_payout_batches/);
+assert.match(payoutMigration, /cryptocrawler_profit_payout_jobs/);
+assert.doesNotMatch(overflowSupport, /CREATE OR REPLACE FUNCTION public\.cryptocrawler_terminal_sweep_finalize_events/);
+
 // Overflow cannot take an older durable-schema fast path that omits these guards.
-assert.match(schema, /const SCHEMA_VERSION = 7/);
+assert.match(schema, /const SCHEMA_VERSION = 8/);
 assert.match(schema, /031_cryptocrawler_payout_confirmation_wait\.sql/);
 assert.match(schema, /cryptocrawler_terminal_sweep_leg_confirmation_guard\(\)/);
 assert.match(schema, /cryptocrawler_profit_payout_confirmation_guard\(\)/);
+
+// The production image must actually contain every recipient-proof migration that
+// schema v8 will read at runtime.
+for (const migration of [
+  '028_cryptocrawler_payout_recipient_confirmation.sql',
+  '029_cryptocrawler_terminal_sweep_recipient_confirmation.sql',
+  '030_cryptocrawler_payout_confirmation_truth_guard.sql',
+  '031_cryptocrawler_payout_confirmation_wait.sql',
+]) {
+  assert.match(docker, new RegExp(migration.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+}
 
 console.log(JSON.stringify({
   ok: true,
@@ -67,5 +88,7 @@ console.log(JSON.stringify({
   mismatchedRecipientFailsClosed: true,
   mismatchedAmountFailsClosed: true,
   privateKeyExposedAsDestination: false,
-  schemaVersion: 7,
+  canonicalPayoutFinalizerOwners: 1,
+  payoutProofMigrationsShippedInImage: true,
+  schemaVersion: 8,
 }, null, 2));
