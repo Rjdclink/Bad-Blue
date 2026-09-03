@@ -7,6 +7,7 @@ function forbidText(text, needle, message) { assert.ok(!text.includes(needle), m
 
 const types = read('server/services/computationalBeam/types.ts');
 const antenna = read('server/services/computationalBeam/omniAntennaLayer.ts');
+const router = read('server/services/computationalBeam/workloadRouter.ts');
 const stream = read('server/services/cryptocrawl/intelligence/cex-order-book-stream.ts');
 const quality = read('server/services/cryptocrawl/intelligence/sovereign-antenna-quality.ts');
 const evolution = read('server/services/cryptocrawl/integration/order-book-evolution-wiring.ts');
@@ -41,6 +42,16 @@ forbidText(antenna, 'cloudflare-antenna-1', 'fictional Cloudflare Antenna node m
 forbidText(antenna, 'gcf-antenna-1', 'fictional GCF Antenna node must remain removed until a real executor is connected');
 forbidText(antenna, 'Math.random()', 'Antenna health/execution may not use synthetic randomness');
 
+requireText(router, 'const ANTENNA_HOT_TASKS = new Set<TaskType>', 'WorkloadRouter must explicitly classify latency-critical Antenna work');
+requireText(router, 'const NON_REPLAYABLE_MARKET_TASKS = new Set<TaskType>', 'sequence-dependent market observations must be identified as non-replayable');
+requireText(router, 'if (ANTENNA_HOT_TASKS.has(task.type)) return TaskIntensity.LIGHTWEIGHT', 'hot task semantics must override generic/default intensity');
+requireText(router, 'if (ANTENNA_HOT_TASKS.has(task.type)) return ComputeLayer.ANTENNA', 'hot tasks must remain on Antenna unless an explicit required layer is supplied');
+requireText(router, 'return omniAntennaLayer.cancelTask(taskId)', 'Antenna-routed work must support cancellation');
+requireText(router, 'const nonReplayable = task ? NON_REPLAYABLE_MARKET_TASKS.has(task.type) : false', 'market-frame retry policy must detect stale/non-replayable observations');
+requireText(router, "reacquisitionAuthority: nonReplayable ? 'canonical_market_stream_resnapshot' : null", 'failed non-replayable frames must return to canonical stream reacquisition rather than delayed replay');
+requireText(router, 'maxRetries: NON_REPLAYABLE_MARKET_TASKS.has(type) ? 0 : this.MAX_RETRIES', 'new sequence-dependent tasks must be created without delayed generic retries');
+requireText(router, 'executionAuthority: false', 'WorkloadRouter must remain compute-routing only');
+
 requireText(stream, "import { omniAntennaLayer } from '../../computationalBeam/omniAntennaLayer.js'", 'canonical CEX stream must use the Antenna accelerator');
 requireText(stream, 'TaskType.ORDER_BOOK_FRAME', 'WebSocket decode/parse must pass through Antenna hot path');
 requireText(stream, 'TaskType.ORDER_BOOK_APPLY', 'ordered local-book application must pass through Antenna hot path');
@@ -74,7 +85,8 @@ for (const forbidden of [
   'stageManager.canExecuteTrades',
 ]) {
   forbidText(antenna, forbidden, `Antenna must not acquire trading authority through ${forbidden}`);
+  forbidText(router, forbidden, `WorkloadRouter must not acquire trading authority through ${forbidden}`);
   forbidText(stream, forbidden, `market-data stream must not acquire trading authority through ${forbidden}`);
 }
 
-console.log('[antenna-production-hot-path] PASS: Antenna is real measured transport/parse/sequence/freshness acceleration, Quanti-backed and pressure-aware, while canonical CEX stream remains the sole market-data truth and execution authority remains elsewhere');
+console.log('[antenna-production-hot-path] PASS: Antenna is real measured transport/parse/sequence/freshness acceleration, Quanti-backed, pressure-aware and explicitly routed; stale market frames are reacquired instead of replayed, while canonical CEX stream remains sole market-data truth and execution authority remains elsewhere');
