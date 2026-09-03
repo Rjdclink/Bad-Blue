@@ -32,9 +32,10 @@ type BalanceCapableAdapter = CexSettlementAdapter & {
 
 type CentralizedExchangeExecutorOptions = CexExecutorOptions & {
   /**
-   * Optional strategy-specific child lifecycle. Full-parent inventory, MC,
+   * Optional strategy-specific child lifecycle. Full-parent inventory,
    * governance and ladder admission stay here; only terminal child submission
-   * semantics are delegated.
+   * semantics are delegated. Monte Carlo remains parallel advisory evidence and
+   * never owns execution admission.
    */
   childExecutor?: HyperHybridChildExecutor;
 };
@@ -366,83 +367,59 @@ export class CentralizedExchangeExecutor {
         calibration.samples,
       ].join(':');
       const monteCarloTtlMs = Math.max(100, Math.min(1000, maxQuoteAgeMs - Math.max(0, plan.quoteAgeMs)));
-      let monteCarlo;
-      try {
-        monteCarlo = await parallelMonteCarloPool.run(monteCarloKey, monteCarloInput, monteCarloTtlMs);
-      } catch (error) {
-        return rejectPlan(`REJECT_MC_COMPUTE: execution profitability simulation could not complete inside the governed quote window: ${error instanceof Error ? error.message : String(error)}`);
-      }
 
-      const empiricalCalibrationAvailable = calibration.samples > 0;
-      const coldStartMeasuredBootstrap = !empiricalCalibrationAvailable &&
-        plan.netProfitUsd > 0 &&
-        plan.liquidity.status === 'measured' &&
-        liquidityCoverage >= 1 &&
-        quoteFreshness > 0 &&
-        Number.isFinite(plan.costs.totalCostsUsd) &&
-        Number.isFinite(plan.expectedSlippageBps ?? 0);
-      const admissionMode = empiricalCalibrationAvailable
-        ? 'empirical_monte_carlo'
-        : coldStartMeasuredBootstrap
-          ? 'first_terminal_sample_bootstrap'
-          : 'cold_start_evidence_incomplete';
-
-      logger.info('Measured CEX profitability forecast evaluated', {
-        component: 'CentralizedExchangeExecutor', symbol: plan.symbol,
-        buyVenue: plan.buyVenue, sellVenue: plan.sellVenue, topology: 'CEX_CEX',
-        verifiedNetProfitUsd: plan.netProfitUsd, quoteFreshness, liquidityCoverage, evidenceConfidence,
-        inventoryReservationId: inventory.reservation.reservationId,
-        inventoryRequirements: inventory.reservation.requirements,
-        calibrationSamples: calibration.samples,
-        empiricalCalibrationAvailable,
-        admissionMode,
-        empiricalBothLegsFillRate: calibration.bothLegsFillRate,
-        empiricalPartialFillRate: calibration.partialFillRate,
-        empiricalProviderFailureRate: calibration.providerFailureRate,
-        profitableProbability: monteCarlo.profitableProbability,
-        profitableProbabilityInterval: monteCarlo.profitableProbabilityInterval,
-        probabilityBothLegsFill: monteCarlo.probabilityBothLegsFill,
-        probabilityLossExceedsThreshold: monteCarlo.probabilityLossExceedsThreshold,
-        probabilityPartialFillLoss: monteCarlo.probabilityPartialFillLoss,
-        p50NetProfitUsd: monteCarlo.p50NetProfitUsd,
-        p25NetProfitUsd: monteCarlo.p25NetProfitUsd,
-        p10NetProfitUsd: monteCarlo.p10NetProfitUsd,
-        p5NetProfitUsd: monteCarlo.p5NetProfitUsd,
-        p1NetProfitUsd: monteCarlo.p1NetProfitUsd,
-        worstNetProfitUsd: monteCarlo.worstNetProfitUsd,
-        valueAtRisk95Usd: monteCarlo.valueAtRisk95Usd,
-        valueAtRisk99Usd: monteCarlo.valueAtRisk99Usd,
-        expectedShortfall95Usd: monteCarlo.expectedShortfall95Usd,
-        expectedShortfall975Usd: monteCarlo.expectedShortfall975Usd,
-        expectedShortfall99Usd: monteCarlo.expectedShortfall99Usd,
-        executionHorizonMs: monteCarlo.executionHorizonMs,
-        samples: monteCarlo.samples, stoppedEarly: monteCarlo.stoppedEarly, converged: monteCarlo.converged,
-        distribution: monteCarlo.distribution, distributionProvenance: monteCarlo.distributionProvenance,
-        policyVersion: monteCarlo.policyVersion, approved: monteCarlo.approved, reason: monteCarlo.reason,
-        compute: parallelMonteCarloPool.getStatus(),
-      });
-
-      if (!monteCarlo.approved && empiricalCalibrationAvailable) {
-        return rejectPlan(`REJECT_MC: empirical profitability forecast rejected execution: ${monteCarlo.reason}`);
-      }
-      if (!monteCarlo.approved && !coldStartMeasuredBootstrap) {
-        return rejectPlan(`REJECT_MC_COLD_START_EVIDENCE: no empirical settlement history exists and current measured execution evidence is incomplete: ${monteCarlo.reason}`);
-      }
-      if (!monteCarlo.approved && coldStartMeasuredBootstrap) {
-        logger.warn('Cold-start Monte Carlo retained as advisory evidence for first terminal sample', {
-          component: 'CentralizedExchangeExecutor',
-          symbol: plan.symbol,
-          buyVenue: plan.buyVenue,
-          sellVenue: plan.sellVenue,
-          calibrationSamples: calibration.samples,
-          verifiedNetProfitUsd: plan.netProfitUsd,
-          liquidityCoverage,
-          quoteFreshness,
-          monteCarloApproved: false,
-          admissionAuthority: 'measured_current_execution_evidence',
-          historyAuthorityAfterExecution: 'terminal_normalized_settlement',
+      // Monte Carlo is useful for post-trade calibration and future search/ranking,
+      // but it must not consume edge lifetime or veto a deterministic hard-fact
+      // positive plan. Run it concurrently and retain its output as advisory
+      // evidence only. A compute failure cannot block the current order.
+      void parallelMonteCarloPool.run(monteCarloKey, monteCarloInput, monteCarloTtlMs)
+        .then(monteCarlo => {
+          logger.info('Measured CEX profitability forecast completed as parallel advisory evidence', {
+            component: 'CentralizedExchangeExecutor', symbol: plan.symbol,
+            buyVenue: plan.buyVenue, sellVenue: plan.sellVenue, topology: 'CEX_CEX',
+            verifiedNetProfitUsd: plan.netProfitUsd, quoteFreshness, liquidityCoverage, evidenceConfidence,
+            inventoryReservationId: inventory.reservation!.reservationId,
+            inventoryRequirements: inventory.reservation!.requirements,
+            calibrationSamples: calibration.samples,
+            empiricalBothLegsFillRate: calibration.bothLegsFillRate,
+            empiricalPartialFillRate: calibration.partialFillRate,
+            empiricalProviderFailureRate: calibration.providerFailureRate,
+            profitableProbability: monteCarlo.profitableProbability,
+            profitableProbabilityInterval: monteCarlo.profitableProbabilityInterval,
+            probabilityBothLegsFill: monteCarlo.probabilityBothLegsFill,
+            probabilityLossExceedsThreshold: monteCarlo.probabilityLossExceedsThreshold,
+            probabilityPartialFillLoss: monteCarlo.probabilityPartialFillLoss,
+            p50NetProfitUsd: monteCarlo.p50NetProfitUsd,
+            p25NetProfitUsd: monteCarlo.p25NetProfitUsd,
+            p10NetProfitUsd: monteCarlo.p10NetProfitUsd,
+            p5NetProfitUsd: monteCarlo.p5NetProfitUsd,
+            p1NetProfitUsd: monteCarlo.p1NetProfitUsd,
+            worstNetProfitUsd: monteCarlo.worstNetProfitUsd,
+            valueAtRisk95Usd: monteCarlo.valueAtRisk95Usd,
+            valueAtRisk99Usd: monteCarlo.valueAtRisk99Usd,
+            expectedShortfall95Usd: monteCarlo.expectedShortfall95Usd,
+            expectedShortfall975Usd: monteCarlo.expectedShortfall975Usd,
+            expectedShortfall99Usd: monteCarlo.expectedShortfall99Usd,
+            executionHorizonMs: monteCarlo.executionHorizonMs,
+            samples: monteCarlo.samples, stoppedEarly: monteCarlo.stoppedEarly, converged: monteCarlo.converged,
+            distribution: monteCarlo.distribution, distributionProvenance: monteCarlo.distributionProvenance,
+            policyVersion: monteCarlo.policyVersion, simulationApproved: monteCarlo.approved, reason: monteCarlo.reason,
+            compute: parallelMonteCarloPool.getStatus(),
+            monteCarloExecutionAuthority: false,
+            currentPlanAdmissionAuthority: 'deterministic_positive_all_in_economics_plus_hard_execution_facts',
+          });
+        })
+        .catch(error => {
+          logger.debug('Parallel CEX Monte Carlo advisory degraded without blocking execution', {
+            component: 'CentralizedExchangeExecutor',
+            symbol: plan.symbol,
+            buyVenue: plan.buyVenue,
+            sellVenue: plan.sellVenue,
+            error: error instanceof Error ? error.message : String(error),
+            monteCarloExecutionAuthority: false,
+            currentPlanAdmissionChanged: false,
+          });
         });
-      }
 
       const effectiveQuoteAgeMs = Math.max(0, plan.quoteAgeMs) + (Date.now() - executionAdmissionStartedAt);
       if (effectiveQuoteAgeMs > maxQuoteAgeMs) {
@@ -507,5 +484,6 @@ const productionCexAdapters = createProductionCexSettlementAdapters();
 // Production adapters are already merged inside execute(). Leaving options empty
 // selects venue-native FOK for default TT split children; strategy-specific
 // executors may delegate only child submission while this class retains full-
-// parent inventory, MC, governance, ladder and settlement aggregation authority.
+// parent inventory, governance, ladder and settlement aggregation authority.
+// Monte Carlo is always parallel advisory evidence and cannot veto execution.
 export const centralizedExchangeExecutor = new CentralizedExchangeExecutor();
