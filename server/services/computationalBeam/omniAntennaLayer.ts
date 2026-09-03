@@ -8,7 +8,7 @@
 
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
-import { performance } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import {
   Task,
   TaskType,
@@ -25,6 +25,9 @@ const HOT_LATENCY_SAMPLE_LIMIT = Math.max(64, Math.min(4096, Number(process.env.
 const availableParallelism = Math.max(1, os.availableParallelism?.() || os.cpus().length);
 const configuredConcurrency = Number(process.env.COMPUTATIONAL_ANTENNA_MAX_CONCURRENCY || Math.max(4, availableParallelism * 2));
 const MAX_LOCAL_CONCURRENCY = Math.max(1, Math.min(64, Number.isFinite(configuredConcurrency) ? Math.floor(configuredConcurrency) : 4));
+const EVENT_LOOP_MONITOR_ENABLED = process.env.NO_INTERVALS !== 'true';
+const eventLoopDelayHistogram = monitorEventLoopDelay({ resolution: 10 });
+if (EVENT_LOOP_MONITOR_ENABLED) eventLoopDelayHistogram.enable();
 
 const ANTENNA_TASK_TYPES = new Set<TaskType>([
   TaskType.WEBSOCKET_PING,
@@ -48,11 +51,65 @@ type HotPathStats = {
   failures: number;
 };
 
+type EventLoopPressure = {
+  monitoring: boolean;
+  utilization: number | null;
+  delayMeanMs: number | null;
+  delayP50Ms: number | null;
+  delayP95Ms: number | null;
+  delayP99Ms: number | null;
+  delayMaxMs: number | null;
+  capacityFactor: number;
+};
+
 function percentile(values: readonly number[], fraction: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * fraction)));
   return Number(sorted[index].toFixed(3));
+}
+
+function finiteMsFromNs(value: number): number | null {
+  const ms = value / 1_000_000;
+  return Number.isFinite(ms) && ms >= 0 ? Number(ms.toFixed(3)) : null;
+}
+
+function eventLoopPressure(): EventLoopPressure {
+  if (!EVENT_LOOP_MONITOR_ENABLED) {
+    return {
+      monitoring: false,
+      utilization: null,
+      delayMeanMs: null,
+      delayP50Ms: null,
+      delayP95Ms: null,
+      delayP99Ms: null,
+      delayMaxMs: null,
+      capacityFactor: 1,
+    };
+  }
+  const utilizationRaw = performance.eventLoopUtilization().utilization;
+  const utilization = Number.isFinite(utilizationRaw) ? Math.max(0, Math.min(1, utilizationRaw)) : 0;
+  const p95 = finiteMsFromNs(eventLoopDelayHistogram.percentile(95));
+  const p99 = finiteMsFromNs(eventLoopDelayHistogram.percentile(99));
+  // Pressure only narrows generic queued Antenna concurrency. Synchronous ordered
+  // frame/apply work remains inline so market-data sequence is never reordered.
+  const capacityFactor = utilization >= 0.95 || (p99 ?? 0) >= 50
+    ? 0.25
+    : utilization >= 0.85 || (p95 ?? 0) >= 25
+      ? 0.50
+      : utilization >= 0.75 || (p95 ?? 0) >= 10
+        ? 0.75
+        : 1;
+  return {
+    monitoring: true,
+    utilization: Number(utilization.toFixed(4)),
+    delayMeanMs: finiteMsFromNs(eventLoopDelayHistogram.mean),
+    delayP50Ms: finiteMsFromNs(eventLoopDelayHistogram.percentile(50)),
+    delayP95Ms: p95,
+    delayP99Ms: p99,
+    delayMaxMs: finiteMsFromNs(eventLoopDelayHistogram.max),
+    capacityFactor,
+  };
 }
 
 function deadlineFromTask(task: Task): number | undefined {
@@ -188,11 +245,13 @@ export class OmniAntennaLayer extends EventEmitter {
   }
 
   private selectNode(task: Task): ComputeNode | null {
-    const candidates = [...this.antennaNodes.values()].filter(node =>
-      node.status === 'active' &&
-      node.capabilities.supportedTaskTypes.includes(task.type) &&
-      node.metrics.currentLoad < node.capabilities.maxConcurrentTasks,
-    );
+    const pressure = eventLoopPressure();
+    const candidates = [...this.antennaNodes.values()].filter(node => {
+      const effectiveCapacity = Math.max(1, Math.floor(node.capabilities.maxConcurrentTasks * pressure.capacityFactor));
+      return node.status === 'active' &&
+        node.capabilities.supportedTaskTypes.includes(task.type) &&
+        node.metrics.currentLoad < effectiveCapacity;
+    });
     if (candidates.length === 0) return null;
     candidates.sort((left, right) => {
       const leftLoad = left.metrics.currentLoad / Math.max(1, left.capabilities.maxConcurrentTasks);
@@ -301,6 +360,7 @@ export class OmniAntennaLayer extends EventEmitter {
   }
 
   public getStatus() {
+    const pressure = eventLoopPressure();
     return {
       totalNodes: this.antennaNodes.size,
       activeNodes: [...this.antennaNodes.values()].filter(node => node.status === 'active').length,
@@ -313,6 +373,9 @@ export class OmniAntennaLayer extends EventEmitter {
       marketDataAuthority: false,
       executionAuthority: false,
       role: 'transport_parse_sequence_freshness_acceleration',
+      eventLoopPressure: pressure,
+      adaptiveQueuedCapacity: Math.max(1, Math.floor(MAX_LOCAL_CONCURRENCY * pressure.capacityFactor)),
+      orderedHotPathThrottledByPressure: false,
       quantiParallelism: quantiParallelismGovernor.getStatus(),
       hotPath: [...this.hotPath.entries()].map(([type, stats]) => ({
         type,
