@@ -11,6 +11,7 @@ import {
 } from '../intelligence/cex-order-control-health.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
+import { recordMakerTerminalCalibration } from '../intelligence/maker-terminal-calibration.js';
 import {
   getOkxRpiExecutionCapability,
   isOkxRpiMakerPriceAdmissible,
@@ -132,6 +133,14 @@ function makerOrderStyle(plan: SharedMakerPlan, venue: ExecutableCexVenue, side:
   return { style: 'post_only', expectedMakerFeeBps: 0 };
 }
 
+function makerFillProbability(plan: SharedMakerPlan, venue: ExecutableCexVenue, side: 'buy' | 'sell'): number | null {
+  const queue = plan.makerExecution?.queueEcho;
+  if (!queue) return null;
+  if (venue === plan.buyVenue && side === 'buy') return queue.buyFillProbability;
+  if (venue === plan.sellVenue && side === 'sell') return queue.sellFillProbability;
+  return null;
+}
+
 function recordLatency(input: {
   traceId: string;
   venue: ExecutableCexVenue;
@@ -228,7 +237,11 @@ function wrapMakerSubmit(
           ordType,
           px: cexDecimalString(request.price),
           sz: cexDecimalString(request.quantity),
-          ...(ordType === 'rpi' ? { rpiPxRound: false } : {}),
+          // Matching-engine book state can move between our fresh spacing check
+          // and actual admission. For RPI only, let OKX round outward to the
+          // nearest still-non-marketable compliant price instead of rejecting
+          // the leg. Outward rounding cannot worsen per-fill price economics.
+          ...(ordType === 'rpi' ? { rpiPxRound: true } : {}),
           clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
         }, { lane: 'order_write' });
         const order = data[0];
@@ -285,6 +298,23 @@ function wrapMakerSubmit(
       const startedAt = Date.now();
       const result = await delegate.query(order);
       recordLatency({ traceId, venue, operation: 'query', symbol: order.symbol, clientRoundTripMs: Date.now() - startedAt });
+      if (result.terminal) {
+        const predictedFillProbability = makerFillProbability(plan, venue, order.side);
+        if (predictedFillProbability !== null) {
+          recordMakerTerminalCalibration({
+            venue,
+            symbol: order.symbol,
+            side: order.side,
+            orderId: order.orderId,
+            predictedFillProbability,
+            requestedQuantity: result.requestedQuantity,
+            filledQuantity: result.filledQuantity ?? 0,
+            submittedAt: result.submittedAt,
+            terminalAt: result.terminalAt ?? Date.now(),
+            terminalStatus: result.status,
+          });
+        }
+      }
       return result;
     },
     async cancel(order) {
@@ -304,10 +334,13 @@ function wrapMakerSubmit(
  * An OKX RPI leg is submitted only when an MM plan explicitly selected it from
  * authenticated fee economics and submit-time product permission, minimum
  * notional, visible RPI spacing, fresh book and fee evidence still support the
- * same-or-better economics. There is no silent downgrade from RPI to standard
- * maker because that could invalidate plan P&L. Measured submit/query/cancel
- * round-trip latency is retained only as BPS revalidation scheduling evidence;
- * it never fabricates a BPS cost, finalizes settlement, or owns execution.
+ * same-or-better economics. RPI requests enable exchange-native outward spacing
+ * normalization so an otherwise-valid leg is not rejected solely because book
+ * state changed while the request was in flight. There is no silent downgrade
+ * from RPI to standard maker because that could invalidate plan P&L. Measured
+ * submit/query/cancel latency is retained only as BPS revalidation scheduling
+ * evidence; realized maker terminal outcomes calibrate the shadow fill model but
+ * never fabricate BPS, finalize settlement, or own execution.
  */
 export function createPostOnlyMakerAdapters(plan: SharedMakerPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();
