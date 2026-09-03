@@ -40,7 +40,6 @@ import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.
 import { ensureZeroCapitalShadowPriorityWiring } from './zero-capital-shadow-priority-wiring.js';
 import { ensureZeroCapitalSizeRefinementWiring } from './zero-capital-size-refinement-wiring.js';
 import { ensureZeroCapitalJointProviderSizeWiring } from './zero-capital-joint-provider-size-wiring.js';
-import { ensureZeroCapitalProfitabilityRescueV2 } from './zero-capital-profitability-rescue-v2.js';
 import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
 import { ensureZeroCapitalDynamicAttemptBarrierWiring } from './zero-capital-dynamic-attempt-barrier-wiring.js';
@@ -125,7 +124,6 @@ function installCanonicalRuntime(): void {
   ensureZeroCapitalShadowPriorityWiring();
   ensureZeroCapitalSizeRefinementWiring();
   ensureZeroCapitalJointProviderSizeWiring();
-  ensureZeroCapitalProfitabilityRescueV2();
   ensureZeroCapitalFlashProviderWiring();
   ensureProviderSpecificZeroCapitalExecutionWiring();
   ensureDualProviderZeroCapitalExecutionWiring();
@@ -133,9 +131,6 @@ function installCanonicalRuntime(): void {
   ensureZeroCapitalDynamicAttemptBarrierWiring();
   ensureAlchemyStandardRpcFirstWiring();
 
-  // Terminal realized-profit reconciliation must exist before the engine can
-  // select native funding or broadcast any zero-capital transaction. The wiring
-  // is idempotent, so every lifecycle entry point can safely reassert it.
   ensureZeroCapitalRealizedProfitWiring();
   void ensureDynamicRpcProviderWiring().finally(() => startCanonicalZeroCapitalRuntime());
 
@@ -231,8 +226,10 @@ function installCanonicalRuntime(): void {
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
     zeroCapitalRuntimeLifecycle: 'terminal_realized_profit_authority_then_cost_safe_rpc_mesh_then_single_canonical_hard_fact_governance_then_fail_closed_retry',
-    zeroCapitalSizeOptimization: 'coarse_independent_quotes_plus_bounded_fresh_local_refinement_plus_exact_provider_size_rescue_plus_profitability_rescue_v2',
-    zeroCapitalProfitabilityRescue: 'decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
+    zeroCapitalSizeOptimization: 'canonical_scan_direct_bps_rescue_then_bounded_fresh_refinement_and_exact_provider_size_rescue',
+    zeroCapitalProfitabilityRescue: 'canonical_scan_direct_call_decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
+    zeroCapitalProfitabilityRescueInstallerAuthority: false,
+    zeroCapitalPredictiveUsdEconomics: 'live_input_asset_price_required_before_monte_carlo_and_position_sizing',
     zeroCapitalFlashLoanEconomics: 'measured_single_provider_fee_liquidity_plus_combined_aave_balancer_liquidity_rescue',
     zeroCapitalProviderExecution: 'verified_balancer_aave_or_dual_receiver_permission_binding',
     zeroCapitalProviderMesh: 'balancer_or_aave_or_balancer_outer_plus_nested_aave_when_combined_liquidity_unlocks_exact_size',
