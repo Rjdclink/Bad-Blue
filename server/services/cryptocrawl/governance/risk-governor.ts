@@ -1,11 +1,11 @@
 /**
  * RISK GOVERNOR
  *
- * Manages execution risk controls and Monte Carlo consensus requirements.
- * Profit magnitude is never an execution ceiling: deterministic all-in positive
- * economics is an upstream eligibility requirement, while this governor owns
- * loss/drawdown, profit-ladder position-size, current Monte Carlo, anomaly, and
- * circuit-breaker safety only.
+ * Manages canonical hard execution-risk controls. Profit magnitude is never an
+ * execution ceiling: deterministic all-in positive economics is an upstream
+ * eligibility requirement, while this governor owns loss/drawdown,
+ * profit-ladder position-size and circuit-breaker safety. Monte Carlo and
+ * aggregate risk scoring are telemetry/learning only and never execution vetoes.
  */
 
 import { EventEmitter } from 'events';
@@ -50,6 +50,7 @@ export interface RiskAssessment {
     /** Compatibility field. Profit ceilings are retired, so this is always true. */
     dailyLimitCheck: boolean;
     positionSizeCheck: boolean;
+    /** Compatibility field. Monte Carlo is advisory, so this is always true. */
     monteCarloCheck: boolean;
     anomalyCheck: boolean;
   };
@@ -91,8 +92,9 @@ export class RiskGovernor extends EventEmitter {
   }
 
   /**
-   * Gate every trade execution with canonical risk assessment.
-   * No daily/hourly/aggregate profit target or ceiling participates in approval.
+   * Gate every trade execution with canonical hard risk assessment.
+   * No daily/hourly/aggregate profit target, Monte Carlo threshold, confidence
+   * score, or aggregate advisory score participates in approval.
    */
   async assessTradeProposal(proposal: TradeProposal): Promise<RiskAssessment> {
     log.debug('Assessing trade proposal', { proposalId: proposal.id });
@@ -115,7 +117,7 @@ export class RiskGovernor extends EventEmitter {
         drawdownCheck: false,
         dailyLimitCheck: true,
         positionSizeCheck: false,
-        monteCarloCheck: false,
+        monteCarloCheck: true,
         anomalyCheck: false,
       },
       timestamp: Date.now(),
@@ -175,9 +177,18 @@ export class RiskGovernor extends EventEmitter {
     }
     assessment.checksPass.positionSizeCheck = true;
 
-    // CHECK 7: Current opportunity-bound Monte Carlo evidence.
-    if (stageConfig.requiresMonteCarloConsensus) {
-      const monteCarloResult = await this.runMonteCarloConsensus(proposal);
+    // CHECK 7: Current opportunity-bound Monte Carlo evidence is advisory only.
+    // It can inform sizing telemetry and learning, but deterministic all-in-positive
+    // economics that already passed hard safety facts cannot be vetoed by a model.
+    const monteCarloResult = await this.runMonteCarloConsensus(proposal).catch(error => {
+      log.debug('Advisory Monte Carlo evidence unavailable', {
+        proposalId: proposal.id,
+        error: error instanceof Error ? error.message : String(error),
+        executionAuthority: false,
+      });
+      return null;
+    });
+    if (monteCarloResult) {
       assessment.monteCarloApproved = monteCarloResult.approved;
       assessment.monteCarloSimulations = monteCarloResult.simulations;
       assessment.monteCarloConsensus = monteCarloResult.consensus;
@@ -185,17 +196,19 @@ export class RiskGovernor extends EventEmitter {
       assessment.kellyFraction = monteCarloResult.kellyFraction;
       assessment.confidenceScore = monteCarloResult.confidenceScore;
       confidenceEnabledForRisk = monteCarloResult.confidenceEnabled;
-
       if (!monteCarloResult.approved) {
-        assessment.reason = `Monte Carlo consensus failed: ${monteCarloResult.reason}`;
-        this.recordAssessment(assessment);
-        return assessment;
+        log.debug('Advisory Monte Carlo did not validate proposal; hard execution facts remain authoritative', {
+          proposalId: proposal.id,
+          reason: monteCarloResult.reason,
+          consensus: monteCarloResult.consensus,
+          confidenceScore: monteCarloResult.confidenceScore,
+          executionAuthority: false,
+        });
       }
-      assessment.checksPass.monteCarloCheck = true;
     } else {
-      assessment.checksPass.monteCarloCheck = true;
       assessment.confidenceScore = 0;
     }
+    assessment.checksPass.monteCarloCheck = true;
 
     // Operational anomaly heuristics are observability only. They may identify
     // suspicious throughput for investigation, but may not independently veto a
@@ -229,6 +242,7 @@ export class RiskGovernor extends EventEmitter {
         positionUSD: proposal.positionSizeUSD,
         profitLadderMaxNotionalUsd: notionalAuthority.maxNotionalUsd,
         riskScoreTelemetryOnly: assessment.riskScore,
+        monteCarloTelemetryOnly: true,
         confidence: assessment.confidenceScore,
         confidenceEnabled: confidenceEnabledForRisk,
         duplicateRiskScoreVetoAuthority: false,
@@ -283,7 +297,7 @@ export class RiskGovernor extends EventEmitter {
       reason,
       simulations: evidenceIsCurrent ? 1 : 0,
       consensus,
-      recommendedPositionUSD: approved ? proposal.positionSizeUSD : 0,
+      recommendedPositionUSD: approved ? proposal.positionSizeUSD : proposal.positionSizeUSD,
       kellyFraction: 0,
       confidenceScore,
       confidenceEnabled,
@@ -452,6 +466,7 @@ export class RiskGovernor extends EventEmitter {
       profitCeilingAuthority: false,
       positionSizeAuthority: 'profit_ladder_capital_allowance',
       legacyStagePositionCapAuthoritative: false,
+      monteCarloExecutionAuthority: false,
       riskScoreExecutionAuthority: false,
       anomalyHeuristicExecutionAuthority: false,
       timestamp: Date.now(),
