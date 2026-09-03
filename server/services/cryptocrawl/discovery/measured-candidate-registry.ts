@@ -35,6 +35,7 @@ export interface CanonicalBpsEconomics {
   measuredAt: number;
   notionalUsd: number | null;
   grossBps: number | null;
+  /** Signed economic exchange fee: positive = cost, negative = realized/quoted rebate or refund. */
   exchangeFeeBps: number | null;
   slippageBps: number | null;
   impactBps: number | null;
@@ -69,6 +70,7 @@ export interface MeasuredCandidate {
   economics: {
     grossProfitUsd: number | null;
     deterministicNetProfitUsd: number | null;
+    /** Signed economic exchange fee in USD: positive = cost, negative = rebate/refund. */
     feeUsd: number | null;
     gasUsd: number | null;
     bridgeUsd: number | null;
@@ -157,13 +159,19 @@ function measuredUsdToBps(valueUsd: unknown, notionalUsd: number | null): number
   return Math.max(0, value) / notionalUsd * 10_000;
 }
 
+function measuredSignedUsdToBps(valueUsd: unknown, notionalUsd: number | null): number | null {
+  const value = finite(valueUsd);
+  if (value === null || notionalUsd === null || notionalUsd <= 0) return null;
+  return value / notionalUsd * 10_000;
+}
+
 function buildCanonicalBps(economics: MeasuredCandidate['economics'], measuredAt: number): CanonicalBpsEconomics {
   const notionalUsd = measuredNotionalUsd(economics);
   return {
     measuredAt,
     notionalUsd,
     grossBps: finite(economics.grossProfitBps),
-    exchangeFeeBps: measuredUsdToBps(economics.feeUsd, notionalUsd),
+    exchangeFeeBps: measuredSignedUsdToBps(economics.feeUsd, notionalUsd),
     slippageBps: finite(economics.expectedSlippageBps),
     impactBps: finite(economics.expectedPriceImpactBps),
     gasBps: finite(economics.gasCostBps) ?? measuredUsdToBps(economics.gasUsd, notionalUsd),
