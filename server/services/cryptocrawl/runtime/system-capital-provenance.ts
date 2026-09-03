@@ -16,14 +16,12 @@ export interface VerifiedSponsoredProfitEvidence {
   transactionHash: string;
   chain: string;
   asset: string;
+  grossProfitBaseUnits: bigint;
   retainedProfitBaseUnits: bigint;
+  payoutReservedBaseUnits: bigint;
   sourceRecipient: string;
   sourceRecipientBalanceBeforeBaseUnits: bigint;
   sourceRecipientBalanceAfterBaseUnits: bigint;
-}
-
-function automaticProfitPayoutEnabled(): boolean {
-  return process.env.CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED?.trim().toLowerCase() === 'true';
 }
 
 export function zeroCapitalSystemCapitalScope(input: {
@@ -40,10 +38,6 @@ export async function prepareSponsoredSystemCapital(input: {
   profitRecipient: string;
   opportunityId: string;
 }): Promise<SponsoredSystemCapitalAttempt> {
-  if (automaticProfitPayoutEnabled()) {
-    throw new Error('System-capital bootstrap requires 100% retained-profit mode; exact payout-reserved base units are not yet available');
-  }
-
   const scope = zeroCapitalSystemCapitalScope(input);
   const executionKey = `zero-capital:${input.chain.toLowerCase()}:${input.opportunityId}`;
   let state = await capitalStore.getOrCreate(scope);
@@ -83,12 +77,14 @@ export async function persistVerifiedSponsoredProfit(
   attempt: SponsoredSystemCapitalAttempt,
   proof: VerifiedSponsoredProfitEvidence,
 ): Promise<CapitalProvenanceState> {
-  if (automaticProfitPayoutEnabled()) {
-    throw new Error('Cannot credit the system-capital pool while automatic profit payout is enabled without exact retained base-unit allocation');
+  if (proof.grossProfitBaseUnits <= 0n) throw new Error('Verified sponsored gross profit must be positive');
+  if (proof.retainedProfitBaseUnits <= 0n) throw new Error('Verified sponsored retained profit must be positive');
+  if (proof.payoutReservedBaseUnits < 0n) throw new Error('Verified sponsored payout reserve cannot be negative');
+  if (proof.retainedProfitBaseUnits + proof.payoutReservedBaseUnits !== proof.grossProfitBaseUnits) {
+    throw new Error('Verified sponsored retained plus payout-reserved units must equal gross settled profit');
   }
-  if (proof.retainedProfitBaseUnits <= 0n) throw new Error('Verified sponsored profit must be positive');
-  if (proof.sourceRecipientBalanceAfterBaseUnits - proof.sourceRecipientBalanceBeforeBaseUnits !== proof.retainedProfitBaseUnits) {
-    throw new Error('Verified sponsored profit does not equal the operational recipient token delta');
+  if (proof.sourceRecipientBalanceAfterBaseUnits - proof.sourceRecipientBalanceBeforeBaseUnits !== proof.grossProfitBaseUnits) {
+    throw new Error('Verified sponsored gross profit does not equal the operational recipient token delta');
   }
 
   if (attempt.bootstrapPending) {
@@ -115,6 +111,8 @@ export async function persistVerifiedSponsoredProfit(
     chain: proof.chain,
     asset: proof.asset,
     retainedProfit: proof.retainedProfitBaseUnits.toString(),
+    grossProfit: proof.grossProfitBaseUnits.toString(),
+    payoutReserved: proof.payoutReservedBaseUnits.toString(),
     settlementReceiptVerified: true,
     profitRecipientDeltaVerified: true,
     sourceRecipient: proof.sourceRecipient,
