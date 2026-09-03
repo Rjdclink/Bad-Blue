@@ -1,5 +1,7 @@
 import WebSocket from 'ws';
 import logger from '../../../logger.js';
+import { omniAntennaLayer } from '../../computationalBeam/omniAntennaLayer.js';
+import { TaskType } from '../../computationalBeam/types.js';
 import {
   canonicalCoinbaseSymbol,
   resolveCoinbaseAdvancedProductId,
@@ -11,6 +13,9 @@ export type CexStreamVenue = 'coinbase' | 'kraken' | 'okx';
 export interface StreamOrderBookLevel {
   price: number;
   quantity: number;
+  rawPrice?: string;
+  rawQuantity?: string;
+  rawExact?: boolean;
 }
 
 export interface StreamOrderBookQuote {
@@ -36,9 +41,14 @@ export interface CexOrderBookStreamStats {
   deltasQueued: number;
   staleDeltasRejected: number;
   sequenceGaps: number;
+  integrityFailures: number;
   staleResets: number;
+  framesReceived: number;
+  controlMessages: number;
   connectionsOpened: number;
   reconnects: number;
+  proactiveReconnects: number;
+  heartbeatTimeouts: number;
   connectionErrors: number;
 }
 
@@ -48,6 +58,7 @@ interface ParsedBookMessage {
   asks: StreamOrderBookLevel[];
   sequence: number | null;
   previousSequence: number | null;
+  checksum: number | null;
   observedAt: number;
 }
 
@@ -74,14 +85,34 @@ interface VenueConnectionState {
   symbols: Map<string, string>;
   canonicalByExternal: Map<string, string>;
   reconnectTimer: NodeJS.Timeout | null;
+  heartbeatTimer: NodeJS.Timeout | null;
   reconnectAttempts: number;
+  lastMessageAt: number;
+  awaitingPongAt: number | null;
   stopped: boolean;
 }
 
+type BookApplyStatus = 'applied' | 'queued' | 'gap' | 'stale' | 'integrity';
+
 const MAX_LEVELS = 50;
+const KRAKEN_BOOK_DEPTH = 25;
 const MAX_PENDING_DELTAS = 256;
 const DEFAULT_STALE_MS = 7_500;
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
+const LIVENESS_CHECK_MS = 5_000;
+const IDLE_BEFORE_PING_MS = 15_000;
+const PONG_TIMEOUT_MS = 10_000;
+const MAX_WS_PAYLOAD_BYTES = 4 * 1024 * 1024;
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
 
 function configuredWebSocket(name: string): string | null {
   const value = process.env[name]?.trim();
@@ -146,8 +177,6 @@ async function resolveStreamIdentity(venue: CexStreamVenue, symbolInput: string)
   const constraints = await getSpotProductConstraints(venue, symbolInput);
   return {
     canonicalSymbol: constraints.symbol,
-    // Kraken WebSocket v2 uses canonical BASE/QUOTE notation rather than the
-    // legacy REST altname. OKX uses the exact regional instId from its catalog.
     externalSymbol: venue === 'kraken'
       ? `${constraints.baseAsset}/${constraints.quoteAsset}`
       : constraints.exchangeSymbol,
@@ -180,22 +209,38 @@ function observedAt(value: unknown, fallback = Date.now()): number {
   return fallback;
 }
 
+function rawDecimal(value: unknown): { text?: string; exact: boolean } {
+  if (typeof value === 'string' && value.trim()) return { text: value.trim(), exact: true };
+  if (typeof value === 'number' && Number.isFinite(value)) return { text: String(value), exact: false };
+  return { exact: false };
+}
+
 function normalizeLevels(raw: unknown, allowZeroQuantity = false): StreamOrderBookLevel[] {
   if (!Array.isArray(raw)) return [];
   return raw.map(level => {
     if (Array.isArray(level)) {
+      const rawPrice = rawDecimal(level[0]);
+      const rawQuantity = rawDecimal(level[1]);
       return {
         price: finiteNumber(level[0]),
         quantity: allowZeroQuantity ? nonNegativeNumber(level[1]) : finiteNumber(level[1]),
+        rawPrice: rawPrice.text,
+        rawQuantity: rawQuantity.text,
+        rawExact: rawPrice.exact && rawQuantity.exact,
       };
     }
     if (level && typeof level === 'object') {
       const row = level as Record<string, unknown>;
+      const priceValue = row.price ?? row.price_level;
+      const quantityValue = row.qty ?? row.quantity ?? row.size ?? row.new_quantity;
+      const rawPrice = rawDecimal(priceValue);
+      const rawQuantity = rawDecimal(quantityValue);
       return {
-        price: finiteNumber(row.price ?? row.price_level),
-        quantity: allowZeroQuantity
-          ? nonNegativeNumber(row.qty ?? row.quantity ?? row.size ?? row.new_quantity)
-          : finiteNumber(row.qty ?? row.quantity ?? row.size ?? row.new_quantity),
+        price: finiteNumber(priceValue),
+        quantity: allowZeroQuantity ? nonNegativeNumber(quantityValue) : finiteNumber(quantityValue),
+        rawPrice: rawPrice.text,
+        rawQuantity: rawQuantity.text,
+        rawExact: rawPrice.exact && rawQuantity.exact,
       };
     }
     return { price: null, quantity: null };
@@ -232,11 +277,12 @@ function parseCoinbase(message: Record<string, unknown>): ParsedVenueMessage[] {
         kind,
         bids,
         asks,
-        // Advanced Trade level2 guarantees ordered delivery. sequence_num is a
-        // channel envelope sequence and can cover multiple products, so it is
-        // retained out of per-product gap authority to avoid false resets.
+        // Advanced Trade level2 is the delivery-guaranteed local-book channel.
+        // sequence_num is channel-envelope scoped, so it is not misused as a
+        // per-product sequence authority.
         sequence: null,
         previousSequence: null,
+        checksum: null,
         observedAt: eventObservedAt,
       },
     });
@@ -261,6 +307,7 @@ function parseKraken(message: Record<string, unknown>): ParsedVenueMessage[] {
         asks: normalizeLevels(row.asks, kind === 'delta'),
         sequence: null,
         previousSequence: null,
+        checksum: nonNegativeInteger(row.checksum),
         observedAt: observedAt(row.timestamp),
       },
     }];
@@ -284,6 +331,9 @@ function parseOkx(message: Record<string, unknown>): ParsedVenueMessage[] {
         asks: normalizeLevels(row.asks, kind === 'delta'),
         sequence: nonNegativeInteger(row.seqId),
         previousSequence: nonNegativeInteger(row.prevSeqId),
+        // OKX deprecated JSON order-book checksum in production on 2026-06-23.
+        // seqId/prevSeqId is the current continuity authority.
+        checksum: null,
         observedAt: observedAt(row.ts),
       },
     }];
@@ -296,6 +346,19 @@ function parseMessages(venue: CexStreamVenue, message: Record<string, unknown>):
   return parseOkx(message);
 }
 
+function crc32Ascii(value: string): number {
+  let crc = 0xffffffff;
+  for (let index = 0; index < value.length; index += 1) {
+    crc = CRC32_TABLE[(crc ^ value.charCodeAt(index)) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function krakenChecksumToken(value: string): string {
+  const stripped = value.replace('.', '').replace(/^0+/, '');
+  return stripped || '0';
+}
+
 export class SequencedOrderBook {
   private readonly bids = new Map<string, StreamOrderBookLevel>();
   private readonly asks = new Map<string, StreamOrderBookLevel>();
@@ -304,19 +367,26 @@ export class SequencedOrderBook {
   private lastSequence: number | null = null;
   private lastUpdateAt = 0;
 
-  apply(message: ParsedBookMessage): 'applied' | 'queued' | 'gap' | 'stale' {
+  constructor(
+    private readonly venue: CexStreamVenue = 'coinbase',
+    private readonly depthLimit: number = MAX_LEVELS,
+  ) {}
+
+  apply(message: ParsedBookMessage): BookApplyStatus {
     if (message.kind === 'snapshot') {
       this.bids.clear();
       this.asks.clear();
       this.applyLevels(this.bids, message.bids);
       this.applyLevels(this.asks, message.asks);
+      this.truncate();
       this.initialized = true;
       this.lastSequence = message.sequence;
       this.lastUpdateAt = message.observedAt;
+      if (!this.validateKrakenChecksum(message.checksum)) return 'integrity';
       const queued = this.pendingDeltas.splice(0);
       for (const delta of queued) {
         const result = this.applyDelta(delta);
-        if (result === 'gap') return result;
+        if (result === 'gap' || result === 'integrity') return result;
       }
       return 'applied';
     }
@@ -364,15 +434,17 @@ export class SequencedOrderBook {
     };
   }
 
-  private applyDelta(message: ParsedBookMessage): 'applied' | 'gap' | 'stale' {
+  private applyDelta(message: ParsedBookMessage): BookApplyStatus {
     if (message.sequence !== null && this.lastSequence !== null) {
       if (message.previousSequence !== null && message.previousSequence !== this.lastSequence) return 'gap';
       if (message.sequence <= this.lastSequence) return 'stale';
     }
     this.applyLevels(this.bids, message.bids);
     this.applyLevels(this.asks, message.asks);
+    this.truncate();
     this.lastSequence = message.sequence ?? this.lastSequence;
     this.lastUpdateAt = message.observedAt;
+    if (!this.validateKrakenChecksum(message.checksum)) return 'integrity';
     return 'applied';
   }
 
@@ -382,6 +454,26 @@ export class SequencedOrderBook {
       if (level.quantity <= 0) target.delete(key);
       else target.set(key, level);
     }
+  }
+
+  private truncate(): void {
+    const bids = [...this.bids.entries()].sort((left, right) => right[1].price - left[1].price);
+    const asks = [...this.asks.entries()].sort((left, right) => left[1].price - right[1].price);
+    for (const [key] of bids.slice(this.depthLimit)) this.bids.delete(key);
+    for (const [key] of asks.slice(this.depthLimit)) this.asks.delete(key);
+  }
+
+  private validateKrakenChecksum(expected: number | null): boolean {
+    if (this.venue !== 'kraken' || expected === null) return true;
+    const asks = [...this.asks.values()].sort((left, right) => left.price - right.price).slice(0, 10);
+    const bids = [...this.bids.values()].sort((left, right) => right.price - left.price).slice(0, 10);
+    const levels = [...asks, ...bids];
+    // Kraken requires decimal/string preservation for checksum correctness. If a
+    // future payload decoder surfaces JS numbers instead of exact strings, do not
+    // fabricate a checksum result; freshness/settlement still fail closed later.
+    if (levels.some(level => level.rawExact !== true || !level.rawPrice || !level.rawQuantity)) return true;
+    const input = levels.map(level => `${krakenChecksumToken(level.rawPrice!)}${krakenChecksumToken(level.rawQuantity!)}`).join('');
+    return crc32Ascii(input) === expected;
   }
 }
 
@@ -395,9 +487,14 @@ class CexOrderBookStreamManager {
     deltasQueued: 0,
     staleDeltasRejected: 0,
     sequenceGaps: 0,
+    integrityFailures: 0,
     staleResets: 0,
+    framesReceived: 0,
+    controlMessages: 0,
     connectionsOpened: 0,
     reconnects: 0,
+    proactiveReconnects: 0,
+    heartbeatTimeouts: 0,
     connectionErrors: 0,
   };
 
@@ -433,6 +530,7 @@ class CexOrderBookStreamManager {
     for (const connection of this.connections.values()) {
       connection.stopped = true;
       if (connection.reconnectTimer) clearTimeout(connection.reconnectTimer);
+      if (connection.heartbeatTimer) clearInterval(connection.heartbeatTimer);
       connection.socket?.close();
     }
     this.connections.clear();
@@ -457,7 +555,7 @@ class CexOrderBookStreamManager {
       venue,
       symbol: identity.canonicalSymbol,
       externalSymbol: identity.externalSymbol,
-      book: new SequencedOrderBook(),
+      book: new SequencedOrderBook(venue, venue === 'kraken' ? KRAKEN_BOOK_DEPTH : MAX_LEVELS),
     };
     this.streams.set(key, state);
     const connection = this.ensureConnection(venue);
@@ -478,7 +576,10 @@ class CexOrderBookStreamManager {
       symbols: new Map<string, string>(),
       canonicalByExternal: new Map<string, string>(),
       reconnectTimer: null,
+      heartbeatTimer: null,
       reconnectAttempts: 0,
+      lastMessageAt: Date.now(),
+      awaitingPongAt: null,
       stopped: false,
     };
     this.connections.set(venue, connection);
@@ -493,13 +594,20 @@ class CexOrderBookStreamManager {
       : connection.venue === 'kraken'
         ? 'wss://ws.kraken.com/v2'
         : getOkxPublicWebSocketEndpoint();
-    const socket = new WebSocket(endpoint);
+    const socket = new WebSocket(endpoint, {
+      perMessageDeflate: false,
+      handshakeTimeout: 10_000,
+      maxPayload: MAX_WS_PAYLOAD_BYTES,
+    });
     connection.socket = socket;
 
     socket.once('open', () => {
       this.stats.connectionsOpened += 1;
       if (connection.reconnectAttempts > 0) this.stats.reconnects += 1;
       connection.reconnectAttempts = 0;
+      connection.lastMessageAt = Date.now();
+      connection.awaitingPongAt = null;
+      this.startLiveness(connection, socket);
       logger.info('[CexOrderBookStream] venue market-data stream connected', {
         component: 'CexOrderBookStream',
         venue: connection.venue,
@@ -508,6 +616,10 @@ class CexOrderBookStreamManager {
         quoteCurrencyAllowlistUsed: false,
         coinbaseAdvancedTrade: connection.venue === 'coinbase',
         regionalExecutionAlignment: connection.venue === 'okx' ? 'rest_base_to_public_ws_region' : 'native_venue_endpoint',
+        antennaHotPath: true,
+        websocketCompression: false,
+        marketDataAuthority: 'cex_order_book_stream',
+        antennaExecutionAuthority: false,
       });
       const externalSymbols = [...connection.symbols.values()];
       if (externalSymbols.length > 0) {
@@ -519,21 +631,58 @@ class CexOrderBookStreamManager {
     });
 
     socket.on('message', data => {
+      this.stats.framesReceived += 1;
+      connection.lastMessageAt = Date.now();
+      const raw = data.toString();
+      if (connection.venue === 'okx' && raw === 'pong') {
+        connection.awaitingPongAt = null;
+        this.stats.controlMessages += 1;
+        return;
+      }
       try {
-        const payload = JSON.parse(data.toString()) as Record<string, unknown>;
-        for (const parsed of parseMessages(connection.venue, payload)) {
+        const decoded = omniAntennaLayer.executeHotPathSync(TaskType.ORDER_BOOK_FRAME, () => {
+          const payload = JSON.parse(raw) as Record<string, unknown>;
+          return { payload, parsed: parseMessages(connection.venue, payload) };
+        });
+        const payload = decoded.payload;
+        if (connection.venue === 'kraken' && payload.method === 'pong') {
+          connection.awaitingPongAt = null;
+          this.stats.controlMessages += 1;
+          return;
+        }
+        if (
+          connection.venue === 'okx' &&
+          payload.event === 'notice' &&
+          String(payload.code || '') === '64008'
+        ) {
+          this.stats.controlMessages += 1;
+          this.stats.proactiveReconnects += 1;
+          logger.info('[CexOrderBookStream] OKX service-upgrade notice received; reconnecting proactively', {
+            component: 'CexOrderBookStream',
+            venue: connection.venue,
+            code: payload.code,
+          });
+          socket.close();
+          return;
+        }
+
+        for (const parsed of decoded.parsed) {
           const canonical = connection.canonicalByExternal.get(externalKey(parsed.externalSymbol))
             || canonicalCompactSymbol(parsed.externalSymbol);
           if (!canonical) continue;
           const state = this.streams.get(`${connection.venue}:${canonical}`);
           if (!state) continue;
-          const result = state.book.apply(parsed.message);
-          if (parsed.message.kind === 'snapshot') this.stats.snapshotsApplied += 1;
+          const result = omniAntennaLayer.executeHotPathSync(
+            TaskType.ORDER_BOOK_APPLY,
+            () => state.book.apply(parsed.message),
+          );
+          if (parsed.message.kind === 'snapshot' && result === 'applied') this.stats.snapshotsApplied += 1;
           else if (result === 'applied') this.stats.deltasApplied += 1;
           else if (result === 'queued') this.stats.deltasQueued += 1;
           else if (result === 'stale') this.stats.staleDeltasRejected += 1;
-          if (result === 'gap') {
-            this.stats.sequenceGaps += 1;
+          if (result === 'gap' || result === 'integrity') {
+            if (result === 'gap') this.stats.sequenceGaps += 1;
+            else this.stats.integrityFailures += 1;
             state.book.reset();
             this.refreshSubscription(connection.venue, canonical);
           }
@@ -556,9 +705,54 @@ class CexOrderBookStreamManager {
     });
 
     socket.once('close', () => {
+      this.stopLiveness(connection);
       if (connection.socket === socket) connection.socket = null;
       this.scheduleReconnect(connection);
     });
+  }
+
+  private startLiveness(connection: VenueConnectionState, socket: WebSocket): void {
+    this.stopLiveness(connection);
+    connection.heartbeatTimer = setInterval(() => {
+      if (connection.socket !== socket || socket.readyState !== WebSocket.OPEN) return;
+      const now = Date.now();
+      if (connection.awaitingPongAt !== null && now - connection.awaitingPongAt > PONG_TIMEOUT_MS) {
+        this.stats.heartbeatTimeouts += 1;
+        logger.warn('[CexOrderBookStream] websocket heartbeat timed out; reconnecting', {
+          component: 'CexOrderBookStream',
+          venue: connection.venue,
+          idleMs: now - connection.lastMessageAt,
+        });
+        socket.terminate();
+        return;
+      }
+      if (now - connection.lastMessageAt < IDLE_BEFORE_PING_MS) return;
+
+      omniAntennaLayer.executeHotPathSync(TaskType.STREAM_LIVENESS, () => {
+        if (connection.venue === 'okx') {
+          socket.send('ping');
+          connection.awaitingPongAt = now;
+          return;
+        }
+        if (connection.venue === 'kraken') {
+          this.send(socket, { method: 'ping', req_id: now }, connection.venue, 'ping');
+          connection.awaitingPongAt = now;
+          return;
+        }
+        // Coinbase heartbeats arrive every second when subscribed. Fifteen
+        // seconds without any frame is therefore stronger evidence of a dead
+        // connection than inventing an undocumented application ping.
+        this.stats.heartbeatTimeouts += 1;
+        socket.terminate();
+      });
+    }, LIVENESS_CHECK_MS);
+    connection.heartbeatTimer.unref?.();
+  }
+
+  private stopLiveness(connection: VenueConnectionState): void {
+    if (connection.heartbeatTimer) clearInterval(connection.heartbeatTimer);
+    connection.heartbeatTimer = null;
+    connection.awaitingPongAt = null;
   }
 
   private refreshSubscription(venue: CexStreamVenue, canonicalSymbol: string): void {
@@ -573,7 +767,9 @@ class CexOrderBookStreamManager {
   private scheduleReconnect(connection: VenueConnectionState): void {
     if (connection.stopped || connection.reconnectTimer) return;
     connection.reconnectAttempts += 1;
-    const delay = Math.min(30_000, DEFAULT_RECONNECT_DELAY_MS * 2 ** Math.min(connection.reconnectAttempts - 1, 5));
+    const exponential = Math.min(30_000, DEFAULT_RECONNECT_DELAY_MS * 2 ** Math.min(connection.reconnectAttempts - 1, 5));
+    const jitter = 0.8 + Math.random() * 0.4;
+    const delay = Math.max(250, Math.round(exponential * jitter));
     connection.reconnectTimer = setTimeout(() => {
       connection.reconnectTimer = null;
       this.connect(connection);
@@ -586,7 +782,7 @@ class CexOrderBookStreamManager {
       return { type: 'subscribe', product_ids: externalSymbols, channel: 'level2' };
     }
     if (venue === 'kraken') {
-      return { method: 'subscribe', params: { channel: 'book', symbol: externalSymbols, depth: 25, snapshot: true } };
+      return { method: 'subscribe', params: { channel: 'book', symbol: externalSymbols, depth: KRAKEN_BOOK_DEPTH, snapshot: true } };
     }
     return { op: 'subscribe', args: externalSymbols.map(instId => ({ channel: 'books', instId })) };
   }
@@ -596,7 +792,7 @@ class CexOrderBookStreamManager {
       return { type: 'unsubscribe', product_ids: externalSymbols, channel: 'level2' };
     }
     if (venue === 'kraken') {
-      return { method: 'unsubscribe', params: { channel: 'book', symbol: externalSymbols, depth: 25 } };
+      return { method: 'unsubscribe', params: { channel: 'book', symbol: externalSymbols, depth: KRAKEN_BOOK_DEPTH } };
     }
     return { op: 'unsubscribe', args: externalSymbols.map(instId => ({ channel: 'books', instId })) };
   }
