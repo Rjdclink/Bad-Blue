@@ -12,13 +12,12 @@ const policy100 = read('server/services/cryptocrawl/optimization/hyperdynamic-bp
 const policy200 = read('server/services/cryptocrawl/optimization/execution-readiness-profitability-policy.ts');
 const canonical = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 
-// Shared parent -> child -> settlement route truth is centralized so this verifier
-// cannot drift when the implementation moves without changing authority.
 verifyCexExecutionContract();
 
 const required = [
   [stage, "STAGE_1_CONSTRAINED_PILOT", 'stage one definition'],
-  [stage, "description: 'Advisory/strategy optimization sandbox - NO EXECUTION'", 'stage one remains non-executable'],
+  [stage, "description: 'Constrained live pilot - verified positive execution only'", 'stage one canonical live-positive policy'],
+  [stage, "canExecuteTrades: true", 'stage one execution is directly authorized by StageManager'],
   [stage, "[Stage.STAGE_2_PROOF_OF_SIGNAL]", 'stage two definition'],
   [stage, "stageName: 'Proof-of-Signal Activation'", 'stage two live stage'],
   [inventory, "return originalExecute(decision.plan);", 'real centralized executor remains reachable'],
@@ -29,7 +28,7 @@ const required = [
   [hydration, 'syntheticBalancesAllowed: false', 'synthetic inventory forbidden'],
   [readiness, 'optimizerCanVetoEligibleExecution: false', 'optimizer cannot strand an eligible candidate'],
   [readiness, 'canonicalRevalidation: true', 'near-edge canonical revalidation enabled'],
-  [readiness, 'stageOneExecutionBypass: false', 'stage one bypass forbidden'],
+  [readiness, 'stageOneExecutionBypass: false', 'Stage 1 still uses canonical governance rather than a bypass'],
   [readiness, 'positiveNetBypass: false', 'positive-net bypass forbidden'],
   [policy200, 'EXECUTION_READINESS_PROFITABILITY_RULES.length !== 200', 'additional 200-control catalog intact'],
   [policy200, 'bypassGovernanceAllowed: false', 'new policy cannot bypass governance'],
@@ -48,7 +47,7 @@ if (originalRules.length !== 100) throw new Error(`[300-profitability-live-execu
 
 const stage1 = stage.slice(stage.indexOf('[Stage.STAGE_1_CONSTRAINED_PILOT]'), stage.indexOf('[Stage.STAGE_2_PROOF_OF_SIGNAL]'));
 const stage2 = stage.slice(stage.indexOf('[Stage.STAGE_2_PROOF_OF_SIGNAL]'), stage.indexOf('[Stage.STAGE_3_MEASURED_DRYRUN]'));
-if (!stage1.includes('canExecuteTrades: false')) throw new Error('[300-profitability-live-execution] Stage 1 execution regression');
+if (!stage1.includes('canExecuteTrades: true')) throw new Error('[300-profitability-live-execution] Stage 1 canonical live-positive execution is not reachable');
 if (!stage2.includes('canExecuteTrades: true')) throw new Error('[300-profitability-live-execution] Stage 2 live execution is not reachable');
 
 const familyLines = policy200.split('\n').filter(line => line.includes("key: '") && line.includes('thresholds: [') && line.includes('lever:'));
@@ -112,7 +111,7 @@ for (let pass = 0; pass < 100; pass++) {
 }
 
 const forbidden = [
-  [stage1, 'canExecuteTrades: true', 'Stage 1 execution bypass'],
+  [stage1, 'canExecuteTrades: false', 'obsolete Stage 1 non-execution authority'],
   [readiness, 'submit(', 'optimizer direct order submission'],
   [hydration, 'submit(', 'inventory hydrator direct order submission'],
   [policy200, 'executionAuthority: true', 'policy execution authority'],
@@ -121,4 +120,4 @@ const forbidden = [
 ];
 for (const [source, token, name] of forbidden) if (source.includes(token)) throw new Error(`[300-profitability-live-execution] forbidden regression: ${name}`);
 
-console.log('[300-profitability-live-execution] PASS: 100 + 200 bounded controls reviewed across 100 dynamic passes; shared PR482 contract verifies the current parent/child/product/settlement route; Stage 1, inventory, positive-net and governance gates remain intact');
+console.log('[300-profitability-live-execution] PASS: 100 + 200 bounded controls reviewed across 100 dynamic passes; StageManager directly owns Stage-1 live-positive execution while inventory, positive-net and governance hard gates remain intact');
