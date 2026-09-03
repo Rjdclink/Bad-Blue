@@ -13,8 +13,6 @@ export type PayoutBatchStatus = 'PREPARED' | 'CONVERTING' | 'WITHDRAWING' | 'SUB
 export type LegStatus = 'PREPARED' | 'SUBMITTED' | 'CONFIRMED' | 'RETRYABLE' | 'MANUAL_REVIEW';
 export type DestinationMode = 'primary' | 'fallback';
 
-export type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 'MANUAL_REVIEW';
-
 export type Control = {
   desired_state: TreasuryState;
   terminal_epoch: string | null;
