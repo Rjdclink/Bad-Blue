@@ -5,6 +5,7 @@ import {
   coinbasePrivateRequest,
 } from '../intelligence/coinbase-advanced-trade-authority.js';
 import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
+import { recordCexOrderControlLatency } from '../intelligence/cex-order-control-health.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
 import {
@@ -76,12 +77,18 @@ function makerOrderStyle(plan: SharedMakerPlan, venue: ExecutableCexVenue, side:
 function recordLatency(input: {
   traceId: string;
   venue: ExecutableCexVenue;
-  operation: 'submit' | 'cancel';
+  operation: 'submit' | 'query' | 'cancel';
   symbol: string;
   clientRoundTripMs: number;
   gatewayProcessingMs?: number | null;
   orderStyle?: MakerOrderStyle;
 }): void {
+  recordCexOrderControlLatency({
+    venue: input.venue,
+    operation: input.operation,
+    clientRoundTripMs: input.clientRoundTripMs,
+    gatewayProcessingMs: input.gatewayProcessingMs,
+  });
   logger.info('[MakerRecovery] Maker order latency evidence', {
     component: 'PostOnlyMakerAdapters',
     traceId: input.traceId,
@@ -91,6 +98,8 @@ function recordLatency(input: {
     orderStyle: input.orderStyle ?? 'post_only',
     clientRoundTripMs: input.clientRoundTripMs,
     gatewayProcessingMs: input.gatewayProcessingMs ?? null,
+    bpsSchedulingEvidenceRecorded: true,
+    economicBpsAuthority: false,
     executionAuthorityChanged: false,
   });
 }
@@ -212,7 +221,12 @@ function wrapMakerSubmit(
         submittedAt,
       };
     },
-    query: order => delegate.query(order),
+    async query(order) {
+      const startedAt = Date.now();
+      const result = await delegate.query(order);
+      recordLatency({ traceId, venue, operation: 'query', symbol: order.symbol, clientRoundTripMs: Date.now() - startedAt });
+      return result;
+    },
     async cancel(order) {
       const startedAt = Date.now();
       const result = await delegate.cancel(order);
@@ -231,7 +245,9 @@ function wrapMakerSubmit(
  * authenticated fee economics and submit-time product permission, minimum
  * notional, visible RPI spacing, fresh book and fee evidence still support the
  * same-or-better economics. There is no silent downgrade from RPI to standard
- * maker because that could invalidate plan P&L.
+ * maker because that could invalidate plan P&L. Measured submit/query/cancel
+ * round-trip latency is retained only as BPS revalidation scheduling evidence;
+ * it never fabricates a BPS cost, finalizes settlement, or owns execution.
  */
 export function createPostOnlyMakerAdapters(plan: SharedMakerPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();
