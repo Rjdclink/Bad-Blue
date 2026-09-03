@@ -3,6 +3,7 @@ const fs = require('node:fs');
 
 const stage = fs.readFileSync('server/services/cryptocrawl/governance/stage-management.ts', 'utf8');
 const risk = fs.readFileSync('server/services/cryptocrawl/governance/risk-governor.ts', 'utf8');
+const ladder = fs.readFileSync('server/services/cryptocrawl/governance/profit-ladder.ts', 'utf8');
 
 const stage2Plus = stage.slice(stage.indexOf('private checkAdvancementCriteria()'), stage.indexOf('private getAutomaticAdvancementBlockers'));
 
@@ -30,4 +31,22 @@ assert.match(risk, /monteCarloExecutionAuthority: false/);
 assert.ok(!risk.includes('assessment.reason = `Monte Carlo consensus failed:'), 'RiskGovernor must not restore Monte Carlo as an execution veto');
 assert.ok(!/if\s*\(!monteCarloResult\.approved\)[\s\S]{0,300}return assessment;/.test(risk), 'RiskGovernor must not return a rejection solely from Monte Carlo');
 
-console.log('[stage-soft-gate-retirement] PASS: Stage 2+ has no 100-trade/win-rate/Sharpe/Monte-Carlo/uptime gate and Monte Carlo has no execution veto authority');
+const tierOneCriteria = ladder.slice(
+  ladder.indexOf("if (tier.id === 1)"),
+  ladder.indexOf("if (this.capitalVerificationStatus !== 'verified')"),
+);
+assert.match(tierOneCriteria, /terminalWinningSamples <= 0/, 'Stage 2 must retain direct terminal-positive proof');
+for (const forbidden of [
+  'performance.daysAtTarget < tier.daysRequiredAtTarget',
+  'performance.successRate < tier.minSuccessRate',
+  'performance.realizedSharpeDayCount < MIN_REALIZED_SHARPE_DAYS',
+  'performance.sharpeRatio < tier.minSharpeRatio',
+  'monteCarlo',
+  'uptime',
+]) {
+  assert.ok(!tierOneCriteria.includes(forbidden), `Profit Ladder Tier 1 reintroduced a Stage-2 soft historical gate: ${forbidden}`);
+}
+assert.match(ladder, /stageTwoSoftHistoricalGateAuthority: false/);
+assert.match(ladder, /terminal_positive_plus_hard_scale_facts/);
+
+console.log('[stage-soft-gate-retirement] PASS: Stage 2 has no trade-count/days-at-target/win-rate/Sharpe/Monte-Carlo/uptime gate, Tier 1 retains terminal-positive plus hard scale facts, and Monte Carlo has no execution veto authority');
