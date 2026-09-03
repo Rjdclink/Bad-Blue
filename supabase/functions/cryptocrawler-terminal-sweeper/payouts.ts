@@ -28,10 +28,18 @@ type PayoutProcessingSummary = {
   waitingForMinimum: boolean;
 };
 
+type RecipientProof = {
+  destinationHash: string;
+  amountEth: number;
+  transactionHash: string;
+  blockNumber: string;
+  source: 'okx_withdrawal_history+ethereum_finalized_rpc';
+};
+
 function classifyBatchError(error: unknown): PayoutBatchStatus {
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof OkxApiError && error.code === '58237') return 'MANUAL_REVIEW';
-  if (/permission|kyc|recipient information|compliance|trusted address|withdrawal.*disabled/i.test(message)) return 'MANUAL_REVIEW';
+  if (/recipient mismatch|amount mismatch|transaction recipient mismatch|permission|kyc|recipient information|compliance|trusted address|withdrawal.*disabled/i.test(message)) return 'MANUAL_REVIEW';
   return 'RETRYABLE';
 }
 
@@ -62,6 +70,101 @@ function activePayoutDestination(secrets: Secrets, batch: PayoutBatch): string {
   return secrets.destination;
 }
 
+function sameAddress(a: unknown, b: unknown): boolean {
+  const left = String(a || '').trim().toLowerCase();
+  const right = String(b || '').trim().toLowerCase();
+  return /^0x[0-9a-f]{40}$/.test(left) && left === right;
+}
+
+function ethereumMainnetChain(chain: unknown): boolean {
+  const normalized = String(chain || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (['arbitrum', 'optimism', 'base', 'polygon', 'bsc', 'zksync', 'linea', 'scroll'].some(name => normalized.includes(name))) return false;
+  return normalized.includes('erc20') || normalized.includes('ethereum');
+}
+
+function decimalEthToWei(value: unknown): bigint {
+  const raw = String(value ?? '').trim();
+  if (!/^\d+(?:\.\d+)?$/.test(raw)) throw new Error(`Invalid ETH amount for confirmation: ${raw || 'empty'}`);
+  const [whole, fraction = ''] = raw.split('.');
+  const normalizedFraction = fraction.slice(0, 18).padEnd(18, '0');
+  return BigInt(whole) * 10n ** 18n + BigInt(normalizedFraction || '0');
+}
+
+async function ethereumRpc(rpcUrl: string, method: string, params: unknown[]): Promise<any> {
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  if (!response.ok) throw new Error(`Ethereum payout confirmation RPC failed HTTP ${response.status}`);
+  const body = await response.json().catch(() => null);
+  if (!body || body.error) throw new Error(`Ethereum payout confirmation RPC ${method} failed`);
+  return body.result;
+}
+
+async function verifyRecipientBoundPayout(
+  secrets: Secrets,
+  batch: PayoutBatch,
+  withdrawalRecord: any,
+  transactionHash: string,
+): Promise<RecipientProof> {
+  const destination = activePayoutDestination(secrets, batch);
+  const expectedWei = decimalEthToWei(batch.payout_amount_eth);
+  const recordWei = decimalEthToWei(withdrawalRecord?.amt);
+
+  if (String(withdrawalRecord?.ccy || '').toUpperCase() !== 'ETH') {
+    throw new Error('Payout recipient mismatch: completed withdrawal is not ETH');
+  }
+  if (!ethereumMainnetChain(withdrawalRecord?.chain)) {
+    throw new Error('Payout recipient mismatch: completed withdrawal is not Ethereum mainnet');
+  }
+  if (!sameAddress(withdrawalRecord?.to, destination)) {
+    throw new Error('Payout recipient mismatch: OKX withdrawal recipient does not equal the active payout destination');
+  }
+  if (recordWei !== expectedWei) {
+    throw new Error('Payout amount mismatch: OKX withdrawal amount does not equal the payout batch target');
+  }
+
+  const [transaction, receipt, finalizedBlock] = await Promise.all([
+    ethereumRpc(secrets.ethereumRpcUrl, 'eth_getTransactionByHash', [transactionHash]),
+    ethereumRpc(secrets.ethereumRpcUrl, 'eth_getTransactionReceipt', [transactionHash]),
+    ethereumRpc(secrets.ethereumRpcUrl, 'eth_getBlockByNumber', ['finalized', false]),
+  ]);
+
+  if (!transaction || !receipt || !finalizedBlock) {
+    throw new Error('Ethereum payout transaction is not yet independently finalizable');
+  }
+  if (String(receipt.status || '').toLowerCase() !== '0x1') {
+    throw new Error('Ethereum payout transaction did not succeed');
+  }
+  if (!sameAddress(transaction.to, destination)) {
+    throw new Error('Ethereum transaction recipient mismatch for completed payout');
+  }
+  if (BigInt(String(transaction.value || '0x0')) < expectedWei) {
+    throw new Error('Ethereum transaction amount is below the payout batch target');
+  }
+
+  const receiptBlock = BigInt(String(receipt.blockNumber || '0x0'));
+  const finalizedNumber = BigInt(String(finalizedBlock.number || '0x0'));
+  if (receiptBlock <= 0n || finalizedNumber < receiptBlock) {
+    throw new Error('Ethereum payout transaction is not finalized yet');
+  }
+
+  const destinationHash = (await sha256Hex(destination.toLowerCase())).slice(0, 16);
+  if (batch.destination_hash && batch.destination_hash !== destinationHash) {
+    throw new Error('Payout recipient mismatch: durable batch destination fingerprint differs from the active recipient');
+  }
+
+  return {
+    destinationHash,
+    amountEth: finite(batch.payout_amount_eth),
+    transactionHash,
+    blockNumber: String(receipt.blockNumber),
+    source: 'okx_withdrawal_history+ethereum_finalized_rpc',
+  };
+}
+
 async function armFallbackDestination(secrets: Secrets, batch: PayoutBatch, withdrawalId: string, state: string): Promise<PayoutBatch> {
   const reason = `OKX ETH withdrawal terminal failure state ${state}`;
   if (batch.destination_mode === 'fallback' || !secrets.fallbackDestination) {
@@ -73,7 +176,7 @@ async function armFallbackDestination(secrets: Secrets, batch: PayoutBatch, with
       primary_failure_reason: batch.primary_failure_reason || (batch.destination_mode === 'primary' ? reason : null),
       last_error: batch.destination_mode === 'fallback'
         ? `Fallback ${reason}; automatic destination failover exhausted`
-        : `${reason}; no distinct Railway-derived fallback address is available`,
+        : `${reason}; no distinct Railway Ethereum fallback address is available`,
     });
   }
 
@@ -89,6 +192,12 @@ async function armFallbackDestination(secrets: Secrets, batch: PayoutBatch, with
     withdrawal_client_id: fallbackClientId,
     withdrawal_id: null,
     submitted_at: null,
+    recipient_confirmed_destination_hash: null,
+    recipient_confirmed_amount_eth: null,
+    recipient_confirmed_transaction_hash: null,
+    recipient_confirmed_block_number: null,
+    recipient_confirmation_source: null,
+    recipient_confirmed_at: null,
     last_error: `${reason}; fallback destination armed after confirmed primary failure`,
   });
 }
@@ -163,12 +272,11 @@ async function createOrLoadPreparedBatch(secrets: Secrets, dueJobs: PayoutJob[])
   }
 
   const targetUsd = Math.min(totalOutstandingUsd, payoutAmountEth * referencePrice);
+  const destinationHash = (await sha256Hex(secrets.destination.toLowerCase())).slice(0, 16);
   const identity = dueJobs
     .map(job => `${job.event_id}:${outstandingUsd(job).toFixed(8)}`)
     .join('|');
-  const batchId = await deterministicId(`payout-batch:${route.chain}:${targetUsd.toFixed(8)}:${payoutAmountEth.toFixed(12)}:${identity}`);
-  const destinationHash = dueJobs[0]?.destination_hash;
-  if (!destinationHash) throw new Error('Due payout jobs do not contain a destination fingerprint');
+  const batchId = await deterministicId(`payout-batch:${route.chain}:${destinationHash}:${targetUsd.toFixed(8)}:${payoutAmountEth.toFixed(12)}:${identity}`);
 
   const { error: insertError } = await supabase.from('cryptocrawler_profit_payout_batches').upsert({
     batch_id: batchId,
@@ -223,7 +331,7 @@ async function createOrLoadPreparedBatch(secrets: Secrets, dueJobs: PayoutJob[])
   const eventIds = allocations.map(item => item.event_id);
   if (eventIds.length > 0) {
     await supabase.from('cryptocrawler_profit_payout_jobs')
-      .update({ status: 'WITHDRAWING', last_error: null, updated_at: nowIso() })
+      .update({ status: 'WITHDRAWING', destination_hash: destinationHash, last_error: null, updated_at: nowIso() })
       .in('event_id', eventIds)
       .in('status', ['QUEUED', 'RETRYABLE']);
     await supabase.from('cryptocrawler_payout_asset_reservations')
@@ -339,6 +447,16 @@ async function reconcileBatchWithdrawal(secrets: Secrets, input: PayoutBatch): P
   const txId = String(record.txId || '').trim();
 
   if (state === '2' && txId) {
+    const proof = await verifyRecipientBoundPayout(secrets, batch, record, txId);
+    batch = await updateBatch(batch.batch_id, {
+      recipient_confirmed_destination_hash: proof.destinationHash,
+      recipient_confirmed_amount_eth: proof.amountEth,
+      recipient_confirmed_transaction_hash: proof.transactionHash,
+      recipient_confirmed_block_number: proof.blockNumber,
+      recipient_confirmation_source: proof.source,
+      recipient_confirmed_at: nowIso(),
+      last_error: null,
+    });
     const { error } = await supabase.rpc('cryptocrawler_profit_payout_batch_confirm', {
       p_batch_id: batch.batch_id,
       p_withdrawal_id: withdrawalId,
@@ -372,7 +490,13 @@ async function submitBatchWithdrawal(secrets: Secrets, input: PayoutBatch): Prom
   }
 
   const destination = activePayoutDestination(secrets, batch);
-  const clientId = batch.withdrawal_client_id || await deterministicId(`payout-batch:${batch.batch_id}:withdraw:ETH:${route.chain}:${amountEth.toFixed(12)}`);
+  const destinationHash = (await sha256Hex(destination.toLowerCase())).slice(0, 16);
+  if (!batch.withdrawal_id && batch.destination_hash !== destinationHash) {
+    batch = await updateBatch(batch.batch_id, { destination_hash: destinationHash, last_error: null });
+  }
+  const clientId = batch.withdrawal_client_id || await deterministicId(
+    `payout-batch:${batch.batch_id}:withdraw:ETH:${route.chain}:${amountEth.toFixed(12)}:${destination.toLowerCase()}`,
+  );
   const recovered = await findWithdrawal(secrets, batch.withdrawal_id, clientId);
   if (recovered?.wdId) {
     batch = await updateBatch(batch.batch_id, {
@@ -405,7 +529,13 @@ async function submitBatchWithdrawal(secrets: Secrets, input: PayoutBatch): Prom
 async function processBatch(secrets: Secrets, control: Control, input: PayoutBatch): Promise<PayoutBatch> {
   let batch = input;
   if (['CONFIRMED', 'TERMINAL_SWEPT', 'MANUAL_REVIEW'].includes(batch.status)) return batch;
-  if (batch.status === 'SUBMITTED') return reconcileBatchWithdrawal(secrets, batch);
+  if (batch.status === 'SUBMITTED') {
+    try {
+      return await reconcileBatchWithdrawal(secrets, batch);
+    } catch (error) {
+      return markBatchError(batch, error);
+    }
+  }
 
   try {
     const route = await getEthRoute(secrets);
@@ -413,7 +543,7 @@ async function processBatch(secrets: Secrets, control: Control, input: PayoutBat
     const payoutAmountEth = finite(batch.payout_amount_eth);
     if (!(payoutAmountEth > 0)) throw new Error('Payout batch has no positive ETH target');
     if (payoutAmountEth + 1e-12 < route.minWithdrawalEth) throw new Error('Payout batch has fallen below the current OKX Ethereum minimum');
-    if (route.maxWithdrawalEth > 0 && payoutAmountEth > route.maxWithdrawalEth + 1e-12) throw new Error('Payout batch exceeds the current OKX Ethereum maximum');
+    if (route.maxWithdrawalEth > 0 && payoutAmountEth > route.maxWithdrawalEth + 1e-12) throw new Error('Payout batch exceeds the current authenticated OKX Ethereum maximum');
 
     const networkCostUsd = route.feeEth * referencePrice;
     const retainedPoolUsd = Math.max(0, finite(control.retained_profit_usd));
