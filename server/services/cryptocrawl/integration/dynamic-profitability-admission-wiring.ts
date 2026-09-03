@@ -67,12 +67,25 @@ function requestCexEvidenceReacquisition(symbolRaw: string, reason: string): voi
   evidenceReacquisitionInFlight.set(key, task);
 }
 
+function configuredZeroCapitalMaxSlippageBps(): number {
+  const parsed = Number(process.env.ZERO_CAPITAL_MAX_SLIPPAGE_BPS || 20);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(50, parsed)) : 20;
+}
+
+function zeroCapitalRegistryBootstrapReady(opportunity: ZeroCapitalOpportunity): boolean {
+  return opportunity.expectedProfit > 0n
+    && Number.isFinite(opportunity.netProfitBps)
+    && opportunity.netProfitBps > 0
+    && opportunity.expiresAt > Date.now()
+    && opportunity.expectedSlippageBps <= configuredZeroCapitalMaxSlippageBps();
+}
+
 function measuredZeroCapitalExecutionReady(
   opportunity: ZeroCapitalOpportunity,
   candidate: MeasuredCandidate,
 ): { allowed: boolean; reason: string; maxSlippageBps: number } {
   const directive = getCryptara().getAutonomousDirective();
-  const configuredMaxSlippage = Math.max(1, Math.min(50, Number(process.env.ZERO_CAPITAL_MAX_SLIPPAGE_BPS || 20)));
+  const configuredMaxSlippage = configuredZeroCapitalMaxSlippageBps();
   const directiveMaxSlippage = Number.isFinite(directive.maxSlippageBps) && directive.maxSlippageBps > 0
     ? directive.maxSlippageBps
     : configuredMaxSlippage;
@@ -168,9 +181,37 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     installed.add(zeroCapital);
     const originalIsAllowedByCryptara = zeroCapital.isAllowedByCryptara.bind(zeroCapital);
     zeroCapital.isAllowedByCryptara = async opportunity => {
-      const cryptaraAllowed = await originalIsAllowedByCryptara(opportunity);
+      let cryptaraAllowed = false;
+      let cryptaraAdvisoryError: string | undefined;
+      try {
+        cryptaraAllowed = await originalIsAllowedByCryptara(opportunity);
+      } catch (error) {
+        cryptaraAdvisoryError = error instanceof Error ? error.message : String(error);
+      }
+
       const current = measuredCandidateRegistry.get(opportunity.id);
-      if (!current) return false;
+      if (!current) {
+        // Configured routes pass through the base scanner before ZeroCapitalResourceWiring
+        // can register their measured candidate. Do not create a circular cold-start
+        // dependency: a freshly positive bounded route may advance to the outer scanner,
+        // which immediately records it before it can enter the execution queue.
+        const bootstrapReady = zeroCapitalRegistryBootstrapReady(opportunity);
+        logger.info('[UnifiedExecutionRouter] Zero-capital registry bootstrap evaluated without duplicate pre-registration veto', {
+          component: 'DynamicProfitabilityAdmissionWiring',
+          opportunityId: opportunity.id,
+          chain: opportunity.chain,
+          bootstrapReady,
+          deterministicPositive: opportunity.expectedProfit > 0n && opportunity.netProfitBps > 0,
+          fresh: opportunity.expiresAt > Date.now(),
+          expectedSlippageBps: opportunity.expectedSlippageBps,
+          configuredMaxSlippageBps: configuredZeroCapitalMaxSlippageBps(),
+          cryptaraAllowed,
+          cryptaraAdvisoryError,
+          registryExpectedImmediatelyAfterBaseScan: true,
+          executionAuthority: false,
+        });
+        return bootstrapReady;
+      }
 
       const executionReady = measuredZeroCapitalExecutionReady(opportunity, current);
       if (!executionReady.allowed) return false;
@@ -186,8 +227,8 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
         });
       }
 
-      if (!cryptaraAllowed) {
-        logger.info('[UnifiedExecutionRouter] Measured zero-capital candidate retained despite advisory Cryptara veto', {
+      if (!cryptaraAllowed || cryptaraAdvisoryError) {
+        logger.info('[UnifiedExecutionRouter] Measured zero-capital candidate retained despite advisory Cryptara/TradingView veto or error', {
           component: 'DynamicProfitabilityAdmissionWiring',
           opportunityId: opportunity.id,
           chain: opportunity.chain,
@@ -196,6 +237,8 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
           expectedSlippageBps: opportunity.expectedSlippageBps,
           maxSlippageBps: executionReady.maxSlippageBps,
           reason: executionReady.reason,
+          cryptaraAllowed,
+          cryptaraAdvisoryError,
           cryptaraExecutionAuthority: false,
           tradingViewExecutionAuthority: false,
           terminalSettlementStillRequired: true,
@@ -206,7 +249,7 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
         provenance: [
           'unified_execution_router:measured_positive_execution_authority',
           executionReady.reason,
-          cryptaraAllowed ? 'Cryptara:advisory_allow' : 'Cryptara:advisory_veto_ignored_for_execution',
+          cryptaraAllowed ? 'Cryptara:advisory_allow' : 'Cryptara:advisory_veto_or_error_ignored_for_execution',
         ],
       });
       if (!eligible) return false;
@@ -235,6 +278,8 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     missingInformationExecutionVetoAuthority: false,
     adaptiveProfitabilityThresholdAuthority: 'ranking_and_sizing_only',
     cryptaraExecutionAuthority: false,
+    tradingViewExecutionAuthority: false,
+    zeroCapitalPreRegistrationBootstrap: 'fresh_positive_bounded_route_then_immediate_measured_registry_record',
     coldStartHistoricalProofRequired: false,
     bpsRescuePortfolio: 'measured_cost_decomposition_plus_decay_scheduling',
     bpsDecomposition: 'exact_measured_cross_topology_telemetry',
