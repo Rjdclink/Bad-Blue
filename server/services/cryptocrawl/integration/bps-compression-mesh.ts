@@ -60,6 +60,11 @@ function bounded(raw: unknown, fallback: number, min: number, max: number): numb
 }
 
 function finite(value: unknown): number | null {
+  // BPS economics are evidence-bearing values. JavaScript coercion would turn
+  // null, blank strings, and booleans into zero and falsely manufacture a
+  // measured fee/gap/freshness value, so preserve those states as unknown.
+  if (value === null || value === undefined || typeof value === 'boolean') return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
