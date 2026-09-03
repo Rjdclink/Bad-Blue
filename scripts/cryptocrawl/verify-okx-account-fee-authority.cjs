@@ -31,6 +31,12 @@ assert.match(authority, /source: zeroFeeGroup \? 'okx_live_spot_zero_fee_group' 
 assert.ok(!authority.includes("OKX_SPOT_ZERO_FEE_GROUP_ID = '17'"), 'ordinary OKX stablecoin group 17 must never be assumed zero-fee');
 assert.ok(!authority.match(/USDCUSDT|USDC-USDT|DAIUSDT|PYUSDUSDT|USDGUSDT/), 'zero-fee authority must not hard-code promotional symbol lists');
 
+// A measured zero fee is valid evidence, not missing information. Preserve it
+// through the generic CEX fee surface so TT/MT/TM/MM can consume exact 0 BPS.
+assert.match(resolver, /rates\.maker !== null && rates\.maker <= 0 \? Math\.max\(0, -rates\.maker \* 10_000\) : null/);
+assert.match(resolver, /source: rates\.zeroFeeGroup \? 'okx_live_spot_zero_fee_group' : 'okx_account_trade_fee'/);
+assert.match(resolver, /zeroFeeGroup: result\.zeroFeeGroup/);
+
 for (const [name, source] of [
   ['CEX fee resolver', resolver],
   ['RPI capability', rpi],
@@ -59,4 +65,4 @@ assert.match(funding, /publicDiscoveryBlockedByPrivateEnrichment: false/);
 assert.match(funding, /const accountContext = await getOkxSwapAccountContext\(\)/);
 assert.match(funding, /instrument\?\.groupId/);
 
-console.log('[okx-account-fee-authority] shared semantic caching, live Spot-zero group truth, no promotional symbol assumptions, prohibited referral/wash rebate tactics, and bounded funding enrichment verified');
+console.log('[okx-account-fee-authority] shared semantic caching, live Spot-zero group truth, exact zero-BPS maker preservation, no promotional symbol assumptions, prohibited referral/wash rebate tactics, and bounded funding enrichment verified');
