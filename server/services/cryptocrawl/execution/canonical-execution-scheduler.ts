@@ -3,6 +3,7 @@ import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
 import { getSettlementProfitCalibrationSnapshot } from '../learning/settlement-profit-calibrator.js';
+import { getBpsReductionSuperEngineSnapshot } from '../optimization/bps-reduction-super-engine.js';
 import { endToEndLatencyHarness, type LatencyOutcome } from '../runtime/end-to-end-latency-harness.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
@@ -38,6 +39,11 @@ export interface CanonicalExecutionSchedulerStats {
 }
 
 type Candidate = CanonicalOpportunitySnapshot & { plan: NonNullable<CanonicalOpportunitySnapshot['plan']> };
+type BpsEdgeHalfLifeState = {
+  symbol: string;
+  emaLifetimeMs: number;
+  completedSamples: number;
+};
 
 function boundedInt(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
@@ -101,7 +107,22 @@ function terminalCalibrationFactor(candidate: Candidate): number {
   return Math.max(0.2, 1 - reserveBurden * confidence - 0.25 * overestimateRate * confidence);
 }
 
-function candidatePriority(candidate: Candidate, maxQuoteAgeMs: number): number {
+function bpsDecayUrgencyFactor(candidate: Candidate, edgeLife: Map<string, BpsEdgeHalfLifeState>): number {
+  const learned = edgeLife.get(candidate.symbol.trim().toUpperCase());
+  if (!learned || learned.completedSamples <= 0 || !Number.isFinite(learned.emaLifetimeMs) || learned.emaLifetimeMs <= 0) return 1;
+  const halfLifeMs = Math.max(50, Math.min(5_000, learned.emaLifetimeMs / 2));
+  const quoteAgeMs = Math.max(0, Number(candidate.plan.quoteAgeMs) || 0);
+  const urgency = Math.max(0, Math.min(1, quoteAgeMs / halfLifeMs));
+  // Super Engine is scheduling-only: it may accelerate a decaying profitable
+  // opportunity but can never reduce priority, admit, reject, size, or execute it.
+  return 1 + urgency * 0.5;
+}
+
+function candidatePriority(
+  candidate: Candidate,
+  maxQuoteAgeMs: number,
+  edgeLife: Map<string, BpsEdgeHalfLifeState>,
+): number {
   const probability = Math.max(0.25, Math.min(1, candidate.assessment?.probabilityOfProfitableExecution ?? 1));
   const expectedProfit = Math.max(0, candidate.plan.netProfitUsd) * probability;
   const freshness = Math.max(0.05, Math.min(1, 1 - candidate.plan.quoteAgeMs / Math.max(1, maxQuoteAgeMs)));
@@ -110,12 +131,23 @@ function candidatePriority(candidate: Candidate, maxQuoteAgeMs: number): number 
   const costEfficiency = 1 / (1 + costBurden);
   const rankSignal = Math.max(0.25, 1 + Math.max(-0.75, Math.min(0.75, Number(candidate.assessment?.rankScore ?? 0) / 100)));
   const calibration = terminalCalibrationFactor(candidate);
-  return expectedProfit * freshness * costEfficiency * rankSignal * calibration;
+  const decayUrgency = bpsDecayUrgencyFactor(candidate, edgeLife);
+  return expectedProfit * freshness * costEfficiency * rankSignal * calibration * decayUrgency;
 }
 
 function currentCandidates(): Candidate[] {
   const maxQuoteAgeMs = Math.max(250, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
   const now = Date.now();
+  const superEngine = getBpsReductionSuperEngineSnapshot();
+  const edgeLife = new Map<string, BpsEdgeHalfLifeState>(
+    superEngine.edgeHalfLife
+      .filter(row => row.symbol && Number.isFinite(row.emaLifetimeMs))
+      .map(row => [row.symbol.trim().toUpperCase(), {
+        symbol: row.symbol,
+        emaLifetimeMs: row.emaLifetimeMs,
+        completedSamples: row.completedSamples,
+      }]),
+  );
   return canonicalOpportunityState.getRecent(512)
     .filter((snapshot): snapshot is Candidate => !!snapshot.plan)
     .filter(snapshot => snapshot.status === 'eligible')
@@ -126,7 +158,7 @@ function currentCandidates(): Candidate[] {
     .filter(snapshot => snapshot.governance.killSwitchActive === false)
     .filter(snapshot => snapshot.governance.paused === false)
     .sort((left, right) => {
-      const priorityDelta = candidatePriority(right, maxQuoteAgeMs) - candidatePriority(left, maxQuoteAgeMs);
+      const priorityDelta = candidatePriority(right, maxQuoteAgeMs, edgeLife) - candidatePriority(left, maxQuoteAgeMs, edgeLife);
       if (priorityDelta !== 0) return priorityDelta;
       if (right.plan.netProfitUsd !== left.plan.netProfitUsd) return right.plan.netProfitUsd - left.plan.netProfitUsd;
       return (right.assessment?.rankScore ?? -Infinity) - (left.assessment?.rankScore ?? -Infinity);
@@ -178,7 +210,9 @@ class CanonicalExecutionScheduler {
       dispatchBatchLimit: dispatchBatchLimit(),
       ownerId: executionResourceScheduler.getOwnerId(),
       authority: 'canonical_eligible_opportunities_and_admitted_measured_topologies',
-      schedulingObjective: 'positive_all_in_net_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration',
+      schedulingObjective: 'positive_all_in_net_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration_x_bps_decay_urgency',
+      bpsSuperEngineSchedulingAuthority: 'bounded_priority_boost_only',
+      bpsSuperEngineExecutionAuthority: false,
       cadenceObjective: 'event_driven_eligibility_wake_with_low_latency_poll_fallback',
       eligibleWakeAuthority: 'measured_candidate_registry',
       terminalCalibrationAuthority: 'scheduling_only_confirmed_settlement_evidence',
