@@ -13,6 +13,8 @@ export type PayoutBatchStatus = 'PREPARED' | 'CONVERTING' | 'WITHDRAWING' | 'SUB
 export type LegStatus = 'PREPARED' | 'SUBMITTED' | 'CONFIRMED' | 'RETRYABLE' | 'MANUAL_REVIEW';
 export type DestinationMode = 'primary' | 'fallback';
 
+export type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 'MANUAL_REVIEW';
+
 export type Control = {
   desired_state: TreasuryState;
   terminal_epoch: string | null;
@@ -87,6 +89,12 @@ export type PayoutBatch = {
   primary_failure_withdrawal_id: string | null;
   primary_failure_at: string | null;
   primary_failure_reason: string | null;
+  recipient_confirmed_destination_hash: string | null;
+  recipient_confirmed_amount_eth: number | string | null;
+  recipient_confirmed_transaction_hash: string | null;
+  recipient_confirmed_block_number: string | null;
+  recipient_confirmation_source: string | null;
+  recipient_confirmed_at: string | null;
   attempt_count: number;
   last_attempt_at: string | null;
   submitted_at: string | null;
@@ -128,6 +136,7 @@ export type Secrets = {
   passphrase: string;
   destination: string;
   fallbackDestination: string | null;
+  ethereumRpcUrl: string;
 };
 export type EthRoute = { chain: string; feeEth: number; minWithdrawalEth: number; maxWithdrawalEth: number; precision: number };
 
@@ -173,20 +182,22 @@ async function readSecret(name: string): Promise<string> {
 }
 
 export async function loadSecrets(): Promise<Secrets> {
-  const [apiKey, apiSecret, passphrase, destination, fallbackRaw] = await Promise.all([
+  const [apiKey, apiSecret, passphrase, destination, fallbackRaw, ethereumRpcUrl] = await Promise.all([
     readSecret('cryptocrawler_okx_api_key'),
     readSecret('cryptocrawler_okx_api_secret'),
     readSecret('cryptocrawler_okx_api_passphrase'),
     readSecret('cryptocrawler_profit_wallet'),
     readSecret('cryptocrawler_fallback_wallet'),
+    readSecret('cryptocrawler_ethereum_rpc_url'),
   ]);
   if (!apiKey || !apiSecret || !passphrase) throw new Error('OKX treasury credentials are not synchronized');
-  if (!/^0x[0-9a-fA-F]{40}$/.test(destination)) throw new Error('MetaMask payout wallet is missing or invalid');
+  if (!/^0x[0-9a-fA-F]{40}$/.test(destination)) throw new Error('Primary MetaMask payout wallet is missing or invalid');
+  if (!/^https:\/\//i.test(ethereumRpcUrl)) throw new Error('Ethereum payout-confirmation RPC is missing or invalid');
   const fallbackDestination = /^0x[0-9a-fA-F]{40}$/.test(fallbackRaw)
     && fallbackRaw.toLowerCase() !== destination.toLowerCase()
     ? fallbackRaw
     : null;
-  return { apiKey, apiSecret, passphrase, destination, fallbackDestination };
+  return { apiKey, apiSecret, passphrase, destination, fallbackDestination, ethereumRpcUrl };
 }
 
 export async function updateJob(eventId: string, patch: Record<string, unknown>): Promise<PayoutJob> {
