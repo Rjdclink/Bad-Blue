@@ -107,6 +107,10 @@ const attributionLedger = new Map<string, BpsAttributionRow>();
 const MAX_LEDGER_ROWS = 4096;
 
 function finite(value: unknown): number | null {
+  // Unknown economics stay unknown. Number(null), Number(''), and Number(false)
+  // are all zero, so coercing them would fabricate measured/realized BPS.
+  if (value === null || value === undefined || typeof value === 'boolean') return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }

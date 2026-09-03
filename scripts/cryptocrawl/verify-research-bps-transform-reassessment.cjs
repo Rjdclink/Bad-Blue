@@ -11,6 +11,7 @@ const economic = read('server/services/cryptocrawl/optimization/economic-transfo
 const residual = read('server/services/cryptocrawl/discovery/cex-residual-replan.ts');
 const graph = read('server/services/cryptocrawl/discovery/opportunity-graph.ts');
 const mc = read('server/services/cryptocrawl/execution/adapters/monte-carlo-profitability.ts');
+const packageJson = read('package.json');
 
 const tacticRows = [...tactics.matchAll(/\{ id: (\d+), key: '[^']+'/g)];
 must(tacticRows.length === 25, `expected exactly 25 new research tactics, found ${tacticRows.length}`);
@@ -34,6 +35,9 @@ has(superEngine, 'learnedHalfLifeMs(candidate', 'super engine must learn/estimat
 has(superEngine, 'Math.min(edge / 3, 5, expectedDecayBps / 2)', 'marketable-limit concession advisory must retain the hard 5 BPS cap');
 has(superEngine, "availableExecutionModes: candidate.topology === 'CEX_CEX'", 'CEX super plan must evaluate TT/MT/TM/MM surfaces');
 has(superEngine, 'buildAttribution(candidate)', 'BPS attribution ledger must decompose measured costs');
+has(superEngine, "if (value === null || value === undefined || typeof value === 'boolean') return null", 'unknown economics must not be coerced into fabricated zero BPS');
+has(superEngine, "if (typeof value === 'string' && value.trim() === '') return null", 'blank economics must remain unknown');
+has(packageJson, 'node scripts/cryptocrawl/verify-research-bps-transform-reassessment.cjs', 'BPS verifier must be an unavoidable prebuild gate');
 has(superEngine, "key: 'maker_latency_control'", 'maker/latency tactic synergy bundle must exist');
 has(superEngine, "key: 'size_route_settlement'", 'size/routing/settlement tactic synergy bundle must exist');
 has(superEngine, "key: 'near_miss_learning'", 'near-miss learning tactic synergy bundle must exist');
