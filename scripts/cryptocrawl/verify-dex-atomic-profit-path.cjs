@@ -88,10 +88,14 @@ forbidPattern(adapter, /setInterval|setTimeout\s*\(/, 'DEX adapter owns no indep
 requirePattern(canonicalScheduler, /measuredTopologyExecutionAdapter\.dispatch/, 'canonical scheduler alone invokes the measured topology adapter');
 forbidFile('server/services/cryptocrawl/execution/measured-topology-execution-scheduler.ts', 'duplicate measured topology scheduler exists');
 
-// Unified admission still requires eligible, deterministic positive evidence.
+// Unified routing requires strict positive deterministic economics plus concrete
+// path/capability/freshness/depth facts. Optional registry gaps remain advisory;
+// DEX eligibility itself is established upstream by firm prepared evidence.
 requirePattern(router, /case\s+'DEX_ATOMIC':[\s\S]{0,80}return\s+'FLASH_LOAN'/, 'DEX_ATOMIC routes through the unified flash-loan path');
-requirePattern(router, /deterministicPositive\s*=\s*Number\(candidate\.economics\.deterministicNetProfitUsd\)\s*>\s*0/, 'unified route admission requires positive deterministic net');
-requirePattern(router, /candidate\.status\s*===\s*'eligible'/, 'unified route admission requires current eligible status');
+requirePattern(router, /const\s+deterministicPositive\s*=\s*Number\.isFinite\(deterministicNet\)\s*&&\s*deterministicNet\s*>\s*0/, 'unified route admission requires positive deterministic net');
+requirePattern(router, /const\s+admitted\s*=\s*deterministicPositive[\s\S]{0,180}pathAvailable[\s\S]{0,180}candidate\.executableCapability[\s\S]{0,180}fresh[\s\S]{0,180}depthReady/, 'unified route admission preserves concrete execution readiness');
+requirePattern(router, /evidenceReacquisitionRequired/, 'unified router explicitly reacquires incomplete evidence');
+forbidPattern(router, /candidate\.missingInformation\.length\s*===\s*0/, 'optional missing-information list regained independent execution veto authority');
 
 // Cold-start topology attention may use current measured evidence but must stay
 // bounded and advisory; terminal outcomes remain the learned authority.
@@ -100,4 +104,4 @@ requirePattern(topologyOptimizer, /candidate\.status\s*===\s*'eligible'/, 'cold-
 requirePattern(topologyOptimizer, /return\s+clamp\(1\s*\+\s*Math\.tanh\(normalized\)\s*\*\s*0\.35,\s*0\.80,\s*1\.35\)/, 'live topology attention is tightly bounded');
 requirePattern(topologyOptimizer, /Terminal settlement is the primary authority/, 'terminal settlement remains primary topology-learning authority');
 
-console.log('[dex-atomic] read-only discovery, v2 allowance evidence, scheduler-owned readiness reconciliation, exact atomic economics, terminal failure learning, and single scheduling authority invariants passed');
+console.log('[dex-atomic] read-only discovery, v2 allowance evidence, scheduler-owned readiness reconciliation, exact atomic economics, advisory evidence reacquisition, terminal failure learning, and single scheduling authority invariants passed');
