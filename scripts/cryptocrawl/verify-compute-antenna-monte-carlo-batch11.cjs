@@ -59,11 +59,13 @@ const required = [
   ['prefetch', 'inFlight.has(normalized)', 'per-symbol prefetch duplicate collapse'],
   ['prefetch', 'executionAuthority: false', 'prefetch cannot authorize execution'],
   ['canonical', "import { ensureComputationalReactorWiring }", 'reactor canonical import'],
-  ['canonical', 'ensureComputationalReactorWiring();', 'reactor canonical installation'],
+  ['canonical', "install('computational_reactor', () => ensureComputationalReactorWiring())", 'reactor isolated canonical installation'],
   ['canonical', "executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'", 'strict positive economics preserved'],
   ['canonical', 'cexHybridExecutionAuthority: true', 'implemented hybrid execution authority declared'],
-  ['canonical', 'ensureHybridCexExecutionWiring();', 'hybrid execution installed canonically'],
-  ['canonical', 'ensureStageProofMetricsWiring();', 'realized stage proof telemetry installed canonically'],
+  ['canonical', "install('hybrid_cex_execution', () => ensureHybridCexExecutionWiring())", 'hybrid execution installed through isolated canonical wiring'],
+  ['canonical', "install('stage_proof_metrics', () => ensureStageProofMetricsWiring())", 'realized stage proof telemetry installed through isolated canonical wiring'],
+  ['canonical', "runtimeComponentIsolation: 'per_component_retry_without_global_runtime_shutdown'", 'component-fault isolation is explicit'],
+  ['canonical', 'runtimeComponentIsolationGlobalShutdownAuthority: false', 'isolated components cannot globally stop runtime'],
   ['hybrid', "export type HybridCexMode = 'MT' | 'TM'", 'hybrid scope limited to MT/TM'],
   ['hybrid', 'createPostOnlyMakerAdapters', 'maker leg uses existing authenticated post-only adapters'],
   ['hybrid', 'createProductionCexSettlementAdapters', 'taker hedge uses existing canonical settlement adapters'],
@@ -117,4 +119,4 @@ for (const [fileKey, token, name] of forbidden) {
   if (source[fileKey].includes(token)) throw new Error(`[compute-antenna-monte-carlo-batch11] forbidden regression: ${name}`);
 }
 
-console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, adaptive Antenna scheduling, canonical TT/MT/TM/MM execution timing, advisory-only realized/Monte-Carlo stage telemetry, and retained hard safety boundaries verified');
+console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, adaptive Antenna scheduling, isolated canonical component startup, TT/MT/TM/MM execution timing, advisory-only realized/Monte-Carlo stage telemetry, and retained hard safety boundaries verified');
