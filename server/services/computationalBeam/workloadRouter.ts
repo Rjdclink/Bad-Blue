@@ -1,27 +1,47 @@
 /**
  * Workload Router
- * 
+ *
  * Accepts crawler tasks, assesses compute intensity, and chooses between
- * lightweight endpoints (antenna layer) or heavyweight VMs (beam layer).
- * Implements retry logic and fallback mechanisms.
+ * lightweight Antenna work and heavyweight Beam work. Market-data transport
+ * work is explicitly pinned to Antenna by task semantics so a default intensity
+ * cannot accidentally send an ordered hot-path task to Beam.
  */
 
-import { 
-  Task, 
-  TaskType, 
-  TaskIntensity, 
+import {
+  Task,
+  TaskType,
+  TaskIntensity,
   RoutingDecision,
   ComputeLayer,
-  TaskRoutingError 
+  TaskRoutingError,
 } from './types';
 import { EventEmitter } from 'events';
 import { omniAntennaLayer } from './omniAntennaLayer';
 import { directionalBeamLayer } from './directionalBeamLayer';
 import { superBatteryLayer } from './superBatteryLayer';
 
-// Constants
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1000;
+
+const ANTENNA_HOT_TASKS = new Set<TaskType>([
+  TaskType.WEBSOCKET_PING,
+  TaskType.BASIC_PARSING,
+  TaskType.ORDER_BOOK_FRAME,
+  TaskType.ORDER_BOOK_APPLY,
+  TaskType.TRADE_STREAM,
+  TaskType.STREAM_LIVENESS,
+  TaskType.FRESHNESS_VALIDATION,
+  TaskType.FEE_RESOLUTION,
+]);
+
+const NON_REPLAYABLE_MARKET_TASKS = new Set<TaskType>([
+  TaskType.WEBSOCKET_PING,
+  TaskType.ORDER_BOOK_FRAME,
+  TaskType.ORDER_BOOK_APPLY,
+  TaskType.TRADE_STREAM,
+  TaskType.STREAM_LIVENESS,
+  TaskType.FRESHNESS_VALIDATION,
+]);
 
 function isNonRetryableTaskFailure(error?: string): boolean {
   const message = String(error || '').toLowerCase();
@@ -45,11 +65,7 @@ export class WorkloadRouter extends EventEmitter {
     this.setupEventListeners();
   }
 
-  /**
-   * Setup event listeners for layers
-   */
   private setupEventListeners(): void {
-    // Antenna layer events
     omniAntennaLayer.on('task-completed', (data) => {
       this.taskOutcomes.set(data.taskId, { result: data.result });
       this.clearCompletedTask(data.taskId);
@@ -60,7 +76,6 @@ export class WorkloadRouter extends EventEmitter {
       void this.handleTaskFailure(data.taskId, 'antenna', data.error);
     });
 
-    // Beam layer events
     directionalBeamLayer.on('task-completed', (data) => {
       this.taskOutcomes.set(data.taskId, { result: data.result });
       this.clearCompletedTask(data.taskId);
@@ -76,28 +91,15 @@ export class WorkloadRouter extends EventEmitter {
     });
   }
 
-  /**
-   * Route task to appropriate layer
-   */
   public async routeTask(task: Task): Promise<RoutingDecision> {
     try {
-      // Step 1: Optimize task with battery layer
       const optimizedTask = await superBatteryLayer.optimizeTask(task);
-
-      // Step 2: Assess compute intensity
       const intensity = this.assessIntensity(optimizedTask);
       optimizedTask.intensity = intensity;
-
-      // Step 3: Select appropriate layer
       const layer = this.selectLayer(optimizedTask);
-
-      // Step 4: Get routing decision
       const decision = await this.getRoutingDecision(optimizedTask, layer);
-
-      // Step 5: Execute routing
       await this.executeRouting(optimizedTask, layer);
 
-      // Store decision
       this.taskHistory.set(task.id, decision);
       this.routedTasks.set(task.id, optimizedTask);
 
@@ -106,6 +108,8 @@ export class WorkloadRouter extends EventEmitter {
         layer,
         intensity,
         provider: decision.selectedNode.provider,
+        latencyCriticalAntennaTask: ANTENNA_HOT_TASKS.has(task.type),
+        executionAuthority: false,
       });
 
       return decision;
@@ -115,29 +119,21 @@ export class WorkloadRouter extends EventEmitter {
       this.emit('task-failed', { taskId: task.id, error: message });
       throw new TaskRoutingError(
         `Failed to route task ${task.id}: ${message}`,
-        { taskId: task.id, error }
+        { taskId: task.id, error },
       );
     }
   }
 
-  /**
-   * Assess task compute intensity
-   */
   private assessIntensity(task: Task): TaskIntensity {
-    // If intensity already set, use it
-    if (task.intensity) {
-      return task.intensity;
-    }
+    // Transport semantics outrank a caller's generic/default intensity. Ordered
+    // market frames must never be moved to Beam simply because createTask()
+    // started them as MODERATE.
+    if (ANTENNA_HOT_TASKS.has(task.type)) return TaskIntensity.LIGHTWEIGHT;
 
-    // Assess based on task type
     switch (task.type) {
-      case TaskType.WEBSOCKET_PING:
-      case TaskType.BASIC_PARSING:
-        return TaskIntensity.LIGHTWEIGHT;
-
       case TaskType.ARBITRAGE_SCAN:
       case TaskType.MARKET_AGGREGATION:
-        return TaskIntensity.MODERATE;
+        return task.intensity || TaskIntensity.MODERATE;
 
       case TaskType.MONTE_CARLO:
       case TaskType.ML_PREDICTION:
@@ -149,96 +145,69 @@ export class WorkloadRouter extends EventEmitter {
         return TaskIntensity.EXTREME;
 
       default:
-        return TaskIntensity.MODERATE;
+        return task.intensity || TaskIntensity.MODERATE;
     }
   }
 
-  /**
-   * Select appropriate compute layer
-   */
   private selectLayer(task: Task): ComputeLayer {
-    if (task.routing?.requiredLayer) {
-      return task.routing.requiredLayer;
-    }
+    if (task.routing?.requiredLayer) return task.routing.requiredLayer;
+    if (ANTENNA_HOT_TASKS.has(task.type)) return ComputeLayer.ANTENNA;
 
     switch (task.intensity) {
       case TaskIntensity.LIGHTWEIGHT:
         return ComputeLayer.ANTENNA;
-      
       case TaskIntensity.MODERATE:
-        // Use antenna if task type is suitable, otherwise beam
-        if ([TaskType.WEBSOCKET_PING, TaskType.BASIC_PARSING].includes(task.type)) {
-          return ComputeLayer.ANTENNA;
-        }
-        return ComputeLayer.BEAM;
-      
       case TaskIntensity.HEAVY:
       case TaskIntensity.EXTREME:
         return ComputeLayer.BEAM;
-      
       default:
-        return ComputeLayer.ANTENNA;
+        return ComputeLayer.BEAM;
     }
   }
 
-  /**
-   * Get routing decision from selected layer
-   */
   private async getRoutingDecision(task: Task, layer: ComputeLayer): Promise<RoutingDecision> {
     let decision: RoutingDecision | null = null;
-
-    if (layer === ComputeLayer.ANTENNA) {
-      decision = omniAntennaLayer.getRoutingDecision(task);
-    } else if (layer === ComputeLayer.BEAM) {
-      decision = directionalBeamLayer.getRoutingDecision(task);
-    }
+    if (layer === ComputeLayer.ANTENNA) decision = omniAntennaLayer.getRoutingDecision(task);
+    else if (layer === ComputeLayer.BEAM) decision = directionalBeamLayer.getRoutingDecision(task);
 
     if (!decision) {
       throw new TaskRoutingError(
         `No available nodes in ${layer} layer for task ${task.id}`,
-        { taskId: task.id, layer }
+        { taskId: task.id, layer },
       );
     }
-
     return decision;
   }
 
-  /**
-   * Execute routing to selected layer
-   */
   private async executeRouting(task: Task, layer: ComputeLayer): Promise<void> {
-    if (layer === ComputeLayer.ANTENNA) {
-      await omniAntennaLayer.acceptTask(task);
-    } else if (layer === ComputeLayer.BEAM) {
-      await directionalBeamLayer.acceptTask(task);
-    }
+    if (layer === ComputeLayer.ANTENNA) await omniAntennaLayer.acceptTask(task);
+    else if (layer === ComputeLayer.BEAM) await directionalBeamLayer.acceptTask(task);
   }
 
-  /**
-   * Cancel a queued or running heavy task. Beam owns compatibility routing while
-   * Quanti Comp owns execution cancellation once work has started.
-   */
+  /** Cancellation follows the actual routing decision. Both Beam and Antenna
+   * support cancellation; neither cancellation path changes trade authority. */
   public cancelTask(taskId: string): boolean {
     const decision = this.taskHistory.get(taskId);
-    if (!decision || decision.selectedNode.layer !== ComputeLayer.BEAM) return false;
-    return directionalBeamLayer.cancelTask(taskId);
+    if (!decision) return false;
+    if (decision.selectedNode.layer === ComputeLayer.ANTENNA) return omniAntennaLayer.cancelTask(taskId);
+    if (decision.selectedNode.layer === ComputeLayer.BEAM) return directionalBeamLayer.cancelTask(taskId);
+    return false;
   }
 
-  /**
-   * Handle task failure with retry logic. Cancellation and deadline expiry are
-   * terminal for that task identity: retrying them can resurrect stale market
-   * evidence after the caller explicitly revoked it.
-   */
   private async handleTaskFailure(taskId: string, layer: string, error?: string): Promise<void> {
     const attempts = this.retryAttempts.get(taskId) || 0;
     const task = this.routedTasks.get(taskId);
     const maxRetries = Math.min(task?.metadata.maxRetries ?? 0, this.MAX_RETRIES);
-    const nonRetryable = isNonRetryableTaskFailure(error);
+    const nonReplayable = task ? NON_REPLAYABLE_MARKET_TASKS.has(task.type) : false;
+    const nonRetryable = nonReplayable || isNonRetryableTaskFailure(error);
 
+    // Sequence-dependent market frames are observations, not commands. Replaying
+    // one after a generic one-second retry would resurrect stale evidence. The
+    // canonical socket/book layer must resnapshot/reacquire instead.
     if (task && !nonRetryable && attempts < maxRetries) {
       this.retryAttempts.set(taskId, attempts + 1);
       task.metadata.retries = attempts + 1;
-      
+
       this.emit('task-retrying', {
         taskId,
         layer,
@@ -257,7 +226,15 @@ export class WorkloadRouter extends EventEmitter {
       this.retryAttempts.delete(taskId);
       this.routedTasks.delete(taskId);
       this.taskOutcomes.set(taskId, { error });
-      this.emit('task-failed', { taskId, layer, attempts, error, nonRetryable });
+      this.emit('task-failed', {
+        taskId,
+        layer,
+        attempts,
+        error,
+        nonRetryable,
+        nonReplayableMarketObservation: nonReplayable,
+        reacquisitionAuthority: nonReplayable ? 'canonical_market_stream_resnapshot' : null,
+      });
     }
   }
 
@@ -281,9 +258,6 @@ export class WorkloadRouter extends EventEmitter {
     return outcome;
   }
 
-  /**
-   * Get routing statistics
-   */
   public getRoutingStats() {
     const history = Array.from(this.taskHistory.values());
     const byLayer = history.reduce((acc, decision) => {
@@ -303,12 +277,12 @@ export class WorkloadRouter extends EventEmitter {
       byLayer,
       byProvider,
       avgConfidence: history.reduce((sum, d) => sum + d.confidence, 0) / (history.length || 1),
+      antennaHotTaskTypes: [...ANTENNA_HOT_TASKS],
+      nonReplayableMarketTaskTypes: [...NON_REPLAYABLE_MARKET_TASKS],
+      executionAuthority: false,
     };
   }
 
-  /**
-   * Get comprehensive system status
-   */
   public getSystemStatus() {
     return {
       router: this.getRoutingStats(),
@@ -319,9 +293,6 @@ export class WorkloadRouter extends EventEmitter {
     };
   }
 
-  /**
-   * Create a task
-   */
   public createTask(
     type: TaskType,
     payload: any,
@@ -329,20 +300,20 @@ export class WorkloadRouter extends EventEmitter {
       intensity?: TaskIntensity;
       priority?: number;
       requiredLayer?: ComputeLayer;
-    }
+    },
   ): Task {
     const taskId = this.generateTaskId();
-    
+    const latencyCritical = ANTENNA_HOT_TASKS.has(type);
     return {
       id: taskId,
       type,
-      intensity: options?.intensity || TaskIntensity.MODERATE,
+      intensity: latencyCritical ? TaskIntensity.LIGHTWEIGHT : (options?.intensity || TaskIntensity.MODERATE),
       payload,
       metadata: {
         created: new Date(),
-        priority: options?.priority || 5,
+        priority: options?.priority ?? (latencyCritical ? 100 : 5),
         retries: 0,
-        maxRetries: this.MAX_RETRIES,
+        maxRetries: NON_REPLAYABLE_MARKET_TASKS.has(type) ? 0 : this.MAX_RETRIES,
       },
       routing: options?.requiredLayer ? {
         requiredLayer: options.requiredLayer,
@@ -353,23 +324,14 @@ export class WorkloadRouter extends EventEmitter {
     };
   }
 
-  /**
-   * Generate unique task ID
-   */
   private generateTaskId(): string {
     return `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   }
 
-  /**
-   * Get task routing history
-   */
   public getTaskHistory(taskId: string): RoutingDecision | undefined {
     return this.taskHistory.get(taskId);
   }
 
-  /**
-   * Clear routing history
-   */
   public clearHistory(): void {
     this.taskHistory.clear();
     this.retryAttempts.clear();
@@ -379,5 +341,4 @@ export class WorkloadRouter extends EventEmitter {
   }
 }
 
-// Export singleton instance
 export const workloadRouter = new WorkloadRouter();
