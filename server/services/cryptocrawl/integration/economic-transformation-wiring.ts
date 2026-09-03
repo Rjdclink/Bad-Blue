@@ -3,6 +3,12 @@ import { queueCexResidualReplan } from '../discovery/cex-residual-replan.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
+import {
+  buildBpsReductionSuperPlan,
+  getBpsReductionSuperEngineSnapshot,
+  recordBpsCandidateAttribution,
+  recordBpsRevalidationOutcome,
+} from '../optimization/bps-reduction-super-engine.js';
 import { adviseEconomicTransformations, type EconomicTransformationAdvice } from '../optimization/economic-transformation-engine.js';
 import { estimateOpportunityDecay } from '../optimization/opportunity-decay-model.js';
 import {
@@ -10,6 +16,7 @@ import {
   getRawCrossVenueEdge,
   runResearchBpsQuantiMonteCarlo,
 } from '../optimization/research-bps-execution-tactics.js';
+import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import { getClosestCexNearMissesBySymbol } from './cex-four-mode-observability-wiring.js';
 
 let timer: NodeJS.Timeout | null = null;
@@ -60,9 +67,16 @@ function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
   if (!symbol) return;
   if (anomalyInFlight.has(symbol) || (anomalyCooldownUntil.get(symbol) || 0) > Date.now()) return;
 
-  const plan = buildResearchBpsExecutionPlan(candidate, null);
-  const attempts = Math.max(1, plan.anomalyRevalidationAttempts);
-  const delays = plan.anomalyRetryDelaysMs.length > 0 ? plan.anomalyRetryDelaysMs : [0];
+  const researchPlan = buildResearchBpsExecutionPlan(candidate, null);
+  const superPlan = buildBpsReductionSuperPlan(
+    candidate,
+    null,
+    researchPlan,
+    null,
+    getBpsCompressionMeshSnapshot(),
+  );
+  const attempts = Math.max(1, superPlan.anomalyPolicy.attempts);
+  const delays = superPlan.anomalyPolicy.delaysMs.length > 0 ? superPlan.anomalyPolicy.delaysMs : [0];
   const task = (async () => {
     let previousDelay = 0;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -70,6 +84,7 @@ function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
       await sleep(Math.max(0, targetDelay - previousDelay));
       previousDelay = targetDelay;
       const cycle = await measuredOpportunityGraph.revalidateSymbols([symbol]);
+      recordBpsRevalidationOutcome(superPlan, cycle);
       logger.info('[EconomicTransformation] Raw positive CEX observation received fresh canonical reassessment', {
         component: 'EconomicTransformationWiring',
         opportunityId: candidate.opportunityId,
@@ -79,6 +94,12 @@ function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
         observedSellVenue: edge.sellVenue,
         attempt: attempt + 1,
         attempts,
+        adaptiveRetryDelaysMs: superPlan.anomalyPolicy.delaysMs,
+        minimumConsensusVenues: superPlan.anomalyPolicy.minimumConsensusVenues,
+        venueConsensusWeights: superPlan.venueConsensusWeights,
+        learnedEdgeHalfLifeMs: superPlan.learnedEdgeHalfLifeMs,
+        expectedDecayBps: superPlan.expectedDecayBps,
+        advisoryMaxConcessionBps: superPlan.advisoryMaxConcessionBps,
         canonicalDeterministicPositive: cycle.deterministicPositive,
         canonicalEligibleCandidates: cycle.eligibleCandidates,
         canonicalCycleId: cycle.cycleId,
@@ -113,19 +134,26 @@ function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
 function installObservedCandidateRevalidationHook(): void {
   if (recordHookInstalled) return;
   recordHookInstalled = true;
-  const registry = measuredCandidateRegistry as typeof measuredCandidateRegistry & {
-    record: (input: any) => MeasuredCandidate;
-  };
+  const registry = measuredCandidateRegistry as any;
   const originalRecord = registry.record.bind(registry);
+  const originalUpdateStatus = registry.updateStatus.bind(registry);
   registry.record = (input: any): MeasuredCandidate => {
     const recorded = originalRecord(input);
+    recordBpsCandidateAttribution(recorded);
     queueAnomalyRevalidation(recorded);
     return recorded;
+  };
+  registry.updateStatus = (...args: any[]): MeasuredCandidate | null => {
+    const updated = originalUpdateStatus(...args);
+    if (updated) recordBpsCandidateAttribution(updated);
+    return updated;
   };
   logger.info('[EconomicTransformation] Positive raw-observation reassessment hook installed', {
     component: 'EconomicTransformationWiring',
     trigger: 'any_measured_cross_venue_raw_edge_greater_than_zero',
     reacquisition: 'bounded_exact_symbol_canonical_revalidation',
+    bpsAttributionLedger: true,
+    realizedOutcomeGovernorFeedback: true,
     anomalyDiscardWithoutRecheck: false,
     executionAuthority: false,
   });
@@ -148,8 +176,20 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
   if (!symbol) return;
 
   const task = (async () => {
-    const plan = buildResearchBpsExecutionPlan(candidate, advice);
-    const mc = await runResearchBpsQuantiMonteCarlo(candidate, plan).catch(error => {
+    const researchPlan = buildResearchBpsExecutionPlan(candidate, advice);
+    const preMonteCarloSuperPlan = buildBpsReductionSuperPlan(
+      candidate,
+      advice,
+      researchPlan,
+      null,
+      getBpsCompressionMeshSnapshot(),
+    );
+    const effectiveResearchPlan = {
+      ...researchPlan,
+      priorityScore: preMonteCarloSuperPlan.effectivePriorityScore,
+      monteCarloSearchMultiplier: preMonteCarloSuperPlan.monteCarloSearchMultiplier,
+    };
+    const mc = await runResearchBpsQuantiMonteCarlo(candidate, effectiveResearchPlan).catch(error => {
       logger.debug('[EconomicTransformation] Quanti Comp Monte Carlo tactic ranking degraded', {
         component: 'EconomicTransformationWiring',
         opportunityId: candidate.opportunityId,
@@ -159,15 +199,23 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
       });
       return null;
     });
+    const superPlan = buildBpsReductionSuperPlan(
+      candidate,
+      advice,
+      effectiveResearchPlan,
+      mc,
+      getBpsCompressionMeshSnapshot(),
+    );
 
     let canonicalCycle: Awaited<ReturnType<typeof measuredOpportunityGraph.revalidateSymbols>> | null = null;
-    if (plan.canonicalRevalidationRequested) {
+    if (effectiveResearchPlan.canonicalRevalidationRequested) {
       canonicalCycle = await measuredOpportunityGraph.revalidateSymbols([symbol]);
+      recordBpsRevalidationOutcome(superPlan, canonicalCycle);
     }
 
     const parentNotionalUsd = Number(candidate.economics.notionalUsd || 0);
-    const fraction = nextResidualFraction(symbol, plan.residualNotionalFractions);
-    if (fraction !== null && parentNotionalUsd > 0) {
+    const fraction = nextResidualFraction(symbol, superPlan.residualNotionalFractions);
+    if (fraction !== null && parentNotionalUsd > 0 && fraction > 0 && fraction < 1) {
       queueCexResidualReplan({
         symbol,
         remainingNotionalUsd: parentNotionalUsd * fraction,
@@ -175,15 +223,29 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
       });
     }
 
-    logger.info('[EconomicTransformation] Measured transformation converted into canonical revalidation work', {
+    logger.info('[EconomicTransformation] Measured transformation converted into adaptive BPS super-engine work', {
       component: 'EconomicTransformationWiring',
       opportunityId: candidate.opportunityId,
       symbol,
       dominantCostDriver: advice.dominantCostDriver,
+      deficiencyClass: superPlan.deficiencyClass,
       bpsToBreakEven: advice.bpsToBreakEven,
       transformations: advice.transformations,
-      activeResearchTactics: plan.activeTacticKeys,
-      activeResearchTacticCount: plan.activeTacticKeys.length,
+      activeResearchTactics: effectiveResearchPlan.activeTacticKeys,
+      activeResearchTacticCount: effectiveResearchPlan.activeTacticKeys.length,
+      synergyBundles: superPlan.synergyBundles,
+      eventTriggers: superPlan.eventTriggers,
+      counterfactuals: superPlan.counterfactuals,
+      governorMultiplier: superPlan.governorMultiplier,
+      effectivePriorityScore: superPlan.effectivePriorityScore,
+      monteCarloSearchMultiplier: superPlan.monteCarloSearchMultiplier,
+      availableExecutionModes: superPlan.availableExecutionModes,
+      learnedEdgeHalfLifeMs: superPlan.learnedEdgeHalfLifeMs,
+      expectedDecayBps: superPlan.expectedDecayBps,
+      advisoryMaxConcessionBps: superPlan.advisoryMaxConcessionBps,
+      cvarBudgetBps: superPlan.cvarBudgetBps,
+      measuredAttribution: superPlan.measuredAttribution,
+      hardwareAccelerationPolicy: superPlan.hardwareAccelerationPolicy,
       quantiCompMonteCarlo: mc ? {
         profitableProbability: mc.profitableProbability,
         probabilityBothLegsFill: mc.probabilityBothLegsFill,
@@ -192,7 +254,7 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
         samples: mc.samples,
         authority: mc.authority,
       } : null,
-      canonicalRevalidationRequested: plan.canonicalRevalidationRequested,
+      canonicalRevalidationRequested: effectiveResearchPlan.canonicalRevalidationRequested,
       canonicalDeterministicPositive: canonicalCycle?.deterministicPositive ?? null,
       canonicalEligibleCandidates: canonicalCycle?.eligibleCandidates ?? null,
       residualNotionalProbeFraction: fraction,
@@ -276,13 +338,16 @@ function queueCexNearMissRecovery(): void {
 function refresh(): void {
   const now = Date.now();
   const recent = measuredCandidateRegistry.getRecent(1024);
+  const mesh = getBpsCompressionMeshSnapshot();
   const ranked = recent
     .filter(candidate => candidate.expiresAt > now)
     .map(candidate => {
       const advice = adviseEconomicTransformations(candidate);
       const decay = estimateOpportunityDecay(candidate, now);
-      const decayAdjustedPriority = advice.priorityScore * decay.survivalProbability;
-      return { candidate, advice, survivalProbability: decay.survivalProbability, decayAdjustedPriority };
+      const researchPlan = buildResearchBpsExecutionPlan(candidate, advice);
+      const superPlan = buildBpsReductionSuperPlan(candidate, advice, researchPlan, null, mesh);
+      const decayAdjustedPriority = superPlan.effectivePriorityScore * decay.survivalProbability;
+      return { candidate, advice, superPlan, survivalProbability: decay.survivalProbability, decayAdjustedPriority };
     })
     .filter(item => item.advice.netProfitBps !== null && item.advice.netProfitBps <= 0)
     .filter(item => item.advice.transformationFeasibilityScore >= minFeasibility())
@@ -324,6 +389,7 @@ function refresh(): void {
   selected.sort((left, right) => right.decayAdjustedPriority - left.decayAdjustedPriority);
   latest = selected.map(item => item.advice);
   const cexNearMisses = getClosestCexNearMissesBySymbol(16);
+  const superSnapshot = getBpsReductionSuperEngineSnapshot();
   logger.info('[EconomicTransformation] Near-break-even rescue portfolio refreshed', {
     component: 'EconomicTransformationWiring',
     candidates: latest.length,
@@ -332,6 +398,14 @@ function refresh(): void {
     topologyFloorCandidates: closestByTopology.size,
     maxPerTopologyDriver: maxPerTopologyDriver(),
     minFeasibility: minFeasibility(),
+    bpsSuperEngine: {
+      ledgerRows: superSnapshot.ledgerRows,
+      realizedRows: superSnapshot.realizedRows,
+      topTacticStates: superSnapshot.tacticStates.slice(0, 8),
+      learnedEdgeHalfLives: superSnapshot.edgeHalfLife.slice(0, 8),
+      authority: superSnapshot.authority,
+      executionAuthority: superSnapshot.executionAuthority,
+    },
     top: selected.slice(0, 8).map(item => ({
       opportunityId: item.advice.opportunityId,
       topology: item.advice.topology,
@@ -346,6 +420,9 @@ function refresh(): void {
       transformationFeasibilityScore: item.advice.transformationFeasibilityScore,
       survivalProbability: item.survivalProbability,
       decayAdjustedPriority: item.decayAdjustedPriority,
+      superEngineGovernorMultiplier: item.superPlan.governorMultiplier,
+      superEngineDeficiencyClass: item.superPlan.deficiencyClass,
+      superEngineEventTriggers: item.superPlan.eventTriggers,
       transformations: item.advice.transformations,
     })),
     cexModeRescueAttention: cexNearMisses.map(item => ({
