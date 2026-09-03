@@ -32,8 +32,8 @@ const required = [
   [policy200, 'bypassGovernanceAllowed: false', 'new policy cannot bypass governance'],
   [policy200, 'bypassInventoryAllowed: false', 'new policy cannot bypass inventory'],
   [policy200, 'bypassPositiveNetAllowed: false', 'new policy cannot bypass positive economics'],
-  [canonical, 'ensureCexInventoryReadinessWiring();', 'inventory readiness canonical installation'],
-  [canonical, 'ensureExecutionReadinessProfitabilityWiring();', 'execution-readiness optimizer canonical installation'],
+  [canonical, "install('cex_inventory_readiness', () => ensureCexInventoryReadinessWiring());", 'inventory readiness canonical installation'],
+  [canonical, "install('execution_readiness_profitability', () => ensureExecutionReadinessProfitabilityWiring());", 'execution-readiness optimizer canonical installation'],
   [canonical, "executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'", 'canonical positive floor'],
 ];
 for (const [source, token, name] of required) {
