@@ -33,12 +33,15 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Build application (requires dev dependencies). The normal build proves the full
-# source tree. The deployed server bundle is then rebuilt through the mandatory
-# CryptoCrawler Overflow authority router so every reachable CryptoCrawler import
-# of server/db resolves to Overflow and canonical runtime install requires the
-# complete Overflow schema proof.
-RUN npm run build && \
+# Build application (requires dev dependencies). Payout-recipient truth is an
+# explicit production gate: the image cannot build if the signer-derived primary,
+# Railway fallback, or recipient/finality confirmation invariants regress. The
+# normal build proves the full source tree. The deployed server bundle is then
+# rebuilt through the mandatory CryptoCrawler Overflow authority router so every
+# reachable CryptoCrawler import of server/db resolves to Overflow and canonical
+# runtime install requires the complete Overflow schema proof.
+RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
+    npm run build && \
     node scripts/cryptocrawl/build-server-overflow-authority.mjs server/cryptara-bootstrap-entry.ts dist/index.js && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
@@ -104,6 +107,10 @@ COPY --from=builder /app/server/migrations/024_cryptocrawler_funding_lifecycle.s
 COPY --from=builder /app/server/migrations/025_cryptocrawler_rainbow_source_ledger.sql ./dist/migrations/025_cryptocrawler_rainbow_source_ledger.sql
 COPY --from=builder /app/server/migrations/026_cryptocrawler_system_capital_allocations.sql ./dist/migrations/026_cryptocrawler_system_capital_allocations.sql
 COPY --from=builder /app/server/migrations/027_cryptocrawler_cex_system_owned_lots.sql ./dist/migrations/027_cryptocrawler_cex_system_owned_lots.sql
+COPY --from=builder /app/server/migrations/028_cryptocrawler_payout_recipient_confirmation.sql ./dist/migrations/028_cryptocrawler_payout_recipient_confirmation.sql
+COPY --from=builder /app/server/migrations/029_cryptocrawler_terminal_sweep_recipient_confirmation.sql ./dist/migrations/029_cryptocrawler_terminal_sweep_recipient_confirmation.sql
+COPY --from=builder /app/server/migrations/030_cryptocrawler_payout_confirmation_truth_guard.sql ./dist/migrations/030_cryptocrawler_payout_confirmation_truth_guard.sql
+COPY --from=builder /app/server/migrations/031_cryptocrawler_payout_confirmation_wait.sql ./dist/migrations/031_cryptocrawler_payout_confirmation_wait.sql
 
 # Overflow-only prerequisites complete migration gaps found by the repository-wide
 # authority audit without enabling duplicate schedulers or browser/API access.
