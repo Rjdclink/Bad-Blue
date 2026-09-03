@@ -6,13 +6,15 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 1;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v1';
+const SCHEMA_VERSION = 8;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v8';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
 // external sweeper schedule. The safe support functions from 016 are mirrored in
-// overflow/004 without creating a second independent payout scheduler.
+// overflow/004 without creating a second independent payout scheduler. The
+// payout-aware finalizer remains owned by migration 018 and is not overridden by
+// Overflow support wiring.
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
   '007_zero_capital_execution_ledger.sql',
@@ -33,6 +35,12 @@ const MIGRATIONS = [
   '023_cryptocrawler_hot_path_schema_authority.sql',
   '024_cryptocrawler_funding_lifecycle.sql',
   '025_cryptocrawler_rainbow_source_ledger.sql',
+  '026_cryptocrawler_system_capital_allocations.sql',
+  '027_cryptocrawler_cex_system_owned_lots.sql',
+  '028_cryptocrawler_payout_recipient_confirmation.sql',
+  '029_cryptocrawler_terminal_sweep_recipient_confirmation.sql',
+  '030_cryptocrawler_payout_confirmation_truth_guard.sql',
+  '031_cryptocrawler_payout_confirmation_wait.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -57,6 +65,9 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_payout_execution_reservations',
   'public.cryptocrawler_cex_inventory_state_v1',
   'public.cryptocrawler_cex_inventory_reservations_v1',
+  'public.cryptocrawler_system_capital_allocations',
+  'public.cryptocrawler_cex_system_owned_lots',
+  'public.cryptocrawler_cex_system_owned_settlements',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
@@ -71,9 +82,12 @@ const REQUIRED_TABLES = [
 
 const REQUIRED_FUNCTIONS = [
   'private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)',
+  'private.cryptocrawler_seed_cex_system_owned_lot()',
   'public.cryptocrawler_treasury_worker_claim(text,integer)',
   'public.cryptocrawler_treasury_worker_release(text)',
   'public.cryptocrawler_terminal_sweep_truth_guard()',
+  'public.cryptocrawler_terminal_sweep_leg_confirmation_guard()',
+  'public.cryptocrawler_profit_payout_confirmation_guard()',
   'public.cryptocrawler_terminal_sweep_secret(text)',
   'public.cryptocrawler_terminal_sweep_finalize_events(uuid)',
   'public.cryptocrawler_okx_treasury_spendable(text)',
@@ -186,10 +200,6 @@ async function provision(): Promise<void> {
       throw new Error('Overflow CryptoCrawler schema authority is currently owned by another replica');
     }
 
-    // Durable fast path: a fresh Railway replica/process must not replay twenty
-    // idempotent DDL migrations merely because its process-local cache is empty.
-    // The durable version marker is cheap to read; required objects are still
-    // verified before runtime admission so drift/corruption fails closed.
     let durableReady = false;
     try {
       durableReady = await durableSchemaIsReady(client);

@@ -14,6 +14,7 @@ import { getCexScanCapacity, type ScanCapacityDecision } from './scan-capacity-p
 
 export interface MeasuredOpportunityGraphCycle {
   cycleId: string;
+  cycleTrigger: 'continuous_scan' | 'positive_observation_revalidation';
   startedAt: number;
   completedAt: number;
   topology: 'CEX_CEX';
@@ -63,12 +64,13 @@ function opportunityId(plan: VerifiedArbitragePlan): string {
 }
 
 function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observedAt: number, maxQuoteAgeMs: number): void {
+  const measuredDepth = plan.liquidity.status === 'measured';
   measuredCandidateRegistry.record({
     opportunityId: opportunityId(plan),
     topology: 'CEX_CEX',
     observedAt,
     expiresAt: observedAt + Math.max(1, maxQuoteAgeMs - Math.min(maxQuoteAgeMs, plan.quoteAgeMs)),
-    status: 'deterministic_positive',
+    status: measuredDepth ? 'eligible' : 'deterministic_positive',
     assets: [plan.symbol],
     venues: [plan.buyVenue, plan.sellVenue],
     chains: ['cex'],
@@ -77,8 +79,8 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
       { source: 'direct_exchange_quotes', venue: plan.sellVenue, symbol: plan.symbol, observedAt: observedAt - plan.quoteAgeMs, bid: plan.sellBid, executable: true },
     ],
     depth: {
-      status: plan.liquidity.status === 'measured' ? 'measured' : 'unavailable',
-      detail: plan.liquidity.status === 'measured' ? plan.liquidity.source.join(',') : 'Measured executable depth unavailable',
+      status: measuredDepth ? 'measured' : 'unavailable',
+      detail: measuredDepth ? plan.liquidity.source.join(',') : 'Measured executable depth unavailable',
     },
     economics: {
       grossProfitUsd: plan.grossProfitUsd,
@@ -91,9 +93,17 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
     },
     quoteAgeMs: plan.quoteAgeMs,
     executableCapability: true,
-    executionCapabilityReason: 'Verified CEX plan uses a settlement-safe centralized executor; MC, governance, inventory and resource locks still control admission',
+    executionCapabilityReason: 'Verified CEX plan uses a settlement-safe centralized executor; governance, inventory and resource locks still control execution',
     missingInformation: [],
-    provenance: ['measured_opportunity_graph', 'formation_attention_scheduler', 'direct_exchange_quotes', 'authenticated_fee_evidence', 'depth_aware_notional_search', 'deterministic_positive_net'],
+    provenance: [
+      'measured_opportunity_graph',
+      'formation_attention_scheduler',
+      'direct_exchange_quotes',
+      'authenticated_fee_evidence',
+      'depth_aware_notional_search',
+      'deterministic_positive_net',
+      ...(measuredDepth ? ['positive_all_in_net_execution_eligible'] : []),
+    ],
   });
 }
 
@@ -115,6 +125,7 @@ async function runBounded<T, R>(items: readonly T[], concurrency: number, worker
 class MeasuredOpportunityGraph {
   private timer: NodeJS.Timeout | null = null;
   private scanInFlight: Promise<MeasuredOpportunityGraphCycle> | null = null;
+  private targetedScans = new Map<string, Promise<MeasuredOpportunityGraphCycle>>();
   private latestCycle: MeasuredOpportunityGraphCycle | null = null;
   private running = false;
 
@@ -124,6 +135,23 @@ class MeasuredOpportunityGraph {
       this.scanInFlight = null;
     });
     this.scanInFlight = promise;
+    return promise;
+  }
+
+  async revalidateSymbols(symbolsInput: readonly string[]): Promise<MeasuredOpportunityGraphCycle> {
+    const symbols = [...new Set(symbolsInput.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))].slice(0, 16);
+    if (symbols.length === 0) return this.scanOnce();
+    const signature = symbols.sort().join(',');
+    const existing = this.targetedScans.get(signature);
+    if (existing) return existing;
+
+    const promise = this.runCycle({
+      symbols,
+      trigger: 'positive_observation_revalidation',
+    }).finally(() => {
+      this.targetedScans.delete(signature);
+    });
+    this.targetedScans.set(signature, promise);
     return promise;
   }
 
@@ -149,7 +177,7 @@ class MeasuredOpportunityGraph {
       topology: 'CEX_CEX',
       scanAttention: 'formation_probability_plus_value_of_information',
       scanAttentionAuthority: 'advisory_only',
-      candidateAuthority: 'measured_candidate_registry',
+      candidateAuthority: 'measured_candidate_registry_positive_all_in_net',
       syntheticEvidenceAllowed: false,
       executionPausedDuringLowActivity: false,
     });
@@ -193,9 +221,13 @@ class MeasuredOpportunityGraph {
     };
   }
 
-  private async runCycle(): Promise<MeasuredOpportunityGraphCycle> {
+  private async runCycle(options?: {
+    symbols?: readonly string[];
+    trigger?: MeasuredOpportunityGraphCycle['cycleTrigger'];
+  }): Promise<MeasuredOpportunityGraphCycle> {
     const startedAt = Date.now();
-    const cycleId = `cex-graph:${startedAt}`;
+    const cycleTrigger = options?.trigger || 'continuous_scan';
+    const cycleId = `cex-graph:${cycleTrigger}:${startedAt}`;
     const errors: string[] = [];
     const configuredSymbol = (process.env.CRYPTO_ARBITRAGE_SYMBOL || 'ETHUSDT').trim().toUpperCase();
     const maxNotionalUsd = positiveFinite(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD, 200);
@@ -203,9 +235,11 @@ class MeasuredOpportunityGraph {
 
     const universe = await marketDataProviders.discoverUniverse();
     const symbols = uniqueSymbols(configuredSymbol, universe);
-    const capacity = getCexScanCapacity(symbols.length);
-    const formationSelection = selectCexFormationSymbols(symbols, capacity.symbolBudget, configuredSymbol);
-    const selected = formationSelection.symbols;
+    const selectionCapacity = getCexScanCapacity(symbols.length);
+    const formationSelection = selectCexFormationSymbols(symbols, selectionCapacity.symbolBudget, configuredSymbol);
+    const targetedSymbols = [...new Set((options?.symbols || []).map(symbol => symbol.trim().toUpperCase()).filter(Boolean))];
+    const selected = targetedSymbols.length > 0 ? targetedSymbols : formationSelection.symbols;
+    const capacity = targetedSymbols.length > 0 ? getCexScanCapacity(selected.length) : selectionCapacity;
 
     const publicDiscoveryPromise = scanPublicCexUniverse(selected).catch(error => {
       errors.push(`public_cex_discovery:${error instanceof Error ? error.message : String(error)}`);
@@ -235,10 +269,6 @@ class MeasuredOpportunityGraph {
       selected.length / Math.max(1, symbols.length),
     );
 
-    // Raw public BBOs are measured search evidence. Register only symbols with
-    // two or more independently observed venues, and keep them explicitly
-    // non-executable with unknown economics. This makes the CEX_CEX discovery
-    // funnel truthful without allowing discovery-only venues into execution.
     const observedCandidateTtlMs = Math.max(
       500,
       Number(process.env.CRYPTOCRAWL_PUBLIC_BBO_CACHE_MS || 1_500),
@@ -262,7 +292,7 @@ class MeasuredOpportunityGraph {
       24,
     ));
     const assessmentCandidates = positivePlans.slice(0, maxAssessments);
-    let eligibleCandidates = 0;
+    let eligibleCandidates = positivePlans.filter(plan => plan.liquidity.status === 'measured').length;
 
     if (assessmentCandidates.length > 0) {
       const cryptara = getCryptara();
@@ -312,15 +342,14 @@ class MeasuredOpportunityGraph {
                 ...providerStatuses.map(status => `provider:${status.provider}:${status.state}`),
               ],
             });
-            if (assessment.recommendation === 'consider' && plan.netProfitUsd > 0) {
-              eligibleCandidates++;
-              measuredCandidateRegistry.updateStatus(id, 'eligible', {
-                provenance: [...technicalEvidence.provenance, 'Cryptara:consider', 'monte_carlo:approved_or_complete'],
-              });
-            } else {
-              measuredCandidateRegistry.updateStatus(id, 'blocked', {
-                missingInformation: assessment.missingInformation,
-                provenance: [...technicalEvidence.provenance, `Cryptara:${assessment.recommendation}`],
+            const current = measuredCandidateRegistry.get(id);
+            if (current) {
+              measuredCandidateRegistry.updateStatus(id, current.status, {
+                provenance: [
+                  ...technicalEvidence.provenance,
+                  `Cryptara:advisory_${assessment.recommendation}`,
+                  'advisory_assessment_execution_veto:false',
+                ],
               });
             }
           } catch (error) {
@@ -333,13 +362,14 @@ class MeasuredOpportunityGraph {
     const completedAt = Date.now();
     const cycle: MeasuredOpportunityGraphCycle = {
       cycleId,
+      cycleTrigger,
       startedAt,
       completedAt,
       topology: 'CEX_CEX',
       universeAssets: universe.length,
       selectedSymbols: selected.length,
-      formationExplorationSymbols: formationSelection.exploration.length,
-      formationExploitationSymbols: formationSelection.exploitation.length,
+      formationExplorationSymbols: targetedSymbols.length > 0 ? selected.length : formationSelection.exploration.length,
+      formationExploitationSymbols: targetedSymbols.length > 0 ? 0 : formationSelection.exploitation.length,
       evaluatedSymbols: evaluated.length,
       publicDiscoveryObservations: publicDiscovery.observations.length,
       publicDiscoveryVenues: new Set(publicDiscovery.observations.map(observation => observation.venue)).size,
@@ -376,6 +406,7 @@ class MeasuredOpportunityGraph {
     logger.info('[OpportunityGraph] Measured CEX edge-formation cycle completed', {
       component: 'MeasuredOpportunityGraph',
       cycleId,
+      cycleTrigger,
       durationMs: completedAt - startedAt,
       nextScanIntervalMs: cycle.capacity.recommendedIntervalMs,
       universeAssets: cycle.universeAssets,

@@ -1,7 +1,7 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
-import { resolveExecutionWalletAddress, resolveTerminalPayoutAddress } from '../core/wallet-identity.js';
+import { resolvePayoutFallbackAddress, resolvePrimaryProfitPayoutAddress } from '../core/wallet-identity.js';
 import { setTreasuryRestartSweepBarrier } from '../governance/treasury-execution-barrier.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 
@@ -11,11 +11,13 @@ const TERMINAL_GRACE_SECONDS = 180;
 const RAILWAY_DEPLOYMENT_ID = (process.env.RAILWAY_DEPLOYMENT_ID || '').trim();
 const RAILWAY_SERVICE_ID = (process.env.RAILWAY_SERVICE_ID || '').trim();
 const RAILWAY_ENVIRONMENT_ID = (process.env.RAILWAY_ENVIRONMENT_ID || '').trim();
-const DESTINATION = resolveTerminalPayoutAddress() || '';
-const EXECUTION_WALLET_DESTINATION = resolveExecutionWalletAddress().address || '';
-const FALLBACK_DESTINATION = EXECUTION_WALLET_DESTINATION && EXECUTION_WALLET_DESTINATION.toLowerCase() !== DESTINATION.toLowerCase()
-  ? EXECUTION_WALLET_DESTINATION
-  : '';
+const DESTINATION = resolvePrimaryProfitPayoutAddress() || '';
+const FALLBACK_DESTINATION = resolvePayoutFallbackAddress() || '';
+const ETHEREUM_RPC_URL = (
+  process.env.ETHEREUM_RPC_URL
+  || process.env.ETHEREM_RPC_URL
+  || (process.env.ALCHEMY_API_KEY ? `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}` : '')
+).trim();
 
 type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 'MANUAL_REVIEW';
 
@@ -67,14 +69,12 @@ async function syncWorkerSecrets(): Promise<void> {
     { name: 'cryptocrawler_okx_api_secret', value: (process.env.OKX_API_SECRET || '').trim(), optional: false, description: requiredDescription },
     { name: 'cryptocrawler_okx_api_passphrase', value: (process.env.OKX_API_PASSPHRASE || '').trim(), optional: false, description: requiredDescription },
     { name: 'cryptocrawler_profit_wallet', value: DESTINATION, optional: false, description: requiredDescription },
+    { name: 'cryptocrawler_ethereum_rpc_url', value: ETHEREUM_RPC_URL, optional: false, description: requiredDescription },
     { name: 'cryptocrawler_supabase_url', value: (process.env.SUPABASE_URL || '').trim(), optional: false, description: requiredDescription },
     { name: 'cryptocrawler_supabase_service_key', value: (process.env.SUPABASE_SERVICE_KEY || '').trim(), optional: false, description: requiredDescription },
     { name: 'cryptocrawler_fallback_wallet', value: FALLBACK_DESTINATION, optional: true, description: optionalDescription },
   ];
 
-  // Resolve all current Vault ids in one acquisition rather than one SELECT per
-  // secret. Writes remain serialized so Vault mutation load is bounded and a
-  // partially failed sync can safely retry from durable state on the next beat.
   const existing = await highPriorityQuery(
     'SELECT id, name FROM vault.secrets WHERE name = ANY($1::text[])',
     [secrets.map(secret => secret.name)],
@@ -88,8 +88,6 @@ async function syncWorkerSecrets(): Promise<void> {
   for (const secret of secrets) {
     const id = ids.get(secret.name) || '';
     if (id) {
-      // Preserve the prior optional-secret rule: an existing fallback is updated
-      // even to an empty value so stale fallback authority cannot survive config.
       if (!secret.optional && !secret.value) continue;
       await highPriorityQuery('SELECT vault.update_secret($1::uuid, $2, $3, $4)', [
         id, secret.value, secret.name, secret.description,
@@ -104,12 +102,6 @@ async function syncWorkerSecrets(): Promise<void> {
   }
 }
 
-/**
- * Read the pre-heartbeat treasury state and apply the permitted successor update
- * in one PostgreSQL round trip. The state CTE is materialized and row-locked so
- * the returned value remains the state observed before a possible SWEPT->RUNNING
- * transition; sweep/manual-review states are read but never heartbeat-updated.
- */
 async function heartbeatTreasuryState(): Promise<TreasuryState> {
   const result = await highPriorityQuery(
     `WITH state AS MATERIALIZED (
@@ -150,10 +142,6 @@ async function heartbeatOnce(): Promise<void> {
 
   heartbeatInFlight = (async () => {
     try {
-      // Secret synchronization is part of the durable heartbeat rather than a
-      // one-shot startup precondition. A transient Supabase timeout therefore
-      // cannot permanently leave the independent worker without current Railway
-      // credentials or the WALLET_PRIVATE_KEY-derived public fallback address.
       if (!workerSecretsSynchronized) {
         await syncWorkerSecrets();
         workerSecretsSynchronized = true;
@@ -162,9 +150,6 @@ async function heartbeatOnce(): Promise<void> {
       const state = await heartbeatTreasuryState();
 
       if (state === 'TERMINATE_AND_SWEEP' || state === 'SWEEPING') {
-        // A successor process must not cancel the previous deployment's restart
-        // drain and must not refresh last_seen_active_at. The central governance
-        // barrier blocks only NEW exposure while cancel/hedge/settle remain live.
         setTreasuryRestartSweepBarrier(true, `treasury_state:${state}`);
         void rainbowProfitBridge.wake('terminal_candidate');
         consecutiveHeartbeatFailures = 0;
@@ -179,8 +164,6 @@ async function heartbeatOnce(): Promise<void> {
         return;
       }
 
-      // RUNNING is heartbeated in the same query. SWEPT is atomically reopened to
-      // RUNNING by that query before this barrier is cleared.
       setTreasuryRestartSweepBarrier(false);
       consecutiveHeartbeatFailures = 0;
       heartbeatDegradedUntil = 0;
@@ -208,8 +191,15 @@ function logHeartbeatFailure(error: unknown): void {
 export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
   if (!isDatabaseConfigured || timer) return;
   if (!DESTINATION) {
-    logger.warn('[Treasury] MetaMask payout wallet is not configured; payouts and restart drain fail closed', {
-      component: 'TerminalTreasuryLifecycle', destinationVariable: 'CRYPTO_PROFIT_WALLET_ADDRESS',
+    logger.warn('[Treasury] Primary MetaMask payout wallet is not available; payout execution fails closed', {
+      component: 'TerminalTreasuryLifecycle',
+      primaryDestinationSource: 'WALLET_PRIVATE_KEY-derived public Ethereum address',
+    });
+  }
+  if (!ETHEREUM_RPC_URL) {
+    logger.warn('[Treasury] Ethereum payout confirmation RPC is not configured; payout confirmation fails closed', {
+      component: 'TerminalTreasuryLifecycle',
+      acceptedSources: ['ETHEREUM_RPC_URL', 'ETHEREM_RPC_URL', 'ALCHEMY_API_KEY'],
     });
   }
 
@@ -218,9 +208,6 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     signalInstalled = true;
   }
 
-  // Install the retry heartbeat before the first database attempt. A transient
-  // startup outage must not permanently disable secret synchronization or the
-  // restart-drain lifecycle for this otherwise healthy Railway process.
   timer = setInterval(() => void heartbeatOnce().catch(logHeartbeatFailure), HEARTBEAT_MS);
   timer.unref?.();
   await heartbeatOnce().catch(logHeartbeatFailure);
@@ -230,9 +217,12 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     deploymentIdPresent: Boolean(RAILWAY_DEPLOYMENT_ID),
     serviceIdPresent: Boolean(RAILWAY_SERVICE_ID),
     environmentIdPresent: Boolean(RAILWAY_ENVIRONMENT_ID),
-    terminalPayoutConfigured: Boolean(DESTINATION),
+    primaryMetaMaskPayoutConfigured: Boolean(DESTINATION),
+    primaryPayoutSource: 'WALLET_PRIVATE_KEY-derived public Ethereum address',
     fallbackPayoutConfigured: Boolean(FALLBACK_DESTINATION),
-    fallbackDerivedFromCanonicalExecutionWallet: Boolean(FALLBACK_DESTINATION),
+    fallbackResolutionPolicy: 'CRYPTO_PAYOUT_WALLET_ADDRESS_then_CRYPTO_PROFIT_WALLET_ADDRESS_if_distinct',
+    recipientConfirmationRpcConfigured: Boolean(ETHEREUM_RPC_URL),
+    recipientConfirmationPolicy: 'okx_recipient_and_amount_plus_finalized_ethereum_transaction',
     workerSecretSynchronizationRetryable: true,
     workerSecretsSynchronized,
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,

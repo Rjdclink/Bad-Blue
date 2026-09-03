@@ -2,6 +2,11 @@
 # Build stage - for compiling the application and installing browsers
 FROM node:20-bookworm-slim AS builder
 
+# Railway provides Git metadata to Docker builds through build arguments. Keep
+# this build-only so the immutable source SHA is compiled into the artifact and
+# is never sourced from a mutable runtime variable.
+ARG RAILWAY_GIT_COMMIT_SHA
+
 WORKDIR /app
 
 # Install build dependencies for native modules and Playwright browser installation
@@ -28,12 +33,15 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Build application (requires dev dependencies). The normal build proves the full
-# source tree. The deployed server bundle is then rebuilt through the mandatory
-# CryptoCrawler Overflow authority router so every reachable CryptoCrawler import
-# of server/db resolves to Overflow and canonical runtime install requires the
-# complete Overflow schema proof.
-RUN npm run build && \
+# Build application (requires dev dependencies). Payout-recipient truth is an
+# explicit production gate: the image cannot build if the signer-derived primary,
+# Railway fallback, or recipient/finality confirmation invariants regress. The
+# normal build proves the full source tree. The deployed server bundle is then
+# rebuilt through the mandatory CryptoCrawler Overflow authority router so every
+# reachable CryptoCrawler import of server/db resolves to Overflow and canonical
+# runtime install requires the complete Overflow schema proof.
+RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
+    npm run build && \
     node scripts/cryptocrawl/build-server-overflow-authority.mjs server/cryptara-bootstrap-entry.ts dist/index.js && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
@@ -97,6 +105,12 @@ COPY --from=builder /app/server/migrations/022_cryptocrawler_payout_destination_
 COPY --from=builder /app/server/migrations/023_cryptocrawler_hot_path_schema_authority.sql ./dist/migrations/023_cryptocrawler_hot_path_schema_authority.sql
 COPY --from=builder /app/server/migrations/024_cryptocrawler_funding_lifecycle.sql ./dist/migrations/024_cryptocrawler_funding_lifecycle.sql
 COPY --from=builder /app/server/migrations/025_cryptocrawler_rainbow_source_ledger.sql ./dist/migrations/025_cryptocrawler_rainbow_source_ledger.sql
+COPY --from=builder /app/server/migrations/026_cryptocrawler_system_capital_allocations.sql ./dist/migrations/026_cryptocrawler_system_capital_allocations.sql
+COPY --from=builder /app/server/migrations/027_cryptocrawler_cex_system_owned_lots.sql ./dist/migrations/027_cryptocrawler_cex_system_owned_lots.sql
+COPY --from=builder /app/server/migrations/028_cryptocrawler_payout_recipient_confirmation.sql ./dist/migrations/028_cryptocrawler_payout_recipient_confirmation.sql
+COPY --from=builder /app/server/migrations/029_cryptocrawler_terminal_sweep_recipient_confirmation.sql ./dist/migrations/029_cryptocrawler_terminal_sweep_recipient_confirmation.sql
+COPY --from=builder /app/server/migrations/030_cryptocrawler_payout_confirmation_truth_guard.sql ./dist/migrations/030_cryptocrawler_payout_confirmation_truth_guard.sql
+COPY --from=builder /app/server/migrations/031_cryptocrawler_payout_confirmation_wait.sql ./dist/migrations/031_cryptocrawler_payout_confirmation_wait.sql
 
 # Overflow-only prerequisites complete migration gaps found by the repository-wide
 # authority audit without enabling duplicate schedulers or browser/API access.
@@ -111,7 +125,7 @@ COPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
 COPY --from=builder /app/artifacts/cryptocrawl ./artifacts/cryptocrawl
 COPY --from=builder /app/server/services/cryptocrawl/config/chains.json ./config/chains.json
 
-# Expose application port (Railway will use PORT env var)
+# Expose application port
 EXPOSE 5000
 
 # Create non-root user for security

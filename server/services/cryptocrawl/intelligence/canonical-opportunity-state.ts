@@ -203,7 +203,7 @@ class CanonicalOpportunityStateStore {
   }): CanonicalOpportunitySnapshot {
     const previous = this.snapshots.get(input.opportunityId);
     const positiveEconomics = !!input.plan && Number.isFinite(input.plan.netProfitUsd) && input.plan.netProfitUsd > 0;
-    const status: CanonicalOpportunityStatus = input.assessment.recommendation === 'consider' && positiveEconomics
+    const status: CanonicalOpportunityStatus = positiveEconomics
       ? 'eligible'
       : input.assessment.recommendation === 'reject'
         ? 'blocked'
@@ -243,6 +243,7 @@ class CanonicalOpportunityStateStore {
       missingInformation: [...new Set(input.assessment.missingInformation)],
       provenance: [...new Set([
         ...input.assessment.provenance,
+        ...(positiveEconomics ? ['canonical:positive_all_in_net_execution_authority'] : []),
         ...(oracle ? [`multi_oracle:${oracle.asset}:${oracle.chain}`] : []),
       ])],
     };

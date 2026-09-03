@@ -2,11 +2,15 @@
 
 require('./verify-overflow-complete-runtime-authority.cjs');
 require('./verify-runtime-safety-invariants.cjs');
+require('./verify-runtime-build-attestation.cjs');
+require('./verify-okx-adaptive-rate-governor.cjs');
+require('./verify-okx-account-fee-authority.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
 require('./verify-substantial-profitability-batch9.cjs');
 require('./verify-cryptara-sovereign-cortex.cjs');
 require('./verify-compute-antenna-monte-carlo-batch11.cjs');
 require('./verify-remaining-seventeen-batch12.cjs');
+require('./verify-competition-evidence-wiring.cjs');
 require('./verify-300-profitability-live-execution-controls.cjs');
 require('./verify-aave-balancer-provider-mesh.cjs');
 require('./verify-cex-websocket-rpi-modernization.cjs');
@@ -25,11 +29,13 @@ require('./verify-cryptara-super-worker.cjs');
 require('./verify-supabase-background-pressure.cjs');
 require('./verify-runtime-initialization-efficiency.cjs');
 require('./verify-product-discovery-coverage.cjs');
+require('./verify-cross-venue-asset-identity.cjs');
 require('./verify-dex-atomic-profit-path.cjs');
 require('./verify-aave-liquidation-profit-integrity.cjs');
 require('./verify-topology-execution-integrity.cjs');
 require('./verify-cross-chain-funding-route-truth.cjs');
 require('./verify-canonical-execution-family-completion.cjs');
 require('./verify-resource-bps-authority.cjs');
+require('./verify-payout-recipient-truth.cjs');
 
-console.log('[deployment-preflight] complete Overflow runtime authority, safety, measured-profitability, canonical execution-family, resource/BPS authority, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] complete Overflow runtime authority, safety, measured-profitability, canonical execution-family, resource/BPS authority, recipient-bound payout truth, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');

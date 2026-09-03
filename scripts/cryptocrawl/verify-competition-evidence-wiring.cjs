@@ -45,9 +45,13 @@ forbidText(compatibility, 'performDimensionalReasoning', 'legacy Cain reasoning 
 forbidText(compatibility, 'canonicalExecutionScheduler.start()', 'compatibility layer cannot reintroduce duplicate scheduler startup authority');
 
 // CEX topology applicability is installed directly by canonical runtime before
-// measured discovery starts. It removes only the inapplicable mempool completeness
-// penalty and must not alter economics, Monte Carlo, or execution authority.
+// measured discovery starts. It must first install the canonical bootstrap-aware
+// Cryptara assessment stack, then remove only the inapplicable mempool completeness
+// penalty without altering economics, Monte Carlo, or execution authority.
 requireText(cryptaraCex, "CEX_EXECUTION_VENUES = new Set(['coinbase', 'kraken', 'okx'])", 'Cryptara CEX applicability must cover every implemented executable CEX venue');
+requireText(cryptaraCex, "import { ensureCryptaraAssessmentWiring } from './cryptara-assessment-wiring.js';", 'CEX topology adapter must depend on the canonical bootstrap-aware assessment stack');
+requireText(cryptaraCex, 'const instance = ensureCryptaraAssessmentWiring();', 'CEX topology adapter must install canonical assessment before wrapping it');
+forbidText(cryptaraCex, 'const instance = getCryptara();', 'CEX topology adapter cannot wrap an un-wired base Cryptara singleton');
 requireText(cryptaraCex, ".filter(item => item !== 'mempool_evidence')", 'Cryptara must remove only the CEX-inapplicable mempool completeness penalty');
 requireText(cryptaraCex, "'not_applicable:mempool_evidence'", 'Cryptara correction must preserve explicit topology provenance');
 requireText(cryptaraCex, 'canonicalOpportunityState.get(context.opportunityId)', 'canonical Monte Carlo state must be read before corrected snapshot overwrite');
@@ -58,9 +62,11 @@ requireText(cryptaraCex, 'economicsChanged: false', 'Cryptara topology correctio
 
 requireText(runtime, "import { ensureCryptaraCexEvidenceWiring } from './cryptara-cex-evidence-wiring.js';", 'canonical runtime must import CEX topology correction');
 requireText(runtime, 'ensureCryptaraCexEvidenceWiring();', 'canonical runtime must install CEX topology correction');
-requireOrder(runtime, 'ensureCryptaraCexEvidenceWiring();', 'measuredOpportunityGraph.start();', 'CEX topology correction must install before measured discovery can assess candidates');
-requireText(runtime, "cexCompetitionEvidence: 'topology_not_applicable_without_synthetic_zero'", 'runtime must attest CEX competition applicability semantics');
-requireText(runtime, 'cexCompetitionEvidenceExecutionAuthority: false', 'competition applicability correction cannot become execution authority');
+requireOrder(runtime, 'ensureCryptaraCexEvidenceWiring();', 'multiTopologyDiscoveryController.start();', 'CEX topology correction must install before the canonical discovery controller can assess candidates');
+requireText(runtime, "historicalProofRequiredBeforeFirstExecution: false", 'runtime must preserve no-history bootstrap authority');
+requireText(runtime, "stageOneBootstrapAuthority: 'fresh_current_evidence_without_prior_profit_history'", 'runtime must preserve fresh-current-evidence Stage-1 bootstrap semantics');
+requireText(runtime, "executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'", 'runtime must preserve strict positive all-in economics');
+requireText(runtime, 'cryptaraCortexExecutionAuthority: false', 'Cryptara advisory intelligence cannot become execution authority');
 requireText(runtime, 'executionAuthorityGranted: false', 'canonical runtime wiring itself cannot grant execution authority');
 
-console.log('[competition-evidence-wiring] PASS — CEX competition/mempool evidence is topology-aware, missing evidence is never fabricated, Cryptara correction is installed before discovery, and scheduler authority remains singular');
+console.log('[competition-evidence-wiring] PASS — CEX assessment is bootstrap-aware before topology correction, competition/mempool evidence is topology-aware, first-trade history is non-blocking, missing evidence is never fabricated, and execution authority remains singular');

@@ -33,7 +33,8 @@ function boundedNotional(requested: number): number {
  * Batch evaluation is discovery-only in the canonical runtime. Let the existing
  * depth-aware verifier search its local size curve up to the current profit-ladder
  * ceiling without adding market-data requests. Stage 1 may measure a larger
- * shadow-live ceiling, but execution remains disabled by StageManager.
+ * shadow-live ceiling; actual execution authority is decided downstream by
+ * StageManager plus canonical admission and settlement gates.
  */
 function discoveryBoundedNotional(requested: number): number {
   const envelope = getAdaptiveProfitOperatingEnvelope();
@@ -55,11 +56,6 @@ function planNeedsRefinement(plan: VerifiedArbitragePlan): { needed: boolean; sc
     scale = Math.min(scale, envelope.maxExpectedSlippageBps / impact * 0.9);
     reasons.push(`expected_slippage_${impact.toFixed(4)}bps_above_${envelope.maxExpectedSlippageBps.toFixed(4)}bps`);
   }
-  if (envelope.stage > 1 && envelope.remainingDailyProfitCapacityUsd > 0
-      && plan.netProfitUsd > envelope.remainingDailyProfitCapacityUsd) {
-    scale = Math.min(scale, envelope.remainingDailyProfitCapacityUsd / plan.netProfitUsd * 0.9);
-    reasons.push('expected_profit_exceeds_remaining_daily_realized_profit_capacity');
-  }
   return { needed: reasons.length > 0 && scale < 0.999, scale: Math.max(0.01, Math.min(1, scale)), reasons };
 }
 
@@ -69,7 +65,6 @@ function planWithinOperatingEnvelope(plan: VerifiedArbitragePlan): boolean {
   if (Number.isFinite(impact) && impact > envelope.maxExpectedSlippageBps + 1e-9) return false;
   if (envelope.stage > 1) {
     if (!envelope.newExposureAllowed) return false;
-    if (plan.netProfitUsd > envelope.remainingDailyProfitCapacityUsd + 1e-9) return false;
     if (plan.notionalUsd > envelope.recommendedMaxNotionalUsd + 1e-9) return false;
   }
   return Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0;
@@ -100,7 +95,7 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
         const refinedBound = Math.max(1e-6, initialBound * refinement.scale);
         const refined = await underlyingEvaluateOnce({ ...request, notionalUsd: refinedBound });
         if (refined) plan = refined;
-        logger.info('[AdaptiveProfitOperations] CEX plan received one bounded depth/profit-cap refinement', {
+        logger.info('[AdaptiveProfitOperations] CEX plan received one bounded depth/slippage refinement', {
           component: 'AdaptiveProfitOperationsWiring',
           symbol: plan.symbol,
           originalRequestedNotionalUsd: requested,
@@ -166,9 +161,9 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     const underlyingRequireAllowed = governance.requireAllowed.bind(governance);
     governance.requireAllowed = mark((action: GovernanceAction, context?: { chain?: string; pair?: string; venue?: string }): void => {
       underlyingRequireAllowed(action, context);
-      // Both the profit ceiling and restart treasury barrier block NEW exposure
-      // only. SUBMIT_TX remains available so already-open exposure can always be
-      // cancelled, hedged, settled, or flattened.
+      // The restart treasury barrier blocks NEW exposure only. SUBMIT_TX remains
+      // available so already-open exposure can always be cancelled, hedged,
+      // settled, or flattened. Realized-profit telemetry is never an exposure cap.
       if (action !== 'EXECUTE_OPPORTUNITY') return;
 
       const treasuryBarrier = getTreasuryExecutionBarrier();
@@ -181,13 +176,11 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
 
       const envelope = getAdaptiveProfitOperatingEnvelope();
       if (!envelope.newExposureAllowed) {
-        throw new GovernanceError('CONSTRAINT_VIOLATION', 'Adaptive operating-day realized-profit envelope reached; new exposure is paused until the next operating-day capacity is available', {
+        throw new GovernanceError('CONSTRAINT_VIOLATION', 'StageManager does not currently authorize new exposure', {
+          stage: envelope.stage,
           operatingLadderDay: envelope.operatingLadderDay,
-          operatingLadderActivatedAt: envelope.operatingLadderActivatedAt,
-          dailyProfitCapUsd: envelope.dailyProfitCapUsd,
-          operatingDayRealizedProfitUsd: envelope.operatingDayRealizedProfitUsd,
+          operatingDayRealizedProfitUsdTelemetryOnly: envelope.operatingDayRealizedProfitUsd,
           rolling24hRealizedProfitUsdTelemetryOnly: envelope.rolling24hRealizedProfitUsd,
-          remainingDailyProfitCapacityUsd: envelope.remainingDailyProfitCapacityUsd,
           settlementAndFlatteningStillAllowed: true,
         });
       }
@@ -202,9 +195,9 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
   const envelope = getAdaptiveProfitOperatingEnvelope();
   logger.info('[AdaptiveProfitOperations] Terminal-realized profit operating envelope installed/reasserted', {
     component: 'AdaptiveProfitOperationsWiring',
-    dailyProfitCapUsd: envelope.dailyProfitCapUsd,
+    dailyProfitCapUsdTelemetryOnly: envelope.dailyProfitCapUsd,
     operatingLadderDay: envelope.operatingLadderDay,
-    operatingDayRealizedProfitUsd: envelope.operatingDayRealizedProfitUsd,
+    operatingDayRealizedProfitUsdTelemetryOnly: envelope.operatingDayRealizedProfitUsd,
     rolling24hRealizedProfitUsdTelemetryOnly: envelope.rolling24hRealizedProfitUsd,
     recommendedMaxNotionalUsd: envelope.recommendedMaxNotionalUsd,
     maxExpectedSlippageBps: envelope.maxExpectedSlippageBps,
@@ -218,6 +211,7 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     wrapperOrderResilient: true,
     newExposureGateOnly: true,
     restartTreasuryBarrierIntegrated: true,
+    realizedProfitCapAuthoritative: false,
     settlementHedgeFlatteningExemptFromProfitCap: true,
     notionalAuthority: 'profit_ladder_capital_allowance',
     legacyStagePositionCapAuthoritative: false,

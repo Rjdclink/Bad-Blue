@@ -4,9 +4,16 @@ import {
   centralizedExchangeExecutor,
   type ArbitrageExecutionResult,
 } from '../execution/centralized-exchange-executor.js';
+import { getExactSystemCapitalOrderAssetDeltas } from '../execution/cex-system-capital-settlement-evidence.js';
+import { applyExactCexSystemOwnedSettlement } from '../execution/cex-system-owned-lot-ledger.js';
 import { createPostOnlyMakerAdapters } from '../execution/post-only-maker-adapters.js';
 import { getMakerLifecycleTraceId } from '../execution/maker-lifecycle-trace.js';
 import { isMakerRecoveryPlan } from '../execution/stablecoin-maker-strategy.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
+import {
+  getProfitLadderNotionalAuthority,
+  type ProfitLadderNotionalAuthoritySnapshot,
+} from '../governance/profit-ladder-notional-authority.js';
 import { getMakerPaperProofStats } from '../intelligence/maker-microstructure-proof.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 
@@ -72,6 +79,46 @@ function executionGuard(plan: ReturnType<typeof asMakerPlan>): string | null {
 function asMakerPlan(plan: VerifiedArbitragePlan) {
   if (!isMakerRecoveryPlan(plan)) throw new Error('maker plan required');
   return plan;
+}
+
+async function persistMakerSystemOwnedSettlement(
+  plan: VerifiedArbitragePlan,
+  result: ArbitrageExecutionResult,
+  traceId: string,
+  notionalAuthority: ProfitLadderNotionalAuthoritySnapshot,
+): Promise<void> {
+  const orders = (result.orders || []).filter(order => order.terminal && (order.filledQuantity ?? 0) > 0);
+  if (orders.length === 0) return;
+  if (!notionalAuthority.aligned || !(notionalAuthority.maxNotionalUsd > 0) || plan.notionalUsd > notionalAuthority.maxNotionalUsd + 1e-9) {
+    throw new Error(`Maker admission-time Profit Ladder proof does not authorize notional ${plan.notionalUsd}`);
+  }
+  const authority = {
+    strategySelectionAuthority: 'cryptara' as const,
+    notionalAuthority: 'profit_ladder' as const,
+    executionAuthority: 'stage_manager' as const,
+    governanceAdmitted: true as const,
+    reference: `maker:${traceId}:profit-ladder:${notionalAuthority.rungKey}:${notionalAuthority.evaluatedAt}`,
+    profitLadderRung: notionalAuthority.rungKey,
+    profitLadderMaxNotionalUsd: notionalAuthority.maxNotionalUsd,
+    admittedParentNotionalUsd: plan.notionalUsd,
+    stage: notionalAuthority.stage,
+    tierId: notionalAuthority.tierId,
+    makerLifecycleTraceId: traceId,
+    admissionEvaluatedAt: notionalAuthority.evaluatedAt,
+  };
+
+  for (const order of orders) {
+    if (order.venue === 'coinbase') {
+      throw new Error(`SYSTEM_CAPITAL_PROVENANCE_DEFICIT:coinbase:${order.symbol}:Coinbase operator balance cannot acquire maker system-owned authority`);
+    }
+    const evidence = await getExactSystemCapitalOrderAssetDeltas(order);
+    await applyExactCexSystemOwnedSettlement({
+      evidence,
+      opportunityId: traceId,
+      strategy: 'stablecoin_maker_recovery',
+      authority,
+    });
+  }
 }
 
 export function ensureStablecoinMakerExecutionWiring(): void {
@@ -143,9 +190,38 @@ export function ensureStablecoinMakerExecutionWiring(): void {
       settlementTimeoutMs: ttl.ttlMs,
       pollIntervalMs,
     });
+    const admissionNotionalAuthority = getProfitLadderNotionalAuthority();
     const startedAt = Date.now();
     try {
       const result = await executor.execute(plan);
+      if (process.env.NODE_ENV === 'production') {
+        try {
+          await persistMakerSystemOwnedSettlement(plan, result, traceId, admissionNotionalAuthority);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          getCryptocrawlGovernance().pause('system', 'cex_system_capital_settlement_persistence_failed');
+          logger.error('[MakerRecovery] Terminal maker trade truth preserved but system-owned capital persistence failed; further trading paused', {
+            component: 'StablecoinMakerExecutionWiring',
+            traceId,
+            symbol: plan.symbol,
+            status: result.status,
+            settlementConfirmed: result.settlementConfirmed,
+            error: message,
+            operatorBalanceFallbackUsed: false,
+          });
+          return {
+            ...result,
+            error: result.error || `CEX_SYSTEM_CAPITAL_ACCOUNTING_FAILED:${message}`,
+            normalized: result.normalized
+              ? {
+                  ...result.normalized,
+                  provenance: [...new Set([...result.normalized.provenance, 'cex_system_capital_accounting_failed_fail_closed'])],
+                  error: result.normalized.error || `Maker system-capital ownership persistence failed after terminal settlement: ${message}`,
+                }
+              : result.normalized,
+          };
+        }
+      }
       logger.info('[MakerRecovery] Maker lifecycle terminal result', {
         component: 'StablecoinMakerExecutionWiring',
         traceId,

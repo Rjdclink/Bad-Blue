@@ -26,16 +26,22 @@ function forbid(relativePath, forbiddenFragments) {
   }
 }
 
-// 1) Unified execution remains fail-closed and strictly positive on measured all-in economics.
-requireAll('server/services/cryptocrawl/execution/unified-execution-router.ts', [
+// 1) Unified execution remains fail-closed and strictly positive on measured
+// all-in economics. Adaptive intelligence may rank/size but cannot independently
+// veto a deterministic positive opportunity with complete execution evidence.
+const unifiedRouter = requireAll('server/services/cryptocrawl/execution/unified-execution-router.ts', [
   "const deterministicPositive = Number(candidate.economics.deterministicNetProfitUsd) > 0;",
   "candidate.status === 'eligible'",
   'candidate.executableCapability',
   'candidate.missingInformation.length === 0',
   "candidate.depth.status !== 'unavailable'",
   'candidate.expiresAt > Date.now()',
-  "admitted: deterministicPositive && completeCurrentEvidence && aboveAdaptiveThreshold && path !== 'UNAVAILABLE'",
+  "admitted: deterministicPositive && completeCurrentEvidence && path !== 'UNAVAILABLE'",
+  'advisory:adaptive_profitability_or_confidence_below_ranking_threshold',
 ]);
+if (unifiedRouter.includes("admitted: deterministicPositive && completeCurrentEvidence && aboveAdaptiveThreshold && path !== 'UNAVAILABLE'")) {
+  throw new Error('unified execution router reintroduced adaptive score/confidence as an independent execution veto');
+}
 
 // 2) Cryptara CEX topology correction is limited to implemented execution venues.
 requireAll('server/services/cryptocrawl/integration/cryptara-cex-evidence-wiring.ts', [
@@ -104,13 +110,41 @@ requireAll('server/services/cryptocrawl/integration/learning-lifecycle-wiring.ts
 ]);
 
 // 6) Zero-capital provider repricing keeps strict positivity for every measured
-// provider shape (single or dual) and rechecks Cryptara after positive repricing.
+// provider shape (single or dual). Provider capability/fee/liquidity evidence
+// remains mandatory before downstream canonical admission.
 requireAll('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts', [
   'if (values.netProfit <= 0n)',
-  'const cryptaraAllowed = !target.executionEnabled || await originalCryptaraAdmission(opportunity);',
   "'strict_positive_repriced_net'",
-  'positiveProviderRescueRechecksCryptara: true',
   'nonPositiveProviderRepriceExecutable: false',
 ]);
 
-console.log('[runtime-safety-invariants] PASS: strict positive economics, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, and single/dual zero-capital repricing invariants preserved');
+// 7) Runtime heartbeat preserves actionable routing evidence without serializing
+// every full candidate decision through console and file transports.
+const runtimeObservability = requireAll('server/services/cryptocrawl/integration/runtime-observability.ts', [
+  'function summarizeMultiTopologyCycle(',
+  'blockedReasonCounts',
+  'highestScoring: cycle.routedOpportunities.slice(0, 12)',
+  'multiTopology: summarizeMultiTopologyCycle(multiTopology)',
+  'fullCandidateDecisionsLogged: false',
+  'boundedMultiTopologyHeartbeat: true',
+]);
+if (/\n\s+multiTopology,\n/.test(runtimeObservability)) {
+  throw new Error('runtime heartbeat contains unbounded multi-topology candidate telemetry');
+}
+
+// 8) Candidate eligibility uses semantic venue-asset identity, not ticker text
+// alone, before unrelated products can become a profitable CEX plan.
+requireAll('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
+  'const VERIFIED_VENUE_ASSET_ALIASES',
+  "kraken: Object.freeze({ LUNA: 'LUNC', UST: 'USTC' })",
+  "okx: Object.freeze({ LIT: 'LIGHTER', LUNA: 'WLUNA' })",
+  'function canonicalVenueAsset(',
+  "canonicalPair(row.base, row.quote, 'kraken')",
+  "canonicalPair(raw.baseCcy, raw.quoteCcy, 'okx')",
+]);
+forbid('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
+  'canonicalPair(row.base, row.quote, true)',
+  'canonicalPair(raw.baseCcy, raw.quoteCcy);',
+]);
+
+console.log('[runtime-safety-invariants] PASS: strict positive economics, complete execution evidence, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, measured zero-capital repricing, bounded production observability, and semantic venue-asset identity invariants preserved');

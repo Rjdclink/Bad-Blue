@@ -69,7 +69,8 @@ const required = [
   ['router', "'MEV_ATOMIC'", 'MEV route'],
   ['router', "candidate.status === 'eligible'", 'eligible-only execution routing'],
   ['router', 'candidate.missingInformation.length === 0', 'complete-evidence routing'],
-  ['router', 'deterministicPositive && completeCurrentEvidence && aboveAdaptiveThreshold', 'combined adaptive admission gate'],
+  ['router', "admitted: deterministicPositive && completeCurrentEvidence && path !== 'UNAVAILABLE'", 'combined canonical admission gate'],
+  ['router', 'advisory:adaptive_profitability_or_confidence_below_ranking_threshold', 'adaptive threshold advisory-only telemetry'],
   ['compatibility', 'routeMeasuredOpportunity(candidate)', 'compatibility selector delegates to unified router'],
   ['compatibility', 'score: routed.score.profitabilityScore', 'compatibility selector uses sole score authority'],
   ['compatibility', 'scoring_authority=UnifiedExecutionRouter:ProfitabilityScore', 'explicit sole scoring authority'],
@@ -170,6 +171,7 @@ forbid('assembler', /executionAuthority:\s*true/, 'composite direct execution au
 forbid('assembler', /sharedPrincipalStackedBps:\s*arithmeticLegBpsSum/, 'arithmetic BPS promoted as shared-principal BPS');
 forbid('liquidation', /deterministicNetProfitUsd:\s*[1-9]/, 'invented liquidation profit');
 forbid('providerEconomics', /availableLiquidity:\s*Number\.POSITIVE_INFINITY/, 'assumed infinite provider liquidity');
+forbid('router', /admitted:\s*deterministicPositive\s*&&\s*completeCurrentEvidence\s*&&\s*aboveAdaptiveThreshold/, 'adaptive threshold independent execution veto');
 
 if (failures.length) {
   console.error('Unified multi-leg adaptive engine verification FAILED');
@@ -181,6 +183,7 @@ console.log('Unified multi-leg adaptive engine verification PASSED');
 console.log(' - all measured discovery sources launch in parallel without a fixed source priority');
 console.log(' - UnifiedExecutionRouter remains the sole ProfitabilityScore authority');
 console.log(' - cold start requires current evidence, not historical profit history');
+console.log(' - adaptive score/confidence remain ranking telemetry and cannot independently veto complete positive-net execution');
 console.log(' - Stage 1 cannot directly submit trades or fabricate terminal settlement history');
 console.log(' - terminal outcomes remain the learning and realized-profit authority');
 console.log(' - Balancer, Aave and dual-provider permission changes invalidate stale quotes and require immediate fresh re-quote');

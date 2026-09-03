@@ -75,12 +75,47 @@ export function resolveConfiguredWalletAddress(environment: NodeJS.ProcessEnv = 
   return resolveExecutionWalletAddress(environment);
 }
 
+/** Legacy payout-address resolver. After canonical bootstrap this is repaired to primary. */
 export function resolveTerminalPayoutAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
   try {
     return normalizeEvmAddress('CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS);
   } catch {
     return null;
   }
+}
+
+/**
+ * Primary realized-profit payout destination. The private key is never exposed or
+ * transmitted; only its canonical public Ethereum address is used as the recipient.
+ */
+export function resolvePrimaryProfitPayoutAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
+  const privateKey = normalizePrivateKey(environment.WALLET_PRIVATE_KEY);
+  return privateKey ? walletFromPrivateKey(privateKey).address : null;
+}
+
+/**
+ * Independent Railway-address redundancy. Prefer CRYPTO_PAYOUT_WALLET_ADDRESS;
+ * preserve any distinct legacy CRYPTO_PROFIT_WALLET_ADDRESS before canonical
+ * bootstrap repairs that legacy name to the signer-derived primary address.
+ * A duplicate of the primary recipient is not a redundancy and resolves to null.
+ */
+export function resolvePayoutFallbackAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
+  const primary = resolvePrimaryProfitPayoutAddress(environment);
+  const primaryLower = primary?.toLowerCase() || '';
+
+  for (const [name, raw] of [
+    ['CRYPTO_PAYOUT_WALLET_ADDRESS', environment.CRYPTO_PAYOUT_WALLET_ADDRESS],
+    ['CRYPTOCRAWL_RAILWAY_PAYOUT_FALLBACK_ADDRESS', environment.CRYPTOCRAWL_RAILWAY_PAYOUT_FALLBACK_ADDRESS],
+    ['CRYPTO_PROFIT_WALLET_ADDRESS', environment.CRYPTO_PROFIT_WALLET_ADDRESS],
+  ] as const) {
+    try {
+      const candidate = normalizeEvmAddress(name, raw);
+      if (candidate && candidate.toLowerCase() !== primaryLower) return candidate;
+    } catch {
+      // Invalid redundancy values never override the canonical signer-derived primary.
+    }
+  }
+  return null;
 }
 
 export function resolveOperationalProfitRecipient(
@@ -114,12 +149,10 @@ export function assertConfiguredWalletAddress(privateKey: string, configuredAddr
 
 /**
  * Establish one operational signer/wallet identity while preserving legacy env
- * names only as in-process aliases for older bridge code. Any historical alias
- * value is repaired to the WALLET_PRIVATE_KEY-derived address. The deprecated
- * duplicate signer/public-key variables are never read as authority.
- *
- * CRYPTO_PROFIT_WALLET_ADDRESS is deliberately excluded: it is the terminal
- * cash-out destination, never an operational trading/bridge signer identity.
+ * names only as in-process aliases for older bridge/payout code. Any historical
+ * operational alias is repaired to the WALLET_PRIVATE_KEY-derived address. A
+ * distinct explicit Railway payout address is preserved first as fallback-only
+ * metadata so compatibility repair cannot erase the redundancy.
  */
 export function installCanonicalWalletConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
@@ -132,16 +165,16 @@ export function installCanonicalWalletConfiguration(
     throw new Error('WALLET_PRIVATE_KEY is not a valid 32-byte EVM private key');
   }
 
-  const rawTerminalPayout = environment.CRYPTO_PROFIT_WALLET_ADDRESS?.trim();
-  const terminalPayoutAddress = resolveTerminalPayoutAddress(environment);
-  const terminalPayoutReason = rawTerminalPayout && !terminalPayoutAddress
-    ? 'CRYPTO_PROFIT_WALLET_ADDRESS is not a valid 20-byte EVM address; terminal sweep remains disabled while trading can continue'
+  const primaryPayoutAddress = resolvePrimaryProfitPayoutAddress(environment);
+  const fallbackPayoutAddress = resolvePayoutFallbackAddress(environment);
+  const terminalPayoutReason = !primaryPayoutAddress
+    ? 'WALLET_PRIVATE_KEY is unavailable or invalid; primary realized-profit payout remains disabled while observation may continue'
     : undefined;
 
   if (!privateKey) {
     return {
       executionAddress: resolveExecutionWalletAddress(environment).address,
-      terminalPayoutAddress,
+      terminalPayoutAddress: primaryPayoutAddress,
       terminalPayoutReason,
       bridgeAliasInstalled: false,
       acrossAliasInstalled: false,
@@ -153,14 +186,20 @@ export function installCanonicalWalletConfiguration(
   const bridgeAliasInstalled = environment.BRIDGE_WALLET_ADDRESS?.trim() !== executionAddress;
   const acrossAliasInstalled = environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS?.trim() !== executionAddress;
 
-  // Compatibility only: existing bridge code still reads these names, but they
-  // can no longer represent a second wallet or signer identity.
+  if (fallbackPayoutAddress && fallbackPayoutAddress.toLowerCase() !== executionAddress.toLowerCase()) {
+    environment.CRYPTOCRAWL_RAILWAY_PAYOUT_FALLBACK_ADDRESS = fallbackPayoutAddress;
+  }
+
+  // Compatibility only: existing code that still reads historical wallet names
+  // cannot disagree with the canonical signer-derived primary recipient. The
+  // preserved fallback above remains separate and has no signing authority.
   environment.BRIDGE_WALLET_ADDRESS = executionAddress;
   environment.CRYPTOCRAWL_ACROSS_DEPOSITOR_ADDRESS = executionAddress;
+  environment.CRYPTO_PROFIT_WALLET_ADDRESS = executionAddress;
 
   return {
     executionAddress,
-    terminalPayoutAddress,
+    terminalPayoutAddress: primaryPayoutAddress,
     terminalPayoutReason,
     bridgeAliasInstalled,
     acrossAliasInstalled,

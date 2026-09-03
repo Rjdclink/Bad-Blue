@@ -79,6 +79,73 @@ function executionConfiguration() {
   };
 }
 
+function summarizeMultiTopologyCycle(
+  cycle: ReturnType<typeof multiTopologyDiscoveryController.getLatestCycle>,
+) {
+  if (!cycle) return null;
+
+  let admitted = 0;
+  const blockedReasonCounts: Record<string, number> = {};
+  for (const decision of cycle.routedOpportunities) {
+    if (decision.admitted) admitted += 1;
+    for (const reason of decision.reasons) {
+      if (!reason.startsWith('blocked:')) continue;
+      blockedReasonCounts[reason] = (blockedReasonCounts[reason] || 0) + 1;
+    }
+  }
+
+  return {
+    cycleId: cycle.cycleId,
+    startedAt: cycle.startedAt,
+    completedAt: cycle.completedAt,
+    candidateCounts: {
+      cex: cycle.cexCandidates,
+      dex: cycle.dexCandidates,
+      crossChain: cycle.crossChainCandidates,
+      mempool: cycle.mempoolCandidates,
+      liquidation: cycle.liquidationCandidates,
+      maker: cycle.makerCandidates,
+      funding: cycle.fundingCandidates,
+    },
+    durationMsByTopology: cycle.durationMsByTopology,
+    scanPriorities: cycle.scanPriorities,
+    admissionPolicy: cycle.admissionPolicy,
+    assemblyPolicy: cycle.assemblyPolicy,
+    routedOpportunities: {
+      evaluated: cycle.routedOpportunities.length,
+      admitted,
+      blocked: cycle.routedOpportunities.length - admitted,
+      blockedReasonCounts: Object.fromEntries(
+        Object.entries(blockedReasonCounts)
+          .sort((left, right) => right[1] - left[1])
+          .slice(0, 24),
+      ),
+      highestScoring: cycle.routedOpportunities.slice(0, 12).map(decision => ({
+        opportunityId: decision.opportunityId,
+        topology: decision.topology,
+        path: decision.path,
+        admitted: decision.admitted,
+        profitabilityScore: decision.score.profitabilityScore,
+        executionRisk: decision.score.executionRisk,
+        confidenceLevel: decision.score.confidenceLevel,
+        reasons: decision.reasons.filter(reason => reason.startsWith('blocked:')).slice(0, 8),
+      })),
+    },
+    compositePlan: cycle.compositePlan ? {
+      planId: cycle.compositePlan.planId,
+      selectedLegCount: cycle.compositePlan.selectedLegCount,
+      selectedExecutionPath: cycle.compositePlan.selectedExecutionPath,
+      executionMode: cycle.compositePlan.executionMode,
+      notionalWeightedNetProfitBps: cycle.compositePlan.notionalWeightedNetProfitBps,
+      sharedPrincipalStackedBps: cycle.compositePlan.sharedPrincipalStackedBps,
+      exactCompositeSimulation: cycle.compositePlan.exactCompositeSimulation,
+    } : null,
+    registry: cycle.registry,
+    errors: cycle.errors.slice(0, 12),
+    fullCandidateDecisionsLogged: false,
+  };
+}
+
 export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
   if (heartbeatRunning) return;
   heartbeatRunning = true;
@@ -121,9 +188,32 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const coinStatsEnvironment = resolveCoinStatsEnvironment();
     const rpcSnapshot = blockchainProviderSnapshot();
     const criticalRpcReady = rpcSnapshot.some(chain => chain.providers.some(provider => provider.http === 'healthy'));
-    const graphFreshMs = Math.max(15_000, Number(process.env.CRYPTOCRAWL_OPPORTUNITY_GRAPH_FRESH_MS || 30_000));
+    const configuredGraphFreshMs = Math.max(15_000, Number(process.env.CRYPTOCRAWL_OPPORTUNITY_GRAPH_FRESH_MS || 30_000));
+    const graphCycleDurationMs = graph ? Math.max(0, graph.completedAt - graph.startedAt) : 0;
+    // A completed cycle remains fresh through one measured cycle duration plus
+    // its adaptive rescan delay and a heartbeat scheduling margin. A fixed 30s
+    // window incorrectly marked healthy 37-114s scans stale while they ran.
+    const measuredGraphFreshMs = graph
+      ? graphCycleDurationMs + Math.max(1_000, graph.capacity.recommendedIntervalMs) + 15_000
+      : 0;
+    const graphFreshMs = Math.max(configuredGraphFreshMs, Math.min(300_000, measuredGraphFreshMs));
     const graphReady = !!graph && graph.completedAt >= Date.now() - graphFreshMs && graph.evaluatedSymbols > 0;
+    const discoveryEvidenceCount = Math.max(
+      candidateMetrics.observed,
+      graph?.observedCandidatesRegistered ?? 0,
+      graph?.publicDiscoveryObservations ?? 0,
+    );
     const inventory = cexInventoryLedger.getSnapshots();
+    const spendableInventory = inventory.filter(snapshot => {
+      const spendable = snapshot.available
+        - snapshot.reserved
+        - snapshot.payoutReserved
+        - snapshot.pendingOrder
+        - snapshot.pendingTransfer
+        - snapshot.minimumReserve;
+      return Number.isFinite(spendable) && spendable > 0;
+    });
+    const spendableInventoryVenues = new Set(spendableInventory.map(snapshot => snapshot.venue)).size;
     const rebalance = inventoryRebalancer.getStatus();
     const mcCalibration = monteCarloCalibrationStore.getMetrics();
     const bookEvolution = orderBookEvolutionStore.getStatus();
@@ -138,12 +228,15 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       coreMarketDataReady,
       criticalRpcReady,
       graphReady,
-      observedOpportunities: recentMinute.observedOpportunities,
+      discoveryEvidenceCount,
+      canonicalObservedOpportunities: recentMinute.observedOpportunities,
       schedulerRunning: scheduler.running,
       noExecutionGuardEnabled: execution.noExecutionGuardEnabled,
       liveExecutionEnabled: execution.liveExecutionEnabled,
       liveExecutionConfirmed: execution.liveExecutionConfirmed,
       reconciledInventoryAssets: inventory.length,
+      spendableInventoryAssets: spendableInventory.length,
+      spendableInventoryVenues,
       eligibleCandidates: candidateMetrics.eligible,
       eligibleCexCandidates: candidateMetrics.byTopology.CEX_CEX.eligible,
       eligibleZeroCapitalCandidates: candidateMetrics.byTopology.ZERO_CAPITAL_ATOMIC.eligible,
@@ -153,7 +246,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       zeroCapitalExecutionEnabled,
     });
 
-    readiness.DISCOVERY_READY.detail += `; selectedSymbols=${graph?.selectedSymbols ?? 0}; multiTopologyObserved=${candidateMetrics.observed}`;
+    readiness.DISCOVERY_READY.detail += `; freshnessThresholdMs=${graphFreshMs}; lastCycleDurationMs=${graphCycleDurationMs}; selectedSymbols=${graph?.selectedSymbols ?? 0}; multiTopologyObserved=${candidateMetrics.observed}`;
 
     logger.info('[CryptoRuntime] Authoritative runtime heartbeat', {
       component: 'CryptoRuntimeObservability',
@@ -178,9 +271,13 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       discovery: {
         cex: graph ? {
           cycleId: graph.cycleId,
+          cycleTrigger: graph.cycleTrigger,
           topology: graph.topology,
           startedAt: graph.startedAt,
           completedAt: graph.completedAt,
+          cycleDurationMs: graphCycleDurationMs,
+          freshnessThresholdMs: graphFreshMs,
+          discoveryEvidenceCount,
           universeAssets: graph.universeAssets,
           selectedSymbols: graph.selectedSymbols,
           evaluatedSymbols: graph.evaluatedSymbols,
@@ -191,7 +288,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
           economicBarrier,
           errors: graph.errors,
         } : null,
-        multiTopology,
+        multiTopology: summarizeMultiTopologyCycle(multiTopology),
         candidateRegistry: candidateMetrics,
       },
       opportunities: {
@@ -262,6 +359,11 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       venues: getVenueCapabilities(),
       inventory: {
         reconciled: inventory,
+        readiness: {
+          spendableAssets: spendableInventory.length,
+          spendableVenues: spendableInventoryVenues,
+          crossVenuePotentiallyRoutable: spendableInventory.length > 0 && spendableInventoryVenues >= 2,
+        },
         rebalance,
         zeroCapitalResourcesAreCexInventory: false,
       },
@@ -332,6 +434,7 @@ export function ensureCryptoRuntimeObservability(): void {
     measuredOpportunityGraphTelemetry: true,
     cexEconomicBarrierTelemetry: true,
     multiTopologyCandidateTelemetry: true,
+    boundedMultiTopologyHeartbeat: true,
     inventoryTelemetry: true,
     monteCarloCalibrationTelemetry: true,
     orderBookEvolutionTelemetry: true,

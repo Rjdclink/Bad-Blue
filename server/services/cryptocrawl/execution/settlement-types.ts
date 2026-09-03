@@ -8,12 +8,20 @@ export type ExecutionStatus =
   | 'settlement_unknown';
 
 export interface ExecutionFill {
+  /** Numeric telemetry/economics view retained for existing consumers. */
   quantity: number;
   price: number;
   feeAmount: number | null;
   feeAsset: string | null;
   timestamp: number | null;
   tradeId?: string;
+  /**
+   * Exchange-native decimal evidence. Ownership/provenance accounting MUST use
+   * these strings (plus authenticated asset decimals), never the numeric fields.
+   */
+  quantityDecimal?: string;
+  priceDecimal?: string;
+  feeAmountDecimal?: string | null;
 }
 
 export interface NormalizedOrderSettlement {
@@ -34,6 +42,11 @@ export interface NormalizedOrderSettlement {
   terminalAt: number | null;
   finalBalances?: Record<string, string>;
   error?: string;
+  /** Exact exchange decimal strings for physical system-capital accounting. */
+  requestedQuantityDecimal?: string;
+  filledQuantityDecimal?: string | null;
+  averageFillPriceDecimal?: string | null;
+  feeAmountDecimal?: string | null;
 }
 
 export interface PredictedExecutionEconomics {

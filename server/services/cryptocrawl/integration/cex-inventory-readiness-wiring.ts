@@ -210,6 +210,10 @@ export function ensureCexInventoryReadinessWiring(): void {
  * scheduler; it cannot synthesize balances or grant execution permission.
  */
 export async function refreshCexInventoryReadinessNow(): Promise<CexInventoryReadinessSnapshot> {
+  const reusableForMs = Math.max(10_000, Math.min(freshnessWindowMs(), latest.nextRefreshMs || baseRefreshMs()));
+  if (latest.observedAt > 0 && Date.now() - latest.observedAt < reusableForMs) {
+    return getCexInventoryReadinessSnapshot();
+  }
   await runRefresh();
   return getCexInventoryReadinessSnapshot();
 }

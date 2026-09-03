@@ -1,4 +1,5 @@
 import { okxPrivateRequest } from './cex-private-authority.js';
+import { resolveOkxAccountFeeRates } from './okx-account-fee-authority.js';
 import { getOkxExecutionRestBaseUrl } from './okx-region-authority.js';
 import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
@@ -78,18 +79,6 @@ function rateToBps(rate: number): number {
   // OKX rates are signed decimals: negative = charged fee, positive = rebate.
   // Convert to signed BPS cost so rebates remain economically negative costs.
   return -rate * 10_000;
-}
-
-function selectFeeRow(row: any, groupId: string | null): { taker: number; maker: number | null; rpiMaker: number | null } | null {
-  const groups = Array.isArray(row?.feeGroup) ? row.feeGroup : [];
-  const group = groupId
-    ? groups.find((candidate: any) => String(candidate?.groupId ?? '') === groupId)
-    : groups.length === 1 ? groups[0] : null;
-  const taker = finite(group?.taker ?? row?.taker);
-  if (taker === null) return null;
-  const maker = finite(group?.maker ?? row?.maker);
-  const rpiMaker = finite(group?.rpiMaker ?? group?.elpMaker ?? row?.rpiMaker ?? row?.elpMaker);
-  return { taker, maker, rpiMaker };
 }
 
 export function getOkxSpotRpiMinimumNotionalUsd(): number {
@@ -183,25 +172,27 @@ export async function getOkxRpiExecutionCapability(
   if (existing) return existing;
 
   const promise = (async (): Promise<OkxRpiExecutionCapability | null> => {
-    const [account, publicMeta, feeResponse] = await Promise.all([
+    const [account, publicMeta, feeRates] = await Promise.all([
       getAccountInstrumentSnapshot(forceFresh),
       getPublicRpiMetadata(constraints.exchangeSymbol),
-      okxPrivateRequest('/api/v5/account/trade-fee', 'GET', {
+      resolveOkxAccountFeeRates({
         instType: 'SPOT',
-        ...(constraints.feeGroupId ? { groupId: constraints.feeGroupId } : { instId: constraints.exchangeSymbol }),
-      }, { lane: 'trade_fee' }),
+        ...(constraints.feeGroupId
+          ? { groupId: constraints.feeGroupId, expectedGroupId: constraints.feeGroupId }
+          : { instId: constraints.exchangeSymbol }),
+        forceRefresh: forceFresh,
+      }),
     ]);
     const accountRow = account.byInstId.get(constraints.exchangeSymbol) || null;
     const rawPermission = String(accountRow?.rpi ?? accountRow?.elp ?? '').trim();
     const permissionState = rawPermission === '0' || rawPermission === '1' || rawPermission === '2'
       ? rawPermission
       : null;
-    const selected = selectFeeRow(feeResponse.data?.[0], constraints.feeGroupId);
-    if (!selected || selected.rpiMaker === null) return null;
+    if (feeRates.rpiMaker === null) return null;
 
-    const takerFeeBps = rateToBps(selected.taker);
-    const standardMakerFeeBps = selected.maker === null ? null : rateToBps(selected.maker);
-    const rpiMakerFeeBps = rateToBps(selected.rpiMaker);
+    const takerFeeBps = rateToBps(feeRates.taker);
+    const standardMakerFeeBps = feeRates.maker === null ? null : rateToBps(feeRates.maker);
+    const rpiMakerFeeBps = rateToBps(feeRates.rpiMaker);
     const rpiSavingsVsStandardMakerBps = standardMakerFeeBps === null
       ? null
       : standardMakerFeeBps - rpiMakerFeeBps;

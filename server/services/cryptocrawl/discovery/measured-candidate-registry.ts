@@ -54,9 +54,7 @@ export interface MeasuredCandidate {
     bridgeUsd: number | null;
     expectedSlippageBps: number | null;
     expectedPriceImpactBps: number | null;
-    /** Measured or explicitly bounded notional used to convert realized P&L into realized BPS. */
     notionalUsd?: number | null;
-    /** Optional BPS decomposition. Populated where the topology has measured all-in economics. */
     grossProfitBps?: number | null;
     flashLoanFeeBps?: number | null;
     gasCostBps?: number | null;
@@ -101,6 +99,8 @@ export interface MeasuredCandidateMetrics {
     averageAllInCostBps: number | null;
   };
 }
+
+type EligibleCandidateListener = (candidate: MeasuredCandidate) => void;
 
 function clone(candidate: MeasuredCandidate): MeasuredCandidate {
   return {
@@ -166,7 +166,13 @@ function isNearBreakEven(candidate: MeasuredCandidate): boolean {
 
 class MeasuredCandidateRegistry {
   private readonly candidates = new Map<string, MeasuredCandidate>();
+  private readonly eligibleListeners = new Set<EligibleCandidateListener>();
   private readonly maxEntries = Math.max(512, Math.min(20_000, Number(process.env.CRYPTOCRAWL_CANDIDATE_REGISTRY_MAX || 4096)));
+
+  onEligible(listener: EligibleCandidateListener): () => void {
+    this.eligibleListeners.add(listener);
+    return () => this.eligibleListeners.delete(listener);
+  }
 
   record(input: Omit<MeasuredCandidate, 'updatedAt'>): MeasuredCandidate {
     if (!input.opportunityId.trim()) throw new Error('Measured candidate requires opportunityId');
@@ -191,6 +197,7 @@ class MeasuredCandidateRegistry {
     };
     this.candidates.set(next.opportunityId, next);
     this.prune();
+    this.notifyEligible(previous, next);
     return clone(next);
   }
 
@@ -209,6 +216,7 @@ class MeasuredCandidateRegistry {
     if (patch?.quoteAgeMs !== undefined) next.quoteAgeMs = patch.quoteAgeMs;
     if (patch?.depth) next.depth = { ...patch.depth };
     this.candidates.set(opportunityId, next);
+    this.notifyEligible(previous, next);
     return clone(next);
   }
 
@@ -288,6 +296,17 @@ class MeasuredCandidateRegistry {
         averageAllInCostBps: average(allInCostBps),
       },
     };
+  }
+
+  private notifyEligible(previous: MeasuredCandidate | undefined, next: MeasuredCandidate): void {
+    if (next.status !== 'eligible') return;
+    if (previous?.status === 'eligible' && previous.updatedAt === next.updatedAt) return;
+    const snapshot = clone(next);
+    queueMicrotask(() => {
+      for (const listener of this.eligibleListeners) {
+        try { listener(clone(snapshot)); } catch { /* listener failures cannot corrupt candidate state */ }
+      }
+    });
   }
 
   private prune(): void {

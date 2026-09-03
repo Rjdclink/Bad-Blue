@@ -327,15 +327,27 @@ class BadBlueWorker {
     scheduleNext();
   }
 
+  private async probeDatabaseAuthority(): Promise<void> {
+    if (process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY === 'true') {
+      const { pool: overflowPool } = await import(
+        './services/cryptocrawl/runtime/cryptocrawl-runtime-database.js'
+      );
+      await overflowPool.query('SELECT 1');
+      return;
+    }
+
+    const { db } = await import('./db');
+    if ((db as any).execute) await (db as any).execute('SELECT 1');
+    else if ((db as any).query) await (db as any).query('SELECT 1');
+  }
+
   private scheduleDatabaseHeartbeat() {
     const isRailway = process.env.RAILWAY_ENVIRONMENT === 'production' || !!process.env.RAILWAY_PROJECT_ID;
     const interval = isRailway ? 10 * 60 * 1000 : 30 * 60 * 1000;  // Doubled for 50% Groq reduction
 
     const run = async () => {
       try {
-        const { db } = await import('./db');
-        if ((db as any).execute) await (db as any).execute('SELECT 1');
-        else if ((db as any).query) await (db as any).query('SELECT 1');
+        await this.probeDatabaseAuthority();
         if (this.consecutiveDbFailures > 0) {
           this.consecutiveDbFailures = 0;
           this.dbRepairAttempts = 0;
@@ -533,10 +545,8 @@ class BadBlueWorker {
     try {
       // DB latency quick check
       try {
-        const { db } = await import('./db');
         const start = Date.now();
-        if ((db as any).execute) await (db as any).execute('SELECT 1');
-        else await (db as any).query('SELECT 1');
+        await this.probeDatabaseAuthority();
         const latency = Date.now() - start;
         if (latency > 2000) {
           await this.recordAlert({

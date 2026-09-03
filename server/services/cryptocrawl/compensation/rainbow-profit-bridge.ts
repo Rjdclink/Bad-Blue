@@ -1,7 +1,18 @@
 import logger from '../../../logger.js';
 
-const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
-const SUPABASE_SERVICE_KEY = (process.env.SUPABASE_SERVICE_KEY || '').trim();
+// CryptoCrawler treasury authority lives only on Overflow. If the Overflow URL or
+// Overflow service credential is unavailable, immediate wake-up fails closed and
+// durable Overflow state remains pending. General/Primary Supabase variables are
+// deliberately not accepted as a payout-control-plane fallback.
+const SUPABASE_URL = (
+  process.env.SUPABASE_URL_OVERFLOW ||
+  ''
+).trim().replace(/\/$/, '');
+const SUPABASE_SERVICE_KEY = (
+  process.env.SUPABASE_SECRET_KEY_OVERFLOW ||
+  process.env.SUPABASE_SERVICEROLE_OVERFLOW_KEY ||
+  ''
+).trim();
 const WAKE_TIMEOUT_MS = Math.max(2_000, Math.min(30_000, Number(process.env.CRYPTO_RAINBOW_WORKER_WAKE_TIMEOUT_MS || 8_000)));
 
 type TreasuryWakeReason = 'terminal_profit_recorded' | 'startup_reconcile' | 'terminal_candidate';
@@ -9,11 +20,11 @@ type TreasuryWakeReason = 'terminal_profit_recorded' | 'startup_reconcile' | 'te
 /**
  * Rainbow Bridge is deliberately a wake-up client, not an exchange-withdrawal
  * authority. The single durable payout/terminal-sweep authority lives in the
- * Supabase Edge Function so a Railway process restart cannot create a second
- * converter, transfer agent, or withdrawal signer.
+ * Overflow Supabase Edge Function so a Railway process restart cannot create a
+ * second converter, transfer agent, or withdrawal signer.
  *
- * pg_cron remains the independent fallback. A wake merely asks the same worker
- * to process already-persisted treasury state sooner.
+ * The independent scheduler remains the fallback. A wake merely asks the same
+ * Overflow worker to process already-persisted treasury state sooner.
  */
 class RainbowProfitBridge {
   private inFlight: Promise<boolean> | null = null;
@@ -21,10 +32,12 @@ class RainbowProfitBridge {
 
   async wake(reason: TreasuryWakeReason = 'terminal_profit_recorded'): Promise<boolean> {
     if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-      logger.warn('[RainbowBridge] Immediate payout-worker wake unavailable; durable cron fallback remains authoritative', {
+      logger.warn('[RainbowBridge] Immediate payout-worker wake unavailable; durable Overflow scheduler remains authoritative', {
         component: 'RainbowProfitBridge',
-        supabaseUrlConfigured: Boolean(SUPABASE_URL),
-        serviceKeyConfigured: Boolean(SUPABASE_SERVICE_KEY),
+        overflowSupabaseUrlConfigured: Boolean(SUPABASE_URL),
+        overflowServiceKeyConfigured: Boolean(SUPABASE_SERVICE_KEY),
+        payoutAuthority: 'overflow_only',
+        primaryFallbackUsed: false,
         payoutAuthorityDuplicated: false,
       });
       return false;
@@ -65,12 +78,14 @@ class RainbowProfitBridge {
       if (payload?.ok === false) throw new Error(String(payload?.error || payload?.reason || 'treasury worker rejected wake'));
       return true;
     } catch (error) {
-      logger.warn('[RainbowBridge] Immediate worker wake deferred; persistent treasury state remains for cron retry', {
+      logger.warn('[RainbowBridge] Immediate worker wake deferred; persistent Overflow treasury state remains for scheduler retry', {
         component: 'RainbowProfitBridge',
         reason,
         error: error instanceof Error ? error.message : String(error),
+        payoutAuthority: 'overflow_only',
+        primaryFallbackUsed: false,
         payoutAuthorityDuplicated: false,
-        durableCronFallback: true,
+        durableSchedulerFallback: true,
       });
       return false;
     } finally {

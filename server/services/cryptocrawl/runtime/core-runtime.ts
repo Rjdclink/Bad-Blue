@@ -1,10 +1,15 @@
 import logger from '../../../logger.js';
 import { installCanonicalWalletConfiguration } from '../core/wallet-identity.js';
+import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
 import {
   createCryptoCrawlerCoreLifecycle,
   type CryptoCrawlerCoreLifecycle,
 } from './core-runtime-lifecycle.js';
 import { ensureCryptocrawlOverflowRuntimeSchema } from './cryptocrawl-overflow-runtime-schema.js';
+import {
+  ensureSystemCapitalPlacementReconciliation,
+  stopSystemCapitalPlacementReconciliation,
+} from './system-capital-placement-wiring.js';
 import { ensureZeroCapitalRealizedProfitWiring } from './zero-capital-realized-profit-wiring.js';
 
 let lifecyclePromise: Promise<CryptoCrawlerCoreLifecycle> | null = null;
@@ -63,9 +68,11 @@ function scheduleRainbowProfitBridge(): void {
 
 async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
   if (!lifecyclePromise) {
+    // Install the canonical Stage-1 live-pilot policy before any discovery or
+    // scheduler module can start. The bootstrap authority mutates StageManager's
+    // shared StageConfig object rather than bypassing governance callers.
+    ensureStageOneBootstrapAuthority();
     ensureCanonicalWalletConfiguration();
-    // Same idempotent settlement authority used by canonical runtime wiring.
-    // Install it before any lifecycle-owned zero-cap execution can start.
     ensureZeroCapitalRealizedProfitWiring();
     lifecyclePromise = Promise.all([
       import('./positive-profit-capture-wiring.js'),
@@ -127,13 +134,10 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
  * Producer-specific provider/rate failures degrade only their own topology.
  */
 export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
-  // Global application readiness remains independent from CryptoCrawler-specific
-  // schema. Production discovery/execution is admitted only after the complete
-  // Overflow-owned execution/governance/settlement schema verifies. Primary is
-  // cold/archive state and must never be a synchronous runtime prerequisite.
   if (process.env.NODE_ENV === 'production') {
     await ensureCryptocrawlOverflowRuntimeSchema();
   }
+  ensureStageOneBootstrapAuthority();
   ensureCanonicalWalletConfiguration();
   ensureZeroCapitalRealizedProfitWiring();
   const lifecycle = await getLifecycle();
@@ -141,6 +145,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   started = lifecycle.isStarted();
   scheduleCoinbaseReadinessProbe();
   scheduleRainbowProfitBridge();
+  ensureSystemCapitalPlacementReconciliation();
 
   if (!changed) return;
   logger.info('[CryptoCoreRuntime] Canonical core runtime started', {
@@ -152,6 +157,9 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     optionalProviderFailureBlocksCore: false,
     positiveProfitCapturePolicy: 'strict_all_in_net_gt_zero',
     arbitraryBpsExecutionFloor: false,
+    stageOneExecutionPolicy: 'constrained_live_positive_execution',
+    stageProgressionRole: 'bounded_scaling_not_execution_veto',
+    stageProgressionWake: 'eligible_candidate_event_driven',
     makerRecoveryEconomics: 'authenticated_fees_plus_fresh_books',
     hybridCexExecution: 'maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
     authenticatedFeeObservation: 'canonical_cex_fee_resolver_only_with_batched_cached_rate_governed_telemetry',
@@ -166,6 +174,8 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     lowLatencyExecutionCorrectnessPolicyInstalled: true,
     marketFocusPolicyInstalled: true,
     zeroCapitalRealizedProfitPolicyInstalledBeforeLifecycle: true,
+    systemCapitalPlacementReconciliation: 'core_owned_pending_hash_reconciliation_only',
+    systemCapitalPlacementCreatesAllocations: false,
     coinbaseReadinessProbeScheduled: true,
     rainbowProfitBridgeScheduled: true,
     canonicalWalletArchitectureInstalled: true,
@@ -176,6 +186,7 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
 }
 
 export async function stopCryptoCrawlerCoreRuntime(): Promise<void> {
+  stopSystemCapitalPlacementReconciliation();
   if (!lifecyclePromise) {
     started = false;
     return;

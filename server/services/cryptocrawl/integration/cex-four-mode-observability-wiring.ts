@@ -64,7 +64,7 @@ function triggerCanonicalPositiveRevalidation(positive: readonly CexModeEconomic
   // and all-in economics. MT/TM can now become canonical only through the
   // maker-first/fresh-taker-requote execution wiring installed in the runtime.
   void import('../discovery/opportunity-graph.js')
-    .then(({ measuredOpportunityGraph }) => measuredOpportunityGraph.scanOnce())
+    .then(({ measuredOpportunityGraph }) => measuredOpportunityGraph.revalidateSymbols(symbols))
     .then(cycle => {
       logger.info('[CexFourMode] Positive observation triggered canonical economic revalidation', {
         component: 'CexFourModeObservabilityWiring',
@@ -72,6 +72,9 @@ function triggerCanonicalPositiveRevalidation(positive: readonly CexModeEconomic
         canonicalDeterministicPositive: cycle.deterministicPositive,
         canonicalEligibleCandidates: cycle.eligibleCandidates,
         canonicalCycleId: cycle.cycleId,
+        canonicalCycleTrigger: cycle.cycleTrigger,
+        targetedRevalidation: true,
+        coalescedIntoOlderFullScan: false,
         authority: 'scheduling_trigger_only',
         observationExecutionAuthority: false,
         canonicalHybridExecutionPathAvailable: true,

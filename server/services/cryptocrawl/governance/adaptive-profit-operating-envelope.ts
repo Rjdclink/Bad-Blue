@@ -191,7 +191,7 @@ export function getAdaptiveProfitOperatingEnvelope(now = Date.now()): AdaptivePr
     dailyProfitCapUsd,
     rolling24hRealizedProfitUsd,
     remainingDailyProfitCapacityUsd,
-    newExposureAllowed: state.currentStage > 1,
+    newExposureAllowed: stageManager.canExecuteTrades(),
     recommendedMaxNotionalUsd,
     ladderMaxNotionalUsd,
     stageMaxPositionUsd,

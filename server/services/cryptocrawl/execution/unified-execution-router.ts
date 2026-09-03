@@ -40,16 +40,10 @@ function preferredPath(candidate: MeasuredCandidate): UnifiedExecutionPath {
     case 'LIQUIDATION':
       return 'FLASH_LOAN_LIQUIDATION';
     case 'FUNDING_ARBITRAGE':
-      // A funding candidate is not a routable trade merely because projected
-      // carry exists. The lifecycle must have a registered venue adapter that can
-      // open, monitor, close and settle both legs with actual funding/fee evidence.
       return fundingPositionLifecycle.getRegisteredVenues().includes(candidate.venues[0] as 'okx' | 'kraken')
         ? 'SPOT_PERP_FUNDING'
         : 'UNAVAILABLE';
     case 'MEMPOOL_BACKRUN':
-      // The strict relay executor accepts an already-built exact signed bundle,
-      // but no canonical compiler currently proves post-victim state and all-in
-      // profit. Do not advertise a dispatch path until that compiler exists.
       return 'UNAVAILABLE';
     default:
       return 'UNAVAILABLE';
@@ -82,7 +76,7 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
 
   if (!deterministicPositive) reasons.push('blocked:deterministic_all_in_net_not_positive');
   if (!completeCurrentEvidence) reasons.push('blocked:current_execution_evidence_incomplete');
-  if (!aboveAdaptiveThreshold) reasons.push('blocked:adaptive_profitability_or_confidence_threshold');
+  if (!aboveAdaptiveThreshold) reasons.push('advisory:adaptive_profitability_or_confidence_below_ranking_threshold');
   if (path === 'CEX_MAKER' && !candidate.executableCapability) reasons.push('blocked:maker_live_executor_not_authoritative');
   if (path === 'BRIDGE_FLASH_LOAN' && !candidate.executableCapability) reasons.push('blocked:cross_chain_terminal_executor_not_authoritative');
   if (path === 'FLASH_LOAN_LIQUIDATION' && !candidate.executableCapability) reasons.push('blocked:liquidation_economics_or_executor_not_authoritative');
@@ -95,7 +89,10 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
     path,
     score,
     threshold,
-    admitted: deterministicPositive && completeCurrentEvidence && aboveAdaptiveThreshold && path !== 'UNAVAILABLE',
+    // Adaptive intelligence is ranking/sizing evidence only. It cannot veto a
+    // deterministic all-in positive opportunity with complete current execution
+    // evidence and an authoritative live path.
+    admitted: deterministicPositive && completeCurrentEvidence && path !== 'UNAVAILABLE',
     reasons,
   };
 }

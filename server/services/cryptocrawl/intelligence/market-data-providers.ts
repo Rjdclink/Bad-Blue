@@ -101,6 +101,58 @@ function getCoinStatsApiKey(): { apiKey: string | undefined; sourceName: string 
   return { apiKey, sourceName: resolution.sourceName, state: resolution.state };
 }
 
+const ZEROX_CREDENTIAL_SOURCES = [
+  'ZEROX_API_KEY',
+  'ZERO_EX_API_KEY',
+  'ZERO_CAPITAL_ZEROX_API_KEY',
+  '0X_API_KEY',
+  'OX_API_KEY',
+  'ZERO_X_API_KEY',
+] as const;
+let activeZeroXCredentialSource: typeof ZEROX_CREDENTIAL_SOURCES[number] | null = null;
+
+function zeroXCredentialCandidates(): Array<{ sourceName: typeof ZEROX_CREDENTIAL_SOURCES[number]; apiKey: string }> {
+  const seen = new Set<string>();
+  const ordered = activeZeroXCredentialSource
+    ? [activeZeroXCredentialSource, ...ZEROX_CREDENTIAL_SOURCES]
+    : [...ZEROX_CREDENTIAL_SOURCES];
+  return [...new Set(ordered)].flatMap(sourceName => {
+    const apiKey = process.env[sourceName]?.trim();
+    if (!apiKey || seen.has(apiKey)) return [];
+    seen.add(apiKey);
+    return [{ sourceName, apiKey }];
+  });
+}
+
+function isZeroXAuthenticationOrEntitlementFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /HTTP\s+(401|403)\b|cannot consume this service|unauthorized|forbidden/i.test(message);
+}
+
+async function fetchZeroXPayload(url: string): Promise<{ payload: any; sourceName: string }> {
+  const candidates = zeroXCredentialCandidates();
+  if (candidates.length === 0) throw new Error('No supported 0x API credential is visible');
+  const failures: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      const payload = await fetchJsonWithRetry<any>(url, {
+        init: { headers: { accept: 'application/json', '0x-api-key': candidate.apiKey, '0x-version': 'v2' } },
+        maxRetries: activeZeroXCredentialSource === candidate.sourceName ? 2 : 0,
+        baseDelayMs: 250,
+        maxDelayMs: 2_000,
+        timeoutMs: 4_000,
+      });
+      activeZeroXCredentialSource = candidate.sourceName;
+      return { payload, sourceName: candidate.sourceName };
+    } catch (error) {
+      if (!isZeroXAuthenticationOrEntitlementFailure(error)) throw error;
+      failures.push(candidate.sourceName);
+      if (activeZeroXCredentialSource === candidate.sourceName) activeZeroXCredentialSource = null;
+    }
+  }
+  throw new Error(`0x authentication or product entitlement rejected for ${failures.length} visible credential source(s): ${failures.join(', ')}`);
+}
+
 class MarketDataProviders {
   private universeCache: CacheEntry<MarketUniverseAsset[]> | null = null;
   private lastUniverse: MarketUniverseAsset[] = [];
@@ -282,9 +334,9 @@ class MarketDataProviders {
     takerAddress?: string;
     purpose?: ZeroXRequestPurpose;
   }): Promise<DexQuoteObservation | null> {
-    const apiKey = process.env.ZEROX_API_KEY?.trim();
-    if (!apiKey) {
-      this.setProviderStatus('0x', 'unavailable', 'ZEROX_API_KEY is not configured');
+    const credentialCandidates = zeroXCredentialCandidates();
+    if (credentialCandidates.length === 0) {
+      this.setProviderStatus('0x', 'unavailable', `No supported 0x credential is configured; checked ${ZEROX_CREDENTIAL_SOURCES.join(', ')}`);
       return null;
     }
 
@@ -312,10 +364,8 @@ class MarketDataProviders {
       return null;
     }
 
-    const promise = fetchJsonWithRetry<any>(
-      `https://api.0x.org/swap/allowance-holder/${policy.endpoint}?chainId=${request.chainId}&sellToken=${encodeURIComponent(request.sellToken)}&buyToken=${encodeURIComponent(request.buyToken)}&sellAmount=${encodeURIComponent(request.sellAmount)}${policy.includeTaker ? `&taker=${encodeURIComponent(policy.takerAddress!)}` : ''}`,
-      { init: { headers: { accept: 'application/json', '0x-api-key': apiKey, '0x-version': 'v2' } }, maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2_000, timeoutMs: 4_000 },
-    ).then(payload => {
+    const requestUrl = `https://api.0x.org/swap/allowance-holder/${policy.endpoint}?chainId=${request.chainId}&sellToken=${encodeURIComponent(request.sellToken)}&buyToken=${encodeURIComponent(request.buyToken)}&sellAmount=${encodeURIComponent(request.sellAmount)}${policy.includeTaker ? `&taker=${encodeURIComponent(policy.takerAddress!)}` : ''}`;
+    const promise = fetchZeroXPayload(requestUrl).then(({ payload, sourceName }) => {
       const sellAmount = Number(request.sellAmount);
       const buyAmount = Number(payload?.buyAmount);
       const route = Array.isArray(payload?.route?.fills) ? payload.route.fills.map((fill: any) => ({
@@ -369,7 +419,11 @@ class MarketDataProviders {
         source: '0x',
       } : null;
       this.quoteCache.set(key, { value: observation, expiresAt: Date.now() + ZEROX_TTL_MS });
-      this.setProviderStatus('0x', observation ? 'live' : 'failed', observation ? policy.reason : '0x returned no usable buy amount');
+      this.setProviderStatus(
+        '0x',
+        observation ? 'live' : 'failed',
+        observation ? `${policy.reason}; authenticated via ${sourceName}` : '0x returned no usable buy amount',
+      );
       return observation;
     }).catch((error: unknown) => {
       this.quoteCache.set(key, { value: null, expiresAt: Date.now() + ZEROX_TTL_MS });

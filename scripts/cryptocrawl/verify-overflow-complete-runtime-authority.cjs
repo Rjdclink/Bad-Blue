@@ -84,6 +84,7 @@ const coordination = fs.readFileSync(path.join(cryptoRoot, 'runtime/database-coo
 const bootstrap = fs.readFileSync(path.join(repoRoot, 'server/cryptara-bootstrap-entry.ts'), 'utf8');
 const docker = fs.readFileSync(path.join(repoRoot, 'Dockerfile'), 'utf8');
 const buildRouter = fs.readFileSync(path.join(repoRoot, 'scripts/cryptocrawl/build-server-overflow-authority.mjs'), 'utf8');
+const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
 
 const requirePattern = (source, pattern, message) => {
   if (!pattern.test(source)) violations.push(message);
@@ -135,6 +136,12 @@ requirePattern(buildRouter, /primaryConfigDependencyRemoved\s*=\s*true/, 'produc
 requirePattern(buildRouter, /primaryFallbackUsed:\s*false/, 'production build proof must declare no Primary fallback');
 requirePattern(buildRouter, /redirectedPrimaryDbImports:\s*redirected/, 'production build proof must enumerate redirected Primary DB imports');
 requirePattern(buildRouter, /auxiliaryOverflowPoolUnified:\s*auxiliaryPoolUnified/, 'production build proof must record auxiliary pool unification');
+if (packageJson.scripts?.['build:server'] !== 'node scripts/cryptocrawl/build-server-overflow-authority.mjs server/index.ts dist/index.js') {
+  violations.push('package build:server must use the sole Overflow-authority build pipeline');
+}
+if (fs.existsSync(path.join(repoRoot, 'scripts/cryptocrawl/build-server-with-attestation.mjs'))) {
+  violations.push('parallel server builder bypassing Overflow authority is forbidden');
+}
 
 requirePattern(
   docker,

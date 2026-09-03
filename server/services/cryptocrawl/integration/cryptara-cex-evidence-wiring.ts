@@ -1,11 +1,11 @@
 import type Cryptara from '../../cryptara/index.js';
-import {
-  getCryptara,
-  type CryptaraOpportunityAssessment,
-  type CryptaraOpportunityContext,
+import type {
+  CryptaraOpportunityAssessment,
+  CryptaraOpportunityContext,
 } from '../../cryptara/index.js';
 import { createLogger } from '../../../logger.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { ensureCryptaraAssessmentWiring } from './cryptara-assessment-wiring.js';
 import { ensureCryptaraProviderConsensusWiring } from './cryptara-provider-consensus-wiring.js';
 
 const log = createLogger('CryptaraCexEvidenceWiring');
@@ -103,12 +103,15 @@ function correctCexMempoolApplicability(
 }
 
 /**
- * Topology adapter layered after the existing Cryptara assessment authority.
+ * Topology adapter layered after the authoritative Cryptara assessment stack.
  * It changes no economics, Monte Carlo output, or execution thresholds. It only
  * removes the on-chain mempool completeness penalty from implemented CEX_CEX plans.
  */
 export function ensureCryptaraCexEvidenceWiring(): Cryptara {
-  const instance = getCryptara();
+  // Always install the bootstrap-aware Monte Carlo / canonical assessment stack
+  // before wrapping it with CEX topology applicability. This removes entry-point
+  // order dependence without changing any execution or profitability authority.
+  const instance = ensureCryptaraAssessmentWiring();
   if (installed.has(instance)) return instance;
   installed.add(instance);
 
@@ -125,6 +128,7 @@ export function ensureCryptaraCexEvidenceWiring(): Cryptara {
 
   log.info('Cryptara CEX topology evidence wiring installed', {
     cexVenues: [...CEX_EXECUTION_VENUES],
+    assessmentAuthority: 'bootstrap_aware_canonical_stack',
     mempoolEvidenceApplicability: 'not_applicable_for_CEX_CEX',
     unsupportedVenueCompletenessCorrectionAllowed: false,
     syntheticMempoolEvidenceCreated: false,

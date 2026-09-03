@@ -70,10 +70,10 @@ export interface ProfitLadderTier {
 }
 
 const MODE_BY_STAGE: Record<StageNumber, SystemMode> = {
-  1: 'advisory', 2: 'proof_based', 3: 'dry_run', 4: 'limited_autonomy', 5: 'supervised', 6: 'conditional',
+  1: 'proof_based', 2: 'proof_based', 3: 'dry_run', 4: 'limited_autonomy', 5: 'supervised', 6: 'conditional',
 };
 const AUTHORITY_BY_STAGE: Record<StageNumber, StageConfig['executionAuthority']> = {
-  1: 'none', 2: 'limited', 3: 'limited', 4: 'conditional', 5: 'supervised', 6: 'autonomous',
+  1: 'limited', 2: 'limited', 3: 'limited', 4: 'conditional', 5: 'supervised', 6: 'autonomous',
 };
 
 export const PROFIT_LADDER: ProfitLadderTier[] = [
@@ -141,12 +141,8 @@ export class StageGovernor extends EventEmitter {
   }
 
   canExecute(): { allowed: boolean; reason: string } {
-    const state = stageManager.getState();
     const gate = stageManager.canProceed();
     if (!gate.allowed) return { allowed: false, reason: gate.reason || 'Governance denied execution' };
-    if (state.currentStage === ManagedStage.STAGE_1_CONSTRAINED_PILOT) {
-      return { allowed: false, reason: 'Stage 1: Advisory only - no execution authority' };
-    }
     if (!stageManager.canExecuteTrades()) return { allowed: false, reason: 'Execution is not authorized for the current stage' };
     return { allowed: true, reason: 'Execution permitted within current stage bounds' };
   }

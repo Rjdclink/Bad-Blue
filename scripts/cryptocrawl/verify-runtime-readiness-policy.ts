@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { computeCryptoRuntimeReadiness } from '../../server/services/cryptocrawl/runtime/readiness-policy.js';
 
 const base = {
@@ -8,12 +9,15 @@ const base = {
   coreMarketDataReady: true,
   criticalRpcReady: true,
   graphReady: true,
-  observedOpportunities: 10,
+  discoveryEvidenceCount: 10,
+  canonicalObservedOpportunities: 0,
   schedulerRunning: true,
   noExecutionGuardEnabled: false,
   liveExecutionEnabled: true,
   liveExecutionConfirmed: true,
   reconciledInventoryAssets: 0,
+  spendableInventoryAssets: 0,
+  spendableInventoryVenues: 0,
   eligibleCandidates: 0,
   eligibleCexCandidates: 0,
   eligibleZeroCapitalCandidates: 0,
@@ -30,12 +34,29 @@ assert.equal(readiness.CANDIDATE_READY.ready, false);
 assert.equal(readiness.GOVERNANCE_READY.ready, false);
 assert.equal(readiness.EXECUTION_READY.ready, false);
 assert.equal(readiness.TRADING_READY.ready, false);
+assert.equal(readiness.DISCOVERY_READY.ready, true);
+assert.match(readiness.DISCOVERY_READY.detail, /discoveryEvidence=10/);
+
+// Discovery evidence is independent from the later canonical candidate funnel.
+// Canonical observations cannot substitute for raw measured discovery, and a
+// lack of profitable canonical candidates cannot make active discovery red.
+readiness = computeCryptoRuntimeReadiness({
+  ...base,
+  discoveryEvidenceCount: 0,
+  canonicalObservedOpportunities: 10,
+});
+assert.equal(readiness.DISCOVERY_READY.ready, false);
+
+readiness = computeCryptoRuntimeReadiness(base);
+assert.equal(readiness.DISCOVERY_READY.ready, true);
 
 // Canonical CEX trading can become ready only when an eligible CEX candidate,
 // reconciled CEX inventory, executable governance and live capability all agree.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   reconciledInventoryAssets: 4,
+  spendableInventoryAssets: 2,
+  spendableInventoryVenues: 2,
   eligibleCandidates: 1,
   eligibleCexCandidates: 1,
   stageCanExecute: true,
@@ -55,6 +76,8 @@ readiness = computeCryptoRuntimeReadiness({
   runtimeIdentitySafe: false,
   runtimeIdentityMismatch: true,
   reconciledInventoryAssets: 4,
+  spendableInventoryAssets: 2,
+  spendableInventoryVenues: 2,
   eligibleCandidates: 1,
   eligibleCexCandidates: 1,
   stageCanExecute: true,
@@ -65,6 +88,16 @@ assert.equal(readiness.EXECUTION_CAPABILITY_READY.ready, false);
 assert.equal(readiness.EXECUTION_READY.ready, false);
 assert.equal(readiness.TRADING_READY.ready, false);
 assert.match(readiness.EXECUTION_CAPABILITY_READY.detail, /runtimeIdentitySafe=false/);
+
+// Balance rows on only one venue are not cross-venue inventory readiness.
+readiness = computeCryptoRuntimeReadiness({
+  ...base,
+  reconciledInventoryAssets: 5,
+  spendableInventoryAssets: 1,
+  spendableInventoryVenues: 1,
+});
+assert.equal(readiness.INVENTORY_READY.ready, false);
+assert.match(readiness.INVENTORY_READY.detail, /spendableCexInventoryVenues=1/);
 
 // Zero-capital gas readiness is a separate topology and must never make a CEX
 // candidate appear resource-ready when reconciled CEX inventory is absent.
@@ -110,6 +143,8 @@ assert.match(readiness.DATA_READY.detail, /not required for core CEX discovery/)
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   reconciledInventoryAssets: 4,
+  spendableInventoryAssets: 2,
+  spendableInventoryVenues: 2,
   eligibleCandidates: 1,
   eligibleCexCandidates: 1,
   stageCanExecute: true,
@@ -119,5 +154,13 @@ readiness = computeCryptoRuntimeReadiness({
 assert.equal(readiness.EXECUTION_CAPABILITY_READY.ready, false);
 assert.equal(readiness.EXECUTION_READY.ready, false);
 assert.equal(readiness.TRADING_READY.ready, false);
+
+const observability = readFileSync(
+  'server/services/cryptocrawl/integration/runtime-observability.ts',
+  'utf8',
+);
+assert.match(observability, /graphCycleDurationMs \+ Math\.max\(1_000, graph\.capacity\.recommendedIntervalMs\) \+ 15_000/);
+assert.match(observability, /discoveryEvidenceCount = Math\.max/);
+assert.doesNotMatch(observability, /observedOpportunities: recentMinute\.observedOpportunities/);
 
 console.log('CryptoCrawler runtime readiness policy verification passed');
