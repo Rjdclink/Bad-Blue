@@ -73,9 +73,15 @@ const required = [
   ['router', "'FLASH_LOAN_LIQUIDATION'", 'liquidation route'],
   ['router', "'SPOT_PERP_FUNDING'", 'funding route'],
   ['router', "'MEV_ATOMIC'", 'MEV route'],
-  ['router', "candidate.status === 'eligible'", 'eligible-only execution routing'],
-  ['router', 'candidate.missingInformation.length === 0', 'complete-evidence routing'],
-  ['router', "admitted: deterministicPositive && completeCurrentEvidence && path !== 'UNAVAILABLE'", 'combined canonical admission gate'],
+  ['router', 'export interface AdvisoryEvidenceScores', 'advisory evidence score surface'],
+  ['router', 'advisoryOnly: true', 'evidence scoring cannot execute or veto independently'],
+  ['router', 'const deterministicPositive = Number.isFinite(deterministicNet) && deterministicNet > 0;', 'strict positive deterministic admission floor'],
+  ['router', 'const evidenceReacquisitionRequired = deterministicZero', 'unknown/zero evidence is reacquired'],
+  ['router', 'const admitted = deterministicPositive', 'positive-net canonical router admission'],
+  ['router', '&& pathAvailable', 'authoritative path requirement'],
+  ['router', '&& candidate.executableCapability', 'execution capability requirement'],
+  ['router', '&& fresh', 'freshness requirement'],
+  ['router', '&& depthReady;', 'depth readiness requirement'],
   ['router', 'advisory:adaptive_profitability_or_confidence_below_ranking_threshold', 'adaptive threshold advisory-only telemetry'],
   ['compatibility', 'routeMeasuredOpportunity(candidate)', 'compatibility selector delegates to unified router'],
   ['compatibility', 'score: routed.score.profitabilityScore', 'compatibility selector uses sole score authority'],
@@ -194,6 +200,8 @@ forbid('assembler', /executionAuthority:\s*true/, 'composite direct execution au
 forbid('assembler', /sharedPrincipalStackedBps:\s*arithmeticLegBpsSum/, 'arithmetic BPS promoted as shared-principal BPS');
 forbid('liquidation', /deterministicNetProfitUsd:\s*[1-9]/, 'invented liquidation profit');
 forbid('providerEconomics', /availableLiquidity:\s*Number\.POSITIVE_INFINITY/, 'assumed infinite provider liquidity');
+forbid('router', /candidate\.missingInformation\.length\s*===\s*0/, 'missing-information registry veto');
+forbid('router', /admitted:\s*deterministicPositive\s*&&\s*completeCurrentEvidence/, 'duplicate complete-evidence execution authority');
 forbid('router', /admitted:\s*deterministicPositive\s*&&\s*completeCurrentEvidence\s*&&\s*aboveAdaptiveThreshold/, 'adaptive threshold independent execution veto');
 forbid('arbitrageVerifier', /MAX_(?:NET_)?PROFIT|MAX_PROFIT_BPS|MAX_SPREAD_BPS|UNREALISTIC_(?:PROFIT|SPREAD)/i, 'profit/spread magnitude execution ceiling');
 forbid('riskGovernor', /estimatedProfitUSD\s*>\s*[1-9][0-9]*/, 'risk rejection based on high estimated profit magnitude');
@@ -208,7 +216,7 @@ console.log('Unified multi-leg adaptive engine verification PASSED');
 console.log(' - all measured discovery sources launch in parallel without a fixed source priority');
 console.log(' - UnifiedExecutionRouter remains the sole ProfitabilityScore authority');
 console.log(' - cold start requires current evidence, not historical profit history');
-console.log(' - adaptive score/confidence remain ranking telemetry and cannot independently veto complete positive-net execution');
+console.log(' - adaptive score/confidence and optional missing evidence remain ranking/reacquisition telemetry, not independent execution vetoes');
 console.log(' - rare/high-profit CEX observations trigger canonical fresh revalidation instead of a profit-magnitude veto');
 console.log(' - canonical CEX revalidation still requires synchronized books, authenticated fees, measured depth and all-in positive economics');
 console.log(' - Stage 1 cannot directly submit trades or fabricate terminal settlement history');
