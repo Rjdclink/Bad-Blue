@@ -31,7 +31,7 @@ const required = [
   [execution, 'profitVerified: true', 'terminal profit verification retained'],
   [barrier, "providerSpecificPayloadParity: ['balancer_v2', 'aave_v3', 'aave_balancer_dual']", 'dynamic barrier payload parity'],
   [barrier, 'buildDualFlashLoanReceiverPayload', 'dual path exact pre-broadcast simulation'],
-  [canonical, 'ensureDualProviderZeroCapitalExecutionWiring();', 'dual executor canonical installation'],
+  [canonical, "install('dual_provider_zero_capital_execution', () => ensureDualProviderZeroCapitalExecutionWiring());", 'dual executor canonical installation'],
   [compile, 'compileAaveBalancerDualFlashLoanReceiver', 'dual receiver compile path'],
   [deploy, 'DEPLOY_AAVE_BALANCER_DUAL_RECEIVER', 'explicit deployment confirmation'],
 ];
@@ -40,9 +40,9 @@ for (const [source, token, name] of required) {
   if (!source.includes(token)) throw new Error(`[aave-balancer-provider-mesh] missing invariant: ${name}`);
 }
 
-const providerIndex = canonical.indexOf('ensureProviderSpecificZeroCapitalExecutionWiring();');
-const dualIndex = canonical.indexOf('ensureDualProviderZeroCapitalExecutionWiring();');
-const barrierIndex = canonical.indexOf('ensureZeroCapitalDynamicAttemptBarrierWiring();');
+const providerIndex = canonical.indexOf("install('provider_specific_zero_capital_execution', () => ensureProviderSpecificZeroCapitalExecutionWiring());");
+const dualIndex = canonical.indexOf("install('dual_provider_zero_capital_execution', () => ensureDualProviderZeroCapitalExecutionWiring());");
+const barrierIndex = canonical.indexOf("install('zero_capital_dynamic_attempt_barrier', () => ensureZeroCapitalDynamicAttemptBarrierWiring());");
 if (!(providerIndex >= 0 && dualIndex > providerIndex && barrierIndex > dualIndex)) {
   throw new Error('[aave-balancer-provider-mesh] canonical wrapper order must be single-provider executor -> dual-provider executor -> dynamic exact barrier');
 }
