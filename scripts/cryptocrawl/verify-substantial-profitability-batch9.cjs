@@ -52,8 +52,10 @@ const behaviors = [
   ['zero', 'ZERO_CAPITAL_PROVIDER_MAX_UTILIZATION', 'provider utilization ceiling'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_MIN_HEADROOM_RATIO', 'provider liquidity headroom floor'],
   ['zero', 'calculateMeasuredFlashLoanFee', 'exact measured provider fee recomputation'],
-  ['zero', 'if (gap <= 5) return', 'near-gap dense sizing curve'],
+  ['zero', 'else if (gap <= 5)', 'near-gap dense sizing curve'],
   ['zero', 'gasPressureBps >= 25', 'gas-pressure sizing curve'],
+  ['zero', 'sharedResidualFractions', 'shared BPS Super Engine nonlinear sizing input'],
+  ['zero', 'buildBpsReductionSuperPlan', 'shared BPS Super Engine operational zero-capital plan'],
   ['zero', 'ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET', 'bounded exact quote budget'],
   ['zero', 'routeFamily(route)', 'route-family rescue diversity'],
   ['zero', 'ZERO_CAPITAL_RESCUE_HALF_LIFE_MS', 'candidate-age rescue decay'],
@@ -81,8 +83,8 @@ const behaviors = [
   ['transformWiring', 'closestByTopology', 'closest feasible rescue retained per topology'],
 ];
 
-if (behaviors.length !== 51) {
-  throw new Error(`[substantial-profitability-batch9] expected exactly 51 behavior checks after current-cycle cadence hardening, got ${behaviors.length}`);
+if (behaviors.length !== 53) {
+  throw new Error(`[substantial-profitability-batch9] expected exactly 53 behavior checks after shared BPS zero-capital operational wiring, got ${behaviors.length}`);
 }
 for (const [fileKey, pattern, name] of behaviors) {
   if (!source[fileKey].includes(pattern)) {
@@ -103,4 +105,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/profi
   throw new Error('[substantial-profitability-batch9] obsolete signal-count batch must not exist');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-one behavior-level profitability enhancements are present; current-cycle near-edge cadence is required; telemetry fields are not counted as enhancements; implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; shared BPS zero-capital sizing is operational, current-cycle near-edge cadence is required, telemetry fields are not counted as enhancements, and implemented CEX topology remains settlement-gated');
