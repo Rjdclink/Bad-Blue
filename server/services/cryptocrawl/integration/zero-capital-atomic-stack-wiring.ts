@@ -261,14 +261,34 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
 
   const originalAssessment = target.isAllowedByCryptara.bind(target);
   target.isAllowedByCryptara = async (opportunity): Promise<boolean> => {
-    const allowed = await originalAssessment(opportunity);
+    const canonicalPositive = opportunity.expectedProfit > 0n;
     const candidate = measuredCandidateRegistry.get(opportunity.id);
-    if (allowed && candidate?.executableCapability && opportunity.expectedProfit > 0n) {
+    if (canonicalPositive && candidate?.executableCapability) {
       measuredCandidateRegistry.updateStatus(opportunity.id, 'eligible', {
-        provenance: ['Cryptara:consider', 'zero_capital_assessment_eligible'],
+        provenance: ['canonical_positive_all_in_net', 'zero_capital_hard_facts_eligible'],
       });
     }
-    return allowed;
+
+    void originalAssessment(opportunity)
+      .then(allowed => {
+        const current = measuredCandidateRegistry.get(opportunity.id);
+        if (!current) return;
+        measuredCandidateRegistry.updateStatus(opportunity.id, current.status, {
+          provenance: [allowed
+            ? 'Cryptara:advisory_consider'
+            : 'Cryptara:advisory_reject_non_veto'],
+        });
+      })
+      .catch(error => {
+        logger.debug('[ZeroCapitalStack] Parallel Cryptara advisory degraded', {
+          component: 'ZeroCapitalAtomicStackWiring',
+          opportunityId: opportunity.id,
+          error: error instanceof Error ? error.message : String(error),
+          executionAuthority: false,
+        });
+      });
+
+    return canonicalPositive;
   };
 
   const originalScan = target.scanChain.bind(target);
@@ -277,9 +297,6 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     for (const opportunity of opportunities) zeroCapitalRouteEvidenceRegistry.record(opportunity);
     if (chain === 'europa' || opportunities.length < 2) return opportunities;
 
-    // Optional composite/stack optimization must never sit in the critical
-    // discover -> canonical profitability -> execute path. Launch it in parallel
-    // and return the individually executable profitable opportunities immediately.
     void (async () => {
       const wallet = target.executionWallets.get(chain);
       if (!wallet) return;
@@ -344,6 +361,7 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     measuredCompositionBenefitRequired: true,
     combinedProfitMustExceedIndividualProfitSum: true,
     realizedAttributionBeforeCompositeExecutionRequired: true,
+    cryptaraAssessmentAuthority: 'parallel_advisory_only',
     parallelAdvisoryOnly: true,
     individualOpportunityCriticalPathBlocked: false,
     executionAuthority: false,
