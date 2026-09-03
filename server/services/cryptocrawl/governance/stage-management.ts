@@ -16,7 +16,8 @@
  * - One canonical stage/pause/kill-switch authority
  * - No profit ceiling or cycle-completion execution halt
  * - Stage advancement does not pause otherwise-qualified execution
- * - Advisory uncertainty and ranking signals cannot independently veto execution
+ * - Advisory uncertainty, historical performance and Monte Carlo signals cannot
+ *   independently veto execution or Stage-2+ advancement
  * - Hard circuit-breaker, kill-switch, blocking-anomaly, funding, inventory,
  *   atomicity, and settlement facts remain authoritative where applicable
  */
@@ -65,6 +66,7 @@ export interface StageConfig {
   // Risk Parameters
   maxPositionSizeUSD: number;
   maxDrawdownPercent: number;
+  /** Compatibility telemetry flag. Monte Carlo never owns execution/advancement authority. */
   requiresMonteCarloConsensus: boolean;
 
   // Autonomy Level
@@ -104,7 +106,7 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
 
     maxPositionSizeUSD: 100,
     maxDrawdownPercent: 5,
-    requiresMonteCarloConsensus: true,
+    requiresMonteCarloConsensus: false,
 
     autonomyLevel: 'limited',
 
@@ -120,7 +122,7 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
   [Stage.STAGE_2_PROOF_OF_SIGNAL]: {
     stage: Stage.STAGE_2_PROOF_OF_SIGNAL,
     stageName: 'Proof-of-Signal Activation',
-    description: 'First live actions inside canonical measured execution bounds',
+    description: 'Live execution inside canonical measured execution bounds without historical-performance gates',
 
     canExecuteTrades: true,
     requiresHumanApproval: false,
@@ -135,7 +137,7 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
 
     maxPositionSizeUSD: 100,
     maxDrawdownPercent: 5,
-    requiresMonteCarloConsensus: true,
+    requiresMonteCarloConsensus: false,
 
     autonomyLevel: 'limited',
 
@@ -166,7 +168,7 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
 
     maxPositionSizeUSD: 500,
     maxDrawdownPercent: 10,
-    requiresMonteCarloConsensus: true,
+    requiresMonteCarloConsensus: false,
 
     autonomyLevel: 'limited',
 
@@ -197,7 +199,7 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
 
     maxPositionSizeUSD: 2000,
     maxDrawdownPercent: 12,
-    requiresMonteCarloConsensus: true,
+    requiresMonteCarloConsensus: false,
 
     autonomyLevel: 'conditional',
 
@@ -228,7 +230,7 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
 
     maxPositionSizeUSD: 5000,
     maxDrawdownPercent: 15,
-    requiresMonteCarloConsensus: true,
+    requiresMonteCarloConsensus: false,
 
     autonomyLevel: 'conditional',
 
@@ -259,7 +261,7 @@ export const STAGE_CONFIGS: Record<Stage, StageConfig> = {
 
     maxPositionSizeUSD: 10000,
     maxDrawdownPercent: 15,
-    requiresMonteCarloConsensus: true,
+    requiresMonteCarloConsensus: false,
 
     autonomyLevel: 'full',
 
@@ -334,7 +336,7 @@ export interface ProofMetrics {
   maxDrawdown: number;
   uptime: number;
 
-  // Monte Carlo validation
+  // Historical/Monte Carlo metrics are telemetry only for Stage 2+.
   monteCarloPassRate: number;
   monteCarloSimulations: number;
   liveValidationSamples: number;
@@ -343,7 +345,7 @@ export interface ProofMetrics {
   chainHealthy: boolean;
   lastLiveValidationAt?: number;
 
-  // Stage-specific requirements
+  // Hard stage-readiness result.
   meetsAdvancementCriteria: boolean;
 }
 
@@ -437,6 +439,8 @@ export class StageManager extends EventEmitter {
       isPaused: this.state.isPaused,
       stageOneLiveExecution: this.config.canExecuteTrades,
       profitCeilingExecutionAuthority: false,
+      monteCarloExecutionAuthority: false,
+      historicalPerformanceAdvancementAuthority: false,
       automaticCyclePauseAuthority: false,
     });
   }
@@ -627,7 +631,7 @@ export class StageManager extends EventEmitter {
     if (!this.state.proofMetrics.meetsAdvancementCriteria) {
       return {
         success: false,
-        message: 'Proof metrics do not meet advancement criteria',
+        message: 'Hard stage safety facts do not permit advancement',
       };
     }
 
@@ -786,19 +790,17 @@ export class StageManager extends EventEmitter {
       return m.chainHealthy &&
         m.liveValidationSamples >= 3 &&
         m.liveValidationPassRate >= 0.8 &&
-        !this.state.blockingAnomaly;
+        !this.state.blockingAnomaly &&
+        !this.state.killSwitchActive;
     }
 
-    if (m.totalTrades < 100) return false;
-    if (m.successRate < 0.6) return false;
-    if (m.sharpeRatio < 1.0) return false;
-    if (m.maxDrawdown > 0.2) return false;
-    if (m.monteCarloPassRate < 0.8) return false;
-
-    const requiredUptimeHours = 24 * 3;
-    if (m.uptime < requiredUptimeHours * 3600 * 1000) return false;
-
-    return true;
+    // Stage 2+ deliberately has no historical-performance requirement. Trade
+    // count, win rate, Sharpe, Monte Carlo pass rate and uptime remain telemetry
+    // only. Automatic advancement additionally requires the canonical Profit
+    // Ladder evidence and clear risk circuit breakers below.
+    return !this.state.blockingAnomaly &&
+      !this.state.killSwitchActive &&
+      this.state.currentDrawdownPercent <= this.config.maxDrawdownPercent;
   }
 
   private getAutomaticAdvancementBlockers(evidence: AutomaticAdvancementEvidence): string[] {
@@ -809,7 +811,7 @@ export class StageManager extends EventEmitter {
     if (this.state.manualHold) blockers.push('A human pause or stop override is active');
     if (this.state.killSwitchActive) blockers.push('Kill-switch is active');
     if (this.state.blockingAnomaly) blockers.push('Blocking anomaly is active');
-    if (!this.state.proofMetrics.meetsAdvancementCriteria) blockers.push('StageManager proof metrics do not meet the current stage criteria');
+    if (!this.state.proofMetrics.meetsAdvancementCriteria) blockers.push('Hard StageManager safety facts do not permit advancement');
     if (!evidence.risk.circuitBreakersClear) blockers.push(`Risk circuit breakers are tripped: ${evidence.risk.trippedCircuitBreakers.join(', ')}`);
     if (evidence.profitLadder.currentTierId !== this.state.currentStage - 1) {
       blockers.push('Profit-ladder tier is not aligned with the current governance stage');
@@ -935,7 +937,7 @@ export class StageManager extends EventEmitter {
     this.state.initialGasReadinessObservedAt = undefined;
     this.recordStateChange({
       initialGasReady: false,
-      initialGasReadinessStatus: 'PRE_STAGE_1_BOOTSTRAP',
+      initialGasReadinessStatus: this.state.initialGasReadinessStatus,
       initialGasReadinessObservedAt: undefined,
     });
     this.persistSoon();
@@ -1224,6 +1226,8 @@ export class StageManager extends EventEmitter {
       stage: this.config.stageName,
       isPaused: this.state.isPaused,
       advisoryUncertaintyExecutionAuthority: false,
+      monteCarloExecutionAuthority: false,
+      historicalPerformanceAdvancementAuthority: false,
     });
   }
 
