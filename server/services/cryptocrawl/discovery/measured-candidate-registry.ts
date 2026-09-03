@@ -73,6 +73,15 @@ export interface MeasuredCandidate {
   provenance: string[];
 }
 
+export type MeasuredCandidateUpdatePatch = Partial<Pick<MeasuredCandidate,
+  'economics' | 'missingInformation' | 'provenance' | 'executableCapability' | 'executionCapabilityReason' | 'quoteAgeMs' | 'depth'>> & {
+  /** Preserve legacy merge semantics unless an authoritative reacquisition pass
+   * explicitly says the supplied list is the complete current missing set. */
+  replaceMissingInformation?: boolean;
+  /** Evidence scanners may clear only the exact variables they actually resolved. */
+  resolvedMissingInformation?: readonly string[];
+};
+
 export interface MeasuredCandidateMetrics {
   windowMs: number;
   observed: number;
@@ -201,15 +210,26 @@ class MeasuredCandidateRegistry {
     return clone(next);
   }
 
-  updateStatus(opportunityId: string, status: MeasuredCandidateStatus, patch?: Partial<Pick<MeasuredCandidate,
-    'economics' | 'missingInformation' | 'provenance' | 'executableCapability' | 'executionCapabilityReason' | 'quoteAgeMs' | 'depth'>>): MeasuredCandidate | null {
+  updateStatus(
+    opportunityId: string,
+    status: MeasuredCandidateStatus,
+    patch?: MeasuredCandidateUpdatePatch,
+  ): MeasuredCandidate | null {
     const previous = this.candidates.get(opportunityId);
     if (!previous) return null;
     const next = clone(previous);
     next.status = status;
     next.updatedAt = Date.now();
     if (patch?.economics) next.economics = { ...patch.economics };
-    if (patch?.missingInformation) next.missingInformation = [...new Set([...previous.missingInformation, ...patch.missingInformation])];
+    if (patch?.replaceMissingInformation) {
+      next.missingInformation = [...new Set((patch.missingInformation || []).map(item => item.trim()).filter(Boolean))];
+    } else if (patch?.missingInformation) {
+      next.missingInformation = [...new Set([...previous.missingInformation, ...patch.missingInformation])];
+    }
+    if (patch?.resolvedMissingInformation?.length) {
+      const resolved = new Set(patch.resolvedMissingInformation.map(item => item.trim()).filter(Boolean));
+      next.missingInformation = next.missingInformation.filter(item => !resolved.has(item));
+    }
     if (patch?.provenance) next.provenance = [...new Set([...previous.provenance, ...patch.provenance])];
     if (patch?.executableCapability !== undefined) next.executableCapability = patch.executableCapability;
     if (patch?.executionCapabilityReason !== undefined) next.executionCapabilityReason = patch.executionCapabilityReason;
