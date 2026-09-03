@@ -108,10 +108,8 @@ function normalizeProbability(value: unknown): number | null {
 
 /**
  * Aries is wired into every measured Cryptara opportunity as a horizon advisory.
- * It deliberately cannot change the existing recommendation here: the existing
- * deterministic economics, Hyper MC and governance remain execution authority.
- * This gives Aries live measured inputs and observable output without creating a
- * new regression-capable bypass while calibration evidence accumulates.
+ * It deliberately cannot change the existing recommendation here: deterministic
+ * all-in economics and genuine hard execution facts remain the execution path.
  */
 function annotateAriesHorizonAdvisory(
   context: CryptaraOpportunityContext,
@@ -169,38 +167,30 @@ function normalizePositiveAssessment(
   const hybridPlan = isHybridCexRecoveryPlan(plan) ? plan : null;
   const makerCanary = makerPlan !== null || hybridPlan !== null;
   const criticalMissing = criticalMissingInformation(assessment.missingInformation, makerCanary);
-  if (criticalMissing.length > 0 || !assessment.monteCarlo) {
-    assessment.recommendation = 'observe';
-    assessment.provenance = [...new Set([
-      ...assessment.provenance,
-      'positive_profit_capture:critical_evidence_still_required',
-      'rank_non_authoritative_for_execution',
-    ])];
-    return assessment;
-  }
+  const probability = normalizeProbability(assessment.monteCarlo?.probabilityOfProfit);
+  const advisoryProbabilityFloor = makerCanary ? makerCanaryMinimumProbability() : 0.60;
 
-  const minimumProbability = makerCanary ? makerCanaryMinimumProbability() : 0.60;
-  if (!Number.isFinite(assessment.monteCarlo.probabilityOfProfit) || assessment.monteCarlo.probabilityOfProfit < minimumProbability) {
-    assessment.recommendation = 'reject';
-    assessment.provenance = [...new Set([
-      ...assessment.provenance,
-      makerCanary ? 'positive_profit_capture:maker_canary_hyper_mc_rejected' : 'positive_profit_capture:mc_risk_gate_retained',
-      'rank_non_authoritative_for_execution',
-    ])];
-    return assessment;
-  }
-
+  // Canonical sequence: discover -> measured all-in profitability -> execute.
+  // Cryptara/Monte Carlo/missing-information scoring remains parallel advisory
+  // and cannot independently demote or reject an already positive hard-fact plan.
   assessment.recommendation = 'consider';
   assessment.provenance = [...new Set([
     ...assessment.provenance,
     makerPlan
-      ? `positive_profit_capture:${makerPlan.makerExecution.strategy}:hyper_mc_qualified`
+      ? `positive_profit_capture:${makerPlan.makerExecution.strategy}:canonical_positive`
       : hybridPlan
-        ? `positive_profit_capture:hybrid_${hybridPlan.hybridExecution.mode.toLowerCase()}:hyper_mc_qualified`
+        ? `positive_profit_capture:hybrid_${hybridPlan.hybridExecution.mode.toLowerCase()}:canonical_positive`
         : 'positive_profit_capture:any_verified_net_gt_zero',
-    ...(makerPlan ? ['maker_canary_bootstrap:post_only_cancel_only'] : []),
-    ...(hybridPlan ? ['hybrid_maker_canary:maker_first_fresh_taker_requote'] : []),
+    ...(criticalMissing.length > 0 ? [`advisory_missing_information:${criticalMissing.join('|')}`] : []),
+    ...(probability === null
+      ? ['monte_carlo:advisory_unavailable_non_veto']
+      : probability < advisoryProbabilityFloor
+        ? [`monte_carlo:advisory_below_${advisoryProbabilityFloor.toFixed(2)}_non_veto`]
+        : ['monte_carlo:advisory_supportive']),
+    ...(makerPlan ? ['maker_canary:telemetry_only'] : []),
+    ...(hybridPlan ? ['hybrid_maker_canary:telemetry_only'] : []),
     'rank_diagnostic_only',
+    'parallel_advisories_execution_authority:false',
   ])];
   return assessment;
 }
@@ -288,35 +278,36 @@ export function ensurePositiveProfitCaptureWiring(): void {
       makerProofWinRate: makerCanary.winRate,
       makerConfidenceScore: makerCanary.confidenceScore,
       sizingAuthority: makerCanary.sizingAuthority,
-      sizingCurve: 'continuous_cryptara_realized_evidence_beneath_profit_ladder',
+      sizingCurve: 'telemetry_only_beneath_profit_ladder',
       volatileMinGrossSpreadBps: finiteBoundedEnv('CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS', 70, 10, 2_000),
       maxTtlMs: 30_000,
-      cryptaraMonteCarloRequired: true,
+      cryptaraMonteCarloRequired: false,
+      monteCarloAuthority: 'parallel_advisory_only',
       monteCarloDepth: 'opportunity_adaptive_early_stop',
-      coldStartCanaryMinimumProbability: makerCanaryMinimumProbability(),
+      advisoryProbabilityReference: makerCanaryMinimumProbability(),
       usdNormalizedExecutionEconomicsRequired: true,
     },
     hybridMakerRecovery: {
       enabled: true,
       venues: ['coinbase', 'kraken', 'okx'],
       modes: ['MT', 'TM'],
-      canaryMinimumProbability: makerCanaryMinimumProbability(),
+      advisoryCanaryProbabilityReference: makerCanaryMinimumProbability(),
+      monteCarloAuthority: 'parallel_advisory_only',
       executionAuthority: 'canonical_hybrid_wiring_only',
-      riskGateWeakened: false,
       usdNormalizedExecutionEconomicsRequired: true,
     },
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
-    retainedAuthorities: [
+    retainedHardAuthorities: [
       'deterministic_all_in_economics',
-      'authenticated_maker_fee_evidence',
+      'authenticated_fee_evidence',
       'measured_product_constraints',
-      'cryptara_parallel_hyper_monte_carlo',
       'governance_stage',
       'risk_circuit_breakers',
-      'position_size',
+      'profit_ladder_position_size',
       'inventory_resource_leases',
       'quote_freshness',
       'settlement',
     ],
+    parallelAdvisories: ['cryptara', 'monte_carlo', 'aries', 'rank', 'missing_information_scoring'],
   });
 }
