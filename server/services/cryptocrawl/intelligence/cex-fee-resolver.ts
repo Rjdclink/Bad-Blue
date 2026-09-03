@@ -17,7 +17,7 @@ export interface CexFeeEvidence {
   takerFeeBps: number;
   makerFeeBps: number | null;
   makerRebateBps: number | null;
-  source: 'coinbase_transaction_summary' | 'kraken_account_trade_volume' | 'okx_account_trade_fee' | 'configured_override';
+  source: 'coinbase_transaction_summary' | 'kraken_account_trade_volume' | 'okx_account_trade_fee' | 'okx_live_spot_zero_fee_group' | 'configured_override';
   observedAt: number;
 }
 
@@ -405,14 +405,21 @@ async function fetchKrakenFeeEvidence(symbol: string): Promise<CexFeeEvidence | 
   return batch.get(normalizeSymbolInput(symbol)) || null;
 }
 
-function okxEvidence(symbol: string, rates: { taker: number; maker: number | null }, observedAt: number): CexFeeEvidence {
+function okxEvidence(
+  symbol: string,
+  rates: { taker: number; maker: number | null; zeroFeeGroup: boolean },
+  observedAt: number,
+): CexFeeEvidence {
   return {
     venue: 'okx',
     symbol,
     takerFeeBps: Math.max(0, -rates.taker * 10_000),
-    makerFeeBps: rates.maker !== null && rates.maker < 0 ? -rates.maker * 10_000 : null,
+    // In OKX rate semantics negative is commission, positive is rebate, and zero
+    // is a genuine zero fee. Preserve 0 as measured evidence rather than turning
+    // it into null/missing information.
+    makerFeeBps: rates.maker !== null && rates.maker <= 0 ? Math.max(0, -rates.maker * 10_000) : null,
     makerRebateBps: rates.maker !== null && rates.maker > 0 ? rates.maker * 10_000 : null,
-    source: 'okx_account_trade_fee',
+    source: rates.zeroFeeGroup ? 'okx_live_spot_zero_fee_group' : 'okx_account_trade_fee',
     observedAt,
   };
 }
@@ -420,7 +427,7 @@ function okxEvidence(symbol: string, rates: { taker: number; maker: number | nul
 async function fetchOkxFeeRates(
   queryParameters: Record<string, string>,
   expectedGroupId: string | null,
-): Promise<{ rates: { taker: number; maker: number | null }; observedAt: number }> {
+): Promise<{ rates: { taker: number; maker: number | null; zeroFeeGroup: boolean }; observedAt: number }> {
   const result = await resolveOkxAccountFeeRates({
     instType: 'SPOT',
     groupId: queryParameters.groupId,
@@ -429,7 +436,7 @@ async function fetchOkxFeeRates(
     timeoutMs: REQUEST_TIMEOUT_MS,
   });
   return {
-    rates: { taker: result.taker, maker: result.maker },
+    rates: { taker: result.taker, maker: result.maker, zeroFeeGroup: result.zeroFeeGroup },
     observedAt: result.observedAt,
   };
 }
