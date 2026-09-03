@@ -179,9 +179,6 @@ async function strategyMinimumChildQuantity(
   const rpiSell = parent.sellVenue === 'okx' && maker.orderStyle.sell === 'rpi';
   if (!rpiBuy && !rpiSell) return 0;
 
-  // If the admitted parent economics depended on RPI, every split child must be
-  // large enough to retain that same fee treatment. Do not manufacture many tiny
-  // maker orders merely to increase order count or nominal rebate activity.
   const capability = await getOkxRpiExecutionCapability(parent.symbol, true);
   if (!capability || !capability.makerPermission || !capability.executableFeeAdvantage) {
     throw new Error('RPI parent economics cannot be preserved across split children: fresh OKX RPI capability unavailable');
@@ -522,9 +519,10 @@ export async function executeHyperHybridCexPlan(input: {
   const plannedChildren = await buildHyperHybridCexChildren(input.parent);
   if (plannedChildren.length === 1) {
     await assertFreshCexProductConstraints(plannedChildren[0]);
+    const singleAdapters = input.useProductionFok ? fokAdapters(input.adapters) : input.adapters;
     const result = input.executeChild
       ? await input.executeChild(plannedChildren[0])
-      : await executeCexPlan(plannedChildren[0], { ...input.executorOptions, adapters: input.adapters });
+      : await executeCexPlan(plannedChildren[0], { ...input.executorOptions, adapters: singleAdapters });
     return {
       ...result,
       parentTargetNotionalUsd: input.parent.notionalUsd,
