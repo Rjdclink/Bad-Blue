@@ -1,0 +1,32 @@
+CRYPTARA BPS EFFICIENCY IMPLEMENTATION CHECKPOINT
+
+Governing law: absolutely no regression. Preserve hard safety, deterministic economics, single canonical BPS authority, single canonical execution authority, measured/realized truth, and fail-closed behavior where financial correctness requires it.
+
+Objective:
+Implement the second 15-solution BPS-efficiency package, targeting >=35 BPS de-overlapped estimated capability improvement while allowing only measured realized savings into canonical economics.
+
+Target enhancements:
+1. Exchange-side opportunity expiration / stale-order rejection.
+2. Kraken L3 queue intelligence.
+3. Queue-preserving atomic amend.
+4. Tick-vs-queue-jump optimizer.
+5. Executable OKX RPI dual-surface routing.
+6. RPI automatic price-spacing normalization.
+7. Gateway-to-matching-engine latency attribution.
+8. Hot-standby market-data handover.
+9. Two-speed CRYPTARA controller: slow global optimizer + fast local revalidation.
+10. Liquidity replenishment/resilience predictor.
+11. Cross-impact-aware multi-asset execution.
+12. Order-book vs RFQ/Convert execution auction.
+13. Synchronized multi-leg WebSocket dispatch with FOK/IOC protection.
+14. Shadow-to-terminal microstructure calibration.
+15. Organic fee-tier trajectory optimizer; never wash trade or execute uneconomically for volume.
+
+Starting production baseline:
+- develop head: 597709d32c08358fadb08b6c021518c2fe7ae58a
+- Existing BPS research tactics and canonical authority boundaries must be reused rather than duplicated.
+- Existing RPI advisory, OKX sequence continuity, maker microprice/imbalance shadow model, measured order-control latency, Stage-2 soft-gate retirement, FOK semantics, Aave/Balancer zero-capital provider mesh, and rebate/refund canonical truth already exist.
+
+Milestone 0 — checkpoint created before implementation.
+Status: STARTED.
+Next action: inspect exact existing execution, fee, order-control, RPI, market-data, maker microstructure, and BPS authority files; implement smallest compatible production slices with verifier coverage; update this file after each verified milestone.
