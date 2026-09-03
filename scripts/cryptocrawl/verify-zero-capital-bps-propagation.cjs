@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const registry = fs.readFileSync('server/services/cryptocrawl/discovery/measured-candidate-registry.ts', 'utf8');
 const wiring = fs.readFileSync('server/services/cryptocrawl/integration/zero-capital-resource-wiring.ts', 'utf8');
+const rescue = fs.readFileSync('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts', 'utf8');
 const scale = fs.readFileSync('server/services/cryptocrawl/scaling/dynamic-scale-pressure-wiring.ts', 'utf8');
 const engine = fs.readFileSync('server/services/cryptocrawl/core/zero-capital-engine.ts', 'utf8');
 
@@ -45,6 +46,23 @@ assert.match(wiring, /const executableCapability = positive && fundingReady && r
 assert.match(wiring, /live_gas_funding/);
 assert.match(wiring, /if \(funding\.mode === 'unavailable'\) continue;/);
 
+// Zero-capital rescue must consume the same shared BPS Super Engine used by the
+// canonical cross-strategy economics pipeline. The Super Engine may rank and
+// select exact re-quote sizes, but it cannot manufacture profitability or submit.
+assert.match(rescue, /buildBpsReductionSuperPlan/);
+assert.match(rescue, /buildResearchBpsExecutionPlan/);
+assert.match(rescue, /adviseEconomicTransformations/);
+assert.match(rescue, /getBpsCompressionMeshSnapshot/);
+assert.match(rescue, /plan\.effectivePriorityScore/);
+assert.match(rescue, /plan\.residualNotionalFractions/);
+assert.match(rescue, /recordBpsRevalidationOutcome/);
+assert.match(rescue, /freshExactRequoteRequired: true/);
+assert.match(rescue, /strictImprovementRequired: true/);
+assert.match(rescue, /existingPositiveNeverReplacedByNegative: true/);
+assert.match(rescue, /executionAuthority: false/);
+assert.doesNotMatch(rescue, /expectedProfit\s*=\s*Math\.max/);
+assert.doesNotMatch(rescue, /netProfitBps\s*=\s*Math\.max/);
+
 // DynamicScale may react to near-break-even density only as bounded search
 // pressure. Profitability remains terminal-confirmed realized truth.
 assert.match(scale, /zeroCapitalNearBreakEvenPressure/);
@@ -61,6 +79,9 @@ assert.match(engine, /if \(opportunity\.expectedProfit <= 0n \|\| Date\.now\(\) 
 
 console.log(JSON.stringify({
   zeroCapitalBpsPropagation: 'verified',
+  zeroCapitalBpsSuperEngineOperational: true,
+  zeroCapitalSharedBpsPriority: true,
+  zeroCapitalSharedResidualNotionalProbes: true,
   nearBreakEvenClassification: 'enriched_observation_only',
   positiveExecutionFloorPreserved: true,
   gasFundingExecutionTruthBound: true,
