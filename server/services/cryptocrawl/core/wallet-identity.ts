@@ -83,6 +83,29 @@ export function resolveTerminalPayoutAddress(environment: NodeJS.ProcessEnv = pr
   }
 }
 
+/**
+ * Resolve the independent Ethereum payout redundancy without ever treating a
+ * private key as an address value. Prefer the explicit Railway payout address
+ * when it is valid and distinct from the MetaMask destination; otherwise use
+ * the canonical WALLET_PRIVATE_KEY-derived public execution address. A duplicate
+ * destination is not a redundancy and therefore resolves to null.
+ */
+export function resolvePayoutFallbackAddress(environment: NodeJS.ProcessEnv = process.env): string | null {
+  const primary = resolveTerminalPayoutAddress(environment);
+  const primaryLower = primary?.toLowerCase() || '';
+
+  try {
+    const explicitFallback = normalizeEvmAddress('CRYPTO_PAYOUT_WALLET_ADDRESS', environment.CRYPTO_PAYOUT_WALLET_ADDRESS);
+    if (explicitFallback && explicitFallback.toLowerCase() !== primaryLower) return explicitFallback;
+  } catch {
+    // An invalid explicit fallback never overrides the canonical execution-wallet fallback.
+  }
+
+  const execution = resolveExecutionWalletAddress(environment).address;
+  if (execution && execution.toLowerCase() !== primaryLower) return execution;
+  return null;
+}
+
 export function resolveOperationalProfitRecipient(
   explicitRecipient?: string,
   environment: NodeJS.ProcessEnv = process.env,
