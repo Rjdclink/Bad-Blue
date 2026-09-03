@@ -3,7 +3,6 @@ import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filt
 import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
-import { ensureStageProfitCapRetirement } from '../governance/stage-profit-cap-retirement.js';
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
@@ -89,7 +88,8 @@ function startCanonicalZeroCapitalRuntime(): void {
         lifecycleOwner: 'AutonomousZeroCapitalEngine',
         receiverFleetInitialization: true,
         dynamicGraphlessScanning: true,
-        liveExecutionRequested: process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true',
+        liveExecutionRequested: process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true' && process.env.NO_EXECUTION !== 'true',
+        zeroCapitalSpecificExecutionFlagAuthority: false,
         startAttempts: zeroCapitalStartAttempts,
         syntheticExecution: false,
       });
@@ -115,7 +115,6 @@ function installCanonicalRuntime(): void {
   if (installed) return;
   installed = true;
 
-  ensureStageProfitCapRetirement();
   logZeroCapitalReadinessDiagnostics();
   ensureComputationalReactorWiring();
   ensureLearningLifecycleWiring();
@@ -231,7 +230,7 @@ function installCanonicalRuntime(): void {
     predictionMarketExecutionAuthority: false,
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
-    zeroCapitalRuntimeLifecycle: 'terminal_realized_profit_authority_then_cost_safe_rpc_mesh_then_canonical_wrappers_then_fail_closed_retry',
+    zeroCapitalRuntimeLifecycle: 'terminal_realized_profit_authority_then_cost_safe_rpc_mesh_then_single_canonical_hard_fact_governance_then_fail_closed_retry',
     zeroCapitalSizeOptimization: 'coarse_independent_quotes_plus_bounded_fresh_local_refinement_plus_exact_provider_size_rescue_plus_profitability_rescue_v2',
     zeroCapitalProfitabilityRescue: 'decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
     zeroCapitalFlashLoanEconomics: 'measured_single_provider_fee_liquidity_plus_combined_aave_balancer_liquidity_rescue',
