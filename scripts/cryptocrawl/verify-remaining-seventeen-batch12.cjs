@@ -89,9 +89,10 @@ assert(retainedProfit.includes('payoutTargetUsd: 0') && retainedProfit.includes(
 assert(retainedProfit.includes('payoutReservationCreated: false'), 'default terminal profit must not reserve strategy inventory for payout');
 assert(retainedProfit.includes('profitAvailableForRedeployment: true'), 'default retained profit must remain available to strategies');
 
-assert(runtime.includes('ensureInventoryConstrainedCexExecutionWiring();'), 'inventory-constrained CEX execution wiring must be installed');
-assert(runtime.includes('ensureCrossVenueTimingGuardWiring();'), 'cross-venue timing guard must be installed');
-assert(runtime.includes('ensureMeasuredCandidateExpiryGuardWiring();'), 'candidate expiry guard must be installed');
+assert(runtime.includes("install('inventory_constrained_cex_execution', () => ensureInventoryConstrainedCexExecutionWiring())"), 'inventory-constrained CEX execution wiring must be isolated and installed');
+assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVenueTimingGuardWiring())"), 'cross-venue timing guard must be isolated and installed');
+assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring())"), 'candidate expiry guard must be isolated and installed');
+assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
 
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, one-batch parallel CEX splitting, anti-rank-gaming partial accounting, and treasury invariants preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, one-batch parallel CEX splitting, anti-rank-gaming partial accounting, treasury invariants, and isolated runtime protections preserved');
