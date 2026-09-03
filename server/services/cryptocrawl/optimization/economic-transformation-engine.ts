@@ -42,6 +42,11 @@ export interface EconomicTransformationAdvice {
 }
 
 function finite(value: unknown): number | null {
+  // Economic transformation may prioritize work, but it may never manufacture
+  // a zero-BPS observation from absent evidence. Unknown remains unknown until
+  // the evidence acquisition/revalidation path measures it.
+  if (value === null || value === undefined || typeof value === 'boolean') return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
