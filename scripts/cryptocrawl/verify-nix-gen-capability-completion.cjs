@@ -30,6 +30,7 @@ const crossTerminal = read('server/services/cryptocrawl/bridge/across-terminal-a
 const acrossExecutor = read('server/services/cryptocrawl/execution/across-bridge-executor.ts');
 const acrossPrebroadcast = read('server/services/cryptocrawl/execution/across-prebroadcast-durability.ts');
 const crossMigration = read('server/migrations/043_cryptocrawler_cross_chain_lifecycle.sql');
+const canonicalScheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const funding = read('server/services/cryptocrawl/discovery/funding-rate-monitor.ts');
 const fundingLifecycle = read('server/services/cryptocrawl/execution/funding-position-lifecycle.ts');
 const fundingAdapter = read('server/services/cryptocrawl/execution/okx-funding-lifecycle-adapter.ts');
@@ -75,6 +76,14 @@ must(crossMigration, 'signed_origin_tx text', 'cross-chain lifecycle stores exac
 must(crossMigration, 'origin_fee_complete boolean NOT NULL DEFAULT false', 'cross-chain lifecycle distinguishes approval-only gas from complete origin gas');
 must(crossMigration, "'PREPARED'", 'cross-chain lifecycle has a pre-broadcast durable state');
 must(crossMigration, "WHERE status IN ('FILLED','REFUNDED','FAILED')", 'origin failures participate in durable terminal feedback');
+must(crossMigration, 'had_origin_fee_complete boolean', 'migration detects the one-time legacy schema transition');
+must(crossMigration, 'IF NOT had_origin_fee_complete THEN', 'legacy broadcast backfill cannot rerun against new live handoffs');
+must(crossMigration, 'broadcast_at = COALESCE(broadcast_at, submitted_at)', 'legacy lifecycle rows are marked as already broadcast');
+must(crossMigration, 'DROP CONSTRAINT IF EXISTS cryptocrawler_cross_chain_lifecycles_status_check', 'legacy status check is upgraded idempotently');
+must(crossMigration, 'CREATE OR REPLACE FUNCTION public.cryptocrawler_pin_cross_chain_reservation()', 'unresolved cross-chain capital has database-level pinning authority');
+must(crossMigration, "SET expires_at = 'infinity'::timestamptz", 'unresolved cross-chain reservation cannot silently expire');
+must(crossMigration, 'AFTER INSERT OR UPDATE OF status, reservation_id', 'new lifecycle rows pin their exact reservation immediately');
+must(crossMigration, "lifecycle.status IN ('PREPARED','SUBMITTED','SETTLEMENT_UNKNOWN','ACCOUNTING_PENDING','RECOVERY_REQUIRED')", 'existing unresolved lifecycle rows are backfilled into pinned reservations');
 must(acrossExecutor, "error: 'REJECT_ACROSS_DURABILITY_CALLBACK_REQUIRED'", 'Across principal execution requires durable lifecycle authority');
 must(acrossExecutor, 'signedOriginTx = await wallet.signTransaction(populated);', 'Across origin transaction is signed before broadcast');
 must(acrossExecutor, 'depositTxnRef = ethers.utils.keccak256(signedOriginTx).toLowerCase();', 'Across recovery identity is the exact signed transaction hash');
@@ -98,6 +107,8 @@ must(combinedAdapter, 'claimPendingAcrossOriginFailureFeedback', 'origin failure
 must(combinedAdapter, "if (result.status === 'REFUNDED') return 'refunded';", 'cross-chain terminal mapping preserves refund truth');
 must(combinedAdapter, "return 'failed';", 'origin failures are recorded as failed terminal executions');
 must(combinedAdapter, "const submitted = (result.status === 'opened' || result.status === 'opening') && Boolean(result.lifecycleId);", 'ambiguous funding opening consumes the parent submission slot');
+must(canonicalScheduler, 'await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);', 'long-lived lifecycle recovery runs on the canonical scheduler cadence');
+mustBefore(canonicalScheduler, 'await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);', "if (!isLiveExecutionPosture())", 'lifecycle recovery runs before new-exposure posture gates');
 
 // Funding entry remains projected expected value. Only authenticated terminal fills/bills establish realized profit.
 must(funding, 'deterministicNetProfitUsd: null', 'funding discovery never writes projected carry into deterministic profit');
