@@ -148,6 +148,43 @@ export async function reserveFundingEntryCapital(input: {
 }
 
 /**
+ * Recover an existing durable funding hold after a process restart. This function
+ * creates no spend authority: it only maps still-active canonical reservation rows
+ * back into the lifecycle's in-memory handle shape.
+ */
+export async function recoverFundingCapitalHold(input: {
+  lifecycleId: string;
+  opportunityId: string;
+  baseAsset: string;
+  quoteAsset: string;
+  holdUntil: number;
+}): Promise<FundingCapitalHold | null> {
+  const marginOpportunityId = `${input.opportunityId}:funding_margin`;
+  const spotOpportunityId = `${input.opportunityId}:funding_spot_entry`;
+  const baseOpportunityId = `${input.opportunityId}:funding_spot_hold`;
+  const result = await pool.query(
+    `SELECT reservation_id::text, opportunity_id, expires_at
+     FROM public.cryptocrawler_cex_inventory_reservations_v1
+     WHERE opportunity_id = ANY($1::text[]) AND expires_at > now()
+     ORDER BY acquired_at ASC`,
+    [[marginOpportunityId, spotOpportunityId, baseOpportunityId]],
+  );
+  const byOpportunity = new Map(result.rows.map(row => [String(row.opportunity_id), String(row.reservation_id)]));
+  const marginReservationId = byOpportunity.get(marginOpportunityId);
+  if (!marginReservationId) return null;
+  return {
+    lifecycleId: input.lifecycleId,
+    opportunityId: input.opportunityId,
+    quoteAsset: canonicalAsset(input.quoteAsset),
+    baseAsset: canonicalAsset(input.baseAsset),
+    marginReservationId,
+    spotEntryReservationId: byOpportunity.get(spotOpportunityId) ?? null,
+    baseReservationId: byOpportunity.get(baseOpportunityId) ?? null,
+    holdUntil: input.holdUntil,
+  };
+}
+
+/**
  * Convert the conservative pre-entry quote reservation into an acquired-base
  * reservation only after exact spot-fill ownership has already been applied.
  * Base is reserved before quote is released, so a transient reservation failure
