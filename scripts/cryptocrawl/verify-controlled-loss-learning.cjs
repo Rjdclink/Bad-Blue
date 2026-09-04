@@ -59,6 +59,8 @@ must(recoveryPath, recovery, 'exit_applied=false', 'recovery must target only un
 must(recoveryPath, recovery, 'runControlledLossLearningOnce', 'recovery must run before every controlled-loss worker pass');
 must(recoveryPath, recovery, 'replayControlledLossLearningFeedbackOnce', 'terminal feedback replay must bracket every worker pass');
 must(recoveryPath, recovery, 'feedbackReplayBeforeAndAfterEveryPass: true', 'terminal feedback replay must cover both prior crashes and new terminal events');
+must(recoveryPath, recovery, 'reconcileLocalReservationsWithDurableState', 'controlled-loss runtime must reconcile process-local holds to durable inventory authority');
+must(recoveryPath, recovery, 'inventoryLocalDurableReconciliation: true', 'controlled-loss runtime must advertise canonical local/durable reservation reconciliation');
 must(recoveryPath, recovery, 'duplicateSubmissionAuthorityGranted: false', 'crash recovery must never authorize duplicate orders');
 must(recoveryPath, recovery, 'terminalSettlementBypassGranted: false', 'crash recovery must never bypass exact terminal settlement');
 
@@ -76,6 +78,13 @@ must(feedbackPath, feedback, 'randomizedNonlossRetry', 'non-loss retry timing mu
 must(feedbackPath, feedback, 'secondControlledLossPossible: false', 'the first actual terminal loss must permanently end the daily controlled-loss lane');
 must(feedbackPath, feedback, 'SET feedback_recorded_at=now()', 'terminal feedback marker must be written only after canonical learning returns');
 must(feedbackPath, feedback, 'terminalFeedbackIdempotent: true', 'feedback replay must explicitly rely on canonical terminal identity dedupe');
+
+const inventoryPath = 'server/services/cryptocrawl/execution/cex-inventory-ledger.ts';
+const inventory = read(inventoryPath);
+must(inventoryPath, inventory, 'reconcileLocalReservationsWithDurableState', 'canonical inventory ledger must reconcile process-local holds against durable reservation truth');
+must(inventoryPath, inventory, 'this.localReservations.entries()', 'local reconciliation must use the canonical ledger reservation registry');
+must(inventoryPath, inventory, 'expires_at > now()', 'only currently active durable reservations may preserve a local hold');
+must(inventoryPath, inventory, 'spendAuthorityCreated: false', 'local reconciliation must never create spend authority');
 
 const lotPath = 'server/services/cryptocrawl/execution/cex-system-owned-lot-ledger.ts';
 const lot = read(lotPath);
