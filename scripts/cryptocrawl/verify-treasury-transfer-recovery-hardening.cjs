@@ -46,7 +46,11 @@ must(recoveryPath, recovery, 'duplicateSubmissionAuthorityGranted: false', 'Reco
 
 const schemaPath = 'server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts';
 const schema = read(schemaPath);
-must(schemaPath, schema, 'const SCHEMA_VERSION = 15;', 'Overflow schema must advance for treasury recovery hardening');
+const schemaVersionMatch = schema.match(/const SCHEMA_VERSION = (\d+);/);
+if (!schemaVersionMatch || Number(schemaVersionMatch[1]) < 15) {
+  throw new Error(`Overflow schema must be at least treasury-recovery schema version 15 (${schemaPath})`);
+}
+must(schemaPath, schema, `cryptocrawl:overflow-runtime-schema:v${schemaVersionMatch[1]}`, 'Overflow lock identity must advance with the schema version');
 must(schemaPath, schema, "'044_cryptocrawler_treasury_transfer_recovery_hardening.sql'", 'Overflow runtime must execute migration 044');
 
 const dockerPath = 'Dockerfile';
