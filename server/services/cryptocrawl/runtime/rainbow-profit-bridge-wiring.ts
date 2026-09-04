@@ -92,15 +92,15 @@ export function ensureRainbowProfitBridgeWiring(): void {
   };
   stageManager.on('execution-evidence-recorded', listener);
 
-  logger.info('[Treasury] Dynamic per-profitable-trade Rainbow wiring installed', {
+  logger.info('[Treasury] Fixed per-profitable-trade Rainbow wiring installed', {
     component: 'RainbowProfitBridgeWiring',
     sourceAuthority: 'terminal_confirmed_settlement_only',
     persistentIdempotency: true,
     sourceAwareLedger: 'venue_chain_symbol_asset_execution_source',
     normalRuntimePayouts: true,
-    allocationPolicy: 'first_three_fixed_60_40_hourly_then_persisted_bounded_55_65_payout',
-    dynamicDelayPolicyMinutes: [30, 90],
-    payoutAuthority: 'single_independent_supabase_worker_okx_only',
+    allocationPolicy: 'fixed_90_percent_wallet_10_percent_retained_for_new_terminal_profit_events',
+    payoutTiming: 'immediate_terminal_profit_job_subject_to_settlement_and_wallet_confirmation',
+    payoutAuthority: 'single_independent_supabase_worker_okx_only_with_kraken_payout_funding_lane',
     recipientConfirmationAuthority: 'railway_read_only_okx_plus_finalized_ethereum_proof',
     recipientConfirmationMovesFunds: false,
     immediateWakePlusCronFallback: true,
@@ -111,6 +111,7 @@ export function ensureRainbowProfitBridgeWiring(): void {
     payoutNetwork: 'ethereum_mainnet_only',
     retainedTradingCapitalSpendabilityAuthority: 'canonical_inventory_ledger',
     retainedCapitalInventoryReserved: false,
+    retainedCapitalRoutingTargets: ['kraken', 'okx'],
     payoutCapitalProtectedFromNewTradeSpendability: true,
     activeTradePreemptionAllowed: false,
     ethConversionTiming: 'only_when_due_and_withdrawal_executable',
