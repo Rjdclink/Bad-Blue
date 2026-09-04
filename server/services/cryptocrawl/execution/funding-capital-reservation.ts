@@ -10,6 +10,9 @@ export interface FundingCapitalHold {
   quoteAsset: string;
   baseAsset: string;
   marginReservationId: string;
+  /** Quote reservation retained until exact spot-entry ownership is reconciled. */
+  spotEntryReservationId: string | null;
+  /** Acquired base reservation installed only after exact ownership is proven. */
   baseReservationId: string | null;
   holdUntil: number;
 }
@@ -122,7 +125,7 @@ export async function reserveFundingEntryCapital(input: {
     opportunityId: spotOpportunityId,
     asset: quoteAsset,
     amount: spotQuote,
-    holdUntil: Math.min(input.holdUntil, Date.now() + 5 * 60_000),
+    holdUntil: input.holdUntil,
   });
   if (!spot) {
     await releaseFundingReservation(margin.reservationId);
@@ -136,6 +139,7 @@ export async function reserveFundingEntryCapital(input: {
       quoteAsset,
       baseAsset,
       marginReservationId: margin.reservationId,
+      spotEntryReservationId: spot.reservationId,
       baseReservationId: null,
       holdUntil: input.holdUntil,
     },
@@ -143,12 +147,17 @@ export async function reserveFundingEntryCapital(input: {
   };
 }
 
+/**
+ * Convert the conservative pre-entry quote reservation into an acquired-base
+ * reservation only after exact spot-fill ownership has already been applied.
+ * Base is reserved before quote is released, so a transient reservation failure
+ * cannot expose newly acquired system capital to another strategy.
+ */
 export async function replaceSpotEntryReservationWithBaseHold(input: {
   hold: FundingCapitalHold;
-  spotEntryReservationId: string;
   exactBaseAmount: string;
 }): Promise<FundingCapitalHold> {
-  await releaseFundingReservation(input.spotEntryReservationId);
+  if (!input.hold.spotEntryReservationId) return input.hold;
   await reconcileOkxInventory();
   const baseAmount = Number(input.exactBaseAmount);
   if (!(baseAmount > 0) || !Number.isFinite(baseAmount)) throw new Error('Funding exact acquired base amount is invalid');
@@ -161,12 +170,26 @@ export async function replaceSpotEntryReservationWithBaseHold(input: {
     holdUntil: input.hold.holdUntil,
   });
   if (!reservation) throw new Error('FUNDING_SYSTEM_OWNED_ACQUIRED_BASE_HOLD_UNAVAILABLE');
-  return { ...input.hold, baseReservationId: reservation.reservationId };
+
+  try {
+    await releaseFundingReservation(input.hold.spotEntryReservationId);
+  } catch (error) {
+    await reservation.release().catch(() => undefined);
+    throw error;
+  }
+  return {
+    ...input.hold,
+    spotEntryReservationId: null,
+    baseReservationId: reservation.reservationId,
+  };
 }
 
 export async function renewFundingCapitalHold(hold: FundingCapitalHold): Promise<boolean> {
   try {
     await extendReservation(hold.marginReservationId, `${hold.opportunityId}:funding_margin`, hold.holdUntil);
+    if (hold.spotEntryReservationId) {
+      await extendReservation(hold.spotEntryReservationId, `${hold.opportunityId}:funding_spot_entry`, hold.holdUntil);
+    }
     if (hold.baseReservationId) {
       await extendReservation(hold.baseReservationId, `${hold.opportunityId}:funding_spot_hold`, hold.holdUntil);
     }
@@ -198,6 +221,7 @@ export async function releaseFundingReservation(reservationId: string): Promise<
 export async function releaseFundingCapitalHold(hold: FundingCapitalHold): Promise<void> {
   await Promise.all([
     releaseFundingReservation(hold.marginReservationId),
+    hold.spotEntryReservationId ? releaseFundingReservation(hold.spotEntryReservationId) : Promise.resolve(),
     hold.baseReservationId ? releaseFundingReservation(hold.baseReservationId) : Promise.resolve(),
   ]);
   liveHandles.delete(hold.lifecycleId);
