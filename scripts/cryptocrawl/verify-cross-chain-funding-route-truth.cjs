@@ -73,15 +73,20 @@ forbidPattern(fundingLifecycle, /CREATE\s+(TABLE|SCHEMA)/i, 'funding runtime can
 forbidPattern(fundingLifecycle, /while\s*\(\s*Date\.now\(\)\s*</, 'funding lifecycle cannot block through the funding window');
 requirePattern(router, /funding_lifecycle_adapter_unavailable/, 'unregistered funding venue adapters are blocked at the execution router');
 
-// Profit may remain in-system for compounding/redeployment. Automatic per-profit
-// wallet withdrawals are opt-in only.
-requirePattern(retainedProfit, /CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED/, 'automatic per-profit payout requires explicit operator opt-in');
-requirePattern(retainedProfit, /if\s*\(!automaticProfitPayoutEnabled\(\)\)/, 'default settlement path is full retention');
-requirePattern(retainedProfit, /payoutTargetUsd:\s*0/, 'default retained settlement creates zero payout target');
-requirePattern(retainedProfit, /retainedFraction:\s*1/, 'default retained settlement preserves one hundred percent of realized profit');
-requirePattern(retainedProfit, /payoutReservationCreated:\s*false/, 'default retained settlement does not reserve payout inventory');
-requirePattern(retainedProfit, /profitAvailableForRedeployment:\s*true/, 'default retained profit stays available for strategy reuse');
-requirePattern(inventoryReadiness, /automaticProfitPayoutRequiresExplicitOptIn:\s*true/, 'inventory telemetry reflects explicit-opt-in payout authority');
+// Terminal-confirmed positive profit follows the fixed 90/10 treasury law.
+// Payout reservations remain excluded from new-trade spendability while the
+// retained 10% stays system-owned and available for profitable redeployment.
+requirePattern(retainedProfit, /const PAYOUT_FRACTION = 0\.90;/, 'automatic terminal payout fraction must remain 90%');
+requirePattern(retainedProfit, /const RETAINED_FRACTION = 0\.10;/, 'retained system-capital fraction must remain 10%');
+requirePattern(retainedProfit, /feedback\.settlement\.terminal !== true/, 'automatic payout allocation requires terminal settlement');
+requirePattern(retainedProfit, /feedback\.settlement\.settlementConfirmed !== true/, 'automatic payout allocation requires confirmed settlement');
+requirePattern(retainedProfit, /feedback\.success !== true/, 'automatic payout allocation requires successful execution');
+requirePattern(retainedProfit, /cryptocrawler_profit_payout_jobs/, 'automatic payout must persist into the durable payout lifecycle');
+requirePattern(retainedProfit, /cryptocrawler_retained_exchange_allocations/, 'retained system capital must persist into the durable retained-capital lifecycle');
+requirePattern(inventoryReadiness, /automaticProfitPayoutDefault:\s*true/, 'inventory telemetry must report automatic terminal-profit payout as the default');
+requirePattern(inventoryReadiness, /automaticProfitPayoutRequiresExplicitOptIn:\s*false/, 'inventory telemetry must not claim a retired payout opt-in gate');
+requirePattern(inventoryReadiness, /automaticProfitPayoutRequiresTerminalConfirmedProfit:\s*true/, 'inventory telemetry must report the terminal-confirmed payout gate');
+requirePattern(inventoryReadiness, /payoutShareExcludedFromNewTradeSpendability:\s*true/, 'payout-reserved inventory must remain protected from new trades');
 requirePattern(inventoryReadiness, /unreservedRetainedProfitAvailableToStrategies:\s*true/, 'inventory telemetry reflects retained-capital spendability');
 forbidPattern(inventoryReadiness, /retainedFortyPercentAvailableToStrategies/, 'stale forty-percent retention telemetry');
 
@@ -91,4 +96,4 @@ requirePattern(canonicalRuntime, /adaptiveProfitCapScope:\s*'retired_no_daily_re
 requirePattern(canonicalRuntime, /retainedProfitRole:\s*'available_for_redeployment_subject_to_profit_ladder_stage_inventory_liquidity_and_risk'/, 'runtime telemetry reports retained-profit redeployment correctly');
 forbidPattern(canonicalRuntime, /persisted_operating_day_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget|new_exposure_only_settlement_hedge_flattening_exempt/, 'stale daily profit-cap authority telemetry');
 
-console.log('[route-truth] Across transport-vs-profit, durable funding lifecycle/adapter gate, compounding-first treasury, and retired profit-cap invariants passed');
+console.log('[route-truth] Across transport-vs-profit, durable funding lifecycle/adapter gate, automatic terminal-confirmed 90/10 treasury, retained-capital protection, and retired profit-cap invariants passed');
