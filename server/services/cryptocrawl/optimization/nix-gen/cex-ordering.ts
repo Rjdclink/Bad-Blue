@@ -36,7 +36,10 @@ export function orderCexCandidatesWithNixGen<T extends CexCandidate>(
   input: NixGenCexOrderingInput<T>,
 ): NixGenCexOrderingResult<T> {
   const original = [...input.candidates];
-  const enabled = process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING === 'true';
+  // Completed Nix-Gen is advisory/fail-open, so scheduling optimization is active
+  // by default. Operators retain an explicit no-regression escape hatch with
+  // CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING=false.
+  const enabled = process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING !== 'false';
   if (!enabled || original.length < 2) {
     if (!enabled) previousCexReplan = undefined;
     return { candidates: original, enabled, applied: false, allocation: null, replan: null, error: null };
