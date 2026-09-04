@@ -7,6 +7,7 @@ import type {
   CexOrderReceipt,
   CexSettlementAdapter,
   OrderRequest,
+  PreparedCexOrderSubmission,
 } from './cex-settlement.js';
 import type { NormalizedOrderSettlement } from './settlement-types.js';
 import {
@@ -23,67 +24,102 @@ function convertClientId(orderId: string): string | null {
   return orderId.startsWith(CONVERT_ORDER_PREFIX) ? orderId.slice(CONVERT_ORDER_PREFIX.length) || null : null;
 }
 
+async function prepareBaseSubmission(
+  base: CexSettlementAdapter,
+  request: OrderRequest,
+): Promise<PreparedCexOrderSubmission> {
+  if (base.prepareSubmit) return base.prepareSubmit(request);
+  return {
+    transport: 'strategy_specific',
+    preparedAt: Date.now(),
+    dispatch: () => base.submit(request),
+  };
+}
+
 /**
  * Wrap the existing OKX settlement adapter without replacing its signing,
  * inventory, scheduler, or standard IOC/RPI authorities. Convert is an execution
  * surface only and is selected after the plan is already canonical-positive.
+ * All quote/auth/product preparation completes before the parent dispatch barrier.
  */
 export function wrapOkxSettlementAdapterWithConvertAuction(base: CexSettlementAdapter): CexSettlementAdapter {
   const terminalConvertTrades = new Map<string, OkxConvertTradeResult>();
 
-  return {
-    async submit(request: OrderRequest): Promise<CexOrderReceipt> {
-      let rpiAveragePrice: number | null = null;
-      if (process.env.CRYPTO_OKX_RPI_TAKER_EXECUTION_ENABLED !== 'false') {
-        const rpiSnapshot = await fetchFreshOkxRpiTakerDepth(request.symbol).catch(() => null);
-        if (rpiSnapshot) {
-          const benefit = evaluateOkxRpiTakerBenefit({
-            snapshot: rpiSnapshot,
-            side: request.side,
-            quantity: request.quantity,
-            plannedLimitPrice: request.price,
-          });
-          if (benefit.useRpiTakerAccess && benefit.total.executable) {
-            rpiAveragePrice = benefit.total.averagePrice;
-          }
-        }
-      }
+  const prepareAuctionSubmission = async (request: OrderRequest): Promise<PreparedCexOrderSubmission> => {
+    // Prepare the already-positive standard path concurrently with the measured
+    // execution-surface comparison. This keeps a safe no-order-sent fallback ready
+    // without delaying the counterpart leg after the parent barrier opens.
+    const basePreparationPromise = prepareBaseSubmission(base, request);
+    const rpiSnapshotPromise = process.env.CRYPTO_OKX_RPI_TAKER_EXECUTION_ENABLED !== 'false'
+      ? fetchFreshOkxRpiTakerDepth(request.symbol).catch(() => null)
+      : Promise.resolve(null);
 
-      const auction = await evaluateOkxExecutionSurfaceAuction({
-        symbol: request.symbol,
+    const [basePrepared, rpiSnapshot] = await Promise.all([
+      basePreparationPromise,
+      rpiSnapshotPromise,
+    ]);
+
+    let rpiAveragePrice: number | null = null;
+    if (rpiSnapshot) {
+      const benefit = evaluateOkxRpiTakerBenefit({
+        snapshot: rpiSnapshot,
         side: request.side,
         quantity: request.quantity,
         plannedLimitPrice: request.price,
-        rpiAveragePrice,
-      }).catch(() => null);
+      });
+      if (benefit.useRpiTakerAccess && benefit.total.executable) {
+        rpiAveragePrice = benefit.total.averagePrice;
+      }
+    }
 
-      if (auction?.surface === 'convert' && auction.convertQuote) {
-        logOkxConvertAuctionSelection({
+    const auction = await evaluateOkxExecutionSurfaceAuction({
+      symbol: request.symbol,
+      side: request.side,
+      quantity: request.quantity,
+      plannedLimitPrice: request.price,
+      rpiAveragePrice,
+    }).catch(() => null);
+
+    if (auction?.surface !== 'convert' || !auction.convertQuote) return basePrepared;
+
+    logOkxConvertAuctionSelection({
+      symbol: request.symbol,
+      side: request.side,
+      quantity: request.quantity,
+      plannedLimitPrice: request.price,
+      auction,
+    });
+
+    return {
+      transport: 'rest',
+      preparedAt: Date.now(),
+      dispatch: async () => {
+        // A null result means Convert explicitly did not submit (expired/cooldown
+        // or explicit rejected state). The standard path was already prepared
+        // before the parent barrier, so fallback does not introduce a second
+        // preparation delay. Ambiguous Convert outcomes throw and never fallback.
+        const trade = await executeOkxConvertQuote(auction.convertQuote!);
+        if (!trade) return basePrepared.dispatch();
+
+        terminalConvertTrades.set(trade.clTReqId, trade);
+        return {
+          venue: 'okx',
+          orderId: `${CONVERT_ORDER_PREFIX}${trade.clTReqId}`,
           symbol: request.symbol,
           side: request.side,
-          quantity: request.quantity,
-          plannedLimitPrice: request.price,
-          auction,
-        });
-        // A null result means the Convert endpoint explicitly did not submit
-        // (local documented cooldown or explicit rejected state), so the already
-        // positive standard IOC path remains safe. Network/ambiguous outcomes throw
-        // and never fall through to a duplicate standard order.
-        const trade = await executeOkxConvertQuote(auction.convertQuote);
-        if (trade) {
-          terminalConvertTrades.set(trade.clTReqId, trade);
-          return {
-            venue: 'okx',
-            orderId: `${CONVERT_ORDER_PREFIX}${trade.clTReqId}`,
-            symbol: request.symbol,
-            side: request.side,
-            requestedQuantity: request.quantity,
-            submittedAt: trade.timestamp,
-          };
-        }
-      }
+          requestedQuantity: request.quantity,
+          submittedAt: trade.timestamp,
+        };
+      },
+    };
+  };
 
-      return base.submit(request);
+  return {
+    prepareSubmit: prepareAuctionSubmission,
+
+    async submit(request: OrderRequest): Promise<CexOrderReceipt> {
+      const prepared = await prepareAuctionSubmission(request);
+      return prepared.dispatch();
     },
 
     async query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement> {
