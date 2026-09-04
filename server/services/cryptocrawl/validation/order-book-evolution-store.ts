@@ -64,6 +64,16 @@ class OrderBookEvolutionStore {
     this.byKey.set(key, list);
   }
 
+  getRecentSnapshots(venue: CexStreamVenue, symbol: string, limit = 64, maxAgeMs = 120_000): OrderBookEvolutionSnapshot[] {
+    const boundedLimit = Math.max(2, Math.min(512, Math.trunc(limit)));
+    const boundedMaxAgeMs = Math.max(1_000, Math.min(15 * 60_000, Math.trunc(maxAgeMs)));
+    const cutoff = Date.now() - boundedMaxAgeMs;
+    return (this.byKey.get(`${venue}:${symbol.toUpperCase()}`) || [])
+      .filter(snapshot => snapshot.observedAt >= cutoff)
+      .slice(-boundedLimit)
+      .map(snapshot => ({ ...snapshot }));
+  }
+
   getEvolution(venue: CexStreamVenue, symbol: string, horizonMs = 5_000): OrderBookEvolutionMetrics {
     const list = this.byKey.get(`${venue}:${symbol.toUpperCase()}`) || [];
     const cutoff = Date.now() - Math.max(horizonMs * 20, 60_000);
