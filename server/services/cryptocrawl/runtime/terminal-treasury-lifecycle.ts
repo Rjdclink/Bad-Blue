@@ -226,7 +226,7 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     workerSecretSynchronizationRetryable: true,
     workerSecretsSynchronized,
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
-    runtimePolicy: 'first_three_fixed_60_percent_then_persisted_dynamic_55_to_65_percent_eth_payout_remainder_retained_restart_drains_remaining_treasury',
+    runtimePolicy: 'fixed_90_percent_eth_payout_10_percent_retained_system_capital_restart_drains_remaining_treasury',
     successorCancelsRestartSweep: false,
     successorNewExposureBlockedDuringSweep: true,
     settlementHedgeFlatteningStillAllowed: true,
