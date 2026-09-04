@@ -9,6 +9,7 @@ import {
 import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 
 export type CexStreamVenue = 'coinbase' | 'kraken' | 'okx';
+type CexStreamLane = 'primary' | 'standby';
 
 export interface StreamOrderBookLevel {
   price: number;
@@ -36,6 +37,7 @@ export interface StreamOrderBookQuote {
 export interface CexOrderBookStreamStats {
   activeStreams: number;
   activeConnections: number;
+  activeStandbyConnections: number;
   snapshotsApplied: number;
   deltasApplied: number;
   deltasQueued: number;
@@ -44,6 +46,8 @@ export interface CexOrderBookStreamStats {
   integrityFailures: number;
   staleResets: number;
   framesReceived: number;
+  standbyFramesReceived: number;
+  standbyHandovers: number;
   controlMessages: number;
   connectionsOpened: number;
   reconnects: number;
@@ -81,6 +85,7 @@ interface SymbolStreamState {
 
 interface VenueConnectionState {
   venue: CexStreamVenue;
+  lane: CexStreamLane;
   socket: WebSocket | null;
   symbols: Map<string, string>;
   canonicalByExternal: Map<string, string>;
@@ -277,9 +282,6 @@ function parseCoinbase(message: Record<string, unknown>): ParsedVenueMessage[] {
         kind,
         bids,
         asks,
-        // Advanced Trade level2 is the delivery-guaranteed local-book channel.
-        // sequence_num is channel-envelope scoped, so it is not misused as a
-        // per-product sequence authority.
         sequence: null,
         previousSequence: null,
         checksum: null,
@@ -331,8 +333,6 @@ function parseOkx(message: Record<string, unknown>): ParsedVenueMessage[] {
         asks: normalizeLevels(row.asks, kind === 'delta'),
         sequence: nonNegativeInteger(row.seqId),
         previousSequence: nonNegativeInteger(row.prevSeqId),
-        // OKX deprecated JSON order-book checksum in production on 2026-06-23.
-        // seqId/prevSeqId is the current continuity authority.
         checksum: null,
         observedAt: observedAt(row.ts),
       },
@@ -468,9 +468,6 @@ export class SequencedOrderBook {
     const asks = [...this.asks.values()].sort((left, right) => left.price - right.price).slice(0, 10);
     const bids = [...this.bids.values()].sort((left, right) => right.price - left.price).slice(0, 10);
     const levels = [...asks, ...bids];
-    // Kraken requires decimal/string preservation for checksum correctness. If a
-    // future payload decoder surfaces JS numbers instead of exact strings, do not
-    // fabricate a checksum result; freshness/settlement still fail closed later.
     if (levels.some(level => level.rawExact !== true || !level.rawPrice || !level.rawQuantity)) return true;
     const input = levels.map(level => `${krakenChecksumToken(level.rawPrice!)}${krakenChecksumToken(level.rawQuantity!)}`).join('');
     return crc32Ascii(input) === expected;
@@ -479,9 +476,12 @@ export class SequencedOrderBook {
 
 class CexOrderBookStreamManager {
   private readonly streams = new Map<string, SymbolStreamState>();
+  private readonly standbyBooks = new Map<string, SequencedOrderBook>();
   private readonly connections = new Map<CexStreamVenue, VenueConnectionState>();
+  private readonly standbyConnections = new Map<CexStreamVenue, VenueConnectionState>();
+  private readonly standbyServing = new Set<string>();
   private readonly identityInFlight = new Map<string, Promise<StreamIdentity>>();
-  private readonly stats: Omit<CexOrderBookStreamStats, 'activeStreams' | 'activeConnections'> = {
+  private readonly stats: Omit<CexOrderBookStreamStats, 'activeStreams' | 'activeConnections' | 'activeStandbyConnections'> = {
     snapshotsApplied: 0,
     deltasApplied: 0,
     deltasQueued: 0,
@@ -490,6 +490,8 @@ class CexOrderBookStreamManager {
     integrityFailures: 0,
     staleResets: 0,
     framesReceived: 0,
+    standbyFramesReceived: 0,
+    standbyHandovers: 0,
     controlMessages: 0,
     connectionsOpened: 0,
     reconnects: 0,
@@ -516,25 +518,35 @@ class CexOrderBookStreamManager {
       state = this.ensureStream(venue, identity);
     }
 
+    const key = `${venue}:${state.symbol}`;
+    const standby = this.hotStandbyEnabled() ? this.standbyBooks.get(key) : null;
     if (state.book.isStale(maxAgeMs)) {
       this.stats.staleResets += 1;
       state.book.reset();
-      this.refreshSubscription(venue, state.symbol);
+      this.refreshSubscription(venue, state.symbol, 'primary');
+      if (standby?.isFresh(maxAgeMs)) return this.serveStandby(key, venue, state.symbol, standby);
       return null;
     }
-    if (!state.book.isFresh(maxAgeMs)) return null;
-    return state.book.getQuote(venue, state.symbol);
+    if (state.book.isFresh(maxAgeMs)) {
+      this.standbyServing.delete(key);
+      return state.book.getQuote(venue, state.symbol);
+    }
+    if (standby?.isFresh(maxAgeMs)) return this.serveStandby(key, venue, state.symbol, standby);
+    return null;
   }
 
   stop(): void {
-    for (const connection of this.connections.values()) {
+    for (const connection of [...this.connections.values(), ...this.standbyConnections.values()]) {
       connection.stopped = true;
       if (connection.reconnectTimer) clearTimeout(connection.reconnectTimer);
       if (connection.heartbeatTimer) clearInterval(connection.heartbeatTimer);
       connection.socket?.close();
     }
     this.connections.clear();
+    this.standbyConnections.clear();
     this.streams.clear();
+    this.standbyBooks.clear();
+    this.standbyServing.clear();
     this.identityInFlight.clear();
   }
 
@@ -542,8 +554,33 @@ class CexOrderBookStreamManager {
     return {
       activeStreams: this.streams.size,
       activeConnections: [...this.connections.values()].filter(connection => connection.socket?.readyState === WebSocket.OPEN).length,
+      activeStandbyConnections: [...this.standbyConnections.values()].filter(connection => connection.socket?.readyState === WebSocket.OPEN).length,
       ...this.stats,
     };
+  }
+
+  private serveStandby(
+    key: string,
+    venue: CexStreamVenue,
+    symbol: string,
+    book: SequencedOrderBook,
+  ): StreamOrderBookQuote | null {
+    const quote = book.getQuote(venue, symbol);
+    if (!quote) return null;
+    if (!this.standbyServing.has(key)) {
+      this.standbyServing.add(key);
+      this.stats.standbyHandovers += 1;
+      logger.warn('[CexOrderBookStream] hot standby assumed quote service while primary recovers', {
+        component: 'CexOrderBookStream',
+        venue,
+        symbol,
+        marketDataAuthority: 'cex_order_book_stream',
+        handoverAuthority: 'fresh_exchange_snapshot_only',
+        syntheticBookAllowed: false,
+        executionAuthorityChanged: false,
+      });
+    }
+    return quote;
   }
 
   private ensureStream(venue: CexStreamVenue, identity: StreamIdentity): SymbolStreamState {
@@ -558,20 +595,30 @@ class CexOrderBookStreamManager {
       book: new SequencedOrderBook(venue, venue === 'kraken' ? KRAKEN_BOOK_DEPTH : MAX_LEVELS),
     };
     this.streams.set(key, state);
-    const connection = this.ensureConnection(venue);
-    connection.symbols.set(identity.canonicalSymbol, identity.externalSymbol);
-    connection.canonicalByExternal.set(externalKey(identity.externalSymbol), identity.canonicalSymbol);
-    if (connection.socket?.readyState === WebSocket.OPEN) {
-      this.send(connection.socket, this.subscription(venue, [identity.externalSymbol]), venue, 'subscribe');
+    this.attachSymbol(this.ensureConnection(venue, 'primary'), identity);
+
+    if (this.hotStandbyEnabled()) {
+      this.standbyBooks.set(key, new SequencedOrderBook(venue, venue === 'kraken' ? KRAKEN_BOOK_DEPTH : MAX_LEVELS));
+      this.attachSymbol(this.ensureConnection(venue, 'standby'), identity);
     }
     return state;
   }
 
-  private ensureConnection(venue: CexStreamVenue): VenueConnectionState {
-    const existing = this.connections.get(venue);
+  private attachSymbol(connection: VenueConnectionState, identity: StreamIdentity): void {
+    connection.symbols.set(identity.canonicalSymbol, identity.externalSymbol);
+    connection.canonicalByExternal.set(externalKey(identity.externalSymbol), identity.canonicalSymbol);
+    if (connection.socket?.readyState === WebSocket.OPEN) {
+      this.send(connection.socket, this.subscription(connection.venue, [identity.externalSymbol]), connection.venue, `${connection.lane}_subscribe`);
+    }
+  }
+
+  private ensureConnection(venue: CexStreamVenue, lane: CexStreamLane): VenueConnectionState {
+    const registry = lane === 'primary' ? this.connections : this.standbyConnections;
+    const existing = registry.get(venue);
     if (existing) return existing;
     const connection: VenueConnectionState = {
       venue,
+      lane,
       socket: null,
       symbols: new Map<string, string>(),
       canonicalByExternal: new Map<string, string>(),
@@ -582,7 +629,7 @@ class CexOrderBookStreamManager {
       awaitingPongAt: null,
       stopped: false,
     };
-    this.connections.set(venue, connection);
+    registry.set(venue, connection);
     this.connect(connection);
     return connection;
   }
@@ -611,6 +658,7 @@ class CexOrderBookStreamManager {
       logger.info('[CexOrderBookStream] venue market-data stream connected', {
         component: 'CexOrderBookStream',
         venue: connection.venue,
+        lane: connection.lane,
         endpoint,
         productIdentityAuthority: 'live_exchange_product_catalog',
         quoteCurrencyAllowlistUsed: false,
@@ -619,19 +667,21 @@ class CexOrderBookStreamManager {
         antennaHotPath: true,
         websocketCompression: false,
         marketDataAuthority: 'cex_order_book_stream',
+        standbyExecutionAuthority: false,
         antennaExecutionAuthority: false,
       });
       const externalSymbols = [...connection.symbols.values()];
       if (externalSymbols.length > 0) {
-        this.send(socket, this.subscription(connection.venue, externalSymbols), connection.venue, 'subscribe');
+        this.send(socket, this.subscription(connection.venue, externalSymbols), connection.venue, `${connection.lane}_subscribe`);
         if (connection.venue === 'coinbase') {
-          this.send(socket, { type: 'subscribe', channel: 'heartbeats' }, connection.venue, 'heartbeat_subscribe');
+          this.send(socket, { type: 'subscribe', channel: 'heartbeats' }, connection.venue, `${connection.lane}_heartbeat_subscribe`);
         }
       }
     });
 
     socket.on('message', data => {
-      this.stats.framesReceived += 1;
+      if (connection.lane === 'primary') this.stats.framesReceived += 1;
+      else this.stats.standbyFramesReceived += 1;
       connection.lastMessageAt = Date.now();
       const raw = data.toString();
       if (connection.venue === 'okx' && raw === 'pong') {
@@ -660,6 +710,7 @@ class CexOrderBookStreamManager {
           logger.info('[CexOrderBookStream] OKX service-upgrade notice received; reconnecting proactively', {
             component: 'CexOrderBookStream',
             venue: connection.venue,
+            lane: connection.lane,
             code: payload.code,
           });
           socket.close();
@@ -670,26 +721,32 @@ class CexOrderBookStreamManager {
           const canonical = connection.canonicalByExternal.get(externalKey(parsed.externalSymbol))
             || canonicalCompactSymbol(parsed.externalSymbol);
           if (!canonical) continue;
-          const state = this.streams.get(`${connection.venue}:${canonical}`);
+          const key = `${connection.venue}:${canonical}`;
+          const state = this.streams.get(key);
           if (!state) continue;
+          const book = connection.lane === 'primary' ? state.book : this.standbyBooks.get(key);
+          if (!book) continue;
           const result = omniAntennaLayer.executeHotPathSync(
             TaskType.ORDER_BOOK_APPLY,
-            () => state.book.apply(parsed.message),
+            () => book.apply(parsed.message),
           );
-          if (parsed.message.kind === 'snapshot' && result === 'applied') this.stats.snapshotsApplied += 1;
-          else if (result === 'applied') this.stats.deltasApplied += 1;
-          else if (result === 'queued') this.stats.deltasQueued += 1;
-          else if (result === 'stale') this.stats.staleDeltasRejected += 1;
+          if (connection.lane === 'primary') {
+            if (parsed.message.kind === 'snapshot' && result === 'applied') this.stats.snapshotsApplied += 1;
+            else if (result === 'applied') this.stats.deltasApplied += 1;
+            else if (result === 'queued') this.stats.deltasQueued += 1;
+            else if (result === 'stale') this.stats.staleDeltasRejected += 1;
+          }
           if (result === 'gap' || result === 'integrity') {
             if (result === 'gap') this.stats.sequenceGaps += 1;
             else this.stats.integrityFailures += 1;
-            state.book.reset();
-            this.refreshSubscription(connection.venue, canonical);
+            book.reset();
+            this.refreshSubscription(connection.venue, canonical, connection.lane);
           }
         }
       } catch (error) {
         logger.debug('[CexOrderBookStream] ignored invalid message', {
           venue: connection.venue,
+          lane: connection.lane,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -699,6 +756,7 @@ class CexOrderBookStreamManager {
       this.stats.connectionErrors += 1;
       logger.debug('[CexOrderBookStream] websocket error', {
         venue: connection.venue,
+        lane: connection.lane,
         endpoint,
         error: error.message,
       });
@@ -721,6 +779,7 @@ class CexOrderBookStreamManager {
         logger.warn('[CexOrderBookStream] websocket heartbeat timed out; reconnecting', {
           component: 'CexOrderBookStream',
           venue: connection.venue,
+          lane: connection.lane,
           idleMs: now - connection.lastMessageAt,
         });
         socket.terminate();
@@ -735,13 +794,10 @@ class CexOrderBookStreamManager {
           return;
         }
         if (connection.venue === 'kraken') {
-          this.send(socket, { method: 'ping', req_id: now }, connection.venue, 'ping');
+          this.send(socket, { method: 'ping', req_id: now }, connection.venue, `${connection.lane}_ping`);
           connection.awaitingPongAt = now;
           return;
         }
-        // Coinbase heartbeats arrive every second when subscribed. Fifteen
-        // seconds without any frame is therefore stronger evidence of a dead
-        // connection than inventing an undocumented application ping.
         this.stats.heartbeatTimeouts += 1;
         socket.terminate();
       });
@@ -755,13 +811,14 @@ class CexOrderBookStreamManager {
     connection.awaitingPongAt = null;
   }
 
-  private refreshSubscription(venue: CexStreamVenue, canonicalSymbol: string): void {
-    const connection = this.connections.get(venue);
+  private refreshSubscription(venue: CexStreamVenue, canonicalSymbol: string, lane: CexStreamLane = 'primary'): void {
+    const registry = lane === 'primary' ? this.connections : this.standbyConnections;
+    const connection = registry.get(venue);
     const socket = connection?.socket;
     const externalSymbol = connection?.symbols.get(canonicalSymbol);
     if (!connection || !socket || !externalSymbol || socket.readyState !== WebSocket.OPEN) return;
-    this.send(socket, this.unsubscription(venue, [externalSymbol]), venue, 'unsubscribe');
-    this.send(socket, this.subscription(venue, [externalSymbol]), venue, 'subscribe');
+    this.send(socket, this.unsubscription(venue, [externalSymbol]), venue, `${lane}_unsubscribe`);
+    this.send(socket, this.subscription(venue, [externalSymbol]), venue, `${lane}_subscribe`);
   }
 
   private scheduleReconnect(connection: VenueConnectionState): void {
@@ -811,6 +868,10 @@ class CexOrderBookStreamManager {
 
   private enabled(): boolean {
     return process.env.CRYPTO_CEX_ORDER_BOOK_STREAM_ENABLED?.trim().toLowerCase() !== 'false';
+  }
+
+  private hotStandbyEnabled(): boolean {
+    return process.env.CRYPTO_CEX_HOT_STANDBY_ENABLED?.trim().toLowerCase() !== 'false';
   }
 
   private staleMs(): number {

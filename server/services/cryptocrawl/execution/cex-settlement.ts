@@ -3,11 +3,16 @@ import logger from '../../../logger.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import {
+  evaluateOkxRpiTakerBenefit,
+  fetchFreshOkxRpiTakerDepth,
+} from '../intelligence/okx-rpi-taker-depth.js';
+import {
   CoinbaseSpotSettlementAdapter,
   type CoinbaseOrderReceipt,
 } from './coinbase-spot-settlement-adapter.js';
+import { preparePrivateCexOrder } from './cex-private-websocket-order-transport.js';
 import { cexDecimalString } from './cex-order-serialization.js';
-import { getSpotProductConstraints } from './cex-spot-product-policy.js';
+import { getSpotProductConstraints, type SpotProductConstraints } from './cex-spot-product-policy.js';
 import type {
   ExecutionFill,
   ExecutionStatus,
@@ -27,8 +32,20 @@ export interface CexOrderReceipt {
   submittedAt: number;
 }
 
+export interface PreparedCexOrderSubmission {
+  transport: 'websocket' | 'rest' | 'strategy_specific';
+  preparedAt: number;
+  dispatch(): Promise<CexOrderReceipt>;
+}
+
 export interface CexSettlementAdapter {
   submit(request: OrderRequest): Promise<CexOrderReceipt>;
+  /**
+   * Optional two-phase submission seam. Preparation may resolve product/auth/feed
+   * dependencies but may not send an order. executeCexPlan dispatches both legs
+   * only after both preparations complete, preserving one parent-level barrier.
+   */
+  prepareSubmit?(request: OrderRequest): Promise<PreparedCexOrderSubmission>;
   query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement>;
   cancel(order: CexOrderReceipt): Promise<void>;
   getBalances?(): Promise<Record<string, string>>;
@@ -144,9 +161,8 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
     return krakenPrivateRequest(path, parameters, { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS });
   }
 
-  async submit(request: OrderRequest): Promise<CexOrderReceipt> {
+  private async submitRest(request: OrderRequest, constraints: SpotProductConstraints): Promise<CexOrderReceipt> {
     const submittedAt = Date.now();
-    const constraints = await getSpotProductConstraints('kraken', request.symbol, true);
     const result = await this.privateRequest('/0/private/AddOrder', {
       pair: constraints.exchangeSymbol,
       type: request.side,
@@ -158,6 +174,22 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
     const orderId = result.txid?.[0];
     if (!orderId) throw new Error('Kraken did not return an order id');
     return { venue: 'kraken', orderId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
+  }
+
+  async prepareSubmit(request: OrderRequest): Promise<PreparedCexOrderSubmission> {
+    const websocket = await preparePrivateCexOrder({ venue: 'kraken', request, timeInForce: 'ioc' });
+    if (websocket) return websocket;
+    const constraints = await getSpotProductConstraints('kraken', request.symbol, true);
+    return {
+      transport: 'rest',
+      preparedAt: Date.now(),
+      dispatch: () => this.submitRest(request, constraints),
+    };
+  }
+
+  async submit(request: OrderRequest): Promise<CexOrderReceipt> {
+    const prepared = await this.prepareSubmit(request);
+    return prepared.dispatch();
   }
 
   async query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement> {
@@ -256,14 +288,48 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
 }
 
 class OkxSettlementAdapter implements CexSettlementAdapter {
-  private async privateRequest(path: string, method: 'GET' | 'POST', parameters: Record<string, string> = {}): Promise<any[]> {
-    const { data } = await okxPrivateRequest(path, method, parameters, { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS });
+  private async privateRequest(path: string, method: 'GET' | 'POST', parameters: Record<string, string | boolean> = {}): Promise<any[]> {
+    const { data } = await okxPrivateRequest(path, method, parameters as Record<string, string>, { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS });
     return data;
   }
 
-  async submit(request: OrderRequest): Promise<CexOrderReceipt> {
+  private async measuredRpiTakerAccess(request: OrderRequest): Promise<boolean> {
+    if (process.env.CRYPTO_OKX_RPI_TAKER_EXECUTION_ENABLED === 'false') return false;
+    const snapshot = await fetchFreshOkxRpiTakerDepth(request.symbol).catch(() => null);
+    if (!snapshot) return false;
+    const benefit = evaluateOkxRpiTakerBenefit({
+      snapshot,
+      side: request.side,
+      quantity: request.quantity,
+      plannedLimitPrice: request.price,
+    });
+    if (benefit.useRpiTakerAccess) {
+      logger.info('[CEX Executor] OKX IOC enabling measured RPI taker liquidity', {
+        component: 'CentralizedExchangeExecutor',
+        symbol: request.symbol,
+        side: request.side,
+        quantity: request.quantity,
+        plannedLimitPrice: request.price,
+        rpiObservedAt: snapshot.observedAt,
+        rpiServerTimestamp: snapshot.serverTimestamp,
+        measuredAdditionalBaseQuantity: benefit.measuredAdditionalBaseQuantity,
+        measuredPriceImprovementBpsAdvisory: benefit.measuredPriceImprovementBps,
+        selectionReason: benefit.reason,
+        canonicalPlanAlreadyPositiveWithoutRpi: true,
+        standardL2AuthorityChanged: false,
+        economicBpsAuthority: false,
+        terminalSettlementRemainsTruth: true,
+      });
+    }
+    return benefit.useRpiTakerAccess;
+  }
+
+  private async submitRest(
+    request: OrderRequest,
+    constraints: SpotProductConstraints,
+    useRpiTakerAccess: boolean,
+  ): Promise<CexOrderReceipt> {
     const submittedAt = Date.now();
-    const constraints = await getSpotProductConstraints('okx', request.symbol, true);
     const rows = await this.privateRequest('/api/v5/trade/order', 'POST', {
       instId: constraints.exchangeSymbol,
       tdMode: 'cash',
@@ -271,11 +337,36 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
       ordType: 'ioc',
       px: cexDecimalString(request.price),
       sz: cexDecimalString(request.quantity),
+      ...(useRpiTakerAccess ? { rpiTakerAccess: true } : {}),
       clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
     });
     const order = rows[0];
     if (!order || order.sCode !== '0' || !order.ordId) throw new Error(`OKX rejected order: ${order?.sMsg || 'unknown error'}`);
     return { venue: 'okx', orderId: order.ordId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
+  }
+
+  async prepareSubmit(request: OrderRequest): Promise<PreparedCexOrderSubmission> {
+    const [constraints, useRpiTakerAccess] = await Promise.all([
+      getSpotProductConstraints('okx', request.symbol, true),
+      this.measuredRpiTakerAccess(request),
+    ]);
+    const websocket = await preparePrivateCexOrder({
+      venue: 'okx',
+      request,
+      timeInForce: 'ioc',
+      rpiTakerAccess: useRpiTakerAccess,
+    });
+    if (websocket) return websocket;
+    return {
+      transport: 'rest',
+      preparedAt: Date.now(),
+      dispatch: () => this.submitRest(request, constraints, useRpiTakerAccess),
+    };
+  }
+
+  async submit(request: OrderRequest): Promise<CexOrderReceipt> {
+    const prepared = await this.prepareSubmit(request);
+    return prepared.dispatch();
   }
 
   async query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement> {
@@ -363,8 +454,19 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
 class CoinbaseSettlementBridge implements CexSettlementAdapter {
   private readonly delegate = new CoinbaseSpotSettlementAdapter();
 
+  async prepareSubmit(request: OrderRequest): Promise<PreparedCexOrderSubmission> {
+    // Advanced Trade order creation remains REST. The parent barrier still starts
+    // this REST dispatch at the same local instant as WS-capable counterpart legs.
+    return {
+      transport: 'rest',
+      preparedAt: Date.now(),
+      dispatch: () => this.delegate.submit(request),
+    };
+  }
+
   async submit(request: OrderRequest): Promise<CexOrderReceipt> {
-    return this.delegate.submit(request);
+    const prepared = await this.prepareSubmit(request);
+    return prepared.dispatch();
   }
 
   async query(order: CexOrderReceipt): Promise<NormalizedOrderSettlement> {
@@ -526,6 +628,18 @@ async function settleOrder(
     : unknownSettlement(order, lastError);
 }
 
+async function prepareSubmission(
+  adapter: CexSettlementAdapter,
+  request: OrderRequest,
+): Promise<PreparedCexOrderSubmission> {
+  if (adapter.prepareSubmit) return adapter.prepareSubmit(request);
+  return {
+    transport: 'strategy_specific',
+    preparedAt: Date.now(),
+    dispatch: () => adapter.submit(request),
+  };
+}
+
 export function createProductionCexSettlementAdapters(): Record<ExecutableCexVenue, CexSettlementAdapter> {
   return {
     coinbase: new CoinbaseSettlementBridge(),
@@ -565,12 +679,37 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
       error: `No settlement-safe adapter for ${plan.buyVenue}->${plan.sellVenue}`,
     };
   }
+
+  // Resolve connection/auth/product preparation for BOTH legs before either can
+  // reach an exchange. This is the parent submission barrier. WebSocket-capable
+  // venues then emit from the same local event-loop turn; Coinbase retains its
+  // supported REST endpoint but starts behind the same barrier.
+  const [buyPrepared, sellPrepared] = await Promise.all([
+    prepareSubmission(buyAdapter, buyRequest),
+    prepareSubmission(sellAdapter, sellRequest),
+  ]);
+  const dispatchStartedAt = Date.now();
   const [buyResult, sellResult] = await Promise.allSettled([
-    buyAdapter.submit(buyRequest),
-    sellAdapter.submit(sellRequest),
+    buyPrepared.dispatch(),
+    sellPrepared.dispatch(),
   ]);
   const buyOrder = buyResult.status === 'fulfilled' ? buyResult.value : undefined;
   const sellOrder = sellResult.status === 'fulfilled' ? sellResult.value : undefined;
+  logger.info('[CEX Executor] synchronized parent-leg dispatch completed', {
+    component: 'CentralizedExchangeExecutor',
+    symbol: plan.symbol,
+    buyVenue: plan.buyVenue,
+    sellVenue: plan.sellVenue,
+    buyTransport: buyPrepared.transport,
+    sellTransport: sellPrepared.transport,
+    preparationSkewMs: Math.abs(buyPrepared.preparedAt - sellPrepared.preparedAt),
+    dispatchReceiptSkewMs: buyOrder && sellOrder ? Math.abs(buyOrder.submittedAt - sellOrder.submittedAt) : null,
+    dispatchElapsedMs: Date.now() - dispatchStartedAt,
+    timeInForcePreservedByAdapter: true,
+    websocketAcknowledgementSettlementAuthority: false,
+    ambiguousWebsocketRetryThroughRest: false,
+  });
+
   const [buySettlement, sellSettlement] = await Promise.all([
     buyOrder
       ? settleOrder(buyOrder, adapters[buyOrder.venue], { now, sleep, settlementTimeoutMs, pollIntervalMs })
@@ -634,6 +773,10 @@ export async function executeCexPlan(plan: VerifiedArbitragePlan, options: CexEx
       ...(buySettlement.fills.length > 0 ? [`${plan.buyVenue}:fills`] : []),
       ...(sellSettlement.fills.length > 0 ? [`${plan.sellVenue}:fills`] : []),
       ...(buySettlement.finalBalances || sellSettlement.finalBalances ? ['authenticated_final_balances'] : []),
+      'synchronized_parent_submission_barrier',
+      `buy_transport:${buyPrepared.transport}`,
+      `sell_transport:${sellPrepared.transport}`,
+      'websocket_acknowledgement_not_settlement_truth',
       'venue_native_fee_sign_normalized_to_economic_cost',
       'kraken_okx_settlement_product_identity:canonical_live_product_authority',
     ],

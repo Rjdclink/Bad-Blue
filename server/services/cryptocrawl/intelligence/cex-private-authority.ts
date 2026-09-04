@@ -1,5 +1,4 @@
 import { createHash, createHmac } from 'crypto';
-import type { PoolClient } from 'pg';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured } from '../../../db.js';
 import {
@@ -40,6 +39,13 @@ const OKX_RATE_MAX_RETRIES = Math.floor(finiteEnvNumber('CRYPTO_OKX_RATE_MAX_RET
 const OKX_RATE_BREAKER_MS = finiteEnvNumber('CRYPTO_OKX_RATE_BREAKER_MS', 30_000, 1_000, 300_000);
 const OKX_DISTRIBUTED_RATE_LOCK_TIMEOUT_MS = finiteEnvNumber('CRYPTO_OKX_DISTRIBUTED_RATE_LOCK_TIMEOUT_MS', 7_500, 500, 30_000);
 const OKX_REPLICA_SAFETY_FACTOR = Math.floor(finiteEnvNumber('CRYPTO_OKX_REPLICA_SAFETY_FACTOR', 4, 1, 16));
+const OKX_ORDER_REQUEST_EXPIRY_MS = finiteEnvNumber('CRYPTO_OKX_ORDER_REQUEST_EXPIRY_MS', 2_000, 500, 5_000);
+const OKX_EXPIRABLE_ORDER_WRITE_PATHS = new Set([
+  '/api/v5/trade/order',
+  '/api/v5/trade/batch-orders',
+  '/api/v5/trade/amend-order',
+  '/api/v5/trade/amend-batch-orders',
+]);
 
 function credential(name: string): string | null {
   const raw = process.env[name];
@@ -97,6 +103,15 @@ function sleep(ms: number): Promise<void> {
 // KRAKEN — one nonce/signing/serialization authority per API key
 // ============================================================================
 
+export type KrakenPrivateEncoding = 'form' | 'json';
+export type KrakenPrivateValue = string | number | boolean;
+export interface KrakenPrivateRequestOptions {
+  timeoutMs?: number;
+  encoding?: KrakenPrivateEncoding;
+  /** Mint time-sensitive fields only after the nonce/cluster lane is acquired. */
+  lateParameters?: () => Record<string, KrakenPrivateValue>;
+}
+
 let krakenLastNonce = 0;
 let krakenPrivateTail: Promise<void> = Promise.resolve();
 let krakenRequestCount = 0;
@@ -107,13 +122,6 @@ let krakenDbLastError: string | null = null;
 let krakenLockContentionCount = 0;
 let krakenLockTimeoutCount = 0;
 let krakenLastLockWaitMs = 0;
-
-class KrakenLockBusyError extends Error {
-  constructor(readonly waitedMs: number) {
-    super(`Kraken distributed nonce lane busy after ${waitedMs}ms; fail-closed and retry on a later hydration cycle`);
-    this.name = 'KrakenLockBusyError';
-  }
-}
 
 class KrakenPostCoordinationError extends Error {
   constructor(readonly causeError: unknown) {
@@ -201,44 +209,10 @@ async function ensureKrakenDistributedState(): Promise<void> {
   return krakenDistributedStateReady;
 }
 
-async function acquireKrakenDistributedLock(client: PoolClient, lockName: string): Promise<void> {
-  const startedAt = Date.now();
-  const deadline = startedAt + KRAKEN_LOCK_MAX_WAIT_MS;
-  while (true) {
-    const result = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS locked', [lockName]);
-    if (result.rows?.[0]?.locked === true) {
-      krakenLastLockWaitMs = Math.max(0, Date.now() - startedAt);
-      return;
-    }
-
-    krakenLockContentionCount += 1;
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      krakenLockTimeoutCount += 1;
-      krakenLastLockWaitMs = Math.max(0, Date.now() - startedAt);
-      logger.warn('[CEX Private] Kraken distributed nonce lane busy; request deferred without blocking an advisory-lock wait queue', {
-        component: 'CexPrivateAuthority',
-        waitedMs: krakenLastLockWaitMs,
-        contentionCount: krakenLockContentionCount,
-        timeoutCount: krakenLockTimeoutCount,
-        blockingAdvisoryLockUsed: false,
-        localNonceFallbackAllowed: false,
-      });
-      throw new KrakenLockBusyError(krakenLastLockWaitMs);
-    }
-
-    const pollMs = Math.min(KRAKEN_LOCK_POLL_MS, remainingMs);
-    const lowMs = Math.max(10, Math.floor(pollMs / 2));
-    const jitterMs = Math.floor(Math.random() * Math.max(1, pollMs - lowMs + 1));
-    await new Promise(resolve => setTimeout(resolve, Math.min(remainingMs, lowMs + jitterMs)));
-  }
-}
-
 /**
  * Kraken nonce ordering is API-key-wide. The same dedicated session lock covers
- * durable nonce allocation and physical network submission, but schema ownership
- * stays entirely with migrations. Bounded try-lock acquisition prevents a blocked
- * replica from consuming an ordinary application DB session indefinitely.
+ * durable nonce allocation and physical network submission, while one local tail
+ * serializes the non-database case. No JSON/L3/amend path owns a second nonce lane.
  */
 async function withKrakenDistributedLane<T>(
   apiKey: string,
@@ -269,9 +243,6 @@ async function withKrakenDistributedLane<T>(
       if (Number.isSafeInteger(numericNonce)) krakenLastNonce = Math.max(krakenLastNonce, numericNonce);
       recordKrakenDatabaseSuccess();
 
-      // Network/exchange failures occur after nonce authority is proven. Keep the
-      // session lock until submission finishes, but never misclassify those errors
-      // as database failures or open the database breaker.
       try {
         return await operation(nonce);
       } catch (error) {
@@ -280,15 +251,41 @@ async function withKrakenDistributedLane<T>(
     }, { acquireTimeoutMs: KRAKEN_LOCK_ACQUIRE_TIMEOUT_MS });
   } catch (error) {
     if (error instanceof KrakenPostCoordinationError) throw error.causeError;
+    krakenLockContentionCount += 1;
+    krakenLastLockWaitMs = KRAKEN_LOCK_ACQUIRE_TIMEOUT_MS;
+    if (String(error instanceof Error ? error.message : error).toLowerCase().includes('timeout')) krakenLockTimeoutCount += 1;
     recordKrakenDatabaseFailure(error);
     throw error;
   }
 }
 
+function krakenRequestBody(
+  nonce: string,
+  parameters: Record<string, KrakenPrivateValue>,
+  encoding: KrakenPrivateEncoding,
+): { body: string; contentType: string } {
+  if (Object.prototype.hasOwnProperty.call(parameters, 'nonce')) {
+    throw new Error('Kraken private request nonce is owned exclusively by CexPrivateAuthority');
+  }
+  if (encoding === 'json') {
+    return {
+      body: JSON.stringify({ ...parameters, nonce: Number(nonce) }),
+      contentType: 'application/json',
+    };
+  }
+  const formEntries: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parameters)) formEntries[key] = String(value);
+  formEntries.nonce = nonce;
+  return {
+    body: new URLSearchParams(formEntries).toString(),
+    contentType: 'application/x-www-form-urlencoded',
+  };
+}
+
 export async function krakenPrivateRequest(
   path: string,
-  parameters: Record<string, string> = {},
-  options: { timeoutMs?: number } = {},
+  parameters: Record<string, KrakenPrivateValue> = {},
+  options: KrakenPrivateRequestOptions = {},
 ): Promise<any> {
   return serializeKrakenPrivate(async () => {
     const apiKey = requireCredential('KRAKEN_API_KEY');
@@ -297,13 +294,19 @@ export async function krakenPrivateRequest(
     if (decodedSecret.length === 0) throw new Error('Kraken API secret is not valid base64');
 
     return withKrakenDistributedLane(apiKey, async nonce => {
-      const body = new URLSearchParams({ nonce, ...parameters }).toString();
+      const late = options.lateParameters?.() || {};
+      if (Object.prototype.hasOwnProperty.call(late, 'nonce')) {
+        throw new Error('Kraken late parameters cannot override nonce authority');
+      }
+      const encoding = options.encoding || 'form';
+      const { body, contentType } = krakenRequestBody(nonce, { ...parameters, ...late }, encoding);
       const response = await fetchWithTimeout(`https://api.kraken.com${path}`, {
         method: 'POST',
         headers: {
           'API-Key': apiKey,
           'API-Sign': signKraken(path, body, nonce, decodedSecret),
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': contentType,
+          Accept: 'application/json',
         },
         body,
       }, options.timeoutMs ?? KRAKEN_TIMEOUT_MS);
@@ -402,8 +405,6 @@ interface OkxLaneSnapshot {
 
 const OKX_LANE_POLICIES: Record<OkxPrivateLane, OkxLanePolicy> = {
   trade_fee: {
-    // OKX documents this endpoint at 5 requests / 2 seconds per User ID.
-    // Never let an environment override expand beyond the venue's authority.
     capacity: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_CAPACITY', 5, 1, 5),
     windowMs: finiteEnvNumber('CRYPTO_OKX_FEE_BUCKET_WINDOW_MS', 2_000, 2_000, 60_000),
     priority: 10,
@@ -519,9 +520,6 @@ async function executeStartedLaneOperation<T>(lane: OkxPrivateLane, operation: (
   try {
     return await operation();
   } finally {
-    // A rejected request still consumes the venue's rate window. Keep the
-    // distributed lock for the complete pacing interval on both success and
-    // failure so a 50011 cannot create an immediate cluster-wide retry burst.
     if (lane === 'trade_fee' && isCoordinationDatabaseConfigured) {
       await sleep(Math.max(0, startedAt + OKX_FEE_MIN_INTERVAL_MS - Date.now()));
     }
@@ -549,9 +547,6 @@ function scheduleOkxLane<T>(lane: OkxPrivateLane, operation: () => Promise<T>): 
   const state = okxLanes[lane];
   const run = state.tail.catch(() => undefined).then(async () => {
     await acquireOkxToken(lane);
-    // The Overflow lease table is the cluster-wide quota authority. Local
-    // buckets protect one process; this claim prevents replicas and concurrent
-    // subsystems from exceeding OKX's user-ID-wide trade-fee window.
     await acquireOkxDistributedQuota(lane);
     if (lane !== 'trade_fee' || !isCoordinationDatabaseConfigured) {
       return executeStartedLaneOperation(lane, operation);
@@ -634,12 +629,26 @@ function recordOkxSuccess(lane: OkxPrivateLane): void {
   if (state.breakerOpenUntil <= Date.now()) state.breakerOpenUntil = 0;
 }
 
+function okxOrderExpirationHeaders(
+  path: string,
+  method: 'GET' | 'POST',
+  expiresAtMs: number | null,
+): Record<string, string> {
+  if (method !== 'POST' || !OKX_EXPIRABLE_ORDER_WRITE_PATHS.has(path) || expiresAtMs === null) return {};
+  const remainingMs = expiresAtMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new Error(`OKX_ORDER_REQUEST_EXPIRED_BEFORE_SEND: ${path}`);
+  }
+  return { expTime: String(Math.floor(expiresAtMs)) };
+}
+
 async function authenticatedOkxRequestFromBase(
   baseUrl: string,
   path: string,
   method: 'GET' | 'POST',
   parameters: Record<string, string>,
   timeoutMs: number,
+  requestExpiresAtMs: number | null = null,
 ): Promise<any> {
   const apiKey = requireCredential('OKX_API_KEY');
   const apiSecret = requireCredential('OKX_API_SECRET');
@@ -659,6 +668,7 @@ async function authenticatedOkxRequestFromBase(
       'OK-ACCESS-TIMESTAMP': timestamp,
       'OK-ACCESS-PASSPHRASE': passphrase,
       'Content-Type': 'application/json',
+      ...okxOrderExpirationHeaders(path, method, requestExpiresAtMs),
     },
     body: method === 'POST' ? body : undefined,
   }, timeoutMs);
@@ -756,12 +766,16 @@ export async function okxPrivateRequest(
 ): Promise<{ payload: any; data: any[]; baseUrl: string }> {
   const baseUrl = await getOkxExecutionRestBaseUrl();
   const lane = options.lane || inferOkxLane(path, method);
+  const requestExpiresAtMs = method === 'POST' && OKX_EXPIRABLE_ORDER_WRITE_PATHS.has(path)
+    ? Date.now() + OKX_ORDER_REQUEST_EXPIRY_MS
+    : null;
   const payload = await executeOkxWithAdaptiveRetry(lane, () => authenticatedOkxRequestFromBase(
     baseUrl,
     path,
     method,
     parameters,
     options.timeoutMs ?? OKX_TIMEOUT_MS,
+    requestExpiresAtMs,
   ));
   return {
     payload,

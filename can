@@ -1,32 +1,102 @@
 CRYPTARA BPS EFFICIENCY IMPLEMENTATION CHECKPOINT
 
-Governing law: absolutely no regression. Preserve hard safety, deterministic economics, single canonical BPS authority, single canonical execution authority, measured/realized truth, and fail-closed behavior where financial correctness requires it.
+GOVERNING LAW
+Absolutely no regression. Preserve hard safety, deterministic economics, one canonical BPS/economic authority, one canonical execution authority, terminal settlement truth, measured/realized evidence, and fail-closed behavior where financial correctness requires it.
 
-Objective:
-Implement the second 15-solution BPS-efficiency package, targeting >=35 BPS de-overlapped estimated capability improvement while allowing only measured realized savings into canonical economics.
+CURRENT OPERATOR INSTRUCTION
+Formal verification cycles are intentionally deferred. Continue implementation efficiently; address concrete issues when they arise. This does NOT authorize fabricated economics, duplicate execution, weakened hard safety, or unsupported trade/profit/payout claims.
 
-Target enhancements:
-1. Exchange-side opportunity expiration / stale-order rejection.
-2. Kraken L3 queue intelligence.
-3. Queue-preserving atomic amend.
-4. Tick-vs-queue-jump optimizer.
-5. Executable OKX RPI dual-surface routing.
-6. RPI automatic price-spacing normalization.
-7. Gateway-to-matching-engine latency attribution.
-8. Hot-standby market-data handover.
-9. Two-speed CRYPTARA controller: slow global optimizer + fast local revalidation.
-10. Liquidity replenishment/resilience predictor.
-11. Cross-impact-aware multi-asset execution.
-12. Order-book vs RFQ/Convert execution auction.
-13. Synchronized multi-leg WebSocket dispatch with FOK/IOC protection.
-14. Shadow-to-terminal microstructure calibration.
-15. Organic fee-tier trajectory optimizer; never wash trade or execute uneconomically for volume.
+WORKING BRANCH
+repair/cryptocrawl-bps-efficiency-wave2-20260903
+PR #512: Cryptocrawl: BPS efficiency wave 2
+Base: develop
+PR remains draft and unmerged. Merge/deploy is a separate explicit action.
 
-Starting production baseline:
-- develop head: 597709d32c08358fadb08b6c021518c2fe7ae58a
-- Existing BPS research tactics and canonical authority boundaries must be reused rather than duplicated.
-- Existing RPI advisory, OKX sequence continuity, maker microprice/imbalance shadow model, measured order-control latency, Stage-2 soft-gate retirement, FOK semantics, Aave/Balancer zero-capital provider mesh, and rebate/refund canonical truth already exist.
+WAVE-2 TARGET PACKAGE — SOURCE IMPLEMENTATION STATUS
+1. Exchange-side opportunity expiration / stale-order rejection — IMPLEMENTED.
+2. Kraken L3 queue intelligence — IMPLEMENTED; previously verified green.
+3. Queue-preserving atomic amend — IMPLEMENTED; previously verified green.
+4. Tick-vs-queue-jump optimizer — IMPLEMENTED; previously verified green.
+5. Executable OKX RPI dual-surface routing — IMPLEMENTED.
+6. RPI automatic price-spacing normalization — IMPLEMENTED; previously verified green.
+7. Gateway/order-control latency attribution — IMPLEMENTED; previously verified green.
+8. Hot-standby market-data handover — IMPLEMENTED.
+9. Two-speed CRYPTARA controller: slow global scan + fast exact-symbol canonical revalidation — IMPLEMENTED.
+10. Liquidity replenishment/resilience predictor — IMPLEMENTED; previously verified green.
+11. Cross-impact-aware multi-asset scheduling — IMPLEMENTED.
+12. Order-book vs OKX Convert measured execution auction — IMPLEMENTED.
+13. Synchronized multi-leg immediate execution with WebSocket/REST preparation barrier and FOK/IOC protection — IMPLEMENTED.
+14. Shadow-to-terminal microstructure calibration — IMPLEMENTED; previously verified green.
+15. Organic authenticated fee-tier trajectory optimizer — IMPLEMENTED as fee-history/scan-attention ranking only; never creates synthetic economics, artificial volume, wash/self trading, or losing trades for future tier value.
 
-Milestone 0 — checkpoint created before implementation.
-Status: STARTED.
-Next action: inspect exact existing execution, fee, order-control, RPI, market-data, maker microstructure, and BPS authority files; implement smallest compatible production slices with verifier coverage; update this file after each verified milestone.
+ZERO-CAPITAL FRESHNESS / CONTINUOUS SCAN — IMPLEMENTED AND PREVIOUSLY VERIFIED GREEN
+- stale measured reads expire rather than persisting as current opportunities
+- stale eligible opportunities are quarantined before execution
+- stale dashboard opportunities are hidden
+- zero-capital measurement timestamp/age is exposed
+- failed fresh requote clears stale recent BPS/notional evidence
+- historical learning cannot masquerade as current execution evidence
+- unified scanning remains bounded/non-starving; the prior -23 BPS observation is not a configured target, threshold, floor, ceiling, or desired metric
+
+HISTORICAL VERIFIED FOUNDATION RETAINED
+Milestones 1-3 and the zero-capital freshness repair retain their previously recorded verifier/Railway evidence. The current later-source head is intentionally not being subjected to another formal exact-head verification cycle under the current operator instruction.
+
+CURRENT SOURCE ARCHITECTURE
+A. Canonical economics
+- fresh executable state + authenticated fees/rebates + depth + exact size + hard resource facts remain the only admission basis
+- advisory models cannot add synthetic BPS or independently approve/veto execution
+- terminal authenticated fills/fees/settlement remain realized P/L truth
+
+B. OKX RPI / Convert
+- ordinary books remain standard L2 authority
+- books-rpi is a measured execution overlay only
+- rpiTakerAccess is conditional on measured exact-quantity benefit inside the existing planned limit
+- IOC and production FOK paths can use measured RPI access
+- OKX Convert competes at submit preparation against fresh order-book/RPI execution at the exact quantity
+- Convert must be strictly better and remain within the existing plan limit
+- ambiguous Convert submission outcomes never fall through to duplicate order-book submission
+- no RPI/Convert benefit is credited into canonical economics before realized settlement
+
+C. Synchronized parent-leg dispatch
+- executeCexPlan prepares both legs before either is sent
+- WebSocket-capable Kraken/OKX immediate orders are prepared before the parent barrier
+- Coinbase remains on its supported REST order endpoint but is prepared behind the same parent barrier
+- production FOK adapters now implement the same two-phase preparation seam rather than submitting during preparation
+- OKX FOK preparation includes measured RPI and Convert competition before the barrier
+- safe REST fallback is allowed only when no WebSocket order was sent
+- ambiguous WebSocket outcomes cannot be retried through REST
+
+D. Hot-standby market data
+- primary and standby books remain independent sequenced exchange books inside the same canonical market-data authority
+- fresh standby data may serve quotes while a stale/reset primary recovers
+- handover does not create a second execution or economics authority
+
+E. Two-speed controller
+- slow global scan remains discovery authority
+- candidate events can trigger cooldown-bounded exact-symbol canonical revalidation
+- no independent BPS threshold or stage/execution authority is introduced
+
+F. Cross-impact
+- measured same-side shared-liquidity/correlation pressure can reorder already-positive work
+- it cannot edit canonical BPS, plan notional, recommendation, eligibility, or execution authority
+
+G. Authenticated fee-tier trajectory
+- consumes already-authenticated cached fee/rebate evidence only
+- does not generate private exchange traffic for tier chasing
+- observed organic fee improvements may influence scan attention
+- future savings never make a losing route eligible
+- no artificial-volume, wash/self-trade, or rebate-order-count objective exists
+
+CURRENT COMPLETION POSITION
+Wave-2 BPS package is SOURCE-CODE COMPLETE at the intended implementation level after the final FOK/RPI/Convert synchronization cleanup.
+Formal exact-head build/runtime verification is DEFERRED by current operator instruction, not represented as completed.
+No live trade, realized BPS saving, profit, settlement, payout, or retained-capital reuse is claimed merely from source implementation.
+
+RESUME RULE
+1. Read /can first.
+2. Refresh PR #512 head before any new write to avoid conflicts.
+3. Do not restart completed Wave-2 mechanisms unless a concrete defect/regression appears.
+4. Preserve one canonical economics authority, one execution authority, hard safety, fresh evidence, Profit Ladder sizing, and terminal settlement truth.
+5. Formal verification is not a blocking workflow unless the operator requests it or a concrete issue requires it.
+6. Never infer execution from discovery or source presence; direct terminal evidence is required for trade/profit/payout claims.
+7. Do not merge automatically; merge/deploy remains a separate explicit action.

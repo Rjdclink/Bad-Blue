@@ -88,7 +88,7 @@ requirePattern(makerAdapters, /getOkxRpiExecutionCapability\(request\.symbol,\s*
 requirePattern(makerAdapters, /ordType\s*=\s*'rpi'/, 'qualified OKX maker legs can submit as RPI');
 requirePattern(makerAdapters, /OKX_RPI_REJECT_FEE_WORSENED/, 'submit-time RPI fee worsening fails closed');
 requirePattern(makerAdapters, /OKX_RPI_REJECT_PERMISSION_NOTIONAL_OR_SPACING_CHANGED/, 'submit-time RPI permission/notional/spacing drift fails closed');
-requirePattern(makerAdapters, /There is no silent[\s\S]{0,120}downgrade from RPI to standard/, 'RPI plan cannot silently fall back to a worse standard-maker fee');
+requirePattern(makerAdapters, /There is no silent[\s\S]{0,120}downgrade[\s\S]{0,40}from RPI to standard/, 'RPI plan cannot silently fall back to a worse standard-maker fee');
 
 // MT/TM reuse the maker adapter but do not carry MM makerExecution metadata.
 // Optional access is required so hybrid maker submission remains standard

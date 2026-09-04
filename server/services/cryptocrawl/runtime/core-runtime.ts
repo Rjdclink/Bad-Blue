@@ -80,6 +80,7 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       import('./hybrid-cex-execution-wiring.js'),
       import('./stage-proof-metrics-wiring.js'),
       import('../integration/authenticated-fee-tier-optimization-wiring.js'),
+      import('../integration/cryptara-two-speed-revalidation-wiring.js'),
       import('./adaptive-profit-operations-wiring.js'),
       import('./expanded-market-universe-wiring.js'),
       import('./alchemy-filtered-mempool-wiring.js'),
@@ -92,6 +93,7 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       hybridCexPolicy,
       stageProofPolicy,
       authenticatedFeePolicy,
+      twoSpeedPolicy,
       adaptiveProfitPolicy,
       universePolicy,
       mempoolPolicy,
@@ -104,6 +106,7 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       hybridCexPolicy.ensureHybridCexExecutionWiring();
       stageProofPolicy.ensureStageProofMetricsWiring();
       authenticatedFeePolicy.ensureAuthenticatedFeeTierOptimizationWiring();
+      twoSpeedPolicy.ensureCryptaraTwoSpeedRevalidationWiring();
       adaptiveProfitPolicy.ensureAdaptiveProfitOperationsWiring();
       universePolicy.ensureExpandedMarketUniverseWiring();
       mempoolPolicy.ensureAlchemyFilteredMempoolWiring();
@@ -154,6 +157,8 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     executionScheduler: 'canonical_resource_leased_scheduler',
     fixedDiscoveryPriority: false,
     adaptiveDiscoveryAttention: 'terminal_realized_performance',
+    twoSpeedOpportunityController: 'slow_global_scan_plus_fast_candidate_event_exact_symbol_revalidation',
+    twoSpeedExecutionAuthority: false,
     optionalProviderFailureBlocksCore: false,
     positiveProfitCapturePolicy: 'strict_all_in_net_gt_zero',
     arbitraryBpsExecutionFloor: false,

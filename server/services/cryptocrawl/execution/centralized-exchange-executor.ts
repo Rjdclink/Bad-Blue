@@ -17,6 +17,7 @@ import {
   type CexSettlementAdapter,
   type ExecutableCexVenue,
 } from './cex-settlement.js';
+import { wrapOkxSettlementAdapterWithConvertAuction } from './okx-convert-settlement-wrapper.js';
 import {
   executeHyperHybridCexPlan,
   type HyperHybridCexExecutionResult,
@@ -481,6 +482,7 @@ export class CentralizedExchangeExecutor {
 }
 
 const productionCexAdapters = createProductionCexSettlementAdapters();
+productionCexAdapters.okx = wrapOkxSettlementAdapterWithConvertAuction(productionCexAdapters.okx);
 // Production adapters are already merged inside execute(). Leaving options empty
 // selects venue-native FOK for default TT split children; strategy-specific
 // executors may delegate only child submission while this class retains full-

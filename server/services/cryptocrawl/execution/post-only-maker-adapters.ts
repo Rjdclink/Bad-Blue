@@ -11,6 +11,7 @@ import {
 } from '../intelligence/cex-order-control-health.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
+import { recordMakerTerminalCalibration } from '../intelligence/maker-terminal-calibration.js';
 import {
   getOkxRpiExecutionCapability,
   isOkxRpiMakerPriceAdmissible,
@@ -27,6 +28,7 @@ import { cexDecimalString } from './cex-order-serialization.js';
 import { getSpotProductConstraints } from './cex-spot-product-policy.js';
 import { coinbaseDecimalString } from './coinbase-spot-settlement-adapter.js';
 import { validateCoinbasePostOnlyOrderAgainstProduct } from './coinbase-product-policy.js';
+import { KrakenMakerQueueAmendController } from './kraken-maker-queue-amend.js';
 import { getMakerLifecycleTraceId } from './maker-lifecycle-trace.js';
 import type { MakerOrderStyle, MakerRecoveryPlan } from './stablecoin-maker-strategy.js';
 
@@ -132,6 +134,14 @@ function makerOrderStyle(plan: SharedMakerPlan, venue: ExecutableCexVenue, side:
   return { style: 'post_only', expectedMakerFeeBps: 0 };
 }
 
+function makerFillProbability(plan: SharedMakerPlan, venue: ExecutableCexVenue, side: 'buy' | 'sell'): number | null {
+  const queue = plan.makerExecution?.queueEcho;
+  if (!queue) return null;
+  if (venue === plan.buyVenue && side === 'buy') return queue.buyFillProbability;
+  if (venue === plan.sellVenue && side === 'sell') return queue.sellFillProbability;
+  return null;
+}
+
 function recordLatency(input: {
   traceId: string;
   venue: ExecutableCexVenue;
@@ -169,6 +179,7 @@ function wrapMakerSubmit(
   delegate: CexSettlementAdapter,
   traceId: string,
   plan: SharedMakerPlan,
+  krakenQueueAmend: KrakenMakerQueueAmendController,
 ): CexSettlementAdapter {
   return {
     async submit(request: OrderRequest): Promise<CexOrderReceipt> {
@@ -187,8 +198,17 @@ function wrapMakerSubmit(
         });
         const orderId = result.txid?.[0];
         if (!orderId) throw new Error('Kraken did not return a post-only maker order id');
+        const receipt: CexOrderReceipt = {
+          venue: 'kraken',
+          orderId,
+          symbol: request.symbol,
+          side: request.side,
+          requestedQuantity: request.quantity,
+          submittedAt,
+        };
+        krakenQueueAmend.rememberSubmitted(receipt, request.price, constraints.priceIncrement);
         recordLatency({ traceId, venue, operation: 'submit', symbol: request.symbol, clientRoundTripMs: Date.now() - submittedAt, orderStyle: 'post_only' });
-        return { venue: 'kraken', orderId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
+        return receipt;
       }
 
       if (venue === 'okx') {
@@ -228,7 +248,11 @@ function wrapMakerSubmit(
           ordType,
           px: cexDecimalString(request.price),
           sz: cexDecimalString(request.quantity),
-          ...(ordType === 'rpi' ? { rpiPxRound: false } : {}),
+          // Matching-engine book state can move between our fresh spacing check
+          // and actual admission. For RPI only, let OKX round outward to the
+          // nearest still-non-marketable compliant price instead of rejecting
+          // the leg. Outward rounding cannot worsen per-fill price economics.
+          ...(ordType === 'rpi' ? { rpiPxRound: true } : {}),
           clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
         }, { lane: 'order_write' });
         const order = data[0];
@@ -285,11 +309,33 @@ function wrapMakerSubmit(
       const startedAt = Date.now();
       const result = await delegate.query(order);
       recordLatency({ traceId, venue, operation: 'query', symbol: order.symbol, clientRoundTripMs: Date.now() - startedAt });
+      if (venue === 'kraken' && !result.terminal) {
+        await krakenQueueAmend.maybeAmend(order, result);
+      }
+      if (result.terminal) {
+        krakenQueueAmend.forget(order.orderId);
+        const predictedFillProbability = makerFillProbability(plan, venue, order.side);
+        if (predictedFillProbability !== null) {
+          recordMakerTerminalCalibration({
+            venue,
+            symbol: order.symbol,
+            side: order.side,
+            orderId: order.orderId,
+            predictedFillProbability,
+            requestedQuantity: result.requestedQuantity,
+            filledQuantity: result.filledQuantity ?? 0,
+            submittedAt: result.submittedAt,
+            terminalAt: result.terminalAt ?? Date.now(),
+            terminalStatus: result.status,
+          });
+        }
+      }
       return result;
     },
     async cancel(order) {
       const startedAt = Date.now();
       const result = await delegate.cancel(order);
+      krakenQueueAmend.forget(order.orderId);
       recordLatency({ traceId, venue, operation: 'cancel', symbol: order.symbol, clientRoundTripMs: Date.now() - startedAt });
       return result;
     },
@@ -304,15 +350,23 @@ function wrapMakerSubmit(
  * An OKX RPI leg is submitted only when an MM plan explicitly selected it from
  * authenticated fee economics and submit-time product permission, minimum
  * notional, visible RPI spacing, fresh book and fee evidence still support the
- * same-or-better economics. There is no silent downgrade from RPI to standard
- * maker because that could invalidate plan P&L. Measured submit/query/cancel
- * round-trip latency is retained only as BPS revalidation scheduling evidence;
- * it never fabricates a BPS cost, finalizes settlement, or owns execution.
+ * same-or-better economics. RPI requests enable exchange-native outward spacing
+ * normalization so an otherwise-valid leg is not rejected solely because book
+ * state changed while the request was in flight. There is no silent downgrade
+ * from RPI to standard maker because that could invalidate plan P&L. Kraken maker
+ * orders may request at most one atomic AmendOrder after bounded authenticated L3
+ * proves actual queue-ahead, the existing queue optimizer recommends exactly one
+ * still-passive tick, and exact remaining-plan USD profit safely covers the full
+ * price concession. Amend/L3 failure never cancels or replaces the resting order.
+ * Measured submit/query/cancel latency remains BPS revalidation scheduling
+ * evidence; realized terminal outcomes calibrate the shadow fill model but never
+ * fabricate BPS, finalize settlement, or own execution.
  */
 export function createPostOnlyMakerAdapters(plan: SharedMakerPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();
   const traceId = getMakerLifecycleTraceId(plan);
-  adapters[plan.buyVenue] = wrapMakerSubmit(plan.buyVenue, adapters[plan.buyVenue], traceId, plan);
-  adapters[plan.sellVenue] = wrapMakerSubmit(plan.sellVenue, adapters[plan.sellVenue], traceId, plan);
+  const krakenQueueAmend = new KrakenMakerQueueAmendController(plan);
+  adapters[plan.buyVenue] = wrapMakerSubmit(plan.buyVenue, adapters[plan.buyVenue], traceId, plan, krakenQueueAmend);
+  adapters[plan.sellVenue] = wrapMakerSubmit(plan.sellVenue, adapters[plan.sellVenue], traceId, plan, krakenQueueAmend);
   return adapters;
 }
