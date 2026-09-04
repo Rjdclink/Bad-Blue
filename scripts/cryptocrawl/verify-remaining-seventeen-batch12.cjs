@@ -85,11 +85,14 @@ assert(!partialProfitAccounting.includes('recordCryptaraExecutionEvidence('), 'p
 
 assert(retainedProfit.includes('ON CONFLICT (event_id) DO NOTHING'), 'retained-profit terminal events must be idempotent');
 assert(retainedProfit.includes('retained_profit_usd = retained_profit_usd + $1'), 'new terminal profit must increment retained treasury accounting');
-assert(retainedProfit.includes('CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED'), 'automatic profit payout must require an explicit opt-in control');
-assert(retainedProfit.includes('if (!automaticProfitPayoutEnabled())'), 'default terminal-profit path must retain instead of enqueueing payout');
-assert(retainedProfit.includes('payoutTargetUsd: 0') && retainedProfit.includes('retainedFraction: 1'), 'default terminal profit must be one hundred percent retained');
-assert(retainedProfit.includes('payoutReservationCreated: false'), 'default terminal profit must not reserve strategy inventory for payout');
-assert(retainedProfit.includes('profitAvailableForRedeployment: true'), 'default retained profit must remain available to strategies');
+assert(retainedProfit.includes('const PAYOUT_FRACTION = 0.90;'), 'automatic terminal profit payout must remain fixed at 90%');
+assert(retainedProfit.includes('const RETAINED_FRACTION = 0.10;'), 'automatic retained system capital must remain fixed at 10%');
+assert(retainedProfit.includes('feedback.settlement.terminal !== true') && retainedProfit.includes('feedback.settlement.settlementConfirmed !== true'), 'automatic payout allocation must require terminal-confirmed settlement');
+assert(retainedProfit.includes('feedback.success !== true'), 'automatic payout allocation must require successful execution');
+assert(retainedProfit.includes('splitProfit(realized)'), 'automatic payout must derive from the canonical realized-profit split');
+assert(retainedProfit.includes('cryptocrawler_profit_payout_jobs'), 'automatic terminal payout must persist to the durable payout lifecycle');
+assert(retainedProfit.includes("'ETH','ethereum'"), 'automatic payout must remain ETH on Ethereum');
+assert(retainedProfit.includes('cryptocrawler_retained_exchange_allocations'), 'the retained 10% must remain durably system-owned and routeable for compounding');
 
 assert(runtime.includes("install('inventory_constrained_cex_execution', () => ensureInventoryConstrainedCexExecutionWiring())"), 'inventory-constrained CEX execution wiring must be isolated and installed');
 assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVenueTimingGuardWiring())"), 'cross-venue timing guard must be isolated and installed');
@@ -97,4 +100,4 @@ assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensure
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
 
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, treasury invariants, and isolated runtime protections preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, automatic terminal-confirmed 90/10 payout with durable retained system capital, and isolated runtime protections preserved');
