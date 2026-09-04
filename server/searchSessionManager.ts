@@ -55,32 +55,33 @@ class SearchSessionManager {
 
   async initialize(): Promise<void> {
     console.log('[SearchSessionManager] Initializing...');
-    
+
     try {
       const session = await this.ensureTodaySession();
       const intervalPlan = session.intervalPlan as AdaptiveIntervalPlan | null;
-      
+
       if (intervalPlan?.sessionStartedAt) {
         this.sessionStartedAt = new Date(intervalPlan.sessionStartedAt);
       } else {
         this.sessionStartedAt = new Date();
       }
-      
+
       if (intervalPlan?.lastSearchAt) {
         this.lastSearchTime = new Date(intervalPlan.lastSearchAt);
       }
-      
+
       if (intervalPlan?.currentDelaySeconds) {
         this.currentDelaySeconds = intervalPlan.currentDelaySeconds;
       }
 
       const delay = await this.computeCurrentDelay();
       this.currentDelaySeconds = delay.delaySeconds;
-      
+
       this.startIntervalMonitor();
       console.log(`[SearchSessionManager] ✓ Initialized with adaptive intervals (current: ${this.currentDelaySeconds}s)`);
     } catch (error: any) {
       console.error('[SearchSessionManager] Initialization failed:', error.message);
+      throw error;
     }
   }
 
@@ -90,7 +91,7 @@ class SearchSessionManager {
 
   private async ensureTodaySession(): Promise<typeof subagentSearchSessions.$inferSelect> {
     const today = this.getTodayDateString();
-    
+
     const existingSession = await db
       .select()
       .from(subagentSearchSessions)
@@ -105,17 +106,17 @@ class SearchSessionManager {
     const now = new Date();
     this.sessionStartedAt = now;
     this.lastSearchTime = null;
-    
+
     const delay = await this.computeCurrentDelay();
     this.currentDelaySeconds = delay.delaySeconds;
-    
+
     const intervalPlan: AdaptiveIntervalPlan = {
       sessionStartedAt: now.toISOString(),
       lastSearchAt: null,
       currentDelaySeconds: this.currentDelaySeconds,
       providerSequence: []
     };
-    
+
     const [newSession] = await db.insert(subagentSearchSessions).values({
       sessionDate: today,
       totalBudgetMinutes: this.DAILY_BUDGET_MINUTES,
@@ -129,19 +130,19 @@ class SearchSessionManager {
 
     this.currentSessionDate = today;
     console.log(`[SearchSessionManager] Created new session for ${today} with adaptive intervals`);
-    
+
     return newSession;
   }
 
   private async computeCurrentDelay(): Promise<{ delaySeconds: number; reason: string; nextProvider: AIProvider | null }> {
     try {
       const result = await computeAdaptiveSearchDelay(UsageContext.AUTONOMOUS);
-      
+
       const clampedDelay = Math.max(
         this.MIN_DELAY_SECONDS,
         Math.min(this.MAX_DELAY_SECONDS, result.delaySeconds)
       );
-      
+
       return {
         delaySeconds: clampedDelay,
         reason: result.reason,
@@ -169,12 +170,12 @@ class SearchSessionManager {
 
   private async checkAndUpdateSession(): Promise<void> {
     const today = this.getTodayDateString();
-    
+
     if (this.currentSessionDate !== today) {
       this.lastSearchTime = null;
       await this.ensureTodaySession();
     }
-    
+
     const delay = await this.computeCurrentDelay();
     if (Math.abs(delay.delaySeconds - this.currentDelaySeconds) > 10) {
       this.currentDelaySeconds = delay.delaySeconds;
@@ -193,11 +194,11 @@ class SearchSessionManager {
   async getSessionState(): Promise<SessionState> {
     const session = await this.ensureTodaySession();
     const delay = await this.computeCurrentDelay();
-    
+
     const secondsSinceLastSearch = this.getSecondsSinceLastSearch();
     const canSearchNow = secondsSinceLastSearch >= this.currentDelaySeconds;
     const waitSeconds = canSearchNow ? 0 : (this.currentDelaySeconds - secondsSinceLastSearch);
-    
+
     let reason = '';
     if (!canSearchNow) {
       reason = `Wait ${waitSeconds}s until next search allowed`;
@@ -208,7 +209,7 @@ class SearchSessionManager {
     } else {
       reason = 'Ready to search';
     }
-    
+
     return {
       isActive: session.status === 'active',
       currentSession: session,
@@ -223,26 +224,26 @@ class SearchSessionManager {
 
   async canStartSearch(): Promise<{ allowed: boolean; reason: string; waitSeconds?: number; nextProvider?: AIProvider | null }> {
     const state = await this.getSessionState();
-    
+
     if (!state.isActive) {
       return { allowed: false, reason: 'Session is not active' };
     }
-    
+
     if (state.minutesRemaining <= 0) {
       return { allowed: false, reason: 'Daily budget exhausted' };
     }
-    
+
     if (!state.canSearchNow) {
-      return { 
-        allowed: false, 
+      return {
+        allowed: false,
         reason: state.reason,
         waitSeconds: state.waitSeconds,
         nextProvider: state.nextProvider
       };
     }
-    
-    return { 
-      allowed: true, 
+
+    return {
+      allowed: true,
       reason: 'Search allowed',
       nextProvider: state.nextProvider
     };
@@ -254,18 +255,18 @@ class SearchSessionManager {
 
   async recordSearchStart(): Promise<void> {
     this.lastSearchTime = new Date();
-    
+
     const today = this.getTodayDateString();
     const delay = await this.computeCurrentDelay();
     this.currentDelaySeconds = delay.delaySeconds;
-    
+
     const intervalPlan: AdaptiveIntervalPlan = {
       sessionStartedAt: this.sessionStartedAt?.toISOString() || new Date().toISOString(),
       lastSearchAt: this.lastSearchTime.toISOString(),
       currentDelaySeconds: this.currentDelaySeconds,
       providerSequence: []
     };
-    
+
     await db.execute(sql`
       UPDATE subagent_search_sessions 
       SET 
@@ -277,7 +278,7 @@ class SearchSessionManager {
 
   async recordSearchTime(durationMinutes: number): Promise<void> {
     const today = this.getTodayDateString();
-    
+
     await db.execute(sql`
       UPDATE subagent_search_sessions 
       SET 
@@ -290,7 +291,7 @@ class SearchSessionManager {
 
   async recordSearchCompletion(officersFound: number, provider?: AIProvider): Promise<void> {
     const today = this.getTodayDateString();
-    
+
     await db.execute(sql`
       UPDATE subagent_search_sessions 
       SET 
@@ -299,14 +300,14 @@ class SearchSessionManager {
         updated_at = NOW()
       WHERE session_date = ${today}
     `);
-    
+
     const delay = await this.computeCurrentDelay();
     this.currentDelaySeconds = delay.delaySeconds;
   }
 
   async pauseSession(reason?: string): Promise<void> {
     const today = this.getTodayDateString();
-    
+
     await db.execute(sql`
       UPDATE subagent_search_sessions 
       SET 
@@ -315,13 +316,13 @@ class SearchSessionManager {
         updated_at = NOW()
       WHERE session_date = ${today}
     `);
-    
+
     console.log(`[SearchSessionManager] Session paused${reason ? `: ${reason}` : ''}`);
   }
 
   async resumeSession(): Promise<void> {
     const today = this.getTodayDateString();
-    
+
     await db.execute(sql`
       UPDATE subagent_search_sessions 
       SET 
@@ -330,13 +331,13 @@ class SearchSessionManager {
         updated_at = NOW()
       WHERE session_date = ${today}
     `);
-    
+
     console.log('[SearchSessionManager] Session resumed');
   }
 
   async exhaustSession(): Promise<void> {
     const today = this.getTodayDateString();
-    
+
     await db.execute(sql`
       UPDATE subagent_search_sessions 
       SET 
@@ -344,7 +345,7 @@ class SearchSessionManager {
         updated_at = NOW()
       WHERE session_date = ${today}
     `);
-    
+
     console.log('[SearchSessionManager] Daily session budget exhausted');
   }
 
@@ -358,7 +359,7 @@ class SearchSessionManager {
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     const weekAgoStr = weekAgo.toISOString().split('T')[0];
-    
+
     const todaySession = await db
       .select()
       .from(subagentSearchSessions)
@@ -376,7 +377,7 @@ class SearchSessionManager {
 
     const stats = weekStats.rows[0] as any;
     const delay = await this.computeCurrentDelay();
-    
+
     let providerProfiles: any[] = [];
     try {
       providerProfiles = await getProviderRateProfiles();
@@ -410,7 +411,7 @@ class SearchSessionManager {
 
   async getNextSearchTarget(): Promise<typeof subagentSearchQueue.$inferSelect | null> {
     const now = new Date();
-    
+
     const canSearch = await this.canStartSearch();
     if (!canSearch.allowed) {
       if (canSearch.waitSeconds && canSearch.waitSeconds < 60) {
@@ -439,7 +440,7 @@ class SearchSessionManager {
 
   async markSearchInProgress(queueId: string): Promise<void> {
     await this.recordSearchStart();
-    
+
     await db
       .update(subagentSearchQueue)
       .set({
@@ -464,7 +465,7 @@ class SearchSessionManager {
     const delay = await this.computeCurrentDelay();
     const retryDelay = Math.max(delay.delaySeconds * 1000, 30 * 60 * 1000);
     const nextAttempt = new Date(Date.now() + retryDelay);
-    
+
     await db
       .update(subagentSearchQueue)
       .set({
