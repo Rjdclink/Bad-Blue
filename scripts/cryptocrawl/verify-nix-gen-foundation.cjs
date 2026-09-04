@@ -24,6 +24,10 @@ const cexResources = read('server/services/cryptocrawl/execution/resource-schedu
 const zeroResources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 
+const rejectionTypeMatch = types.match(/export type NixGenBidRejectionReason =([\s\S]*?);/);
+if (!rejectionTypeMatch) throw new Error('Nix-Gen hard-rejection reason union must exist');
+const rejectionReasons = rejectionTypeMatch[1];
+
 requirePattern(types, /decisionAuthority:\s*'advisory_only'/, 'Nix-Gen must remain advisory-only');
 requirePattern(types, /executionAuthority:\s*false/, 'Nix-Gen must not gain execution authority');
 requirePattern(types, /canonicalEconomicsAuthority:\s*false/, 'Nix-Gen must not gain canonical economics authority');
@@ -31,10 +35,10 @@ requirePattern(types, /netBps:\s*number\s*\|\s*null/, 'Nix-Gen must preserve unk
 requirePattern(types, /priorityOrderOpportunityIds/, 'Nix-Gen must preserve a complete advisory priority order');
 requirePattern(types, /deferred:\s*NixGenDeferredBid\[\]/, 'Nix-Gen must distinguish advisory deferral from hard rejection');
 requirePattern(types, /NixGenDeferredBidReason[\s\S]{0,180}'resource_unavailable'/, 'Temporary resource unavailability must be representable as advisory deferral');
-requirePattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'resource_budget_missing'/, 'Missing resource evidence must remain a hard-invalid input');
-forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'not_selected_by_optimizer'/, 'Advisory non-selection must not be represented as hard rejection');
-forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'mutual_exclusion'/, 'Mutual exclusion must be an advisory deferral, not hard rejection');
-forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'resource_unavailable'/, 'Known temporary resource insufficiency must be a deferral, not hard rejection');
+requirePattern(rejectionReasons, /'resource_budget_missing'/, 'Missing resource evidence must remain a hard-invalid input');
+forbidPattern(rejectionReasons, /'not_selected_by_optimizer'/, 'Advisory non-selection must not be represented as hard rejection');
+forbidPattern(rejectionReasons, /'mutual_exclusion'/, 'Mutual exclusion must be an advisory deferral, not hard rejection');
+forbidPattern(rejectionReasons, /'resource_unavailable'/, 'Known temporary resource insufficiency must be a deferral, not hard rejection');
 
 requirePattern(optimizer, /non_positive_canonical_economics/, 'Nix-Gen must reject non-positive canonical economics from its optimizer input');
 requirePattern(optimizer, /not_canonically_eligible/, 'Nix-Gen must consume already-eligible opportunities only');
@@ -67,8 +71,9 @@ requirePattern(adapters, /resourceProjectionMutatesState:\s*projection\.mutatesR
 requirePattern(adapters, /profitabilityScore[\s\S]{0,220}double-count/, 'Measured-topology adapter must document profitability-score double-count prevention');
 forbidPattern(adapters, /rankScore:\s*Number\.isFinite\(decision\.score\.profitabilityScore\)/, 'Measured-topology profitabilityScore must not be re-applied as Nix-Gen rank');
 
-requirePattern(cexOrdering, /CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING\s*===\s*'true'/, 'CEX Nix-Gen ordering must be explicit opt-in');
-requirePattern(cexOrdering, /if \(!enabled \|\| original\.length < 2\)/, 'Disabled Nix-Gen ordering must immediately preserve canonical order');
+requirePattern(cexOrdering, /CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING\s*!==\s*'false'/, 'CEX Nix-Gen advisory ordering must remain default-on with an explicit false rollback');
+requirePattern(cexOrdering, /if \(!enabled\)\s*\{[\s\S]{0,300}previousCexReplan\s*=\s*undefined[\s\S]{0,300}candidates:\s*original/, 'Disabled Nix-Gen ordering must clear advisory state and immediately preserve canonical order');
+requirePattern(cexOrdering, /if \(original\.length === 0\)\s*\{[\s\S]{0,250}candidates:\s*original/, 'Empty CEX candidate sets must preserve canonical order without replanning');
 requirePattern(cexOrdering, /catch \(error\)[\s\S]{0,450}candidates:\s*original/, 'Nix-Gen ordering errors must fail open to canonical ordering');
 forbidPattern(cexOrdering, /settlementCapable:\s*true/, 'CEX ordering caller must not assert settlement capability');
 forbidPattern(cexOrdering, /\.filter\([^\n]*candidate/, 'CEX Nix-Gen ordering must not filter canonical candidates');
@@ -79,7 +84,7 @@ requirePattern(scarcity, /resourceAuthority:\s*false/, 'Scarcity signaling must 
 requirePattern(scarcity, /normalizedScarcitySignal/, 'Scarcity signaling must expose a bounded advisory scarcity signal');
 requirePattern(scarcity, /Math\.max\(0,\s*Math\.min\(1,\s*value\)\)/, 'Scarcity signal normalization must be explicitly bounded');
 forbidPattern(scarcity, /normalizedShadowPrice/, 'Heuristic scarcity must not be mislabeled as a shadow price');
-forbidPattern(scarcity, /acquire|reserve|release\(/, 'Scarcity signaling must not mutate or reserve canonical resources');
+forbidPattern(scarcity, /\b(?:acquire[A-Za-z0-9_]*|reserve[A-Za-z0-9_]*|release[A-Za-z0-9_]*)\s*\(/, 'Scarcity signaling must not mutate or reserve canonical resources');
 
 requirePattern(replanner, /authority:\s*'nix_gen_advisory_replanner'/, 'Replanner must identify itself as advisory');
 requirePattern(replanner, /executionAuthority:\s*false/, 'Replanner must not gain execution authority');
