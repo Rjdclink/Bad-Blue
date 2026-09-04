@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { BigNumber } from 'ethers';
 import { compileReceiverContract } from './compile-flashloan-receiver.js';
 import {
+  buildBuilderSponsoredBundleGasPlan,
   buildBuilderSponsoredGasPlan,
   computeNextBlockBaseFee,
   requireBuilderPaymentCovered,
@@ -34,6 +35,26 @@ async function main(): Promise<void> {
   assert.equal(plan.sponsorCapWei.toString(), '11300000');
   assert.equal(plan.builderMarginWei.toString(), '1130000');
   assert.equal(plan.builderPaymentWei.toString(), '12430000');
+
+  const greenfield = buildBuilderSponsoredBundleGasPlan({
+    currentBlockNumber: 25_000_000,
+    baseFeePerGasWei: base,
+    blockGasUsed: 30_000_000,
+    blockGasLimit,
+    transactions: [
+      { gasLimit: 1_000_000 }, // deterministic receiver deployment
+      { gasLimit: 100_000 }, // permissions
+      { gasLimit: 500_000 }, // flash route + builder repayment
+    ],
+    builderMarginBps: 1_000,
+  });
+  assert.equal(greenfield.transactionCount, 3);
+  assert.equal(greenfield.totalGasLimit.toString(), '1600000');
+  assert.equal(greenfield.totalValueWei.toString(), '0');
+  assert.equal(greenfield.sponsorCapWei.toString(), '180800000');
+  assert.equal(greenfield.builderMarginWei.toString(), '18080000');
+  assert.equal(greenfield.builderPaymentWei.toString(), '198880000');
+
   requireBuilderPaymentCovered({ builderPaymentWei: plan.builderPaymentWei, exactOutputWethWei: plan.builderPaymentWei });
   assert.throws(
     () => requireBuilderPaymentCovered({ builderPaymentWei: plan.builderPaymentWei, exactOutputWethWei: plan.builderPaymentWei.sub(1) }),
@@ -60,8 +81,9 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({
     targetBlock: plan.targetBlock,
     nextBaseFeePerGasWei: plan.nextBaseFeePerGasWei.toString(),
-    sponsorCapWei: plan.sponsorCapWei.toString(),
-    builderPaymentWei: plan.builderPaymentWei.toString(),
+    singleTransactionSponsorCapWei: plan.sponsorCapWei.toString(),
+    greenfieldBundleSponsorCapWei: greenfield.sponsorCapWei.toString(),
+    greenfieldBundleBuilderPaymentWei: greenfield.builderPaymentWei.toString(),
     contract: CONTRACT,
     compiler: artifact.compiler,
     publicMempoolFallback: false,
