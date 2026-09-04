@@ -27,6 +27,9 @@ requirePattern(types, /executionAuthority:\s*false/, 'Nix-Gen must not gain exec
 requirePattern(types, /canonicalEconomicsAuthority:\s*false/, 'Nix-Gen must not gain canonical economics authority');
 requirePattern(types, /netBps:\s*number\s*\|\s*null/, 'Nix-Gen must preserve unknown canonical BPS instead of recalculating it');
 requirePattern(types, /priorityOrderOpportunityIds/, 'Nix-Gen must preserve a complete advisory priority order');
+requirePattern(types, /deferred:\s*NixGenDeferredBid\[\]/, 'Nix-Gen must distinguish advisory deferral from hard rejection');
+forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'not_selected_by_optimizer'/, 'Advisory non-selection must not be represented as hard rejection');
+forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'mutual_exclusion'/, 'Mutual exclusion must be an advisory deferral, not hard rejection');
 
 requirePattern(optimizer, /non_positive_canonical_economics/, 'Nix-Gen must reject non-positive canonical economics from its optimizer input');
 requirePattern(optimizer, /not_canonically_eligible/, 'Nix-Gen must consume already-eligible opportunities only');
@@ -38,6 +41,9 @@ requirePattern(optimizer, /Math\.min\(MAX_EXACT_BID_LIMIT/, 'Exact optimization 
 requirePattern(optimizer, /exact_branch_and_bound/, 'Nix-Gen must retain an exact bounded optimization path');
 requirePattern(optimizer, /deterministic_greedy/, 'Nix-Gen must have a deterministic bounded-cost fallback');
 requirePattern(optimizer, /priorityOrder\s*=\s*\[\.\.\.selectedOrdered,\s*\.\.\.remainderOrdered\]/, 'Valid non-selected bids must remain in the advisory priority order');
+requirePattern(optimizer, /const deferred:\s*NixGenDeferredBid\[\]\s*=\s*\[\]/, 'Nix-Gen must track valid non-selected bids as deferred');
+requirePattern(optimizer, /reason:\s*selectedGroups\.has\(candidate\.exclusionGroup\)\s*\?\s*'mutual_exclusion'\s*:\s*'resource_contention'/, 'Nix-Gen deferral reason must distinguish exclusivity from resource contention');
+forbidPattern(optimizer, /rejected\.push\([\s\S]{0,220}'not_selected_by_optimizer'/, 'Valid advisory non-selection must never enter rejected state');
 
 requirePattern(coordinator, /filtersCanonicalCandidates:\s*false/, 'Nix-Gen coordination must explicitly preserve canonical candidates');
 requirePattern(coordinator, /executionAuthority:\s*false/, 'Nix-Gen coordination must not become execution authority');
