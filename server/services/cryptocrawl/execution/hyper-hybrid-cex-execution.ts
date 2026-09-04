@@ -22,7 +22,9 @@ import {
   type CexSettlementAdapter,
   type ExecutableCexVenue,
   type OrderRequest,
+  type PreparedCexOrderSubmission,
 } from './cex-settlement.js';
+import { preparePrivateCexOrder } from './cex-private-websocket-order-transport.js';
 import { coinbaseDecimalString, coinbaseProductId } from './coinbase-spot-settlement-adapter.js';
 import { floorToIncrement, validateCoinbaseOrderAgainstProduct } from './coinbase-product-policy.js';
 import { cexDecimalString } from './cex-order-serialization.js';
@@ -344,16 +346,21 @@ async function revalidateBatch(parent: VerifiedArbitragePlan, batchQty: number, 
   return { ok: true, reason: 'warm_live_book_depth_and_planned_fee_economics_positive' };
 }
 
-function fokAdapter(
+async function prepareFokSubmission(
   venue: ExecutableCexVenue,
-  delegate: CexSettlementAdapter,
-): CexSettlementAdapter {
-  const adapter: CexSettlementAdapter = {
-    async submit(request: OrderRequest): Promise<CexOrderReceipt> {
-      const submittedAt = Date.now();
-      if (venue === 'kraken') {
+  request: OrderRequest,
+): Promise<PreparedCexOrderSubmission> {
+  if (venue === 'kraken') {
+    const websocket = await preparePrivateCexOrder({ venue: 'kraken', request, timeInForce: 'fok' });
+    if (websocket) return websocket;
+    const constraints = await getSpotProductConstraints('kraken', request.symbol, true);
+    return {
+      transport: 'rest',
+      preparedAt: Date.now(),
+      dispatch: async () => {
+        const submittedAt = Date.now();
         const result = await krakenPrivateRequest('/0/private/AddOrder', {
-          pair: request.symbol,
+          pair: constraints.exchangeSymbol,
           type: request.side,
           ordertype: 'limit',
           price: cexDecimalString(request.price),
@@ -363,10 +370,19 @@ function fokAdapter(
         const orderId = result.txid?.[0];
         if (!orderId) throw new Error('Kraken did not return an order id for FOK child');
         return { venue, orderId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
-      }
+      },
+    };
+  }
 
-      if (venue === 'okx') {
-        const constraints = await getSpotProductConstraints('okx', request.symbol);
+  if (venue === 'okx') {
+    const websocket = await preparePrivateCexOrder({ venue: 'okx', request, timeInForce: 'fok' });
+    if (websocket) return websocket;
+    const constraints = await getSpotProductConstraints('okx', request.symbol, true);
+    return {
+      transport: 'rest',
+      preparedAt: Date.now(),
+      dispatch: async () => {
+        const submittedAt = Date.now();
         const { data } = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
           instId: constraints.exchangeSymbol,
           tdMode: 'cash',
@@ -379,12 +395,19 @@ function fokAdapter(
         const order = data[0];
         if (!order || order.sCode !== '0' || !order.ordId) throw new Error(`OKX rejected FOK child: ${order?.sMsg || 'unknown error'}`);
         return { venue, orderId: order.ordId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
-      }
+      },
+    };
+  }
 
-      await assertCoinbaseSpotTradeReady();
-      const constraints = await getCoinbaseAdvancedProductConstraints(request.symbol);
-      const check = validateCoinbaseOrderAgainstProduct({ quantity: request.quantity, price: request.price }, constraints);
-      if (!check.valid) throw new Error(`Coinbase FOK child violates current product constraints: ${check.reason}`);
+  await assertCoinbaseSpotTradeReady();
+  const constraints = await getCoinbaseAdvancedProductConstraints(request.symbol);
+  const check = validateCoinbaseOrderAgainstProduct({ quantity: request.quantity, price: request.price }, constraints);
+  if (!check.valid) throw new Error(`Coinbase FOK child violates current product constraints: ${check.reason}`);
+  return {
+    transport: 'rest',
+    preparedAt: Date.now(),
+    dispatch: async () => {
+      const submittedAt = Date.now();
       const payload = await coinbasePrivateRequest('/api/v3/brokerage/orders', 'POST', {
         body: {
           client_order_id: randomUUID(),
@@ -404,6 +427,19 @@ function fokAdapter(
         throw new Error(`Coinbase rejected FOK child: ${String(message)}`);
       }
       return { venue, orderId: String(payload.success_response.order_id), symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
+    },
+  };
+}
+
+function fokAdapter(
+  venue: ExecutableCexVenue,
+  delegate: CexSettlementAdapter,
+): CexSettlementAdapter {
+  const adapter: CexSettlementAdapter = {
+    prepareSubmit: request => prepareFokSubmission(venue, request),
+    async submit(request: OrderRequest): Promise<CexOrderReceipt> {
+      const prepared = await prepareFokSubmission(venue, request);
+      return prepared.dispatch();
     },
     query: order => delegate.query(order),
     cancel: order => delegate.cancel(order),
