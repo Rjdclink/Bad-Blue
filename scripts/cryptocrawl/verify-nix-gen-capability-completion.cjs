@@ -11,6 +11,7 @@ function mustNot(text, needle, label) {
 const index = read('server/services/cryptocrawl/optimization/nix-gen/index.ts');
 const bids = read('server/services/cryptocrawl/optimization/nix-gen/canonical-bid-adapters.ts');
 const live = read('server/services/cryptocrawl/optimization/nix-gen/live-priority-registry.ts');
+const globalLive = read('server/services/cryptocrawl/optimization/nix-gen/global-live-portfolio.ts');
 const zeroOrdering = read('server/services/cryptocrawl/optimization/nix-gen/zero-capital-ordering.ts');
 const zeroWiring = read('server/services/cryptocrawl/integration/zero-capital-shadow-priority-wiring.ts');
 const cexOrdering = read('server/services/cryptocrawl/optimization/nix-gen/cex-ordering.ts');
@@ -18,6 +19,7 @@ const measuredOrdering = read('server/services/cryptocrawl/optimization/nix-gen/
 const crossChain = read('server/services/cryptocrawl/discovery/cross-chain-opportunity-generator.ts');
 const funding = read('server/services/cryptocrawl/discovery/funding-rate-monitor.ts');
 const manifest = read('server/services/cryptocrawl/optimization/nix-gen/completion-manifest.ts');
+const readme = read('server/services/cryptocrawl/optimization/nix-gen/README.md');
 
 must(index, "./zero-capital-ordering.js", 'zero-capital ordering is exported');
 must(index, "./live-priority-registry.js", 'shared live priority registry is exported');
@@ -38,6 +40,10 @@ must(cexOrdering, "source: 'cex'", 'CEX lane publishes to global live priority')
 must(measuredOrdering, "source: 'measured_atomic'", 'measured atomic lane publishes to global live priority');
 must(zeroOrdering, "source: 'zero_capital'", 'zero-capital lane publishes to global live priority');
 
+must(globalLive, 'additionalPrepared?: readonly NixGenPreparedBid[]', 'pure global helper accepts already-prepared independent live lanes');
+must(globalLive, 'additionalPreparedCount: number', 'pure global helper reports additional live-lane participation');
+must(globalLive, 'filtersCanonicalCandidates: false', 'pure global helper remains non-filtering');
+
 must(crossChain, "'cross_chain_source_destination_profit_leg'", 'cross-chain still requires a real revenue leg');
 must(crossChain, 'executableCapability: false', 'cross-chain transport is not falsely promoted to profitable execution');
 must(funding, "'funding_venue_lifecycle_adapter'", 'funding still requires a lifecycle adapter');
@@ -48,7 +54,13 @@ must(manifest, "market_making_live_finger', state: 'implemented'", 'manifest rec
 must(manifest, "cross_chain_live_finger', state: 'upstream_capability_required'", 'manifest truthfully preserves cross-chain dependency');
 must(manifest, "funding_rate_live_finger', state: 'upstream_capability_required'", 'manifest truthfully preserves funding dependency');
 
-for (const text of [bids, live, zeroOrdering]) {
+must(readme, '**Zero-capital atomic**', 'README records zero-capital as a connected execution-capable lane');
+must(readme, '**Maker-CEX / market-making**', 'README records market-making as a connected execution-capable lane');
+must(readme, 'Transport cost alone is not profit.', 'README preserves cross-chain revenue-leg truth');
+must(readme, 'registered venue lifecycle adapters', 'README preserves funding execution dependency truth');
+mustNot(readme, 'a zero-capital strategy may be discovered/planned and have a registered Nix-Gen finger', 'stale zero-capital-unavailable rollout wording is removed');
+
+for (const text of [bids, live, globalLive, zeroOrdering]) {
   mustNot(text, 'WALLET_PRIVATE_KEY', 'Nix-Gen capability layer must not access signer secrets');
   mustNot(text, '.sendTransaction(', 'Nix-Gen capability layer must not submit transactions');
   mustNot(text, '.transfer(', 'Nix-Gen capability layer must not move funds');
