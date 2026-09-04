@@ -39,7 +39,15 @@ function strategyClassForMeasured(candidate: MeasuredCandidate): NixGenStrategyC
 
 function measuredTopologySettlementCapable(decision: UnifiedExecutionDecision): boolean {
   return (decision.topology === 'DEX_ATOMIC' && decision.path === 'FLASH_LOAN')
+    || (decision.topology === 'ZERO_CAPITAL_ATOMIC' && decision.path === 'FLASH_LOAN')
     || (decision.topology === 'LIQUIDATION' && decision.path === 'FLASH_LOAN_LIQUIDATION');
+}
+
+function measuredTopologyAuthoritativePath(decision: UnifiedExecutionDecision): string {
+  if (decision.topology === 'ZERO_CAPITAL_ATOMIC' && decision.path === 'FLASH_LOAN') {
+    return 'zero_capital_engine:dispatchExecutableOpportunities';
+  }
+  return `measured_topology_execution_adapter:${decision.path}`;
 }
 
 function canonicalCexExecutionSupported(plan: NonNullable<CanonicalOpportunitySnapshot['plan']>): boolean {
@@ -149,7 +157,7 @@ export function prepareMeasuredTopologyNixGenBid(
         eligible: candidate.status === 'eligible' && decision.admitted,
         executable: candidate.executableCapability && decision.admitted,
         settlementCapable: true,
-        authoritativePath: `measured_topology_execution_adapter:${decision.path}`,
+        authoritativePath: measuredTopologyAuthoritativePath(decision),
       },
       advisory: {
         probabilityOfProfitableExecution: Number.isFinite(decision.score.confidenceLevel)
@@ -165,6 +173,9 @@ export function prepareMeasuredTopologyNixGenBid(
         topology: candidate.topology,
         chain,
         path: decision.path,
+        executionCapabilityAuthority: candidate.topology === 'ZERO_CAPITAL_ATOMIC'
+          ? 'zero_capital_engine:terminal_realized_profit_wiring'
+          : 'measured_topology_execution_adapter:terminal_settlement',
         resourceProjectionAuthority: projection.authority,
         resourceProjectionMutatesState: projection.mutatesResourceState,
       },
