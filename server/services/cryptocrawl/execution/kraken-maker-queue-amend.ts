@@ -105,7 +105,13 @@ export class KrakenMakerQueueAmendController {
         side: order.side,
         restingPrice: state.price,
       });
-      if (!l3.ownOrderVisible || l3.samePriceQuantityAhead === null || l3.samePriceQuantityAhead <= 0) return;
+      if (
+        !l3.ownOrderVisible
+        || l3.samePriceOrdersAhead === null
+        || l3.samePriceOrdersAhead <= 0
+        || l3.samePriceQuantityAhead === null
+        || l3.samePriceQuantityAhead <= 0
+      ) return;
 
       const maxBookAgeMs = boundedEnv('CRYPTO_KRAKEN_AMEND_BOOK_MAX_AGE_MS', 1_000, 250, 3_000);
       const quote = await cexOrderBookStreams.getQuote('kraken', order.symbol, maxBookAgeMs).catch(() => null);
@@ -165,6 +171,7 @@ export class KrakenMakerQueueAmendController {
         side: order.side,
         previousPrice: decision.currentPrice,
         amendedPrice: proposedPrice,
+        queueAheadOrders: l3.samePriceOrdersAhead,
         queueAheadQty: l3.samePriceQuantityAhead,
         remainingQuantity: remaining,
         newConcessionUsd,
