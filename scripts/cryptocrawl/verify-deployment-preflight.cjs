@@ -13,6 +13,7 @@ require('./verify-stage-soft-gate-retirement.cjs');
 require('./verify-bps-order-control-revalidation.cjs');
 require('./verify-bps-efficiency-wave2-foundation.cjs');
 require('./verify-okx-order-expiration.cjs');
+require('./verify-kraken-l3-queue-amend.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
 require('./verify-substantial-profitability-batch9.cjs');
 require('./verify-cryptara-sovereign-cortex.cjs');
@@ -46,4 +47,4 @@ require('./verify-canonical-execution-family-completion.cjs');
 require('./verify-resource-bps-authority.cjs');
 require('./verify-payout-recipient-truth.cjs');
 
-console.log('[deployment-preflight] complete Overflow runtime authority, safety, per-component runtime failure isolation, measured-profitability, signed rebate/refund BPS truth, single-consumption inventory netting, Stage-2+ soft-gate retirement, advisory-only Monte Carlo, measured order-control latency revalidation/decomposition, realized maker calibration, liquidity resilience, queue-jump ranking and fixed OKX exchange-side stale-order expiration, real Antenna hot-path acceleration with single market-data/execution authority, canonical execution-family, resource/BPS authority, recipient-bound payout truth, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] complete Overflow runtime authority, safety, per-component runtime failure isolation, measured-profitability, signed rebate/refund BPS truth, single-consumption inventory netting, Stage-2+ soft-gate retirement, advisory-only Monte Carlo, measured order-control latency revalidation/decomposition, realized maker calibration, liquidity resilience, queue-jump ranking, fixed OKX exchange-side stale-order expiration, bounded Kraken L3 queue intelligence and profit-preserving atomic AmendOrder, real Antenna hot-path acceleration with single market-data/execution authority, canonical execution-family, resource/BPS authority, recipient-bound payout truth, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
