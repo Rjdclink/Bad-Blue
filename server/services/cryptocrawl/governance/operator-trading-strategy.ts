@@ -4,8 +4,8 @@ import { pool } from '../runtime/cryptocrawl-runtime-database.js';
 
 const STRATEGY_TIMEZONE = 'America/Chicago';
 const CYCLE_DAYS = 30;
-const TRADE_DAYS_PER_CYCLE = 20;
-const LEARNING_DAYS_PER_CYCLE = 10;
+const PROFIT_DAYS_TARGET = 20;
+const BASELINE_ATTEMPT_DAYS_PER_CYCLE = 20;
 const MIN_DAILY_TRADES = 1;
 const MAX_DAILY_TRADES = 3;
 const MIN_DAILY_PROFIT_CEILING_USD = 300;
@@ -14,6 +14,7 @@ const PROFIT_CUSHION_USD = 50;
 
 export type OperatorStrategyBlockReason =
   | 'learning_day'
+  | 'profit_day_target_reached'
   | 'daily_trade_limit'
   | 'daily_profit_stop';
 
@@ -24,6 +25,13 @@ export interface OperatorTradingStrategyState {
   dayOffset: number;
   isTradeDay: boolean;
   learningMode: boolean;
+  eligibilitySource: string;
+  profitQualifiedDay: boolean;
+  qualifiedProfitDays: number;
+  profitDaysTarget: number;
+  profitDaysRemaining: number;
+  calendarDaysRemaining: number;
+  targetStillMathematicallyReachable: boolean;
   maxTrades: number;
   submittedTrades: number;
   remainingTrades: number;
@@ -66,21 +74,18 @@ function daysBetween(left: string, right: string): number {
   return Math.trunc((dateEpoch(right) - dateEpoch(left)) / 86_400_000);
 }
 
-function randomizedTradeOffsets(): number[] {
+function randomizedBaselineAttemptOffsets(): number[] {
   const offsets = Array.from({ length: CYCLE_DAYS }, (_, index) => index);
   for (let index = offsets.length - 1; index > 0; index -= 1) {
     const swapIndex = randomInt(0, index + 1);
     [offsets[index], offsets[swapIndex]] = [offsets[swapIndex], offsets[index]];
   }
-  const selected = offsets.slice(0, TRADE_DAYS_PER_CYCLE).sort((a, b) => a - b);
-  if (selected.length !== TRADE_DAYS_PER_CYCLE || new Set(selected).size !== TRADE_DAYS_PER_CYCLE) {
-    throw new Error('Operator strategy failed to generate exactly 20 unique trade days');
+  const selected = offsets.slice(0, BASELINE_ATTEMPT_DAYS_PER_CYCLE).sort((a, b) => a - b);
+  if (selected.length !== BASELINE_ATTEMPT_DAYS_PER_CYCLE || new Set(selected).size !== BASELINE_ATTEMPT_DAYS_PER_CYCLE) {
+    throw new Error('Operator strategy failed to generate exactly 20 unique baseline attempt days');
   }
-  // Twenty completely non-adjacent days cannot exist inside a 30-day window.
-  // The governing strategy means the twenty selected days must be randomized,
-  // persisted and not a deterministic twenty-day consecutive block.
   if (selected.every((value, index) => value === index)) {
-    return randomizedTradeOffsets();
+    return randomizedBaselineAttemptOffsets();
   }
   return selected;
 }
@@ -95,18 +100,32 @@ function stateFromRow(row: any): OperatorTradingStrategyState {
   const profitCeilingUsd = Number(row.profit_ceiling_usd);
   const stopProfitUsd = Number(row.stop_profit_usd);
   const realizedProfitUsd = Number(row.realized_profit_usd);
+  const qualifiedProfitDays = Number(row.qualified_profit_days || 0);
+  const profitDaysTarget = Number(row.profit_day_target || PROFIT_DAYS_TARGET);
+  const dayOffset = Number(row.day_offset);
+  const calendarDaysRemaining = Math.max(0, CYCLE_DAYS - dayOffset);
+  const profitDaysRemaining = Math.max(0, profitDaysTarget - qualifiedProfitDays);
   const isTradeDay = row.is_trade_day === true;
+  const targetReached = qualifiedProfitDays >= profitDaysTarget;
   let blockReason: OperatorStrategyBlockReason | null = null;
-  if (!isTradeDay) blockReason = 'learning_day';
+  if (targetReached) blockReason = 'profit_day_target_reached';
+  else if (!isTradeDay) blockReason = 'learning_day';
   else if (realizedProfitUsd + 1e-9 >= stopProfitUsd) blockReason = 'daily_profit_stop';
   else if (submittedTrades >= maxTrades) blockReason = 'daily_trade_limit';
   return {
     localDate: String(row.local_date),
     cycleStart: String(row.cycle_start),
     cycleEnd: String(row.cycle_end),
-    dayOffset: Number(row.day_offset),
+    dayOffset,
     isTradeDay,
-    learningMode: !isTradeDay,
+    learningMode: !isTradeDay || targetReached,
+    eligibilitySource: String(row.eligibility_source || 'unknown'),
+    profitQualifiedDay: row.profit_qualified === true,
+    qualifiedProfitDays,
+    profitDaysTarget,
+    profitDaysRemaining,
+    calendarDaysRemaining,
+    targetStillMathematicallyReachable: profitDaysRemaining <= calendarDaysRemaining,
     maxTrades,
     submittedTrades,
     remainingTrades: Math.max(0, maxTrades - submittedTrades),
@@ -116,6 +135,61 @@ function stateFromRow(row: any): OperatorTradingStrategyState {
     executionAllowed: blockReason === null,
     blockReason,
   };
+}
+
+async function finalizeDayEligibility(
+  client: any,
+  dateKey: string,
+  cycleStart: string,
+  dayOffset: number,
+  baselineOffsets: number[],
+): Promise<void> {
+  const current = await client.query(
+    `SELECT eligibility_decided
+     FROM public.cryptocrawler_operator_strategy_days
+     WHERE local_date=$1::date
+     FOR UPDATE`,
+    [dateKey],
+  );
+  if (current.rowCount !== 1) throw new Error(`Operator strategy day ${dateKey} is unavailable for eligibility`);
+  if (current.rows[0].eligibility_decided === true) return;
+
+  const progress = await client.query(
+    `SELECT count(*) FILTER (WHERE profit_qualified=true)::int AS qualified_profit_days
+     FROM public.cryptocrawler_operator_strategy_days
+     WHERE cycle_start=$1::date`,
+    [cycleStart],
+  );
+  const qualifiedProfitDays = Number(progress.rows[0]?.qualified_profit_days || 0);
+  const neededProfitDays = Math.max(0, PROFIT_DAYS_TARGET - qualifiedProfitDays);
+  const calendarDaysRemaining = Math.max(0, CYCLE_DAYS - dayOffset);
+  const baselinePreferred = baselineOffsets.includes(dayOffset);
+  const remainingBaselineDays = baselineOffsets.filter(offset => offset >= dayOffset).length;
+
+  let isTradeDay = false;
+  let eligibilitySource = 'learning_reserve';
+  if (qualifiedProfitDays >= PROFIT_DAYS_TARGET) {
+    eligibilitySource = 'profit_day_target_reached';
+  } else if (baselinePreferred) {
+    isTradeDay = true;
+    eligibilitySource = 'baseline_randomized_attempt';
+  } else if (calendarDaysRemaining <= neededProfitDays) {
+    isTradeDay = true;
+    eligibilitySource = 'catch_up_all_remaining_days';
+  } else if (remainingBaselineDays < neededProfitDays) {
+    isTradeDay = true;
+    eligibilitySource = 'adaptive_reserve_promotion';
+  }
+
+  await client.query(
+    `UPDATE public.cryptocrawler_operator_strategy_days
+     SET is_trade_day=$2,
+         eligibility_decided=true,
+         eligibility_source=$3,
+         updated_at=now()
+     WHERE local_date=$1::date`,
+    [dateKey, isTradeDay, eligibilitySource],
+  );
 }
 
 async function ensureDayForDate(dateKey = localDateKey()): Promise<OperatorTradingStrategyState> {
@@ -133,7 +207,7 @@ async function ensureDayForDate(dateKey = localDateKey()): Promise<OperatorTradi
       throw new Error(`Operator trading strategy timezone drifted from ${STRATEGY_TIMEZONE}`);
     }
 
-    let anchorDate = control.rows[0].anchor_date ? String(control.rows[0].anchor_date) : dateKey;
+    const anchorDate = control.rows[0].anchor_date ? String(control.rows[0].anchor_date) : dateKey;
     if (!control.rows[0].anchor_date) {
       await client.query(
         `UPDATE public.cryptocrawler_operator_strategy_control
@@ -150,35 +224,35 @@ async function ensureDayForDate(dateKey = localDateKey()): Promise<OperatorTradi
     const cycleStart = addDays(anchorDate, cycleIndex * CYCLE_DAYS);
     const cycleEnd = addDays(cycleStart, CYCLE_DAYS - 1);
     let cycle = await client.query(
-      `SELECT cycle_start, cycle_end, trade_day_offsets
+      `SELECT cycle_start, cycle_end, trade_day_offsets, profit_day_target
        FROM public.cryptocrawler_operator_strategy_cycles
        WHERE cycle_start=$1::date`,
       [cycleStart],
     );
 
     if (cycle.rowCount === 0) {
-      const tradeOffsets = randomizedTradeOffsets();
+      const baselineOffsets = randomizedBaselineAttemptOffsets();
       await client.query(
         `INSERT INTO public.cryptocrawler_operator_strategy_cycles
-          (cycle_start, cycle_end, trade_day_offsets, created_at)
-         VALUES ($1::date,$2::date,$3::smallint[],now())`,
-        [cycleStart, cycleEnd, tradeOffsets],
+          (cycle_start, cycle_end, trade_day_offsets, profit_day_target, created_at)
+         VALUES ($1::date,$2::date,$3::smallint[],$4,now())`,
+        [cycleStart, cycleEnd, baselineOffsets, PROFIT_DAYS_TARGET],
       );
-      const tradeSet = new Set(tradeOffsets);
+      const baselineSet = new Set(baselineOffsets);
       for (let dayOffset = 0; dayOffset < CYCLE_DAYS; dayOffset += 1) {
         const ceiling = dailyProfitCeilingUsd();
         await client.query(
           `INSERT INTO public.cryptocrawler_operator_strategy_days
-            (local_date, cycle_start, day_offset, is_trade_day, max_trades,
-             profit_ceiling_usd, stop_profit_usd, submitted_trades, realized_profit_usd,
-             created_at, updated_at)
-           VALUES ($1::date,$2::date,$3,$4,$5,$6,$7,0,0,now(),now())
+            (local_date, cycle_start, day_offset, is_trade_day, eligibility_decided, eligibility_source,
+             max_trades, profit_ceiling_usd, stop_profit_usd, submitted_trades, realized_profit_usd,
+             profit_qualified, created_at, updated_at)
+           VALUES ($1::date,$2::date,$3,$4,false,'pending_dynamic_decision',$5,$6,$7,0,0,false,now(),now())
            ON CONFLICT (local_date) DO NOTHING`,
           [
             addDays(cycleStart, dayOffset),
             cycleStart,
             dayOffset,
-            tradeSet.has(dayOffset),
+            baselineSet.has(dayOffset),
             randomInt(MIN_DAILY_TRADES, MAX_DAILY_TRADES + 1),
             ceiling,
             ceiling - PROFIT_CUSHION_USD,
@@ -186,7 +260,7 @@ async function ensureDayForDate(dateKey = localDateKey()): Promise<OperatorTradi
         );
       }
       cycle = await client.query(
-        `SELECT cycle_start, cycle_end, trade_day_offsets
+        `SELECT cycle_start, cycle_end, trade_day_offsets, profit_day_target
          FROM public.cryptocrawler_operator_strategy_cycles
          WHERE cycle_start=$1::date`,
         [cycleStart],
@@ -194,18 +268,22 @@ async function ensureDayForDate(dateKey = localDateKey()): Promise<OperatorTradi
     }
 
     const offsets = (cycle.rows[0]?.trade_day_offsets || []).map((value: unknown) => Number(value));
-    if (offsets.length !== TRADE_DAYS_PER_CYCLE || new Set(offsets).size !== TRADE_DAYS_PER_CYCLE) {
-      throw new Error('Durable operator strategy cycle does not contain exactly 20 unique trade days');
+    if (offsets.length !== BASELINE_ATTEMPT_DAYS_PER_CYCLE || new Set(offsets).size !== BASELINE_ATTEMPT_DAYS_PER_CYCLE) {
+      throw new Error('Durable operator strategy cycle does not contain exactly 20 unique randomized baseline attempt days');
     }
-    const expectedLearningDays = CYCLE_DAYS - offsets.length;
-    if (expectedLearningDays !== LEARNING_DAYS_PER_CYCLE) {
-      throw new Error('Durable operator strategy cycle does not contain exactly 10 learning days');
+    if (Number(cycle.rows[0]?.profit_day_target || 0) !== PROFIT_DAYS_TARGET) {
+      throw new Error(`Durable operator strategy cycle profit-day target drifted from ${PROFIT_DAYS_TARGET}`);
     }
 
+    const dayOffset = daysBetween(cycleStart, dateKey);
+    await finalizeDayEligibility(client, dateKey, cycleStart, dayOffset, offsets);
+
     const day = await client.query(
-      `SELECT d.local_date, d.cycle_start, c.cycle_end, d.day_offset, d.is_trade_day,
-              d.max_trades, d.submitted_trades, d.profit_ceiling_usd,
-              d.stop_profit_usd, d.realized_profit_usd
+      `SELECT d.local_date, d.cycle_start, c.cycle_end, c.profit_day_target, d.day_offset, d.is_trade_day,
+              d.eligibility_source, d.profit_qualified, d.max_trades, d.submitted_trades,
+              d.profit_ceiling_usd, d.stop_profit_usd, d.realized_profit_usd,
+              (SELECT count(*) FROM public.cryptocrawler_operator_strategy_days q
+               WHERE q.cycle_start=d.cycle_start AND q.profit_qualified=true)::int AS qualified_profit_days
        FROM public.cryptocrawler_operator_strategy_days d
        JOIN public.cryptocrawler_operator_strategy_cycles c USING (cycle_start)
        WHERE d.local_date=$1::date
@@ -225,9 +303,11 @@ async function ensureDayForDate(dateKey = localDateKey()): Promise<OperatorTradi
 
 async function loadLockedDay(client: any, dateKey: string): Promise<OperatorTradingStrategyState> {
   const result = await client.query(
-    `SELECT d.local_date, d.cycle_start, c.cycle_end, d.day_offset, d.is_trade_day,
-            d.max_trades, d.submitted_trades, d.profit_ceiling_usd,
-            d.stop_profit_usd, d.realized_profit_usd
+    `SELECT d.local_date, d.cycle_start, c.cycle_end, c.profit_day_target, d.day_offset, d.is_trade_day,
+            d.eligibility_source, d.profit_qualified, d.max_trades, d.submitted_trades,
+            d.profit_ceiling_usd, d.stop_profit_usd, d.realized_profit_usd,
+            (SELECT count(*) FROM public.cryptocrawler_operator_strategy_days q
+             WHERE q.cycle_start=d.cycle_start AND q.profit_qualified=true)::int AS qualified_profit_days
      FROM public.cryptocrawler_operator_strategy_days d
      JOIN public.cryptocrawler_operator_strategy_cycles c USING (cycle_start)
      WHERE d.local_date=$1::date
@@ -382,6 +462,7 @@ class OperatorTradingStrategy {
       `UPDATE public.cryptocrawler_operator_strategy_days
        SET learning_last_attempt_at=now(), updated_at=now()
        WHERE local_date=$1::date
+         AND eligibility_decided=true
          AND is_trade_day=false
          AND (learning_last_attempt_at IS NULL OR learning_last_attempt_at <= now() - interval '1 hour')
        RETURNING local_date`,
@@ -402,9 +483,6 @@ class OperatorTradingStrategy {
         executionAllowed: false,
       });
     } catch (error) {
-      // Missing fresh evidence is not fabricated. Continuous surveillance and
-      // ordinary Cryptara learning remain active; another bounded attempt is
-      // permitted after one hour when fresh context may exist.
       logger.debug('[OperatorStrategy] Learning-day simulation deferred until measured context is sufficient', {
         component: 'OperatorTradingStrategy',
         localDate: localDateKey(),
@@ -419,8 +497,8 @@ export const operatorTradingStrategy = new OperatorTradingStrategy();
 export const OPERATOR_STRATEGY_CONSTANTS = Object.freeze({
   timezone: STRATEGY_TIMEZONE,
   cycleDays: CYCLE_DAYS,
-  tradeDaysPerCycle: TRADE_DAYS_PER_CYCLE,
-  learningDaysPerCycle: LEARNING_DAYS_PER_CYCLE,
+  profitDaysTarget: PROFIT_DAYS_TARGET,
+  baselineAttemptDaysPerCycle: BASELINE_ATTEMPT_DAYS_PER_CYCLE,
   minDailyTrades: MIN_DAILY_TRADES,
   maxDailyTrades: MAX_DAILY_TRADES,
   minDailyProfitCeilingUsd: MIN_DAILY_PROFIT_CEILING_USD,
