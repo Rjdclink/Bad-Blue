@@ -96,13 +96,21 @@ assert.match(payoutMigration, /cryptocrawler_profit_payout_jobs/);
 assert.doesNotMatch(overflowSupport, /CREATE OR REPLACE FUNCTION public\.cryptocrawler_terminal_sweep_finalize_events/);
 
 // Overflow cannot take an older durable-schema fast path that omits these guards.
-assert.match(schema, /const SCHEMA_VERSION = 8/);
+// Version 8 was the minimum version that first carried the payout proof contract;
+// later schema versions are valid only if they continue to include the same proof
+// migrations and required guard functions. Do not freeze this verifier to one
+// historical schema number because legitimate additive migrations advance it.
+const schemaVersionMatch = schema.match(/const SCHEMA_VERSION = (\d+);/);
+assert.ok(schemaVersionMatch, 'Overflow schema version declaration must exist');
+const schemaVersion = Number(schemaVersionMatch[1]);
+assert.ok(Number.isInteger(schemaVersion) && schemaVersion >= 8, 'Overflow schema must be at least payout-proof schema version 8');
 assert.match(schema, /031_cryptocrawler_payout_confirmation_wait\.sql/);
 assert.match(schema, /cryptocrawler_terminal_sweep_leg_confirmation_guard\(\)/);
 assert.match(schema, /cryptocrawler_profit_payout_confirmation_guard\(\)/);
+assert.match(schema, new RegExp(`const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v${schemaVersion}'`));
 
 // The production image must actually contain every recipient-proof migration that
-// schema v8 will read at runtime.
+// the current monotonic schema will read at runtime.
 for (const migration of [
   '028_cryptocrawler_payout_recipient_confirmation.sql',
   '029_cryptocrawler_terminal_sweep_recipient_confirmation.sql',
@@ -129,5 +137,5 @@ console.log(JSON.stringify({
   privateKeyExposedAsDestination: false,
   canonicalPayoutFinalizerOwners: 1,
   payoutProofMigrationsShippedInImage: true,
-  schemaVersion: 8,
+  schemaVersion,
 }, null, 2));
