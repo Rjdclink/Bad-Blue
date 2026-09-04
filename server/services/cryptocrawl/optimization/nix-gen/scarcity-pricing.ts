@@ -10,7 +10,8 @@ export interface NixGenScarcityPrice {
   capacity: number;
   utilization: number;
   headroomUnits: number;
-  normalizedShadowPrice: number;
+  /** Heuristic congestion/scarcity diagnostic only; not a dual-derived shadow price. */
+  normalizedScarcitySignal: number;
   band: NixGenScarcityBand;
 }
 
@@ -32,10 +33,10 @@ function utilizationFor(used: number, capacity: number): number {
   return clamp01(used / capacity);
 }
 
-function normalizedShadowPrice(utilization: number): number {
+function normalizedScarcitySignal(utilization: number): number {
   // Advisory congestion signal only. Hard resource truth remains owned by the
-  // canonical resource schedulers. Price is deliberately zero through 50%
-  // utilization, then rises convexly toward one as headroom disappears.
+  // canonical resource schedulers. This is intentionally not called a shadow
+  // price because no dual optimization model produced it.
   if (utilization <= 0.5) return 0;
   const normalizedPressure = clamp01((utilization - 0.5) / 0.5);
   return normalizedPressure * normalizedPressure;
@@ -58,7 +59,7 @@ export function deriveNixGenScarcitySnapshot(result: NixGenOptimizationResult): 
       capacity: resource.capacity,
       utilization,
       headroomUnits: Math.max(0, resource.capacity - resource.used),
-      normalizedShadowPrice: normalizedShadowPrice(utilization),
+      normalizedScarcitySignal: normalizedScarcitySignal(utilization),
       band: scarcityBand(utilization),
     } satisfies NixGenScarcityPrice;
   });
@@ -69,7 +70,7 @@ export function deriveNixGenScarcitySnapshot(result: NixGenOptimizationResult): 
     executionAuthority: false,
     resourceAuthority: false,
     prices,
-    priceIndex: Object.fromEntries(prices.map(price => [price.resourceKey, price.normalizedShadowPrice])),
+    priceIndex: Object.fromEntries(prices.map(price => [price.resourceKey, price.normalizedScarcitySignal])),
   };
 }
 
@@ -83,7 +84,7 @@ export function nixGenBidScarcityBurden(
     const price = byKey.get(demand.resourceKey);
     if (!price || !Number.isFinite(demand.units) || demand.units <= 0) continue;
     const normalizedUnits = demand.units / Math.max(EPSILON, price.capacity);
-    burden += price.normalizedShadowPrice * normalizedUnits;
+    burden += price.normalizedScarcitySignal * normalizedUnits;
   }
   return Math.max(0, burden);
 }
