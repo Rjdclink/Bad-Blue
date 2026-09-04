@@ -85,11 +85,12 @@ assert(!partialProfitAccounting.includes('recordCryptaraExecutionEvidence('), 'p
 
 assert(retainedProfit.includes('ON CONFLICT (event_id) DO NOTHING'), 'retained-profit terminal events must be idempotent');
 assert(retainedProfit.includes('retained_profit_usd = retained_profit_usd + $1'), 'new terminal profit must increment retained treasury accounting');
-assert(retainedProfit.includes('CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED'), 'automatic profit payout must require an explicit opt-in control');
-assert(retainedProfit.includes('if (!automaticProfitPayoutEnabled())'), 'default terminal-profit path must retain instead of enqueueing payout');
-assert(retainedProfit.includes('payoutTargetUsd: 0') && retainedProfit.includes('retainedFraction: 1'), 'default terminal profit must be one hundred percent retained');
-assert(retainedProfit.includes('payoutReservationCreated: false'), 'default terminal profit must not reserve strategy inventory for payout');
-assert(retainedProfit.includes('profitAvailableForRedeployment: true'), 'default retained profit must remain available to strategies');
+assert(retainedProfit.includes('const PAYOUT_FRACTION = 0.90;'), 'new terminal profit must allocate 90 percent to payout');
+assert(retainedProfit.includes('const RETAINED_FRACTION = 0.10;'), 'new terminal profit must retain 10 percent as system capital');
+assert(retainedProfit.includes("const RETAINED_TARGET_VENUES = ['kraken', 'okx'] as const;"), 'retained capital must target Kraken or OKX');
+assert(retainedProfit.includes('randomInt(0, RETAINED_TARGET_VENUES.length)'), 'retained target venue must remain randomized');
+assert(retainedProfit.includes("'ETH','ethereum','QUEUED'"), 'automatic payout obligation must remain ETH on Ethereum');
+assert(retainedProfit.includes('payoutScheduledImmediately: true'), 'confirmed terminal profit must schedule its payout obligation immediately');
 
 assert(runtime.includes("install('inventory_constrained_cex_execution', () => ensureInventoryConstrainedCexExecutionWiring())"), 'inventory-constrained CEX execution wiring must be isolated and installed');
 assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVenueTimingGuardWiring())"), 'cross-venue timing guard must be isolated and installed');
@@ -97,4 +98,4 @@ assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensure
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
 
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, treasury invariants, and isolated runtime protections preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
