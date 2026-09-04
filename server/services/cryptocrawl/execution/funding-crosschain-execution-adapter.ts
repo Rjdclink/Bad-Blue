@@ -102,7 +102,7 @@ async function persistAcrossPrebroadcastTerminalCost(input: {
   const feeWei = String(execution.originNativeFeeWei || '0');
   if (!/^\d+$/.test(feeWei) || BigInt(feeWei) <= 0n) return null;
   const approvalTxnRefs = [...new Set((execution.approvalTxnRefs || []).map(value => value.trim().toLowerCase()).filter(validTxHash))];
-  const costReference = approvalTxnRefs.at(-1);
+  const costReference = approvalTxnRefs.length > 0 ? approvalTxnRefs[approvalTxnRefs.length - 1] : undefined;
   if (!costReference) throw new Error('ACROSS_PREBROADCAST_COST_MISSING_RECEIPT_IDENTITY');
   const expectedProfitUsd = Number(input.candidate.economics.deterministicNetProfitUsd);
   const notionalUsd = Number(input.candidate.economics.notionalUsd);
