@@ -60,6 +60,24 @@ function localDateKey(epochMs = Date.now()): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+// node-postgres parses PostgreSQL DATE values into JavaScript Date objects by
+// default. The operator scheduler is deliberately calendar-date based, so every
+// DATE read is normalized back to its local calendar identity before arithmetic.
+// This prevents Date.toString()/timezone formatting from entering dateEpoch().
+function databaseDateKey(value: unknown): string {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) throw new Error('Invalid operator strategy database date');
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  const text = String(value ?? '').trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T\s])/.exec(text);
+  if (!match) throw new Error(`Invalid operator strategy database date: ${text || 'empty'}`);
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
 function dateEpoch(dateKey: string): number {
   const [year, month, day] = dateKey.split('-').map(Number);
   if (![year, month, day].every(Number.isFinite)) throw new Error(`Invalid operator strategy date: ${dateKey}`);
@@ -113,9 +131,9 @@ function stateFromRow(row: any): OperatorTradingStrategyState {
   else if (realizedProfitUsd + 1e-9 >= stopProfitUsd) blockReason = 'daily_profit_stop';
   else if (submittedTrades >= maxTrades) blockReason = 'daily_trade_limit';
   return {
-    localDate: String(row.local_date),
-    cycleStart: String(row.cycle_start),
-    cycleEnd: String(row.cycle_end),
+    localDate: databaseDateKey(row.local_date),
+    cycleStart: databaseDateKey(row.cycle_start),
+    cycleEnd: databaseDateKey(row.cycle_end),
     dayOffset,
     isTradeDay,
     learningMode: !isTradeDay || targetReached,
@@ -207,7 +225,7 @@ async function ensureDayForDate(dateKey = localDateKey()): Promise<OperatorTradi
       throw new Error(`Operator trading strategy timezone drifted from ${STRATEGY_TIMEZONE}`);
     }
 
-    const anchorDate = control.rows[0].anchor_date ? String(control.rows[0].anchor_date) : dateKey;
+    const anchorDate = control.rows[0].anchor_date ? databaseDateKey(control.rows[0].anchor_date) : dateKey;
     if (!control.rows[0].anchor_date) {
       await client.query(
         `UPDATE public.cryptocrawler_operator_strategy_control
@@ -405,7 +423,7 @@ class OperatorTradingStrategy {
         [reservationId],
       );
       if (reservation.rowCount !== 1) throw new Error(`Operator trade reservation ${reservationId} does not exist`);
-      const dateKey = String(reservation.rows[0].local_date);
+      const dateKey = databaseDateKey(reservation.rows[0].local_date);
       let state = await loadLockedDay(client, dateKey);
       const status = String(reservation.rows[0].status);
       if (status === 'RESERVED') {
