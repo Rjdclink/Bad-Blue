@@ -147,8 +147,10 @@ const rainbow = read(rainbowPath);
 requireText(rainbowPath, rainbow, 'fixed_90_percent_wallet_10_percent_retained_for_new_terminal_profit_events', 'runtime policy text must match current 90/10 law');
 requireText(rainbowPath, rainbow, "payoutAsset: 'ETH'", 'runtime payout asset must remain ETH');
 requireText(rainbowPath, rainbow, "payoutNetwork: 'ethereum_mainnet_only'", 'runtime payout network must remain Ethereum mainnet');
-requireText(rainbowPath, rainbow, "retainedCapitalRoutingTargets: ['coinbase', 'kraken', 'okx', 'external_capability_registry_advisory']", 'Rainbow must recognize all three CEX venues while keeping external destinations advisory');
+requireText(rainbowPath, rainbow, "retainedCapitalCexRoutingTargets: ['coinbase', 'kraken', 'okx']", 'Rainbow must expose Coinbase, Kraken and OKX as the complete CEX retained-capital routing set');
+requireText(rainbowPath, rainbow, "externalRetainedCapitalDestinationAuthority: 'external_capability_registry_advisory'", 'external retained-capital destinations must remain separate from CEX routing authority');
 requireText(rainbowPath, rainbow, 'externalCapitalMovementRequiresProviderSpecificExecutionReadyProof: true', 'external capital must remain fail-closed until provider-specific lifecycle proof exists');
+requireText(rainbowPath, rainbow, 'externalCapitalAdvisoryCapitalMovementAuthority: false', 'external capital advisory must never itself move retained capital');
 
 const dockerPath = 'Dockerfile';
 const docker = read(dockerPath);
