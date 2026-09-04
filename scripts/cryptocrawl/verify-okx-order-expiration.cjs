@@ -66,7 +66,16 @@ requirePattern(
 );
 
 // Current live write families all converge on the shared /trade/order private authority.
-requirePattern(settlement, /okxPrivateRequest\(\s*'\/api\/v5\/trade\/order'[\s\S]{0,220}'POST'/, 'normal OKX IOC settlement order uses shared private authority');
+requirePattern(
+  settlement,
+  /privateRequest\([\s\S]{0,220}okxPrivateRequest\(path,\s*method,\s*parameters/,
+  'OKX settlement wrapper delegates to the shared private authority',
+);
+requirePattern(
+  settlement,
+  /this\.privateRequest\(\s*'\/api\/v5\/trade\/order'\s*,\s*'POST'/,
+  'normal OKX IOC settlement order uses its shared private-authority wrapper',
+);
 requirePattern(settlement, /ordType:\s*'ioc'/, 'normal OKX settlement path retains IOC semantics');
 requirePattern(maker, /okxPrivateRequest\(\s*'\/api\/v5\/trade\/order'[\s\S]{0,260}'POST'/, 'OKX post-only/RPI maker order uses shared private authority');
 requirePattern(maker, /ordType\s*=\s*'rpi'|ordType:\s*orderStyle/, 'RPI/maker order style remains owned by the maker executor');
