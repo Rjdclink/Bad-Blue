@@ -17,6 +17,7 @@ const globalLive = read('server/services/cryptocrawl/optimization/nix-gen/global
 const limbs = read('server/services/cryptocrawl/optimization/nix-gen/strategy-limb-registry.ts');
 const portfolio = read('server/services/cryptocrawl/optimization/nix-gen/portfolio-view.ts');
 const integration = read('server/services/cryptocrawl/optimization/nix-gen/integration-contract.ts');
+const manifest = read('server/services/cryptocrawl/optimization/nix-gen/completion-manifest.ts');
 const cexOrdering = read('server/services/cryptocrawl/optimization/nix-gen/cex-ordering.ts');
 const measuredOrdering = read('server/services/cryptocrawl/optimization/nix-gen/measured-portfolio-preparation.ts');
 const measuredAdapter = read('server/services/cryptocrawl/execution/measured-topology-execution-adapter.ts');
@@ -28,6 +29,7 @@ for (const moduleName of [
   'strategy-limb-registry',
   'capital-routing-advisory',
   'integration-contract',
+  'completion-manifest',
 ]) {
   requireText(index, `./${moduleName}.js`, `index exports ${moduleName}`);
 }
@@ -64,6 +66,12 @@ requireText(integration, "id: 'profit_ladder_stage_risk'", 'ProfitLadder/stage/r
 requireText(integration, "id: 'cognitive_fabric'", 'CognitiveFabric boundary is explicit');
 requireText(integration, "mode: 'research_only'", 'research-only systems cannot enter hot execution truth');
 
+requireText(manifest, "implementationState: 'complete'", 'manifest identifies completed Nix-Gen implementation');
+requireText(manifest, 'operationalProofClaimed: false', 'implementation completion is not mislabeled as runtime proof');
+requireText(manifest, "state: 'upstream_capability_required'", 'unavailable strategy executors remain explicit upstream dependencies');
+requireText(manifest, "state: 'research_only'", 'research limbs remain out of production authority');
+requireText(manifest, "productionProfitabilityClaimed: false", 'manifest cannot claim guaranteed profitability');
+
 requireText(cexOrdering, "CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING !== 'false'", 'completed CEX advisory ordering is default-on');
 requireText(measuredOrdering, "CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING !== 'false'", 'completed measured advisory ordering is default-on');
 requireText(cexOrdering, 'candidates: original', 'CEX ordering fails open to canonical order');
@@ -73,7 +81,7 @@ requireText(measuredAdapter, 'orderSettlementCapableMeasuredDecisionsWithNixGen'
 requireText(measuredAdapter, 'canonicalAdmissionChanged: false', 'measured ordering cannot alter canonical admission');
 requireText(measuredAdapter, 'executionAuthorityChanged: false', 'measured ordering cannot alter execution authority');
 
-for (const text of [dual, quanti, globalLive, limbs, portfolio, integration, cexOrdering, measuredOrdering]) {
+for (const text of [dual, quanti, globalLive, limbs, portfolio, integration, manifest, cexOrdering, measuredOrdering]) {
   forbidText(text, 'WALLET_PRIVATE_KEY', 'Nix-Gen must not access signer secrets');
   forbidText(text, '.sendTransaction(', 'Nix-Gen must not submit transactions');
   forbidText(text, '.transfer(', 'Nix-Gen must not move treasury funds');
