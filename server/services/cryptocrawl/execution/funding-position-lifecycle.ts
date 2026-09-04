@@ -230,9 +230,6 @@ class FundingPositionLifecycle {
       receipt = await adapter.openDeltaNeutral(plan, lifecycleId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // The deterministic client-order recovery path owns ambiguity. A normal
-      // throw here means the adapter established that no durable delta-neutral
-      // receipt can be returned in this process pass.
       await this.persist(lifecycleId, plan, 'opening', message);
       return { success: false, settlementConfirmed: false, status: 'opening', lifecycleId, error: 'FUNDING_OPEN_RECOVERY_REQUIRED' };
     }
@@ -241,7 +238,6 @@ class FundingPositionLifecycle {
       return { success: false, settlementConfirmed: false, status: 'opening', lifecycleId, error: 'FUNDING_DELTA_NEUTRALITY_UNPROVEN' };
     }
 
-    // Persist the real exchange position before any accounting transform.
     await this.persist(lifecycleId, plan, 'open', null, receipt);
     const accounting = await this.reconcileOpenAccounting(adapter, plan, lifecycleId, 'open', receipt);
     receipt = accounting.receipt;
@@ -297,8 +293,11 @@ class FundingPositionLifecycle {
       && settlement.spotClosed
       && settlement.perpClosed
       && settlement.fundingPaymentUsd !== null
+      && Number.isFinite(settlement.fundingPaymentUsd)
       && settlement.realizedEntryExitPnlUsd !== null
+      && Number.isFinite(settlement.realizedEntryExitPnlUsd)
       && settlement.realizedFeesUsd !== null
+      && Number.isFinite(settlement.realizedFeesUsd)
       && settlement.realizedNetProfitUsd !== null
       && Number.isFinite(settlement.realizedNetProfitUsd);
   }
@@ -388,12 +387,15 @@ class FundingPositionLifecycle {
     const maxHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_MAX_HOLD_MS, 8 * 60 * 60_000, 60_000, 24 * 60 * 60_000);
     const postPaymentHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_POST_PAYMENT_HOLD_MS, 30_000, 0, 5 * 60_000);
     const normalCloseAt = Math.min(plan.fundingTimestamp + postPaymentHoldMs, receipt.openedAt + maxHoldMs);
-    const healthy = await adapter.marginHealthy(receipt).catch(() => false);
-    if (healthy && Date.now() < normalCloseAt && activeStatus !== 'closing') {
+    const closeRecoveryRequired = activeStatus === 'closing' || activeStatus === 'settlement_unknown';
+    const healthy = closeRecoveryRequired ? false : await adapter.marginHealthy(receipt).catch(() => false);
+    if (!closeRecoveryRequired && healthy && Date.now() < normalCloseAt) {
       return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId, error: accounting.error || undefined };
     }
 
-    const closeReason = healthy ? 'funding_window_complete' : 'margin_or_carry_health_exit';
+    const closeReason = closeRecoveryRequired
+      ? 'close_or_settlement_recovery'
+      : healthy ? 'funding_window_complete' : 'margin_or_carry_health_exit';
     await this.persist(lifecycleId, plan, 'closing', closeReason, receipt, stored.settlement ?? undefined);
     let settlement: FundingTerminalSettlement;
     try {
