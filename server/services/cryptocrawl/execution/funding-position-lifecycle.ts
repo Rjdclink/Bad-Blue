@@ -24,9 +24,16 @@ export interface FundingOpenReceipt {
   spotOrderId: string;
   perpOrderId: string;
   openedAt: number;
+  entrySubmittedAt?: number;
   deltaNeutral: boolean;
   measuredSpotQuantity: number;
   measuredPerpQuantity: number;
+  /** True only after exact spot-entry ownership and the acquired-base hold exist. */
+  entryOwnershipConfirmed?: boolean;
+  marginReservationId?: string;
+  spotEntryReservationId?: string | null;
+  baseReservationId?: string | null;
+  /** Backward-compatible reservation list for already-persisted lifecycle rows. */
   capitalReservationIds?: string[];
 }
 
@@ -47,13 +54,23 @@ export interface FundingTerminalSettlement {
   error?: string;
 }
 
+export interface FundingOpeningRecoveryResult {
+  status: 'pending' | 'opened' | 'failed';
+  receipt?: FundingOpenReceipt;
+  error?: string;
+}
+
 export interface FundingLifecycleAdapter {
   venue: FundingExecutionPlan['venue'];
   verifyCurrentPlan(plan: FundingExecutionPlan): Promise<boolean>;
   openDeltaNeutral(plan: FundingExecutionPlan, lifecycleId: string): Promise<FundingOpenReceipt>;
+  /** Recover deterministic client-order IDs after a crash during entry submission. */
+  recoverOpening?(plan: FundingExecutionPlan, lifecycleId: string): Promise<FundingOpeningRecoveryResult>;
+  /** Retry exact ownership bookkeeping after real entry fills have already become durable. */
+  reconcileOpenReceipt?(plan: FundingExecutionPlan, receipt: FundingOpenReceipt): Promise<FundingOpenReceipt>;
   marginHealthy(receipt: FundingOpenReceipt): Promise<boolean>;
   closeAndSettle(plan: FundingExecutionPlan, receipt: FundingOpenReceipt): Promise<FundingTerminalSettlement>;
-  /** Reconcile an already-closed pair when exchange funding/bill evidence lagged. */
+  /** Reconcile an already-closed pair when exchange funding/bill/accounting evidence lagged. */
   reconcileSettlement?(
     plan: FundingExecutionPlan,
     receipt: FundingOpenReceipt,
@@ -64,7 +81,7 @@ export interface FundingLifecycleAdapter {
 export interface FundingLifecycleResult {
   success: boolean;
   settlementConfirmed: boolean;
-  status: 'rejected' | 'opened' | 'closed' | 'failed' | 'settlement_unknown';
+  status: 'rejected' | 'opening' | 'opened' | 'closed' | 'failed' | 'settlement_unknown';
   lifecycleId?: string;
   settlement?: FundingTerminalSettlement;
   error?: string;
@@ -137,11 +154,46 @@ class FundingPositionLifecycle {
     this.tableRetryAfter = 0;
   }
 
+  private validOpenReceipt(receipt: FundingOpenReceipt | null): receipt is FundingOpenReceipt {
+    return !!receipt
+      && receipt.deltaNeutral === true
+      && receipt.measuredSpotQuantity > 0
+      && receipt.measuredPerpQuantity > 0
+      && Boolean(receipt.spotOrderId)
+      && Boolean(receipt.perpOrderId);
+  }
+
+  private async reconcileOpenAccounting(
+    adapter: FundingLifecycleAdapter,
+    plan: FundingExecutionPlan,
+    lifecycleId: string,
+    status: string,
+    receipt: FundingOpenReceipt,
+  ): Promise<{ receipt: FundingOpenReceipt; error: string | null }> {
+    if (receipt.entryOwnershipConfirmed === true || !adapter.reconcileOpenReceipt) {
+      return { receipt, error: null };
+    }
+    try {
+      const reconciled = await adapter.reconcileOpenReceipt(plan, receipt);
+      await this.persist(lifecycleId, plan, status, null, reconciled);
+      return { receipt: reconciled, error: null };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.persist(lifecycleId, plan, status, `FUNDING_ENTRY_ACCOUNTING_PENDING:${message}`, receipt);
+      logger.warn('[FundingLifecycle] Entry fills are durable while exact ownership reconciliation remains pending', {
+        component: 'FundingPositionLifecycle', lifecycleId, venue: plan.venue, symbol: plan.symbol,
+        error: message, livePositionForgotten: false, capitalReleased: false,
+      });
+      return { receipt, error: 'FUNDING_ENTRY_ACCOUNTING_PENDING' };
+    }
+  }
+
   /**
    * Open a funding lifecycle and return immediately after terminal entry fills are
-   * proven delta-neutral. Holding/margin monitoring/close settlement is advanced
-   * by later canonical scheduler ticks via advanceOpenLifecycles(). The scheduler
-   * therefore never sleeps through a funding window.
+   * proven delta-neutral. Exchange reality is persisted before ownership
+   * reconciliation, so a transient accounting failure can never erase a live
+   * position. Holding/margin monitoring/close settlement is advanced by later
+   * canonical scheduler ticks via advanceOpenLifecycles().
    */
   async execute(plan: FundingExecutionPlan): Promise<FundingLifecycleResult> {
     const rejection = this.validate(plan);
@@ -165,7 +217,7 @@ class FundingPositionLifecycle {
         return {
           success: existing.status === 'open',
           settlementConfirmed: false,
-          status: existing.status === 'failed' ? 'failed' : 'opened',
+          status: existing.status === 'failed' ? 'failed' : existing.status === 'opening' ? 'opening' : 'opened',
           lifecycleId: existing.lifecycleId,
           error: existing.status === 'open' ? undefined : 'FUNDING_OPPORTUNITY_ALREADY_ACTIVE',
         };
@@ -178,20 +230,28 @@ class FundingPositionLifecycle {
       receipt = await adapter.openDeltaNeutral(plan, lifecycleId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.persist(lifecycleId, plan, 'failed', message);
-      return { success: false, settlementConfirmed: false, status: 'failed', lifecycleId, error: 'FUNDING_OPEN_FAILED' };
+      // The deterministic client-order recovery path owns ambiguity. A normal
+      // throw here means the adapter established that no durable delta-neutral
+      // receipt can be returned in this process pass.
+      await this.persist(lifecycleId, plan, 'opening', message);
+      return { success: false, settlementConfirmed: false, status: 'opening', lifecycleId, error: 'FUNDING_OPEN_RECOVERY_REQUIRED' };
     }
-    if (!receipt.deltaNeutral || !(receipt.measuredSpotQuantity > 0) || !(receipt.measuredPerpQuantity > 0)) {
-      await this.persist(lifecycleId, plan, 'failed', 'opened legs are not proven delta-neutral', receipt);
-      return { success: false, settlementConfirmed: false, status: 'failed', lifecycleId, error: 'FUNDING_DELTA_NEUTRALITY_UNPROVEN' };
+    if (!this.validOpenReceipt(receipt)) {
+      await this.persist(lifecycleId, plan, 'opening', 'entry legs are not yet proven delta-neutral', receipt);
+      return { success: false, settlementConfirmed: false, status: 'opening', lifecycleId, error: 'FUNDING_DELTA_NEUTRALITY_UNPROVEN' };
     }
+
+    // Persist the real exchange position before any accounting transform.
     await this.persist(lifecycleId, plan, 'open', null, receipt);
+    const accounting = await this.reconcileOpenAccounting(adapter, plan, lifecycleId, 'open', receipt);
+    receipt = accounting.receipt;
     logger.info('[FundingLifecycle] Delta-neutral position opened; lifecycle delegated to scheduler ticks', {
       component: 'FundingPositionLifecycle', lifecycleId, venue: plan.venue, symbol: plan.symbol,
       fundingTimestamp: plan.fundingTimestamp, blockingWait: false, durableState: true,
+      entryOwnershipConfirmed: receipt.entryOwnershipConfirmed === true,
       expectedProfitAuthority: 'projected_carry_not_deterministic_profit',
     });
-    return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId };
+    return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId, error: accounting.error || undefined };
   }
 
   async advanceOpenLifecycles(limit = 4): Promise<FundingLifecycleResult[]> {
@@ -199,7 +259,7 @@ class FundingPositionLifecycle {
     const rows = await pool.query(
       `SELECT lifecycle_id, plan, status, open_receipt, terminal_settlement, last_error
        FROM ${TABLE}
-       WHERE status IN ('open','closing','settlement_unknown')
+       WHERE status IN ('opening','open','closing','settlement_unknown')
        ORDER BY updated_at ASC
        LIMIT $1`,
       [bounded(limit, 4, 1, 32)],
@@ -210,9 +270,14 @@ class FundingPositionLifecycle {
       if (!lifecycleId || this.advancing.has(lifecycleId)) continue;
       this.advancing.add(lifecycleId);
       try {
+        const plan = parseJson<FundingExecutionPlan>(row.plan);
+        if (!plan) {
+          results.push({ success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_DURABLE_PLAN_INVALID' });
+          continue;
+        }
         const result = await this.advanceStored({
           lifecycleId,
-          plan: parseJson<FundingExecutionPlan>(row.plan)!,
+          plan,
           status: String(row.status || ''),
           receipt: parseJson<FundingOpenReceipt>(row.open_receipt),
           settlement: parseJson<FundingTerminalSettlement>(row.terminal_settlement),
@@ -263,17 +328,44 @@ class FundingPositionLifecycle {
   }
 
   private async advanceStored(stored: StoredLifecycle): Promise<FundingLifecycleResult> {
-    const { lifecycleId, plan, receipt } = stored;
-    if (!plan || !receipt) {
-      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_DURABLE_STATE_INCOMPLETE' };
-    }
+    const { lifecycleId, plan } = stored;
     const adapter = await this.ensureAdapter(plan.venue);
     if (!adapter) {
       return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_LIFECYCLE_ADAPTER_UNAVAILABLE' };
     }
 
+    let receipt = stored.receipt;
+    let activeStatus = stored.status;
+    if (activeStatus === 'opening' && !this.validOpenReceipt(receipt)) {
+      if (!adapter.recoverOpening) {
+        return { success: false, settlementConfirmed: false, status: 'opening', lifecycleId, error: 'FUNDING_OPENING_RECOVERY_UNAVAILABLE' };
+      }
+      try {
+        const recovered = await adapter.recoverOpening(plan, lifecycleId);
+        if (recovered.status === 'pending') {
+          await this.persist(lifecycleId, plan, 'opening', recovered.error || 'FUNDING_OPENING_RECOVERY_PENDING', recovered.receipt);
+          return { success: false, settlementConfirmed: false, status: 'opening', lifecycleId, error: recovered.error || 'FUNDING_OPENING_RECOVERY_PENDING' };
+        }
+        if (recovered.status === 'failed' || !this.validOpenReceipt(recovered.receipt ?? null)) {
+          await this.persist(lifecycleId, plan, 'failed', recovered.error || 'FUNDING_OPENING_RECOVERY_FAILED', recovered.receipt);
+          return { success: false, settlementConfirmed: false, status: 'failed', lifecycleId, error: recovered.error || 'FUNDING_OPENING_RECOVERY_FAILED' };
+        }
+        receipt = recovered.receipt!;
+        activeStatus = 'open';
+        await this.persist(lifecycleId, plan, 'open', null, receipt);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.persist(lifecycleId, plan, 'opening', message, receipt ?? undefined);
+        return { success: false, settlementConfirmed: false, status: 'opening', lifecycleId, error: 'FUNDING_OPENING_RECOVERY_PENDING' };
+      }
+    }
+
+    if (!this.validOpenReceipt(receipt)) {
+      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_DURABLE_STATE_INCOMPLETE' };
+    }
+
     if (
-      stored.status === 'settlement_unknown'
+      activeStatus === 'settlement_unknown'
       && stored.settlement?.spotClosed === true
       && stored.settlement?.perpClosed === true
     ) {
@@ -290,23 +382,26 @@ class FundingPositionLifecycle {
       }
     }
 
+    const accounting = await this.reconcileOpenAccounting(adapter, plan, lifecycleId, activeStatus, receipt);
+    receipt = accounting.receipt;
+
     const maxHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_MAX_HOLD_MS, 8 * 60 * 60_000, 60_000, 24 * 60 * 60_000);
     const postPaymentHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_POST_PAYMENT_HOLD_MS, 30_000, 0, 5 * 60_000);
     const normalCloseAt = Math.min(plan.fundingTimestamp + postPaymentHoldMs, receipt.openedAt + maxHoldMs);
     const healthy = await adapter.marginHealthy(receipt).catch(() => false);
-    if (healthy && Date.now() < normalCloseAt && stored.status !== 'closing') {
-      return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId };
+    if (healthy && Date.now() < normalCloseAt && activeStatus !== 'closing') {
+      return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId, error: accounting.error || undefined };
     }
 
     const closeReason = healthy ? 'funding_window_complete' : 'margin_or_carry_health_exit';
-    await this.persist(lifecycleId, plan, 'closing', closeReason, receipt);
+    await this.persist(lifecycleId, plan, 'closing', closeReason, receipt, stored.settlement ?? undefined);
     let settlement: FundingTerminalSettlement;
     try {
       settlement = await adapter.closeAndSettle(plan, receipt);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.persist(lifecycleId, plan, 'settlement_unknown', message, receipt);
-      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_CLOSE_SETTLEMENT_FAILED' };
+      await this.persist(lifecycleId, plan, 'closing', message, receipt, stored.settlement ?? undefined);
+      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_CLOSE_RECOVERY_REQUIRED' };
     }
     return this.finalizeSettlement(lifecycleId, plan, receipt, settlement, closeReason);
   }
@@ -404,7 +499,7 @@ class FundingPositionLifecycle {
       (lifecycle_id, opportunity_id, venue, symbol, status, expected_net_profit_usd, plan, open_receipt, terminal_settlement, last_error, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,now())
       ON CONFLICT (lifecycle_id) DO UPDATE SET status=EXCLUDED.status, open_receipt=EXCLUDED.open_receipt,
-        terminal_settlement=EXCLUDED.terminal_settlement, last_error=EXCLUDED.last_error, updated_at=now()`, [
+        terminal_settlement=COALESCE(EXCLUDED.terminal_settlement,${TABLE}.terminal_settlement), last_error=EXCLUDED.last_error, updated_at=now()`, [
       lifecycleId, plan.opportunityId, plan.venue, plan.symbol, status, plan.expectedNetProfitUsd,
       JSON.stringify(plan), receipt ? JSON.stringify(receipt) : null, settlement ? JSON.stringify(settlement) : null, error,
     ]);
