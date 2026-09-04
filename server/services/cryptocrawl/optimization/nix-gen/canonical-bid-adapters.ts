@@ -15,6 +15,8 @@ export interface NixGenPreparedBid {
 }
 
 export interface CexNixGenAdvisoryInput {
+  now: number;
+  expiresAt: number;
   probabilityOfProfitableExecution?: number;
   terminalCalibrationFactor?: number;
   decayUrgencyFactor?: number;
@@ -22,7 +24,7 @@ export interface CexNixGenAdvisoryInput {
   settlementCapable: boolean;
 }
 
-function finitePositive(value: unknown): value is number {
+function finitePositive(value: unknown): boolean {
   return Number.isFinite(Number(value)) && Number(value) > 0;
 }
 
@@ -40,11 +42,11 @@ function measuredTopologySettlementCapable(decision: UnifiedExecutionDecision): 
     || (decision.topology === 'LIQUIDATION' && decision.path === 'FLASH_LOAN_LIQUIDATION');
 }
 
-function measuredAtFromCexSnapshot(snapshot: CanonicalOpportunitySnapshot): number {
+function measuredAtFromCexSnapshot(snapshot: CanonicalOpportunitySnapshot, now: number): number {
   if (!snapshot.plan) return snapshot.observedAt;
   const quoteAgeMs = Number(snapshot.plan.quoteAgeMs);
   if (!Number.isFinite(quoteAgeMs) || quoteAgeMs < 0) return snapshot.observedAt;
-  return Math.max(snapshot.observedAt, snapshot.updatedAt - quoteAgeMs);
+  return Math.max(snapshot.observedAt, now - quoteAgeMs);
 }
 
 export function prepareCexNixGenBid(
@@ -54,6 +56,7 @@ export function prepareCexNixGenBid(
   const plan = snapshot.plan;
   if (!plan || snapshot.status !== 'eligible') return null;
   if (!finitePositive(plan.netProfitUsd) || !finitePositive(plan.notionalUsd)) return null;
+  if (!Number.isFinite(advisory.now) || !Number.isFinite(advisory.expiresAt) || advisory.expiresAt <= advisory.now) return null;
 
   const projection = executionResourceScheduler.getCexPlanningProjection(plan);
   return {
@@ -63,12 +66,12 @@ export function prepareCexNixGenBid(
       strategyId: 'verified_cex_arbitrage',
       strategyClass: 'cex_arbitrage',
       observedAt: snapshot.observedAt,
-      expiresAt: Math.max(snapshot.observedAt + 1, snapshot.updatedAt + Math.max(0, Number(plan.quoteAgeMs) || 0)),
+      expiresAt: advisory.expiresAt,
       economics: {
         netProfitUsd: plan.netProfitUsd,
         notionalUsd: plan.notionalUsd,
         netBps: null,
-        measuredAt: measuredAtFromCexSnapshot(snapshot),
+        measuredAt: measuredAtFromCexSnapshot(snapshot, advisory.now),
         authority: 'arbitrage_verifier:verified_plan',
       },
       execution: {
