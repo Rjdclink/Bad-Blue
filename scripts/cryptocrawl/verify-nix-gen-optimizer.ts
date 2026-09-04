@@ -51,6 +51,8 @@ function verifyExactCombination(): void {
   assert.equal(result.executionAuthority, false);
   assert.equal(result.canonicalEconomicsAuthority, false);
   assert.ok(result.priorityOrderBidIds.includes('single-10'), 'valid unselected bid remains available in advisory priority order');
+  assert.equal(result.rejected.some(item => item.bidId === 'single-10'), false, 'valid unselected bid must never become rejected');
+  assert.equal(result.deferred.find(item => item.bidId === 'single-10')?.reason, 'resource_contention');
 }
 
 function verifyTruthGuards(): void {
@@ -89,6 +91,12 @@ function verifyGlobalDispatchScarcityWithoutVeto(): void {
   assert.equal(snapshot.executionAuthority, false);
   assert.deepEqual(snapshot.result.priorityOrderOpportunityIds, ['opp-dex', 'opp-cex', 'opp-liq']);
   assert.equal(Object.keys(snapshot.priorityIndexByOpportunityId).length, 3);
+  assert.equal(snapshot.result.rejected.length, 0, 'valid profitable bids must not be rejected by advisory resource contention');
+  assert.deepEqual(
+    new Set(snapshot.result.deferred.map(item => item.opportunityId)),
+    new Set(['opp-cex', 'opp-liq']),
+    'non-selected valid bids are deferred and remain available for later dispatch',
+  );
 }
 
 verifyExactCombination();
