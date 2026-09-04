@@ -25,6 +25,8 @@ export interface GasFundingCandidate extends GasFundingDecision {
  * monetary gas cost that must be included in the canonical all-in economics or
  * covered by the sponsor's own policy. Native mode is only for already self-funded
  * operation and must never be described as zero-initial-capital cold start.
+ * For native execution, actual receipt gas is terminally converted and subtracted
+ * before realized profit can be accepted as positive canonical economics.
  */
 export function chooseGasFundingMode(
   chain: DynamicChainConfig,
@@ -51,7 +53,7 @@ export function chooseGasFundingMode(
       mode: 'native',
       nativeBalance,
       reserveFloor,
-      reason: 'Self-funded native gas reserve is sufficient; actual receipt gas must be measured and subtracted before realized profit is accepted',
+      reason: 'Self-funded native gas reserve is sufficient; actual receipt gas is terminally converted and subtracted before realized profit is accepted',
     };
   }
 
