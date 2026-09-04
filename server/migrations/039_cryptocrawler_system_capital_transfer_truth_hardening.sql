@@ -147,3 +147,91 @@ GRANT EXECUTE ON FUNCTION public.cryptocrawler_confirm_system_capital_transfer_e
 
 COMMENT ON FUNCTION public.cryptocrawler_confirm_system_capital_transfer_exact(uuid,numeric,numeric,numeric,text,text,jsonb) IS
   'Consumes only the authenticated source debit. CEX targets must receive at least their persisted destination amount; wallet targets must match the persisted target and include recipient-bound transaction evidence.';
+
+-- Treasury and system-sweep reservations are lifecycle-bound, not TTL-bound.
+-- A transfer/order may remain unresolved longer than an arbitrary process timer;
+-- only explicit terminal confirmation/release may make those units spendable again.
+CREATE OR REPLACE FUNCTION public.cryptocrawler_guard_treasury_inventory_reservation_lifecycle()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.reservation_id LIKE 'treasury:%'
+     OR COALESCE(NEW.opportunity_id,'') LIKE 'system-sweep:%' THEN
+    NEW.expires_at := 'infinity'::timestamptz;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_cryptocrawler_guard_treasury_inventory_reservation_lifecycle
+  ON public.cryptocrawler_cex_inventory_reservations_v1;
+CREATE TRIGGER trg_cryptocrawler_guard_treasury_inventory_reservation_lifecycle
+BEFORE INSERT OR UPDATE OF expires_at, reservation_id, opportunity_id
+ON public.cryptocrawler_cex_inventory_reservations_v1
+FOR EACH ROW
+EXECUTE FUNCTION public.cryptocrawler_guard_treasury_inventory_reservation_lifecycle();
+
+UPDATE public.cryptocrawler_cex_inventory_reservations_v1 r
+SET expires_at='infinity'::timestamptz
+WHERE r.reservation_id LIKE 'treasury:%'
+   OR r.opportunity_id LIKE 'system-sweep:%';
+
+COMMENT ON FUNCTION public.cryptocrawler_guard_treasury_inventory_reservation_lifecycle() IS
+  'Prevents unresolved treasury transfers and threshold-sweep conversions from becoming spendable because an arbitrary reservation TTL elapsed.';
+
+-- If a sweep has a possibly-submitted wallet transfer, a generic transient error
+-- must not send the batch back into conversion planning. Keep it in SUBMITTED so
+-- the next pass reconciles the deterministic withdrawal intent before any new move.
+CREATE OR REPLACE FUNCTION public.cryptocrawler_preserve_submitted_sweep_recovery()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF NEW.status='RETRYABLE'
+     AND NEW.wallet_transfer_id IS NOT NULL
+     AND EXISTS (
+       SELECT 1
+       FROM public.cryptocrawler_system_capital_transfers t
+       WHERE t.transfer_id=NEW.wallet_transfer_id
+         AND t.status IN ('SUBMITTED','SETTLING')
+     ) THEN
+    NEW.status := 'SUBMITTED';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_cryptocrawler_preserve_submitted_sweep_recovery
+  ON public.cryptocrawler_system_capital_sweep_batches;
+CREATE TRIGGER trg_cryptocrawler_preserve_submitted_sweep_recovery
+BEFORE UPDATE OF status
+ON public.cryptocrawler_system_capital_sweep_batches
+FOR EACH ROW
+EXECUTE FUNCTION public.cryptocrawler_preserve_submitted_sweep_recovery();
+
+COMMENT ON FUNCTION public.cryptocrawler_preserve_submitted_sweep_recovery() IS
+  'Forces recover-before-resubmit after an ambiguous or interrupted wallet withdrawal instead of allowing a second conversion plan to start.';
+
+-- Runtime schema verification historically named a two-argument release signature.
+-- Keep that compatibility surface as a non-authoritative delegate to the canonical
+-- one-argument release function; the reason text never changes release semantics.
+CREATE OR REPLACE FUNCTION public.cryptocrawler_release_system_capital_transfer(
+  p_transfer_id uuid,
+  p_reason text
+)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT public.cryptocrawler_release_system_capital_transfer(p_transfer_id);
+$$;
+
+REVOKE ALL ON FUNCTION public.cryptocrawler_release_system_capital_transfer(uuid,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cryptocrawler_release_system_capital_transfer(uuid,text) TO service_role;
+
+COMMENT ON FUNCTION public.cryptocrawler_release_system_capital_transfer(uuid,text) IS
+  'Compatibility delegate for the canonical lifecycle-bound treasury release function; the reason parameter is descriptive only.';
