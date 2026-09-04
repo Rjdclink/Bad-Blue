@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { ethers } from 'ethers';
 import { pool } from '../../../db.js';
 import logger from '../../../logger.js';
 import { getPreparedCrossChainRoute } from '../discovery/cross-chain-opportunity-generator.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
+import { operatorTradingStrategy } from '../governance/operator-trading-strategy.js';
 import { stageManager } from '../governance/stage-management.js';
 import { executeAcrossBridgeQuote } from './across-bridge-executor.js';
 import {
@@ -16,7 +18,12 @@ import {
   type CrossChainLifecycleResult,
   type CrossChainSubmissionRecord,
 } from './cross-chain-durable-lifecycle.js';
-import { fundingPositionLifecycle, type FundingExecutionPlan, type FundingLifecycleResult } from './funding-position-lifecycle.js';
+import {
+  fundingPositionLifecycle,
+  type FundingExecutionPlan,
+  type FundingLifecycleResult,
+  type FundingTerminalSettlement,
+} from './funding-position-lifecycle.js';
 import { getPreparedOkxFundingPlan } from './okx-funding-lifecycle-adapter.js';
 import {
   reserveOnchainSystemCapital,
@@ -44,10 +51,23 @@ type FundingLifecycleContext = {
   openedAt: number | null;
 };
 
+const fundingFeedbackWorkerId = `funding-feedback:${randomUUID()}`;
+
 function liveExecutionEnabled(): boolean {
   return process.env.NO_EXECUTION !== 'true'
     && process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
     && process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
+}
+
+function bounded(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
+}
+
+function parseJson<T>(value: unknown): T | null {
+  if (!value) return null;
+  if (typeof value === 'object') return value as T;
+  try { return JSON.parse(String(value)) as T; } catch { return null; }
 }
 
 async function fundingContext(lifecycleId: string): Promise<FundingLifecycleContext | null> {
@@ -62,10 +82,23 @@ async function fundingContext(lifecycleId: string): Promise<FundingLifecycleCont
   return { plan, openedAt: Number.isFinite(Number(receipt?.openedAt)) ? Number(receipt.openedAt) : null };
 }
 
+async function markOperatorTerminalByOpportunity(opportunityId: string): Promise<void> {
+  const result = await pool.query(
+    `SELECT reservation_id::text
+     FROM public.cryptocrawler_operator_trade_reservations
+     WHERE opportunity_id=$1 AND status='SUBMITTED'
+     ORDER BY submitted_at ASC NULLS LAST`,
+    [opportunityId],
+  );
+  for (const row of result.rows) {
+    await operatorTradingStrategy.markTerminal(String(row.reservation_id));
+  }
+}
+
 async function recordFundingTerminal(result: FundingLifecycleResult): Promise<void> {
   if (!result.lifecycleId || !result.settlementConfirmed || !result.settlement?.terminal) return;
   const context = await fundingContext(result.lifecycleId);
-  if (!context) return;
+  if (!context) throw new Error(`Funding lifecycle context ${result.lifecycleId} is unavailable for terminal feedback`);
   const settlement = result.settlement;
   const realized = settlement.realizedNetProfitUsd;
   const settledAt = settlement.settledAt ?? Date.now();
@@ -118,23 +151,66 @@ async function recordFundingTerminal(result: FundingLifecycleResult): Promise<vo
   });
 }
 
+async function claimFundingTerminalFeedback(limit: number): Promise<FundingLifecycleResult[]> {
+  const leaseMs = bounded(process.env.CRYPTOCRAWL_FUNDING_FEEDBACK_LEASE_MS, 45_000, 10_000, 5 * 60_000);
+  const result = await pool.query(
+    `WITH candidates AS (
+       SELECT lifecycle_id
+       FROM private.cryptocrawler_funding_lifecycles
+       WHERE status='closed'
+         AND feedback_applied_at IS NULL
+         AND (feedback_lease_expires_at IS NULL OR feedback_lease_expires_at <= now())
+       ORDER BY updated_at ASC
+       FOR UPDATE SKIP LOCKED
+       LIMIT $1
+     )
+     UPDATE private.cryptocrawler_funding_lifecycles lifecycle
+     SET feedback_lease_owner=$2,feedback_lease_expires_at=to_timestamp($3/1000.0),updated_at=now()
+     FROM candidates
+     WHERE lifecycle.lifecycle_id=candidates.lifecycle_id
+     RETURNING lifecycle.lifecycle_id,lifecycle.terminal_settlement`,
+    [bounded(limit, 8, 1, 32), fundingFeedbackWorkerId, Date.now() + leaseMs],
+  );
+  return result.rows.flatMap(row => {
+    const settlement = parseJson<FundingTerminalSettlement>(row.terminal_settlement);
+    if (!settlement?.terminal || !settlement.settlementConfirmed) return [];
+    return [{
+      success: (settlement.realizedNetProfitUsd ?? Number.NEGATIVE_INFINITY) > 0,
+      settlementConfirmed: true,
+      status: 'closed' as const,
+      lifecycleId: String(row.lifecycle_id),
+      settlement,
+    }];
+  });
+}
+
+async function markFundingFeedbackApplied(lifecycleId: string): Promise<void> {
+  await pool.query(
+    `UPDATE private.cryptocrawler_funding_lifecycles
+     SET feedback_applied_at=COALESCE(feedback_applied_at,now()),feedback_lease_owner=NULL,feedback_lease_expires_at=NULL,updated_at=now()
+     WHERE lifecycle_id=$1 AND feedback_lease_owner=$2`,
+    [lifecycleId, fundingFeedbackWorkerId],
+  );
+}
+
+async function releaseFundingFeedbackLease(lifecycleId: string, error: unknown): Promise<void> {
+  await pool.query(
+    `UPDATE private.cryptocrawler_funding_lifecycles
+     SET feedback_lease_owner=NULL,feedback_lease_expires_at=NULL,last_error=COALESCE($3,last_error),updated_at=now()
+     WHERE lifecycle_id=$1 AND feedback_lease_owner=$2`,
+    [lifecycleId, fundingFeedbackWorkerId, error instanceof Error ? error.message : String(error)],
+  );
+}
+
 async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Promise<void> {
   if (!result.terminal || !result.settlementConfirmed) return;
   const realized = result.realizedNetProfitUsd;
   const settledAt = result.settledAt ?? Date.now();
   const terminal = result.terminalAmountEvidence;
-  const inputHuman = terminal
-    ? Number(ethers.utils.formatUnits(terminal.inputAmount, result.quote.inputTokenDecimals))
-    : null;
-  const outputHuman = terminal
-    ? Number(ethers.utils.formatUnits(terminal.outputAmount, result.quote.outputTokenDecimals))
-    : null;
-  const acquisitionCostUsd = inputHuman !== null && result.assetUsd !== null && Number.isFinite(inputHuman)
-    ? inputHuman * result.assetUsd
-    : null;
-  const proceedsUsd = outputHuman !== null && result.assetUsd !== null && Number.isFinite(outputHuman)
-    ? outputHuman * result.assetUsd
-    : null;
+  const inputHuman = terminal ? Number(ethers.utils.formatUnits(terminal.inputAmount, result.quote.inputTokenDecimals)) : null;
+  const outputHuman = terminal ? Number(ethers.utils.formatUnits(terminal.outputAmount, result.quote.outputTokenDecimals)) : null;
+  const acquisitionCostUsd = inputHuman !== null && result.assetUsd !== null && Number.isFinite(inputHuman) ? inputHuman * result.assetUsd : null;
+  const proceedsUsd = outputHuman !== null && result.assetUsd !== null && Number.isFinite(outputHuman) ? outputHuman * result.assetUsd : null;
   const candidate = measuredCandidateRegistry.get(result.opportunityId);
   if (candidate && realized !== null && Number.isFinite(realized)) {
     const realizedBps = result.notionalUsd > 0 ? realized / result.notionalUsd * 10_000 : null;
@@ -212,10 +288,7 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
   }
 
   const quote = prepared.quote;
-  const reservationExpiry = Date.now() + Math.max(
-    6 * 60 * 60_000,
-    Math.min(7 * 24 * 60 * 60_000, Number(process.env.CRYPTOCRAWL_CROSS_CHAIN_RESERVATION_HOLD_MS || 6 * 60 * 60_000)),
-  );
+  const reservationExpiry = Date.now() + Math.max(6 * 60 * 60_000, Math.min(7 * 24 * 60 * 60_000, Number(process.env.CRYPTOCRAWL_CROSS_CHAIN_RESERVATION_HOLD_MS || 6 * 60 * 60_000)));
   const reservation: OnchainSystemCapitalReservation | null = await reserveOnchainSystemCapital({
     opportunityId: candidate.opportunityId,
     chain: quote.originChain,
@@ -246,63 +319,30 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
     const execution = await executeAcrossBridgeQuote(quote, { onSubmitted: persist, returnAfterSubmission: true });
     const depositTxnRef = execution.depositTxnRef;
     if (depositTxnRef && !durableSubmission && execution.originNativeFeeWei) {
-      // One immediate idempotent retry protects against a transient callback error.
       try {
         await persist({ depositTxnRef, originNativeFeeWei: execution.originNativeFeeWei, submittedAt: Date.now() });
       } catch (error) {
         logger.error('[FundingCrossChainAdapter] Across origin deposit exists but durable lifecycle persistence is unavailable; reservation is deliberately retained', {
-          component: 'FundingCrossChainExecutionAdapter',
-          opportunityId: candidate.opportunityId,
-          depositTxnRef,
-          reservationId: reservation.reservationId,
-          capitalReleaseAllowed: false,
+          component: 'FundingCrossChainExecutionAdapter', opportunityId: candidate.opportunityId,
+          depositTxnRef, reservationId: reservation.reservationId, capitalReleaseAllowed: false,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
-
     if (depositTxnRef) {
       return {
-        opportunityId: decision.opportunityId,
-        topology: 'CROSS_CHAIN',
-        path: 'BRIDGE_FLASH_LOAN',
-        dispatched: true,
-        submitted: true,
-        success: false,
-        settlementConfirmed: false,
-        transactionHash: depositTxnRef,
-        lifecycleId: durableSubmission?.lifecycleId,
-        submissionReference: durableSubmission?.lifecycleId ?? depositTxnRef,
-        realizedNetProfitUsd: null,
+        opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN',
+        dispatched: true, submitted: true, success: false, settlementConfirmed: false,
+        transactionHash: depositTxnRef, lifecycleId: durableSubmission?.lifecycleId,
+        submissionReference: durableSubmission?.lifecycleId ?? depositTxnRef, realizedNetProfitUsd: null,
         error: durableSubmission ? undefined : execution.error || 'CROSS_CHAIN_SUBMITTED_DURABILITY_RECOVERY_REQUIRED',
       };
     }
-
     await reservation.release().catch(() => undefined);
-    return {
-      opportunityId: decision.opportunityId,
-      topology: 'CROSS_CHAIN',
-      path: 'BRIDGE_FLASH_LOAN',
-      dispatched: false,
-      submitted: false,
-      success: false,
-      settlementConfirmed: false,
-      error: execution.error || 'CROSS_CHAIN_SUBMISSION_FAILED',
-    };
+    return { opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: execution.error || 'CROSS_CHAIN_SUBMISSION_FAILED' };
   } catch (error) {
-    // No transaction hash escaped the executor, so the origin deposit was not
-    // proven submitted. Releasing the reservation is safe only in this pre-submit path.
     await reservation.release().catch(() => undefined);
-    return {
-      opportunityId: decision.opportunityId,
-      topology: 'CROSS_CHAIN',
-      path: 'BRIDGE_FLASH_LOAN',
-      dispatched: false,
-      submitted: false,
-      success: false,
-      settlementConfirmed: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
+    return { opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -315,17 +355,10 @@ async function dispatchFunding(decision: UnifiedExecutionDecision): Promise<Fund
   const result = await fundingPositionLifecycle.execute(plan);
   const submitted = result.status === 'opened' && Boolean(result.lifecycleId);
   return {
-    opportunityId: decision.opportunityId,
-    topology: 'FUNDING_ARBITRAGE',
-    path: 'SPOT_PERP_FUNDING',
-    dispatched: submitted,
-    submitted,
-    success: result.success,
-    settlementConfirmed: result.settlementConfirmed,
-    lifecycleId: result.lifecycleId,
-    submissionReference: result.lifecycleId,
-    realizedNetProfitUsd: result.settlement?.realizedNetProfitUsd,
-    error: result.error,
+    opportunityId: decision.opportunityId, topology: 'FUNDING_ARBITRAGE', path: 'SPOT_PERP_FUNDING',
+    dispatched: submitted, submitted, success: result.success, settlementConfirmed: result.settlementConfirmed,
+    lifecycleId: result.lifecycleId, submissionReference: result.lifecycleId,
+    realizedNetProfitUsd: result.settlement?.realizedNetProfitUsd, error: result.error,
   };
 }
 
@@ -335,16 +368,39 @@ class FundingCrossChainExecutionAdapter {
   async advanceOpenFundingLifecycles(limit = 4): Promise<FundingLifecycleResult[]> {
     const results = await fundingPositionLifecycle.advanceOpenLifecycles(limit);
     for (const result of results) {
-      try { await recordFundingTerminal(result); }
-      catch (error) {
-        logger.error('[FundingCrossChainAdapter] Funding terminal feedback failed without changing settlement truth', {
-          component: 'FundingCrossChainExecutionAdapter',
-          lifecycleId: result.lifecycleId,
-          error: error instanceof Error ? error.message : String(error),
-          settlementAuthorityChanged: false,
+      if (!result.lifecycleId || !result.settlementConfirmed || !result.settlement?.terminal) continue;
+      const context = await fundingContext(result.lifecycleId);
+      if (context) await markOperatorTerminalByOpportunity(context.plan.opportunityId).catch(() => undefined);
+    }
+
+    const feedback = await claimFundingTerminalFeedback(Math.max(limit, 8)).catch(error => {
+      logger.error('[FundingCrossChainAdapter] Funding terminal feedback claim failed; durable settlement remains authoritative', {
+        component: 'FundingCrossChainExecutionAdapter',
+        error: error instanceof Error ? error.message : String(error),
+        settlementAuthorityChanged: false,
+      });
+      return [] as FundingLifecycleResult[];
+    });
+    for (const result of feedback) {
+      if (!result.lifecycleId) continue;
+      try {
+        const context = await fundingContext(result.lifecycleId);
+        if (context) await markOperatorTerminalByOpportunity(context.plan.opportunityId);
+        await recordFundingTerminal(result);
+        await markFundingFeedbackApplied(result.lifecycleId);
+      } catch (error) {
+        await releaseFundingFeedbackLease(result.lifecycleId, error).catch(() => undefined);
+        logger.error('[FundingCrossChainAdapter] Funding terminal feedback failed; durable feedback remains pending', {
+          component: 'FundingCrossChainExecutionAdapter', lifecycleId: result.lifecycleId,
+          error: error instanceof Error ? error.message : String(error), settlementAuthorityChanged: false, feedbackDropped: false,
         });
       }
     }
+
+    // The canonical scheduler already calls this method before new-exposure gates.
+    // Advancing cross-chain here gives both long-lived families the same safe
+    // restart/reconciliation cadence without adding a competing timer/daemon.
+    await this.advanceOpenCrossChainLifecycles(limit);
     return results;
   }
 
@@ -353,28 +409,18 @@ class FundingCrossChainExecutionAdapter {
     const feedback = await claimPendingCrossChainTerminalFeedback(Math.max(limit, 8));
     for (const result of feedback) {
       try {
+        await markOperatorTerminalByOpportunity(result.opportunityId);
         await recordCrossChainTerminal(result);
         await markCrossChainTerminalFeedbackApplied(result.lifecycleId);
       } catch (error) {
         await releaseCrossChainTerminalFeedbackLease(result.lifecycleId, error).catch(() => undefined);
         logger.error('[FundingCrossChainAdapter] Cross-chain terminal feedback failed; durable feedback remains pending', {
-          component: 'FundingCrossChainExecutionAdapter',
-          lifecycleId: result.lifecycleId,
-          opportunityId: result.opportunityId,
-          error: error instanceof Error ? error.message : String(error),
-          settlementAuthorityChanged: false,
-          feedbackDropped: false,
+          component: 'FundingCrossChainExecutionAdapter', lifecycleId: result.lifecycleId, opportunityId: result.opportunityId,
+          error: error instanceof Error ? error.message : String(error), settlementAuthorityChanged: false, feedbackDropped: false,
         });
       }
     }
     return results;
-  }
-
-  async advanceOpenLifecycles(limit = 4): Promise<void> {
-    await Promise.all([
-      this.advanceOpenFundingLifecycles(limit),
-      this.advanceOpenCrossChainLifecycles(limit),
-    ]);
   }
 
   async dispatch(decisions: readonly UnifiedExecutionDecision[]): Promise<FundingCrossChainDispatchResult[]> {
@@ -387,9 +433,7 @@ class FundingCrossChainExecutionAdapter {
       if (!supported) continue;
       this.inFlight.add(decision.opportunityId);
       try {
-        results.push(decision.topology === 'CROSS_CHAIN'
-          ? await dispatchCrossChain(decision)
-          : await dispatchFunding(decision));
+        results.push(decision.topology === 'CROSS_CHAIN' ? await dispatchCrossChain(decision) : await dispatchFunding(decision));
       } finally {
         this.inFlight.delete(decision.opportunityId);
       }
