@@ -24,6 +24,7 @@ export type CanonicalSchedulerIdleReason =
   | 'live_execution_posture_disabled'
   | 'runtime_identity_mismatch'
   | 'governance_stage_blocked'
+  | 'lifecycle_maintenance_failed'
   | 'operator_learning_day'
   | 'operator_daily_trade_limit'
   | 'operator_daily_profit_stop'
@@ -71,7 +72,7 @@ function isOperatorStop(reason: CanonicalSchedulerIdleReason | null): boolean {
   return reason === 'operator_learning_day' || reason === 'operator_daily_trade_limit' || reason === 'operator_daily_profit_stop' || reason === 'operator_trade_in_flight';
 }
 function idleCadenceMultiplier(reason: CanonicalSchedulerIdleReason | null): number {
-  if (reason === 'live_execution_posture_disabled' || reason === 'runtime_identity_mismatch' || reason === 'governance_stage_blocked') return 2;
+  if (reason === 'live_execution_posture_disabled' || reason === 'runtime_identity_mismatch' || reason === 'governance_stage_blocked' || reason === 'lifecycle_maintenance_failed') return 2;
   if (reason === 'operator_strategy_unavailable') return 4;
   if (reason === 'no_eligible_candidates') return 1.5;
   if (reason === 'no_resource_qualified_candidates') return 1.4;
@@ -379,13 +380,20 @@ class CanonicalExecutionScheduler {
   }
 
   private async runDispatch(): Promise<void> {
-    // Existing funding positions are risk-management obligations, not new parent
-    // trades. Advance/close/reconcile them before any gate that only governs new
-    // exposure, including learning days, daily limits and profit stops.
+    // Existing funding/cross-chain positions are risk-management obligations, not
+    // new parent trades. Recovery must succeed (or fail in internally isolated
+    // feedback-only paths) before this scheduler cycle may grant fresh exposure.
     try {
       await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);
     } catch (error) {
-      logger.error('[ExecutionScheduler] Existing funding lifecycle maintenance failed closed', { component: 'CanonicalExecutionScheduler', error: error instanceof Error ? error.message : String(error), newExposureGranted: false });
+      this.setIdle('lifecycle_maintenance_failed');
+      logger.error('[ExecutionScheduler] Existing funding/cross-chain lifecycle maintenance failed closed', {
+        component: 'CanonicalExecutionScheduler',
+        error: error instanceof Error ? error.message : String(error),
+        newExposureGranted: false,
+        cycleTerminatedBeforeNewExposure: true,
+      });
+      return;
     }
 
     if (!isLiveExecutionPosture()) { this.setIdle('live_execution_posture_disabled'); return; }
