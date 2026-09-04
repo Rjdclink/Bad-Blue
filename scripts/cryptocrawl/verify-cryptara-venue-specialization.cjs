@@ -49,7 +49,8 @@ mustNot(priorPath, priors, 'terminal: true', 'Documentation metadata must never 
 // executable fee cache. Cryptara may not be imported into this authority.
 must(feePath, fees, "source: 'coinbase_transaction_summary'", 'Coinbase executable fee evidence must identify authenticated transaction-summary authority');
 must(feePath, fees, "source: 'kraken_account_trade_volume'", 'Kraken executable fee evidence must identify authenticated TradeVolume authority');
-must(feePath, fees, "source: 'okx_account_trade_fee'", 'OKX executable fee evidence must identify authenticated account trade-fee authority');
+must(feePath, fees, 'resolveOkxAccountFeeRates', 'OKX executable fee evidence must come from authenticated account trade-fee authority');
+must(feePath, fees, "source: rates.zeroFeeGroup ? 'okx_live_spot_zero_fee_group' : 'okx_account_trade_fee'", 'OKX executable fee evidence must preserve authenticated account rates and live zero-fee groups');
 must(feePath, fees, "if (evidence.source === 'configured_override') return;", 'Configured fee overrides must never enter executable fee evidence cache');
 must(feePath, fees, 'observedAt', 'Fee evidence must carry observation time for freshness enforcement');
 mustNot(feePath, fees, 'venue-specialization-learning', 'Canonical fee authority must never import Cryptara venue learning');
