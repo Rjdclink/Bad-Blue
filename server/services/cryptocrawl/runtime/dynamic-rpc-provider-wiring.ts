@@ -4,6 +4,7 @@ import {
   type RpcCapability,
   type SupportedChain,
 } from '../api/blockchain-providers.js';
+import { ensureZeroCapitalPostOpCostReportingWiring } from './zero-capital-postop-cost-reporting-wiring.js';
 
 const CHAINS: SupportedChain[] = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'avalanche', 'bsc'];
 const DEFAULT_CAPABILITIES: RpcCapability[] = [
@@ -188,11 +189,15 @@ async function registerConfiguredMesh(): Promise<void> {
     independentNoKeyPublicFailover: true,
     paidAlchemyRpcRole: 'last_resort_fallback_after_two_no_key_public_transports_when_available',
     alchemyGasSponsorshipUntouched: true,
+    postOpMeasuredCostReportingInstalledAfterCanonicalReconciliation: true,
     localComputeRole: 'ComputationalBeam_Aries_Cryptara_analysis_after_bounded_market_evidence',
   });
 }
 
 export function ensureDynamicRpcProviderWiring(): Promise<void> {
+  // Canonical runtime invokes this component immediately after realized-profit
+  // wiring, so this is the correct ordering seam for a reporting-only outer guard.
+  ensureZeroCapitalPostOpCostReportingWiring();
   if (installationPromise) return installationPromise;
   installed = true;
   installationPromise = registerConfiguredMesh().catch(error => {
