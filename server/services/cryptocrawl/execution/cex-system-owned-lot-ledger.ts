@@ -8,14 +8,23 @@ import {
   subtractExactDecimals,
 } from './exact-decimal.js';
 
-export interface CexSystemCapitalSettlementAuthority {
-  strategySelectionAuthority: 'cryptara';
-  notionalAuthority: 'profit_ladder';
-  executionAuthority: 'stage_manager';
-  governanceAdmitted: true;
-  reference: string;
-  [key: string]: unknown;
-}
+export type CexSystemCapitalSettlementAuthority =
+  | {
+      strategySelectionAuthority: 'cryptara';
+      notionalAuthority: 'profit_ladder';
+      executionAuthority: 'stage_manager';
+      governanceAdmitted: true;
+      reference: string;
+      [key: string]: unknown;
+    }
+  | {
+      treasuryAuthority: 'operator_strategy';
+      notionalAuthority: 'system_owned_sweep_target';
+      executionAuthority: 'system_capital_sweep_worker';
+      governanceAdmitted: true;
+      reference: string;
+      [key: string]: unknown;
+    };
 
 export interface AppliedCexOwnershipSettlement {
   settlementReference: string;
@@ -30,15 +39,21 @@ export interface AppliedCexOwnershipSettlement {
 }
 
 function requireAuthority(authority: CexSystemCapitalSettlementAuthority): void {
-  if (
-    authority?.strategySelectionAuthority !== 'cryptara' ||
-    authority?.notionalAuthority !== 'profit_ladder' ||
-    authority?.executionAuthority !== 'stage_manager' ||
-    authority?.governanceAdmitted !== true ||
-    typeof authority?.reference !== 'string' ||
-    !authority.reference.trim()
-  ) {
-    throw new Error('CEX ownership transformation requires Cryptara, Profit Ladder, StageManager and governance authority evidence');
+  const referenceValid = typeof authority?.reference === 'string' && Boolean(authority.reference.trim());
+  const tradeAuthority =
+    'strategySelectionAuthority' in authority &&
+    authority.strategySelectionAuthority === 'cryptara' &&
+    authority.notionalAuthority === 'profit_ladder' &&
+    authority.executionAuthority === 'stage_manager' &&
+    authority.governanceAdmitted === true;
+  const treasuryAuthority =
+    'treasuryAuthority' in authority &&
+    authority.treasuryAuthority === 'operator_strategy' &&
+    authority.notionalAuthority === 'system_owned_sweep_target' &&
+    authority.executionAuthority === 'system_capital_sweep_worker' &&
+    authority.governanceAdmitted === true;
+  if (!referenceValid || (!tradeAuthority && !treasuryAuthority)) {
+    throw new Error('CEX ownership transformation requires either canonical trade authority or explicit operator-strategy treasury authority');
   }
 }
 
