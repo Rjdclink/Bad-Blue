@@ -1,85 +1,142 @@
 # Nix-Gen
 
-Nix-Gen is an additive global opportunity-allocation layer for CryptoCrawler. Its job is to compare already-authoritative profitable opportunities under shared scarce resources and improve scheduling order without becoming another execution, economics, governance, settlement, resource, or learning authority.
+Nix-Gen is CryptoCrawler's additive global opportunity-allocation layer. It compares already-authoritative profitable opportunities under shared scarce resources and improves scheduling/resource decisions without becoming a second economics, governance, execution, settlement, resource, treasury, payout, or learning authority.
 
-## Current authority boundary
+## Implementation state
+
+The Nix-Gen architecture in this workstream is **implemented**. `completion-manifest.ts` records the implemented capability surface and deliberately distinguishes implementation completion from runtime proof or guaranteed profitability.
+
+Completed components include:
+
+- standardized cross-strategy bids backed by canonical measured economics;
+- bounded exact branch-and-bound allocation for small feasible sets;
+- deterministic scarcity-aware fallback for larger sets;
+- shared dispatch-resource coordination and mixed CEX/measured live portfolio views;
+- continuous fingerprinted replanning with expiry/temporal invalidation;
+- default-on, fail-open CEX scheduling optimization;
+- default-on, fail-open measured DEX/liquidation scheduling optimization;
+- strategy-finger/limb registry with capability-aware availability;
+- read-only resource projections from canonical schedulers;
+- bounded heuristic scarcity diagnostics;
+- finite-difference marginal canonical-profit resource valuation;
+- optimization-derived Lagrangian dual resource-price discovery with explicit discrete-allocation caveats;
+- robust uncertainty diagnostics with unknown-stays-unknown semantics;
+- confirmed terminal-settlement calibration;
+- capital/inventory routing recommendations based on marginal canonical profit;
+- optional QuantiComp heavy advisory analysis with deterministic inline fallback;
+- an explicit integration contract for Cryptara/Monte Carlo, TradingView/MultiOracle, QuantiComp/Beam, DynamicScalePhysics, ProfitLadder/Stage/risk, private/atomic execution, settlement feedback, and treasury/capital boundaries;
+- Docker build-time semantic/no-regression guards for Nix-Gen files.
+
+## Default runtime posture
+
+`CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING=false` is the explicit rollback switch. If it is not set to `false`, completed Nix-Gen advisory ordering is active.
+
+This changes **scheduling order only**. Any Nix-Gen exception fails open to the prior canonical order. Canonical eligibility, deterministic economics, ProfitLadder sizing, governance, circuit breakers, nonce/rate protection, distributed resource leases, execution, settlement, payout, and learning remain unchanged authorities.
+
+The live runtime currently consumes Nix-Gen ordering in:
+
+- canonical CEX scheduling; and
+- settlement-capable measured DEX atomic/liquidation scheduling.
+
+`global-live-portfolio.ts` provides a single comparative portfolio across those currently settlement-capable surfaces using the coordinator's shared dispatch-capacity resource. It is read-only and cannot submit an order or reserve a resource.
+
+## Authority boundary
 
 - Canonical measured economics remain upstream; Nix-Gen never creates or repairs economics.
 - Unknown canonical BPS remains `null`; Nix-Gen does not duplicate BPS calculation.
-- Existing authoritative execution and settlement capability must already exist before a bid is accepted.
-- CEX execution/settlement capability is derived from `getCanonicalExecutionCapabilities()` rather than asserted by the Nix-Gen caller.
-- Governance, Profit Ladder, resource ownership, nonce/rate safety, kill switch, settlement, payout, and terminal learning remain authoritative in their existing systems.
-- Nix-Gen output is advisory. A valid bid that is not in the resource-feasible selected subset remains in the complete priority order, is marked only as deferred for that allocation snapshot, and is never silently vetoed or labeled rejected.
-- Known but temporarily insufficient resource capacity is advisory-deferred as `resource_unavailable`; missing resource-capacity evidence is hard-invalid to Nix-Gen as `resource_budget_missing` and is never converted to zero.
-- Resource projections are read-only views of the existing resource schedulers. They do not reserve distributed resources or grant execution rights.
-- Current scarcity signals are bounded utilization diagnostics only. They are explicitly **not** dual-derived shadow prices and never replace canonical capacity or lease truth.
-- Robustness output is advisory only. It may expose a downside reserve/value when independent uncertainty evidence is complete, but it never rewrites canonical economics or candidate eligibility.
+- Existing authoritative execution and settlement capability must already exist before a bid can become an available strategy limb.
+- CEX capability comes from the existing canonical execution-capability authority, not from a caller-supplied `true` flag.
+- Governance, ProfitLadder, resource ownership, nonce/rate safety, kill switch, settlement, payout, retained-capital accounting, and terminal learning remain authoritative upstream.
+- Valid profitable bids that lose a temporary resource contest remain in the complete priority order and are advisory-deferred rather than rejected.
+- Known but temporarily insufficient capacity is deferred; missing resource-capacity evidence remains hard-invalid to Nix-Gen and is never converted to zero.
+- Resource projections are read-only; distributed lease acquisition remains hard resource truth.
+- Nix-Gen never reads signer private keys, submits transactions, or transfers treasury funds.
+
+## Canonical evidence integration
+
+### Cryptara and Monte Carlo
+
+Cryptara's canonical assessment already incorporates authoritative Monte Carlo evidence into `probabilityOfProfitableExecution`. Nix-Gen consumes that probability once. It does not run a second Monte Carlo model or recycle composite profitability scores that would double-count profit/confidence.
+
+### TradingView and MultiOracle
+
+TradingView and MultiOracle evidence enrich upstream canonical/Cryptara state. Nix-Gen consumes the resulting canonical assessment rather than creating competing technical-analysis or oracle authorities.
+
+### ProfitLadder, StageManager and risk
+
+Hard notional, stage, drawdown, circuit-breaker and execution-safety constraints remain upstream. Nix-Gen can optimize among opportunities that survive those truths; it cannot bypass them.
+
+### DynamicScalePhysics
+
+DynamicScale/pressure wiring remains scaling authority. Nix-Gen consumes resulting resource capacity/pressure through resource projections rather than independently changing compute scale.
+
+### QuantiComp and Computational Beam
+
+QuantiComp remains canonical heavy-compute authority. `quanti-analysis.ts` may route heavy side-effect-free Nix-Gen analysis through QuantiComp with deduplication, deadline/timeout bounds and deterministic validation. Failure falls back to the same inline classical analysis. Computational Beam remains a compatibility/routing facade rather than a competing compute authority.
 
 ## Optimizer behavior
 
 - Small feasible sets use bounded exact branch-and-bound optimization.
-- Exact search has a hard candidate cap so a combinatorial explosion cannot enter the hot path.
-- Larger sets use a deterministic scarcity-aware fallback.
-- Shared resource capacities are merged conservatively rather than double-counted.
-- Mutual-exclusion groups prevent incompatible variants of the same opportunity from being simultaneously selected while keeping non-selected valid variants advisory-deferred rather than rejected.
-- Canonical positive net profit is the base objective; independent advisory probability, terminal calibration, decay urgency, and normalized rank evidence may adjust scheduling order within bounded ranges.
-- Measured-topology `profitabilityScore` is deliberately not recycled as a Nix-Gen rank input because that score already contains profit/confidence and would double-count them.
+- Exact search has a hard candidate cap so combinatorial explosion cannot enter the hot path.
+- Larger sets use a deterministic resource-aware fallback.
+- Shared capacities are merged conservatively rather than double-counted.
+- Mutual-exclusion groups prevent incompatible variants of the same opportunity from being selected together while keeping valid alternatives deferred/alive.
+- Canonical positive net profit is the base objective.
+- Independent probability, terminal calibration, decay urgency and bounded rank evidence may change scheduling utility only.
 
-## Continuous replanning
+## Resource intelligence
 
-The pure replanner fingerprints every allocation-relevant truth input: canonical economics/timestamps, execution evidence, advisory evidence, resource demand/budgets, mutual exclusion, dispatch capacity and exact-search configuration.
+Nix-Gen exposes three distinct resource signals and keeps their semantics separate:
 
-- An unchanged advisory plan may be reused only before both its bounded maximum plan age and its next temporal truth boundary.
-- Opportunity expiry safety margins and future-dated evidence boundaries force recomputation rather than allowing a long-lived stale plan.
-- It creates no timer, interval, queue, lease, reservation, order or settlement side effect.
-- Opt-in CEX Nix-Gen ordering now calls the pure replanner from the existing canonical scheduler wake/dispatch cycle.
-- Disabling Nix-Gen clears cached advisory plan state; any replanner exception fails open to the exact canonical ordering.
-- No competing polling daemon is introduced.
+1. **Scarcity signal** — bounded heuristic utilization/congestion diagnostic. It is not a shadow price.
+2. **Marginal resource value** — finite-difference estimate of how much additional canonical net profit an extra resource unit could unlock. It is not a mathematical dual variable.
+3. **Dual resource price** — projected-subgradient Lagrangian price in USD/unit derived from the optimization model. Because the allocation is discrete/integer, it is explicitly approximate and does not claim exact strong duality or an exact LP/MIP multiplier.
 
-## Scarcity diagnostics
+Capital-routing advisory uses these resource economics only to identify where another canonical capital/inventory unit could have the highest marginal value. It cannot move, sweep, withhold or size money.
 
-- Each resource receives a bounded `0..1` advisory scarcity signal derived from current optimizer utilization.
-- The signal is deliberately zero at low/moderate utilization and rises convexly as headroom disappears.
-- Saturated/zero-capacity resources receive the maximum diagnostic signal, but canonical resource schedulers still make the hard availability decision.
-- Per-bid scarcity burden is diagnostic/ranking support only; it cannot make an otherwise canonical opportunity ineligible or rejected.
-- True resource/shadow prices, if added later, must come from an appropriate optimization/dual model rather than relabeling this heuristic signal.
+## Robust uncertainty
 
-## Marginal resource-value diagnostics
+- Independent, time-bounded downside evidence may produce an advisory reserve/value.
+- Missing, expired, future-dated or invalid uncertainty evidence remains unknown.
+- Fractional budgeted uncertainty allows graduated conservatism.
+- A negative robust advisory value cannot independently invalidate a canonically profitable executable opportunity.
 
-- A bounded finite-difference analyzer asks how much additional **canonical net profit** an incremental unit of each known resource would unlock.
-- Advisory probability/rank/calibration modifiers are stripped from this sensitivity pass so the reported value is not double-counted or confused with ranking utility.
-- The analysis reuses optimizer-normalized capacities, is bounded to at most 64 resources, and never reserves or mutates resources.
-- `isDualShadowPrice` is always false: finite-difference marginal value is optimization-derived evidence, but it is not a LP/MIP dual variable.
+## Terminal calibration
 
-## Robust uncertainty diagnostics
+Confirmed terminal settlement is the only source used for realized-vs-expected calibration. The existing settlement-profit calibrator remains learning authority; Nix-Gen reads its output and uses a bounded scheduling factor only.
 
-- Robustness uses independent, time-bounded downside envelopes supplied with explicit measurement authority.
-- Missing, expired, future-dated, or otherwise invalid uncertainty evidence remains unknown; it is never silently converted to zero risk.
-- A Bertsimas-Sim-style uncertainty budget may be fractional, allowing graduated conservatism rather than an all-or-nothing penalty.
-- The resulting reserve and robust advisory value are diagnostics only. Even a negative robust advisory value does not invalidate or reject a canonically profitable/executable opportunity.
+## Strategy fingers
 
-## Rollout
+The registry contains fingers for CEX arbitrage, DEX atomic, cross-chain, zero-capital, flash-loan, funding-rate, liquidation, market-making, solver/intents and extensible future strategies.
 
-1. **Foundation:** standardized bids, bounded global optimizer, authority invariants, functional verifier.
-2. **Read-only resource projections:** reuse CEX and atomic scheduler resource models without reserving anything.
-3. **Opt-in CEX ordering:** `CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING=true` may reorder only candidates that have already passed every canonical CEX hard gate. Default is off. Any Nix-Gen failure returns the exact canonical order.
-4. **Continuous CEX replanning:** implemented through the existing scheduler wake/dispatch cycle using the pure fingerprinted replanner; no new daemon.
-5. **Pure scarcity, marginal-resource-value, and robust-uncertainty diagnostics:** implemented without resource/execution authority.
-6. **Cross-topology advisory ordering:** extend the same non-filtering/defer-not-reject model to settlement-capable measured atomic paths after exact-head validation.
-7. **True dual/resource-price optimization and optional classical solver limbs:** add only when benchmarked against real Nix-Gen problem sizes and shown to improve objective quality/latency without becoming mandatory.
-8. **Terminal-settlement calibration:** use confirmed terminal outcomes to tune advisory allocation without creating a second learning/economics authority.
+A registered finger is **not** automatically executable. `resolveNixGenStrategyLimb()` marks it available only when the bid already has upstream canonical eligibility, executability, settlement capability and an authoritative execution path.
 
-## Current limitations by design
+Therefore currently unsupported live paths remain explicit upstream capability boundaries. For example, a zero-capital strategy may be discovered/planned and have a registered Nix-Gen finger, but Nix-Gen will not invent a terminal executor merely to mark the finger available. The same rule applies to cross-chain, funding, maker and solver paths as their upstream capabilities evolve.
 
-- Read-only resource projections reflect the local scheduler view; distributed lease acquisition remains the authoritative hard resource check.
-- Nix-Gen does not yet interleave or authorize execution across CEX and measured-atomic topologies.
-- Scarcity, marginal resource value, and robust uncertainty are diagnostic and are not hard execution gates.
-- Optional external solvers are not dependencies. The dependency-free bounded optimizer remains functional even if no solver limb is installed.
-- HHL/quantum linear-system methods are not a generic replacement for combinatorial allocation and remain optional only for mathematically suitable subproblems.
-- Standalone Nix-Gen verifier scripts are not yet included in the repository `prebuild` command; Railway semantic-verifier execution must not be claimed until that validation gap is explicitly closed.
+## Research-only limbs
 
-## Research principles
+- **CognitiveFabric:** general 4JI cognition remains outside canonical financial truth and the live execution hot path. It may support offline research but cannot create economics/execution evidence.
+- **HHL/quantum:** HHL is relevant only to mathematically suitable linear-system subproblems. It is not a generic combinatorial allocation engine. Classical Nix-Gen remains the mandatory production baseline and fallback.
 
-The implementation uses public research as engineering guidance: Stanford dual/resource-price allocation, NASA/JPL continuous planning and iterative repair, DARPA scalable uncertainty-aware planning, MIT robust optimization and congestion-aware scheduling, Sandia time-critical scheduling, online resource-constrained learning, market-impact-aware optimal execution, smart order routing, combinatorial batch allocation, and deterministic classical solver fallbacks.
+## Research basis
 
-Every implementation slice must remain independently useful and removable without breaking existing production behavior.
+The implementation map in `scripts/cryptocrawl/nix-gen-research-map.txt` records the public/declassified engineering basis used here: Stanford/Boyd resource allocation and dual pricing, NASA/JPL continuous planning and iterative repair, DARPA scalable uncertainty-aware planning, MIT robust/congestion-aware optimization, Sandia time-critical scheduling, online resource-constrained learning, market-impact-aware execution, smart order routing, combinatorial batch allocation, private/atomic routing and deterministic classical solver fallbacks.
+
+Public/declassified research informs architecture; it does not become runtime authority.
+
+## No-regression laws
+
+1. One authority per responsibility.
+2. No synthetic economics, liquidity, fills, settlement, provider health or learning evidence.
+3. Unknown critical evidence is never converted to zero.
+4. Non-positive canonical economics are never promoted by Nix-Gen.
+5. Expired opportunities cannot be selected.
+6. An authoritative settlement-capable execution path must already exist for a live strategy limb.
+7. Resource projections are advisory; canonical lease acquisition remains hard truth.
+8. Valid profitable non-selected bids are deferred, not vetoed.
+9. Profit/confidence evidence cannot be double-counted through recycled composite scores.
+10. QuantiComp, dual pricing, uncertainty analysis and research limbs are never mandatory dependencies for core classical allocation.
+11. Nix-Gen does not access signer secrets, submit transactions, or become treasury authority.
+12. Every slice remains independently useful and removable without breaking existing production behavior.
+
+Implementation completion does not claim live operational proof, future profitability, or completion of upstream strategy executors outside Nix-Gen's authority boundary.
