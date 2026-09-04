@@ -15,6 +15,8 @@ const sponsorPath = 'server/services/cryptocrawl/strategies/gas-sponsorship.ts';
 const receiverPath = 'server/services/cryptocrawl/execution/adapters/sponsored-receiver-manager.ts';
 const builderPath = 'server/services/cryptocrawl/execution/adapters/builder-sponsored-bundle.ts';
 const enginePath = 'server/services/cryptocrawl/core/zero-capital-engine.ts';
+const dynamicExecutionPath = 'server/services/cryptocrawl/runtime/zero-initial-capital-dynamic-execution-wiring.ts';
+const orderingSeamPath = 'server/services/cryptocrawl/runtime/alchemy-standard-rpc-first-wiring.ts';
 const dockerPath = 'Dockerfile';
 const schemaPath = 'server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts';
 
@@ -25,6 +27,8 @@ const sponsor = read(sponsorPath);
 const receiver = read(receiverPath);
 const builder = read(builderPath);
 const engine = read(enginePath);
+const dynamicExecution = read(dynamicExecutionPath);
+const orderingSeam = read(orderingSeamPath);
 const docker = read(dockerPath);
 const schema = read(schemaPath);
 
@@ -60,9 +64,19 @@ must(enginePath, engine, 'configuredRoutesRetained: true', 'Configured routes mu
 must(enginePath, engine, 'Global market operations are not gated by local Zero Initial Capital funding availability', 'StageManager must remain independent of route-local funding');
 must(enginePath, engine, 'Local funding loss callback intentionally suppressed', 'Local funding loss must not call the global shutdown callback');
 must(enginePath, engine, 'this.startScanningLoop();', 'Scanning must remain active independently of local funding readiness');
-must(enginePath, engine, 'getZeroInitialCapitalDynamicOrchestrator', 'The live executor must invoke the dynamic funding orchestrator');
-must(enginePath, engine, 'operatorNativeGasInputRequired', 'The live lane set must distinguish cold-start from self-funded native gas');
-must(enginePath, engine, 'profitRecipient: wallet.address', 'Atomic profit must stay with the operational wallet before Rainbow payout routing');
+
+must(dynamicExecutionPath, dynamicExecution, 'getZeroInitialCapitalDynamicOrchestrator', 'The live funding wrapper must invoke the dynamic funding orchestrator');
+must(dynamicExecutionPath, dynamicExecution, 'operatorNativeGasInputRequired: false', 'Live lanes must distinguish zero-operator-input funding from ordinary wallet gas');
+must(dynamicExecutionPath, dynamicExecution, 'profitRecipient: wallet.address', 'Atomic profit must remain with the operational wallet before Rainbow routing');
+must(dynamicExecutionPath, dynamicExecution, "kind: 'opportunity_erc20_postop'", 'Opportunity-backed postOp gas must be a first-class live lane');
+must(dynamicExecutionPath, dynamicExecution, "kind: 'external_sponsor'", 'External sponsorship must remain an independent live lane');
+must(dynamicExecutionPath, dynamicExecution, "kind: 'system_native'", 'Proven system-native gas must remain a self-funded lane');
+must(dynamicExecutionPath, dynamicExecution, 'provenSystemNativeGasAvailable', 'Wallet native balance alone must never authorize self-funded gas');
+must(dynamicExecutionPath, dynamicExecution, 'parallelPreparation: true', 'Live wrapper must preserve parallel funding preparation');
+must(dynamicExecutionPath, dynamicExecution, 'serializedSubmission: true', 'Live wrapper must preserve one submission authority');
+must(dynamicExecutionPath, dynamicExecution, 'ambiguousSubmissionFallbackAllowed: false', 'Ambiguous submissions must not fall through to a second funding lane');
+must(orderingSeamPath, orderingSeam, 'ensureZeroInitialCapitalDynamicExecutionWiring();', 'Canonical runtime must install dynamic funding before realized-profit reconciliation');
+must(orderingSeamPath, orderingSeam, 'dynamicZeroInitialCapitalFundingInstalledAtCanonicalOrderingSeam: true', 'Runtime ordering seam must self-report dynamic funding installation');
 
 must(schemaPath, schema, "'042_cryptocrawler_coinbase_system_capital_rainbow.sql'", 'Overflow schema must provision Coinbase/Rainbow migration 042');
 must(dockerPath, docker, '042_cryptocrawler_coinbase_system_capital_rainbow.sql', 'Production image must contain migration 042');
