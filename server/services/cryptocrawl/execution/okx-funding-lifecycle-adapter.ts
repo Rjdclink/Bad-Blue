@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import { getOkxExecutionRestBaseUrl, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
+import { pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { cexDecimalString } from './cex-order-serialization.js';
 import { getExactOkxOrderAssetDeltas, type ExactCexOrderAssetDeltaEvidence } from './cex-system-capital-settlement-evidence.js';
 import { applyExactCexSystemOwnedSettlement } from './cex-system-owned-lot-ledger.js';
@@ -17,6 +18,7 @@ import {
   fundingPositionLifecycle,
   type FundingExecutionPlan,
   type FundingLifecycleAdapter,
+  type FundingOpenReceipt,
   type FundingTerminalSettlement,
 } from './funding-position-lifecycle.js';
 import type { NormalizedOrderSettlement } from './settlement-types.js';
@@ -61,6 +63,34 @@ function fundingAuthority(lifecycleId: string) {
     governanceAdmitted: true as const,
     reference: lifecycleId,
   };
+}
+
+function durableHoldFromReceipt(plan: OkxFundingExecutionPlan, receipt: FundingOpenReceipt): FundingCapitalHold | null {
+  const ids = receipt.capitalReservationIds ?? [];
+  if (!ids[0]) return null;
+  const maxHoldMs = Math.max(60_000, Number(process.env.CRYPTOCRAWL_FUNDING_MAX_HOLD_MS || 8 * 60 * 60_000));
+  const holdUntil = Math.min(plan.fundingTimestamp + maxHoldMs, receipt.openedAt + 24 * 60 * 60_000);
+  if (!Number.isFinite(holdUntil) || holdUntil <= Date.now()) return null;
+  return {
+    lifecycleId: receipt.lifecycleId,
+    opportunityId: plan.opportunityId,
+    quoteAsset: plan.okx.quoteAsset,
+    baseAsset: plan.okx.baseAsset,
+    marginReservationId: ids[0],
+    baseReservationId: ids[1] ?? null,
+    holdUntil,
+  };
+}
+
+async function durablePlanForLifecycle(lifecycleId: string): Promise<OkxFundingExecutionPlan | null> {
+  const result = await pool.query(
+    `SELECT plan FROM private.cryptocrawler_funding_lifecycles WHERE lifecycle_id=$1 LIMIT 1`,
+    [lifecycleId],
+  ).catch(() => null);
+  const raw = result?.rows?.[0]?.plan;
+  if (!raw) return null;
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) as FundingExecutionPlan : raw as FundingExecutionPlan;
+  return asOkxPlan(parsed);
 }
 
 async function placeOrder(input: {
@@ -191,9 +221,7 @@ async function orderFillEconomics(input: {
       else throw new Error(`OKX funding fill fee currency ${feeCcy || 'missing'} cannot be valued canonically`);
     }
     if (input.instType === 'SWAP') {
-      if (fee !== null && fee !== 0 && feeCcy !== input.quoteAsset) {
-        throw new Error(`OKX funding SWAP fee currency ${feeCcy || 'missing'} is not canonical quote asset ${input.quoteAsset}`);
-      }
+      if (fee !== null && fee !== 0 && feeCcy !== input.quoteAsset) throw new Error(`OKX funding SWAP fee currency ${feeCcy || 'missing'} is not canonical quote asset ${input.quoteAsset}`);
       exactDerivativeQuoteDelta = addExactDecimals(exactDerivativeQuoteDelta, fillPnlRaw);
       exactDerivativeQuoteDelta = addExactDecimals(exactDerivativeQuoteDelta, feeRaw);
     }
@@ -234,11 +262,7 @@ async function currentFundingSnapshot(plan: OkxFundingExecutionPlan): Promise<{ 
   return Number.isFinite(rate) && Number.isFinite(fundingTime) ? { rate, fundingTime, processing } : null;
 }
 
-async function applyDerivativeFundingOwnership(input: {
-  plan: OkxFundingExecutionPlan;
-  lifecycleId: string;
-  exactQuoteDelta: string;
-}): Promise<void> {
+async function applyDerivativeFundingOwnership(input: { plan: OkxFundingExecutionPlan; lifecycleId: string; exactQuoteDelta: string }): Promise<void> {
   if (Number(input.exactQuoteDelta) === 0) return;
   const evidence: ExactCexOrderAssetDeltaEvidence = {
     venue: 'okx',
@@ -252,20 +276,9 @@ async function applyDerivativeFundingOwnership(input: {
     fills: [],
     assetDeltas: { [input.plan.okx.quoteAsset]: input.exactQuoteDelta },
     settlementReference: `okx-funding:${input.lifecycleId}`,
-    provenance: [
-      'okx_authenticated_swap_fills',
-      'okx_authenticated_funding_bills:type_8',
-      'exact_decimal_derivative_and_funding_quote_delta',
-      'spot_asset_transforms_recorded_separately',
-      'synthetic_evidence:false',
-    ],
+    provenance: ['okx_authenticated_swap_fills', 'okx_authenticated_funding_bills:type_8', 'exact_decimal_derivative_and_funding_quote_delta', 'spot_asset_transforms_recorded_separately', 'synthetic_evidence:false'],
   };
-  await applyExactCexSystemOwnedSettlement({
-    evidence,
-    opportunityId: input.plan.opportunityId,
-    strategy: 'okx_spot_perp_funding',
-    authority: fundingAuthority(input.lifecycleId),
-  });
+  await applyExactCexSystemOwnedSettlement({ evidence, opportunityId: input.plan.opportunityId, strategy: 'okx_spot_perp_funding', authority: fundingAuthority(input.lifecycleId) });
 }
 
 async function terminalEconomics(input: {
@@ -286,19 +299,10 @@ async function terminalEconomics(input: {
   ]);
   if (funding.rows === 0) {
     return {
-      lifecycleId: receipt.lifecycleId,
-      terminal: false,
-      settlementConfirmed: false,
-      spotClosed: true,
-      perpClosed: true,
-      spotCloseOrderId: input.spotCloseOrderId,
-      perpCloseOrderId: input.perpCloseOrderId,
-      fundingPaymentUsd: null,
-      realizedEntryExitPnlUsd: null,
-      realizedFeesUsd: null,
-      realizedNetProfitUsd: null,
-      settledAt: null,
-      provenance: ['okx_terminal_both_legs_closed', 'okx_funding_bill_evidence_pending', 'synthetic_evidence:false'],
+      lifecycleId: receipt.lifecycleId, terminal: false, settlementConfirmed: false, spotClosed: true, perpClosed: true,
+      spotCloseOrderId: input.spotCloseOrderId, perpCloseOrderId: input.perpCloseOrderId,
+      fundingPaymentUsd: null, realizedEntryExitPnlUsd: null, realizedFeesUsd: null, realizedNetProfitUsd: null,
+      settledAt: null, provenance: ['okx_terminal_both_legs_closed', 'okx_funding_bill_evidence_pending', 'synthetic_evidence:false'],
       error: 'OKX_FUNDING_BILL_EVIDENCE_PENDING',
     };
   }
@@ -309,32 +313,13 @@ async function terminalEconomics(input: {
   const signedFees = spotOpenEcon.feeDeltaQuote + spotCloseEcon.feeDeltaQuote + perpOpenEcon.feeDeltaQuote + perpCloseEcon.feeDeltaQuote;
   const realizedFeesUsd = -signedFees * Number(quoteUsd);
   const realizedNetProfitUsd = grossPnlUsd + fundingPaymentUsd - realizedFeesUsd;
-  const exactDerivativeDelta = addExactDecimals(
-    addExactDecimals(perpOpenEcon.exactDerivativeQuoteDelta, perpCloseEcon.exactDerivativeQuoteDelta),
-    funding.exactQuoteDelta,
-  );
+  const exactDerivativeDelta = addExactDecimals(addExactDecimals(perpOpenEcon.exactDerivativeQuoteDelta, perpCloseEcon.exactDerivativeQuoteDelta), funding.exactQuoteDelta);
   await applyDerivativeFundingOwnership({ plan, lifecycleId: receipt.lifecycleId, exactQuoteDelta: exactDerivativeDelta });
   return {
-    lifecycleId: receipt.lifecycleId,
-    terminal: true,
-    settlementConfirmed: true,
-    spotClosed: true,
-    perpClosed: true,
-    spotCloseOrderId: input.spotCloseOrderId,
-    perpCloseOrderId: input.perpCloseOrderId,
-    fundingPaymentUsd,
-    realizedEntryExitPnlUsd: grossPnlUsd,
-    realizedFeesUsd,
-    realizedNetProfitUsd,
-    settledAt: input.closedAt,
-    provenance: [
-      'okx_authenticated_spot_and_swap_fills',
-      'okx_authenticated_funding_bills:type_8',
-      'okx_terminal_both_legs_closed',
-      'cex_system_owned_lot_ledger:exact_spot_and_derivative_transforms',
-      'coingecko_live_quote_currency_usd',
-      'synthetic_evidence:false',
-    ],
+    lifecycleId: receipt.lifecycleId, terminal: true, settlementConfirmed: true, spotClosed: true, perpClosed: true,
+    spotCloseOrderId: input.spotCloseOrderId, perpCloseOrderId: input.perpCloseOrderId,
+    fundingPaymentUsd, realizedEntryExitPnlUsd: grossPnlUsd, realizedFeesUsd, realizedNetProfitUsd, settledAt: input.closedAt,
+    provenance: ['okx_authenticated_spot_and_swap_fills', 'okx_authenticated_funding_bills:type_8', 'okx_terminal_both_legs_closed', 'cex_system_owned_lot_ledger:exact_spot_and_derivative_transforms', 'coingecko_live_quote_currency_usd', 'synthetic_evidence:false'],
   };
 }
 
@@ -356,15 +341,9 @@ const adapter: FundingLifecycleAdapter = {
     lifecyclePlanIds.set(lifecycleId, okx.opportunityId);
     const holdUntil = Math.min(okx.fundingTimestamp + Math.max(60_000, Number(process.env.CRYPTOCRAWL_FUNDING_MAX_HOLD_MS || 8 * 60 * 60_000)), Date.now() + 24 * 60 * 60_000);
     const reserved = await reserveFundingEntryCapital({
-      lifecycleId,
-      opportunityId: okx.opportunityId,
-      baseAsset: okx.okx.baseAsset,
-      quoteAsset: okx.okx.quoteAsset,
-      spotEntryLimit: okx.okx.entry.spotEntryLimit,
-      baseQuantity: okx.okx.baseQuantity,
-      marginBufferUsd: okx.marginBufferUsd,
-      expectedEntryCostUsd: okx.expectedEntryCostUsd,
-      holdUntil,
+      lifecycleId, opportunityId: okx.opportunityId, baseAsset: okx.okx.baseAsset, quoteAsset: okx.okx.quoteAsset,
+      spotEntryLimit: okx.okx.entry.spotEntryLimit, baseQuantity: okx.okx.baseQuantity,
+      marginBufferUsd: okx.marginBufferUsd, expectedEntryCostUsd: okx.expectedEntryCostUsd, holdUntil,
     });
     lifecycleCapitalHolds.set(lifecycleId, reserved.hold);
     const submittedAt = Date.now();
@@ -394,23 +373,22 @@ const adapter: FundingLifecycleAdapter = {
     const updatedHold = await replaceSpotEntryReservationWithBaseHold({ hold: reserved.hold, spotEntryReservationId: reserved.spotEntryReservationId, exactBaseAmount: acquiredBase });
     lifecycleCapitalHolds.set(lifecycleId, updatedHold);
     return {
-      lifecycleId,
-      spotOrderId,
-      perpOrderId,
-      openedAt: Date.now(),
-      deltaNeutral: true,
-      measuredSpotQuantity: spotState.quantity,
-      measuredPerpQuantity: perpBase,
+      lifecycleId, spotOrderId, perpOrderId, openedAt: Date.now(), deltaNeutral: true,
+      measuredSpotQuantity: spotState.quantity, measuredPerpQuantity: perpBase,
       capitalReservationIds: [updatedHold.marginReservationId, ...(updatedHold.baseReservationId ? [updatedHold.baseReservationId] : [])],
     };
   },
 
   async marginHealthy(receipt) {
-    const opportunityId = lifecyclePlanIds.get(receipt.lifecycleId);
-    const plan = opportunityId ? preparedPlans.get(opportunityId) ?? null : null;
+    const cachedOpportunityId = lifecyclePlanIds.get(receipt.lifecycleId);
+    let plan = cachedOpportunityId ? preparedPlans.get(cachedOpportunityId) ?? null : null;
+    if (!plan) plan = await durablePlanForLifecycle(receipt.lifecycleId);
     if (!plan) return false;
-    const hold = lifecycleCapitalHolds.get(receipt.lifecycleId);
-    if (!hold || !await renewFundingCapitalHold(hold)) return false;
+    lifecyclePlanIds.set(receipt.lifecycleId, plan.opportunityId);
+    let hold = lifecycleCapitalHolds.get(receipt.lifecycleId) ?? durableHoldFromReceipt(plan, receipt);
+    if (!hold) return false;
+    lifecycleCapitalHolds.set(receipt.lifecycleId, hold);
+    if (!await renewFundingCapitalHold(hold)) return false;
     const [positions, funding] = await Promise.all([
       okxPrivateRequest('/api/v5/account/positions', 'GET', { instId: plan.okx.swapInstId }, { lane: 'account_read' }),
       currentFundingSnapshot(plan),
@@ -451,7 +429,7 @@ const adapter: FundingLifecycleAdapter = {
     await applySpotOwnership({ plan: okx, lifecycleId: receipt.lifecycleId, orderId: spotCloseId, side: 'sell', row: spotClosed.row, submittedAt });
     const closedAt = Date.now();
     const settlement = await terminalEconomics({ plan: okx, receipt, spotCloseOrderId: spotCloseId, perpCloseOrderId: perpCloseId, closedAt });
-    const hold = lifecycleCapitalHolds.get(receipt.lifecycleId);
+    const hold = lifecycleCapitalHolds.get(receipt.lifecycleId) ?? durableHoldFromReceipt(okx, receipt);
     if (hold) await releaseFundingCapitalHold(hold).catch(() => undefined);
     lifecycleCapitalHolds.delete(receipt.lifecycleId);
     lifecyclePlanIds.delete(receipt.lifecycleId);
@@ -461,14 +439,7 @@ const adapter: FundingLifecycleAdapter = {
   async reconcileSettlement(plan, receipt, prior) {
     const okx = asOkxPlan(plan);
     if (!okx || !prior.spotCloseOrderId || !prior.perpCloseOrderId) return prior;
-    const settlement = await terminalEconomics({
-      plan: okx,
-      receipt,
-      spotCloseOrderId: prior.spotCloseOrderId,
-      perpCloseOrderId: prior.perpCloseOrderId,
-      closedAt: Date.now(),
-    });
-    return settlement;
+    return terminalEconomics({ plan: okx, receipt, spotCloseOrderId: prior.spotCloseOrderId, perpCloseOrderId: prior.perpCloseOrderId, closedAt: Date.now() });
   },
 };
 
@@ -477,13 +448,9 @@ export function ensureOkxFundingLifecycleAdapterRegistered(): void {
   fundingPositionLifecycle.registerAdapter(adapter);
   registered = true;
   logger.info('[FundingLifecycle] OKX production funding adapter registered', {
-    component: 'OkxFundingLifecycleAdapter',
-    venue: 'okx',
-    executionAuthority: 'funding_position_lifecycle',
-    privateRequestAuthority: 'cex_private_authority',
-    capitalAuthority: 'cex_inventory_ledger_min_physical_and_system_owned',
-    terminalEvidence: 'authenticated_fills_plus_funding_bills',
-    projectedProfitAuthority: false,
+    component: 'OkxFundingLifecycleAdapter', venue: 'okx', executionAuthority: 'funding_position_lifecycle',
+    privateRequestAuthority: 'cex_private_authority', capitalAuthority: 'cex_inventory_ledger_min_physical_and_system_owned',
+    terminalEvidence: 'authenticated_fills_plus_funding_bills', projectedProfitAuthority: false,
   });
 }
 
