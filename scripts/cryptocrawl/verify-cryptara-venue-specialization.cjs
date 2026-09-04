@@ -64,7 +64,7 @@ must(priorityPath, priority, 'weightedCanonicalProfitUsd', 'Raw canonical profit
 must(priorityPath, priority, 'routingAdvisoryValueUsd', 'Learned venue specialization must be confined to a distinct advisory routing value');
 must(priorityPath, priority, 'capitalMovementAuthority: false', 'Venue specialization advisory must never move capital');
 const positiveGate = priority.indexOf('if (!Number.isFinite(netProfitUsd) || netProfitUsd <= 0) continue;');
-const learningUse = priority.indexOf('getCryptaraVenueSpecializationLearning()');
+const learningUse = priority.indexOf('const learning = getCryptaraVenueSpecializationLearning();');
 if (positiveGate < 0 || learningUse < 0 || learningUse <= positiveGate) {
   throw new Error(`${priorityPath}: Cryptara venue learning must only be consumed after canonical positive-profit filtering`);
 }
