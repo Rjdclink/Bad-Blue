@@ -5,6 +5,7 @@ import type {
 } from '../../cryptara/index.js';
 import { createLogger } from '../../../logger.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { evaluateCexCrossImpactPriority } from '../intelligence/cex-cross-impact-advisory.js';
 import { ensureCryptaraAssessmentWiring } from './cryptara-assessment-wiring.js';
 import { ensureCryptaraProviderConsensusWiring } from './cryptara-provider-consensus-wiring.js';
 
@@ -32,6 +33,39 @@ function correctedCompleteness(missingInformation: readonly string[]): number {
   return Number(Math.max(0, Math.min(1, 1 - critical.length / 8)).toFixed(4));
 }
 
+function recordCanonicalAssessment(
+  context: CryptaraOpportunityContext,
+  assessment: CryptaraOpportunityAssessment,
+): void {
+  const priorCanonical = canonicalOpportunityState.get(context.opportunityId);
+  const priorCanonicalMonteCarlo = priorCanonical?.assessment?.monteCarlo
+    ? { ...priorCanonical.assessment.monteCarlo }
+    : null;
+  canonicalOpportunityState.recordAssessment({
+    opportunityId: context.opportunityId,
+    observedAt: context.observedAt,
+    chain: context.chain,
+    symbol: context.symbol,
+    plan: context.plan,
+    technical: context.tradingView,
+    mempool: context.mempool,
+    assessment: {
+      opportunityId: assessment.opportunityId,
+      evaluatedAt: assessment.evaluatedAt,
+      recommendation: assessment.recommendation,
+      rankScore: assessment.rankScore,
+      executionConfidence: assessment.executionConfidence,
+      probabilityOfProfitableExecution: assessment.probabilityOfProfitableExecution,
+      riskLevel: assessment.riskLevel,
+      dataCompleteness: assessment.dataCompleteness,
+      marketData: { ...assessment.marketData },
+      missingInformation: [...assessment.missingInformation],
+      provenance: [...assessment.provenance],
+      monteCarlo: priorCanonicalMonteCarlo,
+    },
+  });
+}
+
 function correctCexMempoolApplicability(
   context: CryptaraOpportunityContext,
   assessment: CryptaraOpportunityAssessment,
@@ -39,10 +73,6 @@ function correctCexMempoolApplicability(
   if (!isCexCexPlan(context)) return assessment;
   if (!assessment.missingInformation.includes('mempool_evidence')) return assessment;
 
-  const priorCanonical = canonicalOpportunityState.get(context.opportunityId);
-  const priorCanonicalMonteCarlo = priorCanonical?.assessment?.monteCarlo
-    ? { ...priorCanonical.assessment.monteCarlo }
-    : null;
   const missingInformation = assessment.missingInformation
     .filter(item => item !== 'mempool_evidence');
   const dataCompleteness = correctedCompleteness(missingInformation);
@@ -75,37 +105,56 @@ function correctCexMempoolApplicability(
     provenance,
   };
 
-  canonicalOpportunityState.recordAssessment({
-    opportunityId: context.opportunityId,
-    observedAt: context.observedAt,
-    chain: context.chain,
-    symbol: context.symbol,
-    plan: context.plan,
-    technical: context.tradingView,
-    mempool: context.mempool,
-    assessment: {
-      opportunityId: corrected.opportunityId,
-      evaluatedAt: corrected.evaluatedAt,
-      recommendation: corrected.recommendation,
-      rankScore: corrected.rankScore,
-      executionConfidence: corrected.executionConfidence,
-      probabilityOfProfitableExecution: corrected.probabilityOfProfitableExecution,
-      riskLevel: corrected.riskLevel,
-      dataCompleteness: corrected.dataCompleteness,
-      marketData: { ...corrected.marketData },
-      missingInformation: [...corrected.missingInformation],
-      provenance: [...corrected.provenance],
-      monteCarlo: priorCanonicalMonteCarlo,
-    },
-  });
-
+  recordCanonicalAssessment(context, corrected);
   return corrected;
+}
+
+function applyMeasuredCrossImpactScheduling(
+  context: CryptaraOpportunityContext,
+  assessment: CryptaraOpportunityAssessment,
+): CryptaraOpportunityAssessment {
+  if (!isCexCexPlan(context) || !context.plan) return assessment;
+  const advisory = evaluateCexCrossImpactPriority(context.opportunityId, context.plan);
+  if (!(advisory.priorityFactor < 1) || assessment.rankScore === null || !(assessment.rankScore > 0)) return assessment;
+
+  const adjusted: CryptaraOpportunityAssessment = {
+    ...assessment,
+    // Scheduling rank only. Recommendation, probability, deterministic economics,
+    // plan notional, stage eligibility, and execution authority are unchanged.
+    rankScore: Number((assessment.rankScore * advisory.priorityFactor).toFixed(4)),
+    provenance: [...new Set([
+      ...assessment.provenance,
+      ...advisory.provenance,
+      `cross_impact:priority_factor=${advisory.priorityFactor.toFixed(6)}`,
+      `cross_impact:measured_pairs=${advisory.measuredPairs}`,
+      'cross_impact:economic_authority=false',
+      'cross_impact:execution_authority=false',
+    ])],
+  };
+  recordCanonicalAssessment(context, adjusted);
+
+  log.info('Measured cross-impact adjusted CEX scheduling rank only', {
+    opportunityId: context.opportunityId,
+    symbol: context.symbol,
+    competingPlans: advisory.competingPlans,
+    measuredPairs: advisory.measuredPairs,
+    maxPositiveCorrelation: advisory.maxPositiveCorrelation,
+    aggregateMeasuredPressure: advisory.aggregateMeasuredPressure,
+    priorityFactor: advisory.priorityFactor,
+    canonicalNetProfitUsd: context.plan.netProfitUsd,
+    recommendationChanged: false,
+    economicsChanged: false,
+    eligibilityChanged: false,
+    executionAuthority: false,
+  });
+  return adjusted;
 }
 
 /**
  * Topology adapter layered after the authoritative Cryptara assessment stack.
- * It changes no economics, Monte Carlo output, or execution thresholds. It only
- * removes the on-chain mempool completeness penalty from implemented CEX_CEX plans.
+ * It changes no economics, Monte Carlo output, or execution thresholds. It removes
+ * the on-chain mempool completeness penalty from implemented CEX_CEX plans and can
+ * use measured cross-asset/venue pressure to order already-eligible work only.
  */
 export function ensureCryptaraCexEvidenceWiring(): Cryptara {
   // Always install the bootstrap-aware Monte Carlo / canonical assessment stack
@@ -121,7 +170,8 @@ export function ensureCryptaraCexEvidenceWiring(): Cryptara {
     context: CryptaraOpportunityContext,
   ): Promise<CryptaraOpportunityAssessment> => {
     const assessment = await originalAssessOpportunity(context);
-    return correctCexMempoolApplicability(context, assessment);
+    const topologyCorrected = correctCexMempoolApplicability(context, assessment);
+    return applyMeasuredCrossImpactScheduling(context, topologyCorrected);
   };
 
   ensureCryptaraProviderConsensusWiring();
@@ -130,6 +180,10 @@ export function ensureCryptaraCexEvidenceWiring(): Cryptara {
     cexVenues: [...CEX_EXECUTION_VENUES],
     assessmentAuthority: 'bootstrap_aware_canonical_stack',
     mempoolEvidenceApplicability: 'not_applicable_for_CEX_CEX',
+    measuredCrossImpactRole: 'scheduling_rank_only',
+    crossImpactEconomicAuthority: false,
+    crossImpactEligibilityAuthority: false,
+    crossImpactExecutionAuthority: false,
     unsupportedVenueCompletenessCorrectionAllowed: false,
     syntheticMempoolEvidenceCreated: false,
     canonicalMonteCarloPreserved: true,
