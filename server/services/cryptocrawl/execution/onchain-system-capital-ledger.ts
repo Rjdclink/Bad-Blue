@@ -151,6 +151,11 @@ export async function getAvailableOnchainSystemCapital(input: {
   return String(result.rows[0]?.available || '0');
 }
 
+/**
+ * Sole live reservation authority for retained on-chain system capital. Concrete
+ * owned-lot rows are locked before outstanding reservations are measured, so two
+ * concurrent routes for the same chain/token cannot both spend the same lots.
+ */
 export async function reserveOnchainSystemCapital(input: {
   opportunityId: string;
   chain: string;
@@ -173,19 +178,21 @@ export async function reserveOnchainSystemCapital(input: {
     await client.query('BEGIN');
     await client.query(`DELETE FROM public.cryptocrawler_onchain_inventory_reservations WHERE expires_at <= now()`);
     const lots = await client.query(
-      `SELECT COALESCE(SUM(remaining_base_units),0)::text AS amount
+      `SELECT lot_id::text, remaining_base_units::text
        FROM public.cryptocrawler_onchain_system_owned_lots
        WHERE chain=$1 AND token_address=$2 AND status='ACTIVE' AND remaining_base_units > 0
-       FOR SHARE`,
+       ORDER BY created_at ASC, lot_id ASC
+       FOR UPDATE`,
       [chain, tokenAddress],
     );
+    let owned = 0n;
+    for (const row of lots.rows) owned += BigInt(String(row.remaining_base_units || '0'));
     const reservations = await client.query(
       `SELECT COALESCE(SUM(amount_base_units),0)::text AS amount
        FROM public.cryptocrawler_onchain_inventory_reservations
        WHERE chain=$1 AND token_address=$2 AND expires_at > now()`,
       [chain, tokenAddress],
     );
-    const owned = BigInt(String(lots.rows[0]?.amount || '0'));
     const reserved = BigInt(String(reservations.rows[0]?.amount || '0'));
     if (owned - reserved < BigInt(amount)) {
       await client.query('ROLLBACK');
