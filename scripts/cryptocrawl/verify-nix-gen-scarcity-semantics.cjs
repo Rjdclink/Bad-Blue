@@ -19,7 +19,8 @@ const readme = read('server/services/cryptocrawl/optimization/nix-gen/README.md'
 requirePattern(scarcity, /normalizedScarcitySignal/, 'Heuristic utilization output must be named as a scarcity signal');
 requirePattern(scarcity, /not called a shadow[\s\S]{0,120}no dual optimization model produced it/, 'Scarcity implementation must explicitly distinguish heuristic signals from true dual prices');
 forbidPattern(scarcity, /normalizedShadowPrice/, 'Heuristic scarcity must not be mislabeled as a shadow price');
-requirePattern(readme, /not.*dual-derived shadow prices/i, 'Documentation must preserve the heuristic-vs-dual distinction');
-requirePattern(readme, /True resource\/shadow prices[\s\S]{0,180}appropriate optimization\/dual model/, 'Documentation must require a real dual model before using shadow-price terminology');
+requirePattern(readme, /\*\*Scarcity signal\*\*[\s\S]{0,180}not a shadow price/i, 'Documentation must explicitly state that the heuristic scarcity signal is not a shadow price');
+requirePattern(readme, /\*\*Dual resource price\*\*[\s\S]{0,220}projected-subgradient Lagrangian[\s\S]{0,180}approximate/i, 'Documentation must reserve dual-price terminology for the optimization-derived Lagrangian signal and preserve its approximation limits');
+requirePattern(readme, /Marginal resource value[\s\S]{0,180}not a mathematical dual variable/i, 'Documentation must keep finite-difference marginal value distinct from mathematical dual variables');
 
 console.log('NIX-GEN SCARCITY SEMANTICS VERIFIER PASSED');
