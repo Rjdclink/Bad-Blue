@@ -27,6 +27,8 @@ must(migrationPath, migration, 'max_loss_usd <= gross_profit_usd_at_claim * 0.05
 must(migrationPath, migration, 'realized_loss > current_gross * 0.05', 'terminal SQL truth guard must reject a loss above 5%');
 must(migrationPath, migration, "opportunity_id LIKE 'controlled-loss:%'", 'controlled-loss capital reservations must be lifecycle-held');
 must(migrationPath, migration, 'cryptocrawler_record_controlled_loss_terminal', 'terminal controlled-loss result must have one durable database authority');
+must(migrationPath, migration, 'feedback_recorded_at timestamptz', 'terminal learning feedback completion must be durable and replayable');
+must(migrationPath, migration, 'idx_cryptocrawler_controlled_loss_feedback_replay', 'missing terminal learning feedback must have a bounded replay index');
 
 const workerPath = 'server/services/cryptocrawl/execution/controlled-loss-learning-worker.ts';
 const worker = read(workerPath);
@@ -55,8 +57,20 @@ must(recoveryPath, recovery, "status='EXIT_SUBMITTED'", 'unapplied exit submissi
 must(recoveryPath, recovery, "SET status='ENTRY_TERMINAL'", 'unapplied exit submissions must route back through exact exit settlement');
 must(recoveryPath, recovery, 'exit_applied=false', 'recovery must target only unapplied exit settlement');
 must(recoveryPath, recovery, 'runControlledLossLearningOnce', 'recovery must run before every controlled-loss worker pass');
+must(recoveryPath, recovery, 'replayControlledLossLearningFeedbackOnce', 'terminal feedback replay must bracket every worker pass');
+must(recoveryPath, recovery, 'feedbackReplayBeforeAndAfterEveryPass: true', 'terminal feedback replay must cover both prior crashes and new terminal events');
 must(recoveryPath, recovery, 'duplicateSubmissionAuthorityGranted: false', 'crash recovery must never authorize duplicate orders');
 must(recoveryPath, recovery, 'terminalSettlementBypassGranted: false', 'crash recovery must never bypass exact terminal settlement');
+
+const feedbackPath = 'server/services/cryptocrawl/execution/controlled-loss-feedback-recovery.ts';
+const feedback = read(feedbackPath);
+must(feedbackPath, feedback, "status IN ('TERMINAL_LOSS','TERMINAL_NONLOSS')", 'only durable terminal controlled-loss events may be replayed');
+must(feedbackPath, feedback, 'feedback_recorded_at IS NULL', 'only unacknowledged terminal learning feedback may be replayed');
+must(feedbackPath, feedback, 'createProductionCexSettlementAdapters', 'feedback replay must reauthenticate the two exchange settlements');
+must(feedbackPath, feedback, 'recordCryptaraExecutionEvidence', 'feedback replay must use the canonical Cryptara learning boundary');
+must(feedbackPath, feedback, "strategy: 'controlled_loss_learning'", 'replayed feedback must retain controlled-loss strategy identity');
+must(feedbackPath, feedback, 'SET feedback_recorded_at=now()', 'feedback marker must be written only after canonical learning returns');
+must(feedbackPath, feedback, 'terminalFeedbackIdempotent: true', 'feedback replay must explicitly rely on canonical terminal identity dedupe');
 
 const lotPath = 'server/services/cryptocrawl/execution/cex-system-owned-lot-ledger.ts';
 const lot = read(lotPath);
