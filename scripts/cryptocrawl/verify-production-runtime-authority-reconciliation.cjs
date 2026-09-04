@@ -12,6 +12,7 @@ const bootstrap = read('server/cryptara-bootstrap-entry.ts');
 const logger = read('server/logger.ts');
 const worker = read('server/badblueWorker.ts');
 const treasury = read('server/services/cryptocrawl/execution/cex-treasury-transfer-worker.ts');
+const terminalTreasury = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
 const operator = read('server/services/cryptocrawl/governance/operator-trading-strategy.ts');
 
 // One process-lifecycle owner. Logger and workers are components, not fatal-event authorities.
@@ -35,6 +36,12 @@ mustNot(treasury, 'FROM candidate,', 'treasury UPDATE must not reintroduce multi
 must(treasury, 'Canonical treasury worker cycle failed closed', 'treasury cycle must contain its own asynchronous failure');
 must(treasury, 'unhandledRejectionAllowed: false', 'treasury worker must explicitly deny unhandled-rejection escape');
 
+// Treasury telemetry must describe the same fixed 90/10 authority already enforced
+// by RetainedProfitLedger; stale historic payout-policy strings are forbidden.
+must(terminalTreasury, "runtimePolicy: 'fixed_90_percent_eth_payout_10_percent_retained_system_capital_restart_drains_remaining_treasury'", 'terminal treasury runtime policy must report fixed 90/10 truth');
+mustNot(terminalTreasury, 'first_three_fixed_60_percent', 'legacy 60-percent payout policy telemetry must not return');
+mustNot(terminalTreasury, '55_to_65_percent', 'legacy dynamic payout policy telemetry must not return');
+
 // node-postgres returns PostgreSQL DATE values as JavaScript Date objects. Normalize
 // persisted dates exactly once at the operator-strategy boundary.
 const hasDateNormalizer = operator.includes('function canonicalSqlDate(') || operator.includes('function databaseDateKey(');
@@ -50,14 +57,15 @@ if (!(operator.includes('cycleEnd: canonicalSqlDate(row.cycle_end)') || operator
 }
 
 // CryptoCrawler readiness is exclusively its explicit Overflow runtime authority.
-// Officer Search, SearchSession, PopulationPriorityQueue, Sub-Agent schema, and the
-// ordinary Primary application schema are independent subsystems and may never gate
-// CryptoCrawler bootstrap/readiness/execution.
+// Unrelated application subsystems and the ordinary Primary application schema may
+// never gate CryptoCrawler bootstrap/readiness/execution.
 must(bootstrap, "process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false';", 'CryptoCrawler Overflow readiness starts fail closed');
 must(bootstrap, 'await startCryptaraHyperBridgeBootstrap();', 'CryptoCrawler Overflow bootstrap remains explicit');
 must(bootstrap, 'await ensureCryptocrawlOverflowRuntimeSchema();', 'CryptoCrawler Overflow authority schema is independently proven');
 must(bootstrap, "process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'true';", 'CryptoCrawler readiness flips only after Overflow proof');
-mustNot(bootstrap, 'requireOfficerSearchRuntimeReadiness', 'Officer Search must never gate CryptoCrawler bootstrap');
+mustNot(bootstrap, 'Officer Search', 'Officer Search must not appear in CryptoCrawler bootstrap');
+mustNot(bootstrap, 'officerSearch', 'Officer Search identifiers must not appear in CryptoCrawler bootstrap');
+mustNot(bootstrap, 'requireOfficerSearchRuntimeReadiness', 'Officer Search readiness must never gate CryptoCrawler bootstrap');
 mustNot(bootstrap, 'SUBAGENT_ENABLE_OFFICER_SEARCH', 'Officer Search feature flags must never affect CryptoCrawler readiness');
 mustNot(bootstrap, 'SearchSessionManager', 'SearchSessionManager must never participate in CryptoCrawler bootstrap');
 mustNot(bootstrap, 'PopulationPriorityQueue', 'PopulationPriorityQueue must never participate in CryptoCrawler bootstrap');
