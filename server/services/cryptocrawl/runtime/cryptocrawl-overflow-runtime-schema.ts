@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 9;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v9';
+const SCHEMA_VERSION = 10;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v10';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
@@ -42,6 +42,13 @@ const MIGRATIONS = [
   '030_cryptocrawler_payout_confirmation_truth_guard.sql',
   '031_cryptocrawler_payout_confirmation_wait.sql',
   '032_cryptocrawler_operator_trading_strategy.sql',
+  '033_cryptocrawler_operator_strategy_sequential_submission.sql',
+  '034_cryptocrawler_system_capital_treasury_strategy.sql',
+  '035_cryptocrawler_payout_funding_and_exact_transfer.sql',
+  '036_cryptocrawler_system_capital_wallet_sweep.sql',
+  '037_cryptocrawler_treasury_reservation_unification.sql',
+  '038_cryptocrawler_system_capital_sweep_idempotency.sql',
+  '039_cryptocrawler_system_capital_transfer_truth_hardening.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -75,6 +82,11 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_operator_trade_reservations',
   'public.cryptocrawler_operator_profit_events',
   'public.cryptocrawler_retained_exchange_allocations',
+  'public.cryptocrawler_system_capital_transfers',
+  'public.cryptocrawler_system_capital_transfer_lots',
+  'public.cryptocrawler_system_capital_sweep_batches',
+  'public.cryptocrawler_system_capital_sweep_conversions',
+  'public.cryptocrawler_payout_funding_transfers',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
@@ -101,6 +113,11 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_profit_payout_batch_confirm(text,text,text)',
   'public.cryptocrawler_treasury_claim_okx_liquidity(text,text,numeric)',
   'public.cryptocrawler_operator_strategy_record_profit(text,text,numeric)',
+  'public.cryptocrawler_reserve_system_capital_transfer(uuid,text,text,numeric)',
+  'public.cryptocrawler_release_system_capital_transfer(uuid,text)',
+  'public.cryptocrawler_confirm_system_capital_transfer_exact(uuid,numeric,numeric,numeric,text,text,jsonb)',
+  'public.cryptocrawler_confirm_payout_funding_transfer(text,numeric,numeric,text,text,text,jsonb,jsonb)',
+  'public.cryptocrawler_gate_non_okx_payout_schedule()',
 ] as const;
 
 let schemaReady = false;
