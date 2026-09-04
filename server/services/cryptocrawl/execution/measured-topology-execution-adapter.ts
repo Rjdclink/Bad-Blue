@@ -7,6 +7,7 @@ import { measuredCandidateRegistry } from '../discovery/measured-candidate-regis
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { stageManager } from '../governance/stage-management.js';
+import { orderSettlementCapableMeasuredDecisionsWithNixGen } from '../optimization/nix-gen/measured-portfolio-preparation.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 import {
   executePreparedAaveLiquidation,
@@ -188,21 +189,46 @@ class MeasuredTopologyExecutionAdapter {
       });
     }
 
-    const dexCandidates = decisions
+    const dexLimit = Math.max(1, Math.min(2, Number(process.env.CRYPTOCRAWL_DEX_ATOMIC_MAX_DISPATCH_PER_CYCLE || 1)));
+    const liquidationLimit = Math.max(1, Math.min(2, Number(process.env.CRYPTOCRAWL_LIQUIDATION_MAX_DISPATCH_PER_CYCLE || 1)));
+    const nixOrdering = orderSettlementCapableMeasuredDecisionsWithNixGen(
+      decisions,
+      dexLimit + liquidationLimit,
+      Date.now(),
+    );
+    if (nixOrdering.error) {
+      logger.warn('[MeasuredTopologyAdapter] Nix-Gen measured advisory ordering failed open', {
+        component: 'MeasuredTopologyExecutionAdapter',
+        error: nixOrdering.error,
+        canonicalAdmissionChanged: false,
+        executionAuthorityChanged: false,
+      });
+    }
+    const schedulingDecisions = nixOrdering.decisions;
+    const nixPriority = new Map(schedulingDecisions.map((decision, index) => [decision.opportunityId, index]));
+    const compareScheduling = nixOrdering.applied
+      ? (left: UnifiedExecutionDecision, right: UnifiedExecutionDecision) =>
+        (nixPriority.get(left.opportunityId) ?? Number.MAX_SAFE_INTEGER)
+          - (nixPriority.get(right.opportunityId) ?? Number.MAX_SAFE_INTEGER)
+        || right.score.profitabilityScore - left.score.profitabilityScore
+      : (left: UnifiedExecutionDecision, right: UnifiedExecutionDecision) =>
+        right.score.profitabilityScore - left.score.profitabilityScore;
+
+    const dexCandidates = schedulingDecisions
       .filter(decision => decision.admitted && decision.topology === 'DEX_ATOMIC' && decision.path === 'FLASH_LOAN')
       .filter(decision => !this.inFlight.has(decision.opportunityId) && !this.terminalApplied.has(decision.opportunityId))
-      .sort((left, right) => right.score.profitabilityScore - left.score.profitabilityScore)
-      .slice(0, Math.max(1, Math.min(2, Number(process.env.CRYPTOCRAWL_DEX_ATOMIC_MAX_DISPATCH_PER_CYCLE || 1))));
-    const liquidationCandidates = decisions
+      .sort(compareScheduling)
+      .slice(0, dexLimit);
+    const liquidationCandidates = schedulingDecisions
       .filter(decision => decision.admitted && decision.topology === 'LIQUIDATION' && decision.path === 'FLASH_LOAN_LIQUIDATION')
       .filter(decision => !this.inFlight.has(decision.opportunityId) && !this.terminalApplied.has(decision.opportunityId))
-      .sort((left, right) => right.score.profitabilityScore - left.score.profitabilityScore)
-      .slice(0, Math.max(1, Math.min(2, Number(process.env.CRYPTOCRAWL_LIQUIDATION_MAX_DISPATCH_PER_CYCLE || 1))));
+      .sort(compareScheduling)
+      .slice(0, liquidationLimit);
 
-    // Both topology quotas are preserved; within the combined bounded set the
-    // measured profitability score determines order. This is scheduling only.
-    const candidates = [...dexCandidates, ...liquidationCandidates]
-      .sort((left, right) => right.score.profitabilityScore - left.score.profitabilityScore);
+    // Both topology quotas remain canonical. Nix-Gen may only change scheduling
+    // order inside the same already-admitted bounded set and fails open to the
+    // previous measured profitability ordering when disabled or unavailable.
+    const candidates = [...dexCandidates, ...liquidationCandidates].sort(compareScheduling);
     const results: MeasuredTopologyDispatchResult[] = [];
     for (const decision of candidates) {
       this.inFlight.add(decision.opportunityId);
