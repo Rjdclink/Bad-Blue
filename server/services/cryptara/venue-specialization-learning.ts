@@ -1,4 +1,5 @@
 import type { CryptaraExecutionFeedback } from './index.js';
+import { getCryptaraVenueBootstrapPrior } from './venue-bootstrap-priors.js';
 
 export type CryptaraVenue = 'coinbase' | 'kraken' | 'okx';
 export type CryptaraVenueRole =
@@ -49,6 +50,8 @@ export interface CryptaraVenueRoleRanking {
   score: number;
   confidence: number;
   sampleCount: number;
+  bootstrapPriorConfidence?: number;
+  bootstrapPriorSource?: 'public_exchange_documentation_bootstrap_only';
 }
 
 const SUPPORTED_VENUES = new Set<CryptaraVenue>(['coinbase', 'kraken', 'okx']);
@@ -102,6 +105,13 @@ function freshnessWeight(lastObservedAt: number, now = Date.now()): number {
   );
   const age = Math.max(0, now - lastObservedAt);
   return Math.pow(0.5, age / halfLifeMs);
+}
+
+function decayedBootstrapConfidence(terminalObservations: number, confidence: number): number {
+  // Documentation is allowed to provide only a tiny cold-start hint. One real
+  // terminal observation cuts that influence to 20%; repeated terminal truth
+  // rapidly makes the bootstrap prior economically irrelevant.
+  return Math.max(0, Math.min(0.05, confidence * Math.pow(0.2, Math.max(0, terminalObservations))));
 }
 
 export class CryptaraVenueSpecializationLearning {
@@ -213,7 +223,20 @@ export class CryptaraVenueSpecializationLearning {
 
   score(venue: CryptaraVenue, role: CryptaraVenueRole, now = Date.now()): CryptaraVenueRoleRanking {
     const metric = this.metrics.get(key(venue, role));
-    if (!metric) return { venue, role, score: 0.5, confidence: 0, sampleCount: 0 };
+    const prior = getCryptaraVenueBootstrapPrior(venue, role, now);
+    if (!metric) {
+      const priorConfidence = prior?.confidence || 0;
+      const score = 0.5 * (1 - priorConfidence) + (prior?.score || 0.5) * priorConfidence;
+      return {
+        venue,
+        role,
+        score: Math.max(0, Math.min(1, score)),
+        confidence: priorConfidence,
+        sampleCount: 0,
+        bootstrapPriorConfidence: priorConfidence || undefined,
+        bootstrapPriorSource: prior ? 'public_exchange_documentation_bootstrap_only' : undefined,
+      };
+    }
 
     const confidence = confidenceFromSamples(metric.terminalObservations);
     const freshness = freshnessWeight(metric.lastObservedAt, now);
@@ -235,15 +258,25 @@ export class CryptaraVenueSpecializationLearning {
     }
     evidenceScore = Math.max(0, Math.min(1, evidenceScore - ambiguityPenalty));
 
-    // Unknown/old evidence shrinks toward neutral 0.5 instead of vetoing a venue.
-    const effectiveConfidence = confidence * freshness;
-    const score = 0.5 * (1 - effectiveConfidence) + evidenceScore * effectiveConfidence;
+    // Unknown/old terminal evidence shrinks toward neutral 0.5 instead of vetoing
+    // a venue. A tiny documentation bootstrap may occupy only the remaining
+    // uncertainty, and terminal evidence rapidly erases that bootstrap weight.
+    const terminalConfidence = Math.max(0, Math.min(1, confidence * freshness));
+    const priorConfidence = prior
+      ? Math.min(1 - terminalConfidence, decayedBootstrapConfidence(metric.terminalObservations, prior.confidence))
+      : 0;
+    const neutralConfidence = Math.max(0, 1 - terminalConfidence - priorConfidence);
+    const score = 0.5 * neutralConfidence
+      + evidenceScore * terminalConfidence
+      + (prior?.score || 0.5) * priorConfidence;
     return {
       venue,
       role,
       score: Math.max(0, Math.min(1, score)),
-      confidence: effectiveConfidence,
+      confidence: Math.max(0, Math.min(1, terminalConfidence + priorConfidence)),
       sampleCount: metric.terminalObservations,
+      bootstrapPriorConfidence: priorConfidence || undefined,
+      bootstrapPriorSource: priorConfidence > 0 ? 'public_exchange_documentation_bootstrap_only' : undefined,
     };
   }
 
