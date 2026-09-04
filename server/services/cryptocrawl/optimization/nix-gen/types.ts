@@ -75,7 +75,7 @@ export type NixGenBidRejectionReason =
   | 'execution_not_authoritative'
   | 'settlement_not_capable'
   | 'invalid_resource_demand'
-  | 'resource_unavailable';
+  | 'resource_budget_missing';
 
 export interface NixGenRejectedBid {
   bidId: string;
@@ -83,7 +83,7 @@ export interface NixGenRejectedBid {
   reason: NixGenBidRejectionReason;
 }
 
-export type NixGenDeferredBidReason = 'resource_contention' | 'mutual_exclusion';
+export type NixGenDeferredBidReason = 'resource_contention' | 'resource_unavailable' | 'mutual_exclusion';
 
 export interface NixGenDeferredBid {
   bidId: string;

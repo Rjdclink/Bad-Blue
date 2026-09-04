@@ -69,6 +69,7 @@ function verifyTruthGuards(): void {
     }),
     bid('duplicate', 'opp-duplicate-a', 2, []),
     bid('duplicate', 'opp-duplicate-b', 4, []),
+    bid('missing-budget', 'opp-missing-budget', 4, [{ resourceKey: 'unknown-capacity', units: 1 }]),
   ], [], { now: NOW });
 
   const reasons = new Map(result.rejected.map(item => [item.opportunityId, item.reason]));
@@ -76,6 +77,18 @@ function verifyTruthGuards(): void {
   assert.equal(reasons.get('opp-negative'), 'non_positive_canonical_economics');
   assert.equal(reasons.get('opp-ineligible'), 'not_canonically_eligible');
   assert.equal(reasons.get('opp-duplicate-b'), 'duplicate_bid_id');
+  assert.equal(reasons.get('opp-missing-budget'), 'resource_budget_missing');
+}
+
+function verifyTemporaryResourceUnavailabilityDefersWithoutVeto(): void {
+  const result = optimizeNixGenBids([
+    bid('temporarily-full', 'opp-temporarily-full', 8, [{ resourceKey: 'venue-slot', units: 2 }]),
+  ], [{ resourceKey: 'venue-slot', capacity: 1 }], { now: NOW });
+
+  assert.deepEqual(result.selectedBidIds, []);
+  assert.equal(result.rejected.length, 0, 'known but temporarily insufficient capacity is not a hard rejection');
+  assert.equal(result.deferred[0]?.reason, 'resource_unavailable');
+  assert.deepEqual(result.priorityOrderOpportunityIds, ['opp-temporarily-full']);
 }
 
 function verifyGlobalDispatchScarcityWithoutVeto(): void {
@@ -101,5 +114,6 @@ function verifyGlobalDispatchScarcityWithoutVeto(): void {
 
 verifyExactCombination();
 verifyTruthGuards();
+verifyTemporaryResourceUnavailabilityDefersWithoutVeto();
 verifyGlobalDispatchScarcityWithoutVeto();
 console.log('NIX-GEN OPTIMIZER BEHAVIOR VERIFIED');

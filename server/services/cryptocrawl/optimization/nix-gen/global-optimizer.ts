@@ -97,9 +97,8 @@ function hardValidationReason(
 
   const demand = normalizeDemand(bid.resources);
   if (!demand) return 'invalid_resource_demand';
-  for (const [key, units] of demand) {
-    const capacity = budgets.get(key);
-    if (capacity === undefined || units > capacity + EPSILON) return 'resource_unavailable';
+  for (const key of demand.keys()) {
+    if (!budgets.has(key)) return 'resource_budget_missing';
   }
   return null;
 }
@@ -149,6 +148,16 @@ function canAdd(
     if ((usage.get(key) ?? 0) + units > (budgets.get(key) ?? -Infinity) + EPSILON) return false;
   }
   return true;
+}
+
+function unavailableAgainstCurrentBudget(
+  candidate: ValidatedBid,
+  budgets: ReadonlyMap<string, number>,
+): boolean {
+  for (const [key, units] of candidate.resourceDemand) {
+    if (units > (budgets.get(key) ?? -Infinity) + EPSILON) return true;
+  }
+  return false;
 }
 
 function addCandidate(state: SelectionState, candidate: ValidatedBid): SelectionState {
@@ -274,10 +283,15 @@ export function optimizeNixGenBids(
 
   for (const candidate of valid) {
     if (selectedIds.has(candidate.bid.bidId)) continue;
+    const reason = selectedGroups.has(candidate.exclusionGroup)
+      ? 'mutual_exclusion'
+      : unavailableAgainstCurrentBudget(candidate, budgets)
+        ? 'resource_unavailable'
+        : 'resource_contention';
     deferred.push({
       bidId: candidate.bid.bidId,
       opportunityId: candidate.bid.opportunityId,
-      reason: selectedGroups.has(candidate.exclusionGroup) ? 'mutual_exclusion' : 'resource_contention',
+      reason,
     });
   }
 

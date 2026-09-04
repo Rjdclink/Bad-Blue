@@ -30,8 +30,11 @@ requirePattern(types, /canonicalEconomicsAuthority:\s*false/, 'Nix-Gen must not 
 requirePattern(types, /netBps:\s*number\s*\|\s*null/, 'Nix-Gen must preserve unknown canonical BPS instead of recalculating it');
 requirePattern(types, /priorityOrderOpportunityIds/, 'Nix-Gen must preserve a complete advisory priority order');
 requirePattern(types, /deferred:\s*NixGenDeferredBid\[\]/, 'Nix-Gen must distinguish advisory deferral from hard rejection');
+requirePattern(types, /NixGenDeferredBidReason[\s\S]{0,180}'resource_unavailable'/, 'Temporary resource unavailability must be representable as advisory deferral');
+requirePattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'resource_budget_missing'/, 'Missing resource evidence must remain a hard-invalid input');
 forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'not_selected_by_optimizer'/, 'Advisory non-selection must not be represented as hard rejection');
 forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'mutual_exclusion'/, 'Mutual exclusion must be an advisory deferral, not hard rejection');
+forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'resource_unavailable'/, 'Known temporary resource insufficiency must be a deferral, not hard rejection');
 
 requirePattern(optimizer, /non_positive_canonical_economics/, 'Nix-Gen must reject non-positive canonical economics from its optimizer input');
 requirePattern(optimizer, /not_canonically_eligible/, 'Nix-Gen must consume already-eligible opportunities only');
@@ -39,12 +42,14 @@ requirePattern(optimizer, /execution_not_authoritative/, 'Nix-Gen must require a
 requirePattern(optimizer, /settlement_not_capable/, 'Nix-Gen must require settlement capability');
 requirePattern(optimizer, /expiresAt\s*<=\s*now/, 'Nix-Gen must reject expired bids');
 requirePattern(optimizer, /duplicate_bid_id/, 'Nix-Gen must reject duplicate bid identities');
+requirePattern(optimizer, /resource_budget_missing/, 'Nix-Gen must reject missing resource-capacity evidence without inventing capacity');
 requirePattern(optimizer, /Math\.min\(MAX_EXACT_BID_LIMIT/, 'Exact optimization must have a hard bounded candidate limit');
 requirePattern(optimizer, /exact_branch_and_bound/, 'Nix-Gen must retain an exact bounded optimization path');
 requirePattern(optimizer, /deterministic_greedy/, 'Nix-Gen must have a deterministic bounded-cost fallback');
 requirePattern(optimizer, /priorityOrder\s*=\s*\[\.\.\.selectedOrdered,\s*\.\.\.remainderOrdered\]/, 'Valid non-selected bids must remain in the advisory priority order');
 requirePattern(optimizer, /const deferred:\s*NixGenDeferredBid\[\]\s*=\s*\[\]/, 'Nix-Gen must track valid non-selected bids as deferred');
-requirePattern(optimizer, /reason:\s*selectedGroups\.has\(candidate\.exclusionGroup\)\s*\?\s*'mutual_exclusion'\s*:\s*'resource_contention'/, 'Nix-Gen deferral reason must distinguish exclusivity from resource contention');
+requirePattern(optimizer, /unavailableAgainstCurrentBudget/, 'Nix-Gen must distinguish current capacity insufficiency from invalid resource evidence');
+requirePattern(optimizer, /\?\s*'resource_unavailable'\s*:\s*'resource_contention'/, 'Nix-Gen deferral reason must distinguish unavailable capacity from contention');
 forbidPattern(optimizer, /rejected\.push\([\s\S]{0,220}'not_selected_by_optimizer'/, 'Valid advisory non-selection must never enter rejected state');
 
 requirePattern(coordinator, /filtersCanonicalCandidates:\s*false/, 'Nix-Gen coordination must explicitly preserve canonical candidates');
