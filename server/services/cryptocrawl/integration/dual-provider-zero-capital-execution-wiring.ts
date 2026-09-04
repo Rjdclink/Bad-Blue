@@ -90,6 +90,7 @@ function normalizeSettlement(input: {
         ? ['alchemy_gas_manager', 'eip7702_smart_wallet', 'erc4337_user_operation']
         : ['native_wallet_gas']),
       'dual_flashloan_receiver_profit_verified',
+      'profit_recipient_operational_wallet_before_rainbow',
       'synthetic_evidence:false',
     ],
     transactionHash: input.txHash,
@@ -126,7 +127,7 @@ export function ensureDualProviderZeroCapitalExecutionWiring(): void {
       const basePlan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
         receiver: selection.receiver,
         provider: 'balancer_v2',
-        profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || wallet.address,
+        profitRecipient: wallet.address,
         nowMs: Date.now(),
       });
       const payload = buildDualFlashLoanReceiverPayload({
@@ -136,7 +137,7 @@ export function ensureDualProviderZeroCapitalExecutionWiring(): void {
         balancerAmount: selection.balancerAmount.toString(),
         aaveAmount: selection.aaveAmount.toString(),
         minProfit: basePlan.minProfit,
-        profitRecipient: basePlan.profitRecipient,
+        profitRecipient: wallet.address,
         steps: basePlan.steps,
         gasLimit: Math.max(1_800_000, basePlan.gasLimit || 0),
       });
@@ -216,6 +217,7 @@ export function ensureDualProviderZeroCapitalExecutionWiring(): void {
     providerMesh: ['balancer_v2', 'aave_v3', 'aave_balancer_dual'],
     dualTopology: 'balancer_outer_aave_nested_same_asset',
     terminalProfitAuthority: 'FlashLoanExecuted_receipt_event',
+    profitRecipient: 'operational_wallet_before_rainbow',
     exactBarrierRequiredBeforeBroadcast: true,
     syntheticExecution: false,
   });
