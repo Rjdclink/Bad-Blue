@@ -32,6 +32,13 @@ function maxDurableHoldExtensionMs(): number {
   return Math.max(24 * 60 * 60_000, Math.min(30 * 24 * 60 * 60_000, Math.trunc(value)));
 }
 
+function terminalAccountingRecoveryHoldMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_FUNDING_TERMINAL_ACCOUNTING_HOLD_MS);
+  const fallback = 7 * 24 * 60 * 60_000;
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(24 * 60 * 60_000, Math.min(maxDurableHoldExtensionMs(), Math.trunc(value)));
+}
+
 async function reconcileOkxInventory(): Promise<void> {
   const response = await okxPrivateRequest('/api/v5/account/balance', 'GET', {}, { lane: 'account_read' });
   const details = Array.isArray(response.data?.[0]?.details) ? response.data[0].details : [];
@@ -58,7 +65,7 @@ async function extendReservation(reservationId: string, opportunityId: string, h
   const bounded = Math.min(holdUntil, Date.now() + maxDurableHoldExtensionMs());
   const result = await pool.query(
     `UPDATE public.cryptocrawler_cex_inventory_reservations_v1
-     SET expires_at=to_timestamp($3/1000.0)
+     SET expires_at=GREATEST(expires_at,to_timestamp($3/1000.0))
      WHERE reservation_id=$1 AND opportunity_id=$2 AND expires_at > now()
      RETURNING reservation_id`,
     [reservationId, opportunityId, bounded],
@@ -93,7 +100,8 @@ async function reserveOne(input: {
 /**
  * Reserve system-owned quote capital for the perp margin throughout the carry
  * window, then separately reserve only the quote units needed for the spot entry.
- * Both reservations use the same canonical CEX inventory table seen by treasury.
+ * The durable reservation horizon also covers terminal-accounting recovery so a
+ * delayed bill or restart cannot make still-unreconciled capital spendable.
  */
 export async function reserveFundingEntryCapital(input: {
   lifecycleId: string;
@@ -115,6 +123,7 @@ export async function reserveFundingEntryCapital(input: {
   const quotePrice = Number(quoteUsd);
   const marginQuote = input.marginBufferUsd / quotePrice;
   const spotQuote = input.spotEntryLimit * input.baseQuantity + input.expectedEntryCostUsd / quotePrice;
+  const durableHoldUntil = Math.max(input.holdUntil, Date.now() + terminalAccountingRecoveryHoldMs());
 
   const marginOpportunityId = `${input.opportunityId}:funding_margin`;
   const margin = await reserveOne({
@@ -122,7 +131,7 @@ export async function reserveFundingEntryCapital(input: {
     opportunityId: marginOpportunityId,
     asset: quoteAsset,
     amount: marginQuote,
-    holdUntil: input.holdUntil,
+    holdUntil: durableHoldUntil,
   });
   if (!margin) throw new Error('FUNDING_SYSTEM_OWNED_MARGIN_CAPITAL_UNAVAILABLE');
 
@@ -132,7 +141,7 @@ export async function reserveFundingEntryCapital(input: {
     opportunityId: spotOpportunityId,
     asset: quoteAsset,
     amount: spotQuote,
-    holdUntil: input.holdUntil,
+    holdUntil: durableHoldUntil,
   });
   if (!spot) {
     await releaseFundingReservation(margin.reservationId);
@@ -148,7 +157,7 @@ export async function reserveFundingEntryCapital(input: {
       marginReservationId: margin.reservationId,
       spotEntryReservationId: spot.reservationId,
       baseReservationId: null,
-      holdUntil: input.holdUntil,
+      holdUntil: durableHoldUntil,
     },
     spotEntryReservationId: spot.reservationId,
   };
@@ -179,6 +188,10 @@ export async function recoverFundingCapitalHold(input: {
   const byOpportunity = new Map(result.rows.map(row => [String(row.opportunity_id), String(row.reservation_id)]));
   const marginReservationId = byOpportunity.get(marginOpportunityId);
   if (!marginReservationId) return null;
+  const durableExpiry = result.rows.reduce((latest, row) => {
+    const expiry = new Date(row.expires_at).getTime();
+    return Number.isFinite(expiry) ? Math.max(latest, expiry) : latest;
+  }, input.holdUntil);
   return {
     lifecycleId: input.lifecycleId,
     opportunityId: input.opportunityId,
@@ -187,7 +200,7 @@ export async function recoverFundingCapitalHold(input: {
     marginReservationId,
     spotEntryReservationId: byOpportunity.get(spotOpportunityId) ?? null,
     baseReservationId: byOpportunity.get(baseOpportunityId) ?? null,
-    holdUntil: input.holdUntil,
+    holdUntil: durableExpiry,
   };
 }
 
