@@ -68,6 +68,16 @@ must(fundingAdapter, "okx_authenticated_funding_bills:type_8", 'terminal funding
 must(fundingAdapter, 'cex_system_owned_lot_ledger:exact_spot_and_derivative_transforms', 'funding terminal ownership uses exact system-owned ledger transforms');
 must(combinedAdapter, 'funding_projected_entry_vs_realized_terminal_separated', 'terminal feedback preserves projected-vs-realized separation');
 
+// Ambiguous exchange state must never create a capital release or a duplicate/emergency order.
+must(fundingAdapter, "if (error instanceof OkxPrivateApiError && String(error.code) === '51603') return { state: 'absent' };", 'only explicit OKX OrderNotFound proves client-order absence');
+must(fundingAdapter, "throw new Error('FUNDING_ENTRY_ORDER_STATE_UNCERTAIN')", 'uncertain entry state remains in durable recovery');
+must(fundingAdapter, 'emergencyNeutralizationAuthorized: false', 'ambiguous state explicitly denies emergency resubmission');
+must(fundingAdapter, 'capitalReleased: false', 'ambiguous state explicitly retains capital');
+must(fundingAdapter, "error: 'FUNDING_CLOSE_ORDER_STATE_UNCERTAIN'", 'uncertain close state remains settlement-unknown');
+must(fundingAdapter, "return { status: 'pending', error: 'FUNDING_ENTRY_PARTIAL_TERMINAL_EXPOSURE_RECONCILIATION_REQUIRED' };", 'abnormal terminal partial entry cannot be full-size neutralized blindly');
+mustNot(fundingAdapter, 'spotExposureOpen: spotClosed?.filled !== true', 'unknown close state cannot be interpreted as open exposure');
+mustNot(fundingAdapter, 'perpExposureOpen: perpClosed?.filled !== true', 'unknown close state cannot be interpreted as open exposure');
+
 // Nix deterministic-dollar allocation may include deterministic cross-chain, never projected funding carry.
 must(measuredOrdering, "decision.topology === 'CROSS_CHAIN'", 'deterministic cross-chain enters measured Nix portfolio');
 mustNot(measuredOrdering, "decision.topology === 'FUNDING_ARBITRAGE'", 'projected funding must not enter deterministic Nix portfolio');
