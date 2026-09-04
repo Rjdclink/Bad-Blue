@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../runtime/cryptocrawl-runtime-database.js';
+import { replayControlledLossLearningFeedbackOnce } from './controlled-loss-feedback-recovery.js';
 import { runControlledLossLearningOnce } from './controlled-loss-learning-worker.js';
 
 const WORKER_INTERVAL_MS = Math.max(
@@ -55,7 +56,14 @@ export async function runControlledLossLearningRuntimeOnce(): Promise<void> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     await recoverDurableState();
+    // Catch a prior crash after terminal DB confirmation but before Cryptara
+    // feedback completed. Canonical terminal-feedback identity deduplicates a
+    // replay if the prior call actually succeeded.
+    await replayControlledLossLearningFeedbackOnce();
     await runControlledLossLearningOnce();
+    // Close the normal path immediately; newly terminal rows receive the durable
+    // feedback marker without waiting for the next interval.
+    await replayControlledLossLearningFeedbackOnce();
   })().finally(() => { inFlight = null; });
   return inFlight;
 }
@@ -68,8 +76,10 @@ export function ensureControlledLossLearningWorker(): void {
   logger.info('[ControlledLossLearning] Recovery-gated controlled-loss runtime online', {
     component: 'ControlledLossLearningRuntime',
     recoveryBeforeEveryPass: true,
+    feedbackReplayBeforeAndAfterEveryPass: true,
     deterministicOrderRecovery: true,
     exactSettlementRequiredBeforeFinalization: true,
+    terminalFeedbackIdempotent: true,
   });
 }
 
