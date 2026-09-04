@@ -38,6 +38,8 @@ must(workerPath, worker, 'normalParentTradeQuotaConsumed: false', 'controlled-lo
 must(workerPath, worker, "CANDIDATE_SYMBOLS = ['ETHUSDT', 'ETHUSDC']", 'controlled-loss execution must remain constrained to explicit unlevered spot symbols');
 must(workerPath, worker, "timeinforce: 'FOK'", 'Kraken learning orders must remain fill-or-kill');
 must(workerPath, worker, "ordType: 'fok'", 'OKX learning orders must remain fill-or-kill');
+must(workerPath, worker, 'recoverKrakenOrder', 'Kraken controlled-loss order recovery must precede resubmission');
+must(workerPath, worker, 'recoverOkxOrder', 'OKX controlled-loss order recovery must precede resubmission');
 must(workerPath, worker, 'resolveCexFeeEvidence', 'authenticated fee evidence must size the controlled-loss trade');
 must(workerPath, worker, 'cexInventoryLedger.reserve', 'controlled-loss capital must use canonical inventory reservation');
 must(workerPath, worker, 'getExactSystemCapitalOrderAssetDeltas', 'terminal learning economics must use authenticated exact settlement deltas');
@@ -46,6 +48,15 @@ must(workerPath, worker, "learningAuthority: 'cryptara_controlled_loss'", 'contr
 must(workerPath, worker, 'recordCryptaraExecutionEvidence', 'terminal controlled loss must enter canonical Cryptara learning');
 must(workerPath, worker, "strategy: 'controlled_loss_learning'", 'learning feedback must be explicitly tagged as controlled loss');
 must(workerPath, worker, 'terminalTruthFabricated: false', 'a non-loss result must never be fabricated into a loss');
+
+const recoveryPath = 'server/services/cryptocrawl/execution/controlled-loss-learning-runtime.ts';
+const recovery = read(recoveryPath);
+must(recoveryPath, recovery, "status='EXIT_SUBMITTED'", 'unapplied exit submissions must be recovered before finalization');
+must(recoveryPath, recovery, "SET status='ENTRY_TERMINAL'", 'unapplied exit submissions must route back through exact exit settlement');
+must(recoveryPath, recovery, 'exit_applied=false', 'recovery must target only unapplied exit settlement');
+must(recoveryPath, recovery, 'runControlledLossLearningOnce', 'recovery must run before every controlled-loss worker pass');
+must(recoveryPath, recovery, 'duplicateSubmissionAuthorityGranted: false', 'crash recovery must never authorize duplicate orders');
+must(recoveryPath, recovery, 'terminalSettlementBypassGranted: false', 'crash recovery must never bypass exact terminal settlement');
 
 const lotPath = 'server/services/cryptocrawl/execution/cex-system-owned-lot-ledger.ts';
 const lot = read(lotPath);
@@ -62,6 +73,7 @@ must(schemaPath, schema, 'public.cryptocrawler_record_controlled_loss_terminal(u
 
 const corePath = 'server/services/cryptocrawl/runtime/core-runtime.ts';
 const core = read(corePath);
+must(corePath, core, 'controlled-loss-learning-runtime.js', 'canonical runtime must use the recovery-gated controlled-loss wrapper');
 must(corePath, core, 'ensureControlledLossLearningWorker', 'controlled-loss worker must start with canonical runtime');
 must(corePath, core, 'stopControlledLossLearningWorker', 'controlled-loss worker must stop with canonical runtime');
 
