@@ -20,6 +20,7 @@ export interface SponsoredBuilderSubmissionResult {
   acceptedBy: SponsoredBuilderName[];
   failedBy: SponsoredBuilderName[];
   attempts: SponsoredBuilderAcceptance[];
+  transactionCount: number;
   publicMempoolFallback: false;
 }
 
@@ -27,6 +28,7 @@ const SPONSORED_BUILDERS: Array<{ name: SponsoredBuilderName; endpoint: string }
   { name: 'Titan', endpoint: 'https://rpc.titanbuilder.xyz' },
   { name: 'Quasar', endpoint: 'https://rpc.quasar.win' },
 ];
+const MAX_COLD_START_BUNDLE_TRANSACTIONS = 16;
 
 function validRawTransaction(value: string): boolean {
   return /^0x[0-9a-fA-F]+$/.test(value) && value.length > 10;
@@ -54,8 +56,8 @@ async function rpcSubmit(input: {
       params: [{
         txs: input.bundle.signedTransactions,
         blockNumber: hexBlock(input.bundle.targetBlock),
-        // The cold-start transaction is the economic authority. It is never
-        // permitted to revert or be dropped while a sponsor transfer survives.
+        // No transaction in the bootstrap chain is dispensable. A deployment,
+        // permission, or execution failure must invalidate the entire candidate.
         revertingTxHashes: [],
         droppingTxHashes: [],
         replacementUuid: input.bundle.replacementUuid,
@@ -99,18 +101,25 @@ async function rpcSubmit(input: {
  *
  * IMPORTANT: This module intentionally has no signer and no public RPC fallback.
  * It accepts already-signed transaction bytes from the canonical execution signer
- * and sends those exact bytes to builders that document sponsored bundles. It is
- * designed to be owned by MultiRelaySubmitter rather than becoming a parallel
- * execution authority.
+ * and sends those exact bytes to builders that document sponsored bundles. The
+ * bundle may contain deterministic CREATE2 deployment/configuration transactions
+ * followed by the opportunity-backed execution transaction. None may revert or be
+ * dropped. This transport is designed to be owned by MultiRelaySubmitter rather
+ * than becoming a parallel execution authority.
  */
 export async function submitBuilderSponsoredBundle(
   bundle: SponsoredBuilderBundle,
   options: { timeoutMs?: number } = {},
 ): Promise<SponsoredBuilderSubmissionResult> {
-  if (!Array.isArray(bundle.signedTransactions) || bundle.signedTransactions.length !== 1) {
-    throw new Error('Cold-start sponsored bundle must contain exactly one atomic signed transaction');
+  if (!Array.isArray(bundle.signedTransactions) || bundle.signedTransactions.length === 0) {
+    throw new Error('Cold-start sponsored bundle must contain at least one signed transaction');
   }
-  if (!validRawTransaction(bundle.signedTransactions[0])) throw new Error('Sponsored bundle contains invalid raw transaction bytes');
+  if (bundle.signedTransactions.length > MAX_COLD_START_BUNDLE_TRANSACTIONS) {
+    throw new Error(`Cold-start sponsored bundle exceeds ${MAX_COLD_START_BUNDLE_TRANSACTIONS} transactions`);
+  }
+  if (bundle.signedTransactions.some(transaction => !validRawTransaction(transaction))) {
+    throw new Error('Sponsored bundle contains invalid raw transaction bytes');
+  }
   hexBlock(bundle.targetBlock);
   if (!bundle.replacementUuid || bundle.replacementUuid.trim().length < 8) {
     throw new Error('Sponsored bundle requires a stable replacementUuid of at least 8 characters');
@@ -130,6 +139,7 @@ export async function submitBuilderSponsoredBundle(
     acceptedBy,
     failedBy,
     attempts,
+    transactionCount: bundle.signedTransactions.length,
     publicMempoolFallback: false,
   };
 }
