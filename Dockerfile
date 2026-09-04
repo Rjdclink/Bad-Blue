@@ -27,6 +27,7 @@ COPY . .
 # authority, or venue-learning authority over deterministic economics.
 RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
     node scripts/cryptocrawl/verify-operator-treasury-strategy.cjs && \
+    node scripts/cryptocrawl/verify-treasury-transfer-recovery-hardening.cjs && \
     node scripts/cryptocrawl/verify-controlled-loss-learning.cjs && \
     node scripts/cryptocrawl/verify-zero-initial-capital-dynamic-redundancy.cjs && \
     node scripts/cryptocrawl/verify-cryptara-venue-specialization.cjs && \
@@ -103,6 +104,7 @@ COPY --from=builder /app/server/migrations/040_cryptocrawler_treasury_reservatio
 COPY --from=builder /app/server/migrations/041_cryptocrawler_controlled_loss_learning.sql ./dist/migrations/041_cryptocrawler_controlled_loss_learning.sql
 COPY --from=builder /app/server/migrations/042_cryptocrawler_coinbase_system_capital_rainbow.sql ./dist/migrations/042_cryptocrawler_coinbase_system_capital_rainbow.sql
 COPY --from=builder /app/server/migrations/043_cryptocrawler_profit_qualified_schedule.sql ./dist/migrations/043_cryptocrawler_profit_qualified_schedule.sql
+COPY --from=builder /app/server/migrations/044_cryptocrawler_treasury_transfer_recovery_hardening.sql ./dist/migrations/044_cryptocrawler_treasury_transfer_recovery_hardening.sql
 
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
