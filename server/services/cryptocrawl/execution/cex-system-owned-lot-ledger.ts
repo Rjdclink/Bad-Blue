@@ -24,6 +24,14 @@ export type CexSystemCapitalSettlementAuthority =
       governanceAdmitted: true;
       reference: string;
       [key: string]: unknown;
+    }
+  | {
+      learningAuthority: 'cryptara_controlled_loss';
+      notionalAuthority: 'controlled_loss_budget';
+      executionAuthority: 'controlled_loss_learning_worker';
+      governanceAdmitted: true;
+      reference: string;
+      [key: string]: unknown;
     };
 
 export interface AppliedCexOwnershipSettlement {
@@ -52,8 +60,14 @@ function requireAuthority(authority: CexSystemCapitalSettlementAuthority): void 
     authority.notionalAuthority === 'system_owned_sweep_target' &&
     authority.executionAuthority === 'system_capital_sweep_worker' &&
     authority.governanceAdmitted === true;
-  if (!referenceValid || (!tradeAuthority && !treasuryAuthority)) {
-    throw new Error('CEX ownership transformation requires either canonical trade authority or explicit operator-strategy treasury authority');
+  const controlledLearningAuthority =
+    'learningAuthority' in authority &&
+    authority.learningAuthority === 'cryptara_controlled_loss' &&
+    authority.notionalAuthority === 'controlled_loss_budget' &&
+    authority.executionAuthority === 'controlled_loss_learning_worker' &&
+    authority.governanceAdmitted === true;
+  if (!referenceValid || (!tradeAuthority && !treasuryAuthority && !controlledLearningAuthority)) {
+    throw new Error('CEX ownership transformation requires canonical trade, explicit operator-strategy treasury, or controlled-loss learning authority');
   }
 }
 

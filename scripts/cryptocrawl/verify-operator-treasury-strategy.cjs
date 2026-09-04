@@ -105,10 +105,15 @@ requireText(migration40Path, migration40, "NEW.expires_at := 'infinity'::timesta
 requireText(migration40Path, migration40, "reservation_id LIKE 'treasury:%'", 'treasury transfer reservations must be lifecycle-held');
 requireText(migration40Path, migration40, "opportunity_id LIKE 'system-sweep:%'", 'system sweep conversion reservations must be lifecycle-held');
 
+const migration41Path = 'server/migrations/041_cryptocrawler_controlled_loss_learning.sql';
+const migration41 = read(migration41Path);
+requireText(migration41Path, migration41, "opportunity_id LIKE 'controlled-loss:%'", 'controlled-loss reservations must extend the same lifecycle-hold authority rather than weakening it');
+requireText(migration41Path, migration41, "NEW.expires_at := 'infinity'::timestamptz", 'controlled-loss reservations must remain lifecycle-held until explicit settlement/release');
+
 const schemaPath = 'server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts';
 const schema = read(schemaPath);
-requireText(schemaPath, schema, 'const SCHEMA_VERSION = 11;', 'Overflow schema version must include treasury lifecycle guard');
-for (let n = 32; n <= 40; n += 1) {
+requireText(schemaPath, schema, 'const SCHEMA_VERSION = 12;', 'Overflow schema version must include controlled-loss learning migration 041');
+for (let n = 32; n <= 41; n += 1) {
   requireMatch(schemaPath, schema, new RegExp(`['\"]0${n}_`), `migration 0${n} must be included in Overflow runtime schema`);
 }
 requireText(schemaPath, schema, 'public.cryptocrawler_release_system_capital_transfer(uuid)', 'release RPC signature must match the migration-defined function');
@@ -131,7 +136,7 @@ requireText(rainbowPath, rainbow, "payoutNetwork: 'ethereum_mainnet_only'", 'run
 
 const dockerPath = 'Dockerfile';
 const docker = read(dockerPath);
-for (let n = 32; n <= 40; n += 1) {
+for (let n = 32; n <= 41; n += 1) {
   requireMatch(dockerPath, docker, new RegExp(`/0${n}_[^\\s]+\\.sql`), `production image must package migration 0${n}`);
 }
 requireText(dockerPath, docker, 'verify-operator-treasury-strategy.cjs', 'production build must execute this semantic verifier');
