@@ -1,10 +1,17 @@
+import { randomInt } from 'node:crypto';
 import logger from '../../../logger.js';
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { isDatabaseConfigured, pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { createProductionCexSettlementAdapters } from './cex-settlement.js';
 import type { NormalizedRealizedExecution } from './settlement-types.js';
 
+const STRATEGY_TIMEZONE = 'America/Chicago';
+const MIN_NONLOSS_RETRY_DELAY_MS = 15_000;
+const MAX_NONLOSS_RETRY_DELAY_MS = 10 * 60_000;
+const DAY_END_GUARD_MS = 30_000;
+
 type Venue = 'kraken' | 'okx';
+type ReplayDisposition = 'feedback_marked' | 'nonloss_retry_scheduled';
 
 type TerminalControlledLossRow = {
   event_id: string;
@@ -27,6 +34,37 @@ function finite(raw: unknown): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function localDateKey(epochMs = Date.now()): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: STRATEGY_TIMEZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(epochMs));
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function nextLocalDateBoundary(epochMs: number): number {
+  const current = localDateKey(epochMs);
+  let low = epochMs;
+  let high = epochMs + 36 * 60 * 60_000;
+  while (high - low > 1_000) {
+    const midpoint = Math.floor((low + high) / 2);
+    if (localDateKey(midpoint) === current) low = midpoint;
+    else high = midpoint;
+  }
+  return high;
+}
+
+function randomizedNonlossRetry(epochMs = Date.now()): number | null {
+  const earliest = epochMs + MIN_NONLOSS_RETRY_DELAY_MS;
+  const latest = Math.min(
+    epochMs + MAX_NONLOSS_RETRY_DELAY_MS,
+    nextLocalDateBoundary(epochMs) - DAY_END_GUARD_MS,
+  );
+  if (latest <= earliest) return null;
+  return randomInt(earliest, latest + 1);
+}
+
 async function terminalRowsMissingFeedback(): Promise<TerminalControlledLossRow[]> {
   if (!isDatabaseConfigured) return [];
   const result = await pool.query(
@@ -43,7 +81,35 @@ async function terminalRowsMissingFeedback(): Promise<TerminalControlledLossRow[
   return result.rows as TerminalControlledLossRow[];
 }
 
-async function replayOne(row: TerminalControlledLossRow): Promise<boolean> {
+async function scheduleAnotherAttemptAfterTruthfulNonloss(row: TerminalControlledLossRow): Promise<boolean> {
+  if (row.status !== 'TERMINAL_NONLOSS' || row.local_date !== localDateKey()) return false;
+  const retryAt = randomizedNonlossRetry();
+  if (retryAt === null) return false;
+
+  const reset = await pool.query(
+    `UPDATE public.cryptocrawler_controlled_loss_learning_events
+     SET status='RETRYABLE', retry_not_before=to_timestamp($2/1000.0),
+         gross_profit_usd_at_claim=NULL, max_loss_usd=NULL, expected_loss_usd=NULL,
+         venue=NULL, symbol=NULL, base_asset=NULL, quote_asset=NULL, quote_asset_usd=NULL,
+         authenticated_taker_fee_bps=NULL, source_quote_reserve=NULL,
+         requested_base_quantity=NULL, entry_limit_price=NULL,
+         entry_client_order_id=NULL, entry_order_id=NULL, entry_inventory_reservation_id=NULL,
+         entry_applied=false, exit_base_quantity=NULL, exit_limit_price=NULL,
+         exit_client_order_id=NULL, exit_order_id=NULL, exit_inventory_reservation_id=NULL,
+         exit_applied=false, realized_profit_usd=NULL, terminal_price_observed_at=NULL,
+         settlement_evidence=NULL, completed_at=NULL, feedback_recorded_at=NULL,
+         last_error='Terminal non-loss was learned truthfully; randomized retry scheduled until the single actual controlled loss is obtained',
+         updated_at=now()
+     WHERE event_id=$1::uuid
+       AND status='TERMINAL_NONLOSS'
+       AND feedback_recorded_at IS NULL
+     RETURNING event_id::text`,
+    [row.event_id, retryAt],
+  );
+  return reset.rowCount === 1;
+}
+
+async function replayOne(row: TerminalControlledLossRow): Promise<ReplayDisposition> {
   if ((row.venue !== 'kraken' && row.venue !== 'okx') || !row.symbol || !row.entry_order_id || !row.exit_order_id) {
     throw new Error(`terminal controlled-loss ${row.event_id} lacks durable exchange identity`);
   }
@@ -135,12 +201,21 @@ async function replayOne(row: TerminalControlledLossRow): Promise<boolean> {
     timestamp: settledAt,
     notes: row.status === 'TERMINAL_LOSS'
       ? 'Intentional controlled negative-edge learning settlement (durable replay safe)'
-      : 'Controlled negative-edge learning round-trip settled non-negative; terminal truth preserved (durable replay safe)',
+      : 'Controlled negative-edge learning round-trip settled non-negative; truth learned before randomized retry',
     settlementStatus: normalized.status,
     settlementConfirmed: true,
     provenance: normalized.provenance,
     settlement: normalized,
   });
+
+  // A favorable/flat surprise is still valuable learning, but it does not satisfy
+  // the operator's requirement for one actual controlled loss. Reuse this day's
+  // single durable event with a new randomized attempt. Because only NONLOSS is
+  // reset, a first negative terminal outcome permanently ends the lane and a
+  // second controlled loss cannot occur.
+  if (await scheduleAnotherAttemptAfterTruthfulNonloss(row)) {
+    return 'nonloss_retry_scheduled';
+  }
 
   const marked = await pool.query(
     `UPDATE public.cryptocrawler_controlled_loss_learning_events
@@ -151,25 +226,26 @@ async function replayOne(row: TerminalControlledLossRow): Promise<boolean> {
      RETURNING event_id::text`,
     [row.event_id],
   );
-  return marked.rowCount === 1;
+  if (marked.rowCount !== 1) throw new Error(`controlled-loss ${row.event_id} feedback marker could not be durably committed`);
+  return 'feedback_marked';
 }
 
 export async function replayControlledLossLearningFeedbackOnce(): Promise<void> {
   const rows = await terminalRowsMissingFeedback();
   for (const row of rows) {
     try {
-      const marked = await replayOne(row);
-      if (marked) {
-        logger.info('[ControlledLossLearning] Durable terminal settlement replayed into canonical Cryptara learning', {
-          component: 'ControlledLossFeedbackRecovery',
-          eventId: row.event_id,
-          localDate: row.local_date,
-          status: row.status,
-          venue: row.venue,
-          symbol: row.symbol,
-          terminalFeedbackIdempotent: true,
-        });
-      }
+      const disposition = await replayOne(row);
+      logger.info('[ControlledLossLearning] Durable terminal settlement delivered to canonical Cryptara learning', {
+        component: 'ControlledLossFeedbackRecovery',
+        eventId: row.event_id,
+        localDate: row.local_date,
+        status: row.status,
+        venue: row.venue,
+        symbol: row.symbol,
+        disposition,
+        terminalFeedbackIdempotent: true,
+        secondControlledLossPossible: false,
+      });
     } catch (error) {
       logger.warn('[ControlledLossLearning] Terminal learning feedback replay deferred', {
         component: 'ControlledLossFeedbackRecovery',
