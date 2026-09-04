@@ -111,6 +111,25 @@ class FundingPositionLifecycle {
     return [...this.adapters.keys()];
   }
 
+  private async ensureAdapter(venue: FundingExecutionPlan['venue']): Promise<FundingLifecycleAdapter | null> {
+    const existing = this.adapters.get(venue);
+    if (existing) return existing;
+    if (venue === 'okx') {
+      try {
+        const module = await import('./okx-funding-lifecycle-adapter.js');
+        module.ensureOkxFundingLifecycleAdapterRegistered();
+      } catch (error) {
+        logger.error('[FundingLifecycle] OKX adapter recovery registration failed closed', {
+          component: 'FundingPositionLifecycle',
+          venue,
+          error: error instanceof Error ? error.message : String(error),
+          executionAuthorityGranted: false,
+        });
+      }
+    }
+    return this.adapters.get(venue) ?? null;
+  }
+
   /** Reuse startup's exact schema proof instead of paying another readiness query. */
   primeStoreReady(ttlMs = fundingStoreReadyTtlMs()): void {
     const boundedTtlMs = bounded(ttlMs, fundingStoreReadyTtlMs(), 30_000, 900_000);
@@ -127,7 +146,7 @@ class FundingPositionLifecycle {
   async execute(plan: FundingExecutionPlan): Promise<FundingLifecycleResult> {
     const rejection = this.validate(plan);
     if (rejection) return { success: false, settlementConfirmed: false, status: 'rejected', error: rejection };
-    const adapter = this.adapters.get(plan.venue);
+    const adapter = await this.ensureAdapter(plan.venue);
     if (!adapter) return { success: false, settlementConfirmed: false, status: 'rejected', error: 'REJECT_FUNDING_LIFECYCLE_ADAPTER_UNAVAILABLE' };
     if (!await adapter.verifyCurrentPlan(plan)) {
       return { success: false, settlementConfirmed: false, status: 'rejected', error: 'REJECT_FUNDING_PLAN_NO_LONGER_CURRENT' };
@@ -248,7 +267,7 @@ class FundingPositionLifecycle {
     if (!plan || !receipt) {
       return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_DURABLE_STATE_INCOMPLETE' };
     }
-    const adapter = this.adapters.get(plan.venue);
+    const adapter = await this.ensureAdapter(plan.venue);
     if (!adapter) {
       return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_LIFECYCLE_ADAPTER_UNAVAILABLE' };
     }
