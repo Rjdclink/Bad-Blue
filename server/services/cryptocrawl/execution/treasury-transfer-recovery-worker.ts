@@ -16,15 +16,32 @@ function liveExecutionPosture(): boolean {
 async function recoverOnce(): Promise<void> {
   if (!isDatabaseConfigured || !liveExecutionPosture()) return;
 
+  // Retained routing has two durable state surfaces: the allocation row and the
+  // provenance-backed transfer intent. Move both back to RETRYABLE together.
+  // RETRYABLE remains an active reservation state, so a possibly-submitted
+  // withdrawal never becomes spendable while the exchange recovery path runs.
   const retained = await pool.query(
-    `UPDATE public.cryptocrawler_retained_exchange_allocations
+    `WITH recovered_transfers AS (
+       UPDATE public.cryptocrawler_system_capital_transfers t
+       SET status='RETRYABLE',
+           last_error=COALESCE(t.last_error,'stale retained transfer recovered after restart; exchange recovery must run before any resubmission'),
+           updated_at=now()
+       FROM public.cryptocrawler_retained_exchange_allocations r
+       WHERE t.transfer_id=r.transfer_id
+         AND t.transfer_kind='RETAINED_ROUTE'
+         AND t.status IN ('SUBMITTED','SETTLING')
+         AND r.status IN ('SUBMITTED','SETTLING')
+         AND r.last_attempt_at IS NOT NULL
+         AND r.last_attempt_at <= now() - make_interval(secs => $1)
+       RETURNING t.transfer_id, t.source_event_id
+     )
+     UPDATE public.cryptocrawler_retained_exchange_allocations r
      SET status='RETRYABLE',
-         last_error=COALESCE(last_error,'stale treasury transfer attempt recovered after restart; exchange recovery must run before any resubmission'),
+         last_error=COALESCE(r.last_error,'stale retained transfer attempt recovered after restart; exchange recovery must run before any resubmission'),
          updated_at=now()
-     WHERE status IN ('SUBMITTED','SETTLING')
-       AND last_attempt_at IS NOT NULL
-       AND last_attempt_at <= now() - make_interval(secs => $1)
-     RETURNING event_id`,
+     FROM recovered_transfers recovered
+     WHERE r.event_id=recovered.source_event_id
+     RETURNING r.event_id`,
     [STALE_SECONDS],
   );
 
@@ -47,6 +64,7 @@ async function recoverOnce(): Promise<void> {
       payoutFundingRecovered: payout.rowCount || 0,
       staleSeconds: STALE_SECONDS,
       exchangeRecoveryBeforeResubmitRequired: true,
+      retainedTransferReservationRemainsActive: true,
       duplicateSubmissionAuthorityGranted: false,
     });
   }
