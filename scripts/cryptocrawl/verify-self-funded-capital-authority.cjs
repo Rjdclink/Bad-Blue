@@ -113,9 +113,9 @@ assert.match(lotLedger, /SYSTEM_CAPITAL_PROVENANCE_DEFICIT/, 'unowned trade or f
 assert.match(lotLedger, /type SystemOwnedCexVenue = 'coinbase' \| 'okx' \| 'kraken'/, 'the exact ownership ledger must support Coinbase, OKX and Kraken system-owned execution inventory');
 assert.match(lotLedger, /WHERE venue=\$1 AND asset=\$2 AND status='ACTIVE'/, 'lot consumption must lock only active system-owned inventory');
 assert.match(lotLedger, /FOR UPDATE/, 'CEX ownership mutation must lock consumed lots transactionally');
-const debitIndex = lotLedger.indexOf('// Debit first.');
-const creditIndex = lotLedger.indexOf('for (const [asset, delta] of entries) {', debitIndex + 1);
-assert.ok(debitIndex >= 0 && creditIndex > debitIndex, 'CEX ownership transformation must debit before creating outputs');
+const debitIndex = lotLedger.indexOf('consumedLotIds.push(...await consumeSystemOwnedAsset');
+const creditIndex = lotLedger.indexOf('createdLotIds.push(await createSystemOwnedOutputLot', debitIndex + 1);
+assert.ok(debitIndex >= 0 && creditIndex > debitIndex, 'CEX ownership transformation must debit all system-owned inputs before creating outputs');
 assert.match(lotLedger, /cryptocrawler_cex_system_owned_settlements/, 'terminal CEX ownership application must have a durable idempotency boundary');
 assert.match(lotLedger, /status='APPLIED'/, 'terminal CEX ownership transformation must become durable only after all debits and credits succeed');
 
@@ -135,4 +135,4 @@ assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_settlements
 assert.match(dockerfile, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'production image must bundle the physical CEX ownership migration');
 assert.match(dockerfile, /042_cryptocrawler_coinbase_system_capital_rainbow\.sql/, 'production image must bundle the Coinbase/Rainbow ownership migration');
 
-console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; Coinbase/Kraken/OKX spendability requires exact ACTIVE system-owned lots, Profit Ladder binds taker and maker CEX size, and terminal authenticated fills transform only system-owned inventory');
+console.log('[self-funded-capital-authority] PASS: personal/account-wide balances stay excluded; only exact terminal settlement-derived Coinbase/Kraken/OKX lots may become system-owned CEX inventory, and every ownership transformation debits before crediting outputs');
