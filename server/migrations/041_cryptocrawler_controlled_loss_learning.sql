@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_controlled_loss_learning_events 
   last_attempt_at timestamptz,
   last_error text,
   completed_at timestamptz,
+  feedback_recorded_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (scheduled_not_before >= unlocked_at),
@@ -69,8 +70,17 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_controlled_loss_learning_events 
   CHECK (realized_profit_usd IS NULL OR max_loss_usd IS NULL OR realized_profit_usd >= -max_loss_usd - 0.000000001)
 );
 
+-- Keep the migration idempotent if a preview or interrupted schema pass created
+-- the table before this replay marker was added to the branch.
+ALTER TABLE public.cryptocrawler_controlled_loss_learning_events
+  ADD COLUMN IF NOT EXISTS feedback_recorded_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS idx_cryptocrawler_controlled_loss_ready
   ON public.cryptocrawler_controlled_loss_learning_events(status, scheduled_not_before, retry_not_before);
+
+CREATE INDEX IF NOT EXISTS idx_cryptocrawler_controlled_loss_feedback_replay
+  ON public.cryptocrawler_controlled_loss_learning_events(status, feedback_recorded_at)
+  WHERE status IN ('TERMINAL_LOSS','TERMINAL_NONLOSS') AND feedback_recorded_at IS NULL;
 
 CREATE OR REPLACE FUNCTION public.cryptocrawler_record_controlled_loss_terminal(
   p_event_id uuid,
@@ -178,3 +188,5 @@ COMMENT ON TABLE public.cryptocrawler_controlled_loss_learning_events IS
   'One randomized post-first-win negative-edge learning event per operator trading day. Terminal loss is capped at <=5% of gross positive daily profit and feeds canonical Cryptara learning.';
 COMMENT ON COLUMN public.cryptocrawler_operator_strategy_days.controlled_loss_usd IS
   'Terminal controlled-learning loss only. It is telemetry/learning data and does not reduce gross-positive profit-stop authority.';
+COMMENT ON COLUMN public.cryptocrawler_controlled_loss_learning_events.feedback_recorded_at IS
+  'Set only after canonical Cryptara terminal feedback returns successfully. NULL terminal rows are replayed idempotently after a crash.';
