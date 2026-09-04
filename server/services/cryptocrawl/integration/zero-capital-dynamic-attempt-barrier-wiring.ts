@@ -208,7 +208,7 @@ async function evaluateBarrier(
       return {
         ...base,
         approved: false,
-        reason: 'Selected Aave receiver owner no longer matches execution wallet',
+        reason: 'Selected provider receiver owner no longer matches execution wallet',
         exactCallPassed: false,
         exactGasEstimatePassed: false,
         estimatedGasUnits: null,
@@ -238,7 +238,7 @@ async function evaluateBarrier(
     const plan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
       receiver,
       provider: selection?.provider || 'balancer_v2',
-      profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || wallet.address,
+      profitRecipient: wallet.address,
       nowMs: Date.now(),
     });
     payload = dualSelection
@@ -249,7 +249,7 @@ async function evaluateBarrier(
           balancerAmount: dualSelection.balancerAmount.toString(),
           aaveAmount: dualSelection.aaveAmount.toString(),
           minProfit: plan.minProfit,
-          profitRecipient: plan.profitRecipient,
+          profitRecipient: wallet.address,
           steps: plan.steps,
           gasLimit: Math.max(1_800_000, plan.gasLimit || 0),
         })
@@ -415,6 +415,7 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
     exactEthCallRequired: true,
     exactGasEstimateRequired: true,
     providerSpecificPayloadParity: ['balancer_v2', 'aave_v3', 'aave_balancer_dual'],
+    profitRecipientParity: 'operational_wallet_before_rainbow',
     nativeFailedAttemptExposureUsesMeasuredInputTokenGasEstimate: true,
     sponsoredGasExposureZeroOnlyWhenFundingModeIsSponsored: true,
     barrierIsNotAddedToReportedEconomics: true,
