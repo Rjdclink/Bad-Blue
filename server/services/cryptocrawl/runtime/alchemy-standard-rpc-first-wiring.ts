@@ -2,6 +2,8 @@ import { Contract } from 'ethers';
 import logger from '../../../logger.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { alchemyIntegration, type TokenBalance, type TokenMetadata } from '../capital-free/alchemy-integration.js';
+import { ensureBalancerOperationalProfitRecipientWiring } from './balancer-operational-profit-recipient-wiring.js';
+import { ensureStrictZeroInitialCapitalPolicyWiring } from './strict-zero-initial-capital-policy-wiring.js';
 import { ensureZeroInitialCapitalDynamicExecutionWiring } from './zero-initial-capital-dynamic-execution-wiring.js';
 
 const ERC20_ABI = [
@@ -115,7 +117,8 @@ async function standardBalance(chain: SupportedChain, owner: string, tokenAddres
 /**
  * Canonical runtime installs this module after the provider-specific/dual-provider
  * execution wrappers and immediately before realized-profit reconciliation. Use
- * that ordering seam to install the dynamic funding wrapper underneath realized
+ * that ordering seam to install the Balancer operational-recipient guard, strict
+ * zero-operator-cost admission and dynamic funding wrapper underneath realized
  * accounting without creating a second execution authority.
  *
  * Standard ERC20 reads then move off Alchemy enhanced APIs whenever the caller
@@ -125,6 +128,8 @@ async function standardBalance(chain: SupportedChain, owner: string, tokenAddres
  * Alchemy behavior so no capability is removed.
  */
 export function ensureAlchemyStandardRpcFirstWiring(): void {
+  ensureBalancerOperationalProfitRecipientWiring();
+  ensureStrictZeroInitialCapitalPolicyWiring();
   ensureZeroInitialCapitalDynamicExecutionWiring();
   if (installed || !enabled()) return;
   installed = true;
@@ -166,6 +171,8 @@ export function ensureAlchemyStandardRpcFirstWiring(): void {
     enhancedApiFallbackPreserved: true,
     noNewApiKeys: true,
     gasSponsorshipUntouched: true,
+    strictZeroOperatorCostPolicyInstalled: true,
+    balancerOperationalProfitRecipientInstalled: true,
     dynamicZeroInitialCapitalFundingInstalledAtCanonicalOrderingSeam: true,
     balanceCacheTtlMs: balanceTtlMs(),
     metadataCacheTtlMs: metadataTtlMs(),
