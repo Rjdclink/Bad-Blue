@@ -140,8 +140,10 @@ export function prepareSettlementCapableMeasuredPortfolio(
 }
 
 /**
- * Opt-in fail-open measured-topology scheduling order. Only already-admitted,
- * settlement-capable DEX/liquidation decisions can move relative to one another.
+ * Completed Nix-Gen measured-topology ordering is active by default and remains
+ * fail-open. Only already-admitted, settlement-capable DEX/liquidation decisions
+ * can move relative to one another. Setting
+ * CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING=false restores the exact prior ordering.
  * Unsupported/non-admitted decisions retain their original positions and Nix-Gen
  * never changes admission, economics, resource ownership, or execution authority.
  */
@@ -151,7 +153,7 @@ export function orderSettlementCapableMeasuredDecisionsWithNixGen(
   now = Date.now(),
 ): NixGenMeasuredOrderingResult {
   const original = [...decisions];
-  const enabled = process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING === 'true';
+  const enabled = process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING !== 'false';
   if (!enabled || original.length < 2) {
     if (!enabled) previousMeasuredReplan = undefined;
     return { decisions: original, enabled, applied: false, preparation: null, error: null };
