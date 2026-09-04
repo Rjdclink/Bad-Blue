@@ -112,7 +112,11 @@ requireText(migration41Path, migration41, "NEW.expires_at := 'infinity'::timesta
 
 const schemaPath = 'server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts';
 const schema = read(schemaPath);
-requireText(schemaPath, schema, 'const SCHEMA_VERSION = 12;', 'Overflow schema version must include controlled-loss learning migration 041');
+const schemaVersionMatch = schema.match(/const SCHEMA_VERSION = (\d+);/);
+const schemaVersion = schemaVersionMatch ? Number(schemaVersionMatch[1]) : NaN;
+if (!Number.isInteger(schemaVersion) || schemaVersion < 12) {
+  failures.push(`${schemaPath}: Overflow schema version must be at least 12 and include controlled-loss learning migration 041; later additive schema versions are allowed`);
+}
 for (let n = 32; n <= 41; n += 1) {
   requireMatch(schemaPath, schema, new RegExp(`['\"]0${n}_`), `migration 0${n} must be included in Overflow runtime schema`);
 }
