@@ -3,6 +3,10 @@ import logger from '../../../logger.js';
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import {
+  evaluateOkxRpiTakerBenefit,
+  fetchFreshOkxRpiTakerDepth,
+} from '../intelligence/okx-rpi-taker-depth.js';
+import {
   CoinbaseSpotSettlementAdapter,
   type CoinbaseOrderReceipt,
 } from './coinbase-spot-settlement-adapter.js';
@@ -256,14 +260,45 @@ class KrakenSettlementAdapter implements CexSettlementAdapter {
 }
 
 class OkxSettlementAdapter implements CexSettlementAdapter {
-  private async privateRequest(path: string, method: 'GET' | 'POST', parameters: Record<string, string> = {}): Promise<any[]> {
-    const { data } = await okxPrivateRequest(path, method, parameters, { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS });
+  private async privateRequest(path: string, method: 'GET' | 'POST', parameters: Record<string, string | boolean> = {}): Promise<any[]> {
+    const { data } = await okxPrivateRequest(path, method, parameters as Record<string, string>, { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS });
     return data;
   }
 
   async submit(request: OrderRequest): Promise<CexOrderReceipt> {
     const submittedAt = Date.now();
     const constraints = await getSpotProductConstraints('okx', request.symbol, true);
+    let useRpiTakerAccess = false;
+    if (process.env.CRYPTO_OKX_RPI_TAKER_EXECUTION_ENABLED !== 'false') {
+      const snapshot = await fetchFreshOkxRpiTakerDepth(request.symbol).catch(() => null);
+      if (snapshot) {
+        const benefit = evaluateOkxRpiTakerBenefit({
+          snapshot,
+          side: request.side,
+          quantity: request.quantity,
+          plannedLimitPrice: request.price,
+        });
+        useRpiTakerAccess = benefit.useRpiTakerAccess;
+        if (useRpiTakerAccess) {
+          logger.info('[CEX Executor] OKX IOC enabling measured RPI taker liquidity', {
+            component: 'CentralizedExchangeExecutor',
+            symbol: request.symbol,
+            side: request.side,
+            quantity: request.quantity,
+            plannedLimitPrice: request.price,
+            rpiObservedAt: snapshot.observedAt,
+            rpiServerTimestamp: snapshot.serverTimestamp,
+            measuredAdditionalBaseQuantity: benefit.measuredAdditionalBaseQuantity,
+            measuredPriceImprovementBpsAdvisory: benefit.measuredPriceImprovementBps,
+            selectionReason: benefit.reason,
+            canonicalPlanAlreadyPositiveWithoutRpi: true,
+            standardL2AuthorityChanged: false,
+            economicBpsAuthority: false,
+            terminalSettlementRemainsTruth: true,
+          });
+        }
+      }
+    }
     const rows = await this.privateRequest('/api/v5/trade/order', 'POST', {
       instId: constraints.exchangeSymbol,
       tdMode: 'cash',
@@ -271,6 +306,7 @@ class OkxSettlementAdapter implements CexSettlementAdapter {
       ordType: 'ioc',
       px: cexDecimalString(request.price),
       sz: cexDecimalString(request.quantity),
+      ...(useRpiTakerAccess ? { rpiTakerAccess: true } : {}),
       clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
     });
     const order = rows[0];
