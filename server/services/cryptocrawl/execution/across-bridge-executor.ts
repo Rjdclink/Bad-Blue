@@ -23,6 +23,10 @@ export interface AcrossBridgeExecutionResult {
   settlement?: AcrossSettlementEvidence;
   /** Exact signer-paid origin gas across approval(s) plus the Across swap/deposit when its receipt is known. */
   originNativeFeeWei?: string;
+  /** Approval transaction hashes whose receipts contributed to originNativeFeeWei. */
+  approvalTxnRefs?: string[];
+  /** True only when principal is proven unbroadcast and the approval-gas total is terminal/complete. */
+  prebroadcastTerminalCostComplete?: boolean;
   error?: string;
 }
 
@@ -169,34 +173,54 @@ export async function executeAcrossBridgeQuote(
   const wallet = walletFromPrivateKey(privateKey).connect(provider);
   const expectedChainId = SUPPORTED_CHAINS[quote.originChain].chainId;
   let nativeFeeWei = ethers.BigNumber.from(0);
+  const approvalTxnRefs: string[] = [];
+  const prebroadcastCost = (complete: boolean) => ({
+    originNativeFeeWei: nativeFeeWei.toString(),
+    approvalTxnRefs: [...approvalTxnRefs],
+    prebroadcastTerminalCostComplete: complete,
+  });
 
   for (const approval of payload.approvals) {
     if (approval.chainId !== undefined && approval.chainId !== expectedChainId) {
-      return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_APPROVAL_CHAIN' };
+      return { success: false, status: 'rejected', settlementConfirmed: false, ...prebroadcastCost(true), error: 'REJECT_ACROSS_APPROVAL_CHAIN' };
     }
     try {
       const tx = await wallet.sendTransaction({ to: approval.to, data: approval.data, value: ethers.BigNumber.from(approval.value || '0') });
+      approvalTxnRefs.push(tx.hash.toLowerCase());
       const receipt = await tx.wait();
       if (receipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(receipt));
       if (!receipt || receipt.status !== 1) {
-        return { success: false, status: 'failed', settlementConfirmed: true, originNativeFeeWei: nativeFeeWei.toString(), error: 'ACROSS_APPROVAL_FAILED' };
+        return { success: false, status: 'failed', settlementConfirmed: true, ...prebroadcastCost(true), error: 'ACROSS_APPROVAL_FAILED' };
       }
     } catch (error) {
+      const errorReceipt = (error as { receipt?: ethers.providers.TransactionReceipt } | null)?.receipt;
+      if (errorReceipt) {
+        const receiptHash = errorReceipt.transactionHash?.toLowerCase();
+        if (receiptHash && !approvalTxnRefs.includes(receiptHash)) approvalTxnRefs.push(receiptHash);
+        nativeFeeWei = nativeFeeWei.add(receiptFeeWei(errorReceipt));
+        return {
+          success: false,
+          status: 'failed',
+          settlementConfirmed: true,
+          ...prebroadcastCost(true),
+          error: 'ACROSS_APPROVAL_FAILED',
+        };
+      }
       // Approval ambiguity cannot move the reserved bridge principal. The caller
-      // may safely release the principal reservation; only approval gas/allowance
-      // state is uncertain and no cross-chain lifecycle is created.
+      // may safely release the principal reservation, but terminal cost feedback
+      // must wait because the latest approval receipt/gas state is still unknown.
       return {
         success: false,
         status: 'failed',
         settlementConfirmed: false,
-        originNativeFeeWei: nativeFeeWei.toString(),
+        ...prebroadcastCost(false),
         error: `ACROSS_APPROVAL_STATE_UNCERTAIN:${error instanceof Error ? error.message : String(error)}`,
       };
     }
   }
 
   if (payload.swap.chainId !== undefined && payload.swap.chainId !== expectedChainId) {
-    return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_SWAP_CHAIN' };
+    return { success: false, status: 'rejected', settlementConfirmed: false, ...prebroadcastCost(true), error: 'REJECT_ACROSS_SWAP_CHAIN' };
   }
 
   let signedOriginTx: string;
@@ -208,10 +232,10 @@ export async function executeAcrossBridgeQuote(
       value: ethers.BigNumber.from(payload.swap.value || '0'),
     });
     if (populated.chainId !== expectedChainId) {
-      return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_POPULATED_CHAIN' };
+      return { success: false, status: 'rejected', settlementConfirmed: false, ...prebroadcastCost(true), error: 'REJECT_ACROSS_POPULATED_CHAIN' };
     }
     if (populated.from && populated.from.toLowerCase() !== wallet.address.toLowerCase()) {
-      return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_POPULATED_SIGNER' };
+      return { success: false, status: 'rejected', settlementConfirmed: false, ...prebroadcastCost(true), error: 'REJECT_ACROSS_POPULATED_SIGNER' };
     }
     signedOriginTx = await wallet.signTransaction(populated);
     depositTxnRef = ethers.utils.keccak256(signedOriginTx).toLowerCase();
@@ -220,7 +244,7 @@ export async function executeAcrossBridgeQuote(
       success: false,
       status: 'failed',
       settlementConfirmed: false,
-      originNativeFeeWei: nativeFeeWei.toString(),
+      ...prebroadcastCost(true),
       error: `ACROSS_ORIGIN_SIGNING_FAILED:${error instanceof Error ? error.message : String(error)}`,
     };
   }
@@ -234,11 +258,13 @@ export async function executeAcrossBridgeQuote(
     });
   } catch (error) {
     // No principal broadcast has occurred yet. If lifecycle insertion fails,
-    // return without the hash so the caller can release the principal reservation.
+    // return without the principal hash so the caller can release the principal
+    // reservation while preserving any receipt-backed approval cost separately.
     logger.error('[AcrossBridgeExecution] Pre-broadcast lifecycle insertion failed; origin principal was not broadcast', {
       component: 'AcrossBridgeExecutor',
       depositTxnRef,
       originNativeFeeWei: nativeFeeWei.toString(),
+      approvalTxnRefs,
       principalBroadcast: false,
       capitalReleaseAllowed: true,
       error: error instanceof Error ? error.message : String(error),
@@ -247,7 +273,7 @@ export async function executeAcrossBridgeQuote(
       success: false,
       status: 'failed',
       settlementConfirmed: true,
-      originNativeFeeWei: nativeFeeWei.toString(),
+      ...prebroadcastCost(true),
       error: 'ACROSS_PREBROADCAST_LIFECYCLE_INSERT_FAILED',
     };
   }
