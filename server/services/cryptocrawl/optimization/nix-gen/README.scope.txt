@@ -1,1 +1,0 @@
-Scope: global allocation/ranking of already-valid strategy bids under shared resources. Out of scope: execution authorization, order submission, settlement, payout, governance mutation, fabricated economics.
