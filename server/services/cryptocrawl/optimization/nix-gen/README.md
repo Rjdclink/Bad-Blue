@@ -1,6 +1,6 @@
 # Nix-Gen
 
-Nix-Gen is an additive global opportunity-allocation layer for CryptoCrawler. Its job is to compare already-authoritative profitable opportunities under shared scarce resources and improve scheduling order without becoming another execution, economics, governance, settlement, or learning authority.
+Nix-Gen is an additive global opportunity-allocation layer for CryptoCrawler. Its job is to compare already-authoritative profitable opportunities under shared scarce resources and improve scheduling order without becoming another execution, economics, governance, settlement, resource, or learning authority.
 
 ## Current authority boundary
 
@@ -10,6 +10,7 @@ Nix-Gen is an additive global opportunity-allocation layer for CryptoCrawler. It
 - Governance, Profit Ladder, resource ownership, nonce/rate safety, kill switch, settlement, payout, and terminal learning remain authoritative in their existing systems.
 - Nix-Gen output is advisory. A valid bid that is not in the resource-feasible selected subset remains in the complete priority order, is marked only as deferred for that allocation snapshot, and is never silently vetoed or labeled rejected.
 - Resource projections are read-only views of the existing resource schedulers. They do not reserve distributed resources or grant execution rights.
+- Scarcity/shadow prices are bounded diagnostics derived from advisory resource usage. They never replace canonical capacity or lease truth.
 
 ## Optimizer behavior
 
@@ -21,19 +22,39 @@ Nix-Gen is an additive global opportunity-allocation layer for CryptoCrawler. It
 - Canonical positive net profit is the base objective; independent advisory probability, terminal calibration, decay urgency, and normalized rank evidence may adjust ordering within bounded ranges.
 - Measured-topology `profitabilityScore` is deliberately not recycled as a Nix-Gen rank input because that score already contains profit/confidence and would double-count them.
 
+## Continuous replanning library
+
+The pure replanner is available as an additive library but is not yet runtime scheduling authority.
+
+- It fingerprints every allocation-relevant truth input: canonical economics/timestamps, execution evidence, advisory evidence, resource demand/budgets, mutual exclusion, dispatch capacity and exact-search configuration.
+- An unchanged advisory plan may be reused only before both its bounded maximum plan age and its next temporal truth boundary.
+- Opportunity expiry safety margins and future-dated evidence boundaries force recomputation rather than allowing a long-lived stale plan.
+- It creates no timer, interval, queue, lease, reservation, order or settlement side effect.
+- Runtime integration must reuse the existing canonical scheduler wake/dispatch cycle rather than add a competing polling daemon.
+
+## Scarcity diagnostics
+
+- Each resource receives a bounded `0..1` advisory shadow-price signal derived from current optimizer utilization.
+- The price is deliberately zero at low/moderate utilization and rises convexly as headroom disappears.
+- Saturated/zero-capacity resources receive the maximum diagnostic price, but canonical resource schedulers still make the hard availability decision.
+- Per-bid scarcity burden is diagnostic/ranking support only; it cannot make an otherwise canonical opportunity ineligible or rejected.
+
 ## Rollout
 
 1. **Foundation:** standardized bids, bounded global optimizer, authority invariants, functional verifier.
 2. **Read-only resource projections:** reuse CEX and atomic scheduler resource models without reserving anything.
 3. **Opt-in CEX ordering:** `CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING=true` may reorder only candidates that have already passed every canonical CEX hard gate. Default is off. Any Nix-Gen failure returns the exact canonical order.
-4. **Cross-topology advisory ordering:** only after the CEX slice is proven, extend the same non-filtering ordering model to settlement-capable measured atomic paths.
-5. **Continuous replanning:** reuse the existing scheduler wake/dispatch cycle; do not add a competing polling daemon.
-6. **Scarcity/shadow-price diagnostics, robust uncertainty, solver limbs, and terminal calibration:** add only after each preceding slice proves independent benefit and no regression.
+4. **Pure continuous replanning + scarcity diagnostics:** implemented as non-runtime library functions with deterministic behavioral proofs and no control-loop authority.
+5. **Cross-topology advisory ordering:** only after the prior slices are proven, extend the same non-filtering/defer-not-reject ordering model to settlement-capable measured atomic paths.
+6. **Runtime replanner integration:** call the pure replanner from the existing scheduler wake/dispatch cycle; no new daemon.
+7. **Robust uncertainty, optional classical solver limbs, and terminal calibration:** add only after each preceding slice proves independent benefit and no regression.
 
 ## Current limitations by design
 
 - Read-only resource projections reflect the local scheduler view; distributed lease acquisition remains the authoritative hard resource check.
 - Nix-Gen does not currently interleave or authorize execution across topologies.
+- Scarcity pricing is diagnostic and is not yet consumed as a live scheduler modifier.
+- The pure replanner is not yet wired into runtime; existing scheduler behavior remains authoritative.
 - Optional external solvers are not dependencies. The dependency-free bounded optimizer remains functional even if no solver limb is installed.
 - HHL/quantum linear-system methods are not a generic replacement for combinatorial allocation and remain optional only for mathematically suitable subproblems.
 

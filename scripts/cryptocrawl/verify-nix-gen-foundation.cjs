@@ -18,6 +18,8 @@ const optimizer = read('server/services/cryptocrawl/optimization/nix-gen/global-
 const coordinator = read('server/services/cryptocrawl/optimization/nix-gen/coordinator.ts');
 const adapters = read('server/services/cryptocrawl/optimization/nix-gen/canonical-bid-adapters.ts');
 const cexOrdering = read('server/services/cryptocrawl/optimization/nix-gen/cex-ordering.ts');
+const scarcity = read('server/services/cryptocrawl/optimization/nix-gen/scarcity-pricing.ts');
+const replanner = read('server/services/cryptocrawl/optimization/nix-gen/replanner.ts');
 const cexResources = read('server/services/cryptocrawl/execution/resource-scheduler.ts');
 const zeroResources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
@@ -61,6 +63,26 @@ requirePattern(cexOrdering, /if \(!enabled \|\| original\.length < 2\)/, 'Disabl
 requirePattern(cexOrdering, /catch \(error\)[\s\S]{0,450}candidates:\s*original/, 'Nix-Gen ordering errors must fail open to canonical ordering');
 forbidPattern(cexOrdering, /\.filter\([^\n]*candidate/, 'CEX Nix-Gen ordering must not filter canonical candidates');
 
+requirePattern(scarcity, /authority:\s*'nix_gen_advisory_scarcity'/, 'Scarcity pricing must identify itself as advisory');
+requirePattern(scarcity, /executionAuthority:\s*false/, 'Scarcity pricing must not gain execution authority');
+requirePattern(scarcity, /resourceAuthority:\s*false/, 'Scarcity pricing must not become resource authority');
+requirePattern(scarcity, /normalizedShadowPrice/, 'Scarcity pricing must expose a bounded advisory shadow-price signal');
+requirePattern(scarcity, /Math\.max\(0,\s*Math\.min\(1,\s*value\)\)/, 'Scarcity price normalization must be explicitly bounded');
+forbidPattern(scarcity, /acquire|reserve|release\(/, 'Scarcity pricing must not mutate or reserve canonical resources');
+
+requirePattern(replanner, /authority:\s*'nix_gen_advisory_replanner'/, 'Replanner must identify itself as advisory');
+requirePattern(replanner, /executionAuthority:\s*false/, 'Replanner must not gain execution authority');
+requirePattern(replanner, /resourceAuthority:\s*false/, 'Replanner must not gain resource authority');
+requirePattern(replanner, /filtersCanonicalCandidates:\s*false/, 'Replanner must not filter canonical candidates');
+requirePattern(replanner, /createHash\('sha256'\)/, 'Replanner must fingerprint planning truth deterministically');
+for (const requiredTruth of ['netProfitUsd', 'notionalUsd', 'netBps', 'measuredAt', 'authority', 'resources', 'budgets', 'dispatchCapacity']) {
+  if (!replanner.includes(requiredTruth)) throw new Error(`Replanner fingerprint must include ${requiredTruth}`);
+}
+requirePattern(replanner, /planMaxAgeAt/, 'Replanner must bound advisory plan age');
+requirePattern(replanner, /temporalBoundaryAt/, 'Replanner must invalidate reuse at bid/evidence temporal boundaries');
+requirePattern(replanner, /reason === 'unchanged'[\s\S]{0,160}now < previous\.validUntil/, 'Replanner may reuse only unchanged still-valid advisory plans');
+forbidPattern(replanner, /setInterval|setTimeout|queueMicrotask/, 'Replanner must not create a competing scheduling loop');
+
 requirePattern(cexResources, /getCexPlanningProjection\(plan: VerifiedArbitragePlan\)/, 'CEX resource scheduler must expose a read-only planning projection');
 requirePattern(cexResources, /authority:\s*'execution_resource_scheduler_read_only'/, 'CEX planning projection must identify its authority boundary');
 requirePattern(cexResources, /mutatesResourceState:\s*false/, 'CEX planning projection must be non-mutating');
@@ -80,7 +102,14 @@ if (schedulerSort < 0 || nixCall < 0 || nixCall <= schedulerSort) throw new Erro
 requirePattern(scheduler, /Nix-Gen advisory ordering failed open to canonical order/, 'Scheduler must explicitly fail open on Nix-Gen advisory errors');
 requirePattern(scheduler, /nixGenExecutionAuthority:\s*false/, 'Scheduler telemetry must state Nix-Gen has no execution authority');
 
-for (const [name, text] of [['optimizer', optimizer], ['coordinator', coordinator], ['adapters', adapters], ['cexOrdering', cexOrdering]]) {
+for (const [name, text] of [
+  ['optimizer', optimizer],
+  ['coordinator', coordinator],
+  ['adapters', adapters],
+  ['cexOrdering', cexOrdering],
+  ['scarcity', scarcity],
+  ['replanner', replanner],
+]) {
   forbidPattern(text, /executeVerifiedArbitragePlan|submitOrder|placeOrder|broadcastTransaction|sendTransaction/, `${name} must not submit or execute trades`);
   forbidPattern(text, /stageManager\.|killSwitch\.|profitLadder\./, `${name} must not override governance authorities`);
   forbidPattern(text, /recordSettlement|recordProfit|learnFrom|training/, `${name} must not create settlement or learning authority`);
