@@ -40,6 +40,13 @@ const OKX_RATE_MAX_RETRIES = Math.floor(finiteEnvNumber('CRYPTO_OKX_RATE_MAX_RET
 const OKX_RATE_BREAKER_MS = finiteEnvNumber('CRYPTO_OKX_RATE_BREAKER_MS', 30_000, 1_000, 300_000);
 const OKX_DISTRIBUTED_RATE_LOCK_TIMEOUT_MS = finiteEnvNumber('CRYPTO_OKX_DISTRIBUTED_RATE_LOCK_TIMEOUT_MS', 7_500, 500, 30_000);
 const OKX_REPLICA_SAFETY_FACTOR = Math.floor(finiteEnvNumber('CRYPTO_OKX_REPLICA_SAFETY_FACTOR', 4, 1, 16));
+const OKX_ORDER_REQUEST_EXPIRY_MS = finiteEnvNumber('CRYPTO_OKX_ORDER_REQUEST_EXPIRY_MS', 2_000, 500, 5_000);
+const OKX_EXPIRABLE_ORDER_WRITE_PATHS = new Set([
+  '/api/v5/trade/order',
+  '/api/v5/trade/batch-orders',
+  '/api/v5/trade/amend-order',
+  '/api/v5/trade/amend-batch-orders',
+]);
 
 function credential(name: string): string | null {
   const raw = process.env[name];
@@ -634,12 +641,26 @@ function recordOkxSuccess(lane: OkxPrivateLane): void {
   if (state.breakerOpenUntil <= Date.now()) state.breakerOpenUntil = 0;
 }
 
+function okxOrderExpirationHeaders(
+  path: string,
+  method: 'GET' | 'POST',
+  expiresAtMs: number | null,
+): Record<string, string> {
+  if (method !== 'POST' || !OKX_EXPIRABLE_ORDER_WRITE_PATHS.has(path) || expiresAtMs === null) return {};
+  const remainingMs = expiresAtMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new Error(`OKX_ORDER_REQUEST_EXPIRED_BEFORE_SEND: ${path}`);
+  }
+  return { expTime: String(Math.floor(expiresAtMs)) };
+}
+
 async function authenticatedOkxRequestFromBase(
   baseUrl: string,
   path: string,
   method: 'GET' | 'POST',
   parameters: Record<string, string>,
   timeoutMs: number,
+  requestExpiresAtMs: number | null = null,
 ): Promise<any> {
   const apiKey = requireCredential('OKX_API_KEY');
   const apiSecret = requireCredential('OKX_API_SECRET');
@@ -659,6 +680,7 @@ async function authenticatedOkxRequestFromBase(
       'OK-ACCESS-TIMESTAMP': timestamp,
       'OK-ACCESS-PASSPHRASE': passphrase,
       'Content-Type': 'application/json',
+      ...okxOrderExpirationHeaders(path, method, requestExpiresAtMs),
     },
     body: method === 'POST' ? body : undefined,
   }, timeoutMs);
@@ -756,12 +778,20 @@ export async function okxPrivateRequest(
 ): Promise<{ payload: any; data: any[]; baseUrl: string }> {
   const baseUrl = await getOkxExecutionRestBaseUrl();
   const lane = options.lane || inferOkxLane(path, method);
+  // Mint one absolute freshness deadline after region resolution and preserve it
+  // across local pacing/rate-limit retries. A delayed retry must fail closed and
+  // return to canonical quote/economics revalidation instead of becoming a new
+  // stale opportunity with a freshly extended exchange deadline.
+  const requestExpiresAtMs = method === 'POST' && OKX_EXPIRABLE_ORDER_WRITE_PATHS.has(path)
+    ? Date.now() + OKX_ORDER_REQUEST_EXPIRY_MS
+    : null;
   const payload = await executeOkxWithAdaptiveRetry(lane, () => authenticatedOkxRequestFromBase(
     baseUrl,
     path,
     method,
     parameters,
     options.timeoutMs ?? OKX_TIMEOUT_MS,
+    requestExpiresAtMs,
   ));
   return {
     payload,
