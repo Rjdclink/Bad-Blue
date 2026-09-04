@@ -146,9 +146,9 @@ export function prepareMeasuredTopologyNixGenBid(
         probabilityOfProfitableExecution: Number.isFinite(decision.score.confidenceLevel)
           ? decision.score.confidenceLevel
           : undefined,
-        rankScore: Number.isFinite(decision.score.profitabilityScore)
-          ? Math.max(-75, Math.min(75, decision.score.profitabilityScore))
-          : undefined,
+        // Do not feed UnifiedExecutionScore.profitabilityScore back into Nix-Gen:
+        // that score already contains profit/confidence and would double-count them.
+        rankScore: undefined,
       },
       resources: projection.demands,
       mutualExclusionGroup: `opportunity:${candidate.opportunityId}`,

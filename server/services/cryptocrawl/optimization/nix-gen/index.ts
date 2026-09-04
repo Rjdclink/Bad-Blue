@@ -3,3 +3,4 @@ export * from './types.js';
 export * from './global-optimizer.js';
 export * from './canonical-bid-adapters.js';
 export * from './coordinator.js';
+export * from './cex-ordering.js';

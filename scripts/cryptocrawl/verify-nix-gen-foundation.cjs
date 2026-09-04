@@ -17,8 +17,10 @@ const types = read('server/services/cryptocrawl/optimization/nix-gen/types.ts');
 const optimizer = read('server/services/cryptocrawl/optimization/nix-gen/global-optimizer.ts');
 const coordinator = read('server/services/cryptocrawl/optimization/nix-gen/coordinator.ts');
 const adapters = read('server/services/cryptocrawl/optimization/nix-gen/canonical-bid-adapters.ts');
+const cexOrdering = read('server/services/cryptocrawl/optimization/nix-gen/cex-ordering.ts');
 const cexResources = read('server/services/cryptocrawl/execution/resource-scheduler.ts');
 const zeroResources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
+const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 
 requirePattern(types, /decisionAuthority:\s*'advisory_only'/, 'Nix-Gen must remain advisory-only');
 requirePattern(types, /executionAuthority:\s*false/, 'Nix-Gen must not gain execution authority');
@@ -45,6 +47,13 @@ requirePattern(coordinator, /fallbackComparator\(left, right\)/, 'Nix-Gen orderi
 requirePattern(adapters, /getCexPlanningProjection\(plan\)/, 'CEX Nix-Gen bids must consume the existing resource scheduler projection');
 requirePattern(adapters, /getMeasuredAtomicPlanningProjection/, 'Atomic Nix-Gen bids must consume the existing zero-capital resource scheduler projection');
 requirePattern(adapters, /resourceProjectionMutatesState:\s*projection\.mutatesResourceState/, 'Nix-Gen bid provenance must carry resource projection mutation truth');
+requirePattern(adapters, /profitabilityScore[\s\S]{0,220}double-count/, 'Measured-topology adapter must document profitability-score double-count prevention');
+forbidPattern(adapters, /rankScore:\s*Number\.isFinite\(decision\.score\.profitabilityScore\)/, 'Measured-topology profitabilityScore must not be re-applied as Nix-Gen rank');
+
+requirePattern(cexOrdering, /CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING\s*===\s*'true'/, 'CEX Nix-Gen ordering must be explicit opt-in');
+requirePattern(cexOrdering, /if \(!enabled \|\| original\.length < 2\)/, 'Disabled Nix-Gen ordering must immediately preserve canonical order');
+requirePattern(cexOrdering, /catch \(error\)[\s\S]{0,450}candidates:\s*original/, 'Nix-Gen ordering errors must fail open to canonical ordering');
+forbidPattern(cexOrdering, /\.filter\([^\n]*candidate/, 'CEX Nix-Gen ordering must not filter canonical candidates');
 
 requirePattern(cexResources, /getCexPlanningProjection\(plan: VerifiedArbitragePlan\)/, 'CEX resource scheduler must expose a read-only planning projection');
 requirePattern(cexResources, /authority:\s*'execution_resource_scheduler_read_only'/, 'CEX planning projection must identify its authority boundary');
@@ -53,7 +62,19 @@ requirePattern(zeroResources, /getMeasuredAtomicPlanningProjection/, 'Zero-capit
 requirePattern(zeroResources, /authority:\s*'zero_capital_resource_scheduler_read_only'/, 'Atomic planning projection must identify its authority boundary');
 requirePattern(zeroResources, /mutatesResourceState:\s*false/, 'Atomic planning projection must be non-mutating');
 
-for (const [name, text] of [['optimizer', optimizer], ['coordinator', coordinator], ['adapters', adapters]]) {
+requirePattern(scheduler, /\.filter\(snapshot => snapshot\.status === 'eligible'\)/, 'Canonical eligible filter must remain ahead of Nix-Gen ordering');
+requirePattern(scheduler, /runtimeInvariantMonitor\.evaluate\(snapshot\)\.allowed/, 'Runtime invariant hard gate must remain ahead of Nix-Gen ordering');
+requirePattern(scheduler, /snapshot\.plan\.netProfitUsd > 0/, 'Positive deterministic economics hard gate must remain ahead of Nix-Gen ordering');
+requirePattern(scheduler, /snapshot\.plan\.quoteAgeMs <= maxQuoteAgeMs/, 'Canonical quote freshness gate must remain ahead of Nix-Gen ordering');
+requirePattern(scheduler, /snapshot\.governance\.killSwitchActive === false/, 'Kill-switch gate must remain ahead of Nix-Gen ordering');
+requirePattern(scheduler, /snapshot\.governance\.paused === false/, 'Governance pause gate must remain ahead of Nix-Gen ordering');
+const schedulerSort = scheduler.indexOf('.sort((left, right) =>');
+const nixCall = scheduler.indexOf('orderCexCandidatesWithNixGen({');
+if (schedulerSort < 0 || nixCall < 0 || nixCall <= schedulerSort) throw new Error('Nix-Gen ordering must occur only after canonical filters and canonical fallback sort');
+requirePattern(scheduler, /Nix-Gen advisory ordering failed open to canonical order/, 'Scheduler must explicitly fail open on Nix-Gen advisory errors');
+requirePattern(scheduler, /nixGenExecutionAuthority:\s*false/, 'Scheduler telemetry must state Nix-Gen has no execution authority');
+
+for (const [name, text] of [['optimizer', optimizer], ['coordinator', coordinator], ['adapters', adapters], ['cexOrdering', cexOrdering]]) {
   forbidPattern(text, /executeVerifiedArbitragePlan|submitOrder|placeOrder|broadcastTransaction|sendTransaction/, `${name} must not submit or execute trades`);
   forbidPattern(text, /stageManager\.|killSwitch\.|profitLadder\./, `${name} must not override governance authorities`);
   forbidPattern(text, /recordSettlement|recordProfit|learnFrom|training/, `${name} must not create settlement or learning authority`);
