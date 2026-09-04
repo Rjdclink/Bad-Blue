@@ -74,16 +74,21 @@ BEGIN
     RETURN false;
   END IF;
 
-  IF p_opportunity_id IS NOT NULL AND length(trim(p_opportunity_id)) > 0 THEN
-    SELECT local_date INTO target_date
-    FROM public.cryptocrawler_operator_trade_reservations
-    WHERE opportunity_id=p_opportunity_id
-      AND status IN ('RESERVED','SUBMITTED','TERMINAL')
-    LIMIT 1;
+  -- Only a canonical operator-scheduled execution may affect the 20-profit-day
+  -- objective. Manual, diagnostic, controlled-loss, replay-only, or otherwise
+  -- off-schedule terminal evidence must never be silently assigned to "today".
+  IF p_opportunity_id IS NULL OR length(trim(p_opportunity_id)) = 0 THEN
+    RETURN false;
   END IF;
 
+  SELECT local_date INTO target_date
+  FROM public.cryptocrawler_operator_trade_reservations
+  WHERE opportunity_id=p_opportunity_id
+    AND status IN ('RESERVED','SUBMITTED','TERMINAL')
+  LIMIT 1;
+
   IF target_date IS NULL THEN
-    target_date := (now() AT TIME ZONE 'America/Chicago')::date;
+    RETURN false;
   END IF;
 
   IF NOT EXISTS (
@@ -94,7 +99,7 @@ BEGIN
 
   INSERT INTO public.cryptocrawler_operator_profit_events
     (event_id, opportunity_id, local_date, realized_profit_usd)
-  VALUES (p_event_id, NULLIF(trim(p_opportunity_id), ''), target_date, p_realized_pnl_usd)
+  VALUES (p_event_id, trim(p_opportunity_id), target_date, p_realized_pnl_usd)
   ON CONFLICT (event_id) DO NOTHING
   RETURNING event_id INTO inserted_event;
 
@@ -163,4 +168,4 @@ COMMENT ON COLUMN public.cryptocrawler_operator_strategy_days.eligibility_source
 COMMENT ON COLUMN public.cryptocrawler_operator_strategy_days.profit_qualified IS
   'True only while signed terminal-confirmed realized P&L for this local trading date remains above zero; only such days count toward the cycle target.';
 COMMENT ON FUNCTION public.cryptocrawler_operator_strategy_record_terminal_pnl(text,text,numeric) IS
-  'Idempotently records signed terminal realized P&L against the reservation local date and recomputes whether that day qualifies toward the 20-profit-day target.';
+  'Idempotently records signed terminal realized P&L only for a canonical operator-reserved execution, binds it to the reservation local date, and recomputes whether that day qualifies toward the 20-profit-day target.';
