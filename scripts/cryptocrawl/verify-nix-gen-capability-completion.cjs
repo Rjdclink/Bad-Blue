@@ -7,6 +7,13 @@ function must(text, needle, label) {
 function mustNot(text, needle, label) {
   if (text.includes(needle)) throw new Error(`NIX_GEN_CAPABILITY_COMPLETION_REGRESSION: ${label}`);
 }
+function mustBefore(text, first, second, label) {
+  const firstIndex = text.indexOf(first);
+  const secondIndex = text.indexOf(second);
+  if (firstIndex < 0 || secondIndex < 0 || firstIndex >= secondIndex) {
+    throw new Error(`NIX_GEN_CAPABILITY_COMPLETION_ORDERING: ${label}`);
+  }
+}
 
 const index = read('server/services/cryptocrawl/optimization/nix-gen/index.ts');
 const bids = read('server/services/cryptocrawl/optimization/nix-gen/canonical-bid-adapters.ts');
@@ -20,6 +27,9 @@ const crossChain = read('server/services/cryptocrawl/discovery/cross-chain-oppor
 const crossEconomics = read('server/services/cryptocrawl/discovery/cross-chain-route-economics.ts');
 const crossLifecycle = read('server/services/cryptocrawl/execution/cross-chain-durable-lifecycle.ts');
 const crossTerminal = read('server/services/cryptocrawl/bridge/across-terminal-amount-evidence.ts');
+const acrossExecutor = read('server/services/cryptocrawl/execution/across-bridge-executor.ts');
+const acrossPrebroadcast = read('server/services/cryptocrawl/execution/across-prebroadcast-durability.ts');
+const crossMigration = read('server/migrations/043_cryptocrawler_cross_chain_lifecycle.sql');
 const funding = read('server/services/cryptocrawl/discovery/funding-rate-monitor.ts');
 const fundingLifecycle = read('server/services/cryptocrawl/execution/funding-position-lifecycle.ts');
 const fundingAdapter = read('server/services/cryptocrawl/execution/okx-funding-lifecycle-adapter.ts');
@@ -59,6 +69,35 @@ must(crossEconomics, 'deterministicNetProfitUsd = routeGainUsdBeforeOriginGas - 
 must(crossTerminal, 'if (inputAmount !== quote.inputAmount) return null;', 'terminal deposit amount must match execution quote input');
 must(crossLifecycle, 'applyCrossChainSystemCapitalSettlement', 'terminal cross-chain settlement reconciles system-owned capital');
 must(crossLifecycle, "status: 'ACCOUNTING_PENDING'", 'missing terminal accounting evidence remains pending instead of fabricating settlement');
+
+// The exact origin transaction is durable before any Across principal broadcast.
+must(crossMigration, 'signed_origin_tx text', 'cross-chain lifecycle stores exact signed origin transaction bytes');
+must(crossMigration, 'origin_fee_complete boolean NOT NULL DEFAULT false', 'cross-chain lifecycle distinguishes approval-only gas from complete origin gas');
+must(crossMigration, "'PREPARED'", 'cross-chain lifecycle has a pre-broadcast durable state');
+must(crossMigration, "WHERE status IN ('FILLED','REFUNDED','FAILED')", 'origin failures participate in durable terminal feedback');
+must(acrossExecutor, "error: 'REJECT_ACROSS_DURABILITY_CALLBACK_REQUIRED'", 'Across principal execution requires durable lifecycle authority');
+must(acrossExecutor, 'signedOriginTx = await wallet.signTransaction(populated);', 'Across origin transaction is signed before broadcast');
+must(acrossExecutor, 'depositTxnRef = ethers.utils.keccak256(signedOriginTx).toLowerCase();', 'Across recovery identity is the exact signed transaction hash');
+must(acrossExecutor, 'await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });', 'signed origin transaction is durably armed before broadcast');
+must(acrossExecutor, 'submitted = await provider.sendTransaction(signedOriginTx);', 'principal broadcast uses the exact durable signed transaction');
+mustBefore(acrossExecutor, 'await options.onSubmitted({', 'await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });', 'lifecycle row must exist before signed transaction is armed');
+mustBefore(acrossExecutor, 'await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });', 'submitted = await provider.sendTransaction(signedOriginTx);', 'signed transaction must be durable before principal broadcast');
+must(acrossExecutor, 'duplicateSubmissionAllowed: false', 'ambiguous broadcast explicitly forbids duplicate principal submission');
+must(acrossPrebroadcast, 'ethers.utils.keccak256(raw).toLowerCase() !== hash', 'recovery rejects signed bytes whose hash differs from durable identity');
+must(acrossPrebroadcast, "WHERE (status='PREPARED' OR (status='SUBMITTED' AND origin_fee_complete=false))", 'restart worker recovers both armed and pre-arm durable rows');
+must(acrossPrebroadcast, 'const rebroadcast = await provider.sendTransaction(raw);', 'recovery can only rebroadcast the exact durable signed transaction');
+must(acrossPrebroadcast, "return finalizeOriginFailure(row, row.originNativeFeeWei, 'ACROSS_PREBROADCAST_NOT_BROADCAST');", 'proven pre-broadcast crashes terminally release untouched principal');
+must(acrossPrebroadcast, 'WITH released AS (', 'origin failure releases reservation and writes terminal state atomically');
+must(acrossPrebroadcast, "if (receipt.status !== 1) return finalizeOriginFailure(row, feeWei, 'ACROSS_ORIGIN_DEPOSIT_REVERTED');", 'origin revert is terminal realized gas-loss evidence');
+must(acrossPrebroadcast, 'duplicateSubmissionAllowed: false', 'recovery explicitly denies second principal submission');
+mustNot(acrossPrebroadcast, "pool.query('BEGIN')", 'pooled queries cannot impersonate a pinned database transaction');
+mustNot(acrossPrebroadcast, 'WALLET_PRIVATE_KEY', 'prebroadcast recovery does not read signer secrets');
+mustNot(acrossPrebroadcast, 'setInterval(', 'prebroadcast recovery cannot create a competing timer');
+must(combinedAdapter, 'advancePreparedAcrossOriginTransactions(limit)', 'existing scheduler cadence advances prebroadcast recovery');
+must(combinedAdapter, 'claimPendingAcrossOriginFailureFeedback', 'origin failures enter durable terminal feedback');
+must(combinedAdapter, "if (result.status === 'REFUNDED') return 'refunded';", 'cross-chain terminal mapping preserves refund truth');
+must(combinedAdapter, "return 'failed';", 'origin failures are recorded as failed terminal executions');
+must(combinedAdapter, "const submitted = (result.status === 'opened' || result.status === 'opening') && Boolean(result.lifecycleId);", 'ambiguous funding opening consumes the parent submission slot');
 
 // Funding entry remains projected expected value. Only authenticated terminal fills/bills establish realized profit.
 must(funding, 'deterministicNetProfitUsd: null', 'funding discovery never writes projected carry into deterministic profit');
