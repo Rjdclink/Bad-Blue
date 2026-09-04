@@ -14,6 +14,14 @@ function mustBefore(text, first, second, label) {
     throw new Error(`NIX_GEN_CAPABILITY_COMPLETION_ORDERING: ${label}`);
   }
 }
+function mustBetween(text, start, needle, end, label) {
+  const startIndex = text.indexOf(start);
+  const endIndex = text.indexOf(end, Math.max(0, startIndex));
+  const needleIndex = text.indexOf(needle, Math.max(0, startIndex));
+  if (startIndex < 0 || endIndex < 0 || needleIndex < 0 || needleIndex <= startIndex || needleIndex >= endIndex) {
+    throw new Error(`NIX_GEN_CAPABILITY_COMPLETION_BOUNDARY: ${label}`);
+  }
+}
 
 const index = read('server/services/cryptocrawl/optimization/nix-gen/index.ts');
 const bids = read('server/services/cryptocrawl/optimization/nix-gen/canonical-bid-adapters.ts');
@@ -92,6 +100,22 @@ must(acrossExecutor, 'submitted = await provider.sendTransaction(signedOriginTx)
 mustBefore(acrossExecutor, 'await options.onSubmitted({', 'await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });', 'lifecycle row must exist before signed transaction is armed');
 mustBefore(acrossExecutor, 'await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });', 'submitted = await provider.sendTransaction(signedOriginTx);', 'signed transaction must be durable before principal broadcast');
 must(acrossExecutor, 'duplicateSubmissionAllowed: false', 'ambiguous broadcast explicitly forbids duplicate principal submission');
+
+// Receipt-backed approval cost is preserved only when the prebroadcast cost is complete.
+must(acrossExecutor, 'approvalTxnRefs?: string[];', 'Across result exposes stable approval receipt identities');
+must(acrossExecutor, 'prebroadcastTerminalCostComplete?: boolean;', 'Across result distinguishes complete prebroadcast cost from ambiguous approval state');
+must(acrossExecutor, 'approvalTxnRefs.push(tx.hash.toLowerCase());', 'approval transaction identity is captured before receipt wait');
+must(acrossExecutor, 'const errorReceipt = (error as { receipt?: ethers.providers.TransactionReceipt } | null)?.receipt;', 'thrown approval receipts are recovered as exact gas evidence');
+must(acrossExecutor, '...prebroadcastCost(false)', 'ambiguous approval state cannot be misreported as complete terminal cost');
+must(combinedAdapter, 'async function persistAcrossPrebroadcastTerminalCost', 'prebroadcast approval cost has a durable persistence path');
+must(combinedAdapter, "authority: 'receipt_backed_across_prebroadcast_cost'", 'prebroadcast cost authority is exact receipt-backed evidence');
+must(combinedAdapter, 'principalBroadcast: false', 'prebroadcast cost lifecycle explicitly proves principal never moved');
+must(combinedAdapter, "'FAILED',$17::jsonb", 'prebroadcast cost enters the existing durable terminal-failure stream');
+must(combinedAdapter, 'ACROSS_PREBROADCAST_COST_ONLY:', 'prebroadcast cost feedback remains distinguishable from origin-principal failures');
+must(combinedAdapter, "await client.query('BEGIN');", 'cost persistence uses a pinned database transaction');
+must(combinedAdapter, 'DELETE FROM ${ONCHAIN_RESERVATION_TABLE} WHERE reservation_id=$1::uuid', 'principal reservation release is atomic with durable terminal-cost persistence');
+mustNot(combinedAdapter, "pool.query('BEGIN')", 'prebroadcast cost persistence cannot use pooled BEGIN/COMMIT');
+
 must(acrossPrebroadcast, 'ethers.utils.keccak256(raw).toLowerCase() !== hash', 'recovery rejects signed bytes whose hash differs from durable identity');
 must(acrossPrebroadcast, "WHERE (status='PREPARED' OR (status='SUBMITTED' AND origin_fee_complete=false))", 'restart worker recovers both armed and pre-arm durable rows');
 must(acrossPrebroadcast, 'const rebroadcast = await provider.sendTransaction(raw);', 'recovery can only rebroadcast the exact durable signed transaction');
@@ -103,12 +127,17 @@ mustNot(acrossPrebroadcast, "pool.query('BEGIN')", 'pooled queries cannot impers
 mustNot(acrossPrebroadcast, 'WALLET_PRIVATE_KEY', 'prebroadcast recovery does not read signer secrets');
 mustNot(acrossPrebroadcast, 'setInterval(', 'prebroadcast recovery cannot create a competing timer');
 must(combinedAdapter, 'advancePreparedAcrossOriginTransactions(limit)', 'existing scheduler cadence advances prebroadcast recovery');
-must(combinedAdapter, 'claimPendingAcrossOriginFailureFeedback', 'origin failures enter durable terminal feedback');
+must(combinedAdapter, 'claimPendingAcrossOriginFailureFeedback', 'origin and cost-only failures enter durable terminal feedback');
 must(combinedAdapter, "if (result.status === 'REFUNDED') return 'refunded';", 'cross-chain terminal mapping preserves refund truth');
 must(combinedAdapter, "return 'failed';", 'origin failures are recorded as failed terminal executions');
 must(combinedAdapter, "const submitted = (result.status === 'opened' || result.status === 'opening') && Boolean(result.lifecycleId);", 'ambiguous funding opening consumes the parent submission slot');
+
+// Lifecycle risk-management maintenance must run before and gate all new exposure.
 must(canonicalScheduler, 'await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);', 'long-lived lifecycle recovery runs on the canonical scheduler cadence');
 mustBefore(canonicalScheduler, 'await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);', "if (!isLiveExecutionPosture())", 'lifecycle recovery runs before new-exposure posture gates');
+must(canonicalScheduler, "this.setIdle('lifecycle_maintenance_failed');", 'maintenance failure has an explicit scheduler state');
+must(canonicalScheduler, 'cycleTerminatedBeforeNewExposure: true', 'maintenance failure declares cycle termination before new exposure');
+mustBetween(canonicalScheduler, "this.setIdle('lifecycle_maintenance_failed');", 'return;', "if (!isLiveExecutionPosture())", 'maintenance failure actually returns before any new-exposure gate');
 
 // Funding entry remains projected expected value. Only authenticated terminal fills/bills establish realized profit.
 must(funding, 'deterministicNetProfitUsd: null', 'funding discovery never writes projected carry into deterministic profit');
