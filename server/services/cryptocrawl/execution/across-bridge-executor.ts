@@ -22,6 +22,20 @@ export interface AcrossBridgeExecutionResult {
   error?: string;
 }
 
+export interface AcrossBridgeExecutionOptions {
+  /**
+   * Called immediately after the origin deposit receipt succeeds and before any
+   * settlement wait. Production callers use this to persist restart-safe state.
+   */
+  onSubmitted?: (input: {
+    depositTxnRef: string;
+    originNativeFeeWei: string;
+    submittedAt: number;
+  }) => Promise<void> | void;
+  /** Return after durable submission instead of blocking a scheduler lane for the bridge fill window. */
+  returnAfterSubmission?: boolean;
+}
+
 type TxPayload = {
   to: string;
   data: string;
@@ -111,7 +125,10 @@ async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approv
   }
 }
 
-export async function executeAcrossBridgeQuote(quote: AcrossBridgeQuote): Promise<AcrossBridgeExecutionResult> {
+export async function executeAcrossBridgeQuote(
+  quote: AcrossBridgeQuote,
+  options: AcrossBridgeExecutionOptions = {},
+): Promise<AcrossBridgeExecutionResult> {
   if (quote.provider !== 'across' || quote.originChain === quote.destinationChain) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_ROUTE' };
   }
@@ -173,6 +190,44 @@ export async function executeAcrossBridgeQuote(quote: AcrossBridgeQuote): Promis
   if (originReceipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(originReceipt));
   if (!originReceipt || originReceipt.status !== 1) {
     return { success: false, status: 'failed', settlementConfirmed: false, depositTxnRef: submitted.hash, originNativeFeeWei: nativeFeeWei.toString(), error: 'ACROSS_ORIGIN_DEPOSIT_FAILED' };
+  }
+
+  const submittedAt = Date.now();
+  if (options.onSubmitted) {
+    try {
+      await options.onSubmitted({
+        depositTxnRef: submitted.hash,
+        originNativeFeeWei: nativeFeeWei.toString(),
+        submittedAt,
+      });
+    } catch (error) {
+      logger.error('[AcrossBridgeExecution] Origin deposit succeeded but durable submission callback failed; settlement remains unknown and capital must remain reserved', {
+        component: 'AcrossBridgeExecutor',
+        depositTxnRef: submitted.hash,
+        originNativeFeeWei: nativeFeeWei.toString(),
+        error: error instanceof Error ? error.message : String(error),
+        originDepositSucceeded: true,
+        capitalReleaseAllowed: false,
+      });
+      return {
+        success: false,
+        status: 'settlement_unknown',
+        settlementConfirmed: false,
+        depositTxnRef: submitted.hash,
+        originNativeFeeWei: nativeFeeWei.toString(),
+        error: 'ACROSS_SUBMISSION_DURABILITY_CALLBACK_FAILED',
+      };
+    }
+  }
+
+  if (options.returnAfterSubmission) {
+    return {
+      success: false,
+      status: 'submitted',
+      settlementConfirmed: false,
+      depositTxnRef: submitted.hash,
+      originNativeFeeWei: nativeFeeWei.toString(),
+    };
   }
 
   const timeoutMs = bounded(process.env.ACROSS_TERMINAL_SETTLEMENT_TIMEOUT_MS, 20 * 60_000, 30_000, 2 * 60 * 60_000);
