@@ -2,6 +2,7 @@ import type { ZeroCapitalOpportunity } from '../../core/zero-capital-engine.js';
 import { measuredCandidateRegistry } from '../../discovery/measured-candidate-registry.js';
 import { routeMeasuredOpportunity } from '../../execution/unified-execution-router.js';
 import { prepareMeasuredTopologyNixGenBid, type NixGenPreparedBid } from './canonical-bid-adapters.js';
+import { clearNixGenLivePriority, publishNixGenLivePriority } from './live-priority-registry.js';
 import { replanNixGenAllocation, type NixGenReplanSnapshot } from './replanner.js';
 
 export interface NixGenZeroCapitalOrderingInput {
@@ -26,19 +27,18 @@ function fallbackCompare(left: ZeroCapitalOpportunity, right: ZeroCapitalOpportu
   return left.expectedProfit > right.expectedProfit ? -1 : 1;
 }
 
-/**
- * Nix-Gen ordering for the existing zero-capital engine queue. This function is
- * advisory only: it never creates opportunities, changes canonical eligibility,
- * acquires leases, invokes execution, or records settlement. The existing
- * zero-capital engine remains the sole execution/settlement authority.
- */
 export function orderZeroCapitalOpportunitiesWithNixGen(
   input: NixGenZeroCapitalOrderingInput,
 ): NixGenZeroCapitalOrderingResult {
   const original = [...input.opportunities];
   const enabled = process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING !== 'false';
-  if (!enabled || original.length < 2) {
-    if (!enabled) previousZeroCapitalReplan = undefined;
+  if (!enabled) {
+    previousZeroCapitalReplan = undefined;
+    clearNixGenLivePriority('zero_capital');
+    return { opportunities: original, enabled, applied: false, preparedCount: 0, error: null };
+  }
+  if (original.length === 0) {
+    clearNixGenLivePriority('zero_capital');
     return { opportunities: original, enabled, applied: false, preparedCount: 0, error: null };
   }
 
@@ -56,25 +56,40 @@ export function orderZeroCapitalOpportunitiesWithNixGen(
       if (bid) prepared.push(bid);
     }
 
-    if (prepared.length < 2) {
+    const capacity = Math.max(1, Math.floor(input.dispatchCapacity || 1));
+    const live = publishNixGenLivePriority({
+      source: 'zero_capital',
+      prepared,
+      now: input.now,
+      dispatchCapacity: capacity,
+    });
+    if (prepared.length === 0) {
       previousZeroCapitalReplan = undefined;
-      return { opportunities: original, enabled, applied: false, preparedCount: prepared.length, error: null };
+      return { opportunities: original, enabled, applied: false, preparedCount: 0, error: null };
     }
 
     const replan = replanNixGenAllocation({
       prepared,
       now: input.now,
-      dispatchCapacity: Math.max(1, Math.floor(input.dispatchCapacity || 1)),
+      dispatchCapacity: capacity,
     }, previousZeroCapitalReplan);
     previousZeroCapitalReplan = replan;
-    const priority = replan.allocation.priorityIndexByOpportunityId;
+    const localPriority = replan.allocation.priorityIndexByOpportunityId;
+    const globalPriority = live.priorityIndexByOpportunityId;
     const ordered = [...original].sort((left, right) => {
-      const leftRank = priority[left.id];
-      const rightRank = priority[right.id];
-      const leftKnown = Number.isInteger(leftRank) && leftRank >= 0;
-      const rightKnown = Number.isInteger(rightRank) && rightRank >= 0;
-      if (leftKnown && rightKnown && leftRank !== rightRank) return leftRank - rightRank;
-      if (leftKnown !== rightKnown) return leftKnown ? -1 : 1;
+      const leftGlobal = globalPriority[left.id];
+      const rightGlobal = globalPriority[right.id];
+      const leftGlobalKnown = Number.isInteger(leftGlobal) && leftGlobal >= 0;
+      const rightGlobalKnown = Number.isInteger(rightGlobal) && rightGlobal >= 0;
+      if (leftGlobalKnown && rightGlobalKnown && leftGlobal !== rightGlobal) return leftGlobal - rightGlobal;
+      if (leftGlobalKnown !== rightGlobalKnown) return leftGlobalKnown ? -1 : 1;
+
+      const leftLocal = localPriority[left.id];
+      const rightLocal = localPriority[right.id];
+      const leftLocalKnown = Number.isInteger(leftLocal) && leftLocal >= 0;
+      const rightLocalKnown = Number.isInteger(rightLocal) && rightLocal >= 0;
+      if (leftLocalKnown && rightLocalKnown && leftLocal !== rightLocal) return leftLocal - rightLocal;
+      if (leftLocalKnown !== rightLocalKnown) return leftLocalKnown ? -1 : 1;
       return fallbackCompare(left, right);
     });
 
