@@ -1,4 +1,5 @@
 const fs = require('fs');
+const ts = require('typescript');
 
 function read(path) {
   if (!fs.existsSync(path)) throw new Error(`Missing ${path}`);
@@ -13,6 +14,24 @@ function forbidPattern(text, pattern, message) {
   if (pattern.test(text)) throw new Error(message);
 }
 
+function stringLiteralUnionMembers(sourceText, aliasName) {
+  const sourceFile = ts.createSourceFile('nix-gen-types.ts', sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const declaration = sourceFile.statements.find(statement =>
+    ts.isTypeAliasDeclaration(statement) && statement.name.text === aliasName,
+  );
+  if (!declaration) throw new Error(`Missing type alias ${aliasName}`);
+  if (!ts.isUnionTypeNode(declaration.type)) throw new Error(`${aliasName} must remain a string-literal union`);
+
+  const members = new Set();
+  for (const typeNode of declaration.type.types) {
+    if (!ts.isLiteralTypeNode(typeNode) || !ts.isStringLiteral(typeNode.literal)) {
+      throw new Error(`${aliasName} must contain only string-literal members`);
+    }
+    members.add(typeNode.literal.text);
+  }
+  return members;
+}
+
 const types = read('server/services/cryptocrawl/optimization/nix-gen/types.ts');
 const optimizer = read('server/services/cryptocrawl/optimization/nix-gen/global-optimizer.ts');
 const coordinator = read('server/services/cryptocrawl/optimization/nix-gen/coordinator.ts');
@@ -24,17 +43,21 @@ const cexResources = read('server/services/cryptocrawl/execution/resource-schedu
 const zeroResources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 
+const rejectionReasons = stringLiteralUnionMembers(types, 'NixGenBidRejectionReason');
+const deferredReasons = stringLiteralUnionMembers(types, 'NixGenDeferredBidReason');
+
 requirePattern(types, /decisionAuthority:\s*'advisory_only'/, 'Nix-Gen must remain advisory-only');
 requirePattern(types, /executionAuthority:\s*false/, 'Nix-Gen must not gain execution authority');
 requirePattern(types, /canonicalEconomicsAuthority:\s*false/, 'Nix-Gen must not gain canonical economics authority');
 requirePattern(types, /netBps:\s*number\s*\|\s*null/, 'Nix-Gen must preserve unknown canonical BPS instead of recalculating it');
 requirePattern(types, /priorityOrderOpportunityIds/, 'Nix-Gen must preserve a complete advisory priority order');
 requirePattern(types, /deferred:\s*NixGenDeferredBid\[\]/, 'Nix-Gen must distinguish advisory deferral from hard rejection');
-requirePattern(types, /NixGenDeferredBidReason[\s\S]{0,180}'resource_unavailable'/, 'Temporary resource unavailability must be representable as advisory deferral');
-requirePattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'resource_budget_missing'/, 'Missing resource evidence must remain a hard-invalid input');
-forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'not_selected_by_optimizer'/, 'Advisory non-selection must not be represented as hard rejection');
-forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'mutual_exclusion'/, 'Mutual exclusion must be an advisory deferral, not hard rejection');
-forbidPattern(types, /NixGenBidRejectionReason[\s\S]{0,500}'resource_unavailable'/, 'Known temporary resource insufficiency must be a deferral, not hard rejection');
+if (!deferredReasons.has('resource_unavailable')) throw new Error('Temporary resource unavailability must be representable as advisory deferral');
+if (!deferredReasons.has('mutual_exclusion')) throw new Error('Mutual exclusion must be representable as advisory deferral');
+if (!rejectionReasons.has('resource_budget_missing')) throw new Error('Missing resource evidence must remain a hard-invalid input');
+for (const reason of ['not_selected_by_optimizer', 'mutual_exclusion', 'resource_unavailable']) {
+  if (rejectionReasons.has(reason)) throw new Error(`${reason} must not be represented as hard rejection`);
+}
 
 requirePattern(optimizer, /non_positive_canonical_economics/, 'Nix-Gen must reject non-positive canonical economics from its optimizer input');
 requirePattern(optimizer, /not_canonically_eligible/, 'Nix-Gen must consume already-eligible opportunities only');
