@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 12;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v12';
+const SCHEMA_VERSION = 13;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v13';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
@@ -51,6 +51,8 @@ const MIGRATIONS = [
   '039_cryptocrawler_system_capital_transfer_truth_hardening.sql',
   '040_cryptocrawler_treasury_reservation_lifecycle_guard.sql',
   '041_cryptocrawler_controlled_loss_learning.sql',
+  '042_cryptocrawler_onchain_system_capital.sql',
+  '043_cryptocrawler_cross_chain_lifecycle.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -78,6 +80,10 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_system_capital_allocations',
   'public.cryptocrawler_cex_system_owned_lots',
   'public.cryptocrawler_cex_system_owned_settlements',
+  'public.cryptocrawler_onchain_system_owned_lots',
+  'public.cryptocrawler_onchain_inventory_reservations',
+  'public.cryptocrawler_onchain_system_owned_settlements',
+  'public.cryptocrawler_cross_chain_lifecycles',
   'public.cryptocrawler_operator_strategy_control',
   'public.cryptocrawler_operator_strategy_cycles',
   'public.cryptocrawler_operator_strategy_days',
