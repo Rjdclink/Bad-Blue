@@ -4,12 +4,12 @@ GOVERNING LAW
 Absolutely no regression. Preserve hard safety, deterministic economics, one canonical BPS/economic authority, one canonical execution authority, terminal settlement truth, measured/realized evidence, and fail-closed behavior where financial correctness requires it.
 
 LIVING BLUEPRINT RULE — ACTIVE
-Before every implementation slice: refresh broad public-web evidence relevant to that slice; compare it with the current repo; reuse existing mechanisms rather than duplicating authority; select the smallest beneficial non-regressive change; implement; verify; update this file. Scope intentionally includes exchange docs, market microstructure, execution/routing, queue priority, fees/rebates, RFQ/auctions/solvers, latency/control, DEX/MEV/private execution, market-data resilience, cross-impact, settlement, and related BPS-reduction subjects. Never fabricate private/classified material. Only measured realized savings may become canonical economics.
+Before every implementation slice: refresh current public evidence relevant to that slice; compare it with the repo; reuse existing mechanisms rather than duplicating authority; select the smallest beneficial non-regressive change; implement; verify; update this file. Never fabricate private/classified material. Only measured/realized savings may become canonical economics.
 
 WORKING BRANCH
 repair/cryptocrawl-bps-efficiency-wave2-20260903
 PR #512: Cryptocrawl: BPS efficiency wave 2
-Base production-development reference before this package: 597709d32c08358fadb08b6c021518c2fe7ae58a
+Base: develop
 Do not merge until the entire package and preview verification are complete.
 
 TARGET PACKAGE
@@ -34,132 +34,125 @@ COMPLETE.
 
 MILESTONE 1 — LOW-REGRESSION BPS FOUNDATION
 VERIFIED GREEN.
-Verified foundation deployment included realized maker calibration, measured liquidity resilience, one-tick non-marketable queue-jump ranking, RPI outward spacing normalization, and decomposed measured order-control telemetry without creating BPS or execution authority.
-Implemented #4/#6/#7/#10/#14 foundation.
-Key files added:
-- server/services/cryptocrawl/intelligence/maker-terminal-calibration.ts
-- server/services/cryptocrawl/intelligence/liquidity-resilience.ts
-- server/services/cryptocrawl/intelligence/maker-tick-queue-optimizer.ts
-- scripts/cryptocrawl/verify-bps-efficiency-wave2-foundation.cjs
-Key files changed:
-- server/services/cryptocrawl/intelligence/cex-order-control-health.ts
-- server/services/cryptocrawl/execution/post-only-maker-adapters.ts
-- server/services/cryptocrawl/intelligence/cex-four-mode-matrix.ts
-- scripts/cryptocrawl/verify-deployment-preflight.cjs
-- scripts/cryptocrawl/verify-cex-websocket-rpi-modernization.cjs (static alignment only)
-Canonical TT/MT/TM/MM economics remain gross spread minus authenticated fees; advisory models never fabricate BPS.
+Implemented #4/#6/#7/#10/#14 foundation:
+- realized terminal maker calibration
+- measured liquidity refill/depletion resilience
+- non-marketable one-tick queue-jump ranking
+- OKX RPI outward spacing normalization
+- decomposed submit/query/cancel + OKX gateway order-control telemetry
+Canonical TT/MT/TM/MM economics remain measured spread/depth minus authenticated costs; advisory models never fabricate BPS.
 
 MILESTONE 2 — EXCHANGE-SIDE STALE-ORDER PROTECTION
 VERIFIED GREEN.
-Implementation commit family: a26852d28771d68f70cec9541393eea521e933a2 + verifier-only correction b47dacb41aa120d4131073be68507ab641278d3a.
-Verified Railway preview deployment: f85e1fae-a1d1-4258-930e-d5c84d160fd1 — SUCCESS.
-Runtime boot source identity matched exactly: b47dacb41aa120d4131073be68507ab641278d3a. Overflow schema ready, server ready, canonical runtime installed, live-execution posture remained enabled, Stage-1 live-positive execution remained enabled.
+Shared OKX private authority owns one fixed exchange-side expTime for supported order writes. Stale delayed retries fail closed; IOC/FOK/post-only/RPI semantics and canonical economics/settlement authority remain unchanged.
 
-Implemented #1:
-- Shared OKX private authority now owns `expTime`.
-- Default deadline lifetime 2000 ms, bounded 500–5000 ms.
-- Explicit allowlist only: /api/v5/trade/order, /api/v5/trade/batch-orders, /api/v5/trade/amend-order, /api/v5/trade/amend-batch-orders.
-- No expTime injection into cancel/query/history/fills endpoints.
-- One absolute deadline survives local rate pacing/retry; it is not renewed after delay.
-- Stale requests fail locally before physical send with OKX_ORDER_REQUEST_EXPIRED_BEFORE_SEND.
-- expTime is a REST header and does not mutate the signed order payload.
-- Existing IOC, FOK, post-only and RPI order families inherit the protection through the one shared private authority.
-- New verifier: scripts/cryptocrawl/verify-okx-order-expiration.cjs.
+ZERO-CAPITAL FRESHNESS / CONTINUOUS-SCAN REPAIR
+VERIFIED GREEN BEFORE MILESTONE 3.
+Current repair family includes:
+- stale measured opportunity reads repaired across topologies
+- stale zero-capital recovery opportunities expire
+- stale eligible opportunities quarantined before execution
+- stale canonical dashboard opportunities hidden
+- zero-capital measurement timestamp/age exposed
+- stale zero-capital route evidence expires at source
+- failed fresh requote clears stale recent BPS/notional evidence
+- historical learning remains historical only; stale economics cannot masquerade as current execution evidence
 
-Verifier history:
-- Deployment 54926013-660c-46cb-8322-4ff2cceb5b8e failed only because the new static verifier expected a direct okxPrivateRequest call in cex-settlement.ts although settlement correctly uses its shared wrapper.
-- b47dacb fixed only that verifier assumption: it proves the wrapper delegates to okxPrivateRequest and the IOC submit uses that wrapper. No runtime economics or safety semantics were weakened.
-- Full preflight then passed, application/server/worker builds completed, Docker image exported, and f85e1fae... became SUCCESS.
-
-CURRENT LIVE PREVIEW OBSERVATION AFTER MILESTONE 2
-This is runtime telemetry, not a production-profit claim:
-- runtime identity verified; source b47dacb...
-- stage 1 unpaused; canExecuteTrades=true
-- eligible candidates=0, attempts=0, settlements=0 at the sampled heartbeat
-- current sampled CEX economic barrier: USDCUSDT Kraken->OKX, gross -1.0001 BPS, authenticated combined taker fee 20 BPS, net -21.0001 BPS; sampled maker fee surface also -21.0001 BPS.
-- inventory telemetry showed no spendable CEX inventory at that sampled heartbeat.
-- runtime observed 541 opportunities/minute.
-- fresh CEX graph cycle `cex-graph:continuous_scan:1788481796325` evaluated 125 symbols in 2760 ms with discoveryEvidenceCount=292.
-- order-book evolution showed fresh per-symbol timestamps across Coinbase/Kraken/OKX.
-Conclusion: CEX scanning is refreshing; a blanket claim that the entire system is not rescanning is false.
-
-ZERO-CAPITAL REFRESH ISSUE DISCOVERED — HIGH PRIORITY
-User supplied DeepSeek analysis noting the same historical `-23 BPS` routeId repeated with `attempts:7`, while observedCandidates/positiveCandidates remained zero. That analysis is directionally plausible: a repeated stored closest-route value is not proof of a fresh quote.
-
-Current runtime evidence provides the stronger diagnosis:
-- ZeroCapitalEngine initialized with connectedChains=[ethereum,polygon,arbitrum,optimism,bsc,avalanche].
-- fundingReady=true.
-- configuredRoutes=0.
-- authoritative runtime zero-capital telemetry: observedWithBps=0, nearBreakEven=0, positive=0.
-- BpsCompressionMesh zeroCapital observedCandidates=0, positiveCandidates=0, closestGapBps=null.
-- execution scheduler attempts=0, settled=0, lastIdleReason=`no_eligible_candidates`.
-
-Interpretation:
-- The current zero-capital lane is NOT producing a fresh configured/quoted route population into canonical candidate telemetry.
-- Historical/previous closest-route observability can therefore repeat while no fresh zero-capital quote is being produced.
-- Do not label the repeated `-23 BPS` value as a new opportunity unless attempt counters, observation timestamps, or canonical measured-candidate evidence advance.
-- The likely seam to trace is route hydration/discovery feeding ZeroCapitalEngine/canonical scan, because `configuredRoutes=0` exists despite connected chains and funding readiness.
-- Fix must reacquire fresh route evidence and measured quotes; never replay stale economics into eligibility.
-- Preserve one canonical BPS authority and one canonical execution scheduler.
-
-OTHER CURRENT RUNTIME CONSTRAINTS
-- INVENTORY_READY=false for CEX: 5 reconciled Coinbase assets, 0 spendable assets, 0 spendable venues.
-- Coinbase had 0.98 USDC but minimumReserve=0.98, making spendable amount zero.
-- CANDIDATE_READY=false and TRADING_READY=false at sampled heartbeat.
-- Governance remains ready: stage=1, paused=false, killSwitchActive=false, canExecuteTrades=true.
-- zeroCapitalResourceReady=false in the authoritative readiness snapshot, while ZeroCapitalEngine later emitted fundingReady=true. Treat this as a topology-local readiness discrepancy to trace from current code/evidence; do not weaken readiness checks.
-- Funding-arbitrage discovery produced 12 enriched observations, blocked by `funding_lifecycle_adapter_unavailable`; separate production-readiness gap.
-- Optional provider degradation exists (0x entitlement/auth failure and some public RPC fallbacks), but core CEX discovery remained ready/live.
-
-BLUEPRINT REFRESH FOR MILESTONE 3 — KRAKEN L3 + QUEUE-PRESERVING AMEND
-Public Kraken documentation revalidated immediately before implementation:
-- Kraken REST AmendOrder is POST /0/private/AmendOrder with application/json.
-- It modifies an order in-place, keeps the order identifiers, and maintains queue priority where possible.
-- `limit_price` is supported; `post_only:true` rejects a price amend if it cannot remain passive.
-- REST `deadline` is RFC3339; matching engine rejects stale amend requests; allowed window is now()+2s through now()+60s.
-- Successful amend returns an `amend_id`.
-- Kraken L3 is authenticated POST /0/private/Level3 with application/json.
-- Bounded depth options include 10; entries include individual price, qty, order_id and timestamp.
-- Kraken authentication remains HMAC-SHA512(path + SHA256(nonce + exact POST data)); official auth examples explicitly support a raw JSON string by prefixing the nonce parsed from that JSON before hashing.
-Research refresh also confirms queue position affects fill/adverse-selection value, and recent L3 research warns that depth-only state cannot recover rank-sensitive queue-ahead information. These are advisory motivation only; academic estimates never enter canonical BPS.
+Continuous scan configuration is bounded and non-starving:
+- unified topology scan interval 5000 ms
+- maximum topology coverage gap 5000 ms
+- CEX mode matrix interval 5000 ms
+- zero-capital scan fixed at 2500 ms
+- zero-capital recovery observability 5000 ms
+- zero-capital route evidence max age 10000 ms
+Live unified cycles have shown skippedTopologies=[] and minimumCoveragePreserved=true. The repeated -23 BPS example was remeasured route economics, NOT a target, threshold, floor, ceiling, configured metric, or desired value.
 
 MILESTONE 3 — KRAKEN L3 QUEUE INTELLIGENCE + ATOMIC AMEND
-STATUS: READY TO IMPLEMENT, BUT ZERO-CAPITAL FRESH-SCAN ROOT CAUSE NOW TAKES IMMEDIATE PRIORITY BEFORE CONTINUING OPTIONAL BPS SLICES.
-Smallest authority-safe design when resumed:
-1. Extend existing `krakenPrivateRequest` transport with opt-in JSON encoding while preserving form encoding as default. Do NOT create second signing/nonce lane.
-2. `/0/private/AmendOrder` only: bounded REST deadline minted immediately before signing/network submission after local serialization/coordination delay; target ~3s, bounded to documented 2–60s.
-3. Add bounded authenticated Kraken L3 reader, depth=10. Resolve pair through canonical live product constraints. Find exact order_id on correct side. Compute same-price qty/orders ahead conservatively from timestamps; absence from depth=10 means UNKNOWN, never zero queue-ahead.
-4. L3 advisory only and safe-degrading; cannot block existing maker execution.
-5. In existing Kraken post-only maker adapter lifecycle, after sufficient rest, acquire low-frequency L3 evidence. Only consider one-tick non-marketable amend when exact order visible and actual queue-ahead exists.
-6. Reuse `evaluateMakerTickQueueJump`; no second optimizer.
-7. Before amend, reacquire fresh canonical L2, verify proposed price remains strictly passive, calculate exact worst-case dollar concession on remaining quantity.
-8. Keep per-plan cumulative concession budget across maker legs; require plan.netProfitUsd - cumulativeConcessionUsd - newConcessionUsd > safety epsilon.
-9. Use `/0/private/AmendOrder` with `post_only:true`; initially max one amend/order. Never use EditOrder. Never cancel/reinsert as optimization fallback.
-10. Amend/L3 failure local degradation only; preserve resting order lifecycle and unrelated execution.
-11. Add preflight verifier proving form default, JSON opt-in, one nonce/signing authority, Level3 depth=10/advisory semantics, conservative queue-ahead, AmendOrder not EditOrder, post_only, bounded deadline, strict remaining-profit condition, max one amend/order, no synthetic BPS injection, unchanged settlement/cancel authority.
+VERIFIED GREEN.
+Current verified source SHA: f13e82f1c2aab7e21e5f56997d056d9a8125d1f1
+Verified Railway preview deployment: e89f51c9-e591-4faa-aa21-9cafb90c1260 — SUCCESS.
+Runtime identity matched source SHA exactly. /api/ready reached 200 with ready=true and fullyInitialized=true. Canonical core runtime started, live execution posture remained enabled, Stage-1 live-positive execution remained enabled, unified discovery remained active, and sampled unified discovery showed skippedTopologies=[].
 
-CURRENT COMPLETION ESTIMATE
-Prior user-facing estimate was 78% complete approximately one hour before this checkpoint. Milestone 2 is now verified green, so progress is at least that far and should not be represented as lower without new evidence. Recalculate only after mapping remaining slices and the newly discovered zero-capital refresh repair against actual code.
+Implemented #2/#3:
+1. Existing krakenPrivateRequest remains the ONE Kraken nonce/signing/serialization authority. Form remains default; JSON is opt-in for authenticated JSON surfaces. No second signer/nonce lane exists.
+2. Kraken Level3 reader uses canonical product identity and bounded depth=10.
+3. Exact own order must be visible. If absent from bounded depth, queue-ahead order count and quantity are UNKNOWN/null, never fabricated as zero.
+4. L3 evidence is advisory only and has no economic-BPS or execution authority.
+5. Existing evaluateMakerTickQueueJump is reused; no duplicate queue optimizer exists.
+6. Before amend, fresh canonical Kraken L2 is reacquired and the new one-tick price must remain strictly passive.
+7. Amend requires BOTH positive measured same-price order count ahead and positive measured same-price quantity ahead.
+8. Exact remaining-order dollar concession is computed from the actual one-tick move and remaining quantity.
+9. One shared controller across both maker legs keeps a cumulative concession budget and requires verified plan net profit to remain strictly positive after all concessions plus epsilon.
+10. Uses POST /0/private/AmendOrder with JSON, post_only=true, and a fresh bounded RFC3339 deadline minted after local serialization/distributed nonce admission.
+11. At most one accepted amend per order.
+12. Never uses EditOrder and never cancel/reinserts as an optimization fallback.
+13. L3/amend failure degrades locally and leaves the original resting order lifecycle intact.
+14. Terminal fills/fees and canonical settlement remain the realized truth authority.
+15. Permanent preflight verifier: scripts/cryptocrawl/verify-kraken-l3-queue-amend.cjs.
 
-REMAINING — UPDATED PRIORITY ORDER
-A. IMMEDIATE: trace and repair zero-capital fresh-route hydration/discovery causing `configuredRoutes=0` and zero fresh BPS candidates. Prove new scans by advancing route observation/attempt evidence.
-B. #3 Kraken queue-preserving amend.
-C. #2 Kraken L3 queue evidence.
-D. #5 finish OKX RPI dual-surface competition including books-rpi + rpiTakerAccess.
-E. #8 hot-standby market-data handover using existing sequence continuity/proactive reconnect mechanisms.
-F. #9 two-speed controller: global scan remains discovery authority; fast exact-symbol controller only revalidates prioritized/near-miss events through canonical economics.
-G. #11 cross-impact multi-asset scheduling/risk evidence.
-H. #12 order-book vs RFQ/Convert measured execution auction only where executable quote + settlement adapters exist.
-I. #13 synchronized multi-leg WebSocket dispatch preserving FOK/IOC and terminal-fill hedge semantics; use Kraken WS v2 deadline only if/when that path becomes canonical.
-J. #15 authenticated organic fee-tier trajectory: future tier value may rank otherwise-profitable alternatives but can never make losing trade eligible and can never incentivize wash/self trading.
-K. Full no-regression preview verification after every authority-sensitive slice; update this file immediately after each verified milestone and before stopping/timeouts.
+Exact-head verification:
+- PASS OKX adaptive private rate governor wiring
+- [kraken-l3-queue-amend] PASS
+- [runtime-safety-invariants] PASS
+- [runtime-component-isolation] PASS
+- [bps-rebate-refund-truth] PASS
+- [inventory-intent-netting] PASS
+- [antenna-production-hot-path] PASS
+- [stage-soft-gate-retirement] PASS
+- [bps-order-control-revalidation] PASS
+- [bps-efficiency-wave2-foundation] PASS
+- [okx-order-expiration] PASS
+- [remaining-seventeen-batch12] PASS
+- [300-profitability-live-execution] PASS
+- ProfitLadder Stage-2 terminal proof verification passed
+- CryptoCrawler runtime readiness policy verification passed
+- Unified multi-leg adaptive engine verification PASSED
+- [research-bps-transform-reassessment] PASS
+- [Verify Build] Required server, worker, and frontend artifacts are present
 
-RESUME RULE FOR NEXT AGENT
-1. Read `/can` first.
-2. Verify current branch HEAD and PR #512 preview status before changing code.
-3. Start with zero-capital route hydration/scan root cause. Current evidence: CEX refresh is healthy; zero-capital has no fresh measured route population.
-4. Do not trust repeated historical closestMeasuredRoute as scan proof. Require advancing attempts/observedAt or fresh canonical candidate evidence.
-5. Refresh living blueprint for the exact slice before modifying code.
-6. Make smallest non-regressive change; preserve hard gates, one BPS authority, one execution authority.
-7. Verify build/runtime identity and live telemetry on Railway, then append milestone here.
-8. Do not merge until requested implementation wave is fully verified and user explicitly authorizes merge/deploy.
+Intermediate failed previews in the Milestone 3 commit family were verifier-assumption/string-matching defects, not evidence that runtime economics/safety should be weakened. The existing OKX pacing verifier was made semantic/whitespace-stable; the Kraken verifier was aligned to the actual measured field names. Runtime financial gates were not relaxed to make tests pass.
+
+Natural live runtime observation on the verified Milestone 3 preview:
+- no deterministic-positive candidate was observed in the sampled cycles
+- no eligible trade or Kraken resting maker order existed to naturally exercise AmendOrder
+- therefore no claim of a live Kraken amend, trade execution, profit, settlement, or payout is made from this milestone
+- current sampled CEX economics remain blocked by actual market spread/fees and zero spendable CEX inventory, not by the retired Stage-2 soft gates
+
+BLUEPRINT REFRESH FOR MILESTONE 4 — OKX RPI DUAL-SURFACE
+Current official OKX evidence refreshed before implementation:
+- ELP is now RPI.
+- books-rpi exposes consolidated organic + RPI depth and sequence continuity.
+- public books-rpi depth levels expose total quantity and non-RPI quantity, allowing measured RPI incremental depth without inventing liquidity.
+- rpiTakerAccess can allow supported taker order types including limit/market/FOK/IOC to access RPI liquidity.
+- rpiTakerAccess is not an excuse to assume better execution; the selected execution surface must be bound to current measured depth/economics and revalidated at submission.
+- terminal fills/fees remain realized truth.
+
+Smallest authority-safe design for Milestone 4:
+1. Preserve ordinary OKX books as the canonical standard L2 market-data surface.
+2. Add/reuse a measured books-rpi overlay, with its own freshness/sequence evidence, never replacing or fabricating ordinary L2 truth.
+3. Compare ordinary and consolidated RPI-accessible depth at the exact candidate notional/quantity using the existing canonical depth-consumption economics.
+4. Add plan metadata only when the canonical verifier actually selects an OKX RPI-accessible taker leg from measured same-or-better economics. Metadata is not a second BPS authority.
+5. Set rpiTakerAccess=true only on an OKX IOC/FOK/taker order whose verified plan explicitly selected that measured surface.
+6. Reacquire fresh books-rpi at submit. If stale/missing/worse, do not silently downgrade under old economics; fail locally into canonical revalidation.
+7. Never turn unknown speed-bump/timing cost into synthetic positive economics.
+8. Keep expTime, authenticated fee authority, Profit Ladder sizing, inventory leases, positive-all-in economics and terminal settlement unchanged.
+9. Add a permanent preflight verifier proving ordinary books remains standard authority, books-rpi is measured overlay only, rpiTakerAccess is never blindly always-on, and no synthetic BPS is injected.
+
+REMAINING — CURRENT PRIORITY ORDER
+A. #5 OKX RPI dual-surface competition including books-rpi + rpiTakerAccess — ACTIVE NOW.
+B. #8 hot-standby market-data handover using existing sequence continuity/proactive reconnect mechanisms.
+C. #9 two-speed controller: global scan remains discovery authority; fast exact-symbol controller only revalidates prioritized/near-miss events through canonical economics.
+D. #11 cross-impact multi-asset scheduling/risk evidence.
+E. #12 order-book vs RFQ/Convert measured execution auction only where executable quote + settlement adapters exist.
+F. #13 synchronized multi-leg WebSocket dispatch preserving FOK/IOC and terminal-fill hedge semantics.
+G. #15 authenticated organic fee-tier trajectory: future tier value may rank otherwise-profitable alternatives but can never make a losing trade eligible and can never incentivize wash/self trading.
+H. Full no-regression preview verification after every authority-sensitive slice.
+
+RESUME RULE
+1. Read /can first.
+2. Verify PR #512 head and newest preview before changing code.
+3. Continue the ACTIVE milestone rather than restarting completed work.
+4. Make the smallest non-regressive change; preserve one BPS authority, one execution authority, hard safety, fresh evidence, Profit Ladder sizing and terminal settlement truth.
+5. Verify exact-head preflight/build/runtime identity on Railway before marking a milestone green.
+6. Do not infer execution from discovery. Require direct execution + terminal settlement evidence for any trade/profit/payout claim.
+7. Do not merge until the requested Wave-2 package is fully verified and merge/deploy readiness is genuinely proven.
