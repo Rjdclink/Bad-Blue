@@ -32,6 +32,14 @@ export type CexSystemCapitalSettlementAuthority =
       governanceAdmitted: true;
       reference: string;
       [key: string]: unknown;
+    }
+  | {
+      learningAuthority: 'cryptara_controlled_loss';
+      notionalAuthority: 'controlled_loss_budget';
+      executionAuthority: 'controlled_loss_learning_worker';
+      governanceAdmitted: true;
+      reference: string;
+      [key: string]: unknown;
     };
 
 export interface AppliedCexOwnershipSettlement {
@@ -66,8 +74,14 @@ function requireAuthority(authority: CexSystemCapitalSettlementAuthority): void 
     authority.notionalAuthority === 'system_owned_sweep_target' &&
     authority.executionAuthority === 'system_capital_sweep_worker' &&
     authority.governanceAdmitted === true;
-  if (!referenceValid || (!tradeAuthority && !fundingAuthority && !treasuryAuthority)) {
-    throw new Error('CEX ownership transformation requires canonical trade, funding-lifecycle, or explicit operator-strategy treasury authority');
+  const controlledLearningAuthority =
+    'learningAuthority' in authority &&
+    authority.learningAuthority === 'cryptara_controlled_loss' &&
+    authority.notionalAuthority === 'controlled_loss_budget' &&
+    authority.executionAuthority === 'controlled_loss_learning_worker' &&
+    authority.governanceAdmitted === true;
+  if (!referenceValid || (!tradeAuthority && !fundingAuthority && !treasuryAuthority && !controlledLearningAuthority)) {
+    throw new Error('CEX ownership transformation requires canonical trade, funding-lifecycle, explicit operator-strategy treasury, or controlled-loss learning authority');
   }
 }
 
@@ -250,6 +264,9 @@ export async function applyExactCexSystemOwnedSettlement(input: {
       .map(([asset, delta]) => [normalizedAsset(asset), String(delta)] as const)
       .sort(([a], [b]) => a.localeCompare(b));
 
+    // Debit first. No output ownership can be created unless every cost/fee is
+    // fully covered by prior system-owned inventory. A third-token fee therefore
+    // cannot silently consume an operator balance.
     for (const [asset, delta] of entries) {
       if (compareExactDecimals(delta, '0') >= 0) continue;
       consumedLotIds.push(...await consumeSystemOwnedAsset(client, evidence.venue, asset, negateExactDecimal(delta)));
