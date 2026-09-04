@@ -8,8 +8,12 @@ import {
   type AcrossSettlementEvidence,
 } from '../bridge/across-bridge-provider.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
-import { getCryptocrawlGovernance } from '../governance/index.js';
 import { walletFromPrivateKey } from '../core/wallet-identity.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
+import {
+  armPreparedAcrossOriginTransaction,
+  markPreparedAcrossOriginSubmitted,
+} from './across-prebroadcast-durability.js';
 
 export interface AcrossBridgeExecutionResult {
   success: boolean;
@@ -17,22 +21,24 @@ export interface AcrossBridgeExecutionResult {
   settlementConfirmed: boolean;
   depositTxnRef?: string;
   settlement?: AcrossSettlementEvidence;
-  /** Exact signer-paid origin gas across approval(s) plus the Across swap/deposit. */
+  /** Exact signer-paid origin gas across approval(s) plus the Across swap/deposit when its receipt is known. */
   originNativeFeeWei?: string;
   error?: string;
 }
 
 export interface AcrossBridgeExecutionOptions {
   /**
-   * Called immediately after the origin deposit receipt succeeds and before any
-   * settlement wait. Production callers use this to persist restart-safe state.
+   * Backward-compatible callback name. It is now invoked after the exact origin
+   * transaction hash is signed but BEFORE broadcast. The production caller must
+   * durably create the lifecycle/reservation row here; the executor then arms
+   * that row with the exact signed transaction before any principal can move.
    */
   onSubmitted?: (input: {
     depositTxnRef: string;
     originNativeFeeWei: string;
     submittedAt: number;
   }) => Promise<void> | void;
-  /** Return after durable submission instead of blocking a scheduler lane for the bridge fill window. */
+  /** Return after durable origin submission instead of blocking a scheduler lane for the bridge fill window. */
   returnAfterSubmission?: boolean;
 }
 
@@ -113,9 +119,6 @@ async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approv
       .filter((tx): tx is TxPayload => tx !== null);
     if (approvals.length !== (Array.isArray(payload.approvalTxns) ? payload.approvalTxns.length : 0)) return null;
 
-    // Never allow an execution refresh to worsen the discovery-time guaranteed
-    // minimum. Expected output is insufficient because it can slide inside quote
-    // tolerance; the minimum is the hard economic drift bound.
     const freshMinimum = typeof payload.minOutputAmount === 'string' ? BigInt(payload.minOutputAmount) : null;
     const oldMinimum = quote.minOutputAmount ? BigInt(quote.minOutputAmount) : null;
     if (freshMinimum === null || oldMinimum === null || freshMinimum < oldMinimum) return null;
@@ -139,9 +142,10 @@ export async function executeAcrossBridgeQuote(
   if (!privateKey) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_SIGNER_UNAVAILABLE' };
   }
+  if (!options.onSubmitted) {
+    return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_DURABILITY_CALLBACK_REQUIRED' };
+  }
 
-  // Re-fetch immediately before signing. The original discovery quote is never
-  // trusted as a transaction payload after time has passed.
   const refreshedQuote = await getAcrossBridgeQuote({
     originChain: quote.originChain,
     destinationChain: quote.destinationChain,
@@ -170,54 +174,184 @@ export async function executeAcrossBridgeQuote(
     if (approval.chainId !== undefined && approval.chainId !== expectedChainId) {
       return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_APPROVAL_CHAIN' };
     }
-    const tx = await wallet.sendTransaction({ to: approval.to, data: approval.data, value: ethers.BigNumber.from(approval.value || '0') });
-    const receipt = await tx.wait();
-    if (receipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(receipt));
-    if (!receipt || receipt.status !== 1) {
-      return { success: false, status: 'failed', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'ACROSS_APPROVAL_FAILED' };
+    try {
+      const tx = await wallet.sendTransaction({ to: approval.to, data: approval.data, value: ethers.BigNumber.from(approval.value || '0') });
+      const receipt = await tx.wait();
+      if (receipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(receipt));
+      if (!receipt || receipt.status !== 1) {
+        return { success: false, status: 'failed', settlementConfirmed: true, originNativeFeeWei: nativeFeeWei.toString(), error: 'ACROSS_APPROVAL_FAILED' };
+      }
+    } catch (error) {
+      // Approval ambiguity cannot move the reserved bridge principal. The caller
+      // may safely release the principal reservation; only approval gas/allowance
+      // state is uncertain and no cross-chain lifecycle is created.
+      return {
+        success: false,
+        status: 'failed',
+        settlementConfirmed: false,
+        originNativeFeeWei: nativeFeeWei.toString(),
+        error: `ACROSS_APPROVAL_STATE_UNCERTAIN:${error instanceof Error ? error.message : String(error)}`,
+      };
     }
   }
 
   if (payload.swap.chainId !== undefined && payload.swap.chainId !== expectedChainId) {
     return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_SWAP_CHAIN' };
   }
-  const submitted = await wallet.sendTransaction({
-    to: payload.swap.to,
-    data: payload.swap.data,
-    value: ethers.BigNumber.from(payload.swap.value || '0'),
-  });
-  const originReceipt = await submitted.wait();
-  if (originReceipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(originReceipt));
-  if (!originReceipt || originReceipt.status !== 1) {
-    return { success: false, status: 'failed', settlementConfirmed: false, depositTxnRef: submitted.hash, originNativeFeeWei: nativeFeeWei.toString(), error: 'ACROSS_ORIGIN_DEPOSIT_FAILED' };
+
+  let signedOriginTx: string;
+  let depositTxnRef: string;
+  try {
+    const populated = await wallet.populateTransaction({
+      to: payload.swap.to,
+      data: payload.swap.data,
+      value: ethers.BigNumber.from(payload.swap.value || '0'),
+    });
+    if (populated.chainId !== expectedChainId) {
+      return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_POPULATED_CHAIN' };
+    }
+    if (populated.from && populated.from.toLowerCase() !== wallet.address.toLowerCase()) {
+      return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_POPULATED_SIGNER' };
+    }
+    signedOriginTx = await wallet.signTransaction(populated);
+    depositTxnRef = ethers.utils.keccak256(signedOriginTx).toLowerCase();
+  } catch (error) {
+    return {
+      success: false,
+      status: 'failed',
+      settlementConfirmed: false,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      error: `ACROSS_ORIGIN_SIGNING_FAILED:${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 
-  const submittedAt = Date.now();
-  if (options.onSubmitted) {
-    try {
-      await options.onSubmitted({
-        depositTxnRef: submitted.hash,
-        originNativeFeeWei: nativeFeeWei.toString(),
-        submittedAt,
-      });
-    } catch (error) {
-      logger.error('[AcrossBridgeExecution] Origin deposit succeeded but durable submission callback failed; settlement remains unknown and capital must remain reserved', {
-        component: 'AcrossBridgeExecutor',
-        depositTxnRef: submitted.hash,
-        originNativeFeeWei: nativeFeeWei.toString(),
-        error: error instanceof Error ? error.message : String(error),
-        originDepositSucceeded: true,
-        capitalReleaseAllowed: false,
-      });
-      return {
-        success: false,
-        status: 'settlement_unknown',
-        settlementConfirmed: false,
-        depositTxnRef: submitted.hash,
-        originNativeFeeWei: nativeFeeWei.toString(),
-        error: 'ACROSS_SUBMISSION_DURABILITY_CALLBACK_FAILED',
-      };
-    }
+  const preparedAt = Date.now();
+  try {
+    await options.onSubmitted({
+      depositTxnRef,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      submittedAt: preparedAt,
+    });
+  } catch (error) {
+    // No principal broadcast has occurred yet. If lifecycle insertion fails,
+    // return without the hash so the caller can release the principal reservation.
+    logger.error('[AcrossBridgeExecution] Pre-broadcast lifecycle insertion failed; origin principal was not broadcast', {
+      component: 'AcrossBridgeExecutor',
+      depositTxnRef,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      principalBroadcast: false,
+      capitalReleaseAllowed: true,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      success: false,
+      status: 'failed',
+      settlementConfirmed: true,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      error: 'ACROSS_PREBROADCAST_LIFECYCLE_INSERT_FAILED',
+    };
+  }
+
+  try {
+    await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });
+  } catch (error) {
+    // The lifecycle row exists and therefore owns the reservation/parent slot.
+    // Do not broadcast. Recovery can prove this pre-broadcast state and close it.
+    logger.error('[AcrossBridgeExecution] Signed origin transaction could not be durably armed; principal remains unbroadcast and reserved', {
+      component: 'AcrossBridgeExecutor',
+      depositTxnRef,
+      principalBroadcast: false,
+      capitalReleaseAllowed: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      success: false,
+      status: 'settlement_unknown',
+      settlementConfirmed: false,
+      depositTxnRef,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      error: 'ACROSS_PREBROADCAST_ARMING_RECOVERY_REQUIRED',
+    };
+  }
+
+  let submitted: ethers.providers.TransactionResponse;
+  try {
+    submitted = await provider.sendTransaction(signedOriginTx);
+    if (submitted.hash.toLowerCase() !== depositTxnRef) throw new Error('ACROSS_BROADCAST_HASH_MISMATCH');
+  } catch (error) {
+    // This is the key ambiguous-broadcast case. The exact signed bytes are
+    // durable already, so the recovery worker can query/rebroadcast only this
+    // same nonce/hash. A second principal transaction is impossible by design.
+    logger.warn('[AcrossBridgeExecution] Origin broadcast acknowledgement is uncertain; exact signed transaction remains durable', {
+      component: 'AcrossBridgeExecutor',
+      depositTxnRef,
+      capitalReleaseAllowed: false,
+      duplicateSubmissionAllowed: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      success: false,
+      status: 'settlement_unknown',
+      settlementConfirmed: false,
+      depositTxnRef,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      error: 'ACROSS_ORIGIN_BROADCAST_RECOVERY_REQUIRED',
+    };
+  }
+
+  let originReceipt: ethers.providers.TransactionReceipt | null = null;
+  try {
+    originReceipt = await submitted.wait();
+  } catch (error) {
+    logger.warn('[AcrossBridgeExecution] Origin receipt wait is uncertain; exact hash remains durable for recovery', {
+      component: 'AcrossBridgeExecutor', depositTxnRef, capitalReleaseAllowed: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      success: false,
+      status: 'settlement_unknown',
+      settlementConfirmed: false,
+      depositTxnRef,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      error: 'ACROSS_ORIGIN_RECEIPT_RECOVERY_REQUIRED',
+    };
+  }
+
+  if (originReceipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(originReceipt));
+  if (!originReceipt || originReceipt.status !== 1) {
+    // Keep PREPARED durable state. Recovery reads the authoritative receipt,
+    // releases untouched principal, and records the exact realized gas loss.
+    return {
+      success: false,
+      status: 'failed',
+      settlementConfirmed: true,
+      depositTxnRef,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      error: 'ACROSS_ORIGIN_DEPOSIT_FAILED',
+    };
+  }
+
+  const broadcastAt = Date.now();
+  try {
+    await markPreparedAcrossOriginSubmitted({
+      depositTxnRef,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      broadcastAt,
+    });
+  } catch (error) {
+    logger.error('[AcrossBridgeExecution] Origin deposit succeeded but PREPARED->SUBMITTED transition failed; recovery retains authority', {
+      component: 'AcrossBridgeExecutor', depositTxnRef, originNativeFeeWei: nativeFeeWei.toString(),
+      originDepositSucceeded: true, capitalReleaseAllowed: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      success: false,
+      status: 'settlement_unknown',
+      settlementConfirmed: false,
+      depositTxnRef,
+      originNativeFeeWei: nativeFeeWei.toString(),
+      error: 'ACROSS_SUBMISSION_DURABILITY_TRANSITION_FAILED',
+    };
   }
 
   if (options.returnAfterSubmission) {
@@ -225,7 +359,7 @@ export async function executeAcrossBridgeQuote(
       success: false,
       status: 'submitted',
       settlementConfirmed: false,
-      depositTxnRef: submitted.hash,
+      depositTxnRef,
       originNativeFeeWei: nativeFeeWei.toString(),
     };
   }
@@ -236,7 +370,7 @@ export async function executeAcrossBridgeQuote(
   let last: AcrossSettlementEvidence | undefined;
   while (Date.now() <= deadline) {
     last = await getAcrossDepositSettlementEvidence({
-      depositTxnRef: submitted.hash,
+      depositTxnRef,
       originChain: quote.originChain,
       destinationChain: quote.destinationChain,
     }).catch(() => null) || undefined;
@@ -244,7 +378,7 @@ export async function executeAcrossBridgeQuote(
       const confirmed = last.successful && last.destinationReceiptVerified;
       logger.info('[AcrossBridgeExecution] Terminal bridge settlement observed', {
         component: 'AcrossBridgeExecutor',
-        depositTxnRef: submitted.hash,
+        depositTxnRef,
         providerStatus: last.providerStatus,
         financiallyTerminal: last.financiallyTerminal,
         destinationReceiptVerified: last.destinationReceiptVerified,
@@ -255,7 +389,7 @@ export async function executeAcrossBridgeQuote(
         success: confirmed,
         status: confirmed ? 'filled' : last.providerStatus === 'refunded' ? 'refunded' : 'failed',
         settlementConfirmed: confirmed || (last.providerStatus === 'refunded' && last.refundReceiptVerified),
-        depositTxnRef: submitted.hash,
+        depositTxnRef,
         settlement: last,
         originNativeFeeWei: nativeFeeWei.toString(),
         error: confirmed ? undefined : `ACROSS_TERMINAL_${last.providerStatus || 'FAILED'}`,
@@ -268,7 +402,7 @@ export async function executeAcrossBridgeQuote(
     success: false,
     status: 'settlement_unknown',
     settlementConfirmed: false,
-    depositTxnRef: submitted.hash,
+    depositTxnRef,
     settlement: last,
     originNativeFeeWei: nativeFeeWei.toString(),
     error: 'ACROSS_TERMINAL_SETTLEMENT_TIMEOUT',
