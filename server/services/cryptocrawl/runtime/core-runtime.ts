@@ -7,7 +7,7 @@ import {
 import {
   ensureControlledLossLearningWorker,
   stopControlledLossLearningWorker,
-} from '../execution/controlled-loss-learning-worker.js';
+} from '../execution/controlled-loss-learning-runtime.js';
 import {
   ensureSystemCapitalSweepWorker,
   stopSystemCapitalSweepWorker,
