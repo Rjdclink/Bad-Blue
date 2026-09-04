@@ -78,6 +78,14 @@ must(fundingAdapter, "return { status: 'pending', error: 'FUNDING_ENTRY_PARTIAL_
 mustNot(fundingAdapter, 'spotExposureOpen: spotClosed?.filled !== true', 'unknown close state cannot be interpreted as open exposure');
 mustNot(fundingAdapter, 'perpExposureOpen: perpClosed?.filled !== true', 'unknown close state cannot be interpreted as open exposure');
 
+// Terminal capital release is strictly downstream of complete authenticated accounting.
+must(fundingAdapter, 'function terminalFundingAccountingComplete', 'terminal funding accounting completeness has one explicit predicate');
+must(fundingAdapter, "throw new Error('FUNDING_CAPITAL_RELEASE_REQUIRES_COMPLETE_TERMINAL_ACCOUNTING')", 'capital release helper fails closed without complete terminal accounting');
+must(fundingAdapter, 'if (!terminalFundingAccountingComplete(settlement)) return settlement;', 'pending terminal accounting retains the funding hold');
+must(fundingAdapter, 'await releaseTerminalFundingCapitalHold(okx, reconciledReceipt, settlement);', 'funding hold release occurs only through the terminal-accounting gate');
+must(fundingAdapter, 'funding_capital_hold_retained_until_terminal_accounting', 'delayed funding bills explicitly retain capital');
+must(fundingAdapter, "capitalReleaseAuthority: 'complete_terminal_accounting_only'", 'adapter declares complete terminal accounting as release authority');
+
 // Nix deterministic-dollar allocation may include deterministic cross-chain, never projected funding carry.
 must(measuredOrdering, "decision.topology === 'CROSS_CHAIN'", 'deterministic cross-chain enters measured Nix portfolio');
 mustNot(measuredOrdering, "decision.topology === 'FUNDING_ARBITRAGE'", 'projected funding must not enter deterministic Nix portfolio');
