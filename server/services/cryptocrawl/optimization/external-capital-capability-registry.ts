@@ -1,0 +1,208 @@
+import { getCryptaraNetworkSpecializationLearning } from '../../cryptara/network-specialization-learning.js';
+
+export type ExternalCapitalRole =
+  | 'fixed_credit'
+  | 'collateral_borrow'
+  | 'collateral_efficiency'
+  | 'yield_destination'
+  | 'atomic_principal';
+
+export interface ExternalCapitalCapability {
+  id: string;
+  protocol: string;
+  network: string;
+  role: ExternalCapitalRole;
+  bootstrapEligible: boolean;
+  requiresSystemOwnedCapital: boolean;
+  collateralRequired: boolean;
+  maturityRequired: boolean;
+  oracleDependent: boolean | 'varies';
+  executionReady: boolean;
+  estimatedApr?: number;
+  estimatedCostApr?: number;
+  availableLiquidityUsd?: number;
+  withdrawalLatencyMs?: number;
+  observedAt: number;
+  expiresAt: number;
+  provenance: string[];
+  executionAuthority: false;
+  capitalMovementAuthority: false;
+}
+
+export interface RankedExternalCapitalCapability extends ExternalCapitalCapability {
+  cryptaraScore: number;
+  cryptaraConfidence: number;
+  economicScore: number;
+}
+
+const registry = new Map<string, ExternalCapitalCapability>();
+
+function nowCapability(input: Omit<ExternalCapitalCapability, 'observedAt' | 'expiresAt' | 'executionAuthority' | 'capitalMovementAuthority'>): ExternalCapitalCapability {
+  const now = Date.now();
+  return {
+    ...input,
+    observedAt: now,
+    expiresAt: now + 60 * 60_000,
+    executionAuthority: false,
+    capitalMovementAuthority: false,
+  };
+}
+
+function seed(capability: ExternalCapitalCapability): void {
+  registry.set(capability.id, capability);
+}
+
+// These seed records describe integration roles only. They never authorize a
+// transaction and never invent live APR/liquidity. Runtime evidence can enrich
+// them later through recordMeasuredExternalCapitalCapability().
+seed(nowCapability({
+  id: 'morpho-midnight:base',
+  protocol: 'morpho_midnight',
+  network: 'base',
+  role: 'fixed_credit',
+  bootstrapEligible: false,
+  requiresSystemOwnedCapital: true,
+  collateralRequired: true,
+  maturityRequired: true,
+  oracleDependent: true,
+  executionReady: false,
+  provenance: ['official_morpho_midnight_fixed_rate_fixed_term', 'base_chain_8453', 'advisory_capability_seed'],
+}));
+
+seed(nowCapability({
+  id: 'compound:evm',
+  protocol: 'compound',
+  network: 'evm',
+  role: 'collateral_borrow',
+  bootstrapEligible: false,
+  requiresSystemOwnedCapital: true,
+  collateralRequired: true,
+  maturityRequired: false,
+  oracleDependent: true,
+  executionReady: false,
+  provenance: ['official_compound_collateral_borrowing', 'advisory_capability_seed'],
+}));
+
+seed(nowCapability({
+  id: 'curve-llamalend-v2:evm',
+  protocol: 'curve_llamalend_v2',
+  network: 'evm',
+  role: 'collateral_efficiency',
+  bootstrapEligible: false,
+  requiresSystemOwnedCapital: true,
+  collateralRequired: true,
+  maturityRequired: false,
+  oracleDependent: 'varies',
+  executionReady: false,
+  provenance: ['official_curve_llamalend_v2_lp_collateral', 'advisory_capability_seed'],
+}));
+
+seed(nowCapability({
+  id: 'jupiter-offerbook:solana',
+  protocol: 'jupiter_offerbook',
+  network: 'solana',
+  role: 'fixed_credit',
+  bootstrapEligible: false,
+  requiresSystemOwnedCapital: true,
+  collateralRequired: true,
+  maturityRequired: true,
+  oracleDependent: false,
+  executionReady: false,
+  provenance: ['official_jupiter_offerbook_fixed_term_credit', 'advisory_capability_seed'],
+}));
+
+for (const [id, protocol] of [
+  ['auto-finance:multichain', 'auto_finance'],
+  ['ipor-fusion:evm', 'ipor_fusion'],
+  ['yo-protocol:multichain', 'yo_protocol'],
+] as const) {
+  seed(nowCapability({
+    id,
+    protocol,
+    network: id.includes('evm') ? 'evm' : 'multichain',
+    role: 'yield_destination',
+    bootstrapEligible: false,
+    requiresSystemOwnedCapital: true,
+    collateralRequired: false,
+    maturityRequired: false,
+    oracleDependent: 'varies',
+    executionReady: false,
+    provenance: ['external_yield_destination_advisory_only', 'fresh_runtime_yield_and_exit_cost_required'],
+  }));
+}
+
+// Jupiter Lend is the only newly researched item in this group that is directly
+// relevant to atomic cold-start principal. Its execution remains false here until
+// native Solana signer, fee-payer and terminal settlement proof are all live.
+seed(nowCapability({
+  id: 'jupiter-lend-flashloan:solana',
+  protocol: 'jupiter_lend_flashloan',
+  network: 'solana',
+  role: 'atomic_principal',
+  bootstrapEligible: true,
+  requiresSystemOwnedCapital: false,
+  collateralRequired: false,
+  maturityRequired: false,
+  oracleDependent: false,
+  executionReady: false,
+  estimatedCostApr: 0,
+  provenance: ['official_jupiter_lend_no_collateral', 'official_jupiter_lend_no_flashloan_fee', 'same_transaction_payback_required', 'native_fee_payer_proof_still_required'],
+}));
+
+export function recordMeasuredExternalCapitalCapability(capability: ExternalCapitalCapability): void {
+  if (capability.executionAuthority !== false || capability.capitalMovementAuthority !== false) {
+    throw new Error('External capital capability registry is advisory only');
+  }
+  if (!(capability.expiresAt > capability.observedAt)) throw new Error('Measured capital capability must have a bounded expiry');
+  registry.set(capability.id, {
+    ...capability,
+    provenance: [...new Set(capability.provenance || [])],
+  });
+}
+
+export function listExternalCapitalCapabilities(now = Date.now()): ExternalCapitalCapability[] {
+  return [...registry.values()]
+    .filter(capability => capability.expiresAt > now)
+    .map(capability => ({ ...capability, provenance: [...capability.provenance] }));
+}
+
+function economicScore(capability: ExternalCapitalCapability): number {
+  if (!capability.executionReady) return 0;
+  if (capability.role === 'yield_destination') {
+    const yieldApr = Number(capability.estimatedApr);
+    if (!Number.isFinite(yieldApr)) return 0;
+    const latencyPenalty = Math.min(0.5, Math.max(0, Number(capability.withdrawalLatencyMs || 0)) / (24 * 60 * 60_000) * 0.1);
+    return Math.max(0, yieldApr - latencyPenalty);
+  }
+  if (capability.role === 'fixed_credit' || capability.role === 'collateral_borrow') {
+    const cost = Number(capability.estimatedCostApr);
+    return Number.isFinite(cost) ? 1 / (1 + Math.max(0, cost)) : 0;
+  }
+  if (capability.role === 'atomic_principal') {
+    return capability.bootstrapEligible ? 1 / (1 + Math.max(0, Number(capability.estimatedCostApr || 0))) : 0;
+  }
+  return 0.5;
+}
+
+export function rankExternalCapitalCapabilities(
+  role: ExternalCapitalRole,
+  now = Date.now(),
+): RankedExternalCapitalCapability[] {
+  const learner = getCryptaraNetworkSpecializationLearning();
+  return listExternalCapitalCapabilities(now)
+    .filter(capability => capability.role === role)
+    .map(capability => {
+      const learned = learner.score(capability.network, role === 'atomic_principal' ? 'atomic_principal' : role === 'yield_destination' ? 'retained_capital' : 'capital_transfer', capability.protocol, now);
+      return {
+        ...capability,
+        cryptaraScore: learned.score,
+        cryptaraConfidence: learned.confidence,
+        economicScore: economicScore(capability),
+      };
+    })
+    .sort((left, right) => {
+      const leftCombined = left.economicScore * 0.8 + left.cryptaraScore * left.cryptaraConfidence * 0.2;
+      const rightCombined = right.economicScore * 0.8 + right.cryptaraScore * right.cryptaraConfidence * 0.2;
+      return rightCombined - leftCombined || left.id.localeCompare(right.id);
+    });
+}
