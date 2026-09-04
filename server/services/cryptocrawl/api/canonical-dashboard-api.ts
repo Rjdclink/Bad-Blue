@@ -1,6 +1,6 @@
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
-import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
+import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
 import { ensureCanonicalCryptoCrawlerRuntimeWiring } from '../integration/canonical-runtime-wiring.js';
 import { balanceMonitor } from '../bridge/balance-monitor.js';
@@ -54,11 +54,27 @@ function canonicalStats() {
   };
 }
 
+function maxQuoteAgeMs(): number {
+  const parsed = Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000);
+  return Number.isFinite(parsed) ? Math.max(250, Math.min(15_000, parsed)) : 5_000;
+}
+
+function effectiveQuoteAgeMs(snapshot: CanonicalOpportunitySnapshot, now: number): number {
+  if (!snapshot.plan || !Number.isFinite(snapshot.plan.quoteAgeMs) || snapshot.plan.quoteAgeMs < 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const evaluatedAt = snapshot.assessment?.evaluatedAt ?? snapshot.observedAt;
+  if (!Number.isFinite(evaluatedAt) || evaluatedAt <= 0) return Number.POSITIVE_INFINITY;
+  return snapshot.plan.quoteAgeMs + Math.max(0, now - evaluatedAt);
+}
+
 function canonicalOpportunities() {
   const now = Date.now();
+  const freshnessLimitMs = maxQuoteAgeMs();
   return canonicalOpportunityState.getRecent(100)
     .filter(snapshot => snapshot.status === 'eligible')
     .filter(snapshot => !!snapshot.plan && Number.isFinite(snapshot.plan.netProfitUsd) && snapshot.plan.netProfitUsd > 0)
+    .filter(snapshot => effectiveQuoteAgeMs(snapshot, now) < freshnessLimitMs)
     .map(snapshot => ({
       id: snapshot.opportunityId,
       asset: snapshot.symbol,
@@ -67,6 +83,8 @@ function canonicalOpportunities() {
       successProbability: snapshot.assessment?.probabilityOfProfitableExecution ?? null,
       tier: snapshot.assessment?.riskLevel || 'unknown',
       age: Math.max(0, now - snapshot.observedAt),
+      quoteAgeMs: effectiveQuoteAgeMs(snapshot, now),
+      maxQuoteAgeMs: freshnessLimitMs,
       provenance: [...snapshot.provenance],
     }));
 }
