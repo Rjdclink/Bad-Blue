@@ -341,6 +341,17 @@ class OperatorTradingStrategy {
     return ensureDayForDate(localDateKey(epochMs));
   }
 
+  async recordTerminalPnl(eventId: string, opportunityId: string, realizedPnlUsd: number): Promise<boolean> {
+    const normalizedEventId = eventId.trim();
+    const normalizedOpportunityId = opportunityId.trim();
+    if (!normalizedEventId || !normalizedOpportunityId || !Number.isFinite(realizedPnlUsd) || realizedPnlUsd === 0) return false;
+    const result = await pool.query(
+      `SELECT public.cryptocrawler_operator_strategy_record_terminal_pnl($1,$2,$3) AS recorded`,
+      [normalizedEventId, normalizedOpportunityId, realizedPnlUsd],
+    );
+    return result.rows?.[0]?.recorded === true;
+  }
+
   async reserveTrade(opportunityId: string, strategy: string): Promise<OperatorTradeReservation> {
     const normalizedOpportunityId = opportunityId.trim();
     if (!normalizedOpportunityId) throw new Error('Operator trade slot requires an opportunity id');
@@ -476,12 +487,14 @@ class OperatorTradingStrategy {
     const dateKey = localDateKey();
     const state = await ensureDayForDate(dateKey);
     if (!state.learningMode) return false;
+    // state.learningMode is the authority here. It can be true either because the
+    // date was classified learning-only or because the cycle hit 20 qualified
+    // profit days after this date had already been classified trading-eligible.
     const result = await pool.query(
       `UPDATE public.cryptocrawler_operator_strategy_days
        SET learning_last_attempt_at=now(), updated_at=now()
        WHERE local_date=$1::date
          AND eligibility_decided=true
-         AND is_trade_day=false
          AND (learning_last_attempt_at IS NULL OR learning_last_attempt_at <= now() - interval '1 hour')
        RETURNING local_date`,
       [dateKey],
