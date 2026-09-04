@@ -1,4 +1,5 @@
 import type { VerifiedArbitragePlan } from '../arbitrage/arbitrage-verifier.js';
+import { getAuthenticatedFeeTierTrajectory } from '../integration/authenticated-fee-tier-optimization-wiring.js';
 
 interface SymbolEvidence {
   symbol: string;
@@ -17,6 +18,7 @@ export interface CexFormationSymbolScore {
   freshness: number;
   edgePotential: number;
   valueOfInformation: number;
+  feeTrajectoryPotential: number;
   authority: 'scan_attention_advisory_only';
   executionAuthority: false;
 }
@@ -40,16 +42,26 @@ function normalizedSymbol(symbol: string): string {
   return symbol.trim().toUpperCase();
 }
 
+function feeTrajectoryPotential(symbol: string): number {
+  const normalized = normalizedSymbol(symbol);
+  const improvementBps = getAuthenticatedFeeTierTrajectory()
+    .filter(item => normalizedSymbol(item.symbol) === normalized)
+    .reduce((best, item) => Math.max(best, item.bestObservedImprovementBps), 0);
+  return Math.log1p(Math.max(0, improvementBps));
+}
+
 function scoreSymbol(symbol: string, now: number): CexFormationSymbolScore {
   const item = evidence.get(normalizedSymbol(symbol));
+  const feePotential = feeTrajectoryPotential(symbol);
   if (!item || item.attempts === 0) {
     return {
       symbol: normalizedSymbol(symbol),
-      score: null,
+      score: feePotential > 0 ? 0.15 * feePotential : null,
       positiveProbability: 0.5,
       freshness: 0,
       edgePotential: 0,
       valueOfInformation: 0,
+      feeTrajectoryPotential: feePotential,
       authority: 'scan_attention_advisory_only',
       executionAuthority: false,
     };
@@ -61,7 +73,12 @@ function scoreSymbol(symbol: string, now: number): CexFormationSymbolScore {
   const edgePotential = Math.log1p(Math.max(0, item.recentNetProfitUsd ?? 0));
   const uncertainty = 4 * positiveProbability * (1 - positiveProbability);
   const valueOfInformation = uncertainty * (1 + edgePotential);
-  const score = (positiveProbability * (0.35 + 0.65 * freshness) * (1 + edgePotential)) + (0.35 * valueOfInformation);
+  // Fee trajectory can only direct scarce scan attention toward authenticated
+  // surfaces whose actual fees have improved organically. Future savings are never
+  // added to plan economics and never make a losing trade executable.
+  const score = (positiveProbability * (0.35 + 0.65 * freshness) * (1 + edgePotential))
+    + (0.35 * valueOfInformation)
+    + (0.15 * feePotential);
   return {
     symbol: item.symbol,
     score: Number.isFinite(score) ? score : null,
@@ -69,6 +86,7 @@ function scoreSymbol(symbol: string, now: number): CexFormationSymbolScore {
     freshness,
     edgePotential,
     valueOfInformation,
+    feeTrajectoryPotential: feePotential,
     authority: 'scan_attention_advisory_only',
     executionAuthority: false,
   };
