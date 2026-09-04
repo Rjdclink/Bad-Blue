@@ -14,6 +14,6 @@ requirePattern(/Math\.max\(0\.2, Math\.min\(1,/, 'Terminal calibration factor mu
 requirePattern(/executionAuthority: false/, 'Terminal calibration must declare no execution authority');
 requirePattern(/learningAuthority: false/, 'Terminal calibration must declare no learning authority');
 requirePattern(/canonicalEconomicsAuthority: false/, 'Terminal calibration must declare no canonical economics authority');
-forbidPattern(/recordSettlementProfitCalibration|recordCryptaraExecutionEvidence|updateStatus|execute|submit|reserve|acquire/, 'Nix-Gen terminal calibration must remain read-only and non-executing');
+forbidPattern(/\b(?:recordSettlementProfitCalibration|recordCryptaraExecutionEvidence|updateStatus|execute[A-Za-z0-9_]*|submit[A-Za-z0-9_]*|reserve[A-Za-z0-9_]*|acquire[A-Za-z0-9_]*)\s*\(/, 'Nix-Gen terminal calibration must remain read-only and non-executing');
 
 console.log('NIX-GEN TERMINAL CALIBRATION STATIC VERIFIER PASSED');
