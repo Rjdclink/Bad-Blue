@@ -1,43 +1,13 @@
-// Production bootstrap: reconcile and prove the ordinary Primary application
-// schema first, establish the CryptoCrawler Overflow data plane second, then load
-// the application. Primary and Overflow are explicit, separate authorities; no
-// global pg.Pool interception or cross-database acquisition wrapper is installed.
-process.env.PRIMARY_APPLICATION_SCHEMA_READY = 'false';
+// Production CryptoCrawler bootstrap.
+//
+// CryptoCrawler owns an explicit Overflow runtime data plane. Ordinary LegalWhat,
+// Officer Search, People Search, Sub-Agent, and other Primary application schemas
+// are separate concerns and are never CryptoCrawler readiness prerequisites.
+// Importing reconcileAppSchema installs the existing Railway rollout headroom only;
+// it does not grant Primary application migrations any CryptoCrawler startup authority.
+await import('./migrations/reconcileAppSchema.js');
+
 process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false';
-
-const { runAllSchemaMigrations } = await import('./migrations/reconcileAppSchema.js');
-const { requirePrimaryApplicationSchema } = await import(
-  './migrations/primaryApplicationSchemaReadiness.js'
-);
-
-// The canonical migration list remains the sole mutation authority. Production
-// startup is fail-closed: a thrown migration error cannot be downgraded to a log
-// entry, and workers/routes never load until the migration-owned postconditions
-// are independently proven on Primary.
-const primaryMigrationResults = await runAllSchemaMigrations({ continueOnError: false });
-const reportedPrimaryMigrationFailures = primaryMigrationResults.filter(result => !result.success);
-if (reportedPrimaryMigrationFailures.length > 0) {
-  throw new Error(
-    `Primary application migration readiness failed: ${reportedPrimaryMigrationFailures
-      .map(result => `${result.name}: ${result.error || 'unspecified migration failure'}`)
-      .join('; ')}`,
-  );
-}
-await requirePrimaryApplicationSchema();
-process.env.PRIMARY_APPLICATION_SCHEMA_READY = 'true';
-console.log(
-  '[PRIMARY][SCHEMA-AUTHORITY] READY: canonical migrations completed and required application tables verified before route/worker startup',
-);
-
-if (process.env.SUBAGENT_ENABLE_OFFICER_SEARCH === 'true') {
-  const { requireOfficerSearchRuntimeReadiness } = await import(
-    './officerSearchRuntimeReadiness.js'
-  );
-  await requireOfficerSearchRuntimeReadiness();
-  console.log(
-    '[PRIMARY][OFFICER-SEARCH] READY: search-session and priority-queue dependencies proved before harvester modules load',
-  );
-}
 
 const { installCryptaraSuperWorkerAdmission } = await import(
   './services/cryptocrawl/integration/cryptara-super-worker.js'
@@ -62,7 +32,7 @@ if (overflowBootstrap.state === 'ready') {
     await ensureCryptocrawlOverflowRuntimeSchema();
     process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'true';
     console.log(
-      '[CRYPTARA][OVERFLOW-AUTHORITY] READY: complete CryptoCrawler runtime schema verified on Overflow; Primary application schema is independently ready',
+      '[CRYPTARA][OVERFLOW-AUTHORITY] READY: complete CryptoCrawler runtime schema verified on Overflow; Primary application and Officer Search schemas are not CryptoCrawler runtime prerequisites',
     );
   } catch (error) {
     process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false';
@@ -73,4 +43,7 @@ if (overflowBootstrap.state === 'ready') {
   }
 }
 
+// Deliberately no pg.Pool.prototype interception here. Primary remains the normal
+// application database authority; CryptoCrawler modules use their explicit Overflow
+// runtime database authority instead of globally rerouting unrelated application DB I/O.
 await import('./index.js');
