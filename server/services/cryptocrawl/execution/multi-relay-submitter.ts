@@ -3,6 +3,10 @@ import { FlashbotsBundleProvider } from '@flashbots/ethers-provider-bundle';
 import logger from '../../../logger.js';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 import { getOrCreateFlashbotsAuthPrivateKey } from './adapters/flashbots-auth-identity.js';
+import {
+  submitBuilderSponsoredBundle,
+  type SponsoredBuilderSubmissionResult,
+} from './adapters/builder-sponsored-bundle-lane.js';
 import { walletFromPrivateKey } from '../core/wallet-identity.js';
 
 interface RelayConfig {
@@ -266,6 +270,64 @@ class MultiRelaySubmitter {
   }
 
   /**
+   * Canonical private-relay authority for a zero-ETH cold-start bundle.
+   *
+   * Do NOT run the ordinary eth_callBundle preflight here: an unfunded sender is
+   * expected to fail with LackOfFundForGasLimit before Titan/Quasar inject their
+   * sponsor transaction. Those builders perform the sponsorship-aware simulation
+   * and reject the bundle unless its terminal net effect repays the sponsorship.
+   * This method never falls back to the public mempool and does not require a
+   * developer-funded Flashbots auth account.
+   */
+  async submitSponsoredBundle(
+    bundle: Bundle,
+    targetBlock: number,
+    replacementUuid: string,
+  ): Promise<SponsoredBuilderSubmissionResult> {
+    if (!Number.isSafeInteger(targetBlock) || targetBlock <= 0 || bundle.targetBlock !== targetBlock) {
+      throw new Error('Sponsored bundle target-block mismatch');
+    }
+    if (!Array.isArray(bundle.signedTransactions) || bundle.signedTransactions.length === 0) {
+      throw new Error('Sponsored bundle is empty');
+    }
+
+    const result = await submitBuilderSponsoredBundle({
+      signedTransactions: bundle.signedTransactions,
+      targetBlock,
+      replacementUuid,
+    });
+
+    for (const attempt of result.attempts) {
+      const metrics = this.metrics.get(attempt.builder);
+      if (!metrics) continue;
+      metrics.totalAttempts++;
+      if (attempt.accepted) {
+        metrics.successCount++;
+        metrics.lastSuccessTime = Date.now();
+      } else {
+        metrics.failureCount++;
+      }
+      metrics.successRate = metrics.successCount / metrics.totalAttempts;
+      metrics.avgLatency = (metrics.avgLatency * (metrics.totalAttempts - 1) + attempt.latencyMs) / metrics.totalAttempts;
+      metrics.performance.lastUpdate = Date.now();
+      metrics.performance.successRate = metrics.successRate;
+      metrics.performance.latency = metrics.avgLatency;
+    }
+
+    logger.info('Builder-sponsored bundle handed to sponsorship-aware builders', {
+      component: 'MultiRelaySubmitter',
+      targetBlock,
+      transactions: bundle.signedTransactions.length,
+      submitted: result.submitted,
+      acceptedBy: result.acceptedBy,
+      failedBy: result.failedBy,
+      publicMempoolFallback: false,
+      simulationAuthority: 'builder_sponsored_eth_sendBundle',
+    });
+    return result;
+  }
+
+  /**
    * Actual Flashbots-compatible eth_callBundle simulation. Structural checks or
    * synthetic scores are not accepted as execution evidence. A single revert or
    * relay error blocks submission to every relay.
@@ -367,4 +429,4 @@ class MultiRelaySubmitter {
   }
 }
 
-export { MultiRelaySubmitter, type Bundle, type SubmissionResult, type RelayMetrics };
+export { MultiRelaySubmitter, type Bundle, type SubmissionResult, type RelayMetrics, type SponsoredBuilderSubmissionResult };
