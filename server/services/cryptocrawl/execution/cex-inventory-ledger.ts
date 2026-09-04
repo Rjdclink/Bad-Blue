@@ -455,6 +455,45 @@ class CexInventoryLedger {
     };
   }
 
+  /**
+   * Reconcile process-local reservation telemetry against the durable reservation
+   * authority. This is intentionally one-way: durable rows can keep a local hold,
+   * but missing/expired durable rows release only the corresponding local hold.
+   * It never creates spend authority or deletes a durable reservation.
+   */
+  async reconcileLocalReservationsWithDurableState(): Promise<number> {
+    if (this.localReservations.size === 0) return 0;
+    // Fail closed when the durable authority cannot be checked: retain local
+    // holds rather than accidentally making capital spendable.
+    if (!isDatabaseConfigured || !await this.ensureTables()) return 0;
+
+    const reservationIds = [...this.localReservations.keys()];
+    const durable = await pool.query(
+      `SELECT DISTINCT reservation_id
+       FROM ${RESERVATION_TABLE}
+       WHERE reservation_id = ANY($1::text[])
+         AND expires_at > now()`,
+      [reservationIds],
+    );
+    const active = new Set(durable.rows.map((row: any) => String(row.reservation_id)));
+    let released = 0;
+    for (const [reservationId, requirements] of this.localReservations.entries()) {
+      if (active.has(reservationId)) continue;
+      this.releaseLocal(requirements);
+      this.localReservations.delete(reservationId);
+      released += 1;
+    }
+    if (released > 0) {
+      logger.info('[InventoryLedger] Released process-local holds absent from durable reservation authority', {
+        component: 'CexInventoryLedger',
+        releasedReservations: released,
+        durableAuthority: RESERVATION_TABLE,
+        spendAuthorityCreated: false,
+      });
+    }
+    return released;
+  }
+
   getSnapshots(): InventorySnapshot[] {
     return [...this.local.values()].map(cloneSnapshot);
   }

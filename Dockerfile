@@ -34,16 +34,19 @@ RUN rm -rf node_modules || true && \
 COPY . .
 
 # Build application (requires dev dependencies). Payout-recipient truth, the
-# operator/treasury strategy contract, and every Nix-Gen invariant are explicit
-# production gates: the image cannot build if signer-derived payout truth, the
-# 20/30 randomized operator strategy, 90/10 profit routing, provenance-backed
-# $4k/80% treasury sweep, lifecycle reservations, or Nix-Gen authority boundaries
-# regress. The normal build proves the full source tree. The deployed server
-# bundle is then rebuilt through the mandatory CryptoCrawler Overflow authority
-# router so every reachable CryptoCrawler import of server/db resolves to
-# Overflow and canonical runtime install requires the complete Overflow schema proof.
+# operator/treasury strategy contract, controlled-loss learning, and every
+# Nix-Gen invariant are explicit production gates: the image cannot build if
+# signer-derived payout truth, the 20/30 randomized operator strategy, 90/10
+# profit routing, provenance-backed $4k/80% treasury sweep, lifecycle-held
+# reservations, randomized post-first-win <=5% controlled-loss learning, or
+# Nix-Gen authority boundaries regress. The normal build proves the full source
+# tree. The deployed server bundle is then rebuilt through the mandatory
+# CryptoCrawler Overflow authority router so every reachable CryptoCrawler import
+# of server/db resolves to Overflow and canonical runtime install requires the
+# complete Overflow schema proof.
 RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
     node scripts/cryptocrawl/verify-operator-treasury-strategy.cjs && \
+    node scripts/cryptocrawl/verify-controlled-loss-learning.cjs && \
     for script in scripts/cryptocrawl/verify-nix-gen-*.cjs; do node "$script"; done && \
     for script in scripts/cryptocrawl/verify-nix-gen-*.ts; do npx --no-install tsx "$script"; done && \
     npm run build && \
@@ -125,6 +128,7 @@ COPY --from=builder /app/server/migrations/037_cryptocrawler_treasury_reservatio
 COPY --from=builder /app/server/migrations/038_cryptocrawler_system_capital_sweep_idempotency.sql ./dist/migrations/038_cryptocrawler_system_capital_sweep_idempotency.sql
 COPY --from=builder /app/server/migrations/039_cryptocrawler_system_capital_transfer_truth_hardening.sql ./dist/migrations/039_cryptocrawler_system_capital_transfer_truth_hardening.sql
 COPY --from=builder /app/server/migrations/040_cryptocrawler_treasury_reservation_lifecycle_guard.sql ./dist/migrations/040_cryptocrawler_treasury_reservation_lifecycle_guard.sql
+COPY --from=builder /app/server/migrations/041_cryptocrawler_controlled_loss_learning.sql ./dist/migrations/041_cryptocrawler_controlled_loss_learning.sql
 
 # Overflow-only prerequisites complete migration gaps found by the repository-wide
 # authority audit without enabling duplicate schedulers or browser/API access.

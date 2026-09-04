@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 11;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v11';
+const SCHEMA_VERSION = 12;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v12';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
@@ -50,6 +50,7 @@ const MIGRATIONS = [
   '038_cryptocrawler_system_capital_sweep_idempotency.sql',
   '039_cryptocrawler_system_capital_transfer_truth_hardening.sql',
   '040_cryptocrawler_treasury_reservation_lifecycle_guard.sql',
+  '041_cryptocrawler_controlled_loss_learning.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -88,6 +89,7 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_system_capital_sweep_batches',
   'public.cryptocrawler_system_capital_sweep_conversions',
   'public.cryptocrawler_payout_funding_transfers',
+  'public.cryptocrawler_controlled_loss_learning_events',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
@@ -120,6 +122,7 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_confirm_payout_funding_transfer(text,numeric,numeric,text,text,text,jsonb,jsonb)',
   'public.cryptocrawler_gate_non_okx_payout_schedule()',
   'public.cryptocrawler_enforce_lifecycle_inventory_reservation()',
+  'public.cryptocrawler_record_controlled_loss_terminal(uuid,numeric,jsonb)',
 ] as const;
 
 let schemaReady = false;
