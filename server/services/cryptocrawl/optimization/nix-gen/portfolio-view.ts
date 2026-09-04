@@ -1,5 +1,6 @@
 import type { NixGenPreparedBid } from './canonical-bid-adapters.js';
 import { replanNixGenAllocation, type NixGenReplanSnapshot } from './replanner.js';
+import { resolveNixGenStrategyLimb } from './strategy-limb-registry.js';
 import type { NixGenBidRejectionReason, NixGenDeferredBidReason, NixGenStrategyClass } from './types.js';
 
 export interface NixGenPortfolioEntry {
@@ -8,6 +9,10 @@ export interface NixGenPortfolioEntry {
   opportunityId: string;
   strategyId: string;
   strategyClass: NixGenStrategyClass;
+  strategyLimbId: string;
+  strategyLimbAvailable: boolean;
+  privateExecutionEligible: boolean;
+  zeroCapitalEligible: boolean;
   selected: boolean;
   deferredReason: NixGenDeferredBidReason | null;
   canonicalNetProfitUsd: number;
@@ -29,6 +34,7 @@ export interface NixGenPortfolioView {
   filtersCanonicalCandidates: false;
   preparedBidCount: number;
   strategyClassesPresent: NixGenStrategyClass[];
+  strategyLimbsPresent: string[];
   selectedCount: number;
   deferredCount: number;
   rejectedCount: number;
@@ -73,12 +79,17 @@ export function buildNixGenPortfolioView(
   const priority = result.priorityOrderBidIds.flatMap((bidId, priorityIndex) => {
     const bid = byBidId.get(bidId);
     if (!bid) return [];
+    const limb = resolveNixGenStrategyLimb(bid);
     return [{
       priorityIndex,
       bidId,
       opportunityId: bid.opportunityId,
       strategyId: bid.strategyId,
       strategyClass: bid.strategyClass,
+      strategyLimbId: limb.limb.id,
+      strategyLimbAvailable: limb.available,
+      privateExecutionEligible: limb.limb.privateExecutionEligible,
+      zeroCapitalEligible: limb.limb.zeroCapitalEligible,
       selected: selected.has(bidId),
       deferredReason: deferred.get(bidId) ?? null,
       canonicalNetProfitUsd: bid.economics.netProfitUsd,
@@ -86,6 +97,7 @@ export function buildNixGenPortfolioView(
     } satisfies NixGenPortfolioEntry];
   });
   const strategyClassesPresent = [...new Set(priority.map(item => item.strategyClass))].sort();
+  const strategyLimbsPresent = [...new Set(priority.map(item => item.strategyLimbId))].sort();
 
   return {
     generatedAt: replan.evaluatedAt,
@@ -96,6 +108,7 @@ export function buildNixGenPortfolioView(
     filtersCanonicalCandidates: false,
     preparedBidCount: input.prepared.length,
     strategyClassesPresent,
+    strategyLimbsPresent,
     selectedCount: result.selectedBidIds.length,
     deferredCount: result.deferred.length,
     rejectedCount: result.rejected.length,
