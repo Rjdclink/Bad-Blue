@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_cross_chain_lifecycles (
   input_decimals smallint NOT NULL CHECK (input_decimals BETWEEN 0 AND 36),
   output_decimals smallint NOT NULL CHECK (output_decimals BETWEEN 0 AND 36),
   input_amount_base_units numeric(78,0) NOT NULL CHECK (input_amount_base_units > 0),
+  expected_profit_usd double precision NOT NULL,
+  notional_usd double precision NOT NULL CHECK (notional_usd > 0),
   quote jsonb NOT NULL,
   origin_native_fee_wei numeric(78,0) NOT NULL DEFAULT 0 CHECK (origin_native_fee_wei >= 0),
   status text NOT NULL CHECK (status IN (
@@ -60,4 +62,4 @@ REVOKE ALL ON TABLE public.cryptocrawler_cross_chain_lifecycles FROM PUBLIC, ano
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_cross_chain_lifecycles TO service_role;
 
 COMMENT ON TABLE public.cryptocrawler_cross_chain_lifecycles IS
-  'Durable Across deposit lifecycle. A successful origin deposit is persisted before returning to the scheduler; unresolved/recovery states keep system-owned capital reserved until exact terminal reconciliation. Reconciliation leases prevent duplicate multi-worker processing and terminal feedback is retried until explicitly applied.';
+  'Durable Across deposit lifecycle. A successful origin deposit is persisted before returning to the scheduler; unresolved/recovery states keep system-owned capital reserved until exact terminal reconciliation. Expected economics are snapshotted at submission so terminal Cryptara/Nix feedback survives process restarts.';
