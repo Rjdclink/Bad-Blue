@@ -23,6 +23,7 @@ const crossTerminal = read('server/services/cryptocrawl/bridge/across-terminal-a
 const funding = read('server/services/cryptocrawl/discovery/funding-rate-monitor.ts');
 const fundingLifecycle = read('server/services/cryptocrawl/execution/funding-position-lifecycle.ts');
 const fundingAdapter = read('server/services/cryptocrawl/execution/okx-funding-lifecycle-adapter.ts');
+const fundingCapital = read('server/services/cryptocrawl/execution/funding-capital-reservation.ts');
 const combinedAdapter = read('server/services/cryptocrawl/execution/funding-crosschain-execution-adapter.ts');
 const manifest = read('server/services/cryptocrawl/optimization/nix-gen/completion-manifest.ts');
 
@@ -85,6 +86,13 @@ must(fundingAdapter, 'if (!terminalFundingAccountingComplete(settlement)) return
 must(fundingAdapter, 'await releaseTerminalFundingCapitalHold(okx, reconciledReceipt, settlement);', 'funding hold release occurs only through the terminal-accounting gate');
 must(fundingAdapter, 'funding_capital_hold_retained_until_terminal_accounting', 'delayed funding bills explicitly retain capital');
 must(fundingAdapter, "capitalReleaseAuthority: 'complete_terminal_accounting_only'", 'adapter declares complete terminal accounting as release authority');
+
+// Reservation expiry itself must not bypass terminal-accounting ownership protection.
+must(fundingCapital, 'function terminalAccountingRecoveryHoldMs', 'funding reservations have a bounded terminal-accounting recovery horizon');
+must(fundingCapital, 'const durableHoldUntil = Math.max(input.holdUntil, Date.now() + terminalAccountingRecoveryHoldMs());', 'initial funding reservations cover terminal-accounting recovery');
+must(fundingCapital, 'SET expires_at=GREATEST(expires_at,to_timestamp($3/1000.0))', 'renewal can never shorten a durable funding reservation');
+must(fundingCapital, 'holdUntil: durableExpiry', 'restart recovery preserves the durable reservation expiry');
+must(fundingCapital, '30 * 24 * 60 * 60_000', 'recovery horizon remains bounded rather than permanent');
 
 // Nix deterministic-dollar allocation may include deterministic cross-chain, never projected funding carry.
 must(measuredOrdering, "decision.topology === 'CROSS_CHAIN'", 'deterministic cross-chain enters measured Nix portfolio');
