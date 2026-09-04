@@ -23,9 +23,11 @@ const CAPABILITIES: readonly NixGenCapabilityManifestEntry[] = Object.freeze([
   { capability: 'standardized_strategy_bids', state: 'implemented', implementation: 'canonical-bid-adapters.ts + types.ts', authorityBoundary: 'Consumes canonical economics/execution evidence only' },
   { capability: 'bounded_global_allocation', state: 'implemented', implementation: 'global-optimizer.ts + coordinator.ts', authorityBoundary: 'Advisory subset/order only; valid non-selected bids remain deferred/alive' },
   { capability: 'continuous_replanning', state: 'implemented', implementation: 'replanner.ts', authorityBoundary: 'Pure/fingerprinted; no timer, lease, order or settlement side effects' },
-  { capability: 'mixed_live_portfolio', state: 'implemented', implementation: 'global-live-portfolio.ts + portfolio-view.ts', authorityBoundary: 'Compares settlement-capable CEX/DEX/liquidation bids under shared advisory dispatch capacity' },
+  { capability: 'mixed_live_portfolio', state: 'implemented', implementation: 'global-live-portfolio.ts + live-priority-registry.ts + portfolio-view.ts', authorityBoundary: 'CEX, maker-CEX, DEX/liquidation and zero-capital publish into one fresh advisory priority surface while canonical lane quotas remain hard truth' },
+  { capability: 'shared_cross_lane_priority', state: 'implemented', implementation: 'live-priority-registry.ts + cex-ordering.ts + measured-portfolio-preparation.ts + zero-capital-ordering.ts', authorityBoundary: 'Global ranking only; never acquires a lease, suppresses a canonical candidate or dispatches an order' },
   { capability: 'cex_runtime_ordering', state: 'implemented', implementation: 'cex-ordering.ts + canonical-execution-scheduler.ts', authorityBoundary: 'Default-on fail-open; canonical filters, leases, governance and executor unchanged' },
   { capability: 'measured_runtime_ordering', state: 'implemented', implementation: 'measured-portfolio-preparation.ts + measured-topology-execution-adapter.ts', authorityBoundary: 'Default-on fail-open; topology quotas and canonical executors unchanged' },
+  { capability: 'zero_capital_runtime_ordering', state: 'implemented', implementation: 'zero-capital-ordering.ts + zero-capital-shadow-priority-wiring.ts', authorityBoundary: 'Orders the existing zero-capital queue only; previous resource-shadow ordering remains the fail-open fallback and zero-capital engine retains execution/settlement authority' },
   { capability: 'strategy_fingers', state: 'implemented', implementation: 'strategy-limb-registry.ts + portfolio-view.ts', authorityBoundary: 'Finger is available only when upstream authoritative execution and settlement already exist' },
   { capability: 'resource_projection', state: 'implemented', implementation: 'resource-scheduler.ts + zero-capital-resource-scheduler.ts adapters', authorityBoundary: 'Read-only projections; distributed lease acquisition remains hard truth' },
   { capability: 'scarcity_signal', state: 'implemented', implementation: 'scarcity-pricing.ts', authorityBoundary: 'Bounded heuristic diagnostic; never mislabeled as a dual price' },
@@ -40,19 +42,15 @@ const CAPABILITIES: readonly NixGenCapabilityManifestEntry[] = Object.freeze([
   { capability: 'profit_ladder_stage_risk', state: 'implemented', implementation: 'integration-contract.ts', authorityBoundary: 'Existing hard notional/stage/drawdown/circuit-breaker authorities remain binding' },
   { capability: 'dynamic_scale_integration', state: 'implemented', implementation: 'integration-contract.ts', authorityBoundary: 'Consumes resulting resource pressure/capacity; does not become scaling authority' },
   { capability: 'private_execution_routing', state: 'implemented', implementation: 'strategy-limb-registry.ts + integration-contract.ts', authorityBoundary: 'Uses existing canonical private/atomic capability; no duplicate transaction submitter' },
-  { capability: 'zero_capital_live_finger', state: 'upstream_capability_required', implementation: 'strategy-limb-registry.ts', authorityBoundary: 'Registered but unavailable until canonical zero-capital executor exposes terminal settlement capability' },
-  { capability: 'cross_chain_live_finger', state: 'upstream_capability_required', implementation: 'strategy-limb-registry.ts', authorityBoundary: 'Registered but unavailable until the specific canonical route is executable and settlement-capable' },
-  { capability: 'funding_rate_live_finger', state: 'upstream_capability_required', implementation: 'strategy-limb-registry.ts', authorityBoundary: 'Registered; availability follows upstream lifecycle execution/settlement truth' },
-  { capability: 'market_making_live_finger', state: 'upstream_capability_required', implementation: 'strategy-limb-registry.ts', authorityBoundary: 'Registered; cannot create order-control authority' },
-  { capability: 'solver_intent_live_finger', state: 'upstream_capability_required', implementation: 'strategy-limb-registry.ts', authorityBoundary: 'Registered; requires upstream executable settlement-capable intent path' },
+  { capability: 'zero_capital_live_finger', state: 'implemented', implementation: 'canonical-bid-adapters.ts + zero-capital-ordering.ts + zero-capital-shadow-priority-wiring.ts', authorityBoundary: 'Uses the existing zero-capital engine queue, resource scheduler and terminal realized-profit/treasury settlement path; Nix-Gen never becomes executor or treasury authority' },
+  { capability: 'market_making_live_finger', state: 'implemented', implementation: 'canonical-bid-adapters.ts + cex-ordering.ts + post-only maker execution authority', authorityBoundary: 'Maker/RPI plans are classified separately for Nix-Gen but continue through canonical post-only maker adapters and CEX terminal settlement' },
+  { capability: 'cross_chain_live_finger', state: 'upstream_capability_required', implementation: 'strategy-limb-registry.ts', authorityBoundary: 'Across transport/terminal settlement exists, but discovery intentionally has no source/destination arbitrage revenue leg or deterministic all-in profitable composition; Nix-Gen must not manufacture profit' },
+  { capability: 'funding_rate_live_finger', state: 'upstream_capability_required', implementation: 'strategy-limb-registry.ts', authorityBoundary: 'Durable lifecycle skeleton exists, but discovery intentionally lacks measured entry/exit depth, basis reserve, registered venue lifecycle adapters and terminal funding-close evidence' },
+  { capability: 'solver_intent_live_finger', state: 'upstream_capability_required', implementation: 'strategy-limb-registry.ts', authorityBoundary: 'No upstream executable terminal-settlement-capable intent/solver route currently exists; Nix-Gen cannot fabricate one' },
   { capability: 'cognitive_fabric_hot_path', state: 'research_only', implementation: 'integration-contract.ts', authorityBoundary: '4JI CognitiveFabric remains outside canonical financial truth and live execution' },
   { capability: 'hhl_quantum_limb', state: 'research_only', implementation: 'integration-contract.ts', authorityBoundary: 'Specialized future linear-system research only; classical Nix-Gen is mandatory baseline' },
 ]);
 
-/**
- * Transparent implementation manifest only. It is not runtime proof, a profit
- * guarantee, or a substitute for upstream execution/settlement capability.
- */
 export function getNixGenCompletionManifest(): NixGenCompletionManifest {
   return {
     architecture: 'nix_gen',
