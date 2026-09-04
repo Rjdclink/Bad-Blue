@@ -31,6 +31,20 @@ export interface SponsoredExecutionResult {
   receiptStatus: 0 | 1;
 }
 
+export interface OpportunityBackedGasQuote {
+  provider: 'alchemy-gas-manager';
+  tokenAddress: string;
+  maxTokenAmount: bigint;
+  fundingMode: 'opportunity_erc20_postop';
+  upfrontExecutionWalletTokenBalanceRequired: false;
+}
+
+export interface OpportunityBackedExecutionResult extends SponsoredExecutionResult {
+  feeTokenAddress: string;
+  maxFeeTokenAmount: bigint;
+  fundingMode: 'opportunity_erc20_postop';
+}
+
 interface JsonRpcEnvelope<T> {
   result?: T;
   error?: { code?: number; message?: string; data?: unknown };
@@ -38,7 +52,7 @@ interface JsonRpcEnvelope<T> {
 
 function requireHexAddress(label: string, value: string): string {
   if (!/^0x[a-fA-F0-9]{40}$/.test(value)) throw new Error(`${label} must be a valid EVM address`);
-  return value;
+  return ethers.utils.getAddress(value.toLowerCase());
 }
 
 function toHexValue(value: SponsoredCall['value']): string {
@@ -47,9 +61,40 @@ function toHexValue(value: SponsoredCall['value']): string {
   return ethers.utils.hexValue(BigNumber.from(value));
 }
 
+function toPositiveBigNumber(label: string, value: BigNumber | bigint | string | number): BigNumber {
+  const parsed = typeof value === 'bigint' ? BigNumber.from(value.toString()) : BigNumber.from(value);
+  if (parsed.lte(0)) throw new Error(`${label} must be greater than zero`);
+  return parsed;
+}
+
 function stripEip712Domain(types: Record<string, Array<{ name: string; type: string }>>): Record<string, Array<{ name: string; type: string }>> {
   const { EIP712Domain: _domain, ...rest } = types;
   return rest;
+}
+
+function preparedItems(prepared: any): any[] {
+  return prepared?.type === 'array' && Array.isArray(prepared.data) ? prepared.data : [prepared];
+}
+
+function extractFeePayment(prepared: any, expectedTokenAddress: string): BigNumber {
+  const expected = requireHexAddress('opportunity-backed gas token', expectedTokenAddress).toLowerCase();
+  const payments = preparedItems(prepared)
+    .map(item => item?.feePayment)
+    .filter(payment => payment && payment.sponsored === false && typeof payment.tokenAddress === 'string');
+  if (payments.length === 0) throw new Error('Alchemy opportunity-backed preparation returned no ERC-20 feePayment');
+
+  let max = BigNumber.from(0);
+  let matched = false;
+  for (const payment of payments) {
+    const token = requireHexAddress('Alchemy feePayment.tokenAddress', payment.tokenAddress).toLowerCase();
+    if (token !== expected) continue;
+    const amount = BigNumber.from(payment.maxAmount);
+    if (amount.lte(0)) throw new Error('Alchemy opportunity-backed feePayment maxAmount is not positive');
+    if (amount.gt(max)) max = amount;
+    matched = true;
+  }
+  if (!matched) throw new Error('Alchemy opportunity-backed feePayment token does not match the requested profit token');
+  return max;
 }
 
 export class AlchemyGasSponsorshipManager {
@@ -156,39 +201,25 @@ export class AlchemyGasSponsorshipManager {
     return this.signPreparedItem(wallet, prepared, expectedChainId);
   }
 
-  async execute(input: {
-    wallet: Wallet;
-    chainId: number;
-    calls: SponsoredCall[];
-    timeoutMs?: number;
-    pollMs?: number;
-  }): Promise<SponsoredExecutionResult> {
+  private normalizeCalls(input: { wallet: Wallet; chainId: number; calls: SponsoredCall[] }): {
+    from: string;
+    chainId: string;
+    calls: Array<{ to: string; data: string; value: string }>;
+  } {
     if (!Number.isSafeInteger(input.chainId) || input.chainId <= 0) throw new Error('chainId must be a positive integer');
     if (!Array.isArray(input.calls) || input.calls.length === 0) throw new Error('At least one sponsored call is required');
-
     const from = requireHexAddress('wallet.address', input.wallet.address);
     const calls = input.calls.map((call, index) => ({
       to: requireHexAddress(`calls[${index}].to`, call.to),
       data: ethers.utils.hexlify(call.data || '0x'),
       value: toHexValue(call.value),
     }));
+    return { from, chainId: ethers.utils.hexValue(input.chainId), calls };
+  }
 
-    const prepared = await this.rpc<any>('wallet_prepareCalls', [{
-      calls,
-      from,
-      chainId: ethers.utils.hexValue(input.chainId),
-      capabilities: {
-        paymasterService: { policyId: this.policyId },
-      },
-    }]);
-
-    const signed = await this.signPreparedCalls(input.wallet, prepared, input.chainId);
-    const sendResult = await this.rpc<any>('wallet_sendPreparedCalls', [signed]);
-    const callId = String(sendResult?.id || '');
-    if (!ethers.utils.isHexString(callId)) throw new Error('Alchemy wallet_sendPreparedCalls returned an invalid call id');
-
-    const deadline = Date.now() + Math.max(5_000, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    const pollMs = Math.max(250, input.pollMs ?? DEFAULT_POLL_MS);
+  private async waitForResult(callId: string, timeoutMs?: number, pollMs?: number): Promise<SponsoredExecutionResult> {
+    const deadline = Date.now() + Math.max(5_000, timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const poll = Math.max(250, pollMs ?? DEFAULT_POLL_MS);
     while (Date.now() < deadline) {
       const status = await this.rpc<any>('wallet_getCallsStatus', [callId]);
       const numericStatus = Number(status?.status);
@@ -207,10 +238,139 @@ export class AlchemyGasSponsorshipManager {
         return { callId, transactionHash, blockNumber, gasUsed, receiptStatus: 1 };
       }
       if (numericStatus === 400) throw new Error('Alchemy sponsored call failed or reverted');
-      await new Promise(resolve => setTimeout(resolve, pollMs));
+      await new Promise(resolve => setTimeout(resolve, poll));
+    }
+    throw new Error(`Alchemy sponsored call timed out after ${Math.max(5_000, timeoutMs ?? DEFAULT_TIMEOUT_MS)}ms`);
+  }
+
+  async execute(input: {
+    wallet: Wallet;
+    chainId: number;
+    calls: SponsoredCall[];
+    timeoutMs?: number;
+    pollMs?: number;
+  }): Promise<SponsoredExecutionResult> {
+    const request = this.normalizeCalls(input);
+    const prepared = await this.rpc<any>('wallet_prepareCalls', [{
+      calls: request.calls,
+      from: request.from,
+      chainId: request.chainId,
+      capabilities: {
+        paymasterService: { policyId: this.policyId },
+      },
+    }]);
+
+    const signed = await this.signPreparedCalls(input.wallet, prepared, input.chainId);
+    const sendResult = await this.rpc<any>('wallet_sendPreparedCalls', [signed]);
+    const callId = String(sendResult?.id || '');
+    if (!ethers.utils.isHexString(callId)) throw new Error('Alchemy wallet_sendPreparedCalls returned an invalid call id');
+    return this.waitForResult(callId, input.timeoutMs, input.pollMs);
+  }
+
+  /**
+   * Quotes the maximum ERC-20 amount the paymaster would collect after execution.
+   * balanceCheck=false is intentional only for this opportunity-backed mode: the
+   * atomic call itself must create the payment-token balance before postOp. No
+   * quote is treated as profit and no transaction is submitted from this method.
+   */
+  async quoteOpportunityBackedGas(input: {
+    wallet: Wallet;
+    chainId: number;
+    calls: SponsoredCall[];
+    tokenAddress: string;
+  }): Promise<OpportunityBackedGasQuote> {
+    const request = this.normalizeCalls(input);
+    const tokenAddress = requireHexAddress('opportunity-backed gas token', input.tokenAddress);
+    const prepared = await this.rpc<any>('wallet_prepareCalls', [{
+      calls: request.calls,
+      from: request.from,
+      chainId: request.chainId,
+      capabilities: {
+        paymasterService: {
+          policyId: this.policyId,
+          onlyEstimation: true,
+          erc20: {
+            tokenAddress,
+            postOpSettings: { autoApprove: true, balanceCheck: false },
+          },
+        },
+      },
+    }]);
+    return {
+      provider: 'alchemy-gas-manager',
+      tokenAddress,
+      maxTokenAmount: extractFeePayment(prepared, tokenAddress).toBigInt(),
+      fundingMode: 'opportunity_erc20_postop',
+      upfrontExecutionWalletTokenBalanceRequired: false,
+    };
+  }
+
+  /**
+   * Executes an atomic call whose guaranteed output token pays its own gas in
+   * postOp. The provider fronts native gas, but the opportunity repays the ERC-20
+   * gas charge from proceeds created inside the same UserOperation. The hard
+   * maxTokenAmount is below the receiver-guaranteed minimum profit, ensuring a
+   * strictly positive token remainder if execution succeeds. If preparation,
+   * pricing, approval, execution, or postOp cannot satisfy that invariant, the
+   * operation fails closed and no fallback transaction is submitted here.
+   */
+  async executeOpportunityBacked(input: {
+    wallet: Wallet;
+    chainId: number;
+    calls: SponsoredCall[];
+    tokenAddress: string;
+    minimumProfitTokenAmount: BigNumber | bigint | string | number;
+    timeoutMs?: number;
+    pollMs?: number;
+  }): Promise<OpportunityBackedExecutionResult> {
+    const request = this.normalizeCalls(input);
+    const tokenAddress = requireHexAddress('opportunity-backed gas token', input.tokenAddress);
+    const minimumProfit = toPositiveBigNumber('minimumProfitTokenAmount', input.minimumProfitTokenAmount);
+    if (minimumProfit.lte(1)) throw new Error('Opportunity-backed minimum profit must exceed one base unit');
+
+    const estimate = await this.quoteOpportunityBackedGas({
+      wallet: input.wallet,
+      chainId: input.chainId,
+      calls: input.calls,
+      tokenAddress,
+    });
+    const estimatedMax = BigNumber.from(estimate.maxTokenAmount.toString());
+    if (estimatedMax.gte(minimumProfit)) {
+      throw new Error('Opportunity-backed gas quote consumes the receiver-guaranteed minimum profit');
     }
 
-    throw new Error(`Alchemy sponsored call timed out after ${Math.max(5_000, input.timeoutMs ?? DEFAULT_TIMEOUT_MS)}ms`);
+    const hardMaxTokenAmount = minimumProfit.sub(1);
+    const prepared = await this.rpc<any>('wallet_prepareCalls', [{
+      calls: request.calls,
+      from: request.from,
+      chainId: request.chainId,
+      capabilities: {
+        paymasterService: {
+          policyId: this.policyId,
+          erc20: {
+            tokenAddress,
+            maxTokenAmount: ethers.utils.hexValue(hardMaxTokenAmount),
+            postOpSettings: { autoApprove: true, balanceCheck: false },
+          },
+        },
+      },
+    }]);
+    const finalMax = extractFeePayment(prepared, tokenAddress);
+    if (finalMax.gte(minimumProfit)) {
+      throw new Error('Final opportunity-backed gas charge is not strictly below guaranteed profit');
+    }
+
+    const signed = await this.signPreparedCalls(input.wallet, prepared, input.chainId);
+    const sendResult = await this.rpc<any>('wallet_sendPreparedCalls', [signed]);
+    const callId = String(sendResult?.id || '');
+    if (!ethers.utils.isHexString(callId)) throw new Error('Alchemy wallet_sendPreparedCalls returned an invalid call id');
+    const result = await this.waitForResult(callId, input.timeoutMs, input.pollMs);
+    return {
+      ...result,
+      feeTokenAddress: tokenAddress,
+      maxFeeTokenAmount: finalMax.toBigInt(),
+      fundingMode: 'opportunity_erc20_postop',
+    };
   }
 }
 
