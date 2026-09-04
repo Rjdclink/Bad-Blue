@@ -90,8 +90,9 @@ requirePattern(adapters, /resourceProjectionMutatesState:\s*projection\.mutatesR
 requirePattern(adapters, /profitabilityScore[\s\S]{0,220}double-count/, 'Measured-topology adapter must document profitability-score double-count prevention');
 forbidPattern(adapters, /rankScore:\s*Number\.isFinite\(decision\.score\.profitabilityScore\)/, 'Measured-topology profitabilityScore must not be re-applied as Nix-Gen rank');
 
-requirePattern(cexOrdering, /CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING\s*===\s*'true'/, 'CEX Nix-Gen ordering must be explicit opt-in');
-requirePattern(cexOrdering, /if \(!enabled \|\| original\.length < 2\)/, 'Disabled Nix-Gen ordering must immediately preserve canonical order');
+requirePattern(cexOrdering, /CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING\s*!==\s*'false'/, 'Completed CEX Nix-Gen advisory ordering must remain default-on with an explicit false rollback switch');
+requirePattern(cexOrdering, /if \(!enabled\)/, 'Disabled Nix-Gen ordering must immediately preserve canonical order');
+requirePattern(cexOrdering, /if \(original\.length === 0\)/, 'Empty CEX candidate sets must preserve canonical ordering without advisory work');
 requirePattern(cexOrdering, /catch \(error\)[\s\S]{0,450}candidates:\s*original/, 'Nix-Gen ordering errors must fail open to canonical ordering');
 forbidPattern(cexOrdering, /settlementCapable:\s*true/, 'CEX ordering caller must not assert settlement capability');
 forbidPattern(cexOrdering, /\.filter\([^\n]*candidate/, 'CEX Nix-Gen ordering must not filter canonical candidates');
