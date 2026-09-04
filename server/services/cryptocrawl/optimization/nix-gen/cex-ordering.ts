@@ -1,6 +1,7 @@
 import type { CanonicalOpportunitySnapshot } from '../../intelligence/canonical-opportunity-state.js';
 import { prepareCexNixGenBid } from './canonical-bid-adapters.js';
 import { compareByNixGenPriority, type NixGenAllocationSnapshot } from './coordinator.js';
+import { clearNixGenLivePriority, publishNixGenLivePriority } from './live-priority-registry.js';
 import { replanNixGenAllocation, type NixGenReplanSnapshot } from './replanner.js';
 
 type CexCandidate = CanonicalOpportunitySnapshot & { plan: NonNullable<CanonicalOpportunitySnapshot['plan']> };
@@ -36,12 +37,14 @@ export function orderCexCandidatesWithNixGen<T extends CexCandidate>(
   input: NixGenCexOrderingInput<T>,
 ): NixGenCexOrderingResult<T> {
   const original = [...input.candidates];
-  // Completed Nix-Gen is advisory/fail-open, so scheduling optimization is active
-  // by default. Operators retain an explicit no-regression escape hatch with
-  // CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING=false.
   const enabled = process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING !== 'false';
-  if (!enabled || original.length < 2) {
-    if (!enabled) previousCexReplan = undefined;
+  if (!enabled) {
+    previousCexReplan = undefined;
+    clearNixGenLivePriority('cex');
+    return { candidates: original, enabled, applied: false, allocation: null, replan: null, error: null };
+  }
+  if (original.length === 0) {
+    clearNixGenLivePriority('cex');
     return { candidates: original, enabled, applied: false, allocation: null, replan: null, error: null };
   }
 
@@ -57,7 +60,13 @@ export function orderCexCandidatesWithNixGen<T extends CexCandidate>(
       }))
       .filter((item): item is NonNullable<typeof item> => item !== null);
 
-    if (prepared.length < 2) {
+    const live = publishNixGenLivePriority({
+      source: 'cex',
+      prepared,
+      now: input.now,
+      dispatchCapacity: input.dispatchCapacity,
+    });
+    if (prepared.length === 0) {
       previousCexReplan = undefined;
       return { candidates: original, enabled, applied: false, allocation: null, replan: null, error: null };
     }
@@ -70,10 +79,14 @@ export function orderCexCandidatesWithNixGen<T extends CexCandidate>(
     previousCexReplan = replan;
     const allocation = replan.allocation;
     const originalIndex = new Map(original.map((candidate, index) => [candidate.opportunityId, index]));
-    const ordered = [...original].sort(compareByNixGenPriority(
+    const localComparator = compareByNixGenPriority(
       allocation.priorityIndexByOpportunityId,
-      (left, right) => (originalIndex.get(left.opportunityId) ?? Number.MAX_SAFE_INTEGER)
+      (left: T, right: T) => (originalIndex.get(left.opportunityId) ?? Number.MAX_SAFE_INTEGER)
         - (originalIndex.get(right.opportunityId) ?? Number.MAX_SAFE_INTEGER),
+    );
+    const ordered = [...original].sort(compareByNixGenPriority(
+      live.priorityIndexByOpportunityId,
+      localComparator,
     ));
 
     return {

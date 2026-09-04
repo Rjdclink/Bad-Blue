@@ -4,6 +4,8 @@ export * from './global-optimizer.js';
 export * from './canonical-bid-adapters.js';
 export * from './coordinator.js';
 export * from './cex-ordering.js';
+export * from './zero-capital-ordering.js';
+export * from './live-priority-registry.js';
 export * from './scarcity-pricing.js';
 export * from './replanner.js';
 export * from './robust-uncertainty.js';

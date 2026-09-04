@@ -12,6 +12,12 @@ export type NixGenCexLiveCandidate = CanonicalOpportunitySnapshot & {
 export interface NixGenGlobalLivePortfolioInput<T extends NixGenCexLiveCandidate> {
   cexCandidates: readonly T[];
   measuredDecisions: readonly UnifiedExecutionDecision[];
+  /**
+   * Optional already-prepared bids from independently authoritative lanes such as
+   * the existing zero-capital engine. Supplying them does not transfer execution,
+   * settlement or resource authority to this read-only helper.
+   */
+  additionalPrepared?: readonly NixGenPreparedBid[];
   now?: number;
   maxQuoteAgeMs: number;
   dispatchCapacity: number;
@@ -30,6 +36,7 @@ export interface NixGenGlobalLivePortfolio {
   filtersCanonicalCandidates: false;
   cexPreparedCount: number;
   measuredPreparedCount: number;
+  additionalPreparedCount: number;
   prepared: NixGenPreparedBid[];
   measuredPreparation: NixGenMeasuredPortfolioPreparation;
   portfolio: NixGenPortfolioView | null;
@@ -43,11 +50,11 @@ function cexFreshnessExpiry(candidate: NixGenCexLiveCandidate, now: number, maxQ
 }
 
 /**
- * One read-only portfolio across the currently settlement-capable live topology
- * surface. The coordinator applies the shared scheduler dispatch resource in
- * addition to topology-specific read-only budgets, so the portfolio can compare
- * scarce capacity globally without acquiring a lease or suppressing an upstream
- * canonical candidate.
+ * Pure read-only portfolio builder across currently settlement-capable live
+ * surfaces. CEX/maker and measured atomic bids are prepared here; independently
+ * authoritative lanes (for example zero-capital) may contribute their already-
+ * prepared bids through additionalPrepared. The live runtime's cross-lane rolling
+ * surface is maintained by live-priority-registry.ts.
  */
 export function buildNixGenGlobalLivePortfolio<T extends NixGenCexLiveCandidate>(
   input: NixGenGlobalLivePortfolioInput<T>,
@@ -72,7 +79,20 @@ export function buildNixGenGlobalLivePortfolio<T extends NixGenCexLiveCandidate>
     now,
     dispatchCapacity,
   });
-  const prepared = [...cexPrepared, ...measuredPreparation.prepared];
+  const additionalPrepared = (input.additionalPrepared || [])
+    .filter(item => item.bid.expiresAt > now)
+    .map(item => ({
+      bid: {
+        ...item.bid,
+        economics: { ...item.bid.economics },
+        execution: { ...item.bid.execution },
+        advisory: item.bid.advisory ? { ...item.bid.advisory } : undefined,
+        resources: item.bid.resources.map(resource => ({ ...resource })),
+        metadata: item.bid.metadata ? { ...item.bid.metadata } : undefined,
+      },
+      budgets: item.budgets.map(budget => ({ ...budget })),
+    }));
+  const prepared = [...cexPrepared, ...measuredPreparation.prepared, ...additionalPrepared];
   const portfolio = prepared.length > 0
     ? buildNixGenPortfolioView({ prepared, now, dispatchCapacity }, input.previous)
     : null;
@@ -87,6 +107,7 @@ export function buildNixGenGlobalLivePortfolio<T extends NixGenCexLiveCandidate>
     filtersCanonicalCandidates: false,
     cexPreparedCount: cexPrepared.length,
     measuredPreparedCount: measuredPreparation.prepared.length,
+    additionalPreparedCount: additionalPrepared.length,
     prepared,
     measuredPreparation,
     portfolio,

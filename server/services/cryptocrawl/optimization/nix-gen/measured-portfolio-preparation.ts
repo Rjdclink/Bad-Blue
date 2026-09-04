@@ -2,6 +2,7 @@ import { measuredCandidateRegistry } from '../../discovery/measured-candidate-re
 import { getGasSponsorManager } from '../../strategies/gas-sponsorship.js';
 import type { UnifiedExecutionDecision } from '../../execution/unified-execution-router.js';
 import { prepareMeasuredTopologyNixGenBid, type NixGenPreparedBid } from './canonical-bid-adapters.js';
+import { clearNixGenLivePriority, publishNixGenLivePriority } from './live-priority-registry.js';
 import { buildNixGenPortfolioView, type NixGenPortfolioView } from './portfolio-view.js';
 import type { NixGenReplanSnapshot } from './replanner.js';
 import { getNixGenTerminalCalibration } from './terminal-calibration.js';
@@ -58,13 +59,6 @@ function settlementCapableMeasuredDecision(decision: UnifiedExecutionDecision): 
     || (decision.topology === 'LIQUIDATION' && decision.path === 'FLASH_LOAN_LIQUIDATION');
 }
 
-/**
- * Builds a read-only Nix-Gen portfolio from measured candidates that already
- * possess a settlement-capable canonical execution path. This function never
- * dispatches, reserves resources, updates candidate status, or manufactures
- * economics/capability. Unsupported topologies remain outside Nix-Gen until an
- * authoritative executor/settlement path exists upstream.
- */
 export function prepareSettlementCapableMeasuredPortfolio(
   input: PrepareMeasuredPortfolioInput,
 ): NixGenMeasuredPortfolioPreparation {
@@ -139,14 +133,6 @@ export function prepareSettlementCapableMeasuredPortfolio(
   };
 }
 
-/**
- * Completed Nix-Gen measured-topology ordering is active by default and remains
- * fail-open. Only already-admitted, settlement-capable DEX/liquidation decisions
- * can move relative to one another. Setting
- * CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING=false restores the exact prior ordering.
- * Unsupported/non-admitted decisions retain their original positions and Nix-Gen
- * never changes admission, economics, resource ownership, or execution authority.
- */
 export function orderSettlementCapableMeasuredDecisionsWithNixGen(
   decisions: readonly UnifiedExecutionDecision[],
   dispatchCapacity = 8,
@@ -154,8 +140,13 @@ export function orderSettlementCapableMeasuredDecisionsWithNixGen(
 ): NixGenMeasuredOrderingResult {
   const original = [...decisions];
   const enabled = process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING !== 'false';
-  if (!enabled || original.length < 2) {
-    if (!enabled) previousMeasuredReplan = undefined;
+  if (!enabled) {
+    previousMeasuredReplan = undefined;
+    clearNixGenLivePriority('measured_atomic');
+    return { decisions: original, enabled, applied: false, preparation: null, error: null };
+  }
+  if (original.length === 0) {
+    clearNixGenLivePriority('measured_atomic');
     return { decisions: original, enabled, applied: false, preparation: null, error: null };
   }
 
@@ -166,21 +157,33 @@ export function orderSettlementCapableMeasuredDecisionsWithNixGen(
       dispatchCapacity,
       previous: previousMeasuredReplan,
     });
-    if (!preparation.portfolio || preparation.portfolio.priority.length < 2) {
-      previousMeasuredReplan = preparation.portfolio?.replan;
+    previousMeasuredReplan = preparation.portfolio?.replan;
+    const live = publishNixGenLivePriority({
+      source: 'measured_atomic',
+      prepared: preparation.prepared,
+      now,
+      dispatchCapacity,
+    });
+    if (preparation.prepared.length === 0) {
       return { decisions: original, enabled, applied: false, preparation, error: null };
     }
-    previousMeasuredReplan = preparation.portfolio.replan;
 
-    const priority = new Map(preparation.portfolio.priority.map(entry => [entry.opportunityId, entry.priorityIndex]));
+    const localPriority = new Map((preparation.portfolio?.priority || []).map(entry => [entry.opportunityId, entry.priorityIndex]));
+    const globalPriority = live.priorityIndexByOpportunityId;
     const movable = original
-      .filter(decision => priority.has(decision.opportunityId))
-      .sort((left, right) =>
-        (priority.get(left.opportunityId) ?? Number.MAX_SAFE_INTEGER)
-        - (priority.get(right.opportunityId) ?? Number.MAX_SAFE_INTEGER),
-      );
+      .filter(decision => localPriority.has(decision.opportunityId))
+      .sort((left, right) => {
+        const leftGlobal = globalPriority[left.opportunityId];
+        const rightGlobal = globalPriority[right.opportunityId];
+        const leftGlobalKnown = Number.isInteger(leftGlobal) && leftGlobal >= 0;
+        const rightGlobalKnown = Number.isInteger(rightGlobal) && rightGlobal >= 0;
+        if (leftGlobalKnown && rightGlobalKnown && leftGlobal !== rightGlobal) return leftGlobal - rightGlobal;
+        if (leftGlobalKnown !== rightGlobalKnown) return leftGlobalKnown ? -1 : 1;
+        return (localPriority.get(left.opportunityId) ?? Number.MAX_SAFE_INTEGER)
+          - (localPriority.get(right.opportunityId) ?? Number.MAX_SAFE_INTEGER);
+      });
     let cursor = 0;
-    const ordered = original.map(decision => priority.has(decision.opportunityId)
+    const ordered = original.map(decision => localPriority.has(decision.opportunityId)
       ? movable[cursor++] ?? decision
       : decision);
 
