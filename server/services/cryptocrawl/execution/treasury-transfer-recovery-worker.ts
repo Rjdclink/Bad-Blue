@@ -45,15 +45,36 @@ async function recoverOnce(): Promise<void> {
     [STALE_SECONDS],
   );
 
+  // Payout funding is also represented on two durable surfaces. Recover them as
+  // one state transition. The system-capital reservation remains held because
+  // RETRYABLE with submitted_at is recovery-only under migration 044.
   const payout = await pool.query(
-    `UPDATE public.cryptocrawler_payout_funding_transfers
+    `WITH stale_funding AS (
+       SELECT f.event_id, f.transfer_id
+       FROM public.cryptocrawler_payout_funding_transfers f
+       WHERE f.status IN ('SUBMITTED','SETTLING')
+         AND f.last_attempt_at IS NOT NULL
+         AND f.last_attempt_at <= now() - make_interval(secs => $1)
+       FOR UPDATE
+     ), recovered_system AS (
+       UPDATE public.cryptocrawler_system_capital_transfers t
+       SET status='RETRYABLE',
+           last_error=COALESCE(t.last_error,'stale payout-funding transfer recovered after restart; provider reconciliation must run before any resubmission'),
+           updated_at=now()
+       FROM stale_funding s
+       WHERE t.transfer_id=s.transfer_id
+         AND t.transfer_kind='PAYOUT_FUNDING'
+         AND t.status IN ('SUBMITTED','SETTLING')
+       RETURNING t.transfer_id
+     )
+     UPDATE public.cryptocrawler_payout_funding_transfers f
      SET status='RETRYABLE',
-         last_error=COALESCE(last_error,'stale payout-funding attempt recovered after restart; Kraken withdrawal recovery must run before any resubmission'),
+         last_error=COALESCE(f.last_error,'stale payout-funding attempt recovered after restart; provider reconciliation must run before any resubmission'),
          updated_at=now()
-     WHERE status IN ('SUBMITTED','SETTLING')
-       AND last_attempt_at IS NOT NULL
-       AND last_attempt_at <= now() - make_interval(secs => $1)
-     RETURNING event_id`,
+     FROM stale_funding s
+     WHERE f.event_id=s.event_id
+       AND f.status IN ('SUBMITTED','SETTLING')
+     RETURNING f.event_id`,
     [STALE_SECONDS],
   );
 
@@ -65,6 +86,8 @@ async function recoverOnce(): Promise<void> {
       staleSeconds: STALE_SECONDS,
       exchangeRecoveryBeforeResubmitRequired: true,
       retainedTransferReservationRemainsActive: true,
+      payoutTransferReservationRemainsActive: true,
+      pairedRecoveryStateAuthority: true,
       duplicateSubmissionAuthorityGranted: false,
     });
   }
