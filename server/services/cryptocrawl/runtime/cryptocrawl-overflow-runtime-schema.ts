@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 8;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v8';
+const SCHEMA_VERSION = 9;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v9';
 
 // Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
 // 016 is deliberately excluded because it installs pg_cron/pg_net and an active
@@ -41,6 +41,7 @@ const MIGRATIONS = [
   '029_cryptocrawler_terminal_sweep_recipient_confirmation.sql',
   '030_cryptocrawler_payout_confirmation_truth_guard.sql',
   '031_cryptocrawler_payout_confirmation_wait.sql',
+  '032_cryptocrawler_operator_trading_strategy.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -68,6 +69,12 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_system_capital_allocations',
   'public.cryptocrawler_cex_system_owned_lots',
   'public.cryptocrawler_cex_system_owned_settlements',
+  'public.cryptocrawler_operator_strategy_control',
+  'public.cryptocrawler_operator_strategy_cycles',
+  'public.cryptocrawler_operator_strategy_days',
+  'public.cryptocrawler_operator_trade_reservations',
+  'public.cryptocrawler_operator_profit_events',
+  'public.cryptocrawler_retained_exchange_allocations',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
@@ -93,6 +100,7 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_okx_treasury_spendable(text)',
   'public.cryptocrawler_profit_payout_batch_confirm(text,text,text)',
   'public.cryptocrawler_treasury_claim_okx_liquidity(text,text,numeric)',
+  'public.cryptocrawler_operator_strategy_record_profit(text,text,numeric)',
 ] as const;
 
 let schemaReady = false;
