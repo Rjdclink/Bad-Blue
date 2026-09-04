@@ -1,3 +1,0 @@
-export const NIX_GEN_DEFAULT_EXACT_BID_LIMIT = 18;
-export const NIX_GEN_MAX_EXACT_BID_LIMIT = 24;
-export const NIX_GEN_MAX_DECAY_URGENCY_FACTOR = 2;
