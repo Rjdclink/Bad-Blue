@@ -9,6 +9,12 @@ import { operatorTradingStrategy } from '../governance/operator-trading-strategy
 import { stageManager } from '../governance/stage-management.js';
 import { executeAcrossBridgeQuote } from './across-bridge-executor.js';
 import {
+  advancePreparedAcrossOriginTransactions,
+  claimPendingAcrossOriginFailureFeedback,
+  markAcrossOriginFailureFeedbackApplied,
+  releaseAcrossOriginFailureFeedbackLease,
+} from './across-prebroadcast-durability.js';
+import {
   advanceOpenCrossChainLifecycles,
   claimPendingCrossChainTerminalFeedback,
   ensureCrossChainLifecycleStoreReady,
@@ -202,9 +208,16 @@ async function releaseFundingFeedbackLease(lifecycleId: string, error: unknown):
   );
 }
 
+function crossChainTerminalStatus(result: CrossChainLifecycleResult): 'filled' | 'refunded' | 'failed' {
+  if (result.status === 'FILLED') return 'filled';
+  if (result.status === 'REFUNDED') return 'refunded';
+  return 'failed';
+}
+
 async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Promise<void> {
   if (!result.terminal || !result.settlementConfirmed) return;
   const realized = result.realizedNetProfitUsd;
+  if (realized === null || !Number.isFinite(realized)) throw new Error('CROSS_CHAIN_TERMINAL_REALIZED_ECONOMICS_INCOMPLETE');
   const settledAt = result.settledAt ?? Date.now();
   const terminal = result.terminalAmountEvidence;
   const inputHuman = terminal ? Number(ethers.utils.formatUnits(terminal.inputAmount, result.quote.inputTokenDecimals)) : null;
@@ -212,7 +225,7 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
   const acquisitionCostUsd = inputHuman !== null && result.assetUsd !== null && Number.isFinite(inputHuman) ? inputHuman * result.assetUsd : null;
   const proceedsUsd = outputHuman !== null && result.assetUsd !== null && Number.isFinite(outputHuman) ? outputHuman * result.assetUsd : null;
   const candidate = measuredCandidateRegistry.get(result.opportunityId);
-  if (candidate && realized !== null && Number.isFinite(realized)) {
+  if (candidate) {
     const realizedBps = result.notionalUsd > 0 ? realized / result.notionalUsd * 10_000 : null;
     measuredCandidateRegistry.updateStatus(result.opportunityId, realized > 0 ? candidate.status : 'blocked', {
       economics: { ...candidate.economics, realizedNetProfitBps: realizedBps },
@@ -220,10 +233,18 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
         ? candidate.executionCapabilityReason
         : result.status === 'REFUNDED'
           ? 'Across route returned exact principal; actual origin gas produced a realized loss'
-          : 'Terminal Across same-asset result was not profitable after actual origin gas',
+          : result.status === 'FAILED'
+            ? 'Across origin transaction never transferred principal or reverted; actual origin/approval gas produced a realized loss'
+            : 'Terminal Across same-asset result was not profitable after actual origin gas',
       provenance: [...candidate.provenance, 'cross_chain:durable_terminal_reconciliation', 'cross_chain:system_capital_settlement_authority'],
     });
   }
+  const terminalStatus = crossChainTerminalStatus(result);
+  const terminalProvenance = result.status === 'FILLED'
+    ? 'system_owned_origin_consumed_destination_lot_created'
+    : result.status === 'REFUNDED'
+      ? 'exact_refund_principal_verified'
+      : 'origin_principal_never_moved_or_reverted_exact_hash';
   await recordCryptaraExecutionEvidence({
     source: 'master_pipeline',
     opportunityId: result.opportunityId,
@@ -239,17 +260,18 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
     usedZeroCapital: false,
     timestamp: settledAt,
     notes: result.error,
-    settlementStatus: result.status === 'FILLED' ? 'filled' : result.status === 'REFUNDED' ? 'refunded' : 'settlement_unknown',
+    settlementStatus: terminalStatus,
     settlementConfirmed: true,
     provenance: [
       ...(candidate?.provenance ?? []),
       ...(terminal?.provenance ?? []),
       'cross_chain:restart_safe_terminal_feedback',
       'cross_chain:actual_origin_gas',
+      result.status === 'FAILED' ? 'cross_chain:prebroadcast_or_origin_revert_terminal_truth' : 'cross_chain:bridge_terminal_truth',
       'synthetic_evidence:false',
     ],
     settlement: {
-      status: result.status === 'FILLED' ? 'filled' : result.status === 'REFUNDED' ? 'refunded' : 'settlement_unknown',
+      status: terminalStatus,
       terminal: true,
       settlementConfirmed: true,
       submittedAt: result.submittedAt,
@@ -267,10 +289,7 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
         slippageBps: null,
         netProfitUsd: realized,
       },
-      provenance: [
-        ...(terminal?.provenance ?? []),
-        result.status === 'FILLED' ? 'system_owned_origin_consumed_destination_lot_created' : 'exact_refund_principal_verified',
-      ],
+      provenance: [...(terminal?.provenance ?? []), terminalProvenance],
       transactionHash: result.depositTxnRef,
       error: result.error,
     },
@@ -318,44 +337,43 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
   try {
     const execution = await executeAcrossBridgeQuote(quote, { onSubmitted: persist, returnAfterSubmission: true });
     const depositTxnRef = execution.depositTxnRef;
-    if (depositTxnRef && !durableSubmission && execution.originNativeFeeWei) {
-      try {
-        await persist({ depositTxnRef, originNativeFeeWei: execution.originNativeFeeWei, submittedAt: Date.now() });
-      } catch (error) {
-        logger.error('[FundingCrossChainAdapter] Across origin deposit exists but durable lifecycle persistence is unavailable; reservation is deliberately retained', {
-          component: 'FundingCrossChainExecutionAdapter', opportunityId: candidate.opportunityId,
-          depositTxnRef, reservationId: reservation.reservationId, capitalReleaseAllowed: false,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
     if (depositTxnRef) {
       return {
         opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN',
-        dispatched: true, submitted: true, success: false, settlementConfirmed: false,
+        dispatched: true, submitted: true, success: false,
+        settlementConfirmed: false,
         transactionHash: depositTxnRef, lifecycleId: durableSubmission?.lifecycleId,
         submissionReference: durableSubmission?.lifecycleId ?? depositTxnRef, realizedNetProfitUsd: null,
-        error: durableSubmission ? undefined : execution.error || 'CROSS_CHAIN_SUBMITTED_DURABILITY_RECOVERY_REQUIRED',
+        error: execution.error,
       };
     }
     await reservation.release().catch(() => undefined);
-    return { opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: execution.error || 'CROSS_CHAIN_SUBMISSION_FAILED' };
-  } catch (error) {
-    // An executor exception can occur after RPC broadcast but before receipt or
-    // durable callback. Releasing principal here would create a double-spend
-    // window. Keep the bounded reservation and consume the parent slot until a
-    // deterministic recovery path proves no submission exists.
-    logger.error('[FundingCrossChainAdapter] Cross-chain submission state is ambiguous; capital remains reserved', {
-      component: 'FundingCrossChainExecutionAdapter', opportunityId: candidate.opportunityId,
-      reservationId: reservation.reservationId, capitalReleaseAllowed: false, parentSubmissionAmbiguous: true,
-      error: error instanceof Error ? error.message : String(error),
-    });
     return {
       opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN',
-      dispatched: true, submitted: true, success: false, settlementConfirmed: false,
-      submissionReference: `cross_chain_ambiguous:${reservation.reservationId}`,
+      dispatched: false, submitted: false, success: false, settlementConfirmed: execution.settlementConfirmed,
+      realizedNetProfitUsd: null, error: execution.error || 'CROSS_CHAIN_SUBMISSION_FAILED',
+    };
+  } catch (error) {
+    if (durableSubmission) {
+      logger.error('[FundingCrossChainAdapter] Durable cross-chain lifecycle exists but executor raised unexpectedly; capital remains reserved', {
+        component: 'FundingCrossChainExecutionAdapter', opportunityId: candidate.opportunityId,
+        lifecycleId: durableSubmission.lifecycleId, reservationId: reservation.reservationId,
+        capitalReleaseAllowed: false, parentSubmissionAmbiguous: true,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN',
+        dispatched: true, submitted: true, success: false, settlementConfirmed: false,
+        lifecycleId: durableSubmission.lifecycleId, submissionReference: durableSubmission.lifecycleId,
+        realizedNetProfitUsd: null, error: 'CROSS_CHAIN_DURABLE_SUBMISSION_RECOVERY_REQUIRED',
+      };
+    }
+    await reservation.release().catch(() => undefined);
+    return {
+      opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN',
+      dispatched: false, submitted: false, success: false, settlementConfirmed: false,
       realizedNetProfitUsd: null,
-      error: 'CROSS_CHAIN_SUBMISSION_STATE_AMBIGUOUS',
+      error: `CROSS_CHAIN_PREBROADCAST_FAILURE:${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }
@@ -367,10 +385,6 @@ async function dispatchFunding(decision: UnifiedExecutionDecision): Promise<Fund
     return { opportunityId: decision.opportunityId, topology: 'FUNDING_ARBITRAGE', path: 'SPOT_PERP_FUNDING', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: 'FUNDING_PREPARED_PLAN_UNAVAILABLE' };
   }
   const result = await fundingPositionLifecycle.execute(plan);
-  // `opening` means deterministic client-order recovery is still resolving an
-  // ambiguous submission. Conservatively consume the parent slot exactly as a
-  // concrete submission until recovery proves otherwise; never release it and
-  // permit another parent while real orders may already exist.
   const submitted = (result.status === 'opened' || result.status === 'opening') && Boolean(result.lifecycleId);
   return {
     opportunityId: decision.opportunityId, topology: 'FUNDING_ARBITRAGE', path: 'SPOT_PERP_FUNDING',
@@ -420,9 +434,18 @@ class FundingCrossChainExecutionAdapter {
   }
 
   async advanceOpenCrossChainLifecycles(limit = 4): Promise<CrossChainLifecycleResult[]> {
-    const results = await advanceOpenCrossChainLifecycles(limit);
-    const feedback = await claimPendingCrossChainTerminalFeedback(Math.max(limit, 8));
-    for (const result of feedback) {
+    const preparedResults = await advancePreparedAcrossOriginTransactions(limit);
+    for (const result of preparedResults) {
+      if (result.terminal && result.settlementConfirmed) {
+        await markOperatorTerminalByOpportunity(result.opportunityId).catch(() => undefined);
+      }
+    }
+
+    const settledResults = await advanceOpenCrossChainLifecycles(limit);
+    const standardFeedback = await claimPendingCrossChainTerminalFeedback(Math.max(limit, 8));
+    const originFailureFeedback = await claimPendingAcrossOriginFailureFeedback(Math.max(limit, 8));
+
+    for (const result of standardFeedback) {
       try {
         await markOperatorTerminalByOpportunity(result.opportunityId);
         await recordCrossChainTerminal(result);
@@ -435,7 +458,22 @@ class FundingCrossChainExecutionAdapter {
         });
       }
     }
-    return results;
+
+    for (const result of originFailureFeedback) {
+      try {
+        await markOperatorTerminalByOpportunity(result.opportunityId);
+        await recordCrossChainTerminal(result);
+        await markAcrossOriginFailureFeedbackApplied(result.lifecycleId);
+      } catch (error) {
+        await releaseAcrossOriginFailureFeedbackLease(result.lifecycleId, error).catch(() => undefined);
+        logger.error('[FundingCrossChainAdapter] Across origin-failure feedback failed; durable failure remains pending', {
+          component: 'FundingCrossChainExecutionAdapter', lifecycleId: result.lifecycleId, opportunityId: result.opportunityId,
+          error: error instanceof Error ? error.message : String(error), settlementAuthorityChanged: false, feedbackDropped: false,
+        });
+      }
+    }
+
+    return [...preparedResults, ...settledResults];
   }
 
   async dispatch(decisions: readonly UnifiedExecutionDecision[]): Promise<FundingCrossChainDispatchResult[]> {
