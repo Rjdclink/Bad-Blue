@@ -34,9 +34,11 @@ mustNot(worker, 'process.exit(', 'BadBlueWorker cleanup must never terminate the
 mustNot(worker, 'registerShutdownHandlers()', 'BadBlueWorker must not register duplicate process lifecycle ownership');
 must(worker, 'async shutdown(): Promise<void>', 'BadBlueWorker must retain an explicit cleanup API for server-owned shutdown');
 
-// The exact SQL defect from the stopped deployment is forbidden and worker failures are contained.
-must(treasury, 'attempt_count=r.attempt_count+1', 'retained treasury attempt counter must be relation-qualified');
-mustNot(treasury, 'attempt_count=attempt_count+1', 'ambiguous attempt_count SQL must never return');
+// The stopped-deployment defect was ambiguity inside UPDATE ... FROM. Enforce the
+// exact multi-source claim shape instead of banning harmless single-table counter
+// increments elsewhere in this worker.
+must(treasury, 'UPDATE public.cryptocrawler_retained_exchange_allocations r', 'retained treasury claim must name its target relation alias');
+must(treasury, 'attempt_count=r.attempt_count+1', 'retained treasury attempt counter must read from the target relation alias');
 must(treasury, 'j.source_asset AS payout_source_asset', 'treasury candidate must carry payout source asset');
 must(treasury, 'FROM candidate', 'treasury UPDATE must use one row source');
 mustNot(treasury, 'FROM candidate,', 'treasury UPDATE must not reintroduce multiple row sources');
