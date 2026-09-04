@@ -90,6 +90,7 @@ function normalizeAaveSettlement(input: {
       'verified_aave_v3_receiver',
       'provider_receiver_binding_verified',
       'flashloan_receiver_profit_verified',
+      'profit_recipient_operational_wallet_before_rainbow',
       'synthetic_evidence:false',
     ],
     transactionHash: input.txHash,
@@ -111,7 +112,7 @@ async function executeProviderSpecific(input: {
     const plan = buildFlashLoanExecutionPlanFromOpportunity(input.opportunity, {
       receiver: input.receiver,
       provider: input.providerKind,
-      profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || input.wallet.address,
+      profitRecipient: input.wallet.address,
       nowMs: Date.now(),
     });
     const payload = buildFlashLoanReceiverPayloadFromPlan(plan);
@@ -229,6 +230,7 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
     balancerV2: 'delegates_to_existing_canonical_executor',
     aaveV3: 'provider_specific_receiver_payload_receipt_and_terminal_provenance_verification',
     providerSelectionAuthority: 'flash_loan_provider_selection_registry',
+    profitRecipient: 'operational_wallet_before_rainbow',
     syntheticExecution: false,
   });
 }
