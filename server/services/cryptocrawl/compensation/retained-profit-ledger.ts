@@ -6,12 +6,9 @@ import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-a
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 
 const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
-const FIXED_PAYOUT_FRACTION = 0.60;
-const FIRST_FIXED_PAYOUTS = 3;
-const DYNAMIC_MIN_DELAY_MINUTES = 30;
-const DYNAMIC_MAX_DELAY_MINUTES = 90;
-const DYNAMIC_MIN_PAYOUT_BPS = 5_500;
-const DYNAMIC_MAX_PAYOUT_BPS = 6_500;
+const PAYOUT_FRACTION = 0.90;
+const RETAINED_FRACTION = 0.10;
+const RETAINED_TARGET_VENUES = ['kraken', 'okx'] as const;
 const retryAttemptsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRIES || 4);
 const retryBaseMsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRY_BASE_MS || 250);
 const RETRY_ATTEMPTS = Number.isFinite(retryAttemptsRaw) ? Math.max(1, Math.min(8, Math.trunc(retryAttemptsRaw))) : 4;
@@ -28,6 +25,8 @@ export interface ProfitSplitAllocation {
   scheduledNotBefore: number;
   payoutSourceVenue: string | null;
   payoutSourceAsset: string | null;
+  retainedTargetVenue?: 'kraken' | 'okx' | null;
+  retainedPlacementStatus?: 'IN_PLACE' | 'TRANSFER_REQUIRED' | null;
   recorded: boolean;
 }
 
@@ -39,18 +38,9 @@ interface PayoutInventorySource {
 
 interface StrategyDecision {
   sequence: number;
-  payoutFraction: number;
-  retainedFraction: number;
+  payoutFraction: typeof PAYOUT_FRACTION;
+  retainedFraction: typeof RETAINED_FRACTION;
   scheduledNotBefore: number;
-  delayMinutes: number;
-  mode: 'fixed_first_three' | 'bounded_dynamic';
-}
-
-function automaticProfitPayoutEnabled(): boolean {
-  // Compounding is the safe/default treasury posture. Automatic per-profit
-  // withdrawals are a separate explicit operating choice and must never become
-  // active merely because a destination wallet exists.
-  return process.env.CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED?.trim().toLowerCase() === 'true';
 }
 
 function destinationFingerprint(): string {
@@ -70,13 +60,12 @@ function normalizeRealized(realized: number): number {
   return normalized;
 }
 
-function splitProfit(realized: number, payoutFraction: number): { realized: number; payout: number; retained: number } {
+function splitProfit(realized: number): { realized: number; payout: number; retained: number } {
   const normalized = normalizeRealized(realized);
-  const boundedFraction = Math.max(0.55, Math.min(0.65, payoutFraction));
-  const payout = Number((normalized * boundedFraction).toFixed(12));
+  const payout = Number((normalized * PAYOUT_FRACTION).toFixed(12));
   const retained = Number((normalized - payout).toFixed(12));
   if (!(payout > 0) || retained < 0 || Math.abs((payout + retained) - normalized) > 1e-9) {
-    throw new Error('Invalid realized-profit payout allocation');
+    throw new Error('Invalid 90/10 realized-profit allocation');
   }
   return { realized: normalized, payout, retained };
 }
@@ -101,10 +90,7 @@ function payoutInventorySource(feedback: CryptaraExecutionFeedback, payoutUsd: n
     });
   const unique = [...new Map(candidates.map(item => [`${item.venue}:${item.asset}`, item])).values()];
   if (unique.length !== 1) return null;
-  return {
-    ...unique[0],
-    reservedAssetAmount: payoutUsd,
-  };
+  return { ...unique[0], reservedAssetAmount: payoutUsd };
 }
 
 function sourceVenue(feedback: CryptaraExecutionFeedback): string | null {
@@ -122,6 +108,10 @@ function sourceVenue(feedback: CryptaraExecutionFeedback): string | null {
   return route || null;
 }
 
+function retainedTargetVenue(): 'kraken' | 'okx' {
+  return RETAINED_TARGET_VENUES[randomInt(0, RETAINED_TARGET_VENUES.length)];
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -133,36 +123,16 @@ function persistenceRetryDelayMs(attempt: number): number {
   return floorMs + Math.floor(Math.random() * Math.max(1, ceilingMs - floorMs + 1));
 }
 
-function dynamicPayoutFraction(): number {
-  return randomInt(DYNAMIC_MIN_PAYOUT_BPS, DYNAMIC_MAX_PAYOUT_BPS + 1) / 10_000;
-}
-
-function dynamicDelayMinutes(): number {
-  return randomInt(DYNAMIC_MIN_DELAY_MINUTES, DYNAMIC_MAX_DELAY_MINUTES + 1);
-}
-
 async function allocateStrategyDecision(client: { query: (text: string, values?: unknown[]) => Promise<any> }): Promise<StrategyDecision> {
   const state = await client.query(
-    `SELECT profitable_payout_sequence, last_profit_payout_scheduled_at
+    `SELECT profitable_payout_sequence
      FROM public.cryptocrawler_terminal_sweep_control
      WHERE system_key='cryptocrawler'
      FOR UPDATE`,
   );
-  if (state.rowCount !== 1) throw new Error('Treasury control state unavailable for payout strategy allocation');
-
-  const previousSequence = Number(state.rows[0]?.profitable_payout_sequence || 0);
-  const sequence = previousSequence + 1;
-  const fixed = sequence <= FIRST_FIXED_PAYOUTS;
-  const payoutFraction = fixed ? FIXED_PAYOUT_FRACTION : dynamicPayoutFraction();
-  const retainedFraction = Number((1 - payoutFraction).toFixed(8));
-  const delayMinutes = fixed ? 60 : dynamicDelayMinutes();
-  const now = Date.now();
-  const previousScheduled = state.rows[0]?.last_profit_payout_scheduled_at
-    ? new Date(state.rows[0].last_profit_payout_scheduled_at).getTime()
-    : 0;
-  const anchor = Math.max(now, Number.isFinite(previousScheduled) ? previousScheduled : 0);
-  const scheduledNotBefore = anchor + delayMinutes * 60_000;
-
+  if (state.rowCount !== 1) throw new Error('Treasury control state unavailable for fixed 90/10 allocation');
+  const sequence = Number(state.rows[0]?.profitable_payout_sequence || 0) + 1;
+  const scheduledNotBefore = Date.now();
   await client.query(
     `UPDATE public.cryptocrawler_terminal_sweep_control
      SET profitable_payout_sequence=$1,
@@ -171,29 +141,37 @@ async function allocateStrategyDecision(client: { query: (text: string, values?:
      WHERE system_key='cryptocrawler'`,
     [sequence, scheduledNotBefore],
   );
-
   return {
     sequence,
-    payoutFraction,
-    retainedFraction,
+    payoutFraction: PAYOUT_FRACTION,
+    retainedFraction: RETAINED_FRACTION,
     scheduledNotBefore,
-    delayMinutes,
-    mode: fixed ? 'fixed_first_three' : 'bounded_dynamic',
+  };
+}
+
+function existingAllocation(eventId: string, row: any): ProfitSplitAllocation {
+  return {
+    eventId,
+    realizedProfitUsd: Number(row.realized_profit_usd),
+    payoutTargetUsd: Number(row.payout_target_usd || 0),
+    retainedTargetUsd: Number(row.retained_target_usd ?? row.realized_profit_usd),
+    payoutFraction: Number(row.payout_fraction ?? 0),
+    retainedFraction: Number(row.retained_fraction ?? 1),
+    payoutSequence: Number(row.payout_sequence || 0),
+    scheduledNotBefore: row.scheduled_not_before ? new Date(row.scheduled_not_before).getTime() : 0,
+    payoutSourceVenue: row.source_venue ? String(row.source_venue) : null,
+    payoutSourceAsset: row.source_asset ? String(row.source_asset) : null,
+    retainedTargetVenue: row.target_venue ? String(row.target_venue) as 'kraken' | 'okx' : null,
+    retainedPlacementStatus: row.retained_status ? String(row.retained_status) as 'IN_PLACE' | 'TRANSFER_REQUIRED' : null,
+    recorded: false,
   };
 }
 
 /**
  * Persists each terminal-confirmed profitable settlement exactly once.
- *
- * Default authority is 100% retention: realized profit stays in exchange/system
- * inventory and remains available for subsequent strategies, subject to the
- * Profit Ladder, StageManager, authenticated inventory, liquidity and risk. No
- * payout reservation/job is created merely because a profit exists.
- *
- * The legacy bounded automatic payout strategy remains available only through the
- * explicit CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED=true opt-in. This preserves the
- * independent treasury worker as an intentional withdrawal mechanism without
- * allowing it to drain compounding capital by default.
+ * New settlements always allocate 90% to the durable ETH payout obligation and
+ * 10% to retained system capital. Historical payout/retention rows are preserved
+ * exactly as recorded; retries never re-roll either money split or target venue.
  */
 class RetainedProfitLedger {
   private ready: Promise<void> | null = null;
@@ -210,139 +188,58 @@ class RetainedProfitLedger {
     let lastError: unknown = null;
 
     for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
-      // A terminal-confirmed profit is durable money-state evidence. It receives
-      // critical DB admission priority, but no new treasury/execution authority.
       const client = await withCryptaraSupabasePriority('critical', () => pool.connect());
       try {
         await client.query('BEGIN');
-
-        // One precedence-preserving read replaces the former payout lookup plus a
-        // second retained-event lookup on the default compounding path. Existing
-        // payout records still win for backward compatibility.
         const existing = await client.query(
           `SELECT * FROM (
              SELECT 0 AS precedence, 'payout'::text AS source,
-                    event_id, realized_profit_usd, payout_target_usd, retained_target_usd,
-                    payout_fraction, retained_fraction, payout_sequence, scheduled_not_before,
-                    source_venue, source_asset
-             FROM public.cryptocrawler_profit_payout_jobs
-             WHERE event_id=$1
+                    j.event_id, j.realized_profit_usd, j.payout_target_usd, j.retained_target_usd,
+                    j.payout_fraction, j.retained_fraction, j.payout_sequence, j.scheduled_not_before,
+                    j.source_venue, j.source_asset,
+                    r.target_venue, r.status AS retained_status
+             FROM public.cryptocrawler_profit_payout_jobs j
+             LEFT JOIN public.cryptocrawler_retained_exchange_allocations r USING (event_id)
+             WHERE j.event_id=$1
              UNION ALL
              SELECT 1 AS precedence, 'retained'::text AS source,
-                    event_id, realized_profit_usd, payout_target_usd, retained_target_usd,
+                    e.event_id, e.realized_profit_usd, e.payout_target_usd, e.retained_target_usd,
                     0::numeric AS payout_fraction, 1::numeric AS retained_fraction,
                     0::bigint AS payout_sequence, NULL::timestamptz AS scheduled_not_before,
-                    NULL::text AS source_venue, NULL::text AS source_asset
-             FROM private.cryptocrawler_rainbow_profit_events
-             WHERE event_id=$1
+                    NULL::text AS source_venue, NULL::text AS source_asset,
+                    r.target_venue, r.status AS retained_status
+             FROM private.cryptocrawler_rainbow_profit_events e
+             LEFT JOIN public.cryptocrawler_retained_exchange_allocations r USING (event_id)
+             WHERE e.event_id=$1
            ) existing
            ORDER BY precedence
            LIMIT 1`,
           [eventId],
         );
-
-        const existingRow = existing.rows[0];
-        if (existingRow?.source === 'payout') {
+        if (existing.rowCount === 1) {
           await client.query('COMMIT');
-          return {
-            eventId,
-            realizedProfitUsd: Number(existingRow.realized_profit_usd),
-            payoutTargetUsd: Number(existingRow.payout_target_usd),
-            retainedTargetUsd: Number(existingRow.retained_target_usd),
-            payoutFraction: Number(existingRow.payout_fraction),
-            retainedFraction: Number(existingRow.retained_fraction),
-            payoutSequence: Number(existingRow.payout_sequence),
-            scheduledNotBefore: existingRow.scheduled_not_before ? new Date(existingRow.scheduled_not_before).getTime() : 0,
-            payoutSourceVenue: existingRow.source_venue ? String(existingRow.source_venue) : null,
-            payoutSourceAsset: existingRow.source_asset ? String(existingRow.source_asset) : null,
-            recorded: false,
-          };
-        }
-
-        if (!automaticProfitPayoutEnabled()) {
-          if (existingRow?.source === 'retained') {
-            await client.query('COMMIT');
-            return {
-              eventId,
-              realizedProfitUsd: Number(existingRow.realized_profit_usd),
-              payoutTargetUsd: Number(existingRow.payout_target_usd || 0),
-              retainedTargetUsd: Number(existingRow.retained_target_usd ?? existingRow.realized_profit_usd),
-              payoutFraction: 0,
-              retainedFraction: 1,
-              payoutSequence: 0,
-              scheduledNotBefore: 0,
-              payoutSourceVenue: null,
-              payoutSourceAsset: null,
-              recorded: false,
-            };
-          }
-
-          const normalized = normalizeRealized(realized);
-          const inserted = await client.query(
-            `INSERT INTO private.cryptocrawler_rainbow_profit_events
-              (event_id, opportunity_id, realized_profit_usd, payout_target_usd, retained_target_usd,
-               payout_operating_cost_usd, status, destination_hash, created_at, updated_at)
-             VALUES ($1, $2, $3, 0, $3, 0, 'confirmed', $4, now(), now())
-             ON CONFLICT (event_id) DO NOTHING
-             RETURNING event_id`,
-            [eventId, feedback.opportunityId || null, normalized, destinationHash],
-          );
-          if (inserted.rowCount !== 1) {
-            throw new Error('Retained profit event appeared concurrently while treasury state was locked');
-          }
-
-          await client.query(
-            `UPDATE public.cryptocrawler_terminal_sweep_control
-             SET retained_profit_usd = retained_profit_usd + $1,
-                 destination_address = COALESCE(NULLIF($2, ''), destination_address),
-                 updated_at = now()
-             WHERE system_key='cryptocrawler'`,
-            [normalized, DESTINATION],
-          );
-
-          await client.query('COMMIT');
-          logger.info('[Treasury] Terminal profit retained for compounding', {
-            component: 'RetainedProfitLedger',
-            eventId,
-            realizedProfitUsd: normalized,
-            payoutFraction: 0,
-            retainedFraction: 1,
-            automaticProfitPayoutEnabled: false,
-            payoutReservationCreated: false,
-            profitAvailableForRedeployment: true,
-          });
-          return {
-            eventId,
-            realizedProfitUsd: normalized,
-            payoutTargetUsd: 0,
-            retainedTargetUsd: normalized,
-            payoutFraction: 0,
-            retainedFraction: 1,
-            payoutSequence: 0,
-            scheduledNotBefore: 0,
-            payoutSourceVenue: null,
-            payoutSourceAsset: null,
-            recorded: true,
-          };
+          return existingAllocation(eventId, existing.rows[0]);
         }
 
         const decision = await allocateStrategyDecision(client);
-        const allocation = splitProfit(realized, decision.payoutFraction);
+        const allocation = splitProfit(realized);
         const payoutSource = payoutInventorySource(feedback, allocation.payout);
+        const observedSourceVenue = payoutSource?.venue || sourceVenue(feedback);
+        const targetVenue = retainedTargetVenue();
+        const retainedStatus: 'IN_PLACE' | 'TRANSFER_REQUIRED' = observedSourceVenue === targetVenue
+          ? 'IN_PLACE'
+          : 'TRANSFER_REQUIRED';
 
         const inserted = await client.query(
           `INSERT INTO private.cryptocrawler_rainbow_profit_events
             (event_id, opportunity_id, realized_profit_usd, payout_target_usd, retained_target_usd,
              payout_operating_cost_usd, status, destination_hash, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, 0, 'queued', $6, now(), now())
+           VALUES ($1,$2,$3,$4,$5,0,'queued',$6,now(),now())
            ON CONFLICT (event_id) DO NOTHING
            RETURNING event_id`,
           [eventId, feedback.opportunityId || null, allocation.realized, allocation.payout, allocation.retained, destinationHash],
         );
-
-        if (inserted.rowCount !== 1) {
-          throw new Error('Profit event appeared concurrently while payout strategy state was locked');
-        }
+        if (inserted.rowCount !== 1) throw new Error('Profit event appeared concurrently while 90/10 treasury state was locked');
 
         await client.query(
           `INSERT INTO public.cryptocrawler_profit_payout_jobs
@@ -360,7 +257,7 @@ class RetainedProfitLedger {
             decision.retainedFraction,
             decision.sequence,
             decision.scheduledNotBefore,
-            payoutSource?.venue || sourceVenue(feedback),
+            observedSourceVenue,
             payoutSource?.asset || null,
             destinationHash,
           ],
@@ -377,6 +274,21 @@ class RetainedProfitLedger {
         }
 
         await client.query(
+          `INSERT INTO public.cryptocrawler_retained_exchange_allocations
+            (event_id, retained_usd, target_venue, source_venue, status, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,now(),now())`,
+          [eventId, allocation.retained, targetVenue, observedSourceVenue, retainedStatus],
+        );
+
+        const dailyRecorded = await client.query(
+          `SELECT public.cryptocrawler_operator_strategy_record_profit($1,$2,$3) AS recorded`,
+          [eventId, feedback.opportunityId || '', allocation.realized],
+        );
+        if (dailyRecorded.rows[0]?.recorded !== true) {
+          throw new Error('Terminal profit was not accepted by the durable operator strategy ledger');
+        }
+
+        await client.query(
           `UPDATE public.cryptocrawler_terminal_sweep_control
            SET retained_profit_usd = retained_profit_usd + $1,
                destination_address = COALESCE(NULLIF($2, ''), destination_address),
@@ -386,31 +298,36 @@ class RetainedProfitLedger {
         );
 
         await client.query('COMMIT');
-        logger.info('[Treasury] Explicit automatic profit payout strategy persisted', {
+        logger.info('[Treasury] Terminal profit allocated under fixed 90/10 operator strategy', {
           component: 'RetainedProfitLedger',
           eventId,
+          realizedProfitUsd: allocation.realized,
+          payoutTargetUsd: allocation.payout,
+          retainedTargetUsd: allocation.retained,
+          payoutFraction: PAYOUT_FRACTION,
+          retainedFraction: RETAINED_FRACTION,
           payoutSequence: decision.sequence,
-          strategyMode: decision.mode,
-          payoutFraction: decision.payoutFraction,
-          retainedFraction: decision.retainedFraction,
-          delayMinutes: decision.delayMinutes,
-          scheduledNotBefore: new Date(decision.scheduledNotBefore).toISOString(),
-          payoutSourceVenue: payoutSource?.venue || sourceVenue(feedback),
+          payoutScheduledImmediately: true,
+          payoutSourceVenue: observedSourceVenue,
           payoutSourceAsset: payoutSource?.asset || null,
-          automaticProfitPayoutEnabled: true,
-          decisionReRolledOnRetry: false,
+          retainedTargetVenue: targetVenue,
+          retainedPlacementStatus: retainedStatus,
+          targetSelectionPersisted: true,
+          operatorBalancePromotedToSystemCapital: false,
         });
         return {
           eventId,
           realizedProfitUsd: allocation.realized,
           payoutTargetUsd: allocation.payout,
           retainedTargetUsd: allocation.retained,
-          payoutFraction: decision.payoutFraction,
-          retainedFraction: decision.retainedFraction,
+          payoutFraction: PAYOUT_FRACTION,
+          retainedFraction: RETAINED_FRACTION,
           payoutSequence: decision.sequence,
           scheduledNotBefore: decision.scheduledNotBefore,
-          payoutSourceVenue: payoutSource?.venue || sourceVenue(feedback),
+          payoutSourceVenue: observedSourceVenue,
           payoutSourceAsset: payoutSource?.asset || null,
+          retainedTargetVenue: targetVenue,
+          retainedPlacementStatus: retainedStatus,
           recorded: true,
         };
       } catch (error) {
@@ -418,14 +335,13 @@ class RetainedProfitLedger {
         try { await client.query('ROLLBACK'); } catch { /* transaction may already be gone */ }
         if (attempt < RETRY_ATTEMPTS) {
           const delayMs = persistenceRetryDelayMs(attempt);
-          logger.warn('[Treasury] Profit persistence retry scheduled', {
+          logger.warn('[Treasury] Fixed 90/10 profit persistence retry scheduled', {
             component: 'RetainedProfitLedger',
             eventId,
             attempt,
             maxAttempts: RETRY_ATTEMPTS,
             delayMs,
             idempotentEvent: true,
-            automaticProfitPayoutEnabled: automaticProfitPayoutEnabled(),
           });
           await sleep(delayMs);
         }
@@ -444,22 +360,24 @@ class RetainedProfitLedger {
            to_regclass('private.cryptocrawler_rainbow_profit_events') IS NOT NULL AS event_table,
            to_regclass('public.cryptocrawler_terminal_sweep_control') IS NOT NULL AS control_table,
            to_regclass('public.cryptocrawler_profit_payout_jobs') IS NOT NULL AS payout_table,
-           to_regclass('public.cryptocrawler_payout_asset_reservations') IS NOT NULL AS payout_reserve_table`,
+           to_regclass('public.cryptocrawler_payout_asset_reservations') IS NOT NULL AS payout_reserve_table,
+           to_regclass('public.cryptocrawler_operator_strategy_days') IS NOT NULL AS strategy_day_table,
+           to_regclass('public.cryptocrawler_retained_exchange_allocations') IS NOT NULL AS retained_allocation_table,
+           to_regprocedure('public.cryptocrawler_operator_strategy_record_profit(text,text,numeric)') IS NOT NULL AS strategy_profit_function`,
       );
       const row = requirements.rows[0] || {};
-      const coreReady = row.event_table === true && row.control_table === true;
-      const payoutReady = row.payout_table === true && row.payout_reserve_table === true;
-      if (!coreReady || (automaticProfitPayoutEnabled() && !payoutReady)) {
-        throw new Error(automaticProfitPayoutEnabled()
-          ? 'profit retention plus payout migrations 018 and 019 are required before realized-profit capture'
-          : 'profit retention event/control schema is required before realized-profit capture');
+      if (
+        row.event_table !== true || row.control_table !== true || row.payout_table !== true ||
+        row.payout_reserve_table !== true || row.strategy_day_table !== true ||
+        row.retained_allocation_table !== true || row.strategy_profit_function !== true
+      ) {
+        throw new Error('profit payout migrations 018-032 are required before fixed 90/10 terminal-profit capture');
       }
     }).catch(error => {
       this.ready = null;
-      logger.warn('[Treasury] Retained-profit persistence unavailable', {
+      logger.warn('[Treasury] Fixed 90/10 profit persistence unavailable', {
         component: 'RetainedProfitLedger',
         error: error instanceof Error ? error.message : String(error),
-        automaticProfitPayoutEnabled: automaticProfitPayoutEnabled(),
       });
       throw error;
     });
