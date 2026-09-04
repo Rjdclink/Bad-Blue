@@ -33,14 +33,17 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Build application (requires dev dependencies). Payout-recipient truth is an
-# explicit production gate: the image cannot build if the signer-derived primary,
-# Railway fallback, or recipient/finality confirmation invariants regress. The
-# normal build proves the full source tree. The deployed server bundle is then
-# rebuilt through the mandatory CryptoCrawler Overflow authority router so every
-# reachable CryptoCrawler import of server/db resolves to Overflow and canonical
-# runtime install requires the complete Overflow schema proof.
+# Build application (requires dev dependencies). Payout-recipient truth and every
+# Nix-Gen invariant are explicit production gates: the image cannot build if the
+# signer-derived payout truth, Nix-Gen authority boundary, deterministic optimizer,
+# replanner, robustness, scarcity, marginal-value, portfolio, or runtime-wiring
+# invariants regress. The normal build proves the full source tree. The deployed
+# server bundle is then rebuilt through the mandatory CryptoCrawler Overflow
+# authority router so every reachable CryptoCrawler import of server/db resolves
+# to Overflow and canonical runtime install requires the complete Overflow schema proof.
 RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
+    for script in scripts/cryptocrawl/verify-nix-gen-*.cjs; do node "$script"; done && \
+    for script in scripts/cryptocrawl/verify-nix-gen-*.ts; do npx --no-install tsx "$script"; done && \
     npm run build && \
     node scripts/cryptocrawl/build-server-overflow-authority.mjs server/cryptara-bootstrap-entry.ts dist/index.js && \
     node scripts/copy-static-assets.cjs && \

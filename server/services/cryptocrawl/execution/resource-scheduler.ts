@@ -33,6 +33,14 @@ export interface ExecutionResourcePressureSnapshot {
   effectiveGlobalCapacityMultiplier: number;
 }
 
+export interface ExecutionResourcePlanningProjection {
+  authority: 'execution_resource_scheduler_read_only';
+  mutatesResourceState: false;
+  pressure: ExecutionResourcePressureSnapshot;
+  demands: Array<{ resourceKey: string; units: number }>;
+  budgets: Array<{ resourceKey: string; capacity: number }>;
+}
+
 interface ResourcePoolSpec {
   prefix: string;
   capacity: number;
@@ -161,6 +169,26 @@ class ExecutionResourceScheduler {
       dedup.set(spec.prefix, existing ? { ...existing, capacity: Math.min(existing.capacity, spec.capacity) } : spec);
     }
     return [...dedup.values()];
+  }
+
+  /**
+   * Read-only projection of the exact same local resource model used by acquireCexPlan.
+   * Nix-Gen may consume it for advisory ordering, but this does not reserve a slot,
+   * query distributed lease truth, or grant execution authority.
+   */
+  getCexPlanningProjection(plan: VerifiedArbitragePlan): ExecutionResourcePlanningProjection {
+    const pressure = getExecutionResourcePressureSnapshot();
+    const specs = this.resourceSpecs(plan, pressure);
+    return {
+      authority: 'execution_resource_scheduler_read_only',
+      mutatesResourceState: false,
+      pressure,
+      demands: specs.map(spec => ({ resourceKey: spec.prefix, units: 1 })),
+      budgets: specs.map(spec => ({
+        resourceKey: spec.prefix,
+        capacity: Math.max(0, spec.capacity - (this.localUsage.get(spec.prefix) || 0)),
+      })),
+    };
   }
 
   private async acquireDistributed(

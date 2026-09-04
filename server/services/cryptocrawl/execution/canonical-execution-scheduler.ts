@@ -4,6 +4,7 @@ import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '..
 import { stageManager } from '../governance/stage-management.js';
 import { getSettlementProfitCalibrationSnapshot } from '../learning/settlement-profit-calibrator.js';
 import { getBpsReductionSuperEngineSnapshot } from '../optimization/bps-reduction-super-engine.js';
+import { orderCexCandidatesWithNixGen } from '../optimization/nix-gen/cex-ordering.js';
 import { endToEndLatencyHarness, type LatencyOutcome } from '../runtime/end-to-end-latency-harness.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
@@ -148,7 +149,7 @@ function currentCandidates(): Candidate[] {
         completedSamples: row.completedSamples,
       }]),
   );
-  return canonicalOpportunityState.getRecent(512)
+  const candidates = canonicalOpportunityState.getRecent(512)
     .filter((snapshot): snapshot is Candidate => !!snapshot.plan)
     .filter(snapshot => snapshot.status === 'eligible')
     .filter(snapshot => runtimeInvariantMonitor.evaluate(snapshot).allowed)
@@ -163,6 +164,24 @@ function currentCandidates(): Candidate[] {
       if (right.plan.netProfitUsd !== left.plan.netProfitUsd) return right.plan.netProfitUsd - left.plan.netProfitUsd;
       return (right.assessment?.rankScore ?? -Infinity) - (left.assessment?.rankScore ?? -Infinity);
     });
+
+  const nixOrdering = orderCexCandidatesWithNixGen({
+    candidates,
+    now,
+    maxQuoteAgeMs,
+    dispatchCapacity: dispatchBatchLimit(),
+    terminalCalibrationFactor,
+    decayUrgencyFactor: candidate => bpsDecayUrgencyFactor(candidate, edgeLife),
+  });
+  if (nixOrdering.error) {
+    logger.warn('[ExecutionScheduler] Nix-Gen advisory ordering failed open to canonical order', {
+      component: 'CanonicalExecutionScheduler',
+      error: nixOrdering.error,
+      canonicalEligibilityChanged: false,
+      executionAuthorityChanged: false,
+    });
+  }
+  return nixOrdering.candidates;
 }
 
 function terminalResult(status: string, settlementConfirmed: boolean): boolean {
@@ -213,6 +232,8 @@ class CanonicalExecutionScheduler {
       schedulingObjective: 'positive_all_in_net_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration_x_bps_decay_urgency',
       bpsSuperEngineSchedulingAuthority: 'bounded_priority_boost_only',
       bpsSuperEngineExecutionAuthority: false,
+      nixGenAdvisoryOrderingEnabled: process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING === 'true',
+      nixGenExecutionAuthority: false,
       cadenceObjective: 'event_driven_eligibility_wake_with_low_latency_poll_fallback',
       eligibleWakeAuthority: 'measured_candidate_registry',
       terminalCalibrationAuthority: 'scheduling_only_confirmed_settlement_evidence',
