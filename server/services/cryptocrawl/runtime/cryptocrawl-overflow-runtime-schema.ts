@@ -6,12 +6,14 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 15;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v15';
+const SCHEMA_VERSION = 16;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v16';
 
-// Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
-// 016 is deliberately excluded because it installs pg_cron/pg_net and an active
-// external sweeper schedule. The safe support functions from 016 are mirrored in
+// Overflow is the active application/CryptoCrawler data plane. Bundle only the
+// narrowly scoped application-support migrations needed by services that run on
+// that plane, plus every migration-owned CryptoCrawler state surface. 016 is
+// deliberately excluded because it installs pg_cron/pg_net and an active external
+// sweeper schedule. The safe support functions from 016 are mirrored in
 // overflow/004 without creating a second independent payout scheduler. The
 // payout-aware finalizer remains owned by migration 018 and is not overridden by
 // Overflow support wiring.
@@ -54,6 +56,7 @@ const MIGRATIONS = [
   '042_cryptocrawler_coinbase_system_capital_rainbow.sql',
   '043_cryptocrawler_profit_qualified_schedule.sql',
   '044_cryptocrawler_treasury_transfer_recovery_hardening.sql',
+  '045_overflow_self_improvement_support.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -93,6 +96,9 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_system_capital_sweep_conversions',
   'public.cryptocrawler_payout_funding_transfers',
   'public.cryptocrawler_controlled_loss_learning_events',
+  'public.subagent_learning_patterns',
+  'public.subagent_performance_metrics',
+  'public.subagent_self_improvement_actions',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
