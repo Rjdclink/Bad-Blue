@@ -3,6 +3,7 @@ import { buildNixGenPortfolioView, type NixGenPortfolioView } from './portfolio-
 import type { NixGenReplanSnapshot } from './replanner.js';
 
 export type NixGenLivePrioritySource = 'cex' | 'measured_atomic' | 'zero_capital';
+export type NixGenCexVenue = 'coinbase' | 'kraken' | 'okx';
 
 type PublishedLane = {
   source: NixGenLivePrioritySource;
@@ -22,6 +23,15 @@ export interface NixGenLivePrioritySnapshot {
   globalDispatchCapacity: number;
   priorityIndexByOpportunityId: Readonly<Record<string, number>>;
   portfolio: NixGenPortfolioView | null;
+}
+
+export interface NixGenCexVenueDemand {
+  venue: NixGenCexVenue;
+  weightedCanonicalProfitUsd: number;
+  executableOpportunityCount: number;
+  generatedAt: number;
+  authority: 'nix_gen_live_cex_resource_demand_advisory';
+  capitalMovementAuthority: false;
 }
 
 const lanes = new Map<NixGenLivePrioritySource, PublishedLane>();
@@ -51,6 +61,15 @@ function clonePrepared(input: readonly NixGenPreparedBid[]): NixGenPreparedBid[]
   }));
 }
 
+function pruneStale(now: number): PublishedLane[] {
+  const maxAgeMs = laneMaxAgeMs();
+  for (const [source, lane] of lanes.entries()) {
+    const hasFreshBid = lane.prepared.some(item => item.bid.expiresAt > now);
+    if (now - lane.publishedAt > maxAgeMs || !hasFreshBid) lanes.delete(source);
+  }
+  return [...lanes.values()];
+}
+
 /**
  * Publishes one lane's current read-only bids and recomputes a shared advisory
  * priority surface across every fresh execution-capable lane. The registry has
@@ -70,13 +89,7 @@ export function publishNixGenLivePriority(input: {
     prepared: clonePrepared(input.prepared),
   });
 
-  const maxAgeMs = laneMaxAgeMs();
-  for (const [source, lane] of lanes.entries()) {
-    const hasFreshBid = lane.prepared.some(item => item.bid.expiresAt > now);
-    if (now - lane.publishedAt > maxAgeMs || !hasFreshBid) lanes.delete(source);
-  }
-
-  const active = [...lanes.values()];
+  const active = pruneStale(now);
   const prepared = active.flatMap(lane => lane.prepared)
     .filter(item => item.bid.expiresAt > now);
   const globalDispatchCapacity = Math.max(
@@ -103,6 +116,53 @@ export function publishNixGenLivePriority(input: {
     priorityIndexByOpportunityId,
     portfolio,
   };
+}
+
+/**
+ * Read-only demand signal for Rainbow/treasury policy. It sums canonical positive
+ * profit attached to fresh executable bids that actually consume each CEX venue
+ * resource. Monte Carlo contributes only as a probability weight when present;
+ * it never creates eligibility, execution authority, or capital-movement authority.
+ */
+export function getNixGenLiveCexVenueDemand(nowInput = Date.now()): NixGenCexVenueDemand[] {
+  const now = Number.isFinite(nowInput) ? Number(nowInput) : Date.now();
+  const score = new Map<NixGenCexVenue, { profit: number; opportunities: Set<string> }>();
+  for (const lane of pruneStale(now)) {
+    for (const item of lane.prepared) {
+      const bid = item.bid;
+      if (bid.expiresAt <= now || bid.execution.executable !== true || bid.execution.settlementCapable !== true) continue;
+      const netProfitUsd = Number(bid.economics.netProfitUsd);
+      if (!Number.isFinite(netProfitUsd) || netProfitUsd <= 0) continue;
+      const probabilityRaw = Number(bid.advisory?.probabilityOfProfitableExecution);
+      const probability = Number.isFinite(probabilityRaw) ? Math.max(0, Math.min(1, probabilityRaw)) : 1;
+      const weighted = netProfitUsd * probability;
+      const venues = new Set<NixGenCexVenue>();
+      for (const resource of bid.resources) {
+        const match = /^cex:venue:(coinbase|kraken|okx)$/.exec(resource.resourceKey);
+        if (match) venues.add(match[1] as NixGenCexVenue);
+      }
+      for (const venue of venues) {
+        const current = score.get(venue) || { profit: 0, opportunities: new Set<string>() };
+        current.profit += weighted;
+        current.opportunities.add(bid.opportunityId);
+        score.set(venue, current);
+      }
+    }
+  }
+  return [...score.entries()]
+    .map(([venue, value]) => ({
+      venue,
+      weightedCanonicalProfitUsd: Number(value.profit.toFixed(12)),
+      executableOpportunityCount: value.opportunities.size,
+      generatedAt: now,
+      authority: 'nix_gen_live_cex_resource_demand_advisory' as const,
+      capitalMovementAuthority: false as const,
+    }))
+    .sort((a, b) =>
+      b.weightedCanonicalProfitUsd - a.weightedCanonicalProfitUsd ||
+      b.executableOpportunityCount - a.executableOpportunityCount ||
+      a.venue.localeCompare(b.venue),
+    );
 }
 
 export function clearNixGenLivePriority(source?: NixGenLivePrioritySource): void {
