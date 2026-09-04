@@ -130,6 +130,7 @@ DECLARE
   already_reserved numeric;
   take_amount numeric;
   row_lot record;
+  shadow_reservation_id text := 'treasury:' || p_transfer_id::text;
 BEGIN
   IF p_transfer_id IS NULL OR normalized_venue NOT IN ('kraken','okx') OR normalized_asset='' OR p_amount IS NULL OR p_amount <= 0 THEN
     RETURN 0;
@@ -147,6 +148,10 @@ BEGIN
 
   DELETE FROM public.cryptocrawler_system_capital_transfer_lots
   WHERE transfer_id=p_transfer_id;
+  IF to_regclass('public.cryptocrawler_cex_inventory_reservations_v1') IS NOT NULL THEN
+    DELETE FROM public.cryptocrawler_cex_inventory_reservations_v1
+    WHERE reservation_id=shadow_reservation_id;
+  END IF;
 
   FOR row_lot IN
     SELECT lot_id, remaining_decimal
@@ -184,6 +189,29 @@ BEGIN
     RETURN 0;
   END IF;
 
+  -- Reuse the canonical inventory reservation surface as a durable shadow lock.
+  -- Existing live-trade admission already subtracts this table from both physical
+  -- and system-owned spendability, so no parallel spendability authority is added.
+  IF to_regclass('public.cryptocrawler_cex_inventory_reservations_v1') IS NULL THEN
+    DELETE FROM public.cryptocrawler_system_capital_transfer_lots WHERE transfer_id=p_transfer_id;
+    RETURN 0;
+  END IF;
+  INSERT INTO public.cryptocrawler_cex_inventory_reservations_v1
+    (reservation_id, opportunity_id, venue, asset, amount, acquired_at, expires_at)
+  VALUES (
+    shadow_reservation_id,
+    'treasury-transfer:' || p_transfer_id::text,
+    normalized_venue,
+    normalized_asset,
+    p_amount,
+    now(),
+    'infinity'::timestamptz
+  )
+  ON CONFLICT (reservation_id, venue, asset) DO UPDATE SET
+    amount=EXCLUDED.amount,
+    acquired_at=EXCLUDED.acquired_at,
+    expires_at='infinity'::timestamptz;
+
   UPDATE public.cryptocrawler_system_capital_transfers
   SET status='PREPARED', updated_at=now(), last_error=NULL
   WHERE transfer_id=p_transfer_id;
@@ -206,6 +234,10 @@ BEGIN
   GET DIAGNOSTICS changed = ROW_COUNT;
   IF changed=1 THEN
     DELETE FROM public.cryptocrawler_system_capital_transfer_lots WHERE transfer_id=p_transfer_id;
+    IF to_regclass('public.cryptocrawler_cex_inventory_reservations_v1') IS NOT NULL THEN
+      DELETE FROM public.cryptocrawler_cex_inventory_reservations_v1
+      WHERE reservation_id='treasury:' || p_transfer_id::text;
+    END IF;
   END IF;
   RETURN changed=1;
 END;
@@ -311,6 +343,8 @@ BEGIN
       last_error=NULL
   WHERE transfer_id=p_transfer_id;
 
+  DELETE FROM public.cryptocrawler_cex_inventory_reservations_v1
+  WHERE reservation_id='treasury:' || p_transfer_id::text;
   RETURN true;
 END;
 $$;
@@ -335,7 +369,7 @@ GRANT EXECUTE ON FUNCTION public.cryptocrawler_confirm_system_capital_transfer(u
 COMMENT ON TABLE public.cryptocrawler_system_capital_transfers IS
   'Single durable authority for retained CEX routing, Kraken-to-OKX payout funding, and >$4,000 normal-runtime system-capital sweeps. Transfer rows never authorize raw operator balances.';
 COMMENT ON TABLE public.cryptocrawler_system_capital_transfer_lots IS
-  'Exact ACTIVE system-owned lot units reserved against a treasury transfer. Live trading must subtract these reservations before admitting new exposure.';
+  'Exact ACTIVE system-owned lot units reserved against a treasury transfer. The same amount is shadowed in canonical inventory reservations so live trade admission cannot spend it concurrently.';
 COMMENT ON TABLE public.cryptocrawler_system_capital_sweep_batches IS
   'Normal-runtime 80% wallet sweep intent created only when freshly priced provenance-backed system-owned value on one exchange exceeds exactly $4,000.';
 COMMENT ON TABLE public.cryptocrawler_profit_payout_jobs IS
