@@ -1,6 +1,7 @@
 import { getCryptaraNetworkSpecializationLearning } from '../../cryptara/network-specialization-learning.js';
 
 export type ExternalCapitalRole =
+  | 'fixed_lend'
   | 'fixed_credit'
   | 'collateral_borrow'
   | 'collateral_efficiency'
@@ -52,11 +53,37 @@ function seed(capability: ExternalCapitalCapability): void {
   registry.set(capability.id, capability);
 }
 
-// These seed records describe integration roles only. They never authorize a
-// transaction and never invent live APR/liquidity. Runtime evidence can enrich
-// them later through recordMeasuredExternalCapitalCapability().
+// Seed records define integration roles only. They never authorize a transaction
+// and never invent live APR, liquidity or exit cost. Runtime evidence must enrich
+// a capability before executionReady may become true.
+
+// Morpho Midnight has two materially different capital roles on Base. Lending
+// deploys system-owned loan tokens into fixed-term credit and does not require
+// the lender to post borrower collateral. Borrowing does require accepted
+// collateral and creates fixed-term debt. Keeping these separate prevents Rainbow
+// from confusing a yield destination with a borrowing source.
 seed(nowCapability({
-  id: 'morpho-midnight:base',
+  id: 'morpho-midnight-lend:base',
+  protocol: 'morpho_midnight',
+  network: 'base',
+  role: 'fixed_lend',
+  bootstrapEligible: false,
+  requiresSystemOwnedCapital: true,
+  collateralRequired: false,
+  maturityRequired: true,
+  oracleDependent: 'varies',
+  executionReady: false,
+  provenance: [
+    'official_morpho_midnight_fixed_rate_fixed_term_lending',
+    'base_chain_8453',
+    'lender_credit_units_not_borrower_collateral',
+    'fresh_books_quotes_fees_secondary_exit_required',
+    'advisory_capability_seed',
+  ],
+}));
+
+seed(nowCapability({
+  id: 'morpho-midnight-borrow:base',
   protocol: 'morpho_midnight',
   network: 'base',
   role: 'fixed_credit',
@@ -66,7 +93,13 @@ seed(nowCapability({
   maturityRequired: true,
   oracleDependent: true,
   executionReady: false,
-  provenance: ['official_morpho_midnight_fixed_rate_fixed_term', 'base_chain_8453', 'advisory_capability_seed'],
+  provenance: [
+    'official_morpho_midnight_fixed_rate_fixed_term_borrowing',
+    'base_chain_8453',
+    'accepted_collateral_and_health_required',
+    'fresh_bid_quote_fee_liquidation_risk_required',
+    'advisory_capability_seed',
+  ],
 }));
 
 seed(nowCapability({
@@ -80,7 +113,7 @@ seed(nowCapability({
   maturityRequired: false,
   oracleDependent: true,
   executionReady: false,
-  provenance: ['official_compound_collateral_borrowing', 'advisory_capability_seed'],
+  provenance: ['official_compound_collateral_borrowing', 'fresh_market_rate_and_collateral_capacity_required', 'advisory_capability_seed'],
 }));
 
 seed(nowCapability({
@@ -94,7 +127,7 @@ seed(nowCapability({
   maturityRequired: false,
   oracleDependent: 'varies',
   executionReady: false,
-  provenance: ['official_curve_llamalend_v2_lp_collateral', 'advisory_capability_seed'],
+  provenance: ['official_curve_llamalend_v2_lp_collateral', 'fresh_market_liquidity_liquidation_and_exit_cost_required', 'advisory_capability_seed'],
 }));
 
 seed(nowCapability({
@@ -108,7 +141,7 @@ seed(nowCapability({
   maturityRequired: true,
   oracleDependent: false,
   executionReady: false,
-  provenance: ['official_jupiter_offerbook_fixed_term_credit', 'advisory_capability_seed'],
+  provenance: ['official_jupiter_offerbook_fixed_term_credit', 'no_price_oracle_liquidation_model', 'fresh_offer_collateral_maturity_and_default_risk_required', 'advisory_capability_seed'],
 }));
 
 for (const [id, protocol] of [
@@ -127,13 +160,14 @@ for (const [id, protocol] of [
     maturityRequired: false,
     oracleDependent: 'varies',
     executionReady: false,
-    provenance: ['external_yield_destination_advisory_only', 'fresh_runtime_yield_and_exit_cost_required'],
+    provenance: ['external_yield_destination_advisory_only', 'fresh_runtime_yield_exit_cost_liquidity_and_contract_risk_required'],
   }));
 }
 
-// Jupiter Lend is the only newly researched item in this group that is directly
-// relevant to atomic cold-start principal. Its execution remains false here until
-// native Solana signer, fee-payer and terminal settlement proof are all live.
+// Jupiter Lend is directly relevant to atomic cold-start principal. Zero flashloan
+// fee is not the same thing as zero operator transaction fee, so execution remains
+// false until native Solana signing, an independently proven non-operator fee payer,
+// atomic borrow/payback construction, simulation and terminal settlement proof exist.
 seed(nowCapability({
   id: 'jupiter-lend-flashloan:solana',
   protocol: 'jupiter_lend_flashloan',
@@ -146,7 +180,12 @@ seed(nowCapability({
   oracleDependent: false,
   executionReady: false,
   estimatedCostApr: 0,
-  provenance: ['official_jupiter_lend_no_collateral', 'official_jupiter_lend_no_flashloan_fee', 'same_transaction_payback_required', 'native_fee_payer_proof_still_required'],
+  provenance: [
+    'official_jupiter_lend_no_collateral',
+    'official_jupiter_lend_no_flashloan_fee',
+    'same_transaction_payback_required',
+    'native_fee_payer_proof_still_required',
+  ],
 }));
 
 export function recordMeasuredExternalCapitalCapability(capability: ExternalCapitalCapability): void {
@@ -154,6 +193,27 @@ export function recordMeasuredExternalCapitalCapability(capability: ExternalCapi
     throw new Error('External capital capability registry is advisory only');
   }
   if (!(capability.expiresAt > capability.observedAt)) throw new Error('Measured capital capability must have a bounded expiry');
+  if (capability.executionReady) {
+    if (capability.role === 'yield_destination' || capability.role === 'fixed_lend') {
+      if (!Number.isFinite(Number(capability.estimatedApr))) {
+        throw new Error('Executable retained-capital destination requires measured APR/yield');
+      }
+      if (!Number.isFinite(Number(capability.availableLiquidityUsd)) || Number(capability.availableLiquidityUsd) <= 0) {
+        throw new Error('Executable retained-capital destination requires measured positive liquidity/capacity');
+      }
+      if (!Number.isFinite(Number(capability.withdrawalLatencyMs)) || Number(capability.withdrawalLatencyMs) < 0) {
+        throw new Error('Executable retained-capital destination requires measured exit/withdrawal latency');
+      }
+    }
+    if (capability.role === 'fixed_credit' || capability.role === 'collateral_borrow') {
+      if (!Number.isFinite(Number(capability.estimatedCostApr))) {
+        throw new Error('Executable borrowing capability requires measured borrowing cost');
+      }
+      if (capability.collateralRequired !== true) {
+        throw new Error('Collateralized borrowing capability cannot be execution-ready without collateral gating');
+      }
+    }
+  }
   registry.set(capability.id, {
     ...capability,
     provenance: [...new Set(capability.provenance || [])],
@@ -168,11 +228,14 @@ export function listExternalCapitalCapabilities(now = Date.now()): ExternalCapit
 
 function economicScore(capability: ExternalCapitalCapability): number {
   if (!capability.executionReady) return 0;
-  if (capability.role === 'yield_destination') {
+  if (capability.role === 'yield_destination' || capability.role === 'fixed_lend') {
     const yieldApr = Number(capability.estimatedApr);
-    if (!Number.isFinite(yieldApr)) return 0;
-    const latencyPenalty = Math.min(0.5, Math.max(0, Number(capability.withdrawalLatencyMs || 0)) / (24 * 60 * 60_000) * 0.1);
-    return Math.max(0, yieldApr - latencyPenalty);
+    const liquidity = Number(capability.availableLiquidityUsd);
+    const latency = Number(capability.withdrawalLatencyMs);
+    if (!Number.isFinite(yieldApr) || !Number.isFinite(liquidity) || liquidity <= 0 || !Number.isFinite(latency) || latency < 0) return 0;
+    const latencyPenalty = Math.min(0.5, latency / (24 * 60 * 60_000) * 0.1);
+    const liquidityConfidence = Math.min(1, Math.log10(1 + liquidity) / 8);
+    return Math.max(0, yieldApr - latencyPenalty) * liquidityConfidence;
   }
   if (capability.role === 'fixed_credit' || capability.role === 'collateral_borrow') {
     const cost = Number(capability.estimatedCostApr);
@@ -184,6 +247,12 @@ function economicScore(capability: ExternalCapitalCapability): number {
   return 0.5;
 }
 
+function learningRole(role: ExternalCapitalRole): 'atomic_principal' | 'retained_capital' | 'capital_transfer' {
+  if (role === 'atomic_principal') return 'atomic_principal';
+  if (role === 'yield_destination' || role === 'fixed_lend' || role === 'collateral_efficiency') return 'retained_capital';
+  return 'capital_transfer';
+}
+
 export function rankExternalCapitalCapabilities(
   role: ExternalCapitalRole,
   now = Date.now(),
@@ -192,7 +261,7 @@ export function rankExternalCapitalCapabilities(
   return listExternalCapitalCapabilities(now)
     .filter(capability => capability.role === role)
     .map(capability => {
-      const learned = learner.score(capability.network, role === 'atomic_principal' ? 'atomic_principal' : role === 'yield_destination' ? 'retained_capital' : 'capital_transfer', capability.protocol, now);
+      const learned = learner.score(capability.network, learningRole(role), capability.protocol, now);
       return {
         ...capability,
         cryptaraScore: learned.score,
@@ -201,6 +270,8 @@ export function rankExternalCapitalCapabilities(
       };
     })
     .sort((left, right) => {
+      // Canonical measured economics dominates; Cryptara can only break/rank
+      // already-valid candidates and can never make executionReady become true.
       const leftCombined = left.economicScore * 0.8 + left.cryptaraScore * left.cryptaraConfidence * 0.2;
       const rightCombined = right.economicScore * 0.8 + right.cryptaraScore * right.cryptaraConfidence * 0.2;
       return rightCombined - leftCombined || left.id.localeCompare(right.id);
