@@ -55,6 +55,26 @@ function canonicalCexExecutionSupported(plan: NonNullable<CanonicalOpportunitySn
   return supportedVenues.has(String(plan.buyVenue)) && supportedVenues.has(String(plan.sellVenue));
 }
 
+function cexStrategyIdentity(plan: NonNullable<CanonicalOpportunitySnapshot['plan']>): {
+  strategyId: string;
+  strategyClass: NixGenStrategyClass;
+  authoritativePath: string;
+} {
+  const makerExecution = (plan as NonNullable<CanonicalOpportunitySnapshot['plan']> & { makerExecution?: unknown }).makerExecution;
+  if (makerExecution) {
+    return {
+      strategyId: 'verified_cex_market_making',
+      strategyClass: 'market_making',
+      authoritativePath: 'canonical_execution_scheduler:post_only_maker_execution',
+    };
+  }
+  return {
+    strategyId: 'verified_cex_arbitrage',
+    strategyClass: 'cex_arbitrage',
+    authoritativePath: 'canonical_execution_scheduler:verified_cex_arbitrage',
+  };
+}
+
 function measuredAtFromCexSnapshot(snapshot: CanonicalOpportunitySnapshot, now: number): number {
   if (!snapshot.plan) return snapshot.observedAt;
   const quoteAgeMs = Number(snapshot.plan.quoteAgeMs);
@@ -73,12 +93,13 @@ export function prepareCexNixGenBid(
 
   const projection = executionResourceScheduler.getCexPlanningProjection(plan);
   const executionSupported = canonicalCexExecutionSupported(plan);
+  const strategy = cexStrategyIdentity(plan);
   return {
     bid: {
       bidId: `cex:${snapshot.opportunityId}`,
       opportunityId: snapshot.opportunityId,
-      strategyId: 'verified_cex_arbitrage',
-      strategyClass: 'cex_arbitrage',
+      strategyId: strategy.strategyId,
+      strategyClass: strategy.strategyClass,
       observedAt: snapshot.observedAt,
       expiresAt: advisory.expiresAt,
       economics: {
@@ -92,9 +113,7 @@ export function prepareCexNixGenBid(
         eligible: true,
         executable: executionSupported,
         settlementCapable: executionSupported,
-        authoritativePath: executionSupported
-          ? 'canonical_execution_scheduler:verified_cex_arbitrage'
-          : '',
+        authoritativePath: executionSupported ? strategy.authoritativePath : '',
       },
       advisory: {
         probabilityOfProfitableExecution: advisory.probabilityOfProfitableExecution,
@@ -108,7 +127,9 @@ export function prepareCexNixGenBid(
         symbol: snapshot.symbol,
         buyVenue: plan.buyVenue,
         sellVenue: plan.sellVenue,
-        executionCapabilityAuthority: 'execution-readiness:getCanonicalExecutionCapabilities',
+        executionCapabilityAuthority: strategy.strategyClass === 'market_making'
+          ? 'post-only-maker-adapters:createPostOnlyMakerAdapters'
+          : 'execution-readiness:getCanonicalExecutionCapabilities',
         resourceProjectionAuthority: projection.authority,
         resourceProjectionMutatesState: projection.mutatesResourceState,
       },
