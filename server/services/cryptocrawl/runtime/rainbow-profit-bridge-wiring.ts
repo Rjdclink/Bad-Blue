@@ -8,7 +8,9 @@ import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
 import { rainbowProfitObservability } from '../compensation/rainbow-profit-observability.js';
 import { rainbowProfitSourceLedger } from '../compensation/rainbow-profit-source-ledger.js';
 import { stageManager } from '../governance/stage-management.js';
+import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 import { getRainbowCapitalDestinationAdvisory } from '../optimization/rainbow-capital-destination-advisory.js';
+import { pool } from './cryptocrawl-runtime-database.js';
 import { ensureTerminalTreasuryLifecycle, stopTerminalTreasuryLifecycle } from './terminal-treasury-lifecycle.js';
 
 let installed = false;
@@ -21,12 +23,43 @@ function latestTerminalFeedback(): CryptaraExecutionFeedback | null {
   return latest as unknown as CryptaraExecutionFeedback;
 }
 
+function signedTerminalPnl(feedback: CryptaraExecutionFeedback): number | null {
+  if (feedback.settlement?.terminal !== true || feedback.settlement.settlementConfirmed !== true) return null;
+  const value = Number(feedback.realizedProfitUsd ?? feedback.settlement.realized?.netProfitUsd);
+  if (!Number.isFinite(value) || Math.abs(value) < 1e-12) return null;
+  return Number(value.toFixed(12));
+}
+
+async function recordOperatorTerminalPnl(feedback: CryptaraExecutionFeedback): Promise<void> {
+  const realizedPnlUsd = signedTerminalPnl(feedback);
+  if (realizedPnlUsd === null) return;
+  const eventId = terminalFeedbackIdentity(feedback);
+  await pool.query(
+    `SELECT public.cryptocrawler_operator_strategy_record_terminal_pnl($1,$2,$3) AS recorded`,
+    [eventId, feedback.opportunityId || '', realizedPnlUsd],
+  );
+}
+
 async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
   try {
     // Venue specialization learns only from the same terminal-confirmed execution
     // truth used by treasury capture. It is advisory and cannot authorize a trade,
     // move capital, or modify canonical realized economics.
     getCryptaraVenueSpecializationLearning().recordTerminalExecution(feedback);
+
+    // Profit-day qualification is signed and terminal-settlement based. It shares
+    // terminalFeedbackIdentity with the positive-profit treasury compatibility
+    // wrapper, so positive events remain exactly-once while later realized losses
+    // can remove a day's qualification if the local day's net P&L returns to <= 0.
+    try {
+      await recordOperatorTerminalPnl(feedback);
+    } catch (error) {
+      logger.warn('[OperatorStrategy] Terminal P&L qualification persistence deferred', {
+        component: 'RainbowProfitBridgeWiring',
+        opportunityId: feedback.opportunityId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     const allocation = await retainedProfitLedger.recordTerminalSettlement(feedback);
     const capitalAdvisory = getRainbowCapitalDestinationAdvisory();
@@ -131,6 +164,8 @@ export function ensureRainbowProfitBridgeWiring(): void {
     externalCapitalAdvisoryCapitalMovementAuthority: false,
     venueSpecializationLearning: 'cryptara_terminal_truth_advisory_only',
     venueSpecializationExecutionAuthority: false,
+    profitDayQualificationAuthority: 'signed_terminal_confirmed_realized_pnl_only',
+    profitDayQualificationExecutionAuthority: false,
     payoutCapitalProtectedFromNewTradeSpendability: true,
     activeTradePreemptionAllowed: false,
     ethConversionTiming: 'only_when_due_and_withdrawal_executable',
