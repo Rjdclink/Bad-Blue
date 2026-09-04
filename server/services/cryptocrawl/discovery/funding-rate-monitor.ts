@@ -6,6 +6,12 @@ import { evaluateFundingArbitrage } from './funding-arbitrage-policy.js';
 import { resolveCexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 import { okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { resolveOkxAccountFeeRates } from '../intelligence/okx-account-fee-authority.js';
+import { measureOkxFundingExecutionEvidence, type OkxFundingExecutionEvidence } from '../execution/okx-funding-evidence.js';
+import {
+  ensureOkxFundingLifecycleAdapterRegistered,
+  rememberPreparedOkxFundingPlan,
+  type OkxFundingExecutionPlan,
+} from '../execution/okx-funding-lifecycle-adapter.js';
 
 interface OkxSwapCapability {
   feeBps: number | null;
@@ -26,10 +32,7 @@ const FALLBACK_SYMBOLS = [
 ];
 
 const OKX_SWAP_CONTEXT_TTL_MS = Math.max(10_000, Number(process.env.CRYPTOCRAWL_OKX_SWAP_CONTEXT_TTL_MS || 60_000));
-const OKX_SWAP_CAPABILITY_PROBE_BUDGET = Math.max(
-  1,
-  Math.min(16, Math.floor(Number(process.env.CRYPTOCRAWL_OKX_SWAP_CAPABILITY_PROBE_BUDGET || 8))),
-);
+const OKX_SWAP_CAPABILITY_PROBE_BUDGET = Math.max(1, Math.min(16, Math.floor(Number(process.env.CRYPTOCRAWL_OKX_SWAP_CAPABILITY_PROBE_BUDGET || 8))));
 let okxSwapContextCache: OkxSwapAccountContext | null = null;
 let okxSwapContextInFlight: Promise<OkxSwapAccountContext> | null = null;
 const okxSwapCapabilityCache = new Map<string, { expiresAt: number; value: OkxSwapCapability }>();
@@ -43,17 +46,12 @@ function finite(value: unknown): number | null {
 function feeCostBps(value: unknown): number | null {
   const parsed = finite(value);
   if (parsed === null) return null;
-  // OKX account fee fields are decimal rates: negative means commission,
-  // positive means rebate. A rebate is conservatively treated as zero cost here.
   return parsed < 0 ? Math.abs(parsed) * 10_000 : 0;
 }
 
 async function getOkxSwapAccountContext(): Promise<OkxSwapAccountContext> {
-  if (okxSwapContextCache && Date.now() - okxSwapContextCache.observedAt <= OKX_SWAP_CONTEXT_TTL_MS) {
-    return okxSwapContextCache;
-  }
+  if (okxSwapContextCache && Date.now() - okxSwapContextCache.observedAt <= OKX_SWAP_CONTEXT_TTL_MS) return okxSwapContextCache;
   if (okxSwapContextInFlight) return okxSwapContextInFlight;
-
   okxSwapContextInFlight = (async () => {
     const [instrumentsResponse, configResponse] = await Promise.all([
       okxPrivateRequest('/api/v5/account/instruments', 'GET', { instType: 'SWAP' }, { lane: 'account_read' }),
@@ -68,15 +66,11 @@ async function getOkxSwapAccountContext(): Promise<OkxSwapAccountContext> {
     okxSwapContextCache = context;
     return context;
   })().finally(() => { okxSwapContextInFlight = null; });
-
   return okxSwapContextInFlight;
 }
 
 async function getOkxSwapCapability(observation: FundingRateObservation): Promise<OkxSwapCapability> {
-  if (observation.venue !== 'okx') {
-    return { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'not_okx' };
-  }
-
+  if (observation.venue !== 'okx') return { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'not_okx' };
   const cacheKey = observation.instrumentId.toUpperCase();
   const cached = okxSwapCapabilityCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -86,66 +80,57 @@ async function getOkxSwapCapability(observation: FundingRateObservation): Promis
   const promise = (async (): Promise<OkxSwapCapability> => {
     try {
       const accountContext = await getOkxSwapAccountContext();
-      const instrument = accountContext.instruments.find((row: any) =>
-        String(row?.instId || '').toUpperCase() === observation.instrumentId.toUpperCase(),
-      );
+      const instrument = accountContext.instruments.find((row: any) => String(row?.instId || '').toUpperCase() === observation.instrumentId.toUpperCase());
       const state = String(instrument?.state || '').toLowerCase();
       const instrumentVisible = !!instrument && (!state || state === 'live' || state === 'post_only');
       if (!instrumentVisible) {
-        const unavailable: OkxSwapCapability = {
-          feeBps: null,
-          instrumentVisible: false,
-          accountModeVisible: accountContext.accountModeVisible,
-          reason: 'Existing OKX credentials did not expose this SWAP instrument as live',
-        };
+        const unavailable: OkxSwapCapability = { feeBps: null, instrumentVisible: false, accountModeVisible: accountContext.accountModeVisible, reason: 'Existing OKX credentials did not expose this SWAP instrument as live' };
         okxSwapCapabilityCache.set(cacheKey, { expiresAt: Date.now() + OKX_SWAP_CONTEXT_TTL_MS, value: unavailable });
         return unavailable;
       }
-
       const groupId = String(instrument?.groupId || '').trim();
       const family = observation.instrumentId.replace(/-SWAP$/i, '');
-      const feeRates = await resolveOkxAccountFeeRates({
-        instType: 'SWAP',
-        ...(groupId
-          ? { groupId, expectedGroupId: groupId }
-          : { instFamily: family }),
-      });
+      const feeRates = await resolveOkxAccountFeeRates({ instType: 'SWAP', ...(groupId ? { groupId, expectedGroupId: groupId } : { instFamily: family }) });
       const value: OkxSwapCapability = {
         feeBps: feeCostBps(feeRates.taker),
         instrumentVisible,
         accountModeVisible: accountContext.accountModeVisible,
         reason: accountContext.accountModeVisible
-          ? 'Existing OKX credentials can read the SWAP instrument, account mode and authenticated fee group; live funding execution still requires a registered OKX lifecycle adapter plus measured entry/exit depth, margin-safe sizing and terminal funding/close evidence'
+          ? 'OKX SWAP instrument/account/fee capability is authenticated; exact execution depth, sizing and lifecycle are measured separately before promotion'
           : 'Existing OKX credentials did not prove the derivatives account mode',
       };
       okxSwapCapabilityCache.set(cacheKey, { expiresAt: Date.now() + OKX_SWAP_CONTEXT_TTL_MS, value });
       return value;
     } catch (error) {
-      return {
-        feeBps: null,
-        instrumentVisible: false,
-        accountModeVisible: false,
-        reason: `OKX SWAP capability probe unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      };
+      return { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: `OKX SWAP capability probe unavailable: ${error instanceof Error ? error.message : String(error)}` };
     }
   })().finally(() => { okxSwapCapabilityInFlight.delete(cacheKey); });
-
   okxSwapCapabilityInFlight.set(cacheKey, promise);
   return promise;
 }
 
 function deferredOkxSwapCapability(): OkxSwapCapability {
-  return {
-    feeBps: null,
-    instrumentVisible: false,
-    accountModeVisible: false,
-    reason: 'Private OKX SWAP enrichment deferred by the bounded discovery budget; public evidence is retained and execution remains fail-closed',
-  };
+  return { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'Private OKX SWAP enrichment deferred by the bounded discovery budget; public evidence is retained and execution remains fail-closed' };
 }
 
 function quotedAsset(symbol: string): string[] {
   const match = symbol.match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
   return match ? [match[1], match[2]] : [symbol];
+}
+
+function lockedCaptureWindow(observation: FundingRateObservation): { eligible: boolean; expiresAt: number; reason: string } {
+  const now = Date.now();
+  const settlementAt = observation.fundingTime ?? null;
+  const graceMs = Math.max(1_000, Math.min(60_000, Number(process.env.CRYPTOCRAWL_FUNDING_LOCKED_CAPTURE_GRACE_MS || 20_000)));
+  if (!observation.fundingRateLocked || settlementAt === null || !Number.isFinite(settlementAt)) {
+    return { eligible: false, expiresAt: now, reason: 'locked_applicable_funding_rate_before_position_open' };
+  }
+  const expiresAt = settlementAt + graceMs;
+  return {
+    eligible: settlementAt <= now && now < expiresAt,
+    expiresAt,
+    reason: settlementAt <= now && now < expiresAt ? 'okx_settlement_processing_locked_rate_window' : 'locked_funding_settlement_window_not_open',
+  };
 }
 
 class FundingRateMonitor {
@@ -167,20 +152,13 @@ class FundingRateMonitor {
     this.timer = setTimeout(cycle, 0);
     this.timer.unref?.();
     logger.info('[FundingMonitor] Public funding-rate monitor started', {
-      component: 'FundingRateMonitor',
-      intervalMs,
-      venues: ['okx', 'kraken_futures', 'binance_futures'],
-      okxPrivateAccountContextTtlMs: OKX_SWAP_CONTEXT_TTL_MS,
-      newKeysRequiredForDiscovery: false,
-      durableFundingLifecycleImplemented: true,
-      executionAuthority: 'none_until_topology_specific_adapter_and_exact_economics_exist',
+      component: 'FundingRateMonitor', intervalMs, venues: ['okx', 'kraken_futures', 'binance_futures'],
+      okxPrivateAccountContextTtlMs: OKX_SWAP_CONTEXT_TTL_MS, newKeysRequiredForDiscovery: false,
+      durableFundingLifecycleImplemented: true, executionAuthority: 'funding_position_lifecycle_only_for_fully_measured_locked_okx_capture',
     });
   }
 
-  stop(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-  }
+  stop(): void { if (this.timer) clearTimeout(this.timer); this.timer = null; }
 
   async scanOnce(): Promise<void> {
     if (this.inFlight) return this.inFlight;
@@ -196,47 +174,44 @@ class FundingRateMonitor {
     const universe = getLastOrderedMarketUniverseSymbols();
     const symbols = [...new Set([...(universe.length ? universe : FALLBACK_SYMBOLS), ...FALLBACK_SYMBOLS])];
     try {
+      ensureOkxFundingLifecycleAdapterRegistered();
       const batch = await discoverFundingRates(symbols);
       const notionalUsd = Math.max(1, Number(process.env.CRYPTOCRAWL_FUNDING_REFERENCE_NOTIONAL_USD || 250));
       const ttlMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_FUNDING_CANDIDATE_TTL_MS || 45_000));
       let projectedPositive = 0;
       let deterministicPositive = 0;
+      let eligible = 0;
 
-      // Public discovery must not wait on one private fee read per instrument.
-      // Enrich only the strongest bounded OKX observations. Group-level fee
-      // authority coalesces products sharing an authenticated fee group; every
-      // unselected observation remains visible but cannot become executable.
       const okxCapabilityTargets = batch.observations
         .filter(observation => observation.venue === 'okx')
         .sort((left, right) => Math.abs(right.fundingRate) - Math.abs(left.fundingRate))
-        .filter((observation, index, all) =>
-          all.findIndex(candidate => candidate.instrumentId === observation.instrumentId) === index)
+        .filter((observation, index, all) => all.findIndex(candidate => candidate.instrumentId === observation.instrumentId) === index)
         .slice(0, OKX_SWAP_CAPABILITY_PROBE_BUDGET);
       const okxTargetIds = new Set(okxCapabilityTargets.map(observation => observation.instrumentId));
       const okxEnrichment = new Map<string, {
         spotFee: Awaited<ReturnType<typeof resolveCexFeeEvidence>>;
         swapCapability: OkxSwapCapability;
+        executionEvidence: OkxFundingExecutionEvidence | null;
       }>();
       await Promise.all(okxCapabilityTargets.map(async observation => {
-        const [spotFee, swapCapability] = await Promise.all([
+        const capture = lockedCaptureWindow(observation);
+        const [spotFee, swapCapability, executionEvidence] = await Promise.all([
           resolveCexFeeEvidence('okx', observation.symbol).catch(() => null),
           getOkxSwapCapability(observation),
+          observation.fundingRate > 0 && capture.eligible
+            ? measureOkxFundingExecutionEvidence({ symbol: observation.symbol, swapInstId: observation.instrumentId, targetNotionalUsd: notionalUsd }).catch(() => null)
+            : Promise.resolve(null),
         ]);
-        okxEnrichment.set(observation.instrumentId, { spotFee, swapCapability });
+        okxEnrichment.set(observation.instrumentId, { spotFee, swapCapability, executionEvidence });
       }));
 
       for (const observation of batch.observations) {
-        const enrichment = observation.venue === 'okx'
-          ? okxEnrichment.get(observation.instrumentId)
-          : null;
+        const enrichment = observation.venue === 'okx' ? okxEnrichment.get(observation.instrumentId) : null;
         const spotFee = enrichment?.spotFee || null;
-        const swapCapability = observation.venue === 'okx'
-          ? enrichment?.swapCapability || deferredOkxSwapCapability()
-          : { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'not_okx' };
+        const swapCapability = observation.venue === 'okx' ? enrichment?.swapCapability || deferredOkxSwapCapability() : { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'not_okx' };
+        const executionEvidence = enrichment?.executionEvidence ?? null;
+        const capture = lockedCaptureWindow(observation);
 
-        // Public funding discovery establishes carry signal. It does not promote
-        // execution until future close/basis risk, entry/exit depth, adapter
-        // capability and terminal funding settlement are all measured.
         const decision = evaluateFundingArbitrage({
           fundingRate: observation.fundingRate,
           notionalUsd,
@@ -244,79 +219,129 @@ class FundingRateMonitor {
           spotExitFeeBps: spotFee?.takerFeeBps ?? null,
           perpEntryFeeBps: swapCapability.feeBps,
           perpExitFeeBps: swapCapability.feeBps,
-          entryBasisBps: observation.entryBasisBps,
-          exitBasisReserveBps: null,
-          expectedSlippageBps: null,
+          entryBasisBps: executionEvidence?.entryBasisBps ?? observation.entryBasisBps,
+          exitBasisReserveBps: executionEvidence?.exitBasisReserveBps ?? null,
+          expectedSlippageBps: executionEvidence?.expectedSlippageBps ?? null,
           borrowCostUsd: observation.fundingRate < 0 ? null : 0,
           fundingRateLocked: observation.fundingRateLocked,
           shortSpotCapability: false,
         });
-
         if (decision.projectedNetProfitUsd !== null && decision.projectedNetProfitUsd > 0) projectedPositive++;
         if (decision.deterministicPositive) deterministicPositive++;
 
+        const executionCapable = observation.venue === 'okx'
+          && observation.fundingRate > 0
+          && capture.eligible
+          && decision.deterministicPositive
+          && executionEvidence !== null
+          && executionEvidence.expiresAt > Date.now()
+          && swapCapability.instrumentVisible
+          && swapCapability.accountModeVisible;
+        const opportunityId = `funding:${observation.venue}:${observation.instrumentId}:${observation.symbol}`;
+        const expiresAt = executionCapable
+          ? Math.min(observation.observedAt + ttlMs, executionEvidence!.expiresAt, capture.expiresAt)
+          : observation.observedAt + ttlMs;
+
+        if (executionCapable) {
+          const fees = Math.max(0, decision.expectedTradingFeesUsd ?? 0);
+          const basis = Math.max(0, decision.expectedBasisAndSlippageUsd ?? 0);
+          const marginFraction = Math.max(0.02, Math.min(0.50, Number(process.env.CRYPTOCRAWL_FUNDING_MARGIN_BUFFER_FRACTION || 0.10)));
+          const plan: OkxFundingExecutionPlan = {
+            opportunityId,
+            venue: 'okx',
+            symbol: observation.symbol,
+            notionalUsd,
+            expectedNetProfitUsd: decision.deterministicNetProfitUsd!,
+            expectedEntryCostUsd: fees / 2 + basis / 2,
+            expectedExitCostUsd: fees / 2 + basis / 2,
+            expectedFundingUsd: decision.expectedFundingUsd ?? 0,
+            marginBufferUsd: notionalUsd * marginFraction,
+            fundingTimestamp: observation.fundingTime ?? Date.now(),
+            expiresAt,
+            provenance: [
+              ...observation.provenance,
+              ...executionEvidence!.provenance,
+              'funding_rate:exchange_locked_settlement_processing',
+              'funding_entry_exit_depth:measured',
+              'funding_lifecycle:okx_registered',
+            ],
+            okx: {
+              spotInstId: executionEvidence!.spotInstId,
+              swapInstId: executionEvidence!.swapInstId,
+              baseAsset: executionEvidence!.baseAsset,
+              quoteAsset: executionEvidence!.quoteAsset,
+              contracts: executionEvidence!.contracts,
+              baseQuantity: executionEvidence!.baseQuantity,
+              lockedFundingRate: observation.fundingRate,
+              evidenceMeasuredAt: executionEvidence!.measuredAt,
+              evidenceExpiresAt: executionEvidence!.expiresAt,
+              entry: { spotEntryLimit: executionEvidence!.spotEntryLimit, perpEntryLimit: executionEvidence!.perpEntryLimit },
+            },
+          };
+          rememberPreparedOkxFundingPlan(plan);
+          eligible++;
+        }
+
         const missingInformation = [
           ...decision.missingInformation,
-          'measured_entry_and_exit_depth',
-          'measured_exit_basis_reserve',
-          'funding_venue_lifecycle_adapter',
-          'liquidation_margin_and_collateral_monitoring',
-          'terminal_funding_payment_and_close_settlement',
+          ...(observation.venue === 'okx' && !executionEvidence ? ['measured_entry_exit_depth_margin_capacity'] : []),
+          ...(!capture.eligible && observation.venue === 'okx' ? [capture.reason] : []),
           ...(observation.venue === 'kraken_futures' ? ['kraken_derivatives_execution_credentials'] : []),
           ...(observation.venue === 'binance_futures' ? ['binance_execution_capability_intentionally_disabled'] : []),
           ...(observation.venue === 'okx' && !swapCapability.instrumentVisible ? ['okx_swap_instrument_capability'] : []),
           ...(observation.venue === 'okx' && !swapCapability.accountModeVisible ? ['okx_derivatives_account_mode'] : []),
         ];
 
-        const status = decision.deterministicPositive ? 'deterministic_positive' as const : 'enriched' as const;
         measuredCandidateRegistry.record({
-          opportunityId: `funding:${observation.venue}:${observation.instrumentId}:${observation.symbol}`,
+          opportunityId,
           topology: 'FUNDING_ARBITRAGE',
           observedAt: observation.observedAt,
-          expiresAt: observation.observedAt + ttlMs,
-          status,
+          expiresAt,
+          status: executionCapable ? 'eligible' : decision.deterministicPositive ? 'deterministic_positive' : 'enriched',
           assets: quotedAsset(observation.symbol),
           venues: [observation.venue],
           chains: ['cex'],
           rawQuotes: [{
-            source: `${observation.venue}:funding_rate`,
-            venue: observation.venue,
-            symbol: observation.symbol,
-            observedAt: observation.observedAt,
-            price: observation.perpReferencePrice,
-            executable: false,
+            source: `${observation.venue}:funding_rate`, venue: observation.venue, symbol: observation.symbol,
+            observedAt: observation.observedAt, price: observation.perpReferencePrice, executable: executionCapable,
             provenance: [
               ...observation.provenance,
               `funding_rate:${observation.fundingRate}`,
               `funding_rate_kind:${observation.fundingRateKind}`,
               `funding_rate_locked:${observation.fundingRateLocked}`,
               ...(observation.nextFundingTime ? [`next_funding_time:${observation.nextFundingTime}`] : []),
+              ...(executionEvidence?.provenance ?? []),
             ],
           }],
-          depth: { status: 'unavailable', detail: 'Funding discovery uses public ticker/funding snapshots; executable entry/exit depth is intentionally not inferred' },
+          depth: executionEvidence
+            ? { status: 'measured', detail: 'OKX spot and SWAP entry/exit VWAP depth measured at exact contract/base quantities with authenticated contract sizing and max-size capacity' }
+            : { status: 'unavailable', detail: 'Exact executable spot/SWAP depth and margin capacity were not acquired in this bounded cycle' },
           economics: {
             grossProfitUsd: decision.expectedFundingUsd,
             deterministicNetProfitUsd: decision.deterministicNetProfitUsd,
             feeUsd: decision.expectedTradingFeesUsd,
             gasUsd: 0,
             bridgeUsd: 0,
-            expectedSlippageBps: null,
-            expectedPriceImpactBps: null,
+            expectedSlippageBps: executionEvidence?.expectedSlippageBps ?? null,
+            expectedPriceImpactBps: executionEvidence?.exitBasisReserveBps ?? null,
+            notionalUsd,
           },
           quoteAgeMs: Math.max(0, Date.now() - observation.observedAt),
-          executableCapability: false,
-          executionCapabilityReason: observation.venue === 'okx'
-            ? swapCapability.reason
-            : observation.venue === 'kraken_futures'
-              ? 'Kraken Futures public funding is visible without authentication, but Kraken Spot credentials are not Derivatives execution credentials'
-              : 'Binance Futures is public discovery only; Binance live execution remains intentionally disabled in CryptoCrawler',
-          missingInformation,
+          executableCapability: executionCapable,
+          executionCapabilityReason: executionCapable
+            ? 'OKX locked positive funding capture has authenticated fees, measured spot/SWAP depth, exact contract sizing, margin capacity, registered durable lifecycle, FOK entry/close, margin monitoring, authenticated funding bills and terminal close accounting'
+            : observation.venue === 'okx' ? `${swapCapability.reason}; ${capture.reason}`
+              : observation.venue === 'kraken_futures'
+                ? 'Kraken Futures public funding is visible without authentication, but Kraken Spot credentials are not Derivatives execution credentials'
+                : 'Binance Futures is public discovery only; Binance live execution remains intentionally disabled in CryptoCrawler',
+          missingInformation: [...new Set(missingInformation)],
           provenance: [
             ...observation.provenance,
             'funding_arbitrage_policy:all_in_costs_required',
-            'durable_funding_lifecycle:implemented_migration_owned_nonblocking',
+            'durable_funding_lifecycle:migration_owned_nonblocking',
+            'okx_funding_lifecycle:authenticated_fills_and_bills',
             'unknown_cost_is_not_zero',
-            'execution_not_promoted_from_public_discovery',
+            executionCapable ? 'execution_promoted_from_locked_measured_evidence' : 'execution_not_promoted_without_locked_complete_evidence',
           ],
         });
       }
@@ -325,32 +350,19 @@ class FundingRateMonitor {
       this.lastCycleAt = Date.now();
       this.lastError = null;
       logger.info('[FundingMonitor] Funding discovery cycle completed', {
-        component: 'FundingRateMonitor',
-        requestedSymbols: batch.requestedSymbols,
-        observations: batch.observations.length,
-        failures: batch.failures,
-        projectedPositive,
-        deterministicPositive,
-        eligible: 0,
-        durableFundingLifecycleImplemented: true,
-        okxSwapCapabilityCacheEntries: okxSwapCapabilityCache.size,
-        okxPrivateCapabilityProbeBudget: OKX_SWAP_CAPABILITY_PROBE_BUDGET,
-        okxPrivateCapabilityTargets: okxTargetIds.size,
-        okxPrivateCapabilityDeferred: Math.max(
-          0,
-          batch.observations.filter(observation => observation.venue === 'okx').length - okxTargetIds.size,
-        ),
+        component: 'FundingRateMonitor', requestedSymbols: batch.requestedSymbols, observations: batch.observations.length,
+        failures: batch.failures, projectedPositive, deterministicPositive, eligible,
+        durableFundingLifecycleImplemented: true, okxSwapCapabilityCacheEntries: okxSwapCapabilityCache.size,
+        okxPrivateCapabilityProbeBudget: OKX_SWAP_CAPABILITY_PROBE_BUDGET, okxPrivateCapabilityTargets: okxTargetIds.size,
+        okxPrivateCapabilityDeferred: Math.max(0, batch.observations.filter(observation => observation.venue === 'okx').length - okxTargetIds.size),
         publicDiscoveryBlockedByPrivateEnrichment: false,
-        note: 'Funding rate is carry, not instant spread; unknown exit/depth/adapter/liquidation evidence blocks execution',
+        note: 'Projected funding remains advisory; only exchange-locked settlement-processing rate plus complete executable evidence can enter the live lifecycle',
       });
     } catch (error) {
       this.cycles++;
       this.lastCycleAt = Date.now();
       this.lastError = error instanceof Error ? error.message : String(error);
-      logger.warn('[FundingMonitor] Funding discovery cycle degraded', {
-        component: 'FundingRateMonitor',
-        error: this.lastError,
-      });
+      logger.warn('[FundingMonitor] Funding discovery cycle degraded', { component: 'FundingRateMonitor', error: this.lastError });
     }
   }
 }

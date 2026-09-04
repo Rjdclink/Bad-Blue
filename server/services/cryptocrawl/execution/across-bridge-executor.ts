@@ -17,6 +17,8 @@ export interface AcrossBridgeExecutionResult {
   settlementConfirmed: boolean;
   depositTxnRef?: string;
   settlement?: AcrossSettlementEvidence;
+  /** Exact signer-paid origin gas across approval(s) plus the Across swap/deposit. */
+  originNativeFeeWei?: string;
   error?: string;
 }
 
@@ -50,6 +52,11 @@ function parseTx(value: any): TxPayload | null {
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
+}
+
+function receiptFeeWei(receipt: ethers.providers.TransactionReceipt): ethers.BigNumber {
+  const price = receipt.effectiveGasPrice;
+  return price ? receipt.gasUsed.mul(price) : ethers.BigNumber.from(0);
 }
 
 async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approvals: TxPayload[]; swap: TxPayload } | null> {
@@ -92,9 +99,12 @@ async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approv
       .filter((tx): tx is TxPayload => tx !== null);
     if (approvals.length !== (Array.isArray(payload.approvalTxns) ? payload.approvalTxns.length : 0)) return null;
 
-    const freshExpected = typeof payload.expectedOutputAmount === 'string' ? BigInt(payload.expectedOutputAmount) : null;
-    const oldMinimum = quote.minOutputAmount ? BigInt(quote.minOutputAmount) : BigInt(quote.expectedOutputAmount);
-    if (freshExpected === null || freshExpected < oldMinimum) return null;
+    // Never allow an execution refresh to worsen the discovery-time guaranteed
+    // minimum. Expected output is insufficient because it can slide inside quote
+    // tolerance; the minimum is the hard economic drift bound.
+    const freshMinimum = typeof payload.minOutputAmount === 'string' ? BigInt(payload.minOutputAmount) : null;
+    const oldMinimum = quote.minOutputAmount ? BigInt(quote.minOutputAmount) : null;
+    if (freshMinimum === null || oldMinimum === null || freshMinimum < oldMinimum) return null;
     return { approvals, swap };
   } finally {
     clearTimeout(timeout);
@@ -105,8 +115,8 @@ export async function executeAcrossBridgeQuote(quote: AcrossBridgeQuote): Promis
   if (quote.provider !== 'across' || quote.originChain === quote.destinationChain) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_ROUTE' };
   }
-  if (quote.expiresAt <= Date.now() || quote.simulationSuccess !== true || quote.swapTransactionPresent !== true) {
-    return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_STALE_OR_UNSIMULATED' };
+  if (quote.expiresAt <= Date.now() || quote.simulationSuccess !== true || quote.swapTransactionPresent !== true || !quote.minOutputAmount) {
+    return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_STALE_UNSIMULATED_OR_UNBOUNDED' };
   }
   const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
   if (!privateKey) {
@@ -121,8 +131,11 @@ export async function executeAcrossBridgeQuote(quote: AcrossBridgeQuote): Promis
     token: quote.token,
     amountHuman: Number(ethers.utils.formatUnits(quote.inputAmount, quote.inputTokenDecimals)),
   }).catch(() => null);
-  if (!refreshedQuote || refreshedQuote.expiresAt <= Date.now() || refreshedQuote.simulationSuccess !== true) {
+  if (!refreshedQuote || refreshedQuote.expiresAt <= Date.now() || refreshedQuote.simulationSuccess !== true || !refreshedQuote.minOutputAmount) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_REFRESHED_QUOTE' };
+  }
+  if (BigInt(refreshedQuote.minOutputAmount) < BigInt(quote.minOutputAmount)) {
+    return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_MINIMUM_OUTPUT_WORSENED' };
   }
   const payload = await freshExecutionPayload(refreshedQuote).catch(() => null);
   if (!payload) {
@@ -134,20 +147,22 @@ export async function executeAcrossBridgeQuote(quote: AcrossBridgeQuote): Promis
   const { http: provider } = await multiProviderRpcManager.getProvider(quote.originChain, 'json_rpc');
   const wallet = walletFromPrivateKey(privateKey).connect(provider);
   const expectedChainId = SUPPORTED_CHAINS[quote.originChain].chainId;
+  let nativeFeeWei = ethers.BigNumber.from(0);
 
   for (const approval of payload.approvals) {
     if (approval.chainId !== undefined && approval.chainId !== expectedChainId) {
-      return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_APPROVAL_CHAIN' };
+      return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_APPROVAL_CHAIN' };
     }
     const tx = await wallet.sendTransaction({ to: approval.to, data: approval.data, value: ethers.BigNumber.from(approval.value || '0') });
     const receipt = await tx.wait();
+    if (receipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(receipt));
     if (!receipt || receipt.status !== 1) {
-      return { success: false, status: 'failed', settlementConfirmed: false, error: 'ACROSS_APPROVAL_FAILED' };
+      return { success: false, status: 'failed', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'ACROSS_APPROVAL_FAILED' };
     }
   }
 
   if (payload.swap.chainId !== undefined && payload.swap.chainId !== expectedChainId) {
-    return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_SWAP_CHAIN' };
+    return { success: false, status: 'rejected', settlementConfirmed: false, originNativeFeeWei: nativeFeeWei.toString(), error: 'REJECT_ACROSS_SWAP_CHAIN' };
   }
   const submitted = await wallet.sendTransaction({
     to: payload.swap.to,
@@ -155,8 +170,9 @@ export async function executeAcrossBridgeQuote(quote: AcrossBridgeQuote): Promis
     value: ethers.BigNumber.from(payload.swap.value || '0'),
   });
   const originReceipt = await submitted.wait();
+  if (originReceipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(originReceipt));
   if (!originReceipt || originReceipt.status !== 1) {
-    return { success: false, status: 'failed', settlementConfirmed: false, depositTxnRef: submitted.hash, error: 'ACROSS_ORIGIN_DEPOSIT_FAILED' };
+    return { success: false, status: 'failed', settlementConfirmed: false, depositTxnRef: submitted.hash, originNativeFeeWei: nativeFeeWei.toString(), error: 'ACROSS_ORIGIN_DEPOSIT_FAILED' };
   }
 
   const timeoutMs = bounded(process.env.ACROSS_TERMINAL_SETTLEMENT_TIMEOUT_MS, 20 * 60_000, 30_000, 2 * 60 * 60_000);
@@ -178,6 +194,7 @@ export async function executeAcrossBridgeQuote(quote: AcrossBridgeQuote): Promis
         financiallyTerminal: last.financiallyTerminal,
         destinationReceiptVerified: last.destinationReceiptVerified,
         refundReceiptVerified: last.refundReceiptVerified,
+        originNativeFeeWei: nativeFeeWei.toString(),
       });
       return {
         success: confirmed,
@@ -185,6 +202,7 @@ export async function executeAcrossBridgeQuote(quote: AcrossBridgeQuote): Promis
         settlementConfirmed: confirmed || (last.providerStatus === 'refunded' && last.refundReceiptVerified),
         depositTxnRef: submitted.hash,
         settlement: last,
+        originNativeFeeWei: nativeFeeWei.toString(),
         error: confirmed ? undefined : `ACROSS_TERMINAL_${last.providerStatus || 'FAILED'}`,
       };
     }
@@ -197,6 +215,7 @@ export async function executeAcrossBridgeQuote(quote: AcrossBridgeQuote): Promis
     settlementConfirmed: false,
     depositTxnRef: submitted.hash,
     settlement: last,
+    originNativeFeeWei: nativeFeeWei.toString(),
     error: 'ACROSS_TERMINAL_SETTLEMENT_TIMEOUT',
   };
 }
