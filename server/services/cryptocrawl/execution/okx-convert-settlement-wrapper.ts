@@ -37,6 +37,60 @@ async function prepareBaseSubmission(
 }
 
 /**
+ * Run the measured OKX order-book/RPI-vs-Convert auction against an already
+ * prepared immediate-order fallback. No order is sent while this function runs.
+ * The caller therefore keeps one synchronized parent dispatch barrier regardless
+ * of which surface wins.
+ */
+export async function prepareOkxConvertAuctionAgainstFallback(input: {
+  request: OrderRequest;
+  fallback: PreparedCexOrderSubmission;
+  rpiAveragePrice?: number | null;
+  onConvertTrade?: (trade: OkxConvertTradeResult) => void;
+}): Promise<PreparedCexOrderSubmission> {
+  const auction = await evaluateOkxExecutionSurfaceAuction({
+    symbol: input.request.symbol,
+    side: input.request.side,
+    quantity: input.request.quantity,
+    plannedLimitPrice: input.request.price,
+    rpiAveragePrice: input.rpiAveragePrice ?? null,
+  }).catch(() => null);
+
+  if (auction?.surface !== 'convert' || !auction.convertQuote) return input.fallback;
+
+  logOkxConvertAuctionSelection({
+    symbol: input.request.symbol,
+    side: input.request.side,
+    quantity: input.request.quantity,
+    plannedLimitPrice: input.request.price,
+    auction,
+  });
+
+  return {
+    transport: 'rest',
+    preparedAt: Date.now(),
+    dispatch: async () => {
+      // A null result means Convert explicitly did not submit (expired/cooldown
+      // or explicit rejected state). The immediate-order fallback was already
+      // prepared before the parent barrier, so fallback cannot add preparation
+      // skew. Ambiguous Convert outcomes throw and never duplicate-submit.
+      const trade = await executeOkxConvertQuote(auction.convertQuote!);
+      if (!trade) return input.fallback.dispatch();
+
+      input.onConvertTrade?.(trade);
+      return {
+        venue: 'okx',
+        orderId: `${CONVERT_ORDER_PREFIX}${trade.clTReqId}`,
+        symbol: input.request.symbol,
+        side: input.request.side,
+        requestedQuantity: input.request.quantity,
+        submittedAt: trade.timestamp,
+      };
+    },
+  };
+}
+
+/**
  * Wrap the existing OKX settlement adapter without replacing its signing,
  * inventory, scheduler, or standard IOC/RPI authorities. Convert is an execution
  * surface only and is selected after the plan is already canonical-positive.
@@ -47,8 +101,7 @@ export function wrapOkxSettlementAdapterWithConvertAuction(base: CexSettlementAd
 
   const prepareAuctionSubmission = async (request: OrderRequest): Promise<PreparedCexOrderSubmission> => {
     // Prepare the already-positive standard path concurrently with the measured
-    // execution-surface comparison. This keeps a safe no-order-sent fallback ready
-    // without delaying the counterpart leg after the parent barrier opens.
+    // RPI reference. Both remain no-order-sent work until the parent barrier.
     const basePreparationPromise = prepareBaseSubmission(base, request);
     const rpiSnapshotPromise = process.env.CRYPTO_OKX_RPI_TAKER_EXECUTION_ENABLED !== 'false'
       ? fetchFreshOkxRpiTakerDepth(request.symbol).catch(() => null)
@@ -72,46 +125,12 @@ export function wrapOkxSettlementAdapterWithConvertAuction(base: CexSettlementAd
       }
     }
 
-    const auction = await evaluateOkxExecutionSurfaceAuction({
-      symbol: request.symbol,
-      side: request.side,
-      quantity: request.quantity,
-      plannedLimitPrice: request.price,
+    return prepareOkxConvertAuctionAgainstFallback({
+      request,
+      fallback: basePrepared,
       rpiAveragePrice,
-    }).catch(() => null);
-
-    if (auction?.surface !== 'convert' || !auction.convertQuote) return basePrepared;
-
-    logOkxConvertAuctionSelection({
-      symbol: request.symbol,
-      side: request.side,
-      quantity: request.quantity,
-      plannedLimitPrice: request.price,
-      auction,
+      onConvertTrade: trade => terminalConvertTrades.set(trade.clTReqId, trade),
     });
-
-    return {
-      transport: 'rest',
-      preparedAt: Date.now(),
-      dispatch: async () => {
-        // A null result means Convert explicitly did not submit (expired/cooldown
-        // or explicit rejected state). The standard path was already prepared
-        // before the parent barrier, so fallback does not introduce a second
-        // preparation delay. Ambiguous Convert outcomes throw and never fallback.
-        const trade = await executeOkxConvertQuote(auction.convertQuote!);
-        if (!trade) return basePrepared.dispatch();
-
-        terminalConvertTrades.set(trade.clTReqId, trade);
-        return {
-          venue: 'okx',
-          orderId: `${CONVERT_ORDER_PREFIX}${trade.clTReqId}`,
-          symbol: request.symbol,
-          side: request.side,
-          requestedQuantity: request.quantity,
-          submittedAt: trade.timestamp,
-        };
-      },
-    };
   };
 
   return {
