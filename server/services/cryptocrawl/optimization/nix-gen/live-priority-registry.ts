@@ -1,3 +1,4 @@
+import { getCryptaraVenueSpecializationLearning } from '../../../cryptara/venue-specialization-learning.js';
 import type { NixGenPreparedBid } from './canonical-bid-adapters.js';
 import { buildNixGenPortfolioView, type NixGenPortfolioView } from './portfolio-view.js';
 import type { NixGenReplanSnapshot } from './replanner.js';
@@ -29,8 +30,12 @@ export interface NixGenCexVenueDemand {
   venue: NixGenCexVenue;
   weightedCanonicalProfitUsd: number;
   executableOpportunityCount: number;
+  venueSpecializationScore: number;
+  venueSpecializationConfidence: number;
+  routingAdvisoryValueUsd: number;
   generatedAt: number;
   authority: 'nix_gen_live_cex_resource_demand_advisory';
+  learningAuthority: 'cryptara_venue_specialization';
   capitalMovementAuthority: false;
 }
 
@@ -121,8 +126,10 @@ export function publishNixGenLivePriority(input: {
 /**
  * Read-only demand signal for Rainbow/treasury policy. It sums canonical positive
  * profit attached to fresh executable bids that actually consume each CEX venue
- * resource. Monte Carlo contributes only as a probability weight when present;
- * it never creates eligibility, execution authority, or capital-movement authority.
+ * resource. Monte Carlo contributes only as a probability weight when present.
+ * Cryptara venue specialization adds only a bounded ranking multiplier after the
+ * canonical opportunity is already executable; raw canonical-profit demand is
+ * preserved separately and remains the reallocation threshold authority.
  */
 export function getNixGenLiveCexVenueDemand(nowInput = Date.now()): NixGenCexVenueDemand[] {
   const now = Number.isFinite(nowInput) ? Number(nowInput) : Date.now();
@@ -149,16 +156,30 @@ export function getNixGenLiveCexVenueDemand(nowInput = Date.now()): NixGenCexVen
       }
     }
   }
+
+  const learning = getCryptaraVenueSpecializationLearning();
   return [...score.entries()]
-    .map(([venue, value]) => ({
-      venue,
-      weightedCanonicalProfitUsd: Number(value.profit.toFixed(12)),
-      executableOpportunityCount: value.opportunities.size,
-      generatedAt: now,
-      authority: 'nix_gen_live_cex_resource_demand_advisory' as const,
-      capitalMovementAuthority: false as const,
-    }))
+    .map(([venue, value]) => {
+      const specialization = learning.score(venue, 'retained_capital', now);
+      // Neutral score 0.5 => exactly 1.0x. Learning can move ranking by at most
+      // +/-25%; it can never create an executable opportunity or bypass Rainbow's
+      // raw canonical-profit reallocation threshold.
+      const specializationMultiplier = 0.75 + 0.5 * specialization.score;
+      return {
+        venue,
+        weightedCanonicalProfitUsd: Number(value.profit.toFixed(12)),
+        executableOpportunityCount: value.opportunities.size,
+        venueSpecializationScore: specialization.score,
+        venueSpecializationConfidence: specialization.confidence,
+        routingAdvisoryValueUsd: Number((value.profit * specializationMultiplier).toFixed(12)),
+        generatedAt: now,
+        authority: 'nix_gen_live_cex_resource_demand_advisory' as const,
+        learningAuthority: 'cryptara_venue_specialization' as const,
+        capitalMovementAuthority: false as const,
+      };
+    })
     .sort((a, b) =>
+      b.routingAdvisoryValueUsd - a.routingAdvisoryValueUsd ||
       b.weightedCanonicalProfitUsd - a.weightedCanonicalProfitUsd ||
       b.executableOpportunityCount - a.executableOpportunityCount ||
       a.venue.localeCompare(b.venue),
