@@ -64,6 +64,7 @@ export async function getAcrossTerminalAmountEvidence(input: {
     if (!validAddress(inputToken) || inputToken.toLowerCase() !== quote.inputToken.toLowerCase()) return null;
     if (!validAddress(outputToken) || outputToken.toLowerCase() !== quote.outputToken.toLowerCase()) return null;
     if (!validAmount(inputAmount) || !validAmount(outputAmount)) return null;
+    if (inputAmount !== quote.inputAmount) return null;
     if (String(row.status || '').toLowerCase() !== 'filled') return null;
 
     return {
@@ -81,6 +82,7 @@ export async function getAcrossTerminalAmountEvidence(input: {
         'deposit_tx_identity:verified',
         'origin_destination_chain_identity:verified',
         'input_output_token_identity:verified',
+        'input_amount_identity:verified_against_execution_quote',
         'terminal_output_amount:authenticated',
       ],
     };
