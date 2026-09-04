@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_controlled_loss_learning_events 
   entry_order_id text,
   entry_inventory_reservation_id uuid,
   entry_applied boolean NOT NULL DEFAULT false,
+  exit_base_quantity decimal,
   exit_limit_price numeric,
   exit_client_order_id text,
   exit_order_id text,
