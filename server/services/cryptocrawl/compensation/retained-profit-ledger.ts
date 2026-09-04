@@ -1,18 +1,19 @@
-import { createHash, randomInt } from 'crypto';
+import { createHash } from 'crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
+import { getNixGenLiveCexVenueDemand, type NixGenCexVenue } from '../optimization/nix-gen/live-priority-registry.js';
 
 const DESTINATION = (process.env.CRYPTO_PROFIT_WALLET_ADDRESS || '').trim();
 const PAYOUT_FRACTION = 0.90;
 const RETAINED_FRACTION = 0.10;
-const RETAINED_TARGET_VENUES = ['kraken', 'okx'] as const;
 const retryAttemptsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRIES || 4);
 const retryBaseMsRaw = Number(process.env.CRYPTOCRAWL_RETAINED_PROFIT_RETRY_BASE_MS || 250);
 const RETRY_ATTEMPTS = Number.isFinite(retryAttemptsRaw) ? Math.max(1, Math.min(8, Math.trunc(retryAttemptsRaw))) : 4;
 const RETRY_BASE_MS = Number.isFinite(retryBaseMsRaw) ? Math.max(50, Math.min(5_000, Math.trunc(retryBaseMsRaw))) : 250;
+const REALLOCATION_ADVANTAGE_RATIO = Math.max(1, Math.min(10, Number(process.env.CRYPTOCRAWL_RAINBOW_REALLOCATION_ADVANTAGE_RATIO || 1.25)));
 
 export interface ProfitSplitAllocation {
   eventId: string;
@@ -25,13 +26,13 @@ export interface ProfitSplitAllocation {
   scheduledNotBefore: number;
   payoutSourceVenue: string | null;
   payoutSourceAsset: string | null;
-  retainedTargetVenue?: 'kraken' | 'okx' | null;
+  retainedTargetVenue?: NixGenCexVenue | null;
   retainedPlacementStatus?: 'IN_PLACE' | 'TRANSFER_REQUIRED' | null;
   recorded: boolean;
 }
 
 interface PayoutInventorySource {
-  venue: 'coinbase' | 'kraken' | 'okx';
+  venue: NixGenCexVenue;
   asset: 'USD' | 'USDC' | 'USDT';
   reservedAssetAmount: number;
 }
@@ -108,8 +109,40 @@ function sourceVenue(feedback: CryptaraExecutionFeedback): string | null {
   return route || null;
 }
 
-function retainedTargetVenue(): 'kraken' | 'okx' {
-  return RETAINED_TARGET_VENUES[randomInt(0, RETAINED_TARGET_VENUES.length)];
+function supportedRetainedTransfer(source: NixGenCexVenue, target: NixGenCexVenue): boolean {
+  if (source === target) return true;
+  if (source === 'coinbase' && target === 'okx') return true;
+  if (source === 'kraken' && target === 'okx') return true;
+  if (source === 'okx' && target === 'kraken') return true;
+  return false;
+}
+
+function retainedTargetVenue(observedSourceVenue: string | null): { venue: NixGenCexVenue; authority: string } {
+  const sourceRaw = String(observedSourceVenue || '').trim().toLowerCase();
+  const source = ['coinbase', 'kraken', 'okx'].includes(sourceRaw) ? sourceRaw as NixGenCexVenue : null;
+  const liveDemand = getNixGenLiveCexVenueDemand();
+
+  if (!source) {
+    if (liveDemand[0]) return { venue: liveDemand[0].venue, authority: liveDemand[0].authority };
+    return { venue: 'okx', authority: 'deterministic_treasury_fallback_no_fresh_nix_gen_demand' };
+  }
+
+  const sourceDemand = liveDemand.find(item => item.venue === source)?.weightedCanonicalProfitUsd || 0;
+  const better = liveDemand.find(item =>
+    item.venue !== source &&
+    supportedRetainedTransfer(source, item.venue) &&
+    item.executableOpportunityCount > 0 &&
+    item.weightedCanonicalProfitUsd > Math.max(0, sourceDemand) * REALLOCATION_ADVANTAGE_RATIO,
+  );
+
+  if (better) {
+    return {
+      venue: better.venue,
+      authority: `nix_gen_marginal_value_advantage_${REALLOCATION_ADVANTAGE_RATIO.toFixed(2)}x`,
+    };
+  }
+
+  return { venue: source, authority: 'in_place_zero_transfer_cost_default' };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -141,12 +174,7 @@ async function allocateStrategyDecision(client: { query: (text: string, values?:
      WHERE system_key='cryptocrawler'`,
     [sequence, scheduledNotBefore],
   );
-  return {
-    sequence,
-    payoutFraction: PAYOUT_FRACTION,
-    retainedFraction: RETAINED_FRACTION,
-    scheduledNotBefore,
-  };
+  return { sequence, payoutFraction: PAYOUT_FRACTION, retainedFraction: RETAINED_FRACTION, scheduledNotBefore };
 }
 
 function existingAllocation(eventId: string, row: any): ProfitSplitAllocation {
@@ -161,17 +189,19 @@ function existingAllocation(eventId: string, row: any): ProfitSplitAllocation {
     scheduledNotBefore: row.scheduled_not_before ? new Date(row.scheduled_not_before).getTime() : 0,
     payoutSourceVenue: row.source_venue ? String(row.source_venue) : null,
     payoutSourceAsset: row.source_asset ? String(row.source_asset) : null,
-    retainedTargetVenue: row.target_venue ? String(row.target_venue) as 'kraken' | 'okx' : null,
+    retainedTargetVenue: row.target_venue ? String(row.target_venue) as NixGenCexVenue : null,
     retainedPlacementStatus: row.retained_status ? String(row.retained_status) as 'IN_PLACE' | 'TRANSFER_REQUIRED' : null,
     recorded: false,
   };
 }
 
 /**
- * Persists each terminal-confirmed profitable settlement exactly once.
- * New settlements always allocate 90% to the durable ETH payout obligation and
- * 10% to retained system capital. Historical payout/retention rows are preserved
- * exactly as recorded; retries never re-roll either money split or target venue.
+ * Persists each terminal-confirmed profitable settlement exactly once. New
+ * settlements keep the operator's fixed 90/10 ownership policy, while Rainbow
+ * dynamically selects the retained-capital venue from fresh canonical Nix-Gen
+ * demand. In-place retention wins by default because it has zero transfer cost;
+ * reallocation requires a measured marginal-value advantage and a settlement-
+ * proven transfer route. Monte Carlo remains advisory through Nix-Gen weighting.
  */
 class RetainedProfitLedger {
   private ready: Promise<void> | null = null;
@@ -225,8 +255,8 @@ class RetainedProfitLedger {
         const allocation = splitProfit(realized);
         const payoutSource = payoutInventorySource(feedback, allocation.payout);
         const observedSourceVenue = payoutSource?.venue || sourceVenue(feedback);
-        const targetVenue = retainedTargetVenue();
-        const retainedStatus: 'IN_PLACE' | 'TRANSFER_REQUIRED' = observedSourceVenue === targetVenue
+        const target = retainedTargetVenue(observedSourceVenue);
+        const retainedStatus: 'IN_PLACE' | 'TRANSFER_REQUIRED' = observedSourceVenue === target.venue
           ? 'IN_PLACE'
           : 'TRANSFER_REQUIRED';
 
@@ -277,16 +307,14 @@ class RetainedProfitLedger {
           `INSERT INTO public.cryptocrawler_retained_exchange_allocations
             (event_id, retained_usd, target_venue, source_venue, status, created_at, updated_at)
            VALUES ($1,$2,$3,$4,$5,now(),now())`,
-          [eventId, allocation.retained, targetVenue, observedSourceVenue, retainedStatus],
+          [eventId, allocation.retained, target.venue, observedSourceVenue, retainedStatus],
         );
 
         const dailyRecorded = await client.query(
           `SELECT public.cryptocrawler_operator_strategy_record_profit($1,$2,$3) AS recorded`,
           [eventId, feedback.opportunityId || '', allocation.realized],
         );
-        if (dailyRecorded.rows[0]?.recorded !== true) {
-          throw new Error('Terminal profit was not accepted by the durable operator strategy ledger');
-        }
+        if (dailyRecorded.rows[0]?.recorded !== true) throw new Error('Terminal profit was not accepted by the durable operator strategy ledger');
 
         await client.query(
           `UPDATE public.cryptocrawler_terminal_sweep_control
@@ -298,7 +326,7 @@ class RetainedProfitLedger {
         );
 
         await client.query('COMMIT');
-        logger.info('[Treasury] Terminal profit allocated under fixed 90/10 operator strategy', {
+        logger.info('[Treasury] Terminal profit allocated through dynamic Rainbow retained-capital routing', {
           component: 'RetainedProfitLedger',
           eventId,
           realizedProfitUsd: allocation.realized,
@@ -310,9 +338,11 @@ class RetainedProfitLedger {
           payoutScheduledImmediately: true,
           payoutSourceVenue: observedSourceVenue,
           payoutSourceAsset: payoutSource?.asset || null,
-          retainedTargetVenue: targetVenue,
+          retainedTargetVenue: target.venue,
+          retainedTargetAuthority: target.authority,
           retainedPlacementStatus: retainedStatus,
           targetSelectionPersisted: true,
+          randomCapitalRoutingUsed: false,
           operatorBalancePromotedToSystemCapital: false,
         });
         return {
@@ -326,7 +356,7 @@ class RetainedProfitLedger {
           scheduledNotBefore: decision.scheduledNotBefore,
           payoutSourceVenue: observedSourceVenue,
           payoutSourceAsset: payoutSource?.asset || null,
-          retainedTargetVenue: targetVenue,
+          retainedTargetVenue: target.venue,
           retainedPlacementStatus: retainedStatus,
           recorded: true,
         };
@@ -336,12 +366,7 @@ class RetainedProfitLedger {
         if (attempt < RETRY_ATTEMPTS) {
           const delayMs = persistenceRetryDelayMs(attempt);
           logger.warn('[Treasury] Fixed 90/10 profit persistence retry scheduled', {
-            component: 'RetainedProfitLedger',
-            eventId,
-            attempt,
-            maxAttempts: RETRY_ATTEMPTS,
-            delayMs,
-            idempotentEvent: true,
+            component: 'RetainedProfitLedger', eventId, attempt, maxAttempts: RETRY_ATTEMPTS, delayMs, idempotentEvent: true,
           });
           await sleep(delayMs);
         }
@@ -371,7 +396,7 @@ class RetainedProfitLedger {
         row.payout_reserve_table !== true || row.strategy_day_table !== true ||
         row.retained_allocation_table !== true || row.strategy_profit_function !== true
       ) {
-        throw new Error('profit payout migrations 018-032 are required before fixed 90/10 terminal-profit capture');
+        throw new Error('profit payout migrations 018-043 are required before fixed 90/10 terminal-profit capture');
       }
     }).catch(error => {
       this.ready = null;
