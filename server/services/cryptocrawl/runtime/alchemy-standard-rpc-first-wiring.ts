@@ -2,6 +2,7 @@ import { Contract } from 'ethers';
 import logger from '../../../logger.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { alchemyIntegration, type TokenBalance, type TokenMetadata } from '../capital-free/alchemy-integration.js';
+import { ensureZeroInitialCapitalDynamicExecutionWiring } from './zero-initial-capital-dynamic-execution-wiring.js';
 
 const ERC20_ABI = [
   'function balanceOf(address account) view returns (uint256)',
@@ -112,13 +113,19 @@ async function standardBalance(chain: SupportedChain, owner: string, tokenAddres
 }
 
 /**
- * Moves standard ERC20 reads off Alchemy enhanced APIs whenever the caller already
- * knows the token addresses. The canonical RPC manager handles public/no-key
+ * Canonical runtime installs this module after the provider-specific/dual-provider
+ * execution wrappers and immediately before realized-profit reconciliation. Use
+ * that ordering seam to install the dynamic funding wrapper underneath realized
+ * accounting without creating a second execution authority.
+ *
+ * Standard ERC20 reads then move off Alchemy enhanced APIs whenever the caller
+ * already knows the token addresses. The canonical RPC manager handles public/no-key
  * transports first and can still fail over to configured paid RPC if all free
  * transports are unavailable. Unsupported enumeration requests keep the original
  * Alchemy behavior so no capability is removed.
  */
 export function ensureAlchemyStandardRpcFirstWiring(): void {
+  ensureZeroInitialCapitalDynamicExecutionWiring();
   if (installed || !enabled()) return;
   installed = true;
 
@@ -159,6 +166,7 @@ export function ensureAlchemyStandardRpcFirstWiring(): void {
     enhancedApiFallbackPreserved: true,
     noNewApiKeys: true,
     gasSponsorshipUntouched: true,
+    dynamicZeroInitialCapitalFundingInstalledAtCanonicalOrderingSeam: true,
     balanceCacheTtlMs: balanceTtlMs(),
     metadataCacheTtlMs: metadataTtlMs(),
   });
