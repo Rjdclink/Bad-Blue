@@ -118,6 +118,7 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_profit_payout_batch_confirm(text,text,text)',
   'public.cryptocrawler_treasury_claim_okx_liquidity(text,text,numeric)',
   'public.cryptocrawler_operator_strategy_record_profit(text,text,numeric)',
+  'public.cryptocrawler_operator_strategy_record_terminal_pnl(text,text,numeric)',
   'public.cryptocrawler_reserve_system_capital_transfer(uuid,text,text,numeric)',
   'public.cryptocrawler_release_system_capital_transfer(uuid)',
   'public.cryptocrawler_confirm_system_capital_transfer_exact(uuid,numeric,numeric,numeric,text,text,jsonb)',
