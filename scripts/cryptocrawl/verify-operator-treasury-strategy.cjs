@@ -52,8 +52,16 @@ const retainedPath = 'server/services/cryptocrawl/compensation/retained-profit-l
 const retained = read(retainedPath);
 requireText(retainedPath, retained, 'const PAYOUT_FRACTION = 0.90;', 'new profitable settlements must pay 90%');
 requireText(retainedPath, retained, 'const RETAINED_FRACTION = 0.10;', 'new profitable settlements must retain 10%');
-requireText(retainedPath, retained, "const RETAINED_TARGET_VENUES = ['kraken', 'okx'] as const;", 'retained capital targets must remain Kraken/OKX only');
-requireText(retainedPath, retained, 'randomInt(0, RETAINED_TARGET_VENUES.length)', 'retained Kraken/OKX target must remain randomized');
+requireText(retainedPath, retained, "['coinbase', 'kraken', 'okx'].includes", 'retained/payout venue policy must recognize Coinbase, Kraken and OKX');
+requireText(retainedPath, retained, 'getNixGenLiveCexVenueDemand()', 'retained venue ranking must use fresh canonical Nix-Gen demand');
+requireText(retainedPath, retained, 'REALLOCATION_ADVANTAGE_RATIO', 'retained reallocation must require a measured marginal-value advantage');
+requireText(retainedPath, retained, 'supportedRetainedTransfer(source, item.venue)', 'retained reallocation must require a supported transfer route');
+requireText(retainedPath, retained, 'in_place_zero_transfer_cost_default', 'in-place retained capital must win by default to avoid unnecessary transfer cost');
+requireText(retainedPath, retained, 'deterministic_treasury_fallback_no_fresh_nix_gen_demand', 'absence of fresh demand must use a deterministic fallback');
+requireMatch(retainedPath, retained, /weightedCanonicalProfitUsd\s*>\s*Math\.max\(0, sourceDemand\)\s*\*\s*REALLOCATION_ADVANTAGE_RATIO/, 'reallocation threshold must remain tied to canonical measured profit demand');
+if (/randomInt\(0,\s*RETAINED_TARGET_VENUES\.length\)/.test(retained)) {
+  failures.push(`${retainedPath}: retained-capital venue routing must not be randomized`);
+}
 requireText(retainedPath, retained, 'cryptocrawler_operator_strategy_record_profit', 'terminal realized profit must feed daily stop authority');
 requireText(retainedPath, retained, "payout_asset, payout_network", 'payout asset/network must remain durable state');
 requireText(retainedPath, retained, "'ETH','ethereum'", 'new payouts must remain ETH on Ethereum');
@@ -63,7 +71,7 @@ const transfer = read(transferPath);
 requireText(transferPath, transfer, 'recoverKrakenWithdrawal', 'Kraken transfers must recover before resubmission');
 requireText(transferPath, transfer, 'clientId', 'OKX transfer idempotency must remain client-id based');
 requireText(transferPath, transfer, 'cryptocrawler_confirm_system_capital_transfer_exact', 'retained CEX movement must use exact provenance confirmation');
-requireText(transferPath, transfer, 'cryptocrawler_confirm_payout_funding_transfer', 'Kraken payout funding must remain separate from system-owned capital');
+requireText(transferPath, transfer, 'cryptocrawler_confirm_payout_funding_transfer', 'payout funding must remain separate from system-owned capital');
 requireText(transferPath, transfer, "const TRANSFERABLE_ASSETS = new Set(['USDC', 'USDT', 'ETH']);", 'cross-CEX treasury asset scope must stay explicit and fail closed');
 
 const recoveryPath = 'server/services/cryptocrawl/execution/treasury-transfer-recovery-worker.ts';
@@ -112,9 +120,15 @@ requireText(migration41Path, migration41, "NEW.expires_at := 'infinity'::timesta
 
 const schemaPath = 'server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts';
 const schema = read(schemaPath);
-requireText(schemaPath, schema, 'const SCHEMA_VERSION = 12;', 'Overflow schema version must include controlled-loss learning migration 041');
+const schemaVersionMatch = schema.match(/const SCHEMA_VERSION = (\d+);/);
+if (!schemaVersionMatch || Number(schemaVersionMatch[1]) < 12) {
+  failures.push(`${schemaPath}: Overflow schema must be at least controlled-loss schema version 12`);
+}
 for (let n = 32; n <= 41; n += 1) {
   requireMatch(schemaPath, schema, new RegExp(`['\"]0${n}_`), `migration 0${n} must be included in Overflow runtime schema`);
+}
+if (schemaVersionMatch && Number(schemaVersionMatch[1]) >= 13) {
+  requireMatch(schemaPath, schema, /['\"]042_cryptocrawler_coinbase_system_capital_rainbow\.sql['\"]/, 'schema v13+ must include Coinbase/Rainbow migration 042');
 }
 requireText(schemaPath, schema, 'public.cryptocrawler_release_system_capital_transfer(uuid)', 'release RPC signature must match the migration-defined function');
 requireText(schemaPath, schema, 'public.cryptocrawler_enforce_lifecycle_inventory_reservation()', 'lifecycle guard function must be schema-required');
@@ -133,11 +147,16 @@ const rainbow = read(rainbowPath);
 requireText(rainbowPath, rainbow, 'fixed_90_percent_wallet_10_percent_retained_for_new_terminal_profit_events', 'runtime policy text must match current 90/10 law');
 requireText(rainbowPath, rainbow, "payoutAsset: 'ETH'", 'runtime payout asset must remain ETH');
 requireText(rainbowPath, rainbow, "payoutNetwork: 'ethereum_mainnet_only'", 'runtime payout network must remain Ethereum mainnet');
+requireText(rainbowPath, rainbow, "retainedCapitalRoutingTargets: ['coinbase', 'kraken', 'okx', 'external_capability_registry_advisory']", 'Rainbow must recognize all three CEX venues while keeping external destinations advisory');
+requireText(rainbowPath, rainbow, 'externalCapitalMovementRequiresProviderSpecificExecutionReadyProof: true', 'external capital must remain fail-closed until provider-specific lifecycle proof exists');
 
 const dockerPath = 'Dockerfile';
 const docker = read(dockerPath);
 for (let n = 32; n <= 41; n += 1) {
   requireMatch(dockerPath, docker, new RegExp(`/0${n}_[^\\s]+\\.sql`), `production image must package migration 0${n}`);
+}
+if (schemaVersionMatch && Number(schemaVersionMatch[1]) >= 13) {
+  requireMatch(dockerPath, docker, /\/042_cryptocrawler_coinbase_system_capital_rainbow\.sql/, 'schema v13+ production image must package migration 042');
 }
 requireText(dockerPath, docker, 'verify-operator-treasury-strategy.cjs', 'production build must execute this semantic verifier');
 
