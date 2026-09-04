@@ -179,12 +179,11 @@ export async function withDatabaseSessionAdvisoryLock<T>(
   operation: (client: PoolClient) => Promise<T>,
   options: CoordinationLockOptions = {},
 ): Promise<T> {
-  assertCoordinationDatabaseAvailable();
-
   if (lockName.startsWith(KRAKEN_PRIVATE_LOCK_PREFIX)) {
     return withKrakenDurableSendLease(lockName, operation, options);
   }
 
+  assertCoordinationDatabaseAvailable();
   const acquireTimeoutMs = Math.trunc(Math.max(100, Math.min(30_000, Number(options.acquireTimeoutMs ?? 5_000))));
   const retryIntervalMs = Math.trunc(Math.max(10, Math.min(500, Number(options.retryIntervalMs ?? 50))));
   const deadline = Date.now() + acquireTimeoutMs;
@@ -220,9 +219,15 @@ export async function withDatabaseSessionAdvisoryLock<T>(
   }
 }
 
+/**
+ * Short coordination-state reads do not require session semantics. Route them
+ * through the transaction-capable ordinary pool so a schema/nonce readiness probe
+ * cannot fail merely because the scarce session pool is occupied by a genuine
+ * advisory-lock owner.
+ */
 export async function queryCoordinationDatabase(text: string, values: unknown[] = []): Promise<QueryResult> {
-  assertCoordinationDatabaseAvailable();
-  return coordinationPool.query(text, values);
+  if (!isDatabaseConfigured) throw new Error('CryptoCrawler Overflow runtime database is not configured');
+  return pool.query(text, values);
 }
 
 export function getDatabaseCoordinationSnapshot(): {
