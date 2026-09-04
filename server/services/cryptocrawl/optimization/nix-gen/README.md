@@ -10,7 +10,7 @@ Implemented capabilities include:
 
 - standardized cross-strategy bids backed by canonical measured economics;
 - bounded exact branch-and-bound allocation plus deterministic resource-aware fallback;
-- shared cross-lane live priority across CEX arbitrage, maker-CEX/market-making, measured DEX/liquidation and the existing zero-capital engine;
+- shared cross-lane live priority across CEX arbitrage, maker-CEX/market-making, measured DEX/liquidation, deterministic cross-chain and the existing zero-capital engine;
 - continuous fingerprinted replanning with expiry/temporal invalidation;
 - default-on, fail-open scheduling optimization with `CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING=false` as the rollback switch;
 - defer-not-reject semantics for valid profitable opportunities losing a temporary resource contest;
@@ -28,26 +28,31 @@ Implemented capabilities include:
 
 The runtime live priority surface is `live-priority-registry.ts`. It receives fresh, already-prepared bids from independently authoritative lanes and builds one advisory portfolio without acquiring resources or dispatching work.
 
-Currently connected execution-capable lanes are:
+Currently connected deterministic-profit execution-capable lanes are:
 
 1. **CEX arbitrage** — canonical CEX scheduler/executor and terminal settlement remain authoritative.
 2. **Maker-CEX / market-making** — Nix-Gen identifies maker/RPI plans as the market-making finger while the existing post-only maker adapters and CEX settlement remain execution truth.
 3. **DEX atomic + liquidation** — the measured topology adapter remains the only executor/terminal-settlement path for these topologies.
 4. **Zero-capital atomic** — Nix-Gen orders the existing zero-capital queue only. The zero-capital engine, resource scheduler, receiver execution, realized all-in profit reconciliation, treasury split and retained-capital path remain authoritative. The prior resource-shadow queue scorer remains the fail-open fallback.
+5. **Cross-chain same-asset deterministic routes** — only routes with a closed same-asset value loop, guaranteed minimum output, measured all-in costs, authoritative Across execution and durable terminal settlement can enter the measured Nix portfolio. Nix-Gen does not manufacture a cross-chain revenue leg.
 
 Each lane retains its own hard quota, lease, governance and executor. The shared Nix-Gen priority surface therefore coordinates scarce opportunity value globally without becoming a global execution authority.
 
-`global-live-portfolio.ts` is the pure snapshot helper. It can combine prepared CEX/maker, measured atomic and independently prepared live-lane bids such as zero-capital. It remains read-only.
+`global-live-portfolio.ts` is the pure snapshot helper. It can combine prepared CEX/maker, measured atomic/cross-chain and independently prepared live-lane bids such as zero-capital. It remains read-only.
+
+## Funding-rate execution boundary
+
+The funding-rate execution lifecycle is implemented upstream of Nix-Gen: measured OKX depth/cost evidence, bounded positive expected carry, delta-neutral entry, durable capital reservations, deterministic client-order recovery, margin/carry health, terminal close, authenticated funding bills and exact system-owned ownership accounting are separate execution/settlement authorities.
+
+Funding entry carry is still **projected expected value**, not deterministic canonical profit. Therefore `FUNDING_ARBITRAGE` is intentionally excluded from Nix-Gen's deterministic-dollar measured portfolio at entry. Terminal authenticated fills and funding bills establish realized profit; Nix-Gen may consume resulting terminal calibration later but cannot promote projected carry into deterministic profit.
 
 ## Upstream capability boundaries
 
-A Nix-Gen finger is not made executable merely because the strategy name exists. The following remain unavailable for live Nix-Gen allocation until their upstream canonical path becomes truthfully executable and terminal-settlement-capable:
+A Nix-Gen finger is not made executable merely because the strategy name exists. Current remaining upstream live-capability gap:
 
-- **Cross-chain arbitrage:** Across transport and terminal bridge settlement exist, but current discovery intentionally lacks a source/destination arbitrage revenue leg, destination price/revenue evidence and deterministic all-in profitable composition. Transport cost alone is not profit.
-- **Funding-rate arbitrage:** a durable lifecycle skeleton exists, but current discovery intentionally lacks measured entry/exit depth, measured exit-basis reserve, registered venue lifecycle adapters, complete margin/collateral controls and terminal funding-payment/close evidence.
 - **Solver/intents:** no canonical executable terminal-settlement-capable intent route currently exists.
 
-These are upstream strategy/execution requirements, not missing Nix-Gen allocation machinery. Nix-Gen must not fabricate profitability or execution capability to make those fingers appear available.
+Cross-chain and funding-rate strategy fingers are implemented, but their economics boundaries differ: deterministic cross-chain can participate in the measured Nix portfolio only when its guaranteed all-in net is positive; funding-rate entry remains an execution-capable expected-value lifecycle that is deliberately outside deterministic Nix dollar allocation until terminal evidence exists.
 
 ## Authority boundary
 
@@ -59,6 +64,7 @@ These are upstream strategy/execution requirements, not missing Nix-Gen allocati
 - Known but temporarily insufficient capacity is deferred; missing capacity evidence remains hard-invalid to Nix-Gen and is never converted to zero.
 - Resource projections are read-only; distributed lease acquisition remains hard resource truth.
 - Nix-Gen never reads signer private keys, submits transactions, or transfers treasury funds.
+- Projected funding carry is never rewritten as deterministic Nix profit.
 
 ## Canonical evidence integration
 
@@ -137,6 +143,7 @@ Public/declassified research informs architecture; it does not become runtime au
 9. Profit/confidence evidence cannot be double-counted through recycled composite scores.
 10. QuantiComp, dual pricing, uncertainty analysis and research limbs are never mandatory dependencies for core classical allocation.
 11. Nix-Gen does not access signer secrets, submit transactions, or become treasury authority.
-12. Every slice remains independently useful and removable without breaking existing production behavior.
+12. Projected funding carry cannot enter deterministic Nix dollar allocation.
+13. Every slice remains independently useful and removable without breaking existing production behavior.
 
 Implementation completion does not claim live operational proof, future profitability, or completion of separate upstream strategy executors outside Nix-Gen's authority boundary.

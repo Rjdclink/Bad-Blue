@@ -6,15 +6,9 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 12;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v12';
+const SCHEMA_VERSION = 14;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v14';
 
-// Every migration-owned CryptoCrawler state surface is provisioned on Overflow.
-// 016 is deliberately excluded because it installs pg_cron/pg_net and an active
-// external sweeper schedule. The safe support functions from 016 are mirrored in
-// overflow/004 without creating a second independent payout scheduler. The
-// payout-aware finalizer remains owned by migration 018 and is not overridden by
-// Overflow support wiring.
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
   '007_zero_capital_execution_ledger.sql',
@@ -51,6 +45,9 @@ const MIGRATIONS = [
   '039_cryptocrawler_system_capital_transfer_truth_hardening.sql',
   '040_cryptocrawler_treasury_reservation_lifecycle_guard.sql',
   '041_cryptocrawler_controlled_loss_learning.sql',
+  '042_cryptocrawler_onchain_system_capital.sql',
+  '043_cryptocrawler_cross_chain_lifecycle.sql',
+  '044_cryptocrawler_funding_feedback_recovery.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -78,6 +75,10 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_system_capital_allocations',
   'public.cryptocrawler_cex_system_owned_lots',
   'public.cryptocrawler_cex_system_owned_settlements',
+  'public.cryptocrawler_onchain_system_owned_lots',
+  'public.cryptocrawler_onchain_inventory_reservations',
+  'public.cryptocrawler_onchain_system_owned_settlements',
+  'public.cryptocrawler_cross_chain_lifecycles',
   'public.cryptocrawler_operator_strategy_control',
   'public.cryptocrawler_operator_strategy_cycles',
   'public.cryptocrawler_operator_strategy_days',
@@ -134,59 +135,26 @@ let migrationRuns = 0;
 let lastProvisionMode: 'none' | 'durable_fast_path' | 'migration_repair' = 'none';
 
 async function migrationRoot(): Promise<string> {
-  const candidates = [
-    path.resolve(process.cwd(), 'dist/migrations'),
-    path.resolve(process.cwd(), 'server/migrations'),
-  ];
+  const candidates = [path.resolve(process.cwd(), 'dist/migrations'), path.resolve(process.cwd(), 'server/migrations')];
   for (const candidate of candidates) {
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      // try the next build/development layout
-    }
+    try { await access(candidate); return candidate; } catch { /* try next layout */ }
   }
   throw new Error('CryptoCrawler migration directory is unavailable in the runtime image');
 }
 
 async function verifyRequiredObjects(client: any): Promise<void> {
-  const tableResult = await client.query(
-    `SELECT name, to_regclass(name) IS NOT NULL AS ready
-     FROM unnest($1::text[]) AS name`,
-    [REQUIRED_TABLES],
-  );
-  const missingTables = tableResult.rows
-    .filter((row: any) => row?.ready !== true)
-    .map((row: any) => String(row?.name || 'unknown'));
-  if (missingTables.length > 0) {
-    throw new Error(`Overflow CryptoCrawler runtime schema incomplete: ${missingTables.join(', ')}`);
-  }
-
-  const functionResult = await client.query(
-    `SELECT name, to_regprocedure(name) IS NOT NULL AS ready
-     FROM unnest($1::text[]) AS name`,
-    [REQUIRED_FUNCTIONS],
-  );
-  const missingFunctions = functionResult.rows
-    .filter((row: any) => row?.ready !== true)
-    .map((row: any) => String(row?.name || 'unknown'));
-  if (missingFunctions.length > 0) {
-    throw new Error(`Overflow CryptoCrawler runtime functions incomplete: ${missingFunctions.join(', ')}`);
-  }
+  const tableResult = await client.query(`SELECT name, to_regclass(name) IS NOT NULL AS ready FROM unnest($1::text[]) AS name`, [REQUIRED_TABLES]);
+  const missingTables = tableResult.rows.filter((row: any) => row?.ready !== true).map((row: any) => String(row?.name || 'unknown'));
+  if (missingTables.length > 0) throw new Error(`Overflow CryptoCrawler runtime schema incomplete: ${missingTables.join(', ')}`);
+  const functionResult = await client.query(`SELECT name, to_regprocedure(name) IS NOT NULL AS ready FROM unnest($1::text[]) AS name`, [REQUIRED_FUNCTIONS]);
+  const missingFunctions = functionResult.rows.filter((row: any) => row?.ready !== true).map((row: any) => String(row?.name || 'unknown'));
+  if (missingFunctions.length > 0) throw new Error(`Overflow CryptoCrawler runtime functions incomplete: ${missingFunctions.join(', ')}`);
 }
 
 async function durableSchemaIsReady(client: any): Promise<boolean> {
-  const meta = await client.query(
-    `SELECT to_regclass('private.cryptocrawler_overflow_runtime_meta') IS NOT NULL AS meta_exists`,
-  );
+  const meta = await client.query(`SELECT to_regclass('private.cryptocrawler_overflow_runtime_meta') IS NOT NULL AS meta_exists`);
   if (meta.rows?.[0]?.meta_exists !== true) return false;
-
-  const state = await client.query(
-    `SELECT schema_version, schema_ready
-     FROM private.cryptocrawler_overflow_runtime_meta
-     WHERE system_key='cryptocrawler'
-     LIMIT 1`,
-  );
+  const state = await client.query(`SELECT schema_version, schema_ready FROM private.cryptocrawler_overflow_runtime_meta WHERE system_key='cryptocrawler' LIMIT 1`);
   const row = state.rows?.[0];
   return Number(row?.schema_version) === SCHEMA_VERSION && row?.schema_ready === true;
 }
@@ -207,11 +175,7 @@ async function markVerified(client: any): Promise<void> {
        (system_key, schema_version, schema_ready, verified_at, last_error, updated_at)
      VALUES ('cryptocrawler', $1, true, now(), NULL, now())
      ON CONFLICT (system_key) DO UPDATE
-     SET schema_version=EXCLUDED.schema_version,
-         schema_ready=true,
-         verified_at=now(),
-         last_error=NULL,
-         updated_at=now()`,
+     SET schema_version=EXCLUDED.schema_version,schema_ready=true,verified_at=now(),last_error=NULL,updated_at=now()`,
     [SCHEMA_VERSION],
   );
 }
@@ -221,14 +185,9 @@ async function provision(): Promise<void> {
   const client = await coordinationPool.connect();
   let locked = false;
   try {
-    const lock = await client.query(
-      'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
-      [LOCK_NAME],
-    );
+    const lock = await client.query('SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired', [LOCK_NAME]);
     locked = lock.rows?.[0]?.acquired === true;
-    if (!locked) {
-      throw new Error('Overflow CryptoCrawler schema authority is currently owned by another replica');
-    }
+    if (!locked) throw new Error('Overflow CryptoCrawler schema authority is currently owned by another replica');
 
     let durableReady = false;
     try {
@@ -240,10 +199,8 @@ async function provision(): Promise<void> {
       }
     } catch (error) {
       logger.warn('[CryptoCrawlerOverflowSchema] Durable schema marker/object verification requires repair; migrations will run once', {
-        component: 'CryptoCrawlerOverflowRuntimeSchema',
-        schemaVersion: SCHEMA_VERSION,
-        error: error instanceof Error ? error.message : String(error),
-        primaryFallbackUsed: false,
+        component: 'CryptoCrawlerOverflowRuntimeSchema', schemaVersion: SCHEMA_VERSION,
+        error: error instanceof Error ? error.message : String(error), primaryFallbackUsed: false,
       });
       durableReady = false;
     }
@@ -258,38 +215,21 @@ async function provision(): Promise<void> {
     lastError = null;
     verifiedAt = Date.now();
     logger.info('[CryptoCrawlerOverflowSchema] Complete runtime authority schema verified on Overflow', {
-      component: 'CryptoCrawlerOverflowRuntimeSchema',
-      schemaVersion: SCHEMA_VERSION,
-      provisionMode: lastProvisionMode,
-      durableFastPathHits,
-      migrationRuns,
-      migrationCount: MIGRATIONS.length,
-      requiredTableCount: REQUIRED_TABLES.length,
-      requiredFunctionCount: REQUIRED_FUNCTIONS.length,
-      duplicateTerminalSchedulerInstalled: false,
-      primaryFallbackUsed: false,
+      component: 'CryptoCrawlerOverflowRuntimeSchema', schemaVersion: SCHEMA_VERSION, provisionMode: lastProvisionMode,
+      durableFastPathHits, migrationRuns, migrationCount: MIGRATIONS.length,
+      requiredTableCount: REQUIRED_TABLES.length, requiredFunctionCount: REQUIRED_FUNCTIONS.length,
+      duplicateTerminalSchedulerInstalled: false, primaryFallbackUsed: false,
     });
   } catch (error) {
     schemaReady = false;
     lastError = error instanceof Error ? error.message : String(error);
     try {
-      await client.query(
-        `UPDATE private.cryptocrawler_overflow_runtime_meta
-         SET schema_ready=false, last_error=$1, updated_at=now()
-         WHERE system_key='cryptocrawler'`,
-        [lastError],
-      );
-    } catch {
-      // The prerequisite relation itself may be what failed; preserve original error.
-    }
+      await client.query(`UPDATE private.cryptocrawler_overflow_runtime_meta SET schema_ready=false, last_error=$1, updated_at=now() WHERE system_key='cryptocrawler'`, [lastError]);
+    } catch { /* prerequisite relation itself may be missing */ }
     throw error;
   } finally {
     if (locked) {
-      try {
-        await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [LOCK_NAME]);
-      } catch {
-        // Session release clears advisory locks as a final safety net.
-      }
+      try { await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [LOCK_NAME]); } catch { /* session release clears lock */ }
     }
     client.release();
   }
@@ -298,9 +238,7 @@ async function provision(): Promise<void> {
 export async function ensureCryptocrawlOverflowRuntimeSchema(): Promise<void> {
   if (schemaReady) return;
   if (schemaInFlight) return schemaInFlight;
-  schemaInFlight = provision().finally(() => {
-    schemaInFlight = null;
-  });
+  schemaInFlight = provision().finally(() => { schemaInFlight = null; });
   return schemaInFlight;
 }
 

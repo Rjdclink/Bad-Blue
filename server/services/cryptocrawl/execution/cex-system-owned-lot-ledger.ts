@@ -18,6 +18,14 @@ export type CexSystemCapitalSettlementAuthority =
       [key: string]: unknown;
     }
   | {
+      strategySelectionAuthority: 'funding_arbitrage_policy';
+      notionalAuthority: 'profit_ladder';
+      executionAuthority: 'funding_position_lifecycle';
+      governanceAdmitted: true;
+      reference: string;
+      [key: string]: unknown;
+    }
+  | {
       treasuryAuthority: 'operator_strategy';
       notionalAuthority: 'system_owned_sweep_target';
       executionAuthority: 'system_capital_sweep_worker';
@@ -54,6 +62,12 @@ function requireAuthority(authority: CexSystemCapitalSettlementAuthority): void 
     authority.notionalAuthority === 'profit_ladder' &&
     authority.executionAuthority === 'stage_manager' &&
     authority.governanceAdmitted === true;
+  const fundingAuthority =
+    'strategySelectionAuthority' in authority &&
+    authority.strategySelectionAuthority === 'funding_arbitrage_policy' &&
+    authority.notionalAuthority === 'profit_ladder' &&
+    authority.executionAuthority === 'funding_position_lifecycle' &&
+    authority.governanceAdmitted === true;
   const treasuryAuthority =
     'treasuryAuthority' in authority &&
     authority.treasuryAuthority === 'operator_strategy' &&
@@ -66,8 +80,8 @@ function requireAuthority(authority: CexSystemCapitalSettlementAuthority): void 
     authority.notionalAuthority === 'controlled_loss_budget' &&
     authority.executionAuthority === 'controlled_loss_learning_worker' &&
     authority.governanceAdmitted === true;
-  if (!referenceValid || (!tradeAuthority && !treasuryAuthority && !controlledLearningAuthority)) {
-    throw new Error('CEX ownership transformation requires canonical trade, explicit operator-strategy treasury, or controlled-loss learning authority');
+  if (!referenceValid || (!tradeAuthority && !fundingAuthority && !treasuryAuthority && !controlledLearningAuthority)) {
+    throw new Error('CEX ownership transformation requires canonical trade, funding-lifecycle, explicit operator-strategy treasury, or controlled-loss learning authority');
   }
 }
 
