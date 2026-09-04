@@ -79,6 +79,15 @@ function finitePositive(raw: unknown): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function finiteNonNegative(raw: unknown): number | null {
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function objectRecord(raw: unknown): Record<string, any> {
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, any> : {};
+}
+
 function canonicalAsset(raw: unknown): string {
   let asset = String(raw || '').trim().toUpperCase().split('.')[0];
   if (asset === 'XETH') return 'ETH';
@@ -120,6 +129,14 @@ function liveExecutionPosture(): boolean {
   return process.env.NO_EXECUTION !== 'true'
     && process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
     && process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK';
+}
+
+function submittedBefore(row: any): boolean {
+  return Boolean(row?.submitted_at);
+}
+
+function manualReviewError(message: string): boolean {
+  return /manual review|approved.*withdrawal key|permission|recipient information|compliance|automatic resubmission forbidden|ambiguous.*cannot be recovered|durable .* differs from|lost or drifted.*reservation/i.test(message);
 }
 
 async function assetUsdPrice(asset: string): Promise<{ price: number; observedAt: number }> {
@@ -284,14 +301,30 @@ async function waitKrakenDeposit(asset: string, method: string, txId: string, ad
   throw new Error(`Kraken deposit ${txId} settlement timeout`);
 }
 
-async function transferKrakenToOkx(input: { transferIdentity: string; asset: string; desiredNet: number; createdAt: number }): Promise<TransferSettlement> {
+async function transferKrakenToOkx(input: {
+  transferIdentity: string;
+  asset: string;
+  desiredNet: number;
+  createdAt: number;
+  durableGrossSourceDebit: number;
+  allowSubmission: boolean;
+}): Promise<TransferSettlement> {
   const destination = await resolveOkxDeposit(input.asset);
-  const quote = await krakenGrossForNet(input.asset, destination.krakenWithdrawalKey, input.desiredNet);
+  const gross = input.durableGrossSourceDebit;
   getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: 'cex:kraken', venue: 'kraken' });
-  let withdrawal = await recoverKrakenWithdrawal(input.asset, destination.krakenWithdrawalKey, quote.gross, destination.address, input.createdAt);
+  let withdrawal = await recoverKrakenWithdrawal(input.asset, destination.krakenWithdrawalKey, gross, destination.address, input.createdAt);
   let refid = String(withdrawal?.refid || '').trim();
+  let currentQuote: Awaited<ReturnType<typeof krakenGrossForNet>> | null = null;
   if (!refid) {
-    const submitted = await krakenPrivateRequest('/0/private/Withdraw', { asset: input.asset.toLowerCase(), key: destination.krakenWithdrawalKey, amount: numericString(quote.gross) });
+    if (!input.allowSubmission) {
+      throw new Error('manual review required: prior Kraken withdrawal is not uniquely recoverable; automatic resubmission forbidden');
+    }
+    currentQuote = await krakenGrossForNet(input.asset, destination.krakenWithdrawalKey, input.desiredNet);
+    const tolerance = Math.max(1e-9, gross * 1e-8);
+    if (Math.abs(currentQuote.gross - gross) > tolerance) {
+      throw new Error('pre-submission Kraken transfer economics changed from durable source reservation; fresh intent required');
+    }
+    const submitted = await krakenPrivateRequest('/0/private/Withdraw', { asset: input.asset.toLowerCase(), key: destination.krakenWithdrawalKey, amount: numericString(gross) });
     refid = String(submitted?.refid || '').trim();
     if (!refid) throw new Error('Kraken withdrawal submission returned no durable reference');
   }
@@ -301,29 +334,41 @@ async function transferKrakenToOkx(input: { transferIdentity: string; asset: str
   const deposit = await waitOkxDeposit(input.asset, txId, destination.address);
   const delivered = finitePositive(deposit?.amt);
   if (delivered === null) throw new Error('OKX deposit history omitted positive delivered amount');
-  const sourceFee = Math.max(0, Number(withdrawal?.fee || quote.fee || 0));
+  const sourceFee = Math.max(0, Number(withdrawal?.fee ?? currentQuote?.fee ?? 0));
   const sourceDebit = Number(withdrawal?.amount || 0) + sourceFee;
-  if (!(sourceDebit > 0) || sourceDebit > quote.gross + Math.max(1e-8, quote.gross * 1e-6)) throw new Error('Kraken authenticated withdrawal debit is inconsistent with durable gross request');
+  if (!(sourceDebit > 0) || sourceDebit > gross + Math.max(1e-8, gross * 1e-6)) throw new Error('Kraken authenticated withdrawal debit is inconsistent with durable gross request');
   return {
     sourceDebitDecimal: sourceDebit, deliveredDecimal: delivered, sourceFeeDecimal: sourceFee,
     withdrawalReference: refid, transactionHash: txId,
     destinationReference: String(deposit?.depId || deposit?.txId || txId),
-    sourceEvidence: { venue: 'kraken', withdrawalStatus: String(withdrawal?.status || ''), withdrawalKey: destination.krakenWithdrawalKey, requestedGrossDecimal: quote.gross, authenticatedNetDecimal: withdrawal?.amount, authenticatedFeeDecimal: sourceFee },
+    sourceEvidence: { venue: 'kraken', withdrawalStatus: String(withdrawal?.status || ''), withdrawalKey: destination.krakenWithdrawalKey, requestedGrossDecimal: gross, authenticatedNetDecimal: withdrawal?.amount, authenticatedFeeDecimal: sourceFee, reconcileBeforeResubmit: true },
     destinationEvidence: { venue: 'okx', chain: destination.chain, depositAddress: destination.address, depositAccount: destination.depositAccount, exchangeState: String(deposit?.state ?? ''), creditedAmount: delivered, transactionHash: txId },
   };
 }
 
-async function transferOkxToKraken(input: { transferIdentity: string; asset: string; desiredNet: number }): Promise<TransferSettlement> {
+async function transferOkxToKraken(input: {
+  transferIdentity: string;
+  asset: string;
+  desiredNet: number;
+  durableSourceDebit: number;
+  allowSubmission: boolean;
+}): Promise<TransferSettlement> {
   const destination = await resolveKrakenDeposit(input.asset);
   if (input.desiredNet + 1e-12 < destination.okxMinDecimal) throw new Error(`OKX ${input.asset} retained transfer is below authenticated withdrawal minimum`);
   if (destination.okxMaxDecimal !== null && input.desiredNet > destination.okxMaxDecimal + 1e-12) throw new Error(`OKX ${input.asset} retained transfer exceeds authenticated withdrawal maximum`);
-  const sourceDebit = input.desiredNet + destination.okxFeeDecimal;
+  const currentSourceDebit = input.desiredNet + destination.okxFeeDecimal;
+  if (currentSourceDebit > input.durableSourceDebit + Math.max(1e-9, input.durableSourceDebit * 1e-8) && input.allowSubmission) {
+    throw new Error('pre-submission OKX transfer fee exceeds durable source reservation; fresh intent required');
+  }
   const clientId = deterministicClientId(`treasury:${input.transferIdentity}:${input.asset}:${destination.okxChain}:${input.desiredNet}`);
   getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: 'cex:okx', venue: 'okx' });
   let history = await okxPrivateRequest('/api/v5/asset/withdrawal-history', 'GET', { ccy: input.asset, clientId }, { lane: 'account_read' });
   let row = history.data.find((item: any) => String(item?.clientId || '') === clientId);
   let wdId = String(row?.wdId || '').trim();
   if (!wdId) {
+    if (!input.allowSubmission) {
+      throw new Error('manual review required: prior OKX withdrawal is not recoverable by durable clientId; automatic resubmission forbidden');
+    }
     const submission = await okxPrivateRequest('/api/v5/asset/withdrawal', 'POST', {
       ccy: input.asset, amt: numericString(input.desiredNet), dest: '4', toAddr: destination.address,
       fee: numericString(destination.okxFeeDecimal), chain: destination.okxChain, clientId,
@@ -342,29 +387,112 @@ async function transferOkxToKraken(input: { transferIdentity: string; asset: str
   const deposit = await waitKrakenDeposit(input.asset, destination.method, txId, destination.address);
   const delivered = finitePositive(deposit?.amount);
   if (delivered === null) throw new Error('Kraken deposit status omitted positive delivered amount');
+  const sourceFee = Math.max(0, Number(row?.fee ?? destination.okxFeeDecimal));
+  const sourceDebit = input.desiredNet + sourceFee;
+  if (sourceDebit > input.durableSourceDebit + Math.max(1e-9, input.durableSourceDebit * 1e-8)) {
+    throw new Error('OKX authenticated withdrawal debit exceeds durable source reservation');
+  }
   return {
-    sourceDebitDecimal: sourceDebit, deliveredDecimal: delivered, sourceFeeDecimal: destination.okxFeeDecimal,
+    sourceDebitDecimal: sourceDebit, deliveredDecimal: delivered, sourceFeeDecimal: sourceFee,
     withdrawalReference: wdId, transactionHash: txId,
     destinationReference: String(deposit?.refid || deposit?.txid || txId),
-    sourceEvidence: { venue: 'okx', withdrawalState: String(row?.state ?? ''), clientId, chain: destination.okxChain, requestedNetDecimal: input.desiredNet, authenticatedFeeDecimal: destination.okxFeeDecimal },
+    sourceEvidence: { venue: 'okx', withdrawalState: String(row?.state ?? ''), clientId, chain: destination.okxChain, requestedNetDecimal: input.desiredNet, authenticatedFeeDecimal: sourceFee, reconcileBeforeResubmit: true },
     destinationEvidence: { venue: 'kraken', method: destination.method, depositAddress: destination.address, depositStatus: String(deposit?.status || ''), creditedAmount: delivered, originators: Array.isArray(deposit?.originators) ? deposit.originators : [], transactionHash: txId },
   };
 }
 
-async function transferBetweenVenues(input: { identity: string; sourceVenue: Venue; targetVenue: Venue; asset: string; desiredNet: number; createdAt: number }): Promise<TransferSettlement> {
+async function transferBetweenVenues(input: {
+  identity: string;
+  sourceVenue: Venue;
+  targetVenue: Venue;
+  asset: string;
+  desiredNet: number;
+  durableSourceDebit: number;
+  createdAt: number;
+  allowSubmission: boolean;
+}): Promise<TransferSettlement> {
   if (input.sourceVenue === input.targetVenue) throw new Error('treasury CEX transfer requires distinct venues');
   if (!TRANSFERABLE_ASSETS.has(input.asset)) throw new Error(`treasury CEX transfer does not have settlement-safe network handling for ${input.asset}`);
   if (input.sourceVenue === 'coinbase' && input.targetVenue === 'okx') {
     const prepared = await prepareCoinbaseToOkxTransfer(input.asset, input.desiredNet);
+    if (input.allowSubmission && prepared.sourceReservationCeiling > input.durableSourceDebit + Math.max(1e-9, input.durableSourceDebit * 1e-8)) {
+      throw new Error('pre-submission Coinbase transfer cost ceiling exceeds durable source reservation; fresh intent required');
+    }
+    // Coinbase Transfer API uses the transfer identity as deterministic idem. A
+    // repeated call with the same idem recovers the prior transaction rather than
+    // granting a second transfer identity.
     return executeCoinbaseToOkxTransfer({ transferIdentity: input.identity, prepared });
   }
   if (input.sourceVenue === 'kraken' && input.targetVenue === 'okx') {
-    return transferKrakenToOkx({ transferIdentity: input.identity, asset: input.asset, desiredNet: input.desiredNet, createdAt: input.createdAt });
+    return transferKrakenToOkx({
+      transferIdentity: input.identity,
+      asset: input.asset,
+      desiredNet: input.desiredNet,
+      createdAt: input.createdAt,
+      durableGrossSourceDebit: input.durableSourceDebit,
+      allowSubmission: input.allowSubmission,
+    });
   }
   if (input.sourceVenue === 'okx' && input.targetVenue === 'kraken') {
-    return transferOkxToKraken({ transferIdentity: input.identity, asset: input.asset, desiredNet: input.desiredNet });
+    return transferOkxToKraken({
+      transferIdentity: input.identity,
+      asset: input.asset,
+      desiredNet: input.desiredNet,
+      durableSourceDebit: input.durableSourceDebit,
+      allowSubmission: input.allowSubmission,
+    });
   }
   throw new Error(`treasury CEX transfer route ${input.sourceVenue}->${input.targetVenue} is not yet settlement-proven; no alternate submission is allowed`);
+}
+
+async function persistTransferSettlementIdentity(transferId: string, settlement: TransferSettlement): Promise<void> {
+  await pool.query(
+    `UPDATE public.cryptocrawler_system_capital_transfers
+     SET source_reference=COALESCE(NULLIF(source_reference,''),$2),
+         transaction_hash=COALESCE(NULLIF(transaction_hash,''),$3),
+         source_evidence=COALESCE(source_evidence,'{}'::jsonb)
+           || jsonb_build_object('withdrawalReference',$2,'terminalSourceEvidence',$4::jsonb),
+         destination_evidence=COALESCE(destination_evidence,'{}'::jsonb)
+           || jsonb_build_object('terminalDestinationEvidence',$5::jsonb),
+         updated_at=now()
+     WHERE transfer_id=$1::uuid AND status<>'CONFIRMED'`,
+    [transferId, settlement.withdrawalReference, settlement.transactionHash, JSON.stringify(settlement.sourceEvidence), JSON.stringify(settlement.destinationEvidence)],
+  );
+}
+
+function settlementFromConfirmedSystemTransfer(row: any): TransferSettlement | null {
+  if (String(row?.status || '') !== 'CONFIRMED') return null;
+  const deliveredDecimal = finitePositive(row?.delivered_destination_decimal);
+  const sourceFeeDecimal = finiteNonNegative(row?.source_fee_decimal);
+  const sourceEvidenceRoot = objectRecord(row?.source_evidence);
+  const destinationEvidenceRoot = objectRecord(row?.destination_evidence);
+  const sourceEvidence = objectRecord(sourceEvidenceRoot.terminalSourceEvidence || destinationEvidenceRoot.source || sourceEvidenceRoot);
+  const destinationEvidence = objectRecord(destinationEvidenceRoot.terminalDestinationEvidence || destinationEvidenceRoot.destination || destinationEvidenceRoot);
+  const withdrawalReference = String(row?.source_reference || sourceEvidenceRoot.withdrawalReference || sourceEvidence.withdrawalReference || '').trim();
+  const transactionHash = String(row?.transaction_hash || '').trim();
+  const destinationReference = String(row?.destination_reference || '').trim();
+  if (deliveredDecimal === null || sourceFeeDecimal === null || !withdrawalReference || !transactionHash || !destinationReference) return null;
+  const sourceDebitDecimal = finitePositive(sourceEvidence.authenticatedSourceDebitDecimal || sourceEvidence.sourceDebitDecimal || row?.requested_source_decimal);
+  if (sourceDebitDecimal === null) return null;
+  return { sourceDebitDecimal, deliveredDecimal, sourceFeeDecimal, withdrawalReference, transactionHash, destinationReference, sourceEvidence, destinationEvidence };
+}
+
+async function finalizePayoutFromConfirmedSystemTransfer(eventId: string, systemTransfer: any): Promise<boolean> {
+  const settlement = settlementFromConfirmedSystemTransfer(systemTransfer);
+  if (!settlement) {
+    throw new Error('manual review required: confirmed payout-funding ownership transfer lacks persisted terminal evidence required to finish payout state without resubmission');
+  }
+  await pool.query(
+    `UPDATE public.cryptocrawler_payout_funding_transfers
+     SET status='SETTLING', updated_at=now(), last_error=NULL
+     WHERE event_id=$1 AND status IN ('PREPARED','RETRYABLE','SUBMITTED','SETTLING')`,
+    [eventId],
+  );
+  const confirmed = await pool.query(
+    `SELECT public.cryptocrawler_confirm_payout_funding_transfer($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb) AS confirmed`,
+    [eventId, settlement.deliveredDecimal, settlement.sourceFeeDecimal, settlement.withdrawalReference, settlement.transactionHash, settlement.destinationReference, JSON.stringify(settlement.sourceEvidence), JSON.stringify(settlement.destinationEvidence)],
+  );
+  return confirmed.rows[0]?.confirmed === true;
 }
 
 async function claimRetainedCandidate(): Promise<RetainedRow | null> {
@@ -423,11 +551,10 @@ async function processRetainedCandidate(row: RetainedRow): Promise<void> {
     return;
   }
 
-  const price = await assetUsdPrice(asset);
-  const desiredAmount = retainedUsd / price.price;
-  if (!(desiredAmount > 0) || !Number.isFinite(desiredAmount)) throw new Error('retained target amount could not be derived from live price');
-
   if (sourceVenue === targetVenue) {
+    const price = await assetUsdPrice(asset);
+    const desiredAmount = retainedUsd / price.price;
+    if (!(desiredAmount > 0) || !Number.isFinite(desiredAmount)) throw new Error('retained target amount could not be derived from live price');
     const available = await systemOwnedAvailable(sourceVenue, asset);
     if (available + 1e-10 < desiredAmount) {
       await updateRetained(row.event_id, {
@@ -448,31 +575,50 @@ async function processRetainedCandidate(row: RetainedRow): Promise<void> {
 
   if ((sourceVenue === 'coinbase' || targetVenue === 'coinbase') && !(sourceVenue === 'coinbase' && targetVenue === 'okx')) {
     await updateRetained(row.event_id, {
-      status: 'BLOCKED', source_asset: asset, source_unit_price_usd: price.price,
-      source_price_observed_at: new Date(price.observedAt), source_amount_decimal: desiredAmount,
+      status: 'BLOCKED', source_asset: asset,
       last_error: `cross-venue retained route ${sourceVenue}->${targetVenue} is not yet settlement-proven; new dynamic Rainbow allocations keep Coinbase capital in place instead of paying unnecessary transfer cost`,
     });
     return;
   }
 
-  let transfer = await pool.query(`SELECT * FROM public.cryptocrawler_system_capital_transfers WHERE transfer_kind='RETAINED_ROUTE' AND source_event_id=$1 LIMIT 1`, [row.event_id]);
-  let transferRow = transfer.rows[0];
+  let transferRow = (await pool.query(`SELECT * FROM public.cryptocrawler_system_capital_transfers WHERE transfer_kind='RETAINED_ROUTE' AND source_event_id=$1 LIMIT 1`, [row.event_id])).rows[0];
   if (transferRow?.status === 'CONFIRMED') {
     await updateRetained(row.event_id, { status: 'PLACED', transfer_id: transferRow.transfer_id, transfer_reference: transferRow.destination_reference, transaction_hash: transferRow.transaction_hash, settlement_evidence: JSON.stringify(transferRow.destination_evidence || {}), last_error: null });
     return;
   }
+  if (transferRow?.status === 'MANUAL_REVIEW') {
+    await updateRetained(row.event_id, { status: 'MANUAL_REVIEW', transfer_id: transferRow.transfer_id, last_error: transferRow.last_error || 'treasury transfer requires manual reconciliation' });
+    return;
+  }
 
-  let maximumSourceDebit = desiredAmount;
+  let desiredAmount: number;
+  let maximumSourceDebit: number;
+  let price: { price: number; observedAt: number } | null = null;
   let coinbasePrepared: CoinbaseToOkxPreparedTransfer | null = null;
-  if (sourceVenue === 'coinbase' && targetVenue === 'okx') {
-    coinbasePrepared = await prepareCoinbaseToOkxTransfer(asset, desiredAmount);
-    maximumSourceDebit = coinbasePrepared.sourceReservationCeiling;
-  } else if (sourceVenue === 'okx') {
-    const destination = await resolveKrakenDeposit(asset);
-    maximumSourceDebit = desiredAmount + destination.okxFeeDecimal;
+
+  if (transferRow && transferRow.status !== 'RELEASED') {
+    if (String(transferRow.source_venue) !== sourceVenue || String(transferRow.target_venue) !== targetVenue || canonicalAsset(transferRow.asset) !== asset) {
+      throw new Error('durable retained transfer route differs from current allocation identity');
+    }
+    desiredAmount = finitePositive(transferRow.requested_destination_decimal) || 0;
+    maximumSourceDebit = finitePositive(transferRow.requested_source_decimal) || 0;
+    if (!(desiredAmount > 0) || !(maximumSourceDebit > 0)) throw new Error('durable retained transfer amounts are invalid');
+    if (sourceVenue === 'coinbase' && targetVenue === 'okx') coinbasePrepared = await prepareCoinbaseToOkxTransfer(asset, desiredAmount);
   } else {
-    const destination = await resolveOkxDeposit(asset);
-    maximumSourceDebit = (await krakenGrossForNet(asset, destination.krakenWithdrawalKey, desiredAmount)).gross;
+    price = await assetUsdPrice(asset);
+    desiredAmount = retainedUsd / price.price;
+    if (!(desiredAmount > 0) || !Number.isFinite(desiredAmount)) throw new Error('retained target amount could not be derived from live price');
+    maximumSourceDebit = desiredAmount;
+    if (sourceVenue === 'coinbase' && targetVenue === 'okx') {
+      coinbasePrepared = await prepareCoinbaseToOkxTransfer(asset, desiredAmount);
+      maximumSourceDebit = coinbasePrepared.sourceReservationCeiling;
+    } else if (sourceVenue === 'okx') {
+      const destination = await resolveKrakenDeposit(asset);
+      maximumSourceDebit = desiredAmount + destination.okxFeeDecimal;
+    } else {
+      const destination = await resolveOkxDeposit(asset);
+      maximumSourceDebit = (await krakenGrossForNet(asset, destination.krakenWithdrawalKey, desiredAmount)).gross;
+    }
   }
 
   if (!transferRow) {
@@ -486,30 +632,57 @@ async function processRetainedCandidate(row: RetainedRow): Promise<void> {
        ON CONFLICT (source_event_id) WHERE transfer_kind='RETAINED_ROUTE' AND source_event_id IS NOT NULL DO NOTHING
        RETURNING *`,
       [transferId, sourceVenue, targetVenue, asset, maximumSourceDebit, desiredAmount, row.event_id,
-        JSON.stringify({ retainedUsd, unitPriceUsd: price.price, priceObservedAt: new Date(price.observedAt).toISOString(), ...(coinbasePrepared ? { coinbaseSourceReservationCeiling: coinbasePrepared.sourceReservationCeiling, network: coinbasePrepared.network } : {}) })],
+        JSON.stringify({ retainedUsd, ...(price ? { unitPriceUsd: price.price, priceObservedAt: new Date(price.observedAt).toISOString() } : {}), ...(coinbasePrepared ? { coinbaseSourceReservationCeiling: coinbasePrepared.sourceReservationCeiling, network: coinbasePrepared.network } : {}) })],
     );
     transferRow = inserted.rows[0];
     if (!transferRow) transferRow = (await pool.query(`SELECT * FROM public.cryptocrawler_system_capital_transfers WHERE transfer_kind='RETAINED_ROUTE' AND source_event_id=$1 LIMIT 1`, [row.event_id])).rows[0];
   } else if (transferRow.status === 'RELEASED') {
-    await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='PREPARED', requested_source_decimal=$2, requested_destination_decimal=$3, source_evidence=source_evidence || $4::jsonb, updated_at=now(), last_error=NULL WHERE transfer_id=$1`, [transferRow.transfer_id, maximumSourceDebit, desiredAmount, JSON.stringify({ retainedUsd, unitPriceUsd: price.price, priceObservedAt: new Date(price.observedAt).toISOString() })]);
+    await pool.query(
+      `UPDATE public.cryptocrawler_system_capital_transfers
+       SET status='PREPARED', requested_source_decimal=$2, requested_destination_decimal=$3,
+           source_reference=NULL, destination_reference=NULL, transaction_hash=NULL,
+           source_evidence=$4::jsonb, destination_evidence='{}'::jsonb,
+           submitted_at=NULL, confirmed_at=NULL, last_attempt_at=NULL, attempt_count=0,
+           updated_at=now(), last_error=NULL
+       WHERE transfer_id=$1 AND status='RELEASED'`,
+      [transferRow.transfer_id, maximumSourceDebit, desiredAmount, JSON.stringify({ retainedUsd, ...(price ? { unitPriceUsd: price.price, priceObservedAt: new Date(price.observedAt).toISOString() } : {}), ...(coinbasePrepared ? { coinbaseSourceReservationCeiling: coinbasePrepared.sourceReservationCeiling, network: coinbasePrepared.network } : {}) })],
+    );
+    transferRow = (await pool.query(`SELECT * FROM public.cryptocrawler_system_capital_transfers WHERE transfer_id=$1`, [transferRow.transfer_id])).rows[0];
   }
   if (!transferRow?.transfer_id) throw new Error('retained transfer intent could not be persisted');
+
+  desiredAmount = finitePositive(transferRow.requested_destination_decimal) || 0;
+  maximumSourceDebit = finitePositive(transferRow.requested_source_decimal) || 0;
+  if (!(desiredAmount > 0) || !(maximumSourceDebit > 0)) throw new Error('retained transfer durable amounts are unavailable');
   const transferId = String(transferRow.transfer_id);
+  const hadSubmissionHistory = submittedBefore(transferRow);
 
   const reserved = await pool.query(`SELECT public.cryptocrawler_reserve_system_capital_transfer($1::uuid,$2,$3,$4) AS reserved`, [transferId, sourceVenue, asset, maximumSourceDebit]);
   if (Number(reserved.rows[0]?.reserved || 0) + 1e-12 < maximumSourceDebit) {
-    await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='RELEASED', last_error='settlement-derived system-owned lots are insufficient for retained routing', updated_at=now() WHERE transfer_id=$1`, [transferId]);
-    await updateRetained(row.event_id, { status: 'BLOCKED', source_asset: asset, source_unit_price_usd: price.price, source_price_observed_at: new Date(price.observedAt), source_amount_decimal: desiredAmount, transfer_id: transferId, last_error: 'retained routing refused because operator/account-wide balances cannot satisfy system-owned capital provenance' });
+    if (hadSubmissionHistory) {
+      await updateRetained(row.event_id, { status: 'MANUAL_REVIEW', transfer_id: transferId, last_error: 'ambiguous retained transfer reservation could not be proven intact; automatic resubmission forbidden' });
+      return;
+    }
+    await pool.query(`SELECT public.cryptocrawler_release_system_capital_transfer($1::uuid)`, [transferId]).catch(() => undefined);
+    await updateRetained(row.event_id, { status: 'BLOCKED', source_asset: asset, source_amount_decimal: desiredAmount, transfer_id: transferId, last_error: 'retained routing refused because settlement-derived system-owned lots are insufficient; operator/account-wide balances cannot satisfy provenance' });
     return;
   }
 
-  await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='SUBMITTED', submitted_at=COALESCE(submitted_at,now()), last_attempt_at=now(), attempt_count=attempt_count+1, updated_at=now(), last_error=NULL WHERE transfer_id=$1`, [transferId]);
-  await updateRetained(row.event_id, { status: 'SUBMITTED', source_asset: asset, source_unit_price_usd: price.price, source_price_observed_at: new Date(price.observedAt), source_amount_decimal: desiredAmount, transfer_id: transferId, last_error: null });
+  await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='SUBMITTED', submitted_at=COALESCE(submitted_at,now()), last_attempt_at=now(), attempt_count=attempt_count+1, updated_at=now(), last_error=NULL WHERE transfer_id=$1 AND status IN ('PREPARED','RETRYABLE','SUBMITTED','SETTLING')`, [transferId]);
+  await updateRetained(row.event_id, { status: 'SUBMITTED', source_asset: asset, source_amount_decimal: desiredAmount, transfer_id: transferId, last_error: null });
 
-  const settlement = coinbasePrepared
-    ? await executeCoinbaseToOkxTransfer({ transferIdentity: transferId, prepared: coinbasePrepared })
-    : await transferBetweenVenues({ identity: transferId, sourceVenue, targetVenue, asset, desiredNet: desiredAmount, createdAt: transferRow.created_at ? new Date(transferRow.created_at).getTime() : Date.now() });
-  await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='SETTLING', updated_at=now() WHERE transfer_id=$1`, [transferId]);
+  const settlement = await transferBetweenVenues({
+    identity: transferId,
+    sourceVenue,
+    targetVenue,
+    asset,
+    desiredNet: desiredAmount,
+    durableSourceDebit: maximumSourceDebit,
+    createdAt: transferRow.created_at ? new Date(transferRow.created_at).getTime() : Date.now(),
+    allowSubmission: !hadSubmissionHistory,
+  });
+  await persistTransferSettlementIdentity(transferId, settlement);
+  await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='SETTLING', updated_at=now() WHERE transfer_id=$1 AND status<>'CONFIRMED'`, [transferId]);
   const confirmed = await pool.query(
     `SELECT public.cryptocrawler_confirm_system_capital_transfer_exact($1::uuid,$2,$3,$4,$5,$6,$7::jsonb) AS confirmed`,
     [transferId, settlement.sourceDebitDecimal, settlement.deliveredDecimal, settlement.sourceFeeDecimal, settlement.destinationReference, settlement.transactionHash, JSON.stringify({ source: settlement.sourceEvidence, destination: settlement.destinationEvidence })],
@@ -542,25 +715,53 @@ async function processPayoutFunding(row: PayoutFundingRow): Promise<void> {
     await pool.query(`UPDATE public.cryptocrawler_profit_payout_jobs SET status='MANUAL_REVIEW', last_error=$2, updated_at=now() WHERE event_id=$1`, [row.event_id, `Payout source ${sourceVenue || 'unknown'}:${asset || 'unknown'} has no settlement-safe route to the canonical OKX ETH payout executor`]);
     return;
   }
-  const desiredNet = finitePositive(row.remaining_asset_amount);
-  if (desiredNet === null) return;
 
+  let fundingRow = (await pool.query(`SELECT * FROM public.cryptocrawler_payout_funding_transfers WHERE event_id=$1`, [row.event_id])).rows[0];
+  if (fundingRow?.status === 'CONFIRMED') return;
+
+  let systemTransfer = fundingRow?.transfer_id
+    ? (await pool.query(`SELECT * FROM public.cryptocrawler_system_capital_transfers WHERE transfer_id=$1::uuid`, [String(fundingRow.transfer_id)])).rows[0]
+    : null;
+
+  if (systemTransfer?.status === 'CONFIRMED') {
+    if (!await finalizePayoutFromConfirmedSystemTransfer(row.event_id, systemTransfer)) {
+      throw new Error(`${sourceVenue} payout funding could not finalize from already-confirmed ownership transfer`);
+    }
+    return;
+  }
+
+  if (systemTransfer?.status === 'MANUAL_REVIEW') {
+    await pool.query(`UPDATE public.cryptocrawler_payout_funding_transfers SET status='MANUAL_REVIEW', last_error=COALESCE(last_error,$2), updated_at=now() WHERE event_id=$1 AND status<>'CONFIRMED'`, [row.event_id, systemTransfer.last_error || 'payout funding ownership transfer requires manual reconciliation']);
+    return;
+  }
+
+  let desiredNet: number;
   let requestedSource: number;
   let withdrawalKey: string | null = null;
   let coinbasePrepared: CoinbaseToOkxPreparedTransfer | null = null;
-  if (sourceVenue === 'coinbase') {
-    coinbasePrepared = await prepareCoinbaseToOkxTransfer(asset, desiredNet);
-    requestedSource = coinbasePrepared.sourceReservationCeiling;
-  } else {
-    const destination = await resolveOkxDeposit(asset);
-    const quote = await krakenGrossForNet(asset, destination.krakenWithdrawalKey, desiredNet);
-    requestedSource = quote.gross;
-    withdrawalKey = destination.krakenWithdrawalKey;
-  }
 
-  let funding = await pool.query(`SELECT * FROM public.cryptocrawler_payout_funding_transfers WHERE event_id=$1`, [row.event_id]);
-  let fundingRow = funding.rows[0];
-  if (!fundingRow) {
+  if (fundingRow) {
+    if (String(fundingRow.source_venue) !== sourceVenue || canonicalAsset(fundingRow.asset) !== asset || String(fundingRow.target_venue) !== 'okx') {
+      throw new Error('durable payout funding route differs from current payout reservation identity');
+    }
+    desiredNet = finitePositive(fundingRow.expected_destination_decimal) || 0;
+    requestedSource = finitePositive(fundingRow.requested_source_decimal) || 0;
+    withdrawalKey = String(fundingRow.withdrawal_key || '').trim() || null;
+    if (!(desiredNet > 0) || !(requestedSource > 0)) throw new Error('durable payout funding amounts are invalid');
+    if (sourceVenue === 'coinbase') coinbasePrepared = await prepareCoinbaseToOkxTransfer(asset, desiredNet);
+  } else {
+    desiredNet = finitePositive(row.remaining_asset_amount) || 0;
+    if (!(desiredNet > 0)) return;
+    if (sourceVenue === 'coinbase') {
+      coinbasePrepared = await prepareCoinbaseToOkxTransfer(asset, desiredNet);
+      requestedSource = coinbasePrepared.sourceReservationCeiling;
+    } else {
+      const destination = await resolveOkxDeposit(asset);
+      const quote = await krakenGrossForNet(asset, destination.krakenWithdrawalKey, desiredNet);
+      requestedSource = quote.gross;
+      withdrawalKey = destination.krakenWithdrawalKey;
+    }
+
     const transferId = randomUUID();
     const inserted = await pool.query(
       `INSERT INTO public.cryptocrawler_payout_funding_transfers
@@ -575,13 +776,18 @@ async function processPayoutFunding(row: PayoutFundingRow): Promise<void> {
     fundingRow = inserted.rows[0];
     if (!fundingRow) fundingRow = (await pool.query(`SELECT * FROM public.cryptocrawler_payout_funding_transfers WHERE event_id=$1`, [row.event_id])).rows[0];
   }
+
   if (!fundingRow) throw new Error(`${sourceVenue} payout funding intent could not be persisted`);
   if (fundingRow.status === 'CONFIRMED') return;
+  desiredNet = finitePositive(fundingRow.expected_destination_decimal) || 0;
+  requestedSource = finitePositive(fundingRow.requested_source_decimal) || 0;
+  if (!(desiredNet > 0) || !(requestedSource > 0)) throw new Error('payout funding durable amounts are unavailable');
 
-  // Reserve provenance-backed source units before any provider is allowed to move money.
   const shadowTransferId = String(fundingRow.transfer_id);
-  let systemTransfer = await pool.query(`SELECT transfer_id FROM public.cryptocrawler_system_capital_transfers WHERE transfer_id=$1::uuid`, [shadowTransferId]);
-  if (systemTransfer.rowCount === 0) {
+  if (!systemTransfer) {
+    if (submittedBefore(fundingRow)) {
+      throw new Error('manual review required: submitted payout funding lost its provenance transfer row; automatic resubmission forbidden');
+    }
     await pool.query(
       `INSERT INTO public.cryptocrawler_system_capital_transfers
         (transfer_id, transfer_kind, source_venue, target_kind, target_venue, asset,
@@ -591,18 +797,44 @@ async function processPayoutFunding(row: PayoutFundingRow): Promise<void> {
        ON CONFLICT (transfer_id) DO NOTHING`,
       [shadowTransferId, sourceVenue, asset, requestedSource, desiredNet, row.event_id, JSON.stringify({ payoutFundingTable: true })],
     );
+    systemTransfer = (await pool.query(`SELECT * FROM public.cryptocrawler_system_capital_transfers WHERE transfer_id=$1::uuid`, [shadowTransferId])).rows[0];
   }
+  if (!systemTransfer) throw new Error('payout funding provenance transfer could not be persisted');
+  if (systemTransfer.status === 'CONFIRMED') {
+    if (!await finalizePayoutFromConfirmedSystemTransfer(row.event_id, systemTransfer)) throw new Error('confirmed ownership transfer could not finalize payout funding state');
+    return;
+  }
+  if (String(systemTransfer.source_venue) !== sourceVenue || canonicalAsset(systemTransfer.asset) !== asset || String(systemTransfer.target_venue) !== 'okx') {
+    throw new Error('durable payout system-transfer route differs from payout funding identity');
+  }
+  if (Math.abs(Number(systemTransfer.requested_source_decimal) - requestedSource) > Math.max(1e-12, requestedSource * 1e-10)
+      || Math.abs(Number(systemTransfer.requested_destination_decimal) - desiredNet) > Math.max(1e-12, desiredNet * 1e-10)) {
+    throw new Error('durable payout system-transfer amounts differ from payout funding identity');
+  }
+
+  const hadSubmissionHistory = submittedBefore(systemTransfer) || submittedBefore(fundingRow);
   const reserved = await pool.query(`SELECT public.cryptocrawler_reserve_system_capital_transfer($1::uuid,$2,$3,$4) AS reserved`, [shadowTransferId, sourceVenue, asset, requestedSource]);
-  if (Number(reserved.rows[0]?.reserved || 0) + 1e-12 < requestedSource) throw new Error(`${sourceVenue} payout funding lacks provenance-backed source units including transfer-cost ceiling`);
+  if (Number(reserved.rows[0]?.reserved || 0) + 1e-12 < requestedSource) {
+    if (hadSubmissionHistory) throw new Error('manual review required: submitted payout-funding reservation is not intact; automatic resubmission forbidden');
+    throw new Error(`${sourceVenue} payout funding lacks provenance-backed source units including transfer-cost ceiling`);
+  }
 
-  await pool.query(`UPDATE public.cryptocrawler_payout_funding_transfers SET status='SUBMITTED', submitted_at=COALESCE(submitted_at,now()), last_attempt_at=now(), attempt_count=attempt_count+1, updated_at=now(), last_error=NULL WHERE event_id=$1`, [row.event_id]);
-  await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='SUBMITTED', submitted_at=COALESCE(submitted_at,now()), last_attempt_at=now(), attempt_count=attempt_count+1, updated_at=now(), last_error=NULL WHERE transfer_id=$1::uuid`, [shadowTransferId]);
+  await pool.query(`UPDATE public.cryptocrawler_payout_funding_transfers SET status='SUBMITTED', submitted_at=COALESCE(submitted_at,now()), last_attempt_at=now(), attempt_count=attempt_count+1, updated_at=now(), last_error=NULL WHERE event_id=$1 AND status IN ('PREPARED','RETRYABLE','SUBMITTED','SETTLING')`, [row.event_id]);
+  await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='SUBMITTED', submitted_at=COALESCE(submitted_at,now()), last_attempt_at=now(), attempt_count=attempt_count+1, updated_at=now(), last_error=NULL WHERE transfer_id=$1::uuid AND status IN ('PREPARED','RETRYABLE','SUBMITTED','SETTLING')`, [shadowTransferId]);
 
-  const settlement = sourceVenue === 'coinbase'
-    ? await executeCoinbaseToOkxTransfer({ transferIdentity: shadowTransferId, prepared: coinbasePrepared! })
-    : await transferKrakenToOkx({ transferIdentity: shadowTransferId, asset, desiredNet, createdAt: fundingRow.created_at ? new Date(fundingRow.created_at).getTime() : Date.now() });
-  await pool.query(`UPDATE public.cryptocrawler_payout_funding_transfers SET status='SETTLING', updated_at=now() WHERE event_id=$1`, [row.event_id]);
-  await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='SETTLING', updated_at=now() WHERE transfer_id=$1::uuid`, [shadowTransferId]);
+  const settlement = await transferBetweenVenues({
+    identity: shadowTransferId,
+    sourceVenue,
+    targetVenue: 'okx',
+    asset,
+    desiredNet,
+    durableSourceDebit: requestedSource,
+    createdAt: fundingRow.created_at ? new Date(fundingRow.created_at).getTime() : Date.now(),
+    allowSubmission: !hadSubmissionHistory,
+  });
+  await persistTransferSettlementIdentity(shadowTransferId, settlement);
+  await pool.query(`UPDATE public.cryptocrawler_payout_funding_transfers SET status='SETTLING', updated_at=now() WHERE event_id=$1 AND status<>'CONFIRMED'`, [row.event_id]);
+  await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status='SETTLING', updated_at=now() WHERE transfer_id=$1::uuid AND status<>'CONFIRMED'`, [shadowTransferId]);
 
   const ownershipConfirmed = await pool.query(
     `SELECT public.cryptocrawler_confirm_system_capital_transfer_exact($1::uuid,$2,$3,$4,$5,$6,$7::jsonb) AS confirmed`,
@@ -619,12 +851,36 @@ async function processPayoutFunding(row: PayoutFundingRow): Promise<void> {
 
 async function recordFailure(table: 'retained' | 'payout', key: string, error: unknown): Promise<void> {
   const message = (error instanceof Error ? error.message : String(error)).slice(0, 1000);
+  const manual = manualReviewError(message);
   if (table === 'retained') {
-    await pool.query(`UPDATE public.cryptocrawler_retained_exchange_allocations SET status=CASE WHEN $2 ~* 'manual review|approved.*withdrawal key|permission|recipient information|compliance' THEN 'MANUAL_REVIEW' ELSE 'RETRYABLE' END, last_error=$2, updated_at=now() WHERE event_id=$1 AND status<>'PLACED'`, [key, message]).catch(() => undefined);
+    const transfer = (await pool.query(`SELECT transfer_id, status, submitted_at FROM public.cryptocrawler_system_capital_transfers WHERE transfer_kind='RETAINED_ROUTE' AND source_event_id=$1 LIMIT 1`, [key]).catch(() => ({ rows: [] as any[] }))).rows[0];
+    if (transfer && transfer.status !== 'CONFIRMED') {
+      if (!submittedBefore(transfer) && !manual) {
+        await pool.query(`SELECT public.cryptocrawler_release_system_capital_transfer($1::uuid)`, [transfer.transfer_id]).catch(() => undefined);
+      } else {
+        await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status=$2, last_error=$3, updated_at=now() WHERE transfer_id=$1::uuid AND status<>'CONFIRMED'`, [transfer.transfer_id, manual ? 'MANUAL_REVIEW' : 'RETRYABLE', message]).catch(() => undefined);
+      }
+    }
+    await pool.query(`UPDATE public.cryptocrawler_retained_exchange_allocations SET status=$2, last_error=$3, updated_at=now() WHERE event_id=$1 AND status<>'PLACED'`, [key, manual ? 'MANUAL_REVIEW' : 'RETRYABLE', message]).catch(() => undefined);
   } else {
-    await pool.query(`UPDATE public.cryptocrawler_payout_funding_transfers SET status=CASE WHEN $2 ~* 'manual review|approved.*withdrawal key|permission|recipient information|compliance' THEN 'MANUAL_REVIEW' ELSE 'RETRYABLE' END, last_error=$2, updated_at=now() WHERE event_id=$1 AND status<>'CONFIRMED'`, [key, message]).catch(() => undefined);
+    const funding = (await pool.query(`SELECT transfer_id FROM public.cryptocrawler_payout_funding_transfers WHERE event_id=$1 LIMIT 1`, [key]).catch(() => ({ rows: [] as any[] }))).rows[0];
+    const transfer = funding?.transfer_id
+      ? (await pool.query(`SELECT transfer_id, status, submitted_at FROM public.cryptocrawler_system_capital_transfers WHERE transfer_id=$1::uuid`, [funding.transfer_id]).catch(() => ({ rows: [] as any[] }))).rows[0]
+      : null;
+    if (transfer && transfer.status !== 'CONFIRMED') {
+      if (!submittedBefore(transfer) && !manual) {
+        await pool.query(`SELECT public.cryptocrawler_release_system_capital_transfer($1::uuid)`, [transfer.transfer_id]).catch(() => undefined);
+      } else {
+        await pool.query(`UPDATE public.cryptocrawler_system_capital_transfers SET status=$2, last_error=$3, updated_at=now() WHERE transfer_id=$1::uuid AND status<>'CONFIRMED'`, [transfer.transfer_id, manual ? 'MANUAL_REVIEW' : 'RETRYABLE', message]).catch(() => undefined);
+      }
+    }
+    await pool.query(`UPDATE public.cryptocrawler_payout_funding_transfers SET status=$2, last_error=$3, updated_at=now() WHERE event_id=$1 AND status<>'CONFIRMED'`, [key, manual ? 'MANUAL_REVIEW' : 'RETRYABLE', message]).catch(() => undefined);
   }
-  logger.warn('[TreasuryTransfer] CEX treasury transfer deferred', { component: 'CexTreasuryTransferWorker', kind: table, key, error: message, duplicateSubmissionAllowed: false, operatorBalanceAuthorityGranted: false });
+  logger.warn('[TreasuryTransfer] CEX treasury transfer deferred', {
+    component: 'CexTreasuryTransferWorker', kind: table, key, error: message,
+    reconcileBeforeResubmitRequired: true, duplicateSubmissionAllowed: false,
+    operatorBalanceAuthorityGranted: false,
+  });
 }
 
 async function processOnce(): Promise<void> {
@@ -655,7 +911,9 @@ export function ensureCexTreasuryTransferWorker(): void {
     component: 'CexTreasuryTransferWorker', intervalMs: WORKER_INTERVAL_MS,
     retainedRouting: 'system_owned_lots_only', payoutFunding: 'terminal_profit_reservation_only',
     coinbaseWithdrawalRecovery: 'uuid_idempotency+terminal_transaction_poll',
-    krakenWithdrawalRecovery: 'status_match_before_resubmit', okxWithdrawalRecovery: 'client_id',
+    krakenWithdrawalRecovery: 'durable_amount_status_match_before_resubmit',
+    okxWithdrawalRecovery: 'durable_client_id',
+    payoutConfirmedOwnershipCrashRecovery: true,
     targetDepositConfirmationRequired: true, rawAccountBalanceAuthority: false,
   });
 }
