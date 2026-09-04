@@ -75,14 +75,20 @@ export type NixGenBidRejectionReason =
   | 'execution_not_authoritative'
   | 'settlement_not_capable'
   | 'invalid_resource_demand'
-  | 'resource_unavailable'
-  | 'mutual_exclusion'
-  | 'not_selected_by_optimizer';
+  | 'resource_unavailable';
 
 export interface NixGenRejectedBid {
   bidId: string;
   opportunityId: string;
   reason: NixGenBidRejectionReason;
+}
+
+export type NixGenDeferredBidReason = 'resource_contention' | 'mutual_exclusion';
+
+export interface NixGenDeferredBid {
+  bidId: string;
+  opportunityId: string;
+  reason: NixGenDeferredBidReason;
 }
 
 export interface NixGenResourceUsage {
@@ -103,7 +109,10 @@ export interface NixGenOptimizationResult {
   /** All valid bids in advisory scheduling order, selected subset first. */
   priorityOrderBidIds: string[];
   priorityOrderOpportunityIds: string[];
+  /** Hard-invalid inputs only. A valid profitable bid is never called rejected merely because another bid currently ranks ahead of it. */
   rejected: NixGenRejectedBid[];
+  /** Valid bids not present in the current feasible subset remain eligible upstream and are only deferred for this advisory allocation snapshot. */
+  deferred: NixGenDeferredBid[];
   totalCanonicalNetProfitUsd: number;
   totalRankingUtility: number;
   resourceUsage: NixGenResourceUsage[];
