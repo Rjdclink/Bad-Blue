@@ -28,6 +28,7 @@ import { cexDecimalString } from './cex-order-serialization.js';
 import { getSpotProductConstraints } from './cex-spot-product-policy.js';
 import { coinbaseDecimalString } from './coinbase-spot-settlement-adapter.js';
 import { validateCoinbasePostOnlyOrderAgainstProduct } from './coinbase-product-policy.js';
+import { KrakenMakerQueueAmendController } from './kraken-maker-queue-amend.js';
 import { getMakerLifecycleTraceId } from './maker-lifecycle-trace.js';
 import type { MakerOrderStyle, MakerRecoveryPlan } from './stablecoin-maker-strategy.js';
 
@@ -178,6 +179,7 @@ function wrapMakerSubmit(
   delegate: CexSettlementAdapter,
   traceId: string,
   plan: SharedMakerPlan,
+  krakenQueueAmend: KrakenMakerQueueAmendController,
 ): CexSettlementAdapter {
   return {
     async submit(request: OrderRequest): Promise<CexOrderReceipt> {
@@ -196,8 +198,17 @@ function wrapMakerSubmit(
         });
         const orderId = result.txid?.[0];
         if (!orderId) throw new Error('Kraken did not return a post-only maker order id');
+        const receipt: CexOrderReceipt = {
+          venue: 'kraken',
+          orderId,
+          symbol: request.symbol,
+          side: request.side,
+          requestedQuantity: request.quantity,
+          submittedAt,
+        };
+        krakenQueueAmend.rememberSubmitted(receipt, request.price, constraints.priceIncrement);
         recordLatency({ traceId, venue, operation: 'submit', symbol: request.symbol, clientRoundTripMs: Date.now() - submittedAt, orderStyle: 'post_only' });
-        return { venue: 'kraken', orderId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
+        return receipt;
       }
 
       if (venue === 'okx') {
@@ -298,7 +309,11 @@ function wrapMakerSubmit(
       const startedAt = Date.now();
       const result = await delegate.query(order);
       recordLatency({ traceId, venue, operation: 'query', symbol: order.symbol, clientRoundTripMs: Date.now() - startedAt });
+      if (venue === 'kraken' && !result.terminal) {
+        await krakenQueueAmend.maybeAmend(order, result);
+      }
       if (result.terminal) {
+        krakenQueueAmend.forget(order.orderId);
         const predictedFillProbability = makerFillProbability(plan, venue, order.side);
         if (predictedFillProbability !== null) {
           recordMakerTerminalCalibration({
@@ -320,6 +335,7 @@ function wrapMakerSubmit(
     async cancel(order) {
       const startedAt = Date.now();
       const result = await delegate.cancel(order);
+      krakenQueueAmend.forget(order.orderId);
       recordLatency({ traceId, venue, operation: 'cancel', symbol: order.symbol, clientRoundTripMs: Date.now() - startedAt });
       return result;
     },
@@ -337,15 +353,20 @@ function wrapMakerSubmit(
  * same-or-better economics. RPI requests enable exchange-native outward spacing
  * normalization so an otherwise-valid leg is not rejected solely because book
  * state changed while the request was in flight. There is no silent downgrade
- * from RPI to standard maker because that could invalidate plan P&L. Measured
- * submit/query/cancel latency is retained only as BPS revalidation scheduling
- * evidence; realized maker terminal outcomes calibrate the shadow fill model but
- * never fabricate BPS, finalize settlement, or own execution.
+ * from RPI to standard maker because that could invalidate plan P&L. Kraken maker
+ * orders may request at most one atomic AmendOrder after bounded authenticated L3
+ * proves actual queue-ahead, the existing queue optimizer recommends exactly one
+ * still-passive tick, and exact remaining-plan USD profit safely covers the full
+ * price concession. Amend/L3 failure never cancels or replaces the resting order.
+ * Measured submit/query/cancel latency remains BPS revalidation scheduling
+ * evidence; realized terminal outcomes calibrate the shadow fill model but never
+ * fabricate BPS, finalize settlement, or own execution.
  */
 export function createPostOnlyMakerAdapters(plan: SharedMakerPlan): Record<ExecutableCexVenue, CexSettlementAdapter> {
   const adapters = createProductionCexSettlementAdapters();
   const traceId = getMakerLifecycleTraceId(plan);
-  adapters[plan.buyVenue] = wrapMakerSubmit(plan.buyVenue, adapters[plan.buyVenue], traceId, plan);
-  adapters[plan.sellVenue] = wrapMakerSubmit(plan.sellVenue, adapters[plan.sellVenue], traceId, plan);
+  const krakenQueueAmend = new KrakenMakerQueueAmendController(plan);
+  adapters[plan.buyVenue] = wrapMakerSubmit(plan.buyVenue, adapters[plan.buyVenue], traceId, plan, krakenQueueAmend);
+  adapters[plan.sellVenue] = wrapMakerSubmit(plan.sellVenue, adapters[plan.sellVenue], traceId, plan, krakenQueueAmend);
   return adapters;
 }
