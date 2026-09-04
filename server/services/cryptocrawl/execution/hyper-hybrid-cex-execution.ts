@@ -15,6 +15,10 @@ import { cexOrderBookStreams } from '../intelligence/cex-order-book-stream.js';
 import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { getOkxRpiExecutionCapability } from '../intelligence/okx-rpi-capability.js';
 import {
+  evaluateOkxRpiTakerBenefit,
+  fetchFreshOkxRpiTakerDepth,
+} from '../intelligence/okx-rpi-taker-depth.js';
+import {
   executeCexPlan,
   type CexExecutionResult,
   type CexExecutorOptions,
@@ -28,6 +32,7 @@ import { preparePrivateCexOrder } from './cex-private-websocket-order-transport.
 import { coinbaseDecimalString, coinbaseProductId } from './coinbase-spot-settlement-adapter.js';
 import { floorToIncrement, validateCoinbaseOrderAgainstProduct } from './coinbase-product-policy.js';
 import { cexDecimalString } from './cex-order-serialization.js';
+import { prepareOkxConvertAuctionAgainstFallback } from './okx-convert-settlement-wrapper.js';
 import { getSpotProductConstraints, type SpotProductConstraints } from './cex-spot-product-policy.js';
 import { assertFreshCexProductConstraints } from './cex-submit-time-product-guard.js';
 import type { ExecutionStatus, NormalizedRealizedExecution, RealizedExecutionEconomics } from './settlement-types.js';
@@ -375,28 +380,75 @@ async function prepareFokSubmission(
   }
 
   if (venue === 'okx') {
-    const websocket = await preparePrivateCexOrder({ venue: 'okx', request, timeInForce: 'fok' });
-    if (websocket) return websocket;
-    const constraints = await getSpotProductConstraints('okx', request.symbol, true);
-    return {
+    const [constraints, rpiSnapshot] = await Promise.all([
+      getSpotProductConstraints('okx', request.symbol, true),
+      process.env.CRYPTO_OKX_RPI_TAKER_EXECUTION_ENABLED !== 'false'
+        ? fetchFreshOkxRpiTakerDepth(request.symbol).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    const rpiBenefit = rpiSnapshot
+      ? evaluateOkxRpiTakerBenefit({
+          snapshot: rpiSnapshot,
+          side: request.side,
+          quantity: request.quantity,
+          plannedLimitPrice: request.price,
+        })
+      : null;
+    const useRpiTakerAccess = Boolean(rpiBenefit?.useRpiTakerAccess && rpiBenefit.total.executable);
+    const rpiAveragePrice = useRpiTakerAccess ? rpiBenefit!.total.averagePrice : null;
+
+    const websocket = await preparePrivateCexOrder({
+      venue: 'okx',
+      request,
+      timeInForce: 'fok',
+      rpiTakerAccess: useRpiTakerAccess,
+    });
+    const fallback: PreparedCexOrderSubmission = websocket || {
       transport: 'rest',
       preparedAt: Date.now(),
       dispatch: async () => {
         const submittedAt = Date.now();
-        const { data } = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
+        const parameters: Record<string, string | boolean> = {
           instId: constraints.exchangeSymbol,
           tdMode: 'cash',
           side: request.side,
           ordType: 'fok',
           px: cexDecimalString(request.price),
           sz: cexDecimalString(request.quantity),
+          ...(useRpiTakerAccess ? { rpiTakerAccess: true } : {}),
           clOrdId: randomUUID().replace(/-/g, '').slice(0, 32),
-        }, { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS });
+        };
+        const { data } = await okxPrivateRequest(
+          '/api/v5/trade/order',
+          'POST',
+          parameters as Record<string, string>,
+          { timeoutMs: ORDER_SUBMIT_TIMEOUT_MS },
+        );
         const order = data[0];
         if (!order || order.sCode !== '0' || !order.ordId) throw new Error(`OKX rejected FOK child: ${order?.sMsg || 'unknown error'}`);
         return { venue, orderId: order.ordId, symbol: request.symbol, side: request.side, requestedQuantity: request.quantity, submittedAt };
       },
     };
+
+    if (useRpiTakerAccess) {
+      logger.info('[CEX HyperHybrid] OKX FOK prepared with measured RPI taker access', {
+        component: 'HyperHybridCexExecution',
+        symbol: request.symbol,
+        side: request.side,
+        quantity: request.quantity,
+        plannedLimitPrice: request.price,
+        measuredAdditionalBaseQuantity: rpiBenefit?.measuredAdditionalBaseQuantity ?? null,
+        measuredPriceImprovementBpsAdvisory: rpiBenefit?.measuredPriceImprovementBps ?? null,
+        canonicalEconomicsMutated: false,
+        terminalSettlementRemainsTruth: true,
+      });
+    }
+
+    return prepareOkxConvertAuctionAgainstFallback({
+      request,
+      fallback,
+      rpiAveragePrice,
+    });
   }
 
   await assertCoinbaseSpotTradeReady();
