@@ -7,6 +7,7 @@ import {
 import { BUILDER_SPONSORED_ETHEREUM } from './builder-sponsored-ethereum-config.js';
 import {
   buildBuilderSponsoredInfrastructurePlan,
+  getBuilderSponsoredReceiverIdentity,
   type BuilderSponsoredInfrastructureCall,
   type BuilderSponsoredReceiverIdentity,
 } from './builder-sponsored-receiver-planner.js';
@@ -152,15 +153,10 @@ export async function prepareBuilderSponsoredDexBootstrap(input: {
   const profitRecipient = address('builder-sponsored profit recipient', input.profitRecipient);
   const loanAmount = stableUnits(input.notionalUsd);
 
-  // The receiver address is deterministic from CREATE2 bytecode + constructor args,
-  // so it is usable as the 0x taker before a greenfield deployment lands.
-  const provisionalInfra = await buildBuilderSponsoredInfrastructurePlan({
-    provider: input.provider,
-    owner: input.owner,
-    targets: [config.balancerV2Vault], // replaced below after live 0x targets are known
-    approvalTokens: [config.usdc],
-  });
-  const receiver = provisionalInfra.identity.address;
+  // CREATE2 gives us the final receiver address without reading or mutating any
+  // on-chain permission state, so the first firm quotes remain a pure preparation.
+  const provisionalIdentity = await getBuilderSponsoredReceiverIdentity(input.owner);
+  const receiver = provisionalIdentity.address;
 
   const first = await firmQuote({ sellToken: config.usdc, buyToken: config.usdt, sellAmount: loanAmount, receiver });
   const second = await firmQuote({ sellToken: config.usdt, buyToken: config.usdc, sellAmount: first.buyAmount, receiver });
