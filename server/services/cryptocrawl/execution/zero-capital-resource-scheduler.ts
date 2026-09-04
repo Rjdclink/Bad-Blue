@@ -45,6 +45,13 @@ export interface MeasuredAtomicResourceRequest {
   fundingMode: string;
 }
 
+export interface ZeroCapitalResourcePlanningProjection {
+  authority: 'zero_capital_resource_scheduler_read_only';
+  mutatesResourceState: false;
+  demands: Array<{ resourceKey: string; units: number }>;
+  budgets: Array<{ resourceKey: string; capacity: number }>;
+}
+
 type ResourcePoolSpec = { prefix: string; capacity: number };
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
@@ -96,6 +103,23 @@ class ZeroCapitalResourceScheduler {
       specs.push({ prefix: `zero:protocol:${chain}:${protocol}`, capacity: protocolCapacity });
     }
     return specs;
+  }
+
+  getMeasuredAtomicPlanningProjection(input: {
+    chain: string;
+    protocols: readonly string[];
+    fundingMode: string;
+  }): ZeroCapitalResourcePlanningProjection {
+    const specs = this.specsFor(input.chain, input.protocols, input.fundingMode);
+    return {
+      authority: 'zero_capital_resource_scheduler_read_only',
+      mutatesResourceState: false,
+      demands: specs.map(spec => ({ resourceKey: spec.prefix, units: 1 })),
+      budgets: specs.map(spec => ({
+        resourceKey: spec.prefix,
+        capacity: Math.max(0, spec.capacity - (this.localUsage.get(spec.prefix) || 0)),
+      })),
+    };
   }
 
   scoreOpportunity(opportunity: ZeroCapitalOpportunity, fundingMode: string, now = Date.now()): ZeroCapitalResourcePriority {
