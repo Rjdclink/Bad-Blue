@@ -9,7 +9,8 @@ import type {
 } from './types.js';
 
 const EPSILON = 1e-9;
-const DEFAULT_EXACT_BID_LIMIT = 18;
+const DEFAULT_EXACT_BID_LIMIT = 16;
+const MAX_EXACT_BID_LIMIT = 18;
 
 interface ValidatedBid {
   bid: NixGenStrategyBid;
@@ -31,25 +32,21 @@ export interface NixGenOptimizationOptions {
   exactBidLimit?: number;
 }
 
-function finitePositive(value: unknown): value is number {
-  return Number.isFinite(value) && Number(value) > 0;
+function finitePositive(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
 }
 
-function bounded01(value: unknown, fallback: number): number {
+function bounded(value: unknown, fallback: number, minimum: number, maximum: number): number {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : fallback;
-}
-
-function boundedPositive(value: unknown, fallback: number, maximum: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.min(maximum, parsed) : fallback;
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
 }
 
 function rankingUtility(bid: NixGenStrategyBid): number {
-  const probability = bounded01(bid.advisory?.probabilityOfProfitableExecution, 1);
-  const terminalCalibration = bounded01(bid.advisory?.terminalCalibrationFactor, 1);
-  const decayUrgency = boundedPositive(bid.advisory?.decayUrgencyFactor, 1, 2);
-  const rankAdjustment = Math.max(0.25, 1 + Math.max(-0.75, Math.min(0.75, Number(bid.advisory?.rankScore ?? 0) / 100)));
+  const probability = bounded(bid.advisory?.probabilityOfProfitableExecution, 1, 0, 1);
+  const terminalCalibration = bounded(bid.advisory?.terminalCalibrationFactor, 1, 0.05, 1);
+  const decayUrgency = bounded(bid.advisory?.decayUrgencyFactor, 1, 1, 2);
+  const rankSignal = bounded(bid.advisory?.rankScore, 0, -75, 75);
+  const rankAdjustment = 1 + rankSignal / 100;
   return bid.economics.netProfitUsd * probability * terminalCalibration * decayUrgency * rankAdjustment;
 }
 
@@ -58,7 +55,10 @@ function normalizeBudgets(input: readonly NixGenResourceBudget[]): Map<string, n
   for (const budget of input) {
     const key = budget.resourceKey.trim();
     if (!key || !Number.isFinite(budget.capacity) || budget.capacity < 0) continue;
-    budgets.set(key, (budgets.get(key) ?? 0) + budget.capacity);
+    const existing = budgets.get(key);
+    // Duplicate projections for the same canonical resource describe the same
+    // capacity, not additive capacity. Keep the most conservative projection.
+    budgets.set(key, existing === undefined ? budget.capacity : Math.min(existing, budget.capacity));
   }
   return budgets;
 }
@@ -78,13 +78,22 @@ function hardValidationReason(
   now: number,
   budgets: ReadonlyMap<string, number>,
 ): NixGenBidRejectionReason | null {
-  if (bid.expiresAt <= now) return 'expired';
-  if (bid.observedAt > now) return 'future_observation';
+  if (!bid.bidId.trim() || !bid.opportunityId.trim() || !bid.strategyId.trim()) return 'invalid_economics_evidence';
+  if (!Number.isFinite(bid.observedAt) || bid.observedAt <= 0 || bid.observedAt > now) return 'future_observation';
+  if (!Number.isFinite(bid.expiresAt) || bid.expiresAt <= now) return 'expired';
+  if (
+    !Number.isFinite(bid.economics.measuredAt)
+    || bid.economics.measuredAt <= 0
+    || bid.economics.measuredAt > now
+    || !bid.economics.authority.trim()
+  ) return 'invalid_economics_evidence';
   if (!finitePositive(bid.economics.netProfitUsd)) return 'non_positive_canonical_economics';
   if (!finitePositive(bid.economics.notionalUsd)) return 'invalid_notional';
-  if (!Number.isFinite(bid.economics.netBps)) return 'invalid_bps';
+  if (bid.economics.netBps !== null && !Number.isFinite(bid.economics.netBps)) return 'invalid_bps';
+  if (!bid.execution.eligible) return 'not_canonically_eligible';
   if (!bid.execution.executable || !bid.execution.authoritativePath.trim()) return 'execution_not_authoritative';
   if (!bid.execution.settlementCapable) return 'settlement_not_capable';
+
   const demand = normalizeDemand(bid.resources);
   if (!demand) return 'invalid_resource_demand';
   for (const [key, units] of demand) {
@@ -101,8 +110,16 @@ function validateBids(
 ): { valid: ValidatedBid[]; rejected: NixGenRejectedBid[] } {
   const valid: ValidatedBid[] = [];
   const rejected: NixGenRejectedBid[] = [];
+  const seenBidIds = new Set<string>();
 
   for (const bid of bids) {
+    const normalizedBidId = bid.bidId.trim();
+    if (normalizedBidId && seenBidIds.has(normalizedBidId)) {
+      rejected.push({ bidId: bid.bidId, opportunityId: bid.opportunityId, reason: 'duplicate_bid_id' });
+      continue;
+    }
+    if (normalizedBidId) seenBidIds.add(normalizedBidId);
+
     const reason = hardValidationReason(bid, now, budgets);
     if (reason) {
       rejected.push({ bidId: bid.bidId, opportunityId: bid.opportunityId, reason });
@@ -157,10 +174,18 @@ function isBetter(left: SelectionState, right: SelectionState): boolean {
   return leftIds < rightIds;
 }
 
+function rawPriorityComparator(left: ValidatedBid, right: ValidatedBid): number {
+  return right.utility - left.utility
+    || right.bid.economics.netProfitUsd - left.bid.economics.netProfitUsd
+    || left.bid.bidId.localeCompare(right.bid.bidId);
+}
+
 function exactSelect(valid: readonly ValidatedBid[], budgets: ReadonlyMap<string, number>): SelectionState {
-  const ordered = [...valid].sort((a, b) => b.utility - a.utility || b.bid.economics.netProfitUsd - a.bid.economics.netProfitUsd || a.bid.bidId.localeCompare(b.bid.bidId));
+  const ordered = [...valid].sort(rawPriorityComparator);
   const suffixUtility = new Array<number>(ordered.length + 1).fill(0);
-  for (let index = ordered.length - 1; index >= 0; index--) suffixUtility[index] = suffixUtility[index + 1] + Math.max(0, ordered[index].utility);
+  for (let index = ordered.length - 1; index >= 0; index--) {
+    suffixUtility[index] = suffixUtility[index + 1] + Math.max(0, ordered[index].utility);
+  }
 
   let best: SelectionState = { selected: [], utility: 0, netProfitUsd: 0, usage: new Map(), exclusionGroups: new Set() };
 
@@ -189,15 +214,20 @@ function scarcityPenalty(candidate: ValidatedBid, budgets: ReadonlyMap<string, n
   return penalty;
 }
 
-function greedySelect(valid: readonly ValidatedBid[], budgets: ReadonlyMap<string, number>): SelectionState {
-  const ordered = [...valid].sort((a, b) => {
-    const aDensity = a.utility / (1 + scarcityPenalty(a, budgets));
-    const bDensity = b.utility / (1 + scarcityPenalty(b, budgets));
-    return bDensity - aDensity || b.utility - a.utility || b.bid.economics.netProfitUsd - a.bid.economics.netProfitUsd || a.bid.bidId.localeCompare(b.bid.bidId);
-  });
+function resourceAwareComparator(budgets: ReadonlyMap<string, number>) {
+  return (left: ValidatedBid, right: ValidatedBid): number => {
+    const leftDensity = left.utility / (1 + scarcityPenalty(left, budgets));
+    const rightDensity = right.utility / (1 + scarcityPenalty(right, budgets));
+    return rightDensity - leftDensity || rawPriorityComparator(left, right);
+  };
+}
 
+function greedySelect(valid: readonly ValidatedBid[], budgets: ReadonlyMap<string, number>): SelectionState {
+  const ordered = [...valid].sort(resourceAwareComparator(budgets));
   let state: SelectionState = { selected: [], utility: 0, netProfitUsd: 0, usage: new Map(), exclusionGroups: new Set() };
-  for (const candidate of ordered) if (canAdd(candidate, state.usage, state.exclusionGroups, budgets)) state = addCandidate(state, candidate);
+  for (const candidate of ordered) {
+    if (canAdd(candidate, state.usage, state.exclusionGroups, budgets)) state = addCandidate(state, candidate);
+  }
   return state;
 }
 
@@ -215,13 +245,24 @@ function resourceUsage(state: SelectionState, budgets: ReadonlyMap<string, numbe
     });
 }
 
+function uniqueOpportunityOrder(bids: readonly ValidatedBid[]): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const candidate of bids) {
+    if (seen.has(candidate.bid.opportunityId)) continue;
+    seen.add(candidate.bid.opportunityId);
+    ordered.push(candidate.bid.opportunityId);
+  }
+  return ordered;
+}
+
 export function optimizeNixGenBids(
   bids: readonly NixGenStrategyBid[],
   resourceBudgets: readonly NixGenResourceBudget[],
   options: NixGenOptimizationOptions = {},
 ): NixGenOptimizationResult {
   const now = options.now ?? Date.now();
-  const exactBidLimit = Math.max(1, Math.min(24, Math.trunc(options.exactBidLimit ?? DEFAULT_EXACT_BID_LIMIT)));
+  const exactBidLimit = Math.max(1, Math.min(MAX_EXACT_BID_LIMIT, Math.trunc(options.exactBidLimit ?? DEFAULT_EXACT_BID_LIMIT)));
   const budgets = normalizeBudgets(resourceBudgets);
   const { valid, rejected } = validateBids(bids, budgets, now);
   const exact = valid.length <= exactBidLimit;
@@ -238,13 +279,21 @@ export function optimizeNixGenBids(
     });
   }
 
+  const selectedOrdered = [...selectedState.selected].sort(resourceAwareComparator(budgets));
+  const remainderOrdered = valid
+    .filter(candidate => !selectedIds.has(candidate.bid.bidId))
+    .sort(resourceAwareComparator(budgets));
+  const priorityOrder = [...selectedOrdered, ...remainderOrdered];
+
   return {
     generatedAt: now,
     decisionAuthority: 'advisory_only',
     executionAuthority: false,
     canonicalEconomicsAuthority: false,
-    selectedBidIds: selectedState.selected.map(item => item.bid.bidId),
-    selectedOpportunityIds: selectedState.selected.map(item => item.bid.opportunityId),
+    selectedBidIds: selectedOrdered.map(item => item.bid.bidId),
+    selectedOpportunityIds: uniqueOpportunityOrder(selectedOrdered),
+    priorityOrderBidIds: priorityOrder.map(item => item.bid.bidId),
+    priorityOrderOpportunityIds: uniqueOpportunityOrder(priorityOrder),
     rejected,
     totalCanonicalNetProfitUsd: selectedState.netProfitUsd,
     totalRankingUtility: selectedState.utility,
