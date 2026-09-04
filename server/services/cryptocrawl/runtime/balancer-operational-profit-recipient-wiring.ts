@@ -9,7 +9,7 @@ import {
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
-import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flashloan-receiver-builder.js';
+import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 
