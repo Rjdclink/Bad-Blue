@@ -1,0 +1,119 @@
+-- Adaptive 30-day operator schedule.
+-- The 30-day calendar window remains fixed and durable. Twenty randomized
+-- baseline attempt dates are persisted at cycle creation, but only days with
+-- terminal-confirmed realized profit count toward the 20-day objective.
+-- Reserve/learning days may be promoted later when required to keep the target
+-- reachable. Failure to reach 20 does not fail the system or force a trade.
+
+ALTER TABLE public.cryptocrawler_operator_strategy_cycles
+  ADD COLUMN IF NOT EXISTS profit_day_target smallint NOT NULL DEFAULT 20;
+
+ALTER TABLE public.cryptocrawler_operator_strategy_cycles
+  DROP CONSTRAINT IF EXISTS cryptocrawler_operator_strategy_cycles_profit_day_target_check;
+ALTER TABLE public.cryptocrawler_operator_strategy_cycles
+  ADD CONSTRAINT cryptocrawler_operator_strategy_cycles_profit_day_target_check
+  CHECK (profit_day_target = 20);
+
+ALTER TABLE public.cryptocrawler_operator_strategy_days
+  ADD COLUMN IF NOT EXISTS eligibility_decided boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS eligibility_source text,
+  ADD COLUMN IF NOT EXISTS profit_qualified boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS profit_qualified_at timestamptz;
+
+UPDATE public.cryptocrawler_operator_strategy_days
+SET profit_qualified = realized_profit_usd > 0,
+    profit_qualified_at = CASE
+      WHEN realized_profit_usd > 0 THEN COALESCE(profit_qualified_at, updated_at, now())
+      ELSE NULL
+    END
+WHERE profit_qualified IS DISTINCT FROM (realized_profit_usd > 0)
+   OR (realized_profit_usd > 0 AND profit_qualified_at IS NULL);
+
+-- Preserve already-observed calendar decisions when upgrading an active cycle.
+-- Future dates remain dynamically decidable so reserve dates can be promoted.
+UPDATE public.cryptocrawler_operator_strategy_days
+SET eligibility_decided = true,
+    eligibility_source = COALESCE(
+      eligibility_source,
+      CASE WHEN is_trade_day THEN 'legacy_randomized_attempt_preserved' ELSE 'legacy_learning_day_preserved' END
+    ),
+    updated_at = now()
+WHERE local_date <= (now() AT TIME ZONE 'America/Chicago')::date
+  AND eligibility_decided = false;
+
+UPDATE public.cryptocrawler_operator_strategy_days
+SET eligibility_source = COALESCE(eligibility_source, 'pending_dynamic_decision')
+WHERE eligibility_decided = false;
+
+-- Preserve migration 033's midnight-safe reservation-date binding while also
+-- qualifying the local day exactly once after terminal-confirmed positive profit.
+CREATE OR REPLACE FUNCTION public.cryptocrawler_operator_strategy_record_profit(
+  p_event_id text,
+  p_opportunity_id text,
+  p_profit_usd numeric
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  target_date date;
+  inserted_event text;
+BEGIN
+  IF p_event_id IS NULL OR length(trim(p_event_id)) = 0 OR p_profit_usd IS NULL OR p_profit_usd <= 0 THEN
+    RETURN false;
+  END IF;
+
+  IF p_opportunity_id IS NOT NULL AND length(trim(p_opportunity_id)) > 0 THEN
+    SELECT local_date INTO target_date
+    FROM public.cryptocrawler_operator_trade_reservations
+    WHERE opportunity_id=p_opportunity_id
+      AND status IN ('RESERVED','SUBMITTED','TERMINAL')
+    LIMIT 1;
+  END IF;
+
+  IF target_date IS NULL THEN
+    target_date := (now() AT TIME ZONE 'America/Chicago')::date;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.cryptocrawler_operator_strategy_days WHERE local_date=target_date
+  ) THEN
+    RAISE EXCEPTION 'operator strategy day is missing for terminal profit date %', target_date;
+  END IF;
+
+  INSERT INTO public.cryptocrawler_operator_profit_events
+    (event_id, opportunity_id, local_date, realized_profit_usd)
+  VALUES (p_event_id, NULLIF(trim(p_opportunity_id), ''), target_date, p_profit_usd)
+  ON CONFLICT (event_id) DO NOTHING
+  RETURNING event_id INTO inserted_event;
+
+  IF inserted_event IS NULL THEN
+    RETURN false;
+  END IF;
+
+  UPDATE public.cryptocrawler_operator_strategy_days
+  SET realized_profit_usd = realized_profit_usd + p_profit_usd,
+      profit_qualified = true,
+      profit_qualified_at = COALESCE(profit_qualified_at, now()),
+      updated_at = now()
+  WHERE local_date=target_date;
+
+  RETURN true;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.cryptocrawler_operator_strategy_record_profit(text,text,numeric) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cryptocrawler_operator_strategy_record_profit(text,text,numeric) TO service_role;
+
+COMMENT ON COLUMN public.cryptocrawler_operator_strategy_cycles.trade_day_offsets IS
+  'Twenty randomized baseline attempt-day offsets. They are preferred attempt dates, not automatically counted profit days; reserve dates may be promoted dynamically.';
+COMMENT ON COLUMN public.cryptocrawler_operator_strategy_cycles.profit_day_target IS
+  'Target number of terminal-confirmed profitable local days inside this fixed 30-calendar-day cycle. Missing the target never forces execution and never invalidates the cycle.';
+COMMENT ON COLUMN public.cryptocrawler_operator_strategy_days.eligibility_decided IS
+  'True once this local date has been durably classified as trading-eligible or learning-only for the current cycle state.';
+COMMENT ON COLUMN public.cryptocrawler_operator_strategy_days.eligibility_source IS
+  'Explains whether eligibility came from randomized baseline selection, adaptive reserve promotion, catch-up mode, target completion, or legacy preservation.';
+COMMENT ON COLUMN public.cryptocrawler_operator_strategy_days.profit_qualified IS
+  'True only after terminal-confirmed positive realized profit has been recorded for this local trading date; only such days count toward the cycle target.';
