@@ -1,6 +1,7 @@
 import type { CanonicalOpportunitySnapshot } from '../../intelligence/canonical-opportunity-state.js';
 import { prepareCexNixGenBid } from './canonical-bid-adapters.js';
-import { compareByNixGenPriority, coordinateNixGenAllocation, type NixGenAllocationSnapshot } from './coordinator.js';
+import { compareByNixGenPriority, type NixGenAllocationSnapshot } from './coordinator.js';
+import { replanNixGenAllocation, type NixGenReplanSnapshot } from './replanner.js';
 
 type CexCandidate = CanonicalOpportunitySnapshot & { plan: NonNullable<CanonicalOpportunitySnapshot['plan']> };
 
@@ -18,8 +19,11 @@ export interface NixGenCexOrderingResult<T extends CexCandidate> {
   enabled: boolean;
   applied: boolean;
   allocation: NixGenAllocationSnapshot | null;
+  replan: NixGenReplanSnapshot | null;
   error: string | null;
 }
+
+let previousCexReplan: NixGenReplanSnapshot | undefined;
 
 function freshnessExpiry(candidate: CexCandidate, now: number, maxQuoteAgeMs: number): number {
   const quoteAgeMs = Math.max(0, Number(candidate.plan.quoteAgeMs) || 0);
@@ -34,7 +38,8 @@ export function orderCexCandidatesWithNixGen<T extends CexCandidate>(
   const original = [...input.candidates];
   const enabled = process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING === 'true';
   if (!enabled || original.length < 2) {
-    return { candidates: original, enabled, applied: false, allocation: null, error: null };
+    if (!enabled) previousCexReplan = undefined;
+    return { candidates: original, enabled, applied: false, allocation: null, replan: null, error: null };
   }
 
   try {
@@ -50,13 +55,17 @@ export function orderCexCandidatesWithNixGen<T extends CexCandidate>(
       .filter((item): item is NonNullable<typeof item> => item !== null);
 
     if (prepared.length < 2) {
-      return { candidates: original, enabled, applied: false, allocation: null, error: null };
+      previousCexReplan = undefined;
+      return { candidates: original, enabled, applied: false, allocation: null, replan: null, error: null };
     }
 
-    const allocation = coordinateNixGenAllocation(prepared, {
+    const replan = replanNixGenAllocation({
+      prepared,
       now: input.now,
       dispatchCapacity: input.dispatchCapacity,
-    });
+    }, previousCexReplan);
+    previousCexReplan = replan;
+    const allocation = replan.allocation;
     const originalIndex = new Map(original.map((candidate, index) => [candidate.opportunityId, index]));
     const ordered = [...original].sort(compareByNixGenPriority(
       allocation.priorityIndexByOpportunityId,
@@ -69,6 +78,7 @@ export function orderCexCandidatesWithNixGen<T extends CexCandidate>(
       enabled,
       applied: ordered.some((candidate, index) => candidate.opportunityId !== original[index]?.opportunityId),
       allocation,
+      replan,
       error: null,
     };
   } catch (error) {
@@ -77,6 +87,7 @@ export function orderCexCandidatesWithNixGen<T extends CexCandidate>(
       enabled,
       applied: false,
       allocation: null,
+      replan: null,
       error: error instanceof Error ? error.message : String(error),
     };
   }
