@@ -9,10 +9,6 @@ import {
   stopControlledLossLearningWorker,
 } from '../execution/controlled-loss-learning-runtime.js';
 import {
-  ensureSystemCapitalSweepWorker,
-  stopSystemCapitalSweepWorker,
-} from '../execution/system-capital-sweep-worker.js';
-import {
   ensureTreasuryTransferRecoveryWorker,
   runTreasuryTransferRecoveryOnce,
   stopTreasuryTransferRecoveryWorker,
@@ -85,9 +81,6 @@ function scheduleRainbowProfitBridge(): void {
 
 async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
   if (!lifecyclePromise) {
-    // Install the canonical Stage-1 live-pilot policy before any discovery or
-    // scheduler module can start. The bootstrap authority mutates StageManager's
-    // shared StageConfig object rather than bypassing governance callers.
     ensureStageOneBootstrapAuthority();
     ensureCanonicalWalletConfiguration();
     ensureZeroCapitalRealizedProfitWiring();
@@ -167,14 +160,12 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   scheduleRainbowProfitBridge();
   ensureSystemCapitalPlacementReconciliation();
 
-  // Treasury and controlled-learning workers are subordinate to the same
-  // migration-owned Overflow schema and governance posture. Controlled-loss
-  // learning is a separate one-per-trading-day lane and never consumes the
-  // ordinary 1-3 profit-seeking parent-trade quota.
+  // Treasury transfer/recovery owns only already-persisted fixed 90/10 obligations.
+  // Retained system capital remains reusable/compounding and is not subject to an
+  // additional arbitrary threshold wallet sweep.
   await runTreasuryTransferRecoveryOnce();
   ensureTreasuryTransferRecoveryWorker();
   ensureCexTreasuryTransferWorker();
-  ensureSystemCapitalSweepWorker();
   ensureControlledLossLearningWorker();
 
   if (!changed) return;
@@ -213,7 +204,8 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     canonicalWalletArchitectureInstalled: true,
     retainedProfitTransferWorker: 'kraken_okx_settlement_recovery_provenance_only',
     payoutFundingTransferWorker: 'kraken_to_okx_terminal_profit_reservation_only',
-    systemCapitalThresholdSweep: 'per_venue_gt_4000_then_exact_80_percent_to_eth_ethereum_wallet',
+    retainedSystemCapitalPolicy: 'fixed_10_percent_remains_reusable_and_compounding',
+    arbitrarySystemCapitalThresholdSweep: false,
     treasuryCrashRecovery: 'recover_before_resubmit_no_duplicate_authority',
     controlledLossLearning: 'one_randomized_post_first_win_unlevered_spot_roundtrip_per_trade_day_max_loss_5_percent_gross_positive_profit',
     controlledLossNormalTradeQuotaConsumed: false,
@@ -226,7 +218,6 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
 
 export async function stopCryptoCrawlerCoreRuntime(): Promise<void> {
   stopControlledLossLearningWorker();
-  stopSystemCapitalSweepWorker();
   stopCexTreasuryTransferWorker();
   stopTreasuryTransferRecoveryWorker();
   stopSystemCapitalPlacementReconciliation();
