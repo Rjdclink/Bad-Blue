@@ -25,17 +25,21 @@ function requireText(relative, content, text, description) {
 
 const operatorPath = 'server/services/cryptocrawl/governance/operator-trading-strategy.ts';
 const operator = read(operatorPath);
-requireText(operatorPath, operator, 'const CYCLE_DAYS = 30;', '30-day cycle must remain exact');
-requireText(operatorPath, operator, 'const TRADE_DAYS_PER_CYCLE = 20;', 'exactly 20 trade days must remain configured');
-requireText(operatorPath, operator, 'const LEARNING_DAYS_PER_CYCLE = 10;', 'exactly 10 learning days must remain configured');
+requireText(operatorPath, operator, 'const CYCLE_DAYS = 30;', '30-day calendar cycle must remain exact');
+requireText(operatorPath, operator, 'const PROFIT_DAYS_TARGET = 20;', 'cycle must target exactly 20 profit-qualified days');
+requireText(operatorPath, operator, 'const BASELINE_ATTEMPT_DAYS_PER_CYCLE = 20;', 'cycle must retain 20 randomized baseline attempt dates');
 requireText(operatorPath, operator, 'const MIN_DAILY_TRADES = 1;', 'daily trade minimum must remain 1');
 requireText(operatorPath, operator, 'const MAX_DAILY_TRADES = 3;', 'daily trade maximum must remain 3');
 requireText(operatorPath, operator, 'const MIN_DAILY_PROFIT_CEILING_USD = 300;', 'daily profit ceiling minimum must remain $300');
 requireText(operatorPath, operator, 'const MAX_DAILY_PROFIT_CEILING_USD = 3_500;', 'daily profit ceiling maximum must remain $3,500');
 requireText(operatorPath, operator, 'const PROFIT_CUSHION_USD = 50;', '$50 stop cushion must remain exact');
-requireText(operatorPath, operator, 'randomInt(0, index + 1)', '20 trade days must remain randomized rather than deterministic');
+requireText(operatorPath, operator, 'randomInt(0, index + 1)', 'baseline attempt days must remain randomized rather than deterministic');
+requireText(operatorPath, operator, 'remainingBaselineDays < neededProfitDays', 'reserve days must promote when baseline dates can no longer satisfy the remaining profit-day target');
+requireText(operatorPath, operator, 'calendarDaysRemaining <= neededProfitDays', 'all remaining days must become eligible when catch-up pressure requires every remaining calendar date');
+requireText(operatorPath, operator, "eligibilitySource = 'profit_day_target_reached'", 'remaining days must become learning-only after 20 profit-qualified days are proven');
+requireText(operatorPath, operator, 'targetStillMathematicallyReachable', 'runtime state must expose whether the 20-day target remains mathematically reachable');
+requireText(operatorPath, operator, 'profit_qualified=true', 'only durable profit-qualified days may count toward the 20-day target');
 requireText(operatorPath, operator, 'ceiling - PROFIT_CUSHION_USD', 'daily stop must remain ceiling minus $50');
-requireText(operatorPath, operator, "blockReason = 'learning_day'", 'non-trading days must remain execution-blocked learning days');
 requireText(operatorPath, operator, 'runMonteCarloSimulation', 'learning days must continue running Cryptara Monte Carlo learning');
 
 const schedulerPath = 'server/services/cryptocrawl/execution/canonical-execution-scheduler.ts';
@@ -46,7 +50,16 @@ requireText(schedulerPath, scheduler, 'runLearningDayCycle', 'canonical schedule
 requireText(schedulerPath, scheduler, 'learning_day', 'learning-day block must reach canonical scheduler');
 requireText(schedulerPath, scheduler, 'daily_profit_stop', 'realized daily profit stop must reach canonical scheduler');
 requireText(schedulerPath, scheduler, 'nixGenExecutionAuthority: false', 'Nix-Gen must remain advisory rather than execution authority');
-requireText(schedulerPath, scheduler, 'operatorStrategyProfitabilityAuthority: false', 'operator timing policy must never replace canonical profitability authority');
+requireText(schedulerPath, scheduler, 'operatorStrategyProfitabilityAuthority: false', 'operator timing policy must never replace canonical profitability authority or force a trade');
+
+const migration43Path = 'server/migrations/043_cryptocrawler_profit_qualified_schedule.sql';
+const migration43 = read(migration43Path);
+requireText(migration43Path, migration43, 'profit_day_target smallint NOT NULL DEFAULT 20', 'profit-day target must be durable schema state');
+requireText(migration43Path, migration43, 'profit_qualified boolean NOT NULL DEFAULT false', 'profit qualification must be durable per-day state');
+requireText(migration43Path, migration43, 'eligibility_decided boolean NOT NULL DEFAULT false', 'dynamic day eligibility must be durable across restarts');
+requireText(migration43Path, migration43, 'profit_qualified = true', 'terminal-confirmed profit recording must qualify the local day');
+requireText(migration43Path, migration43, "status IN ('RESERVED','SUBMITTED','TERMINAL')", 'profit must remain bound to the original reserved local trading date across midnight');
+requireText(migration43Path, migration43, 'Missing the target never forces execution and never invalidates the cycle', 'missing the 20-day target must remain non-fatal and must never force execution');
 
 const retainedPath = 'server/services/cryptocrawl/compensation/retained-profit-ledger.ts';
 const retained = read(retainedPath);
@@ -62,7 +75,7 @@ requireMatch(retainedPath, retained, /weightedCanonicalProfitUsd\s*>\s*Math\.max
 if (/randomInt\(0,\s*RETAINED_TARGET_VENUES\.length\)/.test(retained)) {
   failures.push(`${retainedPath}: retained-capital venue routing must not be randomized`);
 }
-requireText(retainedPath, retained, 'cryptocrawler_operator_strategy_record_profit', 'terminal realized profit must feed daily stop authority');
+requireText(retainedPath, retained, 'cryptocrawler_operator_strategy_record_profit', 'terminal realized profit must feed daily qualification/stop authority');
 requireText(retainedPath, retained, "payout_asset, payout_network", 'payout asset/network must remain durable state');
 requireText(retainedPath, retained, "'ETH','ethereum'", 'new payouts must remain ETH on Ethereum');
 
@@ -121,15 +134,14 @@ requireText(migration41Path, migration41, "NEW.expires_at := 'infinity'::timesta
 const schemaPath = 'server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts';
 const schema = read(schemaPath);
 const schemaVersionMatch = schema.match(/const SCHEMA_VERSION = (\d+);/);
-if (!schemaVersionMatch || Number(schemaVersionMatch[1]) < 12) {
-  failures.push(`${schemaPath}: Overflow schema must be at least controlled-loss schema version 12`);
+if (!schemaVersionMatch || Number(schemaVersionMatch[1]) < 14) {
+  failures.push(`${schemaPath}: Overflow schema must be at least profit-qualified scheduling schema version 14`);
 }
 for (let n = 32; n <= 41; n += 1) {
   requireMatch(schemaPath, schema, new RegExp(`['\"]0${n}_`), `migration 0${n} must be included in Overflow runtime schema`);
 }
-if (schemaVersionMatch && Number(schemaVersionMatch[1]) >= 13) {
-  requireMatch(schemaPath, schema, /['\"]042_cryptocrawler_coinbase_system_capital_rainbow\.sql['\"]/, 'schema v13+ must include Coinbase/Rainbow migration 042');
-}
+requireMatch(schemaPath, schema, /['\"]042_cryptocrawler_coinbase_system_capital_rainbow\.sql['\"]/, 'Overflow schema must include Coinbase/Rainbow migration 042');
+requireMatch(schemaPath, schema, /['\"]043_cryptocrawler_profit_qualified_schedule\.sql['\"]/, 'Overflow schema must include adaptive profit-qualified schedule migration 043');
 requireText(schemaPath, schema, 'public.cryptocrawler_release_system_capital_transfer(uuid)', 'release RPC signature must match the migration-defined function');
 requireText(schemaPath, schema, 'public.cryptocrawler_enforce_lifecycle_inventory_reservation()', 'lifecycle guard function must be schema-required');
 
@@ -157,9 +169,8 @@ const docker = read(dockerPath);
 for (let n = 32; n <= 41; n += 1) {
   requireMatch(dockerPath, docker, new RegExp(`/0${n}_[^\\s]+\\.sql`), `production image must package migration 0${n}`);
 }
-if (schemaVersionMatch && Number(schemaVersionMatch[1]) >= 13) {
-  requireMatch(dockerPath, docker, /\/042_cryptocrawler_coinbase_system_capital_rainbow\.sql/, 'schema v13+ production image must package migration 042');
-}
+requireMatch(dockerPath, docker, /\/042_cryptocrawler_coinbase_system_capital_rainbow\.sql/, 'production image must package migration 042');
+requireMatch(dockerPath, docker, /\/043_cryptocrawler_profit_qualified_schedule\.sql/, 'production image must package migration 043');
 requireText(dockerPath, docker, 'verify-operator-treasury-strategy.cjs', 'production build must execute this semantic verifier');
 
 if (failures.length) {
