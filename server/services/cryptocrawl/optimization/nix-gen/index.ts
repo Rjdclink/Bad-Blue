@@ -8,3 +8,4 @@ export * from './scarcity-pricing.js';
 export * from './replanner.js';
 export * from './robust-uncertainty.js';
 export * from './marginal-resource-value.js';
+export * from './portfolio-view.js';
