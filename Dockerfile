@@ -30,6 +30,7 @@ RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
     node scripts/cryptocrawl/verify-operator-treasury-strategy.cjs && \
     node scripts/cryptocrawl/verify-profit-qualified-schedule-behavior.cjs && \
     node scripts/cryptocrawl/verify-profit-qualified-terminal-wiring.cjs && \
+    node scripts/cryptocrawl/verify-system-native-gas-spend-authority.cjs && \
     node scripts/cryptocrawl/verify-treasury-transfer-recovery-hardening.cjs && \
     node scripts/cryptocrawl/verify-overflow-self-improvement-support.cjs && \
     node scripts/cryptocrawl/verify-controlled-loss-learning.cjs && \
@@ -111,6 +112,7 @@ COPY --from=builder /app/server/migrations/042_cryptocrawler_coinbase_system_cap
 COPY --from=builder /app/server/migrations/043_cryptocrawler_profit_qualified_schedule.sql ./dist/migrations/043_cryptocrawler_profit_qualified_schedule.sql
 COPY --from=builder /app/server/migrations/044_cryptocrawler_treasury_transfer_recovery_hardening.sql ./dist/migrations/044_cryptocrawler_treasury_transfer_recovery_hardening.sql
 COPY --from=builder /app/server/migrations/045_overflow_self_improvement_support.sql ./dist/migrations/045_overflow_self_improvement_support.sql
+COPY --from=builder /app/server/migrations/046_cryptocrawler_system_native_gas_spend_authority.sql ./dist/migrations/046_cryptocrawler_system_native_gas_spend_authority.sql
 
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
