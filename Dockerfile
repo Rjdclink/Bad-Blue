@@ -129,6 +129,9 @@ COPY --from=builder /app/server/migrations/038_cryptocrawler_system_capital_swee
 COPY --from=builder /app/server/migrations/039_cryptocrawler_system_capital_transfer_truth_hardening.sql ./dist/migrations/039_cryptocrawler_system_capital_transfer_truth_hardening.sql
 COPY --from=builder /app/server/migrations/040_cryptocrawler_treasury_reservation_lifecycle_guard.sql ./dist/migrations/040_cryptocrawler_treasury_reservation_lifecycle_guard.sql
 COPY --from=builder /app/server/migrations/041_cryptocrawler_controlled_loss_learning.sql ./dist/migrations/041_cryptocrawler_controlled_loss_learning.sql
+COPY --from=builder /app/server/migrations/042_cryptocrawler_onchain_system_capital.sql ./dist/migrations/042_cryptocrawler_onchain_system_capital.sql
+COPY --from=builder /app/server/migrations/043_cryptocrawler_cross_chain_lifecycle.sql ./dist/migrations/043_cryptocrawler_cross_chain_lifecycle.sql
+COPY --from=builder /app/server/migrations/044_cryptocrawler_funding_feedback_recovery.sql ./dist/migrations/044_cryptocrawler_funding_feedback_recovery.sql
 
 # Overflow-only prerequisites complete migration gaps found by the repository-wide
 # authority audit without enabling duplicate schedulers or browser/API access.
