@@ -341,8 +341,22 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
     await reservation.release().catch(() => undefined);
     return { opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: execution.error || 'CROSS_CHAIN_SUBMISSION_FAILED' };
   } catch (error) {
-    await reservation.release().catch(() => undefined);
-    return { opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: error instanceof Error ? error.message : String(error) };
+    // An executor exception can occur after RPC broadcast but before receipt or
+    // durable callback. Releasing principal here would create a double-spend
+    // window. Keep the bounded reservation and consume the parent slot until a
+    // deterministic recovery path proves no submission exists.
+    logger.error('[FundingCrossChainAdapter] Cross-chain submission state is ambiguous; capital remains reserved', {
+      component: 'FundingCrossChainExecutionAdapter', opportunityId: candidate.opportunityId,
+      reservationId: reservation.reservationId, capitalReleaseAllowed: false, parentSubmissionAmbiguous: true,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN',
+      dispatched: true, submitted: true, success: false, settlementConfirmed: false,
+      submissionReference: `cross_chain_ambiguous:${reservation.reservationId}`,
+      realizedNetProfitUsd: null,
+      error: 'CROSS_CHAIN_SUBMISSION_STATE_AMBIGUOUS',
+    };
   }
 }
 
@@ -353,10 +367,14 @@ async function dispatchFunding(decision: UnifiedExecutionDecision): Promise<Fund
     return { opportunityId: decision.opportunityId, topology: 'FUNDING_ARBITRAGE', path: 'SPOT_PERP_FUNDING', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: 'FUNDING_PREPARED_PLAN_UNAVAILABLE' };
   }
   const result = await fundingPositionLifecycle.execute(plan);
-  const submitted = result.status === 'opened' && Boolean(result.lifecycleId);
+  // `opening` means deterministic client-order recovery is still resolving an
+  // ambiguous submission. Conservatively consume the parent slot exactly as a
+  // concrete submission until recovery proves otherwise; never release it and
+  // permit another parent while real orders may already exist.
+  const submitted = (result.status === 'opened' || result.status === 'opening') && Boolean(result.lifecycleId);
   return {
     opportunityId: decision.opportunityId, topology: 'FUNDING_ARBITRAGE', path: 'SPOT_PERP_FUNDING',
-    dispatched: submitted, submitted, success: result.success, settlementConfirmed: result.settlementConfirmed,
+    dispatched: submitted, submitted, success: result.status === 'opened' && result.success, settlementConfirmed: result.settlementConfirmed,
     lifecycleId: result.lifecycleId, submissionReference: result.lifecycleId,
     realizedNetProfitUsd: result.settlement?.realizedNetProfitUsd, error: result.error,
   };
@@ -397,9 +415,6 @@ class FundingCrossChainExecutionAdapter {
       }
     }
 
-    // The canonical scheduler already calls this method before new-exposure gates.
-    // Advancing cross-chain here gives both long-lived families the same safe
-    // restart/reconciliation cadence without adding a competing timer/daemon.
     await this.advanceOpenCrossChainLifecycles(limit);
     return results;
   }
