@@ -8,7 +8,7 @@ Nix-Gen is an additive global opportunity-allocation layer for CryptoCrawler. It
 - Unknown canonical BPS remains `null`; Nix-Gen does not duplicate BPS calculation.
 - Existing authoritative execution and settlement capability must already exist before a bid is accepted.
 - Governance, Profit Ladder, resource ownership, nonce/rate safety, kill switch, settlement, payout, and terminal learning remain authoritative in their existing systems.
-- Nix-Gen output is advisory. A valid bid that is not in the resource-feasible selected subset remains in the complete priority order and is never silently vetoed.
+- Nix-Gen output is advisory. A valid bid that is not in the resource-feasible selected subset remains in the complete priority order, is marked only as deferred for that allocation snapshot, and is never silently vetoed or labeled rejected.
 - Resource projections are read-only views of the existing resource schedulers. They do not reserve distributed resources or grant execution rights.
 
 ## Optimizer behavior
@@ -17,7 +17,7 @@ Nix-Gen is an additive global opportunity-allocation layer for CryptoCrawler. It
 - Exact search has a hard candidate cap so a combinatorial explosion cannot enter the hot path.
 - Larger sets use a deterministic scarcity-aware fallback.
 - Shared resource capacities are merged conservatively rather than double-counted.
-- Mutual-exclusion groups prevent incompatible variants of the same opportunity from being simultaneously selected.
+- Mutual-exclusion groups prevent incompatible variants of the same opportunity from being simultaneously selected while keeping non-selected valid variants advisory-deferred rather than rejected.
 - Canonical positive net profit is the base objective; independent advisory probability, terminal calibration, decay urgency, and normalized rank evidence may adjust ordering within bounded ranges.
 - Measured-topology `profitabilityScore` is deliberately not recycled as a Nix-Gen rank input because that score already contains profit/confidence and would double-count them.
 
