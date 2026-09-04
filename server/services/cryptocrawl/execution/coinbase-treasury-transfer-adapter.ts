@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { getCryptaraVenueSpecializationLearning } from '../../cryptara/venue-specialization-learning.js';
 import {
   deterministicCoinbaseTransferIdempotencyKey,
   getCoinbaseCryptoTransaction,
@@ -130,6 +131,7 @@ export async function executeCoinbaseToOkxTransfer(input: {
   transferIdentity: string;
   prepared: CoinbaseToOkxPreparedTransfer;
 }): Promise<CoinbaseToOkxSettlement> {
+  const startedAt = Date.now();
   const idem = deterministicCoinbaseTransferIdempotencyKey(`cryptocrawl:coinbase-to-okx:${input.transferIdentity}:${input.prepared.asset}:${input.prepared.desiredNet}`);
   const sent = await sendCoinbaseCrypto({
     asset: input.prepared.asset,
@@ -166,6 +168,42 @@ export async function executeCoinbaseToOkxTransfer(input: {
   if (delivered === null || delivered + 1e-12 < input.prepared.desiredNet) {
     throw new Error('OKX credited less than the persisted Coinbase payout/treasury target');
   }
+
+  const latencyMs = Date.now() - startedAt;
+  const stableFeeUsd = ['USDC', 'USDT'].includes(input.prepared.asset) ? fee : undefined;
+  const learning = getCryptaraVenueSpecializationLearning();
+  for (const role of ['treasury_transfer', 'payout_funding'] as const) {
+    learning.record({
+      venue: 'coinbase',
+      role,
+      terminal: true,
+      success: true,
+      observedAt: Date.now(),
+      latencyMs,
+      realizedCostUsd: stableFeeUsd,
+      evidenceReference: terminal.transactionId,
+      provenance: [
+        'coinbase_authenticated_completed_send',
+        'coinbase_idempotent_transfer_identity',
+        'okx_authenticated_terminal_deposit',
+      ],
+    });
+  }
+  learning.record({
+    venue: 'okx',
+    role: 'payout_funding',
+    terminal: true,
+    success: true,
+    observedAt: Date.now(),
+    latencyMs,
+    evidenceReference: String(deposit?.depId || deposit?.txId || terminal.transactionHash),
+    provenance: [
+      'okx_authenticated_terminal_deposit',
+      'coinbase_authenticated_completed_send',
+      'ethereum_transaction_hash_reconciled',
+    ],
+  });
+
   return {
     sourceDebitDecimal: sourceDebit,
     deliveredDecimal: delivered,
