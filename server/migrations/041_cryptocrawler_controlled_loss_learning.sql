@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_controlled_loss_learning_events 
   )),
   gross_profit_usd_at_claim numeric,
   max_loss_usd numeric,
+  expected_loss_usd numeric,
   venue text CHECK (venue IS NULL OR venue IN ('kraken','okx')),
   symbol text,
   base_asset text,
@@ -36,15 +37,18 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_controlled_loss_learning_events 
   authenticated_taker_fee_bps numeric,
   source_quote_reserve decimal,
   requested_base_quantity decimal,
+  entry_limit_price numeric,
   entry_client_order_id text,
   entry_order_id text,
   entry_inventory_reservation_id uuid,
   entry_applied boolean NOT NULL DEFAULT false,
+  exit_limit_price numeric,
   exit_client_order_id text,
   exit_order_id text,
   exit_inventory_reservation_id uuid,
   exit_applied boolean NOT NULL DEFAULT false,
   realized_profit_usd numeric,
+  terminal_price_observed_at timestamptz,
   settlement_evidence jsonb,
   attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
   retry_not_before timestamptz,
@@ -60,6 +64,7 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_controlled_loss_learning_events 
     max_loss_usd > 0 AND
     max_loss_usd <= gross_profit_usd_at_claim * 0.05 + 0.000000001
   )),
+  CHECK (expected_loss_usd IS NULL OR expected_loss_usd >= 0),
   CHECK (realized_profit_usd IS NULL OR max_loss_usd IS NULL OR realized_profit_usd >= -max_loss_usd - 0.000000001)
 );
 
