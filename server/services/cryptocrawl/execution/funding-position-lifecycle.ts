@@ -8,6 +8,7 @@ export interface FundingExecutionPlan {
   venue: 'okx' | 'kraken';
   symbol: string;
   notionalUsd: number;
+  /** Expected-value carry at entry. This is not canonical deterministic profit. */
   expectedNetProfitUsd: number;
   expectedEntryCostUsd: number;
   expectedExitCostUsd: number;
@@ -26,6 +27,7 @@ export interface FundingOpenReceipt {
   deltaNeutral: boolean;
   measuredSpotQuantity: number;
   measuredPerpQuantity: number;
+  capitalReservationIds?: string[];
 }
 
 export interface FundingTerminalSettlement {
@@ -34,6 +36,8 @@ export interface FundingTerminalSettlement {
   settlementConfirmed: boolean;
   spotClosed: boolean;
   perpClosed: boolean;
+  spotCloseOrderId?: string;
+  perpCloseOrderId?: string;
   fundingPaymentUsd: number | null;
   realizedEntryExitPnlUsd: number | null;
   realizedFeesUsd: number | null;
@@ -49,6 +53,12 @@ export interface FundingLifecycleAdapter {
   openDeltaNeutral(plan: FundingExecutionPlan, lifecycleId: string): Promise<FundingOpenReceipt>;
   marginHealthy(receipt: FundingOpenReceipt): Promise<boolean>;
   closeAndSettle(plan: FundingExecutionPlan, receipt: FundingOpenReceipt): Promise<FundingTerminalSettlement>;
+  /** Reconcile an already-closed pair when exchange funding/bill evidence lagged. */
+  reconcileSettlement?(
+    plan: FundingExecutionPlan,
+    receipt: FundingOpenReceipt,
+    prior: FundingTerminalSettlement,
+  ): Promise<FundingTerminalSettlement>;
 }
 
 export interface FundingLifecycleResult {
@@ -128,10 +138,6 @@ class FundingPositionLifecycle {
       return { success: false, settlementConfirmed: false, status: 'rejected', error: 'REJECT_FUNDING_LIFECYCLE_STORE_UNAVAILABLE' };
     }
 
-    // The partial unique index on active opportunity_id is the concurrency
-    // authority. Healthy opens now cost one DB statement instead of a pre-read
-    // plus insert. Only the rare conflict path performs a read to return the
-    // already-active lifecycle to the caller.
     const lifecycleId = `funding:${randomUUID()}`;
     const inserted = await this.insertOpeningIfAbsent(lifecycleId, plan);
     if (!inserted) {
@@ -145,12 +151,7 @@ class FundingPositionLifecycle {
           error: existing.status === 'open' ? undefined : 'FUNDING_OPPORTUNITY_ALREADY_ACTIVE',
         };
       }
-      return {
-        success: false,
-        settlementConfirmed: false,
-        status: 'rejected',
-        error: 'FUNDING_OPPORTUNITY_ALREADY_ACTIVE',
-      };
+      return { success: false, settlementConfirmed: false, status: 'rejected', error: 'FUNDING_OPPORTUNITY_ALREADY_ACTIVE' };
     }
 
     let receipt: FundingOpenReceipt;
@@ -167,13 +168,9 @@ class FundingPositionLifecycle {
     }
     await this.persist(lifecycleId, plan, 'open', null, receipt);
     logger.info('[FundingLifecycle] Delta-neutral position opened; lifecycle delegated to scheduler ticks', {
-      component: 'FundingPositionLifecycle',
-      lifecycleId,
-      venue: plan.venue,
-      symbol: plan.symbol,
-      fundingTimestamp: plan.fundingTimestamp,
-      blockingWait: false,
-      durableState: true,
+      component: 'FundingPositionLifecycle', lifecycleId, venue: plan.venue, symbol: plan.symbol,
+      fundingTimestamp: plan.fundingTimestamp, blockingWait: false, durableState: true,
+      expectedProfitAuthority: 'projected_carry_not_deterministic_profit',
     });
     return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId };
   }
@@ -210,36 +207,8 @@ class FundingPositionLifecycle {
     return results;
   }
 
-  private async advanceStored(stored: StoredLifecycle): Promise<FundingLifecycleResult> {
-    const { lifecycleId, plan, receipt } = stored;
-    if (!plan || !receipt) {
-      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_DURABLE_STATE_INCOMPLETE' };
-    }
-    const adapter = this.adapters.get(plan.venue);
-    if (!adapter) {
-      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_LIFECYCLE_ADAPTER_UNAVAILABLE' };
-    }
-
-    const maxHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_MAX_HOLD_MS, 8 * 60 * 60_000, 60_000, 24 * 60 * 60_000);
-    const postPaymentHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_POST_PAYMENT_HOLD_MS, 30_000, 0, 5 * 60_000);
-    const normalCloseAt = Math.min(plan.fundingTimestamp + postPaymentHoldMs, receipt.openedAt + maxHoldMs);
-    const healthy = await adapter.marginHealthy(receipt).catch(() => false);
-    if (healthy && Date.now() < normalCloseAt && stored.status !== 'closing') {
-      return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId };
-    }
-
-    const closeReason = healthy ? 'funding_window_complete' : 'margin_health_exit';
-    await this.persist(lifecycleId, plan, 'closing', closeReason, receipt);
-    let settlement: FundingTerminalSettlement;
-    try {
-      settlement = await adapter.closeAndSettle(plan, receipt);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.persist(lifecycleId, plan, 'settlement_unknown', message, receipt);
-      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_CLOSE_SETTLEMENT_FAILED' };
-    }
-
-    const confirmed = settlement.terminal
+  private settlementComplete(settlement: FundingTerminalSettlement): boolean {
+    return settlement.terminal
       && settlement.settlementConfirmed
       && settlement.spotClosed
       && settlement.perpClosed
@@ -248,15 +217,21 @@ class FundingPositionLifecycle {
       && settlement.realizedFeesUsd !== null
       && settlement.realizedNetProfitUsd !== null
       && Number.isFinite(settlement.realizedNetProfitUsd);
+  }
+
+  private async finalizeSettlement(
+    lifecycleId: string,
+    plan: FundingExecutionPlan,
+    receipt: FundingOpenReceipt,
+    settlement: FundingTerminalSettlement,
+    closeReason: string,
+  ): Promise<FundingLifecycleResult> {
+    const confirmed = this.settlementComplete(settlement);
     await this.persist(lifecycleId, plan, confirmed ? 'closed' : 'settlement_unknown', settlement.error || null, receipt, settlement);
     logger.info('[FundingLifecycle] Terminal funding lifecycle result', {
-      component: 'FundingPositionLifecycle',
-      lifecycleId,
-      venue: plan.venue,
-      symbol: plan.symbol,
-      closeReason,
-      settlementConfirmed: confirmed,
-      realizedNetProfitUsd: settlement.realizedNetProfitUsd,
+      component: 'FundingPositionLifecycle', lifecycleId, venue: plan.venue, symbol: plan.symbol,
+      closeReason, settlementConfirmed: confirmed, realizedNetProfitUsd: settlement.realizedNetProfitUsd,
+      pairAlreadyClosed: settlement.spotClosed && settlement.perpClosed,
     });
     return {
       success: confirmed && (settlement.realizedNetProfitUsd ?? Number.NEGATIVE_INFINITY) > 0,
@@ -268,13 +243,62 @@ class FundingPositionLifecycle {
     };
   }
 
+  private async advanceStored(stored: StoredLifecycle): Promise<FundingLifecycleResult> {
+    const { lifecycleId, plan, receipt } = stored;
+    if (!plan || !receipt) {
+      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_DURABLE_STATE_INCOMPLETE' };
+    }
+    const adapter = this.adapters.get(plan.venue);
+    if (!adapter) {
+      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_LIFECYCLE_ADAPTER_UNAVAILABLE' };
+    }
+
+    if (
+      stored.status === 'settlement_unknown'
+      && stored.settlement?.spotClosed === true
+      && stored.settlement?.perpClosed === true
+    ) {
+      if (!adapter.reconcileSettlement) {
+        return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, settlement: stored.settlement, error: 'FUNDING_SETTLEMENT_RECONCILER_UNAVAILABLE' };
+      }
+      try {
+        const reconciled = await adapter.reconcileSettlement(plan, receipt, stored.settlement);
+        return this.finalizeSettlement(lifecycleId, plan, receipt, reconciled, 'post_close_evidence_reconciliation');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.persist(lifecycleId, plan, 'settlement_unknown', message, receipt, stored.settlement);
+        return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, settlement: stored.settlement, error: 'FUNDING_POST_CLOSE_RECONCILIATION_FAILED' };
+      }
+    }
+
+    const maxHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_MAX_HOLD_MS, 8 * 60 * 60_000, 60_000, 24 * 60 * 60_000);
+    const postPaymentHoldMs = bounded(process.env.CRYPTOCRAWL_FUNDING_POST_PAYMENT_HOLD_MS, 30_000, 0, 5 * 60_000);
+    const normalCloseAt = Math.min(plan.fundingTimestamp + postPaymentHoldMs, receipt.openedAt + maxHoldMs);
+    const healthy = await adapter.marginHealthy(receipt).catch(() => false);
+    if (healthy && Date.now() < normalCloseAt && stored.status !== 'closing') {
+      return { success: true, settlementConfirmed: false, status: 'opened', lifecycleId };
+    }
+
+    const closeReason = healthy ? 'funding_window_complete' : 'margin_or_carry_health_exit';
+    await this.persist(lifecycleId, plan, 'closing', closeReason, receipt);
+    let settlement: FundingTerminalSettlement;
+    try {
+      settlement = await adapter.closeAndSettle(plan, receipt);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.persist(lifecycleId, plan, 'settlement_unknown', message, receipt);
+      return { success: false, settlementConfirmed: false, status: 'settlement_unknown', lifecycleId, error: 'FUNDING_CLOSE_SETTLEMENT_FAILED' };
+    }
+    return this.finalizeSettlement(lifecycleId, plan, receipt, settlement, closeReason);
+  }
+
   private validate(plan: FundingExecutionPlan): string | null {
     if (!(plan.notionalUsd > 0) || !Number.isFinite(plan.notionalUsd)) return 'REJECT_FUNDING_NOTIONAL';
-    if (!(plan.expectedNetProfitUsd > 0) || !Number.isFinite(plan.expectedNetProfitUsd)) return 'REJECT_FUNDING_NONPOSITIVE_NET';
+    if (!(plan.expectedNetProfitUsd > 0) || !Number.isFinite(plan.expectedNetProfitUsd)) return 'REJECT_FUNDING_NONPOSITIVE_PROJECTED_NET';
     if (![plan.expectedEntryCostUsd, plan.expectedExitCostUsd, plan.expectedFundingUsd, plan.marginBufferUsd].every(Number.isFinite)) return 'REJECT_FUNDING_ECONOMICS_INCOMPLETE';
     if (!(plan.marginBufferUsd > 0)) return 'REJECT_FUNDING_MARGIN_BUFFER';
     if (!Number.isFinite(plan.fundingTimestamp) || plan.fundingTimestamp <= Date.now()) return 'REJECT_FUNDING_TIMESTAMP';
-    if (!Number.isFinite(plan.expiresAt) || plan.expiresAt <= Date.now()) return 'REJECT_FUNDING_EXPIRED';
+    if (!Number.isFinite(plan.expiresAt) || plan.expiresAt <= Date.now() || plan.expiresAt >= plan.fundingTimestamp) return 'REJECT_FUNDING_EXPIRED';
     return null;
   }
 
@@ -296,10 +320,7 @@ class FundingPositionLifecycle {
           this.tableReadyUntil = 0;
           this.tableRetryAfter = Date.now() + retryMs;
           logger.error('[FundingLifecycle] Migration-owned lifecycle table is missing', {
-            component: 'FundingPositionLifecycle',
-            table: TABLE,
-            runtimeDdlAllowed: false,
-            executionAuthorityGranted: false,
+            component: 'FundingPositionLifecycle', table: TABLE, runtimeDdlAllowed: false, executionAuthorityGranted: false,
           });
         }
         return ready;
@@ -308,8 +329,7 @@ class FundingPositionLifecycle {
         this.tableReadyUntil = 0;
         this.tableRetryAfter = Date.now() + retryMs;
         logger.warn('[FundingLifecycle] Lifecycle-store verification failed closed', {
-          component: 'FundingPositionLifecycle',
-          retryAfterMs: retryMs,
+          component: 'FundingPositionLifecycle', retryAfterMs: retryMs,
           error: error instanceof Error ? error.message : String(error),
         });
         return false;
@@ -328,14 +348,7 @@ class FundingPositionLifecycle {
        VALUES ($1,$2,$3,$4,'opening',$5,$6::jsonb,NULL,now())
        ON CONFLICT DO NOTHING
        RETURNING lifecycle_id`,
-      [
-        lifecycleId,
-        plan.opportunityId,
-        plan.venue,
-        plan.symbol,
-        plan.expectedNetProfitUsd,
-        JSON.stringify(plan),
-      ],
+      [lifecycleId, plan.opportunityId, plan.venue, plan.symbol, plan.expectedNetProfitUsd, JSON.stringify(plan)],
     );
     return result.rowCount === 1;
   }
@@ -353,9 +366,7 @@ class FundingPositionLifecycle {
     const plan = parseJson<FundingExecutionPlan>(row.plan);
     if (!plan) return null;
     return {
-      lifecycleId: String(row.lifecycle_id),
-      plan,
-      status: String(row.status),
+      lifecycleId: String(row.lifecycle_id), plan, status: String(row.status),
       receipt: parseJson<FundingOpenReceipt>(row.open_receipt),
       settlement: parseJson<FundingTerminalSettlement>(row.terminal_settlement),
       lastError: row.last_error ? String(row.last_error) : null,
