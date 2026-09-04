@@ -19,7 +19,17 @@ must(source, "CRYPTO_OKX_ORDER_BUCKET_CAPACITY', 60", 'protected order-write buc
 must(source, 'tokens: OKX_LANE_POLICIES[lane].capacity', 'token bucket starts full');
 must(source, 'await acquireOkxToken(lane);', 'token acquisition before private request');
 must(source, 'await acquireOkxDistributedQuota(lane);', 'Overflow cluster-wide quota before every trade-fee attempt');
-must(source, "} finally {\n    // A rejected request still consumes the venue's rate window.", 'failed requests retain distributed pacing');
+
+// Prove failed requests retain pacing semantically rather than depending on a
+// nearby comment or exact whitespace. The physical request is inside try/finally,
+// the distributed trade-fee lane sleeps until the venue interval elapses, and
+// every attempt is counted even when the operation rejects.
+must(source, 'async function executeStartedLaneOperation<T>', 'started lane operation remains the pacing boundary');
+must(source, 'try {\n    return await operation();\n  } finally {', 'physical private request remains protected by finally');
+must(source, "if (lane === 'trade_fee' && isCoordinationDatabaseConfigured)", 'distributed trade-fee pacing remains failure-safe');
+must(source, 'await sleep(Math.max(0, startedAt + OKX_FEE_MIN_INTERVAL_MS - Date.now()));', 'failed trade-fee requests retain full pacing interval');
+must(source, 'state.requestCount += 1;', 'failed and successful requests both consume observability count');
+
 must(source, "['429', '50011', '51071', '50061']", 'explicit OKX rate-limit codes only');
 must(source, 'Math.random() * ceiling', 'full jitter backoff');
 must(source, 'state.consecutiveRateLimits >= 5', 'circuit breaker threshold');
