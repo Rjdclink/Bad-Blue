@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { ethers } from 'ethers';
 import { pool } from '../../../db.js';
 import logger from '../../../logger.js';
+import type { AcrossBridgeQuote } from '../bridge/across-bridge-provider.js';
 import { getPreparedCrossChainRoute } from '../discovery/cross-chain-opportunity-generator.js';
-import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
+import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { operatorTradingStrategy } from '../governance/operator-trading-strategy.js';
 import { stageManager } from '../governance/stage-management.js';
-import { executeAcrossBridgeQuote } from './across-bridge-executor.js';
+import { executeAcrossBridgeQuote, type AcrossBridgeExecutionResult } from './across-bridge-executor.js';
 import {
   advancePreparedAcrossOriginTransactions,
   claimPendingAcrossOriginFailureFeedback,
@@ -58,6 +59,8 @@ type FundingLifecycleContext = {
 };
 
 const fundingFeedbackWorkerId = `funding-feedback:${randomUUID()}`;
+const CROSS_CHAIN_LIFECYCLE_TABLE = 'public.cryptocrawler_cross_chain_lifecycles';
+const ONCHAIN_RESERVATION_TABLE = 'public.cryptocrawler_onchain_inventory_reservations';
 
 function liveExecutionEnabled(): boolean {
   return process.env.NO_EXECUTION !== 'true'
@@ -74,6 +77,123 @@ function parseJson<T>(value: unknown): T | null {
   if (!value) return null;
   if (typeof value === 'object') return value as T;
   try { return JSON.parse(String(value)) as T; } catch { return null; }
+}
+
+function validTxHash(value: string): boolean {
+  return /^0x[0-9a-fA-F]{64}$/.test(value.trim());
+}
+
+/**
+ * A route can consume receipt-backed approval gas and still fail before principal
+ * broadcast. Persist that terminal cost into the existing durable cross-chain
+ * failure stream instead of dropping it. The last approval receipt hash is the
+ * stable terminal identity; the reserved principal is deleted atomically with the
+ * FAILED lifecycle insert because principal is proven never to have moved.
+ */
+async function persistAcrossPrebroadcastTerminalCost(input: {
+  candidate: MeasuredCandidate;
+  quote: AcrossBridgeQuote;
+  reservationId: string;
+  execution: AcrossBridgeExecutionResult;
+  submittedAt: number;
+}): Promise<CrossChainSubmissionRecord | null> {
+  const { execution } = input;
+  if (execution.depositTxnRef || execution.prebroadcastTerminalCostComplete !== true) return null;
+  const feeWei = String(execution.originNativeFeeWei || '0');
+  if (!/^\d+$/.test(feeWei) || BigInt(feeWei) <= 0n) return null;
+  const approvalTxnRefs = [...new Set((execution.approvalTxnRefs || []).map(value => value.trim().toLowerCase()).filter(validTxHash))];
+  const costReference = approvalTxnRefs.at(-1);
+  if (!costReference) throw new Error('ACROSS_PREBROADCAST_COST_MISSING_RECEIPT_IDENTITY');
+  const expectedProfitUsd = Number(input.candidate.economics.deterministicNetProfitUsd);
+  const notionalUsd = Number(input.candidate.economics.notionalUsd);
+  if (!Number.isFinite(expectedProfitUsd) || !Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+    throw new Error('ACROSS_PREBROADCAST_COST_ECONOMICS_INVALID');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const prior = await client.query(
+      `SELECT lifecycle_id::text,opportunity_id,reservation_id::text,submitted_at
+       FROM ${CROSS_CHAIN_LIFECYCLE_TABLE}
+       WHERE deposit_txn_ref=$1
+       FOR UPDATE`,
+      [costReference],
+    );
+    if (prior.rowCount === 1) {
+      const row = prior.rows[0];
+      if (String(row.opportunity_id) !== input.candidate.opportunityId || String(row.reservation_id) !== input.reservationId) {
+        throw new Error('ACROSS_PREBROADCAST_COST_IDEMPOTENCY_COLLISION');
+      }
+      await client.query(`DELETE FROM ${ONCHAIN_RESERVATION_TABLE} WHERE reservation_id=$1::uuid`, [input.reservationId]);
+      await client.query('COMMIT');
+      return {
+        lifecycleId: String(row.lifecycle_id),
+        opportunityId: input.candidate.opportunityId,
+        reservationId: input.reservationId,
+        depositTxnRef: costReference,
+        submittedAt: new Date(row.submitted_at).getTime(),
+      };
+    }
+
+    const lifecycleId = randomUUID();
+    const terminalEvidence = {
+      authority: 'receipt_backed_across_prebroadcast_cost',
+      principalBroadcast: false,
+      terminalCostComplete: true,
+      approvalTxnRefs,
+      terminalCostReference: costReference,
+      originNativeFeeWei: feeWei,
+      error: execution.error || 'ACROSS_PREBROADCAST_TERMINAL_COST',
+      syntheticEvidenceAllowed: false,
+    };
+    await client.query(
+      `INSERT INTO ${CROSS_CHAIN_LIFECYCLE_TABLE} (
+         lifecycle_id,opportunity_id,reservation_id,provider,deposit_txn_ref,signed_origin_tx,origin_fee_complete,broadcast_at,
+         origin_chain,destination_chain,asset,input_token_address,output_token_address,input_decimals,output_decimals,
+         input_amount_base_units,expected_profit_usd,notional_usd,quote,origin_native_fee_wei,status,settlement_evidence,
+         last_error,submitted_at,last_checked_at,terminal_at,updated_at
+       ) VALUES (
+         $1,$2,$3::uuid,'across',$4,NULL,true,NULL,$5,$6,$7,$8,$9,$10,$11,$12::numeric,$13,$14,$15::jsonb,$16::numeric,
+         'FAILED',$17::jsonb,$18,to_timestamp($19/1000.0),now(),now(),now()
+       )`,
+      [
+        lifecycleId,
+        input.candidate.opportunityId,
+        input.reservationId,
+        costReference,
+        input.quote.originChain,
+        input.quote.destinationChain,
+        input.quote.token,
+        input.quote.inputToken.toLowerCase(),
+        input.quote.outputToken.toLowerCase(),
+        input.quote.inputTokenDecimals,
+        input.quote.outputTokenDecimals,
+        input.quote.inputAmount,
+        expectedProfitUsd,
+        notionalUsd,
+        JSON.stringify(input.quote),
+        feeWei,
+        JSON.stringify(terminalEvidence),
+        `ACROSS_PREBROADCAST_COST_ONLY:${execution.error || 'terminal_prebroadcast_failure'}`,
+        input.submittedAt,
+      ],
+    );
+    await client.query(`DELETE FROM ${ONCHAIN_RESERVATION_TABLE} WHERE reservation_id=$1::uuid`, [input.reservationId]);
+    await client.query('COMMIT');
+    return {
+      lifecycleId,
+      opportunityId: input.candidate.opportunityId,
+      reservationId: input.reservationId,
+      depositTxnRef: costReference,
+      submittedAt: input.submittedAt,
+    };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch { /* preserve original */ }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function fundingContext(lifecycleId: string): Promise<FundingLifecycleContext | null> {
@@ -225,6 +345,7 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
   const acquisitionCostUsd = inputHuman !== null && result.assetUsd !== null && Number.isFinite(inputHuman) ? inputHuman * result.assetUsd : null;
   const proceedsUsd = outputHuman !== null && result.assetUsd !== null && Number.isFinite(outputHuman) ? outputHuman * result.assetUsd : null;
   const candidate = measuredCandidateRegistry.get(result.opportunityId);
+  const prebroadcastCostOnly = result.status === 'FAILED' && String(result.error || '').startsWith('ACROSS_PREBROADCAST_COST_ONLY:');
   if (candidate) {
     const realizedBps = result.notionalUsd > 0 ? realized / result.notionalUsd * 10_000 : null;
     measuredCandidateRegistry.updateStatus(result.opportunityId, realized > 0 ? candidate.status : 'blocked', {
@@ -233,9 +354,11 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
         ? candidate.executionCapabilityReason
         : result.status === 'REFUNDED'
           ? 'Across route returned exact principal; actual origin gas produced a realized loss'
-          : result.status === 'FAILED'
-            ? 'Across origin transaction never transferred principal or reverted; actual origin/approval gas produced a realized loss'
-            : 'Terminal Across same-asset result was not profitable after actual origin gas',
+          : prebroadcastCostOnly
+            ? 'Across principal was never broadcast; receipt-backed approval gas produced a realized loss'
+            : result.status === 'FAILED'
+              ? 'Across origin transaction never transferred principal or reverted; actual origin/approval gas produced a realized loss'
+              : 'Terminal Across same-asset result was not profitable after actual origin gas',
       provenance: [...candidate.provenance, 'cross_chain:durable_terminal_reconciliation', 'cross_chain:system_capital_settlement_authority'],
     });
   }
@@ -244,7 +367,9 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
     ? 'system_owned_origin_consumed_destination_lot_created'
     : result.status === 'REFUNDED'
       ? 'exact_refund_principal_verified'
-      : 'origin_principal_never_moved_or_reverted_exact_hash';
+      : prebroadcastCostOnly
+        ? 'receipt_backed_approval_cost_principal_never_broadcast'
+        : 'origin_principal_never_moved_or_reverted_exact_hash';
   await recordCryptaraExecutionEvidence({
     source: 'master_pipeline',
     opportunityId: result.opportunityId,
@@ -267,7 +392,7 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
       ...(terminal?.provenance ?? []),
       'cross_chain:restart_safe_terminal_feedback',
       'cross_chain:actual_origin_gas',
-      result.status === 'FAILED' ? 'cross_chain:prebroadcast_or_origin_revert_terminal_truth' : 'cross_chain:bridge_terminal_truth',
+      prebroadcastCostOnly ? 'cross_chain:receipt_backed_prebroadcast_cost_only' : result.status === 'FAILED' ? 'cross_chain:prebroadcast_or_origin_revert_terminal_truth' : 'cross_chain:bridge_terminal_truth',
       'synthetic_evidence:false',
     ],
     settlement: {
@@ -335,6 +460,7 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
   };
 
   try {
+    const executionStartedAt = Date.now();
     const execution = await executeAcrossBridgeQuote(quote, { onSubmitted: persist, returnAfterSubmission: true });
     const depositTxnRef = execution.depositTxnRef;
     if (depositTxnRef) {
@@ -347,11 +473,26 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
         error: execution.error,
       };
     }
-    await reservation.release().catch(() => undefined);
+
+    let terminalCost: CrossChainSubmissionRecord | null = null;
+    if (execution.prebroadcastTerminalCostComplete === true) {
+      terminalCost = await persistAcrossPrebroadcastTerminalCost({
+        candidate,
+        quote,
+        reservationId: reservation.reservationId,
+        execution,
+        submittedAt: executionStartedAt,
+      });
+    }
+    if (!terminalCost) await reservation.release().catch(() => undefined);
     return {
       opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN',
-      dispatched: false, submitted: false, success: false, settlementConfirmed: execution.settlementConfirmed,
-      realizedNetProfitUsd: null, error: execution.error || 'CROSS_CHAIN_SUBMISSION_FAILED',
+      dispatched: false, submitted: false, success: false,
+      settlementConfirmed: terminalCost ? true : execution.settlementConfirmed,
+      lifecycleId: terminalCost?.lifecycleId,
+      submissionReference: terminalCost?.lifecycleId,
+      realizedNetProfitUsd: null,
+      error: execution.error || 'CROSS_CHAIN_SUBMISSION_FAILED',
     };
   } catch (error) {
     if (durableSubmission) {
