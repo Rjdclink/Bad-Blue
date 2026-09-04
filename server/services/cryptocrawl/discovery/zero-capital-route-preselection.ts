@@ -86,6 +86,20 @@ function boundedNumber(raw: string | undefined, fallback: number, min: number, m
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
 }
 
+function routeEvidenceMaxAgeMs(): number {
+  return boundedInteger(process.env.ZERO_CAPITAL_ROUTE_EVIDENCE_MAX_AGE_MS, 60_000, 5_000, 300_000);
+}
+
+function hasFreshMeasuredEvidence(item: MutableRouteEvidence, now = Date.now()): boolean {
+  return item.lastMeasuredAt !== null
+    && item.lastMeasuredAt <= now
+    && now - item.lastMeasuredAt <= routeEvidenceMaxAgeMs()
+    && item.recentNetProfitBps !== null
+    && Number.isFinite(item.recentNetProfitBps)
+    && item.recentMeasuredNotionalUsd !== null
+    && Number.isFinite(item.recentMeasuredNotionalUsd);
+}
+
 function routeNotionalUsd(route: ConfiguredZeroCapitalRoute): number {
   const baseUnits = Number(route.amountIn);
   const divisor = Math.pow(10, route.inputTokenDecimals);
@@ -135,14 +149,15 @@ function zeroCapitalPlan(routes: readonly ConfiguredZeroCapitalRoute[]): Hyperdy
   let measured = 0;
   let positive = 0;
   const gaps: number[] = [];
+  const now = Date.now();
   for (const route of routes) {
     const item = evidence.get(route.id);
     if (!item) continue;
     attempts += item.attempts;
     positive += item.positiveQuotes;
-    if (item.recentNetProfitBps === null || !Number.isFinite(item.recentNetProfitBps)) continue;
+    if (!hasFreshMeasuredEvidence(item, now)) continue;
     measured += 1;
-    if (item.recentNetProfitBps <= 0) gaps.push(Math.abs(item.recentNetProfitBps));
+    if (item.recentNetProfitBps! <= 0) gaps.push(Math.abs(item.recentNetProfitBps!));
   }
   return buildHyperdynamicBpsPlan({
     zeroCapitalGapBps: gaps.length > 0 ? Math.min(...gaps) : null,
@@ -161,7 +176,7 @@ function scoreRoute(
   const notionalUsd = routeNotionalUsd(route);
   const gasPressure = Math.max(0.000001, gasCostUsd / Math.max(0.01, notionalUsd)) * plan.gasSensitivityMultiplier;
   const cost = quoteCost(route);
-  if (!item || item.lastMeasuredAt === null || item.recentNetProfitBps === null || item.recentMeasuredNotionalUsd === null) {
+  if (!item || !hasFreshMeasuredEvidence(item, now)) {
     return {
       routeId: route.id,
       preScore: null,
@@ -172,7 +187,7 @@ function scoreRoute(
       gasPressure,
       quoteCost: cost,
       estimatedDeterministicPositiveProbability: item ? positiveProbability(item) : null,
-      ...formationFields(route.id, item?.recentNetProfitBps ?? 0, cost),
+      ...formationFields(route.id, 0, cost),
       authority: 'quote_budget_advisory_only',
       deterministicProfitAuthority: false,
       executionAuthority: false,
@@ -185,15 +200,15 @@ function scoreRoute(
     5_000,
     60 * 60_000,
   );
-  const ageMs = Math.max(0, now - item.lastMeasuredAt);
+  const ageMs = Math.max(0, now - item.lastMeasuredAt!);
   const freshness = Math.pow(0.5, ageMs / freshnessHalfLifeMs);
-  const edgePotential = measuredEdgePotential(item.recentNetProfitBps);
+  const edgePotential = measuredEdgePotential(item.recentNetProfitBps!);
   const executableLiquidity = Math.max(
     0.000001,
-    Math.min(1, item.recentMeasuredNotionalUsd / Math.max(0.01, notionalUsd)),
+    Math.min(1, item.recentMeasuredNotionalUsd! / Math.max(0.01, notionalUsd)),
   );
   const probability = positiveProbability(item);
-  const formation = formationFields(route.id, Math.max(0, item.recentNetProfitBps), cost);
+  const formation = formationFields(route.id, Math.max(0, item.recentNetProfitBps!), cost);
   const baseScore = probability === null
     ? null
     : (edgePotential * executableLiquidity * freshness * probability) / (gasPressure * cost);
@@ -251,12 +266,13 @@ function adaptiveQuoteBudget(
   let measured = 0;
   let promising = 0;
   let positive = 0;
+  const now = Date.now();
   for (const route of routes) {
     const item = evidence.get(route.id);
-    if (!item || item.lastMeasuredAt === null || item.recentNetProfitBps === null) continue;
+    if (!item || !hasFreshMeasuredEvidence(item, now)) continue;
     measured += 1;
-    if (item.recentNetProfitBps > 0) positive += 1;
-    if (item.recentNetProfitBps >= -scaleBps) promising += 1;
+    if (item.recentNetProfitBps! > 0) positive += 1;
+    if (item.recentNetProfitBps! >= -scaleBps) promising += 1;
   }
 
   const signal = measured > 0 ? (promising + positive * 2) / measured : 0;
@@ -402,6 +418,9 @@ export function recordZeroCapitalRouteQuoteCycle(
       const notional = Number(quote.amountIn) / Math.pow(10, quote.inputTokenDecimals);
       if (Number.isFinite(notional) && notional > 0) observationNotionalUsd = notional;
       current.recentMeasuredNotionalUsd = observationNotionalUsd;
+    } else {
+      current.recentNetProfitBps = null;
+      current.recentMeasuredNotionalUsd = null;
     }
 
     if (deterministicPositive && quote) {
@@ -422,8 +441,14 @@ export function recordZeroCapitalRouteQuoteCycle(
 }
 
 export function getZeroCapitalRoutePreselectionEvidence(): ZeroCapitalRoutePreselectionEvidence[] {
-  return [...evidence.values()].map(item => ({
-    ...item,
-    estimatedDeterministicPositiveProbability: positiveProbability(item),
-  }));
+  const now = Date.now();
+  return [...evidence.values()].map(item => {
+    const fresh = hasFreshMeasuredEvidence(item, now);
+    return {
+      ...item,
+      recentNetProfitBps: fresh ? item.recentNetProfitBps : null,
+      recentMeasuredNotionalUsd: fresh ? item.recentMeasuredNotionalUsd : null,
+      estimatedDeterministicPositiveProbability: positiveProbability(item),
+    };
+  });
 }
