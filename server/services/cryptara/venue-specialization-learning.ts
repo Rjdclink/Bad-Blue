@@ -1,4 +1,4 @@
-import { getCryptara, type CryptaraExecutionFeedback } from './index.js';
+import type { CryptaraExecutionFeedback } from './index.js';
 
 export type CryptaraVenue = 'coinbase' | 'kraken' | 'okx';
 export type CryptaraVenueRole =
@@ -162,14 +162,6 @@ export class CryptaraVenueSpecializationLearning {
     if (normalized.fillRatio !== undefined) current.fillRatioEwma = ewma(current.fillRatioEwma, normalized.fillRatio, current.terminalObservations);
     current.lastObservedAt = normalized.observedAt;
     this.metrics.set(metricKey, current);
-
-    getCryptara().emit('venue-specialization:learning', {
-      ...normalized,
-      learningAuthority: 'cryptara_venue_specialization',
-      executionAuthority: false,
-      canonicalEconomicsAuthority: false,
-      capitalMovementAuthority: false,
-    });
   }
 
   recordTerminalExecution(feedback: CryptaraExecutionFeedback): void {
