@@ -18,3 +18,4 @@ export * from './global-live-portfolio.js';
 export * from './terminal-calibration.js';
 export * from './quanti-analysis.js';
 export * from './integration-contract.js';
+export * from './completion-manifest.js';
