@@ -7,3 +7,4 @@ export * from './cex-ordering.js';
 export * from './scarcity-pricing.js';
 export * from './replanner.js';
 export * from './robust-uncertainty.js';
+export * from './marginal-resource-value.js';
