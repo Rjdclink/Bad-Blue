@@ -19,6 +19,7 @@ const lotLedger = read('server/services/cryptocrawl/execution/cex-system-owned-l
 const exactDecimal = read('server/services/cryptocrawl/execution/exact-decimal.ts');
 const allocationMigration = read('server/migrations/026_cryptocrawler_system_capital_allocations.sql');
 const ownershipMigration = read('server/migrations/027_cryptocrawler_cex_system_owned_lots.sql');
+const coinbaseOwnershipMigration = read('server/migrations/042_cryptocrawler_coinbase_system_capital_and_rainbow.sql');
 const overflowSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
 const dockerfile = read('Dockerfile');
 
@@ -29,7 +30,8 @@ assert.match(hierarchy, /external\/operator capital remains protected/, 'unprove
 assert.match(hierarchyTest, /funded-wallet-without-provenance/, 'regression test must cover a funded external wallet');
 assert.match(hierarchyTest, /verified-self-funded-capital/, 'regression test must cover verified self-funded capital');
 
-assert.match(inventory, /if\s*\(venue\s*===\s*'coinbase'\)\s*return\s+Math\.max\(configuredMinimumReserve,\s*available\)/, 'Coinbase operator balance must remain non-spendable');
+assert.match(inventory, /if\s*\(venue\s*===\s*'coinbase'\)\s*\{[\s\S]{0,320}available\s*-\s*systemOwned/, 'Coinbase must reserve every account-wide unit except exact independently proven system-owned inventory');
+assert.match(inventory, /Account-wide balances never create ownership on any venue/, 'authenticated account balances must never create system ownership');
 assert.match(inventory, /SYSTEM_CAPITAL_OWNERSHIP_TABLE\s*=\s*'cryptocrawler_cex_system_owned_lots'/, 'CEX reservation must consume the canonical physical ownership-lot table');
 assert.doesNotMatch(inventory, /SYSTEM_CAPITAL_ALLOCATION_TABLE|remaining_destination_base_units/, 'placement rows must not remain an alternate CEX spend authority');
 assert.match(inventory, /status='ACTIVE' AND remaining_decimal > 0/, 'only active settlement-derived ownership lots may establish CEX spendable ownership');
@@ -69,7 +71,7 @@ assert.doesNotMatch(allocation, /CREATE\s+TABLE|ALTER\s+TABLE|CREATE\s+INDEX/i, 
 
 assert.match(placement, /\['zero-capital', 'system-capital'\]\.includes\(parts\[0\]\)/, 'physical placement must accept legacy zero-capital bootstrap and generic system-generated capital provenance');
 assert.match(placement, /scope\.tokenAddress/, 'physical placement must bind the token contract encoded by SELF_FUNDED provenance');
-assert.match(placement, /venue === 'coinbase'/, 'physical CEX placement must reject Coinbase');
+assert.match(placement, /venue === 'coinbase'/, 'Coinbase placement must remain fail-closed until its provider-specific receive/deposit lifecycle is implemented');
 assert.match(placement, /const contractAddress = String\(entry\?\.ctAddr/, 'OKX currency admission must inspect authenticated full contract identity');
 assert.match(placement, /return contractAddress === tokenAddress && canDeposit/, 'OKX Get currencies full contract address must exactly match the SELF_FUNDED token contract');
 assert.match(placement, /const contractSuffix = String\(entry\?\.ctAddr/, 'OKX deposit-address admission must inspect the documented contract suffix');
@@ -95,6 +97,7 @@ assert.match(placement, /tradingAccountSpendableAuthority:\s*true/, 'PLACED OKX 
 
 assert.match(exactDecimal, /bigint/, 'exact CEX settlement arithmetic must use integer-backed decimal math');
 assert.doesNotMatch(exactDecimal, /parseFloat\(|Number\(/, 'exact CEX settlement arithmetic must not pass through floating point');
+assert.match(exactSettlement, /\/api\/v3\/brokerage\/orders\/historical\/fills/, 'exact Coinbase ownership evidence must come from authenticated fill records');
 assert.match(exactSettlement, /\/api\/v5\/trade\/fills/, 'exact OKX ownership evidence must come from authenticated fill records');
 assert.match(exactSettlement, /\/0\/private\/QueryTrades/, 'exact Kraken ownership evidence must come from authenticated trade/fill records');
 assert.match(exactSettlement, /query_trades_batched_at_20/, 'Kraken exact fill evidence must respect the private QueryTrades transaction-id batch limit');
@@ -107,7 +110,7 @@ assert.match(exactSettlement, /compareExactDecimals\(feeDecimal, '0'\) !== 0\) a
 assert.doesNotMatch(exactSettlement, /Kraken exact system-capital fill transformation remains fail-closed/, 'Kraken exact ownership transformation must no longer be left unwired');
 
 assert.match(lotLedger, /SYSTEM_CAPITAL_PROVENANCE_DEFICIT/, 'unowned trade or fee debit must be a hard provenance deficit');
-assert.match(lotLedger, /venue: 'okx' \| 'kraken'/, 'the exact ownership ledger must support both system-owned execution venues');
+assert.match(lotLedger, /type SystemOwnedCexVenue = 'coinbase' \| 'okx' \| 'kraken'/, 'the exact ownership ledger must support Coinbase, OKX and Kraken system-owned execution inventory');
 assert.match(lotLedger, /WHERE venue=\$1 AND asset=\$2 AND status='ACTIVE'/, 'lot consumption must lock only active system-owned inventory');
 assert.match(lotLedger, /FOR UPDATE/, 'CEX ownership mutation must lock consumed lots transactionally');
 const debitIndex = lotLedger.indexOf('// Debit first.');
@@ -123,9 +126,13 @@ assert.match(ownershipMigration, /cryptocrawler_cex_system_owned_settlements/, '
 assert.match(ownershipMigration, /cryptocrawler_seed_cex_system_owned_lot/, 'PLACED CEX deposits must atomically seed physical ownership');
 assert.match(ownershipMigration, /tradingAccountSpendableAuthority/, 'OKX deposit lots require Trading-account spendability evidence');
 assert.match(ownershipMigration, /Authenticated account balances never create rows/, 'ownership migration must explicitly deny account-wide balance provenance');
+assert.match(coinbaseOwnershipMigration, /target_venue IN \('coinbase','kraken','okx'\)/, 'Coinbase must be admitted only through the canonical system-capital destination constraint');
+assert.match(coinbaseOwnershipMigration, /tradingAccountSpendableAuthority/, 'Coinbase system deposits must require explicit trading-account spendability proof');
 assert.match(overflowSchema, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'Overflow runtime schema must provision the physical ownership migration');
+assert.match(overflowSchema, /042_cryptocrawler_coinbase_system_capital_and_rainbow\.sql/, 'Overflow runtime schema must provision Coinbase ownership expansion');
 assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_lots/, 'Overflow runtime admission must require the ownership-lot table');
 assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_settlements/, 'Overflow runtime admission must require settlement idempotency state');
 assert.match(dockerfile, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'production image must bundle the physical CEX ownership migration');
+assert.match(dockerfile, /042_cryptocrawler_coinbase_system_capital_and_rainbow\.sql/, 'production image must bundle the Coinbase/Rainbow ownership migration');
 
-console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; Profit Ladder binds taker and maker CEX size, and exact Kraken/OKX terminal fills including maker rebates transform only system-owned inventory');
+console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; Coinbase/Kraken/OKX spendability requires exact ACTIVE system-owned lots, Profit Ladder binds taker and maker CEX size, and terminal authenticated fills transform only system-owned inventory');
