@@ -24,10 +24,12 @@ COPY . .
 # Production gates run before the normal build. Zero-initial-capital and Rainbow
 # structural checks are mandatory so a build cannot silently reintroduce operator
 # principal/native-gas requirements, random capital routing, duplicate execution
-# authority, or venue-learning authority over deterministic economics.
+# authority, venue-learning authority over deterministic economics, or an
+# application service whose required Overflow relations are absent.
 RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
     node scripts/cryptocrawl/verify-operator-treasury-strategy.cjs && \
     node scripts/cryptocrawl/verify-treasury-transfer-recovery-hardening.cjs && \
+    node scripts/cryptocrawl/verify-overflow-self-improvement-support.cjs && \
     node scripts/cryptocrawl/verify-controlled-loss-learning.cjs && \
     node scripts/cryptocrawl/verify-zero-initial-capital-dynamic-redundancy.cjs && \
     node scripts/cryptocrawl/verify-cryptara-venue-specialization.cjs && \
@@ -64,10 +66,11 @@ RUN rm -rf node_modules || true && \
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 
-# CryptoCrawler Overflow is the complete runtime authority plane. Bundle every
+# Overflow is the active application/CryptoCrawler data plane. Bundle every
 # idempotent migration required by execution, governance, learning, settlement,
-# Rainbow and payout state. 016 remains intentionally omitted because it installs
-# an independent scheduler; Overflow must never create a second payout executor.
+# narrowly scoped application support, Rainbow and payout state. 016 remains
+# intentionally omitted because it installs an independent scheduler; Overflow
+# must never create a second payout executor.
 COPY --from=builder /app/server/migrations/007_zero_capital_execution_ledger.sql ./dist/migrations/007_zero_capital_execution_ledger.sql
 COPY --from=builder /app/server/migrations/008_zero_capital_capital_provenance.sql ./dist/migrations/008_zero_capital_capital_provenance.sql
 COPY --from=builder /app/server/migrations/009_railway_bootstrap_budget.sql ./dist/migrations/009_railway_bootstrap_budget.sql
@@ -105,6 +108,7 @@ COPY --from=builder /app/server/migrations/041_cryptocrawler_controlled_loss_lea
 COPY --from=builder /app/server/migrations/042_cryptocrawler_coinbase_system_capital_rainbow.sql ./dist/migrations/042_cryptocrawler_coinbase_system_capital_rainbow.sql
 COPY --from=builder /app/server/migrations/043_cryptocrawler_profit_qualified_schedule.sql ./dist/migrations/043_cryptocrawler_profit_qualified_schedule.sql
 COPY --from=builder /app/server/migrations/044_cryptocrawler_treasury_transfer_recovery_hardening.sql ./dist/migrations/044_cryptocrawler_treasury_transfer_recovery_hardening.sql
+COPY --from=builder /app/server/migrations/045_overflow_self_improvement_support.sql ./dist/migrations/045_overflow_self_improvement_support.sql
 
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
