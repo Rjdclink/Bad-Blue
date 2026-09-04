@@ -79,6 +79,12 @@ must(fundingAdapter, "return { status: 'pending', error: 'FUNDING_ENTRY_PARTIAL_
 mustNot(fundingAdapter, 'spotExposureOpen: spotClosed?.filled !== true', 'unknown close state cannot be interpreted as open exposure');
 mustNot(fundingAdapter, 'perpExposureOpen: perpClosed?.filled !== true', 'unknown close state cannot be interpreted as open exposure');
 
+// Once close or settlement recovery begins, the lifecycle may never resume normal carry.
+must(fundingLifecycle, "const closeRecoveryRequired = activeStatus === 'closing' || activeStatus === 'settlement_unknown';", 'closing and settlement-unknown states are one-way recovery states');
+must(fundingLifecycle, 'const healthy = closeRecoveryRequired ? false : await adapter.marginHealthy(receipt).catch(() => false);', 'close recovery cannot be reclassified as a healthy carry position');
+must(fundingLifecycle, "? 'close_or_settlement_recovery'", 'recovery close reason remains explicit');
+mustNot(fundingLifecycle, "activeStatus !== 'closing'", 'settlement-unknown cannot fall through the old healthy-carry gate');
+
 // Terminal capital release is strictly downstream of complete authenticated accounting.
 must(fundingAdapter, 'function terminalFundingAccountingComplete', 'terminal funding accounting completeness has one explicit predicate');
 must(fundingAdapter, "throw new Error('FUNDING_CAPITAL_RELEASE_REQUIRES_COMPLETE_TERMINAL_ACCOUNTING')", 'capital release helper fails closed without complete terminal accounting');
