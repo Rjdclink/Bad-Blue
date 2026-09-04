@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import { zeroCapitalEngine, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
+import { ensureZeroCapitalNetworkLearningWiring } from './zero-capital-network-learning-wiring.js';
 
 const installed = new WeakSet<object>();
 
@@ -20,7 +21,8 @@ type PostOpReportingRuntime = {
  *
  * This wrapper is installed after the canonical realized-profit boundary and is
  * reporting-only: it never changes profit, success, settlement authority or any
- * capital movement decision.
+ * capital movement decision. Terminal network/protocol learning is installed
+ * outside this wrapper so it sees the corrected measured postOp cost.
  */
 export function ensureZeroCapitalPostOpCostReportingWiring(): void {
   const runtime = zeroCapitalEngine as unknown as PostOpReportingRuntime;
@@ -60,11 +62,15 @@ export function ensureZeroCapitalPostOpCostReportingWiring(): void {
     };
   };
 
+  // Outer learning wrapper receives only the terminal, already-reconciled result.
+  ensureZeroCapitalNetworkLearningWiring();
+
   logger.info('[ZeroInitialCapital] Opportunity-backed postOp cost reporting guard installed', {
     component: 'ZeroCapitalPostOpCostReportingWiring',
     measuredProviderTokenFeePreserved: true,
     netProfitDoubleSubtraction: false,
     operatorNativeGasInputZeroSemanticsPreserved: true,
+    terminalNetworkLearningOutsideCorrectedReportingBoundary: true,
     executionAuthority: false,
     canonicalEconomicsAuthority: false,
   });
