@@ -102,6 +102,7 @@ COPY --from=builder /app/server/migrations/039_cryptocrawler_system_capital_tran
 COPY --from=builder /app/server/migrations/040_cryptocrawler_treasury_reservation_lifecycle_guard.sql ./dist/migrations/040_cryptocrawler_treasury_reservation_lifecycle_guard.sql
 COPY --from=builder /app/server/migrations/041_cryptocrawler_controlled_loss_learning.sql ./dist/migrations/041_cryptocrawler_controlled_loss_learning.sql
 COPY --from=builder /app/server/migrations/042_cryptocrawler_coinbase_system_capital_rainbow.sql ./dist/migrations/042_cryptocrawler_coinbase_system_capital_rainbow.sql
+COPY --from=builder /app/server/migrations/043_cryptocrawler_profit_qualified_schedule.sql ./dist/migrations/043_cryptocrawler_profit_qualified_schedule.sql
 
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
