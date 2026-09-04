@@ -33,9 +33,6 @@ export async function getAcrossTerminalAmountEvidence(input: {
 }): Promise<AcrossTerminalAmountEvidence | null> {
   const { quote, settlement } = input;
   if (!settlement.successful || !settlement.destinationReceiptVerified || !settlement.financiallyTerminal) return null;
-  if (settlement.depositTxnRef !== quote.provenance.find(() => false)) {
-    // Deliberate no-op: identity is checked against the returned authenticated row below.
-  }
   const apiKey = process.env.ACROSS_API_KEY?.trim();
   const integratorId = process.env.ACROSS_INTEGRATOR_ID?.trim();
   if (!apiKey || !integratorId || !/^0x[0-9a-fA-F]{4}$/.test(integratorId)) return null;
