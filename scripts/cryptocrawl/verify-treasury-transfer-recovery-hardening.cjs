@@ -34,6 +34,7 @@ must(workerPath, worker, 'finalizePayoutFromConfirmedSystemTransfer', 'Confirmed
 must(workerPath, worker, "source_reference=COALESCE(NULLIF(source_reference,''),$2)", 'Withdrawal/provider reference must be durable recovery evidence');
 must(workerPath, worker, 'reconcileBeforeResubmitRequired: true', 'Runtime telemetry must expose reconcile-before-resubmit law');
 must(workerPath, worker, "SELECT public.cryptocrawler_release_system_capital_transfer($1::uuid)", 'Pre-submission release must go through canonical release authority');
+must(workerPath, worker, 'attempt_count=r.attempt_count+1', 'Retained-candidate retry accounting must qualify the target row when UPDATE FROM exposes another attempt_count column');
 mustNot(workerPath, worker, "SET status='RELEASED', last_error='settlement-derived system-owned lots are insufficient", 'Worker must not directly release treasury provenance reservations');
 
 const recoveryPath = 'server/services/cryptocrawl/execution/treasury-transfer-recovery-worker.ts';
