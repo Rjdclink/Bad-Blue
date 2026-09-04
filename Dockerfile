@@ -28,6 +28,7 @@ COPY . .
 # application service whose required Overflow relations are absent.
 RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
     node scripts/cryptocrawl/verify-operator-treasury-strategy.cjs && \
+    node scripts/cryptocrawl/verify-profit-qualified-schedule-behavior.cjs && \
     node scripts/cryptocrawl/verify-treasury-transfer-recovery-hardening.cjs && \
     node scripts/cryptocrawl/verify-overflow-self-improvement-support.cjs && \
     node scripts/cryptocrawl/verify-controlled-loss-learning.cjs && \
