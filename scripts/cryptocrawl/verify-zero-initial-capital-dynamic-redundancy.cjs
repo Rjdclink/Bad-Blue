@@ -16,7 +16,11 @@ const receiverPath = 'server/services/cryptocrawl/execution/adapters/sponsored-r
 const builderPath = 'server/services/cryptocrawl/execution/adapters/builder-sponsored-bundle.ts';
 const enginePath = 'server/services/cryptocrawl/core/zero-capital-engine.ts';
 const dynamicExecutionPath = 'server/services/cryptocrawl/runtime/zero-initial-capital-dynamic-execution-wiring.ts';
+const strictPolicyPath = 'server/services/cryptocrawl/runtime/strict-zero-initial-capital-policy-wiring.ts';
+const balancerGuardPath = 'server/services/cryptocrawl/runtime/balancer-operational-profit-recipient-wiring.ts';
+const postOpReportingPath = 'server/services/cryptocrawl/runtime/zero-capital-postop-cost-reporting-wiring.ts';
 const orderingSeamPath = 'server/services/cryptocrawl/runtime/alchemy-standard-rpc-first-wiring.ts';
+const outerOrderingSeamPath = 'server/services/cryptocrawl/runtime/dynamic-rpc-provider-wiring.ts';
 const dockerPath = 'Dockerfile';
 const schemaPath = 'server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts';
 
@@ -28,7 +32,11 @@ const receiver = read(receiverPath);
 const builder = read(builderPath);
 const engine = read(enginePath);
 const dynamicExecution = read(dynamicExecutionPath);
+const strictPolicy = read(strictPolicyPath);
+const balancerGuard = read(balancerGuardPath);
+const postOpReporting = read(postOpReportingPath);
 const orderingSeam = read(orderingSeamPath);
+const outerOrderingSeam = read(outerOrderingSeamPath);
 const docker = read(dockerPath);
 const schema = read(schemaPath);
 
@@ -69,14 +77,30 @@ must(dynamicExecutionPath, dynamicExecution, 'getZeroInitialCapitalDynamicOrches
 must(dynamicExecutionPath, dynamicExecution, 'operatorNativeGasInputRequired: false', 'Live lanes must distinguish zero-operator-input funding from ordinary wallet gas');
 must(dynamicExecutionPath, dynamicExecution, 'profitRecipient: wallet.address', 'Atomic profit must remain with the operational wallet before Rainbow routing');
 must(dynamicExecutionPath, dynamicExecution, "kind: 'opportunity_erc20_postop'", 'Opportunity-backed postOp gas must be a first-class live lane');
-must(dynamicExecutionPath, dynamicExecution, "kind: 'external_sponsor'", 'External sponsorship must remain an independent live lane');
 must(dynamicExecutionPath, dynamicExecution, "kind: 'system_native'", 'Proven system-native gas must remain a self-funded lane');
 must(dynamicExecutionPath, dynamicExecution, 'provenSystemNativeGasAvailable', 'Wallet native balance alone must never authorize self-funded gas');
 must(dynamicExecutionPath, dynamicExecution, 'parallelPreparation: true', 'Live wrapper must preserve parallel funding preparation');
 must(dynamicExecutionPath, dynamicExecution, 'serializedSubmission: true', 'Live wrapper must preserve one submission authority');
 must(dynamicExecutionPath, dynamicExecution, 'ambiguousSubmissionFallbackAllowed: false', 'Ambiguous submissions must not fall through to a second funding lane');
+
+must(strictPolicyPath, strictPolicy, "id.includes('external-sponsor')", 'Operator-billed ordinary sponsorship must be excluded from strict cold-start admission');
+must(strictPolicyPath, strictPolicy, 'ordinaryOperatorBilledSponsorshipColdStartEligible: false', 'Strict mode must state that operator-billed sponsorship is not zero-capital');
+must(strictPolicyPath, strictPolicy, 'opportunityBackedErc20PostOpColdStartEligible: true', 'Opportunity-backed output-paid gas must remain cold-start eligible');
+must(strictPolicyPath, strictPolicy, 'strictByDefault: true', 'Strict zero-operator-cost semantics must be the default');
+
+must(balancerGuardPath, balancerGuard, "profitRecipient: wallet.address", 'Self-funded Balancer profit must stay operational before Rainbow');
+must(balancerGuardPath, balancerGuard, "funding.mode === 'native'", 'Balancer guard must be limited to native self-funded execution');
+must(balancerGuardPath, balancerGuard, 'operatorNativeGasInputRequired === false', 'Balancer guard must require upstream system-native provenance decision');
+
+must(postOpReportingPath, postOpReporting, "result?.fundingMode !== 'opportunity_erc20_postop'", 'PostOp reporting guard must be scoped to opportunity-backed gas');
+must(postOpReportingPath, postOpReporting, 'gasUsd: providerFeeUsd', 'Measured postOp token gas cost must survive terminal reporting');
+must(postOpReportingPath, postOpReporting, 'no_double_subtraction', 'PostOp fee must not be subtracted from already-net profit twice');
+
+must(orderingSeamPath, orderingSeam, 'ensureBalancerOperationalProfitRecipientWiring();', 'Canonical inner seam must install Balancer recipient guard');
+must(orderingSeamPath, orderingSeam, 'ensureStrictZeroInitialCapitalPolicyWiring();', 'Canonical inner seam must install strict funding admission');
 must(orderingSeamPath, orderingSeam, 'ensureZeroInitialCapitalDynamicExecutionWiring();', 'Canonical runtime must install dynamic funding before realized-profit reconciliation');
 must(orderingSeamPath, orderingSeam, 'dynamicZeroInitialCapitalFundingInstalledAtCanonicalOrderingSeam: true', 'Runtime ordering seam must self-report dynamic funding installation');
+must(outerOrderingSeamPath, outerOrderingSeam, 'ensureZeroCapitalPostOpCostReportingWiring();', 'Canonical outer seam must preserve postOp cost after realized reconciliation');
 
 must(schemaPath, schema, "'042_cryptocrawler_coinbase_system_capital_rainbow.sql'", 'Overflow schema must provision Coinbase/Rainbow migration 042');
 must(dockerPath, docker, '042_cryptocrawler_coinbase_system_capital_rainbow.sql', 'Production image must contain migration 042');
