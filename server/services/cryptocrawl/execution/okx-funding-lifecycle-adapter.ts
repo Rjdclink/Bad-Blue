@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import logger from '../../../logger.js';
 import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
-import { getOkxExecutionRestBaseUrl, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
+import { getOkxExecutionRestBaseUrl, OkxPrivateApiError, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { cexDecimalString } from './cex-order-serialization.js';
 import { getExactOkxOrderAssetDeltas, type ExactCexOrderAssetDeltaEvidence } from './cex-system-capital-settlement-evidence.js';
@@ -139,13 +139,22 @@ async function queryOrder(instId: string, ordId: string): Promise<any> {
   return row;
 }
 
-async function queryOrderByClientId(instId: string, clOrdId: string): Promise<any | null> {
+type ClientOrderLookup = { state: 'found'; row: any } | { state: 'absent' };
+
+async function lookupOrderByClientId(instId: string, clOrdId: string): Promise<ClientOrderLookup> {
   try {
     const response = await okxPrivateRequest('/api/v5/trade/order', 'GET', { instId, clOrdId }, { lane: 'order_read' });
     const row = response.data[0];
-    return row && String(row.clOrdId || '') === clOrdId ? row : null;
-  } catch {
-    return null;
+    if (!row || String(row.clOrdId || '') !== clOrdId) {
+      throw new Error(`OKX clOrdId lookup returned mismatched identity for ${clOrdId}`);
+    }
+    return { state: 'found', row };
+  } catch (error) {
+    // 51603 is OKX's explicit OrderNotFound code. Every other failure is
+    // ambiguous (network/rate/auth/region/etc.) and must NOT authorize a new
+    // submission because clOrdId uniqueness is enforced only for pending orders.
+    if (error instanceof OkxPrivateApiError && String(error.code) === '51603') return { state: 'absent' };
+    throw error;
   }
 }
 
@@ -161,8 +170,8 @@ async function placeOrRecoverOrder(input: {
   ordType?: 'fok' | 'market';
 }): Promise<string> {
   const clOrdId = fundingClientOrderId(input.lifecycleId, input.leg);
-  const prior = await queryOrderByClientId(input.instId, clOrdId);
-  if (prior?.ordId) return String(prior.ordId);
+  const prior = await lookupOrderByClientId(input.instId, clOrdId);
+  if (prior.state === 'found' && prior.row?.ordId) return String(prior.row.ordId);
   try {
     const response = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
       instId: input.instId,
@@ -178,8 +187,11 @@ async function placeOrRecoverOrder(input: {
     if (!row || String(row.sCode || '0') !== '0' || !row.ordId) throw new Error(`OKX funding order rejected: ${String(row?.sMsg || 'missing order id')}`);
     return String(row.ordId);
   } catch (error) {
-    const recovered = await queryOrderByClientId(input.instId, clOrdId);
-    if (recovered?.ordId) return String(recovered.ordId);
+    // A write error can be an ambiguous acknowledgement. Query the deterministic
+    // client ID exactly once; if that read is uncertain it throws and the
+    // lifecycle retries later without another submission.
+    const recovered = await lookupOrderByClientId(input.instId, clOrdId);
+    if (recovered.state === 'found' && recovered.row?.ordId) return String(recovered.row.ordId);
     throw error;
   }
 }
@@ -197,8 +209,10 @@ async function terminalFilled(instId: string, ordId: string): Promise<{ filled: 
 }
 
 async function stateByClientId(instId: string, lifecycleId: string, leg: string): Promise<{ ordId: string; filled: boolean; terminal: boolean; quantity: number; row: any } | null> {
-  const row = await queryOrderByClientId(instId, fundingClientOrderId(lifecycleId, leg));
-  if (!row?.ordId) return null;
+  const lookup = await lookupOrderByClientId(instId, fundingClientOrderId(lifecycleId, leg));
+  if (lookup.state === 'absent') return null;
+  const row = lookup.row;
+  if (!row?.ordId) throw new Error('OKX deterministic funding order lacks ordId');
   const state = String(row.state || '').toLowerCase();
   const quantity = Number(row.accFillSz || 0);
   return {
@@ -634,7 +648,7 @@ const adapter: FundingLifecycleAdapter = {
   async reconcileSettlement(plan, receipt, prior) {
     const okx = asOkxPlan(plan);
     if (!okx) return prior;
-    let reconciledReceipt = await reconcileEntryOwnership(okx, receipt);
+    const reconciledReceipt = await reconcileEntryOwnership(okx, receipt);
     const spotCloseOrderId = prior.spotCloseOrderId
       || (await stateByClientId(okx.okx.spotInstId, receipt.lifecycleId, 'cs'))?.ordId
       || (await stateByClientId(okx.okx.spotInstId, receipt.lifecycleId, 'es'))?.ordId;
@@ -665,7 +679,7 @@ export function ensureOkxFundingLifecycleAdapterRegistered(): void {
     component: 'OkxFundingLifecycleAdapter', venue: 'okx', executionAuthority: 'funding_position_lifecycle',
     privateRequestAuthority: 'cex_private_authority', capitalAuthority: 'cex_inventory_ledger_min_physical_and_system_owned',
     terminalEvidence: 'authenticated_fills_plus_funding_bills', projectedProfitAuthority: false,
-    clientOrderRecovery: 'deterministic_clOrdId_query_before_resubmit',
+    clientOrderRecovery: 'deterministic_clOrdId_query_before_resubmit_fail_closed_on_lookup_uncertainty',
   });
 }
 
