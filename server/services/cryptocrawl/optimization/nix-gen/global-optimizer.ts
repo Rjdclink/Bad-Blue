@@ -1,5 +1,6 @@
 import type {
   NixGenBidRejectionReason,
+  NixGenDeferredBid,
   NixGenOptimizationResult,
   NixGenRejectedBid,
   NixGenResourceBudget,
@@ -269,13 +270,14 @@ export function optimizeNixGenBids(
   const selectedState = exact ? exactSelect(valid, budgets) : greedySelect(valid, budgets);
   const selectedIds = new Set(selectedState.selected.map(item => item.bid.bidId));
   const selectedGroups = new Set(selectedState.selected.map(item => item.exclusionGroup));
+  const deferred: NixGenDeferredBid[] = [];
 
   for (const candidate of valid) {
     if (selectedIds.has(candidate.bid.bidId)) continue;
-    rejected.push({
+    deferred.push({
       bidId: candidate.bid.bidId,
       opportunityId: candidate.bid.opportunityId,
-      reason: selectedGroups.has(candidate.exclusionGroup) ? 'mutual_exclusion' : 'not_selected_by_optimizer',
+      reason: selectedGroups.has(candidate.exclusionGroup) ? 'mutual_exclusion' : 'resource_contention',
     });
   }
 
@@ -295,6 +297,7 @@ export function optimizeNixGenBids(
     priorityOrderBidIds: priorityOrder.map(item => item.bid.bidId),
     priorityOrderOpportunityIds: uniqueOpportunityOrder(priorityOrder),
     rejected,
+    deferred,
     totalCanonicalNetProfitUsd: selectedState.netProfitUsd,
     totalRankingUtility: selectedState.utility,
     resourceUsage: resourceUsage(selectedState, budgets),
