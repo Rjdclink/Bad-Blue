@@ -6,8 +6,6 @@ import * as fs from 'fs';
 const MB = 1024 * 1024;
 const LOG_FILE_MAX_SIZE = 10 * MB; // 10MB for combined logs
 const ERROR_LOG_MAX_SIZE = 5 * MB;  // 5MB for error logs
-const EXCEPTION_LOG_MAX_SIZE = 5 * MB;
-const REJECTION_LOG_MAX_SIZE = 5 * MB;
 
 // Ensure logs directory exists (with error handling for race conditions)
 const logsDir = path.resolve(process.cwd(), 'logs');
@@ -49,23 +47,26 @@ const consoleFormat = winston.format.combine(
     let msg = `${timestamp} ${level}`;
     if (component) msg += ` [${component}]`;
     msg += `: ${message}`;
-    
+
     const metaKeys = Object.keys(meta).filter(k => !RESERVED_KEYS.includes(k));
-    
+
     if (metaKeys.length > 0) {
       const metaObj: Record<string, any> = {};
       metaKeys.forEach(k => metaObj[k] = meta[k]);
       msg += ` ${JSON.stringify(metaObj)}`;
     }
-    
+
     return msg;
   })
 );
 
+// Logger is transport-only. Process-level uncaughtException/unhandledRejection
+// ownership belongs to server/index.ts so there is one fatal lifecycle path and
+// transports are never ended by competing Winston/process handlers.
 export const logger = winston.createLogger({
   level: getLogLevel(),
   format: fileFormat,
-  defaultMeta: { 
+  defaultMeta: {
     service: 'legalwhat',
     pid: process.pid,
   },
@@ -83,20 +84,6 @@ export const logger = winston.createLogger({
       maxFiles: 10,
     }),
   ],
-  exceptionHandlers: [
-    new winston.transports.File({ 
-      filename: path.join(logsDir, 'exceptions.log'),
-      maxsize: EXCEPTION_LOG_MAX_SIZE,
-      maxFiles: 3,
-    }),
-  ],
-  rejectionHandlers: [
-    new winston.transports.File({ 
-      filename: path.join(logsDir, 'rejections.log'),
-      maxsize: REJECTION_LOG_MAX_SIZE,
-      maxFiles: 3,
-    }),
-  ],
 });
 
 logger.exitOnError = false;
@@ -109,16 +96,16 @@ export function createLogger(component: string) {
 
 /**
  * Starts a timer for performance measurement.
- * 
+ *
  * Usage example:
  * ```typescript
  * const timer = startTimer();
  * // ... perform operations ...
  * timer.done({ message: 'Operation completed', operation: 'database-query' });
  * ```
- * 
+ *
  * The timer will log the elapsed time along with the provided metadata.
- * 
+ *
  * @returns A timer object with a done() method to complete timing
  */
 export function startTimer() {
