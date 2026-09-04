@@ -71,10 +71,19 @@ function environmentNumber(prefix: string, venue: InventoryVenue, asset: string)
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function executionMinimumReserve(venue: InventoryVenue, available: number, configuredMinimumReserve: number): number {
-  // Coinbase remains evidence-only for account/fee/settlement truth. Operator
-  // balances on Coinbase are never CryptoCrawler execution capital.
-  if (venue === 'coinbase') return Math.max(configuredMinimumReserve, available);
+function executionMinimumReserve(
+  venue: InventoryVenue,
+  available: number,
+  configuredMinimumReserve: number,
+  provenSystemOwned = 0,
+): number {
+  // Coinbase account-wide balances may include operator funds. Protect every unit
+  // except the exact quantity independently proven in the canonical system-owned
+  // lot ledger. Durable reservation re-checks that ledger before execution.
+  if (venue === 'coinbase') {
+    const systemOwned = Number.isFinite(provenSystemOwned) ? Math.max(0, Math.min(available, provenSystemOwned)) : 0;
+    return Math.max(configuredMinimumReserve, Math.max(0, available - systemOwned));
+  }
   return configuredMinimumReserve;
 }
 
@@ -105,8 +114,6 @@ class CexInventoryLedger {
     if (this.tableReady) return this.tableReady;
     this.tableReady = (async () => {
       try {
-        // Schema ownership belongs to migrations. Runtime trading code is read/write
-        // only and must never acquire DDL locks during a deploy or restart.
         const result = await pool.query(
           `SELECT
              to_regclass($1) IS NOT NULL AS state_present,
@@ -119,10 +126,7 @@ class CexInventoryLedger {
           [`public.${STATE_TABLE}`, `public.${RESERVATION_TABLE}`, `public.${SYSTEM_CAPITAL_OWNERSHIP_TABLE}`, STATE_TABLE],
         );
         const row = result.rows[0] || {};
-        const ready = row.state_present === true &&
-          row.reservation_present === true &&
-          row.system_ownership_present === true &&
-          row.payout_column_present === true;
+        const ready = row.state_present === true && row.reservation_present === true && row.system_ownership_present === true && row.payout_column_present === true;
         if (!ready) {
           logger.error('[InventoryLedger] Durable inventory/system-ownership schema is missing; live reservation fails closed', {
             component: 'CexInventoryLedger',
@@ -156,9 +160,8 @@ class CexInventoryLedger {
     venue: InventoryVenue,
     asset: string,
   ): Promise<number> {
-    // Account-wide exchange balances never create ownership. Coinbase is always
-    // excluded; Kraken/OKX authority comes solely from ACTIVE system-owned lots.
-    if (venue === 'coinbase') return 0;
+    // Account-wide balances never create ownership on any venue. Coinbase is now
+    // eligible only through the same ACTIVE system-owned lots used by Kraken/OKX.
     const result = await client.query(
       `SELECT COALESCE(SUM(remaining_decimal),0)::text AS amount_decimal
        FROM ${SYSTEM_CAPITAL_OWNERSHIP_TABLE}
@@ -166,9 +169,7 @@ class CexInventoryLedger {
       [venue, canonicalAsset(asset)],
     );
     const amount = Number(result.rows[0]?.amount_decimal || 0);
-    if (!Number.isFinite(amount) || amount < 0) {
-      throw new Error(`system_owned_inventory_unrepresentable:${venue}:${canonicalAsset(asset)}`);
-    }
+    if (!Number.isFinite(amount) || amount < 0) throw new Error(`system_owned_inventory_unrepresentable:${venue}:${canonicalAsset(asset)}`);
     return amount;
   }
 
@@ -204,10 +205,7 @@ class CexInventoryLedger {
       executionReserved = Number(execution.rows[0]?.reserved || 0);
     }
 
-    const protectedAmount = Math.max(
-      Number.isFinite(sourceReserved) ? sourceReserved : 0,
-      Number.isFinite(executionReserved) ? executionReserved : 0,
-    );
+    const protectedAmount = Math.max(Number.isFinite(sourceReserved) ? sourceReserved : 0, Number.isFinite(executionReserved) ? executionReserved : 0);
     return anyAuthority ? Math.max(0, protectedAmount) : null;
   }
 
@@ -215,8 +213,7 @@ class CexInventoryLedger {
     const values = new Map<string, number>();
     if (!isDatabaseConfigured) return values;
 
-    const sourceExists = await this.tableExists(pool, PAYOUT_RESERVE_TABLE);
-    if (sourceExists) {
+    if (await this.tableExists(pool, PAYOUT_RESERVE_TABLE)) {
       const source = await pool.query(
         `SELECT asset, COALESCE(SUM(remaining_asset_amount),0) AS reserved
          FROM ${PAYOUT_RESERVE_TABLE}
@@ -231,8 +228,7 @@ class CexInventoryLedger {
       }
     }
 
-    const executionExists = await this.tableExists(pool, PAYOUT_EXECUTION_RESERVE_TABLE);
-    if (executionExists) {
+    if (await this.tableExists(pool, PAYOUT_EXECUTION_RESERVE_TABLE)) {
       const execution = await pool.query(
         `SELECT asset, COALESCE(SUM(reserved_asset_amount),0) AS reserved
          FROM ${PAYOUT_EXECUTION_RESERVE_TABLE}
@@ -243,9 +239,7 @@ class CexInventoryLedger {
       for (const row of execution.rows) {
         const asset = canonicalAsset(String(row.asset || ''));
         const amount = Number(row.reserved || 0);
-        if (asset && Number.isFinite(amount) && amount > 0) {
-          values.set(asset, Math.max(values.get(asset) || 0, amount));
-        }
+        if (asset && Number.isFinite(amount) && amount > 0) values.set(asset, Math.max(values.get(asset) || 0, amount));
       }
     }
     return values;
@@ -262,16 +256,30 @@ class CexInventoryLedger {
       merged.set(asset, (merged.get(asset) || 0) + amount);
     }
 
+    const durableReady = isDatabaseConfigured ? await this.ensureTables() : false;
     const payoutReservedByAsset = await this.payoutReserves(venue);
+    const systemOwnedByAsset = new Map<string, number>();
+    if (venue === 'coinbase' && durableReady) {
+      await Promise.all([...merged.keys()].map(async asset => {
+        try {
+          systemOwnedByAsset.set(asset, await this.systemOwnedForAsset(pool, venue, asset));
+        } catch (error) {
+          logger.warn('[InventoryLedger] Coinbase system-owned amount unavailable; operator balance remains fully protected', {
+            component: 'CexInventoryLedger', venue, asset,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          systemOwnedByAsset.set(asset, 0);
+        }
+      }));
+    }
+
     for (const [asset, available] of merged) {
       const policy = this.policy(venue, asset);
-      const minimumReserve = executionMinimumReserve(venue, available, policy.minimumReserve);
+      const minimumReserve = executionMinimumReserve(venue, available, policy.minimumReserve, systemOwnedByAsset.get(asset) || 0);
       const key = this.key(venue, asset);
       const previous = this.local.get(key);
       this.local.set(key, {
-        venue,
-        asset,
-        available,
+        venue, asset, available,
         reserved: previous?.reserved || 0,
         payoutReserved: payoutReservedByAsset.get(asset) || 0,
         pendingOrder: previous?.pendingOrder || 0,
@@ -283,14 +291,14 @@ class CexInventoryLedger {
       });
     }
 
-    if (await this.ensureTables()) {
+    if (durableReady) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         await client.query(`DELETE FROM ${RESERVATION_TABLE} WHERE expires_at <= now()`);
         for (const [asset, available] of merged) {
           const policy = this.policy(venue, asset);
-          const minimumReserve = executionMinimumReserve(venue, available, policy.minimumReserve);
+          const minimumReserve = executionMinimumReserve(venue, available, policy.minimumReserve, systemOwnedByAsset.get(asset) || 0);
           const payoutReserved = payoutReservedByAsset.get(asset) || 0;
           await client.query(
             `INSERT INTO ${STATE_TABLE}
@@ -323,16 +331,14 @@ class CexInventoryLedger {
 
   private reserveLocal(requirements: readonly InventoryRequirement[]): boolean {
     for (const requirement of requirements) {
-      const key = this.key(requirement.venue, requirement.asset);
-      const snapshot = this.local.get(key);
+      const snapshot = this.local.get(this.key(requirement.venue, requirement.asset));
       if (!snapshot) return false;
       const spendable = snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve;
       if (spendable + 1e-12 < requirement.amount) return false;
       if (snapshot.maximumVenueExposure !== null && snapshot.available > snapshot.maximumVenueExposure + 1e-12) return false;
     }
     for (const requirement of requirements) {
-      const key = this.key(requirement.venue, requirement.asset);
-      const snapshot = this.local.get(key)!;
+      const snapshot = this.local.get(this.key(requirement.venue, requirement.asset))!;
       snapshot.reserved += requirement.amount;
     }
     return true;
@@ -364,8 +370,6 @@ class CexInventoryLedger {
     const expiresAt = acquiredAt + ttlMs;
     let durable = false;
 
-    // Live CEX execution is never authorized from process-local balance telemetry.
-    // Without durable Overflow inventory + system-owned provenance, fail closed.
     if (!isDatabaseConfigured || !await this.ensureTables()) {
       this.releaseLocal(requirements);
       return null;
@@ -400,9 +404,7 @@ class CexInventoryLedger {
         const systemOwnedSpendable = systemOwned - alreadyReserved - payoutReserved - pending;
         const spendable = Math.min(physicalSpendable, systemOwnedSpendable);
         if (!Number.isFinite(spendable) || spendable + 1e-12 < requirement.amount) {
-          throw new Error(
-            `inventory_system_owned_insufficient:${requirement.venue}:${requirement.asset}:physical=${Math.max(0, physicalSpendable).toFixed(12)}:system_owned=${Math.max(0, systemOwnedSpendable).toFixed(12)}:required=${requirement.amount.toFixed(12)}`,
-          );
+          throw new Error(`inventory_system_owned_insufficient:${requirement.venue}:${requirement.asset}:physical=${Math.max(0, physicalSpendable).toFixed(12)}:system_owned=${Math.max(0, systemOwnedSpendable).toFixed(12)}:required=${requirement.amount.toFixed(12)}`);
         }
         if (maximumExposure !== null && Number.isFinite(maximumExposure) && available > maximumExposure + 1e-12) {
           throw new Error(`inventory_exposure_limit:${requirement.venue}:${requirement.asset}`);
@@ -455,16 +457,8 @@ class CexInventoryLedger {
     };
   }
 
-  /**
-   * Reconcile process-local reservation telemetry against the durable reservation
-   * authority. This is intentionally one-way: durable rows can keep a local hold,
-   * but missing/expired durable rows release only the corresponding local hold.
-   * It never creates spend authority or deletes a durable reservation.
-   */
   async reconcileLocalReservationsWithDurableState(): Promise<number> {
     if (this.localReservations.size === 0) return 0;
-    // Fail closed when the durable authority cannot be checked: retain local
-    // holds rather than accidentally making capital spendable.
     if (!isDatabaseConfigured || !await this.ensureTables()) return 0;
 
     const reservationIds = [...this.localReservations.keys()];
@@ -485,10 +479,7 @@ class CexInventoryLedger {
     }
     if (released > 0) {
       logger.info('[InventoryLedger] Released process-local holds absent from durable reservation authority', {
-        component: 'CexInventoryLedger',
-        releasedReservations: released,
-        durableAuthority: RESERVATION_TABLE,
-        spendAuthorityCreated: false,
+        component: 'CexInventoryLedger', releasedReservations: released, durableAuthority: RESERVATION_TABLE, spendAuthorityCreated: false,
       });
     }
     return released;
@@ -502,9 +493,7 @@ class CexInventoryLedger {
     const recommendations: InventoryRebalanceRecommendation[] = [];
     for (const snapshot of this.local.values()) {
       if (snapshot.target === null) continue;
-      const currentSpendable = Math.max(0,
-        snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve,
-      );
+      const currentSpendable = Math.max(0, snapshot.available - snapshot.reserved - snapshot.payoutReserved - snapshot.pendingOrder - snapshot.pendingTransfer - snapshot.minimumReserve);
       const delta = snapshot.target - currentSpendable;
       const tolerance = Math.max(1e-12, snapshot.target * 0.02);
       if (Math.abs(delta) <= tolerance) continue;
