@@ -4,6 +4,7 @@ import {
   type RpcCapability,
   type SupportedChain,
 } from '../api/blockchain-providers.js';
+import { ensureExpandedNetworkObservability } from './expanded-network-observability.js';
 import { ensureZeroCapitalPostOpCostReportingWiring } from './zero-capital-postop-cost-reporting-wiring.js';
 
 const CHAINS: SupportedChain[] = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base', 'avalanche', 'bsc'];
@@ -190,6 +191,7 @@ async function registerConfiguredMesh(): Promise<void> {
     paidAlchemyRpcRole: 'last_resort_fallback_after_two_no_key_public_transports_when_available',
     alchemyGasSponsorshipUntouched: true,
     postOpMeasuredCostReportingInstalledAfterCanonicalReconciliation: true,
+    expandedNetworkObservation: 'sei_evm_plus_native_solana_capability_only_no_execution_authority',
     localComputeRole: 'ComputationalBeam_Aries_Cryptara_analysis_after_bounded_market_evidence',
   });
 }
@@ -198,6 +200,7 @@ export function ensureDynamicRpcProviderWiring(): Promise<void> {
   // Canonical runtime invokes this component immediately after realized-profit
   // wiring, so this is the correct ordering seam for a reporting-only outer guard.
   ensureZeroCapitalPostOpCostReportingWiring();
+  ensureExpandedNetworkObservability();
   if (installationPromise) return installationPromise;
   installed = true;
   installationPromise = registerConfiguredMesh().catch(error => {
