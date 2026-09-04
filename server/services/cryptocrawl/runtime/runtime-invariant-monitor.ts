@@ -4,6 +4,7 @@ import type { CanonicalOpportunitySnapshot } from '../intelligence/canonical-opp
 export type RuntimeInvariantCode =
   | 'ELIGIBLE_WITHOUT_POSITIVE_NET'
   | 'ELIGIBLE_WITHOUT_MEASURED_LIQUIDITY'
+  | 'ELIGIBLE_WITH_STALE_MARKET_EVIDENCE'
   | 'INVALID_DETERMINISTIC_COSTS'
   | 'DETERMINISTIC_ECONOMICS_MISMATCH'
   | 'SETTLED_WITHOUT_TERMINAL_SETTLEMENT'
@@ -49,6 +50,19 @@ function economicsTolerance(...values: number[]): number {
   return Math.max(0.000001, scale * 1e-9);
 }
 
+function maxQuoteAgeMs(): number {
+  const parsed = Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000);
+  return Number.isFinite(parsed) ? Math.max(250, Math.min(15_000, parsed)) : 5_000;
+}
+
+function effectiveQuoteAgeMs(snapshot: CanonicalOpportunitySnapshot): number {
+  const plan = snapshot.plan;
+  if (!plan || !Number.isFinite(plan.quoteAgeMs) || plan.quoteAgeMs < 0) return Number.POSITIVE_INFINITY;
+  const evaluatedAt = snapshot.assessment?.evaluatedAt ?? snapshot.observedAt;
+  if (!Number.isFinite(evaluatedAt) || evaluatedAt <= 0) return Number.POSITIVE_INFINITY;
+  return plan.quoteAgeMs + Math.max(0, Date.now() - evaluatedAt);
+}
+
 function inspectSnapshot(snapshot: CanonicalOpportunitySnapshot): RuntimeInvariantViolation[] {
   const violations: RuntimeInvariantViolation[] = [];
   const push = (code: RuntimeInvariantCode, detail: string) => violations.push({
@@ -69,6 +83,15 @@ function inspectSnapshot(snapshot: CanonicalOpportunitySnapshot): RuntimeInvaria
     }
 
     if (plan) {
+      const effectiveAgeMs = effectiveQuoteAgeMs(snapshot);
+      const freshnessLimitMs = maxQuoteAgeMs();
+      if (!Number.isFinite(effectiveAgeMs) || effectiveAgeMs >= freshnessLimitMs) {
+        push(
+          'ELIGIBLE_WITH_STALE_MARKET_EVIDENCE',
+          `Eligible market evidence is stale: effectiveQuoteAgeMs=${effectiveAgeMs} maxQuoteAgeMs=${freshnessLimitMs}`,
+        );
+      }
+
       // Exchange fees are signed canonical economics: positive values are costs,
       // negative values are authenticated rebates/refunds. Aggregate totalCostsUsd
       // is therefore also allowed to be negative when rebates exceed other costs.
