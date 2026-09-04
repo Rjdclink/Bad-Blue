@@ -14,13 +14,14 @@ export interface NixGenCanonicalEconomics {
   /** Canonical deterministic all-in net profit. Nix-Gen never manufactures this value. */
   netProfitUsd: number;
   notionalUsd: number;
-  netBps: number;
+  /** Optional because Nix-Gen must not duplicate a missing canonical BPS calculation. */
+  netBps: number | null;
   measuredAt: number;
   authority: string;
 }
 
 export interface NixGenAdvisoryEvidence {
-  /** Advisory only. It may change ordering, never eligibility or canonical economics. */
+  /** Advisory only. These values may change ordering, never eligibility or canonical economics. */
   probabilityOfProfitableExecution?: number;
   terminalCalibrationFactor?: number;
   decayUrgencyFactor?: number;
@@ -28,7 +29,8 @@ export interface NixGenAdvisoryEvidence {
 }
 
 export interface NixGenExecutionEvidence {
-  /** Must reflect the already-authoritative execution path; Nix-Gen cannot grant it. */
+  /** These flags must come from already-authoritative upstream systems; Nix-Gen cannot grant them. */
+  eligible: boolean;
   executable: boolean;
   settlementCapable: boolean;
   authoritativePath: string;
@@ -51,7 +53,7 @@ export interface NixGenStrategyBid {
   execution: NixGenExecutionEvidence;
   advisory?: NixGenAdvisoryEvidence;
   resources: readonly NixGenResourceDemand[];
-  /** Variants sharing a group are mutually exclusive; at most one may be selected. */
+  /** Variants sharing a group are mutually exclusive; at most one may be selected in the advisory feasible set. */
   mutualExclusionGroup?: string;
   metadata?: Readonly<Record<string, unknown>>;
 }
@@ -62,11 +64,14 @@ export interface NixGenResourceBudget {
 }
 
 export type NixGenBidRejectionReason =
+  | 'duplicate_bid_id'
   | 'expired'
   | 'future_observation'
+  | 'invalid_economics_evidence'
   | 'non_positive_canonical_economics'
   | 'invalid_notional'
   | 'invalid_bps'
+  | 'not_canonically_eligible'
   | 'execution_not_authoritative'
   | 'settlement_not_capable'
   | 'invalid_resource_demand'
@@ -92,8 +97,12 @@ export interface NixGenOptimizationResult {
   decisionAuthority: 'advisory_only';
   executionAuthority: false;
   canonicalEconomicsAuthority: false;
+  /** Resource-feasible advisory subset; omission never means execution veto. */
   selectedBidIds: string[];
   selectedOpportunityIds: string[];
+  /** All valid bids in advisory scheduling order, selected subset first. */
+  priorityOrderBidIds: string[];
+  priorityOrderOpportunityIds: string[];
   rejected: NixGenRejectedBid[];
   totalCanonicalNetProfitUsd: number;
   totalRankingUtility: number;
