@@ -13,6 +13,7 @@ import {
   type AutomaticAdvancementResult,
   type PersistedCryptaraExecutionEvidence,
 } from './stage-management.js';
+import { operatorTradingStrategy } from './operator-trading-strategy.js';
 import { profitLadder } from './profit-ladder.js';
 import { riskGovernor } from './risk-governor.js';
 import { hydrateStageOneAdvancementEvidence } from './stage-one-evidence-hydrator.js';
@@ -247,6 +248,19 @@ async function recordCryptaraExecutionEvidenceOnce(
     ensureCryptaraMlRankerHydrated(),
     ensureMeasuredEvolutionFeedbackHydrated(),
   ]);
+
+  // The operator calendar consumes canonical terminal P&L; it never computes
+  // economics itself. Positive P&L may qualify a day only when settlement is
+  // confirmed. A known terminal loss is still recorded so a previously positive
+  // day can lose qualification. Off-schedule executions are rejected by the SQL
+  // authority because they have no operator reservation.
+  const terminalNetPnlUsd = Number(feedback.settlement?.realized.netProfitUsd);
+  if (Number.isFinite(terminalNetPnlUsd) && terminalNetPnlUsd !== 0) {
+    const positiveConfirmed = terminalNetPnlUsd > 0 && feedback.settlement?.settlementConfirmed === true;
+    if (terminalNetPnlUsd < 0 || positiveConfirmed) {
+      await operatorTradingStrategy.recordTerminalPnl(eventId, feedback.opportunityId, terminalNetPnlUsd);
+    }
+  }
 
   const cryptara = getCryptara();
   const prediction = cryptara.getPendingOpportunityPrediction(feedback.opportunityId);
