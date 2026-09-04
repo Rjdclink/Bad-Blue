@@ -104,6 +104,40 @@ ALTER TABLE public.cryptocrawler_cross_chain_lifecycles
     'FAILED'
   ));
 
+-- A durable unresolved lifecycle is stronger capital authority than a wall-clock
+-- reservation TTL. Pin that exact reservation at the database layer so even a
+-- long process outage cannot make in-flight/ambiguous principal reusable. Existing
+-- terminal settlement code deletes the reservation after fill/refund; the
+-- prebroadcast recovery helper deletes it after a proven never-broadcast/revert.
+CREATE OR REPLACE FUNCTION public.cryptocrawler_pin_cross_chain_reservation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.status IN ('PREPARED','SUBMITTED','SETTLEMENT_UNKNOWN','ACCOUNTING_PENDING','RECOVERY_REQUIRED') THEN
+    UPDATE public.cryptocrawler_onchain_inventory_reservations
+    SET expires_at = 'infinity'::timestamptz
+    WHERE reservation_id = NEW.reservation_id;
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS cryptocrawler_cross_chain_pin_reservation
+  ON public.cryptocrawler_cross_chain_lifecycles;
+CREATE TRIGGER cryptocrawler_cross_chain_pin_reservation
+AFTER INSERT OR UPDATE OF status, reservation_id
+ON public.cryptocrawler_cross_chain_lifecycles
+FOR EACH ROW
+EXECUTE FUNCTION public.cryptocrawler_pin_cross_chain_reservation();
+
+-- Backfill any unresolved lifecycle that existed before this trigger was added.
+UPDATE public.cryptocrawler_onchain_inventory_reservations reservation
+SET expires_at = 'infinity'::timestamptz
+FROM public.cryptocrawler_cross_chain_lifecycles lifecycle
+WHERE reservation.reservation_id = lifecycle.reservation_id
+  AND lifecycle.status IN ('PREPARED','SUBMITTED','SETTLEMENT_UNKNOWN','ACCOUNTING_PENDING','RECOVERY_REQUIRED');
+
 -- Recreate partial indexes so an upgraded installation receives PREPARED/FAILED
 -- predicates rather than silently retaining the older index definitions.
 DROP INDEX IF EXISTS public.cryptocrawler_cross_chain_lifecycle_open_idx;
@@ -126,4 +160,4 @@ REVOKE ALL ON TABLE public.cryptocrawler_cross_chain_lifecycles FROM PUBLIC, ano
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_cross_chain_lifecycles TO service_role;
 
 COMMENT ON TABLE public.cryptocrawler_cross_chain_lifecycles IS
-  'Durable Across lifecycle. Exact signed origin transaction identity is persisted before broadcast; unresolved states retain system-owned capital until terminal fill, exact refund, or proven origin failure is reconciled. Expected economics are snapshotted so terminal Cryptara/Nix feedback survives restarts.';
+  'Durable Across lifecycle. Exact signed origin transaction identity is persisted before broadcast; unresolved states pin their exact system-owned capital reservation until terminal fill, exact refund, or proven origin failure is reconciled. Expected economics are snapshotted so terminal Cryptara/Nix feedback survives restarts.';
