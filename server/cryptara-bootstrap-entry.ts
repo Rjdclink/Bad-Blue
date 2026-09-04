@@ -29,6 +29,16 @@ console.log(
   '[PRIMARY][SCHEMA-AUTHORITY] READY: canonical migrations completed and required application tables verified before route/worker startup',
 );
 
+if (process.env.SUBAGENT_ENABLE_OFFICER_SEARCH === 'true') {
+  const { requireOfficerSearchRuntimeReadiness } = await import(
+    './officerSearchRuntimeReadiness.js'
+  );
+  await requireOfficerSearchRuntimeReadiness();
+  console.log(
+    '[PRIMARY][OFFICER-SEARCH] READY: search-session and priority-queue dependencies proved before harvester modules load',
+  );
+}
+
 const { installCryptaraSuperWorkerAdmission } = await import(
   './services/cryptocrawl/integration/cryptara-super-worker.js'
 );
