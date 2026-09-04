@@ -1,10 +1,33 @@
-// Production bootstrap: reconcile the ordinary application schema, establish the
-// CryptoCrawler Overflow data plane, then start the application. Primary and
-// Overflow remain explicit, separate authorities; no global pg.Pool interception
-// or cross-database acquisition wrapper is installed.
-await import('./migrations/reconcileAppSchema.js');
-
+// Production bootstrap: reconcile and prove the ordinary Primary application
+// schema first, establish the CryptoCrawler Overflow data plane second, then load
+// the application. Primary and Overflow are explicit, separate authorities; no
+// global pg.Pool interception or cross-database acquisition wrapper is installed.
+process.env.PRIMARY_APPLICATION_SCHEMA_READY = 'false';
 process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false';
+
+const { runAllSchemaMigrations } = await import('./migrations/reconcileAppSchema.js');
+const { requirePrimaryApplicationSchema } = await import(
+  './migrations/primaryApplicationSchemaReadiness.js'
+);
+
+// The canonical migration list remains the sole mutation authority. Production
+// startup is fail-closed: a thrown migration error cannot be downgraded to a log
+// entry, and workers/routes never load until the migration-owned postconditions
+// are independently proven on Primary.
+const primaryMigrationResults = await runAllSchemaMigrations({ continueOnError: false });
+const reportedPrimaryMigrationFailures = primaryMigrationResults.filter(result => !result.success);
+if (reportedPrimaryMigrationFailures.length > 0) {
+  throw new Error(
+    `Primary application migration readiness failed: ${reportedPrimaryMigrationFailures
+      .map(result => `${result.name}: ${result.error || 'unspecified migration failure'}`)
+      .join('; ')}`,
+  );
+}
+await requirePrimaryApplicationSchema();
+process.env.PRIMARY_APPLICATION_SCHEMA_READY = 'true';
+console.log(
+  '[PRIMARY][SCHEMA-AUTHORITY] READY: canonical migrations completed and required application tables verified before route/worker startup',
+);
 
 const { installCryptaraSuperWorkerAdmission } = await import(
   './services/cryptocrawl/integration/cryptara-super-worker.js'
@@ -29,7 +52,7 @@ if (overflowBootstrap.state === 'ready') {
     await ensureCryptocrawlOverflowRuntimeSchema();
     process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'true';
     console.log(
-      '[CRYPTARA][OVERFLOW-AUTHORITY] READY: complete CryptoCrawler runtime schema verified on Overflow; Primary remains the ordinary application database authority',
+      '[CRYPTARA][OVERFLOW-AUTHORITY] READY: complete CryptoCrawler runtime schema verified on Overflow; Primary application schema is independently ready',
     );
   } catch (error) {
     process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false';
