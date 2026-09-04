@@ -19,7 +19,7 @@ const lotLedger = read('server/services/cryptocrawl/execution/cex-system-owned-l
 const exactDecimal = read('server/services/cryptocrawl/execution/exact-decimal.ts');
 const allocationMigration = read('server/migrations/026_cryptocrawler_system_capital_allocations.sql');
 const ownershipMigration = read('server/migrations/027_cryptocrawler_cex_system_owned_lots.sql');
-const coinbaseOwnershipMigration = read('server/migrations/042_cryptocrawler_coinbase_system_capital_and_rainbow.sql');
+const coinbaseOwnershipMigration = read('server/migrations/042_cryptocrawler_coinbase_system_capital_rainbow.sql');
 const overflowSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
 const dockerfile = read('Dockerfile');
 
@@ -129,10 +129,10 @@ assert.match(ownershipMigration, /Authenticated account balances never create ro
 assert.match(coinbaseOwnershipMigration, /target_venue IN \('coinbase','kraken','okx'\)/, 'Coinbase must be admitted only through the canonical system-capital destination constraint');
 assert.match(coinbaseOwnershipMigration, /tradingAccountSpendableAuthority/, 'Coinbase system deposits must require explicit trading-account spendability proof');
 assert.match(overflowSchema, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'Overflow runtime schema must provision the physical ownership migration');
-assert.match(overflowSchema, /042_cryptocrawler_coinbase_system_capital_and_rainbow\.sql/, 'Overflow runtime schema must provision Coinbase ownership expansion');
+assert.match(overflowSchema, /042_cryptocrawler_coinbase_system_capital_rainbow\.sql/, 'Overflow runtime schema must provision Coinbase ownership expansion');
 assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_lots/, 'Overflow runtime admission must require the ownership-lot table');
 assert.match(overflowSchema, /public\.cryptocrawler_cex_system_owned_settlements/, 'Overflow runtime admission must require settlement idempotency state');
 assert.match(dockerfile, /027_cryptocrawler_cex_system_owned_lots\.sql/, 'production image must bundle the physical CEX ownership migration');
-assert.match(dockerfile, /042_cryptocrawler_coinbase_system_capital_and_rainbow\.sql/, 'production image must bundle the Coinbase/Rainbow ownership migration');
+assert.match(dockerfile, /042_cryptocrawler_coinbase_system_capital_rainbow\.sql/, 'production image must bundle the Coinbase/Rainbow ownership migration');
 
 console.log('[self-funded-capital-authority] PASS: personal balances remain excluded; Coinbase/Kraken/OKX spendability requires exact ACTIVE system-owned lots, Profit Ladder binds taker and maker CEX size, and terminal authenticated fills transform only system-owned inventory');
