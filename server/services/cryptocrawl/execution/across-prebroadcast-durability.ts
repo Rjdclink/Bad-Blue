@@ -125,11 +125,6 @@ function originFailedResult(row: PreparedRow, feeWei: string, gasUsd: number | n
   };
 }
 
-/**
- * Arms a lifecycle row that the canonical adapter already inserted. The signed
- * transaction is the exact immutable recovery artifact: rebroadcasting it can
- * only reproduce the same nonce/hash and can never create a second principal move.
- */
 export async function armPreparedAcrossOriginTransaction(input: {
   depositTxnRef: string;
   signedOriginTx: string;
@@ -161,7 +156,6 @@ export async function armPreparedAcrossOriginTransaction(input: {
   }
 }
 
-/** Origin receipt success hands authority back to the existing durable settlement lifecycle. */
 export async function markPreparedAcrossOriginSubmitted(input: {
   depositTxnRef: string;
   originNativeFeeWei: string;
@@ -234,34 +228,27 @@ async function releaseLease(lifecycleId: string, error?: string): Promise<void> 
 
 async function finalizeOriginFailure(row: PreparedRow, feeWei: string, error: string): Promise<CrossChainLifecycleResult> {
   const gasUsd = await actualGasUsd(row.quote, feeWei);
-  await pool.query('BEGIN');
-  try {
-    await pool.query(`DELETE FROM ${RESERVATION_TABLE} WHERE reservation_id=$1::uuid`, [row.reservationId]);
-    await pool.query(
-      `UPDATE ${TABLE}
-       SET status='FAILED',origin_native_fee_wei=$2::numeric,origin_fee_complete=true,signed_origin_tx=NULL,
-           realized_net_profit_usd=$3,gas_usd=$4,last_error=$5,last_checked_at=now(),terminal_at=COALESCE(terminal_at,now()),
-           reconcile_lease_owner=NULL,reconcile_lease_expires_at=NULL,updated_at=now()
-       WHERE lifecycle_id=$1::uuid AND reconcile_lease_owner=$6`,
-      [row.lifecycleId, feeWei, gasUsd === null ? null : -gasUsd, gasUsd, error, workerId],
-    );
-    await pool.query('COMMIT');
-  } catch (failure) {
-    await pool.query('ROLLBACK').catch(() => undefined);
-    throw failure;
-  }
+  const result = await pool.query(
+    `WITH released AS (
+       DELETE FROM ${RESERVATION_TABLE} WHERE reservation_id=$1::uuid RETURNING reservation_id
+     )
+     UPDATE ${TABLE}
+     SET status='FAILED',origin_native_fee_wei=$3::numeric,origin_fee_complete=true,signed_origin_tx=NULL,
+         realized_net_profit_usd=$4,gas_usd=$5,last_error=$6,last_checked_at=now(),terminal_at=COALESCE(terminal_at,now()),
+         reconcile_lease_owner=NULL,reconcile_lease_expires_at=NULL,updated_at=now()
+     WHERE lifecycle_id=$2::uuid AND reconcile_lease_owner=$7
+     RETURNING lifecycle_id`,
+    [row.reservationId, row.lifecycleId, feeWei, gasUsd === null ? null : -gasUsd, gasUsd, error, workerId],
+  );
+  if (result.rowCount !== 1) throw new Error('ACROSS_ORIGIN_FAILURE_FINALIZATION_LOST_LEASE');
   return originFailedResult(row, feeWei, gasUsd, error);
 }
 
 async function reconcilePrepared(row: PreparedRow): Promise<CrossChainLifecycleResult> {
-  if (!await extendReservation(row.reservationId)) {
-    await releaseLease(row.lifecycleId, 'CROSS_CHAIN_DURABLE_RESERVATION_MISSING');
-    return pending(row, 'CROSS_CHAIN_DURABLE_RESERVATION_MISSING');
-  }
-
   // A row inserted by the pre-broadcast callback but never armed cannot have
-  // been broadcast by the new executor. After a short grace, exact state-machine
-  // ordering therefore proves principal never left and only approval gas may exist.
+  // been broadcast by the new executor. Handle this before requiring the
+  // reservation so a caller that safely released an unbroadcast reservation
+  // cannot leave an orphaned lifecycle.
   if (!row.signedOriginTx) {
     const graceMs = bounded(process.env.CRYPTOCRAWL_ACROSS_PREBROADCAST_GRACE_MS, 30_000, 5_000, 5 * 60_000);
     if (Date.now() - row.preparedAt < graceMs) {
@@ -269,6 +256,11 @@ async function reconcilePrepared(row: PreparedRow): Promise<CrossChainLifecycleR
       return pending(row, 'ACROSS_PREBROADCAST_ARMING_PENDING');
     }
     return finalizeOriginFailure(row, row.originNativeFeeWei, 'ACROSS_PREBROADCAST_NOT_BROADCAST');
+  }
+
+  if (!await extendReservation(row.reservationId)) {
+    await releaseLease(row.lifecycleId, 'CROSS_CHAIN_DURABLE_RESERVATION_MISSING');
+    return pending(row, 'CROSS_CHAIN_DURABLE_RESERVATION_MISSING');
   }
 
   const raw = row.signedOriginTx;
@@ -320,14 +312,16 @@ async function reconcilePrepared(row: PreparedRow): Promise<CrossChainLifecycleR
   const feeWei = totalFeeWei.toString();
   if (receipt.status !== 1) return finalizeOriginFailure(row, feeWei, 'ACROSS_ORIGIN_DEPOSIT_REVERTED');
 
-  await pool.query(
+  const transitioned = await pool.query(
     `UPDATE ${TABLE}
      SET status='SUBMITTED',origin_native_fee_wei=$2::numeric,origin_fee_complete=true,
          broadcast_at=COALESCE(broadcast_at,now()),signed_origin_tx=NULL,last_error=NULL,last_checked_at=now(),
          reconcile_lease_owner=NULL,reconcile_lease_expires_at=NULL,updated_at=now()
-     WHERE lifecycle_id=$1::uuid AND reconcile_lease_owner=$3`,
+     WHERE lifecycle_id=$1::uuid AND reconcile_lease_owner=$3
+     RETURNING lifecycle_id`,
     [row.lifecycleId, feeWei, workerId],
   );
+  if (transitioned.rowCount !== 1) throw new Error('ACROSS_PREPARED_SUBMISSION_TRANSITION_LOST_LEASE');
   return {
     ...pending({ ...row, originNativeFeeWei: feeWei, broadcastAt: row.broadcastAt ?? Date.now() }, 'ACROSS_ORIGIN_SUBMISSION_RECOVERED'),
     status: 'SUBMITTED',
