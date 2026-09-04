@@ -20,16 +20,19 @@ assert.match(bridge, /payoutAuthorityDuplicated: false/);
 assert.doesNotMatch(bridge, /withdrawal-history|asset\/withdrawal'|account\/max-withdrawal/);
 
 // Durable money-state authority remains terminal-confirmed positive profit only.
+// New profitable settlements follow the operator's fixed 90/10 policy: 90% is a
+// durable ETH payout obligation and 10% remains retained system capital.
 assert.match(retainedLedger, /feedback\.settlement\.terminal !== true/);
 assert.match(retainedLedger, /feedback\.settlement\.settlementConfirmed !== true/);
 assert.match(retainedLedger, /feedback\.success !== true/);
 assert.match(retainedLedger, /terminalFeedbackIdentity\(feedback\)/);
 assert.match(retainedLedger, /withCryptaraSupabasePriority\('critical'/);
 assert.match(retainedLedger, /ON CONFLICT \(event_id\) DO NOTHING/);
-assert.match(retainedLedger, /CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED/);
-assert.match(retainedLedger, /payoutFraction: 0/);
-assert.match(retainedLedger, /retainedFraction: 1/);
-assert.match(retainedLedger, /profitAvailableForRedeployment: true/);
+assert.match(retainedLedger, /const PAYOUT_FRACTION = 0\.90/);
+assert.match(retainedLedger, /const RETAINED_FRACTION = 0\.10/);
+assert.match(retainedLedger, /payoutFraction: PAYOUT_FRACTION/);
+assert.match(retainedLedger, /retainedFraction: RETAINED_FRACTION/);
+assert.match(retainedLedger, /'ETH','ethereum','QUEUED'/);
 assert.match(retainedLedger, /CRYPTO_PROFIT_WALLET_ADDRESS/);
 
 // Source metadata schema is migration-owned. Runtime records/reads only through
@@ -82,7 +85,8 @@ assert.doesNotMatch(core, /await scheduleRainbowProfitBridge/);
 console.log(JSON.stringify({
   terminalConfirmedProfitOnly: true,
   persistentIdempotency: true,
-  defaultProfitRetention: '100_percent',
+  automaticProfitPayout: '90_percent_eth',
+  retainedSystemCapital: '10_percent',
   sourceAwareLedger: ['executionSource', 'strategy', 'symbol', 'chain', 'venueOrRoute', 'venues', 'assets', 'transactionHash'],
   sourceLedgerIdempotent: true,
   sourceLedgerMigrationOwned: true,

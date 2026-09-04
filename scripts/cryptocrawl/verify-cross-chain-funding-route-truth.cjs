@@ -73,16 +73,18 @@ forbidPattern(fundingLifecycle, /CREATE\s+(TABLE|SCHEMA)/i, 'funding runtime can
 forbidPattern(fundingLifecycle, /while\s*\(\s*Date\.now\(\)\s*</, 'funding lifecycle cannot block through the funding window');
 requirePattern(router, /funding_lifecycle_adapter_unavailable/, 'unregistered funding venue adapters are blocked at the execution router');
 
-// Profit may remain in-system for compounding/redeployment. Automatic per-profit
-// wallet withdrawals are opt-in only.
-requirePattern(retainedProfit, /CRYPTOCRAWL_AUTO_PROFIT_PAYOUT_ENABLED/, 'automatic per-profit payout requires explicit operator opt-in');
-requirePattern(retainedProfit, /if\s*\(!automaticProfitPayoutEnabled\(\)\)/, 'default settlement path is full retention');
-requirePattern(retainedProfit, /payoutTargetUsd:\s*0/, 'default retained settlement creates zero payout target');
-requirePattern(retainedProfit, /retainedFraction:\s*1/, 'default retained settlement preserves one hundred percent of realized profit');
-requirePattern(retainedProfit, /payoutReservationCreated:\s*false/, 'default retained settlement does not reserve payout inventory');
-requirePattern(retainedProfit, /profitAvailableForRedeployment:\s*true/, 'default retained profit stays available for strategy reuse');
-requirePattern(inventoryReadiness, /automaticProfitPayoutRequiresExplicitOptIn:\s*true/, 'inventory telemetry reflects explicit-opt-in payout authority');
+// Confirmed terminal profit follows the current operator treasury law: 90% is a
+// durable ETH payout obligation and 10% remains available as retained capital.
+requirePattern(retainedProfit, /const PAYOUT_FRACTION = 0\.90/, 'new terminal profits must allocate 90 percent to payout');
+requirePattern(retainedProfit, /const RETAINED_FRACTION = 0\.10/, 'new terminal profits must retain 10 percent for system capital');
+requirePattern(retainedProfit, /payoutFraction:\s*PAYOUT_FRACTION/, 'durable allocation must use the fixed payout fraction');
+requirePattern(retainedProfit, /retainedFraction:\s*RETAINED_FRACTION/, 'durable allocation must use the fixed retained fraction');
+requirePattern(retainedProfit, /'ETH','ethereum','QUEUED'/, 'new payout jobs must be ETH on Ethereum');
+requirePattern(inventoryReadiness, /automaticProfitPayoutDefault:\s*true/, 'inventory telemetry must reflect automatic fixed payout truth');
+requirePattern(inventoryReadiness, /automaticProfitPayoutFraction:\s*0\.90/, 'inventory telemetry must expose the 90 percent payout fraction');
+requirePattern(inventoryReadiness, /retainedProfitFraction:\s*0\.10/, 'inventory telemetry must expose the 10 percent retained fraction');
 requirePattern(inventoryReadiness, /unreservedRetainedProfitAvailableToStrategies:\s*true/, 'inventory telemetry reflects retained-capital spendability');
+forbidPattern(inventoryReadiness, /automaticProfitPayoutRequiresExplicitOptIn:\s*true/, 'stale explicit-opt-in payout telemetry');
 forbidPattern(inventoryReadiness, /retainedFortyPercentAvailableToStrategies/, 'stale forty-percent retention telemetry');
 
 // Daily realized-profit execution caps stay retired; Profit Ladder/Stage/inventory/
@@ -91,4 +93,4 @@ requirePattern(canonicalRuntime, /adaptiveProfitCapScope:\s*'retired_no_daily_re
 requirePattern(canonicalRuntime, /retainedProfitRole:\s*'available_for_redeployment_subject_to_profit_ladder_stage_inventory_liquidity_and_risk'/, 'runtime telemetry reports retained-profit redeployment correctly');
 forbidPattern(canonicalRuntime, /persisted_operating_day_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget|new_exposure_only_settlement_hedge_flattening_exempt/, 'stale daily profit-cap authority telemetry');
 
-console.log('[route-truth] Across transport-vs-profit, durable funding lifecycle/adapter gate, compounding-first treasury, and retired profit-cap invariants passed');
+console.log('[route-truth] Across transport-vs-profit, durable funding lifecycle/adapter gate, fixed 90/10 treasury, retained-capital reuse, and retired profit-cap invariants passed');
