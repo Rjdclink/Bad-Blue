@@ -1,69 +1,106 @@
-NIX-GEN PUBLIC RESEARCH IMPLEMENTATION MAP
+NIX-GEN PUBLIC / DECLASSIFIED RESEARCH IMPLEMENTATION MAP
 
-This is an engineering map, not a list of runtime authorities. Public/declassified research is used to derive implementation principles; canonical CryptoCrawler authorities remain unchanged.
+This is an engineering blueprint, not a list of runtime authorities. Public/declassified research is used to derive implementation principles; canonical CryptoCrawler authorities remain unchanged. No classified or non-public source is represented as available.
 
 1. GLOBAL RESOURCE ALLOCATION
 - Stanford/Boyd: simultaneous routing and resource allocation through decomposition and resource prices.
 - Stanford/Agrawal/Boyd: scalable allocation of fungible resources using dual-price concepts.
-Implementation implication: standardized strategy bids, explicit shared resource budgets, global feasible-set optimization, and later diagnostic scarcity prices. Do not label a heuristic scarcity score a true dual price unless it is produced by an appropriate optimization model.
+Implementation: standardized strategy bids, explicit shared resource budgets, bounded global feasible-set optimization, conservative capacity merging, mutual exclusion, finite-difference marginal values, and projected-subgradient Lagrangian dual-price discovery.
+Realized modules: types.ts, canonical-bid-adapters.ts, global-optimizer.ts, coordinator.ts, marginal-resource-value.ts, dual-resource-pricing.ts, resource-opportunity-pricing.ts.
+Truth rule: heuristic scarcity and finite-difference marginal value remain distinct from dual-derived prices; discrete dual prices are explicitly approximate and never claim exact strong duality.
 
 2. CONTINUOUS / MODEL-PREDICTIVE REPLANNING
 - NASA/JPL ASPEN and CASPER: continuous planning, iterative repair, limited-resource margins, and replanning as context changes.
-Implementation implication: re-optimize on the existing opportunity-arrival/expiry/resource/settlement wake cycle instead of creating a long-lived static plan or a competing polling daemon.
+Implementation: re-optimize on existing scheduler/opportunity truth changes rather than creating a competing planning daemon. Fingerprints include economics, timestamps, resource budgets/demands, advisory evidence and dispatch capacity; expiry/temporal boundaries invalidate reused plans.
+Realized modules: replanner.ts, cex-ordering.ts, measured-portfolio-preparation.ts, portfolio-view.ts.
 
 3. SCALABLE PLANNING UNDER UNCERTAINTY
 - DARPA RSPACE and public SCEPTER material: scalable automated planning, rapid comparison of alternatives, reduced-order reasoning, and uncertainty-aware coordination.
-Implementation implication: bounded compute budgets, progressively richer models, explicit uncertainty inputs, deterministic fallback, and no opaque-model authority over hard execution gates.
+Implementation: bounded exact search, deterministic fallback, explicit uncertainty inputs, bounded compute budgets, fail-open advisory ordering and no opaque-model authority over hard execution gates.
+Realized modules: global-optimizer.ts, robust-uncertainty.ts, quanti-analysis.ts.
 
 4. ROBUST OPTIMIZATION
 - MIT/Bertsimas robust optimization: protect decisions against uncertain inputs while preserving tractability.
-Implementation implication: later uncertainty envelopes may adjust advisory utility or reserve scarce capacity, but they must never rewrite canonical measured economics or manufacture a hard veto from low confidence alone.
+Implementation: time-bounded downside envelopes, fractional budgeted uncertainty, unknown-stays-unknown semantics and advisory-only robust values.
+Realized module: robust-uncertainty.ts.
+Truth rule: robust analysis never rewrites canonical measured economics or manufactures a hard execution veto from low confidence.
 
 5. CONGESTION / QUEUE-AWARE SCHEDULING
 - MIT CSAIL Nona: scheduling across heterogeneous resources should consider congestion and queue effects rather than raw task value alone.
-- Sandia time-critical scheduling research: limited assets and dynamic cost functions often require more than naive greedy choice; local/tabu/variable-neighborhood methods can improve bounded real-time schedules.
-Implementation implication: combine realizable value with resource scarcity/queue pressure. Retain deterministic bounded fallback and benchmark any local-search limb before use.
+- Sandia time-critical scheduling research: limited assets and dynamic cost functions often require more than naive greedy choice.
+Implementation: scheduling utility is resource-aware; local canonical scheduler projections, shared dispatch capacity, scarcity pressure, marginal values and dual prices expose where congestion destroys opportunity value.
+Realized modules: scarcity-pricing.ts, coordinator.ts, resource-opportunity-pricing.ts, dual-resource-pricing.ts.
 
 6. ONLINE NON-STATIONARY DECISIONS
 - Stanford non-stationary bandit research and bandits-with-knapsacks literature: learn allocation under changing reward distributions and finite resource budgets.
-Implementation implication: terminal-settlement evidence may tune advisory allocation by regime. Exploration may never fabricate eligibility, economics, fills, or resource availability.
+Implementation: confirmed terminal-settlement evidence tunes advisory scheduling through the existing learning authority rather than a second Nix-Gen learner.
+Realized module: terminal-calibration.ts.
+Truth rule: exploration never fabricates eligibility, economics, fills or resource availability.
 
 7. INTELLIGENCE / MISSION-PLANNING PRINCIPLES FROM PUBLIC SOURCES
 - NSA/CISA public AI guidance: operational efficiency gains must be paired with explicit security/risk controls.
-- FBI public AI/R&D material: triage, prioritization, portfolio optimization, validation, and accountable decision support.
+- FBI public AI/R&D material: triage, prioritization, portfolio optimization, validation and accountable decision support.
 - CIA declassified planning material: priority requirements should drive resource allocation; reduce unnecessary duplication; bridge capability gaps programmatically; emphasize timeliness and cost effectiveness.
-Implementation implication: prioritize scarce resources against explicit mission value, preserve human/system accountability boundaries, avoid duplicate authorities, and treat validation/transition criteria as part of deployment rather than post-hoc documentation.
+Implementation: explicit authority boundaries, capability-aware strategy fingers, one integration contract, no duplicated economics/execution/settlement/learning authorities and default-on fail-open advisory optimization.
+Realized modules: authority.ts, strategy-limb-registry.ts, integration-contract.ts, completion-manifest.ts.
 
 8. SMART ORDER ROUTING / ALL-IN EXECUTION QUALITY
-- 0x public routing documentation: compare multiple liquidity sources and source compositions using all-in execution cost, including fees/gas, with fallbacks and short-lived firm/RFQ quotes.
+- 0x public routing documentation: compare liquidity sources/source compositions using all-in execution cost, fees/gas and short-lived executable quotes.
 - CoW Protocol: combinatorial batch allocation and coincidence-of-wants can improve aggregate execution across interacting orders.
-Implementation implication: Nix-Gen should compare realizable all-in value across supported paths and mutually exclusive variants. Route composition remains subordinate to canonical executable quotes, settlement capability, and topology-specific execution authority.
+Implementation: Nix-Gen compares realizable canonical net value across supported paths and mutually exclusive variants while canonical executors retain route construction/submission authority.
+Realized modules: canonical-bid-adapters.ts, global-live-portfolio.ts, portfolio-view.ts, strategy-limb-registry.ts.
 
 9. PRIVATE / ATOMIC EXECUTION
-- Flashbots public documentation: bundles/private submission/multiplexing and MEV-aware execution can reduce public-mempool exposure where supported.
-Implementation implication: private-execution paths are execution-quality limbs, not a way to bypass venue/chain rules or settlement proof. They may become separate strategy bids only when a canonical measured and settlement-capable path already exists.
+- Flashbots public documentation: private bundles/submission/multiplexing can reduce public-mempool exposure where supported.
+Implementation: private/atomic capability is represented as a strategy-limb property only when the upstream canonical path is executable and settlement-capable. Nix-Gen never becomes a relay or transaction submitter.
+Realized modules: strategy-limb-registry.ts, integration-contract.ts.
 
 10. MARKET IMPACT / UNCERTAIN FILLS
-- Almgren-Chriss and later execution literature: optimal execution balances expected transaction cost/market impact against timing and volatility risk; uncertain fills materially change route quality.
-Implementation implication: later Nix-Gen cost envelopes should consume measured impact/fill evidence from canonical execution systems. Nix-Gen must not invent slippage, fill probability, or synthetic liquidity.
+- Almgren-Chriss and later execution literature: execution quality balances transaction cost/impact, timing and volatility; uncertain fills materially change route quality.
+Implementation: Nix-Gen consumes measured execution confidence/terminal calibration from canonical/Cryptara evidence rather than inventing slippage, fill probability or synthetic liquidity.
+Realized modules: canonical-bid-adapters.ts, terminal-calibration.ts, integration-contract.ts.
 
-11. CLASSICAL SOLVER OPTIONS
+11. CLASSICAL SOLVER / COMPUTE OPTIONS
 - Google OR-Tools: assignment, min-cost flow, LP/MIP, CP-SAT.
 - HiGHS/Argonne: open LP/MIP optimization.
-Implementation implication: preserve a dependency-free exact/greedy baseline. Optional solver limbs are justified only when benchmarked on actual Nix-Gen problem sizes and shown to improve solution quality/latency without becoming required for core function.
+- QuantiComp: existing Bad-Blue canonical heavy-compute scheduler.
+Implementation: dependency-free exact/greedy Nix-Gen is the mandatory baseline. Heavy advisory analysis may run through QuantiComp with deterministic validation/deduplication/deadlines and automatically falls back inline. External solvers remain optional future accelerators only if benchmarked against actual Nix-Gen problem sizes.
+Realized modules: global-optimizer.ts, quanti-analysis.ts.
 
 12. HHL / QUANTUM LIMB
 - Harrow-Hassidim-Lloyd solves certain sparse linear systems under strict assumptions; it is not a generic combinatorial-allocation solver.
-Implementation implication: HHL remains optional and specialized for suitable linear-system subproblems. Classical allocation remains the mandatory fallback and production baseline.
+Implementation: HHL remains research-only for mathematically suitable subproblems. Classical Nix-Gen remains the mandatory fallback and production baseline.
+Realized boundary: integration-contract.ts, completion-manifest.ts.
+
+13. EXISTING BAD-BLUE SUBSYSTEM INTEGRATION
+- Cryptara + authoritative Monte Carlo: upstream probability/rank/risk evidence is consumed once; no second Monte Carlo path and no double counting.
+- TradingView + MultiOracle: upstream technical/oracle evidence enriches canonical/Cryptara state; Nix-Gen does not recreate those authorities.
+- ProfitLadder + StageManager + RiskGovernor: hard notional/stage/drawdown/circuit-breaker safety remains upstream.
+- DynamicScalePhysics: existing measured scale/pressure wiring remains scaling authority; Nix-Gen consumes resulting capacity projections.
+- QuantiComp / Computational Beam: QuantiComp remains heavy-compute authority; Beam remains routing/compatibility.
+- Canonical resource schedulers: read-only planning projections feed Nix-Gen; distributed lease acquisition remains hard truth.
+- Settlement-profit calibrator: confirmed terminal outcomes tune scheduling read-only.
+- Treasury/payout/retained capital: Nix-Gen only recommends where another inventory/capital unit has positive marginal value; it cannot move funds.
+- CognitiveFabric: general 4JI cognition remains research/offline and outside financial truth/execution.
+Realized modules: integration-contract.ts, capital-routing-advisory.ts, quanti-analysis.ts, terminal-calibration.ts.
+
+14. LIVE NIX-GEN APPLICATION
+- CEX scheduling: completed default-on fail-open ordering after canonical hard candidate filters.
+- Measured DEX atomic/liquidation scheduling: completed default-on fail-open ordering while preserving topology quotas, leases, governance and canonical executors.
+- Mixed live portfolio: CEX and currently settlement-capable measured paths can be compared under one read-only global portfolio and shared advisory dispatch-capacity resource.
+- Explicit rollback: CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING=false restores prior ordering.
+- Strategy fingers for zero-capital, cross-chain, funding, market-making and solver/intents are registered but become available only when upstream authoritative execution + terminal settlement exists.
 
 NO-REGRESSION LAWS
 - One authority per responsibility.
-- Nix-Gen is not economics, governance, execution, settlement, payout, or learning authority.
+- Nix-Gen is not canonical economics, governance, execution, settlement, payout, treasury, resource-lease or learning authority.
 - Unknown critical evidence is never converted to zero.
 - Non-positive canonical economics are never promoted by Nix-Gen.
 - Expired opportunities cannot be selected.
-- Settlement-capable authoritative execution path must already exist.
+- Settlement-capable authoritative execution path must already exist for an available live finger.
 - Resource projections are read-only advisory views; canonical lease acquisition remains hard truth.
 - Valid bids not selected in an advisory feasible subset remain in the complete priority order and are not vetoed.
-- No profitability score or composite that already contains profit/confidence may be re-applied in a way that double-counts those terms.
-- Every slice must be independently useful and removable without breaking existing production behavior.
+- No profitability score/composite that already contains profit/confidence may be re-applied in a way that double-counts those terms.
+- QuantiComp, dual pricing, uncertainty analysis, optional external solvers, HHL and CognitiveFabric cannot become mandatory dependencies for core classical allocation.
+- Nix-Gen does not access signer private keys, submit transactions or transfer treasury funds.
+- Every slice is independently useful and removable without breaking existing production behavior.
