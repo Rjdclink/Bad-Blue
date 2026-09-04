@@ -1,0 +1,44 @@
+NIX-GEN PUBLIC RESEARCH IMPLEMENTATION MAP
+
+1. GLOBAL RESOURCE ALLOCATION
+- Stanford Boyd et al.: simultaneous routing/resource allocation; dual decomposition; resource prices.
+- Stanford Agrawal/Boyd et al.: scalable fungible-resource allocation using dual prices.
+Implementation implication: standardized bids + explicit scarce-resource budgets + global feasible-set optimizer.
+
+2. REAL-TIME REPLANNING
+- NASA/JPL ASPEN/CASPER: continuous planning, iterative repair, resource margins, replan on changed context.
+Implementation implication: Nix-Gen should re-optimize incrementally when bids arrive, expire, settle, or resources change rather than rely on long-lived batch plans.
+
+3. COMPLEX/UNCERTAIN COORDINATION
+- DARPA RSPACE/SCEPTER public material: scalable automated planning, rapid option comparison, uncertainty-aware coordination.
+Implementation implication: bounded compute budget, deterministic fallback, explicit uncertainty inputs, no single opaque model authority.
+
+4. ROBUST OPTIMIZATION
+- MIT Bertsimas robust optimization: preserve tractability while protecting against uncertain data.
+Implementation implication: later robust envelopes must be advisory/conservative and must never rewrite measured canonical economics.
+
+5. CONGESTION-AWARE SCHEDULING
+- MIT CSAIL Nona: queueing/congestion-aware scheduling across heterogeneous resources.
+Implementation implication: resource pressure should become a global opportunity-cost signal while hard capacity remains enforced by canonical resource authorities.
+
+6. ONLINE NON-STATIONARY DECISIONS
+- Stanford non-stationary bandit work; bandits-with-knapsacks literature.
+Implementation implication: settlement-derived learning can tune advisory allocation under changing regimes, but exploration may never manufacture eligibility or bypass hard gates.
+
+7. SOLVER OPTIONS
+- Google OR-Tools: assignment, flows, CP-SAT, LP/MIP.
+- HiGHS/Argonne: open LP/MIP optimization.
+Implementation implication: preserve a dependency-free deterministic baseline; optional solver limbs may improve larger combinatorial cases without becoming required for core function.
+
+8. HHL / QUANTUM LIMB
+- Harrow-Hassidim-Lloyd solves sparse linear systems under strict assumptions; it does not directly solve generic combinatorial allocation.
+Implementation implication: HHL remains optional/specialized only for suitable linear-system subproblems; classical optimization remains authoritative fallback.
+
+NO-REGRESSION LAWS
+- One authority per responsibility.
+- Nix-Gen is not economics, governance, execution, settlement, or learning authority.
+- Unknown critical evidence is never zero.
+- Non-positive canonical economics are never promoted by Nix-Gen.
+- Expired opportunities cannot be selected.
+- Settlement-capable authoritative execution path must already exist.
+- Every slice must be independently useful and removable without breaking existing production behavior.
