@@ -61,6 +61,7 @@ function verifyUnknownEvidenceStaysUnknown(): void {
   assert.equal(none.completeEvidence, false);
   assert.equal(none.reserveUsd, null);
   assert.equal(none.robustAdvisoryValueUsd, null);
+  assert.ok(none.invalidEvidence.includes('missing_uncertainty_evidence'));
 
   const expired = evaluateNixGenRobustness({
     bid: candidate,
@@ -71,6 +72,16 @@ function verifyUnknownEvidenceStaysUnknown(): void {
   assert.equal(expired.completeEvidence, false);
   assert.equal(expired.reserveUsd, null);
   assert.ok(expired.invalidEvidence.some(reason => reason.startsWith('expired_evidence:')));
+}
+
+function verifyInvalidBudgetCannotBecomeZeroRisk(): void {
+  const candidate = bid(5);
+  const invalid = evaluateNixGenRobustness({ bid: candidate, components, uncertaintyBudget: Number.NaN, now: NOW });
+  assert.equal(invalid.completeEvidence, false);
+  assert.equal(invalid.uncertaintyBudget, null);
+  assert.equal(invalid.reserveUsd, null);
+  assert.equal(invalid.robustAdvisoryValueUsd, null);
+  assert.ok(invalid.invalidEvidence.includes('invalid_uncertainty_budget'));
 }
 
 function verifyNegativeAdvisoryValueNeverCreatesVeto(): void {
@@ -85,5 +96,6 @@ function verifyNegativeAdvisoryValueNeverCreatesVeto(): void {
 verifyFractionalBudgetAndCanonicalImmutability();
 verifyBudgetMonotonicity();
 verifyUnknownEvidenceStaysUnknown();
+verifyInvalidBudgetCannotBecomeZeroRisk();
 verifyNegativeAdvisoryValueNeverCreatesVeto();
 console.log('NIX-GEN ROBUSTNESS ADVISORY BEHAVIOR VERIFIED');

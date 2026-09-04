@@ -28,20 +28,20 @@ export interface NixGenRobustnessSnapshot {
   bidId: string;
   opportunityId: string;
   canonicalNetProfitUsd: number;
-  uncertaintyBudget: number;
+  uncertaintyBudget: number | null;
   componentsUsed: number;
   completeEvidence: boolean;
   invalidEvidence: string[];
-  /** Advisory reserve only; null means evidence was insufficient or invalid. */
+  /** Advisory reserve only; null means evidence/configuration was insufficient or invalid. */
   reserveUsd: number | null;
   /** Canonical profit minus advisory reserve. Never written back into canonical economics. */
   robustAdvisoryValueUsd: number | null;
 }
 
-function boundedBudget(value: unknown, componentCount: number): number {
+function normalizedBudget(value: unknown, componentCount: number): number | null {
   const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 0;
-  return Math.max(0, Math.min(componentCount, parsed));
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.min(componentCount, parsed);
 }
 
 function validateComponent(component: NixGenUncertaintyComponent, now: number): string | null {
@@ -82,8 +82,12 @@ export function evaluateNixGenRobustness(input: NixGenRobustnessInput): NixGenRo
   const invalidEvidence = input.components
     .map(component => validateComponent(component, now))
     .filter((reason): reason is string => reason !== null);
-  const completeEvidence = input.components.length > 0 && invalidEvidence.length === 0;
-  const uncertaintyBudget = boundedBudget(input.uncertaintyBudget, input.components.length);
+  if (input.components.length === 0) invalidEvidence.push('missing_uncertainty_evidence');
+
+  const uncertaintyBudget = normalizedBudget(input.uncertaintyBudget, input.components.length);
+  if (uncertaintyBudget === null) invalidEvidence.push('invalid_uncertainty_budget');
+
+  const completeEvidence = invalidEvidence.length === 0 && uncertaintyBudget !== null;
   const reserveUsd = completeEvidence ? budgetedReserve(input.components, uncertaintyBudget) : null;
   const robustAdvisoryValueUsd = reserveUsd === null ? null : input.bid.economics.netProfitUsd - reserveUsd;
 

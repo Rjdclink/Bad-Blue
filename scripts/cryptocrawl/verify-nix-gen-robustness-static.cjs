@@ -20,10 +20,13 @@ requirePattern(robust, /authority:\s*'nix_gen_advisory_robustness'/, 'Robustness
 requirePattern(robust, /executionAuthority:\s*false/, 'Robustness must not gain execution authority');
 requirePattern(robust, /canonicalEconomicsAuthority:\s*false/, 'Robustness must not gain canonical economics authority');
 requirePattern(robust, /filtersCanonicalCandidates:\s*false/, 'Robustness must not filter canonical candidates');
+requirePattern(robust, /uncertaintyBudget:\s*number\s*\|\s*null/, 'Invalid uncertainty budget must remain explicitly unknown');
 requirePattern(robust, /reserveUsd:\s*number\s*\|\s*null/, 'Missing robustness evidence must remain explicitly unknown');
 requirePattern(robust, /robustAdvisoryValueUsd:\s*number\s*\|\s*null/, 'Robust advisory value must remain nullable when evidence is incomplete');
 requirePattern(robust, /input\.bid\.economics\.netProfitUsd\s*-\s*reserveUsd/, 'Robust value must be derived without rewriting canonical economics');
-requirePattern(robust, /input\.components\.length\s*>\s*0\s*&&\s*invalidEvidence\.length\s*===\s*0/, 'Robustness must require explicit valid evidence before computing a reserve');
+requirePattern(robust, /missing_uncertainty_evidence/, 'Missing uncertainty evidence must be explicit');
+requirePattern(robust, /invalid_uncertainty_budget/, 'Invalid uncertainty budget must be explicit');
+requirePattern(robust, /completeEvidence\s*=\s*invalidEvidence\.length\s*===\s*0\s*&&\s*uncertaintyBudget\s*!==\s*null/, 'Robustness must require valid evidence and configuration before computing a reserve');
 requirePattern(index, /export \* from '\.\/robust-uncertainty\.js'/, 'Robustness library must be exported through the Nix-Gen index');
 
 forbidPattern(robust, /executeVerifiedArbitragePlan|submitOrder|placeOrder|broadcastTransaction|sendTransaction/, 'Robustness must not submit or execute trades');
