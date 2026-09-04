@@ -140,6 +140,7 @@ async function queryOrder(instId: string, ordId: string): Promise<any> {
 }
 
 type ClientOrderLookup = { state: 'found'; row: any } | { state: 'absent' };
+type FundingOrderState = { ordId: string; filled: boolean; terminal: boolean; quantity: number; row: any };
 
 async function lookupOrderByClientId(instId: string, clOrdId: string): Promise<ClientOrderLookup> {
   try {
@@ -150,9 +151,9 @@ async function lookupOrderByClientId(instId: string, clOrdId: string): Promise<C
     }
     return { state: 'found', row };
   } catch (error) {
-    // 51603 is OKX's explicit OrderNotFound code. Every other failure is
-    // ambiguous (network/rate/auth/region/etc.) and must NOT authorize a new
-    // submission because clOrdId uniqueness is enforced only for pending orders.
+    // Only OKX's explicit OrderNotFound result proves absence. Network, rate,
+    // credential, region, parsing and identity uncertainty must never authorize
+    // a second submission.
     if (error instanceof OkxPrivateApiError && String(error.code) === '51603') return { state: 'absent' };
     throw error;
   }
@@ -184,43 +185,75 @@ async function placeOrRecoverOrder(input: {
       ...(input.reduceOnly ? { reduceOnly: 'true' } : {}),
     }, { lane: 'order_write' });
     const row = response.data[0];
-    if (!row || String(row.sCode || '0') !== '0' || !row.ordId) throw new Error(`OKX funding order rejected: ${String(row?.sMsg || 'missing order id')}`);
+    if (!row || String(row.sCode || '0') !== '0' || !row.ordId) {
+      throw new Error(`OKX funding order rejected: ${String(row?.sMsg || 'missing order id')}`);
+    }
     return String(row.ordId);
   } catch (error) {
-    // A write error can be an ambiguous acknowledgement. Query the deterministic
-    // client ID exactly once; if that read is uncertain it throws and the
-    // lifecycle retries later without another submission.
+    // A write error can be an ambiguous acknowledgement. Re-query the exact
+    // deterministic client ID. If that recovery read is itself uncertain, it
+    // throws and the durable lifecycle retries later without resubmission.
     const recovered = await lookupOrderByClientId(input.instId, clOrdId);
     if (recovered.state === 'found' && recovered.row?.ordId) return String(recovered.row.ordId);
     throw error;
   }
 }
 
-async function terminalFilled(instId: string, ordId: string): Promise<{ filled: boolean; terminal: boolean; quantity: number; row: any | null }> {
-  const row = await queryOrder(instId, ordId);
-  const state = String(row.state || '').toLowerCase();
-  const quantity = Number(row.accFillSz || 0);
+function rowOrderState(row: any): Omit<FundingOrderState, 'ordId'> {
+  const state = String(row?.state || '').toLowerCase();
+  const quantity = Number(row?.accFillSz || 0);
   return {
     filled: state === 'filled' && quantity > 0,
     terminal: state === 'filled' || state === 'canceled' || state === 'mmp_canceled',
-    quantity,
+    quantity: Number.isFinite(quantity) && quantity >= 0 ? quantity : 0,
     row,
   };
 }
 
-async function stateByClientId(instId: string, lifecycleId: string, leg: string): Promise<{ ordId: string; filled: boolean; terminal: boolean; quantity: number; row: any } | null> {
+async function terminalFilled(instId: string, ordId: string): Promise<FundingOrderState> {
+  const row = await queryOrder(instId, ordId);
+  return { ordId, ...rowOrderState(row) };
+}
+
+async function stateByClientId(instId: string, lifecycleId: string, leg: string): Promise<FundingOrderState | null> {
   const lookup = await lookupOrderByClientId(instId, fundingClientOrderId(lifecycleId, leg));
   if (lookup.state === 'absent') return null;
   const row = lookup.row;
   if (!row?.ordId) throw new Error('OKX deterministic funding order lacks ordId');
-  const state = String(row.state || '').toLowerCase();
-  const quantity = Number(row.accFillSz || 0);
+  return { ordId: String(row.ordId), ...rowOrderState(row) };
+}
+
+function unsafePartialTerminal(state: FundingOrderState | null): boolean {
+  return Boolean(state?.terminal && !state.filled && state.quantity > 0);
+}
+
+function uncertainTerminalSettlement(input: {
+  receipt: FundingOpenReceipt;
+  spotState: FundingOrderState | null;
+  perpState: FundingOrderState | null;
+  spotOrderId: string | null;
+  perpOrderId: string | null;
+  error: string;
+}): FundingTerminalSettlement {
   return {
-    ordId: String(row.ordId),
-    filled: state === 'filled' && quantity > 0,
-    terminal: state === 'filled' || state === 'canceled' || state === 'mmp_canceled',
-    quantity,
-    row,
+    lifecycleId: input.receipt.lifecycleId,
+    terminal: false,
+    settlementConfirmed: false,
+    spotClosed: input.spotState?.filled === true,
+    perpClosed: input.perpState?.filled === true,
+    spotCloseOrderId: input.spotOrderId || undefined,
+    perpCloseOrderId: input.perpOrderId || undefined,
+    fundingPaymentUsd: null,
+    realizedEntryExitPnlUsd: null,
+    realizedFeesUsd: null,
+    realizedNetProfitUsd: null,
+    settledAt: null,
+    provenance: [
+      'okx_close_state_not_authoritative_enough_for_emergency_resubmission',
+      'funding_capital_retained_until_terminal_exposure_truth',
+      'synthetic_evidence:false',
+    ],
+    error: input.error,
   };
 }
 
@@ -241,10 +274,14 @@ async function emergencyNeutralize(input: {
   const spotOrderId = spotResult.status === 'fulfilled' && spotResult.value ? spotResult.value : undefined;
   const perpOrderId = perpResult.status === 'fulfilled' && perpResult.value ? perpResult.value : undefined;
   if (input.spotExposureOpen) {
-    if (!spotOrderId || !(await terminalFilled(input.plan.okx.spotInstId, spotOrderId)).filled) throw new Error('FUNDING_EMERGENCY_SPOT_NEUTRALIZATION_UNPROVEN');
+    if (!spotOrderId || !(await terminalFilled(input.plan.okx.spotInstId, spotOrderId)).filled) {
+      throw new Error('FUNDING_EMERGENCY_SPOT_NEUTRALIZATION_UNPROVEN');
+    }
   }
   if (input.perpExposureOpen) {
-    if (!perpOrderId || !(await terminalFilled(input.plan.okx.swapInstId, perpOrderId)).filled) throw new Error('FUNDING_EMERGENCY_PERP_NEUTRALIZATION_UNPROVEN');
+    if (!perpOrderId || !(await terminalFilled(input.plan.okx.swapInstId, perpOrderId)).filled) {
+      throw new Error('FUNDING_EMERGENCY_PERP_NEUTRALIZATION_UNPROVEN');
+    }
   }
   return { spotOrderId, perpOrderId };
 }
@@ -290,9 +327,16 @@ async function applySpotOwnership(input: {
 }
 
 async function orderFillEconomics(input: {
-  instType: 'SPOT' | 'SWAP'; instId: string; ordId: string; side: 'buy' | 'sell'; baseAsset: string; quoteAsset: string;
+  instType: 'SPOT' | 'SWAP';
+  instId: string;
+  ordId: string;
+  side: 'buy' | 'sell';
+  baseAsset: string;
+  quoteAsset: string;
 }): Promise<{ quoteCashflow: number; pnl: number; feeDeltaQuote: number; exactDerivativeQuoteDelta: string; fills: number }> {
-  const response = await okxPrivateRequest('/api/v5/trade/fills', 'GET', { instType: input.instType, instId: input.instId, ordId: input.ordId, limit: '100' }, { lane: 'account_read' });
+  const response = await okxPrivateRequest('/api/v5/trade/fills', 'GET', {
+    instType: input.instType, instId: input.instId, ordId: input.ordId, limit: '100',
+  }, { lane: 'account_read' });
   let quoteCashflow = 0;
   let pnl = 0;
   let feeDeltaQuote = 0;
@@ -317,7 +361,9 @@ async function orderFillEconomics(input: {
       else throw new Error(`OKX funding fill fee currency ${feeCcy || 'missing'} cannot be valued canonically`);
     }
     if (input.instType === 'SWAP') {
-      if (fee !== null && fee !== 0 && feeCcy !== input.quoteAsset) throw new Error(`OKX funding SWAP fee currency ${feeCcy || 'missing'} is not canonical quote asset ${input.quoteAsset}`);
+      if (fee !== null && fee !== 0 && feeCcy !== input.quoteAsset) {
+        throw new Error(`OKX funding SWAP fee currency ${feeCcy || 'missing'} is not canonical quote asset ${input.quoteAsset}`);
+      }
       exactDerivativeQuoteDelta = addExactDecimals(exactDerivativeQuoteDelta, fillPnlRaw);
       exactDerivativeQuoteDelta = addExactDecimals(exactDerivativeQuoteDelta, feeRaw);
     }
@@ -327,7 +373,9 @@ async function orderFillEconomics(input: {
 }
 
 async function fundingPaymentEvidence(input: { instId: string; openedAt: number; closedAt: number }): Promise<{ numeric: number; exactQuoteDelta: string; rows: number }> {
-  const response = await okxPrivateRequest('/api/v5/account/bills', 'GET', { instType: 'SWAP', instId: input.instId, type: '8', limit: '100' }, { lane: 'account_read' });
+  const response = await okxPrivateRequest('/api/v5/account/bills', 'GET', {
+    instType: 'SWAP', instId: input.instId, type: '8', limit: '100',
+  }, { lane: 'account_read' });
   let numeric = 0;
   let exactQuoteDelta = '0';
   let rows = 0;
@@ -368,7 +416,12 @@ async function applyDerivativeFundingOwnership(input: { plan: OkxFundingExecutio
     settlementReference: `okx-funding:${input.lifecycleId}`,
     provenance: ['okx_authenticated_swap_fills', 'okx_authenticated_funding_bills:type_8', 'exact_decimal_derivative_and_funding_quote_delta', 'spot_asset_transforms_recorded_separately', 'synthetic_evidence:false'],
   };
-  await applyExactCexSystemOwnedSettlement({ evidence, opportunityId: input.plan.opportunityId, strategy: 'okx_spot_perp_funding', authority: fundingAuthority(input.lifecycleId) });
+  await applyExactCexSystemOwnedSettlement({
+    evidence,
+    opportunityId: input.plan.opportunityId,
+    strategy: 'okx_spot_perp_funding',
+    authority: fundingAuthority(input.lifecycleId),
+  });
 }
 
 async function terminalEconomics(input: {
@@ -392,7 +445,8 @@ async function terminalEconomics(input: {
       lifecycleId: receipt.lifecycleId, terminal: false, settlementConfirmed: false, spotClosed: true, perpClosed: true,
       spotCloseOrderId: input.spotCloseOrderId, perpCloseOrderId: input.perpCloseOrderId,
       fundingPaymentUsd: null, realizedEntryExitPnlUsd: null, realizedFeesUsd: null, realizedNetProfitUsd: null,
-      settledAt: null, provenance: ['okx_terminal_both_legs_closed', 'okx_funding_bill_evidence_pending', 'synthetic_evidence:false'],
+      settledAt: null,
+      provenance: ['okx_terminal_both_legs_closed', 'okx_funding_bill_evidence_pending', 'synthetic_evidence:false'],
       error: 'OKX_FUNDING_BILL_EVIDENCE_PENDING',
     };
   }
@@ -403,7 +457,10 @@ async function terminalEconomics(input: {
   const signedFees = spotOpenEcon.feeDeltaQuote + spotCloseEcon.feeDeltaQuote + perpOpenEcon.feeDeltaQuote + perpCloseEcon.feeDeltaQuote;
   const realizedFeesUsd = -signedFees * Number(quoteUsd);
   const realizedNetProfitUsd = grossPnlUsd + fundingPaymentUsd - realizedFeesUsd;
-  const exactDerivativeDelta = addExactDecimals(addExactDecimals(perpOpenEcon.exactDerivativeQuoteDelta, perpCloseEcon.exactDerivativeQuoteDelta), funding.exactQuoteDelta);
+  const exactDerivativeDelta = addExactDecimals(
+    addExactDecimals(perpOpenEcon.exactDerivativeQuoteDelta, perpCloseEcon.exactDerivativeQuoteDelta),
+    funding.exactQuoteDelta,
+  );
   await applyDerivativeFundingOwnership({ plan, lifecycleId: receipt.lifecycleId, exactQuoteDelta: exactDerivativeDelta });
   return {
     lifecycleId: receipt.lifecycleId, terminal: true, settlementConfirmed: true, spotClosed: true, perpClosed: true,
@@ -420,7 +477,14 @@ async function reconcileEntryOwnership(plan: OkxFundingExecutionPlan, receipt: F
   const hold = await recoverHold(plan, receipt.lifecycleId, receipt);
   if (!hold) throw new Error('FUNDING_DURABLE_CAPITAL_HOLD_UNAVAILABLE');
   const submittedAt = receipt.entrySubmittedAt ?? receipt.openedAt;
-  const spotEvidence = await applySpotOwnership({ plan, lifecycleId: receipt.lifecycleId, orderId: receipt.spotOrderId, side: 'buy', row: spotState.row, submittedAt });
+  const spotEvidence = await applySpotOwnership({
+    plan,
+    lifecycleId: receipt.lifecycleId,
+    orderId: receipt.spotOrderId,
+    side: 'buy',
+    row: spotState.row,
+    submittedAt,
+  });
   const acquiredBase = spotEvidence.assetDeltas[plan.okx.baseAsset];
   if (!acquiredBase || Number(acquiredBase) <= 0) throw new Error('OKX funding spot entry did not produce exact system-owned base inventory');
   const updatedHold = await replaceSpotEntryReservationWithBaseHold({ hold, exactBaseAmount: acquiredBase });
@@ -437,7 +501,10 @@ async function reconcileEntryOwnership(plan: OkxFundingExecutionPlan, receipt: F
 }
 
 async function openingAgeMs(lifecycleId: string): Promise<number> {
-  const result = await pool.query(`SELECT created_at FROM private.cryptocrawler_funding_lifecycles WHERE lifecycle_id=$1 LIMIT 1`, [lifecycleId]).catch(() => null);
+  const result = await pool.query(
+    `SELECT created_at FROM private.cryptocrawler_funding_lifecycles WHERE lifecycle_id=$1 LIMIT 1`,
+    [lifecycleId],
+  ).catch(() => null);
   const created = result?.rows?.[0]?.created_at ? new Date(result.rows[0].created_at).getTime() : Date.now();
   return Math.max(0, Date.now() - created);
 }
@@ -461,9 +528,15 @@ const adapter: FundingLifecycleAdapter = {
     lifecyclePlanIds.set(lifecycleId, okx.opportunityId);
     const holdUntil = fundingHoldUntil(okx);
     const reserved = await reserveFundingEntryCapital({
-      lifecycleId, opportunityId: okx.opportunityId, baseAsset: okx.okx.baseAsset, quoteAsset: okx.okx.quoteAsset,
-      spotEntryLimit: okx.okx.entry.spotEntryLimit, baseQuantity: okx.okx.baseQuantity,
-      marginBufferUsd: okx.marginBufferUsd, expectedEntryCostUsd: okx.expectedEntryCostUsd, holdUntil,
+      lifecycleId,
+      opportunityId: okx.opportunityId,
+      baseAsset: okx.okx.baseAsset,
+      quoteAsset: okx.okx.quoteAsset,
+      spotEntryLimit: okx.okx.entry.spotEntryLimit,
+      baseQuantity: okx.okx.baseQuantity,
+      marginBufferUsd: okx.marginBufferUsd,
+      expectedEntryCostUsd: okx.expectedEntryCostUsd,
+      holdUntil,
     });
     lifecycleCapitalHolds.set(lifecycleId, reserved.hold);
     const submittedAt = Date.now();
@@ -477,15 +550,51 @@ const adapter: FundingLifecycleAdapter = {
       perpOrderId ? terminalFilled(okx.okx.swapInstId, perpOrderId).catch(() => null) : Promise.resolve(null),
       spotOrderId ? terminalFilled(okx.okx.spotInstId, spotOrderId).catch(() => null) : Promise.resolve(null),
     ]);
-    const perpBase = perpState?.quantity && okx.okx.contracts > 0 ? perpState.quantity / okx.okx.contracts * okx.okx.baseQuantity : 0;
-    const deltaNeutral = Boolean(perpState?.filled && spotState?.filled && Math.abs(Number(spotState?.quantity || 0) - perpBase) <= Math.max(1e-10, okx.okx.baseQuantity * 1e-6));
-    if (!deltaNeutral || !spotOrderId || !perpOrderId) {
-      await emergencyNeutralize({ plan: okx, lifecycleId, spotExposureOpen: spotState?.filled === true, perpExposureOpen: perpState?.filled === true });
+
+    const entryStateUncertain = perpSubmit.status === 'rejected'
+      || spotSubmit.status === 'rejected'
+      || !perpOrderId
+      || !spotOrderId
+      || !perpState
+      || !spotState
+      || !perpState.terminal
+      || !spotState.terminal
+      || unsafePartialTerminal(perpState)
+      || unsafePartialTerminal(spotState);
+    if (entryStateUncertain) {
+      logger.warn('[FundingLifecycle] Entry order state is not authoritative enough to release capital or submit emergency orders', {
+        component: 'OkxFundingLifecycleAdapter',
+        lifecycleId,
+        opportunityId: okx.opportunityId,
+        perpSubmissionResolved: perpSubmit.status === 'fulfilled',
+        spotSubmissionResolved: spotSubmit.status === 'fulfilled',
+        perpStateKnown: Boolean(perpState),
+        spotStateKnown: Boolean(spotState),
+        capitalReleased: false,
+        emergencyNeutralizationAuthorized: false,
+      });
+      throw new Error('FUNDING_ENTRY_ORDER_STATE_UNCERTAIN');
+    }
+
+    const perpBase = perpState.quantity > 0 && okx.okx.contracts > 0
+      ? perpState.quantity / okx.okx.contracts * okx.okx.baseQuantity
+      : 0;
+    const deltaNeutral = perpState.filled
+      && spotState.filled
+      && Math.abs(spotState.quantity - perpBase) <= Math.max(1e-10, okx.okx.baseQuantity * 1e-6);
+    if (!deltaNeutral) {
+      await emergencyNeutralize({
+        plan: okx,
+        lifecycleId,
+        spotExposureOpen: spotState.filled,
+        perpExposureOpen: perpState.filled,
+      });
       await releaseFundingCapitalHold(reserved.hold).catch(() => undefined);
       lifecycleCapitalHolds.delete(lifecycleId);
       lifecyclePlanIds.delete(lifecycleId);
-      throw new Error('OKX funding entry legs did not reach terminal delta-neutral fills; deterministic emergency neutralization completed');
+      throw new Error('OKX funding entry legs reached known terminal non-neutral state; deterministic emergency neutralization completed');
     }
+
     return {
       lifecycleId,
       spotOrderId,
@@ -493,7 +602,7 @@ const adapter: FundingLifecycleAdapter = {
       openedAt: Date.now(),
       entrySubmittedAt: submittedAt,
       deltaNeutral: true,
-      measuredSpotQuantity: Number(spotState!.quantity),
+      measuredSpotQuantity: spotState.quantity,
       measuredPerpQuantity: perpBase,
       entryOwnershipConfirmed: false,
       marginReservationId: reserved.hold.marginReservationId,
@@ -522,17 +631,36 @@ const adapter: FundingLifecycleAdapter = {
     if ((spotState && !spotState.terminal) || (perpState && !perpState.terminal)) {
       return { status: 'pending', error: 'FUNDING_ENTRY_ORDER_STATE_PENDING' };
     }
-    const perpBase = perpState?.quantity && okx.okx.contracts > 0 ? perpState.quantity / okx.okx.contracts * okx.okx.baseQuantity : 0;
-    const deltaNeutral = Boolean(spotState?.filled && perpState?.filled && Math.abs(Number(spotState.quantity) - perpBase) <= Math.max(1e-10, okx.okx.baseQuantity * 1e-6));
+    if (unsafePartialTerminal(spotState) || unsafePartialTerminal(perpState)) {
+      return { status: 'pending', error: 'FUNDING_ENTRY_PARTIAL_TERMINAL_EXPOSURE_RECONCILIATION_REQUIRED' };
+    }
+
+    const perpBase = perpState?.quantity && okx.okx.contracts > 0
+      ? perpState.quantity / okx.okx.contracts * okx.okx.baseQuantity
+      : 0;
+    const deltaNeutral = Boolean(
+      spotState?.filled
+      && perpState?.filled
+      && Math.abs(spotState.quantity - perpBase) <= Math.max(1e-10, okx.okx.baseQuantity * 1e-6),
+    );
     if (!deltaNeutral) {
-      await emergencyNeutralize({ plan: okx, lifecycleId, spotExposureOpen: spotState?.filled === true, perpExposureOpen: perpState?.filled === true });
+      await emergencyNeutralize({
+        plan: okx,
+        lifecycleId,
+        spotExposureOpen: spotState?.filled === true,
+        perpExposureOpen: perpState?.filled === true,
+      });
       const hold = await recoverHold(okx, lifecycleId);
       if (hold) await releaseFundingCapitalHold(hold).catch(() => undefined);
       return { status: 'failed', error: 'FUNDING_PARTIAL_ENTRY_RECOVERED_AND_NEUTRALIZED' };
     }
+
     const hold = await recoverHold(okx, lifecycleId);
     if (!hold) return { status: 'pending', error: 'FUNDING_ENTRY_CAPITAL_HOLD_RECOVERY_PENDING' };
-    const openedAt = Math.max(Number(spotState?.row?.fillTime || spotState?.row?.uTime || Date.now()), Number(perpState?.row?.fillTime || perpState?.row?.uTime || Date.now()));
+    const openedAt = Math.max(
+      Number(spotState?.row?.fillTime || spotState?.row?.uTime || Date.now()),
+      Number(perpState?.row?.fillTime || perpState?.row?.uTime || Date.now()),
+    );
     return {
       status: 'opened',
       receipt: {
@@ -540,7 +668,10 @@ const adapter: FundingLifecycleAdapter = {
         spotOrderId: spotState!.ordId,
         perpOrderId: perpState!.ordId,
         openedAt,
-        entrySubmittedAt: Math.min(Number(spotState?.row?.cTime || openedAt), Number(perpState?.row?.cTime || openedAt)),
+        entrySubmittedAt: Math.min(
+          Number(spotState?.row?.cTime || openedAt),
+          Number(perpState?.row?.cTime || openedAt),
+        ),
         deltaNeutral: true,
         measuredSpotQuantity: spotState!.quantity,
         measuredPerpQuantity: perpBase,
@@ -548,7 +679,10 @@ const adapter: FundingLifecycleAdapter = {
         marginReservationId: hold.marginReservationId,
         spotEntryReservationId: hold.spotEntryReservationId,
         baseReservationId: hold.baseReservationId,
-        capitalReservationIds: [hold.marginReservationId, ...(hold.baseReservationId ? [hold.baseReservationId] : hold.spotEntryReservationId ? [hold.spotEntryReservationId] : [])],
+        capitalReservationIds: [
+          hold.marginReservationId,
+          ...(hold.baseReservationId ? [hold.baseReservationId] : hold.spotEntryReservationId ? [hold.spotEntryReservationId] : []),
+        ],
       },
     };
   },
@@ -590,8 +724,13 @@ const adapter: FundingLifecycleAdapter = {
   async closeAndSettle(plan, receipt) {
     const okx = asOkxPlan(plan);
     if (!okx) throw new Error('OKX funding plan extension missing at close');
-    const fresh = await measureOkxFundingExecutionEvidence({ symbol: okx.okx.baseAsset + okx.okx.quoteAsset, swapInstId: okx.okx.swapInstId, targetNotionalUsd: okx.notionalUsd });
+    const fresh = await measureOkxFundingExecutionEvidence({
+      symbol: okx.okx.baseAsset + okx.okx.quoteAsset,
+      swapInstId: okx.okx.swapInstId,
+      targetNotionalUsd: okx.notionalUsd,
+    });
     if (!fresh) throw new Error('OKX funding close depth unavailable');
+
     const submittedAt = Date.now();
     const [perpClose, spotClose] = await Promise.allSettled([
       placeOrRecoverOrder({ lifecycleId: receipt.lifecycleId, leg: 'cp', instId: okx.okx.swapInstId, tdMode: 'cross', side: 'buy', size: okx.okx.contracts, price: fresh.perpExitLimit, ordType: 'fok', reduceOnly: true }),
@@ -603,28 +742,71 @@ const adapter: FundingLifecycleAdapter = {
       perpCloseId ? terminalFilled(okx.okx.swapInstId, perpCloseId).catch(() => null) : Promise.resolve(null),
       spotCloseId ? terminalFilled(okx.okx.spotInstId, spotCloseId).catch(() => null) : Promise.resolve(null),
     ]);
-    if (!perpClosed?.filled || !spotClosed?.filled) {
+
+    const closeStateUncertain = perpClose.status === 'rejected'
+      || spotClose.status === 'rejected'
+      || !perpCloseId
+      || !spotCloseId
+      || !perpClosed
+      || !spotClosed
+      || !perpClosed.terminal
+      || !spotClosed.terminal
+      || unsafePartialTerminal(perpClosed)
+      || unsafePartialTerminal(spotClosed);
+    if (closeStateUncertain) {
+      logger.warn('[FundingLifecycle] Close order state is not authoritative enough for emergency resubmission', {
+        component: 'OkxFundingLifecycleAdapter',
+        lifecycleId: receipt.lifecycleId,
+        opportunityId: okx.opportunityId,
+        capitalReleased: false,
+        emergencyNeutralizationAuthorized: false,
+      });
+      return uncertainTerminalSettlement({
+        receipt,
+        spotState: spotClosed,
+        perpState: perpClosed,
+        spotOrderId: spotCloseId,
+        perpOrderId: perpCloseId,
+        error: 'FUNDING_CLOSE_ORDER_STATE_UNCERTAIN',
+      });
+    }
+
+    if (!perpClosed.filled || !spotClosed.filled) {
       const emergency = await emergencyNeutralize({
         plan: okx,
         lifecycleId: receipt.lifecycleId,
-        spotExposureOpen: spotClosed?.filled !== true,
-        perpExposureOpen: perpClosed?.filled !== true,
+        spotExposureOpen: !spotClosed.filled,
+        perpExposureOpen: !perpClosed.filled,
       });
-      if (!spotClosed?.filled && emergency.spotOrderId) spotCloseId = emergency.spotOrderId;
-      if (!perpClosed?.filled && emergency.perpOrderId) perpCloseId = emergency.perpOrderId;
+      if (!spotClosed.filled && emergency.spotOrderId) spotCloseId = emergency.spotOrderId;
+      if (!perpClosed.filled && emergency.perpOrderId) perpCloseId = emergency.perpOrderId;
       [perpClosed, spotClosed] = await Promise.all([
         perpCloseId ? terminalFilled(okx.okx.swapInstId, perpCloseId) : Promise.resolve(null),
         spotCloseId ? terminalFilled(okx.okx.spotInstId, spotCloseId) : Promise.resolve(null),
       ]);
     }
     if (!perpClosed?.filled || !spotClosed?.filled || !perpCloseId || !spotCloseId || !spotClosed.row) {
-      throw new Error('OKX funding close exposure neutralization is not terminally proven');
+      return uncertainTerminalSettlement({
+        receipt,
+        spotState: spotClosed,
+        perpState: perpClosed,
+        spotOrderId: spotCloseId,
+        perpOrderId: perpCloseId,
+        error: 'FUNDING_CLOSE_EXPOSURE_NEUTRALIZATION_UNPROVEN',
+      });
     }
 
     let reconciledReceipt = receipt;
     try {
       reconciledReceipt = await reconcileEntryOwnership(okx, receipt);
-      await applySpotOwnership({ plan: okx, lifecycleId: receipt.lifecycleId, orderId: spotCloseId, side: 'sell', row: spotClosed.row, submittedAt });
+      await applySpotOwnership({
+        plan: okx,
+        lifecycleId: receipt.lifecycleId,
+        orderId: spotCloseId,
+        side: 'sell',
+        row: spotClosed.row,
+        submittedAt,
+      });
     } catch (error) {
       return {
         lifecycleId: receipt.lifecycleId, terminal: false, settlementConfirmed: false, spotClosed: true, perpClosed: true,
@@ -640,7 +822,13 @@ const adapter: FundingLifecycleAdapter = {
     if (hold) await releaseFundingCapitalHold(hold).catch(() => undefined);
     lifecycleCapitalHolds.delete(receipt.lifecycleId);
     const closedAt = Date.now();
-    const settlement = await terminalEconomics({ plan: okx, receipt: reconciledReceipt, spotCloseOrderId: spotCloseId, perpCloseOrderId: perpCloseId, closedAt });
+    const settlement = await terminalEconomics({
+      plan: okx,
+      receipt: reconciledReceipt,
+      spotCloseOrderId: spotCloseId,
+      perpCloseOrderId: perpCloseId,
+      closedAt,
+    });
     lifecyclePlanIds.delete(receipt.lifecycleId);
     return settlement;
   },
@@ -661,11 +849,24 @@ const adapter: FundingLifecycleAdapter = {
       terminalFilled(okx.okx.swapInstId, perpCloseOrderId),
     ]);
     if (!spotClosed.filled || !perpClosed.filled || !spotClosed.row) return prior;
-    await applySpotOwnership({ plan: okx, lifecycleId: receipt.lifecycleId, orderId: spotCloseOrderId, side: 'sell', row: spotClosed.row, submittedAt: Number(spotClosed.row?.cTime || Date.now()) });
+    await applySpotOwnership({
+      plan: okx,
+      lifecycleId: receipt.lifecycleId,
+      orderId: spotCloseOrderId,
+      side: 'sell',
+      row: spotClosed.row,
+      submittedAt: Number(spotClosed.row?.cTime || Date.now()),
+    });
     const hold = await recoverHold(okx, receipt.lifecycleId, reconciledReceipt);
     if (hold) await releaseFundingCapitalHold(hold).catch(() => undefined);
     lifecycleCapitalHolds.delete(receipt.lifecycleId);
-    const settlement = await terminalEconomics({ plan: okx, receipt: reconciledReceipt, spotCloseOrderId, perpCloseOrderId, closedAt: Date.now() });
+    const settlement = await terminalEconomics({
+      plan: okx,
+      receipt: reconciledReceipt,
+      spotCloseOrderId,
+      perpCloseOrderId,
+      closedAt: Date.now(),
+    });
     if (settlement.terminal) lifecyclePlanIds.delete(receipt.lifecycleId);
     return settlement;
   },
