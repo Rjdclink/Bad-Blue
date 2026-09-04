@@ -18,6 +18,14 @@ export type CexSystemCapitalSettlementAuthority =
       [key: string]: unknown;
     }
   | {
+      strategySelectionAuthority: 'funding_arbitrage_policy';
+      notionalAuthority: 'profit_ladder';
+      executionAuthority: 'funding_position_lifecycle';
+      governanceAdmitted: true;
+      reference: string;
+      [key: string]: unknown;
+    }
+  | {
       treasuryAuthority: 'operator_strategy';
       notionalAuthority: 'system_owned_sweep_target';
       executionAuthority: 'system_capital_sweep_worker';
@@ -46,14 +54,20 @@ function requireAuthority(authority: CexSystemCapitalSettlementAuthority): void 
     authority.notionalAuthority === 'profit_ladder' &&
     authority.executionAuthority === 'stage_manager' &&
     authority.governanceAdmitted === true;
+  const fundingAuthority =
+    'strategySelectionAuthority' in authority &&
+    authority.strategySelectionAuthority === 'funding_arbitrage_policy' &&
+    authority.notionalAuthority === 'profit_ladder' &&
+    authority.executionAuthority === 'funding_position_lifecycle' &&
+    authority.governanceAdmitted === true;
   const treasuryAuthority =
     'treasuryAuthority' in authority &&
     authority.treasuryAuthority === 'operator_strategy' &&
     authority.notionalAuthority === 'system_owned_sweep_target' &&
     authority.executionAuthority === 'system_capital_sweep_worker' &&
     authority.governanceAdmitted === true;
-  if (!referenceValid || (!tradeAuthority && !treasuryAuthority)) {
-    throw new Error('CEX ownership transformation requires either canonical trade authority or explicit operator-strategy treasury authority');
+  if (!referenceValid || (!tradeAuthority && !fundingAuthority && !treasuryAuthority)) {
+    throw new Error('CEX ownership transformation requires canonical trade, funding-lifecycle, or explicit operator-strategy treasury authority');
   }
 }
 
@@ -236,9 +250,6 @@ export async function applyExactCexSystemOwnedSettlement(input: {
       .map(([asset, delta]) => [normalizedAsset(asset), String(delta)] as const)
       .sort(([a], [b]) => a.localeCompare(b));
 
-    // Debit first. No output ownership can be created unless every cost/fee is
-    // fully covered by prior system-owned inventory. A third-token fee therefore
-    // cannot silently consume an operator balance.
     for (const [asset, delta] of entries) {
       if (compareExactDecimals(delta, '0') >= 0) continue;
       consumedLotIds.push(...await consumeSystemOwnedAsset(client, evidence.venue, asset, negateExactDecimal(delta)));
