@@ -17,9 +17,14 @@ const zeroWiring = read('server/services/cryptocrawl/integration/zero-capital-sh
 const cexOrdering = read('server/services/cryptocrawl/optimization/nix-gen/cex-ordering.ts');
 const measuredOrdering = read('server/services/cryptocrawl/optimization/nix-gen/measured-portfolio-preparation.ts');
 const crossChain = read('server/services/cryptocrawl/discovery/cross-chain-opportunity-generator.ts');
+const crossEconomics = read('server/services/cryptocrawl/discovery/cross-chain-route-economics.ts');
+const crossLifecycle = read('server/services/cryptocrawl/execution/cross-chain-durable-lifecycle.ts');
+const crossTerminal = read('server/services/cryptocrawl/bridge/across-terminal-amount-evidence.ts');
 const funding = read('server/services/cryptocrawl/discovery/funding-rate-monitor.ts');
+const fundingLifecycle = read('server/services/cryptocrawl/execution/funding-position-lifecycle.ts');
+const fundingAdapter = read('server/services/cryptocrawl/execution/okx-funding-lifecycle-adapter.ts');
+const combinedAdapter = read('server/services/cryptocrawl/execution/funding-crosschain-execution-adapter.ts');
 const manifest = read('server/services/cryptocrawl/optimization/nix-gen/completion-manifest.ts');
-const readme = read('server/services/cryptocrawl/optimization/nix-gen/README.md');
 
 must(index, "./zero-capital-ordering.js", 'zero-capital ordering is exported');
 must(index, "./live-priority-registry.js", 'shared live priority registry is exported');
@@ -37,30 +42,41 @@ must(live, 'executionAuthority: false', 'shared registry cannot execute');
 must(live, 'resourceAuthority: false', 'shared registry cannot acquire resources');
 must(live, 'filtersCanonicalCandidates: false', 'shared registry cannot filter canonical candidates');
 must(cexOrdering, "source: 'cex'", 'CEX lane publishes to global live priority');
-must(measuredOrdering, "source: 'measured_atomic'", 'measured atomic lane publishes to global live priority');
+must(measuredOrdering, "source: 'measured_atomic'", 'measured deterministic lane publishes to global live priority');
 must(zeroOrdering, "source: 'zero_capital'", 'zero-capital lane publishes to global live priority');
 
 must(globalLive, 'additionalPrepared?: readonly NixGenPreparedBid[]', 'pure global helper accepts already-prepared independent live lanes');
 must(globalLive, 'additionalPreparedCount: number', 'pure global helper reports additional live-lane participation');
 must(globalLive, 'filtersCanonicalCandidates: false', 'pure global helper remains non-filtering');
 
-must(crossChain, "'cross_chain_source_destination_profit_leg'", 'cross-chain still requires a real revenue leg');
-must(crossChain, 'executableCapability: false', 'cross-chain transport is not falsely promoted to profitable execution');
-must(funding, "'funding_venue_lifecycle_adapter'", 'funding still requires a lifecycle adapter');
-must(funding, 'executableCapability: false', 'funding public discovery is not falsely promoted');
+// Cross-chain is eligible only from a closed same-asset deterministic value loop.
+must(crossChain, 'cross_chain_profit_model:same_asset_closed_value', 'cross-chain uses closed same-asset value accounting');
+must(crossChain, 'cross_chain_profit_model:minimum_output_not_expected_output', 'cross-chain uses guaranteed minimum rather than optimistic expected output');
+must(crossChain, 'executableCapability: routeExecutable', 'cross-chain capability is derived from complete route evidence');
+must(crossEconomics, 'guaranteedOutputHuman', 'cross-chain deterministic economics are based on guaranteed output');
+must(crossEconomics, 'deterministicNetProfitUsd = routeGainUsdBeforeOriginGas - originGasUsd', 'origin gas is subtracted exactly once');
+must(crossTerminal, 'if (inputAmount !== quote.inputAmount) return null;', 'terminal deposit amount must match execution quote input');
+must(crossLifecycle, 'applyCrossChainSystemCapitalSettlement', 'terminal cross-chain settlement reconciles system-owned capital');
+must(crossLifecycle, "status: 'ACCOUNTING_PENDING'", 'missing terminal accounting evidence remains pending instead of fabricating settlement');
 
-must(manifest, "zero_capital_live_finger', state: 'implemented'", 'manifest records zero-capital finger completion');
-must(manifest, "market_making_live_finger', state: 'implemented'", 'manifest records market-making finger completion');
-must(manifest, "cross_chain_live_finger', state: 'upstream_capability_required'", 'manifest truthfully preserves cross-chain dependency');
-must(manifest, "funding_rate_live_finger', state: 'upstream_capability_required'", 'manifest truthfully preserves funding dependency');
+// Funding entry remains projected expected value. Only authenticated terminal fills/bills establish realized profit.
+must(funding, 'deterministicNetProfitUsd: null', 'funding discovery never writes projected carry into deterministic profit');
+must(funding, 'funding_profit_authority:projected_expected_value_until_terminal_bill', 'funding projected-profit boundary is explicit');
+must(fundingLifecycle, 'Expected-value carry at entry. This is not canonical deterministic profit.', 'funding plan type preserves projected-vs-deterministic distinction');
+must(fundingLifecycle, 'reconcileSettlement?', 'funding lifecycle can recover delayed terminal bill evidence');
+must(fundingAdapter, "okx_authenticated_funding_bills:type_8", 'terminal funding economics use authenticated funding bills');
+must(fundingAdapter, 'cex_system_owned_lot_ledger:exact_spot_and_derivative_transforms', 'funding terminal ownership uses exact system-owned ledger transforms');
+must(combinedAdapter, 'funding_projected_entry_vs_realized_terminal_separated', 'terminal feedback preserves projected-vs-realized separation');
 
-must(readme, '**Zero-capital atomic**', 'README records zero-capital as a connected execution-capable lane');
-must(readme, '**Maker-CEX / market-making**', 'README records market-making as a connected execution-capable lane');
-must(readme, 'Transport cost alone is not profit.', 'README preserves cross-chain revenue-leg truth');
-must(readme, 'registered venue lifecycle adapters', 'README preserves funding execution dependency truth');
-mustNot(readme, 'a zero-capital strategy may be discovered/planned and have a registered Nix-Gen finger', 'stale zero-capital-unavailable rollout wording is removed');
+// Nix deterministic-dollar allocation may include deterministic cross-chain, never projected funding carry.
+must(measuredOrdering, "decision.topology === 'CROSS_CHAIN'", 'deterministic cross-chain enters measured Nix portfolio');
+mustNot(measuredOrdering, "decision.topology === 'FUNDING_ARBITRAGE'", 'projected funding must not enter deterministic Nix portfolio');
 
-for (const text of [bids, live, globalLive, zeroOrdering]) {
+must(manifest, "cross_chain_live_finger', state: 'implemented'", 'manifest records cross-chain finger completion');
+must(manifest, "funding_rate_live_finger', state: 'implemented'", 'manifest records funding lifecycle completion');
+must(manifest, 'entry carry remains projected expected value', 'manifest preserves funding deterministic-profit boundary');
+
+for (const text of [bids, live, globalLive, zeroOrdering, measuredOrdering]) {
   mustNot(text, 'WALLET_PRIVATE_KEY', 'Nix-Gen capability layer must not access signer secrets');
   mustNot(text, '.sendTransaction(', 'Nix-Gen capability layer must not submit transactions');
   mustNot(text, '.transfer(', 'Nix-Gen capability layer must not move funds');
