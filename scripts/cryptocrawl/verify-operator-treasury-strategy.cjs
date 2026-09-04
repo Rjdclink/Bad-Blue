@@ -36,13 +36,17 @@ requireText(operatorPath, operator, 'const PROFIT_CUSHION_USD = 50;', '$50 stop 
 requireText(operatorPath, operator, 'randomInt(0, index + 1)', '20 trade days must remain randomized rather than deterministic');
 requireText(operatorPath, operator, 'ceiling - PROFIT_CUSHION_USD', 'daily stop must remain ceiling minus $50');
 requireText(operatorPath, operator, "blockReason = 'learning_day'", 'non-trading days must remain execution-blocked learning days');
+requireText(operatorPath, operator, 'runMonteCarloSimulation', 'learning days must continue running Cryptara Monte Carlo learning');
 
 const schedulerPath = 'server/services/cryptocrawl/execution/canonical-execution-scheduler.ts';
 const scheduler = read(schedulerPath);
 requireText(schedulerPath, scheduler, 'operatorTradingStrategy', 'canonical scheduler must remain wired to operator strategy authority');
 requireText(schedulerPath, scheduler, 'reserveTrade', 'trade-slot reservation must occur before canonical submission');
+requireText(schedulerPath, scheduler, 'runLearningDayCycle', 'canonical scheduler must invoke Cryptara learning on learning days');
 requireText(schedulerPath, scheduler, 'learning_day', 'learning-day block must reach canonical scheduler');
 requireText(schedulerPath, scheduler, 'daily_profit_stop', 'realized daily profit stop must reach canonical scheduler');
+requireText(schedulerPath, scheduler, 'nixGenExecutionAuthority: false', 'Nix-Gen must remain advisory rather than execution authority');
+requireText(schedulerPath, scheduler, 'operatorStrategyProfitabilityAuthority: false', 'operator timing policy must never replace canonical profitability authority');
 
 const retainedPath = 'server/services/cryptocrawl/compensation/retained-profit-ledger.ts';
 const retained = read(retainedPath);
