@@ -69,7 +69,12 @@ must(feedbackPath, feedback, 'feedback_recorded_at IS NULL', 'only unacknowledge
 must(feedbackPath, feedback, 'createProductionCexSettlementAdapters', 'feedback replay must reauthenticate the two exchange settlements');
 must(feedbackPath, feedback, 'recordCryptaraExecutionEvidence', 'feedback replay must use the canonical Cryptara learning boundary');
 must(feedbackPath, feedback, "strategy: 'controlled_loss_learning'", 'replayed feedback must retain controlled-loss strategy identity');
-must(feedbackPath, feedback, 'SET feedback_recorded_at=now()', 'feedback marker must be written only after canonical learning returns');
+must(feedbackPath, feedback, 'scheduleAnotherAttemptAfterTruthfulNonloss', 'a truthful non-loss must be learned and then re-randomized rather than falsely satisfying the daily loss requirement');
+must(feedbackPath, feedback, "AND status='TERMINAL_NONLOSS'", 'only a non-loss may reopen the single daily learning event');
+must(feedbackPath, feedback, "SET status='RETRYABLE'", 'a non-loss must return the same daily event to a randomized retry state');
+must(feedbackPath, feedback, 'randomizedNonlossRetry', 'non-loss retry timing must remain randomized');
+must(feedbackPath, feedback, 'secondControlledLossPossible: false', 'the first actual terminal loss must permanently end the daily controlled-loss lane');
+must(feedbackPath, feedback, 'SET feedback_recorded_at=now()', 'terminal feedback marker must be written only after canonical learning returns');
 must(feedbackPath, feedback, 'terminalFeedbackIdempotent: true', 'feedback replay must explicitly rely on canonical terminal identity dedupe');
 
 const lotPath = 'server/services/cryptocrawl/execution/cex-system-owned-lot-ledger.ts';
