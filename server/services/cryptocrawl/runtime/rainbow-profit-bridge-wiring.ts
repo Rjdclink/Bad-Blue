@@ -8,6 +8,7 @@ import { rainbowProfitBridge } from '../compensation/rainbow-profit-bridge.js';
 import { rainbowProfitObservability } from '../compensation/rainbow-profit-observability.js';
 import { rainbowProfitSourceLedger } from '../compensation/rainbow-profit-source-ledger.js';
 import { stageManager } from '../governance/stage-management.js';
+import { getRainbowCapitalDestinationAdvisory } from '../optimization/rainbow-capital-destination-advisory.js';
 import { ensureTerminalTreasuryLifecycle, stopTerminalTreasuryLifecycle } from './terminal-treasury-lifecycle.js';
 
 let installed = false;
@@ -28,6 +29,7 @@ async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
     getCryptaraVenueSpecializationLearning().recordTerminalExecution(feedback);
 
     const allocation = await retainedProfitLedger.recordTerminalSettlement(feedback);
+    const capitalAdvisory = getRainbowCapitalDestinationAdvisory();
     try {
       await rainbowProfitSourceLedger.recordTerminalSettlement(feedback);
     } catch (error) {
@@ -55,6 +57,10 @@ async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
         payoutNetwork: 'ethereum',
         retainedCapitalInventoryReserved: false,
         payoutCapitalProtectedFromNewTrades: Boolean(allocation.payoutSourceVenue && allocation.payoutSourceAsset),
+        cexDemandCandidates: capitalAdvisory.cexDemand.map(item => item.venue),
+        externalRetainedCapitalCandidates: capitalAdvisory.retainedCapitalCandidates.map(item => item.id),
+        actionableExternalRetainedCapitalCandidates: capitalAdvisory.actionableExternalRetainedCapitalCandidates.map(item => item.id),
+        externalCandidateCapitalMovementAuthority: false,
       });
     }
     if (allocation) void rainbowProfitBridge.wake('terminal_profit_recorded');
@@ -117,7 +123,11 @@ export function ensureRainbowProfitBridgeWiring(): void {
     payoutNetwork: 'ethereum_mainnet_only',
     retainedTradingCapitalSpendabilityAuthority: 'canonical_inventory_ledger_system_owned_lots_only',
     retainedCapitalInventoryReserved: false,
-    retainedCapitalRoutingTargets: ['coinbase', 'kraken', 'okx'],
+    retainedCapitalRoutingTargets: ['coinbase', 'kraken', 'okx', 'external_capability_registry_advisory'],
+    externalCapitalAdvisoryIncludes: ['morpho_midnight', 'compound', 'curve_llamalend_v2', 'jupiter_offerbook', 'auto_finance', 'ipor_fusion', 'yo_protocol', 'jupiter_lend_flashloan'],
+    externalCapitalMovementRequiresProviderSpecificExecutionReadyProof: true,
+    externalCapitalAdvisoryExecutionAuthority: false,
+    externalCapitalAdvisoryCapitalMovementAuthority: false,
     venueSpecializationLearning: 'cryptara_terminal_truth_advisory_only',
     venueSpecializationExecutionAuthority: false,
     payoutCapitalProtectedFromNewTradeSpendability: true,
