@@ -151,9 +151,6 @@ async function lookupOrderByClientId(instId: string, clOrdId: string): Promise<C
     }
     return { state: 'found', row };
   } catch (error) {
-    // Only OKX's explicit OrderNotFound result proves absence. Network, rate,
-    // credential, region, parsing and identity uncertainty must never authorize
-    // a second submission.
     if (error instanceof OkxPrivateApiError && String(error.code) === '51603') return { state: 'absent' };
     throw error;
   }
@@ -190,9 +187,6 @@ async function placeOrRecoverOrder(input: {
     }
     return String(row.ordId);
   } catch (error) {
-    // A write error can be an ambiguous acknowledgement. Re-query the exact
-    // deterministic client ID. If that recovery read is itself uncertain, it
-    // throws and the durable lifecycle retries later without resubmission.
     const recovered = await lookupOrderByClientId(input.instId, clOrdId);
     if (recovered.state === 'found' && recovered.row?.ordId) return String(recovered.row.ordId);
     throw error;
@@ -255,6 +249,34 @@ function uncertainTerminalSettlement(input: {
     ],
     error: input.error,
   };
+}
+
+function terminalFundingAccountingComplete(settlement: FundingTerminalSettlement): boolean {
+  return settlement.terminal
+    && settlement.settlementConfirmed
+    && settlement.spotClosed
+    && settlement.perpClosed
+    && settlement.fundingPaymentUsd !== null
+    && Number.isFinite(settlement.fundingPaymentUsd)
+    && settlement.realizedEntryExitPnlUsd !== null
+    && Number.isFinite(settlement.realizedEntryExitPnlUsd)
+    && settlement.realizedFeesUsd !== null
+    && Number.isFinite(settlement.realizedFeesUsd)
+    && settlement.realizedNetProfitUsd !== null
+    && Number.isFinite(settlement.realizedNetProfitUsd);
+}
+
+async function releaseTerminalFundingCapitalHold(
+  plan: OkxFundingExecutionPlan,
+  receipt: FundingOpenReceipt,
+  settlement: FundingTerminalSettlement,
+): Promise<void> {
+  if (!terminalFundingAccountingComplete(settlement)) {
+    throw new Error('FUNDING_CAPITAL_RELEASE_REQUIRES_COMPLETE_TERMINAL_ACCOUNTING');
+  }
+  const hold = await recoverHold(plan, receipt.lifecycleId, receipt);
+  if (hold) await releaseFundingCapitalHold(hold);
+  lifecycleCapitalHolds.delete(receipt.lifecycleId);
 }
 
 async function emergencyNeutralize(input: {
@@ -446,7 +468,7 @@ async function terminalEconomics(input: {
       spotCloseOrderId: input.spotCloseOrderId, perpCloseOrderId: input.perpCloseOrderId,
       fundingPaymentUsd: null, realizedEntryExitPnlUsd: null, realizedFeesUsd: null, realizedNetProfitUsd: null,
       settledAt: null,
-      provenance: ['okx_terminal_both_legs_closed', 'okx_funding_bill_evidence_pending', 'synthetic_evidence:false'],
+      provenance: ['okx_terminal_both_legs_closed', 'okx_funding_bill_evidence_pending', 'funding_capital_hold_retained_until_terminal_accounting', 'synthetic_evidence:false'],
       error: 'OKX_FUNDING_BILL_EVIDENCE_PENDING',
     };
   }
@@ -818,17 +840,28 @@ const adapter: FundingLifecycleAdapter = {
       };
     }
 
-    const hold = await recoverHold(okx, receipt.lifecycleId, reconciledReceipt);
-    if (hold) await releaseFundingCapitalHold(hold).catch(() => undefined);
-    lifecycleCapitalHolds.delete(receipt.lifecycleId);
     const closedAt = Date.now();
-    const settlement = await terminalEconomics({
-      plan: okx,
-      receipt: reconciledReceipt,
-      spotCloseOrderId: spotCloseId,
-      perpCloseOrderId: perpCloseId,
-      closedAt,
-    });
+    let settlement: FundingTerminalSettlement;
+    try {
+      settlement = await terminalEconomics({
+        plan: okx,
+        receipt: reconciledReceipt,
+        spotCloseOrderId: spotCloseId,
+        perpCloseOrderId: perpCloseId,
+        closedAt,
+      });
+    } catch (error) {
+      return {
+        lifecycleId: receipt.lifecycleId, terminal: false, settlementConfirmed: false, spotClosed: true, perpClosed: true,
+        spotCloseOrderId: spotCloseId, perpCloseOrderId: perpCloseId,
+        fundingPaymentUsd: null, realizedEntryExitPnlUsd: null, realizedFeesUsd: null, realizedNetProfitUsd: null,
+        settledAt: null,
+        provenance: ['okx_terminal_both_legs_closed', 'funding_terminal_economics_or_ownership_pending', 'funding_capital_hold_retained_until_terminal_accounting', 'synthetic_evidence:false'],
+        error: `FUNDING_TERMINAL_ACCOUNTING_PENDING:${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    if (!terminalFundingAccountingComplete(settlement)) return settlement;
+    await releaseTerminalFundingCapitalHold(okx, reconciledReceipt, settlement);
     lifecyclePlanIds.delete(receipt.lifecycleId);
     return settlement;
   },
@@ -857,9 +890,6 @@ const adapter: FundingLifecycleAdapter = {
       row: spotClosed.row,
       submittedAt: Number(spotClosed.row?.cTime || Date.now()),
     });
-    const hold = await recoverHold(okx, receipt.lifecycleId, reconciledReceipt);
-    if (hold) await releaseFundingCapitalHold(hold).catch(() => undefined);
-    lifecycleCapitalHolds.delete(receipt.lifecycleId);
     const settlement = await terminalEconomics({
       plan: okx,
       receipt: reconciledReceipt,
@@ -867,7 +897,9 @@ const adapter: FundingLifecycleAdapter = {
       perpCloseOrderId,
       closedAt: Date.now(),
     });
-    if (settlement.terminal) lifecyclePlanIds.delete(receipt.lifecycleId);
+    if (!terminalFundingAccountingComplete(settlement)) return settlement;
+    await releaseTerminalFundingCapitalHold(okx, reconciledReceipt, settlement);
+    lifecyclePlanIds.delete(receipt.lifecycleId);
     return settlement;
   },
 };
@@ -881,6 +913,7 @@ export function ensureOkxFundingLifecycleAdapterRegistered(): void {
     privateRequestAuthority: 'cex_private_authority', capitalAuthority: 'cex_inventory_ledger_min_physical_and_system_owned',
     terminalEvidence: 'authenticated_fills_plus_funding_bills', projectedProfitAuthority: false,
     clientOrderRecovery: 'deterministic_clOrdId_query_before_resubmit_fail_closed_on_lookup_uncertainty',
+    capitalReleaseAuthority: 'complete_terminal_accounting_only',
   });
 }
 
