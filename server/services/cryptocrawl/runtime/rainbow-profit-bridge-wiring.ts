@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
+import { getCryptaraVenueSpecializationLearning } from '../../cryptara/venue-specialization-learning.js';
 import { payoutRecipientConfirmationObserver } from '../compensation/payout-recipient-confirmation-observer.js';
 import { ensureRainbowMakerFuelReserve, stopRainbowMakerFuelReserve } from '../compensation/rainbow-maker-fuel-reserve.js';
 import { retainedProfitLedger } from '../compensation/retained-profit-ledger.js';
@@ -21,6 +22,11 @@ function latestTerminalFeedback(): CryptaraExecutionFeedback | null {
 
 async function capture(feedback: CryptaraExecutionFeedback): Promise<void> {
   try {
+    // Venue specialization learns only from the same terminal-confirmed execution
+    // truth used by treasury capture. It is advisory and cannot authorize a trade,
+    // move capital, or modify canonical realized economics.
+    getCryptaraVenueSpecializationLearning().recordTerminalExecution(feedback);
+
     const allocation = await retainedProfitLedger.recordTerminalSettlement(feedback);
     try {
       await rainbowProfitSourceLedger.recordTerminalSettlement(feedback);
@@ -77,8 +83,8 @@ export function ensureRainbowProfitBridgeWiring(): void {
   });
 
   // Replay remains safe because terminalFeedbackIdentity plus the database
-  // primary key makes allocation exactly-once. A pre-existing job is not paid a
-  // second time; the independent worker handles any durable backlog.
+  // primary key makes allocation exactly-once. Venue learning is intentionally
+  // allowed to rehydrate only from terminal truth and remains advisory.
   for (const evidence of stageManager.getState().cryptaraExecutionEvidence) {
     if (evidence.settlement?.terminal === true) {
       void capture(evidence as unknown as CryptaraExecutionFeedback);
@@ -92,7 +98,7 @@ export function ensureRainbowProfitBridgeWiring(): void {
   };
   stageManager.on('execution-evidence-recorded', listener);
 
-  logger.info('[Treasury] Fixed per-profitable-trade Rainbow wiring installed', {
+  logger.info('[Treasury] Rainbow terminal-profit wiring installed', {
     component: 'RainbowProfitBridgeWiring',
     sourceAuthority: 'terminal_confirmed_settlement_only',
     persistentIdempotency: true,
@@ -100,7 +106,7 @@ export function ensureRainbowProfitBridgeWiring(): void {
     normalRuntimePayouts: true,
     allocationPolicy: 'fixed_90_percent_wallet_10_percent_retained_for_new_terminal_profit_events',
     payoutTiming: 'immediate_terminal_profit_job_subject_to_settlement_and_wallet_confirmation',
-    payoutAuthority: 'single_independent_supabase_worker_okx_only_with_kraken_payout_funding_lane',
+    payoutAuthority: 'single_independent_supabase_worker_okx_only_with_coinbase_and_kraken_payout_funding_lanes',
     recipientConfirmationAuthority: 'railway_read_only_okx_plus_finalized_ethereum_proof',
     recipientConfirmationMovesFunds: false,
     immediateWakePlusCronFallback: true,
@@ -109,9 +115,11 @@ export function ensureRainbowProfitBridgeWiring(): void {
     ambiguousWithdrawalFailureActivatesFallback: false,
     payoutAsset: 'ETH',
     payoutNetwork: 'ethereum_mainnet_only',
-    retainedTradingCapitalSpendabilityAuthority: 'canonical_inventory_ledger',
+    retainedTradingCapitalSpendabilityAuthority: 'canonical_inventory_ledger_system_owned_lots_only',
     retainedCapitalInventoryReserved: false,
-    retainedCapitalRoutingTargets: ['kraken', 'okx'],
+    retainedCapitalRoutingTargets: ['coinbase', 'kraken', 'okx'],
+    venueSpecializationLearning: 'cryptara_terminal_truth_advisory_only',
+    venueSpecializationExecutionAuthority: false,
     payoutCapitalProtectedFromNewTradeSpendability: true,
     activeTradePreemptionAllowed: false,
     ethConversionTiming: 'only_when_due_and_withdrawal_executable',
