@@ -23,7 +23,10 @@ must(operator, 'const BASELINE_ATTEMPT_DAYS_PER_CYCLE = 20;', 'Adaptive schedule
 must(operator, 'calendarDaysRemaining <= neededProfitDays', 'Catch-up mode must activate when every remaining day is required or the target is already mathematically unreachable');
 must(operator, 'remainingBaselineDays < neededProfitDays', 'Reserve-day promotion must activate before preferred dates become insufficient');
 must(operator, "eligibilitySource = 'profit_day_target_reached'", 'Trading eligibility must stop once 20 profit-qualified days are proven');
+must(operator, "else if (realizedProfitUsd + 1e-9 >= stopProfitUsd) blockReason = 'daily_profit_stop';", 'An early positive result must not itself end the trading day; the existing daily stop remains authoritative');
+must(operator, "else if (submittedTrades >= maxTrades) blockReason = 'daily_trade_limit';", 'The existing 1-3 submitted-trade limit must remain authoritative on an unfinished cycle');
 must(migration, 'profit_qualified = next_realized > 0', 'Only terminal net-positive local days may remain profit-qualified');
+must(migration, 'realized_profit_usd + p_realized_pnl_usd', 'Profit qualification must aggregate signed terminal realized P&L across the whole local day');
 must(migration, 'Missing the target never forces execution and never invalidates the cycle', 'Missing 20 profit days must be explicitly non-fatal');
 must(scheduler, 'operatorStrategyProfitabilityAuthority: false', 'The schedule must never become profitability authority or force a trade');
 
@@ -55,6 +58,11 @@ function decide({
     return { isTradeDay: true, source: 'adaptive_reserve_promotion', neededProfitDays, calendarDaysRemaining, targetStillMathematicallyReachable };
   }
   return { isTradeDay: false, source: 'learning_reserve', neededProfitDays, calendarDaysRemaining, targetStillMathematicallyReachable };
+}
+
+function applySignedTerminalPnl(currentRealizedUsd, signedTerminalPnlUsd) {
+  const nextRealizedUsd = currentRealizedUsd + signedTerminalPnlUsd;
+  return { nextRealizedUsd, profitQualified: nextRealizedUsd > 0 };
 }
 
 function assert(condition, message) {
@@ -94,6 +102,25 @@ function assert(condition, message) {
 {
   const result = decide({ dayOffset: 6, qualifiedProfitDays: 3, baselinePreferred: true, remainingBaselineDays: 16 });
   assert(result.isTradeDay === true && result.source === 'baseline_randomized_attempt', 'Randomized preferred day must remain trading-eligible before target completion');
+}
+
+// Day qualification is based on aggregate signed terminal P&L, not on whether a
+// single trade happened to be profitable. A later realized loss can retract the
+// day from the 20-day count.
+{
+  const afterWin = applySignedTerminalPnl(0, 125);
+  assert(afterWin.profitQualified === true && afterWin.nextRealizedUsd === 125, 'A net-positive terminal result must qualify the day');
+  const afterLaterLoss = applySignedTerminalPnl(afterWin.nextRealizedUsd, -150);
+  assert(afterLaterLoss.profitQualified === false && afterLaterLoss.nextRealizedUsd === -25, 'A later terminal loss must be able to remove day qualification');
+}
+
+// An early profitable trade does not itself consume the rest of the day. While
+// the cycle is below 20 qualified days, the existing daily stop and max-trade
+// rules remain responsible for deciding whether another profitable candidate may
+// be submitted.
+{
+  const qualifiedButCycleUnfinished = decide({ dayOffset: 8, qualifiedProfitDays: 7, baselinePreferred: true, remainingBaselineDays: 14 });
+  assert(qualifiedButCycleUnfinished.isTradeDay === true, 'A profitable day must remain schedule-eligible while the cycle target is unfinished');
 }
 
 // Once 20 net-positive days are terminally proven, all later dates become
