@@ -52,15 +52,72 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_cross_chain_lifecycles (
   UNIQUE (opportunity_id, reservation_id)
 );
 
-CREATE INDEX IF NOT EXISTS cryptocrawler_cross_chain_lifecycle_open_idx
+-- Upgrade an already-existing pre-PREPARED lifecycle table safely. The boolean
+-- existence probe makes the legacy backfill run only on the schema transition,
+-- never against a live new-format PREPARED/SUBMITTED handoff on later reruns.
+DO $$
+DECLARE
+  had_origin_fee_complete boolean;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'cryptocrawler_cross_chain_lifecycles'
+      AND column_name = 'origin_fee_complete'
+  ) INTO had_origin_fee_complete;
+
+  ALTER TABLE public.cryptocrawler_cross_chain_lifecycles
+    ADD COLUMN IF NOT EXISTS signed_origin_tx text;
+  ALTER TABLE public.cryptocrawler_cross_chain_lifecycles
+    ADD COLUMN IF NOT EXISTS origin_fee_complete boolean NOT NULL DEFAULT false;
+  ALTER TABLE public.cryptocrawler_cross_chain_lifecycles
+    ADD COLUMN IF NOT EXISTS broadcast_at timestamptz;
+
+  IF NOT had_origin_fee_complete THEN
+    -- Every legacy row was created only after a successful origin receipt under
+    -- the old executor. Mark it as already-broadcast so new PREPARED recovery can
+    -- never reinterpret historical SUBMITTED/settlement rows as never broadcast.
+    UPDATE public.cryptocrawler_cross_chain_lifecycles
+    SET origin_fee_complete = true,
+        broadcast_at = COALESCE(broadcast_at, submitted_at)
+    WHERE signed_origin_tx IS NULL
+      AND status IN ('SUBMITTED','SETTLEMENT_UNKNOWN','ACCOUNTING_PENDING','RECOVERY_REQUIRED','FILLED','REFUNDED','FAILED');
+  END IF;
+END
+$$;
+
+-- The original inline status check cannot admit PREPARED on an upgraded table.
+-- Replace the deterministic auto-named column CHECK idempotently.
+ALTER TABLE public.cryptocrawler_cross_chain_lifecycles
+  DROP CONSTRAINT IF EXISTS cryptocrawler_cross_chain_lifecycles_status_check;
+ALTER TABLE public.cryptocrawler_cross_chain_lifecycles
+  ADD CONSTRAINT cryptocrawler_cross_chain_lifecycles_status_check
+  CHECK (status IN (
+    'PREPARED',
+    'SUBMITTED',
+    'SETTLEMENT_UNKNOWN',
+    'ACCOUNTING_PENDING',
+    'RECOVERY_REQUIRED',
+    'FILLED',
+    'REFUNDED',
+    'FAILED'
+  ));
+
+-- Recreate partial indexes so an upgraded installation receives PREPARED/FAILED
+-- predicates rather than silently retaining the older index definitions.
+DROP INDEX IF EXISTS public.cryptocrawler_cross_chain_lifecycle_open_idx;
+CREATE INDEX cryptocrawler_cross_chain_lifecycle_open_idx
   ON public.cryptocrawler_cross_chain_lifecycles(status, updated_at)
   WHERE status IN ('PREPARED','SUBMITTED','SETTLEMENT_UNKNOWN','ACCOUNTING_PENDING','RECOVERY_REQUIRED');
 
-CREATE INDEX IF NOT EXISTS cryptocrawler_cross_chain_lifecycle_lease_idx
+DROP INDEX IF EXISTS public.cryptocrawler_cross_chain_lifecycle_lease_idx;
+CREATE INDEX cryptocrawler_cross_chain_lifecycle_lease_idx
   ON public.cryptocrawler_cross_chain_lifecycles(reconcile_lease_expires_at)
   WHERE status IN ('PREPARED','SUBMITTED','SETTLEMENT_UNKNOWN','ACCOUNTING_PENDING','RECOVERY_REQUIRED');
 
-CREATE INDEX IF NOT EXISTS cryptocrawler_cross_chain_lifecycle_feedback_idx
+DROP INDEX IF EXISTS public.cryptocrawler_cross_chain_lifecycle_feedback_idx;
+CREATE INDEX cryptocrawler_cross_chain_lifecycle_feedback_idx
   ON public.cryptocrawler_cross_chain_lifecycles(feedback_applied_at, terminal_at)
   WHERE status IN ('FILLED','REFUNDED','FAILED') AND feedback_applied_at IS NULL;
 
