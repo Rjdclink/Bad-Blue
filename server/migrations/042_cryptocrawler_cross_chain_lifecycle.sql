@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_cross_chain_lifecycles (
   terminal_amount_evidence jsonb,
   realized_net_profit_usd double precision,
   last_error text,
+  reconcile_lease_owner text,
+  reconcile_lease_expires_at timestamptz,
   submitted_at timestamptz NOT NULL DEFAULT now(),
   last_checked_at timestamptz,
   terminal_at timestamptz,
@@ -42,9 +44,13 @@ CREATE INDEX IF NOT EXISTS cryptocrawler_cross_chain_lifecycle_open_idx
   ON public.cryptocrawler_cross_chain_lifecycles(status, updated_at)
   WHERE status IN ('SUBMITTED','SETTLEMENT_UNKNOWN','ACCOUNTING_PENDING','RECOVERY_REQUIRED');
 
+CREATE INDEX IF NOT EXISTS cryptocrawler_cross_chain_lifecycle_lease_idx
+  ON public.cryptocrawler_cross_chain_lifecycles(reconcile_lease_expires_at)
+  WHERE status IN ('SUBMITTED','SETTLEMENT_UNKNOWN','ACCOUNTING_PENDING','RECOVERY_REQUIRED');
+
 ALTER TABLE public.cryptocrawler_cross_chain_lifecycles ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.cryptocrawler_cross_chain_lifecycles FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_cross_chain_lifecycles TO service_role;
 
 COMMENT ON TABLE public.cryptocrawler_cross_chain_lifecycles IS
-  'Durable Across deposit lifecycle. A successful origin deposit is persisted before returning to the scheduler; unresolved/recovery states keep system-owned capital reserved until exact terminal reconciliation.';
+  'Durable Across deposit lifecycle. A successful origin deposit is persisted before returning to the scheduler; unresolved/recovery states keep system-owned capital reserved until exact terminal reconciliation. Reconciliation leases prevent duplicate multi-worker processing.';
