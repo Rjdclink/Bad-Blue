@@ -22,23 +22,29 @@ must(authority, 'lateParameters', 'time-sensitive Kraken fields can be minted on
 must(authority, "contentType: 'application/json'", 'Kraken JSON surface signs and sends exact JSON');
 
 must(l3, "'/0/private/Level3'", 'authenticated Kraken L3 endpoint is used');
-must(l3, 'depth: KRAKEN_L3_DEPTH', 'Kraken L3 is bounded to depth 10');
+must(l3, '{ pair: constraints.exchangeSymbol, depth: KRAKEN_L3_DEPTH }', 'Kraken L3 uses canonical pair and bounded numeric depth');
 must(l3, 'const KRAKEN_L3_DEPTH = 10 as const', 'Kraken L3 depth remains explicitly bounded');
-must(l3, 'samePriceQuantityAhead: null', 'order absence is unknown, never fabricated zero queue');
+must(l3, 'samePriceOrdersAhead: null', 'order-count absence is unknown, never fabricated zero queue');
+must(l3, 'samePriceQuantityAhead: null', 'quantity absence is unknown, never fabricated zero queue');
+must(l3, "reason: 'own_order_not_visible_in_bounded_depth'", 'own-order absence within depth 10 remains unknown');
 must(l3, "authority: 'kraken_l3_queue_advisory_only'", 'L3 queue evidence is advisory only');
 must(l3, 'economicBpsAuthority: false', 'L3 cannot fabricate canonical BPS');
 must(l3, 'executionAuthority: false', 'L3 cannot own execution');
 
 must(amend, 'evaluateMakerTickQueueJump', 'existing queue optimizer is reused rather than duplicated');
+must(amend, 'l3.samePriceOrdersAhead <= 0', 'amend requires explicit positive queue-order count ahead');
+must(amend, 'l3.samePriceQuantityAhead <= 0', 'amend requires explicit positive queue quantity ahead');
 must(amend, "cexOrderBookStreams.getQuote('kraken'", 'fresh canonical Kraken L2 is reacquired before amend');
+must(amend, "const strictlyPassive = order.side === 'buy' ? proposedPrice < quote.ask : proposedPrice > quote.bid", 'fresh L2 proves proposed price remains strictly passive');
 must(amend, "'/0/private/AmendOrder'", 'queue-preserving atomic AmendOrder is used');
 forbid(amend, '/0/private/EditOrder', 'legacy EditOrder replacement semantics are forbidden');
+forbid(amend, '/0/private/CancelOrder', 'queue optimization cannot cancel/reinsert');
 must(amend, 'post_only: true', 'Kraken amend must remain passive');
 must(amend, "encoding: 'json'", 'Kraken amend uses documented JSON surface');
 must(amend, 'lateParameters: () => ({ deadline:', 'Kraken amend deadline is minted immediately before network admission');
-must(amend, "boundedEnv('CRYPTO_KRAKEN_AMEND_DEADLINE_MS', 3_000, 2_000, 60_000)", 'Kraken amend deadline stays within venue-supported bounds');
+must(amend, "boundedEnv('CRYPTO_KRAKEN_AMEND_DEADLINE_MS', 3_000, 2_000, 60_000)", 'Kraken amend deadline stays within conservative venue-supported bounds');
 must(amend, 'state.amended = true', 'one accepted amend permanently consumes the per-order amend budget');
-must(amend, 'if (!state || state.amended) return;', 'at most one amend is attempted after success');
+must(amend, 'if (!state || state.amended) return;', 'at most one accepted amend per order');
 must(amend, 'this.cumulativeConcessionUsd', 'maker legs share one cumulative price-concession budget');
 must(amend, 'remainingVerifiedNetProfitUsd > safetyEpsilonUsd', 'exact remaining verified profit must stay positive after all concessions');
 must(amend, 'cancelReinsertFallbackAllowed: false', 'failed optimization never cancel/reinserts the resting order');
@@ -47,6 +53,7 @@ must(amend, 'settlementAuthority: false', 'amend controller cannot fabricate set
 
 must(maker, 'new KrakenMakerQueueAmendController(plan)', 'both maker legs share one Kraken amend controller');
 must(maker, 'krakenQueueAmend.rememberSubmitted', 'Kraken resting order price/tick state is bound at actual submission');
+must(maker, "if (venue === 'kraken' && !result.terminal)", 'terminal settlement path cannot be amended');
 must(maker, 'await krakenQueueAmend.maybeAmend(order, result)', 'amend evaluation occurs only inside existing maker query lifecycle');
 must(maker, 'krakenQueueAmend.forget(order.orderId)', 'terminal/cancel lifecycle clears amend state');
 
