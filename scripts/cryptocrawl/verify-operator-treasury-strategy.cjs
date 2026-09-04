@@ -57,8 +57,9 @@ const migration43 = read(migration43Path);
 requireText(migration43Path, migration43, 'profit_day_target smallint NOT NULL DEFAULT 20', 'profit-day target must be durable schema state');
 requireText(migration43Path, migration43, 'profit_qualified boolean NOT NULL DEFAULT false', 'profit qualification must be durable per-day state');
 requireText(migration43Path, migration43, 'eligibility_decided boolean NOT NULL DEFAULT false', 'dynamic day eligibility must be durable across restarts');
-requireText(migration43Path, migration43, 'profit_qualified = true', 'terminal-confirmed profit recording must qualify the local day');
-requireText(migration43Path, migration43, "status IN ('RESERVED','SUBMITTED','TERMINAL')", 'profit must remain bound to the original reserved local trading date across midnight');
+requireText(migration43Path, migration43, 'cryptocrawler_operator_strategy_record_terminal_pnl', 'signed terminal P&L must be the qualification authority');
+requireText(migration43Path, migration43, 'profit_qualified = next_realized > 0', 'a day may count only while signed terminal-confirmed realized P&L remains net-positive');
+requireText(migration43Path, migration43, "status IN ('RESERVED','SUBMITTED','TERMINAL')", 'terminal P&L must remain bound to the original reserved local trading date across midnight');
 requireText(migration43Path, migration43, 'Missing the target never forces execution and never invalidates the cycle', 'missing the 20-day target must remain non-fatal and must never force execution');
 
 const retainedPath = 'server/services/cryptocrawl/compensation/retained-profit-ledger.ts';
@@ -142,6 +143,7 @@ for (let n = 32; n <= 41; n += 1) {
 }
 requireMatch(schemaPath, schema, /['\"]042_cryptocrawler_coinbase_system_capital_rainbow\.sql['\"]/, 'Overflow schema must include Coinbase/Rainbow migration 042');
 requireMatch(schemaPath, schema, /['\"]043_cryptocrawler_profit_qualified_schedule\.sql['\"]/, 'Overflow schema must include adaptive profit-qualified schedule migration 043');
+requireText(schemaPath, schema, 'public.cryptocrawler_operator_strategy_record_terminal_pnl(text,text,numeric)', 'runtime schema must require the signed terminal-P&L qualification function');
 requireText(schemaPath, schema, 'public.cryptocrawler_release_system_capital_transfer(uuid)', 'release RPC signature must match the migration-defined function');
 requireText(schemaPath, schema, 'public.cryptocrawler_enforce_lifecycle_inventory_reservation()', 'lifecycle guard function must be schema-required');
 
