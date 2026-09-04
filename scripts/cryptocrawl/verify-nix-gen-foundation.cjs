@@ -63,12 +63,13 @@ requirePattern(cexOrdering, /if \(!enabled \|\| original\.length < 2\)/, 'Disabl
 requirePattern(cexOrdering, /catch \(error\)[\s\S]{0,450}candidates:\s*original/, 'Nix-Gen ordering errors must fail open to canonical ordering');
 forbidPattern(cexOrdering, /\.filter\([^\n]*candidate/, 'CEX Nix-Gen ordering must not filter canonical candidates');
 
-requirePattern(scarcity, /authority:\s*'nix_gen_advisory_scarcity'/, 'Scarcity pricing must identify itself as advisory');
-requirePattern(scarcity, /executionAuthority:\s*false/, 'Scarcity pricing must not gain execution authority');
-requirePattern(scarcity, /resourceAuthority:\s*false/, 'Scarcity pricing must not become resource authority');
-requirePattern(scarcity, /normalizedShadowPrice/, 'Scarcity pricing must expose a bounded advisory shadow-price signal');
-requirePattern(scarcity, /Math\.max\(0,\s*Math\.min\(1,\s*value\)\)/, 'Scarcity price normalization must be explicitly bounded');
-forbidPattern(scarcity, /acquire|reserve|release\(/, 'Scarcity pricing must not mutate or reserve canonical resources');
+requirePattern(scarcity, /authority:\s*'nix_gen_advisory_scarcity'/, 'Scarcity signaling must identify itself as advisory');
+requirePattern(scarcity, /executionAuthority:\s*false/, 'Scarcity signaling must not gain execution authority');
+requirePattern(scarcity, /resourceAuthority:\s*false/, 'Scarcity signaling must not become resource authority');
+requirePattern(scarcity, /normalizedScarcitySignal/, 'Scarcity signaling must expose a bounded advisory scarcity signal');
+requirePattern(scarcity, /Math\.max\(0,\s*Math\.min\(1,\s*value\)\)/, 'Scarcity signal normalization must be explicitly bounded');
+forbidPattern(scarcity, /normalizedShadowPrice/, 'Heuristic scarcity must not be mislabeled as a shadow price');
+forbidPattern(scarcity, /acquire|reserve|release\(/, 'Scarcity signaling must not mutate or reserve canonical resources');
 
 requirePattern(replanner, /authority:\s*'nix_gen_advisory_replanner'/, 'Replanner must identify itself as advisory');
 requirePattern(replanner, /executionAuthority:\s*false/, 'Replanner must not gain execution authority');
