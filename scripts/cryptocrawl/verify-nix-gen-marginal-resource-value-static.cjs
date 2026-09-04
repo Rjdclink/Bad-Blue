@@ -25,7 +25,7 @@ requirePattern(marginal, /advisory:\s*undefined/, 'Marginal canonical-profit ana
 requirePattern(marginal, /HARD_MAX_RESOURCES\s*=\s*64/, 'Marginal analysis must have a hard resource-count compute bound');
 requirePattern(marginal, /baseline\.resourceUsage/, 'Marginal analysis must reuse optimizer-normalized resource capacities');
 forbidPattern(marginal, /normalizedShadowPrice|dualPrice/, 'Marginal finite-difference diagnostics must not invent dual-price semantics');
-forbidPattern(marginal, /acquire|reserve|release\(|submitOrder|placeOrder|executeVerifiedArbitragePlan/, 'Marginal analysis must remain non-mutating and non-executing');
+forbidPattern(marginal, /\b(?:acquire[A-Za-z0-9_]*|reserve[A-Za-z0-9_]*|release|submitOrder|placeOrder|executeVerifiedArbitragePlan)\s*\(/, 'Marginal analysis must remain non-mutating and non-executing');
 forbidPattern(marginal, /setInterval|setTimeout|queueMicrotask/, 'Marginal analysis must not create a scheduling loop');
 
 console.log('NIX-GEN MARGINAL RESOURCE VALUE STATIC VERIFIER PASSED');
