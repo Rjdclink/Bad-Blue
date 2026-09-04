@@ -33,15 +33,17 @@ RUN rm -rf node_modules || true && \
 # Copy application code
 COPY . .
 
-# Build application (requires dev dependencies). Payout-recipient truth and every
-# Nix-Gen invariant are explicit production gates: the image cannot build if the
-# signer-derived payout truth, Nix-Gen authority boundary, deterministic optimizer,
-# replanner, robustness, scarcity, marginal-value, portfolio, or runtime-wiring
-# invariants regress. The normal build proves the full source tree. The deployed
-# server bundle is then rebuilt through the mandatory CryptoCrawler Overflow
-# authority router so every reachable CryptoCrawler import of server/db resolves
-# to Overflow and canonical runtime install requires the complete Overflow schema proof.
+# Build application (requires dev dependencies). Payout-recipient truth, the
+# operator/treasury strategy contract, and every Nix-Gen invariant are explicit
+# production gates: the image cannot build if signer-derived payout truth, the
+# 20/30 randomized operator strategy, 90/10 profit routing, provenance-backed
+# $4k/80% treasury sweep, lifecycle reservations, or Nix-Gen authority boundaries
+# regress. The normal build proves the full source tree. The deployed server
+# bundle is then rebuilt through the mandatory CryptoCrawler Overflow authority
+# router so every reachable CryptoCrawler import of server/db resolves to
+# Overflow and canonical runtime install requires the complete Overflow schema proof.
 RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
+    node scripts/cryptocrawl/verify-operator-treasury-strategy.cjs && \
     for script in scripts/cryptocrawl/verify-nix-gen-*.cjs; do node "$script"; done && \
     for script in scripts/cryptocrawl/verify-nix-gen-*.ts; do npx --no-install tsx "$script"; done && \
     npm run build && \
@@ -114,6 +116,15 @@ COPY --from=builder /app/server/migrations/028_cryptocrawler_payout_recipient_co
 COPY --from=builder /app/server/migrations/029_cryptocrawler_terminal_sweep_recipient_confirmation.sql ./dist/migrations/029_cryptocrawler_terminal_sweep_recipient_confirmation.sql
 COPY --from=builder /app/server/migrations/030_cryptocrawler_payout_confirmation_truth_guard.sql ./dist/migrations/030_cryptocrawler_payout_confirmation_truth_guard.sql
 COPY --from=builder /app/server/migrations/031_cryptocrawler_payout_confirmation_wait.sql ./dist/migrations/031_cryptocrawler_payout_confirmation_wait.sql
+COPY --from=builder /app/server/migrations/032_cryptocrawler_operator_trading_strategy.sql ./dist/migrations/032_cryptocrawler_operator_trading_strategy.sql
+COPY --from=builder /app/server/migrations/033_cryptocrawler_operator_strategy_sequential_submission.sql ./dist/migrations/033_cryptocrawler_operator_strategy_sequential_submission.sql
+COPY --from=builder /app/server/migrations/034_cryptocrawler_system_capital_treasury_strategy.sql ./dist/migrations/034_cryptocrawler_system_capital_treasury_strategy.sql
+COPY --from=builder /app/server/migrations/035_cryptocrawler_payout_funding_and_exact_transfer.sql ./dist/migrations/035_cryptocrawler_payout_funding_and_exact_transfer.sql
+COPY --from=builder /app/server/migrations/036_cryptocrawler_system_capital_wallet_sweep.sql ./dist/migrations/036_cryptocrawler_system_capital_wallet_sweep.sql
+COPY --from=builder /app/server/migrations/037_cryptocrawler_treasury_reservation_unification.sql ./dist/migrations/037_cryptocrawler_treasury_reservation_unification.sql
+COPY --from=builder /app/server/migrations/038_cryptocrawler_system_capital_sweep_idempotency.sql ./dist/migrations/038_cryptocrawler_system_capital_sweep_idempotency.sql
+COPY --from=builder /app/server/migrations/039_cryptocrawler_system_capital_transfer_truth_hardening.sql ./dist/migrations/039_cryptocrawler_system_capital_transfer_truth_hardening.sql
+COPY --from=builder /app/server/migrations/040_cryptocrawler_treasury_reservation_lifecycle_guard.sql ./dist/migrations/040_cryptocrawler_treasury_reservation_lifecycle_guard.sql
 
 # Overflow-only prerequisites complete migration gaps found by the repository-wide
 # authority audit without enabling duplicate schedulers or browser/API access.
