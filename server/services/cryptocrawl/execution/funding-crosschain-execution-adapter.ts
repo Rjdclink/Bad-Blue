@@ -1,18 +1,24 @@
-import { BigNumber, ethers } from 'ethers';
+import { ethers } from 'ethers';
 import { pool } from '../../../db.js';
 import logger from '../../../logger.js';
-import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
-import { getAcrossTerminalAmountEvidence } from '../bridge/across-terminal-amount-evidence.js';
-import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { getPreparedCrossChainRoute } from '../discovery/cross-chain-opportunity-generator.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { stageManager } from '../governance/stage-management.js';
 import { executeAcrossBridgeQuote } from './across-bridge-executor.js';
+import {
+  advanceOpenCrossChainLifecycles,
+  claimPendingCrossChainTerminalFeedback,
+  ensureCrossChainLifecycleStoreReady,
+  markCrossChainTerminalFeedbackApplied,
+  persistSubmittedAcrossLifecycle,
+  releaseCrossChainTerminalFeedbackLease,
+  type CrossChainLifecycleResult,
+  type CrossChainSubmissionRecord,
+} from './cross-chain-durable-lifecycle.js';
 import { fundingPositionLifecycle, type FundingExecutionPlan, type FundingLifecycleResult } from './funding-position-lifecycle.js';
 import { getPreparedOkxFundingPlan } from './okx-funding-lifecycle-adapter.js';
 import {
-  applyCrossChainSystemCapitalSettlement,
   reserveOnchainSystemCapital,
   type OnchainSystemCapitalReservation,
 } from './onchain-system-capital-ledger.js';
@@ -112,14 +118,87 @@ async function recordFundingTerminal(result: FundingLifecycleResult): Promise<vo
   });
 }
 
-async function crossChainGasUsd(chain: keyof typeof SUPPORTED_CHAINS, originNativeFeeWei: string | undefined): Promise<number | null> {
-  if (!originNativeFeeWei || !/^\d+$/.test(originNativeFeeWei)) return null;
-  const currency = SUPPORTED_CHAINS[chain].currency.toUpperCase();
-  const prices = await coinGeckoPriceClient.getLiveSymbolPrices([currency]).catch(() => new Map<string, number>());
-  const price = prices.get(currency);
-  if (!Number.isFinite(price) || Number(price) <= 0) return null;
-  const nativeFee = Number(ethers.utils.formatEther(BigNumber.from(originNativeFeeWei)));
-  return Number.isFinite(nativeFee) ? nativeFee * Number(price) : null;
+async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Promise<void> {
+  if (!result.terminal || !result.settlementConfirmed) return;
+  const realized = result.realizedNetProfitUsd;
+  const settledAt = result.settledAt ?? Date.now();
+  const terminal = result.terminalAmountEvidence;
+  const inputHuman = terminal
+    ? Number(ethers.utils.formatUnits(terminal.inputAmount, result.quote.inputTokenDecimals))
+    : null;
+  const outputHuman = terminal
+    ? Number(ethers.utils.formatUnits(terminal.outputAmount, result.quote.outputTokenDecimals))
+    : null;
+  const acquisitionCostUsd = inputHuman !== null && result.assetUsd !== null && Number.isFinite(inputHuman)
+    ? inputHuman * result.assetUsd
+    : null;
+  const proceedsUsd = outputHuman !== null && result.assetUsd !== null && Number.isFinite(outputHuman)
+    ? outputHuman * result.assetUsd
+    : null;
+  const candidate = measuredCandidateRegistry.get(result.opportunityId);
+  if (candidate && realized !== null && Number.isFinite(realized)) {
+    const realizedBps = result.notionalUsd > 0 ? realized / result.notionalUsd * 10_000 : null;
+    measuredCandidateRegistry.updateStatus(result.opportunityId, realized > 0 ? candidate.status : 'blocked', {
+      economics: { ...candidate.economics, realizedNetProfitBps: realizedBps },
+      executionCapabilityReason: realized > 0
+        ? candidate.executionCapabilityReason
+        : result.status === 'REFUNDED'
+          ? 'Across route returned exact principal; actual origin gas produced a realized loss'
+          : 'Terminal Across same-asset result was not profitable after actual origin gas',
+      provenance: [...candidate.provenance, 'cross_chain:durable_terminal_reconciliation', 'cross_chain:system_capital_settlement_authority'],
+    });
+  }
+  await recordCryptaraExecutionEvidence({
+    source: 'master_pipeline',
+    opportunityId: result.opportunityId,
+    chain: `${result.quote.originChain}->${result.quote.destinationChain}`,
+    symbol: result.quote.token,
+    strategy: 'across_same_asset_cross_chain',
+    success: result.success,
+    expectedProfitUsd: result.expectedProfitUsd,
+    realizedProfitUsd: realized,
+    feeUsd: result.gasUsd,
+    slippageBps: null,
+    latencyMs: Math.max(0, settledAt - result.submittedAt),
+    usedZeroCapital: false,
+    timestamp: settledAt,
+    notes: result.error,
+    settlementStatus: result.status === 'FILLED' ? 'filled' : result.status === 'REFUNDED' ? 'refunded' : 'settlement_unknown',
+    settlementConfirmed: true,
+    provenance: [
+      ...(candidate?.provenance ?? []),
+      ...(terminal?.provenance ?? []),
+      'cross_chain:restart_safe_terminal_feedback',
+      'cross_chain:actual_origin_gas',
+      'synthetic_evidence:false',
+    ],
+    settlement: {
+      status: result.status === 'FILLED' ? 'filled' : result.status === 'REFUNDED' ? 'refunded' : 'settlement_unknown',
+      terminal: true,
+      settlementConfirmed: true,
+      submittedAt: result.submittedAt,
+      settledAt,
+      venueOrRoute: `across:${result.quote.originChain}->${result.quote.destinationChain}:${result.quote.token}`,
+      chain: result.quote.destinationChain,
+      predicted: { profitUsd: result.expectedProfitUsd, feeUsd: null, slippageBps: null },
+      realized: {
+        acquisitionCostUsd,
+        proceedsUsd,
+        exchangeFeeUsd: null,
+        gasUsd: result.gasUsd,
+        gasUsed: null,
+        effectiveGasPriceWei: null,
+        slippageBps: null,
+        netProfitUsd: realized,
+      },
+      provenance: [
+        ...(terminal?.provenance ?? []),
+        result.status === 'FILLED' ? 'system_owned_origin_consumed_destination_lot_created' : 'exact_refund_principal_verified',
+      ],
+      transactionHash: result.depositTxnRef,
+      error: result.error,
+    },
+  });
 }
 
 async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<FundingCrossChainDispatchResult> {
@@ -128,9 +207,16 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
   if (!candidate || !prepared || !decision.admitted || candidate.status !== 'eligible' || !candidate.executableCapability) {
     return { opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: 'CROSS_CHAIN_PREPARED_ROUTE_UNAVAILABLE' };
   }
+  if (!await ensureCrossChainLifecycleStoreReady()) {
+    return { opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: 'CROSS_CHAIN_LIFECYCLE_STORE_UNAVAILABLE' };
+  }
+
   const quote = prepared.quote;
-  const reservationExpiry = Date.now() + Math.max(5 * 60_000, Math.min(3 * 60 * 60_000, Number(process.env.ACROSS_TERMINAL_SETTLEMENT_TIMEOUT_MS || 20 * 60_000) + 5 * 60_000));
-  let reservation: OnchainSystemCapitalReservation | null = await reserveOnchainSystemCapital({
+  const reservationExpiry = Date.now() + Math.max(
+    6 * 60 * 60_000,
+    Math.min(7 * 24 * 60 * 60_000, Number(process.env.CRYPTOCRAWL_CROSS_CHAIN_RESERVATION_HOLD_MS || 6 * 60 * 60_000)),
+  );
+  const reservation: OnchainSystemCapitalReservation | null = await reserveOnchainSystemCapital({
     opportunityId: candidate.opportunityId,
     chain: quote.originChain,
     asset: quote.token,
@@ -142,132 +228,71 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
     return { opportunityId: decision.opportunityId, topology: 'CROSS_CHAIN', path: 'BRIDGE_FLASH_LOAN', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: 'CROSS_CHAIN_SYSTEM_OWNED_CAPITAL_UNAVAILABLE' };
   }
 
-  const startedAt = Date.now();
+  let durableSubmission: CrossChainSubmissionRecord | null = null;
+  const persist = async (input: { depositTxnRef: string; originNativeFeeWei: string; submittedAt: number }) => {
+    durableSubmission = await persistSubmittedAcrossLifecycle({
+      opportunityId: candidate.opportunityId,
+      reservationId: reservation.reservationId,
+      quote,
+      depositTxnRef: input.depositTxnRef,
+      originNativeFeeWei: input.originNativeFeeWei,
+      expectedProfitUsd: Number(candidate.economics.deterministicNetProfitUsd),
+      notionalUsd: Number(candidate.economics.notionalUsd),
+      submittedAt: input.submittedAt,
+    });
+  };
+
   try {
-    const execution = await executeAcrossBridgeQuote(quote);
-    const submitted = Boolean(execution.depositTxnRef);
-    if (!execution.settlementConfirmed || execution.status !== 'filled' || !execution.settlement || !execution.depositTxnRef) {
-      if (execution.status !== 'settlement_unknown') await reservation.release().catch(() => undefined);
+    const execution = await executeAcrossBridgeQuote(quote, { onSubmitted: persist, returnAfterSubmission: true });
+    const depositTxnRef = execution.depositTxnRef;
+    if (depositTxnRef && !durableSubmission && execution.originNativeFeeWei) {
+      // One immediate idempotent retry protects against a transient callback error.
+      try {
+        await persist({ depositTxnRef, originNativeFeeWei: execution.originNativeFeeWei, submittedAt: Date.now() });
+      } catch (error) {
+        logger.error('[FundingCrossChainAdapter] Across origin deposit exists but durable lifecycle persistence is unavailable; reservation is deliberately retained', {
+          component: 'FundingCrossChainExecutionAdapter',
+          opportunityId: candidate.opportunityId,
+          depositTxnRef,
+          reservationId: reservation.reservationId,
+          capitalReleaseAllowed: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (depositTxnRef) {
       return {
         opportunityId: decision.opportunityId,
         topology: 'CROSS_CHAIN',
         path: 'BRIDGE_FLASH_LOAN',
-        dispatched: submitted,
-        submitted,
+        dispatched: true,
+        submitted: true,
         success: false,
-        settlementConfirmed: execution.settlementConfirmed,
-        transactionHash: execution.depositTxnRef,
-        submissionReference: execution.depositTxnRef,
+        settlementConfirmed: false,
+        transactionHash: depositTxnRef,
+        lifecycleId: durableSubmission?.lifecycleId,
+        submissionReference: durableSubmission?.lifecycleId ?? depositTxnRef,
         realizedNetProfitUsd: null,
-        error: execution.error,
+        error: durableSubmission ? undefined : execution.error || 'CROSS_CHAIN_SUBMITTED_DURABILITY_RECOVERY_REQUIRED',
       };
     }
 
-    const terminal = await getAcrossTerminalAmountEvidence({ quote, settlement: execution.settlement });
-    if (!terminal) throw new Error('CROSS_CHAIN_TERMINAL_AMOUNT_EVIDENCE_UNAVAILABLE');
-    const [prices, gasUsd] = await Promise.all([
-      coinGeckoPriceClient.getLiveSymbolPrices([quote.token]),
-      crossChainGasUsd(quote.originChain, execution.originNativeFeeWei),
-    ]);
-    const assetUsd = prices.get(quote.token);
-    if (!Number.isFinite(assetUsd) || Number(assetUsd) <= 0 || gasUsd === null) throw new Error('CROSS_CHAIN_TERMINAL_USD_ECONOMICS_INCOMPLETE');
-    const inputHuman = Number(ethers.utils.formatUnits(terminal.inputAmount, quote.inputTokenDecimals));
-    const outputHuman = Number(ethers.utils.formatUnits(terminal.outputAmount, quote.outputTokenDecimals));
-    if (!Number.isFinite(inputHuman) || !Number.isFinite(outputHuman) || inputHuman <= 0) throw new Error('CROSS_CHAIN_TERMINAL_AMOUNTS_INVALID');
-    const realizedNetProfitUsd = (outputHuman - inputHuman) * Number(assetUsd) - gasUsd;
-
-    await applyCrossChainSystemCapitalSettlement({
-      reservationId: reservation.reservationId,
-      opportunityId: candidate.opportunityId,
-      originChain: quote.originChain,
-      destinationChain: quote.destinationChain,
-      inputAsset: quote.token,
-      outputAsset: quote.token,
-      inputTokenAddress: quote.inputToken,
-      outputTokenAddress: quote.outputToken,
-      inputDecimals: quote.inputTokenDecimals,
-      outputDecimals: quote.outputTokenDecimals,
-      inputAmountBaseUnits: terminal.inputAmount,
-      outputAmountBaseUnits: terminal.outputAmount,
-      settlementReference: execution.depositTxnRef,
-      settlementEvidence: {
-        provider: 'across',
-        depositTxnRef: execution.depositTxnRef,
-        destinationReceiptVerified: execution.settlement.destinationReceiptVerified,
-        authenticatedAmountEvidence: terminal.authority,
-        originNativeFeeWei: execution.originNativeFeeWei ?? null,
-      },
-    });
     await reservation.release().catch(() => undefined);
-    reservation = null;
-    const economicallySuccessful = realizedNetProfitUsd > 0;
-    const notionalUsd = Number(candidate.economics.notionalUsd);
-    measuredCandidateRegistry.updateStatus(candidate.opportunityId, economicallySuccessful ? candidate.status : 'blocked', {
-      economics: {
-        ...candidate.economics,
-        realizedNetProfitBps: Number.isFinite(notionalUsd) && notionalUsd > 0 ? realizedNetProfitUsd / notionalUsd * 10_000 : null,
-      },
-      executionCapabilityReason: economicallySuccessful ? candidate.executionCapabilityReason : 'Terminal Across same-asset result was not profitable after actual origin gas',
-      provenance: [...candidate.provenance, 'cross_chain:terminal_authenticated_amounts', 'cross_chain:system_capital_settlement_applied'],
-    });
-
-    const settledAt = Date.now();
-    await recordCryptaraExecutionEvidence({
-      source: 'master_pipeline',
-      opportunityId: candidate.opportunityId,
-      chain: `${quote.originChain}->${quote.destinationChain}`,
-      symbol: quote.token,
-      strategy: 'across_same_asset_cross_chain',
-      success: economicallySuccessful,
-      expectedProfitUsd: Number(candidate.economics.deterministicNetProfitUsd),
-      realizedProfitUsd: realizedNetProfitUsd,
-      feeUsd: gasUsd,
-      slippageBps: null,
-      latencyMs: settledAt - startedAt,
-      usedZeroCapital: false,
-      timestamp: settledAt,
-      settlementStatus: 'filled',
-      settlementConfirmed: true,
-      provenance: [...candidate.provenance, ...terminal.provenance, 'cross_chain:actual_origin_gas', 'synthetic_evidence:false'],
-      settlement: {
-        status: 'filled',
-        terminal: true,
-        settlementConfirmed: true,
-        submittedAt: startedAt,
-        settledAt,
-        venueOrRoute: `across:${quote.originChain}->${quote.destinationChain}:${quote.token}`,
-        chain: quote.destinationChain,
-        predicted: { profitUsd: Number(candidate.economics.deterministicNetProfitUsd), feeUsd: candidate.economics.gasUsd, slippageBps: candidate.economics.expectedSlippageBps },
-        realized: {
-          acquisitionCostUsd: inputHuman * Number(assetUsd),
-          proceedsUsd: outputHuman * Number(assetUsd),
-          exchangeFeeUsd: null,
-          gasUsd,
-          gasUsed: null,
-          effectiveGasPriceWei: null,
-          slippageBps: null,
-          netProfitUsd: realizedNetProfitUsd,
-        },
-        provenance: [...terminal.provenance, 'across_destination_receipt_verified', 'system_owned_origin_consumed_destination_lot_created'],
-        transactionHash: execution.depositTxnRef,
-        error: economicallySuccessful ? undefined : 'CROSS_CHAIN_TERMINAL_NONPOSITIVE_NET',
-      },
-    });
     return {
       opportunityId: decision.opportunityId,
       topology: 'CROSS_CHAIN',
       path: 'BRIDGE_FLASH_LOAN',
-      dispatched: true,
-      submitted: true,
-      success: economicallySuccessful,
-      settlementConfirmed: true,
-      transactionHash: execution.depositTxnRef,
-      submissionReference: execution.depositTxnRef,
-      realizedNetProfitUsd,
-      error: economicallySuccessful ? undefined : 'CROSS_CHAIN_TERMINAL_NONPOSITIVE_NET',
+      dispatched: false,
+      submitted: false,
+      success: false,
+      settlementConfirmed: false,
+      error: execution.error || 'CROSS_CHAIN_SUBMISSION_FAILED',
     };
   } catch (error) {
-    if (reservation) await reservation.release().catch(() => undefined);
+    // No transaction hash escaped the executor, so the origin deposit was not
+    // proven submitted. Releasing the reservation is safe only in this pre-submit path.
+    await reservation.release().catch(() => undefined);
     return {
       opportunityId: decision.opportunityId,
       topology: 'CROSS_CHAIN',
@@ -321,6 +346,35 @@ class FundingCrossChainExecutionAdapter {
       }
     }
     return results;
+  }
+
+  async advanceOpenCrossChainLifecycles(limit = 4): Promise<CrossChainLifecycleResult[]> {
+    const results = await advanceOpenCrossChainLifecycles(limit);
+    const feedback = await claimPendingCrossChainTerminalFeedback(Math.max(limit, 8));
+    for (const result of feedback) {
+      try {
+        await recordCrossChainTerminal(result);
+        await markCrossChainTerminalFeedbackApplied(result.lifecycleId);
+      } catch (error) {
+        await releaseCrossChainTerminalFeedbackLease(result.lifecycleId, error).catch(() => undefined);
+        logger.error('[FundingCrossChainAdapter] Cross-chain terminal feedback failed; durable feedback remains pending', {
+          component: 'FundingCrossChainExecutionAdapter',
+          lifecycleId: result.lifecycleId,
+          opportunityId: result.opportunityId,
+          error: error instanceof Error ? error.message : String(error),
+          settlementAuthorityChanged: false,
+          feedbackDropped: false,
+        });
+      }
+    }
+    return results;
+  }
+
+  async advanceOpenLifecycles(limit = 4): Promise<void> {
+    await Promise.all([
+      this.advanceOpenFundingLifecycles(limit),
+      this.advanceOpenCrossChainLifecycles(limit),
+    ]);
   }
 
   async dispatch(decisions: readonly UnifiedExecutionDecision[]): Promise<FundingCrossChainDispatchResult[]> {
