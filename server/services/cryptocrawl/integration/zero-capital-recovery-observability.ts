@@ -20,6 +20,8 @@ export interface ZeroCapitalRecoverySnapshot {
     attempts: number;
     positiveQuotes: number;
     measuredNotionalUsd: number | null;
+    measuredAt: number;
+    measurementAgeMs: number;
     sameRouteGapImprovementBps: number | null;
   } | null;
   authority: 'telemetry_only';
@@ -90,13 +92,15 @@ function refresh(): void {
     medianCandidateBpsToBreakEven: percentile(negativeGaps, 0.5),
     p90CandidateBpsToBreakEven: percentile(negativeGaps, 0.9),
     measuredRouteFamilies: measuredRoutes.length,
-    closestMeasuredRoute: closestRoute
+    closestMeasuredRoute: closestRoute && closestRoute.lastMeasuredAt !== null
       ? {
           routeId: closestRoute.routeId,
           netProfitBps: closestRoute.recentNetProfitBps,
           attempts: closestRoute.attempts,
           positiveQuotes: closestRoute.positiveQuotes,
           measuredNotionalUsd: closestRoute.recentMeasuredNotionalUsd,
+          measuredAt: closestRoute.lastMeasuredAt,
+          measurementAgeMs: Math.max(0, now - closestRoute.lastMeasuredAt),
           sameRouteGapImprovementBps: sameRouteGapDeltaBps,
         }
       : null,
