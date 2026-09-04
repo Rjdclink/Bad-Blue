@@ -46,7 +46,6 @@ export function orderCexCandidatesWithNixGen<T extends CexCandidate>(
         terminalCalibrationFactor: input.terminalCalibrationFactor(candidate),
         decayUrgencyFactor: input.decayUrgencyFactor(candidate),
         rankScore: candidate.assessment?.rankScore,
-        settlementCapable: true,
       }))
       .filter((item): item is NonNullable<typeof item> => item !== null);
 

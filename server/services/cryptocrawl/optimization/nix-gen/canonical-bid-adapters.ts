@@ -1,5 +1,6 @@
 import type { CanonicalOpportunitySnapshot } from '../../intelligence/canonical-opportunity-state.js';
 import type { MeasuredCandidate } from '../../discovery/measured-candidate-registry.js';
+import { getCanonicalExecutionCapabilities } from '../../execution/execution-readiness.js';
 import { executionResourceScheduler } from '../../execution/resource-scheduler.js';
 import { zeroCapitalResourceScheduler } from '../../execution/zero-capital-resource-scheduler.js';
 import type { UnifiedExecutionDecision } from '../../execution/unified-execution-router.js';
@@ -21,7 +22,6 @@ export interface CexNixGenAdvisoryInput {
   terminalCalibrationFactor?: number;
   decayUrgencyFactor?: number;
   rankScore?: number;
-  settlementCapable: boolean;
 }
 
 function finitePositive(value: unknown): boolean {
@@ -42,6 +42,11 @@ function measuredTopologySettlementCapable(decision: UnifiedExecutionDecision): 
     || (decision.topology === 'LIQUIDATION' && decision.path === 'FLASH_LOAN_LIQUIDATION');
 }
 
+function canonicalCexExecutionSupported(plan: NonNullable<CanonicalOpportunitySnapshot['plan']>): boolean {
+  const supportedVenues = new Set<string>(getCanonicalExecutionCapabilities().supportedCentralizedVenues);
+  return supportedVenues.has(String(plan.buyVenue)) && supportedVenues.has(String(plan.sellVenue));
+}
+
 function measuredAtFromCexSnapshot(snapshot: CanonicalOpportunitySnapshot, now: number): number {
   if (!snapshot.plan) return snapshot.observedAt;
   const quoteAgeMs = Number(snapshot.plan.quoteAgeMs);
@@ -59,6 +64,7 @@ export function prepareCexNixGenBid(
   if (!Number.isFinite(advisory.now) || !Number.isFinite(advisory.expiresAt) || advisory.expiresAt <= advisory.now) return null;
 
   const projection = executionResourceScheduler.getCexPlanningProjection(plan);
+  const executionSupported = canonicalCexExecutionSupported(plan);
   return {
     bid: {
       bidId: `cex:${snapshot.opportunityId}`,
@@ -76,9 +82,11 @@ export function prepareCexNixGenBid(
       },
       execution: {
         eligible: true,
-        executable: true,
-        settlementCapable: advisory.settlementCapable,
-        authoritativePath: 'canonical_execution_scheduler:verified_cex_arbitrage',
+        executable: executionSupported,
+        settlementCapable: executionSupported,
+        authoritativePath: executionSupported
+          ? 'canonical_execution_scheduler:verified_cex_arbitrage'
+          : '',
       },
       advisory: {
         probabilityOfProfitableExecution: advisory.probabilityOfProfitableExecution,
@@ -92,6 +100,7 @@ export function prepareCexNixGenBid(
         symbol: snapshot.symbol,
         buyVenue: plan.buyVenue,
         sellVenue: plan.sellVenue,
+        executionCapabilityAuthority: 'execution-readiness:getCanonicalExecutionCapabilities',
         resourceProjectionAuthority: projection.authority,
         resourceProjectionMutatesState: projection.mutatesResourceState,
       },

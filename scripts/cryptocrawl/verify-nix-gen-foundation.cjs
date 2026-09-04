@@ -57,6 +57,10 @@ requirePattern(coordinator, /executionAuthority:\s*false/, 'Nix-Gen coordination
 requirePattern(coordinator, /scheduler:dispatch_batch/, 'Nix-Gen must model the existing dispatch batch as a shared advisory resource');
 requirePattern(coordinator, /fallbackComparator\(left, right\)/, 'Nix-Gen ordering must fall back to the existing scheduler order');
 
+requirePattern(adapters, /getCanonicalExecutionCapabilities/, 'CEX Nix-Gen execution capability must come from the existing canonical capability authority');
+requirePattern(adapters, /supportedCentralizedVenues/, 'CEX Nix-Gen must consume canonical supported venue truth');
+requirePattern(adapters, /executable:\s*executionSupported/, 'CEX Nix-Gen executable truth must be derived from canonical capability support');
+requirePattern(adapters, /settlementCapable:\s*executionSupported/, 'CEX Nix-Gen settlement capability must be derived from canonical capability support');
 requirePattern(adapters, /getCexPlanningProjection\(plan\)/, 'CEX Nix-Gen bids must consume the existing resource scheduler projection');
 requirePattern(adapters, /getMeasuredAtomicPlanningProjection/, 'Atomic Nix-Gen bids must consume the existing zero-capital resource scheduler projection');
 requirePattern(adapters, /resourceProjectionMutatesState:\s*projection\.mutatesResourceState/, 'Nix-Gen bid provenance must carry resource projection mutation truth');
@@ -66,6 +70,7 @@ forbidPattern(adapters, /rankScore:\s*Number\.isFinite\(decision\.score\.profita
 requirePattern(cexOrdering, /CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING\s*===\s*'true'/, 'CEX Nix-Gen ordering must be explicit opt-in');
 requirePattern(cexOrdering, /if \(!enabled \|\| original\.length < 2\)/, 'Disabled Nix-Gen ordering must immediately preserve canonical order');
 requirePattern(cexOrdering, /catch \(error\)[\s\S]{0,450}candidates:\s*original/, 'Nix-Gen ordering errors must fail open to canonical ordering');
+forbidPattern(cexOrdering, /settlementCapable:\s*true/, 'CEX ordering caller must not assert settlement capability');
 forbidPattern(cexOrdering, /\.filter\([^\n]*candidate/, 'CEX Nix-Gen ordering must not filter canonical candidates');
 
 requirePattern(scarcity, /authority:\s*'nix_gen_advisory_scarcity'/, 'Scarcity signaling must identify itself as advisory');
