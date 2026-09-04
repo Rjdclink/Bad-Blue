@@ -35,7 +35,14 @@ for (const table of [
 }
 
 must(schemaPath, schema, "'045_overflow_self_improvement_support.sql'", 'Overflow schema migration list must include migration 045');
-must(schemaPath, schema, 'const SCHEMA_VERSION = 16;', 'Overflow schema version must advance for migration 045');
+const schemaVersionMatch = schema.match(/const SCHEMA_VERSION = (\d+);/);
+if (!schemaVersionMatch || Number(schemaVersionMatch[1]) < 16) {
+  throw new Error(`Overflow schema version must be at least 16 for migration 045 (${schemaPath})`);
+}
+const lockVersionMatch = schema.match(/const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v(\d+)'/);
+if (!lockVersionMatch || Number(lockVersionMatch[1]) !== Number(schemaVersionMatch[1])) {
+  throw new Error(`Overflow schema lock version must match current schema version (${schemaPath})`);
+}
 must(enginePath, engine, '.from(subAgentLearningPatterns)', 'SelfImprovementEngine must continue using its canonical learning-pattern relation');
 must(enginePath, engine, '.from(subAgentPerformanceMetrics)', 'SelfImprovementEngine must continue using its canonical performance-metrics relation');
 must(enginePath, engine, '.insert(subAgentSelfImprovementActions)', 'SelfImprovementEngine must continue using its canonical audited action relation');
