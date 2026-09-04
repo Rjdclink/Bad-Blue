@@ -505,7 +505,7 @@ async function claimRetainedCandidate(): Promise<RetainedRow | null> {
        ORDER BY r.created_at FOR UPDATE OF r SKIP LOCKED LIMIT 1
      )
      UPDATE public.cryptocrawler_retained_exchange_allocations r
-     SET last_attempt_at=now(), attempt_count=attempt_count+1, updated_at=now()
+     SET last_attempt_at=now(), attempt_count=r.attempt_count+1, updated_at=now()
      FROM candidate, public.cryptocrawler_profit_payout_jobs j
      WHERE r.event_id=candidate.event_id AND j.event_id=r.event_id
      RETURNING r.event_id, r.retained_usd, r.target_venue, r.source_venue, r.status,
