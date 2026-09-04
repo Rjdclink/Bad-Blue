@@ -35,6 +35,8 @@ export interface ExactCexOrderAssetDeltaEvidence {
   provenance: string[];
 }
 
+const OKX_CONVERT_ORDER_PREFIX = 'okx-convert:';
+
 function canonicalAsset(value: unknown): string {
   let asset = String(value ?? '').trim().toUpperCase();
   if (!asset || !/^[A-Z0-9]+$/.test(asset)) throw new Error(`Invalid CEX settlement asset identity: ${String(value ?? '')}`);
@@ -80,9 +82,87 @@ function terminalKrakenState(value: unknown): string {
   return state;
 }
 
+async function getExactOkxConvertAssetDeltas(order: NormalizedOrderSettlement): Promise<ExactCexOrderAssetDeltaEvidence> {
+  const clTReqId = order.orderId.startsWith(OKX_CONVERT_ORDER_PREFIX)
+    ? order.orderId.slice(OKX_CONVERT_ORDER_PREFIX.length)
+    : '';
+  if (!clTReqId) throw new Error('OKX Convert exact settlement evidence requires a client trade request id');
+  if (!order.terminal) throw new Error('OKX Convert exact settlement evidence requires a terminal normalized order');
+
+  const constraints = await getSpotProductConstraints('okx', order.symbol, true);
+  const response = await okxPrivateRequest(
+    '/api/v5/asset/convert/history',
+    'GET',
+    { clTReqId, limit: '1' },
+    { lane: 'account_read' },
+  );
+  const row = response.data.find(item => String(item?.clTReqId || '') === clTReqId) || response.data[0];
+  if (!row) throw new Error(`OKX returned no authenticated Convert history for ${clTReqId}`);
+  if (String(row.state || '') !== 'fullyFilled') {
+    throw new Error(`OKX Convert exact settlement requires fullyFilled state, received ${String(row.state || 'missing')}`);
+  }
+  if (String(row.instId || '').trim().toUpperCase() !== constraints.exchangeSymbol.toUpperCase()) {
+    throw new Error('OKX Convert instrument conflicts with canonical product identity');
+  }
+  const authenticatedSide = String(row.side || '').trim().toLowerCase();
+  if (authenticatedSide !== order.side) throw new Error('OKX Convert side conflicts with normalized settlement identity');
+
+  const quantityDecimal = requirePositiveExactDecimal(String(row.fillBaseSz || ''), 'OKX Convert base fill');
+  const priceDecimal = requirePositiveExactDecimal(String(row.fillPx || ''), 'OKX Convert fill price');
+  const quoteConsideration = requirePositiveExactDecimal(String(row.fillQuoteSz || ''), 'OKX Convert quote fill');
+  const tradeId = String(row.tradeId || '').trim();
+  if (!tradeId) throw new Error('OKX Convert exact settlement requires tradeId');
+
+  const normalizedFilled = order.filledQuantity;
+  if (normalizedFilled === null || compareExactDecimals(quantityDecimal, String(normalizedFilled)) !== 0) {
+    throw new Error(`OKX Convert authenticated base fill conflicts with normalized settlement for ${clTReqId}`);
+  }
+
+  const baseAsset = canonicalAsset(constraints.baseAsset);
+  const quoteAsset = canonicalAsset(constraints.quoteAsset);
+  const assetDeltas: Record<string, string> = {};
+  if (order.side === 'buy') {
+    addDelta(assetDeltas, baseAsset, quantityDecimal);
+    addDelta(assetDeltas, quoteAsset, negateExactDecimal(quoteConsideration));
+  } else {
+    addDelta(assetDeltas, baseAsset, negateExactDecimal(quantityDecimal));
+    addDelta(assetDeltas, quoteAsset, quoteConsideration);
+  }
+
+  return {
+    venue: 'okx',
+    orderId: order.orderId,
+    symbol: order.symbol,
+    side: order.side,
+    baseAsset,
+    quoteAsset,
+    terminalState: 'fullyfilled',
+    accumulatedFillDecimal: quantityDecimal,
+    fills: [{
+      tradeId,
+      quantityDecimal,
+      priceDecimal,
+      feeDecimal: '0',
+      feeAsset: null,
+      liquidityRole: 'unknown',
+    }],
+    assetDeltas,
+    settlementReference: `okx-convert:${tradeId}`,
+    provenance: [
+      'okx_authenticated_convert_history',
+      'okx_convert_trade_id',
+      'exact_decimal_asset_deltas',
+      'authenticated_fill_base_and_quote_amounts',
+      'convert_all_in_quote_no_separate_fill_fee_field',
+      'convert_spread_preserved_in_authenticated_fill_price',
+    ],
+  };
+}
+
 export async function getExactOkxOrderAssetDeltas(order: NormalizedOrderSettlement): Promise<ExactCexOrderAssetDeltaEvidence> {
   if (order.venue !== 'okx') throw new Error(`Exact OKX settlement evidence cannot process venue ${order.venue}`);
   if (!order.terminal) throw new Error('Exact OKX settlement evidence requires a terminal normalized order');
+  if (order.orderId.startsWith(OKX_CONVERT_ORDER_PREFIX)) return getExactOkxConvertAssetDeltas(order);
 
   const constraints = await getSpotProductConstraints('okx', order.symbol, true);
   const [orderResponse, fillsResponse] = await Promise.all([
