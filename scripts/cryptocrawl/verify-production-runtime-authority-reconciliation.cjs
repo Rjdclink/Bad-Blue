@@ -7,21 +7,12 @@ function must(text, needle, label) {
 function mustNot(text, needle, label) {
   if (text.includes(needle)) throw new Error(`PRODUCTION_RUNTIME_RECONCILIATION_REGRESSION: ${label}`);
 }
-function mustBefore(text, first, second, label) {
-  const a = text.indexOf(first);
-  const b = text.indexOf(second);
-  if (a < 0 || b < 0 || a >= b) throw new Error(`PRODUCTION_RUNTIME_RECONCILIATION_ORDER: ${label}`);
-}
 
 const bootstrap = read('server/cryptara-bootstrap-entry.ts');
 const logger = read('server/logger.ts');
 const worker = read('server/badblueWorker.ts');
 const treasury = read('server/services/cryptocrawl/execution/cex-treasury-transfer-worker.ts');
 const operator = read('server/services/cryptocrawl/governance/operator-trading-strategy.ts');
-const primaryReadiness = read('server/migrations/primaryApplicationSchemaReadiness.ts');
-const searchMigration = read('server/migrations/createSearchPrioritizationTables.ts');
-const searchSession = read('server/searchSessionManager.ts');
-const officerReadiness = read('server/officerSearchRuntimeReadiness.ts');
 
 // One process-lifecycle owner. Logger and workers are components, not fatal-event authorities.
 mustNot(logger, 'exceptionHandlers:', 'Winston exceptionHandlers must not compete with server process lifecycle');
@@ -34,9 +25,8 @@ mustNot(worker, 'process.exit(', 'BadBlueWorker cleanup must never terminate the
 mustNot(worker, 'registerShutdownHandlers()', 'BadBlueWorker must not register duplicate process lifecycle ownership');
 must(worker, 'async shutdown(): Promise<void>', 'BadBlueWorker must retain an explicit cleanup API for server-owned shutdown');
 
-// The stopped-deployment defect was ambiguity inside UPDATE ... FROM. Enforce the
-// exact multi-source claim shape instead of banning harmless single-table counter
-// increments elsewhere in this worker.
+// The stopped-deployment defect was PostgreSQL 42702 ambiguity inside UPDATE ... FROM.
+// Keep exactly one candidate row source and qualify the target-table counter read.
 must(treasury, 'UPDATE public.cryptocrawler_retained_exchange_allocations r', 'retained treasury claim must name its target relation alias');
 must(treasury, 'attempt_count=r.attempt_count+1', 'retained treasury attempt counter must read from the target relation alias');
 must(treasury, 'j.source_asset AS payout_source_asset', 'treasury candidate must carry payout source asset');
@@ -45,7 +35,8 @@ mustNot(treasury, 'FROM candidate,', 'treasury UPDATE must not reintroduce multi
 must(treasury, 'Canonical treasury worker cycle failed closed', 'treasury cycle must contain its own asynchronous failure');
 must(treasury, 'unhandledRejectionAllowed: false', 'treasury worker must explicitly deny unhandled-rejection escape');
 
-// PostgreSQL DATE values are normalized at the operator-strategy boundary.
+// node-postgres returns PostgreSQL DATE values as JavaScript Date objects. Normalize
+// persisted dates exactly once at the operator-strategy boundary.
 const hasDateNormalizer = operator.includes('function canonicalSqlDate(') || operator.includes('function databaseDateKey(');
 if (!hasDateNormalizer) throw new Error('PRODUCTION_RUNTIME_RECONCILIATION_MISSING: operator SQL DATE normalizer');
 if (!(operator.includes('localDate: canonicalSqlDate(row.local_date)') || operator.includes('localDate: databaseDateKey(row.local_date)'))) {
@@ -58,39 +49,22 @@ if (!(operator.includes('cycleEnd: canonicalSqlDate(row.cycle_end)') || operator
   throw new Error('PRODUCTION_RUNTIME_RECONCILIATION_MISSING: cycle_end must use SQL DATE normalizer');
 }
 
-// Primary application schema is a required startup authority, independently of Overflow.
-must(bootstrap, "process.env.PRIMARY_APPLICATION_SCHEMA_READY = 'false';", 'Primary readiness starts fail closed');
-must(bootstrap, 'runAllSchemaMigrations({ continueOnError: false })', 'canonical Primary migrations must fail closed');
-must(bootstrap, 'await requirePrimaryApplicationSchema();', 'Primary application schema must be independently proven');
-must(bootstrap, "process.env.PRIMARY_APPLICATION_SCHEMA_READY = 'true';", 'Primary readiness flips only after proof');
-mustBefore(bootstrap, 'await requirePrimaryApplicationSchema();', 'await startCryptaraHyperBridgeBootstrap();', 'Primary schema proof must precede Overflow bootstrap');
-mustBefore(bootstrap, 'await requirePrimaryApplicationSchema();', "await import('./index.js');", 'Primary schema proof must precede routes/workers');
+// CryptoCrawler readiness is exclusively its explicit Overflow runtime authority.
+// Officer Search, SearchSession, PopulationPriorityQueue, Sub-Agent schema, and the
+// ordinary Primary application schema are independent subsystems and may never gate
+// CryptoCrawler bootstrap/readiness/execution.
+must(bootstrap, "process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false';", 'CryptoCrawler Overflow readiness starts fail closed');
+must(bootstrap, 'await startCryptaraHyperBridgeBootstrap();', 'CryptoCrawler Overflow bootstrap remains explicit');
+must(bootstrap, 'await ensureCryptocrawlOverflowRuntimeSchema();', 'CryptoCrawler Overflow authority schema is independently proven');
+must(bootstrap, "process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'true';", 'CryptoCrawler readiness flips only after Overflow proof');
+mustNot(bootstrap, 'requireOfficerSearchRuntimeReadiness', 'Officer Search must never gate CryptoCrawler bootstrap');
+mustNot(bootstrap, 'SUBAGENT_ENABLE_OFFICER_SEARCH', 'Officer Search feature flags must never affect CryptoCrawler readiness');
+mustNot(bootstrap, 'SearchSessionManager', 'SearchSessionManager must never participate in CryptoCrawler bootstrap');
+mustNot(bootstrap, 'PopulationPriorityQueue', 'PopulationPriorityQueue must never participate in CryptoCrawler bootstrap');
+mustNot(bootstrap, 'requirePrimaryApplicationSchema', 'Primary application schema must never gate CryptoCrawler readiness');
+mustNot(bootstrap, 'runAllSchemaMigrations(', 'CryptoCrawler bootstrap must not run the ordinary application migration suite');
+mustNot(bootstrap, 'PRIMARY_APPLICATION_SCHEMA_READY', 'Primary readiness state must not become CryptoCrawler state');
 mustNot(bootstrap, 'prototype.connect = function cryptaraOverflowPrimaryGatewayConnect', 'global pg.Pool connect interception must not return');
 mustNot(bootstrap, 'Pool.prototype.connect', 'bootstrap must not globally intercept pg.Pool connections');
-
-// The exact missing worker/search tables seen in production must be part of readiness proof.
-for (const relation of [
-  'public.subagent_search_queue',
-  'public.subagent_search_sessions',
-  'public.subagent_learning_patterns',
-  'public.subagent_performance_metrics',
-  'public.subagent_self_improvement_actions',
-  'public.worker_failure_logs',
-  'public.worker_function_errors',
-  'public.worker_health_metrics',
-]) must(primaryReadiness, `'${relation}'`, `Primary readiness must require ${relation}`);
-must(primaryReadiness, 'to_regclass(required_name)', 'Primary readiness must verify relations without mutating them');
-mustNot(primaryReadiness, 'CREATE TABLE', 'Primary readiness proof must not become a second DDL authority');
-
-// Migration/session initialization failures cannot be reported as successful startup.
-must(searchMigration, 'throw error;', 'search-prioritization migration must propagate failure');
-mustNot(searchMigration, 'return { success: false', 'search-prioritization migration must not disguise failure as a successful step return');
-must(searchSession, "console.error('[SearchSessionManager] Initialization failed:'", 'search-session initialization logs its failure');
-must(searchSession, 'throw error;', 'search-session initialization must propagate failure to its owner');
-must(officerReadiness, 'await searchSessionManager.initialize();', 'officer runtime gate initializes search-session authority');
-must(officerReadiness, 'await populationPriorityQueue.initialize();', 'officer runtime gate initializes priority-queue authority');
-must(officerReadiness, 'populationPriorityQueue.getQueueStats()', 'officer runtime gate proves priority-queue schema with a real read');
-must(bootstrap, 'await requireOfficerSearchRuntimeReadiness();', 'enabled officer search is a startup readiness prerequisite');
-mustBefore(bootstrap, 'await requireOfficerSearchRuntimeReadiness();', "await import('./index.js');", 'officer readiness must precede harvester module loading');
 
 console.log('PRODUCTION_RUNTIME_AUTHORITY_RECONCILIATION_OK');
