@@ -25,6 +25,13 @@ function canonicalAsset(value: string): string {
   return normalized;
 }
 
+function maxDurableHoldExtensionMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_FUNDING_MAX_RESERVATION_EXTENSION_MS);
+  const fallback = 7 * 24 * 60 * 60_000;
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(24 * 60 * 60_000, Math.min(30 * 24 * 60 * 60_000, Math.trunc(value)));
+}
+
 async function reconcileOkxInventory(): Promise<void> {
   const response = await okxPrivateRequest('/api/v5/account/balance', 'GET', {}, { lane: 'account_read' });
   const details = Array.isArray(response.data?.[0]?.details) ? response.data[0].details : [];
@@ -48,7 +55,7 @@ function rememberHandle(lifecycleId: string, reservation: InventoryReservation):
 
 async function extendReservation(reservationId: string, opportunityId: string, holdUntil: number): Promise<void> {
   if (!Number.isFinite(holdUntil) || holdUntil <= Date.now()) throw new Error('Funding capital hold expiry is invalid');
-  const bounded = Math.min(holdUntil, Date.now() + 24 * 60 * 60_000);
+  const bounded = Math.min(holdUntil, Date.now() + maxDurableHoldExtensionMs());
   const result = await pool.query(
     `UPDATE public.cryptocrawler_cex_inventory_reservations_v1
      SET expires_at=to_timestamp($3/1000.0)
