@@ -32,7 +32,8 @@ must(evidencePath, evidence, 'terminalNetPnlUsd < 0 || positiveConfirmed', 'Know
 must(evidencePath, evidence, 'operatorTradingStrategy.recordTerminalPnl(eventId, feedback.opportunityId, terminalNetPnlUsd)', 'Signed P&L must use the same terminal event identity and opportunity lifecycle');
 
 must(migrationPath, migration, "status IN ('RESERVED','SUBMITTED','TERMINAL')", 'Only canonical operator-reserved executions may bind terminal P&L to a schedule date');
-must(migrationPath, migration, 'IF target_date IS NULL THEN\n    RETURN false;', 'Off-schedule terminal evidence must not fall back to the current calendar date');
+must(migrationPath, migration, `IF target_date IS NULL THEN
+    RETURN false;`, 'Off-schedule terminal evidence must not fall back to the current calendar date');
 mustNot(migrationPath, migration, "target_date := (now() AT TIME ZONE 'America/Chicago')::date", 'Off-schedule terminal evidence must never be silently assigned to today');
 must(migrationPath, migration, 'ON CONFLICT (event_id) DO NOTHING', 'Terminal P&L must remain exactly-once by event identity');
 must(migrationPath, migration, 'profit_qualified = next_realized > 0', 'Daily qualification must remain reversible from aggregate signed realized P&L');
