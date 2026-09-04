@@ -1,5 +1,18 @@
 import logger from '../../../logger.js';
 import { installCanonicalWalletConfiguration } from '../core/wallet-identity.js';
+import {
+  ensureCexTreasuryTransferWorker,
+  stopCexTreasuryTransferWorker,
+} from '../execution/cex-treasury-transfer-worker.js';
+import {
+  ensureSystemCapitalSweepWorker,
+  stopSystemCapitalSweepWorker,
+} from '../execution/system-capital-sweep-worker.js';
+import {
+  ensureTreasuryTransferRecoveryWorker,
+  runTreasuryTransferRecoveryOnce,
+  stopTreasuryTransferRecoveryWorker,
+} from '../execution/treasury-transfer-recovery-worker.js';
 import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
 import {
   createCryptoCrawlerCoreLifecycle,
@@ -150,6 +163,14 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
   scheduleRainbowProfitBridge();
   ensureSystemCapitalPlacementReconciliation();
 
+  // Treasury workers are subordinate to the same migration-owned Overflow schema
+  // and governance posture. A stale attempt is normalized back to a recoverable
+  // state before either money-moving worker is allowed to run.
+  await runTreasuryTransferRecoveryOnce();
+  ensureTreasuryTransferRecoveryWorker();
+  ensureCexTreasuryTransferWorker();
+  ensureSystemCapitalSweepWorker();
+
   if (!changed) return;
   logger.info('[CryptoCoreRuntime] Canonical core runtime started', {
     component: 'CryptoCoreRuntime',
@@ -184,6 +205,10 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     coinbaseReadinessProbeScheduled: true,
     rainbowProfitBridgeScheduled: true,
     canonicalWalletArchitectureInstalled: true,
+    retainedProfitTransferWorker: 'kraken_okx_settlement_recovery_provenance_only',
+    payoutFundingTransferWorker: 'kraken_to_okx_terminal_profit_reservation_only',
+    systemCapitalThresholdSweep: 'per_venue_gt_4000_then_exact_80_percent_to_eth_ethereum_wallet',
+    treasuryCrashRecovery: 'recover_before_resubmit_no_duplicate_authority',
     fundingRateDiscovery: 'owned_by_unified_parallel_controller',
     authoritySchemaGate: 'overflow_migration_owned_runtime_start_required',
     primaryRuntimePrerequisite: false,
@@ -191,6 +216,9 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
 }
 
 export async function stopCryptoCrawlerCoreRuntime(): Promise<void> {
+  stopSystemCapitalSweepWorker();
+  stopCexTreasuryTransferWorker();
+  stopTreasuryTransferRecoveryWorker();
   stopSystemCapitalPlacementReconciliation();
   if (!lifecyclePromise) {
     started = false;
