@@ -5,7 +5,6 @@ export async function createSearchPrioritizationTables() {
   console.log('[Migration] Starting Search Prioritization tables creation...');
 
   try {
-    // Create jurisdiction_populations table
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS jurisdiction_populations (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -24,25 +23,13 @@ export async function createSearchPrioritizationTables() {
     `);
     console.log('[Migration] ✓ Created jurisdiction_populations table');
 
-    // Create indexes for jurisdiction_populations
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_jurisdiction_state ON jurisdiction_populations(state);
-    `);
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_jurisdiction_population ON jurisdiction_populations(population DESC);
-    `);
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_jurisdiction_entity_type ON jurisdiction_populations(entity_type);
-    `);
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_jurisdiction_search_status ON jurisdiction_populations(search_status);
-    `);
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_jurisdiction_priority ON jurisdiction_populations(priority_score DESC);
-    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_jurisdiction_state ON jurisdiction_populations(state);`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_jurisdiction_population ON jurisdiction_populations(population DESC);`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_jurisdiction_entity_type ON jurisdiction_populations(entity_type);`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_jurisdiction_search_status ON jurisdiction_populations(search_status);`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_jurisdiction_priority ON jurisdiction_populations(priority_score DESC);`);
     console.log('[Migration] ✓ Created indexes for jurisdiction_populations');
 
-    // Create officer_category_priority table
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS officer_category_priority (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -57,16 +44,12 @@ export async function createSearchPrioritizationTables() {
     `);
     console.log('[Migration] ✓ Created officer_category_priority table');
 
-    // Create index for officer_category_priority
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_category_priority_order ON officer_category_priority(priority_order);
-    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_category_priority_order ON officer_category_priority(priority_order);`);
     console.log('[Migration] ✓ Created indexes for officer_category_priority');
 
-    // Insert default category priorities
     await db.execute(sql`
       INSERT INTO officer_category_priority (category_name, priority_order, search_interval_minutes, rest_interval_minutes, daily_budget_minutes)
-      VALUES 
+      VALUES
         ('municipal', 1, 10, 10, 90),
         ('town', 2, 10, 10, 45),
         ('state', 3, 10, 10, 25),
@@ -76,7 +59,6 @@ export async function createSearchPrioritizationTables() {
     `);
     console.log('[Migration] ✓ Inserted default category priorities');
 
-    // Create subagent_search_queue table
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS subagent_search_queue (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -94,19 +76,11 @@ export async function createSearchPrioritizationTables() {
     `);
     console.log('[Migration] ✓ Created subagent_search_queue table');
 
-    // Create indexes for subagent_search_queue
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_search_queue_status ON subagent_search_queue(status);
-    `);
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_search_queue_priority ON subagent_search_queue(priority_score DESC);
-    `);
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_search_queue_next_attempt ON subagent_search_queue(next_attempt_at);
-    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_search_queue_status ON subagent_search_queue(status);`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_search_queue_priority ON subagent_search_queue(priority_score DESC);`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_search_queue_next_attempt ON subagent_search_queue(next_attempt_at);`);
     console.log('[Migration] ✓ Created indexes for subagent_search_queue');
 
-    // Create subagent_search_sessions table
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS subagent_search_sessions (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -126,10 +100,7 @@ export async function createSearchPrioritizationTables() {
     `);
     console.log('[Migration] ✓ Created subagent_search_sessions table');
 
-    // Create index for subagent_search_sessions
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS idx_search_session_date ON subagent_search_sessions(session_date);
-    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_search_session_date ON subagent_search_sessions(session_date);`);
     console.log('[Migration] ✓ Created indexes for subagent_search_sessions');
 
     console.log('[Migration] ✅ Successfully created all Search Prioritization tables and indexes');
@@ -140,7 +111,11 @@ export async function createSearchPrioritizationTables() {
 
     return { success: true };
   } catch (error: any) {
-    console.error('[Migration] Error creating Search Prioritization tables:', error.message);
-    return { success: false, error: error.message };
+    console.error('[Migration] ❌ Search Prioritization schema creation failed:', error?.message ?? error);
+    // Startup migration authority is fail-closed. Returning {success:false} here
+    // previously let the generic runner report this step as successful and allowed
+    // workers to start against missing tables. Throw so the canonical migration
+    // coordinator and startup readiness gate see the real failure.
+    throw error;
   }
 }
