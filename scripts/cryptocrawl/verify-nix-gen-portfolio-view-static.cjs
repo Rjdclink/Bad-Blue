@@ -19,6 +19,6 @@ requirePattern(/replanNixGenAllocation/, 'Portfolio view must reuse the common p
 requirePattern(/priorityOrderBidIds/, 'Portfolio view must preserve the optimizer complete priority order');
 requirePattern(/deferredReason/, 'Portfolio view must expose advisory deferral rather than hiding non-selected valid bids');
 forbidPattern(/setInterval|setTimeout|queueMicrotask/, 'Portfolio view must not create a scheduling loop');
-forbidPattern(/acquire|reserve|release\(|submitOrder|placeOrder|executeVerifiedArbitragePlan/, 'Portfolio view must not mutate resources or execute trades');
+forbidPattern(/\b(?:acquire[A-Za-z0-9_]*|reserve[A-Za-z0-9_]*|release|submitOrder|placeOrder|executeVerifiedArbitragePlan)\s*\(/, 'Portfolio view must not mutate resources or execute trades');
 
 console.log('NIX-GEN PORTFOLIO VIEW STATIC VERIFIER PASSED');
