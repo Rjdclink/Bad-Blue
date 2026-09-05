@@ -77,6 +77,17 @@ assert(railwayExample.includes('NEVER point CRYPTOCRAWL_COORDINATION_DATABASE_UR
 // Fee traffic must stay demand-driven/single-flight. Do not add a duplicate fee authority.
 assert(feeResolver.includes('const feeInFlight = new Map'), 'canonical fee resolver must retain single-flight requests');
 assert(feeResolver.includes('const feeCache = new Map'), 'canonical fee resolver must retain shared process cache');
+assert(feeResolver.includes('ageMs > boundedEvidenceAge(maxAgeMs)'), 'fee resolver must continue rejecting evidence older than the consumer max age');
+
+// Accepted authenticated fee age is a refresh/scheduling signal, not a measured
+// transaction cost. Stale evidence must fail closed at the resolver boundary rather
+// than being converted into invented BPS that can distort recovery ordering.
+assert(fourMode.includes('feeEvidenceAgeMs'), 'four-mode economics must retain fee-age observability');
+assert(fourMode.includes('feeFreshnessScore'), 'four-mode economics must retain fee-freshness scheduling telemetry');
+assert(fourMode.includes('const staleEvidencePenaltyBps = 0;'), 'accepted authenticated fee evidence must not add synthetic BPS');
+assert(!fourMode.includes('Math.max(0, combinedFeeBps) * (1 - feeFreshnessScore)'), 'fee age must not be converted into a synthetic economic penalty');
+assert(fourMode.includes('? queueRiskPenaltyBps\n          : bpsToBreakEven + queueRiskPenaltyBps;'), 'risk-adjusted gap must retain measured break-even and queue risk without synthetic fee-age BPS');
+assert(fourMode.includes('executionAuthority: false'), 'four-mode fee freshness remains advisory and cannot grant execution authority');
 
 // Four-mode economics publishes the canonical maker savings surface. The adaptive
 // policy predates that field and already consumes the same authenticated TT
@@ -100,4 +111,4 @@ assert(marketUniverse.includes('rotationPool'), 'market universe must preserve e
 assert(!exists('scripts/cryptocrawl/verify-hyperscope-seven-system-completion.cjs'), 'Hyperscope-named verifier must not exist in source');
 assert(exists('scripts/cryptocrawl/verify-canonical-execution-family-completion.cjs'), 'real execution-family invariants must remain verified under canonical naming');
 
-console.log('[resource-bps-authority] PASS: DB coordination, deploy configuration, private-rate authority, measured BPS compression, no-regression ordering/exploration, and reference-framework separation are locked');
+console.log('[resource-bps-authority] PASS: DB coordination, deploy configuration, private-rate authority, measured BPS compression, authenticated-fee freshness truth, no-regression ordering/exploration, and reference-framework separation are locked');

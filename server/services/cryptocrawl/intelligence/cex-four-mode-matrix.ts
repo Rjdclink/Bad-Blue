@@ -282,10 +282,14 @@ export async function evaluateCexFourModeMatrix(input: {
         const now = Date.now();
         const feeEvidenceAgeMs = Math.max(0, now - Math.min(buyFee.observedAt, sellFee.observedAt));
         const feeFreshnessScore = Number(Math.pow(0.5, feeEvidenceAgeMs / feeFreshnessHalfLifeMs).toFixed(6));
-        const staleEvidencePenaltyBps = Math.max(0, combinedFeeBps) * (1 - feeFreshnessScore);
+        // Accepted fee evidence is already bounded by the consumer's maxFeeAgeMs
+        // and fails closed when older. Age is therefore a refresh/scheduling signal,
+        // not an additional economic fee. Keep the compatibility field at zero so
+        // accepted authenticated evidence cannot manufacture a synthetic BPS gap.
+        const staleEvidencePenaltyBps = 0;
         const riskAdjustedBpsToBreakEven = economicallyPositive
-          ? queueRiskPenaltyBps + staleEvidencePenaltyBps
-          : bpsToBreakEven + queueRiskPenaltyBps + staleEvidencePenaltyBps;
+          ? queueRiskPenaltyBps
+          : bpsToBreakEven + queueRiskPenaltyBps;
         output.push({
           symbol,
           buyVenue,
