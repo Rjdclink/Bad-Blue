@@ -2,6 +2,7 @@ import { ethers } from 'ethers';
 
 export type SupportedExecutionChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
 export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3';
+export type UniswapV3FeeTier = 100 | 500 | 3000 | 10000;
 
 export interface OnchainSwapLeg {
   protocol: SupportedSwapProtocol;
@@ -10,7 +11,7 @@ export interface OnchainSwapLeg {
   tokenOut: string;
   amountIn: string;
   minAmountOut: string;
-  feeTier?: 500 | 3000 | 10000;
+  feeTier?: UniswapV3FeeTier;
   recipient?: string;
   deadlineBufferSeconds?: number;
 }
