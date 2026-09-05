@@ -158,7 +158,7 @@ requireAll('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
   "okx: Object.freeze({ LIT: 'LIGHTER', LUNA: 'WLUNA' })",
   'function canonicalVenueAsset(',
   "canonicalPair(row.base, row.quote, 'kraken')",
-  "canonicalPair(raw.baseCcy, raw.quote, 'okx')",
+  "canonicalPair(raw.baseCcy, raw.quoteCcy, 'okx')",
 ]);
 forbid('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
   'canonicalPair(row.base, row.quote, true)',
