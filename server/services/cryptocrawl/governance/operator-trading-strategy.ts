@@ -53,9 +53,32 @@ function localDateKey(epochMs = Date.now()): string {
 }
 
 function dateEpoch(dateKey: string): number {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) throw new Error(`Invalid operator strategy date: ${dateKey}`);
   const [year, month, day] = dateKey.split('-').map(Number);
   if (![year, month, day].every(Number.isFinite)) throw new Error(`Invalid operator strategy date: ${dateKey}`);
-  return Date.UTC(year, month - 1, day);
+  const epoch = Date.UTC(year, month - 1, day);
+  if (new Date(epoch).toISOString().slice(0, 10) !== dateKey) throw new Error(`Invalid operator strategy date: ${dateKey}`);
+  return epoch;
+}
+
+/**
+ * PostgreSQL DATE values may arrive from node-postgres as JavaScript Date
+ * instances. Normalize every persisted DATE at this module boundary so all
+ * operator scheduling logic has exactly one canonical YYYY-MM-DD representation.
+ */
+function canonicalSqlDate(value: unknown): string {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) throw new Error('Invalid operator strategy SQL date');
+    return value.toISOString().slice(0, 10);
+  }
+  const raw = String(value ?? '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    dateEpoch(raw);
+    return raw;
+  }
+  const parsed = new Date(raw);
+  if (!Number.isFinite(parsed.getTime())) throw new Error(`Invalid operator strategy SQL date: ${raw}`);
+  return parsed.toISOString().slice(0, 10);
 }
 
 function addDays(dateKey: string, days: number): string {
@@ -101,9 +124,9 @@ function stateFromRow(row: any): OperatorTradingStrategyState {
   else if (realizedProfitUsd + 1e-9 >= stopProfitUsd) blockReason = 'daily_profit_stop';
   else if (submittedTrades >= maxTrades) blockReason = 'daily_trade_limit';
   return {
-    localDate: String(row.local_date),
-    cycleStart: String(row.cycle_start),
-    cycleEnd: String(row.cycle_end),
+    localDate: canonicalSqlDate(row.local_date),
+    cycleStart: canonicalSqlDate(row.cycle_start),
+    cycleEnd: canonicalSqlDate(row.cycle_end),
     dayOffset: Number(row.day_offset),
     isTradeDay,
     learningMode: !isTradeDay,
@@ -133,7 +156,7 @@ async function ensureDayForDate(dateKey = localDateKey()): Promise<OperatorTradi
       throw new Error(`Operator trading strategy timezone drifted from ${STRATEGY_TIMEZONE}`);
     }
 
-    let anchorDate = control.rows[0].anchor_date ? String(control.rows[0].anchor_date) : dateKey;
+    let anchorDate = control.rows[0].anchor_date ? canonicalSqlDate(control.rows[0].anchor_date) : dateKey;
     if (!control.rows[0].anchor_date) {
       await client.query(
         `UPDATE public.cryptocrawler_operator_strategy_control
@@ -325,7 +348,7 @@ class OperatorTradingStrategy {
         [reservationId],
       );
       if (reservation.rowCount !== 1) throw new Error(`Operator trade reservation ${reservationId} does not exist`);
-      const dateKey = String(reservation.rows[0].local_date);
+      const dateKey = canonicalSqlDate(reservation.rows[0].local_date);
       let state = await loadLockedDay(client, dateKey);
       const status = String(reservation.rows[0].status);
       if (status === 'RESERVED') {
