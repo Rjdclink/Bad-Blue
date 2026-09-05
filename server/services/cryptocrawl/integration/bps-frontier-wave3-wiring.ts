@@ -72,18 +72,18 @@ function finite(value: unknown): number | null {
 }
 
 function pollIntervalMs(): number {
-  const value = Number(process.env.CRYPTOCRAWL_BPS_FRONTIER_POLL_MS || 30_000);
-  return Number.isFinite(value) ? Math.max(10_000, Math.min(120_000, Math.trunc(value))) : 30_000;
+  const parsed = Number(process.env.CRYPTOCRAWL_BPS_FRONTIER_POLL_MS || 30_000);
+  return Number.isFinite(parsed) ? Math.max(10_000, Math.min(120_000, Math.trunc(parsed))) : 30_000;
 }
 
 function candidateTtlMs(): number {
-  const value = Number(process.env.CRYPTOCRAWL_LIGHTER_BENCHMARK_TTL_MS || 45_000);
-  return Number.isFinite(value) ? Math.max(5_000, Math.min(120_000, Math.trunc(value))) : 45_000;
+  const parsed = Number(process.env.CRYPTOCRAWL_LIGHTER_BENCHMARK_TTL_MS || 45_000);
+  return Number.isFinite(parsed) ? Math.max(5_000, Math.min(120_000, Math.trunc(parsed))) : 45_000;
 }
 
 function referenceNotionalUsd(): number {
-  const value = Number(process.env.CRYPTOCRAWL_FUNDING_REFERENCE_NOTIONAL_USD || 250);
-  return Number.isFinite(value) ? Math.max(1, value) : 250;
+  const parsed = Number(process.env.CRYPTOCRAWL_FUNDING_REFERENCE_NOTIONAL_USD || 250);
+  return Number.isFinite(parsed) ? Math.max(1, parsed) : 250;
 }
 
 function splitCanonicalSymbol(symbol: string): { base: string; quote: string } | null {
@@ -107,20 +107,19 @@ function routeIdentity(candidate: MeasuredCandidate): string | null {
   const allInCostBps = finite(candidate.canonicalBps.allInCostBps);
   if (notionalUsd === null || notionalUsd <= 0 || allInCostBps === null) return null;
   const assets = [...candidate.assets].map(value => value.trim().toUpperCase()).filter(Boolean).sort();
-  if (assets.length === 0) return null;
-  const chain = [...candidate.chains].map(value => value.trim().toLowerCase()).filter(Boolean).sort().join(',') || 'unknown';
-  // Compare only economically like-sized routes; cross-notional comparisons can
-  // falsely report savings caused by size rather than routing.
-  const notionalBucket = notionalUsd.toFixed(2);
-  return `${assets.join('/')}:${chain}:${notionalBucket}`;
+  if (!assets.length) return null;
+  const chains = [...candidate.chains].map(value => value.trim().toLowerCase()).filter(Boolean).sort().join(',') || 'unknown';
+  // Exact two-decimal notional bucketing deliberately prefers missing a comparison
+  // over manufacturing savings from a size difference.
+  return `${assets.join('/')}:${chains}:${notionalUsd.toFixed(2)}`;
 }
 
-function measuredRoute(candidate: MeasuredCandidate, key: string): MeasuredBpsFrontierRoute | null {
+function measuredRoute(candidate: MeasuredCandidate, routeKey: string): MeasuredBpsFrontierRoute | null {
   const notionalUsd = finite(candidate.canonicalBps.notionalUsd);
   const allInCostBps = finite(candidate.canonicalBps.allInCostBps);
   if (notionalUsd === null || notionalUsd <= 0 || allInCostBps === null) return null;
   return {
-    routeKey: key,
+    routeKey,
     opportunityId: candidate.opportunityId,
     topology: candidate.topology,
     venues: [...candidate.venues],
@@ -136,23 +135,25 @@ function measuredRoute(candidate: MeasuredCandidate, key: string): MeasuredBpsFr
 function recomputeMeasuredFrontier(): void {
   const now = Date.now();
   const grouped = new Map<string, MeasuredBpsFrontierRoute[]>();
+
   for (const candidate of measuredCandidateRegistry.getRecent(4096)) {
     if (candidate.expiresAt <= now || candidate.status === 'expired' || candidate.status === 'blocked') continue;
-    const key = routeIdentity(candidate);
-    if (!key) continue;
-    const route = measuredRoute(candidate, key);
+    const routeKey = routeIdentity(candidate);
+    if (!routeKey) continue;
+    const route = measuredRoute(candidate, routeKey);
     if (!route) continue;
-    const routes = grouped.get(key) || [];
+
+    const routes = grouped.get(routeKey) || [];
     // Multiple snapshots of the same exact route must not manufacture a
-    // smart-routing comparison. Keep only the freshest route signature.
+    // smart-routing comparison. Only its freshest observation survives.
     const signature = `${route.topology}:${route.venues.slice().sort().join('>')}`;
-    const previousIndex = routes.findIndex(item => `${item.topology}:${item.venues.slice().sort().join('>')}` === signature);
-    if (previousIndex >= 0) {
-      if (route.observedAt >= routes[previousIndex].observedAt) routes[previousIndex] = route;
+    const prior = routes.findIndex(item => `${item.topology}:${item.venues.slice().sort().join('>')}` === signature);
+    if (prior >= 0) {
+      if (route.observedAt >= routes[prior].observedAt) routes[prior] = route;
     } else {
       routes.push(route);
     }
-    grouped.set(key, routes);
+    grouped.set(routeKey, routes);
   }
 
   latestGroups = [...grouped.entries()].flatMap(([routeKey, routes]) => {
@@ -163,10 +164,13 @@ function recomputeMeasuredFrontier(): void {
       || right.observedAt - left.observedAt);
     const winner = ordered[0];
     const runnerUp = ordered[1] || null;
-    const measuredSavingsBps = runnerUp
-      ? Math.max(0, runnerUp.allInCostBps - winner.allInCostBps)
-      : null;
-    return [{ routeKey, winner, runnerUp, measuredSavingsBps, comparedRoutes: ordered.length }];
+    return [{
+      routeKey,
+      winner,
+      runnerUp,
+      measuredSavingsBps: runnerUp ? Math.max(0, runnerUp.allInCostBps - winner.allInCostBps) : null,
+      comparedRoutes: ordered.length,
+    }];
   }).sort((left, right) =>
     (right.measuredSavingsBps ?? -1) - (left.measuredSavingsBps ?? -1)
     || left.winner.allInCostBps - right.winner.allInCostBps)
@@ -183,7 +187,10 @@ function scheduleFrontierRefresh(): void {
 }
 
 async function pollLighterFundingBenchmark(): Promise<void> {
-  if (lighterInFlight || process.env.CRYPTOCRAWL_LIGHTER_PUBLIC_DISCOVERY === 'false') return lighterInFlight || Promise.resolve();
+  if (lighterInFlight || process.env.CRYPTOCRAWL_LIGHTER_PUBLIC_DISCOVERY === 'false') {
+    return lighterInFlight || Promise.resolve();
+  }
+
   lighterInFlight = (async () => {
     const universe = getLastOrderedMarketUniverseSymbols();
     const requested = new Set([...(universe.length ? universe : LIGHTER_DEFAULT_SYMBOLS), ...LIGHTER_DEFAULT_SYMBOLS]
@@ -194,7 +201,9 @@ async function pollLighterFundingBenchmark(): Promise<void> {
       maxDelayMs: 800,
       timeoutMs: 3_000,
     });
-    if (!payload || (payload.code !== undefined && payload.code !== 0) || !Array.isArray(payload.funding_rates)) {
+
+    // The official Lighter SDK documents code=200 for this successful response.
+    if (!payload || (payload.code !== undefined && payload.code !== 200) || !Array.isArray(payload.funding_rates)) {
       throw new Error(`Lighter public funding response unavailable${payload?.message ? `: ${payload.message}` : ''}`);
     }
 
@@ -208,12 +217,12 @@ async function pollLighterFundingBenchmark(): Promise<void> {
     for (const row of rows) {
       const symbol = canonicalLighterSymbol(row.symbol, requested);
       const rate = finite(row.rate);
-      if (!symbol || rate === null || rate === 0) continue;
+      if (!symbol || rate === null) continue;
       const split = splitCanonicalSymbol(symbol);
       if (!split) continue;
       const marketId = Number.isFinite(Number(row.market_id)) ? Number(row.market_id) : -1;
-      const expectedFundingUsd = Math.abs(rate) * notionalUsd;
       matchedSymbols.add(symbol);
+
       measuredCandidateRegistry.record({
         opportunityId: `funding:lighter_public:${marketId}:${symbol}`,
         topology: 'FUNDING_ARBITRAGE',
@@ -232,6 +241,7 @@ async function pollLighterFundingBenchmark(): Promise<void> {
           executable: false,
           provenance: [
             'lighter_official_public_rest:/api/v1/funding-rates',
+            'lighter_official_rate_normalization:8h_equivalent',
             `lighter_market_id:${marketId}`,
             `lighter_funding_rate:${rate}`,
             'public_no_auth',
@@ -239,10 +249,13 @@ async function pollLighterFundingBenchmark(): Promise<void> {
         }],
         depth: {
           status: 'unavailable',
-          detail: 'Lighter public funding is a keyless fee/funding frontier benchmark only; exact executable depth, account tier, latency and margin capacity are not inferred',
+          detail: 'Lighter public funding is a keyless frontier input only; executable entry/exit depth, account tier, latency and margin capacity are not inferred',
         },
         economics: {
-          grossProfitUsd: expectedFundingUsd,
+          // A single venue funding rate is not itself arbitrage profit. The
+          // counter-leg, basis, fees, depth, latency and settlement must be
+          // measured before canonical gross/net economics exist.
+          grossProfitUsd: null,
           deterministicNetProfitUsd: null,
           feeUsd: null,
           gasUsd: null,
@@ -254,10 +267,11 @@ async function pollLighterFundingBenchmark(): Promise<void> {
         },
         quoteAgeMs: 0,
         executableCapability: false,
-        executionCapabilityReason: 'Lighter public data is admitted only as a BPS/funding benchmark. Execution requires an authenticated Lighter account/API signer, exact account-tier fees, measured depth/latency, and provenance-backed system-owned margin/collateral; no user-funded collateral path is admitted.',
+        executionCapabilityReason: 'Lighter public data is admitted only as a BPS/funding benchmark. Execution requires authenticated signing, exact account-tier fees, measured counter-leg/depth/latency and provenance-backed system-owned margin/collateral; no user-funded collateral path is admitted.',
         missingInformation: [
           'lighter_authenticated_execution_account',
           'lighter_exact_account_tier_fee_evidence',
+          'lighter_measured_counter_leg',
           'lighter_measured_entry_exit_depth',
           'lighter_measured_execution_latency_cost',
           'lighter_system_owned_margin_collateral_provenance',
@@ -269,6 +283,7 @@ async function pollLighterFundingBenchmark(): Promise<void> {
           'execution_promotion:false',
           'personal_capital_allowed:false',
           'personal_collateral_allowed:false',
+          'single_funding_rate_is_not_profit',
           'unknown_cost_is_not_zero',
           'synthetic_bps_savings:false',
         ],
@@ -283,6 +298,7 @@ async function pollLighterFundingBenchmark(): Promise<void> {
     logger.info('[BpsFrontierWave3] Keyless Lighter public funding frontier refreshed', {
       component: 'BpsFrontierWave3Wiring',
       endpoint: LIGHTER_FUNDING_URL,
+      responseCode: payload.code ?? null,
       sourceRows: rows.length,
       matchedObservations: recorded,
       matchedSymbols: lastLighterSymbols.slice(0, 24),
@@ -290,6 +306,7 @@ async function pollLighterFundingBenchmark(): Promise<void> {
       executionAuthority: false,
       accountTierFeeAssumed: false,
       hiddenLatencyBpsAssumed: false,
+      fundingRateTreatedAsStandaloneProfit: false,
       userCollateralAllowed: false,
     });
   })().catch(error => {
@@ -306,6 +323,7 @@ async function pollLighterFundingBenchmark(): Promise<void> {
   }).finally(() => {
     lighterInFlight = null;
   });
+
   return lighterInFlight;
 }
 
@@ -315,7 +333,9 @@ export function getBpsFrontierWave3Snapshot(): BpsFrontierWave3Snapshot {
     groups: latestGroups.map(group => ({
       ...group,
       winner: { ...group.winner, venues: [...group.winner.venues], chains: [...group.winner.chains] },
-      runnerUp: group.runnerUp ? { ...group.runnerUp, venues: [...group.runnerUp.venues], chains: [...group.runnerUp.chains] } : null,
+      runnerUp: group.runnerUp
+        ? { ...group.runnerUp, venues: [...group.runnerUp.venues], chains: [...group.runnerUp.chains] }
+        : null,
     })),
     lighter: {
       lastPollAt: lastLighterPollAt,
@@ -336,10 +356,12 @@ export function ensureBpsFrontierWave3Wiring(): void {
   recomputeMeasuredFrontier();
   unsubscribe = measuredCandidateRegistry.onUpdate(() => scheduleFrontierRefresh());
   void pollLighterFundingBenchmark();
+
   if (process.env.NO_INTERVALS !== 'true') {
     timer = setInterval(() => void pollLighterFundingBenchmark(), pollIntervalMs());
     timer.unref?.();
   }
+
   logger.info('[BpsFrontierWave3] Measured total-cost frontier installed', {
     component: 'BpsFrontierWave3Wiring',
     smartOrderRoutingUpgrade: 'compare_only_like_notional_fresh_canonical_all_in_cost_routes',
