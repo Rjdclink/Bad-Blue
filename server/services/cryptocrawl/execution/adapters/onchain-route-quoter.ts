@@ -119,6 +119,27 @@ function maxQuoteLatencyMs(): number {
   return Math.max(250, Math.min(15000, Math.trunc(configured)));
 }
 
+function withQuoteTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  const boundedTimeoutMs = Math.max(1, Math.trunc(timeoutMs));
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} exceeded the remaining ${boundedTimeoutMs}ms quote deadline`)),
+      boundedTimeoutMs,
+    );
+    timer.unref?.();
+    promise.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      error => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 /**
  * Observation-only envelope for near-break-even zero-capital routes.
  * A negative value broadens measured discovery; it never changes executable
@@ -287,7 +308,13 @@ async function quoteLegUncached(provider: providers.Provider, chain: SupportedEx
   return BigNumber.from(amounts[amounts.length - 1]);
 }
 
-async function quoteLeg(provider: providers.Provider, chain: SupportedExecutionChain, leg: ConfiguredRouteLeg, amountIn: BigNumber): Promise<BigNumber> {
+async function quoteLeg(
+  provider: providers.Provider,
+  chain: SupportedExecutionChain,
+  leg: ConfiguredRouteLeg,
+  amountIn: BigNumber,
+  timeoutMs: number,
+): Promise<BigNumber> {
   let providerQuotes = inFlightLegQuotes.get(provider);
   if (!providerQuotes) {
     providerQuotes = new Map<string, Promise<BigNumber>>();
@@ -296,9 +323,17 @@ async function quoteLeg(provider: providers.Provider, chain: SupportedExecutionC
 
   const key = legQuoteKey(chain, leg, amountIn);
   const existing = providerQuotes.get(key);
-  if (existing) return existing;
+  if (existing) return withQuoteTimeout(existing, timeoutMs, `${chain}:${leg.protocol} shared leg quote`);
 
-  const pending = quoteLegUncached(provider, chain, leg, amountIn);
+  // Cache the bounded promise, never the raw RPC. A provider call that stops
+  // answering must not pin this key forever or prevent the recurring scanner from
+  // scheduling its next cycle. The underlying RPC may eventually settle, but it
+  // has handlers attached here and is no longer an authority after the deadline.
+  const pending = withQuoteTimeout(
+    quoteLegUncached(provider, chain, leg, amountIn),
+    Math.min(maxQuoteLatencyMs(), Math.max(1, timeoutMs)),
+    `${chain}:${leg.protocol} leg quote`,
+  );
   providerQuotes.set(key, pending);
   try {
     return await pending;
@@ -321,8 +356,16 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
   const steps: RoutePlanningSwapStep[] = [];
 
   for (const leg of route.legs) {
-    if (Date.now() - quoteStartedAt > quoteDeadlineMs) return null;
-    const amountOut = await quoteLeg(provider, route.chain, leg, currentAmount);
+    const elapsedMs = Date.now() - quoteStartedAt;
+    const remainingMs = quoteDeadlineMs - elapsedMs;
+    if (remainingMs <= 0) return null;
+    let amountOut: BigNumber;
+    try {
+      amountOut = await quoteLeg(provider, route.chain, leg, currentAmount, remainingMs);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('quote deadline')) return null;
+      throw error;
+    }
     if (amountOut.lte(0)) return null;
     if (Date.now() - quoteStartedAt > quoteDeadlineMs) return null;
 
