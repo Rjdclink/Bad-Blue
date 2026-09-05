@@ -43,7 +43,7 @@ const behaviors = [
   ['cex', 'buildAdaptiveProfitabilitySearchPolicy', 'adaptive policy wired into CEX observation'],
   ['cex', 'nextIntervalMs = nextPolicy.scanIntervalMs', 'current-cycle adaptive interval applied'],
   ['cex', 'latestModes: latest', 'newly measured modes drive the next scan policy'],
-  ['cex', 'setTimeout(async () =>', 'recursive adaptive rescheduling'],
+  ['cex', 'observeFailClosed().finally(scheduleNext)', 'recursive adaptive rescheduling after completion or failure'],
   ['cex', 'smallest_risk_adjusted_then_exact_bps_to_break_even_first', 'risk-adjusted near-miss ordering'],
 
   ['zero', 'baseUnitsFromUsd(usd: number, decimals: number)', 'token-decimal-correct sizing'],
@@ -93,6 +93,11 @@ for (const [fileKey, pattern, name] of behaviors) {
   }
 }
 
+if (!source.cex.includes('function scheduleNext') ||
+    !source.cex.includes('setTimeout(() =>') ||
+    !source.cex.includes('observeFailClosed().finally(scheduleNext)')) {
+  throw new Error('[substantial-profitability-batch9] adaptive CEX rescheduling must remain one-shot, recursive, and failure-resilient');
+}
 if (!source.core.includes("import { runZeroCapitalProfitabilityRescueV2 } from '../integration/zero-capital-profitability-rescue-v2.js';") ||
     !source.core.includes('return runZeroCapitalProfitabilityRescueV2({')) {
   throw new Error('[substantial-profitability-batch9] zero-capital profitability rescue v2 must be invoked directly by the canonical core scan');
