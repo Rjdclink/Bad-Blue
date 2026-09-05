@@ -9,7 +9,7 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
-import type { SupportedExecutionChain } from '../execution/adapters/onchain-payload-builder.js';
+import type { SupportedExecutionChain, UniswapV3FeeTier } from '../execution/adapters/onchain-payload-builder.js';
 import { discoverGraphlessDexTokens, type GraphlessDexTokenCandidate } from './graphless-dex-scout.js';
 import {
   recordZeroCapitalRouteQuoteCycle,
@@ -93,12 +93,12 @@ function triangleSeedNotionalsUsd(): number[] {
   return notionalsUsd().slice(0, limit);
 }
 
-function feeTiers(): Array<500 | 3000 | 10000> {
-  const parsed = (process.env.ZERO_CAPITAL_DYNAMIC_UNISWAP_FEE_TIERS || '500,3000')
+function feeTiers(): UniswapV3FeeTier[] {
+  const parsed = (process.env.ZERO_CAPITAL_DYNAMIC_UNISWAP_FEE_TIERS || '100,500,3000')
     .split(',')
     .map(value => Number(value.trim()))
-    .filter((value): value is 500 | 3000 | 10000 => value === 500 || value === 3000 || value === 10000);
-  return parsed.length > 0 ? [...new Set(parsed)] : [500, 3000];
+    .filter((value): value is UniswapV3FeeTier => value === 100 || value === 500 || value === 3000 || value === 10000);
+  return parsed.length > 0 ? [...new Set(parsed)] : [100, 500, 3000];
 }
 
 function stableBaseUnits(usd: number): string {
@@ -109,7 +109,7 @@ function protocolLeg(
   protocol: DynamicProtocol,
   tokenIn: string,
   tokenOut: string,
-  feeTier: 500 | 3000 | 10000,
+  feeTier: UniswapV3FeeTier,
 ) {
   return protocol === 'uniswapV3'
     ? { protocol, tokenIn, tokenOut, feeTier }
