@@ -6,8 +6,6 @@ import * as fs from 'fs';
 const MB = 1024 * 1024;
 const LOG_FILE_MAX_SIZE = 10 * MB; // 10MB for combined logs
 const ERROR_LOG_MAX_SIZE = 5 * MB;  // 5MB for error logs
-const EXCEPTION_LOG_MAX_SIZE = 5 * MB;
-const REJECTION_LOG_MAX_SIZE = 5 * MB;
 
 // Ensure logs directory exists (with error handling for race conditions)
 const logsDir = path.resolve(process.cwd(), 'logs');
@@ -62,6 +60,8 @@ const consoleFormat = winston.format.combine(
   })
 );
 
+// Logger is transport-only. Process-level fatal/rejection ownership belongs to
+// server/index.ts so one event follows one cleanup and termination path.
 export const logger = winston.createLogger({
   level: getLogLevel(),
   format: fileFormat,
@@ -81,20 +81,6 @@ export const logger = winston.createLogger({
       filename: path.join(logsDir, 'combined.log'),
       maxsize: LOG_FILE_MAX_SIZE,
       maxFiles: 10,
-    }),
-  ],
-  exceptionHandlers: [
-    new winston.transports.File({ 
-      filename: path.join(logsDir, 'exceptions.log'),
-      maxsize: EXCEPTION_LOG_MAX_SIZE,
-      maxFiles: 3,
-    }),
-  ],
-  rejectionHandlers: [
-    new winston.transports.File({ 
-      filename: path.join(logsDir, 'rejections.log'),
-      maxsize: REJECTION_LOG_MAX_SIZE,
-      maxFiles: 3,
     }),
   ],
 });
