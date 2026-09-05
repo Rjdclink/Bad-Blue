@@ -159,7 +159,7 @@ const required = [
   ['providerEconomics', 'flash_loan_disabled_for_reserve', 'Aave disabled-reserve fail closed'],
   ['providerEconomics', 'feeMeasured && liquidityMeasured && flashLoanEnablementMeasured && flashLoanEnabled', 'Aave complete executable evidence'],
   ['providerEconomics', 'allowedProviders', 'execution-ready provider filter'],
-  ['receiverCapability', "'balancer_v1' | 'balancer_composite_v2' | 'aave_v3'", 'receiver capability kinds'],
+  ['receiverCapability', "'balancer_v1' | 'balancer_composite_v2' | 'aave_v3' | 'morpho_blue'", 'receiver capability kinds'],
   ['receiverCapability', 'receiver_bytecode_present', 'receiver bytecode verification'],
   ['receiverCapability', 'receiver_owner_verified', 'receiver owner verification'],
   ['receiverCapability', 'buildMissingReceiverPermissionCalls', 'provider-neutral permission authority'],
@@ -170,12 +170,13 @@ const required = [
   ['providerWiring', 'verifyDualFlashLoanReceiverCapability', 'dual provider selection verifies receiver'],
   ['providerWiring', 'buildMissingReceiverPermissionCalls', 'provider-neutral route permission check'],
   ['providerWiring', 'fresh_quote_after_provider_receiver_permissions', 'fresh quote after any provider receiver permission change'],
-  ['providerExecution', "selection.provider !== 'aave_v3'", 'provider-specific execution branch'],
+  ['providerExecution', "selection.provider !== 'aave_v3' && selection.provider !== 'morpho_blue'", 'provider-specific execution branch'],
   ['providerExecution', 'buildFlashLoanReceiverPayloadFromPlan', 'provider-specific final payload'],
   ['providerExecution', 'FlashLoanExecuted', 'provider-specific positive-profit receipt verification'],
-  ['providerExecution', 'normalizeAaveSettlement', 'provider-specific normalized settlement'],
+  ['providerExecution', 'normalizeSettlement', 'provider-specific normalized settlement'],
   ['providerExecution', 'aave_v3_pool_flashLoanSimple', 'Aave settlement provenance'],
-  ['providerExecution', 'provider_receiver_binding_verified', 'Aave receiver binding provenance'],
+  ['providerExecution', 'morpho_blue_flashLoan_zero_fee', 'Morpho zero-fee settlement provenance'],
+  ['providerExecution', 'provider_receiver_binding_verified', 'provider receiver binding provenance'],
   ['deployment', "'balancer-composite-v2'", 'Composite V2 deploy support'],
   ['deployment', "'aave-v3'", 'Aave V3 deploy support'],
   ['deployment', 'DEPLOY_FLASHLOAN_RECEIVER', 'explicit deployment confirmation'],
@@ -192,7 +193,7 @@ forbid('stageOneBootstrap', /executeVerifiedArbitragePlan\s*\(/, 'Stage 1 direct
 forbid('stageOneBootstrap', /executeFunded\s*\(/, 'Stage 1 direct zero-capital execution');
 forbid('stageOneBootstrap', /recordExecutionEvidence\s*\(/, 'Stage 1 synthetic terminal evidence');
 forbid('admission', /originalIsAllowedByCryptara/, 'zero-capital duplicate admission monkey-patch');
-forbid('providerExecution', /foundry_create2_receiver/, 'Balancer provenance on Aave settlement');
+forbid('providerExecution', /foundry_create2_receiver/, 'Balancer provenance on provider-specific settlement');
 forbid('assembler', /executionAuthority:\s*true/, 'composite direct execution authority');
 forbid('assembler', /sharedPrincipalStackedBps:\s*arithmeticLegBpsSum/, 'arithmetic BPS promoted as shared-principal BPS');
 forbid('liquidation', /deterministicNetProfitUsd:\s*[1-9]/, 'invented liquidation profit');
@@ -218,6 +219,3 @@ console.log(' - rare/high-profit CEX observations trigger canonical fresh revali
 console.log(' - canonical CEX revalidation still requires synchronized books, authenticated fees, measured depth and all-in positive economics');
 console.log(' - Stage 1 can execute only through canonical executors and cannot directly submit trades or fabricate terminal settlement history');
 console.log(' - terminal outcomes remain the learning and realized-profit authority');
-console.log(' - Balancer, Aave and dual-provider permission changes invalidate stale quotes and require immediate fresh re-quote');
-console.log(' - provider economics remain bound to verified provider-specific receivers');
-console.log(' - incomplete hard execution paths remain fail closed');
