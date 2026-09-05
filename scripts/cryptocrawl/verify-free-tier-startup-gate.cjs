@@ -13,27 +13,38 @@ const forbidPattern = (source, pattern, description) => {
 const entry = read('server/cryptara-bootstrap-entry.ts');
 const index = read('server/index.ts');
 const gateway = read('server/services/cryptocrawl/integration/cryptara-overflow-primary-gateway.ts');
+const overflowAuthorityBuild = read('scripts/cryptocrawl/build-server-overflow-authority.mjs');
 const dockerfile = read('Dockerfile');
 const superWorker = read('server/services/cryptocrawl/integration/cryptara-super-worker.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
 
 requirePattern(
   entry,
-  /import\('\.\/migrations\/reconcileAppSchema\.js'\)[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*overflowBootstrap[\s\S]*cryptaraOverflowPrimaryGatewayConnect[\s\S]*import\('\.\/index\.js'\)/,
-  'rollout contraction, Cryptara admission, overflow verification and primary gateway interception must precede normal server evaluation',
+  /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*overflowBootstrap[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*import\('\.\/index\.js'\)/,
+  'rollout contraction, Cryptara admission, Overflow verification and complete runtime-schema proof must precede normal server evaluation',
 );
 requirePattern(
   entry,
-  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*runThroughCryptaraOverflowPrimaryGateway[\s\S]*legacy_application_primary_acquisition/,
-  'verified overflow must become the sole application gateway to primary',
+  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY\s*=\s*'true'/,
+  'verified Overflow must prove the complete CryptoCrawler runtime schema before readiness',
+);
+forbidPattern(
+  entry,
+  /cryptaraOverflowPrimaryGatewayConnect|Object\.getPrototypeOf\(pool\)|(?:Pool\.)?prototype\.connect|legacy_application_primary_acquisition/,
+  'bootstrap must not install process-wide Primary acquisition interception',
+);
+requirePattern(
+  overflowAuthorityBuild,
+  /if\s*\(!isUnder\(importer,\s*cryptoRoot\)\)\s*return\s+null;[\s\S]*resolved\s*!==\s*rootDbBase[\s\S]*importer\s*===\s*primaryArchiveWorker[\s\S]*redirected\.push[\s\S]*return\s*\{\s*path:\s*overflowDb\s*\}/,
+  'production bundling must redirect hot CryptoCrawler server/db imports to Overflow while preserving the explicit cold-archive Primary worker',
 );
 requirePattern(index, /databaseRuntimeMode\s*=\s*'overflow_proxy'/, 'verified overflow must be a normal proxy runtime mode');
-requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,500}directPrimaryProbes:\s*0/, 'overflow startup must declare zero direct primary probes');
+requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,500}directPrimaryProbes:\s*0/, 'overflow startup must declare zero direct primary readiness probes');
 forbidPattern(index, /probePrimaryDatabaseOnce|overflow_degraded|until primary recovery/, 'overflow must not be temporary failover or directly probe primary');
 requirePattern(migrations, /const\s+rolloutMax\s*=\s*1\s*;/, 'Railway primary fallback remains one ordinary DB client when overflow is absent');
 requirePattern(superWorker, /installCryptaraSuperWorkerAdmission[\s\S]{0,420}installCryptaraSupabaseAdmissionWorker\(\)/, 'Super Worker delegates to the existing admission governor');
 requirePattern(gateway, /createsDatabasePool:\s*false\s+as\s+const/, 'overflow primary gateway must reuse existing primary pools rather than create another pool');
-requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway contract must expose zero direct application primary calls');
+requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'scoped overflow primary gateway must expose zero direct application primary calls');
 
 forbidPattern(entry, /\bpool\.query|\bdb\.execute|fetch\s*\(|axios|https?\.request/, 'bootstrap wrapper must not perform direct primary/provider work');
 forbidPattern(entry, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap wrapper must not add polling or recovery timers');
@@ -44,4 +55,4 @@ requirePattern(
   'Docker build emits the Cryptara-first production entry through the Overflow-authority router and verifies the result',
 );
 
-console.log('[free-tier-startup] PASS: verified overflow becomes the application data plane, primary acquisitions route through overflow gateway, direct startup probes are zero, and no third pool/poller is introduced');
+console.log('[free-tier-startup] PASS: verified Overflow is proven before server evaluation, hot CryptoCrawler DB imports are routed explicitly to Overflow, direct startup Primary probes are zero, and no global Pool interceptor/third pool/poller is introduced');
