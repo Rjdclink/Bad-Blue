@@ -20,6 +20,25 @@ function baseIntervalMs(): number {
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(60_000, Math.trunc(parsed))) : 15_000;
 }
 
+function snapshotMaxAgeMs(): number {
+  const configured = Number(process.env.CRYPTOCRAWL_CEX_MODE_SNAPSHOT_MAX_AGE_MS);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(5_000, Math.min(120_000, Math.trunc(configured)));
+  }
+  const quoteMaxAgeMs = Math.max(250, Math.min(15_000, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000)));
+  const scanCadenceMs = Math.max(baseIntervalMs(), nextIntervalMs);
+  return Math.max(5_000, Math.min(60_000, scanCadenceMs + quoteMaxAgeMs * 2));
+}
+
+function freshModes(now = Date.now()): CexModeEconomics[] {
+  const maxAgeMs = snapshotMaxAgeMs();
+  return latest.filter(item =>
+    Number.isFinite(item.observedAt)
+    && item.observedAt > 0
+    && Math.max(0, now - item.observedAt) <= maxAgeMs,
+  );
+}
+
 function canonicalPromotionCooldownMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_CEX_POSITIVE_PROMOTION_COOLDOWN_MS || 2_000);
   return Number.isFinite(parsed) ? Math.max(500, Math.min(30_000, Math.trunc(parsed))) : 2_000;
@@ -41,7 +60,7 @@ function compare(left: CexModeEconomics, right: CexModeEconomics): number {
 
 export function getClosestCexNearMissesBySymbol(limit = 16): CexModeEconomics[] {
   const best = new Map<string, CexModeEconomics>();
-  for (const item of latest) {
+  for (const item of freshModes()) {
     if (item.economicallyPositive) continue;
     const current = best.get(item.symbol);
     if (!current || compare(item, current) < 0) best.set(item.symbol, item);
@@ -95,9 +114,22 @@ async function observe(): Promise<void> {
   running = true;
   try {
     const universe = getLastOrderedMarketUniverseSymbols();
+    const freshPriorModes = freshModes();
+    if (freshPriorModes.length !== latest.length) {
+      const staleModesDropped = latest.length - freshPriorModes.length;
+      latest = freshPriorModes;
+      logger.info('[CexFourMode] Expired advisory opportunity evidence evicted before adaptive scan', {
+        component: 'CexFourModeObservabilityWiring',
+        staleModesDropped,
+        snapshotMaxAgeMs: snapshotMaxAgeMs(),
+        staleOpportunityReadable: false,
+        staleOpportunitySearchFeedbackAllowed: false,
+        executionAuthority: false,
+      });
+    }
     const selectionPolicy = buildAdaptiveProfitabilitySearchPolicy({
       universeSymbols: universe,
-      latestModes: latest,
+      latestModes: freshPriorModes,
       baseSymbolLimit: baseSymbolLimit(),
       baseIntervalMs: baseIntervalMs(),
     });
@@ -171,6 +203,12 @@ async function observe(): Promise<void> {
         cooldownMs: canonicalPromotionCooldownMs(),
         authority: 'scheduling_trigger_only',
       },
+      freshness: {
+        snapshotMaxAgeMs: snapshotMaxAgeMs(),
+        staleOpportunityReadable: false,
+        staleOpportunitySearchFeedbackAllowed: false,
+        scanReschedulesAfterFailure: true,
+      },
       negativeRankingObjective: 'smallest_risk_adjusted_then_exact_bps_to_break_even_first',
       observationFloorBps: Number(process.env.CRYPTOCRAWL_CEX_FOUR_MODE_OBSERVATION_FLOOR_BPS ?? -200),
       selectedFeeFreshnessTargetMs: selectionPolicy.feeRefreshMaxAgeMs,
@@ -186,16 +224,34 @@ async function observe(): Promise<void> {
   }
 }
 
+async function observeFailClosed(): Promise<void> {
+  try {
+    await observe();
+  } catch (error) {
+    const staleModesCleared = latest.length;
+    latest = [];
+    logger.warn('[CexFourMode] Advisory scan failed closed; prior opportunity snapshot cleared and next scan retained', {
+      component: 'CexFourModeObservabilityWiring',
+      staleModesCleared,
+      error: error instanceof Error ? error.message : String(error),
+      staleOpportunityReadable: false,
+      continuousScanSchedulingPreserved: true,
+      executionAuthority: false,
+    });
+  }
+}
+
 export function getCexFourModeSnapshot(): CexModeEconomics[] {
-  return latest.map(item => ({ ...item, missingExecutionInformation: [...item.missingExecutionInformation] }));
+  const fresh = freshModes();
+  if (fresh.length !== latest.length) latest = fresh;
+  return fresh.map(item => ({ ...item, missingExecutionInformation: [...item.missingExecutionInformation] }));
 }
 
 function scheduleNext(): void {
   if (process.env.NO_INTERVALS === 'true') return;
-  timer = setTimeout(async () => {
+  timer = setTimeout(() => {
     timer = null;
-    await observe();
-    scheduleNext();
+    void observeFailClosed().finally(scheduleNext);
   }, nextIntervalMs);
   timer.unref?.();
 }
@@ -203,5 +259,5 @@ function scheduleNext(): void {
 export function ensureCexFourModeObservabilityWiring(): void {
   if (timer || process.env.CRYPTOCRAWL_CEX_MODE_MATRIX_ENABLED === 'false') return;
   nextIntervalMs = baseIntervalMs();
-  void observe().finally(scheduleNext);
+  void observeFailClosed().finally(scheduleNext);
 }
