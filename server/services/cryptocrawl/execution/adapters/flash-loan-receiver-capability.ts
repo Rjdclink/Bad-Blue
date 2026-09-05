@@ -45,7 +45,7 @@ function normalizeProtocol(protocol: string): SupportedSwapProtocol {
   const normalized = protocol.trim().toLowerCase();
   if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') return 'uniswapV3';
   if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
-  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushi-v3') return 'sushiswapV3';
+  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushiswap-v3' || normalized === 'sushi-v3') return 'sushiswapV3';
   throw new Error(`Unsupported receiver permission protocol: ${protocol}`);
 }
 
