@@ -16,6 +16,15 @@ function intervalMs(): number {
   return Number.isFinite(configured) ? Math.max(5_000, Math.min(300_000, Math.trunc(configured))) : 15_000;
 }
 
+function freshLatest(now = Date.now()): PredictionParityOpportunity[] {
+  return latest.filter(item =>
+    Number.isFinite(item.observedAt)
+    && Number.isFinite(item.expiresAt)
+    && item.observedAt > 0
+    && item.expiresAt > now,
+  );
+}
+
 async function scan(): Promise<void> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
@@ -25,8 +34,12 @@ async function scan(): Promise<void> {
       lastCompletedAt = Date.now();
     } catch (error) {
       errors += 1;
+      const staleRowsCleared = latest.length;
+      latest = [];
       logger.warn('[PredictionMarketDiscovery] Runtime scan failed closed', {
         component: 'PredictionMarketDiscoveryWiring',
+        staleRowsCleared,
+        staleOpportunityReadable: false,
         error: error instanceof Error ? error.message : String(error),
         executionAuthority: false,
       });
@@ -38,11 +51,14 @@ async function scan(): Promise<void> {
 }
 
 export function getPredictionMarketDiscoverySnapshot() {
+  const fresh = freshLatest();
+  if (fresh.length !== latest.length) latest = fresh;
   return {
     cycles,
     errors,
     lastCompletedAt,
-    opportunities: latest.map(item => ({ ...item, provenance: [...item.provenance] })),
+    opportunities: fresh.map(item => ({ ...item, provenance: [...item.provenance] })),
+    staleOpportunityReadable: false as const,
     executionAuthority: false as const,
   };
 }
@@ -60,6 +76,7 @@ export function ensurePredictionMarketDiscoveryWiring(): void {
     intervalMs: intervalMs(),
     apiKeyRequiredForDiscovery: false,
     signUpRequiredForDiscovery: false,
+    staleOpportunityReadable: false,
     executionAuthority: false,
     exactNetProfitAuthority: false,
   });
