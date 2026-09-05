@@ -23,6 +23,7 @@ require('./verify-remaining-seventeen-batch12.cjs');
 require('./verify-competition-evidence-wiring.cjs');
 require('./verify-300-profitability-live-execution-controls.cjs');
 require('./verify-aave-balancer-provider-mesh.cjs');
+require('./verify-morpho-zero-fee-flash.cjs');
 require('./verify-cex-websocket-rpi-modernization.cjs');
 require('./verify-resource-bps-coordination.cjs');
 require('./verify-migration-authority-runtime.cjs');
@@ -49,4 +50,4 @@ require('./verify-canonical-execution-family-completion.cjs');
 require('./verify-resource-bps-authority.cjs');
 require('./verify-payout-recipient-truth.cjs');
 
-console.log('[deployment-preflight] complete Overflow runtime authority, safety, first-three Hyperscope runtime authority, per-component runtime failure isolation, measured-profitability, signed rebate/refund BPS truth, single-consumption inventory netting, Stage-2+ soft-gate retirement, advisory-only Monte Carlo, measured order-control latency revalidation/decomposition, realized maker calibration, liquidity resilience, queue-jump ranking, fixed OKX exchange-side stale-order expiration, bounded Kraken L3 queue intelligence and profit-preserving atomic AmendOrder, real Antenna hot-path acceleration with single market-data/execution authority, canonical execution-family, bounded zero-capital quote liveness, resource/BPS authority, recipient-bound payout truth, provider-mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] complete Overflow runtime authority, safety, first-three Hyperscope runtime authority, per-component runtime failure isolation, measured-profitability, signed rebate/refund BPS truth, single-consumption inventory netting, Stage-2+ soft-gate retirement, advisory-only Monte Carlo, measured order-control latency revalidation/decomposition, realized maker calibration, liquidity resilience, queue-jump ranking, fixed OKX exchange-side stale-order expiration, bounded Kraken L3 queue intelligence and profit-preserving atomic AmendOrder, real Antenna hot-path acceleration with single market-data/execution authority, canonical execution-family, bounded zero-capital quote liveness, resource/BPS authority, recipient-bound payout truth, Aave/Balancer/Morpho provider mesh, CEX websocket/RPI, cross-chain/funding, and Stage-2+ live-execution reachability invariants passed; continuing to downstream prebuild/build');

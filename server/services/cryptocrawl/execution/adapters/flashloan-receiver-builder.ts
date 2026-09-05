@@ -25,10 +25,10 @@ const BALANCER_FLASHLOAN_RECEIVER_ABI = [
 const AAVE_FLASHLOAN_RECEIVER_ABI = [
   'function executeAaveFlashLoan(address loanToken, uint256 loanAmount, (address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps, uint256 minProfit, address profitRecipient) external',
 ];
+const MORPHO_FLASHLOAN_RECEIVER_ABI = [
+  'function executeMorphoFlashLoan(address loanToken, uint256 loanAmount, (address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps, uint256 minProfit, address profitRecipient) external',
+];
 
-// Solidity receiver has no static step cap; this application-side envelope keeps
-// calldata/gas bounded while allowing five ordinary two-leg cycles plus room for
-// route-specific extra hops. Exact simulation and estimateGas still gate execution.
 const MAX_ATOMIC_SWAP_STEPS = 16;
 
 function isAddress(value: string): boolean {
@@ -78,6 +78,18 @@ function validateAtomicRouteBalance(plan: FlashLoanReceiverExecutionPlan): void 
   }
 }
 
+function receiverAbi(provider: FlashLoanProviderKind): string[] {
+  if (provider === 'aave_v3') return AAVE_FLASHLOAN_RECEIVER_ABI;
+  if (provider === 'morpho_blue') return MORPHO_FLASHLOAN_RECEIVER_ABI;
+  return BALANCER_FLASHLOAN_RECEIVER_ABI;
+}
+
+function receiverFunction(provider: FlashLoanProviderKind): string {
+  if (provider === 'aave_v3') return 'executeAaveFlashLoan';
+  if (provider === 'morpho_blue') return 'executeMorphoFlashLoan';
+  return 'executeBalancerFlashLoan';
+}
+
 export function buildFlashLoanReceiverPayloadFromPlan(
   plan: FlashLoanReceiverExecutionPlan,
 ): BuiltOnchainPayload {
@@ -103,10 +115,8 @@ export function buildFlashLoanReceiverPayloadFromPlan(
   validateAtomicRouteBalance(plan);
 
   const provider = plan.provider || 'balancer_v2';
-  const iface = new ethers.utils.Interface(
-    provider === 'aave_v3' ? AAVE_FLASHLOAN_RECEIVER_ABI : BALANCER_FLASHLOAN_RECEIVER_ABI,
-  );
-  const functionName = provider === 'aave_v3' ? 'executeAaveFlashLoan' : 'executeBalancerFlashLoan';
+  const iface = new ethers.utils.Interface(receiverAbi(provider));
+  const functionName = receiverFunction(provider);
   const loanAmount = parseIntegerString('loanAmount', plan.loanAmount);
   const minProfit = parseIntegerString('minProfit', plan.minProfit);
 

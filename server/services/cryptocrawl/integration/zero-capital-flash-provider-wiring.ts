@@ -182,6 +182,14 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           expectedOwner: wallet.address,
         }).catch(() => null)
       : null;
+    const morphoCapability = wallet
+      ? await verifyFlashLoanReceiverCapability({
+          kind: 'morpho_blue',
+          chain: chain as any,
+          provider,
+          expectedOwner: wallet.address,
+        }).catch(() => null)
+      : null;
     const dualCapability = wallet
       ? await verifyDualFlashLoanReceiverCapability({
           chain: chain as any,
@@ -190,11 +198,9 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
         }).catch(() => null)
       : null;
 
-    // Permission setup is infrastructure mutation, so every affected quote is
-    // invalidated and immediately remeasured before provider economics are used.
-    if ((aaveCapability || dualCapability) && wallet && opportunities.length > 0) {
+    if ((aaveCapability || morphoCapability || dualCapability) && wallet && opportunities.length > 0) {
       const missingByIdentity = new Map<string, any>();
-      const permissionReceivers = [aaveCapability?.address, dualCapability?.address]
+      const permissionReceivers = [aaveCapability?.address, morphoCapability?.address, dualCapability?.address]
         .filter((value): value is string => Boolean(value));
       for (const receiver of permissionReceivers) {
         for (const opportunity of opportunities) {
@@ -235,6 +241,7 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
             invalidatedQuotes: preMutation.length,
             freshQuotes: opportunities.length,
             aaveReceiver: Boolean(aaveCapability),
+            morphoReceiver: Boolean(morphoCapability),
             dualReceiver: Boolean(dualCapability),
             staleQuoteExecutionAllowed: false,
             extraFullScanCycleRequired: false,
@@ -262,6 +269,16 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           if (remainingAavePermissions.length === 0) capabilities.set('aave_v3', aaveCapability);
         }
 
+        if (morphoCapability && wallet) {
+          const remainingMorphoPermissions = await buildMissingReceiverPermissionCalls({
+            chain: chain as any,
+            provider,
+            receiver: morphoCapability.address,
+            route: opportunity.route,
+          });
+          if (remainingMorphoPermissions.length === 0) capabilities.set('morpho_blue', morphoCapability);
+        }
+
         const dualPermissionReady = dualCapability && wallet
           ? (await buildMissingReceiverPermissionCalls({
               chain: chain as any,
@@ -279,9 +296,6 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           ? selectMeasuredDualFlashLoanAllocation(evidence, opportunity.flashLoanAmount, allowedProviders)
           : null;
 
-        // Dual selection has already proven its measured split fee is strictly
-        // better than the best executable sufficient single-provider fee, or that
-        // no execution-ready single provider can fund the exact size.
         if (selectedDual && dualCapability) {
           const values = repriceOpportunity(opportunity, selectedDual.totalFee);
           recordReprice(opportunity, chain, values);
@@ -360,7 +374,7 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           updateCandidate(
             opportunity,
             null,
-            'No execution-ready single or combined Aave+Balancer provider path has complete measured fee, liquidity, permission, and verified receiver evidence for this exact amount',
+            'No execution-ready Morpho, Aave, Balancer, or combined Aave+Balancer path has complete measured fee, liquidity, permission, and verified receiver evidence for this exact amount',
             ['measured_flash_loan_provider_liquidity_and_fee'],
             ['provider_mesh_checked:true'],
           );
@@ -380,6 +394,8 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
             opportunity,
             selectedSingle,
             `Measured ${selectedSingle.provider} exact fee/liquidity repriced the route to ${values.netProfitBps} BPS; observation only`,
+            undefined,
+            selectedSingle.provider === 'morpho_blue' ? ['morpho_zero_flash_fee_applied:true'] : [],
           );
           continue;
         }
@@ -408,6 +424,7 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
             'verified_receiver_capability',
             'verified_receiver_route_permissions',
             'provider_receiver_binding',
+            ...(selectedSingle.provider === 'morpho_blue' ? ['morpho_blue_zero_flash_fee'] : []),
             'strict_positive_repriced_net',
             'cryptara_rechecked_after_positive_provider_reprice',
             'synthetic_evidence:false',
@@ -418,6 +435,8 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
           opportunity,
           selectedSingle,
           `Measured ${selectedSingle.provider} exact fee/liquidity plus verified receiver/permissions keep the route positive; downstream Cryptara/Monte Carlo/governance remain required`,
+          undefined,
+          selectedSingle.provider === 'morpho_blue' ? ['morpho_zero_flash_fee_applied:true'] : [],
         );
         repriced.push(opportunity);
       } catch (error) {
@@ -448,8 +467,10 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
     providerSelectionRegistry: true,
     dualProviderSelectionRegistry: true,
     staticFlashLoanFeeAuthority: false,
-    providerSelection: 'evaluate_single_and_dual_then_choose_strictly_better_measured_fee_or_combined_liquidity_rescue',
-    providerMesh: ['balancer_v2', 'aave_v3', 'aave_balancer_dual'],
+    providerSelection: 'choose_lowest_exact_measured_fee_with_verified_receiver_then_use_dual_only_for_strict_improvement_or_liquidity_rescue',
+    providerMesh: ['morpho_blue', 'balancer_v2', 'aave_v3', 'aave_balancer_dual'],
+    morphoBlueZeroFlashFeeAuthority: true,
+    morphoBlueLiveExecutionEnabledWhenVerified: true,
     dualProviderRule: 'combined_liquidity_or_strict_fee_split_improvement_only',
     nearBreakEvenObservationCanReachProviderRepricing: true,
     positiveProviderRescueRechecksCryptara: true,
