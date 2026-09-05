@@ -186,13 +186,14 @@ export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionC
   if (!config?.usdc || !config?.usdt) return [];
 
   const routes: ConfiguredZeroCapitalRoute[] = [];
+  const tiers = feeTiers();
   for (const input of [
     { symbol: 'USDC' as const, token: config.usdc, other: config.usdt },
     { symbol: 'USDT' as const, token: config.usdt, other: config.usdc },
   ]) {
     for (const notional of notionalsUsd()) {
       for (const [firstProtocol, secondProtocol] of DYNAMIC_PROTOCOL_PAIRS) {
-        for (const feeTier of feeTiers()) {
+        for (const feeTier of tiers) {
           routes.push(routeBase({
             id: `dynamic-${chain}-${input.symbol}-${notional}-${firstProtocol}-${secondProtocol}-${feeTier}`,
             chain,
@@ -202,6 +203,27 @@ export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionC
             legs: [
               protocolLeg(firstProtocol, input.token, input.other, feeTier),
               protocolLeg(secondProtocol, input.other, input.token, feeTier),
+            ],
+          }));
+        }
+      }
+
+      // Stablecoin pairs commonly concentrate liquidity in low-fee V3 pools.
+      // Quote cross-tier V3/V3 loops directly so the 0.01% pool can compete with
+      // 0.05%/0.30% pools without forcing an unrelated 0.30% Sushi leg. Missing
+      // pools simply fail their independent quote; execution remains strict net+.
+      for (const firstTier of tiers) {
+        for (const secondTier of tiers) {
+          if (firstTier === secondTier) continue;
+          routes.push(routeBase({
+            id: `dynamic-${chain}-${input.symbol}-${notional}-univ3-${firstTier}-${secondTier}`,
+            chain,
+            symbol: input.symbol,
+            token: input.token,
+            amountUsd: notional,
+            legs: [
+              protocolLeg('uniswapV3', input.token, input.other, firstTier),
+              protocolLeg('uniswapV3', input.other, input.token, secondTier),
             ],
           }));
         }
