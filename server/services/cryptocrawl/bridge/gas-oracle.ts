@@ -6,6 +6,25 @@ import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 
 const { formatUnits, formatEther } = ethers.utils;
 
+/**
+ * Return the best current estimate of the price that will actually be charged per
+ * unit of execution gas. maxFeePerGas is deliberately only a last-resort fallback:
+ * it is a user-supplied/caller cap, not the expected effective gas price, and using
+ * it as realized economics can materially overstate BPS on EIP-1559/L2 networks.
+ */
+function expectedExecutionGasPriceWei(feeData: ethers.providers.FeeData): ethers.BigNumber {
+  if (feeData.gasPrice && feeData.gasPrice.gt(0)) return feeData.gasPrice;
+  if (feeData.lastBaseFeePerGas && feeData.lastBaseFeePerGas.gt(0)) {
+    const priority = feeData.maxPriorityFeePerGas && feeData.maxPriorityFeePerGas.gt(0)
+      ? feeData.maxPriorityFeePerGas
+      : ethers.BigNumber.from(0);
+    const expected = feeData.lastBaseFeePerGas.add(priority);
+    if (expected.gt(0)) return expected;
+  }
+  if (feeData.maxFeePerGas && feeData.maxFeePerGas.gt(0)) return feeData.maxFeePerGas;
+  return ethers.BigNumber.from(0);
+}
+
 class GasOracle {
   private gasPrices: Map<ChainId, GasPrice> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
@@ -64,7 +83,8 @@ class GasOracle {
 
       const config = SUPPORTED_CHAINS[chain];
       const { result: feeData, provenance } = await multiProviderRpcManager.execute(chain, 'gas', provider => provider.getFeeData());
-      const gasPriceWei = feeData.maxFeePerGas || feeData.gasPrice || ethers.BigNumber.from(0);
+      const gasPriceWei = expectedExecutionGasPriceWei(feeData);
+      if (gasPriceWei.lte(0)) throw new Error(`No positive live execution gas price available for ${chain}`);
       const gweiPrice = parseFloat(formatUnits(gasPriceWei, 'gwei'));
       const gasLimit = DEFAULT_GAS_LIMIT;
       const nativePrice = this.nativePrices.get(config.currency) || 0;
