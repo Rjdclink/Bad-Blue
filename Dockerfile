@@ -34,13 +34,14 @@ RUN rm -rf node_modules || true && \
 COPY . .
 
 # Build application (requires dev dependencies). Payout-recipient truth, the
-# operator/treasury strategy contract, controlled-loss learning, and every
-# Nix-Gen invariant are explicit production gates: the image cannot build if
-# signer-derived payout truth, the 20/30 randomized operator strategy, 90/10
-# profit routing, provenance-backed $4k/80% treasury sweep, lifecycle-held
-# reservations, randomized post-first-win <=5% controlled-loss learning, or
-# Nix-Gen authority boundaries regress. Every verifier in the globbed suites is
-# fail-fast so an early failure cannot be masked by a later successful script.
+# operator/treasury strategy contract, controlled-loss learning, system-owned
+# gas authority, and every Nix-Gen invariant are explicit production gates: the
+# image cannot build if signer-derived payout truth, the 20/30 randomized
+# operator strategy, 90/10 profit routing, provenance-backed $4k/80% treasury
+# sweep, lifecycle-held reservations, randomized post-first-win <=5%
+# controlled-loss learning, native-gas ownership truth, or Nix-Gen authority
+# boundaries regress. Every verifier in the globbed suites is fail-fast so an
+# early failure cannot be masked by a later successful script.
 # The normal build proves the full source tree. The deployed server bundle is
 # then rebuilt through the mandatory CryptoCrawler Overflow authority router so
 # every reachable CryptoCrawler import of server/db resolves to Overflow and
@@ -48,6 +49,7 @@ COPY . .
 RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
     node scripts/cryptocrawl/verify-operator-treasury-strategy.cjs && \
     node scripts/cryptocrawl/verify-controlled-loss-learning.cjs && \
+    node scripts/cryptocrawl/verify-system-native-gas-spend-authority.cjs && \
     for script in scripts/cryptocrawl/verify-nix-gen-*.cjs; do node "$script" || exit 1; done && \
     for script in scripts/cryptocrawl/verify-nix-gen-*.ts; do npx --no-install tsx "$script" || exit 1; done && \
     npm run build && \
@@ -133,6 +135,7 @@ COPY --from=builder /app/server/migrations/041_cryptocrawler_controlled_loss_lea
 COPY --from=builder /app/server/migrations/042_cryptocrawler_onchain_system_capital.sql ./dist/migrations/042_cryptocrawler_onchain_system_capital.sql
 COPY --from=builder /app/server/migrations/043_cryptocrawler_cross_chain_lifecycle.sql ./dist/migrations/043_cryptocrawler_cross_chain_lifecycle.sql
 COPY --from=builder /app/server/migrations/044_cryptocrawler_funding_feedback_recovery.sql ./dist/migrations/044_cryptocrawler_funding_feedback_recovery.sql
+COPY --from=builder /app/server/migrations/045_cryptocrawler_system_native_gas_spend_authority.sql ./dist/migrations/045_cryptocrawler_system_native_gas_spend_authority.sql
 
 # Overflow-only prerequisites complete migration gaps found by the repository-wide
 # authority audit without enabling duplicate schedulers or browser/API access.
