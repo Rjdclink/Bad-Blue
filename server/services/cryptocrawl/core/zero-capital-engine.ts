@@ -6,6 +6,10 @@
  * parallel Computational Beam / Monte Carlo advisory -> dynamic sponsored/native gas funding ->
  * deterministic receiver fleet -> atomic flash loan -> verified settlement ->
  * learning feedback.
+ *
+ * Zero Initial Capital funding is a local capability layer, never a global
+ * market-operations veto. Discovery continues while individual funding lanes
+ * recover/retry, and unrelated CryptoCrawler strategies retain their own gates.
  */
 
 import { BigNumber, Wallet, ethers, providers } from 'ethers';
@@ -189,6 +193,7 @@ function executionReadiness(ready: boolean, reason?: string): InitialGasReadines
       'eip7702_smart_wallet',
       'erc4337_user_operation',
       'deterministic_receiver_registry',
+      'zero_initial_capital_local_capability_not_global_veto',
     ],
     reason,
   };
@@ -332,6 +337,7 @@ export class AutonomousZeroCapitalEngine {
       zeroCapitalSpecificExecutionFlagAuthority: false,
       zeroCapitalBpsRescueAuthority: 'canonical_scan_direct_call',
       tokenUnitEqualsUsdAssumption: false,
+      globalHaltAuthority: false,
     });
   }
 
@@ -355,7 +361,15 @@ export class AutonomousZeroCapitalEngine {
     }
     if (this.executionWallets.size === 0) throw new Error('WALLET_PRIVATE_KEY is required for live execution');
     await this.refreshWalletResources();
-    await this.ensureExecutionReceiverFleet();
+    try {
+      await this.ensureExecutionReceiverFleet();
+    } catch (error) {
+      logger.warn('[ZeroCapitalEngine] Receiver/funding bootstrap unavailable locally; discovery and unrelated strategies continue while readiness retries', {
+        component: 'ZeroCapitalEngine',
+        error: error instanceof Error ? error.message : String(error),
+        globalHaltAuthority: false,
+      });
+    }
 
     const cryptara = getCryptara();
     if (!cryptara.getStatus().isRunning) await cryptara.initialize();
@@ -378,12 +392,19 @@ export class AutonomousZeroCapitalEngine {
 
     this.state.isRunning = true;
     const readiness = await this.refreshSponsorshipReadiness();
-    if (!readiness.initialGasReady) {
-      this.state.isRunning = false;
-      throw new Error(readiness.reason || 'Execution funding readiness is unavailable');
-    }
+
+    // Discovery is independent of local funding readiness. A temporarily unavailable
+    // paymaster/builder/receiver must not make opportunities stale in an idle queue.
+    this.startScanningLoop();
 
     if (stageManager.isMarketOperationsAllowed()) await this.startMarketOperations();
+    if (!readiness.initialGasReady) {
+      logger.info('[ZeroCapitalEngine] Zero Initial Capital execution is locally unavailable; scanner remains active and funding retries continue', {
+        component: 'ZeroCapitalEngine',
+        reason: readiness.reason,
+        globalHaltAuthority: false,
+      });
+    }
     this.startReadinessLoop();
   }
 
@@ -431,16 +452,20 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
+    // Do not delete configured routes when a provider/funding setup is temporarily
+    // unavailable. Keeping them allows every readiness cycle to retry the missing
+    // redundancy and allows discovery to continue observing fresh opportunities.
     this.state.receiverRegistry = this.receiverManager.getRecords();
-    this.configuredRoutes = this.configuredRoutes.filter(route => readyChains.has(route.chain));
-    if (this.configuredRoutes.length === 0) {
-      throw new Error(`No configured route chain has a verified funded receiver: ${failures.join('; ')}`);
+    if (readyChains.size === 0) {
+      throw new Error(`No configured route chain currently has a verified funded receiver: ${failures.join('; ')}`);
     }
     if (failures.length > 0) {
-      logger.warn('[ZeroCapitalEngine] Some route chains were excluded because receiver funding/setup failed', {
+      logger.warn('[ZeroCapitalEngine] Some receiver/funding lanes are locally unavailable and will be retried', {
         component: 'ZeroCapitalEngine',
         failures,
         activeChains: Array.from(readyChains),
+        configuredRoutesRetained: true,
+        globalHaltAuthority: false,
       });
     }
   }
@@ -510,27 +535,40 @@ export class AutonomousZeroCapitalEngine {
     const walletReady = this.executionWallets.size > 0 || !!configuredWallet.address;
     const providerReady = this.providers.size > 0;
     const fundingDecisions = await this.refreshGasFundingDecisions();
-    const fundingReady = fundingDecisions.every(decision => decision.mode !== 'unavailable');
-    const receiverReady = this.configuredRoutes.length === 0 ||
-      this.configuredRoutes.every(route => !!this.receiverManager.getReceiver(route.chain));
-    const ready = walletReady && providerReady && fundingReady && receiverReady;
-    const unavailableFunding = fundingDecisions.find(decision => decision.mode === 'unavailable');
+    const decisionByChain = new Map(fundingDecisions.map(decision => [decision.chain, decision]));
+    const executableRoute = this.configuredRoutes.find(route => {
+      const funding = decisionByChain.get(route.chain);
+      return funding?.mode !== undefined && funding.mode !== 'unavailable' && !!this.receiverManager.getReceiver(route.chain);
+    });
+    const routeReady = !!executableRoute;
+    const ready = walletReady && providerReady && routeReady;
     const reason = !walletReady
       ? configuredWallet.reason || 'No authoritative execution wallet is configured'
       : !providerReady
         ? 'No supported execution-chain provider is reachable'
-        : !fundingReady
-          ? unavailableFunding?.reason || 'No usable native or sponsored gas funding path is available'
-          : !receiverReady
-            ? 'No verified receiver is registered for one or more executable route chains'
-            : undefined;
+        : !routeReady
+          ? 'No zero-initial-capital route currently has both a usable funding lane and verified receiver; local retries remain active'
+          : undefined;
 
     const readiness = executionReadiness(ready, reason);
     this.state.initialGasReadiness = readiness;
     this.state.bootstrapState = ready ? 'INITIAL_GAS_READY' : 'PRE_STAGE_1_BOOTSTRAP';
     this.state.receiverRegistry = this.receiverManager.getRecords();
-    stageManager.setInitialGasReadiness(readiness);
-    this.state.marketOperationsEnabled = ready && stageManager.isMarketOperationsAllowed();
+
+    // The shared StageManager must not inherit a route-specific zero-capital veto.
+    // Its legacy initial-gas flag now represents only the runtime-wide prerequisite
+    // that an authoritative wallet and at least one provider exist. Each strategy
+    // remains responsible for proving its own funding before submission.
+    const globalRuntimeReadiness = executionReadiness(
+      walletReady && providerReady,
+      !walletReady
+        ? configuredWallet.reason || 'No authoritative execution wallet is configured'
+        : !providerReady
+          ? 'No supported execution-chain provider is reachable'
+          : 'Global market operations are not gated by local Zero Initial Capital funding availability',
+    );
+    stageManager.setInitialGasReadiness(globalRuntimeReadiness);
+    this.state.marketOperationsEnabled = stageManager.isMarketOperationsAllowed();
     return readiness;
   }
 
@@ -540,26 +578,42 @@ export class AutonomousZeroCapitalEngine {
       if (!this.state.isRunning) return;
       this.state.fundingCycleActive = true;
       try {
-        const readiness = await this.refreshSponsorshipReadiness();
         await this.refreshWalletResources();
+        try {
+          await this.ensureExecutionReceiverFleet();
+        } catch (error) {
+          this.state.lastFundingError = error instanceof Error ? error.message : String(error);
+          logger.debug('[ZeroCapitalEngine] Receiver/funding retry cycle remains locally degraded', {
+            component: 'ZeroCapitalEngine',
+            error: this.state.lastFundingError,
+            globalHaltAuthority: false,
+          });
+        }
+        const readiness = await this.refreshSponsorshipReadiness();
         this.state.fundingCycles++;
         this.state.lastFundingCycleAt = Date.now();
-        this.state.lastFundingError = undefined;
+        if (readiness.initialGasReady) this.state.lastFundingError = undefined;
 
-        if (!readiness.initialGasReady) {
-          this.suspendMarketOperations(readiness.reason || 'Execution funding readiness was lost');
-        } else if (stageManager.isMarketOperationsAllowed() && !this.marketOperationsStarted) {
+        if (stageManager.isMarketOperationsAllowed() && !this.marketOperationsStarted) {
           await this.startMarketOperations();
         }
 
-        const mayExecute = stageManager.canExecuteTrades();
-        if (mayExecute && this.marketOperationsStarted && !this.executionEnabled) {
+        const mayExecuteZeroCapital = readiness.initialGasReady && stageManager.canExecuteTrades();
+        if (mayExecuteZeroCapital && this.marketOperationsStarted && !this.executionEnabled) {
           this.executionEnabled = true;
           this.startExecutionLoop();
-        } else if (!mayExecute && this.executionEnabled) {
+        } else if (!mayExecuteZeroCapital && this.executionEnabled) {
+          // Funding loss stops only Zero Initial Capital submission. Discovery,
+          // the canonical pipeline, AutonomousFaucet and unrelated strategies stay up.
           this.executionEnabled = false;
           if (this.executionTimer) clearInterval(this.executionTimer);
           this.executionTimer = null;
+          if (this.initialGasLostCallback) {
+            logger.debug('[ZeroCapitalEngine] Local funding loss callback intentionally suppressed to prevent global strategy shutdown', {
+              component: 'ZeroCapitalEngine',
+              globalHaltAuthority: false,
+            });
+          }
         }
       } catch (error) {
         this.state.lastFundingError = error instanceof Error ? error.message : String(error);
@@ -575,7 +629,7 @@ export class AutonomousZeroCapitalEngine {
     if (!this.state.isRunning || this.marketOperationsStarted || !stageManager.isMarketOperationsAllowed()) return;
     this.marketOperationsStarted = true;
     this.state.marketOperationsEnabled = true;
-    this.executionEnabled = stageManager.canExecuteTrades();
+    this.executionEnabled = this.state.initialGasReadiness.initialGasReady && stageManager.canExecuteTrades();
     this.startScanningLoop();
     if (this.executionEnabled) this.startExecutionLoop();
     if (this.initialGasReadyCallback) await this.initialGasReadyCallback();
@@ -587,17 +641,17 @@ export class AutonomousZeroCapitalEngine {
     this.state.marketOperationsEnabled = false;
     this.executionEnabled = false;
     this.state.lastFundingError = reason;
-    if (this.scanTimer) clearTimeout(this.scanTimer);
     if (this.executionTimer) clearInterval(this.executionTimer);
-    this.scanTimer = null;
     this.executionTimer = null;
+    // Discovery is intentionally not stopped here. A canonical full runtime stop
+    // uses stop(); local funding/governance suspension must not stale observations.
     if (wasStarted && this.initialGasLostCallback) void this.initialGasLostCallback().catch(() => undefined);
   }
 
   private startScanningLoop(): void {
     if (this.scanTimer) clearTimeout(this.scanTimer);
     const cycle = async (): Promise<void> => {
-      if (!this.state.isRunning || !this.marketOperationsStarted || this.scanning) return;
+      if (!this.state.isRunning || this.scanning) return;
       this.scanning = true;
       let degraded = false;
       try {
@@ -628,7 +682,7 @@ export class AutonomousZeroCapitalEngine {
             : Math.min(this.maxScanDelayMs, Math.floor(this.scanDelayMs * 1.2));
       } finally {
         this.scanning = false;
-        if (this.state.isRunning && this.marketOperationsStarted) {
+        if (this.state.isRunning) {
           this.scanTimer = setTimeout(() => void cycle(), this.scanDelayMs);
         }
       }
@@ -1247,12 +1301,13 @@ export class AutonomousZeroCapitalEngine {
       gasFundingDecisions: this.state.gasFundingDecisions,
       activeExecutions: this.state.activeExecutions,
       maxConcurrentExecutions: this.maxConcurrentExecutions,
-      capitalRequired: 'Dynamic gas policy: use native gas when reserve is sufficient, otherwise use compatible Alchemy sponsorship; flash-loan principal remains zero-capital',
+      capitalRequired: 'Zero Initial Capital funding is attempted per opportunity; native gas is used only from previously generated system reserves and local funding failure never globally halts other strategies',
       executionAuthority: 'canonical_stage_manager_plus_hard_execution_facts',
       zeroCapitalSpecificExecutionFlagAuthority: false,
       zeroCapitalBpsRescueAuthority: 'canonical_scan_direct_call',
       tokenUnitEqualsUsdAssumption: false,
       monteCarloExecutionAuthority: false,
+      zeroInitialCapitalGlobalHaltAuthority: false,
     };
   }
 }
