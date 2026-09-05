@@ -24,6 +24,8 @@ const crossChainEconomics = read('server/services/cryptocrawl/discovery/cross-ch
 const acrossExecutor = read('server/services/cryptocrawl/execution/across-bridge-executor.ts');
 const funding = read('server/services/cryptocrawl/discovery/funding-rate-monitor.ts');
 const fundingPolicy = read('server/services/cryptocrawl/discovery/funding-arbitrage-policy.ts');
+const fundingEvidence = read('server/services/cryptocrawl/execution/okx-funding-evidence.ts');
+const fundingAdapter = read('server/services/cryptocrawl/execution/okx-funding-lifecycle-adapter.ts');
 const fundingLifecycle = read('server/services/cryptocrawl/execution/funding-position-lifecycle.ts');
 const fundingMigration = read('server/migrations/024_cryptocrawler_funding_lifecycle.sql');
 const router = read('server/services/cryptocrawl/execution/unified-execution-router.ts');
@@ -66,21 +68,37 @@ requirePattern(acrossExecutor, /destinationReceiptVerified/, 'successful Across 
 requirePattern(acrossExecutor, /refundReceiptVerified/, 'Across refund requires receipt verification');
 requirePattern(acrossExecutor, /ACROSS_TERMINAL_SETTLEMENT_TIMEOUT/, 'unknown terminal settlement fails closed');
 
-// Funding is a carry topology. The durable open/monitor/close state machine now
-// exists, but public carry observations remain non-executable until a real venue
-// adapter and measured exit/depth/margin/terminal evidence are present.
+// Funding is projected carry before settlement, but OKX execution may be promoted
+// only after authenticated fees, exact contract sizing, measured entry/exit depth,
+// exit reserve/slippage, account mode/capacity and a bounded entry window are all
+// proven. Terminal fills + funding bills remain realized-profit authority.
 requirePattern(funding, /getOkxSwapCapability\s*\(/, 'funding monitor hydrates authenticated OKX SWAP capability');
 requirePattern(funding, /resolveCexFeeEvidence\(\s*'okx'/, 'funding monitor consumes canonical authenticated spot fees');
-requirePattern(funding, /exitBasisReserveBps:\s*null/, 'future exit-basis reserve is not fabricated');
-requirePattern(funding, /expectedSlippageBps:\s*null/, 'unmeasured funding lifecycle slippage is not fabricated');
-requirePattern(funding, /funding_venue_lifecycle_adapter/, 'missing venue lifecycle adapter stays explicit');
-forbidPattern(funding, /persistent_delta_neutral_position_lifecycle/, 'discovery cannot claim the durable funding lifecycle itself is still missing');
-requirePattern(funding, /durable_funding_lifecycle:implemented_migration_owned_nonblocking/, 'discovery records implemented lifecycle truth');
-requirePattern(funding, /liquidation_margin_and_collateral_monitoring/, 'missing liquidation-safe collateral evidence stays explicit');
-requirePattern(funding, /terminal_funding_payment_and_close_settlement/, 'terminal funding and close settlement remains mandatory');
-requirePattern(funding, /executableCapability:\s*false/, 'funding observations remain non-executable without complete adapter/economics');
-requirePattern(fundingPolicy, /input\.fundingRateLocked\s*&&\s*supportedDirection/, 'deterministic funding P&L requires locked rate and supported direction');
-requirePattern(fundingPolicy, /unknown|projected funding|projected profit/i, 'funding policy documents projected-versus-deterministic separation');
+requirePattern(funding, /measureOkxFundingExecutionEvidence\s*\(/, 'funding monitor measures exact OKX entry/exit execution evidence');
+requirePattern(funding, /ensureOkxFundingLifecycleAdapterRegistered\(\)/, 'funding monitor registers the production OKX lifecycle adapter');
+requirePattern(funding, /exitBasisReserveBps: executionEvidence\?\.exitBasisReserveBps \?\? null/, 'measured exit-basis reserve feeds projected all-in carry economics');
+requirePattern(funding, /expectedSlippageBps: executionEvidence\?\.expectedSlippageBps \?\? null/, 'measured entry/exit slippage feeds projected all-in carry economics');
+requirePattern(funding, /const executionCapable = observation\.venue === 'okx'[\s\S]{0,420}projectedNet !== null[\s\S]{0,120}projectedNet > 0[\s\S]{0,160}window\.eligible[\s\S]{0,160}executionEvidence !== null[\s\S]{0,160}executionEvidence\.expiresAt > Date\.now\(\)[\s\S]{0,160}swapCapability\.instrumentVisible[\s\S]{0,160}swapCapability\.accountModeVisible/, 'funding execution promotion requires positive projected carry and complete fresh OKX execution/account evidence');
+requirePattern(funding, /status: executionCapable \? 'eligible' : 'enriched'/, 'only fully execution-capable funding observations become eligible');
+requirePattern(funding, /depth: executionEvidence[\s\S]{0,180}status: 'measured'/, 'eligible OKX funding carries measured spot and SWAP depth');
+requirePattern(funding, /deterministicNetProfitUsd: null/, 'projected funding carry is not relabeled as canonical deterministic profit');
+requirePattern(funding, /executableCapability: executionCapable/, 'funding candidate execution capability is tied to measured execution evidence');
+requirePattern(funding, /funding_profit_authority:projected_expected_value_until_terminal_bill/, 'pre-settlement funding profit remains explicitly projected');
+requirePattern(funding, /execution_promoted_from_bounded_projected_carry_and_complete_execution_evidence/, 'funding promotion provenance requires bounded projected carry plus complete evidence');
+requirePattern(funding, /durable_funding_lifecycle:migration_owned_nonblocking/, 'discovery records implemented durable lifecycle truth');
+forbidPattern(funding, /persistent_delta_neutral_position_lifecycle|funding_venue_lifecycle_adapter|liquidation_margin_and_collateral_monitoring|terminal_funding_payment_and_close_settlement/, 'retired missing-lifecycle evidence cannot replace implemented OKX lifecycle truth');
+requirePattern(fundingPolicy, /input\.fundingRateLocked\s*&&\s*supportedDirection/, 'deterministic funding P&L still requires locked rate and supported direction');
+requirePattern(fundingPolicy, /projected funding payment into deterministic execution evidence/, 'policy preserves projected-versus-deterministic separation');
+
+requirePattern(fundingEvidence, /const spotEntry = vwap\(spotBook\.asks, baseQuantity\)/, 'funding execution evidence measures exact spot entry depth');
+requirePattern(fundingEvidence, /const spotExit = vwap\(spotBook\.bids, baseQuantity\)/, 'funding execution evidence measures exact spot exit depth');
+requirePattern(fundingEvidence, /const perpEntry = vwap\(swapBook\.bids, contracts\)/, 'funding execution evidence measures exact perp entry depth');
+requirePattern(fundingEvidence, /const perpExit = vwap\(swapBook\.asks, contracts\)/, 'funding execution evidence measures exact perp exit depth');
+requirePattern(fundingEvidence, /const exitBasisReserveBps = bps\(perpExit, spotExit\)/, 'funding exit-basis reserve is measured from executable exit VWAPs');
+requirePattern(fundingEvidence, /const expectedSlippageBps = \[/, 'funding slippage is measured across all entry/exit legs');
+requirePattern(fundingEvidence, /posMode && posMode !== 'net_mode'/, 'unsupported OKX position mode fails closed');
+requirePattern(fundingEvidence, /maxSellContracts < contracts/, 'insufficient authenticated max-size capacity fails closed');
+requirePattern(fundingEvidence, /expiresAt: measuredAt \+ maxAgeMs/, 'funding execution evidence is freshness-bounded');
 
 requirePattern(fundingMigration, /private\.cryptocrawler_funding_lifecycles/, 'funding lifecycle table is migration-owned');
 requirePattern(fundingLifecycle, /advanceOpenLifecycles/, 'funding lifecycle advances durably on later bounded scheduler ticks');
@@ -89,7 +107,18 @@ requirePattern(fundingLifecycle, /marginHealthy/, 'funding lifecycle requires ma
 requirePattern(fundingLifecycle, /closeAndSettle/, 'funding lifecycle requires terminal close settlement');
 forbidPattern(fundingLifecycle, /CREATE\s+(TABLE|SCHEMA)/i, 'funding runtime cannot own DDL');
 forbidPattern(fundingLifecycle, /while\s*\(\s*Date\.now\(\)\s*</, 'funding lifecycle cannot block through the funding window');
-requirePattern(router, /funding_lifecycle_adapter_unavailable/, 'unregistered funding venue adapters are blocked at the execution router');
+
+requirePattern(fundingAdapter, /verifyCurrentPlan\(plan\)/, 'OKX lifecycle revalidates projected carry before opening');
+requirePattern(fundingAdapter, /openDeltaNeutral\(plan, lifecycleId\)/, 'OKX lifecycle owns delta-neutral opening');
+requirePattern(fundingAdapter, /ordType: 'fok'/, 'OKX funding entry/close uses fill-or-kill orders');
+requirePattern(fundingAdapter, /async marginHealthy\(receipt\)/, 'OKX lifecycle monitors authenticated margin health while open');
+requirePattern(fundingAdapter, /mgnRatio < minimumRatio/, 'OKX lifecycle fails closed below minimum margin ratio');
+requirePattern(fundingAdapter, /async closeAndSettle\(plan, receipt\)/, 'OKX lifecycle owns measured terminal close');
+requirePattern(fundingAdapter, /measureOkxFundingExecutionEvidence\(/, 'OKX close reacquires fresh exit depth before orders');
+requirePattern(fundingAdapter, /terminalFundingAccountingComplete\(settlement\)/, 'funding capital release requires complete terminal accounting');
+requirePattern(fundingAdapter, /terminalEvidence: 'authenticated_fills_plus_funding_bills'/, 'authenticated fills plus funding bills are terminal profit evidence');
+requirePattern(fundingAdapter, /capitalReleaseAuthority: 'complete_terminal_accounting_only'/, 'funding capital cannot release before complete terminal accounting');
+requirePattern(router, /funding_lifecycle_adapter_unavailable/, 'unregistered funding venue adapters remain blocked at the execution router');
 
 // Confirmed terminal profit follows the current operator treasury law: 90% is a
 // durable ETH payout obligation and 10% remains available as retained capital.
@@ -111,4 +140,4 @@ requirePattern(canonicalRuntime, /adaptiveProfitCapScope:\s*'retired_no_daily_re
 requirePattern(canonicalRuntime, /retainedProfitRole:\s*'available_for_redeployment_subject_to_profit_ladder_stage_inventory_liquidity_and_risk'/, 'runtime telemetry reports retained-profit redeployment correctly');
 forbidPattern(canonicalRuntime, /persisted_operating_day_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget|new_exposure_only_settlement_hedge_flattening_exempt/, 'stale daily profit-cap authority telemetry');
 
-console.log('[route-truth] guaranteed positive Across same-asset economics, approval-gas fail-closed protection, terminal Across settlement, durable funding lifecycle/adapter gate, fixed 90/10 treasury, retained-capital reuse, and retired profit-cap invariants passed');
+console.log('[route-truth] guaranteed positive Across same-asset economics, approval-gas fail-closed protection, terminal Across settlement, measured OKX funding entry/exit economics, bounded projected-carry promotion, durable delta-neutral lifecycle, authenticated terminal funding accounting, fixed 90/10 treasury, retained-capital reuse, and retired profit-cap invariants passed');
