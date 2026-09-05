@@ -47,6 +47,7 @@ export interface CexOrderBookStreamStats {
   staleResets: number;
   framesReceived: number;
   standbyFramesReceived: number;
+  standbyWarmupServes: number;
   standbyHandovers: number;
   controlMessages: number;
   connectionsOpened: number;
@@ -480,6 +481,8 @@ class CexOrderBookStreamManager {
   private readonly connections = new Map<CexStreamVenue, VenueConnectionState>();
   private readonly standbyConnections = new Map<CexStreamVenue, VenueConnectionState>();
   private readonly standbyServing = new Set<string>();
+  private readonly standbyWarmupServing = new Set<string>();
+  private readonly primaryFreshSeen = new Set<string>();
   private readonly identityInFlight = new Map<string, Promise<StreamIdentity>>();
   private readonly stats: Omit<CexOrderBookStreamStats, 'activeStreams' | 'activeConnections' | 'activeStandbyConnections'> = {
     snapshotsApplied: 0,
@@ -491,6 +494,7 @@ class CexOrderBookStreamManager {
     staleResets: 0,
     framesReceived: 0,
     standbyFramesReceived: 0,
+    standbyWarmupServes: 0,
     standbyHandovers: 0,
     controlMessages: 0,
     connectionsOpened: 0,
@@ -528,7 +532,9 @@ class CexOrderBookStreamManager {
       return null;
     }
     if (state.book.isFresh(maxAgeMs)) {
+      this.primaryFreshSeen.add(key);
       this.standbyServing.delete(key);
+      this.standbyWarmupServing.delete(key);
       return state.book.getQuote(venue, state.symbol);
     }
     if (standby?.isFresh(maxAgeMs)) return this.serveStandby(key, venue, state.symbol, standby);
@@ -547,6 +553,8 @@ class CexOrderBookStreamManager {
     this.streams.clear();
     this.standbyBooks.clear();
     this.standbyServing.clear();
+    this.standbyWarmupServing.clear();
+    this.primaryFreshSeen.clear();
     this.identityInFlight.clear();
   }
 
@@ -567,15 +575,41 @@ class CexOrderBookStreamManager {
   ): StreamOrderBookQuote | null {
     const quote = book.getQuote(venue, symbol);
     if (!quote) return null;
+
+    // Independent primary/standby subscriptions receive their initial snapshots
+    // asynchronously. If standby becomes fresh first, that is healthy startup
+    // warmup, not evidence that a previously healthy primary has failed.
+    if (!this.primaryFreshSeen.has(key)) {
+      if (!this.standbyWarmupServing.has(key)) {
+        this.standbyWarmupServing.add(key);
+        this.stats.standbyWarmupServes += 1;
+        logger.info('[CexOrderBookStream] hot standby served startup warmup before primary snapshot', {
+          component: 'CexOrderBookStream',
+          venue,
+          symbol,
+          marketDataAuthority: 'cex_order_book_stream',
+          handoverAuthority: 'fresh_exchange_snapshot_only',
+          startupWarmup: true,
+          primaryFailureInferred: false,
+          syntheticBookAllowed: false,
+          executionAuthorityChanged: false,
+        });
+      }
+      return quote;
+    }
+
+    this.standbyWarmupServing.delete(key);
     if (!this.standbyServing.has(key)) {
       this.standbyServing.add(key);
       this.stats.standbyHandovers += 1;
-      logger.warn('[CexOrderBookStream] hot standby assumed quote service while primary recovers', {
+      logger.warn('[CexOrderBookStream] hot standby assumed quote service after a previously fresh primary degraded', {
         component: 'CexOrderBookStream',
         venue,
         symbol,
         marketDataAuthority: 'cex_order_book_stream',
         handoverAuthority: 'fresh_exchange_snapshot_only',
+        startupWarmup: false,
+        primaryFailureInferred: true,
         syntheticBookAllowed: false,
         executionAuthorityChanged: false,
       });
