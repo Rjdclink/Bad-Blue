@@ -16,7 +16,7 @@ check('Lighter account tier fee is unknown until measured', frontier.includes('f
 check('Lighter hidden latency is never assigned synthetic BPS', frontier.includes('lighter_measured_execution_latency_cost') && frontier.includes('hiddenLatencyBpsAssumed: false'));
 check('Lighter system-owned collateral provenance is required', frontier.includes('lighter_system_owned_margin_collateral_provenance') && frontier.includes('personal_collateral_allowed:false'));
 check('smart-order frontier uses canonical measured all-in BPS', frontier.includes('candidate.canonicalBps.allInCostBps'));
-check('smart-order frontier compares exact like-sized notionals', frontier.includes('notionalUsd.toFixed(2)') && frontier.includes('cross-notional comparisons'));
+check('smart-order frontier compares exact like-sized notionals', frontier.includes('candidate.canonicalBps.notionalUsd') && frontier.includes('notionalUsd.toFixed(2)') && frontier.includes("`${assets.join('/')}:${chains}:${notionalUsd.toFixed(2)}`"));
 check('reported savings are measured route differences only', frontier.includes('runnerUp.allInCostBps - winner.allInCostBps'));
 check('frontier cannot manufacture same-route savings', frontier.includes('Multiple snapshots of the same exact route must not manufacture'));
 check('frontier advertises no independent execution authority', frontier.includes("executionAuthority: false") && !frontier.includes('executionAuthority: true'));
