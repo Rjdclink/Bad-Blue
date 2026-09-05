@@ -7,6 +7,8 @@ const files = {
   cex: 'server/services/cryptocrawl/integration/cex-four-mode-observability-wiring.ts',
   zero: 'server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts',
   core: 'server/services/cryptocrawl/core/zero-capital-engine.ts',
+  recovery: 'server/services/cryptocrawl/integration/zero-capital-recovery-observability.ts',
+  routeEvidence: 'server/services/cryptocrawl/discovery/zero-capital-route-preselection.ts',
   maker: 'server/services/cryptocrawl/runtime/stablecoin-maker-execution-wiring.ts',
   transform: 'server/services/cryptocrawl/optimization/economic-transformation-engine.ts',
   transformWiring: 'server/services/cryptocrawl/integration/economic-transformation-wiring.ts',
@@ -108,6 +110,21 @@ if (!source.core.includes('resolveInputAssetUsdPrice') ||
     !source.core.includes('this.tokenAmountToUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals, inputAssetUsdPrice)')) {
   throw new Error('[substantial-profitability-batch9] pre-trade zero-capital USD economics must use live input-token valuation');
 }
+
+// The historical stale-opportunity defect surfaced the same measured -23 BPS
+// route on repeated recovery-observability ticks with no measurement-age field.
+// Keep the current repair fail-closed: only bounded fresh route evidence may be
+// published, and stale BPS/notional values are nulled at the evidence boundary.
+if (!source.recovery.includes('now - item.lastMeasuredAt <= maxRouteEvidenceAgeMs') ||
+    !source.recovery.includes('measurementAgeMs: Math.max(0, now - closestRoute.lastMeasuredAt)') ||
+    !source.recovery.includes('staleRouteEvidencePublished: false')) {
+  throw new Error('[substantial-profitability-batch9] zero-capital recovery telemetry must reject stale route evidence and publish measurement age');
+}
+if (!source.routeEvidence.includes('recentNetProfitBps: fresh ? item.recentNetProfitBps : null') ||
+    !source.routeEvidence.includes('recentMeasuredNotionalUsd: fresh ? item.recentMeasuredNotionalUsd : null')) {
+  throw new Error('[substantial-profitability-batch9] stale zero-capital route evidence must lose BPS/notional authority before observability or search reuse');
+}
+
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
   throw new Error('[substantial-profitability-batch9] active CEX quote topology must remain restricted to fully implemented Coinbase/Kraken/OKX paths');
 }
@@ -122,4 +139,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital BPS rescue is core-direct with Profit Ladder as sole live size ceiling and live USD valuation, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital BPS rescue is core-direct with Profit Ladder as sole live size ceiling and live USD valuation, stale zero-capital route telemetry fails closed, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
