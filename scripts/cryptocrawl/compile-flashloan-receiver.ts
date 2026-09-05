@@ -16,6 +16,8 @@ const COMPOSITE_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlBalancerComposit
 const COMPOSITE_CONTRACT_NAME = 'CryptocrawlBalancerCompositeFlashLoanReceiver';
 const AAVE_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlAaveV3FlashLoanReceiver.sol';
 const AAVE_CONTRACT_NAME = 'CryptocrawlAaveV3FlashLoanReceiver';
+const MORPHO_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlMorphoFlashLoanReceiver.sol';
+const MORPHO_CONTRACT_NAME = 'CryptocrawlMorphoFlashLoanReceiver';
 const DUAL_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlAaveBalancerDualFlashLoanReceiver.sol';
 const DUAL_CONTRACT_NAME = 'CryptocrawlAaveBalancerDualFlashLoanReceiver';
 
@@ -114,6 +116,10 @@ export async function compileAaveV3FlashLoanReceiver(): Promise<ReceiverArtifact
   return compileReceiverContract(AAVE_SOURCE_NAME, AAVE_CONTRACT_NAME);
 }
 
+export async function compileMorphoBlueFlashLoanReceiver(): Promise<ReceiverArtifact> {
+  return compileReceiverContract(MORPHO_SOURCE_NAME, MORPHO_CONTRACT_NAME);
+}
+
 export async function compileAaveBalancerDualFlashLoanReceiver(): Promise<ReceiverArtifact> {
   return compileReceiverContract(DUAL_SOURCE_NAME, DUAL_CONTRACT_NAME, { viaIR: true });
 }
@@ -154,6 +160,13 @@ export async function writeAaveV3FlashLoanReceiverArtifact(outputPath?: string):
   );
 }
 
+export async function writeMorphoBlueFlashLoanReceiverArtifact(outputPath?: string): Promise<string> {
+  return writeArtifact(
+    await compileMorphoBlueFlashLoanReceiver(),
+    outputPath || 'artifacts/cryptocrawl/CryptocrawlMorphoFlashLoanReceiver.json',
+  );
+}
+
 export async function writeAaveBalancerDualFlashLoanReceiverArtifact(outputPath?: string): Promise<string> {
   return writeArtifact(
     await compileAaveBalancerDualFlashLoanReceiver(),
@@ -174,12 +187,14 @@ if (isDirectInvocation) {
     writeFlashLoanReceiverArtifact(),
     writeCompositeFlashLoanReceiverArtifact(),
     writeAaveV3FlashLoanReceiverArtifact(),
+    writeMorphoBlueFlashLoanReceiverArtifact(),
     writeAaveBalancerDualFlashLoanReceiverArtifact(),
   ])
-    .then(([balancerPath, compositePath, aavePath, dualPath]) => {
+    .then(([balancerPath, compositePath, aavePath, morphoPath, dualPath]) => {
       console.log(`Compiled ${CONTRACT_NAME} artifact: ${balancerPath}`);
       console.log(`Compiled ${COMPOSITE_CONTRACT_NAME} artifact: ${compositePath}`);
       console.log(`Compiled ${AAVE_CONTRACT_NAME} artifact: ${aavePath}`);
+      console.log(`Compiled ${MORPHO_CONTRACT_NAME} artifact: ${morphoPath}`);
       console.log(`Compiled ${DUAL_CONTRACT_NAME} artifact: ${dualPath}`);
     })
     .catch(error => {
