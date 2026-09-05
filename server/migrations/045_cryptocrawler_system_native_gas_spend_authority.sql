@@ -29,7 +29,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_cryptocrawler_system_native_gas_spends_tx
   WHERE transaction_hash IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_cryptocrawler_system_native_gas_spends_wallet
-  ON public.cryptocrawler_system_native_gas_spends(lower(chain), lower(wallet), status);
+  ON public.cryptocrawler_system_native_gas_spends(scope, lower(chain), lower(wallet), status);
 
 CREATE OR REPLACE FUNCTION public.cryptocrawler_reserve_system_native_gas_spend(
   p_idempotency_key text,
@@ -61,7 +61,7 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  PERFORM pg_advisory_xact_lock(hashtextextended('cryptocrawler:native-gas:' || normalized_chain || ':' || normalized_wallet, 0));
+  PERFORM pg_advisory_xact_lock(hashtextextended('cryptocrawler:native-gas:' || p_scope || ':' || normalized_chain || ':' || normalized_wallet, 0));
 
   SELECT * INTO existing
   FROM public.cryptocrawler_system_native_gas_spends
@@ -87,7 +87,8 @@ BEGIN
   SELECT COALESCE(SUM(delivered_native_wei::numeric),0)
   INTO delivered
   FROM public.zero_capital_native_gas_funding_attempts
-  WHERE state='SETTLED'
+  WHERE scope=p_scope
+    AND state='SETTLED'
     AND reimbursement_verified=true
     AND lower(destination_chain)=normalized_chain
     AND lower(destination_wallet)=normalized_wallet
@@ -104,7 +105,8 @@ BEGIN
   ),0)
   INTO committed
   FROM public.cryptocrawler_system_native_gas_spends
-  WHERE lower(chain)=normalized_chain
+  WHERE scope=p_scope
+    AND lower(chain)=normalized_chain
     AND lower(wallet)=normalized_wallet;
 
   IF delivered - committed < p_max_wei THEN RETURN NULL; END IF;
@@ -244,4 +246,4 @@ ALTER TABLE public.cryptocrawler_system_native_gas_spends ENABLE ROW LEVEL SECUR
 COMMENT ON TABLE public.cryptocrawler_system_native_gas_spends IS
   'Exactly-once consumption ledger for CryptoCrawler-owned native gas. Raw wallet native balance is reconciliation evidence only and never grants spend authority.';
 COMMENT ON FUNCTION public.cryptocrawler_reserve_system_native_gas_spend(text,text,text,text,text,numeric) IS
-  'Reserves only native gas previously delivered by terminal SETTLED, reimbursement-verified system-funded gas attempts, net of all prior settled or unresolved spend reservations.';
+  'Reserves only native gas previously delivered within the same SELF_FUNDED scope by terminal SETTLED, reimbursement-verified system-funded gas attempts, net of that scope''s prior settled or unresolved spend reservations.';
