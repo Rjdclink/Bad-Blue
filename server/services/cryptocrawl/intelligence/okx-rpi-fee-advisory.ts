@@ -32,6 +32,29 @@ let latest: OkxRpiFeeOpportunity[] = [];
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
+function refreshIntervalMs(): number {
+  const configured = Number(process.env.CRYPTO_OKX_RPI_FEE_ADVISORY_INTERVAL_MS || 120_000);
+  return Number.isFinite(configured) ? Math.max(15_000, Math.min(30 * 60_000, Math.trunc(configured))) : 120_000;
+}
+
+function advisoryMaxAgeMs(): number {
+  const configured = Number(process.env.CRYPTO_OKX_RPI_ADVISORY_MAX_AGE_MS);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(5_000, Math.min(5 * 60_000, Math.trunc(configured)));
+  }
+  // Keep a small grace window beyond the configured refresh cadence, but never
+  // allow a failed/paused advisory loop to surface multi-minute or hour-old RPI rows.
+  return Math.max(30_000, Math.min(3 * 60_000, refreshIntervalMs() + 30_000));
+}
+
+function freshLatest(now = Date.now()): OkxRpiFeeOpportunity[] {
+  return latest.filter(item =>
+    Number.isFinite(item.observedAt)
+    && item.observedAt > 0
+    && Math.max(0, now - item.observedAt) <= advisoryMaxAgeMs(),
+  );
+}
+
 function sumRpiQty(levels: readonly { rpiQty: number }[]): number {
   return levels.reduce((sum, level) => sum + Math.max(0, Number(level.rpiQty) || 0), 0);
 }
@@ -69,7 +92,19 @@ async function refresh(): Promise<void> {
         || a.riskAdjustedBpsToBreakEven - b.riskAdjustedBpsToBreakEven)
       .map(mode => mode.symbol))]
       .slice(0, Math.max(1, Math.min(24, Number(process.env.CRYPTO_OKX_RPI_ADVISORY_SYMBOLS || 12))));
-    if (symbols.length === 0) return;
+    if (symbols.length === 0) {
+      const staleRowsCleared = latest.length;
+      latest = [];
+      if (staleRowsCleared > 0) {
+        logger.info('[OKX RPI] Upstream opportunity source empty; prior advisory rows cleared', {
+          component: 'OkxRpiFeeAdvisory',
+          staleRowsCleared,
+          staleOpportunityReadable: false,
+          executionAuthority: false,
+        });
+      }
+      return;
+    }
 
     const observed = await Promise.all(symbols.map(symbol => getOkxRpiExecutionCapability(symbol).catch(() => null)));
     latest = observed.filter((item): item is OkxRpiExecutionCapability => item !== null)
@@ -94,6 +129,11 @@ async function refresh(): Promise<void> {
       productIdentityAuthority: 'cex_spot_product_policy',
       quoteCurrencyAllowlistUsed: false,
       spotRpiMinimumNotionalUsd: getOkxSpotRpiMinimumNotionalUsd(),
+      freshness: {
+        maxAgeMs: advisoryMaxAgeMs(),
+        staleOpportunityReadable: false,
+        upstreamEmptyClearsSnapshot: true,
+      },
       executionAuthority: false,
     });
   } finally {
@@ -102,14 +142,16 @@ async function refresh(): Promise<void> {
 }
 
 /**
- * The profitability/BPS mesh consumes only RPI rows the authenticated account can
- * actually use and whose RPI maker rate improves on standard maker economics.
+ * The profitability/BPS mesh consumes only fresh RPI rows the authenticated account
+ * can actually use and whose RPI maker rate improves on standard maker economics.
  * Non-permitted maker rows and the separate RPI-taker depth observation remain
  * advisory. We do not probe taker permission by intentionally sending a live
  * order because a rejected cross-venue leg could create inventory exposure.
  */
 export function getOkxRpiFeeOpportunities(): OkxRpiFeeOpportunity[] {
-  return latest
+  const fresh = freshLatest();
+  if (fresh.length !== latest.length) latest = fresh;
+  return fresh
     .filter(item => item.makerPermission && item.executableFeeAdvantage)
     .map(item => ({
       ...item,
@@ -120,7 +162,9 @@ export function getOkxRpiFeeOpportunities(): OkxRpiFeeOpportunity[] {
 }
 
 export function getOkxRpiTakerLiquidityAdvisory(): OkxRpiFeeOpportunity[] {
-  return latest
+  const fresh = freshLatest();
+  if (fresh.length !== latest.length) latest = fresh;
+  return fresh
     .filter(item => item.rpiTakerAccess.liquidityImprovementVisible)
     .map(item => ({
       ...item,
@@ -134,8 +178,7 @@ export function ensureOkxRpiFeeAdvisory(): void {
   if (timer || process.env.CRYPTO_OKX_RPI_FEE_ADVISORY_ENABLED === 'false') return;
   void refresh();
   if (process.env.NO_INTERVALS !== 'true') {
-    const intervalMs = Math.max(15_000, Math.min(30 * 60_000, Number(process.env.CRYPTO_OKX_RPI_FEE_ADVISORY_INTERVAL_MS || 120_000)));
-    timer = setInterval(() => void refresh(), intervalMs);
+    timer = setInterval(() => void refresh(), refreshIntervalMs());
     timer.unref?.();
   }
 }

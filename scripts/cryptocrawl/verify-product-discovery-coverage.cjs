@@ -1,7 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
-const path = require('node:path');
+const path = require('path');
 const assert = require('node:assert');
 
 const root = path.resolve(__dirname, '..', '..');
@@ -12,6 +12,8 @@ const productPolicy = read('server/services/cryptocrawl/execution/cex-spot-produ
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
 const coinbase = read('server/services/cryptocrawl/intelligence/coinbase-advanced-market-data.ts');
 const expanded = read('server/services/cryptocrawl/runtime/expanded-market-universe-wiring.ts');
+const predictionGenerator = read('server/services/cryptocrawl/discovery/prediction-market-opportunity-generator.ts');
+const predictionWiring = read('server/services/cryptocrawl/integration/prediction-market-discovery-wiring.ts');
 
 // Discovery must actually enumerate products, not merely validate symbols supplied
 // by an external market-cap feed.
@@ -46,4 +48,14 @@ assert(expanded.includes('preservedProductTail'), 'expanded universe must preser
 assert(expanded.includes('productDiscoveryDiscardedByMarketScore: false'), 'runtime telemetry must assert that market-score ranking cannot discard the tail');
 assert(expanded.includes('productDiscoveryExecutionAuthority: false'), 'product discovery remains search coverage, not execution authority');
 
-console.log('[product-discovery-coverage] PASS: Coinbase/Kraken/OKX live products expand the bounded searchable universe, public OKX discovery cannot spend private fee quota, transient catalog failures cannot become product-negative evidence, and the product tail survives the final runtime boundary');
+// Public prediction-market parity is also discovery-only. The generator owns a
+// short quote TTL and the runtime presentation boundary must remove an opportunity
+// immediately after expiresAt rather than waiting for the slower periodic scan.
+assert(predictionGenerator.includes('expiresAt: observedAt + ttlMs'), 'prediction parity observations must carry a bounded quote expiry');
+assert(predictionGenerator.includes('executableCapability: false'), 'prediction parity discovery must remain non-executable');
+assert(/function\s+freshLatest\s*\([\s\S]{0,300}item\.expiresAt\s*>\s*now/.test(predictionWiring), 'prediction discovery snapshot must filter expired opportunity rows');
+assert(/getPredictionMarketDiscoverySnapshot\(\)[\s\S]{0,180}const fresh = freshLatest\(\)/.test(predictionWiring), 'prediction discovery getter must consume only fresh rows');
+assert(/catch\s*\(error\)\s*\{[\s\S]{0,180}latest\s*=\s*\[\];/.test(predictionWiring), 'unexpected prediction scan failures must clear prior advisory opportunities');
+assert(predictionWiring.includes('staleOpportunityReadable: false'), 'prediction discovery telemetry must explicitly deny stale opportunity presentation');
+
+console.log('[product-discovery-coverage] PASS: Coinbase/Kraken/OKX live products expand the bounded searchable universe, public OKX discovery cannot spend private fee quota, transient catalog failures cannot become product-negative evidence, product tails survive the final runtime boundary, and expired prediction-market parity observations fail closed at presentation');
