@@ -12,6 +12,7 @@ import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
+import { executeSystemOwnedNativeTransaction } from '../execution/system-owned-native-transaction.js';
 
 const installed = new WeakSet<object>();
 const RECEIVER_EVENT = new ethers.utils.Interface([
@@ -84,8 +85,8 @@ function normalizeAaveSettlement(input: {
       'monte_carlo_profitability',
       'dynamic_gas_funding_policy',
       ...(input.sponsoredExecution
-        ? ['alchemy_gas_manager', 'eip7702_smart_wallet', 'erc4337_user_operation']
-        : ['native_wallet_gas']),
+        ? ['provider_sponsored:strict_zero_operator_cost_proof_required']
+        : ['system_owned_native_gas:provenance_reserved_and_settled']),
       'aave_v3_pool_flashLoanSimple',
       'verified_aave_v3_receiver',
       'provider_receiver_binding_verified',
@@ -120,6 +121,9 @@ async function executeProviderSpecific(input: {
     let sponsoredExecution = false;
 
     if (input.funding.mode === 'sponsored') {
+      if (input.funding.strictZeroInitialCapitalEligible !== true || input.funding.operatorMonetaryInputRequired !== false) {
+        return { success: false, error: 'Strict zero-capital Aave execution rejected unproven operator-billed sponsorship' };
+      }
       const network = await input.provider.getNetwork();
       const sponsored = await getGasSponsorManager().execute({
         wallet: input.wallet,
@@ -132,13 +136,28 @@ async function executeProviderSpecific(input: {
       if (!receipt) receipt = await input.provider.waitForTransaction(transactionHash, 1, 15_000);
       sponsoredExecution = true;
     } else if (input.funding.mode === 'native') {
-      const transaction = await input.wallet.sendTransaction({
-        to: payload.to,
-        data: payload.data,
-        value: BigNumber.from(payload.value),
+      if (
+        input.funding.paymentSource !== 'system_owned_native' ||
+        input.funding.strictZeroInitialCapitalEligible !== true ||
+        input.funding.operatorMonetaryInputRequired !== false
+      ) {
+        return { success: false, error: 'Strict zero-capital Aave execution rejected native gas without durable system ownership proof' };
+      }
+      const systemTransaction = await executeSystemOwnedNativeTransaction({
+        chain: input.opportunity.chain,
+        wallet: input.wallet,
+        provider: input.provider,
+        idempotencyKey: `zero-capital:${input.opportunity.id}:aave-v3`,
+        purpose: 'zero_capital_aave_v3_flash_execution',
+        transaction: {
+          to: payload.to,
+          data: payload.data,
+          value: BigNumber.from(payload.value),
+        },
+        confirmations: 1,
       });
-      transactionHash = transaction.hash;
-      receipt = await transaction.wait(1);
+      transactionHash = systemTransaction.transactionHash;
+      receipt = systemTransaction.receipt;
     } else {
       return { success: false, error: input.funding.reason };
     }
@@ -227,8 +246,9 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
   logger.info('[ZeroCapitalProviderExecution] Provider-specific execution wiring installed', {
     component: 'ProviderSpecificZeroCapitalExecutionWiring',
     balancerV2: 'delegates_to_existing_canonical_executor',
-    aaveV3: 'provider_specific_receiver_payload_receipt_and_terminal_provenance_verification',
+    aaveV3: 'provider_specific_receiver_payload_receipt_profit_and_owned_gas_settlement_verification',
     providerSelectionAuthority: 'flash_loan_provider_selection_registry',
+    nativeGasAuthority: 'SELF_FUNDED_provenance_reserved_before_broadcast_and_settled_from_receipt',
     syntheticExecution: false,
   });
 }
