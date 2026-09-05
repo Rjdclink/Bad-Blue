@@ -358,7 +358,15 @@ export function ensureZeroCapitalResourceWiring(): void {
           ...(!receiverReady ? ['verified_funded_receiver'] : []),
         ],
       });
-      if (!positive || !executableCapability) continue;
+      if (!positive) {
+        // Keep observation-only near misses inside the scan wrapper chain so the
+        // downstream measured flash-provider selector can apply fresher/lower
+        // provider fees (including zero-fee providers). This is not execution
+        // admission: the central engine queue independently rejects <=0 net.
+        admittedConfigured.push(opportunity);
+        continue;
+      }
+      if (!executableCapability) continue;
       if (!await target.isAllowedByCryptara(opportunity)) continue;
       admittedConfigured.push(opportunity);
     }
@@ -408,7 +416,14 @@ export function ensureZeroCapitalResourceWiring(): void {
       if (positive && permissionReady && quote.id.startsWith('graphless-')) {
         runGraphlessSimulationAdvisory(target, chain, provider, opportunity);
       }
-      if (!positive || !executableCapability) continue;
+      if (!positive) {
+        // Provider repricing is intentionally downstream of this discovery layer.
+        // Preserve the measured near miss for that one purpose; it remains
+        // non-executable unless exact provider repricing makes net profit > 0.
+        dynamic.push(opportunity);
+        continue;
+      }
+      if (!executableCapability) continue;
       if (!await target.isAllowedByCryptara(opportunity)) continue;
       dynamic.push(opportunity);
     }
