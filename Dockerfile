@@ -23,6 +23,12 @@ RUN apt-get update && apt-get install -y \
 # Copy package files
 COPY package*.json ./
 
+# Railway runs this image without a CUDA runtime. onnxruntime-node bundles the
+# CPU runtime; its optional CUDA EP postinstall download is unnecessary here and
+# has repeatedly failed on the external NuGet CDN. Upstream explicitly supports
+# skipping only that extra CUDA download while retaining CPU inference.
+ENV ONNXRUNTIME_NODE_INSTALL=skip
+
 # Clean any existing node_modules and install ALL dependencies (needed for build)
 RUN rm -rf node_modules || true && \
     npm ci --legacy-peer-deps
@@ -63,6 +69,7 @@ FROM node:20-bookworm-slim AS production
 # Avoid installing optional native dependencies in production
 ENV NPM_CONFIG_OPTIONAL=false
 ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
+ENV ONNXRUNTIME_NODE_INSTALL=skip
 
 # NOTE: Chromium installation removed - using playwright-core for remote browser connection
 # Install only minimal dependencies for Node.js runtime
