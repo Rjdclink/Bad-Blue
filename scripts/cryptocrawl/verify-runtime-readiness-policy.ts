@@ -24,6 +24,7 @@ const base = {
   stageCanExecute: false,
   currentStage: 1,
   initialGasReady: false,
+  zeroCapitalFundingReady: false,
   zeroCapitalExecutionEnabled: true,
 };
 
@@ -99,6 +100,37 @@ readiness = computeCryptoRuntimeReadiness({
 assert.equal(readiness.INVENTORY_READY.ready, false);
 assert.match(readiness.INVENTORY_READY.detail, /spendableCexInventoryVenues=1/);
 
+// StageManager/global initial-gas readiness is deliberately broader than strict
+// zero-capital funding. It must never be promoted into a zero-personal-cost
+// resource claim unless route-local funding proof is independently supplied.
+readiness = computeCryptoRuntimeReadiness({
+  ...base,
+  initialGasReady: true,
+  zeroCapitalFundingReady: false,
+  stageCanExecute: true,
+});
+assert.equal(readiness.INVENTORY_READY.ready, false);
+assert.match(readiness.INVENTORY_READY.detail, /zeroCapitalFundingReady=false/);
+assert.match(readiness.INVENTORY_READY.detail, /zeroCapitalResourceReady=false/);
+
+// When strict route-local zero-capital funding is actually proven, observability
+// may report that separate resource as ready, but it still cannot substitute for
+// missing centralized-exchange inventory.
+readiness = computeCryptoRuntimeReadiness({
+  ...base,
+  initialGasReady: true,
+  zeroCapitalFundingReady: true,
+  eligibleCandidates: 1,
+  eligibleZeroCapitalCandidates: 1,
+  stageCanExecute: true,
+  currentStage: 2,
+});
+assert.equal(readiness.INVENTORY_READY.ready, false);
+assert.equal(readiness.CANDIDATE_READY.ready, false);
+assert.equal(readiness.TRADING_READY.ready, false);
+assert.match(readiness.INVENTORY_READY.detail, /zeroCapitalFundingReady=true/);
+assert.match(readiness.INVENTORY_READY.detail, /zeroCapitalResourceReady=true/);
+
 // Zero-capital gas readiness is a separate topology and must never make a CEX
 // candidate appear resource-ready when reconciled CEX inventory is absent.
 readiness = computeCryptoRuntimeReadiness({
@@ -109,6 +141,7 @@ readiness = computeCryptoRuntimeReadiness({
   stageCanExecute: true,
   currentStage: 2,
   initialGasReady: true,
+  zeroCapitalFundingReady: true,
   zeroCapitalExecutionEnabled: true,
 });
 assert.equal(readiness.INVENTORY_READY.ready, false);
@@ -126,6 +159,7 @@ readiness = computeCryptoRuntimeReadiness({
   stageCanExecute: true,
   currentStage: 2,
   initialGasReady: true,
+  zeroCapitalFundingReady: true,
 });
 assert.equal(readiness.CANDIDATE_READY.ready, false);
 assert.equal(readiness.TRADING_READY.ready, false);
@@ -136,9 +170,11 @@ assert.equal(readiness.TRADING_READY.ready, false);
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   criticalRpcReady: false,
+  zeroCapitalFundingReady: true,
 });
 assert.equal(readiness.DATA_READY.ready, true);
 assert.match(readiness.DATA_READY.detail, /not required for core CEX discovery/);
+assert.match(readiness.INVENTORY_READY.detail, /zeroCapitalResourceReady=false/);
 
 readiness = computeCryptoRuntimeReadiness({
   ...base,

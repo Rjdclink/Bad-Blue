@@ -19,7 +19,17 @@ export interface CryptoRuntimeReadinessInput {
   eligibleZeroCapitalCandidates: number;
   stageCanExecute: boolean;
   currentStage: number;
+  /**
+   * Legacy StageManager/global-runtime readiness. This is not sufficient evidence
+   * that a strict zero-initial-capital funding lane is currently usable.
+   */
   initialGasReady: boolean;
+  /**
+   * Route-local strict zero-capital funding proof. Callers that do not yet supply
+   * this field fail closed instead of converting global wallet/RPC readiness into
+   * a false zero-personal-cost funding claim.
+   */
+  zeroCapitalFundingReady?: boolean;
   zeroCapitalExecutionEnabled: boolean;
 }
 
@@ -61,12 +71,13 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
     && input.schedulerRunning;
 
   const inventoryReady = input.spendableInventoryAssets > 0 && input.spendableInventoryVenues >= 2;
-  const zeroCapitalResourceReady = input.zeroCapitalExecutionEnabled && input.initialGasReady && input.criticalRpcReady;
+  const zeroCapitalFundingReady = input.zeroCapitalFundingReady === true;
+  const zeroCapitalResourceReady = input.zeroCapitalExecutionEnabled && zeroCapitalFundingReady && input.criticalRpcReady;
   const cexCandidateReady = input.eligibleCexCandidates > 0;
   const governanceReady = input.stageCanExecute;
   const cexResourceReady = inventoryReady;
   const tradingReady = executionCapabilityReady && governanceReady && cexCandidateReady && cexResourceReady;
-  const tradingDetail = `runtimeIdentitySafe=${input.runtimeIdentitySafe}; canonicalCexCapability=${executionCapabilityReady}; governance=${governanceReady}; cexCandidate=${cexCandidateReady}; cexInventory=${cexResourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; spendableInventoryAssets=${input.spendableInventoryAssets}; spendableInventoryVenues=${input.spendableInventoryVenues}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Zero-capital resources never substitute for CEX inventory. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`;
+  const tradingDetail = `runtimeIdentitySafe=${input.runtimeIdentitySafe}; canonicalCexCapability=${executionCapabilityReady}; governance=${governanceReady}; cexCandidate=${cexCandidateReady}; cexInventory=${cexResourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; spendableInventoryAssets=${input.spendableInventoryAssets}; spendableInventoryVenues=${input.spendableInventoryVenues}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Zero-capital resources never substitute for CEX inventory. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`;
 
   return {
     APP_READY: {
@@ -106,7 +117,7 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
     INVENTORY_READY: {
       ready: inventoryReady,
       scope: 'resource',
-      detail: `reconciledCexInventoryAssets=${input.reconciledInventoryAssets}; spendableCexInventoryAssets=${input.spendableInventoryAssets}; spendableCexInventoryVenues=${input.spendableInventoryVenues}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Generic CEX inventory readiness requires positive spendable capital on at least two venues; candidate admission still requires the exact buy-quote and sell-base assets.`,
+      detail: `reconciledCexInventoryAssets=${input.reconciledInventoryAssets}; spendableCexInventoryAssets=${input.spendableInventoryAssets}; spendableCexInventoryVenues=${input.spendableInventoryVenues}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Generic CEX inventory readiness requires positive spendable capital on at least two venues; candidate admission still requires the exact buy-quote and sell-base assets.`,
     },
     CANDIDATE_READY: {
       ready: cexCandidateReady,
