@@ -44,16 +44,25 @@ function percentile(values: number[], fraction: number): number | null {
 }
 
 function topologySnapshot(topology: MeasuredOpportunityTopology): TopologyBpsSnapshot {
-  const candidates = measuredCandidateRegistry.getRecent(2048).filter(candidate => candidate.topology === topology);
-  const withBps = candidates.filter(candidate => finite(candidate.economics.netProfitBps));
-  const bpsToBreakEven = withBps.map(candidate => candidate.economics.bpsToBreakEven).filter(finite);
-  const allIn = withBps.map(candidate => candidate.economics.allInCostBps).filter(finite);
+  const now = Date.now();
+  // Current BPS telemetry must never surface an expired opportunity as if it were
+  // still actionable. Use the largest canonical registry window, then scope to
+  // topology and freshness before calculating economics. Historical/windowed
+  // throughput remains available from the registry metrics separately.
+  const candidates = measuredCandidateRegistry.getRecent(4096).filter(candidate =>
+    candidate.topology === topology
+    && candidate.status !== 'expired'
+    && candidate.expiresAt > now,
+  );
+  const withBps = candidates.filter(candidate => finite(candidate.canonicalBps.netBps));
+  const bpsToBreakEven = withBps.map(candidate => candidate.canonicalBps.bpsToBreakEven).filter(finite);
+  const allIn = withBps.map(candidate => candidate.canonicalBps.allInCostBps).filter(finite);
   return {
     observed: candidates.length,
     observedWithNetBps: withBps.length,
-    positive: withBps.filter(candidate => Number(candidate.economics.netProfitBps) > 0).length,
-    nearBreakEven: withBps.filter(candidate => Number(candidate.economics.netProfitBps) <= 0).length,
-    bestNetProfitBps: withBps.length > 0 ? Math.max(...withBps.map(candidate => Number(candidate.economics.netProfitBps))) : null,
+    positive: withBps.filter(candidate => Number(candidate.canonicalBps.netBps) > 0).length,
+    nearBreakEven: withBps.filter(candidate => Number(candidate.canonicalBps.netBps) <= 0).length,
+    bestNetProfitBps: withBps.length > 0 ? Math.max(...withBps.map(candidate => Number(candidate.canonicalBps.netBps))) : null,
     averageBpsToBreakEven: average(bpsToBreakEven),
     averageAllInCostBps: average(allIn),
   };
@@ -90,7 +99,11 @@ function refresh(): void {
 
   logger.info('[BpsDecomposition] Exact measured BPS telemetry refreshed', {
     component: 'BpsDecompositionObservability', ...latest,
-    gapDistributionAuthority: 'measured_telemetry_only', syntheticProfitAllowed: false, profitabilityClaimsRequireMeasuredEconomics: true,
+    gapDistributionAuthority: 'measured_telemetry_only',
+    currentCandidateAuthority: 'unexpired_canonical_bps_only',
+    staleCandidateEconomicAuthority: false,
+    syntheticProfitAllowed: false,
+    profitabilityClaimsRequireMeasuredEconomics: true,
   });
 }
 
