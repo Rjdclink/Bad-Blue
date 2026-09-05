@@ -93,7 +93,7 @@ forbidFile('server/services/cryptocrawl/execution/measured-topology-execution-sc
 // DEX eligibility itself is established upstream by firm prepared evidence.
 requirePattern(router, /case\s+'DEX_ATOMIC':[\s\S]{0,80}return\s+'FLASH_LOAN'/, 'DEX_ATOMIC routes through the unified flash-loan path');
 requirePattern(router, /const\s+deterministicPositive\s*=\s*Number\.isFinite\(deterministicNet\)\s*&&\s*deterministicNet\s*>\s*0/, 'unified route admission requires positive deterministic net');
-requirePattern(router, /const\s+admitted\s*=\s*deterministicPositive[\s\S]{0,180}pathAvailable[\s\S]{0,180}candidate\.executableCapability[\s\S]{0,180}fresh[\s\S]{0,180}depthReady/, 'unified route admission preserves concrete execution readiness');
+requirePattern(router, /const\s+economicsAdmitted\s*=\s*isFunding\s*\?\s*fundingProjectedPositive\s*:\s*deterministicPositive[\s\S]{0,180}const\s+admitted\s*=\s*economicsAdmitted\s*&&\s*pathAvailable\s*&&\s*candidate\.executableCapability\s*&&\s*fresh\s*&&\s*depthReady/, 'unified DEX route retains deterministic-positive economics and concrete execution readiness');
 requirePattern(router, /evidenceReacquisitionRequired/, 'unified router explicitly reacquires incomplete evidence');
 forbidPattern(router, /candidate\.missingInformation\.length\s*===\s*0/, 'optional missing-information list regained independent execution veto authority');
 

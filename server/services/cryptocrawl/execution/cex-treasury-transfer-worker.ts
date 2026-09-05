@@ -424,7 +424,7 @@ async function transferBetweenVenues(input: {
 async function claimRetainedCandidate(): Promise<RetainedRow | null> {
   const result = await pool.query(
     `WITH candidate AS (
-       SELECT r.event_id
+       SELECT r.event_id, j.source_asset AS payout_source_asset
        FROM public.cryptocrawler_retained_exchange_allocations r
        LEFT JOIN public.cryptocrawler_profit_payout_jobs j USING (event_id)
        WHERE r.status IN ('IN_PLACE','TRANSFER_REQUIRED','RETRYABLE')
@@ -434,11 +434,11 @@ async function claimRetainedCandidate(): Promise<RetainedRow | null> {
        LIMIT 1
      )
      UPDATE public.cryptocrawler_retained_exchange_allocations r
-     SET last_attempt_at=now(), attempt_count=attempt_count+1, updated_at=now()
-     FROM candidate, public.cryptocrawler_profit_payout_jobs j
-     WHERE r.event_id=candidate.event_id AND j.event_id=r.event_id
+     SET last_attempt_at=now(), attempt_count=r.attempt_count+1, updated_at=now()
+     FROM candidate
+     WHERE r.event_id=candidate.event_id
      RETURNING r.event_id, r.retained_usd, r.target_venue, r.source_venue, r.status,
-               r.source_asset, j.source_asset AS payout_source_asset`,
+               r.source_asset, candidate.payout_source_asset`,
     [Math.ceil(RETRY_AFTER_MS / 1000)],
   );
   return result.rows[0] as RetainedRow | undefined || null;
@@ -746,7 +746,16 @@ async function processOnce(): Promise<void> {
 
 export async function runCexTreasuryTransferOnce(): Promise<void> {
   if (inFlight) return inFlight;
-  inFlight = processOnce().finally(() => { inFlight = null; });
+  inFlight = processOnce()
+    .catch(error => {
+      logger.error('[TreasuryTransfer] Canonical treasury worker cycle failed closed', {
+        component: 'CexTreasuryTransferWorker',
+        error: error instanceof Error ? error.message : String(error),
+        unhandledRejectionAllowed: false,
+        duplicateSubmissionAllowed: false,
+      });
+    })
+    .finally(() => { inFlight = null; });
   return inFlight;
 }
 
