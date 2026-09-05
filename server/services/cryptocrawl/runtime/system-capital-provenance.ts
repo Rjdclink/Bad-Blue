@@ -22,6 +22,12 @@ export interface VerifiedSponsoredProfitEvidence {
   sourceRecipient: string;
   sourceRecipientBalanceBeforeBaseUnits: bigint;
   sourceRecipientBalanceAfterBaseUnits: bigint;
+  /** True only when the provider/paymaster monetary obligation is proven not to be operator-funded. */
+  zeroOperatorMonetaryGasVerified?: boolean;
+  /** True only when no operator/personal native capital funded the bootstrap transaction. */
+  zeroExternalNativeCapitalVerified?: boolean;
+  /** True only when no operator/personal input-token capital funded the bootstrap transaction. */
+  zeroExternalInputCapitalVerified?: boolean;
 }
 
 export function zeroCapitalSystemCapitalScope(input: {
@@ -88,6 +94,15 @@ export async function persistVerifiedSponsoredProfit(
   }
 
   if (attempt.bootstrapPending) {
+    if (
+      proof.zeroOperatorMonetaryGasVerified !== true ||
+      proof.zeroExternalNativeCapitalVerified !== true ||
+      proof.zeroExternalInputCapitalVerified !== true
+    ) {
+      throw new Error(
+        'Bootstrap system-capital credit requires explicit proof of zero operator monetary gas, zero external native capital, and zero external input capital',
+      );
+    }
     return capitalStore.recordVerifiedBootstrapProfit({
       scope: attempt.scope,
       executionKey: attempt.executionKey,
@@ -95,9 +110,9 @@ export async function persistVerifiedSponsoredProfit(
       chain: proof.chain,
       asset: proof.asset,
       residualProfit: proof.retainedProfitBaseUnits.toString(),
-      zeroMonetaryGasVerified: true,
-      zeroExternalNativeCapitalVerified: true,
-      zeroExternalInputCapitalVerified: true,
+      zeroMonetaryGasVerified: proof.zeroOperatorMonetaryGasVerified,
+      zeroExternalNativeCapitalVerified: proof.zeroExternalNativeCapitalVerified,
+      zeroExternalInputCapitalVerified: proof.zeroExternalInputCapitalVerified,
       sourceRecipient: proof.sourceRecipient,
       sourceRecipientBalanceBeforeBaseUnits: proof.sourceRecipientBalanceBeforeBaseUnits.toString(),
       sourceRecipientBalanceAfterBaseUnits: proof.sourceRecipientBalanceAfterBaseUnits.toString(),
