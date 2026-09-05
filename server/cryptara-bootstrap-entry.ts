@@ -48,4 +48,12 @@ const { ensureSystemOwnedGasFundingProofWiring } = await import(
 );
 ensureSystemOwnedGasFundingProofWiring();
 
+// The canonical Balancer native branch signs only after the same durable proof
+// exists, reserves its exact maximum gas budget before broadcast, and settles
+// actual receipt gas back against that reservation.
+const { ensureSystemOwnedNativeZeroCapitalExecutionWiring } = await import(
+  './services/cryptocrawl/runtime/system-owned-native-zero-capital-execution-wiring.js'
+);
+ensureSystemOwnedNativeZeroCapitalExecutionWiring();
+
 await import('./index.js');
