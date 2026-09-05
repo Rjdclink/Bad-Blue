@@ -40,4 +40,12 @@ if (overflowBootstrap.state === 'ready') {
   }
 }
 
+// Strict funding selection may recognize native gas only after durable Overflow
+// provenance proves it belongs to a SELF_FUNDED CryptoCrawler scope. Merely
+// finding native currency in the signer wallet never grants execution authority.
+const { ensureSystemOwnedGasFundingProofWiring } = await import(
+  './services/cryptocrawl/runtime/system-owned-gas-funding-proof-wiring.js'
+);
+ensureSystemOwnedGasFundingProofWiring();
+
 await import('./index.js');
