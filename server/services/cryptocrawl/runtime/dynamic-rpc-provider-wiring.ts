@@ -46,6 +46,12 @@ function validWebSocketUrl(value: unknown): string | undefined {
  * admitted where practical so a single free endpoint outage does not immediately
  * spill ordinary reads into paid Alchemy. Alchemy remains available to the
  * provider manager as a fallback and is still untouched for gas sponsorship.
+ *
+ * Arbitrum deliberately prefers the canonical public endpoint. Production proved
+ * publicnode accepts basic health probes but rejects recent eth_getLogs without a
+ * personal token, which made a provider registered with the `logs` capability a
+ * false primary authority for graph discovery. The same two no-key endpoints are
+ * retained; only their Arbitrum order is corrected.
  */
 function costSafePublicDefinitions(): ProviderDefinition[] {
   if (process.env.CRYPTOCRAWL_COST_SAFE_PUBLIC_RPC_ENABLED?.trim().toLowerCase() === 'false') return [];
@@ -53,7 +59,7 @@ function costSafePublicDefinitions(): ProviderDefinition[] {
   const primary: Partial<Record<SupportedChain, string>> = {
     ethereum: 'https://ethereum-rpc.publicnode.com',
     polygon: 'https://polygon-bor-rpc.publicnode.com',
-    arbitrum: 'https://arbitrum-one-rpc.publicnode.com',
+    arbitrum: 'https://arb1.arbitrum.io/rpc',
     optimism: 'https://optimism-rpc.publicnode.com',
     base: 'https://base-rpc.publicnode.com',
     avalanche: 'https://avalanche-c-chain-rpc.publicnode.com',
@@ -62,7 +68,7 @@ function costSafePublicDefinitions(): ProviderDefinition[] {
   const secondary: Partial<Record<SupportedChain, string>> = {
     ethereum: 'https://cloudflare-eth.com',
     polygon: 'https://polygon-rpc.com',
-    arbitrum: 'https://arb1.arbitrum.io/rpc',
+    arbitrum: 'https://arbitrum-one-rpc.publicnode.com',
     optimism: 'https://mainnet.optimism.io',
     base: 'https://mainnet.base.org',
     avalanche: 'https://api.avax.network/ext/bc/C/rpc',
