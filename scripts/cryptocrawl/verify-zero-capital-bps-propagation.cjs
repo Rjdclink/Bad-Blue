@@ -8,6 +8,11 @@ const wiring = fs.readFileSync('server/services/cryptocrawl/integration/zero-cap
 const rescue = fs.readFileSync('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts', 'utf8');
 const scale = fs.readFileSync('server/services/cryptocrawl/scaling/dynamic-scale-pressure-wiring.ts', 'utf8');
 const engine = fs.readFileSync('server/services/cryptocrawl/core/zero-capital-engine.ts', 'utf8');
+const dynamicRoutes = fs.readFileSync('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts', 'utf8');
+const routeQuoter = fs.readFileSync('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts', 'utf8');
+const payloadBuilder = fs.readFileSync('server/services/cryptocrawl/execution/adapters/onchain-payload-builder.ts', 'utf8');
+const routePlanner = fs.readFileSync('server/services/cryptocrawl/execution/adapters/autonomous-route-planner.ts', 'utf8');
+const receiverCapability = fs.readFileSync('server/services/cryptocrawl/execution/adapters/flash-loan-receiver-capability.ts', 'utf8');
 
 // BPS decomposition is first-class measured evidence without becoming a
 // replacement for deterministic USD economics.
@@ -98,6 +103,19 @@ assert.match(rescue, /executionAuthority: false/);
 assert.doesNotMatch(rescue, /expectedProfit\s*=\s*Math\.max/);
 assert.doesNotMatch(rescue, /netProfitBps\s*=\s*Math\.max/);
 
+// Uniswap V3's official 0.01% / fee=100 tier must survive the complete dynamic
+// zero-capital path: discovery -> quote/config validation -> route planning ->
+// payload serialization -> receiver-permission preparation. This only broadens
+// measured search; the strict all-in positive execution floor above is unchanged.
+assert.match(payloadBuilder, /export type UniswapV3FeeTier = 100 \| 500 \| 3000 \| 10000/);
+assert.match(dynamicRoutes, /ZERO_CAPITAL_DYNAMIC_UNISWAP_FEE_TIERS \|\| '100,500,3000'/);
+assert.match(dynamicRoutes, /value === 100 \|\| value === 500 \|\| value === 3000 \|\| value === 10000/);
+assert.match(routeQuoter, /feeTier !== 100 && feeTier !== 500 && feeTier !== 3000 && feeTier !== 10000/);
+assert.match(routeQuoter, /feeTier must be 100, 500, 3000, or 10000/);
+assert.match(routePlanner, /if \(fee <= 0\.0001\) return 100;/);
+assert.match(receiverCapability, /if \(fee <= 0\.0001\) return 100;/);
+assert.match(routeQuoter, /return \(feeTier \|\| 3000\) \/ 1_000_000/);
+
 // DynamicScale may react to near-break-even density only as bounded search
 // pressure. Profitability remains terminal-confirmed realized truth.
 assert.match(scale, /zeroCapitalNearBreakEvenPressure/);
@@ -121,6 +139,7 @@ console.log(JSON.stringify({
   nearBreakEvenClassification: 'enriched_observation_only',
   positiveExecutionFloorPreserved: true,
   gasFundingExecutionTruthBound: true,
+  uniswapV3OneBpsFeeTierEndToEnd: true,
   simulationExecutionAuthority: false,
   monteCarloExecutionAuthority: false,
   advisoryWorkRunsInParallel: true,
