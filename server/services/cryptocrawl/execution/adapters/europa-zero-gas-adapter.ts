@@ -6,10 +6,13 @@ import { SkaleExternalGasPowAdapter, type SkaleExternalGasPowSolution } from './
 import { Stage4PowComputeCoordinator, type Stage4ComputeSource } from './stage4-pow-compute-coordinator.js';
 
 const ERC20_ABI = ['function balanceOf(address owner) view returns (uint256)'];
-const RECEIVER_ABI = [
+const BALANCER_RECEIVER_ABI = [
   'function vault() view returns (address)',
-  'function factory() view returns (address)',
   'event FlashLoanExecuted(address indexed initiator, address indexed loanToken, uint256 loanAmount, uint256 profit)',
+];
+const SUSHI_V3_RECEIVER_ABI = [
+  'function factory() view returns (address)',
+  'event SushiV3FlashExecuted(address indexed initiator, address indexed pool, address indexed profitToken, uint256 profit)',
 ];
 
 export interface EuropaAtomicExecutionRequest {
@@ -138,7 +141,8 @@ export class EuropaZeroGasAdapter {
     if (actualCodeHash !== expectedCodeHash) {
       throw new Error(`Europa receiver bytecode hash mismatch: expected ${expectedCodeHash}, received ${actualCodeHash}`);
     }
-    const receiverContract = new Contract(receiver, RECEIVER_ABI, provider);
+    const receiverAbi = request.receiverKind === 'sushi-v3' ? SUSHI_V3_RECEIVER_ABI : BALANCER_RECEIVER_ABI;
+    const receiverContract = new Contract(receiver, receiverAbi, provider);
     if (request.receiverKind === 'sushi-v3') {
       const configuredFactory = requireAddress('Europa receiver factory', await receiverContract.factory());
       if (configuredFactory.toLowerCase() !== expectedFactory!.toLowerCase()) {
@@ -294,7 +298,11 @@ export class EuropaZeroGasAdapter {
     const realizedProfit = endingProfitRecipientInputBalance.gt(startingProfitRecipientInputBalance)
       ? endingProfitRecipientInputBalance.sub(startingProfitRecipientInputBalance)
       : BigNumber.from(0);
-    const receiverEvent = receipt.logs.find(log => log.address.toLowerCase() === receiver.toLowerCase() && log.topics[0] === receiverContract.interface.getEventTopic('FlashLoanExecuted'));
+    const profitEventName = request.receiverKind === 'sushi-v3' ? 'SushiV3FlashExecuted' : 'FlashLoanExecuted';
+    const profitEventTopic = receiverContract.interface.getEventTopic(profitEventName);
+    const receiverEvent = receipt.logs.find(
+      log => log.address.toLowerCase() === receiver.toLowerCase() && log.topics[0] === profitEventTopic,
+    );
     const emittedProfit = receiverEvent
       ? BigNumber.from(receiverContract.interface.parseLog(receiverEvent).args.profit)
       : BigNumber.from(0);

@@ -12,6 +12,7 @@ import { buildDualFlashLoanReceiverPayload } from '../execution/adapters/dual-fl
 import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
+import { executeSystemOwnedNativeTransaction } from '../execution/system-owned-native-transaction.js';
 
 const installed = new WeakSet<object>();
 const RECEIVER_EVENT = new ethers.utils.Interface([
@@ -87,8 +88,8 @@ function normalizeSettlement(input: {
       'same_asset_combined_principal',
       'both_provider_repayments_atomic',
       ...(input.sponsoredExecution
-        ? ['alchemy_gas_manager', 'eip7702_smart_wallet', 'erc4337_user_operation']
-        : ['native_wallet_gas']),
+        ? ['provider_sponsored:strict_zero_operator_cost_proof_required']
+        : ['system_owned_native_gas:provenance_reserved_and_settled']),
       'dual_flashloan_receiver_profit_verified',
       'synthetic_evidence:false',
     ],
@@ -145,6 +146,9 @@ export function ensureDualProviderZeroCapitalExecutionWiring(): void {
       let receipt: providers.TransactionReceipt | null;
       let sponsoredExecution = false;
       if (funding.mode === 'sponsored') {
+        if (funding.strictZeroInitialCapitalEligible !== true || funding.operatorMonetaryInputRequired !== false) {
+          return { success: false, error: 'Strict zero-capital dual-provider execution rejected unproven operator-billed sponsorship' };
+        }
         const network = await provider.getNetwork();
         const sponsored = await getGasSponsorManager().execute({
           wallet,
@@ -157,13 +161,28 @@ export function ensureDualProviderZeroCapitalExecutionWiring(): void {
         if (!receipt) receipt = await provider.waitForTransaction(transactionHash, 1, 15_000);
         sponsoredExecution = true;
       } else if (funding.mode === 'native') {
-        const transaction = await wallet.sendTransaction({
-          to: payload.to,
-          data: payload.data,
-          value: BigNumber.from(payload.value),
+        if (
+          funding.paymentSource !== 'system_owned_native' ||
+          funding.strictZeroInitialCapitalEligible !== true ||
+          funding.operatorMonetaryInputRequired !== false
+        ) {
+          return { success: false, error: 'Strict zero-capital dual-provider execution rejected native gas without durable system ownership proof' };
+        }
+        const systemTransaction = await executeSystemOwnedNativeTransaction({
+          chain: opportunity.chain,
+          wallet,
+          provider,
+          idempotencyKey: `zero-capital:${opportunity.id}:aave-balancer-dual`,
+          purpose: 'zero_capital_aave_balancer_dual_flash_execution',
+          transaction: {
+            to: payload.to,
+            data: payload.data,
+            value: BigNumber.from(payload.value),
+          },
+          confirmations: 1,
         });
-        transactionHash = transaction.hash;
-        receipt = await transaction.wait(1);
+        transactionHash = systemTransaction.transactionHash;
+        receipt = systemTransaction.receipt;
       } else {
         return { success: false, error: funding.reason };
       }
@@ -217,6 +236,7 @@ export function ensureDualProviderZeroCapitalExecutionWiring(): void {
     dualTopology: 'balancer_outer_aave_nested_same_asset',
     terminalProfitAuthority: 'FlashLoanExecuted_receipt_event',
     exactBarrierRequiredBeforeBroadcast: true,
+    nativeGasAuthority: 'SELF_FUNDED_provenance_reserved_before_broadcast_and_settled_from_receipt',
     syntheticExecution: false,
   });
 }
