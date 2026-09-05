@@ -43,7 +43,7 @@ const behaviors = [
   ['cex', 'buildAdaptiveProfitabilitySearchPolicy', 'adaptive policy wired into CEX observation'],
   ['cex', 'nextIntervalMs = nextPolicy.scanIntervalMs', 'current-cycle adaptive interval applied'],
   ['cex', 'latestModes: latest', 'newly measured modes drive the next scan policy'],
-  ['cex', 'setTimeout(async () =>', 'recursive adaptive rescheduling'],
+  ['cex', 'observeFailClosed().finally(scheduleNext)', 'failure-resilient recursive adaptive rescheduling'],
   ['cex', 'smallest_risk_adjusted_then_exact_bps_to_break_even_first', 'risk-adjusted near-miss ordering'],
 
   ['zero', 'baseUnitsFromUsd(usd: number, decimals: number)', 'token-decimal-correct sizing'],
