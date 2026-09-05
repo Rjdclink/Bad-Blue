@@ -435,8 +435,24 @@ async function initializeServices(): Promise<void> {
     console.warn('[STARTUP] ⚠ LegalWhat Worker failed:', error?.message ?? error);
   }
 
-  // One canonical officer-data harvester owns the shared session manager, priority
-  // queue, and timer. Its own defaults carry the current bounded 36h/7-search policy.
+  // Initialize Unified Maintenance Worker for weekly system maintenance
+  try {
+    const { maintenanceWorker } = await import('./maintenanceWorker');
+    await maintenanceWorker.initialize();
+    console.log('[STARTUP] ✓ Maintenance Worker initialized (weekly Sunday 3:00 UTC)');
+  } catch (error: any) {
+    console.warn('[STARTUP] ⚠ Maintenance Worker failed:', error?.message ?? error);
+  }
+
+  startupTrace('background_services_completed');
+}
+
+// Officer harvesting is an optional 36-hour background workload. It must not hold
+// Railway deployment admission behind its legacy session/priority DB warm-up reads.
+// The harvester still owns exactly one timer and keeps its existing idempotent guard.
+async function initializeOptionalServicesAfterReadiness(): Promise<void> {
+  startupTrace('optional_services_started');
+
   if (process.env.SUBAGENT_ENABLE_OFFICER_SEARCH === 'true') {
     try {
       const { initializeHarvester } = await import('./subAgentHarvester');
@@ -449,16 +465,7 @@ async function initializeServices(): Promise<void> {
     console.log('[STARTUP] ✓ Canonical Sub-Agent Harvester disabled by SUBAGENT_ENABLE_OFFICER_SEARCH');
   }
 
-  // Initialize Unified Maintenance Worker for weekly system maintenance
-  try {
-    const { maintenanceWorker } = await import('./maintenanceWorker');
-    await maintenanceWorker.initialize();
-    console.log('[STARTUP] ✓ Maintenance Worker initialized (weekly Sunday 3:00 UTC)');
-  } catch (error: any) {
-    console.warn('[STARTUP] ⚠ Maintenance Worker failed:', error?.message ?? error);
-  }
-
-  startupTrace('background_services_completed');
+  startupTrace('optional_services_completed');
 }
 
 app.use(express.json({
@@ -795,6 +802,10 @@ startupTrace('routes_registration_completed');
       startupTrace('application_ready');
       console.log('[STARTUP] ✓ Server fully initialized and ready');
     }
+
+    // This optional workload starts only after strict readiness is true. Failures
+    // remain isolated and cannot keep a healthy replacement deployment in 503.
+    void initializeOptionalServicesAfterReadiness();
   } catch (error) {
     backgroundInitializationError = error instanceof Error ? error.message : String(error);
     startupTrace('background_initialization_failed', { error: backgroundInitializationError });
