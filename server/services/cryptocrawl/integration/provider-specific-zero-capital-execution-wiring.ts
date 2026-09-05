@@ -9,6 +9,7 @@ import {
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
+import type { FlashLoanProviderKind } from '../execution/adapters/flash-loan-provider-economics.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
@@ -18,6 +19,8 @@ const installed = new WeakSet<object>();
 const RECEIVER_EVENT = new ethers.utils.Interface([
   'event FlashLoanExecuted(address indexed initiator,address indexed loanToken,uint256 loanAmount,uint256 profit)',
 ]);
+
+type ProviderSpecificKind = Extract<FlashLoanProviderKind, 'aave_v3' | 'morpho_blue'>;
 
 type ProviderSpecificRuntime = {
   providers: Map<SupportedChain, providers.JsonRpcProvider>;
@@ -45,8 +48,13 @@ function extractProfit(receipt: providers.TransactionReceipt, receiver: string):
   return null;
 }
 
-function normalizeAaveSettlement(input: {
+function providerLabel(providerKind: ProviderSpecificKind): string {
+  return providerKind === 'morpho_blue' ? 'morpho_blue' : 'aave_v3';
+}
+
+function normalizeSettlement(input: {
   opportunity: ZeroCapitalOpportunity;
+  providerKind: ProviderSpecificKind;
   txHash: string;
   receipt: providers.TransactionReceipt;
   profit: bigint;
@@ -56,13 +64,14 @@ function normalizeAaveSettlement(input: {
   startedAt: number;
 }): NormalizedRealizedExecution {
   const settledAt = Date.now();
+  const label = providerLabel(input.providerKind);
   return {
     status: 'filled',
     terminal: true,
     settlementConfirmed: true,
     submittedAt: input.startedAt,
     settledAt,
-    venueOrRoute: `aave_v3:${input.opportunity.route.map(step => step.protocol).join('->')}`,
+    venueOrRoute: `${label}:${input.opportunity.route.map(step => step.protocol).join('->')}`,
     chain: input.opportunity.chain,
     predicted: {
       profitUsd: toUsd(input.opportunity.expectedProfit, input.opportunity.inputTokenDecimals),
@@ -87,8 +96,9 @@ function normalizeAaveSettlement(input: {
       ...(input.sponsoredExecution
         ? ['provider_sponsored:strict_zero_operator_cost_proof_required']
         : ['system_owned_native_gas:provenance_reserved_and_settled']),
-      'aave_v3_pool_flashLoanSimple',
-      'verified_aave_v3_receiver',
+      ...(input.providerKind === 'morpho_blue'
+        ? ['morpho_blue_flashLoan_zero_fee', 'verified_morpho_blue_receiver']
+        : ['aave_v3_pool_flashLoanSimple', 'verified_aave_v3_receiver']),
       'provider_receiver_binding_verified',
       'flashloan_receiver_profit_verified',
       'synthetic_evidence:false',
@@ -105,9 +115,10 @@ async function executeProviderSpecific(input: {
   provider: providers.JsonRpcProvider;
   wallet: Wallet;
   receiver: string;
-  providerKind: 'aave_v3';
+  providerKind: ProviderSpecificKind;
 }): Promise<ExecutionResult> {
   const startedAt = Date.now();
+  const label = providerLabel(input.providerKind);
   try {
     const plan = buildFlashLoanExecutionPlanFromOpportunity(input.opportunity, {
       receiver: input.receiver,
@@ -122,7 +133,7 @@ async function executeProviderSpecific(input: {
 
     if (input.funding.mode === 'sponsored') {
       if (input.funding.strictZeroInitialCapitalEligible !== true || input.funding.operatorMonetaryInputRequired !== false) {
-        return { success: false, error: 'Strict zero-capital Aave execution rejected unproven operator-billed sponsorship' };
+        return { success: false, error: `Strict zero-capital ${label} execution rejected unproven operator-billed sponsorship` };
       }
       const network = await input.provider.getNetwork();
       const sponsored = await getGasSponsorManager().execute({
@@ -141,14 +152,16 @@ async function executeProviderSpecific(input: {
         input.funding.strictZeroInitialCapitalEligible !== true ||
         input.funding.operatorMonetaryInputRequired !== false
       ) {
-        return { success: false, error: 'Strict zero-capital Aave execution rejected native gas without durable system ownership proof' };
+        return { success: false, error: `Strict zero-capital ${label} execution rejected native gas without durable system ownership proof` };
       }
       const systemTransaction = await executeSystemOwnedNativeTransaction({
         chain: input.opportunity.chain,
         wallet: input.wallet,
         provider: input.provider,
-        idempotencyKey: `zero-capital:${input.opportunity.id}:aave-v3`,
-        purpose: 'zero_capital_aave_v3_flash_execution',
+        idempotencyKey: `zero-capital:${input.opportunity.id}:${label}`,
+        purpose: input.providerKind === 'morpho_blue'
+          ? 'zero_capital_morpho_blue_flash_execution'
+          : 'zero_capital_aave_v3_flash_execution',
         transaction: {
           to: payload.to,
           data: payload.data,
@@ -163,17 +176,18 @@ async function executeProviderSpecific(input: {
     }
 
     if (!receipt || receipt.status !== 1) {
-      return { success: false, txHash: transactionHash, error: `${input.providerKind} receiver transaction was not confirmed successfully` };
+      return { success: false, txHash: transactionHash, error: `${label} receiver transaction was not confirmed successfully` };
     }
     const profit = extractProfit(receipt, input.receiver);
     if (profit === null || profit <= 0n) {
-      return { success: false, txHash: transactionHash, error: `No positive verified FlashLoanExecuted profit was emitted by ${input.providerKind} receiver` };
+      return { success: false, txHash: transactionHash, error: `No positive verified FlashLoanExecuted profit was emitted by ${label} receiver` };
     }
 
     const gasUsed = BigInt(receipt.gasUsed.toString());
     const effectiveGasPriceWei = receipt.effectiveGasPrice ? BigInt(receipt.effectiveGasPrice.toString()) : 0n;
-    const normalized = normalizeAaveSettlement({
+    const normalized = normalizeSettlement({
       opportunity: input.opportunity,
+      providerKind: input.providerKind,
       txHash: transactionHash,
       receipt,
       profit,
@@ -216,7 +230,7 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
     if (!selection || selection.provider === 'balancer_v2') {
       return originalExecuteFunded(opportunity, funding);
     }
-    if (selection.provider !== 'aave_v3') {
+    if (selection.provider !== 'aave_v3' && selection.provider !== 'morpho_blue') {
       return { success: false, error: `Unsupported selected flash-loan provider: ${selection.provider}` };
     }
 
@@ -229,8 +243,8 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
     if (selection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()) {
       return { success: false, error: 'Selected provider receiver owner no longer matches execution wallet' };
     }
-    if (selection.receiverCapability.kind !== 'aave_v3') {
-      return { success: false, error: 'Aave provider selection is not bound to a verified Aave V3 receiver capability' };
+    if (selection.receiverCapability.kind !== selection.provider) {
+      return { success: false, error: `${selection.provider} selection is not bound to a verified matching receiver capability` };
     }
 
     return executeProviderSpecific({
@@ -239,7 +253,7 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
       provider,
       wallet,
       receiver: selection.receiver,
-      providerKind: 'aave_v3',
+      providerKind: selection.provider,
     });
   };
 
@@ -247,6 +261,7 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
     component: 'ProviderSpecificZeroCapitalExecutionWiring',
     balancerV2: 'delegates_to_existing_canonical_executor',
     aaveV3: 'provider_specific_receiver_payload_receipt_profit_and_owned_gas_settlement_verification',
+    morphoBlue: 'zero_fee_provider_specific_receiver_payload_receipt_profit_and_owned_gas_settlement_verification',
     providerSelectionAuthority: 'flash_loan_provider_selection_registry',
     nativeGasAuthority: 'SELF_FUNDED_provenance_reserved_before_broadcast_and_settled_from_receipt',
     syntheticExecution: false,
