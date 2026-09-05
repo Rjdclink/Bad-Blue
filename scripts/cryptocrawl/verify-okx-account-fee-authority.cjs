@@ -10,6 +10,7 @@ const resolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver
 const rpi = read('server/services/cryptocrawl/intelligence/okx-rpi-capability.ts');
 const funding = read('server/services/cryptocrawl/discovery/funding-rate-monitor.ts');
 const feeSurface = read('server/services/cryptocrawl/optimization/fee-surface-hyperdynamic-strategy-engine.ts');
+const fourMode = read('server/services/cryptocrawl/integration/cex-four-mode-observability-wiring.ts');
 
 assert.match(authority, /Sole semantic authority for authenticated OKX account fee reads/);
 assert.match(authority, /const feeCache = new Map/);
@@ -18,6 +19,15 @@ assert.match(authority, /if \(existing\)[\s\S]*coalescedCount \+= 1/);
 assert.match(authority, /exactly one of groupId, instId, or instFamily/);
 assert.match(authority, /expectedGroupId/);
 assert.match(authority, /lane: 'trade_fee'/);
+
+// The inner semantic cache may not silently defeat the strict five-second CEX
+// recovery consumer. Production proved a 300s inner default could refill a 5s
+// outer cache with 50s+ evidence; keep both defaults aligned while preserving the
+// existing keyed cache and in-flight coalescing rate controls.
+assert.match(authority, /Math\.max\(\s*5_000,/);
+assert.match(authority, /CRYPTO_OKX_ACCOUNT_FEE_CACHE_MS \|\| 5_000/);
+assert.match(fourMode, /Math\.min\(selectionPolicy\.feeRefreshMaxAgeMs, 5_000\)/);
+assert.match(fourMode, /targetMaxAgeMs: feePrewarmMaxAgeMs\(selectionPolicy\)/);
 
 // Current OKX product identity owns promotional zero-fee truth. Group 11 is the
 // documented live Spot-zero group; no stablecoin symbol list or generic stablecoin
@@ -65,4 +75,4 @@ assert.match(funding, /publicDiscoveryBlockedByPrivateEnrichment: false/);
 assert.match(funding, /const accountContext = await getOkxSwapAccountContext\(\)/);
 assert.match(funding, /instrument\?\.groupId/);
 
-console.log('[okx-account-fee-authority] shared semantic caching, live Spot-zero group truth, exact zero-BPS maker preservation, no promotional symbol assumptions, prohibited referral/wash rebate tactics, and bounded funding enrichment verified');
+console.log('[okx-account-fee-authority] shared semantic caching, <=5s hot-path freshness contract, live Spot-zero group truth, exact zero-BPS maker preservation, no promotional symbol assumptions, prohibited referral/wash rebate tactics, and bounded funding enrichment verified');
