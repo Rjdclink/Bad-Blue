@@ -48,11 +48,10 @@ function advisoryMaxAgeMs(): number {
 }
 
 function freshLatest(now = Date.now()): OkxRpiFeeOpportunity[] {
-  const maxAgeMs = advisoryMaxAgeMs();
   return latest.filter(item =>
     Number.isFinite(item.observedAt)
     && item.observedAt > 0
-    && Math.max(0, now - item.observedAt) <= maxAgeMs,
+    && Math.max(0, now - item.observedAt) <= advisoryMaxAgeMs(),
   );
 }
 
