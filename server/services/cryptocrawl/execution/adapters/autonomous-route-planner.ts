@@ -1,6 +1,11 @@
 import type { FlashLoanReceiverExecutionPlan } from './flashloan-receiver-builder.js';
 import type { FlashLoanProviderKind } from './flash-loan-provider-economics.js';
-import type { OnchainSwapLeg, SupportedExecutionChain, SupportedSwapProtocol } from './onchain-payload-builder.js';
+import type {
+  OnchainSwapLeg,
+  SupportedExecutionChain,
+  SupportedSwapProtocol,
+  UniswapV3FeeTier,
+} from './onchain-payload-builder.js';
 import { resolveOperationalProfitRecipient } from '../../core/wallet-identity.js';
 
 export interface RoutePlanningSwapStep {
@@ -47,10 +52,11 @@ function normalizeProtocol(protocol: string): SupportedSwapProtocol {
   throw new Error(`Unsupported autonomous route protocol: ${protocol}`);
 }
 
-function mapFeeToTier(fee: number): 500 | 3000 | 10000 {
+function mapFeeToTier(fee: number): UniswapV3FeeTier {
   if (!Number.isFinite(fee) || fee < 0 || fee > 0.1) {
     throw new Error('Autonomous route fee must be a decimal fraction between 0 and 0.1');
   }
+  if (fee <= 0.0001) return 100;
   if (fee <= 0.0005) return 500;
   if (fee <= 0.003) return 3000;
   return 10000;
