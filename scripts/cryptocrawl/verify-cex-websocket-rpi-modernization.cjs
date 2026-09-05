@@ -119,12 +119,17 @@ requirePattern(settlement, /venue_native_fee_sign_normalized_to_economic_cost/, 
 // RPI-taker access can expose additional executable depth for standard OKX order
 // types, but the API does not expose a safe read-only account permission probe.
 // Observe/prewarm the incremental RPI depth and keep execution disabled rather
-// than testing eligibility with a live one-leg order.
+// than testing eligibility with a live one-leg order. Advisory rows are usable
+// only while fresh; an empty upstream opportunity source must clear prior rows.
 requirePattern(rpiAdvisory, /executionAuthority:\s*false/, 'RPI taker capability remains advisory-only');
 requirePattern(rpiAdvisory, /permissionProven:\s*false/, 'RPI taker permission remains unproven without a mutating probe');
 requirePattern(rpiAdvisory, /rpiTakerPolicy:\s*'prewarm_and_measure_only_until_non_mutating_account_permission_evidence_exists'/, 'RPI taker stays prewarm-and-measure only');
 requirePattern(rpiAdvisory, /observedAdditionalBidBaseQty[\s\S]{0,220}observedAdditionalAskBaseQty/, 'RPI taker advisory consumes measured incremental RPI depth');
 requirePattern(rpiAdvisory, /rpiTakerExecutionAuthority:\s*false/, 'RPI taker execution remains disabled without safe permission proof');
+requirePattern(rpiAdvisory, /function\s+freshLatest\s*\([\s\S]{0,300}item\.observedAt\s*>\s*0[\s\S]{0,180}now\s*-\s*item\.observedAt[\s\S]{0,120}advisoryMaxAgeMs\(\)/, 'RPI advisory getters age-bound cached rows by measured observation time');
+requirePattern(rpiAdvisory, /if\s*\(symbols\.length\s*===\s*0\)\s*\{[\s\S]{0,160}latest\s*=\s*\[\];/, 'empty fresh upstream opportunity set clears cached RPI rows');
+requirePattern(rpiAdvisory, /getOkxRpiFeeOpportunities\(\)[\s\S]{0,180}const fresh = freshLatest\(\)/, 'RPI fee opportunity getter filters stale rows');
+requirePattern(rpiAdvisory, /getOkxRpiTakerLiquidityAdvisory\(\)[\s\S]{0,180}const fresh = freshLatest\(\)/, 'RPI taker-liquidity getter filters stale rows');
 forbidPattern(rpiAdvisory, /\/api\/v5\/trade\/order|okxPrivateRequest\s*\(/, 'RPI taker advisory issuing a live private order probe');
 
-console.log('[cex-modernization] canonical live-product websockets, authenticated fees, RPI maker execution and truthful terminal P&L verified');
+console.log('[cex-modernization] canonical live-product websockets, authenticated fees, fresh fail-closed RPI advisory, RPI maker execution and truthful terminal P&L verified');
