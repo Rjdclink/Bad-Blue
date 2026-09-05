@@ -7,6 +7,23 @@ import {
   recordAriesRouteFormationObservation,
 } from '../intelligence/aries-edge-formation-reactor.js';
 import { buildHyperdynamicBpsPlan, type HyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
+import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
+
+export interface ZeroCapitalProviderRepriceFeedback {
+  routeId: string;
+  opportunityId: string;
+  provider: string;
+  observedAt: number;
+  expiresAt: number;
+  notionalUsd: number;
+  rawNetProfitBps: number;
+  repricedNetProfitBps: number;
+  measuredFlashLoanFeeBps: number;
+  measuredNetImprovementBps: number;
+  authority: 'quote_budget_advisory_only';
+  deterministicProfitAuthority: false;
+  executionAuthority: false;
+}
 
 export interface ZeroCapitalRoutePreselectionEvidence {
   routeId: string;
@@ -20,6 +37,8 @@ export interface ZeroCapitalRoutePreselectionEvidence {
   recentMeasuredNotionalUsd: number | null;
   recentPositiveNotionalUsd: number | null;
   estimatedDeterministicPositiveProbability: number | null;
+  rankingNetProfitBps: number | null;
+  providerRepriceFeedback: ZeroCapitalProviderRepriceFeedback | null;
 }
 
 export interface ZeroCapitalRoutePreScore {
@@ -32,6 +51,9 @@ export interface ZeroCapitalRoutePreScore {
   gasPressure: number;
   quoteCost: number;
   estimatedDeterministicPositiveProbability: number | null;
+  rawNetProfitBps: number | null;
+  providerAdjustedNetProfitBps: number | null;
+  providerMeasuredImprovementBps: number | null;
   survivalProbability: number;
   estimatedHalfLifeMs: number;
   valueOfInformation: number;
@@ -75,6 +97,8 @@ interface MutableRouteEvidence {
 }
 
 const evidence = new Map<string, MutableRouteEvidence>();
+const providerRepriceFeedback = new Map<string, ZeroCapitalProviderRepriceFeedback>();
+const seenProviderRepriceOpportunities = new Map<string, number>();
 
 function boundedInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
@@ -86,8 +110,18 @@ function boundedNumber(raw: string | undefined, fallback: number, min: number, m
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
 }
 
+function finite(value: unknown): number | null {
+  if (value === null || value === undefined || typeof value === 'boolean') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function routeEvidenceMaxAgeMs(): number {
   return boundedInteger(process.env.ZERO_CAPITAL_ROUTE_EVIDENCE_MAX_AGE_MS, 60_000, 5_000, 300_000);
+}
+
+function providerFeedbackMaxAgeMs(): number {
+  return boundedInteger(process.env.ZERO_CAPITAL_PROVIDER_REPRICE_FEEDBACK_MAX_AGE_MS, 5_000, 250, 15_000);
 }
 
 function hasFreshMeasuredEvidence(item: MutableRouteEvidence, now = Date.now()): boolean {
@@ -144,6 +178,89 @@ function measuredEdgePotential(netProfitBps: number): number {
   return Math.max(0.000001, 1 / (1 + Math.abs(netProfitBps) / nearBreakEvenScaleBps));
 }
 
+function resolveRouteIdFromOpportunityId(opportunityId: string): string | null {
+  let match: string | null = null;
+  for (const routeId of evidence.keys()) {
+    if (!opportunityId.startsWith(`${routeId}-`)) continue;
+    if (match === null || routeId.length > match.length) match = routeId;
+  }
+  return match;
+}
+
+function providerName(candidate: MeasuredCandidate): string | null {
+  const providers = candidate.provenance
+    .filter(value => value.startsWith('flash_loan_provider:'))
+    .map(value => value.slice('flash_loan_provider:'.length))
+    .filter(Boolean);
+  if (providers.includes('aave_balancer_dual')) return 'aave_balancer_dual';
+  return providers.length > 0 ? providers[providers.length - 1] : null;
+}
+
+function pruneProviderFeedback(now = Date.now()): void {
+  for (const [routeId, feedback] of providerRepriceFeedback.entries()) {
+    if (feedback.expiresAt <= now || now - feedback.observedAt > providerFeedbackMaxAgeMs()) {
+      providerRepriceFeedback.delete(routeId);
+    }
+  }
+  for (const [opportunityId, expiresAt] of seenProviderRepriceOpportunities.entries()) {
+    if (expiresAt <= now) seenProviderRepriceOpportunities.delete(opportunityId);
+  }
+}
+
+function freshProviderFeedback(item: MutableRouteEvidence, now = Date.now()): ZeroCapitalProviderRepriceFeedback | null {
+  pruneProviderFeedback(now);
+  const feedback = providerRepriceFeedback.get(item.routeId);
+  if (!feedback || item.lastMeasuredAt === null || item.recentMeasuredNotionalUsd === null) return null;
+  if (feedback.observedAt < item.lastMeasuredAt || feedback.observedAt > now || feedback.expiresAt <= now) return null;
+  if (now - feedback.observedAt > providerFeedbackMaxAgeMs()) return null;
+  if (Math.abs(feedback.notionalUsd - item.recentMeasuredNotionalUsd) > 0.000001) return null;
+  return feedback;
+}
+
+function rankingNetProfitBps(item: MutableRouteEvidence, now = Date.now()): number | null {
+  if (!hasFreshMeasuredEvidence(item, now)) return null;
+  return freshProviderFeedback(item, now)?.repricedNetProfitBps ?? item.recentNetProfitBps;
+}
+
+function recordProviderRepriceCandidate(candidate: MeasuredCandidate): void {
+  if (candidate.topology !== 'ZERO_CAPITAL_ATOMIC' || candidate.expiresAt <= Date.now()) return;
+  if (seenProviderRepriceOpportunities.has(candidate.opportunityId)) return;
+  if (!candidate.provenance.includes('measured_flash_loan_fee_exact_rate')) return;
+  if (!candidate.provenance.includes('provider_selection_bound_to_verified_receiver')) return;
+  if (!candidate.provenance.includes('synthetic_evidence:false')) return;
+
+  const provider = providerName(candidate);
+  const routeId = resolveRouteIdFromOpportunityId(candidate.opportunityId);
+  const item = routeId ? evidence.get(routeId) : null;
+  const repricedNetProfitBps = finite(candidate.canonicalBps.netBps);
+  const measuredFlashLoanFeeBps = finite(candidate.canonicalBps.flashLoanFeeBps);
+  if (!provider || !routeId || !item || item.lastMeasuredAt === null || item.recentNetProfitBps === null || item.recentMeasuredNotionalUsd === null) return;
+  if (candidate.updatedAt < item.lastMeasuredAt || repricedNetProfitBps === null || measuredFlashLoanFeeBps === null) return;
+
+  seenProviderRepriceOpportunities.set(candidate.opportunityId, candidate.expiresAt);
+  providerRepriceFeedback.set(routeId, {
+    routeId,
+    opportunityId: candidate.opportunityId,
+    provider,
+    observedAt: candidate.updatedAt,
+    expiresAt: candidate.expiresAt,
+    notionalUsd: item.recentMeasuredNotionalUsd,
+    rawNetProfitBps: item.recentNetProfitBps,
+    repricedNetProfitBps,
+    measuredFlashLoanFeeBps,
+    measuredNetImprovementBps: repricedNetProfitBps - item.recentNetProfitBps,
+    authority: 'quote_budget_advisory_only',
+    deterministicProfitAuthority: false,
+    executionAuthority: false,
+  });
+}
+
+// Provider repricing already happens inside the canonical zero-capital provider mesh.
+// This listener only feeds that exact, fresh result back into the next quote-budget
+// ranking pass. It never mutates a candidate, increments deterministic-positive
+// history, or creates execution/economic authority.
+measuredCandidateRegistry.onUpdate(recordProviderRepriceCandidate);
+
 function zeroCapitalPlan(routes: readonly ConfiguredZeroCapitalRoute[]): HyperdynamicBpsPlan {
   let attempts = 0;
   let measured = 0;
@@ -155,9 +272,10 @@ function zeroCapitalPlan(routes: readonly ConfiguredZeroCapitalRoute[]): Hyperdy
     if (!item) continue;
     attempts += item.attempts;
     positive += item.positiveQuotes;
-    if (!hasFreshMeasuredEvidence(item, now)) continue;
+    const rankingNet = rankingNetProfitBps(item, now);
+    if (rankingNet === null) continue;
     measured += 1;
-    if (item.recentNetProfitBps! <= 0) gaps.push(Math.abs(item.recentNetProfitBps!));
+    if (rankingNet <= 0) gaps.push(Math.abs(rankingNet));
   }
   return buildHyperdynamicBpsPlan({
     zeroCapitalGapBps: gaps.length > 0 ? Math.min(...gaps) : null,
@@ -187,6 +305,9 @@ function scoreRoute(
       gasPressure,
       quoteCost: cost,
       estimatedDeterministicPositiveProbability: item ? positiveProbability(item) : null,
+      rawNetProfitBps: item?.recentNetProfitBps ?? null,
+      providerAdjustedNetProfitBps: null,
+      providerMeasuredImprovementBps: null,
       ...formationFields(route.id, 0, cost),
       authority: 'quote_budget_advisory_only',
       deterministicProfitAuthority: false,
@@ -202,12 +323,16 @@ function scoreRoute(
   );
   const ageMs = Math.max(0, now - item.lastMeasuredAt!);
   const freshness = Math.pow(0.5, ageMs / freshnessHalfLifeMs);
-  const edgePotential = measuredEdgePotential(item.recentNetProfitBps!);
+  const feedback = freshProviderFeedback(item, now);
+  const rankingNet = feedback?.repricedNetProfitBps ?? item.recentNetProfitBps!;
+  const edgePotential = measuredEdgePotential(rankingNet);
   const executableLiquidity = Math.max(
     0.000001,
     Math.min(1, item.recentMeasuredNotionalUsd! / Math.max(0.01, notionalUsd)),
   );
   const probability = positiveProbability(item);
+  // Aries formation remains tied to the raw market quote so provider-cost feedback
+  // cannot be double-counted as a second market-edge observation.
   const formation = formationFields(route.id, Math.max(0, item.recentNetProfitBps!), cost);
   const baseScore = probability === null
     ? null
@@ -224,6 +349,9 @@ function scoreRoute(
     gasPressure,
     quoteCost: cost,
     estimatedDeterministicPositiveProbability: probability,
+    rawNetProfitBps: item.recentNetProfitBps,
+    providerAdjustedNetProfitBps: feedback?.repricedNetProfitBps ?? null,
+    providerMeasuredImprovementBps: feedback?.measuredNetImprovementBps ?? null,
     ...formation,
     authority: 'quote_budget_advisory_only',
     deterministicProfitAuthority: false,
@@ -270,9 +398,11 @@ function adaptiveQuoteBudget(
   for (const route of routes) {
     const item = evidence.get(route.id);
     if (!item || !hasFreshMeasuredEvidence(item, now)) continue;
+    const rankingNet = rankingNetProfitBps(item, now);
+    if (rankingNet === null) continue;
     measured += 1;
-    if (item.recentNetProfitBps! > 0) positive += 1;
-    if (item.recentNetProfitBps! >= -scaleBps) promising += 1;
+    if (rankingNet > 0) positive += 1;
+    if (rankingNet >= -scaleBps) promising += 1;
   }
 
   const signal = measured > 0 ? (promising + positive * 2) / measured : 0;
@@ -444,11 +574,14 @@ export function getZeroCapitalRoutePreselectionEvidence(): ZeroCapitalRoutePrese
   const now = Date.now();
   return [...evidence.values()].map(item => {
     const fresh = hasFreshMeasuredEvidence(item, now);
+    const feedback = fresh ? freshProviderFeedback(item, now) : null;
     return {
       ...item,
       recentNetProfitBps: fresh ? item.recentNetProfitBps : null,
       recentMeasuredNotionalUsd: fresh ? item.recentMeasuredNotionalUsd : null,
       estimatedDeterministicPositiveProbability: positiveProbability(item),
+      rankingNetProfitBps: fresh ? (feedback?.repricedNetProfitBps ?? item.recentNetProfitBps) : null,
+      providerRepriceFeedback: feedback ? { ...feedback } : null,
     };
   });
 }

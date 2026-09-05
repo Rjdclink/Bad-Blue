@@ -23,14 +23,15 @@ requireText(preselection, 'oldestFirst', 'exploration prioritizes oldest/unobser
 requireText(preselection, 'ZERO_CAPITAL_ROUTE_EXPLORATION_FRACTION', 'exploration share is explicit and bounded');
 requireText(preselection, 'Math.max(1, Math.min(quoteBudget', 'non-full quote cycles preserve at least one exploration slot');
 requireText(preselection, 'ZERO_CAPITAL_DYNAMIC_QUOTE_BUDGET', 'fresh quote work has an explicit local budget');
-requireText(preselection, 'return (item.positiveQuotes + 1) / (item.attempts + 2)', 'historical positive yield remains smoothed measured evidence');
+requireText(preselection, 'return (item.positiveQuotes + 1) / (item.attempts + 2)', 'historical positive yield remains smoothed raw measured evidence');
 requireText(preselection, 'lastMeasuredAt', 'measured near-miss freshness is retained separately from positive history');
 requireText(preselection, 'recentMeasuredNotionalUsd', 'measured notional evidence can rank negative and positive observations');
 requireText(preselection, 'measuredEdgePotential', 'measured BPS distance contributes only to advisory quote allocation');
 requireText(preselection, 'ZERO_CAPITAL_NEAR_BREAK_EVEN_SCALE_BPS', 'near-break-even prioritization scale is explicit and bounded');
-requireText(preselection, 'item.recentNetProfitBps > 0', 'positive measured edges retain preferential score treatment');
+requireText(preselection, 'if (rankingNet > 0) positive += 1', 'fresh provider-adjusted positive potential can retain preferential quote-budget treatment');
+requireText(preselection, 'const deterministicPositive = !!quote && quote.executablePositive && quote.netProfit > 0n', 'deterministic-positive history still comes only from the raw executable quote');
 requireText(preselection, 'Math.abs(netProfitBps)', 'negative measured edges are ranked by distance to break-even rather than fabricated profit');
-requireText(preselection, 'Math.max(0, item.recentNetProfitBps)', 'negative evidence cannot be converted into positive economic consequence for formation authority');
+requireText(preselection, 'Math.max(0, item.recentNetProfitBps)', 'provider feedback cannot be double-counted as positive market-formation consequence');
 requireText(preselection, 'gasCostUsd / Math.max', 'ranking accounts for measured gas pressure');
 requireText(preselection, 'quoteCost(route)', 'ranking accounts for bounded quote cost');
 forbidText(preselection, 'Math.random', 'quote-budget exploration cannot use nondeterministic random starvation');
@@ -56,4 +57,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[zero-capital-route-preselection] PASS — structural breadth and deterministic exploration are preserved while measured positive and near-break-even BPS can steer advisory exploitation; strict all-in net-positive execution authority is unchanged');
+console.log('[zero-capital-route-preselection] PASS — structural breadth and deterministic exploration are preserved while raw measured and fresh provider-repriced BPS can steer advisory exploitation; raw deterministic-positive history and strict all-in net-positive execution authority are unchanged');
