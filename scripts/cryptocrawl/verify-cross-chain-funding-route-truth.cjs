@@ -59,7 +59,7 @@ requirePattern(crossChainEconomics, /across_min_output_same_asset_plus_live_usd_
 
 requirePattern(acrossExecutor, /getAcrossBridgeQuote\s*\(/, 'Across executor refreshes the route immediately before signing');
 requirePattern(acrossExecutor, /freshExecutionPayload\s*\(/, 'Across executor refreshes executable calldata');
-requirePattern(acrossExecutor, /freshExpected\s*<\s*oldMinimum/, 'Across executor applies minimum-output drift protection');
+requirePattern(acrossExecutor, /freshMinimum\s*<\s*oldMinimum/, 'Across executor applies minimum-output drift protection');
 requirePattern(acrossExecutor, /requireAllowed\(\s*'SUBMIT_TX'/, 'Across execution remains governance-gated');
 requirePattern(acrossExecutor, /getAcrossDepositSettlementEvidence\s*\(/, 'Across execution polls provider settlement evidence');
 requirePattern(acrossExecutor, /destinationReceiptVerified/, 'successful Across fill requires destination receipt verification');
