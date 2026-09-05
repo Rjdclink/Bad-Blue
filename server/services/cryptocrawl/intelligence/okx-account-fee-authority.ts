@@ -25,9 +25,14 @@ export interface ResolveOkxAccountFeeOptions {
   timeoutMs?: number;
 }
 
+// The CEX recovery/matrix path consumes authenticated fee evidence on a <=5s
+// contract. Keep this sole semantic authority's default cache inside that same
+// window so an outer strict-age miss cannot be refilled from a much older inner
+// cache. Group-key caching and in-flight coalescing preserve request efficiency;
+// OKX documents the trade-fee endpoint at 5 requests / 2 seconds per User ID.
 const CACHE_TTL_MS = Math.max(
-  10_000,
-  Math.min(600_000, Number(process.env.CRYPTO_OKX_ACCOUNT_FEE_CACHE_MS || 300_000)),
+  5_000,
+  Math.min(600_000, Number(process.env.CRYPTO_OKX_ACCOUNT_FEE_CACHE_MS || 5_000)),
 );
 const DEFAULT_TIMEOUT_MS = Math.max(
   3_000,
