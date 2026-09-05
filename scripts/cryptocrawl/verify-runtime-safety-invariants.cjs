@@ -26,33 +26,38 @@ function forbid(relativePath, forbiddenFragments) {
   }
 }
 
-// 1) Unified execution remains strictly positive on measured all-in economics.
-// Missing/advisory evidence is reacquired and scored, but cannot independently
-// veto a deterministic positive candidate. Strategy-specific hard requirements
-// remain with the canonical executor for that strategy.
+// 1) Unified execution remains strictly positive on measured all-in economics
+// for every deterministic topology. Funding arbitrage is the sole bounded
+// projected-value exception because terminal funding/close settlement is the
+// realized-profit authority. Missing/advisory evidence remains reacquisition or
+// ranking input and cannot independently veto a qualifying positive candidate.
 const unifiedRouter = requireAll('server/services/cryptocrawl/execution/unified-execution-router.ts', [
   'export interface AdvisoryEvidenceScores',
   'advisoryOnly: true',
   'const deterministicPositive = Number.isFinite(deterministicNet) && deterministicNet > 0;',
   'const deterministicNegative = Number.isFinite(deterministicNet) && deterministicNet < 0;',
-  "hardVetoReasons.push('blocked:verified_negative_all_in_net')",
+  'const fundingProjectedPositive = isFunding && projectedFunding !== null && projectedFunding > 0;',
+  'const fundingProjectedNegative = isFunding && projectedFunding !== null && projectedFunding < 0;',
+  "if (!isFunding && deterministicNegative) hardVetoReasons.push('blocked:verified_negative_all_in_net');",
+  "if (fundingProjectedNegative) hardVetoReasons.push('blocked:verified_negative_projected_funding_net');",
   "hardVetoReasons.push('blocked:no_authoritative_execution_path')",
-  'const evidenceReacquisitionRequired = deterministicZero',
+  'const evidenceReacquisitionRequired = economicsMissing',
+  '|| (!isFunding && deterministicZero)',
   'candidate.missingInformation.length > 0;',
   'advisory:adaptive_profitability_or_confidence_below_ranking_threshold',
-  'const admitted = deterministicPositive',
-  '&& pathAvailable',
-  '&& candidate.executableCapability',
-  '&& fresh',
-  '&& depthReady;',
+  'const economicsAdmitted = isFunding ? fundingProjectedPositive : deterministicPositive;',
+  'const admitted = economicsAdmitted && pathAvailable && candidate.executableCapability && fresh && depthReady;',
+  'funding_projected_profit_is_not_deterministic_profit',
 ]);
 for (const forbidden of [
   "admitted: deterministicPositive && completeCurrentEvidence && aboveAdaptiveThreshold && path !== 'UNAVAILABLE'",
   "admitted: deterministicPositive && completeCurrentEvidence && path !== 'UNAVAILABLE'",
   'candidate.missingInformation.length === 0',
+  'const economicsAdmitted = isFunding ? true : deterministicPositive;',
+  'const economicsAdmitted = isFunding ? projectedFunding !== null : deterministicPositive;',
 ]) {
   if (unifiedRouter.includes(forbidden)) {
-    throw new Error(`unified execution router reintroduced a duplicate/advisory execution veto: ${forbidden}`);
+    throw new Error(`unified execution router reintroduced a duplicate/advisory execution veto or funding admission bypass: ${forbidden}`);
   }
 }
 
@@ -153,11 +158,11 @@ requireAll('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
   "okx: Object.freeze({ LIT: 'LIGHTER', LUNA: 'WLUNA' })",
   'function canonicalVenueAsset(',
   "canonicalPair(row.base, row.quote, 'kraken')",
-  "canonicalPair(raw.baseCcy, raw.quoteCcy, 'okx')",
+  "canonicalPair(raw.baseCcy, raw.quote, 'okx')",
 ]);
 forbid('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
   'canonicalPair(row.base, row.quote, true)',
   'canonicalPair(raw.baseCcy, raw.quoteCcy);',
 ]);
 
-console.log('[runtime-safety-invariants] PASS: strict positive economics, advisory evidence scoring with active reacquisition, no duplicate missing-information veto, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, measured zero-capital repricing, bounded production observability, and semantic venue-asset identity invariants preserved');
+console.log('[runtime-safety-invariants] PASS: deterministic topologies preserve strict positive economics; funding alone uses bounded positive projected value before terminal realized settlement; advisory evidence scoring, active reacquisition, no duplicate missing-information veto, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, measured zero-capital repricing, bounded production observability, and semantic venue-asset identity invariants preserved');
