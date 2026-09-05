@@ -5,11 +5,11 @@ import {
   type SupportedSwapProtocol,
   type UniswapV3FeeTier,
 } from './onchain-payload-builder.js';
-import { resolveAaveV3Pool } from './flash-loan-provider-economics.js';
+import { resolveAaveV3Pool, resolveMorphoBlue } from './flash-loan-provider-economics.js';
 import { resolveSponsoredReceiverVault } from './sponsored-receiver-manager.js';
 import type { SponsoredCall } from '../../strategies/gas-sponsorship.js';
 
-export type FlashLoanReceiverCapabilityKind = 'balancer_v1' | 'balancer_composite_v2' | 'aave_v3';
+export type FlashLoanReceiverCapabilityKind = 'balancer_v1' | 'balancer_composite_v2' | 'aave_v3' | 'morpho_blue';
 
 export interface VerifiedFlashLoanReceiverCapability {
   kind: FlashLoanReceiverCapabilityKind;
@@ -85,6 +85,11 @@ export function resolveConfiguredFlashLoanReceiver(
     const candidate = environment[`ZERO_CAPITAL_AAVE_V3_RECEIVER_${chainKey}`]?.trim() || map[chain];
     return candidate ? requireAddress(`Aave V3 receiver for ${chain}`, candidate) : null;
   }
+  if (kind === 'morpho_blue') {
+    const map = parseAddressMap(environment.ZERO_CAPITAL_MORPHO_RECEIVERS, 'ZERO_CAPITAL_MORPHO_RECEIVERS');
+    const candidate = environment[`ZERO_CAPITAL_MORPHO_RECEIVER_${chainKey}`]?.trim() || map[chain];
+    return candidate ? requireAddress(`Morpho Blue receiver for ${chain}`, candidate) : null;
+  }
   if (kind === 'balancer_composite_v2') {
     const map = parseAddressMap(environment.ZERO_CAPITAL_BALANCER_COMPOSITE_RECEIVERS, 'ZERO_CAPITAL_BALANCER_COMPOSITE_RECEIVERS');
     const candidate = environment[`ZERO_CAPITAL_BALANCER_COMPOSITE_RECEIVER_${chainKey}`]?.trim() || map[chain];
@@ -98,6 +103,7 @@ export function resolveConfiguredFlashLoanReceiver(
 
 function expectedInfrastructure(kind: FlashLoanReceiverCapabilityKind, chain: SupportedExecutionChain): string | null {
   if (kind === 'aave_v3') return resolveAaveV3Pool(chain);
+  if (kind === 'morpho_blue') return resolveMorphoBlue(chain);
   return resolveSponsoredReceiverVault(chain);
 }
 
@@ -117,7 +123,7 @@ export async function verifyFlashLoanReceiverCapability(input: {
 
   const code = await input.provider.getCode(address);
   if (code === '0x') return null;
-  const infrastructureGetter = input.kind === 'aave_v3' ? 'pool' : 'vault';
+  const infrastructureGetter = input.kind === 'aave_v3' ? 'pool' : input.kind === 'morpho_blue' ? 'morpho' : 'vault';
   const receiver = new Contract(address, [
     'function owner() view returns (address)',
     `function ${infrastructureGetter}() view returns (address)`,
