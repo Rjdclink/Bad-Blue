@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { measuredCandidateRegistry, type MeasuredOpportunityTopology } from '../discovery/measured-candidate-registry.js';
 import { getCexFourModeSnapshot } from './cex-four-mode-observability-wiring.js';
 import { getEconomicTransformationSnapshot } from './economic-transformation-wiring.js';
+import { ensureBpsPrivateRefundEvidenceWiring, getPrivateRefundEvidenceSnapshot } from './bps-private-refund-evidence.js';
 
 export interface TopologyBpsSnapshot {
   observed: number;
@@ -27,6 +28,13 @@ export interface BpsDecompositionSnapshot {
     closestMode: { symbol: string; mode: string; buyVenue: string; sellVenue: string; recoveryEfficiency: number } | null;
   };
   rescuePortfolio: { candidates: number; dominantCostCouldCoverGap: number; closestBpsToBreakEven: number | null; };
+  privateRefundEvidence: {
+    receivedRefunds: number;
+    pendingRefunds: number;
+    receivedWei: string;
+    pendingWei: string;
+    deterministicAdmissionCredit: false;
+  };
   authority: 'telemetry_only';
   executionAuthority: false;
 }
@@ -72,6 +80,7 @@ function refresh(): void {
   const byTopology = Object.fromEntries(TOPOLOGIES.map(topology => [topology, topologySnapshot(topology)])) as Record<MeasuredOpportunityTopology, TopologyBpsSnapshot>;
   const cexModes = getCexFourModeSnapshot();
   const rescue = getEconomicTransformationSnapshot();
+  const privateRefunds = getPrivateRefundEvidenceSnapshot();
   const cexNegative = cexModes.filter(item => !item.economicallyPositive).sort((a, b) => a.bpsToBreakEven - b.bpsToBreakEven);
   const cexBreakEven = cexNegative.map(item => item.bpsToBreakEven).filter(finite);
   const rescueBreakEven = rescue.map(item => item.bpsToBreakEven).filter(finite);
@@ -94,6 +103,13 @@ function refresh(): void {
       dominantCostCouldCoverGap: rescue.filter(item => item.dominantCostAloneCouldCoverGap).length,
       closestBpsToBreakEven: rescueBreakEven.length > 0 ? Math.min(...rescueBreakEven) : null,
     },
+    privateRefundEvidence: {
+      receivedRefunds: privateRefunds.receivedRefunds,
+      pendingRefunds: privateRefunds.pendingRefunds,
+      receivedWei: privateRefunds.receivedWei,
+      pendingWei: privateRefunds.pendingWei,
+      deterministicAdmissionCredit: false,
+    },
     authority: 'telemetry_only', executionAuthority: false,
   };
 
@@ -102,6 +118,8 @@ function refresh(): void {
     gapDistributionAuthority: 'measured_telemetry_only',
     currentCandidateAuthority: 'unexpired_canonical_bps_only',
     staleCandidateEconomicAuthority: false,
+    privateRefundEconomicAuthority: 'received_terminal_evidence_only',
+    pendingPrivateRefundEconomicAuthority: false,
     syntheticProfitAllowed: false,
     profitabilityClaimsRequireMeasuredEconomics: true,
   });
@@ -109,11 +127,18 @@ function refresh(): void {
 
 export function getBpsDecompositionSnapshot(): BpsDecompositionSnapshot | null {
   if (!latest) return null;
-  return { ...latest, byTopology: Object.fromEntries(Object.entries(latest.byTopology).map(([key, value]) => [key, { ...value }])) as Record<MeasuredOpportunityTopology, TopologyBpsSnapshot>, cexFourMode: { ...latest.cexFourMode }, rescuePortfolio: { ...latest.rescuePortfolio } };
+  return {
+    ...latest,
+    byTopology: Object.fromEntries(Object.entries(latest.byTopology).map(([key, value]) => [key, { ...value }])) as Record<MeasuredOpportunityTopology, TopologyBpsSnapshot>,
+    cexFourMode: { ...latest.cexFourMode },
+    rescuePortfolio: { ...latest.rescuePortfolio },
+    privateRefundEvidence: { ...latest.privateRefundEvidence },
+  };
 }
 
 export function ensureBpsDecompositionObservability(): void {
   if (timer || process.env.CRYPTOCRAWL_BPS_DECOMPOSITION_ENABLED === 'false') return;
+  ensureBpsPrivateRefundEvidenceWiring();
   refresh();
   if (process.env.NO_INTERVALS !== 'true') {
     const intervalMs = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTOCRAWL_BPS_DECOMPOSITION_INTERVAL_MS || 15_000)));
