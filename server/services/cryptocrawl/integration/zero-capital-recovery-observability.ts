@@ -48,15 +48,18 @@ function routeEvidenceMaxAgeMs(): number {
 
 function refresh(): void {
   const now = Date.now();
-  const candidates = measuredCandidateRegistry.getRecent(2048)
+  // Recovery telemetry describes routes that could still be acted on now. Pull
+  // the complete default registry capacity before applying topology/freshness so
+  // high-volume CEX churn cannot crowd zero-capital candidates out of the view.
+  const candidates = measuredCandidateRegistry.getRecent(4096)
     .filter(candidate =>
       candidate.topology === 'ZERO_CAPITAL_ATOMIC'
       && candidate.status !== 'expired'
       && candidate.expiresAt > now,
     );
   const withBps = candidates
-    .filter(candidate => typeof candidate.economics.netProfitBps === 'number' && Number.isFinite(candidate.economics.netProfitBps))
-    .map(candidate => Number(candidate.economics.netProfitBps));
+    .filter(candidate => typeof candidate.canonicalBps.netBps === 'number' && Number.isFinite(candidate.canonicalBps.netBps))
+    .map(candidate => Number(candidate.canonicalBps.netBps));
   const negativeGaps = withBps.filter(value => value <= 0).map(value => Math.abs(value));
   const closestCandidateGapBps = negativeGaps.length > 0 ? Math.min(...negativeGaps) : null;
   const maxRouteEvidenceAgeMs = routeEvidenceMaxAgeMs();
@@ -113,6 +116,8 @@ function refresh(): void {
     component: 'ZeroCapitalRecoveryObservability',
     ...latest,
     routeEvidenceMaxAgeMs: maxRouteEvidenceAgeMs,
+    candidateAuthority: 'unexpired_canonical_bps_only',
+    staleCandidateEconomicAuthority: false,
     staleRouteEvidencePublished: false,
     trendAuthority: 'measured_observation_delta_only',
   });

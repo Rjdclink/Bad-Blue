@@ -118,9 +118,11 @@ assert.match(receiverCapability, /if \(fee <= 0\.0001\) return 100;/);
 assert.match(routeQuoter, /return \(feeTier \|\| 3000\) \/ 1_000_000/);
 
 // DynamicScale may react to near-break-even density only as bounded search
-// pressure. Profitability remains terminal-confirmed realized truth.
+// pressure. Profitability remains terminal-confirmed realized truth, and stale
+// opportunities may never keep near-break-even pressure alive.
 assert.match(scale, /zeroCapitalNearBreakEvenPressure/);
-assert.match(scale, /nearBreakEvenAuthority: 'search_formation_pressure_only'/);
+assert.match(scale, /nearBreakEvenAuthority: 'fresh_unexpired_search_formation_pressure_only'/);
+assert.match(scale, /staleNearBreakEvenEconomicAuthority: false/);
 assert.match(scale, /profitabilityAuthority: 'terminal_confirmed_realized_only'/);
 assert.doesNotMatch(
   scale,
@@ -145,6 +147,6 @@ console.log(JSON.stringify({
   simulationExecutionAuthority: false,
   monteCarloExecutionAuthority: false,
   advisoryWorkRunsInParallel: true,
-  dynamicScaleUse: 'bounded_search_pressure_only',
+  dynamicScaleUse: 'fresh_unexpired_bounded_search_pressure_only',
   realizedProfitabilityAuthorityPreserved: true,
 }, null, 2));

@@ -47,8 +47,44 @@ function beamBacklog(): { queued: number; executing: number; activeNodes: number
   };
 }
 
+function average(values: number[]): number | null {
+  return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function freshZeroCapitalBps(): {
+  nearBreakEven: number;
+  bestNetProfitBps: number | null;
+  averageBpsToBreakEven: number | null;
+} {
+  const now = Date.now();
+  const candidates = measuredCandidateRegistry.getRecent(4096).filter(candidate =>
+    candidate.topology === 'ZERO_CAPITAL_ATOMIC'
+    && candidate.status !== 'expired'
+    && candidate.expiresAt > now
+    && typeof candidate.canonicalBps.netBps === 'number'
+    && Number.isFinite(candidate.canonicalBps.netBps),
+  );
+  const nearBreakEven = candidates.filter(candidate => {
+    const netBps = Number(candidate.canonicalBps.netBps);
+    if (netBps > 0) return false;
+    const floor = Number(candidate.economics.discoveryFloorBps);
+    return !Number.isFinite(floor) || netBps >= floor;
+  });
+  const breakEven = nearBreakEven
+    .map(candidate => candidate.canonicalBps.bpsToBreakEven)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return {
+    nearBreakEven: nearBreakEven.length,
+    bestNetProfitBps: candidates.length > 0
+      ? Math.max(...candidates.map(candidate => Number(candidate.canonicalBps.netBps)))
+      : null,
+    averageBpsToBreakEven: average(breakEven),
+  };
+}
+
 export function getDynamicScalePressureSnapshot(): DynamicScalePressureSnapshot {
   const candidate = measuredCandidateRegistry.getMetrics(60_000);
+  const zeroCapital = freshZeroCapitalBps();
   const canonicalMinute = canonicalOpportunityState.getMetrics(60_000);
   const canonicalHour = canonicalOpportunityState.getMetrics(60 * 60_000);
   const graph = measuredOpportunityGraph.getLatestCycle();
@@ -67,7 +103,7 @@ export function getDynamicScalePressureSnapshot(): DynamicScalePressureSnapshot 
 
   const resourceSaturation = clamp01((beam.queued + beam.executing) / Math.max(1, beamCapacity * 4));
   const zeroCapitalNearBreakEvenPressure = clamp01(
-    candidate.zeroCapitalBps.nearBreakEven / nearBreakEvenTarget,
+    zeroCapital.nearBreakEven / nearBreakEvenTarget,
   );
 
   // Search pressure is intentionally limited to discovery breadth/freshness demand.
@@ -116,9 +152,9 @@ export function getDynamicScalePressureSnapshot(): DynamicScalePressureSnapshot 
     observedCandidatesPerMinute: candidate.observed,
     verifiedPositivePerMinute: canonicalMinute.verifiedPositiveOpportunities,
     eligiblePerMinute: canonicalMinute.eligibleOpportunities,
-    zeroCapitalNearBreakEvenPerMinute: candidate.zeroCapitalBps.nearBreakEven,
-    zeroCapitalBestNetProfitBps: candidate.zeroCapitalBps.bestNetProfitBps,
-    zeroCapitalAverageBpsToBreakEven: candidate.zeroCapitalBps.averageBpsToBreakEven,
+    zeroCapitalNearBreakEvenPerMinute: zeroCapital.nearBreakEven,
+    zeroCapitalBestNetProfitBps: zeroCapital.bestNetProfitBps,
+    zeroCapitalAverageBpsToBreakEven: zeroCapital.averageBpsToBreakEven,
     unexploredFraction,
     expectedNetProfitPerHourUsd: expected,
     realizedNetProfitPerHourUsd: realized,
@@ -189,7 +225,8 @@ export function ensureDynamicScalePressureWiring(): void {
     ],
     profitabilityAuthority: 'terminal_confirmed_realized_only',
     expectedProfitAuthority: 'advisory_telemetry_only',
-    nearBreakEvenAuthority: 'search_formation_pressure_only',
+    nearBreakEvenAuthority: 'fresh_unexpired_search_formation_pressure_only',
+    staleNearBreakEvenEconomicAuthority: false,
     backlogSignals: ['candidateBacklog', 'mcBacklog'],
     resourceSaturation: true,
     zeroPositiveDoesNotSuppressDiscovery: true,
