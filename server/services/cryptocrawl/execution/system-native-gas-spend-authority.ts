@@ -70,8 +70,8 @@ async function load(spendId: string): Promise<SystemNativeGasSpendReservation> {
 
 /**
  * Returns ownership-backed native gas capacity. Raw wallet balance is deliberately
- * absent from this calculation; only reimbursement-verified SETTLED deliveries
- * derived from a SELF_FUNDED CryptoCrawler lifecycle can create spend authority.
+ * absent from this calculation. Capacity is scoped to one SELF_FUNDED lifecycle,
+ * and only that scope's reimbursement-verified terminal gas deliveries count.
  */
 export async function getSystemNativeGasAuthority(input: {
   chain: string;
@@ -83,30 +83,34 @@ export async function getSystemNativeGasAuthority(input: {
   const wallet = requireAddress(input.wallet);
   const minimumWei = input.minimumWei === undefined ? 1n : BigInt(requirePositiveInteger('minimumWei', input.minimumWei));
   const result = await pool.query(
-    `WITH delivered AS (
-       SELECT COALESCE(SUM(delivered_native_wei::numeric),0)::numeric AS amount
-       FROM public.zero_capital_native_gas_funding_attempts
-       WHERE state='SETTLED' AND reimbursement_verified=true
-         AND lower(destination_chain)=lower($1)
-         AND lower(destination_wallet)=lower($2)
-         AND delivered_native_wei ~ '^[0-9]+$'
-         AND delivered_native_wei::numeric > 0
-         AND destination_transaction_hash ~* '^0x[0-9a-f]{64}$'
-     ), committed AS (
+    `SELECT s.scope,
+            COALESCE(delivered.amount,0)::text AS delivered_wei,
+            COALESCE(committed.amount,0)::text AS committed_wei,
+            GREATEST(COALESCE(delivered.amount,0)-COALESCE(committed.amount,0),0)::text AS spendable_wei
+     FROM public.zero_capital_capital_state s
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(a.delivered_native_wei::numeric),0)::numeric AS amount
+       FROM public.zero_capital_native_gas_funding_attempts a
+       WHERE a.scope=s.scope
+         AND a.state='SETTLED' AND a.reimbursement_verified=true
+         AND lower(a.destination_chain)=lower($1)
+         AND lower(a.destination_wallet)=lower($2)
+         AND a.delivered_native_wei ~ '^[0-9]+$'
+         AND a.delivered_native_wei::numeric > 0
+         AND a.destination_transaction_hash ~* '^0x[0-9a-f]{64}$'
+     ) delivered ON true
+     LEFT JOIN LATERAL (
        SELECT COALESCE(SUM(CASE
-         WHEN status='SETTLED' THEN COALESCE(actual_spent_wei,reserved_wei)
-         WHEN status IN ('RESERVED','SUBMITTED','MANUAL_REVIEW') THEN reserved_wei
+         WHEN g.status='SETTLED' THEN COALESCE(g.actual_spent_wei,g.reserved_wei)
+         WHEN g.status IN ('RESERVED','SUBMITTED','MANUAL_REVIEW') THEN g.reserved_wei
          ELSE 0 END),0)::numeric AS amount
-       FROM public.cryptocrawler_system_native_gas_spends
-       WHERE lower(chain)=lower($1) AND lower(wallet)=lower($2)
-     )
-     SELECT s.scope, delivered.amount::text AS delivered_wei,
-            committed.amount::text AS committed_wei,
-            GREATEST(delivered.amount-committed.amount,0)::text AS spendable_wei
-     FROM public.zero_capital_capital_state s, delivered, committed
+       FROM public.cryptocrawler_system_native_gas_spends g
+       WHERE g.scope=s.scope
+         AND lower(g.chain)=lower($1) AND lower(g.wallet)=lower($2)
+     ) committed ON true
      WHERE s.lifecycle='SELF_FUNDED'
-       AND delivered.amount-committed.amount >= $3::numeric
-     ORDER BY s.updated_at DESC
+       AND COALESCE(delivered.amount,0)-COALESCE(committed.amount,0) >= $3::numeric
+     ORDER BY COALESCE(delivered.amount,0)-COALESCE(committed.amount,0) DESC, s.updated_at DESC
      LIMIT 1`,
     [chain, wallet, minimumWei.toString()],
   );
