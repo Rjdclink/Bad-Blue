@@ -5,6 +5,7 @@ import { centralizedExchangeExecutor } from '../execution/centralized-exchange-e
 import { routeMeasuredOpportunity } from '../execution/unified-execution-router.js';
 import { resolveCexFeeEvidence, type CexFeeVenue } from '../intelligence/cex-fee-resolver.js';
 import { ensureBpsDecompositionObservability } from './bps-decomposition-observability.js';
+import { ensureBpsFrontierWave3Wiring } from './bps-frontier-wave3-wiring.js';
 import { ensureEconomicTransformationWiring } from './economic-transformation-wiring.js';
 import { ensureZeroCapitalRecoveryObservability } from './zero-capital-recovery-observability.js';
 import { ensureProfitabilityRecoveryCoordinator } from './profitability-recovery-coordinator.js';
@@ -155,6 +156,7 @@ function requestMinimumExecutionEvidence(candidate: MeasuredCandidate): void {
 
 export function ensureDynamicProfitabilityAdmissionWiring(): void {
   ensureEconomicTransformationWiring();
+  ensureBpsFrontierWave3Wiring();
   ensureBpsDecompositionObservability();
   ensureZeroCapitalRecoveryObservability();
   ensureProfitabilityRecoveryCoordinator();
@@ -237,6 +239,8 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     activeMissingEvidenceAcquisition: 'exact_positive_fee_legs_then_targeted_canonical_revalidation_off_hot_path',
     missingInformationExecutionVetoAuthority: false,
     adaptiveProfitabilityThresholdAuthority: 'ranking_and_sizing_only',
+    bpsFrontierWave3: 'measured_like_notional_total_cost_frontier_plus_keyless_lighter_public_benchmark',
+    bpsFrontierSyntheticSavingsAllowed: false,
     cryptaraExecutionAuthority: false,
     tradingViewExecutionAuthority: false,
     zeroCapitalAdmissionMonkeyPatchInstalled: false,
