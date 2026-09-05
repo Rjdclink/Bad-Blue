@@ -89,7 +89,7 @@ export function chooseGasFundingMode(
         strictZeroInitialCapitalEligible: strictEligible,
         operatorMonetaryInputRequired: !strictEligible,
         reason: strictEligible
-          ? 'Native reserve is sufficient and durable provenance proves it is system-owned; actual receipt gas remains canonical realized cost'
+          ? 'Native reserve is sufficient and durable provenance proves it is system-owned; actual receipt gas is terminally converted and subtracted from realized economics'
           : 'Non-strict mode permits the available native balance without treating it as proven system-owned bootstrap capital',
       };
     }
