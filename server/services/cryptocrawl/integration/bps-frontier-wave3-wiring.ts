@@ -1,0 +1,366 @@
+import logger from '../../../logger.js';
+import { getLastOrderedMarketUniverseSymbols } from '../discovery/market-universe-controller.js';
+import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
+import { fetchJsonWithRetry } from '../utils/resilient-http.js';
+
+const LIGHTER_FUNDING_URL = 'https://mainnet.zklighter.elliot.ai/api/v1/funding-rates';
+const LIGHTER_DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT'];
+
+interface LighterFundingRow {
+  market_id?: number;
+  exchange?: string;
+  symbol?: string;
+  rate?: number | string;
+}
+
+interface LighterFundingResponse {
+  code?: number;
+  message?: string;
+  funding_rates?: LighterFundingRow[];
+}
+
+export interface MeasuredBpsFrontierRoute {
+  routeKey: string;
+  opportunityId: string;
+  topology: MeasuredCandidate['topology'];
+  venues: string[];
+  chains: string[];
+  notionalUsd: number;
+  allInCostBps: number;
+  netBps: number | null;
+  observedAt: number;
+  expiresAt: number;
+}
+
+export interface MeasuredBpsFrontierGroup {
+  routeKey: string;
+  winner: MeasuredBpsFrontierRoute;
+  runnerUp: MeasuredBpsFrontierRoute | null;
+  measuredSavingsBps: number | null;
+  comparedRoutes: number;
+}
+
+export interface BpsFrontierWave3Snapshot {
+  observedAt: number;
+  groups: MeasuredBpsFrontierGroup[];
+  lighter: {
+    lastPollAt: number | null;
+    observations: number;
+    matchedSymbols: string[];
+    lastError: string | null;
+    executionAuthority: false;
+  };
+  authority: 'measured_total_cost_frontier_and_external_discovery_only';
+  executionAuthority: false;
+  syntheticSavingsAllowed: false;
+}
+
+let installed = false;
+let timer: NodeJS.Timeout | null = null;
+let frontierTimer: NodeJS.Timeout | null = null;
+let lighterInFlight: Promise<void> | null = null;
+let unsubscribe: (() => void) | null = null;
+let latestGroups: MeasuredBpsFrontierGroup[] = [];
+let lastLighterPollAt: number | null = null;
+let lastLighterObservations = 0;
+let lastLighterSymbols: string[] = [];
+let lastLighterError: string | null = null;
+
+function finite(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function pollIntervalMs(): number {
+  const value = Number(process.env.CRYPTOCRAWL_BPS_FRONTIER_POLL_MS || 30_000);
+  return Number.isFinite(value) ? Math.max(10_000, Math.min(120_000, Math.trunc(value))) : 30_000;
+}
+
+function candidateTtlMs(): number {
+  const value = Number(process.env.CRYPTOCRAWL_LIGHTER_BENCHMARK_TTL_MS || 45_000);
+  return Number.isFinite(value) ? Math.max(5_000, Math.min(120_000, Math.trunc(value))) : 45_000;
+}
+
+function referenceNotionalUsd(): number {
+  const value = Number(process.env.CRYPTOCRAWL_FUNDING_REFERENCE_NOTIONAL_USD || 250);
+  return Number.isFinite(value) ? Math.max(1, value) : 250;
+}
+
+function splitCanonicalSymbol(symbol: string): { base: string; quote: string } | null {
+  const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
+  return match ? { base: match[1], quote: match[2] } : null;
+}
+
+function canonicalLighterSymbol(raw: unknown, wanted: Set<string>): string | null {
+  const source = String(raw || '').trim().toUpperCase().replace(/[\/_-]/g, '');
+  if (!source) return null;
+  if (wanted.has(source)) return source;
+  for (const quote of ['USDT', 'USDC', 'USD'] as const) {
+    const candidate = `${source}${quote}`;
+    if (wanted.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+function routeIdentity(candidate: MeasuredCandidate): string | null {
+  const notionalUsd = finite(candidate.canonicalBps.notionalUsd);
+  const allInCostBps = finite(candidate.canonicalBps.allInCostBps);
+  if (notionalUsd === null || notionalUsd <= 0 || allInCostBps === null) return null;
+  const assets = [...candidate.assets].map(value => value.trim().toUpperCase()).filter(Boolean).sort();
+  if (assets.length === 0) return null;
+  const chain = [...candidate.chains].map(value => value.trim().toLowerCase()).filter(Boolean).sort().join(',') || 'unknown';
+  // Compare only economically like-sized routes; cross-notional comparisons can
+  // falsely report savings caused by size rather than routing.
+  const notionalBucket = notionalUsd.toFixed(2);
+  return `${assets.join('/')}:${chain}:${notionalBucket}`;
+}
+
+function measuredRoute(candidate: MeasuredCandidate, key: string): MeasuredBpsFrontierRoute | null {
+  const notionalUsd = finite(candidate.canonicalBps.notionalUsd);
+  const allInCostBps = finite(candidate.canonicalBps.allInCostBps);
+  if (notionalUsd === null || notionalUsd <= 0 || allInCostBps === null) return null;
+  return {
+    routeKey: key,
+    opportunityId: candidate.opportunityId,
+    topology: candidate.topology,
+    venues: [...candidate.venues],
+    chains: [...candidate.chains],
+    notionalUsd,
+    allInCostBps,
+    netBps: finite(candidate.canonicalBps.netBps),
+    observedAt: candidate.observedAt,
+    expiresAt: candidate.expiresAt,
+  };
+}
+
+function recomputeMeasuredFrontier(): void {
+  const now = Date.now();
+  const grouped = new Map<string, MeasuredBpsFrontierRoute[]>();
+  for (const candidate of measuredCandidateRegistry.getRecent(4096)) {
+    if (candidate.expiresAt <= now || candidate.status === 'expired' || candidate.status === 'blocked') continue;
+    const key = routeIdentity(candidate);
+    if (!key) continue;
+    const route = measuredRoute(candidate, key);
+    if (!route) continue;
+    const routes = grouped.get(key) || [];
+    // Multiple snapshots of the same exact route must not manufacture a
+    // smart-routing comparison. Keep only the freshest route signature.
+    const signature = `${route.topology}:${route.venues.slice().sort().join('>')}`;
+    const previousIndex = routes.findIndex(item => `${item.topology}:${item.venues.slice().sort().join('>')}` === signature);
+    if (previousIndex >= 0) {
+      if (route.observedAt >= routes[previousIndex].observedAt) routes[previousIndex] = route;
+    } else {
+      routes.push(route);
+    }
+    grouped.set(key, routes);
+  }
+
+  latestGroups = [...grouped.entries()].flatMap(([routeKey, routes]) => {
+    if (routes.length < 2) return [];
+    const ordered = [...routes].sort((left, right) =>
+      left.allInCostBps - right.allInCostBps
+      || (right.netBps ?? Number.NEGATIVE_INFINITY) - (left.netBps ?? Number.NEGATIVE_INFINITY)
+      || right.observedAt - left.observedAt);
+    const winner = ordered[0];
+    const runnerUp = ordered[1] || null;
+    const measuredSavingsBps = runnerUp
+      ? Math.max(0, runnerUp.allInCostBps - winner.allInCostBps)
+      : null;
+    return [{ routeKey, winner, runnerUp, measuredSavingsBps, comparedRoutes: ordered.length }];
+  }).sort((left, right) =>
+    (right.measuredSavingsBps ?? -1) - (left.measuredSavingsBps ?? -1)
+    || left.winner.allInCostBps - right.winner.allInCostBps)
+    .slice(0, 128);
+}
+
+function scheduleFrontierRefresh(): void {
+  if (frontierTimer) return;
+  frontierTimer = setTimeout(() => {
+    frontierTimer = null;
+    recomputeMeasuredFrontier();
+  }, 250);
+  frontierTimer.unref?.();
+}
+
+async function pollLighterFundingBenchmark(): Promise<void> {
+  if (lighterInFlight || process.env.CRYPTOCRAWL_LIGHTER_PUBLIC_DISCOVERY === 'false') return lighterInFlight || Promise.resolve();
+  lighterInFlight = (async () => {
+    const universe = getLastOrderedMarketUniverseSymbols();
+    const requested = new Set([...(universe.length ? universe : LIGHTER_DEFAULT_SYMBOLS), ...LIGHTER_DEFAULT_SYMBOLS]
+      .map(value => value.trim().toUpperCase()).filter(Boolean));
+    const payload = await fetchJsonWithRetry<LighterFundingResponse>(LIGHTER_FUNDING_URL, {
+      maxRetries: 1,
+      baseDelayMs: 200,
+      maxDelayMs: 800,
+      timeoutMs: 3_000,
+    });
+    if (!payload || (payload.code !== undefined && payload.code !== 0) || !Array.isArray(payload.funding_rates)) {
+      throw new Error(`Lighter public funding response unavailable${payload?.message ? `: ${payload.message}` : ''}`);
+    }
+
+    const now = Date.now();
+    const ttlMs = candidateTtlMs();
+    const notionalUsd = referenceNotionalUsd();
+    const rows = payload.funding_rates.filter(row => String(row.exchange || '').trim().toLowerCase() === 'lighter');
+    const matchedSymbols = new Set<string>();
+    let recorded = 0;
+
+    for (const row of rows) {
+      const symbol = canonicalLighterSymbol(row.symbol, requested);
+      const rate = finite(row.rate);
+      if (!symbol || rate === null || rate === 0) continue;
+      const split = splitCanonicalSymbol(symbol);
+      if (!split) continue;
+      const marketId = Number.isFinite(Number(row.market_id)) ? Number(row.market_id) : -1;
+      const expectedFundingUsd = Math.abs(rate) * notionalUsd;
+      matchedSymbols.add(symbol);
+      measuredCandidateRegistry.record({
+        opportunityId: `funding:lighter_public:${marketId}:${symbol}`,
+        topology: 'FUNDING_ARBITRAGE',
+        observedAt: now,
+        expiresAt: now + ttlMs,
+        status: 'enriched',
+        assets: [split.base, split.quote],
+        venues: ['lighter'],
+        chains: ['lighter_zk_rollup'],
+        rawQuotes: [{
+          source: 'lighter:public_funding_rates',
+          venue: 'lighter',
+          symbol,
+          observedAt: now,
+          price: null,
+          executable: false,
+          provenance: [
+            'lighter_official_public_rest:/api/v1/funding-rates',
+            `lighter_market_id:${marketId}`,
+            `lighter_funding_rate:${rate}`,
+            'public_no_auth',
+          ],
+        }],
+        depth: {
+          status: 'unavailable',
+          detail: 'Lighter public funding is a keyless fee/funding frontier benchmark only; exact executable depth, account tier, latency and margin capacity are not inferred',
+        },
+        economics: {
+          grossProfitUsd: expectedFundingUsd,
+          deterministicNetProfitUsd: null,
+          feeUsd: null,
+          gasUsd: null,
+          bridgeUsd: null,
+          expectedSlippageBps: null,
+          expectedPriceImpactBps: null,
+          notionalUsd,
+          netProfitBps: null,
+        },
+        quoteAgeMs: 0,
+        executableCapability: false,
+        executionCapabilityReason: 'Lighter public data is admitted only as a BPS/funding benchmark. Execution requires an authenticated Lighter account/API signer, exact account-tier fees, measured depth/latency, and provenance-backed system-owned margin/collateral; no user-funded collateral path is admitted.',
+        missingInformation: [
+          'lighter_authenticated_execution_account',
+          'lighter_exact_account_tier_fee_evidence',
+          'lighter_measured_entry_exit_depth',
+          'lighter_measured_execution_latency_cost',
+          'lighter_system_owned_margin_collateral_provenance',
+          'lighter_terminal_settlement_adapter',
+        ],
+        provenance: [
+          'bps_frontier_wave3:external_zero_fee_low_fee_venue_benchmark',
+          'lighter_public_funding_discovery:keyless',
+          'execution_promotion:false',
+          'personal_capital_allowed:false',
+          'personal_collateral_allowed:false',
+          'unknown_cost_is_not_zero',
+          'synthetic_bps_savings:false',
+        ],
+      });
+      recorded++;
+    }
+
+    lastLighterPollAt = now;
+    lastLighterObservations = recorded;
+    lastLighterSymbols = [...matchedSymbols].sort();
+    lastLighterError = null;
+    logger.info('[BpsFrontierWave3] Keyless Lighter public funding frontier refreshed', {
+      component: 'BpsFrontierWave3Wiring',
+      endpoint: LIGHTER_FUNDING_URL,
+      sourceRows: rows.length,
+      matchedObservations: recorded,
+      matchedSymbols: lastLighterSymbols.slice(0, 24),
+      apiKeyRequired: false,
+      executionAuthority: false,
+      accountTierFeeAssumed: false,
+      hiddenLatencyBpsAssumed: false,
+      userCollateralAllowed: false,
+    });
+  })().catch(error => {
+    lastLighterPollAt = Date.now();
+    lastLighterObservations = 0;
+    lastLighterSymbols = [];
+    lastLighterError = error instanceof Error ? error.message : String(error);
+    logger.debug('[BpsFrontierWave3] Lighter public benchmark unavailable; existing discovery continues', {
+      component: 'BpsFrontierWave3Wiring',
+      error: lastLighterError,
+      existingDiscoveryBlocked: false,
+      executionAuthority: false,
+    });
+  }).finally(() => {
+    lighterInFlight = null;
+  });
+  return lighterInFlight;
+}
+
+export function getBpsFrontierWave3Snapshot(): BpsFrontierWave3Snapshot {
+  return {
+    observedAt: Date.now(),
+    groups: latestGroups.map(group => ({
+      ...group,
+      winner: { ...group.winner, venues: [...group.winner.venues], chains: [...group.winner.chains] },
+      runnerUp: group.runnerUp ? { ...group.runnerUp, venues: [...group.runnerUp.venues], chains: [...group.runnerUp.chains] } : null,
+    })),
+    lighter: {
+      lastPollAt: lastLighterPollAt,
+      observations: lastLighterObservations,
+      matchedSymbols: [...lastLighterSymbols],
+      lastError: lastLighterError,
+      executionAuthority: false,
+    },
+    authority: 'measured_total_cost_frontier_and_external_discovery_only',
+    executionAuthority: false,
+    syntheticSavingsAllowed: false,
+  };
+}
+
+export function ensureBpsFrontierWave3Wiring(): void {
+  if (installed || process.env.CRYPTOCRAWL_BPS_FRONTIER_WAVE3_ENABLED === 'false') return;
+  installed = true;
+  recomputeMeasuredFrontier();
+  unsubscribe = measuredCandidateRegistry.onUpdate(() => scheduleFrontierRefresh());
+  void pollLighterFundingBenchmark();
+  if (process.env.NO_INTERVALS !== 'true') {
+    timer = setInterval(() => void pollLighterFundingBenchmark(), pollIntervalMs());
+    timer.unref?.();
+  }
+  logger.info('[BpsFrontierWave3] Measured total-cost frontier installed', {
+    component: 'BpsFrontierWave3Wiring',
+    smartOrderRoutingUpgrade: 'compare_only_like_notional_fresh_canonical_all_in_cost_routes',
+    externalVenueBenchmark: 'lighter_public_funding_keyless_discovery_only',
+    directVsAggregatorPolicy: 'only_measured_canonical_costs_may_report_savings',
+    uniswapV4Policy: 'dynamic_fee_hook_flash_accounting_surface_requires_exact_pool_quote_before_economic_credit',
+    intentSolverPolicy: 'cow_uniswapx_style_solver_surfaces_require_exact_executable_quote_and_zero_personal_resource_proof_before_admission',
+    mevPolicy: 'private_builder_or_refund_value_requires_terminal_realized_evidence_before_bps_credit',
+    syntheticSavingsAllowed: false,
+    independentExecutionAuthority: false,
+    personalCapitalAllowed: false,
+    personalCollateralAllowed: false,
+  });
+}
+
+export function stopBpsFrontierWave3WiringForTests(): void {
+  if (timer) clearInterval(timer);
+  if (frontierTimer) clearTimeout(frontierTimer);
+  timer = null;
+  frontierTimer = null;
+  unsubscribe?.();
+  unsubscribe = null;
+  installed = false;
+}
