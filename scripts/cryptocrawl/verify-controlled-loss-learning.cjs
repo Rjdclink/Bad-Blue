@@ -94,7 +94,13 @@ must(lotPath, lot, "executionAuthority: 'controlled_loss_learning_worker'", 'con
 
 const schemaPath = 'server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts';
 const schema = read(schemaPath);
-must(schemaPath, schema, 'const SCHEMA_VERSION = 12;', 'Overflow schema must advance to version 12');
+const schemaVersionMatch = schema.match(/const SCHEMA_VERSION = (\d+);/);
+if (!schemaVersionMatch || Number(schemaVersionMatch[1]) < 12) {
+  failures.push(`${schemaPath}: Overflow schema must be at least controlled-loss schema version 12`);
+} else {
+  const schemaVersion = Number(schemaVersionMatch[1]);
+  must(schemaPath, schema, `const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v${schemaVersion}'`, 'Overflow schema lock version must match current schema version');
+}
 must(schemaPath, schema, '041_cryptocrawler_controlled_loss_learning.sql', 'Overflow schema must execute migration 041');
 must(schemaPath, schema, 'public.cryptocrawler_controlled_loss_learning_events', 'controlled-loss event table must be startup-required');
 must(schemaPath, schema, 'public.cryptocrawler_record_controlled_loss_terminal(uuid,numeric,jsonb)', 'controlled-loss terminal RPC must be startup-required');
