@@ -126,7 +126,12 @@ export function prepareMeasuredTopologyNixGenBid(candidate: MeasuredCandidate, d
       strategyId: decision.path.toLowerCase(), strategyClass, observedAt: candidate.observedAt, expiresAt: candidate.expiresAt,
       economics: { netProfitUsd, notionalUsd, netBps: candidate.canonicalBps.netBps, measuredAt: candidate.canonicalBps.measuredAt, authority: candidate.canonicalBps.source },
       execution: { eligible: candidate.status === 'eligible' && decision.admitted, executable: candidate.executableCapability && decision.admitted, settlementCapable: true, authoritativePath: measuredTopologyAuthoritativePath(decision) },
-      advisory: { probabilityOfProfitableExecution: Number.isFinite(decision.score.confidenceLevel) ? decision.score.confidenceLevel : undefined, rankScore: undefined },
+      advisory: {
+        probabilityOfProfitableExecution: Number.isFinite(decision.score.confidenceLevel) ? decision.score.confidenceLevel : undefined,
+        // Do not feed UnifiedExecutionScore.profitabilityScore back into Nix-Gen:
+        // that score already contains profit/confidence and would double-count them.
+        rankScore: undefined,
+      },
       resources: projection.demands,
       mutualExclusionGroup: `opportunity:${candidate.opportunityId}`,
       metadata: {
