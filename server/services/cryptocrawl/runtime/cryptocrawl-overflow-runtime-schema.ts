@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 14;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v14';
+const SCHEMA_VERSION = 15;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v15';
 
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
@@ -48,6 +48,7 @@ const MIGRATIONS = [
   '042_cryptocrawler_onchain_system_capital.sql',
   '043_cryptocrawler_cross_chain_lifecycle.sql',
   '044_cryptocrawler_funding_feedback_recovery.sql',
+  '045_cryptocrawler_system_native_gas_spend_authority.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -91,6 +92,7 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_system_capital_sweep_conversions',
   'public.cryptocrawler_payout_funding_transfers',
   'public.cryptocrawler_controlled_loss_learning_events',
+  'public.cryptocrawler_system_native_gas_spends',
   'private.cryptocrawler_rainbow_profit_events',
   'private.cryptocrawler_rainbow_profit_sources',
   'private.cryptara_trade_outcomes',
@@ -124,6 +126,11 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_gate_non_okx_payout_schedule()',
   'public.cryptocrawler_enforce_lifecycle_inventory_reservation()',
   'public.cryptocrawler_record_controlled_loss_terminal(uuid,numeric,jsonb)',
+  'public.cryptocrawler_reserve_system_native_gas_spend(text,text,text,text,text,numeric)',
+  'public.cryptocrawler_submit_system_native_gas_spend(uuid,text)',
+  'public.cryptocrawler_settle_system_native_gas_spend(uuid,text,numeric,jsonb)',
+  'public.cryptocrawler_release_system_native_gas_spend(uuid)',
+  'public.cryptocrawler_mark_system_native_gas_spend_manual_review(uuid,text)',
 ] as const;
 
 let schemaReady = false;
