@@ -2,7 +2,7 @@ import { Contract, BigNumber, ethers, providers } from 'ethers';
 import type { SupportedExecutionChain } from './onchain-payload-builder.js';
 import { resolveSponsoredReceiverVault } from './sponsored-receiver-manager.js';
 
-export type FlashLoanProviderKind = 'balancer_v2' | 'aave_v3';
+export type FlashLoanProviderKind = 'balancer_v2' | 'aave_v3' | 'morpho_blue';
 
 export interface FlashLoanProviderEconomics {
   provider: FlashLoanProviderKind;
@@ -36,6 +36,18 @@ const AAVE_DATA_PROVIDER_ABI = [
 ];
 const BALANCER_FIXED_POINT_ONE = 10n ** 18n;
 const AAVE_BPS_DENOMINATOR = 10_000n;
+
+// Morpho Blue's core interface defines flashFee as exactly zero and maxFlashLoan
+// as the token balance held by the singleton. Addresses are public on-chain
+// infrastructure, not credentials. Environment overrides remain authoritative so
+// new deployments can be added without code changes.
+const MORPHO_BLUE_DEFAULTS: Partial<Record<SupportedExecutionChain, string>> = {
+  ethereum: '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb',
+  base: '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb',
+  polygon: '0x1bF0c2541F820E775182832f06c0B7Fc27A25f67',
+  arbitrum: '0x6c247b1F6182318877311737BaC0844bAa518F5e',
+  optimism: '0xce95AfbB8EA029495c66020883F87aaE8864AF92',
+};
 
 function requireAddress(label: string, value: string): string {
   if (!ethers.utils.isAddress(value)) throw new Error(`${label} must be a valid EVM address`);
@@ -75,6 +87,16 @@ export function resolveAaveV3Pool(
   return candidate ? requireNonZeroAddress(`Aave V3 pool for ${chain}`, candidate) : null;
 }
 
+export function resolveMorphoBlue(
+  chain: SupportedExecutionChain,
+  environment: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const mapped = parseAddressMap(environment.ZERO_CAPITAL_MORPHO_BLUE_CONTRACTS, 'ZERO_CAPITAL_MORPHO_BLUE_CONTRACTS');
+  const chainSpecific = environment[`ZERO_CAPITAL_MORPHO_BLUE_${chain.toUpperCase()}`]?.trim();
+  const candidate = chainSpecific || mapped[chain] || MORPHO_BLUE_DEFAULTS[chain];
+  return candidate ? requireNonZeroAddress(`Morpho Blue for ${chain}`, candidate) : null;
+}
+
 export function calculateMeasuredFlashLoanFee(
   evidence: FlashLoanProviderEconomics,
   amount: bigint,
@@ -82,9 +104,6 @@ export function calculateMeasuredFlashLoanFee(
   if (amount < 0n || evidence.feeRateNumerator === null || evidence.feeRateDenominator === null || evidence.feeRateDenominator <= 0n) return null;
   if (evidence.feeRateNumerator < 0n) return null;
   if (amount === 0n || evidence.feeRateNumerator === 0n) return 0n;
-  // Conservative integer rounding: never understate a measured provider fee by
-  // truncating fractional base units. This is especially important for Balancer's
-  // 18-decimal fixed-point fee percentage.
   return (amount * evidence.feeRateNumerator + evidence.feeRateDenominator - 1n) / evidence.feeRateDenominator;
 }
 
@@ -145,13 +164,11 @@ async function resolveAaveReserveEvidence(input: {
   let aTokenAddress: string | null = null;
   const provenance: string[] = [];
 
-  // Newer Aave V3 Pool implementations expose a direct reserve-token getter.
   try {
     aTokenAddress = requireNonZeroAddress('Aave V3 reserve aToken', await input.pool.getReserveAToken(input.asset) as string);
     provenance.push('aave_v3_pool_getReserveAToken');
   } catch {
-    // Older V3 deployments are handled below through the canonical market
-    // AddressesProvider -> PoolDataProvider path rather than by a static address.
+    // Older V3 deployments are handled through the AddressesProvider path.
   }
 
   let dataProvider: Contract | null = null;
@@ -263,6 +280,46 @@ export async function measureAaveV3FlashLoanEconomics(input: {
   };
 }
 
+export async function measureMorphoBlueFlashLoanEconomics(input: {
+  chain: SupportedExecutionChain;
+  provider: providers.Provider;
+  asset: string;
+}): Promise<FlashLoanProviderEconomics | null> {
+  const morpho = resolveMorphoBlue(input.chain);
+  if (!morpho) return null;
+  const asset = requireNonZeroAddress('flash-loan asset', input.asset);
+  const [code, liquidityRaw] = await Promise.all([
+    input.provider.getCode(morpho),
+    new Contract(asset, ERC20_ABI, input.provider).balanceOf(morpho) as Promise<BigNumber>,
+  ]);
+  const codePresent = code !== '0x';
+  const liquidityMeasured = liquidityRaw.gt(0);
+  return {
+    provider: 'morpho_blue',
+    chain: input.chain,
+    infrastructure: morpho,
+    asset,
+    availableLiquidity: liquidityRaw.toBigInt(),
+    feeBps: 0,
+    feeRateNumerator: 0n,
+    feeRateDenominator: 1n,
+    observedAt: Date.now(),
+    executableEvidenceComplete: codePresent && liquidityMeasured,
+    missingEvidence: [
+      ...(!codePresent ? ['morpho_contract_bytecode'] : []),
+      ...(!liquidityMeasured ? ['flash_loan_liquidity'] : []),
+    ],
+    provenance: [
+      'morpho_blue_core_flashFee_zero_by_interface',
+      'morpho_blue_maxFlashLoan_equals_contract_token_balance',
+      'morpho_blue_contract_bytecode_checked',
+      'morpho_blue_token_balance_measured',
+      'receiver_readiness_separate_authority',
+      'synthetic_evidence:false',
+    ],
+  };
+}
+
 export async function measureFlashLoanProviders(input: {
   chain: SupportedExecutionChain;
   provider: providers.Provider;
@@ -271,6 +328,7 @@ export async function measureFlashLoanProviders(input: {
   const settled = await Promise.allSettled([
     measureBalancerFlashLoanEconomics(input),
     measureAaveV3FlashLoanEconomics(input),
+    measureMorphoBlueFlashLoanEconomics(input),
   ]);
   return settled.flatMap(result =>
     result.status === 'fulfilled' && result.value ? [result.value] : [],
