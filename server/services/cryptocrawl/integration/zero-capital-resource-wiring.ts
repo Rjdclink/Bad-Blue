@@ -232,10 +232,11 @@ async function prepareGraphlessPermissions(
       chain,
       routes: graphless.length,
       permissionCalls: calls.length,
-      fundingMode: funding.mode,
+      zeroPersonalCostGasMode: funding.mode,
       onlyPositiveRoutesPrepared: true,
       requiresFreshRequote: calls.length > 0,
       duplicateExecutionEligibilityAuthority: false,
+      personalFundingRequested: false,
     });
   } catch (error) {
     for (const route of graphless) eligible.delete(route.id);
@@ -244,6 +245,7 @@ async function prepareGraphlessPermissions(
       chain,
       routes: graphless.length,
       error: error instanceof Error ? error.message : String(error),
+      personalFundingRequested: false,
     });
   }
   return eligible;
@@ -335,12 +337,12 @@ export function ensureZeroCapitalResourceWiring(): void {
     if (chain === 'europa') return configured;
 
     const receiverReady = !!target.receiverManager.getReceiver(chain);
-    const funding = await target.getGasFundingDecision(chain);
-    const fundingReady = funding.mode !== 'unavailable';
+    const gasResource = await target.getGasFundingDecision(chain);
+    const gasResourceReady = gasResource.mode !== 'unavailable';
     const admittedConfigured: ZeroCapitalOpportunity[] = [];
     for (const opportunity of configured) {
       const positive = opportunity.expectedProfit > 0n;
-      const executableCapability = positive && receiverReady && fundingReady;
+      const executableCapability = positive && receiverReady && gasResourceReady;
       recordZeroCapitalCandidate({
         opportunity,
         chain,
@@ -348,14 +350,14 @@ export function ensureZeroCapitalResourceWiring(): void {
         executableCapability,
         executionCapabilityReason: !positive
           ? `Measured configured route is ${opportunity.netProfitBps} BPS net and retained inside the observation envelope for optimization only`
-          : !fundingReady
-            ? `Measured configured atomic route is deterministic-positive, but live gas funding is unavailable: ${funding.reason}`
+          : !gasResourceReady
+            ? `Measured configured atomic route is deterministic-positive, but no proven zero-personal-cost gas resource is currently available: ${gasResource.reason}`
             : receiverReady
-              ? 'Measured configured atomic route is deterministic-positive with live gas funding and receiver; canonical hard-fact admission remains required before execution'
-              : 'Measured configured atomic route is deterministic-positive, but no verified funded receiver is registered on the chain',
+              ? 'Measured configured atomic route is deterministic-positive with a proven zero-personal-cost gas resource and receiver; canonical hard-fact admission remains required before execution'
+              : 'Measured configured atomic route is deterministic-positive, but no verified execution receiver is registered on the chain',
         missingInformation: !positive || executableCapability ? [] : [
-          ...(!fundingReady ? ['live_gas_funding'] : []),
-          ...(!receiverReady ? ['verified_funded_receiver'] : []),
+          ...(!gasResourceReady ? ['zero_personal_cost_gas_resource'] : []),
+          ...(!receiverReady ? ['verified_execution_receiver'] : []),
         ],
       });
       if (!positive) {
@@ -371,10 +373,10 @@ export function ensureZeroCapitalResourceWiring(): void {
       admittedConfigured.push(opportunity);
     }
 
-    // Bind discovery economics to the same live funding authority used at
-    // execution. Only an actual sponsored funding decision may zero user gas;
-    // native/unavailable modes retain measured native-gas economics.
-    const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode);
+    // Bind discovery economics to the same live zero-personal-cost gas-resource
+    // authority used at execution. Only an actually proven sponsored decision may
+    // zero user gas; native/unavailable modes retain measured native-gas economics.
+    const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider, gasResource.mode);
     if (dynamicQuotes.length === 0) return admittedConfigured;
     const positiveRouteIds = new Set(dynamicQuotes
       .filter(quote => quote.executablePositive && quote.netProfit > 0n)
@@ -390,7 +392,7 @@ export function ensureZeroCapitalResourceWiring(): void {
       }
       const positive = quote.executablePositive && opportunity.expectedProfit > 0n;
       const permissionReady = positive && permissionEligibleIds.has(quote.id);
-      const executableCapability = positive && fundingReady && receiverReady && permissionReady;
+      const executableCapability = positive && gasResourceReady && receiverReady && permissionReady;
       recordZeroCapitalCandidate({
         opportunity,
         chain,
@@ -399,16 +401,16 @@ export function ensureZeroCapitalResourceWiring(): void {
         executableCapability,
         executionCapabilityReason: !positive
           ? `Measured near-break-even route retained for optimization only; ${quote.bpsToBreakEven} BPS remains to strict positive break-even`
-          : !fundingReady
-            ? `Measured deterministic-positive route has no currently usable gas funding: ${funding.reason}`
+          : !gasResourceReady
+            ? `Measured deterministic-positive route has no currently proven zero-personal-cost gas resource: ${gasResource.reason}`
             : !receiverReady
-              ? 'Measured deterministic-positive route has no verified funded receiver on the chain'
+              ? 'Measured deterministic-positive route has no verified execution receiver on the chain'
               : !permissionReady
                 ? 'Measured deterministic-positive route requires fresh quoting after dynamic receiver permissions'
-                : 'Measured atomic route is deterministic-positive with live funding, receiver and route permissions; simulation runs in parallel and has no execution veto authority',
+                : 'Measured atomic route is deterministic-positive with a proven zero-personal-cost gas resource, receiver and route permissions; simulation runs in parallel and has no execution veto authority',
         missingInformation: !positive || executableCapability ? [] : [
-          ...(!fundingReady ? ['live_gas_funding'] : []),
-          ...(!receiverReady ? ['verified_funded_receiver'] : []),
+          ...(!gasResourceReady ? ['zero_personal_cost_gas_resource'] : []),
+          ...(!receiverReady ? ['verified_execution_receiver'] : []),
           ...(!permissionReady ? ['fresh_quote_after_dynamic_route_permissions'] : []),
         ],
       });
@@ -457,13 +459,13 @@ export function ensureZeroCapitalResourceWiring(): void {
       const provider = target.providers.get(chain);
       const wallet = target.executionWallets.get(chain);
       if (!provider || !wallet) throw new Error(`No live provider/wallet for ${chain}`);
-      const funding = await target.getGasFundingDecision(chain);
-      if (funding.mode === 'unavailable') throw new Error(funding.reason);
+      const gasResource = await target.getGasFundingDecision(chain);
+      if (gasResource.mode === 'unavailable') throw new Error(gasResource.reason);
       const record = await target.receiverManager.ensureReceiver({
         chain: chain as any,
         provider,
         wallet,
-        fundingMode: funding.mode as ReceiverFundingMode,
+        fundingMode: gasResource.mode as ReceiverFundingMode,
       });
       const chainRoutes = routes.filter(route => route.chain === chain);
       const permissionCalls = await target.receiverManager.buildMissingPermissionCalls({
@@ -473,7 +475,7 @@ export function ensureZeroCapitalResourceWiring(): void {
         routes: chainRoutes,
       });
       if (permissionCalls.length > 0) {
-        await target.executeSetupCalls(chain as any, provider, wallet, funding.mode as ReceiverFundingMode, permissionCalls);
+        await target.executeSetupCalls(chain as any, provider, wallet, gasResource.mode as ReceiverFundingMode, permissionCalls);
       }
       return record;
     }));
@@ -486,11 +488,22 @@ export function ensureZeroCapitalResourceWiring(): void {
       else failures.push(`${chain}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
     });
     target.state.receiverRegistry = target.receiverManager.getRecords();
-    target.configuredRoutes = target.configuredRoutes.filter(route => readyChains.has(route.chain as SupportedChain));
-    if (readyChains.size === 0) throw new Error(`No zero-capital route chain has a verified funded receiver: ${failures.join('; ')}`);
+
+    // Resource readiness is transient and route-local. Never delete a configured
+    // discovery route merely because its gas/receiver resource is temporarily
+    // unavailable. Retention lets later cycles retry it and keeps zero-capital
+    // measurement alive while submission remains fail-closed.
+    if (readyChains.size === 0) {
+      throw new Error(`No zero-capital route chain currently has a verified zero-personal-cost execution resource: ${failures.join('; ')}`);
+    }
     if (failures.length > 0) {
-      logger.warn('[ZeroCapitalWiring] Some dynamic/configured route chains are execution-ineligible', {
-        component: 'ZeroCapitalResourceWiring', failures, readyChains: [...readyChains],
+      logger.warn('[ZeroCapitalWiring] Some route chains are temporarily execution-ineligible; discovery routes preserved', {
+        component: 'ZeroCapitalResourceWiring',
+        failures,
+        readyChains: [...readyChains],
+        configuredRoutesPreserved: true,
+        discoveryContinues: true,
+        personalFundingRequested: false,
       });
     }
   };
@@ -558,7 +571,8 @@ export function ensureZeroCapitalResourceWiring(): void {
     globalValueSemantics: 'emergency_ceiling_only',
     nearBreakEvenObservation: true,
     bpsEvidencePropagated: true,
-    sponsoredEconomicsAuthority: 'live_gas_funding_decision_only',
+    gasResourceAuthority: 'live_zero_personal_cost_decision_only',
+    personalFundingRequested: false,
     simulationAuthority: 'parallel_advisory_only',
     scheduler: zeroCapitalResourceScheduler.getTelemetry(),
     safety: ['governance', 'positive_net', 'receiver', 'dynamic_route_permissions', 'fresh_requote_after_permission_change', 'wallet_nonce', 'chain', 'provider', 'protocol', 'gas_sponsor'],
