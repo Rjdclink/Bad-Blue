@@ -1,7 +1,13 @@
 import logger from '../../../logger.js';
 import { getLastOrderedMarketUniverseSymbols } from '../discovery/market-universe-controller.js';
+import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
+import {
+  primeCexFeeEvidenceForVenueSymbols,
+  type CexFeePrimeResult,
+  type CexFeeVenue,
+} from '../intelligence/cex-fee-resolver.js';
 import { evaluateCexFourModeMatrix, type CexModeEconomics } from '../intelligence/cex-four-mode-matrix.js';
-import { buildAdaptiveProfitabilitySearchPolicy } from '../optimization/adaptive-profitability-search-policy.js';
+import { buildAdaptiveProfitabilitySearchPolicy, type AdaptiveProfitabilitySearchPolicy } from '../optimization/adaptive-profitability-search-policy.js';
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -18,6 +24,93 @@ function baseSymbolLimit(): number {
 function baseIntervalMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_CEX_MODE_MATRIX_INTERVAL_MS || 15_000);
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(60_000, Math.trunc(parsed))) : 15_000;
+}
+
+function feePrewarmSymbolLimit(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_CEX_FEE_PREWARM_SYMBOLS || 12);
+  return Number.isFinite(parsed) ? Math.max(3, Math.min(24, Math.trunc(parsed))) : 12;
+}
+
+function feePrewarmMaxAgeMs(policy: AdaptiveProfitabilitySearchPolicy): number {
+  // Five seconds is intentionally the current floor: it is inside the requested
+  // 2-5 second freshness target while keeping Kraken's account-wide private API
+  // lane comfortably below its steady-state rate budget. The resolver remains
+  // single-flight/batched and is still the sole authenticated fee authority.
+  return Math.max(1_000, Math.min(5_000, policy.feeRefreshMaxAgeMs));
+}
+
+function orderedFeePrewarmSymbols(policy: AdaptiveProfitabilitySearchPolicy): string[] {
+  return [...new Set([
+    ...policy.recoverySymbols,
+    ...policy.hybridRecoverySymbols,
+    ...policy.staleEvidenceSymbols,
+    ...policy.orderedSymbols,
+  ])].slice(0, feePrewarmSymbolLimit());
+}
+
+async function prewarmAdaptiveFeeEvidence(
+  policy: AdaptiveProfitabilitySearchPolicy,
+  venues: readonly CexFeeVenue[],
+): Promise<CexFeePrimeResult | null> {
+  const symbols = orderedFeePrewarmSymbols(policy);
+  if (symbols.length === 0 || venues.length === 0) return null;
+  const requested: Partial<Record<CexFeeVenue, readonly string[]>> = {};
+  for (const venue of venues) requested[venue] = symbols;
+  try {
+    return await primeCexFeeEvidenceForVenueSymbols(requested, feePrewarmMaxAgeMs(policy));
+  } catch (error) {
+    logger.warn('[CexFourMode] Adaptive fee prewarm degraded; matrix remains fail-closed on authenticated fee evidence', {
+      component: 'CexFourModeObservabilityWiring',
+      symbols: symbols.length,
+      venues,
+      error: error instanceof Error ? error.message : String(error),
+      executionAuthority: false,
+    });
+    return null;
+  }
+}
+
+function threeVenueCoverage(
+  modes: readonly CexModeEconomics[],
+  symbols: readonly string[],
+  expectedVenues: readonly CexFeeVenue[],
+) {
+  const expectedPairs = new Set<string>();
+  for (let index = 0; index < expectedVenues.length; index += 1) {
+    for (let other = index + 1; other < expectedVenues.length; other += 1) {
+      expectedPairs.add([expectedVenues[index], expectedVenues[other]].sort().join('<->'));
+    }
+  }
+
+  const bySymbol = symbols.map(symbol => {
+    const symbolModes = modes.filter(item => item.symbol === symbol);
+    const observedVenues = [...new Set(symbolModes.flatMap(item => [item.buyVenue, item.sellVenue]))].sort() as CexFeeVenue[];
+    const observedPairs = new Set(symbolModes.map(item => [item.buyVenue, item.sellVenue].sort().join('<->')));
+    const missingVenues = expectedVenues.filter(venue => !observedVenues.includes(venue));
+    const missingPairs = [...expectedPairs].filter(pair => !observedPairs.has(pair));
+    return {
+      symbol,
+      expectedVenueCount: expectedVenues.length,
+      observedVenues,
+      missingVenues,
+      expectedPairFamilies: expectedPairs.size,
+      observedPairFamilies: observedPairs.size,
+      missingPairFamilies: missingPairs,
+      completeThreeVenueParticipation: expectedVenues.length === 3 && missingVenues.length === 0,
+      completePairFamilyCoverage: missingPairs.length === 0,
+    };
+  });
+
+  return {
+    expectedVenues: [...expectedVenues],
+    expectedOrderedPairEvaluationsPerSymbol: expectedVenues.length * Math.max(0, expectedVenues.length - 1),
+    expectedPairFamiliesPerSymbol: expectedPairs.size,
+    completeThreeVenueSymbols: bySymbol.filter(row => row.completeThreeVenueParticipation).length,
+    completePairFamilySymbols: bySymbol.filter(row => row.completePairFamilyCoverage).length,
+    incompleteSymbols: bySymbol.filter(row => !row.completeThreeVenueParticipation || !row.completePairFamilyCoverage).slice(0, 12),
+    matrixLoopAuthority: 'all_ordered_buy_sell_pairs_across_active_executable_venues' as const,
+    executionAuthority: false as const,
+  };
 }
 
 function snapshotMaxAgeMs(): number {
@@ -134,11 +227,14 @@ async function observe(): Promise<void> {
       baseIntervalMs: baseIntervalMs(),
     });
     const symbols = selectionPolicy.orderedSymbols;
+    const activeVenues = getActiveExecutableQuoteVenues() as CexFeeVenue[];
+    const feePrewarm = await prewarmAdaptiveFeeEvidence(selectionPolicy, activeVenues);
     const settled = await Promise.allSettled(symbols.map(symbol => evaluateCexFourModeMatrix({
       symbol,
-      maxFeeAgeMs: selectionPolicy.feeRefreshMaxAgeMs,
+      maxFeeAgeMs: Math.min(selectionPolicy.feeRefreshMaxAgeMs, 5_000),
     })));
-    latest = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []).sort(compare).slice(0, 256);
+    const evaluatedModes = settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+    latest = [...evaluatedModes].sort(compare).slice(0, 256);
 
     const nextPolicy = buildAdaptiveProfitabilitySearchPolicy({
       universeSymbols: universe,
@@ -151,6 +247,7 @@ async function observe(): Promise<void> {
     const positive = latest.filter(item => item.economicallyPositive);
     const nearMiss = latest.filter(item => !item.economicallyPositive);
     const closestBySymbol = getClosestCexNearMissesBySymbol(12);
+    const venueCoverage = threeVenueCoverage(evaluatedModes, symbols, activeVenues);
     logger.info('[CexFourMode] TT/MT/TM/MM measured economic matrix refreshed', {
       component: 'CexFourModeObservabilityWiring',
       symbols: symbols.length,
@@ -179,7 +276,7 @@ async function observe(): Promise<void> {
         explorationSymbols: nextPolicy.explorationSymbols,
         hybridRecoverySymbols: nextPolicy.hybridRecoverySymbols,
         staleEvidenceSymbols: nextPolicy.staleEvidenceSymbols,
-        feeRefreshMaxAgeMs: nextPolicy.feeRefreshMaxAgeMs,
+        feeRefreshMaxAgeMs: Math.min(nextPolicy.feeRefreshMaxAgeMs, 5_000),
         activeBpsSolutionCount: nextPolicy.activeBpsSolutionCount,
         activeBpsSolutionIds: nextPolicy.activeBpsSolutionIds,
         makerFocusMultiplier: nextPolicy.makerFocusMultiplier,
@@ -188,6 +285,22 @@ async function observe(): Promise<void> {
         authority: nextPolicy.authority,
         executionAuthority: nextPolicy.executionAuthority,
       },
+      feeFreshnessPrewarm: feePrewarm ? {
+        symbolLimit: feePrewarmSymbolLimit(),
+        targetMaxAgeMs: feePrewarmMaxAgeMs(selectionPolicy),
+        requestedSymbols: feePrewarm.requestedSymbols,
+        requestedByVenue: feePrewarm.requestedByVenue,
+        resolvedByVenue: {
+          coinbase: feePrewarm.coinbaseResolved,
+          kraken: feePrewarm.krakenResolved,
+          okx: feePrewarm.okxResolved,
+        },
+        unresolved: feePrewarm.unresolved.slice(0, 12),
+        adaptiveHotSymbolsFirst: true,
+        hardcodedSymbolAllowlist: false,
+        executionAuthority: false,
+      } : null,
+      threeVenueCoverage: venueCoverage,
       bestPositive: positive[0] ? {
         symbol: positive[0].symbol,
         mode: positive[0].mode,
@@ -211,7 +324,7 @@ async function observe(): Promise<void> {
       },
       negativeRankingObjective: 'smallest_risk_adjusted_then_exact_bps_to_break_even_first',
       observationFloorBps: Number(process.env.CRYPTOCRAWL_CEX_FOUR_MODE_OBSERVATION_FLOOR_BPS ?? -200),
-      selectedFeeFreshnessTargetMs: selectionPolicy.feeRefreshMaxAgeMs,
+      selectedFeeFreshnessTargetMs: Math.min(selectionPolicy.feeRefreshMaxAgeMs, 5_000),
       hybridObservationExecutionAuthority: false,
       hybridCanonicalExecutionAuthority: true,
       hybridCanonicalExecutionPath: 'MT_TM_maker_terminal_fill_then_fresh_depth_aware_taker_hedge',
