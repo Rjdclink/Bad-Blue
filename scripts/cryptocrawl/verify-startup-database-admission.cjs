@@ -15,6 +15,7 @@ function forbidPattern(text, pattern, message) {
 const railway = read('railway.toml');
 const index = read('server/index.ts');
 const bootstrap = read('server/cryptara-bootstrap-entry.ts');
+const overflowAuthorityBuild = read('scripts/cryptocrawl/build-server-overflow-authority.mjs');
 const gateway = read('server/services/cryptocrawl/integration/cryptara-overflow-primary-gateway.ts');
 const db = read('server/db.ts');
 const migrations = read('server/migrations/reconcileAppSchema.ts');
@@ -41,11 +42,12 @@ requirePattern(index, /else\s+if\s*\(isPermanentDatabaseStartupError\(lastError\
 requirePattern(index, /Unknown transient database\/network failure; pool reset suppressed to avoid reconnect amplification/i, 'unknown transient network faults must suppress pool recreation');
 requirePattern(index, /localPoolFailure:\s*isLocalPoolFailure\(lastError\)/, 'startup telemetry must distinguish proven local pool failure from upstream/transient failure');
 
-// Verified overflow is the normal data plane: no primary health/recovery probe,
-// no degraded waiting state, and services continue. Primary access behind that
-// point is intercepted by the overflow gateway before index.ts loads.
+// Verified Overflow is the normal CryptoCrawler data plane. The bootstrap proves
+// the complete Overflow runtime schema before loading index.ts and never mutates
+// node-postgres globally. Production routing redirects hot CryptoCrawler server/db
+// imports to Overflow while retaining one explicit cold-archive Primary worker.
 requirePattern(index, /overflowDatabaseReady\s*=\s*await\s+waitForOverflowBootstrapReadiness\(\)[\s\S]{0,900}if\s*\(overflowDatabaseReady\)\s*\{[\s\S]{0,700}databaseInitialized\s*=\s*true[\s\S]{0,500}databaseRuntimeMode\s*=\s*'overflow_proxy'/, 'verified overflow must become the normal initialized proxy data plane');
-requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,400}directPrimaryProbes:\s*0[\s\S]{0,400}primaryAccess:\s*'overflow_gateway_only'/, 'overflow startup telemetry must prove zero direct primary probes and gateway-only primary access');
+requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,400}directPrimaryProbes:\s*0/, 'overflow startup telemetry must prove zero direct primary readiness probes');
 forbidPattern(index, /probePrimaryDatabaseOnce/, 'overflow mode must not contain a one-off direct primary startup probe');
 requirePattern(index, /if\s*\(overflowDatabaseReady\)[\s\S]{0,1200}else\s*\{[\s\S]{0,500}const\s+primaryReady\s*=\s*await\s+initializeDatabase\(\)/, 'long primary admission is reachable only when overflow is unavailable');
 requirePattern(index, /overflow_proxy_mode_activated[\s\S]*startupTrace\('routes_import_started'\)/, 'overflow data-plane selection must complete before heavyweight route import');
@@ -53,10 +55,13 @@ requirePattern(index, /const\s+usableDataPlane\s*=\s*databaseInitialized\s*\|\|\
 requirePattern(index, /if\s*\(databaseInitialized\)\s*\{[\s\S]{0,300}await\s+initializeServices\(\)/, 'overflow proxy mode must initialize the actual application/worker services');
 forbidPattern(index, /background_services_skipped_overflow_degraded|until primary recovery|overflow_degraded/, 'overflow must not be treated as temporary degraded recovery mode');
 
-requirePattern(bootstrap, /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*cryptaraOverflowPrimaryGatewayConnect[\s\S]*import\('\.\/index\.js'\)/, 'primary pool interception must be installed before index.ts loads');
-requirePattern(bootstrap, /runThroughCryptaraOverflowPrimaryGateway[\s\S]{0,1200}legacy_application_primary_acquisition/, 'legacy primary acquisitions must be routed through overflow gateway');
-requirePattern(gateway, /routing:\s*'application_to_overflow_bridge_to_primary'/, 'gateway routing must explicitly model application -> overflow/bridge -> primary');
-requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway must expose zero direct application primary calls');
+requirePattern(bootstrap, /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*overflowBootstrap[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*import\('\.\/index\.js'\)/, 'bootstrap must reconcile app schema, install admission, verify Overflow runtime schema, then load index.ts');
+requirePattern(bootstrap, /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY\s*=\s*'true'/, 'verified Overflow must prove the complete CryptoCrawler runtime schema before readiness');
+forbidPattern(bootstrap, /cryptaraOverflowPrimaryGatewayConnect|Object\.getPrototypeOf\(pool\)|(?:Pool\.)?prototype\.connect/, 'bootstrap must not mutate shared node-postgres Pool connection behavior');
+forbidPattern(bootstrap, /legacy_application_primary_acquisition/, 'bootstrap must not install legacy global Primary acquisition routing');
+requirePattern(overflowAuthorityBuild, /if\s*\(!isUnder\(importer,\s*cryptoRoot\)\)\s*return\s+null;[\s\S]*resolved\s*!==\s*rootDbBase[\s\S]*importer\s*===\s*primaryArchiveWorker[\s\S]*redirected\.push[\s\S]*return\s*\{\s*path:\s*overflowDb\s*\}/, 'production bundle must route hot CryptoCrawler server/db imports to Overflow while preserving one explicit Primary archive worker');
+requirePattern(gateway, /routing:\s*'application_to_overflow_bridge_to_primary'/, 'gateway routing must explicitly model scoped upstream Primary access through overflow/bridge');
+requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway must expose zero direct application primary calls inside its scoped route');
 requirePattern(gateway, /createsDatabasePool:\s*false\s+as\s+const/, 'gateway must not create a third pool');
 
 requirePattern(index, /const\s+schemaReady\s*=\s*await\s+runStartupSchemaVerification\(\)/, 'startup must retain production schema telemetry in the overflow-unavailable primary fallback path');

@@ -14,26 +14,38 @@ function forbidPattern(source, pattern, description) {
 
 const bootstrap = read('server/cryptara-bootstrap-entry.ts');
 const index = read('server/index.ts');
+const overflowAuthorityBuild = read('scripts/cryptocrawl/build-server-overflow-authority.mjs');
 const bridgeBootstrap = read('server/services/cryptocrawl/integration/cryptara-supabase-hyper-bridge-bootstrap.ts');
 const bridge = read('server/services/cryptocrawl/integration/cryptara-supabase-hyper-bridge.ts');
 const overflowSuperWorker = read('server/services/cryptocrawl/integration/cryptara-overflow-super-worker.ts');
 const gateway = read('server/services/cryptocrawl/integration/cryptara-overflow-primary-gateway.ts');
 const overflow = read('server/services/cryptocrawl/integration/cryptara-supabase-overflow-worker.ts');
 
-// Exact startup order: admission governor -> overflow verification -> primary
-// acquisition gateway -> server entry. No primary health/recovery probe is allowed
-// when the verified overflow data plane exists.
+// Exact startup order: admission governor -> Overflow verification -> complete
+// CryptoCrawler runtime-schema proof -> server entry. Shared node-postgres Pool
+// behavior is never monkey-patched; hot CryptoCrawler DB imports are redirected
+// explicitly by the production Overflow-authority build router.
 requirePattern(
   bootstrap,
-  /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*await\s+startCryptaraHyperBridgeBootstrap\(\)[\s\S]*overflowBootstrap[\s\S]*cryptaraOverflowPrimaryGatewayConnect[\s\S]*import\('\.\/index\.js'\)/,
-  'verified overflow and primary gateway interception must be installed before index.ts loads',
+  /reconcileAppSchema[\s\S]*installCryptaraSuperWorkerAdmission[\s\S]*startCryptaraHyperBridgeBootstrap[\s\S]*await\s+startCryptaraHyperBridgeBootstrap\(\)[\s\S]*overflowBootstrap[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*import\('\.\/index\.js'\)/,
+  'verified Overflow and complete runtime-schema proof must precede index.ts',
 );
 requirePattern(
   bootstrap,
-  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*runThroughCryptaraOverflowPrimaryGateway[\s\S]*legacy_application_primary_acquisition/,
-  'verified overflow must mediate legacy primary acquisitions',
+  /overflowBootstrap\.state\s*===\s*'ready'[\s\S]*ensureCryptocrawlOverflowRuntimeSchema[\s\S]*CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY\s*=\s*'true'/,
+  'verified Overflow must prove complete CryptoCrawler runtime schema before readiness',
 );
-requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,500}directPrimaryProbes:\s*0/, 'index startup must perform zero direct primary probes in overflow proxy mode');
+forbidPattern(
+  bootstrap,
+  /cryptaraOverflowPrimaryGatewayConnect|Object\.getPrototypeOf\(pool\)|(?:Pool\.)?prototype\.connect|legacy_application_primary_acquisition/,
+  'bootstrap must not install process-wide Primary acquisition interception',
+);
+requirePattern(
+  overflowAuthorityBuild,
+  /if\s*\(!isUnder\(importer,\s*cryptoRoot\)\)\s*return\s+null;[\s\S]*resolved\s*!==\s*rootDbBase[\s\S]*importer\s*===\s*primaryArchiveWorker[\s\S]*redirected\.push[\s\S]*return\s*\{\s*path:\s*overflowDb\s*\}/,
+  'production bundling must redirect hot CryptoCrawler server/db imports to Overflow while preserving the explicit cold-archive Primary worker',
+);
+requirePattern(index, /overflow_proxy_mode_activated[\s\S]{0,500}directPrimaryProbes:\s*0/, 'index startup must perform zero direct primary readiness probes in overflow proxy mode');
 forbidPattern(index, /probePrimaryDatabaseOnce|overflow_degraded|until primary recovery/, 'overflow must not be modeled as temporary recovery failover');
 
 requirePattern(
@@ -71,10 +83,10 @@ requirePattern(bridge, /runThroughCryptaraOverflowPrimaryGateway[\s\S]{0,500}hyp
 
 requirePattern(gateway, /new\s+AsyncLocalStorage/, 'gateway must provide a process-local routing context');
 requirePattern(gateway, /createsDatabasePool:\s*false\s+as\s+const/, 'gateway must not create a third database pool');
-requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway must declare zero direct application primary calls');
+requirePattern(gateway, /directApplicationPrimaryCalls:\s*0\s+as\s+const/, 'gateway must declare zero direct application primary calls inside its scoped route');
 forbidPattern(gateway, /\bnew\s+Pool\s*\(|\bpool\.query\s*\(/, 'gateway is transport context only and must not own a DB pool/query');
 
 forbidPattern(bootstrap, /\bpool\.query\s*\(|\bdb\.execute\s*\(|\bnew\s+Pool\s*\(/, 'bootstrap wrapper must remain query-free and pool-free');
 forbidPattern(bootstrap, /setInterval\s*\(|setTimeout\s*\(/, 'bootstrap wrapper must not add recovery polling');
 
-console.log('[hyper-bridge-bootstrap] PASS: verified overflow starts first, all application primary acquisitions are mediated by overflow gateway, worker reads use local->overflow->primary-on-miss, direct primary health/recovery probes are zero, and authority remains primary');
+console.log('[hyper-bridge-bootstrap] PASS: verified Overflow starts first, hot CryptoCrawler DB imports route explicitly to Overflow, worker reads use local->overflow->primary-on-miss through the scoped gateway, direct primary readiness probes are zero, and no global Pool interception exists');
