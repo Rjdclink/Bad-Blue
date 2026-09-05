@@ -31,14 +31,15 @@ for (const field of [
 assert.match(registry, /zeroCapitalBps:/);
 assert.match(registry, /nearBreakEven:/);
 
-// Near-break-even observations never become execution-preparation work. Only a
-// strict positive with concrete funding/receiver/permission facts can enter
-// canonical admission. Generic missing-information and simulation state are not
-// independent execution authorities.
+// Near-break-even observations may pass upward only to the already-installed
+// measured provider repricer. They cannot become execution-preparation work:
+// executable capability still requires strict positive economics and the core
+// queue independently rejects <=0 after every scan wrapper has run.
 assert.match(wiring, /\.filter\(quote => quote\.executablePositive && quote\.netProfit > 0n\)/);
 assert.match(wiring, /status: positive \? 'deterministic_positive' : 'enriched'/);
 assert.match(wiring, /near_break_even_observation_only/);
-assert.match(wiring, /if \(!positive \|\| !executableCapability\) continue;/);
+assert.match(wiring, /if \(!positive\)\s*\{[\s\S]{0,900}?admittedConfigured\.push\(opportunity\);\s*continue;/);
+assert.match(wiring, /if \(!positive\)\s*\{[\s\S]{0,900}?dynamic\.push\(opportunity\);\s*continue;/);
 assert.match(wiring, /executableCapability: positive && input\.executableCapability/);
 assert.match(wiring, /zeroCapitalDiscoveryFloorBps\(\)/);
 
@@ -127,7 +128,8 @@ assert.doesNotMatch(
   'near-break-even density must not contaminate realized profitability pressure',
 );
 
-// Final queue admission remains strict positive all-in economics.
+// Final queue admission remains strict positive all-in economics after every
+// discovery/resource/provider wrapper has had its chance to improve exact costs.
 assert.match(engine, /if \(opportunity\.expectedProfit <= 0n \|\| Date\.now\(\) > opportunity\.expiresAt\) continue;/);
 
 console.log(JSON.stringify({
@@ -136,7 +138,7 @@ console.log(JSON.stringify({
   zeroCapitalSharedBpsPriority: true,
   zeroCapitalSharedResidualNotionalProbes: true,
   duplicateExecutionEligibilityAuthorityRemoved: true,
-  nearBreakEvenClassification: 'enriched_observation_only',
+  nearBreakEvenClassification: 'enriched_observation_only_until_measured_provider_reprice',
   positiveExecutionFloorPreserved: true,
   gasFundingExecutionTruthBound: true,
   uniswapV3OneBpsFeeTierEndToEnd: true,
