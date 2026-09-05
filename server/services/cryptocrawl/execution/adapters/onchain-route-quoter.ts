@@ -1,6 +1,10 @@
 import { BigNumber, Contract, providers } from 'ethers';
 import type { RoutePlanningSwapStep } from './autonomous-route-planner.js';
-import type { SupportedExecutionChain, SupportedSwapProtocol } from './onchain-payload-builder.js';
+import type {
+  SupportedExecutionChain,
+  SupportedSwapProtocol,
+  UniswapV3FeeTier,
+} from './onchain-payload-builder.js';
 import { EUROPA_SUSHI } from './europa-sushi-registry.js';
 import { buildAtomicNotionalCandidates, selectHighestNetProfit } from './atomic-size-optimizer.js';
 import { calculateProgressivePositionSize } from '../../risk/progressive-position-sizing.js';
@@ -34,7 +38,7 @@ export interface ConfiguredRouteLeg {
   tokenIn: string;
   tokenOut: string;
   pool?: string;
-  feeTier?: 500 | 3000 | 10000;
+  feeTier?: UniswapV3FeeTier;
   fee?: number;
 }
 
@@ -156,7 +160,9 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
     if (pool !== undefined && !isAddress(pool)) throw new Error(`Route ${index} leg ${legIndex} pool must be a valid EVM address`);
 
     const feeTier = leg.feeTier === undefined ? undefined : Number(leg.feeTier);
-    if (feeTier !== undefined && feeTier !== 500 && feeTier !== 3000 && feeTier !== 10000) throw new Error(`Route ${index} leg ${legIndex} feeTier must be 500, 3000, or 10000`);
+    if (feeTier !== undefined && feeTier !== 100 && feeTier !== 500 && feeTier !== 3000 && feeTier !== 10000) {
+      throw new Error(`Route ${index} leg ${legIndex} feeTier must be 100, 500, 3000, or 10000`);
+    }
 
     const fee = leg.fee === undefined ? undefined : Number(leg.fee);
     if (fee !== undefined && (!Number.isFinite(fee) || fee < 0 || fee > 0.1)) throw new Error(`Route ${index} leg ${legIndex} fee must be a decimal fraction between 0 and 0.1`);
@@ -166,7 +172,7 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
       tokenIn,
       tokenOut,
       ...(pool !== undefined ? { pool } : {}),
-      ...(feeTier !== undefined ? { feeTier: feeTier as 500 | 3000 | 10000 } : {}),
+      ...(feeTier !== undefined ? { feeTier: feeTier as UniswapV3FeeTier } : {}),
       ...(fee !== undefined ? { fee } : {}),
     };
   });
