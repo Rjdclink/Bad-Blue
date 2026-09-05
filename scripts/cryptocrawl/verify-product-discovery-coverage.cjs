@@ -1,7 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
-const path = require('node:path');
+const path = require('path');
 const assert = require('node:assert');
 
 const root = path.resolve(__dirname, '..', '..');
@@ -52,7 +52,7 @@ assert(expanded.includes('productDiscoveryExecutionAuthority: false'), 'product 
 // short quote TTL and the runtime presentation boundary must remove an opportunity
 // immediately after expiresAt rather than waiting for the slower periodic scan.
 assert(predictionGenerator.includes('expiresAt: observedAt + ttlMs'), 'prediction parity observations must carry a bounded quote expiry');
-assert(predictionGenerator.includes('executionCapability: false'), 'prediction parity discovery must remain non-executable');
+assert(predictionGenerator.includes('executableCapability: false'), 'prediction parity discovery must remain non-executable');
 assert(/function\s+freshLatest\s*\([\s\S]{0,300}item\.expiresAt\s*>\s*now/.test(predictionWiring), 'prediction discovery snapshot must filter expired opportunity rows');
 assert(/getPredictionMarketDiscoverySnapshot\(\)[\s\S]{0,180}const fresh = freshLatest\(\)/.test(predictionWiring), 'prediction discovery getter must consume only fresh rows');
 assert(/catch\s*\(error\)\s*\{[\s\S]{0,180}latest\s*=\s*\[\];/.test(predictionWiring), 'unexpected prediction scan failures must clear prior advisory opportunities');
