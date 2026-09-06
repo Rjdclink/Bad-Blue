@@ -28,8 +28,8 @@ assert(capability.includes("(['coinbase', 'kraken', 'okx'] as const).filter"), '
 
 assert(inventoryResize.includes('capacity.maxFundableNotionalUsd'), 'inventory-constrained CEX sizing must use authenticated fundable capacity');
 assert(inventoryResize.includes('arbitrageVerifier.evaluateOnce({'), 'inventory resize must perform a fresh canonical economics evaluation');
-assert(inventoryResize.includes('refreshed.netProfitUsd <= 0'), 'inventory resize must reject nonpositive refreshed economics');
-assert(sizing.includes('request.expectedNetProfitUsd <= 0'), 'position sizing must reject nonpositive expected net economics');
+assert(inventoryResize.includes('isStrictlyPositiveAllInNetProfit(refreshed.netProfitUsd)'), 'inventory resize must reject nonpositive refreshed economics through canonical profit admission');
+assert(sizing.includes('isStrictlyPositiveAllInNetProfit(request.expectedNetProfitUsd)'), 'position sizing must reject nonpositive expected net economics through canonical profit admission');
 
 assert(timingGuard.includes("value === 'coinbase' || value === 'kraken' || value === 'okx'"), 'timing guard must cover all implemented CEX venues');
 assert(timingGuard.includes('skewMs > maxCrossVenueSkewMs()'), 'timing guard must bound cross-venue timestamp skew');
@@ -97,5 +97,4 @@ assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVe
 assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring())"), 'candidate expiry guard must be isolated and installed');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
-
 console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
