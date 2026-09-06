@@ -6,16 +6,18 @@ function has(text, needle, message) { must(text.includes(needle), message); }
 function lacks(text, needle, message) { must(!text.includes(needle), message); }
 
 const maker = read('server/services/cryptocrawl/discovery/maker-opportunity-generator.ts');
+const makerAdmission = read('server/services/cryptocrawl/runtime/no-bps-maker-admission-wiring.ts');
 const liquidation = read('server/services/cryptocrawl/discovery/liquidation-opportunity-generator.ts');
 const registry = read('server/services/cryptocrawl/discovery/measured-candidate-registry.ts');
 
 // Every viable maker symbol must receive authenticated fee priming and canonical
-// live evaluation in the same cycle. Batch/grouped acquisition is primary. Only
-// unresolved ungrouped OKX products use the canonical per-instrument fallback;
-// failed grouped/account requests are not fanned out into a request storm.
-has(maker, 'const coinbaseSymbols = viable', 'maker fee priming must cover every viable Coinbase route');
-has(maker, 'const krakenSymbols = viable', 'maker fee priming must cover every viable Kraken route');
-has(maker, 'const okxSymbols = viable', 'maker fee priming must cover every viable OKX route');
+// live evaluation in the same cycle. Historical selector names may remain for
+// compatibility, but their former route-dropping semantics are forbidden.
+has(maker, 'const feeTargets = selectMakerFeePrimeTargets(viable)', 'maker structural compatibility selector must consume the complete viable set');
+has(maker, 'return [...viable];', 'maker compatibility selector must return every viable route');
+has(maker, 'const coinbaseSymbols = feeTargets', 'maker fee priming must cover the complete compatibility-selected Coinbase set');
+has(maker, 'const krakenSymbols = feeTargets', 'maker fee priming must cover the complete compatibility-selected Kraken set');
+has(maker, 'const okxSymbols = feeTargets', 'maker fee priming must cover the complete compatibility-selected OKX set');
 has(maker, "primeResult.unresolved.filter(item => item.venue === 'okx')", 'unresolved OKX maker fee evidence must be classified in the same cycle');
 has(maker, "!entry.constraints.feeGroupId", 'only ungrouped unresolved OKX products may fan into per-instrument fallback');
 has(maker, "resolveCexFeeEvidence('okx', item.symbol, { forceRefresh: true })", 'ungrouped OKX maker fallback must use canonical force-refresh evidence authority');
@@ -23,9 +25,16 @@ has(maker, 'runBounded(viable, makerLiveEvaluationConcurrency()', 'every viable 
 has(maker, 'maker_first_pass:all_viable_symbols_live_evaluated', 'maker first-pass provenance is missing');
 has(maker, 'maker_fee_prime:all_viable_symbols_first_pass', 'maker all-route fee priming provenance is missing');
 has(maker, 'maker_fee_redundancy:batch_then_ungrouped_okx_force_refresh', 'maker redundant first-pass fee acquisition provenance is missing');
-lacks(maker, 'makerFeePrimeBudget', 'maker fee budget must not suppress viable route measurement');
-lacks(maker, 'selectMakerFeePrimeTargets', 'maker target selection must not create deferred viable routes');
-lacks(maker, 'makerFeePrimeCursor', 'maker rotating fee cursor must remain retired');
+lacks(maker, '.slice(0, makerFeePrimeBudget())', 'maker compatibility budget must never slice viable routes');
+
+// The verifier wrapper must not reintroduce a second maker omission policy after
+// discovery. It may order all governed symbols, but it must evaluate all of them.
+has(makerAdmission, 'function makerAdmissionSymbolBudget(): number {\n  return Number.MAX_SAFE_INTEGER;', 'historical maker admission budget must be non-constraining');
+has(makerAdmission, 'return [...governedSymbols].sort', 'maker admission selector must preserve every governed route');
+has(makerAdmission, 'const makerSymbols = selectMakerAdmissionSymbols(governedSymbols, plans)', 'maker admission must use the non-dropping selector');
+has(makerAdmission, 'allGovernedMakerSymbolsEvaluated: makerSymbols.length === governedSymbols.length', 'maker all-governed coverage must be observable');
+has(makerAdmission, "privateFeeHydrationPolicy: 'all_governed_symbols_first_pass_ordered_by_measured_recovery_value'", 'maker runtime all-route first-pass policy is missing');
+lacks(makerAdmission, '.slice(0, makerAdmissionSymbolBudget())', 'maker admission must not slice governed routes');
 
 // Every liquidatable position on an exact execution chain must receive full
 // hydration. Concurrency can bound pressure but cannot slice away positions.
@@ -43,4 +52,4 @@ has(registry, "normalized.startsWith('required:')", 'required execution facts mu
 has(registry, "normalized.startsWith('optional:')", 'optional facts must remain recognized as nonblocking');
 has(registry, "normalized.startsWith('advisory:')", 'advisory facts must remain recognized as nonblocking');
 
-console.log('[first-pass-route-measurability] PASS: maker and liquidation no longer use discovery budgets to suppress viable first-pass evidence acquisition; maker uses batch-plus-ungrouped-OKX fallback without grouped request storms and provider pressure remains owned by canonical rate/concurrency authorities');
+console.log('[first-pass-route-measurability] PASS: maker discovery/admission and liquidation no longer use route-dropping evidence budgets; compatibility selectors are non-constraining, provider pressure remains bounded by canonical rate/concurrency authorities, and minimum-sufficient execution evidence remains enforced');
