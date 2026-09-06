@@ -9,6 +9,11 @@ import {
   getCoinbaseAdvancedProductConstraints,
 } from '../intelligence/coinbase-advanced-market-data.js';
 import { trackSubmittedPrivateCexOrder } from '../intelligence/cex-private-execution-feedback.js';
+import {
+  isCoinbaseConvertReceipt,
+  prepareCoinbaseConvertAuctionAgainstFallback,
+  queryCoinbaseConvertSettlement,
+} from './coinbase-convert-execution-auction.js';
 import { validateCoinbaseOrderAgainstProduct } from './coinbase-product-policy.js';
 import type {
   ExecutionFill,
@@ -197,7 +202,7 @@ async function readCoinbaseBalances(requester: CoinbasePrivateRequester): Promis
 export class CoinbaseSpotSettlementAdapter {
   constructor(private readonly requester: CoinbasePrivateRequester = coinbasePrivateRequest) {}
 
-  async submit(request: CoinbaseOrderRequest): Promise<CoinbaseOrderReceipt> {
+  private async resolveProductForSubmission(request: CoinbaseOrderRequest): Promise<string> {
     let productId = explicitProductId(request.productId);
     if (this.requester === coinbasePrivateRequest) {
       await assertCoinbaseSpotTradeReady();
@@ -214,7 +219,10 @@ export class CoinbaseSpotSettlementAdapter {
     if (!productId) {
       throw new Error('Coinbase injected settlement requester requires an explicit exact productId; product IDs are not inferred from quote suffixes');
     }
+    return productId;
+  }
 
+  private async submitIoc(request: CoinbaseOrderRequest, productId: string): Promise<CoinbaseOrderReceipt> {
     const submittedAt = Date.now();
     const payload = await this.requester('/api/v3/brokerage/orders', 'POST', {
       body: {
@@ -249,7 +257,39 @@ export class CoinbaseSpotSettlementAdapter {
     return receipt;
   }
 
+  async prepareSubmit(request: CoinbaseOrderRequest) {
+    const productId = await this.resolveProductForSubmission(request);
+    const fallback = {
+      transport: 'rest' as const,
+      preparedAt: Date.now(),
+      dispatch: () => this.submitIoc(request, productId),
+    };
+    if (this.requester !== coinbasePrivateRequest) return fallback;
+    return prepareCoinbaseConvertAuctionAgainstFallback({ request, fallback });
+  }
+
+  async submit(request: CoinbaseOrderRequest): Promise<CoinbaseOrderReceipt> {
+    const prepared = await this.prepareSubmit(request);
+    return prepared.dispatch() as Promise<CoinbaseOrderReceipt>;
+  }
+
   async query(receipt: CoinbaseOrderReceipt): Promise<NormalizedOrderSettlement> {
+    if (this.requester === coinbasePrivateRequest && isCoinbaseConvertReceipt(receipt.orderId)) {
+      const settlement = await queryCoinbaseConvertSettlement(receipt);
+      if (!settlement) throw new Error(`Coinbase Convert receipt ${receipt.orderId} could not be decoded`);
+      if (!settlement.terminal) return settlement;
+      try {
+        return { ...settlement, finalBalances: await this.getBalances() };
+      } catch (error) {
+        logger.warn('[Coinbase Convert] Final balance snapshot unavailable after terminal conversion', {
+          component: 'CoinbaseSpotSettlementAdapter',
+          orderId: receipt.orderId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return settlement;
+      }
+    }
+
     const orderPayload = await this.requester(`/api/v3/brokerage/orders/historical/${encodeURIComponent(receipt.orderId)}`, 'GET');
     let fillsPayload: any = {};
     try {
@@ -280,6 +320,7 @@ export class CoinbaseSpotSettlementAdapter {
   }
 
   async cancel(receipt: CoinbaseOrderReceipt): Promise<void> {
+    if (isCoinbaseConvertReceipt(receipt.orderId)) return;
     const payload = await this.requester('/api/v3/brokerage/orders/batch_cancel', 'POST', {
       body: { order_ids: [receipt.orderId] },
     });
