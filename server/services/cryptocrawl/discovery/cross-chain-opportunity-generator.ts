@@ -112,6 +112,7 @@ function bridgeQuoteProvenance(quote: AcrossBridgeQuote): string[] {
     `across_total_max_fee_usd:${quote.totalMaxFeeUsd ?? 'unknown'}`,
     `across_bridge_fee_usd:${quote.bridgeFeeUsd ?? 'unknown'}`,
     `across_origin_gas_usd:${quote.originGasUsd ?? 'unknown'}`,
+    `across_approval_gas_usd:${quote.approvalGasUsd ?? 'unknown'}`,
     `across_approval_transactions:${quote.approvalTransactions}`,
     `across_destination_gas_usd:${quote.destinationGasUsd ?? 'unknown'}`,
     `across_lp_fee_usd:${quote.lpFeeUsd ?? 'unknown'}`,
@@ -143,12 +144,15 @@ function recordRoute(
     : null;
   const deterministicPositive = economics?.executablePositive === true;
 
-  // Approval transaction gas is deliberately not inferred from swapTx originGas.
-  // Approval-required routes remain visible and automatically refreshed, but only
-  // zero-approval quotes can currently satisfy complete pre-trade all-in cost
-  // proof. The executor can still pay system-owned approval gas for lifecycle
-  // recovery, but that cost cannot be omitted from deterministic admission.
-  const approvalGasCanonical = hasFreshQuote && quote.approvalTransactions === 0;
+  // Approval transactions are a normal Across execution prerequisite. They no
+  // longer form a discovery dead end: the provider measures a conservative gas
+  // ceiling for the exact approval payloads. Zero is accepted only when Across
+  // returns no approval transaction. Missing approval-gas evidence fails closed
+  // and is reacquired next cycle.
+  const approvalGasCanonical = hasFreshQuote
+    && quote.approvalGasUsd !== null
+    && Number.isFinite(quote.approvalGasUsd)
+    && quote.approvalGasUsd >= 0;
   const routeExecutable = deterministicPositive
     && readiness.configured
     && hasSigner
@@ -165,14 +169,14 @@ function recordRoute(
     ...(!hasFreshQuote ? ['measured_bridge_quote', 'measured_bridge_liquidity', 'measured_bridge_transfer_time'] : []),
     ...(hasFreshQuote && quote.totalFeeUsd === null ? ['measured_bridge_total_fee'] : []),
     ...(hasFreshQuote && quote.originGasUsd === null ? ['measured_origin_gas_usd'] : []),
-    ...(hasFreshQuote && quote.approvalTransactions > 0 ? ['measured_approval_gas_usd'] : []),
+    ...(hasFreshQuote && quote.approvalGasUsd === null ? ['measured_approval_gas_usd'] : []),
     ...(hasFreshQuote && quote.minOutputAmount === null ? ['guaranteed_minimum_output'] : []),
     ...(hasFreshQuote && !quote.simulationSuccess ? ['bridge_provider_simulation_success'] : []),
     ...(hasFreshQuote && !quote.swapTransactionPresent ? ['across_swap_transaction_payload'] : []),
     ...(!hasSigner ? ['cross_chain_signer'] : []),
     ...(inputPrice === null ? [`live_${route.inputAsset.toLowerCase()}_usd_price`] : []),
     ...(outputPrice === null ? [`live_${route.outputAsset.toLowerCase()}_usd_price`] : []),
-    ...(economics && !deterministicPositive ? ['positive_guaranteed_cross_chain_net_after_origin_gas'] : []),
+    ...(economics && !deterministicPositive ? ['positive_guaranteed_cross_chain_net_after_all_origin_gas'] : []),
   ];
 
   return measuredCandidateRegistry.record({
@@ -193,7 +197,11 @@ function recordRoute(
         ...bridgeQuoteProvenance(quote),
         'cross_chain_profit_output_authority:minimum_guaranteed_output',
         'cross_chain_input_output_prices:separately_live',
-        approvalGasCanonical ? 'cross_chain_approval_gas:no_approval_transaction_required' : 'cross_chain_approval_gas:missing_from_canonical_pretrade_economics',
+        approvalGasCanonical
+          ? quote.approvalTransactions === 0
+            ? 'cross_chain_approval_gas:not_required_zero_cost'
+            : 'cross_chain_approval_gas:measured_buffered_ceiling_included'
+          : 'cross_chain_approval_gas:missing_reacquisition_required',
       ],
     }] : [],
     depth: hasFreshQuote
@@ -203,7 +211,7 @@ function recordRoute(
       grossProfitUsd: economics?.routeGainUsdBeforeOriginGas ?? null,
       deterministicNetProfitUsd: economics?.deterministicNetProfitUsd ?? null,
       feeUsd: hasFreshQuote ? quote.totalFeeUsd : null,
-      gasUsd: economics?.originGasUsd ?? (hasFreshQuote ? quote.originGasUsd : null),
+      gasUsd: economics?.originGasUsd ?? null,
       bridgeUsd: hasFreshQuote ? quote.bridgeFeeUsd : null,
       expectedSlippageBps: null,
       expectedPriceImpactBps: null,
@@ -213,13 +221,15 @@ function recordRoute(
     quoteAgeMs: hasFreshQuote ? Math.max(0, now - quote.observedAt) : null,
     executableCapability: routeExecutable,
     executionCapabilityReason: routeExecutable
-      ? 'Across fresh simulated cross-swap has guaranteed minimum output whose independently marked USD value remains positive after separately paid origin gas, with no unpriced approval transaction; durable system-owned capital execution may revalidate immediately before signing'
-      : deterministicPositive && hasFreshQuote && quote.approvalTransactions > 0
-        ? 'Cross-chain economics are positive before approval gas, but Across requires approval transaction gas that is not yet included in canonical pre-trade economics'
+      ? quote!.approvalTransactions > 0
+        ? 'Across fresh simulated cross-swap remains strictly positive after guaranteed output, separately paid origin gas, and a measured buffered approval-gas ceiling; exact approval receipts and a fresh post-approval route are revalidated before principal broadcast'
+        : 'Across fresh simulated cross-swap remains strictly positive after guaranteed output and separately paid origin gas; no approval transaction is required and durable system-owned capital execution revalidates immediately before signing'
+      : deterministicPositive && !approvalGasCanonical
+        ? 'Cross-chain route is positive before missing approval-gas evidence; the exact approval payload is automatically remeasured next cycle and cannot authorize execution while unpriced'
         : deterministicPositive
           ? 'Cross-chain economics are deterministically positive, but a required execution capability fact is unavailable'
           : hasFreshQuote
-            ? 'Across transport and any source/destination swap composition are measured, but this exact route is not deterministically positive after guaranteed output and origin gas'
+            ? 'Across transport and any source/destination swap composition are measured, but this exact route is not deterministically positive after guaranteed output and all measured origin gas'
             : readiness.configured
               ? 'Across evidence acquisition was attempted in the current cycle and returned no fresh authoritative executable quote; route remains in automatic reacquisition'
               : readiness.reason,
@@ -232,13 +242,14 @@ function recordRoute(
       `cross_chain_approval_gas_canonical:${approvalGasCanonical}`,
       `cross_chain_route:${route.inputAsset}->${route.outputAsset}`,
       'across_terminal_executor:refresh_exact_cross_swap_before_signing',
-      'across_terminal_executor:minimum_output_drift_bound',
+      'across_terminal_executor:post_approval_profit_revalidation_required',
       'across_terminal_executor:destination_receipt_or_verified_refund',
       'cross_chain_profit_model:closed_usd_value',
       'cross_chain_profit_model:minimum_output_not_expected_output',
       'cross_chain_profit_model:separate_live_input_output_prices',
-      'cross_chain_profit_model:origin_gas_subtracted_once',
-      'cross_chain_profit_model:unpriced_approval_gas_blocks_execution',
+      'cross_chain_profit_model:swap_origin_gas_subtracted_once',
+      'cross_chain_profit_model:approval_gas_subtracted_once_when_required',
+      'cross_chain_approval_dead_end:removed_with_measured_gas_ceiling',
       'cross_chain_route_formation:across_any_to_any_stablecoin_composition',
       'evidence_reacquisition:all_structural_routes_each_cycle_bounded_concurrency',
       'synthetic_evidence:false',
@@ -249,7 +260,7 @@ function recordRoute(
 export function getPreparedCrossChainRoute(opportunityId: string): { quote: AcrossBridgeQuote; economics: CrossChainRouteEconomics } | null {
   const prepared = preparedCrossChainQuotes.get(opportunityId) ?? null;
   if (!prepared) return null;
-  if (prepared.quote.expiresAt <= Date.now() || prepared.quote.approvalTransactions > 0) {
+  if (prepared.quote.expiresAt <= Date.now()) {
     preparedCrossChainQuotes.delete(opportunityId);
     return null;
   }
@@ -269,7 +280,7 @@ export async function discoverMeasuredCrossChainCandidates(): Promise<MeasuredCa
   ]);
 
   for (const [id, prepared] of preparedCrossChainQuotes.entries()) {
-    if (prepared.quote.expiresAt <= now || prepared.quote.approvalTransactions > 0) preparedCrossChainQuotes.delete(id);
+    if (prepared.quote.expiresAt <= now) preparedCrossChainQuotes.delete(id);
   }
 
   return routes.map(route => recordRoute(route, now, ttlMs, quotes.get(routeKey(route)) ?? null, prices));
