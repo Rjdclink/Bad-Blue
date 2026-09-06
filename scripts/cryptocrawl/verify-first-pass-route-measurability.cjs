@@ -8,6 +8,7 @@ function lacks(text, needle, message) { must(!text.includes(needle), message); }
 const maker = read('server/services/cryptocrawl/discovery/maker-opportunity-generator.ts');
 const makerAdmission = read('server/services/cryptocrawl/runtime/no-bps-maker-admission-wiring.ts');
 const liquidation = read('server/services/cryptocrawl/discovery/liquidation-opportunity-generator.ts');
+const liquidationExecutor = read('server/services/cryptocrawl/execution/aave-liquidation-atomic-executor.ts');
 const registry = read('server/services/cryptocrawl/discovery/measured-candidate-registry.ts');
 
 // Every viable maker symbol must receive authenticated fee priming and canonical
@@ -46,6 +47,16 @@ has(liquidation, 'required:exact_liquidation_simulation', 'exact liquidation sim
 lacks(liquidation, 'CRYPTOCRAWL_LIQUIDATION_FIRM_HYDRATION_PER_CHAIN', 'per-chain liquidation hydration cap must remain retired');
 lacks(liquidation, '.slice(0, hydrationLimit)', 'liquidation hydration must not slice viable positions');
 
+// Position-level coverage is insufficient if a borrower has several valid debt /
+// collateral combinations. Every structural pair must be measured before the best
+// positive all-in plan is selected; no hidden pair limit may starve a viable route.
+has(liquidationExecutor, 'for (const pair of pairs)', 'liquidation compiler must hydrate every structural debt/collateral pair');
+has(liquidationExecutor, 'liquidation_pair_hydration:all_structural_pairs_same_cycle', 'all-pair liquidation hydration provenance is missing');
+has(liquidationExecutor, 'liquidation_pair_selection:highest_measured_positive_all_in_net_profit_usd', 'liquidation pair selection must use the highest measured positive all-in net plan');
+has(liquidationExecutor, 'if (!bestPlan || plan.deterministicNetProfitUsd > bestPlan.deterministicNetProfitUsd) bestPlan = plan;', 'liquidation compiler must compare all positive prepared plans');
+lacks(liquidationExecutor, 'CRYPTOCRAWL_LIQUIDATION_PAIR_HYDRATION_LIMIT', 'liquidation pair hydration limit must remain retired');
+lacks(liquidationExecutor, 'pairs.slice(0, pairLimit)', 'liquidation pair hydration must not slice structural pairs');
+
 // Minimum-sufficient execution semantics remain canonical: optional/advisory facts
 // cannot veto a trade, while explicit required/critical facts remain blocking.
 has(registry, 'hasMinimumSufficientExecutionEvidence', 'minimum-sufficient execution invariant must remain installed');
@@ -53,4 +64,4 @@ has(registry, "normalized.startsWith('required:')", 'required execution facts mu
 has(registry, "normalized.startsWith('optional:')", 'optional facts must remain recognized as nonblocking');
 has(registry, "normalized.startsWith('advisory:')", 'advisory facts must remain recognized as nonblocking');
 
-console.log('[first-pass-route-measurability] PASS: maker discovery/admission and liquidation no longer use route-dropping evidence budgets; compatibility selectors are non-constraining, provider pressure remains bounded by canonical rate/concurrency authorities, and minimum-sufficient execution evidence remains enforced');
+console.log('[first-pass-route-measurability] PASS: maker discovery/admission and liquidation position/pair formation no longer use route-dropping evidence budgets; compatibility selectors are non-constraining, provider pressure remains bounded by canonical rate/concurrency authorities, and minimum-sufficient execution evidence remains enforced');
