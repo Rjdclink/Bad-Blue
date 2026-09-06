@@ -7,7 +7,8 @@ export interface RebalanceRouteEvidence {
   network: string;
   withdrawalFeeAsset: number;
   estimatedFeeUsd: number;
-  estimatedLatencyMs: number;
+  /** Null means network transfer latency has not yet been measured from terminal settlement. */
+  estimatedLatencyMs: number | null;
   minimumAmount: number;
   maximumAmount: number | null;
   withdrawalSupported: boolean;
@@ -25,7 +26,7 @@ export interface RebalancePlan {
   network: string;
   amount: number;
   estimatedFeeUsd: number;
-  estimatedLatencyMs: number;
+  estimatedLatencyMs: number | null;
   sourceSurplus: number;
   destinationDeficit: number;
   executable: false;
@@ -56,8 +57,11 @@ class InventoryRebalancer {
 
   recordMeasuredRouteEvidence(input: RebalanceRouteEvidence): void {
     if (input.sourceVenue === input.destinationVenue) throw new Error('Rebalance route requires distinct venues');
-    if (!(input.estimatedFeeUsd >= 0) || !(input.estimatedLatencyMs >= 0) || !(input.minimumAmount >= 0)) {
-      throw new Error('Rebalance evidence requires finite non-negative fee/latency/minimum');
+    if (!(input.withdrawalFeeAsset >= 0) || !(input.estimatedFeeUsd >= 0) || !(input.minimumAmount >= 0)) {
+      throw new Error('Rebalance evidence requires finite non-negative withdrawal fee/USD fee/minimum');
+    }
+    if (input.estimatedLatencyMs !== null && !(input.estimatedLatencyMs >= 0)) {
+      throw new Error('Rebalance measured latency must be null or finite non-negative milliseconds');
     }
     if (!Number.isFinite(input.observedAt) || !Number.isFinite(input.expiresAt) || input.expiresAt <= input.observedAt) {
       throw new Error('Rebalance evidence requires a bounded freshness interval');
@@ -65,8 +69,20 @@ class InventoryRebalancer {
     this.evidence.set(this.key(input), {
       ...input,
       asset: input.asset.toUpperCase(),
-      provenance: [...new Set([...input.provenance, 'measured_rebalance_route_evidence'])],
+      provenance: [...new Set([
+        ...input.provenance,
+        'measured_rebalance_route_evidence',
+        input.estimatedLatencyMs === null ? 'transfer_latency:unknown_not_economic_authority' : 'transfer_latency:terminal_measured',
+      ])],
     });
+  }
+
+  getMeasuredRoutes(): RebalanceRouteEvidence[] {
+    const now = Date.now();
+    return [...this.evidence.values()]
+      .filter(route => route.expiresAt > now)
+      .sort((left, right) => left.estimatedFeeUsd - right.estimatedFeeUsd)
+      .map(route => ({ ...route, provenance: [...route.provenance] }));
   }
 
   private bestNettingCandidate(
@@ -91,10 +107,14 @@ class InventoryRebalancer {
           const amount = Math.min(surplus.remainingDelta, deficit.remainingDelta, maximum);
           if (!(amount > 0) || !(amount >= route.minimumAmount)) continue;
           // Rebalance fees are normally fixed or weakly amount-dependent. Prefer
-          // routes that move more useful inventory per measured dollar of fee,
-          // with latency only as a small tie-breaker. This is planning-only and
-          // never changes arbitrage execution economics.
-          const utilityCost = (route.estimatedFeeUsd + route.estimatedLatencyMs / 60_000 * 0.01) / amount;
+          // routes that move more useful inventory per measured dollar of fee.
+          // Terminal-measured latency is only a tiny tie-breaker. Unknown latency
+          // receives no fabricated BPS/economic value and therefore cannot be
+          // presented as measured execution cost.
+          const measuredLatencyTieBreaker = route.estimatedLatencyMs === null
+            ? 0.02
+            : route.estimatedLatencyMs / 60_000 * 0.01;
+          const utilityCost = (route.estimatedFeeUsd + measuredLatencyTieBreaker) / amount;
           candidates.push({ surplus, deficit, route, amount, utilityCost });
         }
       }
@@ -137,7 +157,7 @@ class InventoryRebalancer {
         sourceSurplus: surplus.delta,
         destinationDeficit: deficit.delta,
         executable: false,
-        reason: 'Measured inventory intents netted without double allocation; transfer still requires verified withdrawal/deposit address and terminal settlement adapter',
+        reason: 'Fresh authenticated inventory intents and route fee/deposit/withdrawal evidence are netted without double allocation; transfer still requires verified address/network and terminal settlement adapter',
         evidenceObservedAt: route.observedAt,
         evidenceExpiresAt: route.expiresAt,
         provenance: [...new Set([...route.provenance, 'inventory_intent_netting:single_consumption'])],
@@ -154,10 +174,10 @@ class InventoryRebalancer {
   }
 
   getStatus() {
-    const now = Date.now();
-    const liveEvidence = [...this.evidence.values()].filter(item => item.expiresAt > now);
+    const liveEvidence = this.getMeasuredRoutes();
     return {
       measuredRoutes: liveEvidence.length,
+      routesWithTerminalMeasuredLatency: liveEvidence.filter(route => route.estimatedLatencyMs !== null).length,
       configuredTargets: cexInventoryLedger.getSnapshots().filter(snapshot => snapshot.target !== null).length,
       recommendations: cexInventoryLedger.getRebalanceRecommendations().length,
       plannedTransfers: this.getPlans().length,
@@ -165,6 +185,7 @@ class InventoryRebalancer {
       inventoryIntentNetting: true,
       singleConsumptionAllocation: true,
       syntheticFillNetting: false,
+      syntheticTransferLatencyEconomics: false,
       exchangeFillFeeErasure: false,
       reason: 'Arbitrage execution is intentionally independent of venue transfer settlement; live rebalancing stays disabled until settlement-safe address/network adapters are installed',
     };
