@@ -48,6 +48,7 @@ require('./verify-cryptara-hyper-bridge-bootstrap.cjs');
 require('./verify-cryptara-resource-intelligence.cjs');
 require('./verify-cryptara-super-worker.cjs');
 require('./verify-supabase-background-pressure.cjs');
+require('./verify-production-pressure-evidence-repairs.cjs');
 require('./verify-runtime-initialization-efficiency.cjs');
 require('./verify-product-discovery-coverage.cjs');
 require('./verify-cross-venue-asset-identity.cjs');
@@ -60,4 +61,4 @@ require('./verify-canonical-execution-family-completion.cjs');
 require('./verify-resource-bps-authority.cjs');
 require('./verify-payout-recipient-truth.cjs');
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, safety, measured-profitability, provider, treasury, execution-family, and payout invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, and payout invariants passed; continuing to downstream prebuild/build');
