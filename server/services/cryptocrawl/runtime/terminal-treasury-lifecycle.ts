@@ -80,25 +80,18 @@ async function syncWorkerSecrets(): Promise<void> {
     [secrets.map(secret => secret.name)],
   );
   const ids = new Map<string, string>(
-    existing.rows
-      .filter(row => row?.name && row?.id)
-      .map(row => [String(row.name), String(row.id)]),
+    existing.rows.filter(row => row?.name && row?.id).map(row => [String(row.name), String(row.id)]),
   );
 
   for (const secret of secrets) {
     const id = ids.get(secret.name) || '';
     if (id) {
       if (!secret.optional && !secret.value) continue;
-      await highPriorityQuery('SELECT vault.update_secret($1::uuid, $2, $3, $4)', [
-        id, secret.value, secret.name, secret.description,
-      ]);
+      await highPriorityQuery('SELECT vault.update_secret($1::uuid, $2, $3, $4)', [id, secret.value, secret.name, secret.description]);
       continue;
     }
-
     if (!secret.value) continue;
-    await highPriorityQuery('SELECT vault.create_secret($1, $2, $3)', [
-      secret.value, secret.name, secret.description,
-    ]);
+    await highPriorityQuery('SELECT vault.create_secret($1, $2, $3)', [secret.value, secret.name, secret.description]);
   }
 }
 
@@ -146,9 +139,7 @@ async function heartbeatOnce(): Promise<void> {
         await syncWorkerSecrets();
         workerSecretsSynchronized = true;
       }
-
       const state = await heartbeatTreasuryState();
-
       if (state === 'TERMINATE_AND_SWEEP' || state === 'SWEEPING') {
         setTreasuryRestartSweepBarrier(true, `treasury_state:${state}`);
         void rainbowProfitBridge.wake('terminal_candidate');
@@ -156,14 +147,12 @@ async function heartbeatOnce(): Promise<void> {
         heartbeatDegradedUntil = 0;
         return;
       }
-
       if (state === 'MANUAL_REVIEW') {
         setTreasuryRestartSweepBarrier(true, 'treasury_manual_review');
         consecutiveHeartbeatFailures = 0;
         heartbeatDegradedUntil = 0;
         return;
       }
-
       setTreasuryRestartSweepBarrier(false);
       consecutiveHeartbeatFailures = 0;
       heartbeatDegradedUntil = 0;
@@ -174,7 +163,6 @@ async function heartbeatOnce(): Promise<void> {
       throw error;
     }
   })().finally(() => { heartbeatInFlight = null; });
-
   return heartbeatInFlight;
 }
 
@@ -192,22 +180,18 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
   if (!isDatabaseConfigured || timer) return;
   if (!DESTINATION) {
     logger.warn('[Treasury] Primary MetaMask payout wallet is not available; payout execution fails closed', {
-      component: 'TerminalTreasuryLifecycle',
-      primaryDestinationSource: 'WALLET_PRIVATE_KEY-derived public Ethereum address',
+      component: 'TerminalTreasuryLifecycle', primaryDestinationSource: 'WALLET_PRIVATE_KEY-derived public Ethereum address',
     });
   }
   if (!ETHEREUM_RPC_URL) {
     logger.warn('[Treasury] Ethereum payout confirmation RPC is not configured; payout confirmation fails closed', {
-      component: 'TerminalTreasuryLifecycle',
-      acceptedSources: ['ETHEREUM_RPC_URL', 'ETHEREM_RPC_URL', 'ALCHEMY_API_KEY'],
+      component: 'TerminalTreasuryLifecycle', acceptedSources: ['ETHEREUM_RPC_URL', 'ETHEREM_RPC_URL', 'ALCHEMY_API_KEY'],
     });
   }
-
   if (!signalInstalled && RAILWAY_DEPLOYMENT_ID) {
     process.prependListener('SIGTERM', sigtermCandidateListener);
     signalInstalled = true;
   }
-
   timer = setInterval(() => void heartbeatOnce().catch(logHeartbeatFailure), HEARTBEAT_MS);
   timer.unref?.();
   await heartbeatOnce().catch(logHeartbeatFailure);
@@ -226,7 +210,7 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     workerSecretSynchronizationRetryable: true,
     workerSecretsSynchronized,
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
-    runtimePolicy: 'first_three_fixed_60_percent_then_persisted_dynamic_55_to_65_percent_eth_payout_remainder_retained_restart_drains_remaining_treasury',
+    runtimePolicy: 'fixed_90_percent_terminal_realized_profit_to_eth_payout_10_percent_retained_restart_drains_remaining_treasury',
     successorCancelsRestartSweep: false,
     successorNewExposureBlockedDuringSweep: true,
     settlementHedgeFlatteningStillAllowed: true,
