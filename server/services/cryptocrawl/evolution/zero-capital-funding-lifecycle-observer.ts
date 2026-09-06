@@ -15,17 +15,17 @@ function providerFrom(candidate: MeasuredCandidate): string {
 }
 
 function estimatedCostUsd(candidate: MeasuredCandidate): number | undefined {
-  const direct = candidate.economics.feeUsd;
-  const gas = candidate.economics.gasUsd;
-  const bridge = candidate.economics.bridgeUsd;
-  const known = [direct, gas, bridge].filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-  if (known.length > 0) return Math.max(0, known.reduce((sum, value) => sum + value, 0));
+  // Prefer canonical all-in BPS so flash premium, relay and every already-measured
+  // component remain represented exactly once. Component summation is a fallback
+  // only when the canonical notional/BPS pair is unavailable.
   const notional = candidate.canonicalBps.notionalUsd;
   const allIn = candidate.canonicalBps.allInCostBps;
   if (typeof notional === 'number' && Number.isFinite(notional) && notional > 0 && typeof allIn === 'number' && Number.isFinite(allIn)) {
     return Math.max(0, allIn / 10_000 * notional);
   }
-  return undefined;
+  const known = [candidate.economics.feeUsd, candidate.economics.gasUsd, candidate.economics.bridgeUsd]
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return known.length > 0 ? Math.max(0, known.reduce((sum, value) => sum + value, 0)) : undefined;
 }
 
 function classify(candidate: MeasuredCandidate): { stage: ZeroCapitalFundingObservationStage; outcome: ZeroCapitalFundingObservationOutcome } {
@@ -52,10 +52,9 @@ function classify(candidate: MeasuredCandidate): { stage: ZeroCapitalFundingObse
 
 function pruneFingerprints(): void {
   if (lastFingerprint.size <= MAX_FINGERPRINTS) return;
-  const remove = lastFingerprint.size - MAX_FINGERPRINTS;
   for (const key of lastFingerprint.keys()) {
     lastFingerprint.delete(key);
-    if (lastFingerprint.size <= MAX_FINGERPRINTS || lastFingerprint.size <= remove) break;
+    if (lastFingerprint.size <= MAX_FINGERPRINTS) break;
   }
 }
 
