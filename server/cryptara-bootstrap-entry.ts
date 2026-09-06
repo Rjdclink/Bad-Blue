@@ -40,6 +40,14 @@ if (overflowBootstrap.state === 'ready') {
   }
 }
 
+// Advisory zero-capital funding learning observes canonical candidate lifecycle
+// updates directly. It cannot mutate candidates, provider selection, economics,
+// settlement, scheduling or execution authority.
+const { ensureZeroCapitalFundingLifecycleObserver } = await import(
+  './services/cryptocrawl/evolution/zero-capital-funding-lifecycle-observer.js'
+);
+ensureZeroCapitalFundingLifecycleObserver();
+
 // Zero-capital gas ownership proof and native spend reservation are now explicit
 // functions called by the single canonical ZERO_CAPITAL_ATOMIC executor. The
 // bootstrap must not rewrite engine methods or install a parallel execution path.
