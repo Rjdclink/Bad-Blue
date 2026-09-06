@@ -1,7 +1,7 @@
 import logger from '../../../logger.js';
 import { canonicalizeCexSymbol } from '../discovery/symbol-registry.js';
 
-export type PrivateExecutionFeedbackVenue = 'kraken' | 'okx';
+export type PrivateExecutionFeedbackVenue = 'coinbase' | 'kraken' | 'okx';
 export type PrivateExecutionLiquidityRole = 'maker' | 'taker' | null;
 
 export interface PrivateExecutionFeedbackEvent {
@@ -59,6 +59,7 @@ function boundedInt(raw: unknown, fallback: number, min: number, max: number): n
 }
 
 function finiteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || typeof value === 'boolean') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -106,6 +107,10 @@ function trackedSymbol(venue: PrivateExecutionFeedbackVenue, orderId: string): s
   return tracked.symbol;
 }
 
+function isTracked(venue: PrivateExecutionFeedbackVenue, orderId: string): boolean {
+  return trackedSymbol(venue, orderId) !== null;
+}
+
 function rememberEventKey(key: string): boolean {
   if (seenEventKeys.has(key)) {
     duplicateEvents += 1;
@@ -121,6 +126,10 @@ function materiallyUseful(event: PrivateExecutionFeedbackEvent): boolean {
   if ((event.cumulativeFillQuantity || 0) > 0 || (event.lastFillQuantity || 0) > 0) return true;
   if (event.venue === 'kraken') {
     return ['trade', 'amended', 'restated', 'canceled', 'expired', 'filled'].includes(event.eventType);
+  }
+  if (event.venue === 'coinbase') {
+    return ['open', 'filled', 'cancelled', 'canceled', 'expired', 'failed'].includes(event.state)
+      || event.orderEnteredBook === true;
   }
   if (event.state === 'partially_filled') return true;
   // Since the 2026 OKX post-only/RPI state change, a pushed `live` state means
@@ -196,7 +205,7 @@ export function trackSubmittedPrivateCexOrder(input: {
   symbol: string;
   submittedAt: number;
 }): void {
-  if (input.venue !== 'kraken' && input.venue !== 'okx') return;
+  if (input.venue !== 'coinbase' && input.venue !== 'kraken' && input.venue !== 'okx') return;
   const venue: PrivateExecutionFeedbackVenue = input.venue;
   const orderId = input.orderId.trim();
   const symbol = canonicalizeCexSymbol(input.symbol)?.symbol || input.symbol.trim().toUpperCase();
@@ -207,6 +216,61 @@ export function trackSubmittedPrivateCexOrder(input: {
     expiresAt: Math.max(Date.now(), input.submittedAt) + TRACKED_ORDER_TTL_MS,
   });
   prune();
+  if (venue === 'coinbase') {
+    // Coinbase order submission remains REST-authoritative. The separate user
+    // WebSocket is started only after this process has a concrete submitted order
+    // and is strictly read-only execution-state feedback.
+    void import('./coinbase-private-execution-feedback.js')
+      .then(({ ensureCoinbasePrivateExecutionFeedback }) => ensureCoinbasePrivateExecutionFeedback())
+      .catch(() => undefined);
+  }
+}
+
+function coinbaseEvent(
+  row: Record<string, any>,
+  sequence: number | null,
+  envelopeTimestamp: unknown,
+  envelopeEventType: string,
+): PrivateExecutionFeedbackEvent | null {
+  const orderId = String(row.order_id || '').trim();
+  if (!orderId || !isTracked('coinbase', orderId)) return null;
+  const state = String(row.status || '').trim().toLowerCase();
+  const cumulativeFillQuantity = finiteNumber(row.cumulative_quantity);
+  const averageFillPrice = finiteNumber(row.avg_price);
+  const totalFees = finiteNumber(row.total_fees);
+  const productId = String(row.product_id || '').trim().toUpperCase();
+  const quoteAsset = productId.includes('-') ? productId.split('-')[1] || null : null;
+  const eventTimestamp = timestampMs(row.last_fill_time || row.end_time || row.creation_time || envelopeTimestamp);
+  const terminal = ['filled', 'cancelled', 'canceled', 'expired', 'failed'].includes(state);
+  const sourceEventId = String(row.client_order_id || '').trim() || null;
+  const dedupe = `coinbase:${orderId}:${state}:${cumulativeFillQuantity ?? ''}:${totalFees ?? ''}:${sequence ?? eventTimestamp ?? ''}`;
+  if (!rememberEventKey(dedupe)) return null;
+  return {
+    venue: 'coinbase',
+    orderId,
+    symbol: trackedSymbol('coinbase', orderId) || canonicalEventSymbol(productId),
+    state,
+    eventType: envelopeEventType || state || 'status',
+    observedAt: Date.now(),
+    eventTimestamp,
+    cumulativeFillQuantity,
+    lastFillQuantity: null,
+    averageFillPrice,
+    lastFillPrice: null,
+    feeAmountEconomic: totalFees,
+    feeAsset: quoteAsset,
+    // Only literal USD fees are normalized to USD here. Stablecoin par is never
+    // assumed by this advisory feedback layer.
+    feeUsd: quoteAsset === 'USD' ? totalFees : null,
+    liquidityRole: row.post_only === true ? 'maker' : null,
+    terminal,
+    sourceEventId,
+    rawSequence: sequence,
+    orderEnteredBook: state === 'open' ? true : null,
+    settlementAuthority: false,
+    economicBpsAuthority: false,
+    executionAuthority: false,
+  };
 }
 
 function krakenEvent(row: Record<string, any>, sequence: number | null): PrivateExecutionFeedbackEvent | null {
@@ -311,7 +375,7 @@ function okxEvent(row: Record<string, any>): PrivateExecutionFeedbackEvent | nul
 
 /**
  * Consume authenticated private WebSocket execution/order-state frames. Returning
- * true tells the shared order transport that the frame was an asynchronous state
+ * true tells a shared transport/listener that the frame was an asynchronous state
  * update rather than a request acknowledgement. These observations may wake
  * revalidation/settlement work, but never finalize P/L or mutate canonical BPS.
  */
@@ -319,6 +383,21 @@ export function consumePrivateCexExecutionFrame(
   venue: PrivateExecutionFeedbackVenue,
   payload: Record<string, any>,
 ): boolean {
+  if (venue === 'coinbase') {
+    if (payload.channel !== 'user' || !Array.isArray(payload.events)) return false;
+    const sequence = finiteNumber(payload.sequence_num);
+    for (const envelope of payload.events) {
+      if (!envelope || typeof envelope !== 'object') continue;
+      const eventType = String(envelope.type || 'update').toLowerCase();
+      for (const raw of Array.isArray(envelope.orders) ? envelope.orders : []) {
+        if (!raw || typeof raw !== 'object') continue;
+        const event = coinbaseEvent(raw as Record<string, any>, sequence, payload.timestamp, eventType);
+        if (event) publish(event);
+      }
+    }
+    return true;
+  }
+
   if (venue === 'kraken') {
     if (payload.channel !== 'executions' || !Array.isArray(payload.data)) return false;
     const sequence = finiteNumber(payload.sequence);
@@ -391,6 +470,7 @@ export function getPrivateCexExecutionFeedbackSnapshot() {
     revalidationRequests,
     revalidationFailures,
     lastObservedAt,
+    venues: ['coinbase', 'kraken', 'okx'] as const,
     settlementAuthority: false as const,
     economicBpsAuthority: false as const,
     executionAuthority: false as const,
