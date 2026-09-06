@@ -34,6 +34,13 @@ export interface DexQuoteObservation {
   buyToken: string;
   sellAmount: string;
   buyAmount?: string;
+  maxSellAmount?: string;
+  minBuyAmount?: string;
+  amountMode: 'exact_in' | 'exact_out';
+  slippagePpmApplied?: number;
+  tradeSurplusRequested: boolean;
+  tradeSurplusRecipient?: string;
+  tradeSurplusMaxBps?: number;
   price?: number;
   guaranteedPrice?: number;
   liquidityAvailable: boolean;
@@ -87,6 +94,7 @@ const ZEROX_AUTH_FAILURE_COOLDOWN_MS = Math.max(60_000, Math.min(3_600_000, Numb
 const MAX_UNIVERSE_SIZE = Math.min(50, Math.max(3, Number(process.env.CRYPTO_MARKET_UNIVERSE_SIZE || 12)));
 const CEX_PRODUCT_DISCOVERY_EXPANSION = Math.max(0, Math.min(100, Math.floor(Number(process.env.CRYPTO_CEX_PRODUCT_DISCOVERY_EXPANSION || 24))));
 const CEX_PRODUCT_DISCOVERY_CACHE_MS = Math.max(5_000, Math.min(300_000, Number(process.env.CRYPTO_CEX_PRODUCT_DISCOVERY_CACHE_MS || 60_000)));
+const EVM_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 
 interface CacheEntry<T> { value: T; expiresAt: number; }
 
@@ -126,6 +134,17 @@ function zeroXCredentialCandidates(): Array<{ sourceName: typeof ZEROX_CREDENTIA
 function isZeroXAuthenticationOrEntitlementFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /HTTP\s+(401|403)\b|cannot consume this service|unauthorized|forbidden|authentication or product entitlement rejected|product entitlement/i.test(message);
+}
+
+function positiveIntegerString(value: unknown): string | null {
+  const raw = String(value ?? '').trim();
+  return /^\d+$/.test(raw) && BigInt(raw) > 0n ? raw : null;
+}
+
+function optionalBoundedInteger(value: unknown, min: number, max: number): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : Number.NaN;
 }
 
 async function fetchZeroXPayload(url: string): Promise<{ payload: any; sourceName: string }> {
@@ -271,9 +290,13 @@ class MarketDataProviders {
     chainId: number;
     sellToken: string;
     buyToken: string;
-    sellAmount: string;
+    sellAmount?: string;
+    buyAmount?: string;
     takerAddress?: string;
     purpose?: ZeroXRequestPurpose;
+    slippagePpm?: number;
+    tradeSurplusRecipient?: string;
+    tradeSurplusMaxBps?: number;
   }): Promise<DexQuoteObservation | null> {
     const now = Date.now();
     if (this.zeroXUnavailableUntil > now) {
@@ -283,6 +306,20 @@ class MarketDataProviders {
     if (this.zeroXUnavailableUntil > 0) {
       this.zeroXUnavailableUntil = 0;
       this.zeroXUnavailableReason = null;
+    }
+
+    const sellAmount = positiveIntegerString(request.sellAmount);
+    const exactBuyAmount = positiveIntegerString(request.buyAmount);
+    if ((sellAmount === null) === (exactBuyAmount === null)) {
+      this.setProviderStatus('0x', 'failed', '0x quote requires exactly one positive sellAmount or buyAmount');
+      return null;
+    }
+    const amountMode: 'exact_in' | 'exact_out' = sellAmount !== null ? 'exact_in' : 'exact_out';
+
+    const slippagePpm = optionalBoundedInteger(request.slippagePpm, 0, 1_000_000);
+    if (Number.isNaN(slippagePpm)) {
+      this.setProviderStatus('0x', 'failed', 'slippagePpm must be an integer from 0 through 1000000');
+      return null;
     }
 
     const credentialCandidates = zeroXCredentialCandidates();
@@ -295,7 +332,32 @@ class MarketDataProviders {
       this.setProviderStatus('0x', 'unavailable', policy.reason);
       return null;
     }
-    const key = `${request.chainId}:${request.sellToken.toLowerCase()}:${request.buyToken.toLowerCase()}:${request.sellAmount}:${policy.purpose}:${policy.takerAddress || ''}`;
+
+    const requestedSurplusRecipient = request.tradeSurplusRecipient?.trim() || '';
+    if (requestedSurplusRecipient && !EVM_ADDRESS.test(requestedSurplusRecipient)) {
+      this.setProviderStatus('0x', 'failed', 'tradeSurplusRecipient must be a valid EVM address');
+      return null;
+    }
+    const tradeSurplusPlanEnabled = process.env.ZEROX_TRADE_SURPLUS_CUSTOM_PLAN_ENABLED?.trim().toLowerCase() === 'true';
+    const tradeSurplusRequested = policy.endpoint === 'quote' && tradeSurplusPlanEnabled && Boolean(requestedSurplusRecipient);
+    const tradeSurplusMaxBps = optionalBoundedInteger(request.tradeSurplusMaxBps, 1, 10_000);
+    if (Number.isNaN(tradeSurplusMaxBps)) {
+      this.setProviderStatus('0x', 'failed', 'tradeSurplusMaxBps must be an integer from 1 through 10000');
+      return null;
+    }
+
+    const amountIdentity = sellAmount !== null ? `sell:${sellAmount}` : `buy:${exactBuyAmount}`;
+    const key = [
+      request.chainId,
+      request.sellToken.toLowerCase(),
+      request.buyToken.toLowerCase(),
+      amountIdentity,
+      policy.purpose,
+      policy.takerAddress || '',
+      slippagePpm ?? 'default',
+      tradeSurplusRequested ? requestedSurplusRecipient.toLowerCase() : 'no-surplus',
+      tradeSurplusRequested ? (tradeSurplusMaxBps ?? 10_000) : 'none',
+    ].join(':');
     const cached = this.quoteCache.get(key);
     if (cached && cached.expiresAt > Date.now()) {
       this.setProviderStatus('0x', 'cached', `served from the DEX ${policy.endpoint} cache`);
@@ -308,12 +370,31 @@ class MarketDataProviders {
       this.setProviderStatus('0x', 'throttled', admission.reason);
       return null;
     }
-    const requestUrl = `https://api.0x.org/swap/allowance-holder/${policy.endpoint}?chainId=${request.chainId}&sellToken=${encodeURIComponent(request.sellToken)}&buyToken=${encodeURIComponent(request.buyToken)}&sellAmount=${encodeURIComponent(request.sellAmount)}${policy.includeTaker ? `&taker=${encodeURIComponent(policy.takerAddress!)}` : ''}`;
+
+    const query = new URLSearchParams({
+      chainId: String(request.chainId),
+      sellToken: request.sellToken,
+      buyToken: request.buyToken,
+    });
+    if (sellAmount !== null) query.set('sellAmount', sellAmount);
+    else query.set('buyAmount', exactBuyAmount!);
+    if (policy.includeTaker) query.set('taker', policy.takerAddress!);
+    if (slippagePpm !== null) query.set('slippagePpm', String(slippagePpm));
+    if (tradeSurplusRequested) {
+      query.set('tradeSurplusRecipient', requestedSurplusRecipient);
+      query.set('tradeSurplusMaxBps', String(tradeSurplusMaxBps ?? 10_000));
+    }
+    const requestUrl = `https://api.0x.org/swap/allowance-holder/${policy.endpoint}?${query.toString()}`;
+
     const promise = fetchZeroXPayload(requestUrl).then(({ payload, sourceName }) => {
       this.zeroXUnavailableUntil = 0;
       this.zeroXUnavailableReason = null;
-      const sellAmount = Number(request.sellAmount);
-      const buyAmount = Number(payload?.buyAmount);
+      const resolvedSellAmount = positiveIntegerString(payload?.sellAmount)
+        || positiveIntegerString(payload?.maxSellAmount)
+        || sellAmount;
+      const resolvedBuyAmount = positiveIntegerString(payload?.buyAmount) || exactBuyAmount;
+      const sellAmountNumber = Number(resolvedSellAmount);
+      const buyAmountNumber = Number(resolvedBuyAmount);
       const route = Array.isArray(payload?.route?.fills) ? payload.route.fills.map((fill: any) => ({
         source: typeof fill?.source === 'string' ? fill.source : undefined,
         proportionBps: Number.isFinite(Number(fill?.proportionBps)) ? Number(fill.proportionBps) : undefined,
@@ -323,12 +404,24 @@ class MarketDataProviders {
       const priceImpact = Number(payload?.priceImpact);
       const allowanceIssue = payload?.issues?.allowance && typeof payload.issues.allowance === 'object' ? payload.issues.allowance : null;
       const balanceIssue = payload?.issues?.balance && typeof payload.issues.balance === 'object' ? payload.issues.balance : null;
-      const observation: DexQuoteObservation | null = Number.isFinite(buyAmount) && buyAmount > 0 ? {
-        chainId: request.chainId, sellToken: request.sellToken, buyToken: request.buyToken, sellAmount: request.sellAmount,
-        buyAmount: payload.buyAmount, price: Number.isFinite(sellAmount) && sellAmount > 0 ? buyAmount / sellAmount : undefined,
+      const observation: DexQuoteObservation | null = resolvedSellAmount && resolvedBuyAmount && Number.isFinite(buyAmountNumber) && buyAmountNumber > 0 ? {
+        chainId: request.chainId,
+        sellToken: request.sellToken,
+        buyToken: request.buyToken,
+        sellAmount: resolvedSellAmount,
+        buyAmount: resolvedBuyAmount,
+        maxSellAmount: positiveIntegerString(payload?.maxSellAmount) || undefined,
+        minBuyAmount: positiveIntegerString(payload?.minBuyAmount) || undefined,
+        amountMode,
+        slippagePpmApplied: slippagePpm ?? undefined,
+        tradeSurplusRequested,
+        tradeSurplusRecipient: tradeSurplusRequested ? requestedSurplusRecipient : undefined,
+        tradeSurplusMaxBps: tradeSurplusRequested ? (tradeSurplusMaxBps ?? 10_000) : undefined,
+        price: Number.isFinite(sellAmountNumber) && sellAmountNumber > 0 ? buyAmountNumber / sellAmountNumber : undefined,
         guaranteedPrice: Number(payload?.guaranteedPrice) || undefined,
-        liquidityAvailable: payload?.liquidityAvailable === undefined ? buyAmount > 0 : payload.liquidityAvailable === true,
-        route, priceImpact: Number.isFinite(priceImpact) ? priceImpact : undefined,
+        liquidityAvailable: payload?.liquidityAvailable === undefined ? buyAmountNumber > 0 : payload.liquidityAvailable === true,
+        route,
+        priceImpact: Number.isFinite(priceImpact) ? priceImpact : undefined,
         estimatedGas: typeof payload?.estimatedGas === 'string' ? payload.estimatedGas : undefined,
         gasPrice: typeof payload?.gasPrice === 'string' ? payload.gasPrice : undefined,
         fees: payload?.fees && typeof payload.fees === 'object' ? payload.fees : undefined,
@@ -350,10 +443,16 @@ class MarketDataProviders {
         } : undefined,
         quoteKind: policy.endpoint,
         executable: policy.endpoint === 'quote' && typeof payload?.transaction?.to === 'string' && typeof payload?.transaction?.data === 'string',
-        observedAt: Date.now(), source: '0x',
+        observedAt: Date.now(),
+        source: '0x',
       } : null;
       this.quoteCache.set(key, { value: observation, expiresAt: Date.now() + ZEROX_TTL_MS });
-      this.setProviderStatus('0x', observation ? 'live' : 'failed', observation ? `${policy.reason}; authenticated via ${sourceName}` : '0x returned no usable buy amount');
+      const features = [
+        amountMode === 'exact_out' ? 'exact-out' : 'exact-in',
+        slippagePpm !== null ? `slippagePpm=${slippagePpm}` : null,
+        tradeSurplusRequested ? 'trade-surplus-custom-plan' : null,
+      ].filter(Boolean).join(',');
+      this.setProviderStatus('0x', observation ? 'live' : 'failed', observation ? `${policy.reason}; ${features}; authenticated via ${sourceName}` : '0x returned no usable buy amount');
       return observation;
     }).catch((error: unknown) => {
       this.quoteCache.set(key, { value: null, expiresAt: Date.now() + ZEROX_TTL_MS });
@@ -418,7 +517,7 @@ class MarketDataProviders {
         symbol: `${row.symbol.toUpperCase()}USDT`, coinGeckoId: row.id, marketCapRank: Number(row.market_cap_rank) || undefined,
         priceUsd: Number.isFinite(Number(row.current_price)) ? Number(row.current_price) : undefined,
         volume24hUsd: Number.isFinite(Number(row.total_volume)) ? Number(row.total_volume) : undefined,
-        marketCapUsd: Number.isFinite(Number(row.market_cap)) ? Number(row.market_cap) : undefined,
+        marketCapUsd: Number.isFinite(Number(row.marketCap || row.market_cap)) ? Number(row.marketCap || row.market_cap) : undefined,
         priceChange24hPct: Number.isFinite(Number(row.price_change_percentage_24h)) ? Number(row.price_change_percentage_24h) : undefined,
         priceHistory: Array.isArray(row.sparkline_in_7d?.price) ? row.sparkline_in_7d.price.filter((price: unknown) => Number.isFinite(Number(price)) && Number(price) > 0).map((price: unknown) => Number(price)) : undefined,
         source: 'coingecko' as const, sources: ['coingecko' as const], observedAt: Date.now(),
