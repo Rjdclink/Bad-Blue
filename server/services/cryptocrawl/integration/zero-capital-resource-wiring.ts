@@ -161,12 +161,13 @@ function recordZeroCapitalCandidate(input: {
 }): void {
   const { opportunity, chain, source, quote } = input;
   const positive = opportunity.expectedProfit > 0n && (quote?.executablePositive ?? true);
+  const canonicalEligible = positive && input.executableCapability;
   measuredCandidateRegistry.record({
     opportunityId: opportunity.id,
     topology: 'ZERO_CAPITAL_ATOMIC',
     observedAt: opportunity.timestamp,
     expiresAt: opportunity.expiresAt,
-    status: positive ? 'deterministic_positive' : 'enriched',
+    status: canonicalEligible ? 'eligible' : positive ? 'deterministic_positive' : 'enriched',
     assets: [opportunity.inputAssetSymbol],
     venues: [...new Set(opportunity.route.map(step => step.protocol))],
     chains: [chain],
@@ -177,7 +178,7 @@ function recordZeroCapitalCandidate(input: {
       observedAt: opportunity.timestamp,
       amountIn: step.amountIn.toString(),
       amountOut: step.expectedAmountOut.toString(),
-      executable: positive && input.executableCapability,
+      executable: canonicalEligible,
       provenance: ['direct_contract_quote'],
     })),
     depth: {
@@ -186,7 +187,7 @@ function recordZeroCapitalCandidate(input: {
     },
     economics: zeroCapitalEconomics(opportunity, quote),
     quoteAgeMs: opportunity.quoteLatencyMs,
-    executableCapability: positive && input.executableCapability,
+    executableCapability: canonicalEligible,
     executionCapabilityReason: input.executionCapabilityReason,
     missingInformation: input.missingInformation || [],
     provenance: [
@@ -197,6 +198,7 @@ function recordZeroCapitalCandidate(input: {
       'flash_premium_attribution:flashLoanFeeBps_only',
       'quoted_amount_out_embeds_current_route_economics',
       'min_output_tolerance_not_expected_slippage_cost',
+      ...(canonicalEligible ? ['canonical_positive_all_in_net', 'zero_capital_hard_facts_eligible'] : []),
       ...(input.simulationReady && opportunity.id.startsWith('graphless-') ? ['exact_receiver_call_simulation'] : []),
       positive ? 'deterministic_positive_net' : 'near_break_even_observation_only',
       'synthetic_evidence:false',
