@@ -3,6 +3,7 @@ import { getLastOrderedMarketUniverseSymbols } from './market-universe-controlle
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
 import {
   primeCexFeeEvidenceForVenueSymbols,
+  resolveCexFeeEvidence,
   getCachedCexFeeEvidence,
   type CexFeeEvidence,
   type CexFeeVenue,
@@ -87,9 +88,11 @@ async function hasUsdNormalizedMakerEconomics(venue: CexFeeVenue, symbol: string
 
 /**
  * Every structurally viable maker symbol receives authenticated fee priming and a
- * canonical live evaluation in the same discovery cycle. Provider-specific rate
- * limiting remains owned by the existing fee resolvers; this layer never creates
- * a budget/defer class that can leave a viable route permanently paper-only.
+ * canonical live evaluation in the same discovery cycle. Batch/account-level fee
+ * acquisition is primary. Any unresolved OKX product is immediately retried via
+ * the canonical per-instrument authority with forceRefresh, which bypasses only
+ * local defer/backoff state; endpoint throttling remains owned by OKX's canonical
+ * account-fee rate governor. No discovery budget may create a paper-only class.
  */
 export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandidate[]> {
   const venues = getActiveExecutableQuoteVenues().filter(
@@ -130,11 +133,23 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
     .filter(entry => entry.usableBooks.some(book => book.venue === 'okx'))
     .map(entry => entry.symbol);
 
-  await primeCexFeeEvidenceForVenueSymbols({
+  const primeResult = await primeCexFeeEvidenceForVenueSymbols({
     coinbase: coinbaseSymbols,
     kraken: krakenSymbols,
     okx: okxSymbols,
   }).catch(() => null);
+
+  // OKX grouped fee requests are the efficient first path. If an instrument is
+  // ungrouped and the grouped resolver's rotating budget leaves it unresolved,
+  // immediately ask the canonical single-instrument authority in this same pass.
+  // This creates redundancy without bypassing the account-level rate governor.
+  const unresolvedOkx = primeResult
+    ? primeResult.unresolved.filter(item => item.venue === 'okx')
+    : okxSymbols.map(symbol => ({ venue: 'okx' as const, symbol }));
+  await runBounded(unresolvedOkx, makerLiveEvaluationConcurrency(), async item => {
+    await resolveCexFeeEvidence('okx', item.symbol, { forceRefresh: true }).catch(() => null);
+    return item.symbol;
+  });
 
   const liveTargetNotionalUsd = liveMakerTargetNotionalUsd();
   const evaluatedLivePlans = await runBounded(viable, makerLiveEvaluationConcurrency(), async ({ symbol }) => ({
@@ -206,6 +221,7 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
           'taker_fallback:false',
           'canonical_cex_venues:coinbase_kraken_okx',
           'maker_first_pass:all_viable_symbols_live_evaluated',
+          'maker_fee_redundancy:batch_then_unresolved_okx_force_refresh',
           'strict_all_in_net_profit_gt_zero:true',
           'terminal_settlement_still_required:true',
           'synthetic_evidence:false',
@@ -274,7 +290,7 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
           },
           quoteAgeMs: Math.max(0, Date.now() - observedAt),
           executableCapability: false,
-          executionCapabilityReason: 'Paper maker proof is telemetry only; every viable symbol already received same-cycle authenticated fee priming and canonical live evaluation, and only that measured live plan can gain execution authority',
+          executionCapabilityReason: 'Paper maker proof is telemetry only; every viable symbol already received same-cycle authenticated fee acquisition plus canonical live evaluation, and only that measured live plan can gain execution authority',
           missingInformation: [
             ...(makerFeeKnown ? [] : ['required:authenticated_maker_fee_evidence']),
             'required:fully_measured_canonical_maker_plan',
@@ -285,6 +301,7 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
             'microprice_queue_imbalance_shadow_model',
             'adaptive_maker_ttl_shadow_model',
             'maker_fee_prime:all_viable_symbols_first_pass',
+            'maker_fee_redundancy:batch_then_unresolved_okx_force_refresh',
             'maker_live_evaluation:all_viable_symbols_first_pass',
             'usd_normalized_quote_evidence',
             'canonical_cex_venues:coinbase_kraken_okx',
