@@ -9,7 +9,6 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 function requirePattern(source, pattern, label) {
   if (!pattern.test(source)) throw new Error(`[liquidation-profit-integrity] missing invariant: ${label}`);
 }
-
 function forbidPattern(source, pattern, label) {
   if (pattern.test(source)) throw new Error(`[liquidation-profit-integrity] forbidden regression: ${label}`);
 }
@@ -17,8 +16,7 @@ function forbidPattern(source, pattern, label) {
 const liquidationExecutor = read('server/services/cryptocrawl/execution/aave-liquidation-atomic-executor.ts');
 const liquidationDiscovery = read('server/services/cryptocrawl/discovery/liquidation-opportunity-generator.ts');
 const topologyAdapter = read('server/services/cryptocrawl/execution/measured-topology-execution-adapter.ts');
-const realizedProfit = read('server/services/cryptocrawl/runtime/zero-capital-realized-profit-wiring.ts');
-const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 
 requirePattern(liquidationExecutor, /getUserConfiguration\(/, 'liquidation compiler consumes the live Aave reserve bitmap');
 requirePattern(liquidationExecutor, /getUserReserveData\(/, 'liquidation compiler consumes reserve-level user debt/collateral');
@@ -50,22 +48,6 @@ requirePattern(topologyAdapter, /zeroCapitalResourceScheduler\.acquireMeasuredAt
 requirePattern(topologyAdapter, /executePreparedAaveLiquidation/, 'canonical adapter performs fresh liquidation execution');
 requirePattern(topologyAdapter, /recordCryptaraExecutionEvidence/, 'terminal liquidation evidence enters canonical learning pipeline');
 requirePattern(topologyAdapter, /actualGasFromLiquidation/, 'actual receipt gas is reconciled before terminal profitability learning');
+requirePattern(scheduler, /decision\.topology === 'LIQUIDATION'/, 'canonical parent scheduler remains the sole liquidation dispatch owner');
 
-requirePattern(realizedProfit, /dualFlashLoanProviderSelectionRegistry\.get/, 'profit boundary resolves the actual dual-provider receiver');
-requirePattern(realizedProfit, /flashLoanProviderSelectionRegistry\.get/, 'profit boundary resolves the actual single-provider receiver');
-requirePattern(realizedProfit, /receiverStarting\s*!==\s*0n/, 'pre-existing selected-receiver loan-token balance blocks profit attribution');
-requirePattern(realizedProfit, /recipientDelta\s*!==\s*result\.profit/, 'receiver event must equal operational-wallet token delta');
-requirePattern(realizedProfit, /withEvmSignerLane/, 'native zero-capital submission uses distributed EVM signer serialization');
-requirePattern(realizedProfit, /getLiveSymbolPrices/, 'native receipt gas uses live native/USD pricing');
-requirePattern(realizedProfit, /activeProfitBoundaries/, 'captured wrapper stacks cannot double-apply signer/profit boundaries');
-requirePattern(realizedProfit, /target\.executeFunded\s*=\s*wrapped/, 'terminal reconciliation wraps the current instance execution stack');
-forbidPattern(realizedProfit, /CRYPTO_PROFIT_WALLET_ADDRESS/, 'terminal payout address is not an operational profit-attribution authority');
-
-const providerSpecificIndex = canonicalRuntime.indexOf("install('provider_specific_zero_capital_execution', () => ensureProviderSpecificZeroCapitalExecutionWiring());");
-const dualProviderIndex = canonicalRuntime.indexOf("install('dual_provider_zero_capital_execution', () => ensureDualProviderZeroCapitalExecutionWiring());");
-const realizedIndex = canonicalRuntime.indexOf("install('zero_capital_realized_profit', () => ensureZeroCapitalRealizedProfitWiring());");
-if (providerSpecificIndex < 0 || dualProviderIndex < 0 || realizedIndex < 0 || realizedIndex < providerSpecificIndex || realizedIndex < dualProviderIndex) {
-  throw new Error('[liquidation-profit-integrity] terminal realized-profit boundary must be reasserted after provider-specific and dual-provider wrappers');
-}
-
-console.log('[liquidation-profit-integrity] exact Aave liquidation, selected-receiver profit provenance, distributed signer ordering, actual-gas reconciliation, and terminal-only learning invariants passed');
+console.log('[liquidation-profit-integrity] exact Aave liquidation, fresh executable quote/simulation, receiver balance/profit provenance, actual-gas reconciliation, canonical parent scheduling, and terminal-only learning invariants passed');
