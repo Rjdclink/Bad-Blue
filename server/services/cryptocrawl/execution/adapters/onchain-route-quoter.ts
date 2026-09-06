@@ -82,6 +82,7 @@ export interface QuotedZeroCapitalRoute {
 }
 
 const inFlightLegQuotes = new WeakMap<providers.Provider, Map<string, Promise<BigNumber>>>();
+const BPS_PRECISION = 1_000_000n;
 
 function isAddress(value: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -93,6 +94,17 @@ function toBigInt(label: string, value: unknown): bigint {
     throw new Error(`${label} must be an integer string denominated in token base units`);
   }
   return BigInt(normalized);
+}
+
+function ratioToBps(value: bigint, notional: bigint): number {
+  if (notional <= 0n) throw new Error('BPS notional must be positive');
+  return Number((value * 10_000n * BPS_PRECISION) / notional) / Number(BPS_PRECISION);
+}
+
+function feeFromBps(notional: bigint, bps: number): bigint {
+  if (!Number.isFinite(bps) || bps < 0) throw new Error('Flash-loan BPS must be a finite non-negative number');
+  const scaledBps = BigInt(Math.round(bps * Number(BPS_PRECISION)));
+  return (notional * scaledBps) / (10_000n * BPS_PRECISION);
 }
 
 function normalizeAddress(value: string): string {
@@ -385,14 +397,14 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
   if (initial <= 0n) return null;
 
   const grossProfit = finalAmount - initial;
-  const flashLoanFee = (initial * BigInt(Math.round((route.flashLoanFeeBps || 0)))) / 10000n;
+  const flashLoanFee = feeFromBps(initial, route.flashLoanFeeBps || 0);
   const gasCost = toBigInt('estimatedGasCostInInputToken', route.estimatedGasCostInInputToken);
   const relayFee = toBigInt('relayFeeInInputToken', route.relayFeeInInputToken);
   const allInCost = flashLoanFee + gasCost + relayFee;
   const netProfit = grossProfit - allInCost;
-  const grossProfitBps = Number((grossProfit * 10000n) / initial);
-  const allInCostBps = Number((allInCost * 10000n) / initial);
-  const netProfitBps = Number((netProfit * 10000n) / initial);
+  const grossProfitBps = ratioToBps(grossProfit, initial);
+  const allInCostBps = ratioToBps(allInCost, initial);
+  const netProfitBps = ratioToBps(netProfit, initial);
   const discoveryFloorBps = zeroCapitalDiscoveryFloorBps();
   if (netProfitBps < discoveryFloorBps) return null;
 
