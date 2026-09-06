@@ -6,10 +6,11 @@ import {
   type SupportedChain,
   type ZeroCapitalOpportunity,
 } from '../core/zero-capital-engine.js';
+import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildDualFlashLoanReceiverPayload } from '../execution/adapters/dual-flashloan-receiver-builder.js';
-import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
+import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
 import type { NormalizedRealizedExecution } from '../execution/settlement-types.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 import { executeSystemOwnedNativeTransaction } from '../execution/system-owned-native-transaction.js';
@@ -90,6 +91,7 @@ function normalizeSettlement(input: {
       ...(input.sponsoredExecution
         ? ['provider_sponsored:strict_zero_operator_cost_proof_required']
         : ['system_owned_native_gas:provenance_reserved_and_settled']),
+      'canonical_operational_profit_recipient',
       'dual_flashloan_receiver_profit_verified',
       'synthetic_evidence:false',
     ],
@@ -106,8 +108,8 @@ export function ensureDualProviderZeroCapitalExecutionWiring(): void {
 
   const originalExecuteFunded = target.executeFunded.bind(target);
   target.executeFunded = async (opportunity, funding): Promise<ExecutionResult> => {
-    const selection = dualFlashLoanProviderSelectionRegistry.get(opportunity.id);
-    if (!selection) return originalExecuteFunded(opportunity, funding);
+    const selection = flashLoanProviderSelectionRegistry.get(opportunity.id);
+    if (!selection || selection.kind !== 'dual') return originalExecuteFunded(opportunity, funding);
 
     const provider = target.providers.get(opportunity.chain);
     const wallet = target.executionWallets.get(opportunity.chain);
@@ -127,7 +129,7 @@ export function ensureDualProviderZeroCapitalExecutionWiring(): void {
       const basePlan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
         receiver: selection.receiver,
         provider: 'balancer_v2',
-        profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || wallet.address,
+        profitRecipient: resolveOperationalProfitRecipient(),
         nowMs: Date.now(),
       });
       const payload = buildDualFlashLoanReceiverPayload({
@@ -230,12 +232,13 @@ export function ensureDualProviderZeroCapitalExecutionWiring(): void {
     }
   };
 
-  logger.info('[ZeroCapitalProviderMesh] Dual-provider execution wiring installed', {
+  logger.info('[ZeroCapitalProviderMesh] Dual-provider execution compatibility layer installed', {
     component: 'DualProviderZeroCapitalExecutionWiring',
-    providerMesh: ['balancer_v2', 'aave_v3', 'aave_balancer_dual'],
+    providerSelectionAuthority: 'flash_loan_provider_selection_registry_single_underlying_store',
     dualTopology: 'balancer_outer_aave_nested_same_asset',
     terminalProfitAuthority: 'FlashLoanExecuted_receipt_event',
     exactBarrierRequiredBeforeBroadcast: true,
+    operationalProfitRecipientAuthority: 'resolveOperationalProfitRecipient',
     nativeGasAuthority: 'SELF_FUNDED_provenance_reserved_before_broadcast_and_settled_from_receipt',
     syntheticExecution: false,
   });
