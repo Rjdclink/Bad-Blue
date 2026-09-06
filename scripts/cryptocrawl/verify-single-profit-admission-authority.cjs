@@ -9,7 +9,12 @@ const authority = read('server/services/cryptocrawl/governance/profit-admission-
 const planner = read('server/services/cryptocrawl/execution/adapters/autonomous-route-planner.ts');
 const europa = read('server/services/cryptocrawl/execution/adapters/europa-dynamic-route-discovery.ts');
 const dex = read('server/services/cryptocrawl/execution/dex-zerox-atomic-executor.ts');
+const verifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
 const sizing = read('server/services/cryptocrawl/risk/progressive-position-sizing.ts');
+const adaptive = read('server/services/cryptocrawl/runtime/adaptive-profit-operations-wiring.ts');
+const inventory = read('server/services/cryptocrawl/integration/inventory-constrained-cex-execution-wiring.ts');
+const positiveCapture = read('server/services/cryptocrawl/runtime/positive-profit-capture-wiring.ts');
+const liveCycle = read('server/services/cryptocrawl/testing/run-arbitrage-live-cycles.ts');
 const quoter = read('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts');
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
 const capitalFreeBarrel = read('server/services/cryptocrawl/capital-free/index.ts');
@@ -24,6 +29,12 @@ assert.match(authority, /strategySpecificProfitFloorAllowed: false/);
 assert.match(authority, /parsed !== null && parsed > 0/);
 assert.match(authority, /return 1n/);
 assert.ok(!authority.includes('process.env'), 'profit admission authority must never be environment-configurable');
+
+// Canonical CEX verifier cannot accept a caller-provided profit floor.
+assert.match(verifier, /profit-admission-authority\.js/);
+assert.match(verifier, /isStrictlyPositiveAllInNetProfit\(plan\.netProfitUsd\)/);
+assert.ok(!verifier.includes('minNetProfitUsd'), 'CEX verifier must not expose a second dollar-profit threshold');
+assert.ok(!verifier.includes('CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD'), 'CEX verifier must not expose an environment profit floor');
 
 // Atomic route planning uses exactly one smallest base unit as the integer form of >0.
 assert.match(planner, /profit-admission-authority\.js/);
@@ -46,9 +57,29 @@ assert.match(dex, /isStrictlyPositiveAllInNetProfit\(plan\.deterministicNetProfi
 assert.ok(!dex.includes('ZERO_CAPITAL_MIN_PROFIT_BPS'), '0x atomic execution must not contain a configurable profit magnitude floor');
 assert.ok(!dex.includes('deterministicNetBaseUnits.mul(minProfitBps)'), '0x atomic execution must not convert expected profit into a second threshold');
 
-// Shared position sizing consumes the same profitability authority; sizing/risk can cap exposure but not raise the profit floor.
-assert.match(sizing, /profit-admission-authority\.js/);
-assert.match(sizing, /isStrictlyPositiveAllInNetProfit\(request\.expectedNetProfitUsd\)/);
+// Shared position sizing and runtime CEX wrappers consume the same profitability authority.
+for (const [name, source] of [
+  ['position sizing', sizing],
+  ['adaptive operations', adaptive],
+  ['inventory constrained CEX', inventory],
+]) {
+  assert.match(source, /profit-admission-authority\.js/, `${name} must import canonical profit admission`);
+  assert.match(source, /isStrictlyPositiveAllInNetProfit/, `${name} must consume canonical positive-profit predicate`);
+  assert.ok(!source.includes('minNetProfitUsd'), `${name} must not pass or own a local minimum-profit amount`);
+}
+
+// The former positive-profit runtime patch may still compose route recovery, but
+// it may not override verifier admission or Cryptara minimum-profit policy.
+assert.match(positiveCapture, /profit-admission-authority\.js/);
+assert.match(positiveCapture, /profitAdmissionRuntimeOverride: false/);
+assert.match(positiveCapture, /cryptaraMinimumProfitOverride: false/);
+assert.ok(!positiveCapture.includes('verifier.verifyOnce = async'), 'runtime wiring must not replace canonical verifier profit admission');
+assert.ok(!positiveCapture.includes('minimumNetProfitUsd: 0'), 'runtime wiring must not patch a second minimum-profit policy');
+
+// Quotes-only live-cycle tooling follows the same rule and cannot introduce a test-only floor.
+assert.match(liveCycle, /isStrictlyPositiveAllInNetProfit\(plan\.netProfitUsd\)/);
+assert.ok(!liveCycle.includes('CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD'), 'live-cycle harness must not advertise a separate profit floor');
+assert.ok(!liveCycle.includes('minNetProfitUsd'), 'live-cycle harness must not calculate a separate profit floor');
 
 // The compatibility BPS field is telemetry-only. Executable route economics remain strict netProfit > 0.
 assert.match(quoter, /telemetry only; executable eligibility is strict all-in netProfit > 0/);
@@ -62,4 +93,4 @@ for (const token of ['AutonomousOptimizer', 'NexGenProtocolLayer']) {
 }
 assert.ok(!optimizationBarrel.includes('DivineOptimizationEngine'), 'DivineOptimizationEngine must remain outside the production optimization namespace');
 
-console.log('[single-profit-admission-authority] PASS: one non-configurable >0 all-in-net-profit authority; no live dollar/BPS magnitude floor; atomic minProfit is one smallest base unit; legacy threshold engines remain non-production');
+console.log('[single-profit-admission-authority] PASS: one non-configurable >0 all-in-net-profit authority; no live dollar/BPS magnitude floor; no runtime profit patch; atomic minProfit is one smallest base unit; legacy threshold engines remain non-production');
