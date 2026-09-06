@@ -1,6 +1,8 @@
 import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
+import { measureBalancerFlashLoanEconomics } from '../execution/adapters/flash-loan-provider-economics.js';
 import { supportsSponsoredReceiverChain } from '../execution/adapters/sponsored-receiver-manager.js';
 import { prepareZeroXAtomicRoundTrip } from '../execution/dex-zerox-atomic-executor.js';
 import { getMeasuredErc20Decimals } from '../intelligence/erc20-decimals-authority.js';
@@ -167,6 +169,19 @@ async function discoverChainCandidates(
     }));
   }
 
+  // Flash-provider fee/liquidity evidence is measured once per chain through the
+  // canonical RPC mesh before route economics are formed. This lets every route
+  // with two live 0x price legs carry numeric all-in observation BPS even when
+  // receiver/execution hydration later proves the route non-executable.
+  const balancerEvidence = await multiProviderRpcManager.execute(
+    chain,
+    'contract_calls',
+    provider => measureBalancerFlashLoanEconomics({ chain, provider, asset: config.usdc }),
+  ).then(result => result.result).catch(() => null);
+  const observedFlashFeeBps = balancerEvidence?.feeBps !== null && balancerEvidence?.feeBps !== undefined && Number.isFinite(balancerEvidence.feeBps)
+    ? Number(balancerEvidence.feeBps)
+    : null;
+
   const indicative: IndicativeRoundTrip[] = [];
   // Notionals remain sequential within one chain because each second leg depends
   // on the first leg's measured output. Chains still run in parallel.
@@ -247,11 +262,29 @@ async function discoverChainCandidates(
     const quoteAgeMs = prepared
       ? Date.now() - Math.min(prepared.firstQuote.observedAt, prepared.secondQuote.observedAt)
       : Date.now() - Math.min(item.first.observedAt, item.second.observedAt);
+
+    const observationGrossBps = item.grossProfitUsd !== null
+      ? item.grossProfitUsd / item.notionalUsd * 10_000
+      : null;
+    const observationGasBps = item.discoveryGasUsd !== null
+      ? item.discoveryGasUsd / item.notionalUsd * 10_000
+      : null;
+    const observationAllInCostBps = observedFlashFeeBps !== null && observationGasBps !== null
+      ? observedFlashFeeBps + observationGasBps
+      : null;
+    const observationNetBps = observationGrossBps !== null && observationAllInCostBps !== null
+      ? observationGrossBps - observationAllInCostBps
+      : null;
+    const observationNetProfitUsd = observationNetBps !== null
+      ? observationNetBps / 10_000 * item.notionalUsd
+      : null;
+
     const missingInformation = prepared ? [
       ...(!explicitFeeTreatmentComplete ? ['required:complete_0x_explicit_fee_economic_treatment'] : []),
     ] : [
       'required:firm_0x_atomic_quote',
-      'required:measured_balancer_flash_loan_fee',
+      ...((observedFlashFeeBps === null) ? ['required:measured_balancer_flash_loan_fee'] : []),
+      ...((balancerEvidence?.availableLiquidity === null || balancerEvidence?.availableLiquidity === undefined) ? ['required:measured_balancer_flash_loan_liquidity'] : []),
       'required:exact_receiver_gas_cost',
       'required:receiver_permission_and_simulation_readiness',
       ...(preparationUnavailable ? ['required:atomic_execution_preparation_currently_unavailable'] : []),
@@ -267,7 +300,7 @@ async function discoverChainCandidates(
       expiresAt: prepared ? Math.min(item.observedAt + ttlMs, prepared.expiresAt) : item.observedAt + ttlMs,
       status,
       assets: ['USDC', 'USDT'],
-      venues: ['0x', ...(prepared ? ['balancer_v2'] : [])],
+      venues: ['0x', 'balancer_v2'],
       chains: [chain],
       rawQuotes: prepared
         ? [quoteEvidence(item.first, chain), quoteEvidence(item.second, chain), quoteEvidence(prepared.firstQuote, chain), quoteEvidence(prepared.secondQuote, chain)]
@@ -276,7 +309,7 @@ async function discoverChainCandidates(
         status: 'measured',
         detail: prepared
           ? '0x indicative route plus two firm allowance-holder quotes, explicit fee treatment, existing receiver permissions, exact receiver simulation and exact gas estimation'
-          : '0x /price liquidityAvailable round-trip measured and firm atomic hydration was attempted in the same cycle',
+          : '0x /price liquidityAvailable round-trip plus current Balancer fee/liquidity evidence measured; firm atomic hydration was attempted in the same cycle',
       },
       economics: prepared ? {
         grossProfitUsd: prepared.grossProfitUsd,
@@ -296,22 +329,20 @@ async function discoverChainCandidates(
         bpsToBreakEven: Math.max(0, -prepared.netProfitBps),
       } : {
         grossProfitUsd: item.grossProfitUsd,
-        deterministicNetProfitUsd: null,
+        deterministicNetProfitUsd: observationNetProfitUsd,
         feeUsd: null,
         gasUsd: item.discoveryGasUsd,
         bridgeUsd: 0,
         expectedSlippageBps: null,
         expectedPriceImpactBps: Number.isFinite(item.priceImpactBps) ? item.priceImpactBps : null,
         notionalUsd: item.notionalUsd,
-        grossProfitBps: item.grossProfitUsd !== null ? item.grossProfitUsd / item.notionalUsd * 10_000 : null,
-        flashLoanFeeBps: null,
-        gasCostBps: item.discoveryGasUsd !== null ? item.discoveryGasUsd / item.notionalUsd * 10_000 : null,
-        allInCostBps: null,
-        breakEvenBps: null,
-        netProfitBps: null,
-        bpsToBreakEven: item.grossAfterIndicativeGasBps !== null && item.grossAfterIndicativeGasBps < 0
-          ? Math.abs(item.grossAfterIndicativeGasBps)
-          : null,
+        grossProfitBps: observationGrossBps,
+        flashLoanFeeBps: observedFlashFeeBps,
+        gasCostBps: observationGasBps,
+        allInCostBps: observationAllInCostBps,
+        breakEvenBps: observationAllInCostBps,
+        netProfitBps: observationNetBps,
+        bpsToBreakEven: observationNetBps !== null && observationNetBps < 0 ? Math.abs(observationNetBps) : 0,
       },
       quoteAgeMs,
       executableCapability: prepared !== null && explicitFeeTreatmentComplete,
@@ -319,7 +350,7 @@ async function discoverChainCandidates(
         ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; 0x explicit fee effects are classified without double subtraction, current flash fee and exact receiver gas are measured, existing permissions are verified, and eth_call simulation succeeds'
         : prepared
           ? 'Firm 0x atomic preparation exists, but an explicit 0x fee component lacks a complete same-chain economic treatment and therefore cannot be promoted'
-          : 'Every indicative DEX route is sent through firm atomic hydration in the same cycle; this route did not produce the minimum required firm execution facts on that first-pass attempt',
+          : 'Numeric observation BPS is preserved from live 0x route outputs plus measured Balancer fee and current gas evidence; every indicative route also receives same-cycle firm hydration, and only that firm minimum-sufficient proof may execute',
       missingInformation,
       provenance: [
         '0x:price_only_discovery',
@@ -331,6 +362,8 @@ async function discoverChainCandidates(
         hydrationTargets.has(item.opportunityId) ? 'firm_hydration:all_measured_routes_same_cycle' : 'firm_hydration:invariant_violation',
         'firm_hydration:fixed_negative_bps_gate_removed',
         'firm_hydration:budget_defer_removed',
+        ...(observedFlashFeeBps !== null ? ['balancer_v2:flash_fee_measured_onchain_for_observation_bps'] : ['balancer_v2:flash_fee_unavailable']),
+        'dex_observation_bps:indicative_not_execution_authority',
         'gas_oracle:measured_when_available',
         'receiver_chain_capability:verified',
         'discovery_infrastructure_mutation:false',
