@@ -45,11 +45,15 @@ assert.match(recovery, /crossReplicaKfeeReservationImplemented: false/);
 assert.match(recovery, /preTradeKfeeCreditAllowed: false/);
 
 // OKX Rebate Card/fee-rebate recovery is recognized only after an authenticated
-// funding-account bill proves a positive received credit. Forecasts are zero.
+// funding-account bill proves a positive received credit. Forecasts are zero and
+// stablecoin credits are not synthetically treated as exactly USD.
 assert.match(recovery, /\/api\/v5\/asset\/bills/);
 assert.match(recovery, /type: '68'/);
 assert.match(recovery, /type: '173'/);
-assert.match(recovery, /const amountUsd = finitePositive\(row\?\.balChg\)/);
+assert.match(recovery, /const amount = finitePositive\(row\?\.balChg\)/);
+assert.match(recovery, /amountUsd: currency === 'USD' \? amount : null/);
+assert.match(recovery, /requiresUsdNormalization: currency !== 'USD'/);
+assert.match(recovery, /stablecoinParAssumptionAllowed: false/);
 assert.match(recovery, /received: true/);
 assert.match(recovery, /realizedRecoveryAuthority: true/);
 assert.match(recovery, /unreceivedForecastCreditBps: 0/);
@@ -94,4 +98,4 @@ for (const forbidden of [
   assert.ok(!combined.includes(forbidden), `Unexpected new credential dependency: ${forbidden}`);
 }
 
-console.log('[cex-fee-recovery-completion] PASS: live Coinbase stablepair zero-maker pricing, existing Kraken/OKX signed fee economics, received-only OKX recovery, conservative KFEE observation, one fee lifecycle, one BPS authority, no new trading API key, and no synthetic profitability');
+console.log('[cex-fee-recovery-completion] PASS: live Coinbase stablepair zero-maker pricing, existing Kraken/OKX signed fee economics, received-only OKX recovery with exact currency truth, conservative KFEE observation, one fee lifecycle, one BPS authority, no new trading API key, and no synthetic profitability');
