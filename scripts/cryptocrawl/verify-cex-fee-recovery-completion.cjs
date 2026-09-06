@@ -21,6 +21,10 @@ assert.match(stablepair, /api\.exchange\.coinbase\.com\/products/);
 assert.match(stablepair, /payload\?\.fx_stablecoin === true/);
 assert.match(stablepair, /stablepair \? 0 : null/);
 assert.match(stablepair, /staticPairAllowlistUsed: false/);
+assert.match(stablepair, /singleDirectoryRequest: true/);
+assert.match(stablepair, /directoryInFlight/);
+assert.match(stablepair, /directory\.products\.get\(key\)/);
+assert.ok(!stablepair.includes('`https://api.exchange.coinbase.com/products/${'), 'Stablepair classification must use one coalesced live directory, not per-symbol public request fan-out');
 assert.match(resolver, /resolveCoinbaseStablepairFeeEvidence/);
 assert.match(resolver, /coinbase_stablepair_live_product/);
 assert.match(resolver, /stablepairZeroMaker \? 0 : accountFee\.makerFeeBps/);
@@ -98,4 +102,4 @@ for (const forbidden of [
   assert.ok(!combined.includes(forbidden), `Unexpected new credential dependency: ${forbidden}`);
 }
 
-console.log('[cex-fee-recovery-completion] PASS: live Coinbase stablepair zero-maker pricing, existing Kraken/OKX signed fee economics, received-only OKX recovery with exact currency truth, conservative KFEE observation, one fee lifecycle, one BPS authority, no new trading API key, and no synthetic profitability');
+console.log('[cex-fee-recovery-completion] PASS: coalesced live Coinbase stablepair zero-maker pricing, existing Kraken/OKX signed fee economics, received-only OKX recovery with exact currency truth, conservative KFEE observation, one fee lifecycle, one BPS authority, no new trading API key, and no synthetic profitability');
