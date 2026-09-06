@@ -6,6 +6,7 @@ export interface RebalanceRouteEvidence {
   asset: string;
   network: string;
   withdrawalFeeAsset: number;
+  withdrawalFeeCurrency: string;
   estimatedFeeUsd: number;
   /** Null means network transfer latency has not yet been measured from terminal settlement. */
   estimatedLatencyMs: number | null;
@@ -60,6 +61,7 @@ class InventoryRebalancer {
     if (!(input.withdrawalFeeAsset >= 0) || !(input.estimatedFeeUsd >= 0) || !(input.minimumAmount >= 0)) {
       throw new Error('Rebalance evidence requires finite non-negative withdrawal fee/USD fee/minimum');
     }
+    if (!input.withdrawalFeeCurrency.trim()) throw new Error('Rebalance evidence requires withdrawal fee currency');
     if (input.estimatedLatencyMs !== null && !(input.estimatedLatencyMs >= 0)) {
       throw new Error('Rebalance measured latency must be null or finite non-negative milliseconds');
     }
@@ -69,6 +71,7 @@ class InventoryRebalancer {
     this.evidence.set(this.key(input), {
       ...input,
       asset: input.asset.toUpperCase(),
+      withdrawalFeeCurrency: input.withdrawalFeeCurrency.toUpperCase(),
       provenance: [...new Set([
         ...input.provenance,
         'measured_rebalance_route_evidence',
