@@ -31,6 +31,10 @@ export interface DualFlashLoanProviderSelection {
 }
 
 export type FlashLoanProviderSelection = SingleFlashLoanProviderSelection | DualFlashLoanProviderSelection;
+export type FlashLoanProviderSelectionInput =
+  | FlashLoanProviderSelection
+  | Omit<SingleFlashLoanProviderSelection, 'kind'>
+  | Omit<DualFlashLoanProviderSelection, 'kind'>;
 
 function cloneEconomics(value: FlashLoanProviderEconomics): FlashLoanProviderEconomics {
   return {
@@ -64,11 +68,19 @@ function cloneSelection(value: FlashLoanProviderSelection): FlashLoanProviderSel
   };
 }
 
+function normalizeSelection(input: FlashLoanProviderSelectionInput): FlashLoanProviderSelection {
+  if ('kind' in input) return input;
+  return input.provider === 'aave_balancer_dual'
+    ? { ...input, kind: 'dual' } as DualFlashLoanProviderSelection
+    : { ...input, kind: 'single' } as SingleFlashLoanProviderSelection;
+}
+
 class FlashLoanProviderSelectionRegistry {
   private readonly entries = new Map<string, FlashLoanProviderSelection>();
   private readonly maxEntries = Math.max(64, Math.min(4096, Number(process.env.ZERO_CAPITAL_PROVIDER_SELECTION_MAX || 1024)));
 
-  record(selection: FlashLoanProviderSelection): void {
+  record(input: FlashLoanProviderSelectionInput): void {
+    const selection = normalizeSelection(input);
     if (!selection.opportunityId || selection.expiresAt <= selection.selectedAt) return;
     if (selection.kind === 'dual' && (selection.balancerAmount <= 0n || selection.aaveAmount <= 0n)) return;
     this.entries.set(selection.opportunityId, cloneSelection(selection));
