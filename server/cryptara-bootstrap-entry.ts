@@ -57,6 +57,13 @@ const { ensureExpandedNetworkObservability } = await import(
 );
 ensureExpandedNetworkObservability();
 
+// Canonical provider selections feed advisory external-capital specialization.
+// The observer cannot select a provider, mutate economics, or submit capital.
+const { ensureExternalCapitalSelectionObserver } = await import(
+  './services/cryptocrawl/integration/external-capital-selection-observer.js'
+);
+ensureExternalCapitalSelectionObserver();
+
 // Authenticated inventory-route fee/network evidence feeds planning only. It may
 // reduce future rebalance drag but cannot move funds or alter trade economics.
 const { ensureMeasuredRebalanceRouteEvidenceWiring } = await import(
