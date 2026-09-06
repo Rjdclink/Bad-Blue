@@ -48,6 +48,13 @@ const { ensureZeroCapitalFundingLifecycleObserver } = await import(
 );
 ensureZeroCapitalFundingLifecycleObserver();
 
+// Authenticated inventory-route fee/network evidence feeds planning only. It may
+// reduce future rebalance drag but cannot move funds or alter trade economics.
+const { ensureMeasuredRebalanceRouteEvidenceWiring } = await import(
+  './services/cryptocrawl/integration/measured-rebalance-route-evidence-wiring.js'
+);
+ensureMeasuredRebalanceRouteEvidenceWiring();
+
 // Zero-capital gas ownership proof and native spend reservation are now explicit
 // functions called by the single canonical ZERO_CAPITAL_ATOMIC executor. The
 // bootstrap must not rewrite engine methods or install a parallel execution path.
