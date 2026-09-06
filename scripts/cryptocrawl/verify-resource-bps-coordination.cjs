@@ -187,7 +187,9 @@ requirePattern(marketFocus, /executionAuthorityChanged:\s*false/, 'economic rank
 
 // Solution 9 — Profit-Ladder/depth sizing remains the one notional authority.
 requirePattern(adaptiveProfit, /profit[-_ ]?ladder/i, 'adaptive profit operations preserve Profit-Ladder sizing');
-requirePattern(adaptiveProfit, /netProfitUsd\s*>\s*0|netProfitUsd[^\n]{0,80}positive/i, 'adaptive sizing retains positive-net gate');
+requirePattern(adaptiveProfit, /isStrictlyPositiveAllInNetProfit/, 'adaptive sizing delegates positive-net admission to the canonical authority');
+requirePattern(adaptiveProfit, /return\s+isStrictlyPositiveAllInNetProfit\(plan\.netProfitUsd\)/, 'adaptive sizing retains the canonical positive-net gate');
+requirePattern(adaptiveProfit, /strictPositiveNetAuthority:\s*'profit_admission_authority'/, 'adaptive sizing reports the canonical positive-net authority');
 requirePattern(residualReplan, /residual/i, 'partial/residual replanning remains available');
 requirePattern(residualReplan, /netProfitUsd[^\n]{0,120}>\s*0|netProfitUsd[^\n]{0,120}positive/i, 'residual replan requires positive verified economics');
 
