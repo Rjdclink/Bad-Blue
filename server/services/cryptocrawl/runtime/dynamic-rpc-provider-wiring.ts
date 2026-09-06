@@ -66,7 +66,7 @@ function costSafePublicDefinitions(): ProviderDefinition[] {
     bsc: 'https://bsc-rpc.publicnode.com',
   };
   const secondary: Partial<Record<SupportedChain, string>> = {
-    ethereum: 'https://cloudflare-eth.com',
+    ethereum: 'https://cloudflare-eth.com/v1/mainnet',
     polygon: 'https://polygon-rpc.com',
     arbitrum: 'https://arbitrum-one-rpc.publicnode.com',
     optimism: 'https://mainnet.optimism.io',
