@@ -17,6 +17,10 @@ const positiveCapture = read('server/services/cryptocrawl/runtime/positive-profi
 const liveCycle = read('server/services/cryptocrawl/testing/run-arbitrage-live-cycles.ts');
 const quoter = read('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts');
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
+const zeroCapitalEngine = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
+const cryptara = read('server/services/cryptara/index.ts');
+const envExample = read('.env.example');
+const envRailwayExample = read('.env.railway.example');
 const capitalFreeBarrel = read('server/services/cryptocrawl/capital-free/index.ts');
 const optimizationBarrel = read('server/services/cryptocrawl/optimization/index.ts');
 
@@ -76,10 +80,28 @@ assert.match(positiveCapture, /cryptaraMinimumProfitOverride: false/);
 assert.ok(!positiveCapture.includes('verifier.verifyOnce = async'), 'runtime wiring must not replace canonical verifier profit admission');
 assert.ok(!positiveCapture.includes('minimumNetProfitUsd: 0'), 'runtime wiring must not patch a second minimum-profit policy');
 
+// Cryptara may retain zero-valued advisory compatibility telemetry, but execution
+// is forbidden from consuming that field as an admission condition or threshold.
+assert.match(cryptara, /minimumNetProfitUsd: 0/);
+assert.ok(!/directive\.minimumNetProfitUsd\s*[<>]=?/.test(zeroCapitalEngine), 'zero-capital execution must never gate on Cryptara advisory minimum-profit telemetry');
+assert.ok(!/minimumNetProfitUsd\s*[<>]=?/.test(positiveCapture), 'runtime composition must never gate on Cryptara advisory minimum-profit telemetry');
+
 // Quotes-only live-cycle tooling follows the same rule and cannot introduce a test-only floor.
 assert.match(liveCycle, /isStrictlyPositiveAllInNetProfit\(plan\.netProfitUsd\)/);
 assert.ok(!liveCycle.includes('CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD'), 'live-cycle harness must not advertise a separate profit floor');
 assert.ok(!liveCycle.includes('minNetProfitUsd'), 'live-cycle harness must not calculate a separate profit floor');
+
+// Deployment configuration cannot resurrect retired strategy-local profit floors.
+for (const [name, source] of [['.env.example', envExample], ['.env.railway.example', envRailwayExample]]) {
+  for (const forbidden of [
+    'ZERO_CAPITAL_MIN_PROFIT_BPS',
+    'ZERO_CAPITAL_EUROPA_MIN_PROFIT_BPS',
+    'CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD',
+  ]) {
+    assert.ok(!source.includes(forbidden), `${name} must not expose retired profit-floor variable ${forbidden}`);
+  }
+  assert.match(source, /Profit admission is non-configurable: complete measured all-in net profit must be > 0\./);
+}
 
 // The compatibility BPS field is telemetry-only. Executable route economics remain strict netProfit > 0.
 assert.match(quoter, /telemetry only; executable eligibility is strict all-in netProfit > 0/);
@@ -93,4 +115,4 @@ for (const token of ['AutonomousOptimizer', 'NexGenProtocolLayer']) {
 }
 assert.ok(!optimizationBarrel.includes('DivineOptimizationEngine'), 'DivineOptimizationEngine must remain outside the production optimization namespace');
 
-console.log('[single-profit-admission-authority] PASS: one non-configurable >0 all-in-net-profit authority; no live dollar/BPS magnitude floor; no runtime profit patch; atomic minProfit is one smallest base unit; legacy threshold engines remain non-production');
+console.log('[single-profit-admission-authority] PASS: one non-configurable >0 all-in-net-profit authority; no live dollar/BPS magnitude floor; no runtime profit patch; deployment templates cannot resurrect retired floors; advisory compatibility telemetry has no execution authority; atomic minProfit is one smallest base unit; legacy threshold engines remain non-production');
