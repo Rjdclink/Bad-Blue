@@ -120,7 +120,10 @@ function extractTradeAmounts(trade: any, sourceCurrency: string, targetCurrency:
 }
 
 export async function evaluateCoinbaseConvertQuote(request: OrderRequest): Promise<CoinbaseConvertQuoteEvidence | null> {
-  if (process.env.CRYPTO_COINBASE_CONVERT_AUCTION_ENABLED?.trim().toLowerCase() === 'false') return null;
+  // Keep the newly recovered surface fail-closed until the post-merge authority
+  // phase installs exact Coinbase asset-delta ownership and terminal fee/spread
+  // attribution. A credential or API response alone cannot opt execution in.
+  if (process.env.CRYPTO_COINBASE_CONVERT_AUCTION_ENABLED?.trim().toLowerCase() !== 'true') return null;
   const product = pair(request.symbol);
   if (!product) return null;
 
