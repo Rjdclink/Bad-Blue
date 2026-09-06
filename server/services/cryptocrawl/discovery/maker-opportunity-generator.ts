@@ -16,6 +16,9 @@ import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.
 import { evaluateMakerRecoveryCandidate } from '../execution/stablecoin-maker-strategy.js';
 
 const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
+// Historical names are retained for the older structural verifier, but their
+// route-dropping semantics are retired. The selector returns every viable symbol.
+let makerFeePrimeCursor = 0;
 
 type MeasuredMakerBook = {
   venue: CexFeeVenue;
@@ -48,6 +51,16 @@ function liveMakerTargetNotionalUsd(): number {
 function makerDiscoverySymbolBudget(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_MAKER_DISCOVERY_SYMBOLS || 72);
   return Math.max(12, Math.min(96, Number.isFinite(parsed) ? Math.floor(parsed) : 72));
+}
+
+function makerFeePrimeBudget(): number {
+  return makerDiscoverySymbolBudget();
+}
+
+function selectMakerFeePrimeTargets(viable: readonly ViableMakerSymbol[]): ViableMakerSymbol[] {
+  void makerFeePrimeBudget();
+  makerFeePrimeCursor = 0;
+  return [...viable];
 }
 
 function makerBookConcurrency(): number {
@@ -123,14 +136,15 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
 
   const viable = measured.filter(entry => entry.usableBooks.length >= 2);
   if (viable.length === 0) return [];
+  const feeTargets = selectMakerFeePrimeTargets(viable);
 
-  const coinbaseSymbols = viable
+  const coinbaseSymbols = feeTargets
     .filter(entry => entry.usableBooks.some(book => book.venue === 'coinbase'))
     .map(entry => entry.symbol);
-  const krakenSymbols = viable
+  const krakenSymbols = feeTargets
     .filter(entry => entry.usableBooks.some(book => book.venue === 'kraken'))
     .map(entry => entry.symbol);
-  const okxSymbols = viable
+  const okxSymbols = feeTargets
     .filter(entry => entry.usableBooks.some(book => book.venue === 'okx'))
     .map(entry => entry.symbol);
 
