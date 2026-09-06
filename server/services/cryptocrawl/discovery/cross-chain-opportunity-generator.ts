@@ -1,18 +1,24 @@
-import { getAcrossBridgeQuote, getAcrossBridgeReadiness, type AcrossBridgeQuote } from '../bridge/across-bridge-provider.js';
+import {
+  getAcrossBridgeReadiness,
+  getAcrossCrossSwapQuote,
+  type AcrossBridgeQuote,
+  type AcrossStableSymbol,
+} from '../bridge/across-bridge-provider.js';
 import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import type { ChainId } from '../bridge/types.js';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
-import { evaluateAcrossSameAssetProfit, type CrossChainRouteEconomics } from './cross-chain-route-economics.js';
+import { evaluateAcrossClosedUsdProfit, type CrossChainRouteEconomics } from './cross-chain-route-economics.js';
 
 const CHAINS: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];
-const ASSETS = ['USDC', 'USDT'] as const;
+const ASSETS: readonly AcrossStableSymbol[] = ['USDC', 'USDT'] as const;
 const preparedCrossChainQuotes = new Map<string, { quote: AcrossBridgeQuote; economics: CrossChainRouteEconomics }>();
 
 interface CrossChainRoute {
   from: ChainId;
   to: ChainId;
-  asset: typeof ASSETS[number];
+  inputAsset: AcrossStableSymbol;
+  outputAsset: AcrossStableSymbol;
 }
 
 function rpcHealthy(chain: ChainId): boolean {
@@ -35,14 +41,16 @@ function structuralRoutes(): CrossChainRoute[] {
     if (!rpcHealthy(from)) continue;
     for (const to of CHAINS) {
       if (from === to || !rpcHealthy(to)) continue;
-      for (const asset of ASSETS) routes.push({ from, to, asset });
+      for (const inputAsset of ASSETS) {
+        for (const outputAsset of ASSETS) routes.push({ from, to, inputAsset, outputAsset });
+      }
     }
   }
   return routes;
 }
 
 function routeKey(route: CrossChainRoute): string {
-  return `${route.from}:${route.to}:${route.asset}`;
+  return `${route.from}:${route.to}:${route.inputAsset}:${route.outputAsset}`;
 }
 
 function acrossQuoteConcurrency(): number {
@@ -50,11 +58,10 @@ function acrossQuoteConcurrency(): number {
 }
 
 /**
- * Missing bridge quote/liquidity/fill-time evidence is never a passive dead end.
- * Every currently structural route is actively reacquired every discovery cycle,
- * with bounded concurrency so provider pressure stays controlled. A provider
- * failure remains explicit missing evidence and is retried on the next cycle;
- * synthetic/cache-only bridge evidence is never manufactured.
+ * Every structural same-asset and USDC<->USDT Across cross-swap is refreshed in
+ * every discovery cycle. Across itself composes any origin/destination swaps with
+ * the bridge; CryptoCrawler only consumes the provider's guaranteed minimum
+ * output and never fabricates a cross-chain price leg.
  */
 async function acquireRouteQuotes(
   routes: readonly CrossChainRoute[],
@@ -70,10 +77,11 @@ async function acquireRouteQuotes(
       if (index >= routes.length) return;
       const route = routes[index];
       try {
-        quotes.set(routeKey(route), await getAcrossBridgeQuote({
+        quotes.set(routeKey(route), await getAcrossCrossSwapQuote({
           originChain: route.from,
           destinationChain: route.to,
-          token: route.asset,
+          inputSymbol: route.inputAsset,
+          outputSymbol: route.outputAsset,
           amountHuman: notionalUsd,
         }));
       } catch {
@@ -95,7 +103,7 @@ function freshQuote(quote: AcrossBridgeQuote | null, now: number): quote is Acro
 }
 
 function bridgeQuoteProvenance(quote: AcrossBridgeQuote): string[] {
-  const values = [
+  return [...new Set([
     ...quote.provenance,
     `across_quote_id:${quote.quoteId || 'none'}`,
     `across_expected_fill_seconds:${quote.expectedFillTimeSec}`,
@@ -108,8 +116,8 @@ function bridgeQuoteProvenance(quote: AcrossBridgeQuote): string[] {
     `across_destination_gas_usd:${quote.destinationGasUsd ?? 'unknown'}`,
     `across_lp_fee_usd:${quote.lpFeeUsd ?? 'unknown'}`,
     `across_relayer_capital_fee_usd:${quote.relayerCapitalFeeUsd ?? 'unknown'}`,
-  ];
-  return [...new Set(values)];
+    `across_cross_swap_type:${quote.crossSwapType ?? 'unreported'}`,
+  ])];
 }
 
 function signerConfigured(): boolean {
@@ -121,22 +129,25 @@ function recordRoute(
   now: number,
   ttlMs: number,
   quote: AcrossBridgeQuote | null,
-  liveAssetUsdPrice: number | null,
+  prices: ReadonlyMap<string, number>,
 ): MeasuredCandidate {
   const hasFreshQuote = freshQuote(quote, now);
   const readiness = getAcrossBridgeReadiness();
   const hasSigner = signerConfigured();
-  const expiresAt = hasFreshQuote
-    ? Math.min(now + ttlMs, quote.expiresAt, quote.observedAt + Math.max(1_000, Math.min(60_000, Number(process.env.CRYPTOCRAWL_ACROSS_MAX_QUOTE_AGE_MS || 10_000))))
-    : now + ttlMs;
-  const economics = hasFreshQuote && liveAssetUsdPrice !== null
-    ? evaluateAcrossSameAssetProfit({ quote, liveAssetUsdPrice })
+  const inputPrice = prices.get(route.inputAsset) ?? null;
+  const outputPrice = prices.get(route.outputAsset) ?? null;
+  const maxAgeMs = Math.max(1_000, Math.min(60_000, Number(process.env.CRYPTOCRAWL_ACROSS_MAX_QUOTE_AGE_MS || 10_000)));
+  const expiresAt = hasFreshQuote ? Math.min(now + ttlMs, quote.expiresAt, quote.observedAt + maxAgeMs) : now + ttlMs;
+  const economics = hasFreshQuote && inputPrice !== null && outputPrice !== null
+    ? evaluateAcrossClosedUsdProfit({ quote, liveInputAssetUsdPrice: inputPrice, liveOutputAssetUsdPrice: outputPrice })
     : null;
   const deterministicPositive = economics?.executablePositive === true;
-  // Across documents originGas as the gas estimate for swapTx while approvalTxns
-  // are separate executable transactions. Until approval gas is explicitly priced
-  // into canonical pre-trade economics, approval-required routes remain visible but
-  // cannot be promoted to live execution.
+
+  // Approval transaction gas is deliberately not inferred from swapTx originGas.
+  // Approval-required routes remain visible and automatically refreshed, but only
+  // zero-approval quotes can currently satisfy complete pre-trade all-in cost
+  // proof. The executor can still pay system-owned approval gas for lifecycle
+  // recovery, but that cost cannot be omitted from deterministic admission.
   const approvalGasCanonical = hasFreshQuote && quote.approvalTransactions === 0;
   const routeExecutable = deterministicPositive
     && readiness.configured
@@ -145,11 +156,9 @@ function recordRoute(
     && quote!.simulationSuccess === true
     && quote!.swapTransactionPresent === true
     && quote!.minOutputAmount !== null;
-  const opportunityId = `cross-chain:${route.from}:${route.to}:${route.asset}:${now}`;
+  const opportunityId = `cross-chain:${route.from}:${route.to}:${route.inputAsset}-${route.outputAsset}:${now}`;
 
-  if (routeExecutable && quote && economics) {
-    preparedCrossChainQuotes.set(opportunityId, { quote, economics });
-  }
+  if (routeExecutable && quote && economics) preparedCrossChainQuotes.set(opportunityId, { quote, economics });
 
   const missingInformation = [
     ...(!readiness.configured ? ['across_production_credentials'] : []),
@@ -161,7 +170,8 @@ function recordRoute(
     ...(hasFreshQuote && !quote.simulationSuccess ? ['bridge_provider_simulation_success'] : []),
     ...(hasFreshQuote && !quote.swapTransactionPresent ? ['across_swap_transaction_payload'] : []),
     ...(!hasSigner ? ['cross_chain_signer'] : []),
-    ...(liveAssetUsdPrice === null ? ['live_same_asset_usd_price'] : []),
+    ...(inputPrice === null ? [`live_${route.inputAsset.toLowerCase()}_usd_price`] : []),
+    ...(outputPrice === null ? [`live_${route.outputAsset.toLowerCase()}_usd_price`] : []),
     ...(economics && !deterministicPositive ? ['positive_guaranteed_cross_chain_net_after_origin_gas'] : []),
   ];
 
@@ -171,37 +181,25 @@ function recordRoute(
     observedAt: now,
     expiresAt,
     status: routeExecutable ? 'eligible' : deterministicPositive ? 'deterministic_positive' : hasFreshQuote ? 'enriched' : 'observed',
-    assets: [route.asset],
+    assets: [...new Set([route.inputAsset, route.outputAsset])],
     venues: hasFreshQuote ? ['across'] : [],
     chains: [route.from, route.to],
     rawQuotes: hasFreshQuote ? [{
-      source: 'across',
-      venue: 'across',
-      chain: `${route.from}->${route.to}`,
-      symbol: route.asset,
-      observedAt: quote.observedAt,
-      amountIn: quote.inputAmount,
-      amountOut: quote.minOutputAmount ?? quote.expectedOutputAmount,
+      source: 'across', venue: 'across', chain: `${route.from}->${route.to}`,
+      symbol: `${route.inputAsset}/${route.outputAsset}`, observedAt: quote.observedAt,
+      amountIn: quote.inputAmount, amountOut: quote.minOutputAmount ?? quote.expectedOutputAmount,
       executable: routeExecutable,
       provenance: [
         ...bridgeQuoteProvenance(quote),
         'cross_chain_profit_output_authority:minimum_guaranteed_output',
-        approvalGasCanonical
-          ? 'cross_chain_approval_gas:no_approval_transaction_required'
-          : 'cross_chain_approval_gas:missing_from_canonical_pretrade_economics',
+        'cross_chain_input_output_prices:separately_live',
+        approvalGasCanonical ? 'cross_chain_approval_gas:no_approval_transaction_required' : 'cross_chain_approval_gas:missing_from_canonical_pretrade_economics',
       ],
     }] : [],
     depth: hasFreshQuote
-      ? {
-          status: 'measured',
-          detail: `Across returned a fresh exact-input simulated route for the sampled ${discoveryNotionalUsd()} ${route.asset}; measured depth applies only to this exact quoted amount`,
-        }
+      ? { status: 'measured', detail: `Across returned a fresh simulated exact-input ${route.inputAsset}->${route.outputAsset} route for ${discoveryNotionalUsd()} source units; depth applies only to this exact quoted amount` }
       : { status: 'unavailable', detail: 'Across evidence acquisition was actively attempted for this route in the current cycle but no fresh authoritative quote was returned' },
     economics: {
-      // Across expected/minimum output already includes route swap/bridge/destination
-      // fees. Do not subtract totalFeeUsd a second time. originGas prices swapTx;
-      // approval-required routes are not executable until approval gas has its own
-      // canonical pre-trade measurement.
       grossProfitUsd: economics?.routeGainUsdBeforeOriginGas ?? null,
       deterministicNetProfitUsd: economics?.deterministicNetProfitUsd ?? null,
       feeUsd: hasFreshQuote ? quote.totalFeeUsd : null,
@@ -215,31 +213,33 @@ function recordRoute(
     quoteAgeMs: hasFreshQuote ? Math.max(0, now - quote.observedAt) : null,
     executableCapability: routeExecutable,
     executionCapabilityReason: routeExecutable
-      ? 'Across has a fresh simulated exact-input route whose guaranteed same-asset minimum output remains positive after separately paid origin swap gas and requires no unpriced approval transaction; canonical measured-topology execution may revalidate immediately before signing'
+      ? 'Across fresh simulated cross-swap has guaranteed minimum output whose independently marked USD value remains positive after separately paid origin gas, with no unpriced approval transaction; durable system-owned capital execution may revalidate immediately before signing'
       : deterministicPositive && hasFreshQuote && quote.approvalTransactions > 0
-        ? 'Cross-chain economics are positive before approval gas, but Across requires one or more approval transactions whose gas is not included in canonical pre-trade economics'
+        ? 'Cross-chain economics are positive before approval gas, but Across requires approval transaction gas that is not yet included in canonical pre-trade economics'
         : deterministicPositive
           ? 'Cross-chain economics are deterministically positive, but a required execution capability fact is unavailable'
           : hasFreshQuote
-            ? 'Across transport is measured and executable, but this exact same-asset route is not deterministically positive after guaranteed minimum output and origin gas'
+            ? 'Across transport and any source/destination swap composition are measured, but this exact route is not deterministically positive after guaranteed output and origin gas'
             : readiness.configured
-              ? 'Across evidence acquisition was attempted in the current cycle and returned no fresh authoritative executable quote; the route remains in automatic reacquisition rather than a passive missing-data state'
+              ? 'Across evidence acquisition was attempted in the current cycle and returned no fresh authoritative executable quote; route remains in automatic reacquisition'
               : readiness.reason,
     missingInformation: [...new Set(missingInformation)],
     provenance: [
-      `rpc:${route.from}:healthy`,
-      `rpc:${route.to}:healthy`,
+      `rpc:${route.from}:healthy`, `rpc:${route.to}:healthy`,
       ...(hasFreshQuote ? bridgeQuoteProvenance(quote) : ['across_quote:active_reacquisition_attempted_current_cycle']),
       `across_production_configured:${readiness.configured}`,
       `cross_chain_signer_configured:${hasSigner}`,
       `cross_chain_approval_gas_canonical:${approvalGasCanonical}`,
-      'across_terminal_executor:refresh_quote_and_payload_before_signing',
+      `cross_chain_route:${route.inputAsset}->${route.outputAsset}`,
+      'across_terminal_executor:refresh_exact_cross_swap_before_signing',
       'across_terminal_executor:minimum_output_drift_bound',
       'across_terminal_executor:destination_receipt_or_verified_refund',
-      'cross_chain_profit_model:same_asset_closed_value',
+      'cross_chain_profit_model:closed_usd_value',
       'cross_chain_profit_model:minimum_output_not_expected_output',
+      'cross_chain_profit_model:separate_live_input_output_prices',
       'cross_chain_profit_model:origin_gas_subtracted_once',
       'cross_chain_profit_model:unpriced_approval_gas_blocks_execution',
+      'cross_chain_route_formation:across_any_to_any_stablecoin_composition',
       'evidence_reacquisition:all_structural_routes_each_cycle_bounded_concurrency',
       'synthetic_evidence:false',
     ],
@@ -256,13 +256,6 @@ export function getPreparedCrossChainRoute(opportunityId: string): { quote: Acro
   return prepared;
 }
 
-/**
- * Structural coverage is complete for every currently healthy chain pair and
- * stablecoin. Every structural route actively reacquires a fresh Across approval
- * quote each cycle under bounded concurrency. A route becomes executable only
- * when its guaranteed same-asset output is strictly positive after separately
- * paid origin gas and the quote requires no unpriced approval transaction.
- */
 export async function discoverMeasuredCrossChainCandidates(): Promise<MeasuredCandidate[]> {
   await multiProviderRpcManager.initialize(CHAINS);
   const now = Date.now();
@@ -279,11 +272,5 @@ export async function discoverMeasuredCrossChainCandidates(): Promise<MeasuredCa
     if (prepared.quote.expiresAt <= now || prepared.quote.approvalTransactions > 0) preparedCrossChainQuotes.delete(id);
   }
 
-  return routes.map(route => recordRoute(
-    route,
-    now,
-    ttlMs,
-    quotes.get(routeKey(route)) ?? null,
-    prices.get(route.asset) ?? null,
-  ));
+  return routes.map(route => recordRoute(route, now, ttlMs, quotes.get(routeKey(route)) ?? null, prices));
 }
