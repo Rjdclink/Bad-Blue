@@ -32,6 +32,7 @@ const source = {
   providerSelection: read('server/services/cryptocrawl/execution/adapters/flash-loan-provider-selection-registry.ts'),
   providerWiring: read('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts'),
   providerExecution: read('server/services/cryptocrawl/integration/provider-specific-zero-capital-execution-wiring.ts'),
+  canonicalZeroCapitalExecutor: read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts'),
   deployment: read('scripts/cryptocrawl/deploy-flashloan-receiver.ts'),
 };
 
@@ -170,13 +171,18 @@ const required = [
   ['providerWiring', 'verifyDualFlashLoanReceiverCapability', 'dual provider selection verifies receiver'],
   ['providerWiring', 'buildMissingReceiverPermissionCalls', 'provider-neutral route permission check'],
   ['providerWiring', 'fresh_quote_after_provider_receiver_permissions', 'fresh quote after any provider receiver permission change'],
-  ['providerExecution', "selection.provider !== 'aave_v3' && selection.provider !== 'morpho_blue'", 'provider-specific execution branch'],
-  ['providerExecution', 'buildFlashLoanReceiverPayloadFromPlan', 'provider-specific final payload'],
-  ['providerExecution', 'FlashLoanExecuted', 'provider-specific positive-profit receipt verification'],
-  ['providerExecution', 'normalizeSettlement', 'provider-specific normalized settlement'],
-  ['providerExecution', 'aave_v3_pool_flashLoanSimple', 'Aave settlement provenance'],
-  ['providerExecution', 'morpho_blue_flashLoan_zero_fee', 'Morpho zero-fee settlement provenance'],
-  ['providerExecution', 'provider_receiver_binding_verified', 'provider receiver binding provenance'],
+  ['providerWiring', 'morpho_zero_flash_fee_applied:true', 'Morpho zero-fee provider repricing provenance'],
+  ['providerExecution', "executionAuthority: 'CanonicalZeroCapitalExecutor'", 'retired provider wrapper points to canonical execution authority'],
+  ['providerExecution', 'executeFundedMutation: false', 'retired provider wrapper cannot mutate funded execution'],
+  ['providerExecution', 'transactionSubmissionAuthority: false', 'retired provider wrapper cannot submit transactions'],
+  ['canonicalZeroCapitalExecutor', "provider: selection.kind === 'single' ? selection.provider : 'balancer_v2'", 'canonical executor binds selected provider into the final plan'],
+  ['receiverBuilder', "if (provider === 'aave_v3') return 'executeAaveFlashLoan';", 'Aave provider-specific receiver entry point'],
+  ['receiverBuilder', "if (provider === 'morpho_blue') return 'executeMorphoFlashLoan';", 'Morpho provider-specific receiver entry point'],
+  ['canonicalZeroCapitalExecutor', 'buildFlashLoanReceiverPayloadFromPlan', 'provider-specific final payload'],
+  ['canonicalZeroCapitalExecutor', 'FlashLoanExecuted', 'provider-specific positive-profit receipt verification'],
+  ['canonicalZeroCapitalExecutor', 'normalizedSettlement', 'canonical normalized settlement'],
+  ['canonicalZeroCapitalExecutor', 'providerLabel: selection.provider', 'terminal settlement carries exact selected-provider attribution'],
+  ['canonicalZeroCapitalExecutor', 'selection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()', 'selected provider receiver remains bound to canonical execution wallet'],
   ['deployment', "'balancer-composite-v2'", 'Composite V2 deploy support'],
   ['deployment', "'aave-v3'", 'Aave V3 deploy support'],
   ['deployment', 'DEPLOY_FLASHLOAN_RECEIVER', 'explicit deployment confirmation'],
@@ -193,7 +199,8 @@ forbid('stageOneBootstrap', /executeVerifiedArbitragePlan\s*\(/, 'Stage 1 direct
 forbid('stageOneBootstrap', /executeFunded\s*\(/, 'Stage 1 direct zero-capital execution');
 forbid('stageOneBootstrap', /recordExecutionEvidence\s*\(/, 'Stage 1 synthetic terminal evidence');
 forbid('admission', /originalIsAllowedByCryptara/, 'zero-capital duplicate admission monkey-patch');
-forbid('providerExecution', /foundry_create2_receiver/, 'Balancer provenance on provider-specific settlement');
+forbid('providerExecution', /buildFlashLoanReceiverPayloadFromPlan|executeSystemOwnedNativeTransaction|gasSponsor\.execute|sendTransaction\s*\(/, 'retired provider wrapper regaining payload or transaction submission authority');
+forbid('providerExecution', /foundry_create2_receiver/, 'Balancer provenance on retired provider-specific wrapper');
 forbid('assembler', /executionAuthority:\s*true/, 'composite direct execution authority');
 forbid('assembler', /sharedPrincipalStackedBps:\s*arithmeticLegBpsSum/, 'arithmetic BPS promoted as shared-principal BPS');
 forbid('liquidation', /deterministicNetProfitUsd:\s*[1-9]/, 'invented liquidation profit');
@@ -218,4 +225,5 @@ console.log(' - Cryptara/TradingView scoring and optional missing evidence remai
 console.log(' - rare/high-profit CEX observations trigger canonical fresh revalidation instead of a profit-magnitude veto');
 console.log(' - canonical CEX revalidation still requires synchronized books, authenticated fees, measured depth and all-in positive economics');
 console.log(' - Stage 1 can execute only through canonical executors and cannot directly submit trades or fabricate terminal settlement history');
+console.log(' - provider-specific Aave/Morpho payload, receiver binding, terminal-profit and normalized-settlement invariants are verified on the canonical zero-capital executor while the retired wrapper remains authority-free');
 console.log(' - terminal outcomes remain the learning and realized-profit authority');
