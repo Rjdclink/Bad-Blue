@@ -2,7 +2,9 @@ import logger from '../../../logger.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
+import { evaluateMakerRecoveryCandidate } from '../execution/stablecoin-maker-strategy.js';
 import { routeMeasuredOpportunity } from '../execution/unified-execution-router.js';
+import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import { resolveCexFeeEvidence, type CexFeeVenue } from '../intelligence/cex-fee-resolver.js';
 import { ensureBpsDecompositionObservability } from './bps-decomposition-observability.js';
 import { ensureBpsFrontierWave3Wiring } from './bps-frontier-wave3-wiring.js';
@@ -13,6 +15,15 @@ import { ensureProfitabilityRecoveryCoordinator } from './profitability-recovery
 const installed = new WeakSet<object>();
 const evidenceReacquisitionInFlight = new Map<string, Promise<void>>();
 const evidenceReacquisitionCooldownUntil = new Map<string, number>();
+const makerEvidenceQueued = new Set<string>();
+const makerEvidenceQueue: Array<{
+  key: string;
+  symbol: string;
+  reason: string;
+  venues: CexFeeVenue[];
+  priority: number;
+}> = [];
+let makerEvidenceActive = 0;
 let evidenceScannerSubscribed = false;
 
 type CexRuntime = {
@@ -34,6 +45,23 @@ function cexOpportunityId(plan: { buyVenue: string; sellVenue: string; symbol: s
 function evidenceReacquisitionCooldownMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_EVIDENCE_REACQUISITION_COOLDOWN_MS || 500);
   return Number.isFinite(parsed) ? Math.max(100, Math.min(5_000, Math.trunc(parsed))) : 500;
+}
+
+function makerEvidenceConcurrency(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_MAKER_EVIDENCE_CONCURRENCY || 3);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(8, Math.trunc(parsed))) : 3;
+}
+
+function makerEvidenceMaxQuoteAgeMs(): number {
+  const parsed = Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000);
+  return Number.isFinite(parsed) ? Math.max(500, Math.min(15_000, Math.trunc(parsed))) : 5_000;
+}
+
+function makerEvidenceNotionalUsd(): number {
+  const ladder = getProfitLadderNotionalAuthority();
+  const fallback = Number(process.env.CRYPTOCRAWL_MAKER_PAPER_NOTIONAL_USD || 1_000);
+  const value = ladder.maxNotionalUsd > 0 ? ladder.maxNotionalUsd : fallback;
+  return Number.isFinite(value) ? Math.max(10, value) : 1_000;
 }
 
 function cexCandidateSymbol(candidate: MeasuredCandidate): string {
@@ -72,6 +100,39 @@ function cexHardEvidenceMissing(candidate: MeasuredCandidate): boolean {
   if (candidate.status === 'blocked' || candidate.status === 'expired' || candidate.expiresAt <= Date.now()) return false;
   if (candidate.status === 'observed' || candidate.status === 'enriched') return true;
   return candidate.missingInformation.some(item => /fee|depth|quote|product|deterministic|all_in_economics|execution_path|settlement_safe/i.test(item));
+}
+
+function makerEvidenceMissing(candidate: MeasuredCandidate): boolean {
+  if (candidate.topology !== 'MAKER_CEX') return false;
+  if (candidate.status === 'expired' || candidate.expiresAt <= Date.now()) return false;
+  if (!candidate.missingInformation.some(item => /authenticated_maker_fee_evidence|fully_measured_canonical_maker_plan/i.test(item))) return false;
+  // Paper maker candidates are intentionally stored as blocked so paper evidence
+  // can never execute. That blocked state must not also make evidence acquisition a
+  // dead end. Only this exact paper-evidence block is eligible for reacquisition.
+  return candidate.executionCapabilityReason.includes('Paper maker proof accelerates calibration');
+}
+
+function makerPaperNetProfitUsd(candidate: MeasuredCandidate): number | null {
+  for (const item of candidate.provenance) {
+    const match = /^paper_net_profit_usd:([-+]?\d+(?:\.\d+)?)$/i.exec(item.trim());
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function makerEvidencePriority(candidate: MeasuredCandidate): number {
+  const paperNet = makerPaperNetProfitUsd(candidate);
+  const ageMs = Math.max(0, Date.now() - candidate.observedAt);
+  const lifetimeMs = Math.max(1, candidate.expiresAt - candidate.observedAt);
+  const freshness = Math.max(0, 1 - ageMs / lifetimeMs);
+  const authenticatedFeeKnown = candidate.missingInformation.includes('authenticated_maker_fee_evidence') ? 0 : 1;
+  // Paper economics remain advisory only. This score chooses which evidence to
+  // measure first and has no admission, sizing, profitability or execution power.
+  return (paperNet !== null && paperNet > 0 ? 100 + Math.min(25, paperNet) : 0)
+    + authenticatedFeeKnown * 10
+    + freshness;
 }
 
 function requestCexEvidenceReacquisition(
@@ -135,7 +196,105 @@ function requestCexEvidenceReacquisition(
   evidenceReacquisitionInFlight.set(key, task);
 }
 
+function drainMakerEvidenceQueue(): void {
+  while (makerEvidenceActive < makerEvidenceConcurrency() && makerEvidenceQueue.length > 0) {
+    makerEvidenceQueue.sort((left, right) => right.priority - left.priority);
+    const request = makerEvidenceQueue.shift()!;
+    makerEvidenceQueued.delete(request.key);
+    if ((evidenceReacquisitionCooldownUntil.get(request.key) || 0) > Date.now()) continue;
+    if (evidenceReacquisitionInFlight.has(request.key)) continue;
+
+    makerEvidenceActive += 1;
+    const task = (async () => {
+      const feeResults = await Promise.allSettled(request.venues.map(async venue => ({
+        venue,
+        evidence: await resolveCexFeeEvidence(venue, request.symbol, { forceRefresh: true }),
+      })));
+      const authenticatedMakerFeeVenues = feeResults.flatMap(result => {
+        if (result.status !== 'fulfilled') return [];
+        const evidence = result.value.evidence;
+        if (!evidence || evidence.source === 'configured_override') return [];
+        const makerKnown = (evidence.makerFeeBps !== null && Number.isFinite(evidence.makerFeeBps))
+          || (evidence.makerRebateBps !== null && Number.isFinite(evidence.makerRebateBps));
+        return makerKnown ? [result.value.venue] : [];
+      });
+
+      const plan = await evaluateMakerRecoveryCandidate({
+        symbol: request.symbol,
+        notionalUsd: makerEvidenceNotionalUsd(),
+        maxQuoteAgeMs: makerEvidenceMaxQuoteAgeMs(),
+      });
+      const measuredPositive = Boolean(plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0);
+      const telemetry = {
+        component: 'DynamicProfitabilityAdmissionWiring',
+        symbol: request.symbol,
+        reason: request.reason,
+        requestedFeeVenues: request.venues,
+        authenticatedMakerFeeVenues,
+        canonicalMakerPlanMeasured: Boolean(plan),
+        canonicalMakerPlanPositive: measuredPositive,
+        measuredNetProfitUsd: measuredPositive ? plan!.netProfitUsd : null,
+        measuredNotionalUsd: measuredPositive ? plan!.notionalUsd : null,
+        acquisitionMode: 'bounded_single_flight_authenticated_fee_then_canonical_maker_evaluation',
+        paperEvidenceExecutionAuthority: false,
+        shadowPriorityExecutionAuthority: false,
+        hotPathExecutionAuthority: false,
+        terminalSettlementStillRequired: true,
+      };
+      if (measuredPositive) {
+        logger.info('[EvidenceScanner] Blocked maker evidence converted to a measured positive canonical plan', telemetry);
+      } else {
+        logger.debug('[EvidenceScanner] Blocked maker evidence reacquired without a positive canonical plan', telemetry);
+      }
+    })()
+      .catch(error => {
+        logger.warn('[EvidenceScanner] Targeted maker evidence acquisition degraded', {
+          component: 'DynamicProfitabilityAdmissionWiring',
+          symbol: request.symbol,
+          reason: request.reason,
+          requestedFeeVenues: request.venues,
+          error: error instanceof Error ? error.message : String(error),
+          paperEvidenceExecutionAuthority: false,
+          hotPathExecutionAuthority: false,
+        });
+      })
+      .finally(() => {
+        evidenceReacquisitionInFlight.delete(request.key);
+        evidenceReacquisitionCooldownUntil.set(request.key, Date.now() + evidenceReacquisitionCooldownMs());
+        makerEvidenceActive = Math.max(0, makerEvidenceActive - 1);
+        drainMakerEvidenceQueue();
+      });
+    evidenceReacquisitionInFlight.set(request.key, task);
+  }
+}
+
+function requestMakerEvidenceReacquisition(candidate: MeasuredCandidate): void {
+  if (!makerEvidenceMissing(candidate)) return;
+  const symbol = cexCandidateSymbol(candidate);
+  if (!symbol) return;
+  const key = `maker:${symbol}`;
+  if (makerEvidenceQueued.has(key) || evidenceReacquisitionInFlight.has(key) || (evidenceReacquisitionCooldownUntil.get(key) || 0) > Date.now()) return;
+  const venues = [...new Set(candidate.venues
+    .map(value => String(value).trim().toLowerCase() as CexFeeVenue)
+    .filter(venue => EXECUTABLE_CEX_VENUES.has(venue)))];
+  if (venues.length < 2) return;
+
+  makerEvidenceQueued.add(key);
+  makerEvidenceQueue.push({
+    key,
+    symbol,
+    reason: `blocked_paper_maker_requires_live_plan:${candidate.missingInformation.join(',')}`,
+    venues,
+    priority: makerEvidencePriority(candidate),
+  });
+  drainMakerEvidenceQueue();
+}
+
 function requestMinimumExecutionEvidence(candidate: MeasuredCandidate): void {
+  if (makerEvidenceMissing(candidate)) {
+    requestMakerEvidenceReacquisition(candidate);
+    return;
+  }
   if (!cexHardEvidenceMissing(candidate)) return;
   const symbol = cexCandidateSymbol(candidate);
   if (!symbol) return;
@@ -170,6 +329,9 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
       positiveRawEdgePriority: 'highest_gross_bps_first_via_existing_candidate_update_order',
       feeAcquisition: 'exact_positive_venue_legs_force_authenticated_refresh',
       remainingEvidenceAcquisition: 'canonical_exact_symbol_revalidation',
+      makerEvidenceAcquisition: 'blocked_paper_candidates_bounded_single_flight_to_existing_canonical_maker_evaluator',
+      makerPaperExecutionAuthority: false,
+      makerShadowPriorityExecutionAuthority: false,
       missingEvidenceIsVeto: false,
       advisoryOnly: true,
       executionAuthority: false,
@@ -236,7 +398,7 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     component: 'DynamicProfitabilityAdmissionWiring',
     hotPathExecutionAuthority: 'canonical_strategy_executor_only',
     evidenceScoringAuthority: 'parallel_advisory_only',
-    activeMissingEvidenceAcquisition: 'exact_positive_fee_legs_then_targeted_canonical_revalidation_off_hot_path',
+    activeMissingEvidenceAcquisition: 'exact_positive_fee_legs_plus_bounded_maker_reacquisition_then_canonical_revalidation_off_hot_path',
     missingInformationExecutionVetoAuthority: false,
     adaptiveProfitabilityThresholdAuthority: 'ranking_and_sizing_only',
     bpsFrontierWave3: 'measured_like_notional_total_cost_frontier_plus_keyless_lighter_public_benchmark',
