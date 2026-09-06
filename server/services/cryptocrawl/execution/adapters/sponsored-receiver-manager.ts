@@ -5,7 +5,7 @@ import type { ConfiguredZeroCapitalRoute } from './onchain-route-quoter.js';
 import { buildSwapCallFromLeg, type SupportedExecutionChain } from './onchain-payload-builder.js';
 import { getGasSponsorManager, type SponsoredCall } from '../../strategies/gas-sponsorship.js';
 import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../../governance/zero-capital-infrastructure-policy.js';
-import { withEvmSignerLane } from '../evm-signer-lane.js';
+import { executeSystemOwnedNativeTransaction } from '../system-owned-native-transaction.js';
 
 const DEFAULT_CREATE2_DEPLOYER = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
 const DEFAULT_CREATE2_DEPLOYER_CODE_HASH = '0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989';
@@ -159,11 +159,6 @@ export class SponsoredReceiverManager {
     if (actualVault.toLowerCase() !== vault.toLowerCase()) throw new Error(`Receiver Balancer vault mismatch at ${address}`);
   }
 
-  /**
-   * Read-only receiver inspection. It computes the same deterministic CREATE2
-   * address as deployment, verifies bytecode/owner/vault if already deployed,
-   * and never broadcasts a transaction or mutates on-chain permissions.
-   */
   async inspectExistingReceiver(input: {
     chain: SupportedExecutionChain;
     provider: providers.JsonRpcProvider;
@@ -227,30 +222,29 @@ export class SponsoredReceiverManager {
 
     let deploymentTransactionHash: string | undefined;
     if (input.fundingMode === 'sponsored') {
+      // A configured hosted policy is not evidence that the operator bears zero
+      // monetary cost. Until the canonical sponsorship authority can supply that
+      // proof, receiver deployment remains on the provenance-backed native path.
       const sponsorReadiness = this.sponsor.getReadiness();
-      if (!sponsorReadiness.ready) throw new Error(sponsorReadiness.reason || 'Alchemy Gas Manager is not ready');
-      const sponsored = await this.sponsor.execute({
-        wallet: input.wallet,
-        chainId: identity.chainId,
-        calls: [{ to: DEFAULT_CREATE2_DEPLOYER, data: deploymentData, value: BigNumber.from(0) }],
-        timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_DEPLOY_TIMEOUT_MS || 90_000)),
-      });
-      deploymentTransactionHash = sponsored.transactionHash;
+      throw new Error(sponsorReadiness.ready
+        ? 'Receiver deployment sponsorship is configured but zero-operator-cost provenance is unproven'
+        : sponsorReadiness.reason || 'Receiver deployment sponsorship is unavailable');
     } else {
-      deploymentTransactionHash = await withEvmSignerLane({
-        chainId: identity.chainId,
-        walletAddress: identity.owner,
-        operation: async () => {
-          const transaction = await input.wallet.sendTransaction({
-            to: DEFAULT_CREATE2_DEPLOYER,
-            data: deploymentData,
-            value: BigNumber.from(0),
-          });
-          const receipt = await transaction.wait(1);
-          if (!receipt || receipt.status !== 1) throw new Error(`Native receiver deployment reverted on ${input.chain}`);
-          return transaction.hash;
+      const result = await executeSystemOwnedNativeTransaction({
+        chain: input.chain,
+        wallet: input.wallet,
+        provider: input.provider,
+        idempotencyKey: `zero-receiver-deploy:${input.chain}:${identity.predictedAddress.toLowerCase()}`,
+        purpose: 'zero_capital_receiver_deployment',
+        transaction: {
+          to: DEFAULT_CREATE2_DEPLOYER,
+          data: deploymentData,
+          value: BigNumber.from(0),
         },
+        confirmations: 1,
       });
+      if (result.receipt.status !== 1) throw new Error(`System-owned receiver deployment reverted on ${input.chain}`);
+      deploymentTransactionHash = result.transactionHash;
     }
 
     await this.verifyReceiver(input.provider, identity.predictedAddress, identity.owner, identity.vault);
@@ -269,7 +263,6 @@ export class SponsoredReceiverManager {
     return { ...record };
   }
 
-  /** Read-only computation of setup calls for explicit targets/tokens. */
   async buildMissingExplicitPermissionCalls(input: {
     receiver: string;
     provider: providers.JsonRpcProvider;
