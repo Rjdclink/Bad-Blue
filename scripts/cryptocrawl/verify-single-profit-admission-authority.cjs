@@ -51,7 +51,7 @@ assert.match(europa, /profit-admission-authority\.js/);
 assert.match(europa, /isStrictlyPositiveProfitBaseUnits\(netProfit\)/);
 assert.match(europa, /minNetProfitBps: PROFIT_ADMISSION_POLICY\.minimumProfitBps/);
 assert.ok(!europa.includes('ZERO_CAPITAL_EUROPA_MIN_PROFIT_BPS'), 'Europa must not expose a separate profit-floor environment variable');
-assert.ok(!europa.includes('minimumProfitBps'), 'Europa must not calculate a local minimum-profit BPS');
+assert.equal((europa.match(/minimumProfitBps/g) || []).length, 1, 'Europa may reference the canonical minimum-profit BPS telemetry exactly once');
 
 // 0x atomic execution must not scale minProfit from expected profit or an environment setting.
 assert.match(dex, /profit-admission-authority\.js/);
