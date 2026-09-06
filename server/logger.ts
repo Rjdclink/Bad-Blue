@@ -37,10 +37,64 @@ const fileFormat = winston.format.combine(
   winston.format.json()
 );
 
+// Railway enforces a per-replica console-line throughput ceiling. CryptoCrawler's
+// canonical scanners intentionally run at high cadence, so identical summary
+// messages can otherwise crowd out the warnings/errors and terminal evidence we
+// actually need in deploy logs. Sample only the known repetitive INFO summaries
+// on the Console transport. File transports remain unsampled and retain every
+// event, and warnings/errors are never filtered.
+const HIGH_FREQUENCY_PRODUCTION_SUMMARIES = new Set([
+  '[NoBpsMakerAdmission] Canonical bounded MM comparison completed',
+  '[ExpandedUniverse] Final universe composed from broad market evidence plus live cross-venue product discovery',
+  '[HybridCEX] MT/TM canonical comparison completed',
+  '[OpportunityGraph] Measured CEX edge-formation cycle completed',
+  '[ArbVerifier] Dynamic two-phase concurrent CEX scan completed',
+  '[EvidenceScanner] Targeted CEX minimum execution evidence acquisition completed',
+  '[EconomicTransformation] Raw positive CEX observation received fresh canonical reassessment',
+  '[CEX Fees] Fee evidence resolved',
+]);
+
+type ConsoleSampleState = { lastEmittedAt: number; suppressed: number };
+const productionConsoleSamples = new Map<string, ConsoleSampleState>();
+
+function productionConsoleSampleIntervalMs(): number {
+  const parsed = Number(process.env.PRODUCTION_CONSOLE_SUMMARY_SAMPLE_MS || 1_000);
+  return Number.isFinite(parsed) ? Math.max(250, Math.min(10_000, Math.trunc(parsed))) : 1_000;
+}
+
+const productionConsoleNoiseFilter = winston.format(info => {
+  if ((process.env.NODE_ENV || 'development') !== 'production') return info;
+  if (String(info.level).toLowerCase() !== 'info') return info;
+  const message = String(info.message || '');
+  if (!HIGH_FREQUENCY_PRODUCTION_SUMMARIES.has(message)) return info;
+
+  const key = `${String(info.component || '')}|${message}`;
+  const now = Date.now();
+  const intervalMs = productionConsoleSampleIntervalMs();
+  const state = productionConsoleSamples.get(key);
+  if (!state) {
+    productionConsoleSamples.set(key, { lastEmittedAt: now, suppressed: 0 });
+    return info;
+  }
+
+  if (now - state.lastEmittedAt < intervalMs) {
+    state.suppressed += 1;
+    return false;
+  }
+
+  if (state.suppressed > 0) {
+    info.consoleSuppressedSinceLastEmit = state.suppressed;
+  }
+  state.lastEmittedAt = now;
+  state.suppressed = 0;
+  return info;
+})();
+
 // Reserved keys that should not appear in metadata output
 const RESERVED_KEYS = ['timestamp', 'level', 'message', 'component', 'service', 'pid'];
 
 const consoleFormat = winston.format.combine(
+  productionConsoleNoiseFilter,
   winston.format.colorize({ all: true }),
   winston.format.timestamp({ format: 'HH:mm:ss.SSS' }),
   winston.format.printf(({ timestamp, level, message, component, ...meta }) => {

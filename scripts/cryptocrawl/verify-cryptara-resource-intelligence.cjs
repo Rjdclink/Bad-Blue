@@ -46,10 +46,12 @@ requirePattern(intelligence, /installCryptaraResourceIntelligenceAdvisor/, 'reso
 requirePattern(intelligence, /setCryptaraSupabaseRecoveryAdvisor/, 'resource intelligence connects to the existing Cryptara governor');
 requirePattern(worker, /export\s+function\s+setCryptaraSupabaseRecoveryAdvisor/, 'worker exposes advisory-only recovery input');
 requirePattern(worker, /Math\.max\(1,\s*Math\.min\(1\.5,\s*value\)\)/, 'recovery advice is clamped to 1.0x..1.5x');
-requirePattern(worker, /const\s+healthy\s*=\s*stats\.waiting\s*===\s*0\s*&&\s*acquireMs\s*<=\s*HEALTHY_ACQUIRE_MS/, 'worker first requires its own healthy DB evidence');
+requirePattern(worker, /if\s*\(stats\.waiting\s*>\s*0\)[\s\S]{0,120}this\.contract\('pool_waiters'\)/, 'worker contracts explicitly on measured node-postgres waiters');
+requirePattern(worker, /const\s+healthy\s*=\s*acquireMs\s*<=\s*HEALTHY_ACQUIRE_MS/, 'worker requires its own healthy acquisition-latency evidence after waiter pressure has already been excluded');
 requirePattern(worker, /Math\.max\(2,\s*Math\.ceil\(HEALTHY_SUCCESSES_TO_GROW\s*\/\s*recoveryAcceleration\)\)/, 'advisor can only shorten the healthy-evidence count with a floor of two');
-requirePattern(worker, /Math\.min\(ceiling,\s*this\.targetConcurrency\s*\+\s*1\)/, 'recovery still grows by exactly one permit and never above the live ceiling');
-requirePattern(worker, /Math\.floor\(this\.targetConcurrency\s*\/\s*2\)/, 'measured DB pressure still controls multiplicative contraction');
+requirePattern(worker, /Math\.min\(ceiling,\s*previous\s*\+\s*1\)/, 'recovery still grows by exactly one permit and never above the live ceiling');
+requirePattern(worker, /const\s+next\s*=\s*Math\.max\(1,\s*Math\.floor\(previous\s*\/\s*2\)\)/, 'measured DB pressure still controls multiplicative contraction');
+forbidPattern(worker, /pool_saturation/, 'healthy full utilization is never reclassified as pressure');
 
 // Existing authority split remains intact: Antenna senses, Beam routes, Quanti Comp computes.
 requirePattern(antenna, /executionAuthority:\s*false/, 'Sovereign Antenna remains non-executing');

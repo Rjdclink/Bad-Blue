@@ -44,10 +44,15 @@ requirePattern(worker, /admissionBudget\s*=\s*pressureActive[\s\S]{0,120}Math\.m
 requirePattern(worker, /while\s*\(admitted\s*<\s*admissionBudget/, 'each pressure drain pass obeys its measured reuse budget');
 requirePattern(worker, /if\s*\(this\s*!==\s*pool\)/, 'only the live ordinary pool is admitted through Cryptara');
 requirePattern(worker, /Pool\.prototype/, 'shared ordinary callers converge on one acquisition gate');
+requirePattern(worker, /operatorPromptsRequired:\s*false/, 'custodian requires no operator question/answer loop');
+requirePattern(worker, /interventionPolicy:\s*'measured_pressure_only'/, 'custodian remains dormant unless measured pressure appears');
+forbidPattern(worker, /console\.warn\s*\(/, 'expected adaptive pool behavior bypassing structured log severity');
+forbidPattern(worker, /pool_saturation/, 'full healthy utilization being mislabeled as database pressure');
+forbidPattern(worker, /stats\.total\s*>=\s*ceiling[\s\S]{0,100}stats\.idle\s*===\s*0/, 'full utilization alone triggering multiplicative contraction');
 
 requireFragments(worker, [
   'primeToCurrentPoolCapacity(): void',
-  'const ceiling = Math.max(1, Math.trunc(stats.max || 1));',
+  'const ceiling = stats.max;',
   'if (stats.waiting > 0)',
   'Math.floor(ceiling / 2)',
   'this.targetConcurrency = ceiling;',
@@ -56,11 +61,11 @@ requireFragments(worker, [
 ], 'worker starts from the effective pool ceiling and contracts only on measured local pressure');
 
 // Dynamic pressure response: multiplicative decrease, additive recovery, bounded by live pool max.
-requirePattern(worker, /Math\.floor\(this\.targetConcurrency\s*\/\s*2\)/, 'multiplicative pressure contraction');
-requirePattern(worker, /this\.targetConcurrency\s*\+\s*1/, 'additive healthy recovery');
-requirePattern(worker, /Math\.min\(ceiling,\s*this\.targetConcurrency\s*\+\s*1\)/, 'recovery never exceeds the current pool ceiling');
+requirePattern(worker, /const\s+next\s*=\s*Math\.max\(1,\s*Math\.floor\(previous\s*\/\s*2\)\)/, 'multiplicative pressure contraction');
+requirePattern(worker, /previous\s*\+\s*1/, 'additive healthy recovery');
+requirePattern(worker, /Math\.min\(ceiling,\s*previous\s*\+\s*1\)/, 'recovery never exceeds the current pool ceiling');
 requirePattern(worker, /stats\.waiting\s*>\s*0/, 'live pool waiters are a pressure signal');
-requirePattern(worker, /PRESSURE_ACQUIRE_MS/, 'measured admission latency feeds the pressure decision');
+requirePattern(worker, /acquireMs\s*>=\s*PRESSURE_ACQUIRE_MS/, 'measured admission latency feeds the pressure decision');
 requirePattern(worker, /PRESSURE_HOLD_MS/, 'sustained checkouts with queued work feed the pressure decision');
 requirePattern(worker, /53300/, 'Postgres too-many-connections pressure classification');
 requirePattern(worker, /57p03/i, 'Postgres cannot-connect-now pressure classification');
@@ -70,7 +75,7 @@ requirePattern(worker, /connection terminated due to connection timeout/i, 'obse
 // Preserve capability: queue all work, prioritize without starvation, and release every permit.
 requirePattern(worker, /this\.queue\.push\s*\(/, 'work is queued rather than discarded when capacity is occupied');
 requirePattern(worker, /AGE_PROMOTION_MS/, 'priority aging prevents low-priority starvation');
-requirePattern(worker, /contextualPriority\s*\|\|\s*'normal'/, 'unclassified callers keep neutral priority rather than gaining accidental authority');
+requirePattern(worker, /priorityContext\.getStore\(\)\s*\|\|\s*'normal'/, 'unclassified callers keep neutral priority rather than gaining accidental authority');
 requirePattern(worker, /finally\s*\{[\s\S]{0,160}permit\.release/, 'client release always returns the worker permit');
 requirePattern(worker, /permit\.release\(undefined,\s*0\)/, 'failed acquisitions return their worker permit without double-counting pressure');
 requirePattern(worker, /try\s*\{[\s\S]{0,200}originalConnect\.call\(this,[\s\S]{0,1800}catch\s*\(error\)\s*\{[\s\S]{0,120}permit\.release\(undefined,\s*0\)/, 'callback-style synchronous connection failures cannot leak worker permits');
@@ -188,4 +193,4 @@ requirePattern(calibration, /withCryptaraSupabasePriority\('low',[\s\S]{0,260}IN
 requirePattern(calibration, /INSERT INTO \$\{TABLE\}/, 'terminal calibration persistence remains active');
 requirePattern(calibration, /SELECT payload FROM \$\{TABLE\}/, 'calibration hydration remains active');
 
-console.log('[cryptara-supabase-worker] adaptive ordinary-lane admission through the unified Cryptara Super Worker, full effective startup capacity, idle-reuse pressure budgeting, jittered recovery, zero-extra-pool, critical/high/normal/low task priority, Super Worker single-flight shared lease authority across CEX/zero-capital/quota, server-side slot call coalescing, terminal-profit call coalescing, authority isolation, starvation protection, and migration-owned persistence invariants passed');
+console.log('[cryptara-supabase-worker] autonomous event-driven ordinary-lane custodian, measured-pressure-only contraction, full-utilization-safe queueing, jittered recovery, zero-extra-pool, critical/high/normal/low priority, shared lease authority, terminal-profit durability, starvation protection, and migration-owned persistence invariants passed');

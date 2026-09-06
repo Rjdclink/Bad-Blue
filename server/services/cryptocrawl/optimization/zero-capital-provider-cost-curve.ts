@@ -15,6 +15,12 @@ export interface ZeroCapitalProviderCostPoint {
   evidence: FlashLoanProviderEconomics;
 }
 
+const BPS_PRECISION = 1_000_000n;
+
+function bpsFromBaseUnits(value: bigint, notional: bigint): number {
+  return Number((value * 10_000n * BPS_PRECISION) / notional) / Number(BPS_PRECISION);
+}
+
 function providerEvidenceMaxAgeMs(): number {
   const parsed = Number(process.env.ZERO_CAPITAL_FLASH_PROVIDER_EVIDENCE_TTL_MS || 2_500);
   return Number.isFinite(parsed) ? Math.max(250, Math.min(15_000, Math.trunc(parsed))) : 2_500;
@@ -45,7 +51,7 @@ export function buildZeroCapitalProviderCostCurve(
       provider: item.provider,
       amount,
       exactFee,
-      exactFeeBps: Number((exactFee * 10_000n) / amount),
+      exactFeeBps: bpsFromBaseUnits(exactFee, amount),
       liquidityHeadroom: item.availableLiquidity - amount,
       liquidityUtilization,
       evidenceAgeMs,
