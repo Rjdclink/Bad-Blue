@@ -14,6 +14,10 @@ import {
   armPreparedAcrossOriginTransaction,
   markPreparedAcrossOriginSubmitted,
 } from './across-prebroadcast-durability.js';
+import {
+  executePreparedSystemOwnedNativeTransaction,
+  executeSystemOwnedNativeTransaction,
+} from './system-owned-native-transaction.js';
 
 export interface AcrossBridgeExecutionResult {
   success: boolean;
@@ -21,7 +25,7 @@ export interface AcrossBridgeExecutionResult {
   settlementConfirmed: boolean;
   depositTxnRef?: string;
   settlement?: AcrossSettlementEvidence;
-  /** Exact signer-paid origin gas across approval(s) plus the Across swap/deposit when its receipt is known. */
+  /** Exact system-owned origin gas across approval(s) plus the Across swap/deposit when its receipt is known. */
   originNativeFeeWei?: string;
   /** Approval transaction hashes whose receipts contributed to originNativeFeeWei. */
   approvalTxnRefs?: string[];
@@ -78,9 +82,8 @@ function bounded(raw: unknown, fallback: number, min: number, max: number): numb
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
 }
 
-function receiptFeeWei(receipt: ethers.providers.TransactionReceipt): ethers.BigNumber {
-  const price = receipt.effectiveGasPrice;
-  return price ? receipt.gasUsed.mul(price) : ethers.BigNumber.from(0);
+function gasIntentKey(parts: readonly string[]): string {
+  return parts.map(part => part.trim().toLowerCase().replace(/[^a-z0-9:_-]/g, '_')).join(':').slice(0, 220);
 }
 
 async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approvals: TxPayload[]; swap: TxPayload } | null> {
@@ -180,41 +183,38 @@ export async function executeAcrossBridgeQuote(
     prebroadcastTerminalCostComplete: complete,
   });
 
-  for (const approval of payload.approvals) {
+  for (let approvalIndex = 0; approvalIndex < payload.approvals.length; approvalIndex += 1) {
+    const approval = payload.approvals[approvalIndex];
     if (approval.chainId !== undefined && approval.chainId !== expectedChainId) {
       return { success: false, status: 'rejected', settlementConfirmed: false, ...prebroadcastCost(true), error: 'REJECT_ACROSS_APPROVAL_CHAIN' };
     }
     try {
-      const tx = await wallet.sendTransaction({ to: approval.to, data: approval.data, value: ethers.BigNumber.from(approval.value || '0') });
-      approvalTxnRefs.push(tx.hash.toLowerCase());
-      const receipt = await tx.wait();
-      if (receipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(receipt));
-      if (!receipt || receipt.status !== 1) {
+      const result = await executeSystemOwnedNativeTransaction({
+        chain: quote.originChain,
+        wallet,
+        provider,
+        idempotencyKey: gasIntentKey([
+          'across-approval', quote.originChain, quote.destinationChain, quote.inputToken,
+          quote.inputAmount, String(approvalIndex), approval.to, approval.data.slice(0, 34),
+        ]),
+        purpose: 'across_origin_approval',
+        transaction: { to: approval.to, data: approval.data, value: ethers.BigNumber.from(approval.value || '0') },
+        confirmations: 1,
+      });
+      approvalTxnRefs.push(result.transactionHash);
+      nativeFeeWei = nativeFeeWei.add(result.actualSpentWei.toString());
+      if (result.receipt.status !== 1) {
         return { success: false, status: 'failed', settlementConfirmed: true, ...prebroadcastCost(true), error: 'ACROSS_APPROVAL_FAILED' };
       }
     } catch (error) {
-      const errorReceipt = (error as { receipt?: ethers.providers.TransactionReceipt } | null)?.receipt;
-      if (errorReceipt) {
-        const receiptHash = errorReceipt.transactionHash?.toLowerCase();
-        if (receiptHash && !approvalTxnRefs.includes(receiptHash)) approvalTxnRefs.push(receiptHash);
-        nativeFeeWei = nativeFeeWei.add(receiptFeeWei(errorReceipt));
-        return {
-          success: false,
-          status: 'failed',
-          settlementConfirmed: true,
-          ...prebroadcastCost(true),
-          error: 'ACROSS_APPROVAL_FAILED',
-        };
-      }
-      // Approval ambiguity cannot move the reserved bridge principal. The caller
-      // may safely release the principal reservation, but terminal cost feedback
-      // must wait because the latest approval receipt/gas state is still unknown.
+      // The system-owned gas authority quarantines any ambiguous submitted gas
+      // spend. Principal has not moved, so no personal-gas fallback is allowed.
       return {
         success: false,
         status: 'failed',
         settlementConfirmed: false,
         ...prebroadcastCost(false),
-        error: `ACROSS_APPROVAL_STATE_UNCERTAIN:${error instanceof Error ? error.message : String(error)}`,
+        error: `ACROSS_SYSTEM_OWNED_APPROVAL_GAS_UNAVAILABLE:${error instanceof Error ? error.message : String(error)}`,
       };
     }
   }
@@ -257,9 +257,6 @@ export async function executeAcrossBridgeQuote(
       submittedAt: preparedAt,
     });
   } catch (error) {
-    // No principal broadcast has occurred yet. If lifecycle insertion fails,
-    // return without the principal hash so the caller can release the principal
-    // reservation while preserving any receipt-backed approval cost separately.
     logger.error('[AcrossBridgeExecution] Pre-broadcast lifecycle insertion failed; origin principal was not broadcast', {
       component: 'AcrossBridgeExecutor',
       depositTxnRef,
@@ -267,6 +264,7 @@ export async function executeAcrossBridgeQuote(
       approvalTxnRefs,
       principalBroadcast: false,
       capitalReleaseAllowed: true,
+      personalGasFallbackAllowed: false,
       error: error instanceof Error ? error.message : String(error),
     });
     return {
@@ -281,13 +279,12 @@ export async function executeAcrossBridgeQuote(
   try {
     await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });
   } catch (error) {
-    // The lifecycle row exists and therefore owns the reservation/parent slot.
-    // Do not broadcast. Recovery can prove this pre-broadcast state and close it.
     logger.error('[AcrossBridgeExecution] Signed origin transaction could not be durably armed; principal remains unbroadcast and reserved', {
       component: 'AcrossBridgeExecutor',
       depositTxnRef,
       principalBroadcast: false,
       capitalReleaseAllowed: false,
+      personalGasFallbackAllowed: false,
       error: error instanceof Error ? error.message : String(error),
     });
     return {
@@ -300,19 +297,29 @@ export async function executeAcrossBridgeQuote(
     };
   }
 
-  let submitted: ethers.providers.TransactionResponse;
+  let originReceipt: ethers.providers.TransactionReceipt;
   try {
-    submitted = await provider.sendTransaction(signedOriginTx);
-    if (submitted.hash.toLowerCase() !== depositTxnRef) throw new Error('ACROSS_BROADCAST_HASH_MISMATCH');
+    const result = await executePreparedSystemOwnedNativeTransaction({
+      chain: quote.originChain,
+      provider,
+      idempotencyKey: gasIntentKey(['across-origin', depositTxnRef]),
+      purpose: 'across_origin_deposit',
+      signedTransaction: signedOriginTx,
+      confirmations: 1,
+    });
+    if (result.transactionHash !== depositTxnRef) throw new Error('ACROSS_SYSTEM_GAS_HASH_MISMATCH');
+    nativeFeeWei = nativeFeeWei.add(result.actualSpentWei.toString());
+    originReceipt = result.receipt;
   } catch (error) {
-    // This is the key ambiguous-broadcast case. The exact signed bytes are
-    // durable already, so the recovery worker can query/rebroadcast only this
-    // same nonce/hash. A second principal transaction is impossible by design.
-    logger.warn('[AcrossBridgeExecution] Origin broadcast acknowledgement is uncertain; exact signed transaction remains durable', {
+    // The exact transaction and its principal reservation are durable. Recovery
+    // may retry only these exact signed bytes under the same system-owned gas
+    // idempotency key; personal/native-wallet balance never becomes authority.
+    logger.warn('[AcrossBridgeExecution] System-owned origin gas unavailable or submission uncertain; exact prepared transaction remains durable', {
       component: 'AcrossBridgeExecutor',
       depositTxnRef,
       capitalReleaseAllowed: false,
       duplicateSubmissionAllowed: false,
+      personalGasFallbackAllowed: false,
       error: error instanceof Error ? error.message : String(error),
     });
     return {
@@ -321,32 +328,11 @@ export async function executeAcrossBridgeQuote(
       settlementConfirmed: false,
       depositTxnRef,
       originNativeFeeWei: nativeFeeWei.toString(),
-      error: 'ACROSS_ORIGIN_BROADCAST_RECOVERY_REQUIRED',
+      error: 'ACROSS_SYSTEM_OWNED_ORIGIN_GAS_RECOVERY_REQUIRED',
     };
   }
 
-  let originReceipt: ethers.providers.TransactionReceipt | null = null;
-  try {
-    originReceipt = await submitted.wait();
-  } catch (error) {
-    logger.warn('[AcrossBridgeExecution] Origin receipt wait is uncertain; exact hash remains durable for recovery', {
-      component: 'AcrossBridgeExecutor', depositTxnRef, capitalReleaseAllowed: false,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return {
-      success: false,
-      status: 'settlement_unknown',
-      settlementConfirmed: false,
-      depositTxnRef,
-      originNativeFeeWei: nativeFeeWei.toString(),
-      error: 'ACROSS_ORIGIN_RECEIPT_RECOVERY_REQUIRED',
-    };
-  }
-
-  if (originReceipt) nativeFeeWei = nativeFeeWei.add(receiptFeeWei(originReceipt));
-  if (!originReceipt || originReceipt.status !== 1) {
-    // Keep PREPARED durable state. Recovery reads the authoritative receipt,
-    // releases untouched principal, and records the exact realized gas loss.
+  if (originReceipt.status !== 1) {
     return {
       success: false,
       status: 'failed',
