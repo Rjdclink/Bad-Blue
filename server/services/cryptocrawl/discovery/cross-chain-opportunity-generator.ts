@@ -7,7 +7,6 @@ import { evaluateAcrossSameAssetProfit, type CrossChainRouteEconomics } from './
 
 const CHAINS: ChainId[] = ['polygon', 'arbitrum', 'avalanche', 'bsc'];
 const ASSETS = ['USDC', 'USDT'] as const;
-let routeCursor = 0;
 const preparedCrossChainQuotes = new Map<string, { quote: AcrossBridgeQuote; economics: CrossChainRouteEconomics }>();
 
 interface CrossChainRoute {
@@ -46,13 +45,43 @@ function routeKey(route: CrossChainRoute): string {
   return `${route.from}:${route.to}:${route.asset}`;
 }
 
-function rotatingQuoteRoutes(routes: CrossChainRoute[]): CrossChainRoute[] {
-  if (routes.length === 0) return [];
-  const requested = boundedInteger(process.env.CRYPTOCRAWL_ACROSS_QUOTES_PER_CYCLE, 4, 1, 12);
-  const count = Math.min(requested, routes.length);
-  const selected = Array.from({ length: count }, (_, offset) => routes[(routeCursor + offset) % routes.length]);
-  routeCursor = (routeCursor + count) % routes.length;
-  return selected;
+function acrossQuoteConcurrency(): number {
+  return boundedInteger(process.env.CRYPTOCRAWL_ACROSS_QUOTE_CONCURRENCY, 4, 1, 8);
+}
+
+/**
+ * Missing bridge quote/liquidity/fill-time evidence is never a passive dead end.
+ * Every currently structural route is actively reacquired every discovery cycle,
+ * with bounded concurrency so provider pressure stays controlled. A provider
+ * failure remains explicit missing evidence and is retried on the next cycle;
+ * synthetic/cache-only bridge evidence is never manufactured.
+ */
+async function acquireRouteQuotes(
+  routes: readonly CrossChainRoute[],
+  notionalUsd: number,
+): Promise<Map<string, AcrossBridgeQuote | null>> {
+  const quotes = new Map<string, AcrossBridgeQuote | null>();
+  if (routes.length === 0) return quotes;
+  let cursor = 0;
+  const workers = Math.min(acrossQuoteConcurrency(), routes.length);
+  await Promise.all(Array.from({ length: workers }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= routes.length) return;
+      const route = routes[index];
+      try {
+        quotes.set(routeKey(route), await getAcrossBridgeQuote({
+          originChain: route.from,
+          destinationChain: route.to,
+          token: route.asset,
+          amountHuman: notionalUsd,
+        }));
+      } catch {
+        quotes.set(routeKey(route), null);
+      }
+    }
+  }));
+  return quotes;
 }
 
 function freshQuote(quote: AcrossBridgeQuote | null, now: number): quote is AcrossBridgeQuote {
@@ -167,7 +196,7 @@ function recordRoute(
           status: 'measured',
           detail: `Across returned a fresh exact-input simulated route for the sampled ${discoveryNotionalUsd()} ${route.asset}; measured depth applies only to this exact quoted amount`,
         }
-      : { status: 'unavailable', detail: 'No fresh measured bridge liquidity quote has been admitted for this route in the current rotation' },
+      : { status: 'unavailable', detail: 'Across evidence acquisition was actively attempted for this route in the current cycle but no fresh authoritative quote was returned' },
     economics: {
       // Across expected/minimum output already includes route swap/bridge/destination
       // fees. Do not subtract totalFeeUsd a second time. originGas prices swapTx;
@@ -193,12 +222,14 @@ function recordRoute(
           ? 'Cross-chain economics are deterministically positive, but a required execution capability fact is unavailable'
           : hasFreshQuote
             ? 'Across transport is measured and executable, but this exact same-asset route is not deterministically positive after guaranteed minimum output and origin gas'
-            : readiness.reason,
+            : readiness.configured
+              ? 'Across evidence acquisition was attempted in the current cycle and returned no fresh authoritative executable quote; the route remains in automatic reacquisition rather than a passive missing-data state'
+              : readiness.reason,
     missingInformation: [...new Set(missingInformation)],
     provenance: [
       `rpc:${route.from}:healthy`,
       `rpc:${route.to}:healthy`,
-      ...(hasFreshQuote ? bridgeQuoteProvenance(quote) : ['across_quote:not_sampled_or_unavailable_this_cycle']),
+      ...(hasFreshQuote ? bridgeQuoteProvenance(quote) : ['across_quote:active_reacquisition_attempted_current_cycle']),
       `across_production_configured:${readiness.configured}`,
       `cross_chain_signer_configured:${hasSigner}`,
       `cross_chain_approval_gas_canonical:${approvalGasCanonical}`,
@@ -209,6 +240,7 @@ function recordRoute(
       'cross_chain_profit_model:minimum_output_not_expected_output',
       'cross_chain_profit_model:origin_gas_subtracted_once',
       'cross_chain_profit_model:unpriced_approval_gas_blocks_execution',
+      'evidence_reacquisition:all_structural_routes_each_cycle_bounded_concurrency',
       'synthetic_evidence:false',
     ],
   });
@@ -226,33 +258,22 @@ export function getPreparedCrossChainRoute(opportunityId: string): { quote: Acro
 
 /**
  * Structural coverage is complete for every currently healthy chain pair and
- * stablecoin. Fresh Across approval quotes are sampled on a bounded rotating
- * subset. A route becomes executable only when its guaranteed same-asset output
- * is strictly positive after separately paid origin gas and the quote requires no
- * unpriced approval transaction; transport alone remains observation-only.
+ * stablecoin. Every structural route actively reacquires a fresh Across approval
+ * quote each cycle under bounded concurrency. A route becomes executable only
+ * when its guaranteed same-asset output is strictly positive after separately
+ * paid origin gas and the quote requires no unpriced approval transaction.
  */
 export async function discoverMeasuredCrossChainCandidates(): Promise<MeasuredCandidate[]> {
   await multiProviderRpcManager.initialize(CHAINS);
   const now = Date.now();
   const ttlMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_CROSS_CHAIN_CANDIDATE_TTL_MS || 30_000));
   const routes = structuralRoutes();
-  const selected = rotatingQuoteRoutes(routes);
   const notionalUsd = discoveryNotionalUsd();
 
-  const [quoteResults, prices] = await Promise.all([
-    Promise.allSettled(selected.map(route => getAcrossBridgeQuote({
-      originChain: route.from,
-      destinationChain: route.to,
-      token: route.asset,
-      amountHuman: notionalUsd,
-    }))),
+  const [quotes, prices] = await Promise.all([
+    acquireRouteQuotes(routes, notionalUsd),
     coinGeckoPriceClient.getLiveSymbolPrices([...ASSETS]).catch(() => new Map<string, number>()),
   ]);
-  const quotes = new Map<string, AcrossBridgeQuote | null>();
-  selected.forEach((route, index) => {
-    const result = quoteResults[index];
-    quotes.set(routeKey(route), result.status === 'fulfilled' ? result.value : null);
-  });
 
   for (const [id, prepared] of preparedCrossChainQuotes.entries()) {
     if (prepared.quote.expiresAt <= now || prepared.quote.approvalTransactions > 0) preparedCrossChainQuotes.delete(id);
