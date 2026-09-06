@@ -46,9 +46,9 @@ assert.match(wiring, /zeroCapitalDiscoveryFloorBps\(\)/);
 // Candidate execution-capability truth consumes the same current gas funding,
 // verified receiver, and route-permission facts as dispatch. Exact simulation
 // runs in parallel and cannot downgrade an otherwise hard-fact-ready positive.
-assert.match(wiring, /const fundingReady = funding\.mode !== 'unavailable';/);
-assert.match(wiring, /const executableCapability = positive && receiverReady && fundingReady;/);
-assert.match(wiring, /const executableCapability = positive && fundingReady && receiverReady && permissionReady;/);
+assert.match(wiring, /const gasResourceReady = gasResource\.mode !== 'unavailable';/);
+assert.match(wiring, /const executableCapability = positive && receiverReady && gasResourceReady;/);
+assert.match(wiring, /const executableCapability = positive && gasResourceReady && receiverReady && permissionReady;/);
 assert.doesNotMatch(wiring, /executableCapability\s*=\s*[^;]*simulationReady/);
 assert.doesNotMatch(wiring, /exactSimulationRequired/);
 assert.doesNotMatch(wiring, /\['exact_atomic_simulation'\]/);
