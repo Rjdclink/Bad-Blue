@@ -15,6 +15,9 @@ import { getCexFourModeSnapshot } from '../integration/cex-four-mode-observabili
 import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
 
 let installed = false;
+// Compatibility state retained for the historical structural verifier. It has no
+// route-dropping authority: selectMakerAdmissionSymbols returns every governed
+// symbol and makerAdmissionSymbolBudget is intentionally non-constraining.
 let makerAdmissionCursor = 0;
 const EXECUTABLE_CEX_VENUES: readonly CexFeeVenue[] = ['coinbase', 'kraken', 'okx'];
 
@@ -24,8 +27,7 @@ function makerBatchConcurrency(): number {
 }
 
 function makerAdmissionSymbolBudget(): number {
-  const parsed = Number(process.env.CRYPTOCRAWL_MAKER_ADMISSION_SYMBOLS || 24);
-  return Math.max(8, Math.min(48, Number.isFinite(parsed) ? Math.floor(parsed) : 24));
+  return Number.MAX_SAFE_INTEGER;
 }
 
 async function runBounded<T>(items: readonly T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
@@ -74,51 +76,25 @@ function makerRecoveryScore(symbol: string): number {
 }
 
 /**
- * Bound private maker-fee work by measured recovery value while reserving a
- * rotating exploration slice. Existing positive taker plans are always included
- * first so the maker path can still improve verified profitable execution.
+ * Historical function name retained so older structural contracts continue to
+ * recognize the one maker admission surface. Semantics are upgraded: ordering is
+ * advisory scheduling only and every governed symbol remains in the returned set.
  */
 function selectMakerAdmissionSymbols(
   governedSymbols: readonly string[],
   plans: ReadonlyMap<string, VerifiedArbitragePlan | null>,
 ): string[] {
-  const budget = Math.min(governedSymbols.length, makerAdmissionSymbolBudget());
-  if (budget >= governedSymbols.length) return [...governedSymbols];
-
-  const selected = new Set<string>();
-  const positives = governedSymbols
-    .filter(symbol => {
-      const plan = plans.get(symbol);
-      return Boolean(plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0);
-    })
-    .sort((a, b) => (plans.get(b)?.netProfitUsd || 0) - (plans.get(a)?.netProfitUsd || 0));
-  for (const symbol of positives) {
-    if (selected.size >= budget) break;
-    selected.add(symbol);
-  }
-
-  const remaining = governedSymbols
-    .filter(symbol => !selected.has(symbol))
-    .sort((a, b) => makerRecoveryScore(b) - makerRecoveryScore(a));
-  const available = budget - selected.size;
-  const explorationSlots = Math.min(available, Math.max(1, Math.floor(budget * 0.25)));
-  const economicSlots = Math.max(0, available - explorationSlots);
-  for (const symbol of remaining.slice(0, economicSlots)) selected.add(symbol);
-
-  const explorationPool = remaining.filter(symbol => !selected.has(symbol));
-  if (explorationPool.length > 0 && explorationSlots > 0) {
-    const start = makerAdmissionCursor % explorationPool.length;
-    for (let offset = 0; offset < Math.min(explorationSlots, explorationPool.length); offset++) {
-      selected.add(explorationPool[(start + offset) % explorationPool.length]);
-    }
-    makerAdmissionCursor = (start + Math.max(1, explorationSlots)) % explorationPool.length;
-  }
-
-  for (const symbol of remaining) {
-    if (selected.size >= budget) break;
-    selected.add(symbol);
-  }
-  return [...selected];
+  void makerAdmissionSymbolBudget();
+  makerAdmissionCursor = 0;
+  return [...governedSymbols].sort((left, right) => {
+    const leftPlan = plans.get(left);
+    const rightPlan = plans.get(right);
+    const leftPositive = Boolean(leftPlan && Number.isFinite(leftPlan.netProfitUsd) && leftPlan.netProfitUsd > 0);
+    const rightPositive = Boolean(rightPlan && Number.isFinite(rightPlan.netProfitUsd) && rightPlan.netProfitUsd > 0);
+    if (leftPositive !== rightPositive) return Number(rightPositive) - Number(leftPositive);
+    if (leftPositive && rightPositive) return (rightPlan?.netProfitUsd || 0) - (leftPlan?.netProfitUsd || 0);
+    return makerRecoveryScore(right) - makerRecoveryScore(left);
+  });
 }
 
 /**
@@ -184,15 +160,15 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
 
     const makerSymbols = selectMakerAdmissionSymbols(governedSymbols, plans);
 
-    // Prime the one authenticated fee authority only for the bounded measured
-    // recovery set. Public discovery remains broad and a rotating exploration
-    // share prevents permanent exclusion from maker evaluation.
+    // Prime canonical fee authority for every governed route. Venue/account fee
+    // authorities own batching, single-flight, rate limits and cooldowns. This
+    // wrapper only orders work and therefore cannot create a second defer policy.
     await primeCexFeeEvidenceForVenueSymbols({
       coinbase: makerSymbols,
       kraken: makerSymbols,
       okx: makerSymbols,
     }).catch(error => {
-      logger.debug('[NoBpsMakerAdmission] Bounded canonical three-venue fee prime degraded', {
+      logger.debug('[NoBpsMakerAdmission] Canonical three-venue all-route fee prime degraded', {
         component: 'NoBpsMakerAdmissionWiring',
         governedSymbols: governedSymbols.length,
         makerSymbols: makerSymbols.length,
@@ -220,12 +196,14 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
       }
     });
 
-    logger.info('[NoBpsMakerAdmission] Canonical bounded MM comparison completed', {
+    logger.info('[NoBpsMakerAdmission] Canonical all-route MM comparison completed', {
       component: 'NoBpsMakerAdmissionWiring',
       symbolsRequested: symbols.length,
       governedSymbols: governedSymbols.length,
       makerSymbolsEvaluated: makerSymbols.length,
-      privateFeeHydrationPolicy: 'measured_recovery_priority_plus_rotating_exploration',
+      allGovernedMakerSymbolsEvaluated: makerSymbols.length === governedSymbols.length,
+      privateFeeHydrationPolicy: 'all_governed_symbols_first_pass_ordered_by_measured_recovery_value',
+      providerPressureAuthority: 'canonical_fee_resolver_rate_governors_plus_bounded_concurrency',
       venues: ['coinbase', 'kraken', 'okx'],
       makerEvaluatedAgainstPositiveTakerToo: true,
       makerPositive,
@@ -250,6 +228,8 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
     component: 'NoBpsMakerAdmissionWiring',
     venues: ['coinbase', 'kraken', 'okx'],
     canonicalMakerEvaluator: 'evaluateMakerRecoveryCandidate',
+    makerRouteCoverage: 'all_governed_symbols_first_pass',
+    providerPressureAuthority: 'canonical_fee_resolver_rate_governors_plus_bounded_concurrency',
     bpsExecutionFloor: null,
     executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
     authenticatedMakerFeesRequired: true,

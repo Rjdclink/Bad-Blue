@@ -17,10 +17,22 @@ assert.match(quoter, /const remainingMs = quoteDeadlineMs - elapsedMs/);
 assert.match(quoter, /quoteLeg\(provider, route\.chain, leg, currentAmount, remainingMs\)/);
 assert.match(quoter, /if \(error instanceof Error && error\.message\.includes\('quote deadline'\)\) return null/);
 
+// First-pass evidence acquisition must use the canonical redundant RPC mesh for
+// active EVM routes rather than trusting one provider instance.
+assert.match(quoter, /multiProviderRpcManager\.execute\([\s\S]*'contract_calls'/);
+assert.match(quoter, /rpcProvider => quoteLegAgainstProvider\(rpcProvider, chain, leg, amountIn\)/);
+
+// A successfully quoted route is measurable regardless of economic quality.
+// The historical discovery floor is telemetry only; it cannot erase negative BPS.
+assert.doesNotMatch(quoter, /if \(netProfitBps < discoveryFloorBps\) return null/);
+assert.match(quoter, /bpsToBreakEven: netProfitBps >= 0 \? 0 : Math\.abs\(netProfitBps\)/);
+assert.match(quoter, /executablePositive: netProfit > 0n/);
+assert.match(quoter, /const selectionPool = admissible\.length > 0 \? admissible : observed/);
+
 // The outer lifecycle must still reschedule after every completed/degraded scan;
-// quote timeouts only remove stale observations and never grant execution.
+// quote timeouts only remove genuinely absent current quote evidence and never grant execution.
 assert.match(engine, /Promise\.allSettled\([\s\S]*this\.scanChain/);
 assert.match(engine, /finally \{[\s\S]*this\.scanning = false;[\s\S]*this\.scanTimer = setTimeout\(\(\) => void cycle\(\), this\.scanDelayMs\)/);
 assert.match(engine, /if \(opportunity\.expectedProfit <= 0n \|\| Date\.now\(\) > opportunity\.expiresAt\) continue/);
 
-console.log('[zero-capital-quote-liveness] bounded per-leg RPC deadline, in-flight eviction, recurring scanner reschedule, and positive-only execution admission verified');
+console.log('[zero-capital-quote-liveness] redundant RPC mesh, bounded quote deadlines, numeric negative-route measurement, recurring scanner reschedule, and positive-only execution admission verified');

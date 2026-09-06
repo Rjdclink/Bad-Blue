@@ -19,7 +19,7 @@ import {
 } from './adapters/flash-loan-receiver-capability.js';
 import { getSponsoredReceiverManager } from './adapters/sponsored-receiver-manager.js';
 import type { SupportedExecutionChain } from './adapters/onchain-payload-builder.js';
-import { withEvmSignerLane } from './evm-signer-lane.js';
+import { executeSystemOwnedNativeTransaction } from './system-owned-native-transaction.js';
 
 /**
  * Liquidation execution is deliberately limited to chains where pre-trade native
@@ -410,9 +410,6 @@ function pairEconomics(input: {
     collateralReceived = collateralReceived.sub(protocolFee);
   }
 
-  // Leave a small collateral residue rather than risk an exact-output mismatch
-  // from one-unit protocol rounding/state movement. Residual collateral is not
-  // counted as deterministic profit.
   const sellBps = boundedInt(process.env.CRYPTOCRAWL_LIQUIDATION_COLLATERAL_SELL_BPS, 9_990, 9_500, 9_999);
   const collateralSellAmount = percentMulFloor(collateralReceived, sellBps);
   if (collateralSellAmount.lte(0)) return null;
@@ -538,32 +535,19 @@ async function executeInfrastructureCalls(input: {
     throw new Error('Aave liquidation infrastructure signer changed since permission need was queued');
   }
   const connected = wallet.connect(input.provider);
-  const sponsor = getGasSponsorManager();
-  if (sponsor.getReadiness().ready) {
-    const result = await sponsor.execute({
+  for (const call of input.need.calls) {
+    const data = String(call.data || '0x');
+    const result = await executeSystemOwnedNativeTransaction({
+      chain: input.need.request.chain,
       wallet: connected,
-      chainId: input.need.chainId,
-      calls: input.need.calls,
-      timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_DEPLOY_TIMEOUT_MS || 90_000)),
+      provider: input.provider,
+      idempotencyKey: `liquidation-infra:${input.need.request.chain}:${call.to.toLowerCase()}:${ethers.utils.keccak256(data)}`,
+      purpose: 'zero_capital_receiver_permission_setup',
+      transaction: { to: call.to, data, value: BigNumber.from(call.value || 0) },
+      confirmations: 1,
     });
-    if (!result.transactionHash) throw new Error('Sponsored Aave liquidation permission transaction returned no hash');
-    return;
+    if (result.receipt.status !== 1) throw new Error('Aave liquidation receiver permission transaction reverted');
   }
-  await withEvmSignerLane({
-    chainId: input.need.chainId,
-    walletAddress: connected.address,
-    operation: async () => {
-      for (const call of input.need.calls) {
-        const transaction = await connected.sendTransaction({
-          to: call.to,
-          data: call.data,
-          value: BigNumber.from(call.value || 0),
-        });
-        const receipt = await transaction.wait(1);
-        if (!receipt || receipt.status !== 1) throw new Error('Aave liquidation receiver permission transaction reverted');
-      }
-    },
-  });
 }
 
 function rejected(error: string): AaveLiquidationExecutionResult {
@@ -630,9 +614,10 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
   })).sort((left, right) => right.liquidationBonusUsd - left.liquidationBonusUsd);
   if (pairs.length === 0) throw new Error('Aave liquidation has no conservative debt/collateral pair');
 
-  const pairLimit = boundedInt(process.env.CRYPTOCRAWL_LIQUIDATION_PAIR_HYDRATION_LIMIT, 2, 1, 6);
   const failures: string[] = [];
-  for (const pair of pairs.slice(0, pairLimit)) {
+  let bestPlan: AaveLiquidationPreparation | null = null;
+  let positivePairsMeasured = 0;
+  for (const pair of pairs) {
     try {
       const flash = await measureAaveV3FlashLoanEconomics({
         chain: input.chain as SupportedExecutionChain,
@@ -808,25 +793,32 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
           'receiver:exact_full_liquidation_gas_estimate',
           'gas:live_native_usd_price_no_static_fallback',
           'gas:bounded_pretrade_reserve',
+          'gas:system_owned_native_reservation_required_at_execution',
           'residual_collateral:not_counted_as_profit',
           'discovery_infrastructure_mutation:false',
           'synthetic_evidence:false',
         ],
       };
-      preparedPlans.set(input.opportunityId, plan);
-      return getPreparedAaveLiquidationPlan(input.opportunityId)!;
+      positivePairsMeasured += 1;
+      if (!bestPlan || plan.deterministicNetProfitUsd > bestPlan.deterministicNetProfitUsd) bestPlan = plan;
     } catch (error) {
       failures.push(`${pair.debt.symbol}/${pair.collateral.symbol}:${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  throw new Error(`Aave liquidation pair hydration failed closed: ${failures.join(' | ')}`);
+
+  if (bestPlan) {
+    bestPlan.provenance.push(
+      'liquidation_pair_hydration:all_structural_pairs_same_cycle',
+      `liquidation_pair_candidates_attempted:${pairs.length}`,
+      `liquidation_pair_positive_plans_measured:${positivePairsMeasured}`,
+      'liquidation_pair_selection:highest_measured_positive_all_in_net_profit_usd',
+    );
+    preparedPlans.set(input.opportunityId, bestPlan);
+    return getPreparedAaveLiquidationPlan(input.opportunityId)!;
+  }
+  throw new Error(`Aave liquidation pair hydration failed closed after all ${pairs.length} structural pairs: ${failures.join(' | ')}`);
 }
 
-/**
- * Canonical-scheduler subordinate infrastructure reconciliation. It can only
- * apply already-computed receiver target/token permissions and never submits a
- * liquidation or mutates discovery state directly.
- */
 export async function reconcilePendingAaveLiquidationInfrastructure(maxRequests = 1): Promise<AaveLiquidationInfrastructureResult> {
   const ttlMs = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTOCRAWL_LIQUIDATION_INFRA_REQUEST_TTL_MS || 30_000)));
   const now = Date.now();
@@ -853,6 +845,7 @@ export async function reconcilePendingAaveLiquidationInfrastructure(maxRequests 
         chain: need.request.chain,
         liquidationSubmitted: false,
         discoveryMutationAuthority: false,
+        personalGasFallbackAllowed: false,
       });
     } catch (error) {
       failed++;
@@ -890,9 +883,10 @@ export async function executePreparedAaveLiquidation(
   const connectedWallet = wallet.connect(provider);
   const debtToken = new Contract(plan.debtAsset, ERC20_ABI, provider);
   const sponsor = getGasSponsorManager();
-  const requestedFundingMode = options.fundingMode ?? (sponsor.getReadiness().ready ? 'sponsored' : 'native');
+  const requestedFundingMode = options.fundingMode ?? 'native';
   let transactionHash: string | undefined;
   let fundingModeUsed: 'sponsored' | 'native' | undefined;
+  let nativeReceipt: ethers.providers.TransactionReceipt | null = null;
 
   try {
     const preSubmitDebt = BigNumber.from(await debtToken.balanceOf(plan.receiver));
@@ -909,25 +903,30 @@ export async function executePreparedAaveLiquidation(
       transactionHash = sponsored.transactionHash;
       fundingModeUsed = 'sponsored';
     } else {
-      transactionHash = await withEvmSignerLane({
-        chainId: CHAIN_IDS[request.chain],
-        walletAddress: connectedWallet.address,
-        operation: async () => {
+      const native = await executeSystemOwnedNativeTransaction({
+        chain: request.chain,
+        wallet: connectedWallet,
+        provider,
+        idempotencyKey: `aave-liquidation:${opportunityId}:${plan.receiver.toLowerCase()}`,
+        purpose: 'aave_liquidation_execution',
+        transaction: {
+          to: plan.payload.to,
+          data: plan.payload.data,
+          value: 0,
+          gasLimit: plan.payload.gasLimit,
+        },
+        confirmations: 1,
+        preBroadcastCheck: async () => {
           const latestDebtBalance = BigNumber.from(await debtToken.balanceOf(plan.receiver));
           if (!latestDebtBalance.isZero()) throw new Error('AAVE_LIQUIDATION_RECEIVER_DEBT_BALANCE_CHANGED_INSIDE_SIGNER_LANE');
-          const transaction = await connectedWallet.sendTransaction({
-            to: plan.payload.to,
-            data: plan.payload.data,
-            value: 0,
-            gasLimit: plan.payload.gasLimit,
-          });
-          return transaction.hash;
         },
       });
+      transactionHash = native.transactionHash;
+      nativeReceipt = native.receipt;
       fundingModeUsed = 'native';
     }
 
-    const receipt = await provider.waitForTransaction(
+    const receipt = nativeReceipt || await provider.waitForTransaction(
       transactionHash,
       1,
       Math.max(15_000, Number(process.env.ZERO_CAPITAL_RECEIPT_TIMEOUT_MS || 120_000)),
@@ -1036,6 +1035,8 @@ export async function executePreparedAaveLiquidation(
       gasUsed,
       effectiveGasPriceWei,
       settlementConfirmed: true,
+      personalGasFallbackAllowed: false,
+      systemOwnedNativeGasLedgerApplied: fundingModeUsed === 'native',
       syntheticEvidence: false,
     });
     return {

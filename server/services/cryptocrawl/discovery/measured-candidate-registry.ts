@@ -188,7 +188,63 @@ function buildCanonicalBps(economics: MeasuredCandidate['economics'], measuredAt
   };
 }
 
-function clone(candidate: MeasuredCandidate): MeasuredCandidate {
+function explicitlyNonBlockingMissingInformation(item: string): boolean {
+  const normalized = item.trim().toLowerCase();
+  return normalized.startsWith('optional:')
+    || normalized.startsWith('advisory:')
+    || normalized.startsWith('redundant:')
+    || normalized.startsWith('telemetry:')
+    || normalized.startsWith('learning:');
+}
+
+function explicitlyRequiredMissingInformation(item: string): boolean {
+  const normalized = item.trim().toLowerCase();
+  return normalized.startsWith('required:') || normalized.startsWith('critical:');
+}
+
+/**
+ * Execution is governed by the minimum evidence that actually proves this exact
+ * candidate can execute: current eligibility, authoritative execution capability,
+ * fresh evidence, executable depth (or a topology where depth is not applicable),
+ * a measured notional, and a positive canonical all-in net result. Once those
+ * facts are present, additional missing telemetry/provider/learning fields remain
+ * observable but cannot veto the trade merely because they are listed.
+ */
+export function hasMinimumSufficientExecutionEvidence(candidate: MeasuredCandidate, now = Date.now()): boolean {
+  const notionalUsd = finite(candidate.canonicalBps.notionalUsd);
+  const netBps = finite(candidate.canonicalBps.netBps);
+  return candidate.status === 'eligible'
+    && candidate.executableCapability === true
+    && candidate.expiresAt > now
+    && candidate.depth.status !== 'unavailable'
+    && notionalUsd !== null
+    && notionalUsd > 0
+    && netBps !== null
+    && netBps > 0;
+}
+
+/**
+ * `missingInformation` remains complete in the internal registry for diagnostics
+ * and evidence-acquisition metrics. Consumers that can grant/prepare execution see
+ * only genuinely blocking gaps. Optional/redundant/advisory fields never block;
+ * after minimum-sufficient execution proof exists, only explicitly required or
+ * critical gaps remain blockers. This prevents irrelevant completeness scoring
+ * from becoming a shadow execution authority.
+ */
+export function executionBlockingMissingInformation(candidate: MeasuredCandidate, now = Date.now()): string[] {
+  const all = [...new Set(candidate.missingInformation.map(item => item.trim()).filter(Boolean))];
+  const nonOptional = all.filter(item => !explicitlyNonBlockingMissingInformation(item));
+  if (!hasMinimumSufficientExecutionEvidence(candidate, now)) return nonOptional;
+  return nonOptional.filter(explicitlyRequiredMissingInformation);
+}
+
+function clone(candidate: MeasuredCandidate, preserveAllMissingInformation = false): MeasuredCandidate {
+  const blockingMissingInformation = preserveAllMissingInformation
+    ? [...candidate.missingInformation]
+    : executionBlockingMissingInformation(candidate);
+  const advisoryMissing = preserveAllMissingInformation
+    ? []
+    : candidate.missingInformation.filter(item => !blockingMissingInformation.includes(item));
   return {
     ...candidate,
     assets: [...candidate.assets],
@@ -198,8 +254,12 @@ function clone(candidate: MeasuredCandidate): MeasuredCandidate {
     depth: { ...candidate.depth },
     economics: { ...candidate.economics },
     canonicalBps: { ...candidate.canonicalBps },
-    missingInformation: [...candidate.missingInformation],
-    provenance: [...candidate.provenance],
+    missingInformation: [...blockingMissingInformation],
+    provenance: [...new Set([
+      ...candidate.provenance,
+      ...(advisoryMissing.length > 0 ? ['minimum_sufficient_execution_evidence:nonblocking_missing_information'] : []),
+      ...advisoryMissing.map(item => `advisory_missing_nonblocking:${item}`),
+    ])],
   };
 }
 
@@ -284,7 +344,7 @@ class MeasuredCandidateRegistry {
       depth: { ...input.depth },
       economics,
       canonicalBps: buildCanonicalBps(economics, updatedAt),
-      missingInformation: [...new Set(input.missingInformation)],
+      missingInformation: [...new Set(input.missingInformation.map(item => item.trim()).filter(Boolean))],
       provenance: [...new Set([...input.provenance, 'canonical_bps:measured_candidate_registry'])],
       // Every record is a new authoritative evidence snapshot. Eligibility never
       // survives a re-record unless the producer explicitly supplies `eligible`
@@ -305,7 +365,9 @@ class MeasuredCandidateRegistry {
   ): MeasuredCandidate | null {
     const previous = this.candidates.get(opportunityId);
     if (!previous) return null;
-    const next = clone(previous);
+    // Internal mutations must retain the complete diagnostic missing-information
+    // set. Filtering applies only at the execution-consumer boundary.
+    const next = clone(previous, true);
     next.status = status;
     next.updatedAt = Date.now();
     if (patch?.economics) next.economics = { ...patch.economics };
@@ -313,7 +375,7 @@ class MeasuredCandidateRegistry {
     if (patch?.replaceMissingInformation) {
       next.missingInformation = [...new Set((patch.missingInformation || []).map(item => item.trim()).filter(Boolean))];
     } else if (patch?.missingInformation) {
-      next.missingInformation = [...new Set([...previous.missingInformation, ...patch.missingInformation])];
+      next.missingInformation = [...new Set([...previous.missingInformation, ...patch.missingInformation].map(item => item.trim()).filter(Boolean))];
     }
     if (patch?.resolvedMissingInformation?.length) {
       const resolved = new Set(patch.resolvedMissingInformation.map(item => item.trim()).filter(Boolean));
@@ -344,7 +406,7 @@ class MeasuredCandidateRegistry {
         : candidate)
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .slice(0, Math.max(1, Math.min(limit, 4096)))
-      .map(clone);
+      .map(candidate => clone(candidate));
   }
 
   getMetrics(windowMs = 60_000): MeasuredCandidateMetrics {

@@ -32,7 +32,6 @@ const FALLBACK_SYMBOLS = [
 ];
 
 const OKX_SWAP_CONTEXT_TTL_MS = Math.max(10_000, Number(process.env.CRYPTOCRAWL_OKX_SWAP_CONTEXT_TTL_MS || 60_000));
-const OKX_SWAP_CAPABILITY_PROBE_BUDGET = Math.max(1, Math.min(16, Math.floor(Number(process.env.CRYPTOCRAWL_OKX_SWAP_CAPABILITY_PROBE_BUDGET || 8))));
 let okxSwapContextCache: OkxSwapAccountContext | null = null;
 let okxSwapContextInFlight: Promise<OkxSwapAccountContext> | null = null;
 const okxSwapCapabilityCache = new Map<string, { expiresAt: number; value: OkxSwapCapability }>();
@@ -108,10 +107,6 @@ async function getOkxSwapCapability(observation: FundingRateObservation): Promis
   return promise;
 }
 
-function deferredOkxSwapCapability(): OkxSwapCapability {
-  return { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'Private OKX SWAP enrichment deferred by the bounded discovery budget; public evidence is retained and execution remains fail-closed' };
-}
-
 function quotedAsset(symbol: string): string[] {
   const match = symbol.match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
   return match ? [match[1], match[2]] : [symbol];
@@ -133,6 +128,18 @@ function entryWindow(observation: FundingRateObservation): { eligible: boolean; 
   if (leadMs > maxLeadMs) return { eligible: false, expiresAt: now, reason: 'funding_entry_window_not_yet_open' };
   const evidenceTtlMs = Math.max(1_000, Math.min(30_000, Number(process.env.CRYPTOCRAWL_FUNDING_ENTRY_EVIDENCE_TTL_MS || 5_000)));
   return { eligible: true, expiresAt: Math.min(fundingAt - 1, now + evidenceTtlMs), reason: 'pre_settlement_entry_window_open' };
+}
+
+function fundingEnrichmentPriority(observation: FundingRateObservation): [number, number, number] {
+  const positiveSupportedDirection = observation.fundingRate > 0 ? 1 : 0;
+  const windowOpen = entryWindow(observation).eligible ? 1 : 0;
+  return [positiveSupportedDirection, windowOpen, Math.abs(observation.fundingRate)];
+}
+
+function compareFundingEnrichmentPriority(left: FundingRateObservation, right: FundingRateObservation): number {
+  const a = fundingEnrichmentPriority(left);
+  const b = fundingEnrichmentPriority(right);
+  return b[0] - a[0] || b[1] - a[1] || b[2] - a[2];
 }
 
 class FundingRateMonitor {
@@ -159,6 +166,8 @@ class FundingRateMonitor {
       durableFundingLifecycleImplemented: true,
       executionAuthority: 'funding_position_lifecycle_for_bounded_positive_pre_settlement_okx_carry',
       projectedProfitIsDeterministicProfit: false,
+      measurableProjectedBpsOutsideEntryWindow: true,
+      firstPassPrivateEvidenceForAllOkxRoutes: true,
     });
   }
 
@@ -185,11 +194,14 @@ class FundingRateMonitor {
       let projectedPositive = 0;
       let eligible = 0;
 
+      // Every discovered OKX instrument receives private account/fee evidence in
+      // the same cycle. The existing OKX lane governor remains the pressure/rate
+      // authority, so completeness is not obtained by creating a second request
+      // authority or by dropping routes behind an arbitrary discovery budget.
       const okxCapabilityTargets = batch.observations
         .filter(observation => observation.venue === 'okx')
-        .sort((left, right) => Math.abs(right.fundingRate) - Math.abs(left.fundingRate))
-        .filter((observation, index, all) => all.findIndex(candidate => candidate.instrumentId === observation.instrumentId) === index)
-        .slice(0, OKX_SWAP_CAPABILITY_PROBE_BUDGET);
+        .sort(compareFundingEnrichmentPriority)
+        .filter((observation, index, all) => all.findIndex(candidate => candidate.instrumentId === observation.instrumentId) === index);
       const okxTargetIds = new Set(okxCapabilityTargets.map(observation => observation.instrumentId));
       const okxEnrichment = new Map<string, {
         spotFee: Awaited<ReturnType<typeof resolveCexFeeEvidence>>;
@@ -197,11 +209,14 @@ class FundingRateMonitor {
         executionEvidence: OkxFundingExecutionEvidence | null;
       }>();
       await Promise.all(okxCapabilityTargets.map(async observation => {
-        const window = entryWindow(observation);
         const [spotFee, swapCapability, executionEvidence] = await Promise.all([
           resolveCexFeeEvidence('okx', observation.symbol).catch(() => null),
           getOkxSwapCapability(observation),
-          observation.fundingRate > 0 && window.eligible
+          // Exact entry/exit depth, sizing and slippage evidence remains useful for
+          // projected all-in BPS before the entry window opens. Every supported
+          // positive direction is measured immediately; the window only controls
+          // when an already-measured route can be submitted.
+          observation.fundingRate > 0
             ? measureOkxFundingExecutionEvidence({ symbol: observation.symbol, swapInstId: observation.instrumentId, targetNotionalUsd: notionalUsd }).catch(() => null)
             : Promise.resolve(null),
         ]);
@@ -211,7 +226,9 @@ class FundingRateMonitor {
       for (const observation of batch.observations) {
         const enrichment = observation.venue === 'okx' ? okxEnrichment.get(observation.instrumentId) : null;
         const spotFee = enrichment?.spotFee || null;
-        const swapCapability = observation.venue === 'okx' ? enrichment?.swapCapability || deferredOkxSwapCapability() : { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'not_okx' };
+        const swapCapability = observation.venue === 'okx'
+          ? enrichment?.swapCapability || { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'OKX first-pass private enrichment returned no capability evidence' }
+          : { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'not_okx' };
         const executionEvidence = enrichment?.executionEvidence ?? null;
         const window = entryWindow(observation);
         const decision = evaluateFundingArbitrage({
@@ -287,12 +304,12 @@ class FundingRateMonitor {
 
         const missingInformation = [
           ...decision.missingInformation,
-          ...(observation.venue === 'okx' && !executionEvidence ? ['measured_entry_exit_depth_margin_capacity'] : []),
-          ...(!window.eligible && observation.venue === 'okx' ? [window.reason] : []),
-          ...(observation.venue === 'kraken_futures' ? ['kraken_derivatives_execution_credentials'] : []),
-          ...(observation.venue === 'binance_futures' ? ['binance_execution_capability_intentionally_disabled'] : []),
-          ...(observation.venue === 'okx' && !swapCapability.instrumentVisible ? ['okx_swap_instrument_capability'] : []),
-          ...(observation.venue === 'okx' && !swapCapability.accountModeVisible ? ['okx_derivatives_account_mode'] : []),
+          ...(observation.venue === 'okx' && observation.fundingRate > 0 && !executionEvidence ? ['required:measured_entry_exit_depth_margin_capacity'] : []),
+          ...(!window.eligible && observation.venue === 'okx' ? [`advisory:${window.reason}`] : []),
+          ...(observation.venue === 'kraken_futures' ? ['required:kraken_derivatives_execution_credentials'] : []),
+          ...(observation.venue === 'binance_futures' ? ['required:binance_execution_capability_intentionally_disabled'] : []),
+          ...(observation.venue === 'okx' && !swapCapability.instrumentVisible ? ['required:okx_swap_instrument_capability'] : []),
+          ...(observation.venue === 'okx' && !swapCapability.accountModeVisible ? ['required:okx_derivatives_account_mode'] : []),
         ];
 
         measuredCandidateRegistry.record({
@@ -319,10 +336,9 @@ class FundingRateMonitor {
           }],
           depth: executionEvidence
             ? { status: 'measured', detail: 'OKX spot and SWAP entry/exit VWAP depth measured at exact contract/base quantities with authenticated contract sizing and max-size capacity' }
-            : { status: 'unavailable', detail: 'Exact executable spot/SWAP depth and margin capacity were not acquired in this bounded cycle' },
+            : { status: 'unavailable', detail: 'All supported positive-direction OKX routes are sent through exact private depth/sizing evidence acquisition in their first discovery cycle; unavailable evidence remains explicit rather than budget-deferred' },
           economics: {
             grossProfitUsd: decision.expectedFundingUsd,
-            // Projected funding carry is deliberately not canonical deterministic profit.
             deterministicNetProfitUsd: null,
             feeUsd: decision.expectedTradingFeesUsd,
             gasUsd: 0,
@@ -336,19 +352,24 @@ class FundingRateMonitor {
           executableCapability: executionCapable,
           executionCapabilityReason: executionCapable
             ? 'OKX positive projected carry is inside the pre-settlement entry window with authenticated fees, measured SPOT/SWAP depth, exact contract sizing, system-capital-aware lifecycle capability, FOK entry/close, margin monitoring, authenticated funding bills and terminal realized accounting'
-            : observation.venue === 'okx' ? `${swapCapability.reason}; ${window.reason}`
-              : observation.venue === 'kraken_futures'
-                ? 'Kraken Futures public funding is visible without authentication, but Kraken Spot credentials are not Derivatives execution credentials'
-                : 'Binance Futures is public discovery only; Binance live execution remains intentionally disabled in CryptoCrawler',
+            : observation.venue === 'okx' && projectedNet !== null
+              ? `${swapCapability.reason}; projected all-in BPS is measured independently of entry-window timing; ${window.reason}`
+              : observation.venue === 'okx' ? `${swapCapability.reason}; ${window.reason}`
+                : observation.venue === 'kraken_futures'
+                  ? 'Kraken Futures public funding is visible without authentication, but Kraken Spot credentials are not Derivatives execution credentials'
+                  : 'Binance Futures is public discovery only; Binance live execution remains intentionally disabled in CryptoCrawler',
           missingInformation: [...new Set(missingInformation)],
           provenance: [
             ...observation.provenance,
             'funding_arbitrage_policy:all_in_projected_costs_required',
             'funding_projected_profit_is_not_deterministic_profit',
+            'funding_measured_bps:not_gated_by_entry_window',
+            'funding_private_enrichment:all_supported_okx_routes_first_pass',
+            'funding_private_evidence:budget_defer_removed',
             'durable_funding_lifecycle:migration_owned_nonblocking',
             'okx_funding_lifecycle:authenticated_fills_and_bills',
             'unknown_cost_is_not_zero',
-            executionCapable ? 'execution_promoted_from_bounded_projected_carry_and_complete_execution_evidence' : 'execution_not_promoted_without_complete_pre_settlement_evidence',
+            executionCapable ? 'execution_promoted_from_projected_carry_and_minimum_sufficient_execution_evidence' : 'execution_not_promoted_without_required_execution_evidence',
           ],
         });
       }
@@ -360,10 +381,12 @@ class FundingRateMonitor {
         component: 'FundingRateMonitor', requestedSymbols: batch.requestedSymbols, observations: batch.observations.length,
         failures: batch.failures, projectedPositive, deterministicPositive: 0, eligible,
         durableFundingLifecycleImplemented: true, okxSwapCapabilityCacheEntries: okxSwapCapabilityCache.size,
-        okxPrivateCapabilityProbeBudget: OKX_SWAP_CAPABILITY_PROBE_BUDGET, okxPrivateCapabilityTargets: okxTargetIds.size,
-        okxPrivateCapabilityDeferred: Math.max(0, batch.observations.filter(observation => observation.venue === 'okx').length - okxTargetIds.size),
+        okxPrivateCapabilityTargets: okxTargetIds.size,
+        okxPrivateCapabilityDeferred: 0,
+        firstPassPrivateEvidenceForAllOkxRoutes: true,
+        projectedBpsMeasuredOutsideEntryWindow: true,
         publicDiscoveryBlockedByPrivateEnrichment: false,
-        note: 'Funding entries are bounded projected carry before settlement; only authenticated terminal fills and funding bills become realized profit truth',
+        note: 'Funding entries are projected carry before settlement; only authenticated terminal fills and funding bills become realized profit truth',
       });
     } catch (error) {
       this.cycles++;

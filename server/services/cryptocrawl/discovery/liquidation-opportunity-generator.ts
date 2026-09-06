@@ -33,6 +33,25 @@ function boundedInteger(raw: string | undefined, fallback: number, min: number, 
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
 }
 
+function liquidationHydrationConcurrency(): number {
+  return boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_HYDRATION_CONCURRENCY, 4, 1, 12);
+}
+
+async function runBounded<T, R>(items: readonly T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const count = Math.max(1, Math.min(items.length, Math.floor(concurrency)));
+  await Promise.all(Array.from({ length: count }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  }));
+  return results;
+}
+
 function rememberBorrower(chain: RpcSupportedChain, address: string, blockNumber: number): void {
   if (!ethers.utils.isAddress(address)) return;
   const normalized = ethers.utils.getAddress(address);
@@ -101,32 +120,33 @@ function baseCandidate(input: {
     quoteAgeMs: 0,
     executableCapability: false,
     executionCapabilityReason: executionReviewed
-      ? 'Position is currently measured liquidatable; exact reserve/oracle/flash-liquidity/unwind/gas/atomic-simulation hydration is required before execution'
+      ? 'Position is currently measured liquidatable and receives exact reserve/oracle/flash-liquidity/unwind/gas/atomic-simulation hydration in this same discovery cycle before execution can be considered'
       : 'Position is currently measured liquidatable, but this chain remains discovery-only until exact pre-trade gas accounting includes every chain-specific fee component',
     missingInformation: executionReviewed ? [
-      'liquidation_debt_reserve_and_amount',
-      'liquidation_collateral_reserve_and_amount',
-      'liquidation_bonus_and_protocol_fee',
-      'liquidation_close_factor',
-      'liquidation_oracle_values',
-      'measured_flash_loan_provider_liquidity_and_fee',
-      'liquidation_collateral_unwind_quote',
-      'liquidation_gas_cost',
-      'atomic_liquidation_payload_adapter',
-      'exact_liquidation_simulation',
+      'required:liquidation_debt_reserve_and_amount',
+      'required:liquidation_collateral_reserve_and_amount',
+      'required:liquidation_bonus_and_protocol_fee',
+      'required:liquidation_close_factor',
+      'required:liquidation_oracle_values',
+      'required:measured_flash_loan_provider_liquidity_and_fee',
+      'required:liquidation_collateral_unwind_quote',
+      'required:liquidation_gas_cost',
+      'required:atomic_liquidation_payload_adapter',
+      'required:exact_liquidation_simulation',
     ] : [
-      'chain_specific_complete_pretrade_gas_accounting',
-      'liquidation_debt_reserve_and_amount',
-      'liquidation_collateral_reserve_and_amount',
-      'liquidation_bonus_and_protocol_fee',
-      'liquidation_oracle_values',
-      'liquidation_collateral_unwind_quote',
+      'required:chain_specific_complete_pretrade_gas_accounting',
+      'required:liquidation_debt_reserve_and_amount',
+      'required:liquidation_collateral_reserve_and_amount',
+      'required:liquidation_bonus_and_protocol_fee',
+      'required:liquidation_oracle_values',
+      'required:liquidation_collateral_unwind_quote',
     ],
     provenance: [
       'aave_v3_borrow_event_universe',
       'aave_v3_getUserAccountData',
       'health_factor_below_one',
       `exact_execution_chain_reviewed:${executionReviewed}`,
+      ...(executionReviewed ? ['liquidation_first_pass:full_hydration_same_cycle'] : []),
       'liquidation_profitability:not_assumed',
       'synthetic_evidence:false',
     ],
@@ -190,6 +210,7 @@ function preparedCandidate(current: MeasuredCandidate, prepared: AaveLiquidation
       `liquidation_debt_asset:${prepared.debtAsset}`,
       `liquidation_collateral_asset:${prepared.collateralAsset}`,
       `liquidation_debt_to_cover:${prepared.debtToCover}`,
+      'liquidation_first_pass:full_hydration_completed',
       'flash_premium_attribution:flashLoanFeeBps_only',
       'canonical_scheduler_dispatch_required:true',
       'synthetic_evidence:false',
@@ -264,17 +285,18 @@ async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<Meas
     return observations.map(observation => observation.candidate);
   }
 
-  // Firm 0x quotes and exact full-payload simulations are deliberately bounded.
-  // Prioritize the lowest health factor first, then larger measured debt, while
-  // every other liquidatable borrower remains in measured discovery coverage.
-  const hydrationLimit = boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_FIRM_HYDRATION_PER_CHAIN, 2, 1, 8);
+  // Aave liquidation competition rewards immediate, complete position hydration.
+  // Every liquidatable position on a reviewed execution chain receives reserve,
+  // oracle, flash-liquidity, firm unwind, permissions, simulation and gas work in
+  // this same cycle. Concurrency controls provider pressure; it never drops or
+  // defers a viable position from first-pass measurement.
   const prioritized = [...observations].sort((left, right) => {
     if (left.healthFactor !== right.healthFactor) return left.healthFactor - right.healthFactor;
     if (left.totalDebtBase.eq(right.totalDebtBase)) return 0;
     return right.totalDebtBase.gt(left.totalDebtBase) ? 1 : -1;
-  }).slice(0, hydrationLimit);
+  });
 
-  for (const observation of prioritized) {
+  await runBounded(prioritized, liquidationHydrationConcurrency(), async observation => {
     try {
       const prepared = await prepareAaveLiquidation({
         opportunityId: observation.candidate.opportunityId,
@@ -284,11 +306,12 @@ async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<Meas
       });
       observation.candidate = preparedCandidate(observation.candidate, prepared);
     } catch {
-      // Fail closed. The base measured candidate already carries the complete set
-      // of evidence still required; infrastructure permission needs are queued by
-      // the preparation authority for reconciliation beneath the canonical scheduler.
+      // The base candidate remains explicit with required evidence facts. This is
+      // a same-cycle acquisition failure, not a scheduling/budget deferral and it
+      // cannot silently disappear or gain synthetic execution authority.
     }
-  }
+    return observation.candidate;
+  });
 
   return observations.map(observation => observation.candidate);
 }

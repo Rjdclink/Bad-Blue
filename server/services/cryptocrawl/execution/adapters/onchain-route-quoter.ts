@@ -1,4 +1,5 @@
 import { BigNumber, Contract, providers } from 'ethers';
+import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../../api/blockchain-providers.js';
 import type { RoutePlanningSwapStep } from './autonomous-route-planner.js';
 import type {
   SupportedExecutionChain,
@@ -126,9 +127,9 @@ function asSupportedChain(value: unknown): SupportedExecutionChain {
 }
 
 function maxQuoteLatencyMs(): number {
-  const configured = Number(process.env.ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS || 2500);
-  if (!Number.isFinite(configured)) return 2500;
-  return Math.max(250, Math.min(15000, Math.trunc(configured)));
+  const configured = Number(process.env.ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS || 15000);
+  if (!Number.isFinite(configured)) return 15000;
+  return Math.max(250, Math.min(30000, Math.trunc(configured)));
 }
 
 function withQuoteTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -153,9 +154,10 @@ function withQuoteTimeout<T>(promise: Promise<T>, timeoutMs: number, label: stri
 }
 
 /**
- * Observation-only envelope for near-break-even zero-capital routes.
- * A negative value broadens measured discovery; it never changes executable
- * eligibility, which remains strict all-in netProfit > 0 downstream.
+ * Historical observation-priority hint retained for ranking/telemetry only.
+ * It is never a measurement floor. Every structurally valid route that returns
+ * executable quote amounts remains numerically measurable regardless of how far
+ * below break-even it is; only positive all-in net economics can execute.
  */
 export function zeroCapitalDiscoveryFloorBps(): number {
   const configured = Number(process.env.ZERO_CAPITAL_DISCOVERY_FLOOR_BPS ?? -100);
@@ -271,6 +273,27 @@ function legQuoteKey(chain: SupportedExecutionChain, leg: ConfiguredRouteLeg, am
   return [chain, leg.protocol, normalizeAddress(leg.tokenIn), normalizeAddress(leg.tokenOut), leg.pool ? normalizeAddress(leg.pool) : '', leg.feeTier || '', leg.fee ?? '', amountIn.toString()].join(':');
 }
 
+async function quoteLegAgainstProvider(
+  rpcProvider: providers.Provider,
+  chain: SupportedExecutionChain,
+  leg: ConfiguredRouteLeg,
+  amountIn: BigNumber,
+): Promise<BigNumber> {
+  if (leg.protocol === 'uniswapV3') {
+    const quoterAddress = chain === 'europa' ? process.env.EUROPA_UNISWAP_V3_QUOTER?.trim() : UNISWAP_V3_QUOTERS[chain];
+    if (!quoterAddress) throw new Error(`No Uniswap V3 quoter configured for ${chain}`);
+    const quoter = new Contract(quoterAddress, UNISWAP_V3_QUOTER_ABI, rpcProvider);
+    return BigNumber.from(await quoter.callStatic.quoteExactInputSingle(leg.tokenIn, leg.tokenOut, leg.feeTier || 3000, amountIn, 0));
+  }
+
+  const routerAddress = chain === 'europa' ? process.env.EUROPA_SUSHISWAP_ROUTER?.trim() : SUSHISWAP_ROUTERS[chain];
+  if (!routerAddress) throw new Error(`No SushiSwap router configured for ${chain}`);
+  const router = new Contract(routerAddress, SUSHISWAP_ROUTER_ABI, rpcProvider);
+  const amounts = await router.getAmountsOut(amountIn, [leg.tokenIn, leg.tokenOut]);
+  if (!Array.isArray(amounts) || amounts.length < 2) throw new Error('SushiSwap quote returned no output amount');
+  return BigNumber.from(amounts[amounts.length - 1]);
+}
+
 async function quoteLegUncached(provider: providers.Provider, chain: SupportedExecutionChain, leg: ConfiguredRouteLeg, amountIn: BigNumber): Promise<BigNumber> {
   if (chain === 'europa' && leg.protocol === 'sushiswapV3') {
     const sender = process.env.ZERO_CAPITAL_EUROPA_QUOTE_SENDER?.trim() || '0x0e9878153c1500ec48b51cdd5325c7e374c9cdae';
@@ -305,19 +328,20 @@ async function quoteLegUncached(provider: providers.Provider, chain: SupportedEx
     return BigNumber.from(quote.assumedAmountOut);
   }
 
-  if (leg.protocol === 'uniswapV3') {
-    const quoterAddress = chain === 'europa' ? process.env.EUROPA_UNISWAP_V3_QUOTER?.trim() : UNISWAP_V3_QUOTERS[chain];
-    if (!quoterAddress) throw new Error(`No Uniswap V3 quoter configured for ${chain}`);
-    const quoter = new Contract(quoterAddress, UNISWAP_V3_QUOTER_ABI, provider);
-    return BigNumber.from(await quoter.callStatic.quoteExactInputSingle(leg.tokenIn, leg.tokenOut, leg.feeTier || 3000, amountIn, 0));
+  // Active EVM route evidence is acquired through the canonical provider mesh.
+  // The manager retries independent healthy providers for the same deterministic
+  // eth_call before this route is considered temporarily unquoted. The caller's
+  // provider is retained only for retired/non-mesh compatibility paths.
+  if (chain !== 'europa') {
+    const { result } = await multiProviderRpcManager.execute(
+      chain as RpcSupportedChain,
+      'contract_calls',
+      rpcProvider => quoteLegAgainstProvider(rpcProvider, chain, leg, amountIn),
+    );
+    return BigNumber.from(result);
   }
 
-  const routerAddress = chain === 'europa' ? process.env.EUROPA_SUSHISWAP_ROUTER?.trim() : SUSHISWAP_ROUTERS[chain];
-  if (!routerAddress) throw new Error(`No SushiSwap router configured for ${chain}`);
-  const router = new Contract(routerAddress, SUSHISWAP_ROUTER_ABI, provider);
-  const amounts = await router.getAmountsOut(amountIn, [leg.tokenIn, leg.tokenOut]);
-  if (!Array.isArray(amounts) || amounts.length < 2) throw new Error('SushiSwap quote returned no output amount');
-  return BigNumber.from(amounts[amounts.length - 1]);
+  return quoteLegAgainstProvider(provider, chain, leg, amountIn);
 }
 
 async function quoteLeg(
@@ -406,8 +430,10 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
   const allInCostBps = ratioToBps(allInCost, initial);
   const netProfitBps = ratioToBps(netProfit, initial);
   const discoveryFloorBps = zeroCapitalDiscoveryFloorBps();
-  if (netProfitBps < discoveryFloorBps) return null;
 
+  // Do not erase a successfully measured route because it is economically bad.
+  // A deeply negative quote is still valuable measurement and must remain visible
+  // as numeric BPS/distance-to-break-even. Profitability controls execution below.
   return {
     id: route.id,
     chain: route.chain,
@@ -507,9 +533,8 @@ async function quoteBestRouteSize(
     : positive;
 
   // Preserve executable preference when one exists. Otherwise return the best
-  // measured near-miss inside the observation-only discovery envelope so BPS
-  // and cost telemetry remain visible. Downstream execution still rejects
-  // expectedProfit <= 0 and therefore cannot execute this fallback quote.
+  // measured numeric route regardless of distance below break-even. Downstream
+  // execution remains strict net-positive and cannot execute the fallback quote.
   const selectionPool = admissible.length > 0 ? admissible : observed;
   return selectHighestNetProfit(selectionPool, quote => quote.netProfit);
 }
@@ -517,10 +542,9 @@ async function quoteBestRouteSize(
 /**
  * Each configured atomic route is independently quoted across a bounded notional
  * curve and selected by the largest measured all-in net profit. Profit is never
- * extrapolated linearly from a smaller quote. When governance can execute, a
- * positive size that passes canonical progressive sizing wins. If none exists,
- * the best quote inside the bounded observation-only discovery envelope may be
- * returned for truthful BPS telemetry; it remains non-executable downstream.
+ * extrapolated linearly from a smaller quote. Every route with executable quote
+ * amounts remains measurable; only positive sizes that pass canonical sizing can
+ * execute.
  */
 export async function quoteConfiguredZeroCapitalRoutesForChain(
   chain: SupportedExecutionChain,
