@@ -18,6 +18,8 @@ const stream = read('server/services/cryptocrawl/intelligence/cex-order-book-str
 const evidence = read('server/services/cryptocrawl/integration/dynamic-profitability-admission-wiring.ts');
 const economic = read('server/services/cryptocrawl/optimization/economic-transformation-engine.ts');
 const liquidation = read('server/services/cryptocrawl/discovery/liquidation-opportunity-generator.ts');
+const routeQuoter = read('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts');
+const providerCostCurve = read('server/services/cryptocrawl/optimization/zero-capital-provider-cost-curve.ts');
 
 // Railway console protection is narrowly scoped to repetitive production INFO.
 requirePattern(logger, /HIGH_FREQUENCY_PRODUCTION_SUMMARIES/, 'bounded high-frequency summary allowlist exists');
@@ -70,4 +72,13 @@ requirePattern(economic, /aliasedCexDepthImpact\s*\?\s*impact\s*:\s*slippage\s*\
 requirePattern(liquidation, /feeUsd:\s*0,[\s\S]{0,260}flashLoanFeeBps:\s*prepared\.flashLoanFeeBps/, 'liquidation flash premium is not also emitted as exchange fee');
 requirePattern(liquidation, /flash_premium_attribution:flashLoanFeeBps_only/, 'liquidation flash-premium single-attribution provenance is explicit');
 
-console.log('[production-pressure-evidence] Railway console budget, autonomous Supabase custody, CEX transport/freshness separation, bounded maker evidence reacquisition, and canonical BPS single-attribution invariants passed');
+// Fractional measured costs must not be truncated to zero BPS.
+requirePattern(routeQuoter, /const\s+BPS_PRECISION\s*=\s*1_000_000n/, 'zero-capital route BPS preserves micro-BPS precision');
+requirePattern(routeQuoter, /function\s+ratioToBps\([\s\S]{0,180}10_000n\s*\*\s*BPS_PRECISION/, 'route BPS ratios retain fractional basis points');
+requirePattern(routeQuoter, /function\s+feeFromBps\(/, 'fractional configured flash-loan fee converts without whole-BPS rounding');
+forbidPattern(routeQuoter, /Math\.round\(\(route\.flashLoanFeeBps\s*\|\|\s*0\)\)/, 'configured flash-loan fee rounded to a whole BPS');
+forbidPattern(routeQuoter, /Number\(\([^\n]*\*\s*10000n\)\s*\/\s*initial\)/, 'route economics truncated to integer BPS');
+requirePattern(providerCostCurve, /const\s+BPS_PRECISION\s*=\s*1_000_000n/, 'provider cost curve preserves micro-BPS precision');
+forbidPattern(providerCostCurve, /exactFeeBps:\s*Number\(\(exactFee\s*\*\s*10_000n\)\s*\/\s*amount\)/, 'provider fee curve truncates sub-BPS costs');
+
+console.log('[production-pressure-evidence] Railway console budget, autonomous Supabase custody, CEX transport/freshness separation, bounded maker evidence reacquisition, canonical BPS single-attribution, and fractional-BPS precision invariants passed');
