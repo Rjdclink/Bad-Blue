@@ -25,6 +25,7 @@ const migrationPath = 'server/migrations/045_cryptocrawler_system_native_gas_spe
 const authorityPath = 'server/services/cryptocrawl/execution/system-native-gas-spend-authority.ts';
 const txPath = 'server/services/cryptocrawl/execution/system-owned-native-transaction.ts';
 const proofWiringPath = 'server/services/cryptocrawl/runtime/system-owned-gas-funding-proof-wiring.ts';
+const canonicalExecutorPath = 'server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts';
 const baseExecutionPath = 'server/services/cryptocrawl/runtime/system-owned-native-zero-capital-execution-wiring.ts';
 const providerExecutionPath = 'server/services/cryptocrawl/integration/provider-specific-zero-capital-execution-wiring.ts';
 const dualExecutionPath = 'server/services/cryptocrawl/integration/dual-provider-zero-capital-execution-wiring.ts';
@@ -34,6 +35,7 @@ const migration = read(migrationPath);
 const authority = read(authorityPath);
 const tx = read(txPath);
 const proofWiring = read(proofWiringPath);
+const canonicalExecutor = read(canonicalExecutorPath);
 const baseExecution = read(baseExecutionPath);
 const providerExecution = read(providerExecutionPath);
 const dualExecution = read(dualExecutionPath);
@@ -80,14 +82,20 @@ must(proofWiringPath, proofWiring, 'getSystemNativeGasAuthority', 'Strict fundin
 must(proofWiringPath, proofWiring, 'sponsorOperatorMonetaryCostProvenZero: false', 'Configured sponsorship must never be promoted to zero-operator-cost proof here');
 must(proofWiringPath, proofWiring, 'nativeSystemOwnedProven: authority !== null', 'Native funding must require durable spendable authority');
 
+must(canonicalExecutorPath, canonicalExecutor, "funding.mode === 'native' && funding.paymentSource !== 'system_owned_native'", 'Canonical zero-capital executor must reject unproven native payment sources');
+must(canonicalExecutorPath, canonicalExecutor, "funding.mode === 'sponsored' && funding.paymentSource !== 'provider_sponsored'", 'Canonical zero-capital executor must reject unproven sponsored payment sources');
+must(canonicalExecutorPath, canonicalExecutor, 'executeSystemOwnedNativeTransaction', 'Canonical zero-capital executor must use the owned-gas transaction boundary for native submission');
+mustNot(canonicalExecutorPath, canonicalExecutor, 'wallet.sendTransaction(', 'Canonical zero-capital executor must not bypass owned-gas reservation with direct wallet sends');
+
 for (const [path, text] of [[baseExecutionPath, baseExecution], [providerExecutionPath, providerExecution], [dualExecutionPath, dualExecution]]) {
-  must(path, text, "paymentSource !== 'system_owned_native'", 'Every zero-capital native execution branch must reject unproven native balance');
-  must(path, text, 'executeSystemOwnedNativeTransaction', 'Every zero-capital native execution branch must use the owned-gas transaction boundary');
-  mustNot(path, text, 'wallet.sendTransaction(', 'Zero-capital native execution must not bypass owned-gas reservation with direct wallet sends');
+  must(path, text, "executionAuthority: 'CanonicalZeroCapitalExecutor'", 'Retired zero-capital wrappers must point to the single canonical execution authority');
+  must(path, text, 'transactionSubmissionAuthority: false', 'Retired zero-capital wrappers must have no transaction submission authority');
+  mustNot(path, text, 'wallet.sendTransaction(', 'Retired zero-capital wrappers must not retain direct wallet submission');
+  mustNot(path, text, 'executeSystemOwnedNativeTransaction(', 'Retired zero-capital wrappers must not retain a second owned-native submission path');
 }
 
 must(bootstrapPath, bootstrap, 'ensureSystemOwnedGasFundingProofWiring', 'Bootstrap must install durable gas ownership proof before runtime start');
-must(bootstrapPath, bootstrap, 'ensureSystemOwnedNativeZeroCapitalExecutionWiring', 'Bootstrap must replace the legacy Balancer native send before runtime start');
+must(bootstrapPath, bootstrap, 'ensureSystemOwnedNativeZeroCapitalExecutionWiring', 'Bootstrap must retain the compatibility boundary while canonical execution owns submission');
 
 must(schemaPath, schema, 'const SCHEMA_VERSION = 15;', 'Runtime schema must advance for the native-gas spend ledger');
 must(schemaPath, schema, "'045_cryptocrawler_system_native_gas_spend_authority.sql'", 'Runtime schema must provision migration 045');
@@ -104,5 +112,7 @@ console.log(JSON.stringify({
   signedHashBoundBeforeBroadcast: true,
   ambiguousSubmissionQuarantine: true,
   zeroCapitalNativeDirectWalletSendAuthority: false,
+  canonicalZeroCapitalExecutorOwnsSubmission: true,
+  retiredExecutionWrappersSubmissionAuthority: false,
   hostedSponsorZeroOperatorCostAssumed: false,
 }, null, 2));
