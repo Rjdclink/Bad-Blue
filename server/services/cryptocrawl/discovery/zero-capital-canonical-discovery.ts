@@ -1,35 +1,61 @@
-import type { Wallet, providers } from 'ethers';
+import { BigNumber, type Wallet, type providers } from 'ethers';
 import logger from '../../../logger.js';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import type { DynamicChainConfig } from '../core/dynamic-chain-registry.js';
 import {
+  buildDynamicZeroCapitalRouteTemplates,
   discoverDynamicZeroCapitalQuotes,
+  getCachedGraphlessDynamicRouteTemplates,
 } from './dynamic-zero-capital-routes.js';
 import { measuredCandidateRegistry } from './measured-candidate-registry.js';
-import { zeroCapitalDiscoveryFloorBps, type QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
-import type { SponsoredReceiverRecord, ReceiverFundingMode } from '../execution/adapters/sponsored-receiver-manager.js';
+import {
+  zeroCapitalDiscoveryFloorBps,
+  type ConfiguredZeroCapitalRoute,
+  type QuotedZeroCapitalRoute,
+} from '../execution/adapters/onchain-route-quoter.js';
+import {
+  supportsSponsoredReceiverChain,
+  type SponsoredReceiverRecord,
+  type ReceiverFundingMode,
+} from '../execution/adapters/sponsored-receiver-manager.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { repriceZeroCapitalProviderEconomics } from '../integration/zero-capital-flash-provider-wiring.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
+import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
+import { executeSystemOwnedNativeTransaction } from '../execution/system-owned-native-transaction.js';
 
 interface CanonicalZeroCapitalRuntime {
+  configuredRoutes: ConfiguredZeroCapitalRoute[];
   providers: Map<SupportedChain, providers.JsonRpcProvider>;
   executionWallets: Map<SupportedChain, Wallet>;
+  dynamicChainConfigs: Map<Exclude<SupportedChain, 'europa'>, DynamicChainConfig>;
+  gasSponsor: {
+    getReadiness: () => { ready: boolean };
+    execute: (input: {
+      wallet: Wallet;
+      chainId: number;
+      calls: Array<{ to: string; data: string; value?: BigNumber }>;
+      timeoutMs: number;
+    }) => Promise<{ transactionHash: string }>;
+  };
   receiverManager: {
     getReceiver: (chain: string) => string | null;
     getRecords: () => SponsoredReceiverRecord[];
+    ensureReceiver: (input: {
+      chain: any;
+      provider: providers.JsonRpcProvider;
+      wallet: Wallet;
+      fundingMode: ReceiverFundingMode;
+    }) => Promise<SponsoredReceiverRecord>;
+    buildMissingPermissionCalls: (input: {
+      chain: any;
+      receiver: string;
+      provider: providers.JsonRpcProvider;
+      routes: ConfiguredZeroCapitalRoute[];
+    }) => Promise<Array<{ to: string; data: string; value?: string | number | BigNumber }>>;
   };
   scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
   fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
-  getGasFundingDecision: (chain: SupportedChain) => Promise<GasFundingDecision>;
-  ensureExecutionReceiverFleet: () => Promise<void>;
-  refreshSponsorshipReadiness: () => Promise<unknown>;
-  executeSetupCalls: (
-    chain: any,
-    provider: providers.JsonRpcProvider,
-    wallet: Wallet,
-    fundingMode: ReceiverFundingMode,
-    calls: any[],
-  ) => Promise<void>;
 }
 
 let started = false;
@@ -39,6 +65,7 @@ let lastCycleAt = 0;
 let lastError: string | null = null;
 let observed = 0;
 let repriced = 0;
+let readyReceiverChains = 0;
 
 function runtime(): CanonicalZeroCapitalRuntime {
   return zeroCapitalEngine as unknown as CanonicalZeroCapitalRuntime;
@@ -59,6 +86,106 @@ function baseUnitsToUsd(value: bigint | undefined, decimals: number): number {
 function bpsFromBaseUnits(value: bigint | undefined, notional: bigint): number | null {
   if (value === undefined || notional <= 0n) return null;
   return Number((value * 10_000n) / notional);
+}
+
+function executionRoutes(target: CanonicalZeroCapitalRuntime): ConfiguredZeroCapitalRoute[] {
+  const byId = new Map<string, ConfiguredZeroCapitalRoute>();
+  for (const route of [
+    ...target.configuredRoutes,
+    ...[...target.providers.keys()].flatMap(chain => buildDynamicZeroCapitalRouteTemplates(chain)),
+    ...getCachedGraphlessDynamicRouteTemplates(),
+  ]) byId.set(route.id, route);
+  return [...byId.values()];
+}
+
+async function strictFunding(target: CanonicalZeroCapitalRuntime, chain: SupportedChain): Promise<GasFundingDecision> {
+  return getProvenZeroCapitalGasFundingDecision(target, chain);
+}
+
+async function executeSetupCalls(input: {
+  target: CanonicalZeroCapitalRuntime;
+  chain: SupportedChain;
+  provider: providers.JsonRpcProvider;
+  wallet: Wallet;
+  funding: GasFundingDecision;
+  calls: Array<{ to: string; data: string; value?: string | number | BigNumber }>;
+}): Promise<void> {
+  if (input.funding.strictZeroInitialCapitalEligible !== true || input.funding.operatorMonetaryInputRequired !== false) {
+    throw new Error(`Strict zero-capital setup funding is unavailable: ${input.funding.reason}`);
+  }
+  if (input.funding.mode === 'sponsored') {
+    if (input.funding.paymentSource !== 'provider_sponsored') throw new Error('Unproven sponsored setup payment source');
+    const network = await input.provider.getNetwork();
+    await input.target.gasSponsor.execute({
+      wallet: input.wallet,
+      chainId: network.chainId,
+      calls: input.calls.map(call => ({ to: call.to, data: call.data, value: BigNumber.from(call.value || 0) })),
+      timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_SETUP_TIMEOUT_MS || 90_000)),
+    });
+    return;
+  }
+  if (input.funding.mode !== 'native' || input.funding.paymentSource !== 'system_owned_native') {
+    throw new Error(`Strict zero-capital setup has no proven system-owned gas path: ${input.funding.reason}`);
+  }
+  for (let index = 0; index < input.calls.length; index += 1) {
+    const call = input.calls[index];
+    const result = await executeSystemOwnedNativeTransaction({
+      chain: input.chain,
+      wallet: input.wallet,
+      provider: input.provider,
+      idempotencyKey: `zero-capital-setup:${input.chain}:${call.to}:${index}:${call.data.slice(0, 18)}`,
+      purpose: 'zero_capital_receiver_permission_setup',
+      transaction: { to: call.to, data: call.data, value: BigNumber.from(call.value || 0) },
+      confirmations: 1,
+    });
+    if (result.receipt.status !== 1) throw new Error(`System-owned receiver permission transaction reverted on ${input.chain}`);
+  }
+}
+
+async function ensureReceiverFleet(target: CanonicalZeroCapitalRuntime): Promise<void> {
+  const routes = executionRoutes(target);
+  const chains = [...new Set(routes.map(route => route.chain as SupportedChain))]
+    .filter(chain => chain !== 'europa' && supportsSponsoredReceiverChain(chain as any));
+  let ready = 0;
+  const failures: string[] = [];
+  for (const chain of chains) {
+    const provider = target.providers.get(chain);
+    const wallet = target.executionWallets.get(chain);
+    if (!provider || !wallet) { failures.push(`${chain}:provider_or_wallet_unavailable`); continue; }
+    try {
+      const funding = await strictFunding(target, chain);
+      if (funding.mode === 'unavailable') throw new Error(funding.reason);
+      const receiver = await target.receiverManager.ensureReceiver({
+        chain: chain as any,
+        provider,
+        wallet,
+        fundingMode: funding.mode as ReceiverFundingMode,
+      });
+      const chainRoutes = routes.filter(route => route.chain === chain);
+      const calls = await target.receiverManager.buildMissingPermissionCalls({
+        chain: chain as any,
+        receiver: receiver.address,
+        provider,
+        routes: chainRoutes,
+      });
+      if (calls.length > 0) {
+        await executeSetupCalls({ target, chain, provider, wallet, funding, calls });
+      }
+      ready++;
+    } catch (error) {
+      failures.push(`${chain}:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  readyReceiverChains = ready;
+  if (ready === 0 && chains.length > 0) {
+    logger.debug('[ZeroCapitalDiscovery] No strict zero-capital receiver chain is execution-ready; discovery remains active', {
+      component: 'CanonicalZeroCapitalDiscovery', failures, executionAuthority: false,
+    });
+  } else if (failures.length > 0) {
+    logger.debug('[ZeroCapitalDiscovery] Receiver fleet is partially ready; failed chains remain discovery-only', {
+      component: 'CanonicalZeroCapitalDiscovery', readyReceiverChains: ready, failures,
+    });
+  }
 }
 
 function canonicalEconomics(opportunity: ZeroCapitalOpportunity, quote?: QuotedZeroCapitalRoute) {
@@ -99,8 +226,6 @@ function recordPreselectionCandidate(input: {
 }): void {
   const { opportunity, quote } = input;
   const positive = opportunity.expectedProfit > 0n && (quote?.executablePositive ?? true);
-  // Explicitly revoke an earlier provider selection before the exact current quote
-  // is re-evaluated. Provider repricing below is the sole eligibility promotion.
   const existing = measuredCandidateRegistry.get(opportunity.id);
   if (existing?.status === 'eligible') {
     measuredCandidateRegistry.updateStatus(opportunity.id, positive ? 'deterministic_positive' : 'enriched', {
@@ -159,12 +284,15 @@ function recordPreselectionCandidate(input: {
 async function scanOneChain(chain: SupportedChain, provider: providers.JsonRpcProvider): Promise<void> {
   if (chain === 'europa') return;
   const target = runtime();
-  const funding = await target.getGasFundingDecision(chain);
+  const funding = await strictFunding(target, chain);
   const receiverReady = Boolean(target.receiverManager.getReceiver(chain));
-  const resourceReady = funding.mode !== 'unavailable' && receiverReady;
+  const resourceReady = funding.mode !== 'unavailable'
+    && funding.strictZeroInitialCapitalEligible === true
+    && funding.operatorMonetaryInputRequired === false
+    && receiverReady;
   const resourceReason = funding.mode === 'unavailable'
     ? funding.reason
-    : receiverReady ? 'resource_ready' : 'verified_execution_receiver_unavailable';
+    : receiverReady ? funding.reason : 'verified_execution_receiver_unavailable';
 
   const configured = await target.scanChain(chain, provider).catch(error => {
     logger.warn('[ZeroCapitalDiscovery] Configured-route measurement degraded', {
@@ -205,8 +333,18 @@ async function scanOneChain(chain: SupportedChain, provider: providers.JsonRpcPr
     context: {
       executionWallets: target.executionWallets,
       receiverManager: target.receiverManager,
-      getGasFundingDecision: target.getGasFundingDecision.bind(target),
-      executeSetupCalls: target.executeSetupCalls.bind(target),
+      getGasFundingDecision: selectedChain => strictFunding(target, selectedChain),
+      executeSetupCalls: async (selectedChain, selectedProvider, selectedWallet, _fundingMode, calls) => {
+        const selectedFunding = await strictFunding(target, selectedChain as SupportedChain);
+        await executeSetupCalls({
+          target,
+          chain: selectedChain as SupportedChain,
+          provider: selectedProvider,
+          wallet: selectedWallet,
+          funding: selectedFunding,
+          calls,
+        });
+      },
     },
   });
   repriced += selected.length;
@@ -215,14 +353,7 @@ async function scanOneChain(chain: SupportedChain, provider: providers.JsonRpcPr
 async function cycle(): Promise<void> {
   const target = runtime();
   try {
-    await target.ensureExecutionReceiverFleet().catch(error => {
-      logger.debug('[ZeroCapitalDiscovery] Receiver/resource fleet remains locally degraded', {
-        component: 'CanonicalZeroCapitalDiscovery',
-        error: error instanceof Error ? error.message : String(error),
-        discoveryContinues: true,
-      });
-    });
-    await target.refreshSponsorshipReadiness().catch(() => undefined);
+    await ensureReceiverFleet(target);
     await Promise.allSettled([...target.providers.entries()].map(([chain, provider]) => scanOneChain(chain, provider)));
     lastCycleAt = Date.now();
     lastError = null;
@@ -255,6 +386,8 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     executionAuthority: false,
     schedulerAuthority: false,
     eligibilityAuthority: 'canonical_provider_repricing_stage_only',
+    gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
+    receiverSetupAuthority: 'canonical_discovery_resource_stage_with_system_owned_native_reservations',
     bpsAuthority: 'measured_candidate_registry',
     dynamicGraphlessDiscovery: true,
     runtimeMethodMutation: false,
@@ -268,5 +401,5 @@ export function stopCanonicalZeroCapitalDiscovery(): void {
 }
 
 export function getCanonicalZeroCapitalDiscoverySnapshot() {
-  return { started, cycleInFlight: Boolean(cycleInFlight), lastCycleAt, lastError, observed, repriced };
+  return { started, cycleInFlight: Boolean(cycleInFlight), lastCycleAt, lastError, observed, repriced, readyReceiverChains };
 }
