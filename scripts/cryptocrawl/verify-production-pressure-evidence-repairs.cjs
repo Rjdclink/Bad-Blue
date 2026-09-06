@@ -16,6 +16,8 @@ const logger = read('server/logger.ts');
 const poolWorker = read('server/services/cryptocrawl/integration/cryptara-supabase-admission-worker.ts');
 const stream = read('server/services/cryptocrawl/intelligence/cex-order-book-stream.ts');
 const evidence = read('server/services/cryptocrawl/integration/dynamic-profitability-admission-wiring.ts');
+const economic = read('server/services/cryptocrawl/optimization/economic-transformation-engine.ts');
+const liquidation = read('server/services/cryptocrawl/discovery/liquidation-opportunity-generator.ts');
 
 // Railway console protection is narrowly scoped to repetitive production INFO.
 requirePattern(logger, /HIGH_FREQUENCY_PRODUCTION_SUMMARIES/, 'bounded high-frequency summary allowlist exists');
@@ -61,4 +63,11 @@ requirePattern(evidence, /hotPathExecutionAuthority:\s*false/, 'evidence worker 
 forbidPattern(evidence, /paperEvidenceExecutionAuthority:\s*true/, 'paper evidence promoted to execution authority');
 forbidPattern(evidence, /shadowPriorityExecutionAuthority:\s*true/, 'shadow score promoted to execution authority');
 
-console.log('[production-pressure-evidence] Railway console budget, autonomous Supabase custody, CEX transport/freshness separation, and bounded maker evidence reacquisition invariants passed');
+// Canonical BPS attribution must never count one measured economic burden twice.
+requirePattern(economic, /function\s+combinedSlippageImpactBps\(/, 'shared slippage/impact attribution deduplicator exists');
+requirePattern(economic, /candidate\.topology\s*===\s*'CEX_CEX'[\s\S]{0,180}depth_aware_notional_search[\s\S]{0,180}Math\.abs\(slippage\s*-\s*impact\)\s*<=\s*1e-9/, 'aliased CEX depth impact is recognized exactly');
+requirePattern(economic, /aliasedCexDepthImpact\s*\?\s*impact\s*:\s*slippage\s*\+\s*impact/, 'distinct slippage and impact remain additive while aliases count once');
+requirePattern(liquidation, /feeUsd:\s*0,[\s\S]{0,260}flashLoanFeeBps:\s*prepared\.flashLoanFeeBps/, 'liquidation flash premium is not also emitted as exchange fee');
+requirePattern(liquidation, /flash_premium_attribution:flashLoanFeeBps_only/, 'liquidation flash-premium single-attribution provenance is explicit');
+
+console.log('[production-pressure-evidence] Railway console budget, autonomous Supabase custody, CEX transport/freshness separation, bounded maker evidence reacquisition, and canonical BPS single-attribution invariants passed');
