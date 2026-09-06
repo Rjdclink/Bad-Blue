@@ -189,14 +189,8 @@ function privateKeyFromSecret(secret: string): { key: KeyObject; algorithm: 'ES2
   return { key, algorithm: 'EdDSA' };
 }
 
-export function createCoinbaseRestJwt(
-  methodInput: string,
-  requestPath: string,
-  nowMs: number = Date.now(),
-): string {
+function signCoinbaseJwt(payload: Record<string, unknown>, nowMs: number): string {
   const { keyName, keySecret } = requireCoinbaseCredentials();
-  const method = methodInput.trim().toUpperCase();
-  if (!method || !requestPath.startsWith('/')) throw new Error('Coinbase JWT requires an HTTP method and absolute request path');
   const { key, algorithm } = privateKeyFromSecret(keySecret);
   const now = Math.floor(nowMs / 1000);
   const header = {
@@ -205,20 +199,39 @@ export function createCoinbaseRestJwt(
     kid: keyName,
     nonce: randomBytes(16).toString('hex'),
   };
-  const payload = {
+  const signingInput = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify({
     sub: keyName,
     iss: 'cdp',
     aud: ['cdp_service'],
     nbf: now,
     exp: now + 120,
-    uri: `${method} ${COINBASE_HOST}${requestPath}`,
-  };
-  const signingInput = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(payload))}`;
+    ...payload,
+  }))}`;
   const signature = algorithm === 'ES256'
     ? cryptoSign('sha256', Buffer.from(signingInput), { key, dsaEncoding: 'ieee-p1363' })
     : cryptoSign(null, Buffer.from(signingInput), key);
   lastAuthAlgorithm = algorithm;
   return `${signingInput}.${base64Url(signature)}`;
+}
+
+export function createCoinbaseRestJwt(
+  methodInput: string,
+  requestPath: string,
+  nowMs: number = Date.now(),
+): string {
+  const method = methodInput.trim().toUpperCase();
+  if (!method || !requestPath.startsWith('/')) throw new Error('Coinbase JWT requires an HTTP method and absolute request path');
+  return signCoinbaseJwt({ uri: `${method} ${COINBASE_HOST}${requestPath}` }, nowMs);
+}
+
+/**
+ * Coinbase Advanced Trade WebSocket JWTs intentionally omit the REST `uri`
+ * claim. Keeping both token forms in this one credential/signing authority avoids
+ * a second signer while allowing the authenticated user-order stream to remain a
+ * read-only execution-state feedback surface.
+ */
+export function createCoinbaseWebSocketJwt(nowMs: number = Date.now()): string {
+  return signCoinbaseJwt({}, nowMs);
 }
 
 function appendQuery(url: URL, query: Record<string, string | string[]> | undefined): void {
