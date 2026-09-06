@@ -4,6 +4,7 @@ import { cexInventoryLedger, type InventoryVenue } from '../execution/cex-invent
 import { createProductionCexSettlementAdapters, type CexSettlementAdapter, type ExecutableCexVenue } from '../execution/cex-settlement.js';
 import { stageManager } from '../governance/stage-management.js';
 import { buildExecutionReadinessProfitabilityPlan } from '../optimization/execution-readiness-profitability-policy.js';
+import { ensureMeasuredRebalanceRouteEvidenceWiring } from './measured-rebalance-route-evidence-wiring.js';
 
 interface BalanceCapableAdapter extends CexSettlementAdapter {
   getBalances: () => Promise<Record<string, string>>;
@@ -189,12 +190,17 @@ async function runRefresh(): Promise<void> {
 
 export function ensureCexInventoryReadinessWiring(): void {
   if (timer || running || process.env.CRYPTOCRAWL_CEX_INVENTORY_READINESS_ENABLED === 'false') return;
+  // Rebalance route evidence is planning-only and depends on these authenticated
+  // inventory intents. Start it from the inventory lifecycle rather than as a
+  // competing execution/runtime authority.
+  ensureMeasuredRebalanceRouteEvidenceWiring();
   void runRefresh().finally(scheduleNext);
   logger.info('[CexInventoryReadiness] Proactive authenticated inventory hydration installed', {
     component: 'CexInventoryReadinessWiring',
     baseRefreshMs: baseRefreshMs(),
     freshnessWindowMs: freshnessWindowMs(),
     privateRequestDeduplication: 'one_in_flight_cycle',
+    measuredRebalanceRouteEvidence: 'authenticated_planning_only',
     liveExecutionPreparation: true,
     payoutReservationsProtectedFromNewOrders: true,
     automaticProfitPayoutDefault: true,
