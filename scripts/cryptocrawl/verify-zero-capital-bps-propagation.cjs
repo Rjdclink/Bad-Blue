@@ -43,9 +43,9 @@ assert.match(wiring, /if \(!positive\)\s*\{[\s\S]{0,900}?dynamic\.push\(opportun
 assert.match(wiring, /executableCapability: positive && input\.executableCapability/);
 assert.match(wiring, /zeroCapitalDiscoveryFloorBps\(\)/);
 
-// Candidate execution-capability truth consumes the same current gas funding,
-// verified receiver, and route-permission facts as dispatch. Exact simulation
-// runs in parallel and cannot downgrade an otherwise hard-fact-ready positive.
+// Candidate execution-capability truth consumes the same current zero-personal-cost
+// gas resource, verified receiver, and route-permission facts as dispatch. Exact
+// simulation runs in parallel and cannot downgrade an otherwise hard-fact-ready positive.
 assert.match(wiring, /const gasResourceReady = gasResource\.mode !== 'unavailable';/);
 assert.match(wiring, /const executableCapability = positive && receiverReady && gasResourceReady;/);
 assert.match(wiring, /const executableCapability = positive && gasResourceReady && receiverReady && permissionReady;/);
@@ -56,7 +56,7 @@ assert.match(wiring, /function runGraphlessSimulationAdvisory/);
 assert.match(wiring, /runGraphlessSimulationAdvisory\(target, chain, provider, opportunity\)/);
 assert.match(wiring, /simulationAuthority: 'parallel_advisory_only'/);
 assert.match(wiring, /executionAuthority: false/);
-assert.match(wiring, /live_gas_funding/);
+assert.match(wiring, /zero_personal_cost_gas_resource/);
 assert.match(wiring, /if \(funding\.mode === 'unavailable'\) continue;/);
 
 // Monte Carlo / Computational Beam is useful advisory intelligence, but it may
