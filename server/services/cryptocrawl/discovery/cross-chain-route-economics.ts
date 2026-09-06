@@ -8,6 +8,8 @@ export interface CrossChainRouteEconomics {
   inputValueUsd: number;
   guaranteedOutputValueUsd: number;
   routeGainUsdBeforeOriginGas: number;
+  swapOriginGasUsd: number;
+  approvalGasUsd: number;
   originGasUsd: number;
   deterministicNetProfitUsd: number;
   netProfitBps: number;
@@ -20,14 +22,20 @@ function positiveFinite(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function nonNegativeFinite(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 /**
  * Across Swap API may compose origin swap + bridge + destination swap. The only
  * recognized cross-chain profit is closed USD value: exact input marked at a live
  * input-asset price versus the provider-guaranteed minimum output marked at a
- * separately live output-asset price, with separately paid origin gas subtracted
- * once. Expected output, bridge fee breakdowns and theoretical slippage never add
- * profit. This supports same-asset transfers and measured USDC<->USDT cross-swaps
- * without pretending an asynchronous bridge is flash-atomic.
+ * separately live output-asset price. Separately paid origin transaction gas and
+ * any required approval gas are subtracted exactly once. Approval gas must be a
+ * measured conservative ceiling when approvals are required; it is zero only when
+ * Across reports no approval transaction. Expected output and fee-attribution
+ * fields never manufacture profit.
  */
 export function evaluateAcrossClosedUsdProfit(input: {
   quote: AcrossBridgeQuote;
@@ -37,8 +45,11 @@ export function evaluateAcrossClosedUsdProfit(input: {
   const { quote } = input;
   const inputPrice = positiveFinite(input.liveInputAssetUsdPrice);
   const outputPrice = positiveFinite(input.liveOutputAssetUsdPrice);
-  const originGasUsd = quote.originGasUsd === null ? null : Number(quote.originGasUsd);
-  if (!inputPrice || !outputPrice || originGasUsd === null || !Number.isFinite(originGasUsd) || originGasUsd < 0) return null;
+  const swapOriginGasUsd = nonNegativeFinite(quote.originGasUsd);
+  const approvalGasUsd = quote.approvalTransactions === 0
+    ? 0
+    : nonNegativeFinite(quote.approvalGasUsd);
+  if (!inputPrice || !outputPrice || swapOriginGasUsd === null || approvalGasUsd === null) return null;
   if (!quote.minOutputAmount || !quote.inputSymbol || !quote.outputSymbol) return null;
 
   let inputAmountHuman: number;
@@ -55,6 +66,7 @@ export function evaluateAcrossClosedUsdProfit(input: {
   const guaranteedOutputValueUsd = guaranteedOutputHuman * outputPrice;
   if (!(inputValueUsd > 0) || !Number.isFinite(inputValueUsd) || !Number.isFinite(guaranteedOutputValueUsd)) return null;
   const routeGainUsdBeforeOriginGas = guaranteedOutputValueUsd - inputValueUsd;
+  const originGasUsd = swapOriginGasUsd + approvalGasUsd;
   const deterministicNetProfitUsd = routeGainUsdBeforeOriginGas - originGasUsd;
   const netProfitBps = deterministicNetProfitUsd / inputValueUsd * 10_000;
 
@@ -65,6 +77,8 @@ export function evaluateAcrossClosedUsdProfit(input: {
     inputValueUsd,
     guaranteedOutputValueUsd,
     routeGainUsdBeforeOriginGas,
+    swapOriginGasUsd,
+    approvalGasUsd,
     originGasUsd,
     deterministicNetProfitUsd,
     netProfitBps,
