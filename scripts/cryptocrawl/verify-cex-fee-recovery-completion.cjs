@@ -63,14 +63,20 @@ assert.match(recovery, /realizedRecoveryAuthority: true/);
 assert.match(recovery, /unreceivedForecastCreditBps: 0/);
 assert.match(recovery, /futureOrConfiguredRecoveryCanCreateProfitability: false/);
 
-// Coinbase One, OKX Tradeback, AI Builder proprietary commissions and external
-// cashback remain classified but cannot silently alter executable economics.
+// Every researched external/programmatic path is explicit. Valid-but-unproven
+// recovery remains outside executable economics; unavailable/out-of-scope paths
+// are classified instead of being silently forgotten or granted authority.
 assert.match(recovery, /coinbase_one_advanced_fee_rebate/);
 assert.match(recovery, /okx_tradeback_voucher/);
 assert.match(recovery, /okx_ai_builder_proprietary_trade_commission/);
 assert.match(recovery, /excluded_for_proprietary_trading/);
-assert.match(recovery, /third_party_cashback/);
+assert.match(recovery, /trade_reclaim_okx_cashback/);
 assert.match(recovery, /external_or_manual_only/);
+assert.match(recovery, /tetherback_okx_cashback/);
+assert.match(recovery, /excluded_current_partner_status/);
+assert.match(recovery, /binance_us_market_maker_program/);
+assert.match(recovery, /excluded_existing_venue_scope/);
+assert.match(recovery, /newApiKeyRequired: true/);
 
 // Recovery is attached to the one existing fee lifecycle and surfaced through
 // the BPS Super Engine as a received-only sidecar. It cannot submit or reprice.
@@ -102,4 +108,4 @@ for (const forbidden of [
   assert.ok(!combined.includes(forbidden), `Unexpected new credential dependency: ${forbidden}`);
 }
 
-console.log('[cex-fee-recovery-completion] PASS: coalesced live Coinbase stablepair zero-maker pricing, existing Kraken/OKX signed fee economics, received-only OKX recovery with exact currency truth, conservative KFEE observation, one fee lifecycle, one BPS authority, no new trading API key, and no synthetic profitability');
+console.log('[cex-fee-recovery-completion] PASS: coalesced live Coinbase stablepair zero-maker pricing, existing Kraken/OKX signed fee economics, received-only OKX recovery with exact currency truth, conservative KFEE observation, explicit researched-program classification, one fee lifecycle, one BPS authority, no new trading API key, and no synthetic profitability');
