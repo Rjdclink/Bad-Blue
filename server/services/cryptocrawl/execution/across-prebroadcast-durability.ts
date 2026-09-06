@@ -6,6 +6,7 @@ import type { AcrossBridgeQuote } from '../bridge/across-bridge-provider.js';
 import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import type { CrossChainLifecycleResult } from './cross-chain-durable-lifecycle.js';
+import { executePreparedSystemOwnedNativeTransaction } from './system-owned-native-transaction.js';
 
 const TABLE = 'public.cryptocrawler_cross_chain_lifecycles';
 const RESERVATION_TABLE = 'public.cryptocrawler_onchain_inventory_reservations';
@@ -281,14 +282,22 @@ async function reconcilePrepared(row: PreparedRow): Promise<CrossChainLifecycleR
   let observed = receipt ? true : Boolean(await provider.getTransaction(row.depositTxnRef).catch(() => null));
   if (!receipt && !observed) {
     try {
-      const rebroadcast = await provider.sendTransaction(raw);
-      if (rebroadcast.hash.toLowerCase() !== row.depositTxnRef.toLowerCase()) throw new Error('ACROSS_REBROADCAST_HASH_MISMATCH');
+      const recovered = await executePreparedSystemOwnedNativeTransaction({
+        chain: row.quote.originChain,
+        provider,
+        idempotencyKey: `across-origin:${row.depositTxnRef.toLowerCase()}`,
+        purpose: 'across_origin_deposit',
+        signedTransaction: raw,
+        confirmations: 1,
+      });
+      if (recovered.transactionHash !== row.depositTxnRef.toLowerCase()) throw new Error('ACROSS_SYSTEM_GAS_RECOVERY_HASH_MISMATCH');
+      receipt = recovered.receipt;
       observed = true;
     } catch (error) {
       receipt = await provider.getTransactionReceipt(row.depositTxnRef).catch(() => null);
       observed = receipt ? true : Boolean(await provider.getTransaction(row.depositTxnRef).catch(() => null));
       if (!observed) {
-        const message = `ACROSS_EXACT_REBROADCAST_PENDING:${error instanceof Error ? error.message : String(error)}`;
+        const message = `ACROSS_SYSTEM_OWNED_GAS_RETRY_PENDING:${error instanceof Error ? error.message : String(error)}`;
         await releaseLease(row.lifecycleId, message);
         return pending(row, message);
       }
@@ -341,7 +350,8 @@ export async function advancePreparedAcrossOriginTransactions(limit = 4): Promis
       results.push(pending(row, message));
       logger.error('[AcrossPrebroadcast] Recovery failed closed; exact signed transaction and reservation remain authoritative', {
         component: 'AcrossPrebroadcastDurability', lifecycleId: row.lifecycleId, opportunityId: row.opportunityId,
-        depositTxnRef: row.depositTxnRef, capitalReleased: false, duplicateSubmissionAllowed: false, error: message,
+        depositTxnRef: row.depositTxnRef, capitalReleased: false, duplicateSubmissionAllowed: false,
+        personalGasFallbackAllowed: false, error: message,
       });
     }
   }
