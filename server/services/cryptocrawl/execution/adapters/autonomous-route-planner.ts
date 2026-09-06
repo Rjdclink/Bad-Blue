@@ -7,6 +7,10 @@ import type {
   UniswapV3FeeTier,
 } from './onchain-payload-builder.js';
 import { resolveOperationalProfitRecipient } from '../../core/wallet-identity.js';
+import {
+  isStrictlyPositiveProfitBaseUnits,
+  minimumPositiveProfitBaseUnits,
+} from '../../governance/profit-admission-authority.js';
 
 export interface RoutePlanningSwapStep {
   protocol: string;
@@ -100,7 +104,6 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     /** Offline/test override only when WALLET_PRIVATE_KEY is absent. */
     profitRecipient?: string;
     minOutputBps?: number;
-    minProfitBps?: number;
     maxRouteHops?: number;
     deadlineBufferSeconds?: number;
     nowMs?: number;
@@ -143,19 +146,14 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
   if (flashLoanAmount <= 0n) {
     throw new Error('Autonomous zero-capital flash-loan amount must be greater than zero');
   }
-  if (expectedProfit <= 0n) {
-    throw new Error('Autonomous zero-capital expected profit must be greater than zero');
+  if (!isStrictlyPositiveProfitBaseUnits(expectedProfit)) {
+    throw new Error('Autonomous zero-capital expected all-in profit must be strictly greater than zero');
   }
 
   const minOutputBps = boundedBps(
     'ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS',
     options?.minOutputBps ?? Number(process.env.ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS || 9990),
     9990,
-  );
-  const minProfitBps = boundedBps(
-    'ZERO_CAPITAL_MIN_PROFIT_BPS',
-    options?.minProfitBps ?? Number(process.env.ZERO_CAPITAL_MIN_PROFIT_BPS || 9000),
-    9000,
   );
   const deadlineBufferSeconds = boundedDeadlineSeconds(
     options?.deadlineBufferSeconds ?? Number(process.env.ZERO_CAPITAL_SWAP_DEADLINE_SECONDS || 90),
@@ -212,7 +210,7 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     provider: options?.provider || 'balancer_v2',
     loanToken: inputToken,
     loanAmount: flashLoanAmount.toString(),
-    minProfit: applyHaircut(expectedProfit, minProfitBps),
+    minProfit: minimumPositiveProfitBaseUnits().toString(),
     profitRecipient,
     steps,
     gasLimit: 1400000,
