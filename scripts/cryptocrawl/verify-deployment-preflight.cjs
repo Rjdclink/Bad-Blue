@@ -60,5 +60,6 @@ require('./verify-cross-chain-funding-route-truth.cjs');
 require('./verify-canonical-execution-family-completion.cjs');
 require('./verify-resource-bps-authority.cjs');
 require('./verify-payout-recipient-truth.cjs');
+require('./verify-final-evidence-route-resolution.cjs');
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, and payout invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, final evidence/route resolution, and payout invariants passed; continuing to downstream prebuild/build');
