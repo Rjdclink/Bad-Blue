@@ -6,6 +6,7 @@ import {
   type SupportedChain,
   type ZeroCapitalOpportunity,
 } from '../core/zero-capital-engine.js';
+import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
@@ -100,6 +101,7 @@ function normalizeSettlement(input: {
         ? ['morpho_blue_flashLoan_zero_fee', 'verified_morpho_blue_receiver']
         : ['aave_v3_pool_flashLoanSimple', 'verified_aave_v3_receiver']),
       'provider_receiver_binding_verified',
+      'canonical_operational_profit_recipient',
       'flashloan_receiver_profit_verified',
       'synthetic_evidence:false',
     ],
@@ -123,7 +125,7 @@ async function executeProviderSpecific(input: {
     const plan = buildFlashLoanExecutionPlanFromOpportunity(input.opportunity, {
       receiver: input.receiver,
       provider: input.providerKind,
-      profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || input.wallet.address,
+      profitRecipient: resolveOperationalProfitRecipient(),
       nowMs: Date.now(),
     });
     const payload = buildFlashLoanReceiverPayloadFromPlan(plan);
@@ -231,7 +233,7 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
       return originalExecuteFunded(opportunity, funding);
     }
     if (selection.provider !== 'aave_v3' && selection.provider !== 'morpho_blue') {
-      return { success: false, error: `Unsupported selected flash-loan provider: ${selection.provider}` };
+      return originalExecuteFunded(opportunity, funding);
     }
 
     const provider = target.providers.get(opportunity.chain);
@@ -239,6 +241,9 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
     if (!provider || !wallet) return { success: false, error: `No provider/execution wallet for ${opportunity.chain}` };
     if (selection.expiresAt <= Date.now() || opportunity.expiresAt <= Date.now()) {
       return { success: false, error: 'Provider selection or opportunity expired before provider-specific execution' };
+    }
+    if (selection.kind !== 'single') {
+      return originalExecuteFunded(opportunity, funding);
     }
     if (selection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()) {
       return { success: false, error: 'Selected provider receiver owner no longer matches execution wallet' };
@@ -257,12 +262,10 @@ export function ensureProviderSpecificZeroCapitalExecutionWiring(): void {
     });
   };
 
-  logger.info('[ZeroCapitalProviderExecution] Provider-specific execution wiring installed', {
+  logger.info('[ZeroCapitalProviderExecution] Provider-specific execution compatibility layer installed', {
     component: 'ProviderSpecificZeroCapitalExecutionWiring',
-    balancerV2: 'delegates_to_existing_canonical_executor',
-    aaveV3: 'provider_specific_receiver_payload_receipt_profit_and_owned_gas_settlement_verification',
-    morphoBlue: 'zero_fee_provider_specific_receiver_payload_receipt_profit_and_owned_gas_settlement_verification',
-    providerSelectionAuthority: 'flash_loan_provider_selection_registry',
+    providerSelectionAuthority: 'flash_loan_provider_selection_registry_single_underlying_store',
+    operationalProfitRecipientAuthority: 'resolveOperationalProfitRecipient',
     nativeGasAuthority: 'SELF_FUNDED_provenance_reserved_before_broadcast_and_settled_from_receipt',
     syntheticExecution: false,
   });
