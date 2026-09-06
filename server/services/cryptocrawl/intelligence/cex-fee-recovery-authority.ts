@@ -7,11 +7,13 @@ export type CexFeeRecoveryMode =
   | 'available_fee_credit'
   | 'received_only'
   | 'external_or_manual_only'
-  | 'excluded_for_proprietary_trading';
+  | 'excluded_for_proprietary_trading'
+  | 'excluded_current_partner_status'
+  | 'excluded_existing_venue_scope';
 
 export interface CexFeeRecoveryProgramCatalogRow {
   key: string;
-  venue: CexFeeRecoveryVenue;
+  venue: CexFeeRecoveryVenue | 'external';
   mode: CexFeeRecoveryMode;
   preTradeEconomicAuthority: boolean;
   newApiKeyRequired: boolean;
@@ -162,13 +164,31 @@ export function getCexFeeRecoveryProgramCatalog(): CexFeeRecoveryProgramCatalogR
       note: 'Builder commissions are not credited to CryptoCrawler proprietary trades.',
     },
     {
-      key: 'third_party_cashback',
+      key: 'trade_reclaim_okx_cashback',
       venue: 'okx',
       mode: 'external_or_manual_only',
       preTradeEconomicAuthority: false,
       newApiKeyRequired: false,
       automaticallyObserved: false,
-      note: 'External cashback/referral attribution is excluded from executable economics unless an actual received credit can be independently proven without account rebinding or a new trading key.',
+      note: 'Trade Reclaim remains outside executable economics unless the existing OKX UID is proven eligible for attribution and an actual received cashback credit is independently evidenced; no trading credential is supplied to the service by this integration.',
+    },
+    {
+      key: 'tetherback_okx_cashback',
+      venue: 'okx',
+      mode: 'excluded_current_partner_status',
+      preTradeEconomicAuthority: false,
+      newApiKeyRequired: false,
+      automaticallyObserved: false,
+      note: 'TetherBack is not treated as an OKX fee-recovery source while current partner support does not prove OKX eligibility.',
+    },
+    {
+      key: 'binance_us_market_maker_program',
+      venue: 'external',
+      mode: 'excluded_existing_venue_scope',
+      preTradeEconomicAuthority: false,
+      newApiKeyRequired: true,
+      automaticallyObserved: false,
+      note: 'The Binance.US market-maker concept is valid evidence that zero/negative maker economics exist, but Binance.US is intentionally excluded because CryptoCrawler is constrained to the existing Coinbase/Kraken/OKX accounts and credentials.',
     },
   ];
 }
