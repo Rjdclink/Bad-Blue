@@ -12,6 +12,10 @@ const providers = read('server/services/cryptocrawl/intelligence/market-data-pro
 const rpc = read('server/services/cryptocrawl/runtime/dynamic-rpc-provider-wiring.ts');
 const ledger = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
 const treasury = read('server/services/cryptocrawl/runtime/terminal-treasury-lifecycle.ts');
+const resourceScheduler = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
+const measuredAdapter = read('server/services/cryptocrawl/execution/measured-topology-execution-adapter.ts');
+const atomicPolicy = read('server/services/cryptocrawl/governance/atomic-zero-capital-strategy-coverage.ts');
+const positiveCapture = read('server/services/cryptocrawl/runtime/positive-profit-capture-wiring.ts');
 
 // BPS floor/accounting: flash premium is a dedicated cost and min-output tolerance
 // is not silently booked as a second expected loss.
@@ -29,6 +33,22 @@ must(gas.includes('sponsorOperatorMonetaryCostProvenZero === true'), 'sponsored 
 must(gas.includes('nativeSystemOwnedProven === true'), 'native gas must require durable system-owned provenance');
 must(gas.includes("paymentSource: 'provider_sponsored'"), 'sponsored payment source must remain explicit');
 must(gas.includes("paymentSource: strictEligible ? 'system_owned_native' : 'unproven_native_balance'"), 'native payment-source provenance must remain explicit');
+
+// Preserve the already-completed live zero-personal-cost admission work from
+// PR #558 on the current structural branch. Generic sponsor readiness cannot
+// stand in for proven zero-operator-cost gas provenance.
+must(resourceScheduler.includes('evaluateAtomicZeroCapitalAdmission({'), 'live atomic leases must consume the universal zero-personal-cost policy');
+must(resourceScheduler.includes('strictCanonicalGasDecision'), 'resource leases must reacquire canonical gas provenance at lease time');
+must(resourceScheduler.includes('gasDecision.mode !== input.fundingMode'), 'caller gas mode must not override canonical gas truth');
+must(resourceScheduler.includes("!['DEX_ATOMIC', 'LIQUIDATION'].includes(candidate.topology)"), 'measured atomic leases must bind to current DEX/liquidation candidates');
+must(resourceScheduler.includes('completeMeasuredAtomicEconomics'), 'measured atomic leases must require current positive all-in economics');
+must(measuredAdapter.includes('strictAtomicFundingMode'), 'DEX/liquidation execution must derive the canonical gas mode');
+must(measuredAdapter.includes("decision.mode === 'sponsored' && decision.paymentSource !== 'provider_sponsored'"), 'sponsored measured atomic execution must require provider-sponsored provenance');
+must(measuredAdapter.includes("decision.mode === 'native' && decision.paymentSource !== 'system_owned_native'"), 'native measured atomic execution must require system-owned provenance');
+must(!measuredAdapter.includes("getGasSponsorManager().getReadiness().ready ? 'sponsored' : 'native'"), 'generic sponsor readiness must not choose zero-personal-cost execution mode');
+must(atomicPolicy.includes('evaluateAtomicZeroCapitalAdmission'), 'universal zero-personal-cost admission policy must remain present');
+must(positiveCapture.includes("deterministicNetProfitRule: 'profit_admission_authority'"), 'single canonical profit admission authority must remain in force');
+must(positiveCapture.includes('arbitraryMinimumProfitUsd: false'), 'no arbitrary profit magnitude floor may return');
 
 // 0x is current v2, and bad credentials/product entitlement are an unavailable
 // optional resource with bounded retries rather than a permanent runtime failure loop.
