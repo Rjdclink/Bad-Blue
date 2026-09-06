@@ -4,6 +4,7 @@ import type { ChainId } from '../bridge/types.js';
 import { supportsSponsoredReceiverChain } from '../execution/adapters/sponsored-receiver-manager.js';
 import { prepareZeroXAtomicRoundTrip } from '../execution/dex-zerox-atomic-executor.js';
 import { marketDataProviders, type DexQuoteObservation } from '../intelligence/market-data-providers.js';
+import { inspectZeroXFeeEconomics } from '../intelligence/zerox-fee-economics.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
 
 function executableDiscoveryChains(): ChainId[] {
@@ -31,6 +32,7 @@ function unitsToUsd(raw: string | undefined): number | null {
 }
 
 function quoteEvidence(quote: DexQuoteObservation, chain: ChainId) {
+  const fees = inspectZeroXFeeEconomics(quote);
   return {
     source: '0x',
     venue: '0x',
@@ -40,7 +42,15 @@ function quoteEvidence(quote: DexQuoteObservation, chain: ChainId) {
     amountOut: quote.buyAmount ?? null,
     price: quote.price ?? null,
     executable: quote.executable,
-    provenance: ['0x', quote.quoteKind],
+    provenance: [
+      '0x',
+      quote.quoteKind,
+      `0x_explicit_fee_components:${fees.components.length}`,
+      `0x_embedded_fee_components:${fees.embedded.length}`,
+      `0x_external_native_fee_components:${fees.externalNative.length}`,
+      `0x_unknown_fee_components:${fees.unknown.length}`,
+      '0x_embedded_fee_double_count:false',
+    ],
   };
 }
 
@@ -125,17 +135,25 @@ async function discoverChainCandidates(
       }
     }
 
+    const preparedFeeEvidence = prepared
+      ? [inspectZeroXFeeEconomics(prepared.firstQuote), inspectZeroXFeeEconomics(prepared.secondQuote)]
+      : [];
+    const explicitFeeTreatmentComplete = prepared
+      ? preparedFeeEvidence.every(evidence => evidence.completeForSameChainAllowanceHolder)
+      : false;
     const quoteAgeMs = prepared
       ? Date.now() - Math.min(prepared.firstQuote.observedAt, prepared.secondQuote.observedAt)
       : Date.now() - Math.min(first.observedAt, second.observedAt);
-    const missingInformation = prepared ? [] : [
+    const missingInformation = prepared ? [
+      ...(!explicitFeeTreatmentComplete ? ['complete_0x_explicit_fee_economic_treatment'] : []),
+    ] : [
       'firm_0x_atomic_quote',
       'measured_balancer_flash_loan_fee',
       'exact_receiver_gas_cost',
       'receiver_permission_and_simulation_readiness',
       ...(preparationUnavailable ? ['atomic_execution_preparation_currently_unavailable'] : []),
     ];
-    const status = prepared && prepared.deterministicNetProfitUsd > 0
+    const status = prepared && prepared.deterministicNetProfitUsd > 0 && explicitFeeTreatmentComplete
       ? 'eligible' as const
       : 'enriched' as const;
 
@@ -154,13 +172,16 @@ async function discoverChainCandidates(
       depth: {
         status: first.liquidityAvailable && second.liquidityAvailable ? 'measured' : 'unavailable',
         detail: prepared
-          ? '0x indicative route plus two firm allowance-holder quotes, existing receiver permissions, exact receiver simulation and exact gas estimation'
+          ? '0x indicative route plus two firm allowance-holder quotes, explicit fee treatment, existing receiver permissions, exact receiver simulation and exact gas estimation'
           : '0x /price liquidityAvailable/route response; pool-level depth and executable atomic settlement are not inferred',
       },
       economics: prepared ? {
         grossProfitUsd: prepared.grossProfitUsd,
         deterministicNetProfitUsd: prepared.deterministicNetProfitUsd,
-        feeUsd: prepared.flashLoanFeeUsd,
+        // 0x fee effects are already embedded in quoted output. Flash-loan cost
+        // has its own dedicated canonical field and must not be mislabeled as an
+        // exchange fee or counted twice in BPS attribution.
+        feeUsd: null,
         gasUsd: prepared.gasUsd,
         bridgeUsd: 0,
         expectedSlippageBps: null,
@@ -195,14 +216,17 @@ async function discoverChainCandidates(
           : null,
       },
       quoteAgeMs,
-      executableCapability: prepared !== null,
-      executionCapabilityReason: prepared
-        ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; current flash fee and exact receiver gas are measured, existing permissions are verified, and eth_call simulation succeeds'
-        : 'Indicative DEX evidence remains non-executable until firm quotes, flash fee, existing receiver permissions, exact gas and atomic simulation are current',
+      executableCapability: prepared !== null && explicitFeeTreatmentComplete,
+      executionCapabilityReason: prepared && explicitFeeTreatmentComplete
+        ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; 0x explicit fee effects are classified without double subtraction, current flash fee and exact receiver gas are measured, existing permissions are verified, and eth_call simulation succeeds'
+        : prepared
+          ? 'Firm 0x atomic preparation exists, but an explicit 0x fee component lacks a complete same-chain economic treatment and therefore cannot be promoted'
+          : 'Indicative DEX evidence remains non-executable until firm quotes, flash fee, existing receiver permissions, exact gas and atomic simulation are current',
       missingInformation,
       provenance: [
         '0x:price_only_discovery',
         ...(prepared ? prepared.provenance : ['0x:firm_execution_not_promoted']),
+        ...(prepared ? ['0x:explicit_fee_object_inspected', '0x:embedded_fee_effect_already_in_quote_output', '0x:embedded_fee_double_count:false'] : []),
         'gas_oracle:measured_when_available',
         'receiver_chain_capability:verified',
         'discovery_infrastructure_mutation:false',

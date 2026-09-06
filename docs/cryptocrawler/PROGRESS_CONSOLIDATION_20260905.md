@@ -4,7 +4,7 @@ This ledger is the current anti-duplication map for CryptoCrawler work. It recor
 
 ## Current consolidated baseline
 
-Current baseline: `develop` at `a5ecb927b70894e2fb4050e4d8374515d30c9474` (includes PR #550/#551 plus the concurrent zero-capital route-retention/CEX-standby truth repair).
+Current baseline at creation of the active wave: `develop` at `3a4851bf70871ba55b32894de09ed0c974b6c7e5` (includes PR #552 provider-feedback wave 5 and all prior consolidated repairs through #553).
 
 The governing invariants remain:
 
@@ -53,13 +53,14 @@ The governing invariants remain:
 | #547 | Universal eight-topology zero-personal-principal/gas/collateral policy integrated with the existing authority. |
 | #548 | Keyless Titan/Quasar builder-sponsored cold-start transport extracted safely from stale #520; operator-billed hosted sponsorship remains excluded. |
 | #549 | Measured like-notional total-cost BPS frontier plus keyless Lighter discovery/benchmarking; no synthetic savings or independent execution authority. |
-| #551 | Exact-notional #549 verifier repair only; no economics, execution, or authority change. |
 | #550 | Received-only Flashbots private-refund BPS evidence plus this anti-duplication ledger; pending/forecast refunds cannot receive pre-execution credit. |
-| concurrent develop repair | Preserves zero-capital routes during resource standby and distinguishes CEX standby warmup from true failover. |
+| #551 | Exact-notional #549 verifier repair only; no economics, execution, or authority change. |
+| #552 | Fresh, exact, receiver-bound Morpho/Aave/Balancer provider repricing feeds only the next zero-capital quote-budget ranking; raw market edge, candidate economics and execution authority remain canonical and unchanged. |
+| #553 | Preserves configured zero-capital discovery routes during execution-resource standby and distinguishes CEX startup warmup from true post-primary failover. |
 
 ## Current active work — do not duplicate
 
-- **#552** — BPS provider-feedback wave 5. It feeds fresh, exact, receiver-bound Morpho/Aave/Balancer provider repricing back into the *next zero-capital quote-budget ranking only*. Raw deterministic-positive counts, Aries market-formation evidence, canonical candidate economics, execution authority, and strict net-positive admission remain unchanged. Do not create another provider-pricing engine or another zero-capital route scorer while this PR is active.
+- **BPS attribution/SOR wave 6 (`feature/cryptocrawl-bps-attribution-sor-wave6-20260905`)** — upgrades the already-merged #549 frontier rather than creating a second router. It classifies explicit 0x fee evidence, forbids double-subtraction of quote-embedded fees, stops labeling flash-loan premium as an exchange fee on DEX atomic candidates, and compares exact-notional contemporaneous routes by fresh canonical net outcome before explicit-cost tiebreaks. It remains measurement/ranking only and has no execution authority.
 
 ## Historical PR disposition
 
@@ -75,11 +76,11 @@ Already superseded/extracted from #520:
 
 - builder-sponsored Titan/Quasar transport -> #548;
 - strict gas provenance / no raw-wallet authority -> #528/#536;
-- scanning remains live during funding standby -> #532 plus the current route-retention repair;
+- scanning remains live during funding standby -> #532/#553;
 - strict route-local zero-capital readiness -> #533;
 - universal zero-personal-cost topology coverage -> #547;
 - modern RPC/readiness/runtime-authority repairs -> #531/#534;
-- current BPS/freshness economics -> #539/#540/#545/#546/#549/#550 and active #552.
+- current BPS/freshness economics -> #539/#540/#545/#546/#549/#550/#552 plus active BPS attribution/SOR wave 6.
 
 Residual #520 areas that may contain unique value and therefore must be reviewed before #520 can be closed:
 
@@ -93,16 +94,17 @@ Residual #520 areas that may contain unique value and therefore must be reviewed
 
 ## Current BPS improvement frontier
 
-Current research/implementation frontier after #550 and active #552:
+Current research/implementation frontier after #552 and active wave 6:
 
-- feed exact provider-repriced flash-liquidity economics back into quote prioritization without converting advisory feedback into execution authority (#552);
-- measured total-cost route competition rather than displayed-price routing;
-- direct low-fee AMM route versus 0x/aggregator complete-cost comparison, including 0x protocol fees when returned and embedded DEX price/impact rather than comparing incomplete cost fields;
+- preserve fresh measured flash-provider repricing in quote prioritization without converting advisory feedback into execution authority (#552);
+- exact-notional contemporaneous route competition by canonical net outcome, so quote-embedded fees/price impact influence ranking without being subtracted twice (active wave 6);
+- direct low-fee AMM route versus 0x/aggregator complete-outcome comparison, including explicit 0x fee attribution and embedded quote effects (active wave 6 foundation);
 - Lighter as a measured external benchmark until signing/account/margin provenance is genuinely executable;
 - private-transport and terminal MEV/gas refund evidence, with no forecast/pending refund credited to deterministic admission (#550);
-- MEV Blocker / Flashbots Protect / builder transport comparison using measured latency, inclusion, cost and terminal realized refunds;
-- Uniswap v4 hooks/dynamic fees/flash-accounting benefits only after exact executable pool/quote evidence;
-- intent/solver/filler lanes only after exact zero-personal-resource and settlement proof.
+- MEV Blocker / Flashbots Protect / Titan / Quasar transport comparison using measured latency, inclusion, cost and terminal realized refunds;
+- Uniswap v4 existing-pool dynamic-fee/hooks/flash-accounting benefits only after exact executable pool/quote evidence; no user-funded pool deployment is assumed;
+- intent/solver/filler lanes only after exact zero-personal-resource and settlement proof;
+- builder-sponsored cold-start integration must use execution-created builder value and canonical same-block economics; no user ETH top-up is allowed.
 
 ## Rules for future agents
 
