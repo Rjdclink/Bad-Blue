@@ -45,8 +45,8 @@ requirePattern(
   /if \(!positive\)\s*\{[\s\S]{0,900}?dynamic\.push\(opportunity\);\s*continue;/,
   'dynamic near miss survives inner resource wrapper for downstream provider repricing',
 );
-requireText(resource, 'const executableCapability = positive && receiverReady && fundingReady;', 'configured observation cannot become executable before positive economics');
-requireText(resource, 'const executableCapability = positive && fundingReady && receiverReady && permissionReady;', 'dynamic observation cannot become executable before positive economics');
+requireText(resource, 'const executableCapability = positive && receiverReady && gasResourceReady;', 'configured observation cannot become executable before positive economics');
+requireText(resource, 'const executableCapability = positive && gasResourceReady && receiverReady && permissionReady;', 'dynamic observation cannot become executable before positive economics');
 
 const resourceWiringIndex = canonical.indexOf("install('zero_capital_resource'");
 const providerWiringIndex = canonical.indexOf("install('zero_capital_flash_provider'");
