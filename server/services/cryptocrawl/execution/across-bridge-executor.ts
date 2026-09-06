@@ -8,7 +8,9 @@ import {
   type AcrossSettlementEvidence,
 } from '../bridge/across-bridge-provider.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
+import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import { walletFromPrivateKey } from '../core/wallet-identity.js';
+import { evaluateAcrossClosedUsdProfit } from '../discovery/cross-chain-route-economics.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { armPreparedAcrossOriginTransaction, markPreparedAcrossOriginSubmitted } from './across-prebroadcast-durability.js';
 import { executePreparedSystemOwnedNativeTransaction, executeSystemOwnedNativeTransaction } from './system-owned-native-transaction.js';
@@ -51,12 +53,49 @@ function bounded(raw: unknown, fallback: number, min: number, max: number): numb
 function gasIntentKey(parts: readonly string[]): string {
   return parts.map(part => part.trim().toLowerCase().replace(/[^a-z0-9:_-]/g, '_')).join(':').slice(0, 220);
 }
+function sameRouteIdentity(left: AcrossBridgeQuote, right: AcrossBridgeQuote): boolean {
+  return right.inputToken.toLowerCase() === left.inputToken.toLowerCase()
+    && right.outputToken.toLowerCase() === left.outputToken.toLowerCase()
+    && right.inputSymbol === left.inputSymbol
+    && right.outputSymbol === left.outputSymbol
+    && right.inputAmount === left.inputAmount
+    && right.originChain === left.originChain
+    && right.destinationChain === left.destinationChain;
+}
+
+async function liveApprovalGasUsd(quote: AcrossBridgeQuote, approvalWei: ethers.BigNumber): Promise<number | null> {
+  if (approvalWei.isZero()) return 0;
+  const symbol = SUPPORTED_CHAINS[quote.originChain].currency;
+  const prices = await coinGeckoPriceClient.getLiveSymbolPrices([symbol]).catch(() => new Map<string, number>());
+  const price = prices.get(symbol);
+  if (!Number.isFinite(price) || Number(price) <= 0) return null;
+  const native = Number(ethers.utils.formatEther(approvalWei));
+  return Number.isFinite(native) && native >= 0 ? native * Number(price) : null;
+}
+
+async function postApprovalEconomicsPositive(quote: AcrossBridgeQuote, actualApprovalGasUsd: number): Promise<boolean> {
+  const prices = await coinGeckoPriceClient
+    .getLiveSymbolPrices([...new Set([quote.inputSymbol, quote.outputSymbol])])
+    .catch(() => new Map<string, number>());
+  const inputPrice = prices.get(quote.inputSymbol);
+  const outputPrice = prices.get(quote.outputSymbol);
+  if (!Number.isFinite(inputPrice) || Number(inputPrice) <= 0 || !Number.isFinite(outputPrice) || Number(outputPrice) <= 0) return false;
+  const economics = evaluateAcrossClosedUsdProfit({
+    quote: {
+      ...quote,
+      approvalTransactions: actualApprovalGasUsd > 0 ? 1 : 0,
+      approvalGasUsd: actualApprovalGasUsd,
+    },
+    liveInputAssetUsdPrice: Number(inputPrice),
+    liveOutputAssetUsdPrice: Number(outputPrice),
+  });
+  return economics?.executablePositive === true;
+}
 
 /**
- * The execution payload is reacquired from the exact token identities already
- * bound into the refreshed canonical quote. This endpoint is intentionally not
- * cached. The minimum guaranteed output may improve but never worsen relative to
- * discovery, and provider simulation must still succeed.
+ * Reacquire the exact execution payload from Across. The request is intentionally
+ * uncached. Its guaranteed minimum may improve but cannot worsen relative to the
+ * quote supplied to this function, and provider simulation must still succeed.
  */
 async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approvals: TxPayload[]; swap: TxPayload } | null> {
   const apiKey = process.env.ACROSS_API_KEY?.trim();
@@ -107,6 +146,9 @@ export async function executeAcrossBridgeQuote(
   if (quote.expiresAt <= Date.now() || quote.simulationSuccess !== true || quote.swapTransactionPresent !== true || !quote.minOutputAmount) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_STALE_UNSIMULATED_OR_UNBOUNDED' };
   }
+  if (quote.approvalGasUsd === null || !Number.isFinite(quote.approvalGasUsd) || quote.approvalGasUsd < 0) {
+    return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_APPROVAL_GAS_EVIDENCE' };
+  }
   const privateKey = process.env.WALLET_PRIVATE_KEY?.trim();
   if (!privateKey) return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_SIGNER_UNAVAILABLE' };
   if (!options.onSubmitted) return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_DURABILITY_CALLBACK_REQUIRED' };
@@ -122,17 +164,13 @@ export async function executeAcrossBridgeQuote(
   if (!refreshedQuote || refreshedQuote.expiresAt <= Date.now() || refreshedQuote.simulationSuccess !== true || !refreshedQuote.minOutputAmount) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_REFRESHED_QUOTE' };
   }
-  if (refreshedQuote.inputToken.toLowerCase() !== quote.inputToken.toLowerCase()
-    || refreshedQuote.outputToken.toLowerCase() !== quote.outputToken.toLowerCase()
-    || refreshedQuote.inputSymbol !== quote.inputSymbol
-    || refreshedQuote.outputSymbol !== quote.outputSymbol
-    || refreshedQuote.inputAmount !== quote.inputAmount) {
+  if (!sameRouteIdentity(quote, refreshedQuote)) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_REFRESHED_ROUTE_IDENTITY_DRIFT' };
   }
   if (BigInt(refreshedQuote.minOutputAmount) < BigInt(quote.minOutputAmount)) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_MINIMUM_OUTPUT_WORSENED' };
   }
-  const payload = await freshExecutionPayload(refreshedQuote).catch(() => null);
+  let payload = await freshExecutionPayload(refreshedQuote).catch(() => null);
   if (!payload) return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_EXECUTION_PAYLOAD' };
 
   getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: quote.originChain });
@@ -173,6 +211,40 @@ export async function executeAcrossBridgeQuote(
         error: `ACROSS_SYSTEM_OWNED_APPROVAL_GAS_UNAVAILABLE:${error instanceof Error ? error.message : String(error)}`,
       };
     }
+  }
+
+  // Approval receipts change allowance state. Reacquire the canonical quote and
+  // payload after those receipts, then prove that the exact current route remains
+  // positive after the actual approval gas already spent. Principal is never
+  // broadcast when the post-approval economics no longer clear zero.
+  if (approvalTxnRefs.length > 0) {
+    const actualApprovalGasUsd = await liveApprovalGasUsd(quote, nativeFeeWei);
+    if (actualApprovalGasUsd === null) {
+      return { success: false, status: 'failed', settlementConfirmed: true, ...prebroadcastCost(true), error: 'ACROSS_POST_APPROVAL_GAS_USD_UNAVAILABLE' };
+    }
+    const postApprovalQuote = await getAcrossCrossSwapQuote({
+      originChain: quote.originChain,
+      destinationChain: quote.destinationChain,
+      inputSymbol: quote.inputSymbol,
+      outputSymbol: quote.outputSymbol,
+      amountHuman,
+    }).catch(() => null);
+    if (!postApprovalQuote || !postApprovalQuote.minOutputAmount || !sameRouteIdentity(quote, postApprovalQuote)) {
+      return { success: false, status: 'failed', settlementConfirmed: true, ...prebroadcastCost(true), error: 'ACROSS_POST_APPROVAL_QUOTE_UNAVAILABLE' };
+    }
+    if (BigInt(postApprovalQuote.minOutputAmount) < BigInt(quote.minOutputAmount)) {
+      return { success: false, status: 'failed', settlementConfirmed: true, ...prebroadcastCost(true), error: 'ACROSS_POST_APPROVAL_MINIMUM_OUTPUT_WORSENED' };
+    }
+    if (!await postApprovalEconomicsPositive(postApprovalQuote, actualApprovalGasUsd)) {
+      return { success: false, status: 'failed', settlementConfirmed: true, ...prebroadcastCost(true), error: 'ACROSS_POST_APPROVAL_NONPOSITIVE_NET' };
+    }
+    const postPayload = await freshExecutionPayload(postApprovalQuote).catch(() => null);
+    if (!postPayload || postPayload.approvals.length > 0) {
+      return { success: false, status: 'failed', settlementConfirmed: true, ...prebroadcastCost(true), error: 'ACROSS_POST_APPROVAL_ALLOWANCE_NOT_SATISFIED' };
+    }
+    payload = postPayload;
+  } else if (!await postApprovalEconomicsPositive(refreshedQuote, 0)) {
+    return { success: false, status: 'rejected', settlementConfirmed: false, ...prebroadcastCost(true), error: 'REJECT_ACROSS_REFRESHED_NONPOSITIVE_NET' };
   }
 
   if (payload.swap.chainId !== undefined && payload.swap.chainId !== expectedChainId) {
