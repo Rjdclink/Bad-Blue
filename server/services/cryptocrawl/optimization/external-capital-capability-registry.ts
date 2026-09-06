@@ -12,13 +12,14 @@ export interface ExternalCapitalCapability {
   protocol: string;
   network: string;
   role: ExternalCapitalRole;
+  asset?: string;
   bootstrapEligible: boolean;
   requiresSystemOwnedCapital: boolean;
   collateralRequired: boolean;
   executionReady: boolean;
   delegatedCanonicalAuthority?: string;
   measuredCostBps?: number;
-  availableLiquidityUsd?: number;
+  availableLiquidityBaseUnits?: string;
   observedAt: number;
   expiresAt: number;
   provenance: string[];
@@ -38,6 +39,11 @@ function clone(value: ExternalCapitalCapability): ExternalCapitalCapability {
   return { ...value, provenance: [...value.provenance] };
 }
 
+function positiveBaseUnits(value: unknown): boolean {
+  const raw = String(value ?? '').trim();
+  return /^\d+$/.test(raw) && BigInt(raw) > 0n;
+}
+
 function assertCapability(value: ExternalCapitalCapability): void {
   if (value.executionAuthority !== false || value.capitalMovementAuthority !== false) {
     throw new Error('External capital capability registry is advisory only');
@@ -49,8 +55,8 @@ function assertCapability(value: ExternalCapitalCapability): void {
   if (value.executionReady && !value.delegatedCanonicalAuthority) {
     throw new Error('Execution-ready capability must delegate to an existing canonical authority');
   }
-  if (value.executionReady && (!Number.isFinite(Number(value.measuredCostBps)) || !Number.isFinite(Number(value.availableLiquidityUsd)) || Number(value.availableLiquidityUsd) <= 0)) {
-    throw new Error('Execution-ready capability requires fresh measured cost and positive liquidity');
+  if (value.executionReady && (!Number.isFinite(Number(value.measuredCostBps)) || !positiveBaseUnits(value.availableLiquidityBaseUnits))) {
+    throw new Error('Execution-ready capability requires fresh measured cost and positive base-unit liquidity');
   }
 }
 
@@ -130,13 +136,13 @@ function learningRole(role: ExternalCapitalRole): 'atomic_principal' | 'retained
 }
 
 function economicScore(capability: ExternalCapitalCapability): number {
-  if (!capability.executionReady) return 0;
+  if (!capability.executionReady || !positiveBaseUnits(capability.availableLiquidityBaseUnits)) return 0;
   const cost = Number(capability.measuredCostBps);
-  const liquidity = Number(capability.availableLiquidityUsd);
-  if (!Number.isFinite(cost) || !Number.isFinite(liquidity) || liquidity <= 0) return 0;
-  const costScore = 1 / (1 + Math.max(0, cost));
-  const liquidityConfidence = Math.min(1, Math.log10(1 + liquidity) / 8);
-  return costScore * liquidityConfidence;
+  if (!Number.isFinite(cost)) return 0;
+  // Cost is directly comparable across providers in BPS. Liquidity remains in
+  // canonical token base units because token decimals/prices belong to the exact
+  // opportunity; this registry must never relabel raw units as USD.
+  return 1 / (1 + Math.max(0, cost));
 }
 
 export function rankExternalCapitalCapabilities(role: ExternalCapitalRole, now = Date.now()): RankedExternalCapitalCapability[] {
