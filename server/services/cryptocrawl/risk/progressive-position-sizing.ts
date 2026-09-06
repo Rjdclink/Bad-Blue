@@ -1,4 +1,5 @@
 import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
+import { isStrictlyPositiveAllInNetProfit } from '../governance/profit-admission-authority.js';
 import { riskGovernor } from '../governance/risk-governor.js';
 import { stageManager } from '../governance/stage-management.js';
 
@@ -77,7 +78,7 @@ export function calculateProgressivePositionSize(
   if (state.currentDrawdownPercent > stage.maxDrawdownPercent) {
     return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: Math.max(0, ladderMaxNotionalUsd), reasons: ['Current drawdown exceeds the canonical stage safety cap'] };
   }
-  if (!Number.isFinite(request.expectedNetProfitUsd) || request.expectedNetProfitUsd <= 0 || !Number.isFinite(request.expectedCostUsd) || request.expectedCostUsd < 0) {
+  if (!isStrictlyPositiveAllInNetProfit(request.expectedNetProfitUsd) || !Number.isFinite(request.expectedCostUsd) || request.expectedCostUsd < 0) {
     return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: Math.max(0, ladderMaxNotionalUsd), reasons: ['Expected all-in net profitability is not positive with measured non-negative costs'] };
   }
   if (!(ladderMaxNotionalUsd > 0)) {
