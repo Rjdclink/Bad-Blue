@@ -66,11 +66,27 @@ function latencyDecayBps(candidate: MeasuredCandidate): number | null {
   return Math.max(0.01, gross * pressure);
 }
 
+/**
+ * Depth walking already measures the BBO-to-average-fill effect for CEX plans.
+ * Older CEX producers exposed that same measurement under both slippage and
+ * impact. Treating the aliases as additive would count one measured burden twice.
+ * Distinct independently measured values remain additive for every topology.
+ */
+function combinedSlippageImpactBps(candidate: MeasuredCandidate): number | null {
+  const slippage = finite(candidate.canonicalBps.slippageBps);
+  const impact = finite(candidate.canonicalBps.impactBps);
+  if (slippage === null && impact === null) return null;
+  if (slippage === null) return impact;
+  if (impact === null) return slippage;
+  const aliasedCexDepthImpact = candidate.topology === 'CEX_CEX'
+    && candidate.provenance.includes('depth_aware_notional_search')
+    && Math.abs(slippage - impact) <= 1e-9;
+  return aliasedCexDepthImpact ? impact : slippage + impact;
+}
+
 function dominant(candidate: MeasuredCandidate): { driver: EconomicCostDriver; bps: number | null } {
   const canonical = candidate.canonicalBps;
-  const slippageImpact = canonical.slippageBps === null && canonical.impactBps === null
-    ? null
-    : (canonical.slippageBps || 0) + (canonical.impactBps || 0);
+  const slippageImpact = combinedSlippageImpactBps(candidate);
   const costs: Array<[EconomicCostDriver, number | null]> = [
     ['exchange_fees', canonical.exchangeFeeBps],
     ['gas', canonical.gasBps],
@@ -165,6 +181,7 @@ export function adviseEconomicTransformations(candidate: MeasuredCandidate): Eco
       'evidence_completeness_weighted',
       'freshness_weighted',
       'dominant_cost_coverage_scheduling_hint',
+      'duplicate_cex_depth_impact_deduplicated',
       'transformation_search_advisory_only',
       'exact_requote_required',
       'synthetic_profit:false',
