@@ -1,6 +1,10 @@
 import { ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
+import {
+  evaluateAtomicZeroCapitalAdmission,
+  type AtomicZeroCapitalAdmissionEvidence,
+} from '../governance/atomic-zero-capital-strategy-coverage.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { MultiRelaySubmitter } from './multi-relay-submitter.js';
 
@@ -14,6 +18,12 @@ export interface ExactBackrunPlan {
   expectedGasUsd: number;
   expiresAt: number;
   provenance: string[];
+  /** Exact capital source bound by the planner. Raw/account-wide balances are never valid evidence. */
+  principalProvenance: Extract<AtomicZeroCapitalAdmissionEvidence['principalProvenance'], 'temporary_external' | 'system_owned'>;
+  /** Private relay submission is not itself gas sponsorship. The planner must prove who pays. */
+  gasProvenance: Extract<AtomicZeroCapitalAdmissionEvidence['gasProvenance'], 'external_zero_operator_cost' | 'system_owned'>;
+  /** True only when the signed transaction has complete measured all-in fee/builder/gas economics. */
+  completeAllInCostsMeasured: boolean;
 }
 
 export interface BackrunExecutionResult {
@@ -36,6 +46,9 @@ function strictBackrunPlan(plan: ExactBackrunPlan): string | null {
   if (!Number.isFinite(plan.deterministicNetProfitUsd) || plan.deterministicNetProfitUsd <= 0) return 'REJECT_BACKRUN_NONPOSITIVE_NET';
   if (!Number.isFinite(plan.expectedGasUsd) || plan.expectedGasUsd < 0) return 'REJECT_BACKRUN_GAS_UNKNOWN';
   if (plan.expiresAt <= Date.now()) return 'REJECT_BACKRUN_EXPIRED';
+  if (plan.principalProvenance !== 'temporary_external' && plan.principalProvenance !== 'system_owned') return 'REJECT_BACKRUN_PRINCIPAL_PROVENANCE';
+  if (plan.gasProvenance !== 'external_zero_operator_cost' && plan.gasProvenance !== 'system_owned') return 'REJECT_BACKRUN_GAS_PROVENANCE';
+  if (plan.completeAllInCostsMeasured !== true) return 'REJECT_BACKRUN_INCOMPLETE_ALL_IN_COSTS';
   return null;
 }
 
@@ -44,10 +57,37 @@ function strictBackrunPlan(plan: ExactBackrunPlan): string | null {
  * and no sandwich construction. The victim transaction remains first, unchanged,
  * and the bot transaction may only follow it. MultiRelaySubmitter performs a real
  * relay eth_callBundle simulation before any submission.
+ *
+ * A relay accepting a bundle does NOT prove that gas was free to the searcher.
+ * The universal zero-personal-cost policy therefore requires explicit principal
+ * and gas provenance on the exact signed backrun before relay submission.
  */
 export async function executeExactBackrun(plan: ExactBackrunPlan): Promise<BackrunExecutionResult> {
   const rejection = strictBackrunPlan(plan);
   if (rejection) return { success: false, status: 'rejected', settlementConfirmed: false, error: rejection };
+
+  const zeroPersonalCostAdmission = evaluateAtomicZeroCapitalAdmission({
+    topology: 'MEMPOOL_BACKRUN',
+    personalPrincipalRequired: false,
+    personalGasRequired: false,
+    personalCollateralRequired: false,
+    principalProvenance: plan.principalProvenance,
+    gasProvenance: plan.gasProvenance,
+    collateralProvenance: 'none',
+    completeAllInCostsMeasured: plan.completeAllInCostsMeasured,
+    deterministicNetPositive: plan.deterministicNetProfitUsd > 0,
+    settlementPathReady: true,
+    executionPathReady: true,
+    atomicity: 'private_bundle_ordered',
+  });
+  if (!zeroPersonalCostAdmission.approved) {
+    return {
+      success: false,
+      status: 'rejected',
+      settlementConfirmed: false,
+      error: `REJECT_BACKRUN_ZERO_PERSONAL_COST:${zeroPersonalCostAdmission.reason}`,
+    };
+  }
 
   let victim: ethers.utils.Transaction;
   let backrun: ethers.utils.Transaction;
@@ -110,6 +150,9 @@ export async function executeExactBackrun(plan: ExactBackrunPlan): Promise<Backr
       backrunStatus: backrunReceipt.status,
       settlementConfirmed: confirmed,
       sandwichOrFrontrun: false,
+      personalPrincipalFallbackAllowed: false,
+      personalGasFallbackAllowed: false,
+      zeroPersonalCostPolicyApproved: true,
     });
     return {
       success: confirmed,
