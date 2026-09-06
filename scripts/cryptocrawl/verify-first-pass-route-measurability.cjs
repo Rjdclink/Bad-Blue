@@ -29,7 +29,8 @@ lacks(maker, '.slice(0, makerFeePrimeBudget())', 'maker compatibility budget mus
 
 // The verifier wrapper must not reintroduce a second maker omission policy after
 // discovery. It may order all governed symbols, but it must evaluate all of them.
-has(makerAdmission, 'function makerAdmissionSymbolBudget(): number {\n  return Number.MAX_SAFE_INTEGER;', 'historical maker admission budget must be non-constraining');
+has(makerAdmission, 'function makerAdmissionSymbolBudget(): number {', 'historical maker admission budget function must remain visible');
+has(makerAdmission, 'return Number.MAX_SAFE_INTEGER;', 'historical maker admission budget must be non-constraining');
 has(makerAdmission, 'return [...governedSymbols].sort', 'maker admission selector must preserve every governed route');
 has(makerAdmission, 'const makerSymbols = selectMakerAdmissionSymbols(governedSymbols, plans)', 'maker admission must use the non-dropping selector');
 has(makerAdmission, 'allGovernedMakerSymbolsEvaluated: makerSymbols.length === governedSymbols.length', 'maker all-governed coverage must be observable');
