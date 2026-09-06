@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
+import { measureAcrossApprovalGasEvidence, type AcrossApprovalGasEvidence } from './across-approval-gas-evidence.js';
 import { SUPPORTED_CHAINS } from './chain-config.js';
 import type { ChainId } from './types.js';
 
@@ -37,6 +38,9 @@ export interface AcrossBridgeQuote {
   quoteExpiryTimestamp: number;
   simulationSuccess: boolean;
   originGasUsd: number | null;
+  /** Conservative measured ceiling for approval transaction gas; zero when approval is unnecessary. */
+  approvalGasUsd: number | null;
+  approvalGasEvidence: AcrossApprovalGasEvidence | null;
   destinationGasUsd: number | null;
   lpFeeUsd: number | null;
   relayerCapitalFeeUsd: number | null;
@@ -293,10 +297,10 @@ export function getAcrossBridgeMetrics(): AcrossBridgeMetrics {
 
 /**
  * Canonical Across quote authority for both bridgeable-to-bridgeable transfers
- * and stablecoin cross-asset swaps. Across' Swap API itself owns the origin swap,
- * bridge and destination swap composition; CryptoCrawler does not manufacture a
- * separate price leg. Quotes remain uncached and carry provider simulation,
- * guaranteed output, fill-time and fee evidence.
+ * and stablecoin cross-asset swaps. Across owns any origin swap, bridge and
+ * destination swap composition. Approval transaction gas is independently
+ * measured through the canonical RPC mesh and bound into the quote as a
+ * conservative ceiling; it is never assumed zero merely because the quote exists.
  */
 export async function getAcrossCrossSwapQuote(input: {
   originChain: ChainId;
@@ -352,6 +356,13 @@ export async function getAcrossCrossSwapQuote(input: {
       evidenceMetrics.expiredQuotesRejected += 1;
       return null;
     }
+    const rawApprovals = Array.isArray(payload?.approvalTxns) ? payload.approvalTxns : [];
+    const approvalGasEvidence = await measureAcrossApprovalGasEvidence({
+      chain: input.originChain,
+      depositor: credentials.depositor,
+      approvalTxns: rawApprovals,
+    }).catch(() => null);
+    const approvalGasUsd = approvalGasEvidence?.maximumGasUsd ?? null;
     const details = bridgeDetails(payload);
     const crossSwapType = typeof payload?.crossSwapType === 'string' ? payload.crossSwapType : null;
     const quote: AcrossBridgeQuote = {
@@ -366,12 +377,14 @@ export async function getAcrossCrossSwapQuote(input: {
       expectedFillTimeSec, quoteExpiryTimestamp,
       simulationSuccess: payload?.swapTx?.simulationSuccess === true,
       originGasUsd: amountUsd(payload?.fees?.originGas?.amountUsd),
+      approvalGasUsd,
+      approvalGasEvidence,
       destinationGasUsd: amountUsd(details?.destinationGas?.amountUsd),
       lpFeeUsd: amountUsd(details?.lp?.amountUsd),
       relayerCapitalFeeUsd: amountUsd(details?.relayerCapital?.amountUsd),
       bridgeFeeUsd: bridgeFeeUsd(payload), totalFeeUsd: quoteFeeUsd(payload),
       totalMaxFeeUsd: amountUsd(payload?.fees?.totalMax?.amountUsd),
-      approvalTransactions: Array.isArray(payload?.approvalTxns) ? payload.approvalTxns.length : 0,
+      approvalTransactions: rawApprovals.length,
       swapTransactionPresent: !!(payload?.swapTx?.to && payload?.swapTx?.data), crossSwapType,
       observedAt, expiresAt,
       provenance: [
@@ -380,6 +393,13 @@ export async function getAcrossCrossSwapQuote(input: {
         `output_token:${destination.chainId}:${outputToken.address}:${outputToken.decimals}:${input.outputSymbol}`,
         `cross_swap_type:${crossSwapType || 'unreported'}`,
         'fresh_cross_chain_fee_and_fill_time', 'provider_simulation_status',
+        `approval_transactions:${rawApprovals.length}`,
+        approvalGasEvidence
+          ? `approval_gas_ceiling_usd:${approvalGasUsd}`
+          : 'approval_gas_ceiling_usd:unavailable',
+        approvalGasEvidence
+          ? 'approval_gas_evidence:rpc_estimate_plus_live_native_price_buffered_ceiling'
+          : 'approval_gas_evidence:missing_retry_required',
         input.inputSymbol === input.outputSymbol ? 'route_value_model:same_asset' : 'route_value_model:cross_asset_closed_usd',
       ],
     };
