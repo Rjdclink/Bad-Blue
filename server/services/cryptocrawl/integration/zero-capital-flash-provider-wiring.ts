@@ -479,6 +479,7 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
   logger.info('[ZeroCapitalFlashProvider] Compatibility installer retained without runtime method mutation', {
     component: 'ZeroCapitalFlashProviderWiring',
     providerRepricingAuthority: 'explicit_zero_capital_discovery_pipeline_stage',
+    nonPositiveProviderRepriceExecutable: false,
     scanChainMutation: false,
     cryptaraAdmissionMutation: false,
     executionAuthority: false,
