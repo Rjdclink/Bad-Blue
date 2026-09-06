@@ -13,6 +13,7 @@ import {
 } from '../governance/profit-admission-authority.js';
 import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../governance/zero-capital-infrastructure-policy.js';
 import { stageManager } from '../governance/stage-management.js';
+import { getMeasuredErc20Decimals } from '../intelligence/erc20-decimals-authority.js';
 import { marketDataProviders, type DexQuoteObservation } from '../intelligence/market-data-providers.js';
 import { getGasSponsorManager, type SponsoredCall } from '../strategies/gas-sponsorship.js';
 import { executeSystemOwnedNativeTransaction } from './system-owned-native-transaction.js';
@@ -37,6 +38,8 @@ export interface ZeroXAtomicRoundTripPreparation {
   receiver: string;
   inputToken: string;
   intermediateToken: string;
+  inputTokenDecimals: number;
+  intermediateTokenDecimals: number;
   loanAmount: string;
   finalAmount: string;
   flashLoanFeeAmount: string;
@@ -118,12 +121,34 @@ function asPositiveInteger(label: string, value: string | undefined): BigNumber 
   return parsed;
 }
 
-function stableUnits(usd: number): string {
-  return BigNumber.from(Math.max(1, Math.floor(usd * 1_000_000))).toString();
+function requireTokenDecimals(decimals: number): number {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error('Stablecoin decimals are unavailable');
+  return decimals;
 }
 
-function baseUnitsToUsd(value: BigNumber): number {
-  const result = Number(value.toString()) / 1_000_000;
+function stableUnits(usd: number, decimals: number): string {
+  requireTokenDecimals(decimals);
+  if (!Number.isFinite(usd) || usd <= 0) throw new Error('Stablecoin USD amount must be positive');
+  const micros = BigNumber.from(Math.max(1, Math.floor(usd * 1_000_000)).toString());
+  if (decimals === 6) return micros.toString();
+  if (decimals > 6) return micros.mul(BigNumber.from(10).pow(decimals - 6)).toString();
+  const divisor = BigNumber.from(10).pow(6 - decimals);
+  return micros.div(divisor).toString();
+}
+
+function usdToBaseUnitsCeil(usd: number, decimals: number): BigNumber {
+  requireTokenDecimals(decimals);
+  if (!Number.isFinite(usd) || usd < 0) throw new Error('Stablecoin USD cost is invalid');
+  const micros = BigNumber.from(Math.max(0, Math.ceil(usd * 1_000_000)).toString());
+  if (decimals === 6) return micros;
+  if (decimals > 6) return micros.mul(BigNumber.from(10).pow(decimals - 6));
+  const divisor = BigNumber.from(10).pow(6 - decimals);
+  return micros.add(divisor).sub(1).div(divisor);
+}
+
+function baseUnitsToUsd(value: BigNumber, decimals: number): number {
+  requireTokenDecimals(decimals);
+  const result = Number(ethers.utils.formatUnits(value, decimals));
   if (!Number.isFinite(result)) throw new Error('Stablecoin base-unit value exceeds safe USD conversion range');
   return result;
 }
@@ -138,9 +163,7 @@ function adaptiveStablecoinSlippagePpm(opportunityId: string): number {
 
   const candidate = measuredCandidateRegistry.get(opportunityId);
   const netBps = Number(candidate?.canonicalBps?.netBps);
-  if (!Number.isFinite(netBps) || netBps <= 0) {
-    return 10_000;
-  }
+  if (!Number.isFinite(netBps) || netBps <= 0) return 10_000;
 
   const perLegBps = Math.max(0.10, Math.min(100, netBps * 0.25));
   return Math.max(10, Math.min(10_000, Math.round(perLegBps * 100)));
@@ -194,9 +217,6 @@ async function measureBalancerFlashFeeBps(chain: ChainId, provider: ethers.provi
 }
 
 function infrastructureFundingMode(): ReceiverFundingMode {
-  // Hosted paymaster readiness alone does not prove zero operator monetary cost.
-  // Infrastructure therefore uses only the provenance-backed system-owned native
-  // path until canonical sponsorship evidence explicitly proves zero user cost.
   return 'native';
 }
 
@@ -210,9 +230,7 @@ async function executeInfrastructureCalls(input: {
 }): Promise<void> {
   if (input.calls.length === 0) return;
   requireZeroCapitalInfrastructureDeploymentAllowed({ chain: input.chain, operation: 'receiver_permissions' });
-  if (input.fundingMode === 'sponsored') {
-    throw new Error('0x receiver permission sponsorship lacks canonical zero-operator-cost proof');
-  }
+  if (input.fundingMode === 'sponsored') throw new Error('0x receiver permission sponsorship lacks canonical zero-operator-cost proof');
 
   const connected = input.wallet.connect(input.provider);
   for (const call of input.calls) {
@@ -224,11 +242,7 @@ async function executeInfrastructureCalls(input: {
       provider: input.provider,
       idempotencyKey: `dex-infra:${input.chain}:${call.to.toLowerCase()}:${callHash}`,
       purpose: 'zero_capital_receiver_permission_setup',
-      transaction: {
-        to: call.to,
-        data,
-        value: BigNumber.from(call.value || 0),
-      },
+      transaction: { to: call.to, data, value: BigNumber.from(call.value || 0) },
       confirmations: 1,
     });
     if (result.receipt.status !== 1) throw new Error('0x receiver permission transaction reverted');
@@ -263,6 +277,8 @@ async function firmRoundTripQuotes(input: {
   receiver: string;
 }): Promise<{
   loanAmount: BigNumber;
+  inputTokenDecimals: number;
+  intermediateTokenDecimals: number;
   firstQuote: DexQuoteObservation;
   secondQuote: DexQuoteObservation;
   intermediateAmount: BigNumber;
@@ -271,7 +287,11 @@ async function firmRoundTripQuotes(input: {
   second: ReturnType<typeof quoteTransaction>;
 }> {
   const config = SUPPORTED_CHAINS[input.request.chain];
-  const loanAmount = BigNumber.from(stableUnits(input.request.notionalUsd));
+  const [inputTokenDecimals, intermediateTokenDecimals] = await Promise.all([
+    getMeasuredErc20Decimals(input.request.chain, config.usdc),
+    getMeasuredErc20Decimals(input.request.chain, config.usdt),
+  ]);
+  const loanAmount = BigNumber.from(stableUnits(input.request.notionalUsd, inputTokenDecimals));
   const slippagePpm = adaptiveStablecoinSlippagePpm(input.request.opportunityId);
   const firstQuote = await marketDataProviders.getDexQuote({
     chainId: config.chainId,
@@ -304,7 +324,7 @@ async function firmRoundTripQuotes(input: {
   }
   const finalAmount = asPositiveInteger('0x second buyAmount', secondQuote.buyAmount);
   const second = quoteTransaction(secondQuote, intermediateAmount);
-  return { loanAmount, firstQuote, secondQuote, intermediateAmount, finalAmount, first, second };
+  return { loanAmount, inputTokenDecimals, intermediateTokenDecimals, firstQuote, secondQuote, intermediateAmount, finalAmount, first, second };
 }
 
 async function ensureInfrastructureForRequest(request: AtomicRequest): Promise<void> {
@@ -320,12 +340,7 @@ async function ensureInfrastructureForRequest(request: AtomicRequest): Promise<v
   if (network.chainId !== config.chainId) throw new Error(`DEX atomic provider chain mismatch for ${request.chain}`);
   const fundingMode = infrastructureFundingMode();
   const manager = getSponsoredReceiverManager();
-  const receiverRecord = await manager.ensureReceiver({
-    chain: request.chain,
-    provider,
-    wallet: connectedWallet,
-    fundingMode,
-  });
+  const receiverRecord = await manager.ensureReceiver({ chain: request.chain, provider, wallet: connectedWallet, fundingMode });
   const firm = await firmRoundTripQuotes({ request, receiver: receiverRecord.address });
   const calls = await manager.buildMissingExplicitPermissionCalls({
     receiver: receiverRecord.address,
@@ -333,19 +348,10 @@ async function ensureInfrastructureForRequest(request: AtomicRequest): Promise<v
     targets: [firm.first.target, firm.second.target],
     approvalTokens: [config.usdc, config.usdt],
   });
-  await executeInfrastructureCalls({
-    chain: request.chain,
-    chainId: config.chainId,
-    wallet: connectedWallet,
-    provider,
-    fundingMode,
-    calls,
-  });
+  await executeInfrastructureCalls({ chain: request.chain, chainId: config.chainId, wallet: connectedWallet, provider, fundingMode, calls });
 }
 
-export async function reconcilePendingZeroXAtomicInfrastructure(
-  maxRequests = 1,
-): Promise<ZeroXAtomicInfrastructureResult> {
+export async function reconcilePendingZeroXAtomicInfrastructure(maxRequests = 1): Promise<ZeroXAtomicInfrastructureResult> {
   const ttlMs = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTOCRAWL_DEX_INFRA_REQUEST_TTL_MS || 30_000)));
   const now = Date.now();
   for (const [id, request] of pendingInfrastructure.entries()) {
@@ -366,31 +372,16 @@ export async function reconcilePendingZeroXAtomicInfrastructure(
       prepared += 1;
       details.push({ opportunityId: request.opportunityId, chain: request.chain, ready: true });
       logger.info('[DexAtomic] Receiver/AllowanceHolder infrastructure reconciled beneath canonical scheduler', {
-        component: 'DexZeroXAtomicExecutor',
-        opportunityId: request.opportunityId,
-        chain: request.chain,
-        tradeSubmitted: false,
-        discoveryMutationAuthority: false,
-        personalGasFallbackAllowed: false,
+        component: 'DexZeroXAtomicExecutor', opportunityId: request.opportunityId, chain: request.chain,
+        tradeSubmitted: false, discoveryMutationAuthority: false, personalGasFallbackAllowed: false,
       });
     } catch (error) {
       failed += 1;
-      details.push({
-        opportunityId: request.opportunityId,
-        chain: request.chain,
-        ready: false,
-        reason: error instanceof Error ? error.message : String(error),
-      });
+      details.push({ opportunityId: request.opportunityId, chain: request.chain, ready: false, reason: error instanceof Error ? error.message : String(error) });
     }
   }
 
-  return {
-    attempted: pending.length,
-    prepared,
-    failed,
-    remaining: pendingInfrastructure.size,
-    details,
-  };
+  return { attempted: pending.length, prepared, failed, remaining: pendingInfrastructure.size, details };
 }
 
 export function getPreparedZeroXAtomicPlan(opportunityId: string): ZeroXAtomicRoundTripPreparation | null {
@@ -418,11 +409,7 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   if (network.chainId !== config.chainId) throw new Error(`DEX atomic provider chain mismatch for ${input.chain}`);
 
   const manager = getSponsoredReceiverManager();
-  const receiverRecord = await manager.inspectExistingReceiver({
-    chain: input.chain,
-    provider,
-    owner: connectedWallet.address,
-  });
+  const receiverRecord = await manager.inspectExistingReceiver({ chain: input.chain, provider, owner: connectedWallet.address });
   if (!receiverRecord) {
     rememberInfrastructureNeed(input);
     throw new Error('DEX_ATOMIC_RECEIVER_NOT_READY');
@@ -449,41 +436,27 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   const profitRecipient = asAddress('operational profit recipient', resolveOperationalProfitRecipient());
   const canonicalMinProfit = BigNumber.from(minimumPositiveProfitBaseUnits().toString());
   const preliminaryData = encodeReceiverPayload({
-    receiver,
-    loanToken: config.usdc,
-    loanAmount: firm.loanAmount,
-    minProfit: canonicalMinProfit,
-    profitRecipient,
-    first: firm.first,
-    second: firm.second,
-    intermediateAmount: firm.intermediateAmount,
-    intermediateToken: config.usdt,
+    receiver, loanToken: config.usdc, loanAmount: firm.loanAmount, minProfit: canonicalMinProfit, profitRecipient,
+    first: firm.first, second: firm.second, intermediateAmount: firm.intermediateAmount, intermediateToken: config.usdt,
   });
   await provider.call({ from: connectedWallet.address, to: receiver, data: preliminaryData, value: 0 });
   const estimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data: preliminaryData, value: 0 });
   const gas = await gasOracle.getGasPrice(input.chain);
   const gasUsd = gas.usdCost * Number(estimatedGas.toString()) / DEFAULT_GAS_LIMIT;
   if (!Number.isFinite(gasUsd) || gasUsd < 0) throw new Error('Exact DEX atomic gas cost could not be measured');
-  const gasBaseUnits = BigNumber.from(Math.ceil(gasUsd * 1_000_000));
+  const gasBaseUnits = usdToBaseUnitsCeil(gasUsd, firm.inputTokenDecimals);
   const deterministicNetBaseUnits = grossBaseUnits.sub(flashLoanFeeAmount).sub(gasBaseUnits);
   if (deterministicNetBaseUnits.lte(0)) throw new Error('0x firm atomic round-trip is not positive after measured flash fee and gas');
 
   const finalData = encodeReceiverPayload({
-    receiver,
-    loanToken: config.usdc,
-    loanAmount: firm.loanAmount,
-    minProfit: canonicalMinProfit,
-    profitRecipient,
-    first: firm.first,
-    second: firm.second,
-    intermediateAmount: firm.intermediateAmount,
-    intermediateToken: config.usdt,
+    receiver, loanToken: config.usdc, loanAmount: firm.loanAmount, minProfit: canonicalMinProfit, profitRecipient,
+    first: firm.first, second: firm.second, intermediateAmount: firm.intermediateAmount, intermediateToken: config.usdt,
   });
   await provider.call({ from: connectedWallet.address, to: receiver, data: finalData, value: 0 });
 
-  const grossProfitUsd = baseUnitsToUsd(grossBaseUnits);
-  const flashLoanFeeUsd = baseUnitsToUsd(flashLoanFeeAmount);
-  const deterministicNetProfitUsd = baseUnitsToUsd(deterministicNetBaseUnits);
+  const grossProfitUsd = baseUnitsToUsd(grossBaseUnits, firm.inputTokenDecimals);
+  const flashLoanFeeUsd = baseUnitsToUsd(flashLoanFeeAmount, firm.inputTokenDecimals);
+  const deterministicNetProfitUsd = baseUnitsToUsd(deterministicNetBaseUnits, firm.inputTokenDecimals);
   const grossProfitBps = grossProfitUsd / input.notionalUsd * 10_000;
   const gasCostBps = gasUsd / input.notionalUsd * 10_000;
   const allInCostBps = flashLoanFeeBps + gasCostBps;
@@ -498,6 +471,8 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
     receiver,
     inputToken: config.usdc,
     intermediateToken: config.usdt,
+    inputTokenDecimals: firm.inputTokenDecimals,
+    intermediateTokenDecimals: firm.intermediateTokenDecimals,
     loanAmount: firm.loanAmount.toString(),
     finalAmount: firm.finalAmount.toString(),
     flashLoanFeeAmount: flashLoanFeeAmount.toString(),
@@ -525,6 +500,9 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
       '0x:trade_surplus_pretrade_credit:false_terminal_receipt_only',
       '0x:issues_allowance_spender_or_allowance_target_preserved',
       '0x:allowance_spender_equals_transaction_target_verified',
+      `token_decimals:input:${firm.inputTokenDecimals}`,
+      `token_decimals:intermediate:${firm.intermediateTokenDecimals}`,
+      'token_decimals:measured_onchain',
       'receiver:existing_deployment_verified_read_only',
       'receiver:permissions_verified_read_only',
       'balancer_v2:flash_fee_measured_onchain',
@@ -586,12 +564,7 @@ export async function executePreparedZeroXAtomicRoundTrip(
         provider,
         idempotencyKey: `dex-atomic:${opportunityId}:${plan.receiver.toLowerCase()}`,
         purpose: 'dex_atomic_execution',
-        transaction: {
-          to: plan.payload.to,
-          data: plan.payload.data,
-          value: 0,
-          gasLimit: plan.payload.gasLimit,
-        },
+        transaction: { to: plan.payload.to, data: plan.payload.data, value: 0, gasLimit: plan.payload.gasLimit },
         confirmations: 1,
       });
       transactionHash = native.transactionHash;
@@ -610,18 +583,7 @@ export async function executePreparedZeroXAtomicRoundTrip(
     const gasUsed = receipt.gasUsed?.toString();
     const effectiveGasPriceWei = receipt.effectiveGasPrice?.toString();
     if (receiptStatus !== 1) {
-      return {
-        success: false,
-        status: 'failed',
-        terminal: true,
-        settlementConfirmed: true,
-        transactionHash,
-        fundingModeUsed,
-        receiptStatus,
-        gasUsed,
-        effectiveGasPriceWei,
-        error: 'DEX_ATOMIC_RECEIPT_REVERTED',
-      };
+      return { success: false, status: 'failed', terminal: true, settlementConfirmed: true, transactionHash, fundingModeUsed, receiptStatus, gasUsed, effectiveGasPriceWei, error: 'DEX_ATOMIC_RECEIPT_REVERTED' };
     }
 
     const iface = new ethers.utils.Interface(RECEIVER_ABI);
@@ -634,54 +596,27 @@ export async function executePreparedZeroXAtomicRoundTrip(
       } catch { /* unrelated receiver log */ }
     }
     if (!receiverProfit || receiverProfit.lte(0)) {
-      return {
-        success: false,
-        status: 'failed',
-        terminal: true,
-        settlementConfirmed: true,
-        transactionHash,
-        fundingModeUsed,
-        receiptStatus,
-        gasUsed,
-        effectiveGasPriceWei,
-        error: 'DEX_ATOMIC_TERMINAL_PROFIT_EVENT_MISSING_OR_NONPOSITIVE',
-      };
+      return { success: false, status: 'failed', terminal: true, settlementConfirmed: true, transactionHash, fundingModeUsed, receiptStatus, gasUsed, effectiveGasPriceWei, error: 'DEX_ATOMIC_TERMINAL_PROFIT_EVENT_MISSING_OR_NONPOSITIVE' };
     }
 
-    const realizedProfitUsd = baseUnitsToUsd(receiverProfit);
+    const realizedProfitUsd = baseUnitsToUsd(receiverProfit, plan.inputTokenDecimals);
     const realizedProfitBps = realizedProfitUsd / request.notionalUsd * 10_000;
     logger.info('[DexAtomic] Terminal 0x receiver event confirmed; all-in reconciliation pending', {
-      component: 'DexZeroXAtomicExecutor',
-      opportunityId,
-      chain: request.chain,
-      transactionHash,
-      fundingModeUsed,
-      receiverProfitUsd: realizedProfitUsd,
-      receiverProfitBps: realizedProfitBps,
+      component: 'DexZeroXAtomicExecutor', opportunityId, chain: request.chain, transactionHash, fundingModeUsed,
+      receiverProfitUsd: realizedProfitUsd, receiverProfitBps: realizedProfitBps,
+      inputTokenDecimals: plan.inputTokenDecimals,
       terminalTradeSurplusCaptureRequested: plan.secondQuote.tradeSurplusRequested,
       terminalTradeSurplusPretradeCreditBps: 0,
-      receiptStatus,
-      gasUsed,
-      effectiveGasPriceWei,
-      settlementConfirmed: true,
+      receiptStatus, gasUsed, effectiveGasPriceWei, settlementConfirmed: true,
       personalGasFallbackAllowed: false,
       systemOwnedNativeGasLedgerApplied: fundingModeUsed === 'native',
       allInRealizedEconomicsAuthority: 'canonical_measured_topology_adapter_after_actual_gas',
       syntheticEvidence: false,
     });
     return {
-      success: true,
-      status: 'filled',
-      terminal: true,
-      settlementConfirmed: true,
-      transactionHash,
-      fundingModeUsed,
-      receiptStatus,
-      gasUsed,
-      effectiveGasPriceWei,
-      realizedProfitUsd,
-      realizedProfitBps,
-      gasUsd: plan.gasUsd,
+      success: true, status: 'filled', terminal: true, settlementConfirmed: true,
+      transactionHash, fundingModeUsed, receiptStatus, gasUsed, effectiveGasPriceWei,
+      realizedProfitUsd, realizedProfitBps, gasUsd: plan.gasUsd,
     };
   } catch (error) {
     return transactionHash
