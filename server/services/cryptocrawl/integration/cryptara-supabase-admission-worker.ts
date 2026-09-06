@@ -1,9 +1,15 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import pg from 'pg';
 import { getPoolStats, pool } from '../../../db.js';
+import { createLogger } from '../../../logger.js';
 
 /**
- * Cryptara-owned resource governor for CryptoCrawler database work.
+ * Autonomous Cryptara pool custodian for CryptoCrawler database work.
+ *
+ * The custodian is deliberately event-driven: it does nothing while the pool is
+ * healthy, then automatically queues, ranks, contracts and recovers when measured
+ * pressure appears. It never asks the operator what to do and never creates a
+ * second database pool or expands the configured connection budget.
  *
  * Boundary rules:
  * - creates no database pool and consumes no connection by itself;
@@ -11,6 +17,7 @@ import { getPoolStats, pool } from '../../../db.js';
  * - never grants execution, governance, profitability, or write authority;
  * - queues rather than drops work, so pressure reduction cannot remove capability;
  * - adapts only from measured local pool/acquisition outcomes;
+ * - full utilization alone is capacity use, not pressure;
  * - the hot Overflow ordinary pool is governed automatically;
  * - explicit cold-archive work may join the same ranked permit queue without
  *   registering or globally intercepting the application's Primary pool.
@@ -35,6 +42,13 @@ type AdmissionPermit = {
 
 type RecoveryAdvisor = () => number;
 
+type PoolStats = {
+  total: number;
+  idle: number;
+  waiting: number;
+  max: number;
+};
+
 export interface CryptaraSupabaseAdmissionSnapshot {
   installed: boolean;
   governor: 'cryptara';
@@ -45,12 +59,7 @@ export interface CryptaraSupabaseAdmissionSnapshot {
   targetConcurrency: number;
   inFlight: number;
   queued: number;
-  pool: {
-    total: number;
-    idle: number;
-    waiting: number;
-    max: number;
-  };
+  pool: PoolStats;
   ewmaAcquireMs: number;
   ewmaHoldMs: number;
   pressureCooldownMs: number;
@@ -58,6 +67,7 @@ export interface CryptaraSupabaseAdmissionSnapshot {
   peakQueued: number;
 }
 
+const log = createLogger('CryptaraSupabaseAdmissionWorker');
 const priorityContext = new AsyncLocalStorage<CryptaraSupabasePriority>();
 const PRIORITY_RANK: Record<CryptaraSupabasePriority, number> = {
   critical: 0,
@@ -141,10 +151,17 @@ class CryptaraSupabaseResourceGovernor {
   private admissionFailures = 0;
   private peakQueued = 0;
   private lastMode: CryptaraSupabaseAdmissionSnapshot['mode'] = 'recovering';
+  private lastPressureReason: string | null = null;
 
-  private poolSnapshot() {
+  private poolSnapshot(): PoolStats {
     try {
-      return getPoolStats();
+      const stats = getPoolStats();
+      return {
+        total: finiteNonNegative(stats.total),
+        idle: finiteNonNegative(stats.idle),
+        waiting: finiteNonNegative(stats.waiting),
+        max: Math.max(1, Math.trunc(finiteNonNegative(stats.max) || 1)),
+      };
     } catch {
       return { total: 0, idle: 0, waiting: 0, max: 1 };
     }
@@ -153,29 +170,30 @@ class CryptaraSupabaseResourceGovernor {
   private mode(now = Date.now()): CryptaraSupabaseAdmissionSnapshot['mode'] {
     const stats = this.poolSnapshot();
     if (now < this.pressureUntil || stats.waiting > 0) return 'pressure';
-    if (this.targetConcurrency < Math.max(1, stats.max)) return 'recovering';
+    if (this.targetConcurrency < stats.max) return 'recovering';
     return 'steady';
   }
 
   primeToCurrentPoolCapacity(): void {
     const stats = this.poolSnapshot();
-    const ceiling = Math.max(1, Math.trunc(stats.max || 1));
+    const ceiling = stats.max;
     this.healthySuccesses = 0;
 
-    // Do not impose a synthetic cold-start throttle. Railway rollout headroom has
-    // already reduced the incoming replica's effective pool max when overlap is
-    // possible, so healthy startup can immediately use that safe capacity. If
-    // local pool telemetry already shows a queue, start contracted instead.
+    // Start at the already-configured safe pool ceiling. Only measured existing
+    // waiters justify a contracted cold start. Merely having every pool client in
+    // use is healthy capacity utilization and must not be treated as an incident.
     if (stats.waiting > 0) {
       this.targetConcurrency = Math.max(1, Math.floor(ceiling / 2));
       this.pressureUntil = Date.now() + this.pressureCooldown();
       this.lastMode = 'pressure';
+      this.lastPressureReason = 'startup_pool_waiters';
       return;
     }
 
     this.targetConcurrency = ceiling;
     this.pressureUntil = 0;
     this.lastMode = 'steady';
+    this.lastPressureReason = null;
   }
 
   private updateEwma(current: number, sample: number): number {
@@ -200,26 +218,42 @@ class CryptaraSupabaseResourceGovernor {
 
   private contract(reason: string): void {
     const previous = this.targetConcurrency;
-    this.targetConcurrency = Math.max(1, Math.floor(this.targetConcurrency / 2));
+    const next = Math.max(1, Math.floor(previous / 2));
+    this.targetConcurrency = next;
     this.healthySuccesses = 0;
     this.pressureUntil = Math.max(this.pressureUntil, Date.now() + this.pressureCooldown());
-    if (previous !== this.targetConcurrency || this.lastMode !== 'pressure') {
-      console.warn(`[CRYPTARA][SUPABASE-WORKER] pressure=${reason}; concurrency ${previous}->${this.targetConcurrency}; queued=${this.queue.length}`);
+
+    // One warning per actual transition/reason. Healthy full utilization never
+    // enters this path, which prevents expected queueing from becoming Railway red.
+    if (previous !== next || this.lastMode !== 'pressure' || this.lastPressureReason !== reason) {
+      log.warn('[CRYPTARA][SUPABASE-WORKER] measured pressure; autonomous contraction applied', {
+        reason,
+        previousConcurrency: previous,
+        targetConcurrency: next,
+        queued: this.queue.length,
+        inFlight: this.inFlight,
+        pool: this.poolSnapshot(),
+      });
     }
     this.lastMode = 'pressure';
+    this.lastPressureReason = reason;
   }
 
   private considerRecovery(acquireMs: number): void {
     const now = Date.now();
     const stats = this.poolSnapshot();
-    const ceiling = Math.max(1, stats.max);
-    this.targetConcurrency = Math.min(this.targetConcurrency, ceiling);
+    const ceiling = stats.max;
+    this.targetConcurrency = Math.max(1, Math.min(this.targetConcurrency, ceiling));
 
-    const localPressure = stats.waiting > 0 ||
-      acquireMs >= PRESSURE_ACQUIRE_MS ||
-      (stats.total >= ceiling && stats.idle === 0 && this.queue.length > this.targetConcurrency);
-    if (localPressure) {
-      this.contract(stats.waiting > 0 ? 'pool_waiters' : acquireMs >= PRESSURE_ACQUIRE_MS ? 'slow_admission' : 'pool_saturation');
+    // Actual node-postgres waiters or slow acquisition prove contention. A pool
+    // with total=max, idle=0 and a local queue does not: the local queue is the
+    // custodian doing its job and should not trigger multiplicative backoff.
+    if (stats.waiting > 0) {
+      this.contract('pool_waiters');
+      return;
+    }
+    if (acquireMs >= PRESSURE_ACQUIRE_MS) {
+      this.contract('slow_admission');
       return;
     }
 
@@ -228,7 +262,7 @@ class CryptaraSupabaseResourceGovernor {
       return;
     }
 
-    const healthy = stats.waiting === 0 && acquireMs <= HEALTHY_ACQUIRE_MS;
+    const healthy = acquireMs <= HEALTHY_ACQUIRE_MS;
     if (!healthy) {
       this.healthySuccesses = 0;
       return;
@@ -237,18 +271,26 @@ class CryptaraSupabaseResourceGovernor {
     this.healthySuccesses += 1;
     const recoveryAcceleration = boundedRecoveryAcceleration();
     const healthySuccessThreshold = Math.max(2, Math.ceil(HEALTHY_SUCCESSES_TO_GROW / recoveryAcceleration));
-    if (this.healthySuccesses < healthySuccessThreshold || this.targetConcurrency >= ceiling) return;
+    if (this.healthySuccesses < healthySuccessThreshold || this.targetConcurrency >= ceiling) {
+      this.lastMode = this.mode(now);
+      if (this.lastMode === 'steady') this.lastPressureReason = null;
+      return;
+    }
 
     const previous = this.targetConcurrency;
-    // Additive recovery always grows exactly one permit. Comp/Antenna intelligence
-    // may only shorten the already-healthy evidence window (bounded 1..1.5x); it
-    // cannot bypass DB pressure, cooldown, pool ceiling, or multiplicative backoff.
-    this.targetConcurrency = Math.min(ceiling, this.targetConcurrency + 1);
+    this.targetConcurrency = Math.min(ceiling, previous + 1);
     this.healthySuccesses = 0;
     if (previous !== this.targetConcurrency) {
-      console.log(`[CRYPTARA][SUPABASE-WORKER] healthy admission; concurrency ${previous}->${this.targetConcurrency}; pool=${stats.total}/${stats.max}; evidence=${healthySuccessThreshold}; advisory=${recoveryAcceleration.toFixed(2)}x`);
+      log.info('[CRYPTARA][SUPABASE-WORKER] healthy evidence restored one concurrency permit', {
+        previousConcurrency: previous,
+        targetConcurrency: this.targetConcurrency,
+        pool: stats,
+        healthyEvidenceRequired: healthySuccessThreshold,
+        recoveryAdvisor: Number(recoveryAcceleration.toFixed(2)),
+      });
     }
     this.lastMode = this.mode(now);
+    if (this.lastMode === 'steady') this.lastPressureReason = null;
   }
 
   private effectiveRank(waiter: Waiter, now: number): number {
@@ -285,13 +327,9 @@ class CryptaraSupabaseResourceGovernor {
 
   private drain(): void {
     const stats = this.poolSnapshot();
-    const ceiling = Math.max(1, Math.trunc(stats.max || 1));
+    const ceiling = stats.max;
     this.targetConcurrency = Math.max(1, Math.min(this.targetConcurrency, ceiling));
 
-    // During a pressure cooldown, reusable idle clients are free capacity: admit
-    // no more tasks than the number already idle. That prevents a single idle
-    // client from accidentally opening additional Supavisor clients in the same
-    // drain pass. With no idle client, pause until the one-shot jitter expires.
     const now = Date.now();
     const pressureActive = now < this.pressureUntil;
     if (this.queue.length > 0 && pressureActive && stats.idle === 0) {
@@ -355,7 +393,7 @@ class CryptaraSupabaseResourceGovernor {
       targetConcurrency: this.targetConcurrency,
       inFlight: this.inFlight,
       queued: this.queue.length,
-      pool: { ...stats },
+      pool: stats,
       ewmaAcquireMs: Number(this.ewmaAcquireMs.toFixed(2)),
       ewmaHoldMs: Number(this.ewmaHoldMs.toFixed(2)),
       pressureCooldownMs: Math.max(0, this.pressureUntil - now),
@@ -378,8 +416,8 @@ function wrapClientRelease(
 ): (error?: unknown) => void {
   let released = false;
   const wrappedRelease = (error?: unknown) => {
-    // Preserve node-postgres double-release behavior instead of silently hiding a
-    // caller bug; only the Cryptara permit is protected from double release.
+    // Preserve node-postgres double-release behavior instead of hiding a caller
+    // bug; only the custodian permit itself is protected from double release.
     if (released) {
       originalRelease(error);
       return;
@@ -405,13 +443,12 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
   if (!prototype.connect?.[PATCHED_CONNECT]) {
     const patchedConnect = function(this: any, callback?: (...args: any[]) => void): any {
       // The live ESM binding tracks resetPool() replacements. Coordination and any
-      // unrelated pg pools bypass this worker completely.
+      // unrelated pg pools bypass this custodian completely.
       if (this !== pool) {
         return typeof callback === 'function' ? originalConnect.call(this, callback) : originalConnect.call(this);
       }
 
-      const contextualPriority = priorityContext.getStore();
-      const priority: CryptaraSupabasePriority = contextualPriority || 'normal';
+      const priority: CryptaraSupabasePriority = priorityContext.getStore() || 'normal';
 
       if (typeof callback === 'function') {
         void governor.acquire(priority).then(permit => {
@@ -421,8 +458,6 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
               const acquireMs = Date.now() - acquisitionStartedAt;
               governor.reportConnectionOutcome(acquireMs, error);
               if (error || !client) {
-                // The connection outcome already taught the governor about pressure;
-                // release only the worker permit here to avoid double contraction.
                 permit.release(undefined, 0);
                 callback(error, client, release);
                 return;
@@ -448,8 +483,6 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
           return client;
         } catch (error) {
           governor.reportConnectionOutcome(Date.now() - acquisitionStartedAt, error);
-          // See callback path above: report once, then return the permit without
-          // re-classifying the same acquisition failure.
           permit.release(undefined, 0);
           throw error;
         }
@@ -462,7 +495,15 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
   governor.primeToCurrentPoolCapacity();
   installed = true;
   const snapshot = governor.snapshot(true);
-  console.log(`[CRYPTARA][SUPABASE-WORKER] adaptive admission installed; ordinary pool only, no additional pool or connection budget; initial concurrency=${snapshot.targetConcurrency}/${snapshot.pool.max}`);
+  log.info('[CRYPTARA][SUPABASE-WORKER] autonomous pool custodian installed', {
+    ordinaryPoolOnly: true,
+    additionalPoolCreated: false,
+    additionalConnectionBudget: 0,
+    operatorPromptsRequired: false,
+    interventionPolicy: 'measured_pressure_only',
+    initialConcurrency: snapshot.targetConcurrency,
+    poolMax: snapshot.pool.max,
+  });
 }
 
 /**
@@ -479,9 +520,7 @@ export function withCryptaraSupabasePriority<T>(
 /**
  * Join the same ranked Cryptara admission queue for a deliberately explicit task
  * that does not use the automatically governed hot pool (for example a Primary
- * cold-archive query). This does not register or patch the task's underlying pool,
- * so unrelated application database traffic and session/coordination pools remain
- * untouched. Work is queued, never dropped.
+ * cold-archive query). This does not register or patch the task's underlying pool.
  */
 export async function withCryptaraSupabaseAdmission<T>(
   priority: CryptaraSupabasePriority,
@@ -501,9 +540,8 @@ export async function withCryptaraSupabaseAdmission<T>(
 }
 
 /**
- * Install or remove advisory recovery acceleration. The callback cannot set a
- * concurrency target; its numeric output is clamped to 1..1.5 and is consulted
- * only after the worker has already classified an admission as healthy.
+ * Optional advisory recovery acceleration. It can only shorten the number of
+ * already-healthy samples needed to restore one permit and is clamped to 1..1.5.
  */
 export function setCryptaraSupabaseRecoveryAdvisor(advisor: RecoveryAdvisor | null): void {
   recoveryAdvisor = advisor;
