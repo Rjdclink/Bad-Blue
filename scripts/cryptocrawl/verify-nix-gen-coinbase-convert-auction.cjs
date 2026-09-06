@@ -15,6 +15,7 @@ function forbid(source, pattern, message) {
   if (pattern.test(source)) throw new Error(`[verify-nix-gen-coinbase-convert-auction] ${message}`);
 }
 
+must(auction, /CRYPTO_COINBASE_CONVERT_AUCTION_ENABLED[^\n]+!== 'true'/, 'Coinbase Convert must remain explicit-opt-in until exact Coinbase asset-delta authority is installed');
 must(auction, /\/api\/v3\/brokerage\/convert\/quote/, 'current Advanced Trade Convert quote endpoint is missing');
 must(auction, /\/api\/v3\/brokerage\/convert\/trade\//, 'current Advanced Trade Convert commit\/query endpoint is missing');
 must(auction, /resolveCexFeeEvidence\('coinbase'/, 'Convert comparison must use authenticated Coinbase fee evidence');
