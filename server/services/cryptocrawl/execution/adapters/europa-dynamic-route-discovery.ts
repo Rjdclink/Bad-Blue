@@ -1,5 +1,9 @@
 import { EUROPA_SUSHI } from './europa-sushi-registry.js';
 import type { ConfiguredZeroCapitalRoute } from './onchain-route-quoter.js';
+import {
+  isStrictlyPositiveProfitBaseUnits,
+  PROFIT_ADMISSION_POLICY,
+} from '../../governance/profit-admission-authority.js';
 
 const EUROPA_CHAIN_ID = '2046399126';
 const SUSHI_API = 'https://api.sushi.com';
@@ -96,7 +100,6 @@ async function evaluateCycle(input: {
   initialAmount: string;
   sender: string;
   flashLoanFeeBps: number;
-  minimumProfitBps: number;
 }): Promise<DynamicEuropaRouteEvidence | null> {
   const startedAt = Date.now();
   let currentAmount = input.initialAmount;
@@ -117,7 +120,7 @@ async function evaluateCycle(input: {
   const final = BigInt(currentAmount);
   const grossProfit = final - initial;
   const netProfit = grossProfit - (initial * BigInt(input.flashLoanFeeBps)) / 10000n;
-  if (netProfit <= 0n || (netProfit * 10000n) / initial < BigInt(input.minimumProfitBps)) return null;
+  if (!isStrictlyPositiveProfitBaseUnits(netProfit)) return null;
 
   return {
     initialAmount: input.initialAmount,
@@ -137,7 +140,7 @@ async function evaluateCycle(input: {
       estimatedGasCostInInputToken: '0',
       relayFeeInInputToken: '0',
       flashLoanFeeBps: input.flashLoanFeeBps,
-      minNetProfitBps: input.minimumProfitBps,
+      minNetProfitBps: PROFIT_ADMISSION_POLICY.minimumProfitBps,
       legs: input.cycle.legs.map(leg => ({
         protocol: 'sushiswapV3' as const,
         tokenIn: leg.tokenIn,
@@ -152,19 +155,14 @@ async function evaluateCycle(input: {
 /**
  * Searches both validated Europa triangular directions across a bounded set of
  * USDC flash-loan sizes. Each leg is quoted live through Sushi's Europa route
- * processor. Only positive post-flash-fee candidates that satisfy the configured
- * minimum profit rate are returned, and the highest absolute net-profit route
- * is selected for the engine to independently re-quote before execution.
+ * processor. The single canonical profit authority requires only strictly
+ * positive post-cost net profit; no strategy-local dollar or BPS floor exists.
  */
 export async function discoverProfitableEuropaRoute(environment: NodeJS.ProcessEnv = process.env): Promise<DynamicEuropaRouteEvidence | null> {
   const sender = address(environment.ZERO_CAPITAL_EUROPA_QUOTE_SENDER?.trim() || '0x0e9878153c1500ec48b51cdd5325c7e374c9cdae');
   const flashLoanFeeBps = Number(environment.ZERO_CAPITAL_EUROPA_FLASH_LOAN_FEE_BPS || '0');
   if (!Number.isInteger(flashLoanFeeBps) || flashLoanFeeBps < 0 || flashLoanFeeBps > 1000) {
     throw new Error('ZERO_CAPITAL_EUROPA_FLASH_LOAN_FEE_BPS must be an integer from 0 to 1000');
-  }
-  const minimumProfitBps = Number(environment.ZERO_CAPITAL_EUROPA_MIN_PROFIT_BPS || '50');
-  if (!Number.isInteger(minimumProfitBps) || minimumProfitBps < 1 || minimumProfitBps > 5000) {
-    throw new Error('ZERO_CAPITAL_EUROPA_MIN_PROFIT_BPS must be an integer from 1 to 5000');
   }
 
   const attempts = await Promise.allSettled(
@@ -174,7 +172,6 @@ export async function discoverProfitableEuropaRoute(environment: NodeJS.ProcessE
         initialAmount,
         sender,
         flashLoanFeeBps,
-        minimumProfitBps,
       })),
     ),
   );
