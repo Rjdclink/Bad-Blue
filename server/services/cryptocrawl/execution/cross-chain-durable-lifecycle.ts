@@ -51,6 +51,7 @@ export interface CrossChainLifecycleResult {
   terminalAmountEvidence: AcrossTerminalAmountEvidence | null;
   realizedNetProfitUsd: number | null;
   gasUsd: number | null;
+  /** Same-asset compatibility price only; cross-asset terminal accounting uses separately measured input/output prices. */
   assetUsd: number | null;
   error?: string;
 }
@@ -83,6 +84,9 @@ function inputAsset(quote: AcrossBridgeQuote): AcrossStableSymbol {
 }
 function outputAsset(quote: AcrossBridgeQuote): AcrossStableSymbol {
   return quote.outputSymbol || quote.token;
+}
+function sameAssetCompatibilityPrice(quote: AcrossBridgeQuote, outputPrice: number | null): number | null {
+  return inputAsset(quote) === outputAsset(quote) ? outputPrice : null;
 }
 function quoteIdentityMatches(left: AcrossBridgeQuote, right: AcrossBridgeQuote): boolean {
   return left.provider === right.provider
@@ -318,17 +322,18 @@ async function reconcileOne(stored: StoredLifecycle): Promise<CrossChainLifecycl
     const [inputPrice, outputPrice, actualGasUsd] = await Promise.all([
       liveUsd(inputAsset(stored.quote)), liveUsd(outputAsset(stored.quote)), gasUsd(stored.quote, stored.originNativeFeeWei),
     ]);
+    const compatibilityPrice = sameAssetCompatibilityPrice(stored.quote, outputPrice);
     if (inputPrice === null || outputPrice === null || actualGasUsd === null) {
       const error = 'CROSS_CHAIN_TERMINAL_USD_ECONOMICS_INCOMPLETE';
-      await updateLifecycle({ lifecycleId: stored.lifecycleId, status: 'ACCOUNTING_PENDING', settlement, terminalAmount, gasUsd: actualGasUsd, assetUsd: outputPrice, error });
-      return { ...pendingResult(stored, 'ACCOUNTING_PENDING', settlement, error), terminalAmountEvidence: terminalAmount, gasUsd: actualGasUsd, assetUsd: outputPrice };
+      await updateLifecycle({ lifecycleId: stored.lifecycleId, status: 'ACCOUNTING_PENDING', settlement, terminalAmount, gasUsd: actualGasUsd, assetUsd: compatibilityPrice, error });
+      return { ...pendingResult(stored, 'ACCOUNTING_PENDING', settlement, error), terminalAmountEvidence: terminalAmount, gasUsd: actualGasUsd, assetUsd: compatibilityPrice };
     }
     const inputHuman = Number(ethers.utils.formatUnits(terminalAmount.inputAmount, stored.quote.inputTokenDecimals));
     const outputHuman = Number(ethers.utils.formatUnits(terminalAmount.outputAmount, stored.quote.outputTokenDecimals));
     if (!Number.isFinite(inputHuman) || !Number.isFinite(outputHuman) || inputHuman <= 0 || outputHuman < 0) {
       const error = 'CROSS_CHAIN_TERMINAL_AMOUNTS_INVALID';
-      await updateLifecycle({ lifecycleId: stored.lifecycleId, status: 'ACCOUNTING_PENDING', settlement, terminalAmount, gasUsd: actualGasUsd, assetUsd: outputPrice, error });
-      return { ...pendingResult(stored, 'ACCOUNTING_PENDING', settlement, error), terminalAmountEvidence: terminalAmount, gasUsd: actualGasUsd, assetUsd: outputPrice };
+      await updateLifecycle({ lifecycleId: stored.lifecycleId, status: 'ACCOUNTING_PENDING', settlement, terminalAmount, gasUsd: actualGasUsd, assetUsd: compatibilityPrice, error });
+      return { ...pendingResult(stored, 'ACCOUNTING_PENDING', settlement, error), terminalAmountEvidence: terminalAmount, gasUsd: actualGasUsd, assetUsd: compatibilityPrice };
     }
     const inputValueUsd = inputHuman * inputPrice;
     const outputValueUsd = outputHuman * outputPrice;
@@ -358,13 +363,13 @@ async function reconcileOne(stored: StoredLifecycle): Promise<CrossChainLifecycl
     });
     await updateLifecycle({
       lifecycleId: stored.lifecycleId, status: 'FILLED', settlement, terminalAmount, realizedNetProfitUsd,
-      gasUsd: actualGasUsd, assetUsd: outputPrice,
+      gasUsd: actualGasUsd, assetUsd: compatibilityPrice,
       error: realizedNetProfitUsd > 0 ? null : 'CROSS_CHAIN_TERMINAL_NONPOSITIVE_NET', terminal: true,
     });
     return {
       ...stored, status: 'FILLED', terminal: true, settlementConfirmed: true, success: realizedNetProfitUsd > 0,
       settledAt: Date.now(), settlement, terminalAmountEvidence: terminalAmount, realizedNetProfitUsd,
-      gasUsd: actualGasUsd, assetUsd: outputPrice,
+      gasUsd: actualGasUsd, assetUsd: compatibilityPrice,
       error: realizedNetProfitUsd > 0 ? undefined : 'CROSS_CHAIN_TERMINAL_NONPOSITIVE_NET',
     };
   }
