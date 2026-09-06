@@ -7,7 +7,13 @@ export interface ZeroCapitalRecoverySnapshot {
   observedCandidates: number;
   candidatesWithNetBps: number;
   positiveCandidates: number;
+  nonPositiveGrossEdgeCandidates: number;
+  grossPositiveNetNegativeCandidates: number;
   closestCandidateBpsToBreakEven: number | null;
+  closestCostCompressibleBpsToBreakEven: number | null;
+  closestCandidateGrossBps: number | null;
+  closestCandidateAllInCostBps: number | null;
+  closestCandidateMarketEdgeDeficitBps: number | null;
   previousClosestCandidateBpsToBreakEven: number | null;
   closestCandidateGapImprovementBps: number | null;
   closestCandidateGapImproving: boolean | null;
@@ -34,6 +40,13 @@ let previousClosestCandidateGapBps: number | null = null;
 let previousClosestRoute: { routeId: string; gapBps: number } | null = null;
 let latest: ZeroCapitalRecoverySnapshot | null = null;
 
+function finite(value: unknown): number | null {
+  if (value === null || value === undefined || typeof value === 'boolean') return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function percentile(values: number[], p: number): number | null {
   if (values.length === 0) return null;
   const ordered = [...values].sort((left, right) => left - right);
@@ -57,11 +70,38 @@ function refresh(): void {
       && candidate.status !== 'expired'
       && candidate.expiresAt > now,
     );
-  const withBps = candidates
-    .filter(candidate => typeof candidate.canonicalBps.netBps === 'number' && Number.isFinite(candidate.canonicalBps.netBps))
-    .map(candidate => Number(candidate.canonicalBps.netBps));
+  const bpsCandidates = candidates
+    .filter(candidate => typeof candidate.canonicalBps.netBps === 'number' && Number.isFinite(candidate.canonicalBps.netBps));
+  const withBps = bpsCandidates.map(candidate => Number(candidate.canonicalBps.netBps));
   const negativeGaps = withBps.filter(value => value <= 0).map(value => Math.abs(value));
   const closestCandidateGapBps = negativeGaps.length > 0 ? Math.min(...negativeGaps) : null;
+  const nonPositiveGrossEdgeCandidates = bpsCandidates.filter(candidate => {
+    const gross = finite(candidate.canonicalBps.grossBps);
+    return gross !== null && gross <= 0;
+  });
+  const costCompressibleCandidates = bpsCandidates.filter(candidate => {
+    const gross = finite(candidate.canonicalBps.grossBps);
+    const net = finite(candidate.canonicalBps.netBps);
+    const allInCost = finite(candidate.canonicalBps.allInCostBps);
+    return gross !== null && gross > 0
+      && net !== null && net <= 0
+      && allInCost !== null && allInCost > 0;
+  });
+  const costCompressibleGaps = costCompressibleCandidates
+    .map(candidate => Math.abs(Number(candidate.canonicalBps.netBps)))
+    .filter(value => Number.isFinite(value));
+  const closestCostCompressibleGapBps = costCompressibleGaps.length > 0
+    ? Math.min(...costCompressibleGaps)
+    : null;
+  const closestCandidate = bpsCandidates
+    .filter(candidate => Number(candidate.canonicalBps.netBps) <= 0)
+    .sort((left, right) => Math.abs(Number(left.canonicalBps.netBps)) - Math.abs(Number(right.canonicalBps.netBps)))[0] ?? null;
+  const closestCandidateGrossBps = closestCandidate ? finite(closestCandidate.canonicalBps.grossBps) : null;
+  const closestCandidateAllInCostBps = closestCandidate ? finite(closestCandidate.canonicalBps.allInCostBps) : null;
+  const closestCandidateMarketEdgeDeficitBps = closestCandidateGrossBps === null
+    ? null
+    : Math.max(0, -closestCandidateGrossBps);
+
   const maxRouteEvidenceAgeMs = routeEvidenceMaxAgeMs();
   const routeEvidence = getZeroCapitalRoutePreselectionEvidence();
   const measuredRoutes = routeEvidence.filter(item =>
@@ -88,7 +128,13 @@ function refresh(): void {
     observedCandidates: candidates.length,
     candidatesWithNetBps: withBps.length,
     positiveCandidates: withBps.filter(value => value > 0).length,
+    nonPositiveGrossEdgeCandidates: nonPositiveGrossEdgeCandidates.length,
+    grossPositiveNetNegativeCandidates: costCompressibleCandidates.length,
     closestCandidateBpsToBreakEven: closestCandidateGapBps,
+    closestCostCompressibleBpsToBreakEven: closestCostCompressibleGapBps,
+    closestCandidateGrossBps,
+    closestCandidateAllInCostBps,
+    closestCandidateMarketEdgeDeficitBps,
     previousClosestCandidateBpsToBreakEven: previousClosestCandidateGapBps,
     closestCandidateGapImprovementBps: candidateGapDeltaBps,
     closestCandidateGapImproving: candidateGapDeltaBps === null ? null : candidateGapDeltaBps > 0,
@@ -117,6 +163,8 @@ function refresh(): void {
     ...latest,
     routeEvidenceMaxAgeMs: maxRouteEvidenceAgeMs,
     candidateAuthority: 'unexpired_canonical_bps_only',
+    costCompressionAuthority: 'gross_positive_net_nonpositive_measured_candidates_only',
+    nonPositiveGrossEdgeTreatment: 'route_pool_market_edge_search_not_fee_compression',
     staleCandidateEconomicAuthority: false,
     staleRouteEvidencePublished: false,
     trendAuthority: 'measured_observation_delta_only',
