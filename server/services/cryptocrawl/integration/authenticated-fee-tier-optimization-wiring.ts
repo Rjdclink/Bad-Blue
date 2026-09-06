@@ -5,6 +5,7 @@ import {
   type CexFeeEvidence,
   type CexFeeVenue,
 } from '../intelligence/cex-fee-resolver.js';
+import { ensureCexFeeRecoveryWiring, getCexFeeRecoveryWiringStatus } from './cex-fee-recovery-wiring.js';
 
 export interface AuthenticatedFeeTierSnapshot {
   venue: CexFeeVenue;
@@ -158,6 +159,7 @@ async function scanOnce(symbolsInput?: readonly string[]): Promise<void> {
         .map(item => ({ venue: item.venue, symbol: item.symbol, makerRebateBps: item.makerRebateBps })),
       observationIntervalMs: observationIntervalMs(),
       feeAuthority: 'cex_fee_resolver_only',
+      feeRecoveryObserverInstalled: getCexFeeRecoveryWiringStatus().installed,
       directPrivateExchangeRequests: false,
       observationGeneratesExchangeTraffic: false,
       organicVolumeOnly: true,
@@ -208,6 +210,10 @@ export function getAuthenticatedFeeTierTrajectory(): AuthenticatedFeeTierTraject
 export function ensureAuthenticatedFeeTierOptimizationWiring(): void {
   if (schedulerInstalled) return;
   schedulerInstalled = true;
+  // The fee-recovery observer is attached to the already-canonical authenticated
+  // fee wiring so both runtime installers receive it without creating a second
+  // lifecycle/economics authority.
+  ensureCexFeeRecoveryWiring();
   void scanOnce().catch(error => {
     logger.debug('[AuthenticatedFeeTier] Initial canonical fee telemetry observation deferred', {
       component: 'AuthenticatedFeeTierOptimizationWiring',
@@ -220,6 +226,7 @@ export function ensureAuthenticatedFeeTierOptimizationWiring(): void {
     observationIntervalMs: observationIntervalMs(),
     historySamples: historyLimit(),
     feeAuthority: 'cex_fee_resolver_only',
+    feeRecoveryAuthority: 'embedded_canonical_fees_plus_received_only_recovery_observer',
     privateRateAuthority: 'existing_exchange_rate_lanes_and_fee_cache',
     signedMakerEconomics: true,
     organicAuthenticatedFeeTrajectory: true,
@@ -239,11 +246,13 @@ export function getAuthenticatedFeeObservationStatus(): {
   scanInFlight: boolean;
   snapshots: number;
   trajectories: number;
+  feeRecoveryInstalled: boolean;
 } {
   return {
     lastScanAt,
     scanInFlight: Boolean(scanInFlight),
     snapshots: getAuthenticatedFeeTierSnapshot().length,
     trajectories: getAuthenticatedFeeTierTrajectory().length,
+    feeRecoveryInstalled: getCexFeeRecoveryWiringStatus().installed,
   };
 }

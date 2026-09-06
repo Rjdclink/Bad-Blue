@@ -1,4 +1,5 @@
 import type { MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
+import { getCexFeeRecoverySnapshot } from '../intelligence/cex-fee-recovery-authority.js';
 import type { EconomicTransformationAdvice } from './economic-transformation-engine.js';
 import {
   getRawCrossVenueEdge,
@@ -434,11 +435,15 @@ export function getBpsReductionSuperEngineSnapshot() {
   const tacticStates = [...tacticOutcome.entries()]
     .map(([key, state]) => ({ key, ...state, validationHitRate: state.attempts > 0 ? state.validationHits / state.attempts : null }))
     .sort((left, right) => right.allocationMultiplier - left.allocationMultiplier || right.validationHits - left.validationHits);
+  const feeRecovery = getCexFeeRecoverySnapshot();
   return {
     ledgerRows: ledger.length,
     realizedRows: realized.length,
     tacticStates,
     edgeHalfLife: [...edgeLife.entries()].map(([symbol, state]) => ({ symbol, ...state })),
+    feeRecovery,
+    feeRecoveryAuthority: 'embedded_canonical_fees_plus_received_only_sidecar' as const,
+    unreceivedProgramRecoveryCanCreateProfitability: false as const,
     canonicalBpsAuthority: 'measured_candidate_registry' as const,
     allTopologiesConsumeCanonicalBps: true as const,
     authority: 'measurement_learning_and_scheduling_only' as const,

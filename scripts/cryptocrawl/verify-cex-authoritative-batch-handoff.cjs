@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 
 const verifier = fs.readFileSync('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts', 'utf8');
+const profitAuthority = fs.readFileSync('server/services/cryptocrawl/governance/profit-admission-authority.ts', 'utf8');
 const graph = fs.readFileSync('server/services/cryptocrawl/discovery/opportunity-graph.ts', 'utf8');
 
 // The verifier owns one explicit full-map batch entry point. It must reuse the
@@ -13,11 +14,18 @@ assert.match(verifier, /governance\.requireAllowed\('ADVISE', \{ chain: req\.gas
 assert.match(verifier, /governance\.completeAdvisoryCycle\('system', 'arb_verifier_batch_cycle_complete'\)/);
 
 // All original deterministic authorities remain in the one reused batch path.
-assert.match(verifier, /primeCexFeeEvidence\(\[\.\.\.rawEdgeSurvivors\]\)/);
+assert.match(verifier, /primeCexFeeEvidence\(economicsSymbols\)/);
 assert.match(verifier, /quantityFractions = \[0\.05/);
 assert.match(verifier, /topSpreadBps <= breakEvenBps/);
 assert.match(verifier, /candidate\.netProfitUsd > bestPlan\.netProfitUsd/);
-assert.match(verifier, /plan\.netProfitUsd < req\.minNetProfitUsd/);
+
+// Profit admission has one non-configurable authority. The verifier may not
+// accept a caller-supplied minimum-profit magnitude.
+assert.match(verifier, /isStrictlyPositiveAllInNetProfit\(plan\.netProfitUsd\)/);
+assert.doesNotMatch(verifier, /minNetProfitUsd/);
+assert.match(profitAuthority, /rule: 'strictly_positive_verified_all_in_net_profit'/);
+assert.match(profitAuthority, /minimumProfitUsd: 0/);
+assert.doesNotMatch(profitAuthority, /process\.env/);
 
 // The graph consumes the complete map exactly once and preserves selected-symbol
 // ordering when handing formation outcomes downstream.
@@ -50,5 +58,6 @@ console.log(JSON.stringify({
   authenticatedFeeAuthorityPreserved: true,
   depthAwareSizingPreserved: true,
   deterministicNetEconomicsPreserved: true,
+  singleProfitAdmissionAuthority: true,
   batchFailureFailsClosed: true,
 }, null, 2));

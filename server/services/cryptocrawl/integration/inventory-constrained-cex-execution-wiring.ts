@@ -8,6 +8,7 @@ import {
   type CexSettlementAdapter,
   type ExecutableCexVenue,
 } from '../execution/cex-settlement.js';
+import { isStrictlyPositiveAllInNetProfit } from '../governance/profit-admission-authority.js';
 
 const installed = new WeakSet<object>();
 const balanceCache = new Map<ExecutableCexVenue, { expiresAt: number; balances: Record<string, string> }>();
@@ -197,7 +198,7 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
   if (capabilityRejection) return { kind: 'reject', reason: capabilityRejection };
   const feeRejection = feeFreshnessRejection(plan);
   if (feeRejection) return { kind: 'reject', reason: feeRejection };
-  if (!Number.isFinite(plan.netProfitUsd) || !(plan.netProfitUsd > 0)) {
+  if (!isStrictlyPositiveAllInNetProfit(plan.netProfitUsd)) {
     return { kind: 'reject', reason: 'REJECT_NEGATIVE_NET_EDGE: strict positive measured all-in economics required before inventory work' };
   }
   if (!await reconcilePairBalances(plan)) {
@@ -221,7 +222,6 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     symbol: plan.symbol,
     notionalUsd: freshBound,
     maxQuoteAgeMs,
-    minNetProfitUsd: 0,
   }).catch(error => {
     logger.warn('[InventoryConstrainedCex] Fresh post-balance economics evaluation failed closed', {
       component: 'InventoryConstrainedCexExecutionWiring',
@@ -244,7 +244,7 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     });
     return { kind: 'reject', reason: 'REJECT_VENUE_DRIFT: fresh inventory-bounded optimization changed venue pair' };
   }
-  if (!Number.isFinite(refreshed.netProfitUsd) || refreshed.netProfitUsd <= 0) {
+  if (!isStrictlyPositiveAllInNetProfit(refreshed.netProfitUsd)) {
     return { kind: 'reject', reason: 'REJECT_RESIZED_NEGATIVE_NET: fresh post-balance plan is not strictly profitable after measured costs' };
   }
 
@@ -266,6 +266,7 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     sellBaseSpendable: capacity.sellBaseSpendable,
     economicsAuthority: 'fresh_order_books_plus_bounded_current_fee_evidence_after_balance_io',
     inventoryAuthority: 'authenticated_spendable_balance_after_trade_and_payout_reserves',
+    profitAdmissionAuthority: 'profit_admission_authority',
     balanceCacheMs: balanceCacheMs(),
     retryDelaysMs: inventoryRetryDelaysMs(),
     staleFallbackExecutionAuthority: false,
@@ -320,6 +321,7 @@ export function ensureInventoryConstrainedCexExecutionWiring(): void {
     duplicateDownstreamAdmissionAvoidedOnKnownResourceFailure: true,
     bpsExecutionFloor: null,
     executionRule: 'strict_all_in_net_profit_usd_greater_than_zero',
+    profitAdmissionAuthority: 'profit_admission_authority',
     terminalSettlementAuthorityUnchanged: true,
   });
 }

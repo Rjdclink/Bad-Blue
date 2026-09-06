@@ -10,7 +10,6 @@
  * Env:
  *   CRYPTO_ARBITRAGE_SYMBOL=ETHUSDT
  *   CRYPTO_ARBITRAGE_NOTIONAL_USD=200
- *   CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD=0.5
  *   CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS=5000
  *   CRYPTO_ARBITRAGE_GAS_CHAIN=polygon
  *   ARB_CYCLES=5
@@ -18,9 +17,10 @@
  */
 import { arbitrageVerifier } from '../arbitrage/arbitrage-verifier.js';
 import type { ChainId as BridgeChainId } from '../bridge/types';
-import { getCryptocrawlGovernance } from '../governance/index.js';
-import { getCryptara } from '../../cryptara/index.js';
 import { marketConditionDetector, MarketConditionDetector } from '../core/market-condition-detector.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
+import { isStrictlyPositiveAllInNetProfit } from '../governance/profit-admission-authority.js';
+import { getCryptara } from '../../cryptara/index.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -34,7 +34,6 @@ function n(v: unknown, fallback: number): number {
 async function main(): Promise<void> {
   const symbol = (process.env.CRYPTO_ARBITRAGE_SYMBOL || 'ETHUSDT').trim().toUpperCase();
   const notionalUsd = n(process.env.CRYPTO_ARBITRAGE_NOTIONAL_USD, 200);
-  const minNetProfitUsd = n(process.env.CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD, 0.5);
   const maxQuoteAgeMs = n(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS, 5000);
 
   const cycles = Math.max(1, Math.floor(n(process.env.ARB_CYCLES, 5)));
@@ -45,7 +44,7 @@ async function main(): Promise<void> {
   let profitable = 0;
   let skipped = 0;
 
-  console.log(`[arb] cycles=${cycles} intervalMs=${intervalMs} symbol=${symbol} notionalUsd=${notionalUsd} minNetProfitUsd=${minNetProfitUsd}`);
+  console.log(`[arb] cycles=${cycles} intervalMs=${intervalMs} symbol=${symbol} notionalUsd=${notionalUsd} profitRule=strictly_positive_all_in_net`);
 
   // Canonical: "one constrained live cycle" and Stage 1: auto-pause after each advisory cycle.
   if (cycles !== 1) {
@@ -93,7 +92,7 @@ async function main(): Promise<void> {
         skipped++;
         console.log(`[arb] ${i + 1}/${cycles} SKIP elapsedMs=${elapsed}`);
       } else {
-        const decision = plan.netProfitUsd >= minNetProfitUsd ? 'PROFIT' : 'NO_PROFIT';
+        const decision = isStrictlyPositiveAllInNetProfit(plan.netProfitUsd) ? 'PROFIT' : 'NO_PROFIT';
         if (decision === 'PROFIT') profitable++;
         else skipped++;
 
@@ -148,4 +147,3 @@ main().catch(err => {
   console.error(err);
   process.exitCode = 1;
 });
-

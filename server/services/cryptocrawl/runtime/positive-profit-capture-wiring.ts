@@ -8,6 +8,7 @@ import {
   getDynamicMakerCanaryStatus,
   isMakerRecoveryPlan,
 } from '../execution/stablecoin-maker-strategy.js';
+import { isStrictlyPositiveAllInNetProfit } from '../governance/profit-admission-authority.js';
 import { stageManager } from '../governance/stage-management.js';
 import { computeAriesExpectedValueOfInformation, rankAriesBeam } from '../intelligence/aries-vault.js';
 import { ensureCoinCapEnvironmentWiring } from './coincap-environment-wiring.js';
@@ -161,7 +162,7 @@ function normalizePositiveAssessment(
   assessment: CryptaraOpportunityAssessment,
 ): CryptaraOpportunityAssessment {
   const plan = context.plan;
-  if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) return assessment;
+  if (!plan || !isStrictlyPositiveAllInNetProfit(plan.netProfitUsd)) return assessment;
 
   const makerPlan = isMakerRecoveryPlan(plan) ? plan : null;
   const hybridPlan = isHybridCexRecoveryPlan(plan) ? plan : null;
@@ -205,8 +206,10 @@ export function ensurePositiveProfitCaptureWiring(): void {
   ensureDynamicRpcProviderWiring();
   ensureStablecoinMakerExecutionWiring();
 
+  // Route recovery remains a composition concern only. Profit admission itself
+  // is owned exclusively by governance/profit-admission-authority.ts and is not
+  // patched or overridden here.
   const verifier = arbitrageVerifier as typeof arbitrageVerifier & {
-    verifyOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
     evaluateOnce: (request: any) => Promise<VerifiedArbitragePlan | null>;
   };
   const originalEvaluateOnce = verifier.evaluateOnce.bind(verifier);
@@ -220,24 +223,13 @@ export function ensurePositiveProfitCaptureWiring(): void {
       maxQuoteAgeMs: Math.max(1, Number(request?.maxQuoteAgeMs || process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5000)),
     });
   };
-  verifier.verifyOnce = async (request: any): Promise<VerifiedArbitragePlan | null> => {
-    const plan = await verifier.evaluateOnce(request);
-    return plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0 ? plan : null;
-  };
 
   const stageRuntime = stageManager as typeof stageManager & { getMaxDailyProfit: () => number };
   stageRuntime.getMaxDailyProfit = () => Number.POSITIVE_INFINITY;
 
   const cryptara = getCryptara() as ReturnType<typeof getCryptara> & {
-    getAutonomousDirective: () => ReturnType<ReturnType<typeof getCryptara>['getAutonomousDirective']>;
     recordOpportunityObservation: (context: CryptaraOpportunityContext) => CryptaraOpportunityAssessment;
   };
-
-  const originalDirective = cryptara.getAutonomousDirective.bind(cryptara);
-  cryptara.getAutonomousDirective = () => ({
-    ...originalDirective(),
-    minimumNetProfitUsd: 0,
-  });
 
   const originalObservation = cryptara.recordOpportunityObservation.bind(cryptara);
   cryptara.recordOpportunityObservation = (context: CryptaraOpportunityContext): CryptaraOpportunityAssessment => {
@@ -249,8 +241,10 @@ export function ensurePositiveProfitCaptureWiring(): void {
   const makerCanary = getDynamicMakerCanaryStatus();
   logger.info('[PositiveProfitCapture] Positive-edge routing installed with dynamic maker recovery', {
     component: 'PositiveProfitCapture',
-    deterministicNetProfitRule: 'strictly_greater_than_zero',
+    deterministicNetProfitRule: 'profit_admission_authority',
     arbitraryMinimumProfitUsd: false,
+    profitAdmissionRuntimeOverride: false,
+    cryptaraMinimumProfitOverride: false,
     maximumDailyProfitExecutionStop: false,
     rankScoreExecutionGate: false,
     authenticatedKrakenFeeAuthority: Boolean(process.env.KRAKEN_API_KEY?.trim() && process.env.KRAKEN_API_SECRET?.trim()),
@@ -298,6 +292,7 @@ export function ensurePositiveProfitCaptureWiring(): void {
     },
     cexProductConstraintsBeforeEligibility: ['coinbase', 'kraken', 'okx'],
     retainedHardAuthorities: [
+      'profit_admission_authority',
       'deterministic_all_in_economics',
       'authenticated_fee_evidence',
       'measured_product_constraints',
