@@ -35,6 +35,7 @@ export type FlashLoanProviderSelectionInput =
   | FlashLoanProviderSelection
   | Omit<SingleFlashLoanProviderSelection, 'kind'>
   | Omit<DualFlashLoanProviderSelection, 'kind'>;
+export type FlashLoanProviderSelectionListener = (selection: FlashLoanProviderSelection) => void;
 
 function cloneEconomics(value: FlashLoanProviderEconomics): FlashLoanProviderEconomics {
   return {
@@ -77,14 +78,23 @@ function normalizeSelection(input: FlashLoanProviderSelectionInput): FlashLoanPr
 
 class FlashLoanProviderSelectionRegistry {
   private readonly entries = new Map<string, FlashLoanProviderSelection>();
+  private readonly listeners = new Set<FlashLoanProviderSelectionListener>();
   private readonly maxEntries = Math.max(64, Math.min(4096, Number(process.env.ZERO_CAPITAL_PROVIDER_SELECTION_MAX || 1024)));
 
   record(input: FlashLoanProviderSelectionInput): void {
     const selection = normalizeSelection(input);
     if (!selection.opportunityId || selection.expiresAt <= selection.selectedAt) return;
     if (selection.kind === 'dual' && (selection.balancerAmount <= 0n || selection.aaveAmount <= 0n)) return;
-    this.entries.set(selection.opportunityId, cloneSelection(selection));
+    const stored = cloneSelection(selection);
+    this.entries.set(selection.opportunityId, stored);
     this.prune();
+    for (const listener of this.listeners) {
+      try {
+        listener(cloneSelection(stored));
+      } catch {
+        // Advisory observers must never interfere with canonical provider selection.
+      }
+    }
   }
 
   get(opportunityId: string, now = Date.now()): FlashLoanProviderSelection | null {
@@ -100,6 +110,11 @@ class FlashLoanProviderSelectionRegistry {
     this.entries.delete(opportunityId);
   }
 
+  onSelection(listener: FlashLoanProviderSelectionListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   private prune(): void {
     const now = Date.now();
     for (const [id, selection] of this.entries) if (selection.expiresAt <= now) this.entries.delete(id);
@@ -113,6 +128,7 @@ class FlashLoanProviderSelectionRegistry {
  * Sole flash-provider selection authority for ZERO_CAPITAL_ATOMIC. Single-provider
  * and combined-provider choices share one opportunity-keyed registry so execution,
  * pre-broadcast validation, settlement attribution, and provider repricing cannot
- * disagree about which provider plan is current.
+ * disagree about which provider plan is current. onSelection() is read-only
+ * telemetry; observer failure cannot alter selection or execution.
  */
 export const flashLoanProviderSelectionRegistry = new FlashLoanProviderSelectionRegistry();
