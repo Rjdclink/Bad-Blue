@@ -6,6 +6,10 @@ import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
 import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import {
+  isStrictlyPositiveAllInNetProfit,
+  minimumPositiveProfitBaseUnits,
+} from '../governance/profit-admission-authority.js';
 import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../governance/zero-capital-infrastructure-policy.js';
 import { stageManager } from '../governance/stage-management.js';
 import { marketDataProviders, type DexQuoteObservation } from '../intelligence/market-data-providers.js';
@@ -426,11 +430,12 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   const grossBaseUnits = firm.finalAmount.sub(firm.loanAmount);
   if (grossBaseUnits.lte(0)) throw new Error('0x firm round-trip gross economics are not positive');
   const profitRecipient = asAddress('operational profit recipient', resolveOperationalProfitRecipient());
+  const canonicalMinProfit = BigNumber.from(minimumPositiveProfitBaseUnits().toString());
   const preliminaryData = encodeReceiverPayload({
     receiver,
     loanToken: config.usdc,
     loanAmount: firm.loanAmount,
-    minProfit: BigNumber.from(1),
+    minProfit: canonicalMinProfit,
     profitRecipient,
     first: firm.first,
     second: firm.second,
@@ -446,13 +451,11 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   const deterministicNetBaseUnits = grossBaseUnits.sub(flashLoanFeeAmount).sub(gasBaseUnits);
   if (deterministicNetBaseUnits.lte(0)) throw new Error('0x firm atomic round-trip is not positive after measured flash fee and gas');
 
-  const minProfitBps = Math.max(1, Math.min(10_000, Math.trunc(Number(process.env.ZERO_CAPITAL_MIN_PROFIT_BPS || 9000))));
-  const minProfit = deterministicNetBaseUnits.mul(minProfitBps).div(10_000);
   const finalData = encodeReceiverPayload({
     receiver,
     loanToken: config.usdc,
     loanAmount: firm.loanAmount,
-    minProfit: minProfit.gt(0) ? minProfit : BigNumber.from(1),
+    minProfit: canonicalMinProfit,
     profitRecipient,
     first: firm.first,
     second: firm.second,
@@ -490,7 +493,7 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
     gasCostBps,
     allInCostBps,
     netProfitBps,
-    minProfit: (minProfit.gt(0) ? minProfit : BigNumber.from(1)).toString(),
+    minProfit: canonicalMinProfit.toString(),
     payload: { to: receiver, data: finalData, value: '0', gasLimit: Number(estimatedGas.toString()) },
     firstQuote: firm.firstQuote,
     secondQuote: firm.secondQuote,
@@ -505,6 +508,7 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
       'balancer_v2:flash_fee_measured_onchain',
       'receiver:exact_eth_call_simulation',
       'receiver:exact_gas_estimate',
+      'profit_admission:single_strictly_positive_authority',
       'discovery_infrastructure_mutation:false',
       'synthetic_evidence:false',
     ],
@@ -525,7 +529,9 @@ export async function executePreparedZeroXAtomicRoundTrip(
   let plan: ZeroXAtomicRoundTripPreparation;
   try { plan = await prepareZeroXAtomicRoundTrip(request); }
   catch (error) { return rejected(error instanceof Error ? error.message : String(error)); }
-  if (!(plan.deterministicNetProfitUsd > 0) || plan.expiresAt <= Date.now()) return rejected('DEX_ATOMIC_FRESH_ALL_IN_ECONOMICS_NOT_POSITIVE');
+  if (!isStrictlyPositiveAllInNetProfit(plan.deterministicNetProfitUsd) || plan.expiresAt <= Date.now()) {
+    return rejected('DEX_ATOMIC_FRESH_ALL_IN_ECONOMICS_NOT_POSITIVE');
+  }
 
   const config = SUPPORTED_CHAINS[request.chain];
   await multiProviderRpcManager.initialize([request.chain]);
