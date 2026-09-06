@@ -83,6 +83,13 @@ function validTxHash(value: string): boolean {
   return /^0x[0-9a-fA-F]{64}$/.test(value.trim());
 }
 
+function inputAsset(quote: AcrossBridgeQuote): string {
+  return quote.inputSymbol || quote.token;
+}
+function outputAsset(quote: AcrossBridgeQuote): string {
+  return quote.outputSymbol || quote.token;
+}
+
 /**
  * A route can consume receipt-backed approval gas and still fail before principal
  * broadcast. Persist that terminal cost into the existing durable cross-chain
@@ -164,7 +171,7 @@ async function persistAcrossPrebroadcastTerminalCost(input: {
         costReference,
         input.quote.originChain,
         input.quote.destinationChain,
-        input.quote.token,
+        inputAsset(input.quote),
         input.quote.inputToken.toLowerCase(),
         input.quote.outputToken.toLowerCase(),
         input.quote.inputTokenDecimals,
@@ -340,10 +347,21 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
   if (realized === null || !Number.isFinite(realized)) throw new Error('CROSS_CHAIN_TERMINAL_REALIZED_ECONOMICS_INCOMPLETE');
   const settledAt = result.settledAt ?? Date.now();
   const terminal = result.terminalAmountEvidence;
+  const routeInputAsset = inputAsset(result.quote);
+  const routeOutputAsset = outputAsset(result.quote);
+  const sameAsset = routeInputAsset === routeOutputAsset;
   const inputHuman = terminal ? Number(ethers.utils.formatUnits(terminal.inputAmount, result.quote.inputTokenDecimals)) : null;
   const outputHuman = terminal ? Number(ethers.utils.formatUnits(terminal.outputAmount, result.quote.outputTokenDecimals)) : null;
-  const acquisitionCostUsd = inputHuman !== null && result.assetUsd !== null && Number.isFinite(inputHuman) ? inputHuman * result.assetUsd : null;
-  const proceedsUsd = outputHuman !== null && result.assetUsd !== null && Number.isFinite(outputHuman) ? outputHuman * result.assetUsd : null;
+  // The durable lifecycle already computed cross-asset realized P/L from separate
+  // live input/output prices. A single compatibility assetUsd is intentionally
+  // absent on cross-asset routes, so never reconstruct false acquisition/proceeds
+  // from one price here.
+  const acquisitionCostUsd = sameAsset && inputHuman !== null && result.assetUsd !== null && Number.isFinite(inputHuman)
+    ? inputHuman * result.assetUsd
+    : null;
+  const proceedsUsd = sameAsset && outputHuman !== null && result.assetUsd !== null && Number.isFinite(outputHuman)
+    ? outputHuman * result.assetUsd
+    : null;
   const candidate = measuredCandidateRegistry.get(result.opportunityId);
   const prebroadcastCostOnly = result.status === 'FAILED' && String(result.error || '').startsWith('ACROSS_PREBROADCAST_COST_ONLY:');
   if (candidate) {
@@ -358,7 +376,7 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
             ? 'Across principal was never broadcast; receipt-backed approval gas produced a realized loss'
             : result.status === 'FAILED'
               ? 'Across origin transaction never transferred principal or reverted; actual origin/approval gas produced a realized loss'
-              : 'Terminal Across same-asset result was not profitable after actual origin gas',
+              : 'Terminal Across route was not profitable after actual closed-USD input/output value and actual origin gas',
       provenance: [...candidate.provenance, 'cross_chain:durable_terminal_reconciliation', 'cross_chain:system_capital_settlement_authority'],
     });
   }
@@ -374,8 +392,8 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
     source: 'master_pipeline',
     opportunityId: result.opportunityId,
     chain: `${result.quote.originChain}->${result.quote.destinationChain}`,
-    symbol: result.quote.token,
-    strategy: 'across_same_asset_cross_chain',
+    symbol: sameAsset ? routeInputAsset : `${routeInputAsset}/${routeOutputAsset}`,
+    strategy: sameAsset ? 'across_same_asset_cross_chain' : 'across_cross_asset_cross_chain',
     success: result.success,
     expectedProfitUsd: result.expectedProfitUsd,
     realizedProfitUsd: realized,
@@ -392,6 +410,7 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
       ...(terminal?.provenance ?? []),
       'cross_chain:restart_safe_terminal_feedback',
       'cross_chain:actual_origin_gas',
+      sameAsset ? 'cross_chain:terminal_value_model_same_asset' : 'cross_chain:terminal_value_model_separate_input_output_usd',
       prebroadcastCostOnly ? 'cross_chain:receipt_backed_prebroadcast_cost_only' : result.status === 'FAILED' ? 'cross_chain:prebroadcast_or_origin_revert_terminal_truth' : 'cross_chain:bridge_terminal_truth',
       'synthetic_evidence:false',
     ],
@@ -401,7 +420,7 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
       settlementConfirmed: true,
       submittedAt: result.submittedAt,
       settledAt,
-      venueOrRoute: `across:${result.quote.originChain}->${result.quote.destinationChain}:${result.quote.token}`,
+      venueOrRoute: `across:${result.quote.originChain}->${result.quote.destinationChain}:${routeInputAsset}->${routeOutputAsset}`,
       chain: result.quote.destinationChain,
       predicted: { profitUsd: result.expectedProfitUsd, feeUsd: null, slippageBps: null },
       realized: {
@@ -414,7 +433,7 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
         slippageBps: null,
         netProfitUsd: realized,
       },
-      provenance: [...(terminal?.provenance ?? []), terminalProvenance],
+      provenance: [...(terminal?.provenance ?? []), terminalProvenance, sameAsset ? 'same_asset_compatibility_price' : 'cross_asset_reconstruction_from_single_price_forbidden'],
       transactionHash: result.depositTxnRef,
       error: result.error,
     },
@@ -436,7 +455,7 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
   const reservation: OnchainSystemCapitalReservation | null = await reserveOnchainSystemCapital({
     opportunityId: candidate.opportunityId,
     chain: quote.originChain,
-    asset: quote.token,
+    asset: inputAsset(quote),
     tokenAddress: quote.inputToken,
     amountBaseUnits: quote.inputAmount,
     expiresAt: reservationExpiry,
