@@ -10,19 +10,19 @@ const liquidation = read('server/services/cryptocrawl/discovery/liquidation-oppo
 const registry = read('server/services/cryptocrawl/discovery/measured-candidate-registry.ts');
 
 // Every viable maker symbol must receive authenticated fee priming and canonical
-// live evaluation in the same cycle. Batch/grouped acquisition is primary; an
-// unresolved OKX product must immediately use the canonical per-instrument path
-// rather than becoming a discovery-budget defer. The account fee authority still
-// owns endpoint throttling/rate safety.
+// live evaluation in the same cycle. Batch/grouped acquisition is primary. Only
+// unresolved ungrouped OKX products use the canonical per-instrument fallback;
+// failed grouped/account requests are not fanned out into a request storm.
 has(maker, 'const coinbaseSymbols = viable', 'maker fee priming must cover every viable Coinbase route');
 has(maker, 'const krakenSymbols = viable', 'maker fee priming must cover every viable Kraken route');
 has(maker, 'const okxSymbols = viable', 'maker fee priming must cover every viable OKX route');
-has(maker, "primeResult.unresolved.filter(item => item.venue === 'okx')", 'unresolved OKX maker fee evidence must receive same-cycle fallback');
-has(maker, "resolveCexFeeEvidence('okx', item.symbol, { forceRefresh: true })", 'OKX maker fallback must use canonical force-refresh evidence authority');
+has(maker, "primeResult.unresolved.filter(item => item.venue === 'okx')", 'unresolved OKX maker fee evidence must be classified in the same cycle');
+has(maker, "!entry.constraints.feeGroupId", 'only ungrouped unresolved OKX products may fan into per-instrument fallback');
+has(maker, "resolveCexFeeEvidence('okx', item.symbol, { forceRefresh: true })", 'ungrouped OKX maker fallback must use canonical force-refresh evidence authority');
 has(maker, 'runBounded(viable, makerLiveEvaluationConcurrency()', 'every viable maker symbol must receive same-cycle canonical live evaluation');
 has(maker, 'maker_first_pass:all_viable_symbols_live_evaluated', 'maker first-pass provenance is missing');
 has(maker, 'maker_fee_prime:all_viable_symbols_first_pass', 'maker all-route fee priming provenance is missing');
-has(maker, 'maker_fee_redundancy:batch_then_unresolved_okx_force_refresh', 'maker redundant first-pass fee acquisition provenance is missing');
+has(maker, 'maker_fee_redundancy:batch_then_ungrouped_okx_force_refresh', 'maker redundant first-pass fee acquisition provenance is missing');
 lacks(maker, 'makerFeePrimeBudget', 'maker fee budget must not suppress viable route measurement');
 lacks(maker, 'selectMakerFeePrimeTargets', 'maker target selection must not create deferred viable routes');
 lacks(maker, 'makerFeePrimeCursor', 'maker rotating fee cursor must remain retired');
@@ -43,4 +43,4 @@ has(registry, "normalized.startsWith('required:')", 'required execution facts mu
 has(registry, "normalized.startsWith('optional:')", 'optional facts must remain recognized as nonblocking');
 has(registry, "normalized.startsWith('advisory:')", 'advisory facts must remain recognized as nonblocking');
 
-console.log('[first-pass-route-measurability] PASS: maker and liquidation no longer use discovery budgets to suppress viable first-pass evidence acquisition; maker uses batch-plus-unresolved-OKX fallback and provider pressure remains owned by canonical rate/concurrency authorities');
+console.log('[first-pass-route-measurability] PASS: maker and liquidation no longer use discovery budgets to suppress viable first-pass evidence acquisition; maker uses batch-plus-ungrouped-OKX fallback without grouped request storms and provider pressure remains owned by canonical rate/concurrency authorities');
