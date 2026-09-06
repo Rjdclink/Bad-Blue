@@ -191,15 +191,17 @@ function publish(event: PrivateExecutionFeedbackEvent): void {
 }
 
 export function trackSubmittedPrivateCexOrder(input: {
-  venue: PrivateExecutionFeedbackVenue;
+  venue: string;
   orderId: string;
   symbol: string;
   submittedAt: number;
 }): void {
+  if (input.venue !== 'kraken' && input.venue !== 'okx') return;
+  const venue: PrivateExecutionFeedbackVenue = input.venue;
   const orderId = input.orderId.trim();
   const symbol = canonicalizeCexSymbol(input.symbol)?.symbol || input.symbol.trim().toUpperCase();
   if (!orderId || !symbol) return;
-  trackedOrders.set(orderKey(input.venue, orderId), {
+  trackedOrders.set(orderKey(venue, orderId), {
     symbol,
     submittedAt: input.submittedAt,
     expiresAt: Math.max(Date.now(), input.submittedAt) + TRACKED_ORDER_TTL_MS,
@@ -220,8 +222,14 @@ function krakenEvent(row: Record<string, any>, sequence: number | null): Private
   const averageFillPrice = finiteNumber(row.avg_price);
   const lastFillPrice = finiteNumber(row.last_price);
   const fees = Array.isArray(row.fees) ? row.fees : [];
-  const feeAmount = fees.length > 0 ? fees.reduce((sum: number, fee: any) => sum + (finiteNumber(fee?.qty) || 0), 0) : null;
-  const feeUsd = fees.length > 0 ? fees.reduce((sum: number, fee: any) => sum + (finiteNumber(fee?.fee_usd_equiv) || 0), 0) : null;
+  const feeAmounts = fees.map((fee: any) => finiteNumber(fee?.qty));
+  const feeUsdValues = fees.map((fee: any) => finiteNumber(fee?.fee_usd_equiv));
+  const feeAmount = fees.length > 0 && feeAmounts.every((value: number | null) => value !== null)
+    ? feeAmounts.reduce((sum: number, value: number | null) => sum + value!, 0)
+    : null;
+  const feeUsd = fees.length > 0 && feeUsdValues.every((value: number | null) => value !== null)
+    ? feeUsdValues.reduce((sum: number, value: number | null) => sum + value!, 0)
+    : null;
   const feeAsset = fees.length > 0 && fees.every((fee: any) => String(fee?.asset || '') === String(fees[0]?.asset || ''))
     ? String(fees[0]?.asset || '') || null
     : null;
@@ -355,17 +363,19 @@ export function waitForPrivateCexExecutionFeedback(input: {
   if (timeoutMs === 0) return Promise.resolve(null);
   return new Promise(resolve => {
     let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+    let unsubscribe: () => void = () => undefined;
     const finish = (event: PrivateExecutionFeedbackEvent | null) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       unsubscribe();
       resolve(event);
     };
-    const unsubscribe = subscribePrivateCexExecutionFeedback(event => {
+    unsubscribe = subscribePrivateCexExecutionFeedback(event => {
       if (event.venue === input.venue && event.orderId === input.orderId && event.observedAt > input.afterObservedAt) finish(event);
     });
-    const timer = setTimeout(() => finish(null), timeoutMs);
+    timer = setTimeout(() => finish(null), timeoutMs);
     timer.unref?.();
   });
 }
