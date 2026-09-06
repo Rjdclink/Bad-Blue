@@ -1,6 +1,6 @@
 import logger from '../../../logger.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
-import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
+import { startCanonicalZeroCapitalDiscovery } from '../discovery/zero-capital-canonical-discovery.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
@@ -12,7 +12,6 @@ import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-
 import { ensureHybridCexExecutionWiring } from '../runtime/hybrid-cex-execution-wiring.js';
 import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
 import { ensureStageProofMetricsWiring } from '../runtime/stage-proof-metrics-wiring.js';
-import { ensureZeroCapitalRealizedProfitWiring } from '../runtime/zero-capital-realized-profit-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
 import { ensureAuthenticatedFeeTierOptimizationWiring } from './authenticated-fee-tier-optimization-wiring.js';
 import { ensureCexFourModeObservabilityWiring } from './cex-four-mode-observability-wiring.js';
@@ -36,13 +35,8 @@ import { ensureOracleEvidenceWiring } from './oracle-evidence-wiring.js';
 import { logLegacyIntelligenceQuarantine } from './legacy-intelligence-quarantine.js';
 import { ensurePredictionMarketDiscoveryWiring } from './prediction-market-discovery-wiring.js';
 import { ensureCryptoRuntimeObservability } from './runtime-observability.js';
-import { ensureZeroCapitalResourceWiring } from './zero-capital-resource-wiring.js';
 import { ensureZeroCapitalShadowPriorityWiring } from './zero-capital-shadow-priority-wiring.js';
-import { ensureZeroCapitalFlashProviderWiring } from './zero-capital-flash-provider-wiring.js';
 import { ensureZeroCapitalAtomicStackWiring } from './zero-capital-atomic-stack-wiring.js';
-import { ensureZeroCapitalDynamicAttemptBarrierWiring } from './zero-capital-dynamic-attempt-barrier-wiring.js';
-import { ensureProviderSpecificZeroCapitalExecutionWiring } from './provider-specific-zero-capital-execution-wiring.js';
-import { ensureDualProviderZeroCapitalExecutionWiring } from './dual-provider-zero-capital-execution-wiring.js';
 import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js';
 
 let installed = false;
@@ -186,29 +180,32 @@ export function getCanonicalRuntimeComponentIsolationSnapshot() {
 }
 
 function startCanonicalZeroCapitalRuntime(): void {
-  if (zeroCapitalStartPromise || zeroCapitalEngine.getState().isRunning) return;
+  if (zeroCapitalStartPromise) return;
   if (zeroCapitalRetryTimer) {
     clearTimeout(zeroCapitalRetryTimer);
     zeroCapitalRetryTimer = null;
   }
   zeroCapitalStartAttempts += 1;
-  zeroCapitalStartPromise = zeroCapitalEngine.start()
+  zeroCapitalStartPromise = startCanonicalZeroCapitalDiscovery()
     .then(() => {
       zeroCapitalRetryTimer = null;
-      logger.info('[ZeroCapitalRuntime] Canonical zero-capital lifecycle started', {
+      logger.info('[ZeroCapitalRuntime] Canonical zero-capital discovery lifecycle started', {
         component: 'CanonicalCryptoCrawlerRuntimeWiring',
-        lifecycleOwner: 'AutonomousZeroCapitalEngine',
+        lifecycleOwner: 'CanonicalZeroCapitalDiscovery',
+        executionSchedulerOwner: 'CanonicalExecutionScheduler',
+        executionOwner: 'CanonicalZeroCapitalExecutor',
+        independentZeroCapitalExecutionLoop: false,
+        runtimeMethodMutation: false,
         receiverFleetInitialization: true,
         dynamicGraphlessScanning: true,
         liveExecutionRequested: process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true' && process.env.NO_EXECUTION !== 'true',
-        zeroCapitalSpecificExecutionFlagAuthority: false,
         startAttempts: zeroCapitalStartAttempts,
         syntheticExecution: false,
       });
     })
     .catch(error => {
       const retryMs = zeroCapitalRetryDelayMs();
-      logger.error('[ZeroCapitalRuntime] Canonical zero-capital lifecycle failed to start', {
+      logger.error('[ZeroCapitalRuntime] Canonical zero-capital discovery failed to start', {
         component: 'CanonicalCryptoCrawlerRuntimeWiring',
         error: error instanceof Error ? error.message : String(error),
         startAttempts: zeroCapitalStartAttempts,
@@ -235,15 +232,9 @@ function installCanonicalRuntime(): void {
   install('monte_carlo_calibration', () => ensureMonteCarloCalibrationWiring());
   install('oracle_evidence', () => ensureOracleEvidenceWiring());
   install('dynamic_scale_pressure', () => ensureDynamicScalePressureWiring());
-  install('zero_capital_resource', () => ensureZeroCapitalResourceWiring());
   install('zero_capital_shadow_priority', () => ensureZeroCapitalShadowPriorityWiring());
-  install('zero_capital_flash_provider', () => ensureZeroCapitalFlashProviderWiring());
-  install('provider_specific_zero_capital_execution', () => ensureProviderSpecificZeroCapitalExecutionWiring());
-  install('dual_provider_zero_capital_execution', () => ensureDualProviderZeroCapitalExecutionWiring());
   install('zero_capital_atomic_stack', () => ensureZeroCapitalAtomicStackWiring());
-  install('zero_capital_dynamic_attempt_barrier', () => ensureZeroCapitalDynamicAttemptBarrierWiring());
   install('alchemy_standard_rpc_first', () => ensureAlchemyStandardRpcFirstWiring());
-  install('zero_capital_realized_profit', () => ensureZeroCapitalRealizedProfitWiring());
   install('dynamic_rpc_provider', async () => {
     try {
       await ensureDynamicRpcProviderWiring();
@@ -294,7 +285,12 @@ function installCanonicalRuntime(): void {
   logger.info('Canonical CryptoCrawler runtime wiring installed', {
     component: 'CanonicalCryptoCrawlerRuntimeWiring',
     lifecycleAuthority: 'canonical_measured_runtime',
-    discoveryAuthority: 'unified_multi_topology_parallel_controller',
+    discoveryAuthority: 'unified_multi_topology_parallel_controller_plus_explicit_zero_capital_discovery',
+    zeroCapitalDiscoveryAuthority: 'CanonicalZeroCapitalDiscovery',
+    zeroCapitalEligibilityAuthority: 'canonical_provider_repricing_stage_only',
+    zeroCapitalSchedulerAuthority: 'CanonicalExecutionScheduler_only',
+    zeroCapitalExecutionAuthority: 'CanonicalZeroCapitalExecutor_only',
+    zeroCapitalRuntimeMethodMutation: false,
     fixedDiscoveryPriority: false,
     adaptiveAdmissionFormula: '(NetProfitUSD / ExecutionRisk) * ConfidenceLevel',
     historicalProofRequiredBeforeFirstExecution: false,
@@ -343,21 +339,21 @@ function installCanonicalRuntime(): void {
     predictionMarketExecutionAuthority: false,
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
     acrossBridgeExecutionAuthority: false,
-    zeroCapitalRuntimeLifecycle: 'terminal_realized_profit_authority_then_cost_safe_rpc_mesh_then_single_canonical_hard_fact_governance_then_fail_closed_retry',
+    zeroCapitalRuntimeLifecycle: 'explicit_discovery_to_measured_candidate_to_single_scheduler_to_single_executor_to_terminal_treasury_feedback',
     zeroCapitalSizeOptimization: 'canonical_scan_direct_bps_rescue_with_exact_provider_fee_liquidity_and_fresh_notional_requotes',
     zeroCapitalDuplicateSizeOptimizerOwners: 0,
     zeroCapitalProfitabilityRescue: 'canonical_scan_direct_call_decimals_correct_gap_aware_fresh_provider_liquidity_bounded_expiry_safe',
     zeroCapitalProfitabilityRescueInstallerAuthority: false,
     zeroCapitalPredictiveUsdEconomics: 'live_input_asset_price_required_before_monte_carlo_and_position_sizing',
-    zeroCapitalFlashLoanEconomics: 'measured_single_provider_fee_liquidity_plus_combined_aave_balancer_liquidity_rescue',
-    zeroCapitalProviderExecution: 'verified_balancer_aave_or_dual_receiver_permission_binding',
-    zeroCapitalProviderMesh: 'balancer_or_aave_or_balancer_outer_plus_nested_aave_when_combined_liquidity_unlocks_exact_size',
+    zeroCapitalFlashLoanEconomics: 'single_registry_measured_single_or_combined_provider_fee_liquidity',
+    zeroCapitalProviderExecution: 'single_executor_verified_balancer_aave_morpho_or_dual_receiver_permission_binding',
+    zeroCapitalProviderMesh: 'balancer_aave_morpho_or_combined_aave_balancer_when_measured_exact_economics_support_it',
     zeroCapitalProviderMeshSinglePreferredWhenSufficient: true,
-    zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2',
+    zeroCapitalAtomicStacking: 'same_chain_same_token_exact_simulation_shared_principal_composite_v2_advisory_only',
     zeroCapitalAtomicStackExecutionAuthority: false,
-    zeroCapitalDynamicAttemptBarrier: 'exact_provider_specific_eth_call_plus_exact_gas_estimate_then_dynamic_profit_cushion_vs_failed_attempt_exposure_defer_and_requote',
+    zeroCapitalDynamicAttemptBarrier: 'direct_exact_pre_broadcast_validator_called_by_single_executor',
     zeroCapitalDynamicAttemptBarrierExecutionAuthority: false,
-    zeroCapitalExecutionAdmission: 'resource_leases_plus_dynamic_profitability_confidence',
+    zeroCapitalExecutionAdmission: 'measured_positive_exact_provider_resource_evidence_then_canonical_scheduler',
     zeroCapitalWorkOrdering: 'expected_net_profit_per_scarcity_unit_with_expiry_urgency_scheduling_only',
     alchemyPaidPendingStreamDefault: false,
     paidAlchemyRpcRole: 'fallback_only_after_two_cost_safe_provider_failures_when_available',
