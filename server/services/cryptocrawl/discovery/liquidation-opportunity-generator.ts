@@ -164,7 +164,9 @@ function preparedCandidate(current: MeasuredCandidate, prepared: AaveLiquidation
     economics: {
       grossProfitUsd: prepared.deterministicNetProfitUsd + prepared.expectedFlashFeeUsd + prepared.expectedGasUsd,
       deterministicNetProfitUsd: prepared.deterministicNetProfitUsd,
-      feeUsd: prepared.expectedFlashFeeUsd,
+      // Aave flash premium is not an exchange fee. It is represented exclusively
+      // by flashLoanFeeBps below so canonical BPS attribution counts it once.
+      feeUsd: 0,
       gasUsd: prepared.expectedGasUsd,
       bridgeUsd: 0,
       expectedSlippageBps: prepared.expectedUnwindCostUsd / prepared.notionalUsd * 10_000,
@@ -188,6 +190,7 @@ function preparedCandidate(current: MeasuredCandidate, prepared: AaveLiquidation
       `liquidation_debt_asset:${prepared.debtAsset}`,
       `liquidation_collateral_asset:${prepared.collateralAsset}`,
       `liquidation_debt_to_cover:${prepared.debtToCover}`,
+      'flash_premium_attribution:flashLoanFeeBps_only',
       'canonical_scheduler_dispatch_required:true',
       'synthetic_evidence:false',
     ],
