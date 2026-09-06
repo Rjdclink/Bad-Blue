@@ -73,11 +73,6 @@ async function measuredGasUsd(chain: ChainId, quotes: DexQuoteObservation[]): Pr
   return gas.usdCost * totalGasUnits / DEFAULT_GAS_LIMIT;
 }
 
-function firmHydrationBudget(): number {
-  const configured = Number(process.env.CRYPTOCRAWL_DEX_FIRM_HYDRATION_BUDGET || 4);
-  return Number.isFinite(configured) ? Math.max(1, Math.min(10, Math.trunc(configured))) : 4;
-}
-
 function missingDexCandidate(input: {
   chain: ChainId;
   notionalUsd: number;
@@ -99,7 +94,7 @@ function missingDexCandidate(input: {
     venues: rawQuotes.length > 0 ? ['0x'] : [],
     chains: [input.chain],
     rawQuotes: rawQuotes.map(quote => quoteEvidence(quote, input.chain)),
-    depth: { status: 'unavailable', detail: 'Required 0x round-trip evidence was actively requested in this cycle and will be reacquired on the next cycle if unavailable' },
+    depth: { status: 'unavailable', detail: 'All configured first-pass evidence acquisition paths were attempted in this cycle; this observation remains explicit and cannot silently disappear' },
     economics: {
       grossProfitUsd: null,
       deterministicNetProfitUsd: null,
@@ -119,11 +114,11 @@ function missingDexCandidate(input: {
     },
     quoteAgeMs: rawQuotes.length > 0 ? Math.max(0, Date.now() - Math.min(...rawQuotes.map(quote => quote.observedAt))) : null,
     executableCapability: false,
-    executionCapabilityReason: 'DEX atomic evidence acquisition is active; missing quote/liquidity facts remain retryable evidence and never become synthetic execution authority',
-    missingInformation: [...new Set(input.missing)],
+    executionCapabilityReason: 'DEX atomic first-pass evidence acquisition exhausted its configured authoritative paths without enough route facts for safe deterministic execution; the observation stays visible and never gains synthetic authority',
+    missingInformation: [...new Set(input.missing.map(item => `required:${item}`))],
     provenance: [
-      '0x:active_reacquisition_current_cycle',
-      'dex_missing_evidence:retry_next_cycle',
+      '0x:first_pass_redundant_credential_and_http_retry_acquisition',
+      'dex_missing_evidence:explicit_observation_retained',
       'missing_evidence_execution_authority:false',
       'synthetic_evidence:false',
     ],
@@ -228,25 +223,19 @@ async function discoverChainCandidates(
     });
   }
 
-  // Hydrate the strongest measured indicative routes every cycle regardless of
-  // whether they are already close to break-even. This removes the old fixed
-  // negative-BPS gate that could leave DEX Atomic at N/A indefinitely while still
-  // bounding firm quote/simulation pressure.
-  const hydrationTargets = new Set(indicative
-    .slice()
-    .sort((left, right) => (right.grossAfterIndicativeGasBps ?? Number.NEGATIVE_INFINITY) - (left.grossAfterIndicativeGasBps ?? Number.NEGATIVE_INFINITY))
-    .slice(0, firmHydrationBudget())
-    .map(item => item.opportunityId));
+  // Every route that has a complete indicative round-trip is hydrated into the
+  // firm atomic path in the same discovery cycle. There is no budget-based class
+  // of indefinitely half-measured routes. The structural candidate set itself is
+  // bounded to at most ten notionals per chain, while chains execute in parallel.
+  const hydrationTargets = new Set(indicative.map(item => item.opportunityId));
 
   for (const item of indicative) {
     let prepared: Awaited<ReturnType<typeof prepareZeroXAtomicRoundTrip>> | null = null;
     let preparationUnavailable = false;
-    if (hydrationTargets.has(item.opportunityId)) {
-      try {
-        prepared = await prepareZeroXAtomicRoundTrip({ opportunityId: item.opportunityId, chain, notionalUsd: item.notionalUsd });
-      } catch {
-        preparationUnavailable = true;
-      }
+    try {
+      prepared = await prepareZeroXAtomicRoundTrip({ opportunityId: item.opportunityId, chain, notionalUsd: item.notionalUsd });
+    } catch {
+      preparationUnavailable = true;
     }
 
     const preparedFeeEvidence = prepared
@@ -259,14 +248,13 @@ async function discoverChainCandidates(
       ? Date.now() - Math.min(prepared.firstQuote.observedAt, prepared.secondQuote.observedAt)
       : Date.now() - Math.min(item.first.observedAt, item.second.observedAt);
     const missingInformation = prepared ? [
-      ...(!explicitFeeTreatmentComplete ? ['complete_0x_explicit_fee_economic_treatment'] : []),
+      ...(!explicitFeeTreatmentComplete ? ['required:complete_0x_explicit_fee_economic_treatment'] : []),
     ] : [
-      'firm_0x_atomic_quote',
-      'measured_balancer_flash_loan_fee',
-      'exact_receiver_gas_cost',
-      'receiver_permission_and_simulation_readiness',
-      ...(hydrationTargets.has(item.opportunityId) && preparationUnavailable ? ['atomic_execution_preparation_currently_unavailable'] : []),
-      ...(!hydrationTargets.has(item.opportunityId) ? ['firm_hydration_budget_deferred_this_cycle'] : []),
+      'required:firm_0x_atomic_quote',
+      'required:measured_balancer_flash_loan_fee',
+      'required:exact_receiver_gas_cost',
+      'required:receiver_permission_and_simulation_readiness',
+      ...(preparationUnavailable ? ['required:atomic_execution_preparation_currently_unavailable'] : []),
     ];
     const status = prepared && prepared.deterministicNetProfitUsd > 0 && explicitFeeTreatmentComplete
       ? 'eligible' as const
@@ -288,7 +276,7 @@ async function discoverChainCandidates(
         status: 'measured',
         detail: prepared
           ? '0x indicative route plus two firm allowance-holder quotes, explicit fee treatment, existing receiver permissions, exact receiver simulation and exact gas estimation'
-          : '0x /price liquidityAvailable round-trip measured; strongest routes are automatically promoted into bounded firm hydration every cycle',
+          : '0x /price liquidityAvailable round-trip measured and firm atomic hydration was attempted in the same cycle',
       },
       economics: prepared ? {
         grossProfitUsd: prepared.grossProfitUsd,
@@ -331,9 +319,7 @@ async function discoverChainCandidates(
         ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; 0x explicit fee effects are classified without double subtraction, current flash fee and exact receiver gas are measured, existing permissions are verified, and eth_call simulation succeeds'
         : prepared
           ? 'Firm 0x atomic preparation exists, but an explicit 0x fee component lacks a complete same-chain economic treatment and therefore cannot be promoted'
-          : hydrationTargets.has(item.opportunityId)
-            ? 'Firm DEX atomic hydration was actively attempted in this cycle and will be retried with fresh evidence; no fixed negative-BPS gate can permanently suppress measurement'
-            : 'Indicative DEX round-trip is measured and remains eligible for adaptive firm-hydration scheduling; deferred budget is not a profitability veto',
+          : 'Every indicative DEX route is sent through firm atomic hydration in the same cycle; this route did not produce the minimum required firm execution facts on that first-pass attempt',
       missingInformation,
       provenance: [
         '0x:price_only_discovery',
@@ -342,8 +328,9 @@ async function discoverChainCandidates(
         'token_decimals:measured_onchain',
         ...(prepared ? prepared.provenance : ['0x:firm_execution_not_promoted']),
         ...(prepared ? ['0x:explicit_fee_object_inspected', '0x:embedded_fee_effect_already_in_quote_output', '0x:embedded_fee_double_count:false'] : []),
-        hydrationTargets.has(item.opportunityId) ? 'firm_hydration:active_top_measured_route' : 'firm_hydration:bounded_deferred_retry',
+        hydrationTargets.has(item.opportunityId) ? 'firm_hydration:all_measured_routes_same_cycle' : 'firm_hydration:invariant_violation',
         'firm_hydration:fixed_negative_bps_gate_removed',
+        'firm_hydration:budget_defer_removed',
         'gas_oracle:measured_when_available',
         'receiver_chain_capability:verified',
         'discovery_infrastructure_mutation:false',
