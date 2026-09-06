@@ -26,7 +26,7 @@ assert.match(capability, /ZERO_CAPITAL_MORPHO_RECEIVER_/);
 assert.match(capability, /kind === 'morpho_blue' \? 'morpho'/);
 
 assert.match(wiring, /kind: 'morpho_blue'/);
-assert.match(wiring, /capabilities\.single\.set\('morpho_blue', morpho\)/);
+assert.match(wiring, /if \(morpho\) single\.set\('morpho_blue', morpho\)/);
 assert.match(wiring, /morpho_zero_flash_fee_applied:true/);
 assert.match(wiring, /strict_positive_repriced_net/);
 assert.match(wiring, /measured_flash_loan_provider_liquidity_and_fee/);
