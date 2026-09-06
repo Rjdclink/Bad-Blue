@@ -1,4 +1,5 @@
 import { BigNumber, ethers, type Wallet, type providers } from 'ethers';
+import { withEvmSignerLane } from './evm-signer-lane.js';
 import {
   bindSystemNativeGasSpendSubmission,
   getSystemNativeGasAuthority,
@@ -6,6 +7,7 @@ import {
   releaseUnsubmittedSystemNativeGasSpend,
   reserveSystemNativeGasSpend,
   settleSystemNativeGasSpend,
+  type SystemNativeGasSpendReservation,
 } from './system-native-gas-spend-authority.js';
 
 export interface SystemOwnedNativeTransactionResult {
@@ -16,6 +18,20 @@ export interface SystemOwnedNativeTransactionResult {
   scope: string;
 }
 
+type PreparedEnvelope = {
+  transactionHash: string;
+  walletAddress: string;
+  maximumWei: BigNumber;
+  parsed: ethers.utils.Transaction;
+};
+
+type SubmittedSystemOwnedTransaction = {
+  envelope: PreparedEnvelope;
+  reservation: SystemNativeGasSpendReservation;
+  scope: string;
+  chainId: number;
+};
+
 function safeId(value: string): string {
   return value.trim().replace(/[^a-zA-Z0-9:_-]/g, '_').slice(0, 240);
 }
@@ -23,12 +39,7 @@ function safeId(value: string): string {
 function preparedTransactionEnvelope(input: {
   signedTransaction: string;
   providerNetworkChainId: number;
-}): {
-  transactionHash: string;
-  walletAddress: string;
-  maximumWei: BigNumber;
-  parsed: ethers.utils.Transaction;
-} {
+}): PreparedEnvelope {
   const signedTransaction = input.signedTransaction.trim();
   if (!/^0x[0-9a-fA-F]+$/.test(signedTransaction)) {
     throw new Error('system-owned prepared transaction requires exact signed transaction bytes');
@@ -58,29 +69,19 @@ function preparedTransactionEnvelope(input: {
   };
 }
 
-/**
- * Executes an already-signed exact transaction only after provenance-backed
- * CryptoCrawler-owned native gas is durably reserved and bound to its exact hash.
- * The idempotency key may therefore be reused by restart recovery for the same
- * signed transaction without creating a second gas commitment or second nonce.
- */
-export async function executePreparedSystemOwnedNativeTransaction(input: {
+async function reserveBindAndBroadcastWithinSignerLane(input: {
   chain: string;
   provider: providers.JsonRpcProvider;
   idempotencyKey: string;
   purpose: string;
   signedTransaction: string;
-  confirmations?: number;
-}): Promise<SystemOwnedNativeTransactionResult> {
-  const network = await input.provider.getNetwork();
-  const envelope = preparedTransactionEnvelope({
-    signedTransaction: input.signedTransaction,
-    providerNetworkChainId: network.chainId,
-  });
+  chainId: number;
+  envelope: PreparedEnvelope;
+}): Promise<SubmittedSystemOwnedTransaction> {
   const authority = await getSystemNativeGasAuthority({
     chain: input.chain,
-    wallet: envelope.walletAddress,
-    minimumWei: envelope.maximumWei.toString(),
+    wallet: input.envelope.walletAddress,
+    minimumWei: input.envelope.maximumWei.toString(),
   });
   if (!authority) {
     throw new Error('strict native execution rejected: no SELF_FUNDED provenance-backed gas capacity covers the signed transaction ceiling');
@@ -90,16 +91,16 @@ export async function executePreparedSystemOwnedNativeTransaction(input: {
     idempotencyKey: safeId(input.idempotencyKey),
     scope: authority.scope,
     chain: input.chain,
-    wallet: envelope.walletAddress,
+    wallet: input.envelope.walletAddress,
     purpose: safeId(input.purpose),
-    maximumWei: envelope.maximumWei.toString(),
+    maximumWei: input.envelope.maximumWei.toString(),
   });
   if (!reservation) {
     throw new Error('strict native execution rejected: system-owned gas reservation lost the provenance/capacity race');
   }
 
   try {
-    await bindSystemNativeGasSpendSubmission(reservation.spendId, envelope.transactionHash);
+    await bindSystemNativeGasSpendSubmission(reservation.spendId, input.envelope.transactionHash);
   } catch (error) {
     await releaseUnsubmittedSystemNativeGasSpend(reservation.spendId).catch(() => undefined);
     throw error;
@@ -107,15 +108,36 @@ export async function executePreparedSystemOwnedNativeTransaction(input: {
 
   try {
     try {
-      await input.provider.sendTransaction(input.signedTransaction);
+      const submitted = await input.provider.sendTransaction(input.signedTransaction);
+      if (submitted.hash.toLowerCase() !== input.envelope.transactionHash) {
+        throw new Error(`system-owned native broadcast hash mismatch: expected=${input.envelope.transactionHash} actual=${submitted.hash.toLowerCase()}`);
+      }
     } catch (error) {
-      const observed = await input.provider.getTransaction(envelope.transactionHash).catch(() => null);
+      const observed = await input.provider.getTransaction(input.envelope.transactionHash).catch(() => null);
       if (!observed) {
         await quarantineSubmittedSystemNativeGasSpend(reservation.spendId, error);
-        throw new Error(`system-owned native broadcast outcome is unknown for ${envelope.transactionHash}`);
+        throw new Error(`system-owned native broadcast outcome is unknown for ${input.envelope.transactionHash}`);
       }
     }
+    return {
+      envelope: input.envelope,
+      reservation,
+      scope: authority.scope,
+      chainId: input.chainId,
+    };
+  } catch (error) {
+    await quarantineSubmittedSystemNativeGasSpend(reservation.spendId, error).catch(() => undefined);
+    throw error;
+  }
+}
 
+async function waitAndSettleSystemOwnedTransaction(input: {
+  provider: providers.JsonRpcProvider;
+  submitted: SubmittedSystemOwnedTransaction;
+  confirmations?: number;
+}): Promise<SystemOwnedNativeTransactionResult> {
+  const { envelope, reservation } = input.submitted;
+  try {
     const receipt = await input.provider.waitForTransaction(
       envelope.transactionHash,
       Math.max(1, input.confirmations || 1),
@@ -137,13 +159,14 @@ export async function executePreparedSystemOwnedNativeTransaction(input: {
       transactionHash: envelope.transactionHash,
       actualSpentWei: actualSpent.toString(),
       evidence: {
-        chainId: network.chainId,
+        chainId: input.submitted.chainId,
         blockNumber: receipt.blockNumber,
         receiptStatus: receipt.status,
         gasUsed: receipt.gasUsed.toString(),
         effectiveGasPriceWei: BigNumber.from(effectiveGasPrice).toString(),
         rawWalletBalanceAuthority: false,
         exactSignedTransactionRecovery: true,
+        signerLaneCoversReservationAndBroadcast: true,
       },
     });
 
@@ -152,7 +175,7 @@ export async function executePreparedSystemOwnedNativeTransaction(input: {
       receipt,
       reservedWei: BigInt(envelope.maximumWei.toString()),
       actualSpentWei: BigInt(actualSpent.toString()),
-      scope: authority.scope,
+      scope: input.submitted.scope,
     };
   } catch (error) {
     // If settlement already succeeded this becomes a harmless no-op. Otherwise a
@@ -163,8 +186,49 @@ export async function executePreparedSystemOwnedNativeTransaction(input: {
 }
 
 /**
- * Populates and signs a transaction, then delegates the exact signed bytes to the
- * same provenance-backed authority used by restart-safe prepared transactions.
+ * Executes an already-signed exact transaction only after provenance-backed
+ * CryptoCrawler-owned native gas is durably reserved and bound to its exact hash.
+ * Reservation plus physical broadcast share the distributed signer/nonce lane;
+ * receipt waiting happens after the lane is released so confirmations do not
+ * unnecessarily serialize unrelated post-broadcast observation work.
+ */
+export async function executePreparedSystemOwnedNativeTransaction(input: {
+  chain: string;
+  provider: providers.JsonRpcProvider;
+  idempotencyKey: string;
+  purpose: string;
+  signedTransaction: string;
+  confirmations?: number;
+}): Promise<SystemOwnedNativeTransactionResult> {
+  const network = await input.provider.getNetwork();
+  const envelope = preparedTransactionEnvelope({
+    signedTransaction: input.signedTransaction,
+    providerNetworkChainId: network.chainId,
+  });
+  const submitted = await withEvmSignerLane({
+    chainId: network.chainId,
+    walletAddress: envelope.walletAddress,
+    operation: () => reserveBindAndBroadcastWithinSignerLane({
+      chain: input.chain,
+      provider: input.provider,
+      idempotencyKey: input.idempotencyKey,
+      purpose: input.purpose,
+      signedTransaction: input.signedTransaction,
+      chainId: network.chainId,
+      envelope,
+    }),
+  });
+  return waitAndSettleSystemOwnedTransaction({
+    provider: input.provider,
+    submitted,
+    confirmations: input.confirmations,
+  });
+}
+
+/**
+ * Populates and signs a transaction under the same nonce lane that reserves and
+ * broadcasts its gas. This prevents a second process/operation from consuming the
+ * nonce or provenance-backed native budget between population and submission.
  */
 export async function executeSystemOwnedNativeTransaction(input: {
   chain: string;
@@ -177,20 +241,39 @@ export async function executeSystemOwnedNativeTransaction(input: {
 }): Promise<SystemOwnedNativeTransactionResult> {
   const wallet = input.wallet.connect(input.provider);
   const network = await input.provider.getNetwork();
-  const populated = await wallet.populateTransaction({
-    ...input.transaction,
+  const submitted = await withEvmSignerLane({
     chainId: network.chainId,
+    walletAddress: wallet.address,
+    operation: async () => {
+      const populated = await wallet.populateTransaction({
+        ...input.transaction,
+        chainId: network.chainId,
+      });
+      if (!populated.gasLimit || populated.nonce === undefined) {
+        throw new Error('system-owned native transaction could not establish a bounded gas limit and nonce');
+      }
+      const signedTransaction = await wallet.signTransaction(populated);
+      const envelope = preparedTransactionEnvelope({
+        signedTransaction,
+        providerNetworkChainId: network.chainId,
+      });
+      if (envelope.walletAddress !== wallet.address.toLowerCase()) {
+        throw new Error('system-owned native transaction signer changed during population');
+      }
+      return reserveBindAndBroadcastWithinSignerLane({
+        chain: input.chain,
+        provider: input.provider,
+        idempotencyKey: input.idempotencyKey,
+        purpose: input.purpose,
+        signedTransaction,
+        chainId: network.chainId,
+        envelope,
+      });
+    },
   });
-  if (!populated.gasLimit || populated.nonce === undefined) {
-    throw new Error('system-owned native transaction could not establish a bounded gas limit and nonce');
-  }
-  const signedTransaction = await wallet.signTransaction(populated);
-  return executePreparedSystemOwnedNativeTransaction({
-    chain: input.chain,
+  return waitAndSettleSystemOwnedTransaction({
     provider: input.provider,
-    idempotencyKey: input.idempotencyKey,
-    purpose: input.purpose,
-    signedTransaction,
+    submitted,
     confirmations: input.confirmations,
   });
 }
