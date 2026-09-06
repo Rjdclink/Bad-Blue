@@ -1,14 +1,18 @@
 import logger from '../../../logger.js';
 import { coinbasePrivateRequest } from '../intelligence/coinbase-advanced-trade-authority.js';
 import { resolveCexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
-import { coinbaseDecimalString, coinbaseProductId } from './coinbase-spot-settlement-adapter.js';
 import type { CexOrderReceipt, OrderRequest, PreparedCexOrderSubmission } from './cex-settlement.js';
 import type { NormalizedOrderSettlement } from './settlement-types.js';
 
 const CONVERT_PREFIX = 'coinbase-convert:';
 const QUOTE_TTL_MS = boundedInt(process.env.CRYPTO_COINBASE_CONVERT_QUOTE_TTL_MS, 1_500, 250, 10_000);
 const MIN_BENEFIT_BPS = boundedNumber(process.env.CRYPTO_COINBASE_CONVERT_MIN_BENEFIT_BPS, 0, 0, 100);
-const ELIGIBLE_PAIRS = new Set(['USDC-USD', 'PYUSD-USD', 'EURC-EUR', 'PYUSD-USDC']);
+const ELIGIBLE_PAIRS = [
+  { base: 'USDC', quote: 'USD' },
+  { base: 'PYUSD', quote: 'USD' },
+  { base: 'EURC', quote: 'EUR' },
+  { base: 'PYUSD', quote: 'USDC' },
+] as const;
 
 export interface CoinbaseConvertQuoteEvidence {
   tradeId: string;
@@ -52,6 +56,21 @@ function finiteNonNegative(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function decimalString(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) throw new Error('Coinbase Convert amount must be finite and positive');
+  const canonical = value.toString().toLowerCase();
+  if (!canonical.includes('e')) return canonical;
+  const [coefficient, exponentText] = canonical.split('e');
+  const exponent = Number(exponentText);
+  if (!Number.isInteger(exponent)) throw new Error('Coinbase Convert amount has an invalid numeric exponent');
+  const [whole, fraction = ''] = coefficient.split('.');
+  const digits = `${whole}${fraction}`;
+  const decimalIndex = whole.length + exponent;
+  if (decimalIndex <= 0) return `0.${'0'.repeat(-decimalIndex)}${digits}`;
+  if (decimalIndex >= digits.length) return `${digits}${'0'.repeat(decimalIndex - digits.length)}`;
+  return `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
+}
+
 function money(value: any): { value: number; currency: string } | null {
   const amount = finitePositive(value?.value);
   const currency = String(value?.currency || '').trim().toUpperCase();
@@ -64,19 +83,16 @@ function feeMoney(value: any): { value: number; currency: string } | null {
   return amount !== null && currency ? { value: amount, currency } : null;
 }
 
-function pair(symbol: string): { base: string; quote: string; productId: string } | null {
-  let productId: string;
-  try {
-    productId = coinbaseProductId(symbol);
-  } catch {
-    return null;
+function pair(symbolRaw: string): { base: string; quote: string } | null {
+  const symbol = symbolRaw.trim().toUpperCase().replace(/[\/_-]/g, '');
+  for (const candidate of ELIGIBLE_PAIRS) {
+    if (symbol === `${candidate.base}${candidate.quote}` || symbol === `${candidate.quote}${candidate.base}`) {
+      return symbol === `${candidate.base}${candidate.quote}`
+        ? { base: candidate.base, quote: candidate.quote }
+        : { base: candidate.quote, quote: candidate.base };
+    }
   }
-  const [base, quote] = productId.split('-').map(value => value.trim().toUpperCase());
-  if (!base || !quote) return null;
-  const canonical = `${base}-${quote}`;
-  const inverse = `${quote}-${base}`;
-  if (!ELIGIBLE_PAIRS.has(canonical) && !ELIGIBLE_PAIRS.has(inverse)) return null;
-  return { base, quote, productId: canonical };
+  return null;
 }
 
 function terminalStatus(statusRaw: unknown): { terminal: boolean; success: boolean } {
@@ -118,7 +134,7 @@ export async function evaluateCoinbaseConvertQuote(request: OrderRequest): Promi
       body: {
         from_account: sourceCurrency,
         to_account: targetCurrency,
-        amount: coinbaseDecimalString(requestedSourceAmount),
+        amount: decimalString(requestedSourceAmount),
       },
     }),
     resolveCexFeeEvidence('coinbase', request.symbol, {
