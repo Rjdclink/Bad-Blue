@@ -614,9 +614,10 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
   })).sort((left, right) => right.liquidationBonusUsd - left.liquidationBonusUsd);
   if (pairs.length === 0) throw new Error('Aave liquidation has no conservative debt/collateral pair');
 
-  const pairLimit = boundedInt(process.env.CRYPTOCRAWL_LIQUIDATION_PAIR_HYDRATION_LIMIT, 2, 1, 6);
   const failures: string[] = [];
-  for (const pair of pairs.slice(0, pairLimit)) {
+  let bestPlan: AaveLiquidationPreparation | null = null;
+  let positivePairsMeasured = 0;
+  for (const pair of pairs) {
     try {
       const flash = await measureAaveV3FlashLoanEconomics({
         chain: input.chain as SupportedExecutionChain,
@@ -798,13 +799,24 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
           'synthetic_evidence:false',
         ],
       };
-      preparedPlans.set(input.opportunityId, plan);
-      return getPreparedAaveLiquidationPlan(input.opportunityId)!;
+      positivePairsMeasured += 1;
+      if (!bestPlan || plan.deterministicNetProfitUsd > bestPlan.deterministicNetProfitUsd) bestPlan = plan;
     } catch (error) {
       failures.push(`${pair.debt.symbol}/${pair.collateral.symbol}:${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  throw new Error(`Aave liquidation pair hydration failed closed: ${failures.join(' | ')}`);
+
+  if (bestPlan) {
+    bestPlan.provenance.push(
+      'liquidation_pair_hydration:all_structural_pairs_same_cycle',
+      `liquidation_pair_candidates_attempted:${pairs.length}`,
+      `liquidation_pair_positive_plans_measured:${positivePairsMeasured}`,
+      'liquidation_pair_selection:highest_measured_positive_all_in_net_profit_usd',
+    );
+    preparedPlans.set(input.opportunityId, bestPlan);
+    return getPreparedAaveLiquidationPlan(input.opportunityId)!;
+  }
+  throw new Error(`Aave liquidation pair hydration failed closed after all ${pairs.length} structural pairs: ${failures.join(' | ')}`);
 }
 
 export async function reconcilePendingAaveLiquidationInfrastructure(maxRequests = 1): Promise<AaveLiquidationInfrastructureResult> {
