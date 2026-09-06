@@ -8,6 +8,7 @@ import {
   getCachedCoinbaseAdvancedProductId,
   getCoinbaseAdvancedProductConstraints,
 } from '../intelligence/coinbase-advanced-market-data.js';
+import { trackSubmittedPrivateCexOrder } from '../intelligence/cex-private-execution-feedback.js';
 import { validateCoinbaseOrderAgainstProduct } from './coinbase-product-policy.js';
 import type {
   ExecutionFill,
@@ -232,7 +233,7 @@ export class CoinbaseSpotSettlementAdapter {
       const message = payload?.error_response?.message || payload?.error_response?.error_details || 'unknown Coinbase order rejection';
       throw new Error(`Coinbase rejected IOC order: ${String(message)}`);
     }
-    return {
+    const receipt: CoinbaseOrderReceipt = {
       venue: 'coinbase',
       orderId: String(payload.success_response.order_id),
       symbol: request.symbol,
@@ -241,6 +242,11 @@ export class CoinbaseSpotSettlementAdapter {
       requestedQuantity: request.quantity,
       submittedAt,
     };
+    // The REST response remains submission authority. Tracking only canonical
+    // production requests lazily starts the separate read-only user WebSocket;
+    // injected test requesters never create external socket activity.
+    if (this.requester === coinbasePrivateRequest) trackSubmittedPrivateCexOrder(receipt);
+    return receipt;
   }
 
   async query(receipt: CoinbaseOrderReceipt): Promise<NormalizedOrderSettlement> {
