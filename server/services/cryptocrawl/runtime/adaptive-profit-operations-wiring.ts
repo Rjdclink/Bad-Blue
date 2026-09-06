@@ -6,6 +6,7 @@ import {
 } from '../arbitrage/arbitrage-verifier.js';
 import { getCryptocrawlGovernance } from '../governance/governance.js';
 import { getAdaptiveProfitOperatingEnvelope } from '../governance/adaptive-profit-operating-envelope.js';
+import { isStrictlyPositiveAllInNetProfit } from '../governance/profit-admission-authority.js';
 import { stageManager } from '../governance/stage-management.js';
 import { getTreasuryExecutionBarrier } from '../governance/treasury-execution-barrier.js';
 import { GovernanceError, type GovernanceAction } from '../governance/types.js';
@@ -60,7 +61,7 @@ function planWithinOperatingEnvelope(plan: VerifiedArbitragePlan): boolean {
   if (!envelope.newExposureAllowed) return false;
   if (!(envelope.recommendedMaxNotionalUsd > 0)) return false;
   if (plan.notionalUsd > envelope.recommendedMaxNotionalUsd + 1e-9) return false;
-  return Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0;
+  return isStrictlyPositiveAllInNetProfit(plan.netProfitUsd);
 }
 
 export function ensureAdaptiveProfitOperationsWiring(): void {
@@ -134,7 +135,6 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
             ...request,
             symbol,
             notionalUsd: refinedBound,
-            minNetProfitUsd: 0,
           }).catch(() => null);
           plans.set(symbol, refined && planWithinOperatingEnvelope(refined) ? refined : null);
         })());
@@ -207,7 +207,7 @@ export function ensureAdaptiveProfitOperationsWiring(): void {
     settlementHedgeFlatteningExemptFromProfitCap: true,
     notionalAuthority: 'profit_ladder_capital_allowance',
     legacyStagePositionCapAuthoritative: false,
-    strictPositiveNetAuthorityPreserved: true,
+    strictPositiveNetAuthority: 'profit_admission_authority',
     terminalSettlementAuthorityPreserved: true,
     exchangeSurveillanceThresholdAssumed: false,
   });
