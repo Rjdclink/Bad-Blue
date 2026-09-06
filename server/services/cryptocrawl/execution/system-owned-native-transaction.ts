@@ -178,20 +178,11 @@ async function waitAndSettleSystemOwnedTransaction(input: {
       scope: input.submitted.scope,
     };
   } catch (error) {
-    // If settlement already succeeded this becomes a harmless no-op. Otherwise a
-    // submitted reservation stays quarantined and cannot be double-spent.
     await quarantineSubmittedSystemNativeGasSpend(reservation.spendId, error).catch(() => undefined);
     throw error;
   }
 }
 
-/**
- * Executes an already-signed exact transaction only after provenance-backed
- * CryptoCrawler-owned native gas is durably reserved and bound to its exact hash.
- * Reservation plus physical broadcast share the distributed signer/nonce lane;
- * receipt waiting happens after the lane is released so confirmations do not
- * unnecessarily serialize unrelated post-broadcast observation work.
- */
 export async function executePreparedSystemOwnedNativeTransaction(input: {
   chain: string;
   provider: providers.JsonRpcProvider;
@@ -227,8 +218,9 @@ export async function executePreparedSystemOwnedNativeTransaction(input: {
 
 /**
  * Populates and signs a transaction under the same nonce lane that reserves and
- * broadcasts its gas. This prevents a second process/operation from consuming the
- * nonce or provenance-backed native budget between population and submission.
+ * broadcasts its gas. `preBroadcastCheck`, when supplied, runs inside that same
+ * lane immediately before population/signing so state-sensitive execution guards
+ * cannot be separated from nonce/resource admission by another local process.
  */
 export async function executeSystemOwnedNativeTransaction(input: {
   chain: string;
@@ -238,6 +230,7 @@ export async function executeSystemOwnedNativeTransaction(input: {
   purpose: string;
   transaction: providers.TransactionRequest;
   confirmations?: number;
+  preBroadcastCheck?: () => Promise<void>;
 }): Promise<SystemOwnedNativeTransactionResult> {
   const wallet = input.wallet.connect(input.provider);
   const network = await input.provider.getNetwork();
@@ -245,6 +238,7 @@ export async function executeSystemOwnedNativeTransaction(input: {
     chainId: network.chainId,
     walletAddress: wallet.address,
     operation: async () => {
+      if (input.preBroadcastCheck) await input.preBroadcastCheck();
       const populated = await wallet.populateTransaction({
         ...input.transaction,
         chainId: network.chainId,
