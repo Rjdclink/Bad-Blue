@@ -8,7 +8,6 @@ import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-p
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { stageManager } from '../governance/stage-management.js';
 import { orderSettlementCapableMeasuredDecisionsWithNixGen } from '../optimization/nix-gen/measured-portfolio-preparation.js';
-import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 import {
   executePreparedAaveLiquidation,
   reconcilePendingAaveLiquidationInfrastructure,
@@ -50,6 +49,8 @@ type ReceiptBearingExecution = {
   receiptStatus?: 0 | 1;
 };
 
+type StrictAtomicFundingMode = 'sponsored' | 'native';
+
 function asSupportedChain(raw: string | undefined): ChainId | null {
   const chain = String(raw || '').trim().toLowerCase() as ChainId;
   return Object.prototype.hasOwnProperty.call(SUPPORTED_CHAINS, chain) ? chain : null;
@@ -58,6 +59,28 @@ function asSupportedChain(raw: string | undefined): ChainId | null {
 function asLiquidationChain(raw: string | undefined): ExecutableAaveLiquidationChain | null {
   const chain = String(raw || '').trim().toLowerCase();
   return chain === 'ethereum' || chain === 'polygon' ? chain : null;
+}
+
+async function strictAtomicFundingMode(chain: string): Promise<StrictAtomicFundingMode | null> {
+  try {
+    const { zeroCapitalEngine } = await import('../core/zero-capital-engine.js');
+    const runtime = zeroCapitalEngine as any;
+    if (typeof runtime.getGasFundingDecision !== 'function') return null;
+    const decision = await runtime.getGasFundingDecision(chain);
+    if (!decision || (decision.mode !== 'sponsored' && decision.mode !== 'native')) return null;
+    if (decision.strictZeroInitialCapitalEligible !== true || decision.operatorMonetaryInputRequired !== false) return null;
+    if (decision.mode === 'sponsored' && decision.paymentSource !== 'provider_sponsored') return null;
+    if (decision.mode === 'native' && decision.paymentSource !== 'system_owned_native') return null;
+    return decision.mode;
+  } catch (error) {
+    logger.debug('[MeasuredTopologyAdapter] Canonical zero-personal-cost gas mode unavailable', {
+      component: 'MeasuredTopologyExecutionAdapter',
+      chain,
+      error: error instanceof Error ? error.message : String(error),
+      personalGasFallbackAllowed: false,
+    });
+    return null;
+  }
 }
 
 async function actualGasFromCurrency(
@@ -492,7 +515,10 @@ class MeasuredTopologyExecutionAdapter {
       return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_DETERMINISTIC_NET_NOT_POSITIVE' };
     }
 
-    const fundingMode: 'sponsored' | 'native' = getGasSponsorManager().getReadiness().ready ? 'sponsored' : 'native';
+    const fundingMode = await strictAtomicFundingMode(chain);
+    if (!fundingMode) {
+      return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'DEX_ATOMIC_ZERO_PERSONAL_GAS_PROVENANCE_UNAVAILABLE' };
+    }
     const lease = await zeroCapitalResourceScheduler.acquireMeasuredAtomic({
       opportunityId: candidate.opportunityId,
       chain,
@@ -572,7 +598,10 @@ class MeasuredTopologyExecutionAdapter {
       return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'AAVE_LIQUIDATION_DETERMINISTIC_NET_NOT_POSITIVE' };
     }
 
-    const fundingMode: 'sponsored' | 'native' = getGasSponsorManager().getReadiness().ready ? 'sponsored' : 'native';
+    const fundingMode = await strictAtomicFundingMode(chain);
+    if (!fundingMode) {
+      return { opportunityId: decision.opportunityId, topology: decision.topology, path: decision.path, dispatched: false, success: false, settlementConfirmed: false, error: 'AAVE_LIQUIDATION_ZERO_PERSONAL_GAS_PROVENANCE_UNAVAILABLE' };
+    }
     const lease = await zeroCapitalResourceScheduler.acquireMeasuredAtomic({
       opportunityId: candidate.opportunityId,
       chain,
