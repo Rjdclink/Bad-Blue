@@ -5,6 +5,7 @@ import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
 import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
+import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import {
   isStrictlyPositiveAllInNetProfit,
@@ -131,6 +132,31 @@ function sameAddress(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
 }
 
+function adaptiveStablecoinSlippagePpm(opportunityId: string): number {
+  const configured = Number(process.env.ZEROX_STABLECOIN_SLIPPAGE_PPM);
+  if (Number.isInteger(configured) && configured >= 0 && configured <= 1_000_000) return configured;
+
+  const candidate = measuredCandidateRegistry.get(opportunityId);
+  const netBps = Number(candidate?.canonicalBps?.netBps);
+  if (!Number.isFinite(netBps) || netBps <= 0) {
+    // 100 BPS exactly matches the prior 0x API default; PPM merely makes the
+    // control explicit until route-local positive economics justify tightening.
+    return 10_000;
+  }
+
+  // Two-leg route: allocate at most half of the currently measured positive net
+  // edge to worst-case slippage guards (25% per leg). This is a guard only;
+  // neither the unused tolerance nor any theoretical improvement receives BPS
+  // credit. Sub-BPS precision remains useful for very small positive edges.
+  const perLegBps = Math.max(0.10, Math.min(100, netBps * 0.25));
+  return Math.max(10, Math.min(10_000, Math.round(perLegBps * 100)));
+}
+
+function configuredTradeSurplusMaxBps(): number {
+  const parsed = Number(process.env.ZEROX_TRADE_SURPLUS_MAX_BPS || 10_000);
+  return Number.isInteger(parsed) ? Math.max(1, Math.min(10_000, parsed)) : 10_000;
+}
+
 function rememberInfrastructureNeed(input: AtomicRequest): void {
   pendingInfrastructure.set(input.opportunityId, { ...input, queuedAt: Date.now() });
 }
@@ -143,6 +169,7 @@ function quoteTransaction(quote: DexQuoteObservation, expectedSellAmount: BigNum
   allowanceSpender: string;
 } {
   if (!quote.executable || quote.quoteKind !== 'quote' || !quote.transaction) throw new Error('0x firm quote did not return executable transaction evidence');
+  if (quote.amountMode !== 'exact_in') throw new Error('Atomic round-trip execution requires exact-in 0x calldata; exact-out remains a separate settlement capability');
   const target = asAddress('0x transaction target', quote.transaction.to);
   const data = String(quote.transaction.data || '');
   if (!ethers.utils.isHexString(data) || data === '0x') throw new Error('0x firm quote transaction calldata is missing');
@@ -255,6 +282,7 @@ async function firmRoundTripQuotes(input: {
 }> {
   const config = SUPPORTED_CHAINS[input.request.chain];
   const loanAmount = BigNumber.from(stableUnits(input.request.notionalUsd));
+  const slippagePpm = adaptiveStablecoinSlippagePpm(input.request.opportunityId);
   const firstQuote = await marketDataProviders.getDexQuote({
     chainId: config.chainId,
     sellToken: config.usdc,
@@ -262,8 +290,10 @@ async function firmRoundTripQuotes(input: {
     sellAmount: loanAmount.toString(),
     takerAddress: input.receiver,
     purpose: 'execution',
+    slippagePpm,
   });
   if (!firstQuote?.buyAmount || !firstQuote.liquidityAvailable) throw new Error('0x first firm quote unavailable');
+  if (firstQuote.tradeSurplusRequested) throw new Error('First atomic leg must not divert positive slippage away from the intermediate sell amount');
   const intermediateAmount = asPositiveInteger('0x first buyAmount', firstQuote.buyAmount);
   const first = quoteTransaction(firstQuote, loanAmount);
 
@@ -274,8 +304,17 @@ async function firmRoundTripQuotes(input: {
     sellAmount: intermediateAmount.toString(),
     takerAddress: input.receiver,
     purpose: 'execution',
+    slippagePpm,
+    // 0x surplus capture is custom-plan gated inside MarketDataProviders. When
+    // entitled, only the terminal loan-token leg captures positive slippage so
+    // it cannot strand intermediate inventory or bypass terminal profit proof.
+    tradeSurplusRecipient: input.receiver,
+    tradeSurplusMaxBps: configuredTradeSurplusMaxBps(),
   });
   if (!secondQuote?.buyAmount || !secondQuote.liquidityAvailable) throw new Error('0x second firm quote unavailable');
+  if (secondQuote.tradeSurplusRequested && !sameAddress(secondQuote.tradeSurplusRecipient || '', input.receiver)) {
+    throw new Error('0x terminal trade-surplus recipient differs from the canonical atomic receiver');
+  }
   const finalAmount = asPositiveInteger('0x second buyAmount', secondQuote.buyAmount);
   const second = quoteTransaction(secondQuote, intermediateAmount);
   return { loanAmount, firstQuote, secondQuote, intermediateAmount, finalAmount, first, second };
@@ -501,6 +540,11 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
     simulated: true,
     provenance: [
       '0x:v2_allowance_holder_firm_quote',
+      `0x:sub_bps_slippage_ppm:${firm.secondQuote.slippagePpmApplied ?? 'provider_default'}`,
+      '0x:slippage_tolerance_is_execution_guard_not_expected_cost_credit',
+      '0x:first_leg_trade_surplus_capture:false',
+      `0x:terminal_trade_surplus_capture:${firm.secondQuote.tradeSurplusRequested}`,
+      '0x:trade_surplus_pretrade_credit:false_terminal_receipt_only',
       '0x:issues_allowance_spender_or_allowance_target_preserved',
       '0x:allowance_spender_equals_transaction_target_verified',
       'receiver:existing_deployment_verified_read_only',
@@ -631,6 +675,8 @@ export async function executePreparedZeroXAtomicRoundTrip(
       fundingModeUsed,
       receiverProfitUsd: realizedProfitUsd,
       receiverProfitBps: realizedProfitBps,
+      terminalTradeSurplusCaptureRequested: plan.secondQuote.tradeSurplusRequested,
+      terminalTradeSurplusPretradeCreditBps: 0,
       receiptStatus,
       gasUsed,
       effectiveGasPriceWei,
