@@ -3,11 +3,25 @@ import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capita
 export interface ZeroCapitalRouteEvidence {
   opportunityId: string;
   chain: SupportedChain;
+  type: ZeroCapitalOpportunity['type'];
   inputToken: string;
+  outputToken: string;
+  inputAssetSymbol: ZeroCapitalOpportunity['inputAssetSymbol'];
   inputTokenDecimals: number;
+  inputAssetUsdPrice?: number;
   flashLoanAmount: bigint;
   expectedProfit: bigint;
+  grossProfit?: bigint;
+  gasEstimate: bigint;
+  estimatedExecutionCostInInputToken: bigint;
+  estimatedGasCostInInputToken?: bigint;
+  flashLoanFeeInInputToken?: bigint;
+  relayFeeInInputToken?: bigint;
+  expectedSlippageBps: number;
+  quoteLatencyMs: number;
+  netProfitBps: number;
   route: ZeroCapitalOpportunity['route'];
+  confidence: number;
   observedAt: number;
   expiresAt: number;
 }
@@ -16,6 +30,34 @@ function clone(evidence: ZeroCapitalRouteEvidence): ZeroCapitalRouteEvidence {
   return {
     ...evidence,
     route: evidence.route.map(step => ({ ...step })),
+  };
+}
+
+function toOpportunity(evidence: ZeroCapitalRouteEvidence): ZeroCapitalOpportunity {
+  return {
+    id: evidence.opportunityId,
+    type: evidence.type,
+    chain: evidence.chain,
+    inputToken: evidence.inputToken,
+    outputToken: evidence.outputToken,
+    inputAssetSymbol: evidence.inputAssetSymbol,
+    inputTokenDecimals: evidence.inputTokenDecimals,
+    ...(evidence.inputAssetUsdPrice !== undefined ? { inputAssetUsdPrice: evidence.inputAssetUsdPrice } : {}),
+    flashLoanAmount: evidence.flashLoanAmount,
+    expectedProfit: evidence.expectedProfit,
+    ...(evidence.grossProfit !== undefined ? { grossProfit: evidence.grossProfit } : {}),
+    gasEstimate: evidence.gasEstimate,
+    estimatedExecutionCostInInputToken: evidence.estimatedExecutionCostInInputToken,
+    ...(evidence.estimatedGasCostInInputToken !== undefined ? { estimatedGasCostInInputToken: evidence.estimatedGasCostInInputToken } : {}),
+    ...(evidence.flashLoanFeeInInputToken !== undefined ? { flashLoanFeeInInputToken: evidence.flashLoanFeeInInputToken } : {}),
+    ...(evidence.relayFeeInInputToken !== undefined ? { relayFeeInInputToken: evidence.relayFeeInInputToken } : {}),
+    expectedSlippageBps: evidence.expectedSlippageBps,
+    quoteLatencyMs: evidence.quoteLatencyMs,
+    netProfitBps: evidence.netProfitBps,
+    route: evidence.route.map(step => ({ ...step })),
+    confidence: evidence.confidence,
+    timestamp: evidence.observedAt,
+    expiresAt: evidence.expiresAt,
   };
 }
 
@@ -28,11 +70,25 @@ class ZeroCapitalRouteEvidenceRegistry {
     this.entries.set(opportunity.id, {
       opportunityId: opportunity.id,
       chain: opportunity.chain,
+      type: opportunity.type,
       inputToken: opportunity.inputToken,
+      outputToken: opportunity.outputToken,
+      inputAssetSymbol: opportunity.inputAssetSymbol,
       inputTokenDecimals: opportunity.inputTokenDecimals,
+      ...(opportunity.inputAssetUsdPrice !== undefined ? { inputAssetUsdPrice: opportunity.inputAssetUsdPrice } : {}),
       flashLoanAmount: opportunity.flashLoanAmount,
       expectedProfit: opportunity.expectedProfit,
+      ...(opportunity.grossProfit !== undefined ? { grossProfit: opportunity.grossProfit } : {}),
+      gasEstimate: opportunity.gasEstimate,
+      estimatedExecutionCostInInputToken: opportunity.estimatedExecutionCostInInputToken,
+      ...(opportunity.estimatedGasCostInInputToken !== undefined ? { estimatedGasCostInInputToken: opportunity.estimatedGasCostInInputToken } : {}),
+      ...(opportunity.flashLoanFeeInInputToken !== undefined ? { flashLoanFeeInInputToken: opportunity.flashLoanFeeInInputToken } : {}),
+      ...(opportunity.relayFeeInInputToken !== undefined ? { relayFeeInInputToken: opportunity.relayFeeInInputToken } : {}),
+      expectedSlippageBps: opportunity.expectedSlippageBps,
+      quoteLatencyMs: opportunity.quoteLatencyMs,
+      netProfitBps: opportunity.netProfitBps,
       route: opportunity.route.map(step => ({ ...step })),
+      confidence: opportunity.confidence,
       observedAt: opportunity.timestamp,
       expiresAt: opportunity.expiresAt,
     });
@@ -43,6 +99,11 @@ class ZeroCapitalRouteEvidenceRegistry {
     const value = this.entries.get(opportunityId);
     if (!value || value.expiresAt <= Date.now()) return null;
     return clone(value);
+  }
+
+  getOpportunity(opportunityId: string): ZeroCapitalOpportunity | null {
+    const evidence = this.get(opportunityId);
+    return evidence ? toOpportunity(evidence) : null;
   }
 
   getCompatible(input: { chain: SupportedChain; inputToken: string; now?: number }): ZeroCapitalRouteEvidence[] {
@@ -56,6 +117,10 @@ class ZeroCapitalRouteEvidenceRegistry {
       )
       .sort((left, right) => Number(right.expectedProfit - left.expectedProfit))
       .map(clone);
+  }
+
+  getCompatibleOpportunities(input: { chain: SupportedChain; inputToken: string; now?: number }): ZeroCapitalOpportunity[] {
+    return this.getCompatible(input).map(toOpportunity);
   }
 
   private prune(): void {
