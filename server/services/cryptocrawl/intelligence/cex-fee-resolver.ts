@@ -3,6 +3,7 @@ import { krakenPrivateRequest } from './cex-private-authority.js';
 import { resolveOkxAccountFeeRates } from './okx-account-fee-authority.js';
 import { assertCoinbaseSpotTradeReady } from './coinbase-advanced-trade-authority.js';
 import { getCoinbaseSpotFeeEvidence } from './coinbase-fee-evidence.js';
+import { resolveCoinbaseStablepairFeeEvidence } from './coinbase-stablepair-fee-authority.js';
 import {
   getSpotProductConstraints,
   SpotProductUnavailableError,
@@ -17,7 +18,7 @@ export interface CexFeeEvidence {
   takerFeeBps: number;
   makerFeeBps: number | null;
   makerRebateBps: number | null;
-  source: 'coinbase_transaction_summary' | 'kraken_account_trade_volume' | 'okx_account_trade_fee' | 'okx_live_spot_zero_fee_group' | 'configured_override';
+  source: 'coinbase_transaction_summary' | 'coinbase_stablepair_live_product' | 'kraken_account_trade_volume' | 'okx_account_trade_fee' | 'okx_live_spot_zero_fee_group' | 'configured_override';
   observedAt: number;
 }
 
@@ -267,14 +268,33 @@ async function fetchCoinbaseFeeEvidence(symbolInput: string, forceRefresh = fals
   const symbol = normalizeSymbolInput(symbolInput);
   await assertCoinbaseSpotTradeReady();
   const accountFee = await getCoinbaseSpotFeeEvidence(forceRefresh);
+  let stablepair = null;
+  try {
+    stablepair = await resolveCoinbaseStablepairFeeEvidence(symbol, forceRefresh);
+  } catch (error) {
+    // Stablepair classification is an optional cost improvement, not permission
+    // to weaken authenticated account fee evidence. If the public product flag is
+    // unavailable, retain the authenticated account fee rather than assume zero.
+    logger.debug('[CEX Fees] Coinbase stablepair classification unavailable; authenticated account fee retained', {
+      component: 'CexFeeResolver',
+      venue: 'coinbase',
+      symbol,
+      error: error instanceof Error ? error.message : String(error),
+      zeroMakerAssumed: false,
+      failClosedToAccountFee: true,
+    });
+  }
+  const stablepairZeroMaker = stablepair?.stablepair === true && stablepair.makerFeeBps === 0;
   return {
     venue: 'coinbase',
     symbol,
     takerFeeBps: accountFee.takerFeeBps,
-    makerFeeBps: accountFee.makerFeeBps,
+    makerFeeBps: stablepairZeroMaker ? 0 : accountFee.makerFeeBps,
     makerRebateBps: null,
-    source: 'coinbase_transaction_summary',
-    observedAt: accountFee.observedAt,
+    source: stablepairZeroMaker ? 'coinbase_stablepair_live_product' : 'coinbase_transaction_summary',
+    observedAt: stablepairZeroMaker
+      ? Math.min(accountFee.observedAt, stablepair!.observedAt)
+      : accountFee.observedAt,
   };
 }
 
@@ -707,15 +727,25 @@ export async function primeCexFeeEvidenceForVenueSymbols(
     !readFreshCache('coinbase', symbol, acceptedAgeMs) && !transientRetryEntry('coinbase', symbol));
   if (missingCoinbase.length > 0) {
     try {
-      // Coinbase transaction-summary fees are account-level. One authenticated
-      // read hydrates every requested Coinbase SPOT symbol; never issue one fee
-      // request per symbol.
-      const baseEvidence = await fetchCoinbaseFeeEvidence(missingCoinbase[0], acceptedAgeMs < FEE_CACHE_TTL_MS);
-      if (baseEvidence) for (const symbol of missingCoinbase) storeFeeEvidence({ ...baseEvidence, symbol });
-      else markTransientRetryMany('coinbase', missingCoinbase, 'account_fee_temporarily_unresolved');
+      // Coinbase transaction-summary fee tier is account-wide, while the
+      // stablepair zero-maker classification is product-specific. The account
+      // fee authority is already cached/single-flight, so resolve each requested
+      // product without cloning the first product's stablepair classification.
+      const results = await Promise.allSettled(missingCoinbase.map(symbol =>
+        fetchCoinbaseFeeEvidence(symbol, acceptedAgeMs < FEE_CACHE_TTL_MS)));
+      const unresolvedCoinbase: string[] = [];
+      for (let index = 0; index < results.length; index++) {
+        const result = results[index];
+        const symbol = missingCoinbase[index];
+        if (result.status === 'fulfilled' && result.value) storeFeeEvidence(result.value);
+        else unresolvedCoinbase.push(symbol);
+      }
+      if (unresolvedCoinbase.length > 0) {
+        markTransientRetryMany('coinbase', unresolvedCoinbase, 'account_or_product_fee_temporarily_unresolved');
+      }
     } catch (error) {
       markTransientRetryMany('coinbase', missingCoinbase, 'account_fee_request_transient_failure');
-      logger.debug('[CEX Fees] Coinbase account fee prime unavailable; Coinbase remains fail-closed for executable economics', {
+      logger.debug('[CEX Fees] Coinbase account/product fee prime unavailable; Coinbase remains fail-closed for executable economics', {
         component: 'CexFeeResolver',
         symbols: missingCoinbase.length,
         error: error instanceof Error ? error.message : String(error),
