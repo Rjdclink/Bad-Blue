@@ -5,7 +5,7 @@ import {
   type SupportedChain,
   type ZeroCapitalOpportunity,
 } from '../core/zero-capital-engine.js';
-import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
+import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import {
   buildCompositeFlashLoanReceiverPayload,
@@ -17,10 +17,10 @@ import { zeroCapitalCompositeEvidenceRegistry } from '../optimization/zero-capit
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 
 const installed = new WeakSet<object>();
+const advisoryInFlight = new Set<string>();
 
 type ZeroCapitalStackRuntime = {
-  scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
-  receiverManager: { getReceiver: (chain: string) => string | null };
+  providers: Map<SupportedChain, providers.JsonRpcProvider>;
   executionWallets: Map<SupportedChain, Wallet>;
 };
 
@@ -70,7 +70,8 @@ function chooseStack(opportunities: readonly ZeroCapitalOpportunity[]): ZeroCapi
       const candidate = measuredCandidateRegistry.get(opportunity.id);
       return individuallyComposable(opportunity) &&
         opportunity.netProfitBps >= policy.minIncrementalBps &&
-        candidate?.executableCapability === true &&
+        candidate?.status === 'eligible' &&
+        candidate.executableCapability === true &&
         candidate.missingInformation.length === 0;
     })
     .sort((left, right) => right.netProfitBps - left.netProfitBps || (right.expectedProfit > left.expectedProfit ? 1 : -1));
@@ -253,70 +254,71 @@ async function exactSimulateStack(input: {
   });
 }
 
-export function ensureZeroCapitalAtomicStackWiring(): void {
-  const target = zeroCapitalEngine as unknown as ZeroCapitalStackRuntime;
-  if (installed.has(target)) return;
-  installed.add(target);
+function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: MeasuredCandidate): void {
+  if (
+    candidate.topology !== 'ZERO_CAPITAL_ATOMIC'
+    || candidate.status !== 'eligible'
+    || candidate.executableCapability !== true
+    || candidate.expiresAt <= Date.now()
+    || candidate.missingInformation.length > 0
+  ) return;
 
-  const originalScan = target.scanChain.bind(target);
-  target.scanChain = async (chain, provider): Promise<ZeroCapitalOpportunity[]> => {
-    const opportunities = await originalScan(chain, provider);
-    for (const opportunity of opportunities) zeroCapitalRouteEvidenceRegistry.record(opportunity);
-    if (chain === 'europa' || opportunities.length < 2) return opportunities;
+  const opportunity = zeroCapitalRouteEvidenceRegistry.getOpportunity(candidate.opportunityId);
+  if (!opportunity || opportunity.chain === 'europa') return;
+  const key = `${opportunity.chain}:${opportunity.inputToken.toLowerCase()}`;
+  if (advisoryInFlight.has(key)) return;
+  advisoryInFlight.add(key);
 
+  queueMicrotask(() => {
     void (async () => {
-      const wallet = target.executionWallets.get(chain);
-      if (!wallet) return;
+      const provider = target.providers.get(opportunity.chain);
+      const wallet = target.executionWallets.get(opportunity.chain);
+      if (!provider || !wallet) return;
       const compositeCapability = await verifyFlashLoanReceiverCapability({
         kind: 'balancer_composite_v2',
-        chain,
+        chain: opportunity.chain,
         provider,
         expectedOwner: wallet.address,
       }).catch(() => null);
       if (!compositeCapability) return;
 
-      const byInputToken = new Map<string, ZeroCapitalOpportunity[]>();
-      for (const opportunity of opportunities) {
-        if (opportunity.expectedProfit <= 0n) continue;
-        const key = opportunity.inputToken.toLowerCase();
-        const list = byInputToken.get(key) || [];
-        list.push(opportunity);
-        byInputToken.set(key, list);
-      }
-
-      for (const group of byInputToken.values()) {
-        const stack = chooseStack(group);
-        if (stack.length < 2) continue;
-        await exactSimulateStack({
-          chain,
-          provider,
-          wallet,
-          receiver: compositeCapability.address,
-          opportunities: stack,
-        }).catch(error => {
-          logger.debug('[ZeroCapitalStack] Composite V2 exact simulation rejected', {
-            component: 'ZeroCapitalAtomicStackWiring',
-            chain,
-            opportunityIds: stack.map(opportunity => opportunity.id),
-            error: error instanceof Error ? error.message : String(error),
-            executionAuthority: false,
-          });
-        });
-      }
-    })().catch(error => {
-      logger.debug('[ZeroCapitalStack] Parallel advisory optimization failed', {
-        component: 'ZeroCapitalAtomicStackWiring',
-        chain,
-        error: error instanceof Error ? error.message : String(error),
-        individualExecutionAffected: false,
-        executionAuthority: false,
+      const compatible = zeroCapitalRouteEvidenceRegistry.getCompatibleOpportunities({
+        chain: opportunity.chain,
+        inputToken: opportunity.inputToken,
       });
-    });
+      const stack = chooseStack(compatible);
+      if (stack.length < 2) return;
+      await exactSimulateStack({
+        chain: opportunity.chain,
+        provider,
+        wallet,
+        receiver: compositeCapability.address,
+        opportunities: stack,
+      });
+    })()
+      .catch(error => {
+        logger.debug('[ZeroCapitalStack] Parallel advisory optimization rejected', {
+          component: 'ZeroCapitalAtomicStackWiring',
+          opportunityId: candidate.opportunityId,
+          chain: opportunity.chain,
+          error: error instanceof Error ? error.message : String(error),
+          individualExecutionAffected: false,
+          executionAuthority: false,
+        });
+      })
+      .finally(() => advisoryInFlight.delete(key));
+  });
+}
 
-    return opportunities;
-  };
+export function ensureZeroCapitalAtomicStackWiring(): void {
+  const target = zeroCapitalEngine as unknown as ZeroCapitalStackRuntime;
+  if (installed.has(target)) return;
+  installed.add(target);
 
-  logger.info('[ZeroCapitalStack] Shared-principal atomic stacking wiring installed', {
+  measuredCandidateRegistry.onUpdate(candidate => scheduleStackAdvisory(target, candidate));
+  for (const candidate of measuredCandidateRegistry.getRecent(512)) scheduleStackAdvisory(target, candidate);
+
+  logger.info('[ZeroCapitalStack] Shared-principal atomic stacking advisory installed', {
     component: 'ZeroCapitalAtomicStackWiring',
     receiverKind: 'balancer_composite_v2',
     verifiedCompositeReceiverRequired: true,
@@ -330,6 +332,9 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     realizedAttributionBeforeCompositeExecutionRequired: true,
     cryptaraAssessmentAuthority: 'canonical_zero_capital_engine_advisory_only',
     eligibilityAuthority: 'measured_candidate_producer_only',
+    candidateTrigger: 'measured_candidate_registry_update_subscription',
+    scanMethodMutation: false,
+    executionMethodMutation: false,
     parallelAdvisoryOnly: true,
     individualOpportunityCriticalPathBlocked: false,
     executionAuthority: false,
