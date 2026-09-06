@@ -7,6 +7,7 @@ import { getSettlementProfitCalibrationSnapshot } from '../learning/settlement-p
 import { getBpsReductionSuperEngineSnapshot } from '../optimization/bps-reduction-super-engine.js';
 import { orderCexCandidatesWithNixGen } from '../optimization/nix-gen/cex-ordering.js';
 import { orderSettlementCapableMeasuredDecisionsWithNixGen } from '../optimization/nix-gen/measured-portfolio-preparation.js';
+import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 import { endToEndLatencyHarness, type LatencyOutcome } from '../runtime/end-to-end-latency-harness.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
@@ -18,6 +19,7 @@ import {
 } from './funding-crosschain-execution-adapter.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
 import { routeRecentMeasuredOpportunities } from './unified-execution-router.js';
+import { executeCanonicalZeroCapitalOpportunity } from './zero-capital-canonical-executor.js';
 
 export type CanonicalSchedulerIdleReason =
   | 'not_started'
@@ -204,6 +206,7 @@ class CanonicalExecutionScheduler {
     logger.info('[ExecutionScheduler] Canonical execution scheduler started', {
       component: 'CanonicalExecutionScheduler', baseIntervalMs: baseDispatchIntervalMs(), maxIntervalMs: maxDispatchIntervalMs(), boundedJitterFraction: dispatchJitterFraction(), dispatchBatchLimit: dispatchBatchLimit(), ownerId: executionResourceScheduler.getOwnerId(),
       authority: 'canonical_eligible_opportunities_and_admitted_measured_topologies',
+      zeroCapitalAtomicAuthority: 'single_parent_scheduler_to_single_canonical_executor',
       schedulingObjective: 'positive_all_in_net_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration_x_bps_decay_urgency',
       bpsSuperEngineSchedulingAuthority: 'bounded_priority_boost_only', bpsSuperEngineExecutionAuthority: false,
       nixGenAdvisoryOrderingEnabled: process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING !== 'false', nixGenExecutionAuthority: false,
@@ -313,21 +316,77 @@ class CanonicalExecutionScheduler {
       const routed = routeRecentMeasuredOpportunities(1024);
       const ordered = orderSettlementCapableMeasuredDecisionsWithNixGen(routed, 6, Date.now()).decisions;
       const candidates = ordered.filter(decision => decision.admitted && (
-        (decision.topology === 'DEX_ATOMIC' && decision.path === 'FLASH_LOAN')
+        (decision.topology === 'ZERO_CAPITAL_ATOMIC' && decision.path === 'FLASH_LOAN')
+        || (decision.topology === 'DEX_ATOMIC' && decision.path === 'FLASH_LOAN')
         || (decision.topology === 'LIQUIDATION' && decision.path === 'FLASH_LOAN_LIQUIDATION')
         || (decision.topology === 'CROSS_CHAIN' && decision.path === 'BRIDGE_FLASH_LOAN')
         || (decision.topology === 'FUNDING_ARBITRAGE' && decision.path === 'SPOT_PERP_FUNDING')
       ));
       let anyDispatched = false;
       for (const decision of candidates) {
-        const strategy = decision.topology === 'LIQUIDATION' ? 'aave_liquidation'
-          : decision.topology === 'DEX_ATOMIC' ? 'dex_0x_atomic_roundtrip'
-            : decision.topology === 'CROSS_CHAIN' ? 'across_same_asset_cross_chain'
-              : 'okx_spot_perp_funding';
+        const strategy = decision.topology === 'ZERO_CAPITAL_ATOMIC' ? 'zero_capital_atomic'
+          : decision.topology === 'LIQUIDATION' ? 'aave_liquidation'
+            : decision.topology === 'DEX_ATOMIC' ? 'dex_0x_atomic_roundtrip'
+              : decision.topology === 'CROSS_CHAIN' ? 'across_same_asset_cross_chain'
+                : 'okx_spot_perp_funding';
         const reservation = await this.reserveOperatorTrade(decision.opportunityId, strategy);
         if (!reservation || !reservation.allowed || !reservation.reservationId) return { dispatched: anyDispatched, submitted: false };
         const reservationId = reservation.reservationId;
         try {
+          if (decision.topology === 'ZERO_CAPITAL_ATOMIC') {
+            const candidate = measuredCandidateRegistry.get(decision.opportunityId);
+            const opportunity = zeroCapitalRouteEvidenceRegistry.getOpportunity(decision.opportunityId);
+            const exactEligible = candidate?.status === 'eligible'
+              && candidate.executableCapability === true
+              && candidate.missingInformation.length === 0
+              && candidate.expiresAt > Date.now()
+              && Number(candidate.canonicalBps?.netBps) > 0
+              && opportunity !== null
+              && opportunity.expiresAt > Date.now()
+              && opportunity.expectedProfit > 0n
+              && opportunity.netProfitBps > 0;
+            if (!exactEligible || !opportunity) {
+              await operatorTradingStrategy.releaseReservation(reservationId);
+              continue;
+            }
+
+            const result = await executeCanonicalZeroCapitalOpportunity(opportunity);
+            if (!result.submitted || !result.transactionHash) {
+              await operatorTradingStrategy.releaseReservation(reservationId);
+              logger.info('[ExecutionScheduler] ZERO_CAPITAL_ATOMIC deferred before submission', {
+                component: 'CanonicalExecutionScheduler', opportunityId: decision.opportunityId,
+                status: result.status, error: result.error, operatorSlotConsumed: false,
+                schedulerAuthority: 'canonical_only',
+              });
+              continue;
+            }
+
+            this.attempts++;
+            this.lastMeasuredTopologyDispatchCount = 1;
+            this.lastDispatchAt = Date.now();
+            this.lastIdleReason = null;
+            this.lastOperatorState = await operatorTradingStrategy.markSubmitted(reservationId);
+            const terminalReceipt = result.settlementConfirmed || result.receiptStatus === 0 || result.receiptStatus === 1;
+            if (terminalReceipt) await operatorTradingStrategy.markTerminal(reservationId);
+            if (result.settlementConfirmed && result.success) this.settled++;
+            else if (terminalReceipt) this.failed++;
+            else this.pending++;
+            logger.info('[ExecutionScheduler] ZERO_CAPITAL_ATOMIC parent trade consumed operator slot only after concrete submission', {
+              component: 'CanonicalExecutionScheduler', opportunityId: decision.opportunityId,
+              topology: decision.topology, submissionReference: result.transactionHash,
+              settlementConfirmed: result.settlementConfirmed, success: result.success,
+              realizedNetProfitUsd: result.normalized?.realized.netProfitUsd ?? null,
+              treasuryRecorded: result.treasuryRecorded === true,
+              localDate: this.lastOperatorState.localDate,
+              submittedTrades: this.lastOperatorState.submittedTrades,
+              maxTrades: this.lastOperatorState.maxTrades,
+              realizedProfitUsd: this.lastOperatorState.realizedProfitUsd,
+              stopProfitUsd: this.lastOperatorState.stopProfitUsd,
+              singleSchedulerAuthority: true,
+            });
+            return { dispatched: true, submitted: true };
+          }
+
           if (decision.topology === 'DEX_ATOMIC' || decision.topology === 'LIQUIDATION') {
             const results = await measuredTopologyExecutionAdapter.dispatch([decision]);
             const result = results.find(item => item.opportunityId === decision.opportunityId);
@@ -380,9 +439,6 @@ class CanonicalExecutionScheduler {
   }
 
   private async runDispatch(): Promise<void> {
-    // Existing funding/cross-chain positions are risk-management obligations, not
-    // new parent trades. Recovery must succeed (or fail in internally isolated
-    // feedback-only paths) before this scheduler cycle may grant fresh exposure.
     try {
       await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);
     } catch (error) {
