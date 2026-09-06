@@ -27,6 +27,7 @@ const db = read('server/db.ts');
 const coordination = read('server/services/cryptocrawl/runtime/database-coordination.ts');
 const privateAuthority = read('server/services/cryptocrawl/intelligence/cex-private-authority.ts');
 const coinbasePrivate = read('server/services/cryptocrawl/intelligence/coinbase-advanced-trade-authority.ts');
+const coinbaseFeeEvidence = read('server/services/cryptocrawl/intelligence/coinbase-fee-evidence.ts');
 const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resolver.ts');
 const productPolicy = read('server/services/cryptocrawl/execution/cex-spot-product-policy.ts');
 const arbitrageVerifier = read('server/services/cryptocrawl/arbitrage/arbitrage-verifier.ts');
@@ -127,7 +128,11 @@ requirePattern(feeResolver, /evidence\.source\s*===\s*'configured_override'\)\s*
 forbidPattern(feeResolver, /storeFeeEvidence\(fallback\)/, 'configured fallback is cached as authenticated fee evidence');
 requirePattern(feeResolver, /OKX_PER_INSTRUMENT_BUDGET/, 'OKX per-instrument fallback is bounded');
 requirePattern(feeResolver, /same-cycle per-instrument fan-out suppressed/, 'failed OKX group request cannot fan out in the same cycle');
-requirePattern(feeResolver, /fetchCoinbaseFeeEvidence\(missingCoinbase\[0\]/, 'one account-level Coinbase fee read hydrates all requested Coinbase symbols');
+requirePattern(feeResolver, /Promise\.allSettled\(missingCoinbase\.map/, 'Coinbase prime preserves per-product stablepair classification instead of cloning one product across symbols');
+requirePattern(feeResolver, /fetchCoinbaseFeeEvidence\(symbol,\s*acceptedAgeMs\s*<\s*FEE_CACHE_TTL_MS\)/, 'Coinbase prime resolves each requested product while sharing the account-level fee authority');
+requirePattern(coinbaseFeeEvidence, /let\s+inFlight:\s*Promise<CoinbaseFeeEvidence>\s*\|\s*null\s*=\s*null/, 'Coinbase authenticated account-level fee request remains single-flight');
+requirePattern(coinbaseFeeEvidence, /if\s*\(inFlight\)\s*return\s*\{\s*\.\.\.\(await\s+inFlight\)\s*\}/, 'concurrent Coinbase product hydration shares one authenticated account-level fee request');
+requirePattern(coinbaseFeeEvidence, /transaction_summary/, 'Coinbase account fee authority uses the official transaction-summary fee tier surface');
 requirePattern(feeResolver, /!unavailableEntry\('kraken'/, 'Kraken proven-unavailable fee rows are suppressed during prime');
 requirePattern(feeResolver, /!unavailableEntry\('okx'/, 'OKX proven-unavailable products are suppressed during prime');
 requirePattern(productPolicy, /MISSING_CATALOG_RECHECK_MS/, 'missing-product catalog recheck is bounded');
@@ -205,7 +210,7 @@ requirePattern(canonicalScheduler, /measuredTopologyExecutionAdapter\.dispatch/,
 forbidFile('server/services/cryptocrawl/execution/measured-topology-execution-scheduler.ts', 'duplicate topology scheduler exists');
 
 // Analysis/reference frameworks must never become runtime architecture.
-for (const [name, source] of Object.entries({ db, coordination, privateAuthority, coinbasePrivate, feeResolver, productPolicy, arbitrageVerifier, evmSigner, distributedQuota, resources, zeroResources, leaseAuthority, makerDiscovery, makerAdmission, marginal, hyperdynamic, mesh, universe, marketFocus, reactor, dexDiscovery, dexExecutor, dexAdapter, discoveryController, canonicalScheduler, adaptiveProfit, residualReplan })) {
+for (const [name, source] of Object.entries({ db, coordination, privateAuthority, coinbasePrivate, coinbaseFeeEvidence, feeResolver, productPolicy, arbitrageVerifier, evmSigner, distributedQuota, resources, zeroResources, leaseAuthority, makerDiscovery, makerAdmission, marginal, hyperdynamic, mesh, universe, marketFocus, reactor, dexDiscovery, dexExecutor, dexAdapter, discoveryController, canonicalScheduler, adaptiveProfit, residualReplan })) {
   forbidPattern(source, /\bhyperscope\b/i, `${name} embeds Hyperscope reference vocabulary into runtime code`);
   forbidPattern(source, /\benhancements\s+list\b/i, `${name} embeds the enhancements list into runtime code`);
 }
