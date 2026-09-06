@@ -95,6 +95,10 @@ class ZeroCapitalRouteEvidenceRegistry {
     this.prune();
   }
 
+  remove(opportunityId: string): void {
+    this.entries.delete(opportunityId);
+  }
+
   get(opportunityId: string): ZeroCapitalRouteEvidence | null {
     const value = this.entries.get(opportunityId);
     if (!value || value.expiresAt <= Date.now()) return null;
