@@ -7,6 +7,10 @@ import { krakenPrivateRequest, okxPrivateRequest } from '../intelligence/cex-pri
 const REFRESH_MS = boundedInt(process.env.CRYPTOCRAWL_REBALANCE_ROUTE_EVIDENCE_REFRESH_MS, 60_000, 15_000, 15 * 60_000);
 const EVIDENCE_TTL_MS = boundedInt(process.env.CRYPTOCRAWL_REBALANCE_ROUTE_EVIDENCE_TTL_MS, 120_000, 30_000, 30 * 60_000);
 const MAX_ASSETS_PER_SCAN = boundedInt(process.env.CRYPTOCRAWL_REBALANCE_ROUTE_EVIDENCE_ASSETS, 8, 1, 24);
+const MEMO_FREE_NETWORKS = new Set([
+  'ethereum', 'arbitrum', 'optimism', 'base', 'polygon', 'zksync', 'linea', 'scroll',
+  'avalanche', 'bsc', 'solana', 'tron', 'bitcoin',
+]);
 
 let installed = false;
 let timer: NodeJS.Timeout | null = null;
@@ -43,6 +47,7 @@ function canonicalAsset(raw: unknown): string {
 function networkKey(raw: unknown): string | null {
   const value = String(raw || '').trim().toLowerCase();
   if (!value) return null;
+  if (value.includes('lightning')) return 'bitcoin_lightning';
   if (value.includes('arbitrum')) return 'arbitrum';
   if (value.includes('optimism')) return 'optimism';
   if (/(^|[^a-z])base([^a-z]|$)/.test(value)) return 'base';
@@ -55,9 +60,12 @@ function networkKey(raw: unknown): string | null {
   if (value.includes('solana') || value === 'sol') return 'solana';
   if (value.includes('tron') || value.includes('trc20')) return 'tron';
   if (value.includes('bitcoin') || value === 'btc') return 'bitcoin';
-  if (value.includes('lightning')) return 'bitcoin_lightning';
   if (value.includes('ethereum') || value.includes('erc20') || value === 'eth') return 'ethereum';
   return value.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || null;
+}
+
+function memoFreeNetwork(network: string | null): network is string {
+  return network !== null && MEMO_FREE_NETWORKS.has(network);
 }
 
 function addressEqual(leftRaw: unknown, rightRaw: unknown): boolean {
@@ -96,13 +104,19 @@ async function recordOkxToKraken(asset: string, amount: number): Promise<number>
     krakenPrivateRequest('/0/private/DepositMethods', { asset }),
   ]);
   const deposits = (Array.isArray(krakenDepositMethods) ? krakenDepositMethods : [])
-    .map((row: any) => ({ method: String(row?.method || '').trim(), network: networkKey(row?.method), fee: finiteNonNegative(row?.fee) }))
-    .filter(row => row.method && row.network);
+    .map((row: any) => ({
+      method: String(row?.method || '').trim(),
+      network: networkKey(row?.method),
+      minimum: finiteNonNegative(row?.minimum) ?? 0,
+    }))
+    .filter(row => row.method && memoFreeNetwork(row.network));
   let recorded = 0;
   for (const row of Array.isArray(okxCurrencies?.data) ? okxCurrencies.data : []) {
-    if (!bool(row?.canWd)) continue;
+    if (!bool(row?.canWd) || bool(row?.needTag)) continue;
     const network = networkKey(row?.chain);
-    if (!network || !deposits.some(deposit => deposit.network === network)) continue;
+    if (!memoFreeNetwork(network)) continue;
+    const destination = deposits.find(deposit => deposit.network === network);
+    if (!destination) continue;
     const burningFeeRate = finiteNonNegative(row?.burningFeeRate) ?? 0;
     // A percentage burn cannot be represented as a fixed route fee without an
     // exact amount/currency treatment. Skip it rather than understate costs.
@@ -111,7 +125,8 @@ async function recordOkxToKraken(asset: string, amount: number): Promise<number>
     const feeCurrency = canonicalAsset(row?.feeCcy || asset);
     const minWd = finiteNonNegative(row?.minWd) ?? 0;
     const maxWd = finitePositive(row?.maxWd);
-    if (fee === null || !feeCurrency || amount + 1e-12 < minWd || (maxWd !== null && amount > maxWd + 1e-12)) continue;
+    const minimumAmount = Math.max(minWd, destination.minimum);
+    if (fee === null || !feeCurrency || amount + 1e-12 < minimumAmount || (maxWd !== null && amount > maxWd + 1e-12)) continue;
     const feeUsd = await usdValue(fee, feeCurrency);
     if (feeUsd === null) continue;
     const observedAt = Date.now();
@@ -124,7 +139,7 @@ async function recordOkxToKraken(asset: string, amount: number): Promise<number>
       withdrawalFeeCurrency: feeCurrency,
       estimatedFeeUsd: feeUsd,
       estimatedLatencyMs: null,
-      minimumAmount: minWd,
+      minimumAmount,
       maximumAmount: maxWd,
       withdrawalSupported: true,
       depositSupported: true,
@@ -135,8 +150,10 @@ async function recordOkxToKraken(asset: string, amount: number): Promise<number>
         'okx_authenticated:/api/v5/asset/currencies',
         'kraken_authenticated:/0/private/DepositMethods',
         `okx_chain:${String(row?.chain || '')}`,
+        `kraken_deposit_method:${destination.method}`,
         'withdrawal_fee:authenticated_current',
         'destination_deposit_method:authenticated_current',
+        'memo_or_tag_route:false',
         'transfer_execution_authority:false',
       ],
     });
@@ -158,23 +175,29 @@ async function recordKrakenToOkx(asset: string, amount: number): Promise<number>
       network: networkKey(row?.network || row?.method),
       minimum: finiteNonNegative(row?.minimum) ?? 0,
     }))
-    .filter(row => row.method && row.network && amount + 1e-12 >= row.minimum);
+    .filter(row => row.method && memoFreeNetwork(row.network));
+  const okxCapabilities = (Array.isArray(okxCurrencies?.data) ? okxCurrencies.data : [])
+    .filter((row: any) => bool(row?.canDep) && !bool(row?.needTag))
+    .map((row: any) => ({
+      network: networkKey(row?.chain),
+      minDep: finiteNonNegative(row?.minDep) ?? 0,
+      rawChain: String(row?.chain || ''),
+    }))
+    .filter(row => memoFreeNetwork(row.network));
   const okxDeposits = (Array.isArray(okxDepositAddresses?.data) ? okxDepositAddresses.data : [])
     .map((row: any) => ({ address: String(row?.addr || '').trim(), network: networkKey(row?.chain), rawChain: String(row?.chain || '') }))
-    .filter(row => row.address && row.network);
-  const okxCanDeposit = new Set(
-    (Array.isArray(okxCurrencies?.data) ? okxCurrencies.data : [])
-      .filter((row: any) => bool(row?.canDep))
-      .map((row: any) => networkKey(row?.chain))
-      .filter((value: string | null): value is string => Boolean(value)),
-  );
+    .filter(row => row.address && memoFreeNetwork(row.network));
   const addresses = Array.isArray(withdrawAddressesRaw) ? withdrawAddressesRaw : [];
   let recorded = 0;
 
   for (const method of methods) {
-    if (!okxCanDeposit.has(method.network)) continue;
+    const capability = okxCapabilities.find(row => row.network === method.network);
+    if (!capability) continue;
+    const minimumAmount = Math.max(method.minimum, capability.minDep);
+    if (amount + 1e-12 < minimumAmount) continue;
     const destinationRows = okxDeposits.filter(row => row.network === method.network);
     const matching = addresses.filter((row: any) => {
+      if (row?.verified === false || String(row?.verified || '').trim().toLowerCase() === 'false') return false;
       const rowNetwork = networkKey(row?.method || row?.network);
       if (rowNetwork !== method.network || !String(row?.key || '').trim()) return false;
       return destinationRows.some(destination => addressEqual(row?.address, destination.address));
@@ -196,7 +219,7 @@ async function recordKrakenToOkx(asset: string, amount: number): Promise<number>
       withdrawalFeeCurrency: asset,
       estimatedFeeUsd: feeUsd,
       estimatedLatencyMs: null,
-      minimumAmount: method.minimum,
+      minimumAmount,
       maximumAmount: null,
       withdrawalSupported: true,
       depositSupported: true,
@@ -209,8 +232,10 @@ async function recordKrakenToOkx(asset: string, amount: number): Promise<number>
         'kraken_authenticated:/0/private/WithdrawInfo',
         'okx_authenticated:/api/v5/asset/currencies',
         'okx_authenticated:/api/v5/asset/deposit-address',
+        `okx_chain:${capability.rawChain}`,
         'destination_address:exact_verified_match',
         'withdrawal_fee:authenticated_amount_specific',
+        'memo_or_tag_route:false',
         'transfer_execution_authority:false',
       ],
     });
@@ -260,6 +285,7 @@ async function refreshOnce(): Promise<void> {
       liveTransferExecutionEnabled: false,
       syntheticFeeEvidenceAllowed: false,
       syntheticLatencyEconomicsAllowed: false,
+      memoOrTagRoutesAdmitted: false,
       operatorBalanceAuthorityGranted: false,
       executionAuthority: false,
     });
@@ -308,5 +334,6 @@ export function getMeasuredRebalanceRouteEvidenceWiringStatus() {
     transferExecutionAuthority: false as const,
     syntheticFeeEvidenceAllowed: false as const,
     syntheticLatencyEconomicsAllowed: false as const,
+    memoOrTagRoutesAdmitted: false as const,
   };
 }
