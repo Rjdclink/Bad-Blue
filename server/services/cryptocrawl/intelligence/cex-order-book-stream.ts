@@ -524,11 +524,21 @@ class CexOrderBookStreamManager {
 
     const key = `${venue}:${state.symbol}`;
     const standby = this.hotStandbyEnabled() ? this.standbyBooks.get(key) : null;
-    if (state.book.isStale(maxAgeMs)) {
+    const transportStaleMs = this.staleMs();
+
+    // Quote freshness is an execution-admission requirement; transport staleness
+    // is a stream-health requirement. A caller can legitimately require a 250ms
+    // or 1s quote while the exchange sends no book delta because nothing changed.
+    // Only the independent transport-health threshold may reset/resubscribe the
+    // primary stream. This preserves strict stale-quote rejection without turning
+    // normal sparse books into false websocket failures and standby handover spam.
+    if (state.book.isStale(transportStaleMs)) {
       this.stats.staleResets += 1;
       state.book.reset();
       this.refreshSubscription(venue, state.symbol, 'primary');
-      if (standby?.isFresh(maxAgeMs)) return this.serveStandby(key, venue, state.symbol, standby);
+      if (standby?.isFresh(maxAgeMs)) {
+        return this.serveStandby(key, venue, state.symbol, standby, true);
+      }
       return null;
     }
     if (state.book.isFresh(maxAgeMs)) {
@@ -537,7 +547,9 @@ class CexOrderBookStreamManager {
       this.standbyWarmupServing.delete(key);
       return state.book.getQuote(venue, state.symbol);
     }
-    if (standby?.isFresh(maxAgeMs)) return this.serveStandby(key, venue, state.symbol, standby);
+    if (standby?.isFresh(maxAgeMs)) {
+      return this.serveStandby(key, venue, state.symbol, standby, false);
+    }
     return null;
   }
 
@@ -572,6 +584,7 @@ class CexOrderBookStreamManager {
     venue: CexStreamVenue,
     symbol: string,
     book: SequencedOrderBook,
+    primaryTransportDegraded: boolean,
   ): StreamOrderBookQuote | null {
     const quote = book.getQuote(venue, symbol);
     if (!quote) return null;
@@ -597,6 +610,13 @@ class CexOrderBookStreamManager {
       }
       return quote;
     }
+
+    // A standby quote can be newer than the primary for a strict caller-specific
+    // maxAgeMs while both websocket lanes remain healthy. That is freshness
+    // selection, not transport degradation, so it must not increment handover
+    // failures or emit a warning. Actual handovers are recorded only after the
+    // independent transport-health threshold has been exceeded.
+    if (!primaryTransportDegraded) return quote;
 
     this.standbyWarmupServing.delete(key);
     if (!this.standbyServing.has(key)) {
