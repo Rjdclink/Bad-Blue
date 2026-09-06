@@ -43,18 +43,14 @@ export interface ReceivedCexFeeRecovery {
   realizedRecoveryAuthority: true;
 }
 
-const REFRESH_MS = Math.max(
-  15_000,
-  Math.min(15 * 60_000, Number(process.env.CRYPTOCRAWL_CEX_FEE_RECOVERY_REFRESH_MS || 60_000)),
-);
-const PRIVATE_TIMEOUT_MS = Math.max(
-  3_000,
-  Math.min(15_000, Number(process.env.CRYPTO_ARBITRAGE_FEE_TIMEOUT_MS || 8_000)),
-);
-const MAX_RECEIVED_ROWS = Math.max(
-  100,
-  Math.min(5_000, Math.trunc(Number(process.env.CRYPTOCRAWL_CEX_FEE_RECOVERY_ROWS || 1_000))),
-);
+function boundedEnvInteger(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
+}
+
+const REFRESH_MS = boundedEnvInteger('CRYPTOCRAWL_CEX_FEE_RECOVERY_REFRESH_MS', 60_000, 15_000, 15 * 60_000);
+const PRIVATE_TIMEOUT_MS = boundedEnvInteger('CRYPTO_ARBITRAGE_FEE_TIMEOUT_MS', 8_000, 3_000, 15_000);
+const MAX_RECEIVED_ROWS = boundedEnvInteger('CRYPTOCRAWL_CEX_FEE_RECOVERY_ROWS', 1_000, 100, 5_000);
 
 let krakenKfee: KrakenKfeeSnapshot | null = null;
 let krakenRefreshAt = 0;
