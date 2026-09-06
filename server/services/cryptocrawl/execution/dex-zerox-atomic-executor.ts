@@ -15,7 +15,7 @@ import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../governance
 import { stageManager } from '../governance/stage-management.js';
 import { marketDataProviders, type DexQuoteObservation } from '../intelligence/market-data-providers.js';
 import { getGasSponsorManager, type SponsoredCall } from '../strategies/gas-sponsorship.js';
-import { withEvmSignerLane } from './evm-signer-lane.js';
+import { executeSystemOwnedNativeTransaction } from './system-owned-native-transaction.js';
 import {
   getSponsoredReceiverManager,
   resolveSponsoredReceiverVault,
@@ -68,9 +68,9 @@ export interface ZeroXAtomicExecutionResult {
   receiptStatus?: 0 | 1;
   gasUsed?: string;
   effectiveGasPriceWei?: string;
-  /** Receiver profit after flash-loan repayment/fee, before wallet-paid native gas. */
+  /** Receiver profit after flash-loan repayment/fee, before system-owned native gas. */
   realizedProfitUsd?: number;
-  /** Receiver profit BPS before wallet-paid native gas. Not terminal all-in net BPS. */
+  /** Receiver profit BPS before system-owned native gas. Not terminal all-in net BPS. */
   realizedProfitBps?: number;
   /** Pretrade gas estimate only. Terminal gas reconciliation must use receipt fields above. */
   gasUsd?: number;
@@ -139,15 +139,9 @@ function adaptiveStablecoinSlippagePpm(opportunityId: string): number {
   const candidate = measuredCandidateRegistry.get(opportunityId);
   const netBps = Number(candidate?.canonicalBps?.netBps);
   if (!Number.isFinite(netBps) || netBps <= 0) {
-    // 100 BPS exactly matches the prior 0x API default; PPM merely makes the
-    // control explicit until route-local positive economics justify tightening.
     return 10_000;
   }
 
-  // Two-leg route: allocate at most half of the currently measured positive net
-  // edge to worst-case slippage guards (25% per leg). This is a guard only;
-  // neither the unused tolerance nor any theoretical improvement receives BPS
-  // credit. Sub-BPS precision remains useful for very small positive edges.
   const perLegBps = Math.max(0.10, Math.min(100, netBps * 0.25));
   return Math.max(10, Math.min(10_000, Math.round(perLegBps * 100)));
 }
@@ -177,9 +171,6 @@ function quoteTransaction(quote: DexQuoteObservation, expectedSellAmount: BigNum
   if (!value.isZero()) throw new Error('Stablecoin atomic DEX route unexpectedly requires native transaction value');
   const gas = asPositiveInteger('0x firm quote gas', quote.transaction.gas || quote.estimatedGas);
 
-  // 0x v2 says the allowance target is authoritative in issues.allowance.spender
-  // or allowanceTarget. For the AllowanceHolder ERC-20 flow, transaction.to is
-  // also AllowanceHolder; if an explicit spender is present it must agree.
   const explicitSpender = quote.allowanceSpender || quote.allowanceTarget;
   const spender = explicitSpender ? asAddress('0x allowance spender', explicitSpender) : target;
   if (!sameAddress(spender, target)) throw new Error('0x allowance spender differs from transaction target; unsupported AllowanceHolder route fails closed');
@@ -203,7 +194,10 @@ async function measureBalancerFlashFeeBps(chain: ChainId, provider: ethers.provi
 }
 
 function infrastructureFundingMode(): ReceiverFundingMode {
-  return getGasSponsorManager().getReadiness().ready ? 'sponsored' : 'native';
+  // Hosted paymaster readiness alone does not prove zero operator monetary cost.
+  // Infrastructure therefore uses only the provenance-backed system-owned native
+  // path until canonical sponsorship evidence explicitly proves zero user cost.
+  return 'native';
 }
 
 async function executeInfrastructureCalls(input: {
@@ -217,32 +211,28 @@ async function executeInfrastructureCalls(input: {
   if (input.calls.length === 0) return;
   requireZeroCapitalInfrastructureDeploymentAllowed({ chain: input.chain, operation: 'receiver_permissions' });
   if (input.fundingMode === 'sponsored') {
-    const result = await getGasSponsorManager().execute({
-      wallet: input.wallet,
-      chainId: input.chainId,
-      calls: input.calls,
-      timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_DEPLOY_TIMEOUT_MS || 90_000)),
-    });
-    if (!result.transactionHash) throw new Error('Sponsored 0x receiver permission transaction returned no hash');
-    return;
+    throw new Error('0x receiver permission sponsorship lacks canonical zero-operator-cost proof');
   }
 
   const connected = input.wallet.connect(input.provider);
-  await withEvmSignerLane({
-    chainId: input.chainId,
-    walletAddress: connected.address,
-    operation: async () => {
-      for (const call of input.calls) {
-        const transaction = await connected.sendTransaction({
-          to: call.to,
-          data: call.data,
-          value: BigNumber.from(call.value || 0),
-        });
-        const receipt = await transaction.wait(1);
-        if (!receipt || receipt.status !== 1) throw new Error('0x receiver permission transaction reverted');
-      }
-    },
-  });
+  for (const call of input.calls) {
+    const data = String(call.data || '0x');
+    const callHash = ethers.utils.keccak256(data);
+    const result = await executeSystemOwnedNativeTransaction({
+      chain: input.chain,
+      wallet: connected,
+      provider: input.provider,
+      idempotencyKey: `dex-infra:${input.chain}:${call.to.toLowerCase()}:${callHash}`,
+      purpose: 'zero_capital_receiver_permission_setup',
+      transaction: {
+        to: call.to,
+        data,
+        value: BigNumber.from(call.value || 0),
+      },
+      confirmations: 1,
+    });
+    if (result.receipt.status !== 1) throw new Error('0x receiver permission transaction reverted');
+  }
 }
 
 function encodeReceiverPayload(input: {
@@ -305,9 +295,6 @@ async function firmRoundTripQuotes(input: {
     takerAddress: input.receiver,
     purpose: 'execution',
     slippagePpm,
-    // 0x surplus capture is custom-plan gated inside MarketDataProviders. When
-    // entitled, only the terminal loan-token leg captures positive slippage so
-    // it cannot strand intermediate inventory or bypass terminal profit proof.
     tradeSurplusRecipient: input.receiver,
     tradeSurplusMaxBps: configuredTradeSurplusMaxBps(),
   });
@@ -356,11 +343,6 @@ async function ensureInfrastructureForRequest(request: AtomicRequest): Promise<v
   });
 }
 
-/**
- * Called only beneath the canonical execution scheduler through the measured
- * topology adapter. It performs bounded infrastructure readiness work queued by
- * read-only discovery preparation; it never submits a swap transaction.
- */
 export async function reconcilePendingZeroXAtomicInfrastructure(
   maxRequests = 1,
 ): Promise<ZeroXAtomicInfrastructureResult> {
@@ -389,6 +371,7 @@ export async function reconcilePendingZeroXAtomicInfrastructure(
         chain: request.chain,
         tradeSubmitted: false,
         discoveryMutationAuthority: false,
+        personalGasFallbackAllowed: false,
       });
     } catch (error) {
       failed += 1;
@@ -419,11 +402,6 @@ export function getPreparedZeroXAtomicPlan(opportunityId: string): ZeroXAtomicRo
   return { ...plan, payload: { ...plan.payload }, firstQuote: { ...plan.firstQuote }, secondQuote: { ...plan.secondQuote }, provenance: [...plan.provenance] };
 }
 
-/**
- * Read-only firm preparation: network reads, 0x quote reads, on-chain permission
- * reads, eth_call and gas estimation only. Missing receiver/permissions are queued
- * for the canonical scheduler's infrastructure reconciler and fail closed here.
- */
 export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise<ZeroXAtomicRoundTripPreparation> {
   requestInputs.set(input.opportunityId, { ...input });
   if (!supportsSponsoredReceiverChain(input.chain)) throw new Error(`${input.chain} has no reviewed receiver-backed Balancer execution surface`);
@@ -553,6 +531,7 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
       'receiver:exact_eth_call_simulation',
       'receiver:exact_gas_estimate',
       'profit_admission:single_strictly_positive_authority',
+      'gas:system_owned_native_reservation_required_at_execution',
       'discovery_infrastructure_mutation:false',
       'synthetic_evidence:false',
     ],
@@ -584,9 +563,10 @@ export async function executePreparedZeroXAtomicRoundTrip(
   if (!wallet) return rejected('DEX_ATOMIC_SIGNER_MISSING');
   const connectedWallet = wallet.connect(provider);
   const sponsor = getGasSponsorManager();
-  const requestedFundingMode = options.fundingMode ?? (sponsor.getReadiness().ready ? 'sponsored' : 'native');
+  const requestedFundingMode = options.fundingMode ?? 'native';
   let transactionHash: string | undefined;
   let fundingModeUsed: 'sponsored' | 'native' | undefined;
+  let nativeReceipt: ethers.providers.TransactionReceipt | null = null;
 
   try {
     if (requestedFundingMode === 'sponsored') {
@@ -600,23 +580,26 @@ export async function executePreparedZeroXAtomicRoundTrip(
       transactionHash = sponsored.transactionHash;
       fundingModeUsed = 'sponsored';
     } else {
-      transactionHash = await withEvmSignerLane({
-        chainId: config.chainId,
-        walletAddress: connectedWallet.address,
-        operation: async () => {
-          const transaction = await connectedWallet.sendTransaction({
-            to: plan.payload.to,
-            data: plan.payload.data,
-            value: 0,
-            gasLimit: plan.payload.gasLimit,
-          });
-          return transaction.hash;
+      const native = await executeSystemOwnedNativeTransaction({
+        chain: request.chain,
+        wallet: connectedWallet,
+        provider,
+        idempotencyKey: `dex-atomic:${opportunityId}:${plan.receiver.toLowerCase()}`,
+        purpose: 'dex_atomic_execution',
+        transaction: {
+          to: plan.payload.to,
+          data: plan.payload.data,
+          value: 0,
+          gasLimit: plan.payload.gasLimit,
         },
+        confirmations: 1,
       });
+      transactionHash = native.transactionHash;
+      nativeReceipt = native.receipt;
       fundingModeUsed = 'native';
     }
 
-    const receipt = await provider.waitForTransaction(
+    const receipt = nativeReceipt || await provider.waitForTransaction(
       transactionHash,
       1,
       Math.max(15_000, Number(process.env.ZERO_CAPITAL_RECEIPT_TIMEOUT_MS || 120_000)),
@@ -681,6 +664,8 @@ export async function executePreparedZeroXAtomicRoundTrip(
       gasUsed,
       effectiveGasPriceWei,
       settlementConfirmed: true,
+      personalGasFallbackAllowed: false,
+      systemOwnedNativeGasLedgerApplied: fundingModeUsed === 'native',
       allInRealizedEconomicsAuthority: 'canonical_measured_topology_adapter_after_actual_gas',
       syntheticEvidence: false,
     });
