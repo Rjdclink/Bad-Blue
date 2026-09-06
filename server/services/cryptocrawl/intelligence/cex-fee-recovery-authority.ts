@@ -36,7 +36,9 @@ export interface ReceivedCexFeeRecovery {
   source: 'okx_rebate_card_received' | 'okx_affiliate_fee_rebate_received';
   externalId: string;
   currency: 'USD' | 'USDT' | 'USDC';
-  amountUsd: number;
+  amount: number;
+  amountUsd: number | null;
+  requiresUsdNormalization: boolean;
   observedAt: number;
   received: true;
   preTradeEconomicAuthority: false;
@@ -213,8 +215,8 @@ function parseOkxReceivedRows(
   for (const row of rows) {
     const currency = String(row?.ccy ?? '').trim().toUpperCase();
     if (currency !== 'USD' && currency !== 'USDT' && currency !== 'USDC') continue;
-    const amountUsd = finitePositive(row?.balChg);
-    if (amountUsd === null) continue;
+    const amount = finitePositive(row?.balChg);
+    if (amount === null) continue;
     const observedAt = finitePositive(row?.ts) ?? Date.now();
     const externalId = String(row?.billId ?? '').trim();
     if (!externalId) continue;
@@ -223,7 +225,9 @@ function parseOkxReceivedRows(
       source,
       externalId,
       currency: currency as 'USD' | 'USDT' | 'USDC',
-      amountUsd,
+      amount,
+      amountUsd: currency === 'USD' ? amount : null,
+      requiresUsdNormalization: currency !== 'USD',
       observedAt,
       received: true,
       preTradeEconomicAuthority: false,
@@ -282,15 +286,17 @@ export async function refreshCexFeeRecoveryEvidence(force = false): Promise<void
 
 export function getCexFeeRecoverySnapshot() {
   const receivedRows = [...received.values()].sort((left, right) => right.observedAt - left.observedAt);
-  const receivedRecoveryUsd = receivedRows.reduce((sum, row) => sum + row.amountUsd, 0);
+  const receivedRecoveryUsd = receivedRows.reduce((sum, row) => sum + (row.amountUsd ?? 0), 0);
   return {
     observedAt: Date.now(),
     krakenKfee: krakenKfee ? { ...krakenKfee } : null,
     received: receivedRows.map(row => ({ ...row })),
     receivedRecoveryUsd: Number(receivedRecoveryUsd.toFixed(8)),
+    receivedRowsRequiringUsdNormalization: receivedRows.filter(row => row.requiresUsdNormalization).length,
     programCatalog: getCexFeeRecoveryProgramCatalog(),
     canonicalEmbeddedFeeAuthority: 'cex_fee_resolver' as const,
     realizedRecoveryAuthority: 'received_authenticated_credits_only' as const,
+    stablecoinParAssumptionAllowed: false as const,
     unreceivedForecastCreditBps: 0 as const,
     futureOrConfiguredRecoveryCanCreateProfitability: false as const,
     crossReplicaKfeeReservationImplemented: false as const,
