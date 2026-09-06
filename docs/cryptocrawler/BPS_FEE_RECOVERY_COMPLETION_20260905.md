@@ -29,8 +29,9 @@ This wave closes the remaining CEX fee-program/recovery integration gap without 
 ### Observed account recovery, not pre-credited
 
 - **Kraken Fee Credits (KFEE/FEE):** authenticated balance is observed using existing Kraken credentials. The aliases are never summed. The available dollar-equivalent fee offset is measured, but it is not inserted into pre-trade BPS until a cross-replica reservation and exact terminal deduction can be proven. Kraken can still apply the credit automatically at the venue.
-- **OKX Rebate Card:** only an authenticated positive funding-account bill of type 68 is counted as received recovery. Future card face value is not pre-credited.
+- **OKX Rebate Card:** only an authenticated positive funding-account bill of type 68 is retained as received recovery. Future card face value is not pre-credited.
 - **OKX received fee-rebate bills:** authenticated positive funding-account bill type 173 is retained as received recovery evidence, never as forecast profit.
+- **Received-credit currency truth:** USD credits can be totaled directly as USD. USDT/USDC credits remain exact native-currency amounts with `amountUsd = null` until an authoritative quote-to-USD normalization is available. Stablecoin par is never assumed merely to make the recovery number larger.
 
 ### Catalogued but deliberately non-authoritative before receipt
 
@@ -52,6 +53,8 @@ The Super Engine snapshot now contains `feeRecovery` with:
 - authenticated received recovery rows;
 - current Kraken fee-credit availability;
 - program catalog and authority classification;
+- exact native-currency received amounts and explicit USD-normalization gaps;
+- `stablecoinParAssumptionAllowed = false`;
 - `unreceivedForecastCreditBps = 0`;
 - `futureOrConfiguredRecoveryCanCreateProfitability = false`;
 - `preTradeKfeeCreditAllowed = false` until exact reservation is implemented;
@@ -63,6 +66,7 @@ No 26th research tactic or independent profitability model was added. The existi
 
 - Never hard-code a fee-free Coinbase/Kraken/OKX pair when current live product/account evidence can prove the rate.
 - Never convert a subscription, coupon, voucher, affiliate promise, cashback percentage, or future rebate into executable BPS before deterministic entitlement/receipt is proven.
+- Never assume USDT/USDC equals exactly one USD for realized-recovery accounting; normalize through authoritative market evidence before converting it to USD/BPS.
 - Never sum Kraken `KFEE` and `FEE` aliases.
 - Never inject asynchronous program credits into immediate `cex-settlement.ts` trade P/L unless exact order-level provenance exists.
 - Never make a losing trade eligible merely to reach a future fee tier, cashback threshold, or promotional reward.
@@ -71,4 +75,4 @@ No 26th research tactic or independent profitability model was added. The existi
 
 ## Permanent verification
 
-`verify-cex-fee-recovery-completion.cjs` is included in deployment preflight. It rejects regression of live Coinbase stablepair classification, canonical signed maker economics, received-only OKX recovery, conservative Kraken fee-credit accounting, one authenticated fee lifecycle, BPS Super Engine recovery visibility, no delayed-credit injection into CEX settlement, and no new trading credential dependency.
+`verify-cex-fee-recovery-completion.cjs` is included in deployment preflight. It rejects regression of live Coinbase stablepair classification, canonical signed maker economics, received-only OKX recovery, exact recovery-currency truth, conservative Kraken fee-credit accounting, one authenticated fee lifecycle, BPS Super Engine recovery visibility, no delayed-credit injection into CEX settlement, and no new trading credential dependency.
