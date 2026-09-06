@@ -48,6 +48,15 @@ const { ensureZeroCapitalFundingLifecycleObserver } = await import(
 );
 ensureZeroCapitalFundingLifecycleObserver();
 
+// Preserve the useful PR #520 network-capability layer without restoring its
+// obsolete execution wrappers. These observers verify only current chain/RPC
+// identity and remain fail-closed for execution until route-local provider,
+// zero-personal-fee and terminal settlement evidence all exist.
+const { ensureExpandedNetworkObservability } = await import(
+  './services/cryptocrawl/runtime/expanded-network-observability.js'
+);
+ensureExpandedNetworkObservability();
+
 // Authenticated inventory-route fee/network evidence feeds planning only. It may
 // reduce future rebalance drag but cannot move funds or alter trade economics.
 const { ensureMeasuredRebalanceRouteEvidenceWiring } = await import(
