@@ -70,7 +70,13 @@ function updateCandidate(
       economics: {
         ...candidate.economics,
         deterministicNetProfitUsd: Number(opportunity.expectedProfit) / (10 ** opportunity.inputTokenDecimals),
-        feeUsd: Number(opportunity.flashLoanFeeInInputToken || 0n) / (10 ** opportunity.inputTokenDecimals),
+        // Provider repricing changes the flash premium, not an exchange/CEX fee.
+        // Keep that premium exclusively in flashLoanFeeBps so the canonical BPS
+        // attribution cannot count the same economic cost in two categories.
+        feeUsd: 0,
+        // The direct quote's amountOut already embeds current route economics.
+        // Min-output tolerance remains an execution guard, not expected loss.
+        expectedSlippageBps: 0,
         flashLoanFeeBps: bpsFromBaseUnits(opportunity.flashLoanFeeInInputToken || 0n, opportunity.flashLoanAmount),
         allInCostBps: bpsFromBaseUnits(opportunity.estimatedExecutionCostInInputToken, opportunity.flashLoanAmount),
         breakEvenBps: bpsFromBaseUnits(opportunity.estimatedExecutionCostInInputToken, opportunity.flashLoanAmount),
@@ -86,6 +92,8 @@ function updateCandidate(
             'measured_flash_loan_fee_exact_rate',
             'measured_flash_loan_liquidity',
             'provider_selection_bound_to_verified_receiver',
+            'flash_premium_attribution:flashLoanFeeBps_only',
+            'min_output_tolerance_not_expected_slippage_cost',
             ...extraProvenance,
           ]
         : ['flash_loan_provider_unavailable_fail_closed', ...extraProvenance],
