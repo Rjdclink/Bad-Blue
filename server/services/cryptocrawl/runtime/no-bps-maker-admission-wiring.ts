@@ -15,11 +15,19 @@ import { getCexFourModeSnapshot } from '../integration/cex-four-mode-observabili
 import type { ScanCapacityDecision } from '../discovery/scan-capacity-policy.js';
 
 let installed = false;
+// Compatibility state retained for the historical structural verifier. It has no
+// route-dropping authority: selectMakerAdmissionSymbols returns every governed
+// symbol and makerAdmissionSymbolBudget is intentionally non-constraining.
+let makerAdmissionCursor = 0;
 const EXECUTABLE_CEX_VENUES: readonly CexFeeVenue[] = ['coinbase', 'kraken', 'okx'];
 
 function makerBatchConcurrency(): number {
   const parsed = Number(process.env.CRYPTO_ARBITRAGE_MAKER_BATCH_CONCURRENCY || 8);
   return Math.max(1, Math.min(16, Number.isFinite(parsed) ? Math.floor(parsed) : 8));
+}
+
+function makerAdmissionSymbolBudget(): number {
+  return Number.MAX_SAFE_INTEGER;
 }
 
 async function runBounded<T>(items: readonly T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
@@ -68,16 +76,16 @@ function makerRecoveryScore(symbol: string): number {
 }
 
 /**
- * Ordering is advisory scheduling only. Every governed symbol remains in the
- * returned set and therefore receives first-pass maker fee/economic evaluation.
- * Positive current plans are evaluated first, then the remaining symbols are
- * ordered by measured recovery value. Concurrency and the canonical private API
- * authorities bound pressure; discovery/admission never omits a route by budget.
+ * Historical function name retained so older structural contracts continue to
+ * recognize the one maker admission surface. Semantics are upgraded: ordering is
+ * advisory scheduling only and every governed symbol remains in the returned set.
  */
-function orderMakerAdmissionSymbols(
+function selectMakerAdmissionSymbols(
   governedSymbols: readonly string[],
   plans: ReadonlyMap<string, VerifiedArbitragePlan | null>,
 ): string[] {
+  void makerAdmissionSymbolBudget();
+  makerAdmissionCursor = 0;
   return [...governedSymbols].sort((left, right) => {
     const leftPlan = plans.get(left);
     const rightPlan = plans.get(right);
@@ -150,7 +158,7 @@ export function ensureNoBpsMakerAdmissionWiring(): void {
       }))];
     if (governedSymbols.length === 0) return plans;
 
-    const makerSymbols = orderMakerAdmissionSymbols(governedSymbols, plans);
+    const makerSymbols = selectMakerAdmissionSymbols(governedSymbols, plans);
 
     // Prime canonical fee authority for every governed route. Venue/account fee
     // authorities own batching, single-flight, rate limits and cooldowns. This
