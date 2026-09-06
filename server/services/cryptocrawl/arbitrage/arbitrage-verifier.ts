@@ -20,6 +20,7 @@ import { getCexScanCapacity, type ScanCapacityDecision } from '../discovery/scan
 import { getSpotProductConstraints } from '../execution/cex-spot-product-policy.js';
 import logger from '../../../logger.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import { isStrictlyPositiveAllInNetProfit } from '../governance/profit-admission-authority.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { cexOrderBookStreams, type CexOrderBookStreamStats, type CexStreamVenue } from '../intelligence/cex-order-book-stream.js';
 import {
@@ -135,7 +136,6 @@ export interface VerifyRequest {
   symbol: string;
   notionalUsd: number;
   maxQuoteAgeMs: number;
-  minNetProfitUsd: number;
   /** Compatibility/advisory inputs only. Executable economics require authenticated venue evidence. */
   buyFeesBps?: Partial<Record<QuoteVenue, number>>;
   /** Compatibility/advisory inputs only. Executable economics require authenticated venue evidence. */
@@ -152,7 +152,7 @@ export interface VerifyRequest {
   };
 }
 
-export type VerifyManyRequest = Omit<VerifyRequest, 'symbol' | 'minNetProfitUsd'>;
+export type VerifyManyRequest = Omit<VerifyRequest, 'symbol'>;
 
 const USD_NORMALIZED_QUOTES = new Set(['USD', 'USDC', 'USDT']);
 const QUOTE_REQUEST_CACHE_TTL_MS = Math.max(500, Number(process.env.CRYPTO_ARBITRAGE_QUOTE_CACHE_MS || 2000));
@@ -351,7 +351,7 @@ function effectiveTakerFeeBps(evidence: CexFeeEvidence | null): number | null {
     : null;
 }
 
-function scanRequestKey(req: Omit<VerifyRequest, 'minNetProfitUsd'>, symbols: readonly string[]): string {
+function scanRequestKey(req: VerifyRequest, symbols: readonly string[]): string {
   return JSON.stringify({
     symbols: [...symbols].sort(),
     notionalUsd: req.notionalUsd,
@@ -413,7 +413,7 @@ export class ArbitrageVerifier {
     return contexts[0] ? { ...contexts[0] } : null;
   }
 
-  async evaluateOnce(req: Omit<VerifyRequest, 'minNetProfitUsd'>): Promise<VerifiedArbitragePlan | null> {
+  async evaluateOnce(req: VerifyRequest): Promise<VerifiedArbitragePlan | null> {
     const governance = getCryptocrawlGovernance();
     const symbol = req.symbol.trim().toUpperCase();
     if (!symbol) throw new Error('symbol is required');
@@ -484,7 +484,7 @@ export class ArbitrageVerifier {
     if (allowedSymbols.length === 0) return output;
 
     const capacity = capacityInput || getCexScanCapacity(allowedSymbols.length);
-    const batchRequest: Omit<VerifyRequest, 'minNetProfitUsd'> = {
+    const batchRequest: VerifyRequest = {
       ...req,
       symbol: allowedSymbols[0],
     };
@@ -529,7 +529,7 @@ export class ArbitrageVerifier {
   }
 
   private async evaluateBatch(
-    req: Omit<VerifyRequest, 'minNetProfitUsd'>,
+    req: VerifyRequest,
     symbolsInput: readonly string[],
     capacity: ScanCapacityDecision,
   ): Promise<Map<string, VerifiedArbitragePlan | null>> {
@@ -639,7 +639,7 @@ export class ArbitrageVerifier {
         nearMissBarriersHydrated: nearMissSymbols.length,
         economicsHydrationSymbols: economicsSymbols.length,
         cheapPrefilterRejected: symbols.length - rawEdgeSurvivors.size,
-        positivePlans: [...plans.values()].filter(plan => plan && Number.isFinite(plan.netProfitUsd) && plan.netProfitUsd > 0).length,
+        positivePlans: [...plans.values()].filter(plan => plan && isStrictlyPositiveAllInNetProfit(plan.netProfitUsd)).length,
         searchDensityPerMinute: capacity.searchDensityPerMinute,
         verifiedPositivePerMinute: capacity.verifiedPositivePerMinute,
         capacityReason: capacity.reason,
@@ -647,6 +647,7 @@ export class ArbitrageVerifier {
         quoteTransportPolicy: 'coinbase_kraken_okx_websocket_first_with_exact_rest_fallback',
         economicBarrierPolicy: 'raw_positive_plus_bounded_best_near_misses',
         executableFeeAuthority: 'authenticated_venue_evidence_only',
+        profitAdmissionAuthority: 'strictly_positive_verified_all_in_net_profit',
         configuredOrRequestFeeOverridesExecutable: false,
         nonUsdNormalizedQuoteExecutionAuthority: false,
       });
@@ -658,7 +659,7 @@ export class ArbitrageVerifier {
   }
 
   private async evaluateSymbolOnce(
-    req: Omit<VerifyRequest, 'minNetProfitUsd'>,
+    req: VerifyRequest,
     prefetchedQuotes?: readonly TopOfBookQuote[],
   ): Promise<VerifiedArbitragePlan | null> {
     const symbol = req.symbol.trim().toUpperCase();
@@ -838,8 +839,7 @@ export class ArbitrageVerifier {
 
   async verifyOnce(req: VerifyRequest): Promise<VerifiedArbitragePlan | null> {
     const plan = await this.evaluateOnce(req);
-    if (!plan) return null;
-    if (!Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd < req.minNetProfitUsd) return null;
+    if (!plan || !isStrictlyPositiveAllInNetProfit(plan.netProfitUsd)) return null;
     return plan;
   }
 }
