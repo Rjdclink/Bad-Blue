@@ -40,20 +40,7 @@ if (overflowBootstrap.state === 'ready') {
   }
 }
 
-// Strict funding selection may recognize native gas only after durable Overflow
-// provenance proves it belongs to a SELF_FUNDED CryptoCrawler scope. Merely
-// finding native currency in the signer wallet never grants execution authority.
-const { ensureSystemOwnedGasFundingProofWiring } = await import(
-  './services/cryptocrawl/runtime/system-owned-gas-funding-proof-wiring.js'
-);
-ensureSystemOwnedGasFundingProofWiring();
-
-// The canonical Balancer native branch signs only after the same durable proof
-// exists, reserves its exact maximum gas budget before broadcast, and settles
-// actual receipt gas back against that reservation.
-const { ensureSystemOwnedNativeZeroCapitalExecutionWiring } = await import(
-  './services/cryptocrawl/runtime/system-owned-native-zero-capital-execution-wiring.js'
-);
-ensureSystemOwnedNativeZeroCapitalExecutionWiring();
-
+// Zero-capital gas ownership proof and native spend reservation are now explicit
+// functions called by the single canonical ZERO_CAPITAL_ATOMIC executor. The
+// bootstrap must not rewrite engine methods or install a parallel execution path.
 await import('./index.js');
