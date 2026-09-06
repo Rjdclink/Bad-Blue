@@ -232,7 +232,7 @@ function boundedFrequency(
     counts.set(value, (counts.get(value) || 0) + 1);
   }
   return [...counts.entries()]
-    .sort((left, right) => right[1] - left[0].localeCompare(right[0]))
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .slice(0, Math.max(1, Math.min(50, limit)))
     .map(([value, count]) => keyName === 'reason'
       ? { reason: value, count }
