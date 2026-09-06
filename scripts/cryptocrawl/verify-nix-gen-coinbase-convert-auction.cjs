@@ -6,6 +6,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..', '..');
 const auction = fs.readFileSync(path.join(root, 'server/services/cryptocrawl/execution/coinbase-convert-execution-auction.ts'), 'utf8');
 const adapter = fs.readFileSync(path.join(root, 'server/services/cryptocrawl/execution/coinbase-spot-settlement-adapter.ts'), 'utf8');
+const settlement = fs.readFileSync(path.join(root, 'server/services/cryptocrawl/execution/cex-settlement.ts'), 'utf8');
 
 function must(source, pattern, message) {
   if (!pattern.test(source)) throw new Error(`[verify-nix-gen-coinbase-convert-auction] ${message}`);
@@ -27,5 +28,7 @@ must(auction, /synthetic_bps:false/, 'synthetic BPS must remain prohibited');
 must(adapter, /prepareCoinbaseConvertAuctionAgainstFallback/, 'canonical Coinbase adapter does not prepare the Convert auction');
 must(adapter, /queryCoinbaseConvertSettlement/, 'canonical Coinbase adapter does not terminally query Convert');
 must(adapter, /isCoinbaseConvertReceipt\(receipt\.orderId\)\) return;/, 'Convert commit must not be sent to order-cancel endpoint');
+must(settlement, /return\s+this\.delegate\.prepareSubmit\(request\);/, 'Coinbase Convert/product preparation must finish before the synchronized parent dispatch barrier');
+forbid(settlement, /dispatch:\s*\(\)\s*=>\s*this\.delegate\.submit\(request\)/, 'Coinbase bridge must not defer quote/product preparation until after the parent barrier');
 
 console.log('[verify-nix-gen-coinbase-convert-auction] PASS');
