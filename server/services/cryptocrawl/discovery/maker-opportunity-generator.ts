@@ -89,10 +89,11 @@ async function hasUsdNormalizedMakerEconomics(venue: CexFeeVenue, symbol: string
 /**
  * Every structurally viable maker symbol receives authenticated fee priming and a
  * canonical live evaluation in the same discovery cycle. Batch/account-level fee
- * acquisition is primary. Any unresolved OKX product is immediately retried via
- * the canonical per-instrument authority with forceRefresh, which bypasses only
- * local defer/backoff state; endpoint throttling remains owned by OKX's canonical
- * account-fee rate governor. No discovery budget may create a paper-only class.
+ * acquisition is primary. If an OKX product has no fee group and was unresolved
+ * only by the resolver's rotating per-instrument budget, this layer immediately
+ * invokes the canonical per-instrument authority with forceRefresh. Products that
+ * had a failed grouped/account request are not fanned out, preserving the shared
+ * quota/rate governor and avoiding a request storm.
  */
 export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandidate[]> {
   const venues = getActiveExecutableQuoteVenues().filter(
@@ -139,14 +140,21 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
     okx: okxSymbols,
   }).catch(() => null);
 
-  // OKX grouped fee requests are the efficient first path. If an instrument is
-  // ungrouped and the grouped resolver's rotating budget leaves it unresolved,
-  // immediately ask the canonical single-instrument authority in this same pass.
-  // This creates redundancy without bypassing the account-level rate governor.
   const unresolvedOkx = primeResult
     ? primeResult.unresolved.filter(item => item.venue === 'okx')
     : okxSymbols.map(symbol => ({ venue: 'okx' as const, symbol }));
-  await runBounded(unresolvedOkx, makerLiveEvaluationConcurrency(), async item => {
+  const unresolvedOkxClassification = await runBounded(
+    unresolvedOkx,
+    makerLiveEvaluationConcurrency(),
+    async item => ({
+      item,
+      constraints: await getSpotProductConstraints('okx', item.symbol).catch(() => null),
+    }),
+  );
+  const ungroupedOkxFallback = unresolvedOkxClassification
+    .filter(entry => entry.constraints !== null && !entry.constraints.feeGroupId)
+    .map(entry => entry.item);
+  await runBounded(ungroupedOkxFallback, makerLiveEvaluationConcurrency(), async item => {
     await resolveCexFeeEvidence('okx', item.symbol, { forceRefresh: true }).catch(() => null);
     return item.symbol;
   });
@@ -221,7 +229,7 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
           'taker_fallback:false',
           'canonical_cex_venues:coinbase_kraken_okx',
           'maker_first_pass:all_viable_symbols_live_evaluated',
-          'maker_fee_redundancy:batch_then_unresolved_okx_force_refresh',
+          'maker_fee_redundancy:batch_then_ungrouped_okx_force_refresh',
           'strict_all_in_net_profit_gt_zero:true',
           'terminal_settlement_still_required:true',
           'synthetic_evidence:false',
@@ -301,7 +309,7 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
             'microprice_queue_imbalance_shadow_model',
             'adaptive_maker_ttl_shadow_model',
             'maker_fee_prime:all_viable_symbols_first_pass',
-            'maker_fee_redundancy:batch_then_unresolved_okx_force_refresh',
+            'maker_fee_redundancy:batch_then_ungrouped_okx_force_refresh',
             'maker_live_evaluation:all_viable_symbols_first_pass',
             'usd_normalized_quote_evidence',
             'canonical_cex_venues:coinbase_kraken_okx',
