@@ -17,7 +17,7 @@ const rebalance = read('server/services/cryptocrawl/execution/inventory-rebalanc
 
 assert(inventory.includes('reconcilePairBalances(plan)'), 'inventory execution must reconcile authenticated balances');
 assert(inventory.includes('arbitrageVerifier.evaluateOnce({'), 'inventory resize must use a fresh canonical requote');
-assert(inventory.includes('refreshed.netProfitUsd <= 0'), 'resized CEX plan must remain strictly positive after measured costs');
+assert(inventory.includes('isStrictlyPositiveAllInNetProfit(refreshed.netProfitUsd)'), 'resized CEX plan must remain strictly positive after measured costs through canonical profit admission');
 assert(inventory.includes('REJECT_BALANCE_UNVERIFIED'), 'unverified inventory must fail closed');
 
 assert(makerDiscovery.includes('evaluateMakerRecoveryCandidate({'), 'maker discovery must ask the canonical measured maker evaluator');
