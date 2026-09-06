@@ -62,5 +62,6 @@ require('./verify-resource-bps-authority.cjs');
 require('./verify-payout-recipient-truth.cjs');
 require('./verify-final-evidence-route-resolution.cjs');
 require('./verify-minimum-sufficient-execution-evidence.cjs');
+require('./verify-first-pass-route-measurability.cjs');
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, final evidence/route resolution, and payout invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, final evidence/route resolution, and payout invariants passed; continuing to downstream prebuild/build');
