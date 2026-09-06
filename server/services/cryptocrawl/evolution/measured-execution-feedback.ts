@@ -6,6 +6,7 @@ import { canonicalIntelligenceRepository } from '../intelligence/canonical-intel
 import { terminalFeedbackIdentity } from '../learning/terminal-feedback-identity.js';
 import { endToEndLatencyHarness } from '../runtime/end-to-end-latency-harness.js';
 import { RuntimeJsonStateStore } from '../integration/runtime-json-state-store.js';
+import { recordTerminalNetworkAndFundingLearning } from './terminal-network-funding-learning.js';
 
 export interface MeasuredExecutionSample {
   eventId: string;
@@ -256,6 +257,7 @@ export async function recordMeasuredEvolutionFeedback(feedback: CryptaraExecutio
     return;
   }
 
+  recordTerminalNetworkAndFundingLearning(feedback, eventId);
   state.samples = mergeSamples(state.samples, [sample]);
   state.updatedAt = Date.now();
   await persistSoon();
