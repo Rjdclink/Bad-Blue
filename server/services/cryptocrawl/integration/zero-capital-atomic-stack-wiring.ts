@@ -20,7 +20,6 @@ const installed = new WeakSet<object>();
 
 type ZeroCapitalStackRuntime = {
   scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
-  isAllowedByCryptara: (opportunity: ZeroCapitalOpportunity) => Promise<boolean>;
   receiverManager: { getReceiver: (chain: string) => string | null };
   executionWallets: Map<SupportedChain, Wallet>;
 };
@@ -259,38 +258,6 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
   if (installed.has(target)) return;
   installed.add(target);
 
-  const originalAssessment = target.isAllowedByCryptara.bind(target);
-  target.isAllowedByCryptara = async (opportunity): Promise<boolean> => {
-    const canonicalPositive = opportunity.expectedProfit > 0n;
-    const candidate = measuredCandidateRegistry.get(opportunity.id);
-    if (canonicalPositive && candidate?.executableCapability) {
-      measuredCandidateRegistry.updateStatus(opportunity.id, 'eligible', {
-        provenance: ['canonical_positive_all_in_net', 'zero_capital_hard_facts_eligible'],
-      });
-    }
-
-    void originalAssessment(opportunity)
-      .then(allowed => {
-        const current = measuredCandidateRegistry.get(opportunity.id);
-        if (!current) return;
-        measuredCandidateRegistry.updateStatus(opportunity.id, current.status, {
-          provenance: [allowed
-            ? 'Cryptara:advisory_consider'
-            : 'Cryptara:advisory_reject_non_veto'],
-        });
-      })
-      .catch(error => {
-        logger.debug('[ZeroCapitalStack] Parallel Cryptara advisory degraded', {
-          component: 'ZeroCapitalAtomicStackWiring',
-          opportunityId: opportunity.id,
-          error: error instanceof Error ? error.message : String(error),
-          executionAuthority: false,
-        });
-      });
-
-    return canonicalPositive;
-  };
-
   const originalScan = target.scanChain.bind(target);
   target.scanChain = async (chain, provider): Promise<ZeroCapitalOpportunity[]> => {
     const opportunities = await originalScan(chain, provider);
@@ -361,7 +328,8 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     measuredCompositionBenefitRequired: true,
     combinedProfitMustExceedIndividualProfitSum: true,
     realizedAttributionBeforeCompositeExecutionRequired: true,
-    cryptaraAssessmentAuthority: 'parallel_advisory_only',
+    cryptaraAssessmentAuthority: 'canonical_zero_capital_engine_advisory_only',
+    eligibilityAuthority: 'measured_candidate_producer_only',
     parallelAdvisoryOnly: true,
     individualOpportunityCriticalPathBlocked: false,
     executionAuthority: false,
