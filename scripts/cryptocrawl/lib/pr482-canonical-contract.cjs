@@ -47,6 +47,7 @@ function verifyCexExecutionContract() {
   const rpiCapability = read('server/services/cryptocrawl/intelligence/okx-rpi-capability.ts');
   const gasFunding = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
   const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
+  const canonicalDiscovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
   const zeroResource = read('server/services/cryptocrawl/integration/zero-capital-resource-wiring.ts');
   const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
   const graphlessScout = read('server/services/cryptocrawl/discovery/graphless-dex-scout.ts');
@@ -168,8 +169,9 @@ function verifyCexExecutionContract() {
   forbidPattern(canonicalRuntime, /ensureZeroCapitalRealizedProfitWiring/, 'canonical runtime must not reinstall the retired realized-profit execution wrapper');
   requirePattern(coreRuntime, /ensureZeroCapitalRealizedProfitWiring\(\);[\s\S]{0,6000}createCryptoCrawlerCoreLifecycle\s*\(/, 'core lifecycle installs the idempotent realized-profit compatibility boundary before lifecycle construction');
   forbidPattern(coreRuntime, /scheduleZeroCapitalProfitWiring|zeroCapitalRealizedProfitPolicyScheduled/, 'deferred duplicate realized-profit authority scheduling');
-  requirePattern(zeroResource, /const\s+gasResource\s*=\s*await\s+target\.getGasFundingDecision\(chain\)/, 'zero-capital scanning obtains the live gas-funding decision');
-  requirePattern(zeroResource, /discoverDynamicZeroCapitalQuotes\(chain,\s*provider,\s*gasResource\.mode\)/, 'dynamic quote economics consume that live gas-funding decision');
+  requirePattern(canonicalDiscovery, /async\s+function\s+strictFunding[\s\S]{0,240}getProvenZeroCapitalGasFundingDecision\(target,\s*chain\)/, 'canonical zero-capital discovery obtains the proven live gas-funding decision');
+  requirePattern(canonicalDiscovery, /const\s+funding\s*=\s*await\s+strictFunding\(target,\s*chain\)[\s\S]{0,1800}discoverDynamicZeroCapitalQuotes\(chain,\s*provider,\s*funding\.mode\)/, 'dynamic quote economics consume that same live gas-funding decision');
+  forbidPattern(zeroResource, /target\.getGasFundingDecision\s*\(|discoverDynamicZeroCapitalQuotes\s*\(/, 'retired zero-capital resource wrapper must not regain gas or quote authority');
   requirePattern(dynamicRoutes, /fundingMode\s*===\s*'sponsored'/, 'dynamic route gas compression recognizes verified sponsored funding');
   requirePattern(dynamicRoutes, /gasCostAuthority:\s*'verified_sponsored_user_cost_zero'/, 'sponsored zero-user-gas economics are explicitly provenance-bound');
   requirePattern(dynamicRoutes, /recoveryQuoteRoutes\s*\(/, 'zero-measured-quote funnel has a bounded recovery quote lane');
@@ -181,7 +183,7 @@ function verifyCexExecutionContract() {
     centralized, hyperHybrid, partialAccounting, residualReplan, capability, fourMode, feeResolver, arbVerifier,
     maker, makerDiscovery, makerAdapters, hybrid, positiveCapture, spotProducts, submitGuard, coinbaseMarket,
     timingGuard, canonicalRuntime, inventoryReadiness, adaptiveSearch, feeSurface, stageProgression, stageBootstrap,
-    stageHydrator, rpiCapability, gasFunding, dynamicRoutes, zeroResource, coreRuntime, graphlessScout,
+    stageHydrator, rpiCapability, gasFunding, dynamicRoutes, canonicalDiscovery, zeroResource, coreRuntime, graphlessScout,
   };
 }
 
@@ -197,7 +199,6 @@ function verifyProfitLadderNotionalContract() {
   requirePattern(ladder, /key:\s*'institutional_100m'/, 'institutional ladder contains the $100M evidence rung');
   requirePattern(ladder, /authority:\s*'profit_ladder_capital_allowance'/, 'Profit Ladder declares the canonical notional authority');
   requirePattern(ladder, /aligned\s*&&\s*stage\.canExecuteTrades/, 'stage/tier alignment and execution authority fail closed before notional is exposed');
-
   requirePattern(risk, /getProfitLadderNotionalAuthority\s*\(/, 'RiskGovernor consumes the canonical ladder notional authority');
   requirePattern(risk, /proposal\.positionSizeUSD\s*>\s*notionalAuthority\.maxNotionalUsd/, 'RiskGovernor rejects exposure above the ladder ceiling');
   forbidPattern(risk, /proposal\.positionSizeUSD\s*>\s*stageConfig\.maxPositionSizeUSD/, 'legacy StageManager position cap acting as a second notional ceiling');
