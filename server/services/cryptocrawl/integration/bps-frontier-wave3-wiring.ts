@@ -27,7 +27,7 @@ export interface MeasuredBpsFrontierRoute {
   chains: string[];
   notionalUsd: number;
   allInCostBps: number;
-  netBps: number | null;
+  netBps: number;
   observedAt: number;
   expiresAt: number;
 }
@@ -36,8 +36,12 @@ export interface MeasuredBpsFrontierGroup {
   routeKey: string;
   winner: MeasuredBpsFrontierRoute;
   runnerUp: MeasuredBpsFrontierRoute | null;
+  /** Difference between fresh canonical net outcomes; includes quote-embedded costs. */
+  measuredNetAdvantageBps: number | null;
+  /** Explicit canonical cost-field difference only; never substitutes for net outcome. */
   measuredSavingsBps: number | null;
   comparedRoutes: number;
+  maximumObservationSkewMs: number;
 }
 
 export interface BpsFrontierWave3Snapshot {
@@ -81,6 +85,11 @@ function candidateTtlMs(): number {
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(120_000, Math.trunc(parsed))) : 45_000;
 }
 
+function comparisonSkewMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_BPS_ROUTE_COMPARISON_MAX_SKEW_MS || 2_000);
+  return Number.isFinite(parsed) ? Math.max(100, Math.min(10_000, Math.trunc(parsed))) : 2_000;
+}
+
 function referenceNotionalUsd(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_FUNDING_REFERENCE_NOTIONAL_USD || 250);
   return Number.isFinite(parsed) ? Math.max(1, parsed) : 250;
@@ -105,7 +114,8 @@ function canonicalLighterSymbol(raw: unknown, wanted: Set<string>): string | nul
 function routeIdentity(candidate: MeasuredCandidate): string | null {
   const notionalUsd = finite(candidate.canonicalBps.notionalUsd);
   const allInCostBps = finite(candidate.canonicalBps.allInCostBps);
-  if (notionalUsd === null || notionalUsd <= 0 || allInCostBps === null) return null;
+  const netBps = finite(candidate.canonicalBps.netBps);
+  if (notionalUsd === null || notionalUsd <= 0 || allInCostBps === null || netBps === null) return null;
   const assets = [...candidate.assets].map(value => value.trim().toUpperCase()).filter(Boolean).sort();
   if (!assets.length) return null;
   const chains = [...candidate.chains].map(value => value.trim().toLowerCase()).filter(Boolean).sort().join(',') || 'unknown';
@@ -117,7 +127,8 @@ function routeIdentity(candidate: MeasuredCandidate): string | null {
 function measuredRoute(candidate: MeasuredCandidate, routeKey: string): MeasuredBpsFrontierRoute | null {
   const notionalUsd = finite(candidate.canonicalBps.notionalUsd);
   const allInCostBps = finite(candidate.canonicalBps.allInCostBps);
-  if (notionalUsd === null || notionalUsd <= 0 || allInCostBps === null) return null;
+  const netBps = finite(candidate.canonicalBps.netBps);
+  if (notionalUsd === null || notionalUsd <= 0 || allInCostBps === null || netBps === null) return null;
   return {
     routeKey,
     opportunityId: candidate.opportunityId,
@@ -126,7 +137,7 @@ function measuredRoute(candidate: MeasuredCandidate, routeKey: string): Measured
     chains: [...candidate.chains],
     notionalUsd,
     allInCostBps,
-    netBps: finite(candidate.canonicalBps.netBps),
+    netBps,
     observedAt: candidate.observedAt,
     expiresAt: candidate.expiresAt,
   };
@@ -134,6 +145,7 @@ function measuredRoute(candidate: MeasuredCandidate, routeKey: string): Measured
 
 function recomputeMeasuredFrontier(): void {
   const now = Date.now();
+  const maxSkewMs = comparisonSkewMs();
   const grouped = new Map<string, MeasuredBpsFrontierRoute[]>();
 
   for (const candidate of measuredCandidateRegistry.getRecent(4096)) {
@@ -158,22 +170,33 @@ function recomputeMeasuredFrontier(): void {
 
   latestGroups = [...grouped.entries()].flatMap(([routeKey, routes]) => {
     if (routes.length < 2) return [];
-    const ordered = [...routes].sort((left, right) =>
-      left.allInCostBps - right.allInCostBps
-      || (right.netBps ?? Number.NEGATIVE_INFINITY) - (left.netBps ?? Number.NEGATIVE_INFINITY)
+    const freshestObservedAt = Math.max(...routes.map(route => route.observedAt));
+    // SOR decisions must compare contemporaneous quotes. A stale-but-unexpired
+    // candidate cannot win merely because its older price was better.
+    const comparable = routes.filter(route => freshestObservedAt - route.observedAt <= maxSkewMs);
+    if (comparable.length < 2) return [];
+    const ordered = [...comparable].sort((left, right) =>
+      right.netBps - left.netBps
+      || left.allInCostBps - right.allInCostBps
       || right.observedAt - left.observedAt);
     const winner = ordered[0];
     const runnerUp = ordered[1] || null;
+    const maximumObservationSkewMs = Math.max(...ordered.map(route => freshestObservedAt - route.observedAt));
     return [{
       routeKey,
       winner,
       runnerUp,
-      measuredSavingsBps: runnerUp ? Math.max(0, runnerUp.allInCostBps - winner.allInCostBps) : null,
+      measuredNetAdvantageBps: runnerUp ? Math.max(0, winner.netBps - runnerUp.netBps) : null,
+      measuredSavingsBps: runnerUp && winner.allInCostBps <= runnerUp.allInCostBps
+        ? Math.max(0, runnerUp.allInCostBps - winner.allInCostBps)
+        : null,
       comparedRoutes: ordered.length,
+      maximumObservationSkewMs,
     }];
   }).sort((left, right) =>
-    (right.measuredSavingsBps ?? -1) - (left.measuredSavingsBps ?? -1)
-    || left.winner.allInCostBps - right.winner.allInCostBps)
+    (right.measuredNetAdvantageBps ?? -1) - (left.measuredNetAdvantageBps ?? -1)
+    || (right.measuredSavingsBps ?? -1) - (left.measuredSavingsBps ?? -1)
+    || right.winner.netBps - left.winner.netBps)
     .slice(0, 128);
 }
 
@@ -364,9 +387,11 @@ export function ensureBpsFrontierWave3Wiring(): void {
 
   logger.info('[BpsFrontierWave3] Measured total-cost frontier installed', {
     component: 'BpsFrontierWave3Wiring',
-    smartOrderRoutingUpgrade: 'compare_only_like_notional_fresh_canonical_all_in_cost_routes',
+    smartOrderRoutingUpgrade: 'compare_only_like_notional_contemporaneous_fresh_canonical_net_outcomes_then_explicit_costs',
+    routeComparisonMaxSkewMs: comparisonSkewMs(),
+    quoteEmbeddedCostPolicy: 'canonical_net_outcome_wins_before_explicit_cost_field_tiebreak_so_embedded_fees_are_not_ignored_or_double_subtracted',
     externalVenueBenchmark: 'lighter_public_funding_keyless_discovery_only',
-    directVsAggregatorPolicy: 'only_measured_canonical_costs_may_report_savings',
+    directVsAggregatorPolicy: 'only_measured_canonical_net_outcomes_and_costs_may_report_route_advantage',
     uniswapV4Policy: 'dynamic_fee_hook_flash_accounting_surface_requires_exact_pool_quote_before_economic_credit',
     intentSolverPolicy: 'cow_uniswapx_style_solver_surfaces_require_exact_executable_quote_and_zero_personal_resource_proof_before_admission',
     mevPolicy: 'private_builder_or_refund_value_requires_terminal_realized_evidence_before_bps_credit',
