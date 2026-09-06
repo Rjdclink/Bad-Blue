@@ -2,6 +2,7 @@ import type { CexFeeVenue } from '../intelligence/cex-fee-resolver.js';
 
 export type FeeSurfaceStrategyKey =
   | 'authenticated_maker_rebate_capture'
+  | 'zero_or_negative_exchange_fee_surface'
   | 'stablecoin_zero_maker_lane'
   | 'maker_taker_fee_inversion'
   | 'taker_maker_fee_inversion'
@@ -63,9 +64,11 @@ export interface FeeSurfaceHyperdynamicStrategyPlan {
   allStrategies: FeeSurfaceStrategyDecision[];
   bestMeasuredBpsBenefit: number | null;
   authenticatedRebateSymbols: string[];
+  zeroOrNegativeExchangeFeeSymbols: string[];
   cexPriorityMultiplier: number;
   zeroCapitalPriorityMultiplier: number;
   objective: 'maximize_expected_realized_net_execution_quality_with_authenticated_fee_structure';
+  costObjective: 'drive_measured_exchange_fee_cost_to_zero_or_negative_while_preserving_positive_all_in_net';
   authority: 'search_ranking_and_measurement_only';
   executionAuthority: false;
   syntheticFeeAuthority: false;
@@ -120,6 +123,12 @@ function modeKey(mode: FeeSurfaceModeInput): string {
  * spending more discovery/verification budget on. Canonical execution remains
  * governed by the existing fresh all-in netProfitUsd > 0 path.
  *
+ * The cost objective is explicit and separate from the profit gate: search and
+ * ranking should drive measured exchange-fee cost toward zero and preferably
+ * negative cost (a genuine rebate surplus), while execution still requires fresh
+ * strictly positive all-in net economics after price, depth, slippage, impact,
+ * gas, funding, relay, settlement and every other applicable cost.
+ *
  * Fee/rebate magnitude is never the sole routing objective: price, executable
  * depth, fill/queue probability, latency, adverse selection, inventory and
  * terminal settlement remain part of the canonical execution-quality decision.
@@ -146,6 +155,12 @@ export function buildFeeSurfaceHyperdynamicStrategyPlan(input: {
     mode.mode[1] === 'M' ? Math.max(0, -(mode.sellMakerCostBps ?? 0)) : 0,
   ));
   const bestRebate = rebateBenefits.length ? Math.max(...rebateBenefits) : null;
+
+  const zeroOrNegativeExchangeFeeModes = modes.filter(mode =>
+    mode.feeFreshnessScore >= 0.75 && mode.combinedFeeBps <= 0);
+  const bestExchangeFeeSurplusBps = zeroOrNegativeExchangeFeeModes.length
+    ? Math.max(0.000001, ...zeroOrNegativeExchangeFeeModes.map(mode => Math.max(0, -mode.combinedFeeBps)))
+    : null;
 
   const stableZeroMaker = modes.filter(mode => stablecoinSymbol(mode.symbol) && (
     (mode.mode[0] === 'M' && mode.buyMakerCostBps !== null && mode.buyMakerCostBps <= 0)
@@ -206,6 +221,7 @@ export function buildFeeSurfaceHyperdynamicStrategyPlan(input: {
   const best = (values: Array<{ benefit: number }>) => values.length ? Math.max(...values.map(item => item.benefit)) : null;
   const decisions: FeeSurfaceStrategyDecision[] = [
     decision('authenticated_maker_rebate_capture', bestRebate, rebateModes.map(mode => mode.symbol), 'Use only authenticated negative maker-fee evidence; never assume a pair rebates or route solely to maximize rebate.'),
+    decision('zero_or_negative_exchange_fee_surface', bestExchangeFeeSurplusBps, zeroOrNegativeExchangeFeeModes.map(mode => mode.symbol), 'Prefer fresh authenticated route surfaces whose combined exchange-fee cost is already zero or negative; negative cost is a measured rebate surplus, not trade profit, and canonical execution must still prove strictly positive all-in net economics.'),
     decision('stablecoin_zero_maker_lane', stableZeroMaker.length ? 0.000001 : null, stableZeroMaker.map(mode => mode.symbol), 'Prioritize measured stablecoin lanes whose authenticated maker cost is zero or negative.'),
     decision('maker_taker_fee_inversion', best(mtSavings), mtSavings.map(item => item.symbol), 'Prefer MT only when its measured fee surface beats the same-route TT alternative; partial-fill-safe execution remains mandatory.'),
     decision('taker_maker_fee_inversion', best(tmSavings), tmSavings.map(item => item.symbol), 'Prefer TM only when its measured fee surface beats the same-route TT alternative; fresh hedge economics remain mandatory.'),
@@ -216,9 +232,9 @@ export function buildFeeSurfaceHyperdynamicStrategyPlan(input: {
     decision('spread_plus_rebate_stack', spreadRebateBenefit, spreadRebate.map(mode => mode.symbol), 'Stack a real spread with a real authenticated rebate; neither component may be simulated into execution truth.'),
     decision('lowest_taker_surface_routing', takerRange, takerCandidates.map(item => item.symbol), 'Continuously compare authenticated taker surfaces across Coinbase/Kraken/OKX, but let canonical price/depth/latency economics choose the actual route.'),
     decision('lowest_maker_surface_routing', makerRange, makerCandidates.map(item => item.symbol), 'Continuously compare authenticated maker surfaces across Coinbase/Kraken/OKX, including zero and negative effective maker cost.'),
-    decision('fee_freshness_prewarm', stale.length && freshest.length ? 1 : null, stale.map(mode => mode.symbol), 'Refresh stale authenticated fee evidence before promising routes consume canonical verification time.'),
+    decision('fee_freshness_prewarm', stale.length ? 1 : null, stale.map(mode => mode.symbol), 'Refresh stale authenticated fee evidence even when every sampled fee surface is stale; fresh evidence is reacquired before promising routes consume canonical verification time.'),
     decision('account_fee_surface_refresh', modes.length ? Math.max(0.000001, takerRange ?? 0, makerRange ?? 0) : null, modes.map(mode => mode.symbol), 'Treat actual account-specific fee tiers as changing market state; refresh authenticated rates rather than hard-code public schedules or speculate about a future tier.'),
-    decision('zero_capital_fee_gas_compression', input.zeroCapitalGapBps !== null && input.zeroCapitalGapBps > 0 ? 1 / (1 + input.zeroCapitalGapBps / 25) : null, input.zeroCapitalGapBps !== null ? ['ZERO_CAPITAL'] : [], 'Allocate zero-capital quote/gas work only from measured route economics; flash-loan principal never substitutes for unknown fees or gas.'),
+    decision('zero_capital_fee_gas_compression', input.zeroCapitalGapBps !== null && input.zeroCapitalGapBps > 0 ? input.zeroCapitalGapBps : null, input.zeroCapitalGapBps !== null ? ['ZERO_CAPITAL'] : [], 'Use the measured BPS-to-break-even value in BPS units for zero-capital compression scheduling; never substitute a unitless inverse score for BPS and never treat flash-loan principal as fee or gas evidence.'),
     decision('cross_topology_fee_budget_switching', input.zeroCapitalGapImproving === true && modes.length > 0 ? 0.5 : null, input.zeroCapitalGapImproving === true ? ['CEX', 'ZERO_CAPITAL'] : [], 'Shift search budget between CEX fee surfaces and zero-capital routes using measured distance to profitability, preserving exploration floors.'),
   ];
 
@@ -234,9 +250,11 @@ export function buildFeeSurfaceHyperdynamicStrategyPlan(input: {
     allStrategies: decisions,
     bestMeasuredBpsBenefit,
     authenticatedRebateSymbols: unique(rebateModes.map(mode => mode.symbol)),
+    zeroOrNegativeExchangeFeeSymbols: unique(zeroOrNegativeExchangeFeeModes.map(mode => mode.symbol)),
     cexPriorityMultiplier: clamp(1 + Math.min(0.35, cexSignals * 0.015 + (bestMeasuredBpsBenefit ?? 0) / 100), 0.85, 1.35),
     zeroCapitalPriorityMultiplier: clamp(1 + Math.min(0.20, zeroSignals * 0.04), 0.90, 1.20),
     objective: 'maximize_expected_realized_net_execution_quality_with_authenticated_fee_structure',
+    costObjective: 'drive_measured_exchange_fee_cost_to_zero_or_negative_while_preserving_positive_all_in_net',
     authority: 'search_ranking_and_measurement_only',
     executionAuthority: false,
     syntheticFeeAuthority: false,

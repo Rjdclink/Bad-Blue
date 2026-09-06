@@ -25,7 +25,10 @@ export interface BpsCompressionMeshSnapshot {
   zeroCapital: {
     observedCandidates: number;
     positiveCandidates: number;
+    nonPositiveGrossEdgeCandidates: number;
+    grossPositiveNetNegativeCandidates: number;
     closestGapBps: number | null;
+    closestCostCompressibleGapBps: number | null;
     gapImproving: boolean | null;
     rawPriority: number;
     attentionShare: number;
@@ -186,6 +189,8 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
   const dynamic = getDynamicZeroCapitalDiscoveryState();
   const zeroPositive = zero?.positiveCandidates ?? 0;
   const zeroGap = zero?.closestCandidateBpsToBreakEven ?? null;
+  const zeroCostCompressibleGap = zero?.closestCostCompressibleBpsToBreakEven ?? null;
+  const zeroNonPositiveGrossEdge = zero?.nonPositiveGrossEdgeCandidates ?? 0;
   const zeroQuoteUtilization = dynamic.structuralCandidates > 0 ? dynamic.measuredQuotes / dynamic.structuralCandidates : null;
   const zeroPositiveYield = dynamic.measuredQuotes > 0 ? dynamic.positiveQuotes / dynamic.measuredQuotes : null;
 
@@ -221,7 +226,7 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
     rpiSavingsBps: maxRpiSavingsVsTakerBps,
     rpiEligibleSymbols: rpi.length,
     heatPressure: scarcity.combinedPressure,
-    zeroCapitalGapBps: zeroGap,
+    zeroCapitalGapBps: zeroCostCompressibleGap,
     zeroCapitalPositiveYield: zeroPositiveYield,
     zeroCapitalQuoteUtilization: zeroQuoteUtilization,
     relativeCexAdvantageBps,
@@ -256,7 +261,7 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
       rpiSavingsVsTakerBps: item.rpiSavingsVsTakerBps,
       rpiSavingsVsStandardMakerBps: item.rpiSavingsVsStandardMakerBps,
     })),
-    zeroCapitalGapBps: zeroGap,
+    zeroCapitalGapBps: zeroCostCompressibleGap,
     zeroCapitalGapImproving: zero?.closestCandidateGapImproving ?? null,
   });
 
@@ -272,7 +277,13 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
   cexRaw /= scarcity.cexScarcityMultiplier;
   if (positives.length > 0) cexRaw = Math.max(cexRaw, 1.5);
 
-  let zeroRaw = zeroPositive > 0 ? 3 + Math.min(4, zeroPositive) : gapPriority(zeroGap, 25);
+  let zeroRaw = zeroPositive > 0
+    ? 3 + Math.min(4, zeroPositive)
+    : zeroCostCompressibleGap !== null
+      ? gapPriority(zeroCostCompressibleGap, 25)
+      : zeroNonPositiveGrossEdge > 0
+        ? 0.35
+        : gapPriority(zeroGap, 25);
   if (zero?.closestCandidateGapImproving === true) zeroRaw *= 1.20;
   if (zero?.closestCandidateGapImproving === false) zeroRaw *= 0.90;
   zeroRaw *= hyperdynamic.zeroCapitalPriorityMultiplier;
@@ -300,7 +311,10 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
     zeroCapital: {
       observedCandidates: zero?.observedCandidates ?? 0,
       positiveCandidates: zeroPositive,
+      nonPositiveGrossEdgeCandidates: zeroNonPositiveGrossEdge,
+      grossPositiveNetNegativeCandidates: zero?.grossPositiveNetNegativeCandidates ?? 0,
       closestGapBps: zeroGap,
+      closestCostCompressibleGapBps: zeroCostCompressibleGap,
       gapImproving: zero?.closestCandidateGapImproving ?? null,
       rawPriority: zeroRaw,
       attentionShare: shares.zero,
@@ -321,6 +335,11 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
   logger.info('[BpsCompressionMesh] Cross-topology profitability attention refreshed', {
     component: 'BpsCompressionMesh',
     ...latest,
+    zeroCapitalGapClassification: zeroCostCompressibleGap !== null
+      ? 'gross_positive_cost_compressible'
+      : zeroNonPositiveGrossEdge > 0
+        ? 'nonpositive_gross_edge_requires_route_or_market_improvement'
+        : 'unknown',
     marginalBpsSummary: {
       topLever: latest.marginalAllocation.topLever,
       estimatedAggregateRecoverableBps: latest.marginalAllocation.estimatedAggregateRecoverableBps,

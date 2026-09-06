@@ -5,6 +5,10 @@ import {
   getOkxExecutionRestBaseUrl,
   krakenPrivateRequest,
 } from '../intelligence/cex-private-authority.js';
+import {
+  consumePrivateCexExecutionFrame,
+  trackSubmittedPrivateCexOrder,
+} from '../intelligence/cex-private-execution-feedback.js';
 import { cexDecimalString } from './cex-order-serialization.js';
 import { getSpotProductConstraints } from './cex-spot-product-policy.js';
 import type { CexOrderReceipt, OrderRequest } from './cex-settlement.js';
@@ -98,7 +102,8 @@ abstract class PersistentPrivateOrderSocket {
     logger.info('[CEX Private WS] authenticated order transport ready', {
       component: 'CexPrivateWebSocketOrderTransport',
       venue: this.venue,
-      role: 'submission_transport_only',
+      role: 'submission_transport_plus_read_only_execution_feedback',
+      privateExecutionFeedbackAuthority: 'bps_revalidation_only',
       settlementAuthority: false,
       economicAuthority: false,
       retryAfterAmbiguousSend: false,
@@ -228,7 +233,19 @@ class KrakenPrivateOrderSocket extends PersistentPrivateOrderSocket {
       socket.once('error', onError);
       socket.once('open', onOpen);
     });
-    this.installFrameRouter(socket);
+    this.installFrameRouter(socket, payload => consumePrivateCexExecutionFrame('kraken', payload));
+    const subscribeReqId = ++this.requestSequence;
+    socket.send(JSON.stringify({
+      method: 'subscribe',
+      params: {
+        channel: 'executions',
+        snap_orders: false,
+        snap_trades: false,
+        order_status: true,
+        token,
+      },
+      req_id: subscribeReqId,
+    }));
     return socket;
   }
 
@@ -279,7 +296,7 @@ class KrakenPrivateOrderSocket extends PersistentPrivateOrderSocket {
         if (response.success !== true || !response.result?.order_id) {
           throw new Error(`Kraken WebSocket rejected ${timeInForce.toUpperCase()} order: ${String(response.error || 'unknown error')}`);
         }
-        return {
+        const receipt: CexOrderReceipt = {
           venue: 'kraken',
           orderId: String(response.result.order_id),
           symbol: request.symbol,
@@ -287,6 +304,8 @@ class KrakenPrivateOrderSocket extends PersistentPrivateOrderSocket {
           requestedQuantity: request.quantity,
           submittedAt,
         };
+        trackSubmittedPrivateCexOrder(receipt);
+        return receipt;
       },
     };
   }
@@ -356,13 +375,18 @@ class OkxPrivateOrderSocket extends PersistentPrivateOrderSocket {
         loginReject?.(new Error(`OKX private WebSocket login failed: ${String(payload.code)} ${String(payload.msg || '')}`.trim()));
         return true;
       }
-      return false;
+      return consumePrivateCexExecutionFrame('okx', payload);
     });
     socket.send(JSON.stringify({
       op: 'login',
       args: [{ apiKey, passphrase, timestamp, sign }],
     }));
     await requestTimeout(loginPromise, CONNECT_TIMEOUT_MS, 'OKX private WebSocket login');
+    socket.send(JSON.stringify({
+      id: `orders${Date.now()}`.slice(-32),
+      op: 'subscribe',
+      args: [{ channel: 'orders', instType: 'SPOT' }],
+    }));
     return socket;
   }
 
@@ -437,7 +461,7 @@ class OkxPrivateOrderSocket extends PersistentPrivateOrderSocket {
         if (String(response.code ?? '0') !== '0' || !order || String(order.sCode ?? '') !== '0' || !order.ordId) {
           throw new Error(`OKX WebSocket rejected ${timeInForce.toUpperCase()} order: ${String(order?.sMsg || response.msg || 'unknown error')}`);
         }
-        return {
+        const receipt: CexOrderReceipt = {
           venue: 'okx',
           orderId: String(order.ordId),
           symbol: request.symbol,
@@ -445,6 +469,8 @@ class OkxPrivateOrderSocket extends PersistentPrivateOrderSocket {
           requestedQuantity: request.quantity,
           submittedAt,
         };
+        trackSubmittedPrivateCexOrder(receipt);
+        return receipt;
       },
     };
   }

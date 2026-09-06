@@ -40,20 +40,38 @@ if (overflowBootstrap.state === 'ready') {
   }
 }
 
-// Strict funding selection may recognize native gas only after durable Overflow
-// provenance proves it belongs to a SELF_FUNDED CryptoCrawler scope. Merely
-// finding native currency in the signer wallet never grants execution authority.
-const { ensureSystemOwnedGasFundingProofWiring } = await import(
-  './services/cryptocrawl/runtime/system-owned-gas-funding-proof-wiring.js'
+// Advisory zero-capital funding learning observes canonical candidate lifecycle
+// updates directly. It cannot mutate candidates, provider selection, economics,
+// settlement, scheduling or execution authority.
+const { ensureZeroCapitalFundingLifecycleObserver } = await import(
+  './services/cryptocrawl/evolution/zero-capital-funding-lifecycle-observer.js'
 );
-ensureSystemOwnedGasFundingProofWiring();
+ensureZeroCapitalFundingLifecycleObserver();
 
-// The canonical Balancer native branch signs only after the same durable proof
-// exists, reserves its exact maximum gas budget before broadcast, and settles
-// actual receipt gas back against that reservation.
-const { ensureSystemOwnedNativeZeroCapitalExecutionWiring } = await import(
-  './services/cryptocrawl/runtime/system-owned-native-zero-capital-execution-wiring.js'
+// Preserve the useful PR #520 network-capability layer without restoring its
+// obsolete execution wrappers. These observers verify only current chain/RPC
+// identity and remain fail-closed for execution until route-local provider,
+// zero-personal-fee and terminal settlement evidence all exist.
+const { ensureExpandedNetworkObservability } = await import(
+  './services/cryptocrawl/runtime/expanded-network-observability.js'
 );
-ensureSystemOwnedNativeZeroCapitalExecutionWiring();
+ensureExpandedNetworkObservability();
 
+// Canonical provider selections feed advisory external-capital specialization.
+// The observer cannot select a provider, mutate economics, or submit capital.
+const { ensureExternalCapitalSelectionObserver } = await import(
+  './services/cryptocrawl/integration/external-capital-selection-observer.js'
+);
+ensureExternalCapitalSelectionObserver();
+
+// Authenticated inventory-route fee/network evidence feeds planning only. It may
+// reduce future rebalance drag but cannot move funds or alter trade economics.
+const { ensureMeasuredRebalanceRouteEvidenceWiring } = await import(
+  './services/cryptocrawl/integration/measured-rebalance-route-evidence-wiring.js'
+);
+ensureMeasuredRebalanceRouteEvidenceWiring();
+
+// Zero-capital gas ownership proof and native spend reservation are now explicit
+// functions called by the single canonical ZERO_CAPITAL_ATOMIC executor. The
+// bootstrap must not rewrite engine methods or install a parallel execution path.
 await import('./index.js');

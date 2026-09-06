@@ -1,8 +1,7 @@
 import logger from '../../../logger.js';
-import {
-  zeroCapitalEngine,
-  type SupportedChain,
-  type ZeroCapitalOpportunity,
+import type {
+  SupportedChain,
+  ZeroCapitalOpportunity,
 } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import {
@@ -24,10 +23,24 @@ import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/du
 import type { ReceiverFundingMode } from '../execution/adapters/sponsored-receiver-manager.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
+import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 import type { Wallet, providers } from 'ethers';
 
-const installed = new WeakSet<object>();
 const evidenceCache = new Map<string, { observedAt: number; evidence: FlashLoanProviderEconomics[] }>();
+let compatibilityNoticeLogged = false;
+
+export interface ZeroCapitalProviderRepriceContext {
+  executionWallets: Map<SupportedChain, Wallet>;
+  receiverManager: { getReceiver: (chain: string) => string | null };
+  getGasFundingDecision: (chain: SupportedChain) => Promise<GasFundingDecision>;
+  executeSetupCalls: (
+    chain: any,
+    provider: providers.JsonRpcProvider,
+    wallet: Wallet,
+    fundingMode: ReceiverFundingMode,
+    calls: any[],
+  ) => Promise<void>;
+}
 
 function cacheTtlMs(): number {
   const value = Number(process.env.ZERO_CAPITAL_FLASH_PROVIDER_EVIDENCE_TTL_MS || 2_500);
@@ -53,42 +66,52 @@ function bpsFromBaseUnits(value: bigint, notional: bigint): number | null {
   return Number((value * 10_000n) / notional);
 }
 
-function updateCandidate(
-  opportunity: ZeroCapitalOpportunity,
-  selected: FlashLoanProviderEconomics | null,
-  reason: string,
-  missingInformation?: string[],
-  extraProvenance: string[] = [],
-): void {
-  const candidate = measuredCandidateRegistry.get(opportunity.id);
+function updateCandidate(input: {
+  opportunity: ZeroCapitalOpportunity;
+  selected: FlashLoanProviderEconomics | null;
+  eligible: boolean;
+  reason: string;
+  missingInformation?: string[];
+  extraProvenance?: string[];
+}): void {
+  const candidate = measuredCandidateRegistry.get(input.opportunity.id);
   if (!candidate) return;
-  const positive = opportunity.expectedProfit > 0n;
+  const positive = input.opportunity.expectedProfit > 0n;
   measuredCandidateRegistry.updateStatus(
-    opportunity.id,
-    positive && selected ? 'deterministic_positive' : 'enriched',
+    input.opportunity.id,
+    input.eligible ? 'eligible' : positive ? 'deterministic_positive' : 'enriched',
     {
       economics: {
         ...candidate.economics,
-        deterministicNetProfitUsd: Number(opportunity.expectedProfit) / (10 ** opportunity.inputTokenDecimals),
-        feeUsd: Number(opportunity.flashLoanFeeInInputToken || 0n) / (10 ** opportunity.inputTokenDecimals),
-        flashLoanFeeBps: bpsFromBaseUnits(opportunity.flashLoanFeeInInputToken || 0n, opportunity.flashLoanAmount),
-        allInCostBps: bpsFromBaseUnits(opportunity.estimatedExecutionCostInInputToken, opportunity.flashLoanAmount),
-        breakEvenBps: bpsFromBaseUnits(opportunity.estimatedExecutionCostInInputToken, opportunity.flashLoanAmount),
-        netProfitBps: opportunity.netProfitBps,
-        bpsToBreakEven: opportunity.netProfitBps >= 0 ? 0 : Math.abs(opportunity.netProfitBps),
+        deterministicNetProfitUsd: Number(input.opportunity.expectedProfit) / (10 ** input.opportunity.inputTokenDecimals),
+        // Flash premium is not an exchange/CEX fee. Keep it exclusively in its
+        // canonical field so BPS attribution cannot count the same cost twice.
+        feeUsd: 0,
+        // Current route amountOut already embeds the measured AMM/router result.
+        // Min-output tolerance is an execution guard, not measured expected loss.
+        expectedSlippageBps: 0,
+        flashLoanFeeBps: bpsFromBaseUnits(input.opportunity.flashLoanFeeInInputToken || 0n, input.opportunity.flashLoanAmount),
+        allInCostBps: bpsFromBaseUnits(input.opportunity.estimatedExecutionCostInInputToken, input.opportunity.flashLoanAmount),
+        breakEvenBps: bpsFromBaseUnits(input.opportunity.estimatedExecutionCostInInputToken, input.opportunity.flashLoanAmount),
+        netProfitBps: input.opportunity.netProfitBps,
+        bpsToBreakEven: input.opportunity.netProfitBps >= 0 ? 0 : Math.abs(input.opportunity.netProfitBps),
       },
-      executableCapability: positive && !!selected && candidate.executableCapability,
-      executionCapabilityReason: reason,
-      missingInformation: missingInformation ?? (selected ? [] : ['measured_flash_loan_provider_liquidity_and_fee']),
-      provenance: selected
+      executableCapability: input.eligible,
+      executionCapabilityReason: input.reason,
+      replaceMissingInformation: true,
+      missingInformation: input.missingInformation ?? [],
+      provenance: input.selected
         ? [
-            `flash_loan_provider:${selected.provider}`,
+            `flash_loan_provider:${input.selected.provider}`,
             'measured_flash_loan_fee_exact_rate',
             'measured_flash_loan_liquidity',
             'provider_selection_bound_to_verified_receiver',
-            ...extraProvenance,
+            'flash_premium_attribution:flashLoanFeeBps_only',
+            'min_output_tolerance_not_expected_slippage_cost',
+            ...(input.eligible ? ['canonical_positive_all_in_net', 'zero_capital_hard_facts_eligible'] : []),
+            ...(input.extraProvenance || []),
           ]
-        : ['flash_loan_provider_unavailable_fail_closed', ...extraProvenance],
+        : ['flash_loan_provider_unavailable_fail_closed', ...(input.extraProvenance || [])],
     },
   );
 }
@@ -133,353 +156,332 @@ function recordReprice(
   });
 }
 
-export function ensureZeroCapitalFlashProviderWiring(): void {
-  const target = zeroCapitalEngine as unknown as {
-    scanChain: (chain: SupportedChain, provider: providers.JsonRpcProvider) => Promise<ZeroCapitalOpportunity[]>;
-    executionWallets: Map<SupportedChain, Wallet>;
-    receiverManager: { getReceiver: (chain: string) => string | null };
-    executionEnabled: boolean;
-    isAllowedByCryptara: (opportunity: ZeroCapitalOpportunity) => Promise<boolean>;
-    getGasFundingDecision: (chain: SupportedChain) => Promise<GasFundingDecision>;
-    executeSetupCalls: (
-      chain: any,
-      provider: providers.JsonRpcProvider,
-      wallet: Wallet,
-      fundingMode: ReceiverFundingMode,
-      calls: any[],
-    ) => Promise<void>;
-  };
-  if (installed.has(target)) return;
-  installed.add(target);
+async function verifiedCapabilities(input: {
+  chain: SupportedChain;
+  provider: providers.JsonRpcProvider;
+  wallet: Wallet | undefined;
+  balancerReceiver: string | null;
+}): Promise<{
+  single: Map<FlashLoanProviderKind, VerifiedFlashLoanReceiverCapability>;
+  dual: Awaited<ReturnType<typeof verifyDualFlashLoanReceiverCapability>> | null;
+}> {
+  const { chain, provider, wallet, balancerReceiver } = input;
+  const single = new Map<FlashLoanProviderKind, VerifiedFlashLoanReceiverCapability>();
+  if (!wallet) return { single, dual: null };
 
-  const originalCryptaraAdmission = target.isAllowedByCryptara.bind(target);
-  target.isAllowedByCryptara = async (opportunity): Promise<boolean> => {
-    if (opportunity.expectedProfit <= 0n) return true;
-    return originalCryptaraAdmission(opportunity);
-  };
-
-  const originalScanChain = target.scanChain.bind(target);
-  target.scanChain = async (chain, provider): Promise<ZeroCapitalOpportunity[]> => {
-    let opportunities = await originalScanChain(chain, provider);
-    if (chain === 'europa' || opportunities.length === 0) return opportunities;
-
-    const wallet = target.executionWallets.get(chain);
-    const balancerReceiver = target.receiverManager.getReceiver(chain);
-    const balancerCapability = wallet && balancerReceiver
-      ? await verifyFlashLoanReceiverCapability({
+  const [balancer, aave, morpho, dual] = await Promise.all([
+    balancerReceiver
+      ? verifyFlashLoanReceiverCapability({
           kind: 'balancer_v1',
           chain: chain as any,
           provider,
           expectedOwner: wallet.address,
           address: balancerReceiver,
         }).catch(() => null)
-      : null;
-    const aaveCapability = wallet
-      ? await verifyFlashLoanReceiverCapability({
-          kind: 'aave_v3',
-          chain: chain as any,
-          provider,
-          expectedOwner: wallet.address,
-        }).catch(() => null)
-      : null;
-    const morphoCapability = wallet
-      ? await verifyFlashLoanReceiverCapability({
-          kind: 'morpho_blue',
-          chain: chain as any,
-          provider,
-          expectedOwner: wallet.address,
-        }).catch(() => null)
-      : null;
-    const dualCapability = wallet
-      ? await verifyDualFlashLoanReceiverCapability({
-          chain: chain as any,
-          provider,
-          expectedOwner: wallet.address,
-        }).catch(() => null)
-      : null;
+      : Promise.resolve(null),
+    verifyFlashLoanReceiverCapability({
+      kind: 'aave_v3',
+      chain: chain as any,
+      provider,
+      expectedOwner: wallet.address,
+    }).catch(() => null),
+    verifyFlashLoanReceiverCapability({
+      kind: 'morpho_blue',
+      chain: chain as any,
+      provider,
+      expectedOwner: wallet.address,
+    }).catch(() => null),
+    verifyDualFlashLoanReceiverCapability({
+      chain: chain as any,
+      provider,
+      expectedOwner: wallet.address,
+    }).catch(() => null),
+  ]);
 
-    if ((aaveCapability || morphoCapability || dualCapability) && wallet && opportunities.length > 0) {
-      const missingByIdentity = new Map<string, any>();
-      const permissionReceivers = [aaveCapability?.address, morphoCapability?.address, dualCapability?.address]
-        .filter((value): value is string => Boolean(value));
-      for (const receiver of permissionReceivers) {
-        for (const opportunity of opportunities) {
-          const missing = await buildMissingReceiverPermissionCalls({
-            chain: chain as any,
-            provider,
-            receiver,
-            route: opportunity.route,
-          }).catch(() => [] as any[]);
-          for (const call of missing) missingByIdentity.set(setupCallIdentity(call), call);
-        }
-      }
+  if (balancer) single.set('balancer_v2', balancer);
+  if (aave) single.set('aave_v3', aave);
+  if (morpho) single.set('morpho_blue', morpho);
+  return { single, dual };
+}
 
-      if (missingByIdentity.size > 0) {
-        const funding = await target.getGasFundingDecision(chain);
-        if (funding.mode !== 'unavailable') {
-          const preMutation = opportunities;
-          await target.executeSetupCalls(
-            chain as any,
-            provider,
-            wallet,
-            funding.mode as ReceiverFundingMode,
-            [...missingByIdentity.values()],
-          );
-          for (const opportunity of preMutation) {
-            updateCandidate(
-              opportunity,
-              null,
-              'Provider receiver permissions changed; pre-mutation quote invalidated before immediate fresh re-quote',
-              ['fresh_quote_after_provider_receiver_permissions'],
-            );
-          }
-          opportunities = await originalScanChain(chain, provider);
-          logger.info('[ZeroCapitalFlashProvider] Receiver permissions warmed and market evidence immediately refreshed', {
-            component: 'ZeroCapitalFlashProviderWiring',
-            chain,
-            setupCalls: missingByIdentity.size,
-            invalidatedQuotes: preMutation.length,
-            freshQuotes: opportunities.length,
-            aaveReceiver: Boolean(aaveCapability),
-            morphoReceiver: Boolean(morphoCapability),
-            dualReceiver: Boolean(dualCapability),
-            staleQuoteExecutionAllowed: false,
-            extraFullScanCycleRequired: false,
-          });
-          if (opportunities.length === 0) return [];
-        }
-      }
-    }
+/**
+ * Canonical provider repricing stage for ZERO_CAPITAL_ATOMIC discovery.
+ *
+ * This is a normal function, not a runtime method replacement. The caller owns
+ * discovery order explicitly. It may measure provider fees/liquidity, prepare a
+ * verified receiver permission, reprice the exact opportunity, and update the
+ * same measured candidate/evidence record. It never schedules or submits a trade.
+ */
+export async function repriceZeroCapitalProviderEconomics(input: {
+  chain: SupportedChain;
+  provider: providers.JsonRpcProvider;
+  opportunities: ZeroCapitalOpportunity[];
+  context: ZeroCapitalProviderRepriceContext;
+}): Promise<ZeroCapitalOpportunity[]> {
+  const { chain, provider, context } = input;
+  if (chain === 'europa' || input.opportunities.length === 0) return input.opportunities;
 
-    const repriced: ZeroCapitalOpportunity[] = [];
-    for (const opportunity of opportunities) {
-      flashLoanProviderSelectionRegistry.remove(opportunity.id);
-      dualFlashLoanProviderSelectionRegistry.remove(opportunity.id);
-      try {
-        const capabilities = new Map<FlashLoanProviderKind, VerifiedFlashLoanReceiverCapability>();
-        if (balancerCapability) capabilities.set('balancer_v2', balancerCapability);
+  const wallet = context.executionWallets.get(chain);
+  const balancerReceiver = context.receiverManager.getReceiver(chain);
+  const capabilities = await verifiedCapabilities({ chain, provider, wallet, balancerReceiver });
+  const repriced: ZeroCapitalOpportunity[] = [];
+  const permissionCalls = new Map<string, any>();
+  const permissionDeferred = new Set<string>();
 
-        if (aaveCapability && wallet) {
-          const remainingAavePermissions = await buildMissingReceiverPermissionCalls({
-            chain: chain as any,
-            provider,
-            receiver: aaveCapability.address,
-            route: opportunity.route,
-          });
-          if (remainingAavePermissions.length === 0) capabilities.set('aave_v3', aaveCapability);
-        }
+  for (const opportunity of input.opportunities) {
+    flashLoanProviderSelectionRegistry.remove(opportunity.id);
+    dualFlashLoanProviderSelectionRegistry.remove(opportunity.id);
 
-        if (morphoCapability && wallet) {
-          const remainingMorphoPermissions = await buildMissingReceiverPermissionCalls({
-            chain: chain as any,
-            provider,
-            receiver: morphoCapability.address,
-            route: opportunity.route,
-          });
-          if (remainingMorphoPermissions.length === 0) capabilities.set('morpho_blue', morphoCapability);
-        }
+    try {
+      const evidence = await providerEvidence(chain, provider, opportunity.inputToken);
+      const allowedProviders = [...capabilities.single.keys()];
+      const selectedSingle = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount, allowedProviders);
+      const selectedCapability = selectedSingle ? capabilities.single.get(selectedSingle.provider) ?? null : null;
+      const selectedDual = capabilities.dual
+        ? selectMeasuredDualFlashLoanAllocation(evidence, opportunity.flashLoanAmount, allowedProviders)
+        : null;
 
-        const dualPermissionReady = dualCapability && wallet
-          ? (await buildMissingReceiverPermissionCalls({
-              chain: chain as any,
-              provider,
-              receiver: dualCapability.address,
-              route: opportunity.route,
-            })).length === 0
-          : false;
-
-        const evidence = await providerEvidence(chain, provider, opportunity.inputToken);
-        const allowedProviders = [...capabilities.keys()];
-        const selectedSingle = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount, allowedProviders);
-        const selectedCapability = selectedSingle ? capabilities.get(selectedSingle.provider) ?? null : null;
-        const selectedDual = dualPermissionReady && dualCapability
-          ? selectMeasuredDualFlashLoanAllocation(evidence, opportunity.flashLoanAmount, allowedProviders)
-          : null;
-
-        if (selectedDual && dualCapability) {
-          const values = repriceOpportunity(opportunity, selectedDual.totalFee);
-          recordReprice(opportunity, chain, values);
-          const feeSavings = selectedDual.measuredFeeSavingsVsBestSingle;
-          const dualProvenance = [
-            'flash_loan_provider:aave_balancer_dual',
-            `dual_selection_reason:${selectedDual.reason}`,
-            `dual_balancer_amount:${selectedDual.balancerAmount.toString()}`,
-            `dual_aave_amount:${selectedDual.aaveAmount.toString()}`,
-            `dual_total_fee:${selectedDual.totalFee.toString()}`,
-            ...(feeSavings !== null ? [`dual_fee_savings_vs_best_single:${feeSavings.toString()}`] : []),
-            'same_asset_nested_atomicity_required',
-          ];
-
-          if (values.netProfit <= 0n) {
-            updateCandidate(
-              opportunity,
-              selectedDual.balancer,
-              `Measured Aave+Balancer provider mesh repriced the exact route to ${values.netProfitBps} BPS; observation only`,
-              undefined,
-              dualProvenance,
-            );
-            continue;
-          }
-
-          const cryptaraAllowed = !target.executionEnabled || await originalCryptaraAdmission(opportunity);
-          if (!cryptaraAllowed) {
-            updateCandidate(
-              opportunity,
-              selectedDual.balancer,
-              'Measured Aave+Balancer provider mesh produced positive economics but Cryptara rejected the fresh positive candidate',
-              ['cryptara_positive_provider_mesh_reprice_rejected'],
-              dualProvenance,
-            );
-            continue;
-          }
-
-          dualFlashLoanProviderSelectionRegistry.record({
-            opportunityId: opportunity.id,
-            provider: 'aave_balancer_dual',
-            receiver: dualCapability.address,
-            balancerAmount: selectedDual.balancerAmount,
-            aaveAmount: selectedDual.aaveAmount,
-            balancerEconomics: selectedDual.balancer,
-            aaveEconomics: selectedDual.aave,
-            receiverCapability: dualCapability,
-            totalMeasuredFlashFee: selectedDual.totalFee,
-            selectedAt: Date.now(),
-            expiresAt: opportunity.expiresAt,
-            provenance: [
-              'measured_combined_provider_economics',
-              'verified_dual_receiver_capability',
-              'verified_dual_receiver_route_permissions',
-              'balancer_outer_aave_nested',
-              selectedDual.reason,
-              ...(feeSavings !== null ? ['dual_fee_split_strictly_beats_best_single'] : []),
-              'strict_positive_repriced_net',
-              'cryptara_rechecked_after_positive_provider_mesh_reprice',
-              'synthetic_evidence:false',
-            ],
-          });
-          updateCandidate(
-            opportunity,
-            selectedDual.balancer,
-            selectedDual.reason === 'fee_split_beats_single_provider'
-              ? 'Measured Aave+Balancer fee split beats the best executable single-provider flash fee; exact dual payload simulation, Monte Carlo, governance, and terminal settlement remain required'
-              : 'Measured Aave+Balancer combined liquidity unlocks the exact profitable size; exact dual payload simulation, Monte Carlo, governance, and terminal settlement remain required',
-            undefined,
-            dualProvenance,
-          );
-          repriced.push(opportunity);
-          continue;
-        }
-
-        if (!selectedSingle || !selectedCapability) {
-          updateCandidate(
-            opportunity,
-            null,
-            'No execution-ready Morpho, Aave, Balancer, or combined Aave+Balancer path has complete measured fee, liquidity, permission, and verified receiver evidence for this exact amount',
-            ['measured_flash_loan_provider_liquidity_and_fee'],
-            ['provider_mesh_checked:true'],
-          );
-          continue;
-        }
-
-        const measuredFlashFee = calculateMeasuredFlashLoanFee(selectedSingle, opportunity.flashLoanAmount);
-        if (measuredFlashFee === null) {
-          updateCandidate(opportunity, null, 'Selected flash-loan provider is missing an exact measured fee rate');
-          continue;
-        }
-        const values = repriceOpportunity(opportunity, measuredFlashFee);
+      if (selectedDual && capabilities.dual) {
+        const values = repriceOpportunity(opportunity, selectedDual.totalFee);
         recordReprice(opportunity, chain, values);
+        zeroCapitalRouteEvidenceRegistry.record(opportunity);
+        const feeSavings = selectedDual.measuredFeeSavingsVsBestSingle;
+        const dualProvenance = [
+          'flash_loan_provider:aave_balancer_dual',
+          `dual_selection_reason:${selectedDual.reason}`,
+          `dual_balancer_amount:${selectedDual.balancerAmount.toString()}`,
+          `dual_aave_amount:${selectedDual.aaveAmount.toString()}`,
+          `dual_total_fee:${selectedDual.totalFee.toString()}`,
+          ...(feeSavings !== null ? [`dual_fee_savings_vs_best_single:${feeSavings.toString()}`] : []),
+          'same_asset_nested_atomicity_required',
+        ];
 
         if (values.netProfit <= 0n) {
-          updateCandidate(
+          updateCandidate({
             opportunity,
-            selectedSingle,
-            `Measured ${selectedSingle.provider} exact fee/liquidity repriced the route to ${values.netProfitBps} BPS; observation only`,
-            undefined,
-            selectedSingle.provider === 'morpho_blue' ? ['morpho_zero_flash_fee_applied:true'] : [],
-          );
+            selected: selectedDual.balancer,
+            eligible: false,
+            reason: `Measured Aave+Balancer provider mesh repriced the exact route to ${values.netProfitBps} BPS; observation only`,
+            extraProvenance: dualProvenance,
+          });
           continue;
         }
 
-        const cryptaraAllowed = !target.executionEnabled || await originalCryptaraAdmission(opportunity);
-        if (!cryptaraAllowed) {
-          updateCandidate(
+        const missing = await buildMissingReceiverPermissionCalls({
+          chain: chain as any,
+          provider,
+          receiver: capabilities.dual.address,
+          route: opportunity.route,
+        }).catch(() => [] as any[]);
+        if (missing.length > 0) {
+          for (const call of missing) permissionCalls.set(setupCallIdentity(call), call);
+          permissionDeferred.add(opportunity.id);
+          zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+          updateCandidate({
             opportunity,
-            selectedSingle,
-            `Measured ${selectedSingle.provider} repricing produced positive economics but Cryptara rejected the fresh positive candidate`,
-            ['cryptara_positive_provider_reprice_rejected'],
-          );
+            selected: selectedDual.balancer,
+            eligible: false,
+            reason: 'Measured dual-provider route is positive, but receiver permissions must settle before a fresh quote can become executable',
+            missingInformation: ['fresh_quote_after_provider_receiver_permissions'],
+            extraProvenance: dualProvenance,
+          });
           continue;
         }
 
-        flashLoanProviderSelectionRegistry.record({
+        dualFlashLoanProviderSelectionRegistry.record({
           opportunityId: opportunity.id,
-          provider: selectedSingle.provider,
-          receiver: selectedCapability.address,
-          economics: selectedSingle,
-          receiverCapability: selectedCapability,
+          provider: 'aave_balancer_dual',
+          receiver: capabilities.dual.address,
+          balancerAmount: selectedDual.balancerAmount,
+          aaveAmount: selectedDual.aaveAmount,
+          balancerEconomics: selectedDual.balancer,
+          aaveEconomics: selectedDual.aave,
+          receiverCapability: capabilities.dual,
+          totalMeasuredFlashFee: selectedDual.totalFee,
           selectedAt: Date.now(),
           expiresAt: opportunity.expiresAt,
           provenance: [
-            'measured_provider_economics',
-            'verified_receiver_capability',
-            'verified_receiver_route_permissions',
-            'provider_receiver_binding',
-            ...(selectedSingle.provider === 'morpho_blue' ? ['morpho_blue_zero_flash_fee'] : []),
+            'measured_combined_provider_economics',
+            'verified_dual_receiver_capability',
+            'verified_dual_receiver_route_permissions',
+            'balancer_outer_aave_nested',
+            selectedDual.reason,
+            ...(feeSavings !== null ? ['dual_fee_split_strictly_beats_best_single'] : []),
             'strict_positive_repriced_net',
-            'cryptara_rechecked_after_positive_provider_reprice',
             'synthetic_evidence:false',
           ],
         });
-
-        updateCandidate(
+        updateCandidate({
           opportunity,
-          selectedSingle,
-          `Measured ${selectedSingle.provider} exact fee/liquidity plus verified receiver/permissions keep the route positive; downstream Cryptara/Monte Carlo/governance remain required`,
-          undefined,
-          selectedSingle.provider === 'morpho_blue' ? ['morpho_zero_flash_fee_applied:true'] : [],
-        );
+          selected: selectedDual.balancer,
+          eligible: true,
+          reason: selectedDual.reason === 'fee_split_beats_single_provider'
+            ? 'Measured Aave+Balancer fee split beats the best executable single-provider flash fee; canonical scheduler owns submission'
+            : 'Measured Aave+Balancer combined liquidity unlocks the exact profitable size; canonical scheduler owns submission',
+          extraProvenance: dualProvenance,
+        });
         repriced.push(opportunity);
-      } catch (error) {
-        flashLoanProviderSelectionRegistry.remove(opportunity.id);
-        dualFlashLoanProviderSelectionRegistry.remove(opportunity.id);
-        updateCandidate(
+        continue;
+      }
+
+      if (!selectedSingle || !selectedCapability) {
+        zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+        updateCandidate({
           opportunity,
-          null,
-          `Flash-loan provider mesh evidence failed closed: ${error instanceof Error ? error.message : String(error)}`,
+          selected: null,
+          eligible: false,
+          reason: 'No execution-ready Morpho, Aave, Balancer, or combined Aave+Balancer path has complete measured fee, liquidity, and verified receiver evidence for this exact amount',
+          missingInformation: ['measured_flash_loan_provider_liquidity_and_fee'],
+          extraProvenance: ['provider_mesh_checked:true'],
+        });
+        continue;
+      }
+
+      const measuredFlashFee = calculateMeasuredFlashLoanFee(selectedSingle, opportunity.flashLoanAmount);
+      if (measuredFlashFee === null) {
+        zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+        updateCandidate({
+          opportunity,
+          selected: null,
+          eligible: false,
+          reason: 'Selected flash-loan provider is missing an exact measured fee rate',
+          missingInformation: ['measured_flash_loan_provider_fee'],
+        });
+        continue;
+      }
+
+      const values = repriceOpportunity(opportunity, measuredFlashFee);
+      recordReprice(opportunity, chain, values);
+      zeroCapitalRouteEvidenceRegistry.record(opportunity);
+      const providerProvenance = selectedSingle.provider === 'morpho_blue' ? ['morpho_zero_flash_fee_applied:true'] : [];
+      if (values.netProfit <= 0n) {
+        updateCandidate({
+          opportunity,
+          selected: selectedSingle,
+          eligible: false,
+          reason: `Measured ${selectedSingle.provider} exact fee/liquidity repriced the route to ${values.netProfitBps} BPS; observation only`,
+          extraProvenance: providerProvenance,
+        });
+        continue;
+      }
+
+      const missing = await buildMissingReceiverPermissionCalls({
+        chain: chain as any,
+        provider,
+        receiver: selectedCapability.address,
+        route: opportunity.route,
+      }).catch(() => [] as any[]);
+      if (missing.length > 0) {
+        for (const call of missing) permissionCalls.set(setupCallIdentity(call), call);
+        permissionDeferred.add(opportunity.id);
+        zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+        updateCandidate({
+          opportunity,
+          selected: selectedSingle,
+          eligible: false,
+          reason: `Measured ${selectedSingle.provider} route is positive, but receiver permissions must settle before a fresh quote can become executable`,
+          missingInformation: ['fresh_quote_after_provider_receiver_permissions'],
+          extraProvenance: providerProvenance,
+        });
+        continue;
+      }
+
+      flashLoanProviderSelectionRegistry.record({
+        opportunityId: opportunity.id,
+        provider: selectedSingle.provider,
+        receiver: selectedCapability.address,
+        economics: selectedSingle,
+        receiverCapability: selectedCapability,
+        selectedAt: Date.now(),
+        expiresAt: opportunity.expiresAt,
+        provenance: [
+          'measured_provider_economics',
+          'verified_receiver_capability',
+          'verified_receiver_route_permissions',
+          'provider_receiver_binding',
+          ...(selectedSingle.provider === 'morpho_blue' ? ['morpho_blue_zero_flash_fee'] : []),
+          'strict_positive_repriced_net',
+          'synthetic_evidence:false',
+        ],
+      });
+      updateCandidate({
+        opportunity,
+        selected: selectedSingle,
+        eligible: true,
+        reason: `Measured ${selectedSingle.provider} exact fee/liquidity plus verified receiver/permissions keep the route positive; canonical scheduler owns submission`,
+        extraProvenance: providerProvenance,
+      });
+      repriced.push(opportunity);
+    } catch (error) {
+      flashLoanProviderSelectionRegistry.remove(opportunity.id);
+      dualFlashLoanProviderSelectionRegistry.remove(opportunity.id);
+      zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+      updateCandidate({
+        opportunity,
+        selected: null,
+        eligible: false,
+        reason: `Flash-loan provider mesh evidence failed closed: ${error instanceof Error ? error.message : String(error)}`,
+        missingInformation: ['measured_flash_loan_provider_liquidity_and_fee'],
+      });
+      logger.warn('[ZeroCapitalFlashProvider] Provider mesh evidence failed closed', {
+        component: 'ZeroCapitalFlashProviderWiring',
+        chain,
+        opportunityId: opportunity.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (permissionCalls.size > 0 && wallet) {
+    const funding = await context.getGasFundingDecision(chain);
+    if (funding.mode !== 'unavailable') {
+      try {
+        await context.executeSetupCalls(
+          chain as any,
+          provider,
+          wallet,
+          funding.mode as ReceiverFundingMode,
+          [...permissionCalls.values()],
         );
-        logger.warn('[ZeroCapitalFlashProvider] Provider mesh evidence failed closed', {
+        logger.info('[ZeroCapitalFlashProvider] Selected positive-route receiver permissions prepared; stale quotes remain invalid until the next canonical discovery cycle', {
           component: 'ZeroCapitalFlashProviderWiring',
           chain,
-          opportunityId: opportunity.id,
+          setupCalls: permissionCalls.size,
+          deferredOpportunityIds: [...permissionDeferred],
+          staleQuoteExecutionAllowed: false,
+          nextAuthority: 'canonical_fresh_discovery_cycle',
+          executionAuthority: false,
+        });
+      } catch (error) {
+        logger.warn('[ZeroCapitalFlashProvider] Selected positive-route receiver permission preparation failed closed', {
+          component: 'ZeroCapitalFlashProviderWiring',
+          chain,
+          deferredOpportunityIds: [...permissionDeferred],
           error: error instanceof Error ? error.message : String(error),
+          personalFundingRequested: false,
+          executionAuthority: false,
         });
       }
     }
-    return repriced;
-  };
+  }
 
-  logger.info('[ZeroCapitalFlashProvider] Live provider mesh economics authority installed', {
+  return repriced;
+}
+
+/**
+ * Compatibility export only. Provider repricing is now called explicitly by the
+ * canonical zero-capital discovery pipeline; this function never rewrites engine
+ * methods and never creates a second execution or discovery authority.
+ */
+export function ensureZeroCapitalFlashProviderWiring(): void {
+  if (compatibilityNoticeLogged) return;
+  compatibilityNoticeLogged = true;
+  logger.info('[ZeroCapitalFlashProvider] Compatibility installer retained without runtime method mutation', {
     component: 'ZeroCapitalFlashProviderWiring',
-    feeAuthority: 'measured_provider_state_exact_rate',
-    liquidityAuthority: 'measured_provider_state',
-    receiverAuthority: 'verified_provider_specific_or_dual_receiver_capability',
-    permissionAuthority: 'provider_specific_receiver_allowlist_with_immediate_fresh_requote_after_mutation',
-    providerSelectionRegistry: true,
-    dualProviderSelectionRegistry: true,
-    staticFlashLoanFeeAuthority: false,
-    providerSelection: 'choose_lowest_exact_measured_fee_with_verified_receiver_then_use_dual_only_for_strict_improvement_or_liquidity_rescue',
-    providerMesh: ['morpho_blue', 'balancer_v2', 'aave_v3', 'aave_balancer_dual'],
-    morphoBlueZeroFlashFeeAuthority: true,
-    morphoBlueLiveExecutionEnabledWhenVerified: true,
-    dualProviderRule: 'combined_liquidity_or_strict_fee_split_improvement_only',
-    nearBreakEvenObservationCanReachProviderRepricing: true,
-    positiveProviderRescueRechecksCryptara: true,
+    providerRepricingAuthority: 'explicit_zero_capital_discovery_pipeline_stage',
     nonPositiveProviderRepriceExecutable: false,
-    aaveMarketEvidenceMeasured: true,
-    aaveLiveExecutionEnabledWhenVerified: true,
-    dualProviderExecutionEnabledWhenVerified: true,
-    permissionWarmupRemovesFullCycleDelay: true,
-    staleQuoteExecutionAllowed: false,
-    failClosedOnMissingProviderEvidence: true,
+    scanChainMutation: false,
+    cryptaraAdmissionMutation: false,
+    executionAuthority: false,
   });
 }

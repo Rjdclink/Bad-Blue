@@ -1,18 +1,12 @@
 import type { Wallet, providers } from 'ethers';
 import logger from '../../../logger.js';
-import {
-  zeroCapitalEngine,
-  type SupportedChain,
-  type ZeroCapitalOpportunity,
-} from '../core/zero-capital-engine.js';
+import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from '../execution/adapters/flashloan-receiver-builder.js';
 import { buildDualFlashLoanReceiverPayload } from '../execution/adapters/dual-flashloan-receiver-builder.js';
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
-import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
 import type { FlashLoanProviderKind } from '../execution/adapters/flash-loan-provider-economics.js';
-
-const installed = new WeakSet<object>();
 
 type BarrierProviderKind = FlashLoanProviderKind | 'aave_balancer_dual';
 
@@ -21,13 +15,12 @@ interface FundingDecisionLike {
   reason: string;
 }
 
-type ZeroCapitalBarrierRuntime = {
-  executeAndRecord: (opportunity: ZeroCapitalOpportunity) => Promise<void>;
+export interface ZeroCapitalBarrierContext {
   providers: Map<SupportedChain, providers.JsonRpcProvider>;
   executionWallets: Map<SupportedChain, Wallet>;
   receiverManager: { getReceiver: (chain: string) => string | null };
   getGasFundingDecision: (chain: SupportedChain) => Promise<FundingDecisionLike>;
-};
+}
 
 export interface DynamicAttemptBarrierDecision {
   opportunityId: string;
@@ -48,13 +41,14 @@ export interface DynamicAttemptBarrierDecision {
   confidence: number;
   expectedSlippageBps: number;
   barrierMultiple: number;
-  authority: 'pre_broadcast_defer_only';
+  authority: 'canonical_pre_broadcast_validation';
   executionAuthority: false;
 }
 
 let latest: DynamicAttemptBarrierDecision | null = null;
 let deferrals = 0;
 let approvals = 0;
+let compatibilityNoticeLogged = false;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -62,8 +56,8 @@ function clamp(value: number, min: number, max: number): number {
 
 function ratio(numerator: bigint, denominator: bigint): number | null {
   if (denominator <= 0n) return null;
-  const scaled = Number((numerator * 1_000_000n) / denominator) / 1_000_000;
-  return Number.isFinite(scaled) ? scaled : null;
+  const value = Number((numerator * 1_000_000n) / denominator) / 1_000_000;
+  return Number.isFinite(value) ? value : null;
 }
 
 function multiplyCeil(value: bigint, multiplier: number): bigint {
@@ -89,165 +83,106 @@ function dynamicBarrierMultiple(opportunity: ZeroCapitalOpportunity, ageFraction
   return clamp(base + agePenalty + confidencePenalty + slippagePenalty + latencyPenalty, 0.25, 10);
 }
 
-async function evaluateBarrier(
-  runtime: ZeroCapitalBarrierRuntime,
+function denied(
   opportunity: ZeroCapitalOpportunity,
-): Promise<DynamicAttemptBarrierDecision> {
-  const observedAt = Date.now();
-  const funding = await runtime.getGasFundingDecision(opportunity.chain);
-  const provider = runtime.providers.get(opportunity.chain);
-  const wallet = runtime.executionWallets.get(opportunity.chain);
-  const dualSelection = dualFlashLoanProviderSelectionRegistry.get(opportunity.id, observedAt);
-  const selection = dualSelection ? null : flashLoanProviderSelectionRegistry.get(opportunity.id, observedAt);
-  const flashLoanProvider: BarrierProviderKind = dualSelection ? 'aave_balancer_dual' : selection?.provider || 'balancer_v2';
-  const receiver = dualSelection
-    ? dualSelection.receiver
-    : selection?.provider === 'aave_v3'
-      ? selection.receiver
-      : runtime.receiverManager.getReceiver(opportunity.chain);
-  const ageFraction = quoteAgeFraction(opportunity, observedAt);
-  const barrierMultiple = dynamicBarrierMultiple(opportunity, ageFraction);
-
-  const base = {
+  observedAt: number,
+  funding: FundingDecisionLike,
+  flashLoanProvider: BarrierProviderKind,
+  reason: string,
+  extra: Partial<Pick<DynamicAttemptBarrierDecision, 'exactCallPassed' | 'exactGasEstimatePassed' | 'estimatedGasUnits' | 'failedAttemptExposure'>> = {},
+): DynamicAttemptBarrierDecision {
+  const age = quoteAgeFraction(opportunity, observedAt);
+  const failedAttemptExposure = extra.failedAttemptExposure ?? 0n;
+  return {
     opportunityId: opportunity.id,
     chain: opportunity.chain,
     observedAt,
+    approved: false,
+    reason,
     fundingMode: funding.mode,
     flashLoanProvider,
+    exactCallPassed: extra.exactCallPassed ?? false,
+    exactGasEstimatePassed: extra.exactGasEstimatePassed ?? false,
+    estimatedGasUnits: extra.estimatedGasUnits ?? null,
     expectedNetProfit: opportunity.expectedProfit,
-    quoteAgeFraction: ageFraction,
+    failedAttemptExposure,
+    dynamicBarrier: 0n,
+    profitToFailureExposureRatio: ratio(opportunity.expectedProfit, failedAttemptExposure),
+    quoteAgeFraction: age,
     confidence: opportunity.confidence,
     expectedSlippageBps: opportunity.expectedSlippageBps,
-    barrierMultiple,
-    authority: 'pre_broadcast_defer_only' as const,
-    executionAuthority: false as const,
+    barrierMultiple: dynamicBarrierMultiple(opportunity, age),
+    authority: 'canonical_pre_broadcast_validation',
+    executionAuthority: false,
   };
+}
+
+/**
+ * Exact pre-broadcast validation used directly by the canonical ZERO_CAPITAL_ATOMIC
+ * executor. It can only reject/defer an already-eligible exact opportunity. It has
+ * no scheduler, admission, repricing, or submission authority and mutates no engine
+ * methods at runtime.
+ */
+export async function evaluateZeroCapitalDynamicAttemptBarrier(
+  context: ZeroCapitalBarrierContext,
+  opportunity: ZeroCapitalOpportunity,
+): Promise<DynamicAttemptBarrierDecision> {
+  const observedAt = Date.now();
+  const funding = await context.getGasFundingDecision(opportunity.chain);
+  const provider = context.providers.get(opportunity.chain);
+  const wallet = context.executionWallets.get(opportunity.chain);
+  const selection = flashLoanProviderSelectionRegistry.get(opportunity.id, observedAt);
+  const flashLoanProvider: BarrierProviderKind = selection?.kind === 'dual'
+    ? 'aave_balancer_dual'
+    : selection?.provider || 'balancer_v2';
+  const receiver = selection?.receiver || context.receiverManager.getReceiver(opportunity.chain);
 
   if (opportunity.expectedProfit <= 0n) {
-    return {
-      ...base,
-      approved: false,
-      reason: 'Expected all-in net profit is not positive',
-      exactCallPassed: false,
-      exactGasEstimatePassed: false,
-      estimatedGasUnits: null,
-      failedAttemptExposure: 0n,
-      dynamicBarrier: 0n,
-      profitToFailureExposureRatio: null,
-    };
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Expected all-in net profit is not positive');
+    latest = result; deferrals++; return result;
   }
-  if (Date.now() >= opportunity.expiresAt) {
-    return {
-      ...base,
-      approved: false,
-      reason: 'Opportunity expired before exact pre-broadcast validation',
-      exactCallPassed: false,
-      exactGasEstimatePassed: false,
-      estimatedGasUnits: null,
-      failedAttemptExposure: 0n,
-      dynamicBarrier: 0n,
-      profitToFailureExposureRatio: null,
-    };
+  if (observedAt >= opportunity.expiresAt) {
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Opportunity expired before exact pre-broadcast validation');
+    latest = result; deferrals++; return result;
   }
-
-  if (dualSelection) {
-    if (dualSelection.expiresAt <= observedAt) {
-      return {
-        ...base,
-        approved: false,
-        reason: 'Dual-provider evidence expired before pre-broadcast validation',
-        exactCallPassed: false,
-        exactGasEstimatePassed: false,
-        estimatedGasUnits: null,
-        failedAttemptExposure: 0n,
-        dynamicBarrier: 0n,
-        profitToFailureExposureRatio: null,
-      };
-    }
-    if (wallet && dualSelection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()) {
-      return {
-        ...base,
-        approved: false,
-        reason: 'Dual-provider receiver owner no longer matches execution wallet',
-        exactCallPassed: false,
-        exactGasEstimatePassed: false,
-        estimatedGasUnits: null,
-        failedAttemptExposure: 0n,
-        dynamicBarrier: 0n,
-        profitToFailureExposureRatio: null,
-      };
-    }
-    if (dualSelection.balancerAmount + dualSelection.aaveAmount !== opportunity.flashLoanAmount) {
-      return {
-        ...base,
-        approved: false,
-        reason: 'Dual-provider principal split no longer equals exact opportunity notional',
-        exactCallPassed: false,
-        exactGasEstimatePassed: false,
-        estimatedGasUnits: null,
-        failedAttemptExposure: 0n,
-        dynamicBarrier: 0n,
-        profitToFailureExposureRatio: null,
-      };
-    }
-  } else if (selection?.provider === 'aave_v3') {
-    if (selection.expiresAt <= observedAt) {
-      return {
-        ...base,
-        approved: false,
-        reason: 'Selected Aave provider evidence expired before pre-broadcast validation',
-        exactCallPassed: false,
-        exactGasEstimatePassed: false,
-        estimatedGasUnits: null,
-        failedAttemptExposure: 0n,
-        dynamicBarrier: 0n,
-        profitToFailureExposureRatio: null,
-      };
-    }
-    if (wallet && selection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()) {
-      return {
-        ...base,
-        approved: false,
-        reason: 'Selected Aave receiver owner no longer matches execution wallet',
-        exactCallPassed: false,
-        exactGasEstimatePassed: false,
-        estimatedGasUnits: null,
-        failedAttemptExposure: 0n,
-        dynamicBarrier: 0n,
-        profitToFailureExposureRatio: null,
-      };
-    }
+  if (!selection) {
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Canonical flash-loan provider selection is unavailable or expired');
+    latest = result; deferrals++; return result;
   }
-
+  if (selection.receiverCapability.owner.toLowerCase() !== wallet?.address.toLowerCase()) {
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Selected provider receiver owner no longer matches execution wallet');
+    latest = result; deferrals++; return result;
+  }
+  if (selection.kind === 'dual' && selection.balancerAmount + selection.aaveAmount !== opportunity.flashLoanAmount) {
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider, 'Dual-provider principal split no longer equals exact opportunity notional');
+    latest = result; deferrals++; return result;
+  }
   if (funding.mode === 'unavailable' || !provider || !wallet || !receiver) {
-    return {
-      ...base,
-      approved: false,
-      reason: funding.mode === 'unavailable' ? funding.reason : 'Provider, wallet, or provider-specific verified receiver unavailable',
-      exactCallPassed: false,
-      exactGasEstimatePassed: false,
-      estimatedGasUnits: null,
-      failedAttemptExposure: 0n,
-      dynamicBarrier: 0n,
-      profitToFailureExposureRatio: null,
-    };
+    const result = denied(
+      opportunity,
+      observedAt,
+      funding,
+      flashLoanProvider,
+      funding.mode === 'unavailable' ? funding.reason : 'Provider, wallet, or selected verified receiver unavailable',
+    );
+    latest = result; deferrals++; return result;
   }
 
-  let payload;
+  let payload: { to: string; data: string; value: string | number };
   try {
     const plan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
       receiver,
-      provider: selection?.provider || 'balancer_v2',
-      profitRecipient: process.env.CRYPTO_PROFIT_WALLET_ADDRESS || wallet.address,
-      nowMs: Date.now(),
+      provider: selection.kind === 'single' ? selection.provider : 'balancer_v2',
+      profitRecipient: resolveOperationalProfitRecipient(),
+      nowMs: observedAt,
     });
-    payload = dualSelection
+    payload = selection.kind === 'dual'
       ? buildDualFlashLoanReceiverPayload({
           chain: plan.chain,
           receiver,
           loanToken: plan.loanToken,
-          balancerAmount: dualSelection.balancerAmount.toString(),
-          aaveAmount: dualSelection.aaveAmount.toString(),
+          balancerAmount: selection.balancerAmount.toString(),
+          aaveAmount: selection.aaveAmount.toString(),
           minProfit: plan.minProfit,
           profitRecipient: plan.profitRecipient,
           steps: plan.steps,
@@ -255,171 +190,74 @@ async function evaluateBarrier(
         })
       : buildFlashLoanReceiverPayloadFromPlan(plan);
   } catch (error) {
-    return {
-      ...base,
-      approved: false,
-      reason: `Exact ${flashLoanProvider} payload rebuild failed: ${error instanceof Error ? error.message : String(error)}`,
-      exactCallPassed: false,
-      exactGasEstimatePassed: false,
-      estimatedGasUnits: null,
-      failedAttemptExposure: 0n,
-      dynamicBarrier: 0n,
-      profitToFailureExposureRatio: null,
-    };
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider, `Exact provider payload rebuild failed: ${error instanceof Error ? error.message : String(error)}`);
+    latest = result; deferrals++; return result;
   }
 
-  const request = {
-    from: wallet.address,
-    to: payload.to,
-    data: payload.data,
-    value: payload.value,
-  };
-  const [call, gas] = await Promise.allSettled([
-    provider.call(request),
-    provider.estimateGas(request),
-  ]);
+  const request = { from: wallet.address, to: payload.to, data: payload.data, value: payload.value };
+  const [call, gas] = await Promise.allSettled([provider.call(request), provider.estimateGas(request)]);
+  const nativeExposure = funding.mode === 'native' ? opportunity.estimatedGasCostInInputToken || 0n : 0n;
   if (call.status !== 'fulfilled') {
-    return {
-      ...base,
-      approved: false,
-      reason: `Exact ${flashLoanProvider} eth_call rejected; defer and re-quote: ${call.reason instanceof Error ? call.reason.message : String(call.reason)}`,
-      exactCallPassed: false,
-      exactGasEstimatePassed: gas.status === 'fulfilled',
-      estimatedGasUnits: gas.status === 'fulfilled' ? BigInt(gas.value.toString()) : null,
-      failedAttemptExposure: funding.mode === 'native' ? opportunity.estimatedGasCostInInputToken || 0n : 0n,
-      dynamicBarrier: 0n,
-      profitToFailureExposureRatio: null,
-    };
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider,
+      `Exact provider eth_call rejected; defer and re-quote: ${call.reason instanceof Error ? call.reason.message : String(call.reason)}`,
+      { exactGasEstimatePassed: gas.status === 'fulfilled', estimatedGasUnits: gas.status === 'fulfilled' ? BigInt(gas.value.toString()) : null, failedAttemptExposure: nativeExposure });
+    latest = result; deferrals++; return result;
   }
   if (gas.status !== 'fulfilled') {
-    return {
-      ...base,
-      approved: false,
-      reason: `Exact ${flashLoanProvider} gas estimation rejected; defer and re-quote: ${gas.reason instanceof Error ? gas.reason.message : String(gas.reason)}`,
-      exactCallPassed: true,
-      exactGasEstimatePassed: false,
-      estimatedGasUnits: null,
-      failedAttemptExposure: funding.mode === 'native' ? opportunity.estimatedGasCostInInputToken || 0n : 0n,
-      dynamicBarrier: 0n,
-      profitToFailureExposureRatio: null,
-    };
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider,
+      `Exact provider gas estimation rejected; defer and re-quote: ${gas.reason instanceof Error ? gas.reason.message : String(gas.reason)}`,
+      { exactCallPassed: true, failedAttemptExposure: nativeExposure });
+    latest = result; deferrals++; return result;
   }
 
+  const age = quoteAgeFraction(opportunity, observedAt);
+  const barrierMultiple = dynamicBarrierMultiple(opportunity, age);
   const estimatedGasUnits = BigInt(gas.value.toString());
-  const failedAttemptExposure = funding.mode === 'native'
-    ? opportunity.estimatedGasCostInInputToken || 0n
-    : 0n;
-  const dynamicBarrier = multiplyCeil(failedAttemptExposure, barrierMultiple);
-  const profitToFailureExposureRatio = ratio(opportunity.expectedProfit, failedAttemptExposure);
-  const approved = failedAttemptExposure <= 0n || opportunity.expectedProfit > dynamicBarrier;
-
-  return {
-    ...base,
+  const dynamicBarrier = multiplyCeil(nativeExposure, barrierMultiple);
+  const approved = nativeExposure <= 0n || opportunity.expectedProfit > dynamicBarrier;
+  const result: DynamicAttemptBarrierDecision = {
+    opportunityId: opportunity.id,
+    chain: opportunity.chain,
+    observedAt,
     approved,
     reason: approved
       ? funding.mode === 'sponsored'
-        ? `Exact ${flashLoanProvider} call and gas estimate passed; sponsored funding removes direct failed-attempt wallet gas exposure`
-        : `Exact ${flashLoanProvider} call/gas passed and profit cushion exceeds dynamic failed-attempt barrier (${barrierMultiple.toFixed(3)}x)`
-      : `Defer and re-quote: profit cushion does not exceed dynamic failed-attempt barrier (${barrierMultiple.toFixed(3)}x)`,
+        ? `Exact ${flashLoanProvider} call and gas estimate passed with verified sponsored funding lane`
+        : `Exact ${flashLoanProvider} call/gas passed and profit exceeds dynamic failed-attempt barrier (${barrierMultiple.toFixed(3)}x)`
+      : `Defer and re-quote: profit does not exceed dynamic failed-attempt barrier (${barrierMultiple.toFixed(3)}x)`,
+    fundingMode: funding.mode,
+    flashLoanProvider,
     exactCallPassed: true,
     exactGasEstimatePassed: true,
     estimatedGasUnits,
-    failedAttemptExposure,
+    expectedNetProfit: opportunity.expectedProfit,
+    failedAttemptExposure: nativeExposure,
     dynamicBarrier,
-    profitToFailureExposureRatio,
+    profitToFailureExposureRatio: ratio(opportunity.expectedProfit, nativeExposure),
+    quoteAgeFraction: age,
+    confidence: opportunity.confidence,
+    expectedSlippageBps: opportunity.expectedSlippageBps,
+    barrierMultiple,
+    authority: 'canonical_pre_broadcast_validation',
+    executionAuthority: false,
   };
+  latest = result;
+  if (approved) approvals++; else deferrals++;
+  return result;
 }
 
-export function getZeroCapitalDynamicAttemptBarrierSnapshot(): {
-  latest: DynamicAttemptBarrierDecision | null;
-  approvals: number;
-  deferrals: number;
-} {
-  return {
-    latest: latest ? { ...latest } : null,
-    approvals,
-    deferrals,
-  };
+export function getZeroCapitalDynamicAttemptBarrierSnapshot() {
+  return { latest: latest ? { ...latest } : null, approvals, deferrals };
 }
 
-/**
- * Adds a defer-only pre-broadcast barrier in front of the canonical executor.
- * A blocked opportunity is not counted as a failed trade because no transaction
- * was submitted. The normal scan loop will discover/re-quote the route again.
- * This wrapper can only withhold execution; it cannot grant execution authority.
- */
+/** Compatibility only. Canonical startup no longer installs a runtime wrapper. */
 export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
-  const runtime = zeroCapitalEngine as unknown as ZeroCapitalBarrierRuntime;
-  if (installed.has(runtime)) return;
-  installed.add(runtime);
-
-  const originalExecuteAndRecord = runtime.executeAndRecord.bind(runtime);
-  runtime.executeAndRecord = async (opportunity): Promise<void> => {
-    const age = quoteAgeFraction(opportunity);
-    const dualSelection = dualFlashLoanProviderSelectionRegistry.get(opportunity.id);
-    const selection = dualSelection ? null : flashLoanProviderSelectionRegistry.get(opportunity.id);
-    const decision = await evaluateBarrier(runtime, opportunity).catch(error => ({
-      opportunityId: opportunity.id,
-      chain: opportunity.chain,
-      observedAt: Date.now(),
-      approved: false,
-      reason: `Dynamic attempt barrier failed closed: ${error instanceof Error ? error.message : String(error)}`,
-      fundingMode: 'unavailable' as const,
-      flashLoanProvider: dualSelection ? 'aave_balancer_dual' as const : selection?.provider || 'balancer_v2' as const,
-      exactCallPassed: false,
-      exactGasEstimatePassed: false,
-      estimatedGasUnits: null,
-      expectedNetProfit: opportunity.expectedProfit,
-      failedAttemptExposure: 0n,
-      dynamicBarrier: 0n,
-      profitToFailureExposureRatio: null,
-      quoteAgeFraction: age,
-      confidence: opportunity.confidence,
-      expectedSlippageBps: opportunity.expectedSlippageBps,
-      barrierMultiple: dynamicBarrierMultiple(opportunity, age),
-      authority: 'pre_broadcast_defer_only' as const,
-      executionAuthority: false as const,
-    }));
-    latest = decision;
-
-    if (!decision.approved) {
-      deferrals++;
-      logger.info('[ZeroCapitalBarrier] Opportunity deferred before broadcast', {
-        component: 'ZeroCapitalDynamicAttemptBarrier',
-        ...decision,
-        expectedNetProfit: decision.expectedNetProfit.toString(),
-        failedAttemptExposure: decision.failedAttemptExposure.toString(),
-        dynamicBarrier: decision.dynamicBarrier.toString(),
-        estimatedGasUnits: decision.estimatedGasUnits?.toString() ?? null,
-        terminalTradeFailure: false,
-        transactionSubmitted: false,
-        revalidationAuthority: 'next_fresh_scan',
-      });
-      return;
-    }
-
-    approvals++;
-    logger.debug('[ZeroCapitalBarrier] Opportunity passed dynamic pre-broadcast barrier', {
-      component: 'ZeroCapitalDynamicAttemptBarrier',
-      ...decision,
-      expectedNetProfit: decision.expectedNetProfit.toString(),
-      failedAttemptExposure: decision.failedAttemptExposure.toString(),
-      dynamicBarrier: decision.dynamicBarrier.toString(),
-      estimatedGasUnits: decision.estimatedGasUnits?.toString() ?? null,
-    });
-    await originalExecuteAndRecord(opportunity);
-  };
-
-  logger.info('[ZeroCapitalBarrier] Dynamic failed-attempt barrier wiring installed', {
+  if (compatibilityNoticeLogged) return;
+  compatibilityNoticeLogged = true;
+  logger.info('[ZeroCapitalBarrier] Compatibility installer retained without runtime mutation', {
     component: 'ZeroCapitalDynamicAttemptBarrier',
-    exactEthCallRequired: true,
-    exactGasEstimateRequired: true,
-    providerSpecificPayloadParity: ['balancer_v2', 'aave_v3', 'aave_balancer_dual'],
-    nativeFailedAttemptExposureUsesMeasuredInputTokenGasEstimate: true,
-    sponsoredGasExposureZeroOnlyWhenFundingModeIsSponsored: true,
-    barrierIsNotAddedToReportedEconomics: true,
-    blockedOpportunityTreatment: 'defer_and_requote_not_failed_trade',
-    dynamicInputs: ['quote_age', 'confidence', 'expected_slippage', 'quote_latency', 'funding_mode'],
+    validationAuthority: 'canonical_zero_capital_executor_direct_call',
+    executeAndRecordMutation: false,
     executionAuthority: false,
   });
 }

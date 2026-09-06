@@ -52,6 +52,10 @@ function validWebSocketUrl(value: unknown): string | undefined {
  * personal token, which made a provider registered with the `logs` capability a
  * false primary authority for graph discovery. The same two no-key endpoints are
  * retained; only their Arbitrum order is corrected.
+ *
+ * Ethereum deliberately uses dRPC as its second no-key transport. Cloudflare's
+ * legacy public cloudflare-eth.com gateway is deprecated and is no longer admitted
+ * into the runtime provider mesh.
  */
 function costSafePublicDefinitions(): ProviderDefinition[] {
   if (process.env.CRYPTOCRAWL_COST_SAFE_PUBLIC_RPC_ENABLED?.trim().toLowerCase() === 'false') return [];
@@ -66,7 +70,7 @@ function costSafePublicDefinitions(): ProviderDefinition[] {
     bsc: 'https://bsc-rpc.publicnode.com',
   };
   const secondary: Partial<Record<SupportedChain, string>> = {
-    ethereum: 'https://cloudflare-eth.com',
+    ethereum: 'https://eth.drpc.org/',
     polygon: 'https://polygon-rpc.com',
     arbitrum: 'https://arbitrum-one-rpc.publicnode.com',
     optimism: 'https://mainnet.optimism.io',
@@ -192,6 +196,7 @@ async function registerConfiguredMesh(): Promise<void> {
     providerManagerAuthoritative: true,
     costSafePublicRpcPreferred: true,
     independentNoKeyPublicFailover: true,
+    deprecatedCloudflarePublicGatewayAdmitted: false,
     paidAlchemyRpcRole: 'last_resort_fallback_after_two_no_key_public_transports_when_available',
     alchemyGasSponsorshipUntouched: true,
     localComputeRole: 'ComputationalBeam_Aries_Cryptara_analysis_after_bounded_market_evidence',

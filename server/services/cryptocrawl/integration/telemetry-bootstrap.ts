@@ -100,7 +100,10 @@ function adoptLegacyProviderAliases(): void {
 }
 
 async function registerBestEffortAnkrFallbacks(): Promise<void> {
-  const allowAnonymousPublicFallback = process.env.CRYPTOCRAWL_ALLOW_PUBLIC_ANKR_FALLBACK !== 'false';
+  // Anonymous Ankr is best-effort and must be intentionally enabled. When a key
+  // or configured endpoint is present, that authenticated/configured path remains
+  // eligible regardless of this public-fallback switch.
+  const allowAnonymousPublicFallback = process.env.CRYPTOCRAWL_ALLOW_PUBLIC_ANKR_FALLBACK === 'true';
   const ankrKey = process.env.ANKR_API_KEY?.trim() || process.env.ANKR_KEY?.trim();
   const outcomes = await Promise.all(TELEMETRY_CHAINS.map(async chain => {
     const keyDerived = ankrKey && ANKR_SLUGS[chain]

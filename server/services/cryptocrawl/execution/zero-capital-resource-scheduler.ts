@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
+import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
+import { evaluateAtomicZeroCapitalAdmission } from '../governance/atomic-zero-capital-strategy-coverage.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
 import {
   RESOURCE_LEASE_TABLE as TABLE,
@@ -72,6 +75,59 @@ function expectedNetUsd(opportunity: ZeroCapitalOpportunity): number {
   const divisor = 10 ** Math.max(0, Math.min(18, opportunity.inputTokenDecimals));
   const converted = Number(opportunity.expectedProfit) / divisor;
   return Number.isFinite(converted) ? Math.max(0, converted) : 0;
+}
+
+function gasAdmissionProvenance(decision: GasFundingDecision): 'external_zero_operator_cost' | 'system_owned' | 'unproven' {
+  if (
+    decision.mode === 'sponsored'
+    && decision.paymentSource === 'provider_sponsored'
+    && decision.strictZeroInitialCapitalEligible === true
+    && decision.operatorMonetaryInputRequired === false
+  ) return 'external_zero_operator_cost';
+  if (
+    decision.mode === 'native'
+    && decision.paymentSource === 'system_owned_native'
+    && decision.strictZeroInitialCapitalEligible === true
+    && decision.operatorMonetaryInputRequired === false
+  ) return 'system_owned';
+  return 'unproven';
+}
+
+async function strictCanonicalGasDecision(chain: string): Promise<GasFundingDecision | null> {
+  try {
+    // Dynamic import avoids making the resource scheduler part of the engine's
+    // construction cycle. At lease time the runtime wiring has already replaced
+    // getGasFundingDecision with the durable system-owned-gas proof authority.
+    const { zeroCapitalEngine } = await import('../core/zero-capital-engine.js');
+    const runtime = zeroCapitalEngine as any;
+    if (typeof runtime.getGasFundingDecision !== 'function') return null;
+    const decision = await runtime.getGasFundingDecision(chain) as GasFundingDecision;
+    if (!decision || decision.mode === 'unavailable') return null;
+    if (decision.strictZeroInitialCapitalEligible !== true || decision.operatorMonetaryInputRequired !== false) return null;
+    if (gasAdmissionProvenance(decision) === 'unproven') return null;
+    return decision;
+  } catch (error) {
+    logger.debug('[ZeroCapitalScheduler] Canonical gas provenance could not be proven', {
+      component: 'ZeroCapitalResourceScheduler',
+      chain,
+      error: error instanceof Error ? error.message : String(error),
+      personalGasFallbackAllowed: false,
+    });
+    return null;
+  }
+}
+
+function completeMeasuredAtomicEconomics(candidate: MeasuredCandidate, expectedNetProfitUsd: number): boolean {
+  return candidate.status === 'eligible'
+    && candidate.executableCapability === true
+    && candidate.expiresAt > Date.now()
+    && Number.isFinite(expectedNetProfitUsd)
+    && expectedNetProfitUsd > 0
+    && Number.isFinite(Number(candidate.economics.deterministicNetProfitUsd))
+    && Number(candidate.economics.deterministicNetProfitUsd) > 0
+    && Number.isFinite(Number(candidate.canonicalBps.allInCostBps))
+    && Number.isFinite(Number(candidate.canonicalBps.netBps))
+    && Number(candidate.canonicalBps.netBps) > 0;
 }
 
 class ZeroCapitalResourceScheduler {
@@ -289,20 +345,83 @@ class ZeroCapitalResourceScheduler {
     fundingMode: string,
   ): Promise<ZeroCapitalResourceLease | null> {
     if (opportunity.expectedProfit <= 0n || Date.now() > opportunity.expiresAt) return null;
+    const gasDecision = await strictCanonicalGasDecision(opportunity.chain);
+    if (!gasDecision || gasDecision.mode !== fundingMode) return null;
+    const admission = evaluateAtomicZeroCapitalAdmission({
+      topology: 'ZERO_CAPITAL_ATOMIC',
+      personalPrincipalRequired: false,
+      personalGasRequired: false,
+      personalCollateralRequired: false,
+      principalProvenance: 'temporary_external',
+      gasProvenance: gasAdmissionProvenance(gasDecision),
+      collateralProvenance: 'none',
+      completeAllInCostsMeasured:
+        opportunity.estimatedExecutionCostInInputToken >= 0n
+        && opportunity.gasEstimate > 0n
+        && Number.isFinite(opportunity.netProfitBps),
+      deterministicNetPositive: opportunity.expectedProfit > 0n && opportunity.netProfitBps > 0,
+      executionPathReady: true,
+      settlementPathReady: true,
+      atomicity: 'same_transaction_atomic',
+    });
+    if (!admission.approved) {
+      logger.debug('[ZeroCapitalScheduler] Atomic route lease denied by universal zero-personal-cost policy', {
+        component: 'ZeroCapitalResourceScheduler',
+        opportunityId: opportunity.id,
+        chain: opportunity.chain,
+        reason: admission.reason,
+        personalFundingFallbackAllowed: false,
+      });
+      return null;
+    }
     return this.acquireSpecs(
       opportunity.id,
       opportunity.expiresAt,
-      this.specsFor(opportunity.chain, protocolNames(opportunity), fundingMode),
+      this.specsFor(opportunity.chain, protocolNames(opportunity), gasDecision.mode),
     );
   }
 
   async acquireMeasuredAtomic(input: MeasuredAtomicResourceRequest): Promise<ZeroCapitalResourceLease | null> {
     if (!Number.isFinite(input.expectedNetProfitUsd) || input.expectedNetProfitUsd <= 0) return null;
     if (!Number.isFinite(input.expiresAt) || input.expiresAt <= Date.now()) return null;
+    const candidate = measuredCandidateRegistry.get(input.opportunityId);
+    if (!candidate || !['DEX_ATOMIC', 'LIQUIDATION'].includes(candidate.topology)) return null;
+    if (!completeMeasuredAtomicEconomics(candidate, input.expectedNetProfitUsd)) return null;
+
+    const gasDecision = await strictCanonicalGasDecision(input.chain);
+    // Callers may request a mode, but they may not manufacture funding truth. A
+    // lease exists only when their requested transport matches the canonical
+    // provenance-backed decision exactly.
+    if (!gasDecision || gasDecision.mode !== input.fundingMode) return null;
+    const admission = evaluateAtomicZeroCapitalAdmission({
+      topology: candidate.topology,
+      personalPrincipalRequired: false,
+      personalGasRequired: false,
+      personalCollateralRequired: false,
+      principalProvenance: 'temporary_external',
+      gasProvenance: gasAdmissionProvenance(gasDecision),
+      collateralProvenance: 'none',
+      completeAllInCostsMeasured: true,
+      deterministicNetPositive: input.expectedNetProfitUsd > 0,
+      executionPathReady: candidate.executableCapability,
+      settlementPathReady: true,
+      atomicity: 'same_transaction_atomic',
+    });
+    if (!admission.approved) {
+      logger.debug('[ZeroCapitalScheduler] Measured atomic lease denied by universal zero-personal-cost policy', {
+        component: 'ZeroCapitalResourceScheduler',
+        opportunityId: input.opportunityId,
+        topology: candidate.topology,
+        chain: input.chain,
+        reason: admission.reason,
+        personalFundingFallbackAllowed: false,
+      });
+      return null;
+    }
     return this.acquireSpecs(
       input.opportunityId,
       input.expiresAt,
-      this.specsFor(input.chain, input.protocols, input.fundingMode),
+      this.specsFor(input.chain, input.protocols, gasDecision.mode),
     );
   }
 

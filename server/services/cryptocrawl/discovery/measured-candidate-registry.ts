@@ -286,10 +286,10 @@ class MeasuredCandidateRegistry {
       canonicalBps: buildCanonicalBps(economics, updatedAt),
       missingInformation: [...new Set(input.missingInformation)],
       provenance: [...new Set([...input.provenance, 'canonical_bps:measured_candidate_registry'])],
-      status: previous && previous.observedAt === input.observedAt &&
-        previous.status === 'eligible' && !['blocked', 'expired'].includes(input.status)
-        ? 'eligible'
-        : input.status,
+      // Every record is a new authoritative evidence snapshot. Eligibility never
+      // survives a re-record unless the producer explicitly supplies `eligible`
+      // from current evidence; this prevents stale provider/resource authority.
+      status: input.status,
     };
     this.candidates.set(next.opportunityId, next);
     this.prune();

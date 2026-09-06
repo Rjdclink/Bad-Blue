@@ -455,13 +455,11 @@ class CoinbaseSettlementBridge implements CexSettlementAdapter {
   private readonly delegate = new CoinbaseSpotSettlementAdapter();
 
   async prepareSubmit(request: OrderRequest): Promise<PreparedCexOrderSubmission> {
-    // Advanced Trade order creation remains REST. The parent barrier still starts
-    // this REST dispatch at the same local instant as WS-capable counterpart legs.
-    return {
-      transport: 'rest',
-      preparedAt: Date.now(),
-      dispatch: () => this.delegate.submit(request),
-    };
+    // The delegate performs exact live product validation plus any measured
+    // Coinbase Convert-vs-order-book comparison before the parent submission
+    // barrier. dispatch() is the first point that may reach a Coinbase execution
+    // endpoint, preserving synchronized two-leg admission.
+    return this.delegate.prepareSubmit(request);
   }
 
   async submit(request: OrderRequest): Promise<CexOrderReceipt> {
