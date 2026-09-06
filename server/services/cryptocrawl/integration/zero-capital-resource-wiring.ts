@@ -24,6 +24,7 @@ import {
   type SponsoredReceiverRecord,
 } from '../execution/adapters/sponsored-receiver-manager.js';
 import { zeroCapitalResourceScheduler } from '../execution/zero-capital-resource-scheduler.js';
+import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 
 const installed = new WeakSet<object>();
@@ -162,6 +163,7 @@ function recordZeroCapitalCandidate(input: {
   const { opportunity, chain, source, quote } = input;
   const positive = opportunity.expectedProfit > 0n && (quote?.executablePositive ?? true);
   const canonicalEligible = positive && input.executableCapability;
+  zeroCapitalRouteEvidenceRegistry.record(opportunity);
   measuredCandidateRegistry.record({
     opportunityId: opportunity.id,
     topology: 'ZERO_CAPITAL_ATOMIC',
@@ -195,6 +197,7 @@ function recordZeroCapitalCandidate(input: {
       opportunity.id.startsWith('graphless-') ? 'graphless_no_key_discovery' : 'stable_seed_discovery',
       'direct_contract_quotes',
       'measured_all_in_economics',
+      'exact_route_evidence:zero_capital_route_evidence_registry',
       'flash_premium_attribution:flashLoanFeeBps_only',
       'quoted_amount_out_embeds_current_route_economics',
       'min_output_tolerance_not_expected_slippage_cost',
@@ -582,6 +585,7 @@ export function ensureZeroCapitalResourceWiring(): void {
     globalValueSemantics: 'emergency_ceiling_only',
     nearBreakEvenObservation: true,
     bpsEvidencePropagated: true,
+    routeEvidenceAuthority: 'zero_capital_candidate_producer',
     gasResourceAuthority: 'live_zero_personal_cost_decision_only',
     personalFundingRequested: false,
     simulationAuthority: 'parallel_advisory_only',
