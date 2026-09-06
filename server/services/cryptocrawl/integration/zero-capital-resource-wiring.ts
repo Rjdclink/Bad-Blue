@@ -125,10 +125,16 @@ function zeroCapitalEconomics(
   return {
     grossProfitUsd: baseUnitsToUsd(opportunity.grossProfit || 0n, opportunity.inputTokenDecimals),
     deterministicNetProfitUsd: baseUnitsToUsd(opportunity.expectedProfit, opportunity.inputTokenDecimals),
-    feeUsd: baseUnitsToUsd(opportunity.flashLoanFeeInInputToken || 0n, opportunity.inputTokenDecimals),
+    // ZERO_CAPITAL_ATOMIC has no exchange/CEX fee in this direct-route record.
+    // Flash premium already has its own canonical field below; duplicating it as
+    // feeUsd falsely attributes the same cost as both exchange fee and flash fee.
+    feeUsd: 0,
     gasUsd: baseUnitsToUsd(opportunity.estimatedGasCostInInputToken || 0n, opportunity.inputTokenDecimals),
     bridgeUsd: 0,
-    expectedSlippageBps: opportunity.expectedSlippageBps,
+    // The direct quote amountOut already contains current AMM/router economics.
+    // The route's min-output tolerance is execution protection, not a measured
+    // expected slippage loss, so it must not become canonical BPS cost.
+    expectedSlippageBps: 0,
     expectedPriceImpactBps: null,
     grossProfitBps,
     flashLoanFeeBps,
@@ -188,6 +194,9 @@ function recordZeroCapitalCandidate(input: {
       opportunity.id.startsWith('graphless-') ? 'graphless_no_key_discovery' : 'stable_seed_discovery',
       'direct_contract_quotes',
       'measured_all_in_economics',
+      'flash_premium_attribution:flashLoanFeeBps_only',
+      'quoted_amount_out_embeds_current_route_economics',
+      'min_output_tolerance_not_expected_slippage_cost',
       ...(input.simulationReady && opportunity.id.startsWith('graphless-') ? ['exact_receiver_call_simulation'] : []),
       positive ? 'deterministic_positive_net' : 'near_break_even_observation_only',
       'synthetic_evidence:false',
