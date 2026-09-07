@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { ensureKalshiFundingLifecycleAdapterRegistered } from '../execution/kalshi-funding-lifecycle-adapter.js';
 import { refreshKalshiPredictionIntelligence } from '../intelligence/kalshi-prediction-market-authority.js';
 import { ensureKalshiBpsOptimizationWiring, getKalshiBpsOptimizationSnapshot } from './kalshi-bps-optimization-wiring.js';
 import { ensureCryptaraKalshiPredictionWiring, getCryptaraKalshiPredictionSummary } from './cryptara-kalshi-prediction-wiring.js';
@@ -55,6 +56,7 @@ export function getKalshiSystemWiringStatus() {
     bps: getKalshiBpsOptimizationSnapshot(),
     cryptara: getCryptaraKalshiPredictionSummary(),
     quanti: getKalshiQuantiStatus(),
+    fundingLifecycleAdapterRegistered: installed,
     duplicateExecutionSchedulerCreated: false as const,
     canonicalEconomicAuthorityChanged: false as const,
     canonicalMonteCarloAuthorityChanged: false as const,
@@ -63,15 +65,18 @@ export function getKalshiSystemWiringStatus() {
 }
 
 /**
- * Installs Kalshi as a measured input to existing canonical authorities only.
- * It creates no scheduler, execution authority, economics authority or synthetic
- * profit path. Live Kalshi execution remains separately gated until its dedicated
- * lifecycle proves margin, order, fill, funding and terminal settlement evidence.
+ * Installs Kalshi as a measured input to existing canonical authorities and
+ * registers the dedicated funding lifecycle adapter with the one existing
+ * funding-position state machine. It creates no second scheduler and grants no
+ * order authority by itself: live entry still requires fresh positive economics,
+ * system-owned Kalshi margin, system-owned CEX hedge inventory, governance and
+ * terminal settlement evidence.
  */
 export function ensureKalshiSystemWiring(): void {
   if (installed || process.env.CRYPTOCRAWL_KALSHI_ENABLED === 'false') return;
   installed = true;
 
+  ensureKalshiFundingLifecycleAdapterRegistered();
   ensureKalshiBpsOptimizationWiring();
   ensureCryptaraKalshiPredictionWiring();
   ensureKalshiMonteCarloContextWiring();
@@ -89,9 +94,11 @@ export function ensureKalshiSystemWiring(): void {
     cryptaraContext: true,
     quantiCompContext: true,
     monteCarloLearningContext: true,
+    fundingLifecycleAdapterRegistered: true,
     duplicateEconomicAuthority: false,
     duplicateExecutionScheduler: false,
     legacyIntelligenceAuthorityRevived: false,
     liveKalshiExecutionGrantedByThisWiring: false,
+    liveKalshiExecutionRequiresSystemOwnedCapitalAndFreshAdmission: true,
   });
 }
