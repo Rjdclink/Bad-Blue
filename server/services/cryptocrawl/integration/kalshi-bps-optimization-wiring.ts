@@ -5,6 +5,13 @@ import {
   getKalshiMarginMarkets,
   getKalshiPerpFundingEvidence,
 } from '../intelligence/kalshi-perps-market-authority.js';
+import { getKalshiPredictionIntelligenceSnapshot } from '../intelligence/kalshi-prediction-market-authority.js';
+import {
+  getKalshiApiCapacityEvidence,
+  getKalshiCapitalEfficiencyEvidence,
+  type KalshiApiCapacityEvidence,
+  type KalshiCapitalEfficiencyEvidence,
+} from '../intelligence/kalshi-capital-efficiency-authority.js';
 
 export interface KalshiBpsOptimizationRow {
   ticker: string;
@@ -33,7 +40,19 @@ export interface KalshiBpsOptimizationSnapshot {
   bestMakerSavingsBpsRoundTrip: number | null;
   lowestMakerFeeBps: number | null;
   lowestTakerFeeBps: number | null;
+  activePredictionIncentivePrograms: number;
+  marketsWithFeeWaiverMetadata: number;
+  scheduledSeriesFeeChanges: number;
+  capitalEfficiency: KalshiCapitalEfficiencyEvidence | null;
+  apiCapacity: KalshiApiCapacityEvidence | null;
   exactFeeAuthority: 'kalshi_authenticated_effective_margin_fee_tiers';
+  makerSavingsCounterfactualUntilFill: true;
+  fundingEstimateCreditedAsRealizedBps: false;
+  predictionIncentiveRewardCreditedAsBpsBeforePayment: false;
+  feeWaiverMetadataCreditedAsZeroFeeWithoutFeeProof: false;
+  collateralReturnCreditedAsProfit: false;
+  interestProgramCreditedWithoutPaidEvidence: false;
+  apiTierCreditedAsEconomicProfit: false;
   theoreticalSavingsCreditedAsRealized: false;
   executionAuthority: false;
 }
@@ -46,6 +65,11 @@ let errors = 0;
 let observedAt: number | null = null;
 let marginEnabled = false;
 let rows: KalshiBpsOptimizationRow[] = [];
+let capitalEfficiency: KalshiCapitalEfficiencyEvidence | null = null;
+let apiCapacity: KalshiApiCapacityEvidence | null = null;
+let activePredictionIncentivePrograms = 0;
+let marketsWithFeeWaiverMetadata = 0;
+let scheduledSeriesFeeChanges = 0;
 
 function intervalMs(): number {
   const configured = Number(process.env.KALSHI_BPS_SCAN_INTERVAL_MS || 30_000);
@@ -66,12 +90,28 @@ function spreadBps(bid: number | null, ask: number | null): number | null {
 async function scan(): Promise<void> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
-    const [markets, fees, account] = await Promise.all([
+    const [markets, fees, account, capital, capacity] = await Promise.all([
       getKalshiMarginMarkets(true),
       getKalshiMarginFeeMap(true),
       getKalshiMarginAccountReadiness(),
+      getKalshiCapitalEfficiencyEvidence(),
+      getKalshiApiCapacityEvidence().catch(() => null),
     ]);
     marginEnabled = account.marginEnabled && account.authenticated;
+    capitalEfficiency = capital;
+    apiCapacity = capacity;
+    const prediction = getKalshiPredictionIntelligenceSnapshot();
+    activePredictionIncentivePrograms = prediction.incentives.filter(program => {
+      const now = Date.now();
+      return (program.startAt === null || program.startAt <= now)
+        && (program.endAt === null || program.endAt > now)
+        && !program.paidOut;
+    }).length;
+    marketsWithFeeWaiverMetadata = prediction.markets.filter(market =>
+      market.feeWaiverExpirationAt !== null && market.feeWaiverExpirationAt > Date.now(),
+    ).length;
+    scheduledSeriesFeeChanges = prediction.feeChanges.length;
+
     const active = markets.filter(market => market.status === 'active');
     const fundingLimit = Math.max(1, Math.min(32, Number(process.env.KALSHI_BPS_FUNDING_SCAN_LIMIT || 16)));
     const fundingPairs = await Promise.all(active.slice(0, fundingLimit).map(async market => [
@@ -124,6 +164,11 @@ async function scan(): Promise<void> {
       authenticatedFeeMarkets: rows.length,
       marginEnabled,
       bestMakerSavingsBpsRoundTrip: rows[0]?.makerVsTakerSavingsBpsRoundTrip ?? null,
+      activePredictionIncentivePrograms,
+      marketsWithFeeWaiverMetadata,
+      scheduledSeriesFeeChanges,
+      collateralReturnPotential: capitalEfficiency?.collateralReturnPotential ?? false,
+      apiUsageTier: apiCapacity?.usageTier ?? null,
       theoreticalSavingsCreditedAsRealized: false,
       executionAuthority: false,
     });
@@ -132,11 +177,18 @@ async function scan(): Promise<void> {
     rows = [];
     observedAt = Date.now();
     marginEnabled = false;
+    capitalEfficiency = null;
+    apiCapacity = null;
+    activePredictionIncentivePrograms = 0;
+    marketsWithFeeWaiverMetadata = 0;
+    scheduledSeriesFeeChanges = 0;
     logger.warn('[KalshiBPS] Kalshi BPS frontier failed closed', {
       component: 'KalshiBpsOptimizationWiring',
       error: error instanceof Error ? error.message : String(error),
       staleRowsRetained: false,
       zeroFeeAssumed: false,
+      incentiveRewardsAssumed: false,
+      collateralReturnAssumedProfit: false,
       executionAuthority: false,
     });
   }).finally(() => { inFlight = null; });
@@ -154,7 +206,19 @@ export function getKalshiBpsOptimizationSnapshot(): KalshiBpsOptimizationSnapsho
     bestMakerSavingsBpsRoundTrip: copy.length ? Math.max(...copy.map(row => row.makerVsTakerSavingsBpsRoundTrip)) : null,
     lowestMakerFeeBps: copy.length ? Math.min(...copy.map(row => row.makerFeeBps)) : null,
     lowestTakerFeeBps: copy.length ? Math.min(...copy.map(row => row.takerFeeBps)) : null,
+    activePredictionIncentivePrograms,
+    marketsWithFeeWaiverMetadata,
+    scheduledSeriesFeeChanges,
+    capitalEfficiency: capitalEfficiency ? structuredClone(capitalEfficiency) : null,
+    apiCapacity: apiCapacity ? structuredClone(apiCapacity) : null,
     exactFeeAuthority: 'kalshi_authenticated_effective_margin_fee_tiers',
+    makerSavingsCounterfactualUntilFill: true,
+    fundingEstimateCreditedAsRealizedBps: false,
+    predictionIncentiveRewardCreditedAsBpsBeforePayment: false,
+    feeWaiverMetadataCreditedAsZeroFeeWithoutFeeProof: false,
+    collateralReturnCreditedAsProfit: false,
+    interestProgramCreditedWithoutPaidEvidence: false,
+    apiTierCreditedAsEconomicProfit: false,
     theoreticalSavingsCreditedAsRealized: false,
     executionAuthority: false,
   };
@@ -181,6 +245,10 @@ export function ensureKalshiBpsOptimizationWiring(): void {
     authenticatedEffectiveFeeAuthority: true,
     makerTakerModeComparison: true,
     fundingDirectionMeasurement: true,
+    predictionIncentiveDiscovery: true,
+    feeWaiverMetadataDiscovery: true,
+    collateralNettingEvidence: true,
+    apiCapacityEvidence: true,
     realizedBpsAuthorityChanged: false,
     executionAuthority: false,
   });
