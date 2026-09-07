@@ -71,10 +71,9 @@ function environmentNumber(prefix: string, venue: InventoryVenue, asset: string)
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function executionMinimumReserve(venue: InventoryVenue, available: number, configuredMinimumReserve: number): number {
-  // Coinbase remains evidence-only for account/fee/settlement truth. Operator
-  // balances on Coinbase are never CryptoCrawler execution capital.
-  if (venue === 'coinbase') return Math.max(configuredMinimumReserve, available);
+function executionMinimumReserve(_venue: InventoryVenue, _available: number, configuredMinimumReserve: number): number {
+  // Venue balances are capacity evidence only. Spend authority is separately
+  // bounded by ACTIVE system-owned lots below, including Coinbase.
   return configuredMinimumReserve;
 }
 
@@ -156,9 +155,8 @@ class CexInventoryLedger {
     venue: InventoryVenue,
     asset: string,
   ): Promise<number> {
-    // Account-wide exchange balances never create ownership. Coinbase is always
-    // excluded; Kraken/OKX authority comes solely from ACTIVE system-owned lots.
-    if (venue === 'coinbase') return 0;
+    // Account-wide exchange balances never create ownership. Every venue,
+    // including Coinbase, derives spend authority solely from ACTIVE owned lots.
     const result = await client.query(
       `SELECT COALESCE(SUM(remaining_decimal),0)::text AS amount_decimal
        FROM ${SYSTEM_CAPITAL_OWNERSHIP_TABLE}
@@ -301,7 +299,7 @@ class CexInventoryLedger {
                payout_reserved=EXCLUDED.payout_reserved,
                target=EXCLUDED.target,
                minimum_reserve=EXCLUDED.minimum_reserve,
-               maximum_venue_exposure=EXCLUDED.maximum_venue_exposure,
+               maximum_venue_exposure=EXCLUDED.maximumVenueExposure,
                reconciled_at=EXCLUDED.reconciled_at`,
             [venue, asset, available, payoutReserved, policy.target, minimumReserve, policy.maximumVenueExposure, now],
           );
