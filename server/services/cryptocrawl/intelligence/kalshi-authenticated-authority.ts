@@ -1,4 +1,4 @@
-import { constants, createPrivateKey, sign, type KeyObject } from 'node:crypto';
+import { constants, createHash, createPrivateKey, sign, type KeyObject } from 'node:crypto';
 import logger from '../../../logger.js';
 
 export type KalshiApiEnvironment = 'production' | 'demo';
@@ -26,12 +26,21 @@ function cleanSecret(raw: string | undefined): string | null {
   return value || null;
 }
 
+/**
+ * Kalshi recommends separate credentials for the Perps/margin surface. Prefer
+ * those when present while retaining the already-deployed generic variables as
+ * a compatibility fallback. Secrets are never logged or emitted in snapshots.
+ */
 function apiKeyId(): string | null {
-  return cleanSecret(process.env.KALSHI_API_KEY) || cleanSecret(process.env.KALSHI_API_KEY_ID);
+  return cleanSecret(process.env.KALSHI_PERPS_API_KEY)
+    || cleanSecret(process.env.KALSHI_PERPS_KEY_ID)
+    || cleanSecret(process.env.KALSHI_API_KEY)
+    || cleanSecret(process.env.KALSHI_API_KEY_ID);
 }
 
 function privateKeyRaw(): string | null {
-  return cleanSecret(process.env.KALSHI_PRIVATE_KEY);
+  return cleanSecret(process.env.KALSHI_PERPS_PRIVATE_KEY)
+    || cleanSecret(process.env.KALSHI_PRIVATE_KEY);
 }
 
 function normalizePem(value: string): string {
@@ -44,10 +53,10 @@ function decodePrivateKey(value: string): KeyObject {
 
   const compact = normalized.replace(/\s+/g, '');
   if (!/^[A-Za-z0-9+/=]+$/.test(compact)) {
-    throw new Error('KALSHI_PRIVATE_KEY is neither PEM nor base64 DER');
+    throw new Error('Kalshi private key is neither PEM nor base64 DER');
   }
   const der = Buffer.from(compact, 'base64');
-  if (der.length < 256) throw new Error('KALSHI_PRIVATE_KEY base64 DER is unexpectedly short');
+  if (der.length < 256) throw new Error('Kalshi private key base64 DER is unexpectedly short');
   try {
     return createPrivateKey({ key: der, format: 'der', type: 'pkcs8' });
   } catch {
@@ -58,11 +67,11 @@ function decodePrivateKey(value: string): KeyObject {
 let cachedPrivateKey: { fingerprint: string; key: KeyObject } | null = null;
 function privateKey(): KeyObject {
   const raw = privateKeyRaw();
-  if (!raw) throw new Error('KALSHI_PRIVATE_KEY is not configured');
-  const fingerprint = `${raw.length}:${raw.slice(0, 24)}:${raw.slice(-24)}`;
+  if (!raw) throw new Error('Kalshi private key is not configured');
+  const fingerprint = createHash('sha256').update(raw, 'utf8').digest('hex');
   if (cachedPrivateKey?.fingerprint === fingerprint) return cachedPrivateKey.key;
   const key = decodePrivateKey(raw);
-  if (key.asymmetricKeyType !== 'rsa') throw new Error('KALSHI_PRIVATE_KEY must be an RSA key');
+  if (key.asymmetricKeyType !== 'rsa') throw new Error('Kalshi private key must be an RSA key');
   cachedPrivateKey = { fingerprint, key };
   return key;
 }
@@ -95,7 +104,7 @@ function normalizePath(pathWithQuery: string): string {
 
 function signatureHeaders(method: string, pathWithQuery: string): Record<string, string> {
   const keyId = apiKeyId();
-  if (!keyId) throw new Error('KALSHI_API_KEY is not configured');
+  if (!keyId) throw new Error('Kalshi API key ID is not configured');
   const timestamp = String(Date.now());
   const pathWithoutQuery = normalizePath(pathWithQuery).split('?')[0];
   const message = Buffer.from(`${timestamp}${method.toUpperCase()}${pathWithoutQuery}`, 'utf8');
@@ -154,6 +163,11 @@ export async function kalshiAuthenticatedRequest<T>(
       message: message.slice(0, 240) || null,
       apiKeyPresent: Boolean(apiKeyId()),
       privateKeyPresent: Boolean(privateKeyRaw()),
+      perpsSpecificCredentialPreferred: Boolean(
+        cleanSecret(process.env.KALSHI_PERPS_API_KEY)
+        || cleanSecret(process.env.KALSHI_PERPS_KEY_ID)
+        || cleanSecret(process.env.KALSHI_PERPS_PRIVATE_KEY),
+      ),
       secretsLogged: false,
       executionAuthorityGranted: false,
     });
