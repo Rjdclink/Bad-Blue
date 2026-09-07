@@ -1,5 +1,6 @@
 import { workloadRouter } from '../../computationalBeam/workloadRouter.js';
-import { ComputeLayer, TaskIntensity, TaskPriority, TaskType, type Task } from '../../computationalBeam/types.js';
+import { ComputeLayer, TaskIntensity, TaskPriority, TaskType } from '../../computationalBeam/types.js';
+import { getKalshiEventMarketMakingSnapshot, type KalshiEventMarketMakingCandidate } from '../intelligence/kalshi-event-market-making-authority.js';
 import type { CryptaraKalshiPredictionSnapshot } from './cryptara-kalshi-prediction-wiring.js';
 
 export interface KalshiQuantiContext {
@@ -16,16 +17,29 @@ export interface KalshiQuantiContext {
   nearestOccurrenceMs: number | null;
   medianSpreadBps: number | null;
   sourceQualityScore: number;
+  eventMakerCandidateCount: number;
+  eventMakerActiveIncentiveCount: number;
+  eventMakerPositiveMeasuredSpreadCount: number;
+  eventMakerBestMeasuredSpreadAfterFeesBps: number | null;
+  eventMakerMedianMeasuredSpreadAfterFeesBps: number | null;
+  eventMakerMeanReferenceContracts: number | null;
+  eventMakerProjectedSpreadCanCreateProfitability: false;
+  eventIncentiveRewardPrecredited: false;
   directionalForecastProduced: false;
   economicAuthority: false;
   monteCarloAuthority: false;
   writeAuthority: false;
   executionAuthority: false;
   computeAuthority: 'quanticomp_beam';
-  source: 'cached_kalshi_prediction_intelligence';
+  source: 'cached_kalshi_prediction_and_event_maker_intelligence';
 }
 
 type Pending = { opportunityId: string; observedAt: number };
+interface KalshiQuantiWorkloadInput {
+  prediction: CryptaraKalshiPredictionSnapshot;
+  eventMaker: KalshiEventMarketMakingCandidate[];
+}
+
 const contexts = new Map<string, KalshiQuantiContext>();
 const pending = new Map<string, Pending>();
 const inFlight = new Set<string>();
@@ -45,6 +59,13 @@ function mean(values: number[]): number | null {
   return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : null;
 }
 
+function median(values: number[]): number | null {
+  const sorted = values.filter(Number.isFinite).sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 function standardDeviation(values: number[]): number | null {
   const avg = mean(values);
   if (avg === null || values.length < 2) return null;
@@ -57,7 +78,9 @@ function binaryEntropy(probability: number): number {
   return -(p * Math.log2(p) + (1 - p) * Math.log2(1 - p));
 }
 
-function analyze(snapshot: CryptaraKalshiPredictionSnapshot): KalshiQuantiContext {
+function analyze(input: KalshiQuantiWorkloadInput): KalshiQuantiContext {
+  const snapshot = input.prediction;
+  const eventMaker = input.eventMaker.filter(row => row.expiresAt > snapshot.evaluatedAt && row.asset === snapshot.asset);
   const probabilities = snapshot.signals
     .map(signal => signal.impliedProbability)
     .filter((value): value is number => value !== null && Number.isFinite(value) && value >= 0 && value <= 1);
@@ -70,6 +93,8 @@ function analyze(snapshot: CryptaraKalshiPredictionSnapshot): KalshiQuantiContex
     .map(signal => signal.occurrenceAt === null ? null : Math.max(0, signal.occurrenceAt - snapshot.evaluatedAt))
     .filter((value): value is number => value !== null && Number.isFinite(value));
   const count = Math.max(1, snapshot.signalCount);
+  const makerSpreads = eventMaker.map(row => row.measuredMakerSpreadAfterFeesBps).filter(Number.isFinite);
+  const makerReferenceContracts = eventMaker.map(row => row.referenceContracts).filter(Number.isFinite);
   return {
     opportunityId: snapshot.opportunityId,
     observedAt: snapshot.evaluatedAt,
@@ -84,13 +109,21 @@ function analyze(snapshot: CryptaraKalshiPredictionSnapshot): KalshiQuantiContex
     nearestOccurrenceMs: occurrenceHorizons.length ? Math.min(...occurrenceHorizons) : null,
     medianSpreadBps: snapshot.medianSpreadBps,
     sourceQualityScore: snapshot.qualityScore,
+    eventMakerCandidateCount: eventMaker.length,
+    eventMakerActiveIncentiveCount: eventMaker.filter(row => row.activeIncentive).length,
+    eventMakerPositiveMeasuredSpreadCount: eventMaker.filter(row => row.measuredMakerSpreadAfterFeesBps > 0).length,
+    eventMakerBestMeasuredSpreadAfterFeesBps: makerSpreads.length ? Math.max(...makerSpreads) : null,
+    eventMakerMedianMeasuredSpreadAfterFeesBps: median(makerSpreads),
+    eventMakerMeanReferenceContracts: mean(makerReferenceContracts),
+    eventMakerProjectedSpreadCanCreateProfitability: false,
+    eventIncentiveRewardPrecredited: false,
     directionalForecastProduced: false,
     economicAuthority: false,
     monteCarloAuthority: false,
     writeAuthority: false,
     executionAuthority: false,
     computeAuthority: 'quanticomp_beam',
-    source: 'cached_kalshi_prediction_intelligence',
+    source: 'cached_kalshi_prediction_and_event_maker_intelligence',
   };
 }
 
@@ -129,24 +162,34 @@ function ensureListeners(): void {
 }
 
 /**
- * Routes a frozen, already-acquired Kalshi snapshot through the canonical Beam
- * compute layer. This performs structural feature extraction only; it produces no
- * directional forecast and cannot alter economics, Monte Carlo, governance or
- * execution admission.
+ * Routes frozen, already-acquired Kalshi prediction and event-maker snapshots
+ * through the canonical Beam compute layer. This performs structural feature
+ * extraction only; maker spread remains a counterfactual quote surface and
+ * incentives remain unpaid until terminal proof. No directional forecast or
+ * economic/Monte-Carlo/execution authority is created here.
  */
 export function prewarmKalshiQuantiContext(snapshot: CryptaraKalshiPredictionSnapshot): void {
-  if (snapshot.signalCount <= 0) return;
+  const eventMaker = getKalshiEventMarketMakingSnapshot().candidates
+    .filter(row => row.asset === snapshot.asset && row.expiresAt > snapshot.evaluatedAt)
+    .map(row => ({ ...row, provenance: [...row.provenance] }));
+  if (snapshot.signalCount <= 0 && eventMaker.length <= 0) return;
   const identity = key(snapshot.opportunityId, snapshot.evaluatedAt);
   if (contexts.has(identity) || inFlight.has(identity)) return;
   ensureListeners();
   inFlight.add(identity);
-  const frozen = structuredClone(snapshot);
+  const frozen: KalshiQuantiWorkloadInput = {
+    prediction: structuredClone(snapshot),
+    eventMaker: structuredClone(eventMaker),
+  };
   const task = workloadRouter.createTask(TaskType.ML_PREDICTION, {
     helper: 'kalshi_market_structure_quanti_context',
-    opportunityId: frozen.opportunityId,
-    sourceObservedAt: frozen.evaluatedAt,
-    sourceSignals: frozen.signalCount,
+    opportunityId: snapshot.opportunityId,
+    sourceObservedAt: snapshot.evaluatedAt,
+    sourceSignals: snapshot.signalCount,
+    sourceEventMakerCandidates: eventMaker.length,
     cachedInputOnly: true,
+    eventMakerProjectedSpreadCanCreateProfitability: false,
+    eventIncentiveRewardPrecredited: false,
     economicAuthority: false,
     executionAuthority: false,
   }, {
@@ -160,10 +203,10 @@ export function prewarmKalshiQuantiContext(snapshot: CryptaraKalshiPredictionSna
     type: 'kalshi_market_structure_quanti_context',
     input: frozen,
     timeoutMs: Math.max(25, Math.min(500, Number(process.env.KALSHI_QUANTI_TIMEOUT_MS || 150))),
-    execute: immutable => analyze(immutable as CryptaraKalshiPredictionSnapshot),
+    execute: immutable => analyze(immutable as KalshiQuantiWorkloadInput),
     validate: result => Boolean(result && typeof result === 'object'),
   };
-  pending.set(task.id, { opportunityId: frozen.opportunityId, observedAt: frozen.evaluatedAt });
+  pending.set(task.id, { opportunityId: snapshot.opportunityId, observedAt: snapshot.evaluatedAt });
   void workloadRouter.routeTask(task).catch(() => {
     pending.delete(task.id);
     inFlight.delete(identity);
@@ -183,10 +226,18 @@ export function getKalshiQuantiContext(opportunityId: string, observedAt?: numbe
 }
 
 export function getKalshiQuantiStatus() {
+  const values = [...contexts.values()];
   return {
     cachedContexts: contexts.size,
     inFlight: inFlight.size,
     pendingTasks: pending.size,
+    contextsWithEventMakerCandidates: values.filter(row => row.eventMakerCandidateCount > 0).length,
+    bestObservedEventMakerMeasuredSpreadAfterFeesBps: values
+      .map(row => row.eventMakerBestMeasuredSpreadAfterFeesBps)
+      .filter((value): value is number => value !== null && Number.isFinite(value))
+      .sort((left, right) => right - left)[0] ?? null,
+    eventMakerProjectedSpreadCanCreateProfitability: false as const,
+    eventIncentiveRewardPrecredited: false as const,
     computeAuthority: 'quanticomp_beam' as const,
     directionalForecastProduced: false as const,
     economicAuthority: false as const,
