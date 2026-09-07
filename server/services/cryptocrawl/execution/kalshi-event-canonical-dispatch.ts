@@ -83,6 +83,29 @@ export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCan
         }
 
         const result = await kalshiEventLifecycle.execute(plan);
+        const ambiguousDurableOpening = result.submitted === false
+          && Boolean(result.lifecycleId)
+          && result.status === 'opening'
+          && result.error === 'KALSHI_EVENT_ENTRY_RECOVERY_REQUIRED';
+        if (ambiguousDurableOpening) {
+          // A deterministic client-order-id recovery record can represent a live
+          // venue write even though confirmation was lost. Consume the operator
+          // slot conservatively until lifecycle maintenance proves terminal state.
+          await operatorTradingStrategy.markSubmitted(reservationId);
+          logger.warn('[KalshiEventDispatch] Ambiguous event entry retained under canonical operator accounting', {
+            component: 'KalshiEventCanonicalDispatch', opportunityId: candidate.opportunityId,
+            lifecycleId: result.lifecycleId, venueSubmissionConfirmed: false,
+            operatorSlotConsumedConservatively: true, extraDailyTradeAllowed: false,
+          });
+          return {
+            attempted: true,
+            submitted: true,
+            opportunityId: candidate.opportunityId,
+            lifecycleId: result.lifecycleId ?? null,
+            result,
+            error: 'KALSHI_EVENT_ENTRY_RECOVERY_REQUIRED',
+          };
+        }
         const concreteSubmission = result.submitted === true && Boolean(result.lifecycleId)
           && (Boolean(result.orderId) || result.status === 'opening' || result.status === 'waiting_settlement');
         if (!concreteSubmission) {
@@ -90,7 +113,9 @@ export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCan
           return { attempted: true, submitted: false, opportunityId: candidate.opportunityId, lifecycleId: result.lifecycleId ?? null, result };
         }
         await operatorTradingStrategy.markSubmitted(reservationId);
-        if (result.settlementConfirmed) await operatorTradingStrategy.markTerminal(reservationId);
+        if (result.settlementConfirmed || result.status === 'failed') {
+          await operatorTradingStrategy.markTerminal(reservationId);
+        }
         logger.info('[KalshiEventDispatch] Canonical event parent submitted', {
           component: 'KalshiEventCanonicalDispatch', opportunityId: candidate.opportunityId,
           lifecycleId: result.lifecycleId, orderId: result.orderId, expectedNetProfitUsd: plan.expectedNetProfitUsd,
