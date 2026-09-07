@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import logger from '../../../logger.js';
 import { getKalshiEventOpportunitySnapshot, getPreparedKalshiEventPlan } from '../discovery/kalshi-event-opportunity-generator.js';
+import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
+import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
+import { operatorTradingStrategy } from '../governance/operator-trading-strategy.js';
+import { stageManager } from '../governance/stage-management.js';
 import { estimateKalshiEventFees } from '../intelligence/kalshi-event-fee-authority.js';
 import { getKalshiEventDepth } from '../intelligence/kalshi-event-depth-authority.js';
 import { getKalshiEventMarketMakingSnapshot } from '../intelligence/kalshi-event-market-making-authority.js';
@@ -24,6 +28,7 @@ import {
 } from './kalshi-event-system-owned-cash-ledger.js';
 import { acquireKalshiEventResourceLease } from './kalshi-event-resource-lease.js';
 import type { KalshiEventExecutionPlan, KalshiEventOutcome } from './kalshi-event-lifecycle.js';
+import { routeMeasuredOpportunity } from './unified-execution-router.js';
 
 const TABLE = 'private.cryptocrawler_kalshi_event_maker_lifecycles';
 const PERFORMANCE = 'private.cryptocrawler_kalshi_event_maker_performance';
@@ -91,6 +96,7 @@ function minSpreadAfterFeesBps(): number { return boundedNumber(process.env.CRYP
 function informationShockBps(): number { return boundedNumber(process.env.CRYPTOCRAWL_KALSHI_EVENT_MAKER_INFORMATION_SHOCK_BPS, 150, 1, 10_000); }
 function eventRiskWindowMs(): number { return boundedInt(process.env.CRYPTOCRAWL_KALSHI_EVENT_MAKER_EVENT_RISK_WINDOW_MS, 30 * 60_000, 60_000, 24 * 60 * 60_000); }
 function deteriorationSamples(): number { return boundedInt(process.env.CRYPTOCRAWL_KALSHI_EVENT_MAKER_DISABLE_SAMPLES, 8, 3, 1000); }
+function recoveryProbeCooldownMs(): number { return boundedInt(process.env.CRYPTOCRAWL_KALSHI_EVENT_MAKER_RECOVERY_PROBE_COOLDOWN_MS, 6 * 60 * 60_000, 60_000, 30 * 24 * 60 * 60_000); }
 function ewmaAlpha(): number { return boundedNumber(process.env.CRYPTOCRAWL_KALSHI_EVENT_MAKER_EWMA_ALPHA, 0.25, 0.01, 1); }
 function liveMakerEnabled(): boolean {
   return process.env.NO_EXECUTION !== 'true'
@@ -120,14 +126,43 @@ function midpointForOutcome(outcome: KalshiEventOutcome, yesBid: number, yesAsk:
 }
 
 async function performanceDisabled(ticker: string): Promise<boolean> {
-  const row = await pool.query(`SELECT terminal_samples,realized_net_bps_ewma,adverse_selection_bps_ewma,disabled FROM ${PERFORMANCE} WHERE ticker=$1`, [ticker]);
+  const row = await pool.query(
+    `SELECT terminal_samples,realized_net_bps_ewma,adverse_selection_bps_ewma,disabled,disabled_reason,last_terminal_at
+     FROM ${PERFORMANCE} WHERE ticker=$1`,
+    [ticker],
+  );
   const value = row.rows?.[0];
   if (!value) return false;
-  if (value.disabled === true) return true;
+  const disabledReason = value.disabled_reason ? String(value.disabled_reason) : null;
+  if (value.disabled === true) {
+    if (disabledReason === 'recovery_probe_in_flight') return true;
+    const lastTerminalAt = value.last_terminal_at ? new Date(value.last_terminal_at).getTime() : null;
+    if (lastTerminalAt !== null && Number.isFinite(lastTerminalAt) && Date.now() - lastTerminalAt >= recoveryProbeCooldownMs()) {
+      const released = await pool.query(
+        `UPDATE ${PERFORMANCE}
+         SET disabled=false,disabled_reason='recovery_probe_ready',updated_at=now()
+         WHERE ticker=$1 AND disabled=true AND last_terminal_at=$2
+         RETURNING ticker`,
+        [ticker, value.last_terminal_at],
+      );
+      return released.rowCount !== 1;
+    }
+    return true;
+  }
+  if (disabledReason === 'recovery_probe_ready') return false;
   const samples = Number(value.terminal_samples || 0);
   const net = finite(value.realized_net_bps_ewma);
   const adverse = finite(value.adverse_selection_bps_ewma);
   return samples >= deteriorationSamples() && ((net !== null && net <= 0) || (adverse !== null && adverse > informationShockBps()));
+}
+
+async function markRecoveryProbeInFlight(ticker: string): Promise<void> {
+  await pool.query(
+    `UPDATE ${PERFORMANCE}
+     SET disabled=true,disabled_reason='recovery_probe_in_flight',updated_at=now()
+     WHERE ticker=$1 AND disabled=false AND disabled_reason='recovery_probe_ready'`,
+    [ticker],
+  );
 }
 
 function parsePlan(raw: unknown): KalshiEventExecutionPlan | null {
@@ -196,15 +231,26 @@ async function reserveAndInsert(plan: KalshiEventExecutionPlan, contracts: numbe
     expiresAt: Math.min(plan.settlementDeadlineAt, Date.now() + 7 * 24 * 60 * 60_000),
   });
   if (!reservation) return null;
-  const group = await createKalshiEventOrderGroup(Math.max(contracts, contracts * 2)).catch(() => null);
-  if (!group) { await releaseKalshiEventSystemCashReservation(reservation.reservationId); return null; }
-  const result = await pool.query(
-    `INSERT INTO ${TABLE} (lifecycle_id,opportunity_id,ticker,symbol,status,plan,cash_reservation_id,order_group_id,last_midpoint,last_quote_at)
-     VALUES ($1,$2,$3,$4,'quoting_bid',$5::jsonb,$6::uuid,$7,$8,now()) ON CONFLICT DO NOTHING RETURNING *`,
-    [lifecycleId, plan.opportunityId, plan.ticker, plan.symbol, JSON.stringify(plan), reservation.reservationId, group.orderGroupId, midpoint],
-  );
-  if (result.rowCount !== 1) { await releaseKalshiEventSystemCashReservation(reservation.reservationId); return null; }
-  return parseRow(result.rows[0]);
+  try {
+    const group = await createKalshiEventOrderGroup(Math.max(contracts, contracts * 2)).catch(() => null);
+    if (!group) {
+      await releaseKalshiEventSystemCashReservation(reservation.reservationId);
+      return null;
+    }
+    const result = await pool.query(
+      `INSERT INTO ${TABLE} (lifecycle_id,opportunity_id,ticker,symbol,status,plan,cash_reservation_id,order_group_id,last_midpoint,last_quote_at)
+       VALUES ($1,$2,$3,$4,'quoting_bid',$5::jsonb,$6::uuid,$7,$8,now()) ON CONFLICT DO NOTHING RETURNING *`,
+      [lifecycleId, plan.opportunityId, plan.ticker, plan.symbol, JSON.stringify(plan), reservation.reservationId, group.orderGroupId, midpoint],
+    );
+    if (result.rowCount !== 1) {
+      await releaseKalshiEventSystemCashReservation(reservation.reservationId);
+      return null;
+    }
+    return parseRow(result.rows[0]);
+  } catch (error) {
+    await releaseKalshiEventSystemCashReservation(reservation.reservationId).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function quoteBid(row: MakerRow, contracts: number, outcomeBid: number): Promise<string> {
@@ -287,8 +333,8 @@ async function recordPerformance(row: MakerRow, realizedNetProfitUsd: number, fe
        realized_net_bps_ewma=COALESCE(${PERFORMANCE}.realized_net_bps_ewma,EXCLUDED.realized_net_bps_ewma)*(1-$7)+EXCLUDED.realized_net_bps_ewma*$7,
        adverse_selection_bps_ewma=COALESCE(${PERFORMANCE}.adverse_selection_bps_ewma,EXCLUDED.adverse_selection_bps_ewma)*(1-$7)+EXCLUDED.adverse_selection_bps_ewma*$7,
        realized_fee_bps_ewma=COALESCE(${PERFORMANCE}.realized_fee_bps_ewma,EXCLUDED.realized_fee_bps_ewma)*(1-$7)+EXCLUDED.realized_fee_bps_ewma*$7,
-       disabled=CASE WHEN ${PERFORMANCE}.terminal_samples+1 >= $8 AND ((COALESCE(${PERFORMANCE}.realized_net_bps_ewma,EXCLUDED.realized_net_bps_ewma)*(1-$7)+EXCLUDED.realized_net_bps_ewma*$7) <= 0 OR (COALESCE(${PERFORMANCE}.adverse_selection_bps_ewma,EXCLUDED.adverse_selection_bps_ewma)*(1-$7)+EXCLUDED.adverse_selection_bps_ewma*$7) > $9) THEN true ELSE ${PERFORMANCE}.disabled END,
-       disabled_reason=CASE WHEN ${PERFORMANCE}.terminal_samples+1 >= $8 AND (COALESCE(${PERFORMANCE}.realized_net_bps_ewma,EXCLUDED.realized_net_bps_ewma)*(1-$7)+EXCLUDED.realized_net_bps_ewma*$7) <= 0 THEN 'realized_net_bps_deteriorated' WHEN ${PERFORMANCE}.terminal_samples+1 >= $8 AND (COALESCE(${PERFORMANCE}.adverse_selection_bps_ewma,EXCLUDED.adverse_selection_bps_ewma)*(1-$7)+EXCLUDED.adverse_selection_bps_ewma*$7) > $9 THEN 'adverse_selection_deteriorated' ELSE ${PERFORMANCE}.disabled_reason END,
+       disabled=CASE WHEN ${PERFORMANCE}.terminal_samples+1 >= $8 AND ((COALESCE(${PERFORMANCE}.realized_net_bps_ewma,EXCLUDED.realized_net_bps_ewma)*(1-$7)+EXCLUDED.realized_net_bps_ewma*$7) <= 0 OR (COALESCE(${PERFORMANCE}.adverse_selection_bps_ewma,EXCLUDED.adverse_selection_bps_ewma)*(1-$7)+EXCLUDED.adverse_selection_bps_ewma*$7) > $9) THEN true ELSE false END,
+       disabled_reason=CASE WHEN ${PERFORMANCE}.terminal_samples+1 >= $8 AND (COALESCE(${PERFORMANCE}.realized_net_bps_ewma,EXCLUDED.realized_net_bps_ewma)*(1-$7)+EXCLUDED.realized_net_bps_ewma*$7) <= 0 THEN 'realized_net_bps_deteriorated' WHEN ${PERFORMANCE}.terminal_samples+1 >= $8 AND (COALESCE(${PERFORMANCE}.adverse_selection_bps_ewma,EXCLUDED.adverse_selection_bps_ewma)*(1-$7)+EXCLUDED.adverse_selection_bps_ewma*$7) > $9 THEN 'adverse_selection_deteriorated' ELSE NULL END,
        last_terminal_at=EXCLUDED.last_terminal_at,updated_at=now()`,
     [row.ticker, realizedNetProfitUsd > 0 ? 1 : 0, realizedBps, adverse, feeBps, terminalAt, alpha, deteriorationSamples(), informationShockBps()],
   );
@@ -431,13 +477,31 @@ export async function maintainKalshiEventMakerLifecycles(limit = 8): Promise<Kal
 export async function dispatchBestKalshiEventMakerCandidate(): Promise<KalshiEventMakerDispatchResult> {
   if (dispatchInFlight) return dispatchInFlight;
   dispatchInFlight = (async () => {
-    if (!liveMakerEnabled()) return { attempted: false, submitted: false, lifecycleId: null, opportunityId: null, orderId: null };
+    if (!liveMakerEnabled() || !stageManager.isMarketOperationsAllowed() || !stageManager.canExecuteTrades()) {
+      return { attempted: false, submitted: false, lifecycleId: null, opportunityId: null, orderId: null };
+    }
+    const ladder = getProfitLadderNotionalAuthority();
+    if (!ladder.aligned || !(ladder.maxNotionalUsd > 0)) {
+      return { attempted: false, submitted: false, lifecycleId: null, opportunityId: null, orderId: null, error: 'KALSHI_MAKER_PROFIT_LADDER_NOTIONAL_UNAVAILABLE' };
+    }
     const frontier = getKalshiEventMarketMakingSnapshot();
     const event = getKalshiEventOpportunitySnapshot();
     const eligible = event.candidates
       .filter(candidate => candidate.status === 'eligible' && candidate.plan && candidate.expiresAt > Date.now())
       .sort((a, b) => (b.expectedNetProfitUsd ?? -Infinity) - (a.expectedNetProfitUsd ?? -Infinity));
     for (const candidate of eligible) {
+      const canonicalMeasured = measuredCandidateRegistry.get(candidate.opportunityId);
+      if (!canonicalMeasured
+        || canonicalMeasured.topology !== 'PREDICTION_EVENT'
+        || canonicalMeasured.status !== 'eligible'
+        || canonicalMeasured.executableCapability !== true
+        || canonicalMeasured.expiresAt <= Date.now()) continue;
+      const admission = routeMeasuredOpportunity(canonicalMeasured);
+      if (!admission.admitted
+        || admission.hardVetoVerified
+        || admission.path !== 'PREDICTION_EVENT_ORDER'
+        || admission.opportunityId !== candidate.opportunityId) continue;
+
       const plan = getPreparedKalshiEventPlan(candidate.opportunityId);
       if (!plan || await performanceDisabled(plan.ticker)) continue;
       const measured = frontier.candidates.find(row => row.ticker === plan.ticker && row.expiresAt > Date.now());
@@ -451,27 +515,65 @@ export async function dispatchBestKalshiEventMakerCandidate(): Promise<KalshiEve
       if (!takerFee?.economicCreditAllowed || takerFee.takerFeeUsd === null) continue;
       const makerAcquisitionCost = contracts * levels.bid + makerFee.makerFeeUsd;
       const takerAcquisitionCost = contracts * levels.ask + takerFee.takerFeeUsd;
-      if (!(makerAcquisitionCost < takerAcquisitionCost)) continue;
+      if (!(makerAcquisitionCost < takerAcquisitionCost) || makerAcquisitionCost > ladder.maxNotionalUsd) continue;
       const resource = await acquireKalshiEventResourceLease({ opportunityId: plan.opportunityId, notionalUsd: makerAcquisitionCost, expiresAt: plan.expiresAt });
       if (!resource) continue;
+      const operator = await operatorTradingStrategy.reserveTrade(plan.opportunityId, 'kalshi_event_post_only_market_maker').catch(() => null);
+      if (!operator?.allowed || !operator.reservationId) {
+        await resource.release();
+        return { attempted: false, submitted: false, lifecycleId: null, opportunityId: plan.opportunityId, orderId: null, error: 'KALSHI_MAKER_OPERATOR_SLOT_UNAVAILABLE' };
+      }
+      const operatorReservationId = operator.reservationId;
       try {
+        const currentMeasured = measuredCandidateRegistry.get(candidate.opportunityId);
+        const currentAdmission = currentMeasured ? routeMeasuredOpportunity(currentMeasured) : null;
+        if (!currentMeasured
+          || currentMeasured.updatedAt !== canonicalMeasured.updatedAt
+          || currentMeasured.status !== 'eligible'
+          || currentMeasured.executableCapability !== true
+          || currentMeasured.expiresAt <= Date.now()
+          || !currentAdmission?.admitted
+          || currentAdmission.path !== 'PREDICTION_EVENT_ORDER') {
+          await operatorTradingStrategy.releaseReservation(operatorReservationId);
+          return { attempted: false, submitted: false, lifecycleId: null, opportunityId: plan.opportunityId, orderId: null, error: 'KALSHI_MAKER_CANDIDATE_INVALIDATED_BEFORE_SUBMISSION' };
+        }
+
         const row = await reserveAndInsert(plan, contracts, levels.bid, levels.midpoint);
-        if (!row) return { attempted: true, submitted: false, lifecycleId: null, opportunityId: plan.opportunityId, orderId: null, error: 'KALSHI_MAKER_SYSTEM_CASH_OR_DURABLE_STATE_UNAVAILABLE' };
+        if (!row) {
+          await operatorTradingStrategy.releaseReservation(operatorReservationId);
+          return { attempted: true, submitted: false, lifecycleId: null, opportunityId: plan.opportunityId, orderId: null, error: 'KALSHI_MAKER_SYSTEM_CASH_OR_DURABLE_STATE_UNAVAILABLE' };
+        }
+        await markRecoveryProbeInFlight(plan.ticker);
         try {
           const orderId = await quoteBid(row, contracts, levels.bid);
-          logger.info('[KalshiEventMaker] Post-only maker bid submitted under calibrated terminal fallback', {
+          await operatorTradingStrategy.markSubmitted(operatorReservationId);
+          logger.info('[KalshiEventMaker] Canonical post-only maker parent submitted under calibrated terminal fallback', {
             component: 'KalshiEventMarketMaker', lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, ticker: row.ticker,
             outcome: row.plan.outcome, contracts, outcomeBid: levels.bid, makerFeeUsd: makerFee.makerFeeUsd,
             takerAlternativeCostUsd: takerAcquisitionCost, makerAcquisitionCostUsd: makerAcquisitionCost,
             makerVsTakerSavingsUsd: takerAcquisitionCost - makerAcquisitionCost,
+            profitLadderRung: ladder.rungKey, profitLadderMaxNotionalUsd: ladder.maxNotionalUsd,
+            canonicalMeasuredAdmission: true, operatorSlotConsumed: true,
             accountPositionMintsOwnership: false, incentiveRewardPrecredited: false,
           });
           return { attempted: true, submitted: true, lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, orderId };
         } catch (error) {
-          await updateRow(row.lifecycleId, { status: 'recovery_required', last_error: error instanceof Error ? error.message : String(error) });
-          return { attempted: true, submitted: false, lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, orderId: null, error: 'KALSHI_MAKER_ORDER_RECOVERY_REQUIRED' };
+          const message = error instanceof Error ? error.message : String(error);
+          await updateRow(row.lifecycleId, { status: 'recovery_required', last_error: message });
+          await operatorTradingStrategy.markSubmitted(operatorReservationId);
+          logger.warn('[KalshiEventMaker] Ambiguous maker entry retained under canonical operator accounting', {
+            component: 'KalshiEventMarketMaker', lifecycleId: row.lifecycleId, opportunityId: row.opportunityId,
+            error: message, venueSubmissionConfirmed: false, operatorSlotConsumedConservatively: true,
+            extraDailyTradeAllowed: false,
+          });
+          return { attempted: true, submitted: true, lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, orderId: null, error: 'KALSHI_MAKER_ORDER_RECOVERY_REQUIRED' };
         }
-      } finally { await resource.release(); }
+      } catch (error) {
+        await operatorTradingStrategy.releaseReservation(operatorReservationId).catch(() => undefined);
+        throw error;
+      } finally {
+        await resource.release();
+      }
     }
     return { attempted: false, submitted: false, lifecycleId: null, opportunityId: null, orderId: null };
   })().finally(() => { dispatchInFlight = null; });
@@ -486,7 +588,9 @@ export async function getKalshiEventMakerPerformanceSnapshot() {
       makerFillSamples: Number(row.maker_fill_samples || 0), realizedNetBpsEwma: finite(row.realized_net_bps_ewma),
       adverseSelectionBpsEwma: finite(row.adverse_selection_bps_ewma), realizedFeeBpsEwma: finite(row.realized_fee_bps_ewma),
       disabled: row.disabled === true, disabledReason: row.disabled_reason ? String(row.disabled_reason) : null,
+      lastTerminalAt: row.last_terminal_at ? new Date(row.last_terminal_at).getTime() : null,
     })),
+    recoveryProbeCooldownMs: recoveryProbeCooldownMs(),
     projectedSpreadCreditedAsRealized: false as const,
     unpaidIncentiveCreditedAsRealized: false as const,
     accountPositionMintsOwnership: false as const,
