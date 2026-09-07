@@ -218,7 +218,7 @@ async function fetchOpenMarkets(): Promise<{ rows: any[]; truncated: boolean }> 
 
   return {
     rows,
-    truncated: moreAvailable && rows.length >= MARKET_LIMIT,
+    truncated: moreAvailable,
   };
 }
 
