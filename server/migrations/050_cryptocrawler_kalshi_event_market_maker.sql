@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS private.cryptocrawler_kalshi_event_maker_lifecycles (
   ask_order_id text,
   bid_filled_contracts numeric NOT NULL DEFAULT 0 CHECK (bid_filled_contracts >= 0),
   ask_filled_contracts numeric NOT NULL DEFAULT 0 CHECK (ask_filled_contracts >= 0),
+  bid_fees_usd numeric NOT NULL DEFAULT 0 CHECK (bid_fees_usd >= 0),
+  ask_fees_usd numeric NOT NULL DEFAULT 0 CHECK (ask_fees_usd >= 0),
   inventory_contracts numeric NOT NULL DEFAULT 0 CHECK (inventory_contracts >= 0),
   inventory_cost_usd numeric NOT NULL DEFAULT 0 CHECK (inventory_cost_usd >= 0),
   realized_proceeds_usd numeric NOT NULL DEFAULT 0 CHECK (realized_proceeds_usd >= 0),
@@ -37,7 +39,9 @@ CREATE TABLE IF NOT EXISTS private.cryptocrawler_kalshi_event_maker_lifecycles (
 
 ALTER TABLE private.cryptocrawler_kalshi_event_maker_lifecycles
   ADD COLUMN IF NOT EXISTS bid_filled_contracts numeric NOT NULL DEFAULT 0 CHECK (bid_filled_contracts >= 0),
-  ADD COLUMN IF NOT EXISTS ask_filled_contracts numeric NOT NULL DEFAULT 0 CHECK (ask_filled_contracts >= 0);
+  ADD COLUMN IF NOT EXISTS ask_filled_contracts numeric NOT NULL DEFAULT 0 CHECK (ask_filled_contracts >= 0),
+  ADD COLUMN IF NOT EXISTS bid_fees_usd numeric NOT NULL DEFAULT 0 CHECK (bid_fees_usd >= 0),
+  ADD COLUMN IF NOT EXISTS ask_fees_usd numeric NOT NULL DEFAULT 0 CHECK (ask_fees_usd >= 0);
 
 CREATE UNIQUE INDEX IF NOT EXISTS cryptocrawler_kalshi_event_maker_active_opportunity_idx
   ON private.cryptocrawler_kalshi_event_maker_lifecycles (opportunity_id)
