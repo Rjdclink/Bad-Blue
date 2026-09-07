@@ -1,4 +1,9 @@
 import logger from '../../../logger.js';
+import {
+  getCoinbaseFeeRebateSnapshot,
+  refreshCoinbaseReceivedFeeRecoveries,
+  type CoinbaseReceivedFeeRecovery,
+} from './coinbase-fee-rebate-authority.js';
 import { krakenPrivateRequest, okxPrivateRequest } from './cex-private-authority.js';
 
 export type CexFeeRecoveryVenue = 'coinbase' | 'kraken' | 'okx';
@@ -33,7 +38,7 @@ export interface KrakenKfeeSnapshot {
   reasonPreTradeAuthorityFalse: 'available_credit_not_cross_replica_reserved';
 }
 
-export interface ReceivedCexFeeRecovery {
+export interface OkxReceivedCexFeeRecovery {
   venue: 'okx';
   source: 'okx_rebate_card_received' | 'okx_affiliate_fee_rebate_received';
   externalId: string;
@@ -46,6 +51,8 @@ export interface ReceivedCexFeeRecovery {
   preTradeEconomicAuthority: false;
   realizedRecoveryAuthority: true;
 }
+
+export type ReceivedCexFeeRecovery = CoinbaseReceivedFeeRecovery | OkxReceivedCexFeeRecovery;
 
 function boundedEnvInteger(name: string, fallback: number, min: number, max: number): number {
   const parsed = Number(process.env[name]);
@@ -60,8 +67,8 @@ let krakenKfee: KrakenKfeeSnapshot | null = null;
 let krakenRefreshAt = 0;
 let krakenInFlight: Promise<KrakenKfeeSnapshot> | null = null;
 let okxRefreshAt = 0;
-let okxInFlight: Promise<ReceivedCexFeeRecovery[]> | null = null;
-const received = new Map<string, ReceivedCexFeeRecovery>();
+let okxInFlight: Promise<OkxReceivedCexFeeRecovery[]> | null = null;
+const okxReceived = new Map<string, OkxReceivedCexFeeRecovery>();
 
 function finiteNonNegative(value: unknown): number | null {
   if (value === null || value === undefined || typeof value === 'boolean') return null;
@@ -75,9 +82,9 @@ function finitePositive(value: unknown): number | null {
 }
 
 function trimReceivedRows(): void {
-  if (received.size <= MAX_RECEIVED_ROWS) return;
-  const rows = [...received.entries()].sort((left, right) => left[1].observedAt - right[1].observedAt);
-  for (const [key] of rows.slice(0, rows.length - MAX_RECEIVED_ROWS)) received.delete(key);
+  if (okxReceived.size <= MAX_RECEIVED_ROWS) return;
+  const rows = [...okxReceived.entries()].sort((left, right) => left[1].observedAt - right[1].observedAt);
+  for (const [key] of rows.slice(0, rows.length - MAX_RECEIVED_ROWS)) okxReceived.delete(key);
 }
 
 export function getCexFeeRecoveryProgramCatalog(): CexFeeRecoveryProgramCatalogRow[] {
@@ -98,7 +105,7 @@ export function getCexFeeRecoveryProgramCatalog(): CexFeeRecoveryProgramCatalogR
       preTradeEconomicAuthority: true,
       newApiKeyRequired: false,
       automaticallyObserved: true,
-      note: 'Any approved fee-tier, liquidity-program, or fee-match improvement is consumed only after it appears in authenticated transaction-summary rates.',
+      note: 'Any approved Advanced/VIP fee-tier, liquidity-program, or fee-match improvement is consumed only after it appears in authenticated transaction-summary rates.',
     },
     {
       key: 'coinbase_one_advanced_fee_rebate',
@@ -106,8 +113,26 @@ export function getCexFeeRecoveryProgramCatalog(): CexFeeRecoveryProgramCatalogR
       mode: 'received_only',
       preTradeEconomicAuthority: false,
       newApiKeyRequired: false,
+      automaticallyObserved: true,
+      note: 'Completed Coinbase App transaction type subscription_rebate in USDC is automatically admitted as realized recovery. Public 25% Preferred/Premium terms are reference-only; membership tier and remaining cap are never inferred or pre-credited.',
+    },
+    {
+      key: 'coinbase_advanced_vip_premium_fee_rebate',
+      venue: 'coinbase',
+      mode: 'received_only',
+      preTradeEconomicAuthority: false,
+      newApiKeyRequired: false,
+      automaticallyObserved: true,
+      note: 'Advanced VIP reduced rates are already captured by authenticated transaction-summary fees. A separate incentive payout is admitted only when an authenticated completed Coinbase credit explicitly identifies itself as a trading/fee rebate.',
+    },
+    {
+      key: 'coinbase_eea_price_improvement_trade_rebate',
+      venue: 'coinbase',
+      mode: 'received_only',
+      preTradeEconomicAuthority: false,
+      newApiKeyRequired: false,
       automaticallyObserved: false,
-      note: 'Coinbase One Advanced rebates are not pre-credited because the current trading API does not prove membership, cap remainder, or a received USDC rebate.',
+      note: 'EEA price-improvement rebates are region-specific and are not assumed for this account or pre-credited. Only a distinct authenticated received credit can enter realized recovery.',
     },
     {
       key: 'kraken_pair_zero_or_negative_maker',
@@ -202,8 +227,6 @@ export async function refreshKrakenKfeeSnapshot(force = false): Promise<KrakenKf
     const balances = await krakenPrivateRequest('/0/private/Balance', {}, { timeoutMs: PRIVATE_TIMEOUT_MS });
     const kfee = finiteNonNegative(balances?.KFEE);
     const fee = finiteNonNegative(balances?.FEE);
-    // Kraken documentation treats KFEE/FEE as aliases. Never sum both aliases;
-    // taking the larger visible value avoids double counting if both are emitted.
     const creditUnits = Math.max(kfee ?? 0, fee ?? 0);
     const creditCode: 'KFEE' | 'FEE' | null = kfee !== null && kfee >= (fee ?? -1)
       ? 'KFEE'
@@ -229,9 +252,9 @@ export async function refreshKrakenKfeeSnapshot(force = false): Promise<KrakenKf
 
 function parseOkxReceivedRows(
   rows: any[],
-  source: ReceivedCexFeeRecovery['source'],
-): ReceivedCexFeeRecovery[] {
-  const parsed: ReceivedCexFeeRecovery[] = [];
+  source: OkxReceivedCexFeeRecovery['source'],
+): OkxReceivedCexFeeRecovery[] {
+  const parsed: OkxReceivedCexFeeRecovery[] = [];
   for (const row of rows) {
     const currency = String(row?.ccy ?? '').trim().toUpperCase();
     if (currency !== 'USD' && currency !== 'USDT' && currency !== 'USDC') continue;
@@ -257,9 +280,9 @@ function parseOkxReceivedRows(
   return parsed;
 }
 
-export async function refreshOkxReceivedFeeRecoveries(force = false): Promise<ReceivedCexFeeRecovery[]> {
+export async function refreshOkxReceivedFeeRecoveries(force = false): Promise<OkxReceivedCexFeeRecovery[]> {
   const now = Date.now();
-  if (!force && okxRefreshAt + REFRESH_MS > now) return [...received.values()].map(row => ({ ...row }));
+  if (!force && okxRefreshAt + REFRESH_MS > now) return [...okxReceived.values()].map(row => ({ ...row }));
   if (okxInFlight) return (await okxInFlight).map(row => ({ ...row }));
 
   okxInFlight = (async () => {
@@ -273,7 +296,7 @@ export async function refreshOkxReceivedFeeRecoveries(force = false): Promise<Re
     const feeRebateRows = requests[1].status === 'fulfilled'
       ? parseOkxReceivedRows(requests[1].value.data, 'okx_affiliate_fee_rebate_received')
       : [];
-    for (const row of [...cardRows, ...feeRebateRows]) received.set(`${row.source}:${row.externalId}`, row);
+    for (const row of [...cardRows, ...feeRebateRows]) okxReceived.set(`${row.source}:${row.externalId}`, row);
     trimReceivedRows();
     okxRefreshAt = Date.now();
 
@@ -282,12 +305,12 @@ export async function refreshOkxReceivedFeeRecoveries(force = false): Promise<Re
       logger.debug('[CEX Fee Recovery] One or more OKX received-credit reads were unavailable', {
         component: 'CexFeeRecoveryAuthority',
         failedReads: failures.length,
-        receivedRowsRetained: received.size,
+        receivedRowsRetained: okxReceived.size,
         futureCreditPrecredited: false,
         executionAuthority: false,
       });
     }
-    return [...received.values()];
+    return [...okxReceived.values()];
   })().finally(() => { okxInFlight = null; });
 
   return (await okxInFlight).map(row => ({ ...row }));
@@ -295,6 +318,7 @@ export async function refreshOkxReceivedFeeRecoveries(force = false): Promise<Re
 
 export async function refreshCexFeeRecoveryEvidence(force = false): Promise<void> {
   const outcomes = await Promise.allSettled([
+    refreshCoinbaseReceivedFeeRecoveries(force),
     refreshKrakenKfeeSnapshot(force),
     refreshOkxReceivedFeeRecoveries(force),
   ]);
@@ -305,13 +329,20 @@ export async function refreshCexFeeRecoveryEvidence(force = false): Promise<void
 }
 
 export function getCexFeeRecoverySnapshot() {
-  const receivedRows = [...received.values()].sort((left, right) => right.observedAt - left.observedAt);
+  const coinbase = getCoinbaseFeeRebateSnapshot();
+  const receivedRows: ReceivedCexFeeRecovery[] = [
+    ...coinbase.received,
+    ...okxReceived.values(),
+  ].sort((left, right) => right.observedAt - left.observedAt);
   const receivedRecoveryUsd = receivedRows.reduce((sum, row) => sum + (row.amountUsd ?? 0), 0);
   return {
     observedAt: Date.now(),
     krakenKfee: krakenKfee ? { ...krakenKfee } : null,
-    received: receivedRows.map(row => ({ ...row })),
+    coinbase,
+    received: receivedRows.map(row => ({ ...row, ...('provenance' in row ? { provenance: [...row.provenance] } : {}) })),
     receivedRecoveryUsd: Number(receivedRecoveryUsd.toFixed(8)),
+    coinbaseReceivedRecoveryUsd: coinbase.realizedRecoveryUsd,
+    coinbaseMonthToDateRecoveryUsd: coinbase.monthToDateRecoveryUsd,
     receivedRowsRequiringUsdNormalization: receivedRows.filter(row => row.requiresUsdNormalization).length,
     programCatalog: getCexFeeRecoveryProgramCatalog(),
     canonicalEmbeddedFeeAuthority: 'cex_fee_resolver' as const,
@@ -319,6 +350,8 @@ export function getCexFeeRecoverySnapshot() {
     stablecoinParAssumptionAllowed: false as const,
     unreceivedForecastCreditBps: 0 as const,
     futureOrConfiguredRecoveryCanCreateProfitability: false as const,
+    coinbasePublic25PercentReferenceCanCreateProfitability: false as const,
+    coinbaseMembershipOrCapInferred: false as const,
     crossReplicaKfeeReservationImplemented: false as const,
     preTradeKfeeCreditAllowed: false as const,
     executionAuthority: false as const,
