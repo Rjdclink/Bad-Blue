@@ -5,7 +5,7 @@ import { getCryptocrawlGovernance } from '../governance/index.js';
 
 export interface FundingExecutionPlan {
   opportunityId: string;
-  venue: 'okx' | 'kraken';
+  venue: 'okx' | 'kraken' | 'kalshi_perps';
   symbol: string;
   notionalUsd: number;
   /** Expected-value carry at entry. This is not canonical deterministic profit. */
@@ -141,6 +141,19 @@ class FundingPositionLifecycle {
           venue,
           error: error instanceof Error ? error.message : String(error),
           executionAuthorityGranted: false,
+        });
+      }
+    } else if (venue === 'kalshi_perps') {
+      try {
+        const module = await import('./kalshi-funding-lifecycle-adapter.js');
+        module.ensureKalshiFundingLifecycleAdapterRegistered();
+      } catch (error) {
+        logger.error('[FundingLifecycle] Kalshi adapter recovery registration failed closed', {
+          component: 'FundingPositionLifecycle',
+          venue,
+          error: error instanceof Error ? error.message : String(error),
+          executionAuthorityGranted: false,
+          systemOwnedCapitalRequirementChanged: false,
         });
       }
     }
@@ -409,6 +422,7 @@ class FundingPositionLifecycle {
   }
 
   private validate(plan: FundingExecutionPlan): string | null {
+    if (!['okx', 'kraken', 'kalshi_perps'].includes(String(plan.venue))) return 'REJECT_FUNDING_VENUE';
     if (!(plan.notionalUsd > 0) || !Number.isFinite(plan.notionalUsd)) return 'REJECT_FUNDING_NOTIONAL';
     if (!(plan.expectedNetProfitUsd > 0) || !Number.isFinite(plan.expectedNetProfitUsd)) return 'REJECT_FUNDING_NONPOSITIVE_PROJECTED_NET';
     if (![plan.expectedEntryCostUsd, plan.expectedExitCostUsd, plan.expectedFundingUsd, plan.marginBufferUsd].every(Number.isFinite)) return 'REJECT_FUNDING_ECONOMICS_INCOMPLETE';
