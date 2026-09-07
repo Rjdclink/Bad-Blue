@@ -57,12 +57,7 @@ function acrossQuoteConcurrency(): number {
   return boundedInteger(process.env.CRYPTOCRAWL_ACROSS_QUOTE_CONCURRENCY, 4, 1, 8);
 }
 
-/**
- * Every structural same-asset and USDC<->USDT Across cross-swap is refreshed in
- * every discovery cycle. Across itself composes any origin/destination swaps with
- * the bridge; CryptoCrawler only consumes the provider's guaranteed minimum
- * output and never fabricates a cross-chain price leg.
- */
+/** Every structural stablecoin Across route is refreshed every discovery cycle. */
 async function acquireRouteQuotes(
   routes: readonly CrossChainRoute[],
   notionalUsd: number,
@@ -107,7 +102,8 @@ function bridgeQuoteProvenance(quote: AcrossBridgeQuote): string[] {
     ...quote.provenance,
     `across_quote_id:${quote.quoteId || 'none'}`,
     `across_expected_fill_seconds:${quote.expectedFillTimeSec}`,
-    `across_simulation_success:${quote.simulationSuccess}`,
+    `across_simulation_success_advisory:${quote.simulationSuccess}`,
+    'across_simulation_veto_authority:false',
     `across_total_fee_usd:${quote.totalFeeUsd ?? 'unknown'}`,
     `across_total_max_fee_usd:${quote.totalMaxFeeUsd ?? 'unknown'}`,
     `across_bridge_fee_usd:${quote.bridgeFeeUsd ?? 'unknown'}`,
@@ -144,11 +140,8 @@ function recordRoute(
     : null;
   const deterministicPositive = economics?.executablePositive === true;
 
-  // Approval transactions are a normal Across execution prerequisite. They no
-  // longer form a discovery dead end: the provider measures a conservative gas
-  // ceiling for the exact approval payloads. Zero is accepted only when Across
-  // returns no approval transaction. Missing approval-gas evidence fails closed
-  // and is reacquired next cycle.
+  // Approval gas, fresh guaranteed output, signer and exact transaction payload
+  // are hard facts. Across simulationSuccess is provider telemetry only.
   const approvalGasCanonical = hasFreshQuote
     && quote.approvalGasUsd !== null
     && Number.isFinite(quote.approvalGasUsd)
@@ -157,7 +150,6 @@ function recordRoute(
     && readiness.configured
     && hasSigner
     && approvalGasCanonical
-    && quote!.simulationSuccess === true
     && quote!.swapTransactionPresent === true
     && quote!.minOutputAmount !== null;
   const opportunityId = `cross-chain:${route.from}:${route.to}:${route.inputAsset}-${route.outputAsset}:${now}`;
@@ -171,7 +163,7 @@ function recordRoute(
     ...(hasFreshQuote && quote.originGasUsd === null ? ['measured_origin_gas_usd'] : []),
     ...(hasFreshQuote && quote.approvalGasUsd === null ? ['measured_approval_gas_usd'] : []),
     ...(hasFreshQuote && quote.minOutputAmount === null ? ['guaranteed_minimum_output'] : []),
-    ...(hasFreshQuote && !quote.simulationSuccess ? ['bridge_provider_simulation_success'] : []),
+    ...(hasFreshQuote && !quote.simulationSuccess ? ['advisory:bridge_provider_simulation_unsuccessful_or_unavailable'] : []),
     ...(hasFreshQuote && !quote.swapTransactionPresent ? ['across_swap_transaction_payload'] : []),
     ...(!hasSigner ? ['cross_chain_signer'] : []),
     ...(inputPrice === null ? [`live_${route.inputAsset.toLowerCase()}_usd_price`] : []),
@@ -205,7 +197,7 @@ function recordRoute(
       ],
     }] : [],
     depth: hasFreshQuote
-      ? { status: 'measured', detail: `Across returned a fresh simulated exact-input ${route.inputAsset}->${route.outputAsset} route for ${discoveryNotionalUsd()} source units; depth applies only to this exact quoted amount` }
+      ? { status: 'measured', detail: `Across returned a fresh exact-input ${route.inputAsset}->${route.outputAsset} route for ${discoveryNotionalUsd()} source units with bounded guaranteed output; provider simulation is advisory` }
       : { status: 'unavailable', detail: 'Across evidence acquisition was actively attempted for this route in the current cycle but no fresh authoritative quote was returned' },
     economics: {
       grossProfitUsd: economics?.routeGainUsdBeforeOriginGas ?? null,
@@ -222,8 +214,8 @@ function recordRoute(
     executableCapability: routeExecutable,
     executionCapabilityReason: routeExecutable
       ? quote!.approvalTransactions > 0
-        ? 'Across fresh simulated cross-swap remains strictly positive after guaranteed output, separately paid origin gas, and a measured buffered approval-gas ceiling; exact approval receipts and a fresh post-approval route are revalidated before principal broadcast'
-        : 'Across fresh simulated cross-swap remains strictly positive after guaranteed output and separately paid origin gas; no approval transaction is required and durable system-owned capital execution revalidates immediately before signing'
+        ? 'Across fresh cross-swap remains strictly positive after guaranteed output, separately paid origin gas, and measured buffered approval gas; exact approval receipts and a fresh post-approval route are revalidated before principal broadcast; provider simulation is advisory'
+        : 'Across fresh cross-swap remains strictly positive after guaranteed output and separately paid origin gas; no approval transaction is required and durable system-owned execution revalidates immediately before signing; provider simulation is advisory'
       : deterministicPositive && !approvalGasCanonical
         ? 'Cross-chain route is positive before missing approval-gas evidence; the exact approval payload is automatically remeasured next cycle and cannot authorize execution while unpriced'
         : deterministicPositive
@@ -241,6 +233,7 @@ function recordRoute(
       `cross_chain_signer_configured:${hasSigner}`,
       `cross_chain_approval_gas_canonical:${approvalGasCanonical}`,
       `cross_chain_route:${route.inputAsset}->${route.outputAsset}`,
+      'cross_chain_simulation_execution_authority:false',
       'across_terminal_executor:refresh_exact_cross_swap_before_signing',
       'across_terminal_executor:post_approval_profit_revalidation_required',
       'across_terminal_executor:destination_receipt_or_verified_refund',
