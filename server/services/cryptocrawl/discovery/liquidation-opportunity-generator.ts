@@ -120,19 +120,19 @@ function baseCandidate(input: {
     quoteAgeMs: 0,
     executableCapability: false,
     executionCapabilityReason: executionReviewed
-      ? 'Position is currently measured liquidatable and receives exact reserve/oracle/flash-liquidity/unwind/gas/atomic-simulation hydration in this same discovery cycle before execution can be considered'
+      ? 'Position is currently measured liquidatable and receives exact same-block reserve/protocol-rule/oracle/flash-liquidity/unwind/gas hydration in this discovery cycle; eth_call is advisory only'
       : 'Position is currently measured liquidatable, but this chain remains discovery-only until exact pre-trade gas accounting includes every chain-specific fee component',
     missingInformation: executionReviewed ? [
       'required:liquidation_debt_reserve_and_amount',
       'required:liquidation_collateral_reserve_and_amount',
       'required:liquidation_bonus_and_protocol_fee',
-      'required:liquidation_close_factor',
+      'required:liquidation_close_factor_total_debt_thresholds_and_dust',
+      'required:liquidation_reserve_pause_grace_and_emode_state',
       'required:liquidation_oracle_values',
       'required:measured_flash_loan_provider_liquidity_and_fee',
       'required:liquidation_collateral_unwind_quote',
       'required:liquidation_gas_cost',
       'required:atomic_liquidation_payload_adapter',
-      'required:exact_liquidation_simulation',
     ] : [
       'required:chain_specific_complete_pretrade_gas_accounting',
       'required:liquidation_debt_reserve_and_amount',
@@ -147,6 +147,7 @@ function baseCandidate(input: {
       'health_factor_below_one',
       `exact_execution_chain_reviewed:${executionReviewed}`,
       ...(executionReviewed ? ['liquidation_first_pass:full_hydration_same_cycle'] : []),
+      'liquidation_eth_call_simulation_execution_authority:false',
       'liquidation_profitability:not_assumed',
       'synthetic_evidence:false',
     ],
@@ -179,7 +180,7 @@ function preparedCandidate(current: MeasuredCandidate, prepared: AaveLiquidation
     ],
     depth: {
       status: 'measured',
-      detail: 'Aave user reserve/debt/collateral state, live oracle/configuration, measured Aave flash liquidity/fee, firm 0x collateral unwind, existing receiver permissions, full eth_call and exact gas estimate are current',
+      detail: 'Aave same-block reserve/debt/collateral state, exact close-factor/dust/eMode/pause/grace rules, live oracle/configuration, measured Aave flash liquidity/fee, firm 0x collateral unwind, receiver permissions and exact gas are current; eth_call is advisory telemetry',
     },
     economics: {
       grossProfitUsd: prepared.deterministicNetProfitUsd + prepared.expectedFlashFeeUsd + prepared.expectedGasUsd,
@@ -202,7 +203,7 @@ function preparedCandidate(current: MeasuredCandidate, prepared: AaveLiquidation
     },
     quoteAgeMs: Math.max(0, Date.now() - prepared.unwindQuote.observedAt),
     executableCapability: true,
-    executionCapabilityReason: 'Current Aave reserve/oracle/configuration evidence, conservative close-factor sizing, measured flash liquidity/fee, firm 0x unwind, verified receiver permissions, exact atomic simulation and bounded live gas economics prove positive deterministic all-in net profit',
+    executionCapabilityReason: 'Current same-block Aave protocol facts, exact protocol-valid sizing, measured flash liquidity/fee, firm 0x unwind, verified receiver permissions and bounded live gas economics prove positive deterministic all-in net profit; simulation remains advisory only',
     missingInformation: [],
     provenance: [
       ...current.provenance,
@@ -210,6 +211,8 @@ function preparedCandidate(current: MeasuredCandidate, prepared: AaveLiquidation
       `liquidation_debt_asset:${prepared.debtAsset}`,
       `liquidation_collateral_asset:${prepared.collateralAsset}`,
       `liquidation_debt_to_cover:${prepared.debtToCover}`,
+      `liquidation_simulation_advisory_passed:${prepared.simulated}`,
+      'liquidation_simulation_veto_authority:false',
       'liquidation_first_pass:full_hydration_completed',
       'flash_premium_attribution:flashLoanFeeBps_only',
       'canonical_scheduler_dispatch_required:true',
@@ -285,11 +288,9 @@ async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<Meas
     return observations.map(observation => observation.candidate);
   }
 
-  // Aave liquidation competition rewards immediate, complete position hydration.
-  // Every liquidatable position on a reviewed execution chain receives reserve,
-  // oracle, flash-liquidity, firm unwind, permissions, simulation and gas work in
-  // this same cycle. Concurrency controls provider pressure; it never drops or
-  // defers a viable position from first-pass measurement.
+  // Every liquidatable position on a reviewed execution chain receives same-cycle
+  // hard-fact hydration. Concurrency controls provider pressure; it never drops a
+  // viable position. eth_call may run for telemetry but is not execution evidence.
   const prioritized = [...observations].sort((left, right) => {
     if (left.healthFactor !== right.healthFactor) return left.healthFactor - right.healthFactor;
     if (left.totalDebtBase.eq(right.totalDebtBase)) return 0;
@@ -306,9 +307,9 @@ async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<Meas
       });
       observation.candidate = preparedCandidate(observation.candidate, prepared);
     } catch {
-      // The base candidate remains explicit with required evidence facts. This is
-      // a same-cycle acquisition failure, not a scheduling/budget deferral and it
-      // cannot silently disappear or gain synthetic execution authority.
+      // The base candidate remains explicit with required hard-evidence facts. A
+      // same-cycle acquisition failure cannot silently disappear or gain synthetic
+      // execution authority, but advisory simulation is never added as a blocker.
     }
     return observation.candidate;
   });
