@@ -77,8 +77,15 @@ function intervalMs(): number {
 }
 
 function baseFromTicker(ticker: string): string | null {
-  const match = ticker.trim().toUpperCase().match(/^([A-Z0-9]+)PERP$/);
-  return match ? match[1] : null;
+  const normalized = ticker.trim().toUpperCase();
+  // Current Perps API examples/spec use BASE-PERP. Retain the historical
+  // KXBASEPERP/BASEPERP forms only for compatibility with already-observed rows.
+  const current = normalized.match(/^([A-Z0-9]+)-PERP$/);
+  if (current) return current[1];
+  const legacyKx = normalized.match(/^KX([A-Z0-9]+)PERP$/);
+  if (legacyKx) return legacyKx[1];
+  const legacyCompact = normalized.match(/^([A-Z0-9]+)PERP$/);
+  return legacyCompact ? legacyCompact[1] : null;
 }
 
 function spreadBps(bid: number | null, ask: number | null): number | null {
