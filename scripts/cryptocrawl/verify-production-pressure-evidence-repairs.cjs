@@ -69,7 +69,9 @@ forbidPattern(evidence, /shadowPriorityExecutionAuthority:\s*true/, 'shadow scor
 requirePattern(economic, /function\s+combinedSlippageImpactBps\(/, 'shared slippage/impact attribution deduplicator exists');
 requirePattern(economic, /candidate\.topology\s*===\s*'CEX_CEX'[\s\S]{0,180}depth_aware_notional_search[\s\S]{0,180}Math\.abs\(slippage\s*-\s*impact\)\s*<=\s*1e-9/, 'aliased CEX depth impact is recognized exactly');
 requirePattern(economic, /aliasedCexDepthImpact\s*\?\s*impact\s*:\s*slippage\s*\+\s*impact/, 'distinct slippage and impact remain additive while aliases count once');
-requirePattern(liquidation, /feeUsd:\s*0,[\s\S]{0,260}flashLoanFeeBps:\s*prepared\.flashLoanFeeBps/, 'liquidation flash premium is not also emitted as exchange fee');
+requirePattern(liquidation, /feeUsd:\s*0\s*,/, 'liquidation flash premium is excluded from exchange feeUsd');
+requirePattern(liquidation, /flashLoanFeeBps:\s*prepared\.flashLoanFeeBps/, 'liquidation flash premium remains explicitly attributed to flashLoanFeeBps');
+forbidPattern(liquidation, /feeUsd:\s*prepared\.(?:expectedFlashFeeUsd|flashLoanFeeUsd|flashLoanFee)/, 'liquidation flash premium cannot regress into exchange feeUsd');
 requirePattern(liquidation, /flash_premium_attribution:flashLoanFeeBps_only/, 'liquidation flash-premium single-attribution provenance is explicit');
 
 // Fractional measured costs must not be truncated to zero BPS.
