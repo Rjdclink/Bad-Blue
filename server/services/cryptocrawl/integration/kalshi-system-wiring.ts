@@ -1,5 +1,9 @@
 import logger from '../../../logger.js';
 import { ensureKalshiFundingLifecycleAdapterRegistered } from '../execution/kalshi-funding-lifecycle-adapter.js';
+import {
+  getKalshiEventMarketMakingSnapshot,
+  refreshKalshiEventMarketMakingFrontier,
+} from '../intelligence/kalshi-event-market-making-authority.js';
 import { refreshKalshiPredictionIntelligence } from '../intelligence/kalshi-prediction-market-authority.js';
 import { ensureKalshiBpsOptimizationWiring, getKalshiBpsOptimizationSnapshot } from './kalshi-bps-optimization-wiring.js';
 import { ensureCryptaraKalshiPredictionWiring, getCryptaraKalshiPredictionSummary } from './cryptara-kalshi-prediction-wiring.js';
@@ -21,15 +25,22 @@ function predictionRefreshMs(): number {
 async function refreshPredictionSurface(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = refreshKalshiPredictionIntelligence(true)
-    .then(snapshot => {
+    .then(async snapshot => {
+      const maker = await refreshKalshiEventMarketMakingFrontier(true).catch(() => null);
       refreshCycles += 1;
-      refreshErrors = snapshot.errors;
+      refreshErrors = snapshot.errors + (maker?.errors ?? 0);
       lastRefreshAt = snapshot.observedAt;
       logger.debug('[KalshiSystem] Prediction intelligence refreshed', {
         component: 'KalshiSystemWiring',
         markets: snapshot.markets.length,
+        marketRowsFetched: snapshot.marketRowsFetched,
+        marketScanTruncated: snapshot.marketScanTruncated,
         incentives: snapshot.incentives.length,
         feeChanges: snapshot.feeChanges.length,
+        eventMakerCandidates: maker?.candidates.length ?? 0,
+        eventMakerBestMeasuredSpreadAfterFeesBps: maker?.bestMeasuredMakerSpreadAfterFeesBps ?? null,
+        eventMakerProjectedSpreadCanCreateProfitability: false,
+        eventIncentiveRewardPrecredited: false,
         executionAuthority: false,
       });
     })
@@ -54,12 +65,15 @@ export function getKalshiSystemWiringStatus() {
     predictionRefreshErrors: refreshErrors,
     lastPredictionRefreshAt: lastRefreshAt,
     bps: getKalshiBpsOptimizationSnapshot(),
+    eventMarketMaking: getKalshiEventMarketMakingSnapshot(),
     cryptara: getCryptaraKalshiPredictionSummary(),
     quanti: getKalshiQuantiStatus(),
     fundingLifecycleAdapterRegistered: installed,
     duplicateExecutionSchedulerCreated: false as const,
     canonicalEconomicAuthorityChanged: false as const,
     canonicalMonteCarloAuthorityChanged: false as const,
+    eventMakerProjectedSpreadCanCreateProfitability: false as const,
+    eventIncentiveRewardPrecredited: false as const,
     executionAuthority: false as const,
   };
 }
@@ -69,8 +83,7 @@ export function getKalshiSystemWiringStatus() {
  * registers the dedicated funding lifecycle adapter with the one existing
  * funding-position state machine. It creates no second scheduler and grants no
  * order authority by itself: live entry still requires fresh positive economics,
- * system-owned Kalshi margin, system-owned CEX hedge inventory, governance and
- * terminal settlement evidence.
+ * system-owned Kalshi capital, governance and terminal settlement evidence.
  */
 export function ensureKalshiSystemWiring(): void {
   if (installed || process.env.CRYPTOCRAWL_KALSHI_ENABLED === 'false') return;
@@ -91,6 +104,10 @@ export function ensureKalshiSystemWiring(): void {
     component: 'KalshiSystemWiring',
     bpsMeasurement: true,
     predictionMarketIntelligence: true,
+    eventMarketDepthMeasurement: true,
+    eventMarketMakingFrontier: true,
+    eventMakerProjectedSpreadCanCreateProfitability: false,
+    eventIncentiveRewardPrecredited: false,
     cryptaraContext: true,
     quantiCompContext: true,
     monteCarloLearningContext: true,
