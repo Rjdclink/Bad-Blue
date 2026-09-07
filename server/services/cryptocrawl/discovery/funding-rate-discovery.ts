@@ -1,8 +1,9 @@
 import logger from '../../../logger.js';
 import { getOkxExecutionRestBaseUrl } from '../intelligence/okx-region-authority.js';
+import { getKalshiMarginMarkets, getKalshiPerpFundingEvidence } from '../intelligence/kalshi-perps-market-authority.js';
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
-export type FundingDiscoveryVenue = 'okx' | 'kraken_futures' | 'binance_futures';
+export type FundingDiscoveryVenue = 'okx' | 'kraken_futures' | 'binance_futures' | 'kalshi_perps';
 export type FundingRateKind = 'current_estimate' | 'current_continuous_rate' | 'last_settled_reference' | 'settlement_rate';
 
 export interface FundingRateObservation {
@@ -82,6 +83,10 @@ function binanceFundingDiscoveryEnabled(): boolean {
   return process.env.CRYPTOCRAWL_BINANCE_FUTURES_DISCOVERY?.trim().toLowerCase() === 'true';
 }
 
+function kalshiFundingDiscoveryEnabled(): boolean {
+  return process.env.CRYPTOCRAWL_KALSHI_FUNDING_DISCOVERY?.trim().toLowerCase() !== 'false';
+}
+
 function isBinanceJurisdictionFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /HTTP\s*451\b|restricted location|eligibility/i.test(message);
@@ -89,12 +94,8 @@ function isBinanceJurisdictionFailure(error: unknown): boolean {
 
 async function fetchBinanceFunding(symbols: Set<string>): Promise<FundingRateObservation[]> {
   const now = Date.now();
-  if (binanceJurisdictionUnavailableUntil !== null && binanceJurisdictionUnavailableUntil > now) {
-    return [];
-  }
-  if (binanceJurisdictionUnavailableUntil !== null && binanceJurisdictionUnavailableUntil <= now) {
-    binanceJurisdictionUnavailableUntil = null;
-  }
+  if (binanceJurisdictionUnavailableUntil !== null && binanceJurisdictionUnavailableUntil > now) return [];
+  if (binanceJurisdictionUnavailableUntil !== null && binanceJurisdictionUnavailableUntil <= now) binanceJurisdictionUnavailableUntil = null;
 
   let payload: any[];
   try {
@@ -104,11 +105,8 @@ async function fetchBinanceFunding(symbols: Set<string>): Promise<FundingRateObs
     binanceJurisdictionFailureCount += 1;
     binanceJurisdictionUnavailableUntil = Date.now() + BINANCE_JURISDICTION_COOLDOWN_MS;
     logger.warn('[FundingDiscovery] Binance Futures jurisdiction circuit opened after HTTP 451/eligibility rejection', {
-      component: 'FundingRateDiscovery',
-      executionAuthority: false,
-      failureCount: binanceJurisdictionFailureCount,
-      cooldownMs: BINANCE_JURISDICTION_COOLDOWN_MS,
-      retryAt: binanceJurisdictionUnavailableUntil,
+      component: 'FundingRateDiscovery', executionAuthority: false, failureCount: binanceJurisdictionFailureCount,
+      cooldownMs: BINANCE_JURISDICTION_COOLDOWN_MS, retryAt: binanceJurisdictionUnavailableUntil,
       reason: 'jurisdiction_or_eligibility_unavailable',
     });
     throw error;
@@ -125,19 +123,11 @@ async function fetchBinanceFunding(symbols: Set<string>): Promise<FundingRateObs
     const perpReferencePrice = positive(row?.markPrice);
     const nextFundingTime = finite(row?.nextFundingTime);
     return [{
-      venue: 'binance_futures' as const,
-      symbol,
-      instrumentId: symbol,
-      fundingRate,
-      fundingRateKind: 'last_settled_reference' as const,
-      fundingRateLocked: false,
-      fundingTime: null,
+      venue: 'binance_futures' as const, symbol, instrumentId: symbol, fundingRate,
+      fundingRateKind: 'last_settled_reference' as const, fundingRateLocked: false, fundingTime: null,
       nextFundingTime: nextFundingTime !== null && nextFundingTime > 0 ? nextFundingTime : null,
-      spotReferencePrice,
-      perpReferencePrice,
-      entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice),
-      observedAt,
-      executableWithCurrentSpotCredentials: false,
+      spotReferencePrice, perpReferencePrice, entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice),
+      observedAt, executableWithCurrentSpotCredentials: false,
       provenance: ['binance_usdm_public_premium_index', 'public_no_auth', 'last_funding_rate_not_execution_guarantee'],
     }];
   });
@@ -158,22 +148,74 @@ async function fetchKrakenFunding(symbols: Set<string>): Promise<FundingRateObse
     const spotReferencePrice = positive(row?.indexPrice);
     const perpReferencePrice = positive(row?.markPrice);
     return [{
-      venue: 'kraken_futures' as const,
-      symbol,
-      instrumentId: String(row?.symbol || '').trim().toUpperCase(),
-      fundingRate,
-      fundingRateKind: 'current_continuous_rate' as const,
-      fundingRateLocked: false,
-      fundingTime: null,
-      nextFundingTime: nextUtcHour(observedAt),
-      spotReferencePrice,
-      perpReferencePrice,
-      entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice),
-      observedAt,
+      venue: 'kraken_futures' as const, symbol, instrumentId: String(row?.symbol || '').trim().toUpperCase(),
+      fundingRate, fundingRateKind: 'current_continuous_rate' as const, fundingRateLocked: false,
+      fundingTime: null, nextFundingTime: nextUtcHour(observedAt), spotReferencePrice, perpReferencePrice,
+      entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice), observedAt,
       executableWithCurrentSpotCredentials: false,
       provenance: ['kraken_futures_public_tickers', 'public_no_auth', 'separate_derivatives_credentials_required_for_execution'],
     }];
   });
+}
+
+async function fetchKalshiFunding(symbols: Set<string>): Promise<FundingRateObservation[]> {
+  const markets = await getKalshiMarginMarkets();
+  const byBase = new Map<string, string[]>();
+  for (const symbol of symbols) {
+    const pair = splitCanonicalSymbol(symbol);
+    if (!pair) continue;
+    const rows = byBase.get(canonicalBase(pair.base)) || [];
+    rows.push(symbol);
+    byBase.set(canonicalBase(pair.base), rows);
+  }
+
+  const selected = markets
+    .filter(market => market.status === 'active' && market.isOpen)
+    .map(market => ({ market, tickerMatch: market.ticker.match(/^([A-Z0-9]+)PERP$/i) }))
+    .filter((entry): entry is { market: (typeof markets)[number]; tickerMatch: RegExpMatchArray } => !!entry.tickerMatch)
+    .filter(entry => byBase.has(canonicalBase(entry.tickerMatch[1])))
+    .slice(0, Math.max(1, Math.min(32, Number(process.env.CRYPTOCRAWL_KALSHI_FUNDING_SYMBOLS || 16))));
+
+  const output: FundingRateObservation[] = [];
+  const concurrency = Math.max(1, Math.min(6, Number(process.env.CRYPTOCRAWL_KALSHI_FUNDING_CONCURRENCY || 3)));
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, selected.length)) }, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= selected.length) return;
+      const { market, tickerMatch } = selected[index];
+      try {
+        const funding = await getKalshiPerpFundingEvidence(market.ticker);
+        if (!funding) continue;
+        const base = canonicalBase(tickerMatch[1]);
+        const matchingSymbols = byBase.get(base) || [];
+        const symbol = matchingSymbols.find(item => item.endsWith('USD')) || matchingSymbols[0] || `${base}USD`;
+        const spotReferencePrice = market.referencePrice;
+        const perpReferencePrice = funding.markPrice ?? midpoint(market.bid, market.ask, market.settlementMarkPrice);
+        output.push({
+          venue: 'kalshi_perps', symbol, instrumentId: market.ticker, fundingRate: funding.fundingRate,
+          fundingRateKind: 'current_estimate', fundingRateLocked: false,
+          fundingTime: funding.nextFundingTime, nextFundingTime: funding.nextFundingTime,
+          spotReferencePrice, perpReferencePrice,
+          entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice), observedAt: funding.observedAt,
+          executableWithCurrentSpotCredentials: false,
+          provenance: [
+            'kalshi_margin_markets_public',
+            'kalshi_margin_funding_rate_estimate_public',
+            'kalshi_reference_price_public',
+            'funding_rate_moves_until_next_funding_time',
+            'separate_kalshi_margin_entitlement_required_for_execution',
+          ],
+        });
+      } catch (error) {
+        logger.debug('[FundingDiscovery] Kalshi perps funding instrument unavailable', {
+          component: 'FundingRateDiscovery', venue: 'kalshi_perps', ticker: market.ticker,
+          error: error instanceof Error ? error.message : String(error), executionAuthority: false,
+        });
+      }
+    }
+  }));
+  return output;
 }
 
 async function fetchOkxFunding(symbols: Set<string>): Promise<FundingRateObservation[]> {
@@ -199,8 +241,7 @@ async function fetchOkxFunding(symbols: Set<string>): Promise<FundingRateObserva
 
   const selected = [...symbols]
     .map(symbol => ({ symbol, pair: splitCanonicalSymbol(symbol), swap: swapBySymbol.get(symbol), spot: spotBySymbol.get(symbol) }))
-    .filter((entry): entry is { symbol: string; pair: NonNullable<ReturnType<typeof splitCanonicalSymbol>>; swap: any; spot: any } =>
-      !!entry.pair && !!entry.swap && !!entry.spot)
+    .filter((entry): entry is { symbol: string; pair: NonNullable<ReturnType<typeof splitCanonicalSymbol>>; swap: any; spot: any } => !!entry.pair && !!entry.swap && !!entry.spot)
     .slice(0, Math.max(1, Math.min(50, Number(process.env.CRYPTOCRAWL_FUNDING_OKX_SYMBOLS || 24))));
 
   const concurrency = Math.max(1, Math.min(6, Number(process.env.CRYPTOCRAWL_FUNDING_OKX_CONCURRENCY || 2)));
@@ -213,10 +254,7 @@ async function fetchOkxFunding(symbols: Set<string>): Promise<FundingRateObserva
       const entry = selected[index];
       const instId = `${entry.pair.base}-${entry.pair.quote}-SWAP`;
       try {
-        const payload = await fetchJsonWithRetry<any>(
-          `${baseUrl}/api/v5/public/funding-rate?instId=${encodeURIComponent(instId)}`,
-          REQUEST_OPTIONS,
-        );
+        const payload = await fetchJsonWithRetry<any>(`${baseUrl}/api/v5/public/funding-rate?instId=${encodeURIComponent(instId)}`, REQUEST_OPTIONS);
         const row = payload?.code === '0' ? payload?.data?.[0] : null;
         if (!row) continue;
         const displayedRate = finite(row?.fundingRate);
@@ -227,31 +265,19 @@ async function fetchOkxFunding(symbols: Set<string>): Promise<FundingRateObserva
         const perpReferencePrice = midpoint(entry.swap?.bidPx, entry.swap?.askPx, entry.swap?.last);
         const observedAt = Date.now();
         observations.push({
-          venue: 'okx',
-          symbol: entry.symbol,
-          instrumentId: instId,
-          fundingRate,
-          fundingRateKind: settlementRate !== null ? 'settlement_rate' : 'current_estimate',
-          fundingRateLocked: settlementRate !== null,
-          fundingTime: finite(row?.fundingTime),
-          nextFundingTime: finite(row?.nextFundingTime),
-          spotReferencePrice,
-          perpReferencePrice,
-          entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice),
-          observedAt,
+          venue: 'okx', symbol: entry.symbol, instrumentId: instId, fundingRate,
+          fundingRateKind: settlementRate !== null ? 'settlement_rate' : 'current_estimate', fundingRateLocked: settlementRate !== null,
+          fundingTime: finite(row?.fundingTime), nextFundingTime: finite(row?.nextFundingTime), spotReferencePrice, perpReferencePrice,
+          entryBasisBps: basisBps(perpReferencePrice, spotReferencePrice), observedAt,
           executableWithCurrentSpotCredentials: true,
           provenance: [
-            'okx_regional_public_funding_rate',
-            'okx_regional_spot_and_swap_tickers',
-            'public_no_auth_market_data',
+            'okx_regional_public_funding_rate', 'okx_regional_spot_and_swap_tickers', 'public_no_auth_market_data',
             settlementRate !== null ? 'settlement_rate_exposed_during_processing' : 'funding_rate_can_change_before_settlement',
           ],
         });
       } catch (error) {
         logger.debug('[FundingDiscovery] OKX funding instrument unavailable', {
-          component: 'FundingRateDiscovery',
-          symbol: entry.symbol,
-          instrumentId: instId,
+          component: 'FundingRateDiscovery', symbol: entry.symbol, instrumentId: instId,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -263,32 +289,19 @@ async function fetchOkxFunding(symbols: Set<string>): Promise<FundingRateObserva
 export async function discoverFundingRates(symbolInputs: readonly string[]): Promise<FundingDiscoveryBatch> {
   const startedAt = Date.now();
   const maxSymbols = Math.max(1, Math.min(128, Number(process.env.CRYPTOCRAWL_FUNDING_SYMBOLS || 64)));
-  const symbols = new Set(
-    [...new Set(symbolInputs.map(symbol => symbol.trim().toUpperCase()).filter(symbol => !!splitCanonicalSymbol(symbol)))]
-      .slice(0, maxSymbols),
-  );
+  const symbols = new Set([...new Set(symbolInputs.map(symbol => symbol.trim().toUpperCase()).filter(symbol => !!splitCanonicalSymbol(symbol)))].slice(0, maxSymbols));
   const failures: FundingDiscoveryBatch['failures'] = [];
   const tasks: Array<{ venue: FundingDiscoveryVenue; promise: Promise<FundingRateObservation[]> }> = [
     { venue: 'kraken_futures', promise: fetchKrakenFunding(symbols) },
     { venue: 'okx', promise: fetchOkxFunding(symbols) },
   ];
-  if (binanceFundingDiscoveryEnabled()) {
-    tasks.push({ venue: 'binance_futures', promise: fetchBinanceFunding(symbols) });
-  }
+  if (kalshiFundingDiscoveryEnabled()) tasks.push({ venue: 'kalshi_perps', promise: fetchKalshiFunding(symbols) });
+  if (binanceFundingDiscoveryEnabled()) tasks.push({ venue: 'binance_futures', promise: fetchBinanceFunding(symbols) });
   const settled = await Promise.allSettled(tasks.map(task => task.promise));
   const observations: FundingRateObservation[] = [];
   settled.forEach((result, index) => {
     if (result.status === 'fulfilled') observations.push(...result.value);
-    else failures.push({
-      venue: tasks[index].venue,
-      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-    });
+    else failures.push({ venue: tasks[index].venue, error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
   });
-  return {
-    startedAt,
-    completedAt: Date.now(),
-    requestedSymbols: symbols.size,
-    observations,
-    failures,
-  };
+  return { startedAt, completedAt: Date.now(), requestedSymbols: symbols.size, observations, failures };
 }
