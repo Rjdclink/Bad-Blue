@@ -8,6 +8,10 @@ import { okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { resolveOkxAccountFeeRates } from '../intelligence/okx-account-fee-authority.js';
 import { measureOkxFundingExecutionEvidence, type OkxFundingExecutionEvidence } from '../execution/okx-funding-evidence.js';
 import {
+  measureKalshiFundingExecutionEvidence,
+  type KalshiFundingExecutionEvidence,
+} from '../execution/kalshi-funding-evidence.js';
+import {
   ensureOkxFundingLifecycleAdapterRegistered,
   rememberPreparedOkxFundingPlan,
   type OkxFundingExecutionPlan,
@@ -115,7 +119,8 @@ function quotedAsset(symbol: string): string[] {
 function entryWindow(observation: FundingRateObservation): { eligible: boolean; expiresAt: number; reason: string } {
   const now = Date.now();
   const fundingAt = observation.fundingTime ?? null;
-  if (observation.venue !== 'okx' || fundingAt === null || !Number.isFinite(fundingAt)) {
+  const supportedVenue = observation.venue === 'okx' || observation.venue === 'kalshi_perps';
+  if (!supportedVenue || fundingAt === null || !Number.isFinite(fundingAt)) {
     return { eligible: false, expiresAt: now, reason: 'future_funding_timestamp_unavailable' };
   }
   if (observation.fundingRateLocked) {
@@ -161,13 +166,16 @@ class FundingRateMonitor {
     this.timer = setTimeout(cycle, 0);
     this.timer.unref?.();
     logger.info('[FundingMonitor] Public funding-rate monitor started', {
-      component: 'FundingRateMonitor', intervalMs, venues: ['okx', 'kraken_futures', 'binance_futures'],
+      component: 'FundingRateMonitor', intervalMs, venues: ['okx', 'kraken_futures', 'binance_futures', 'kalshi_perps'],
       okxPrivateAccountContextTtlMs: OKX_SWAP_CONTEXT_TTL_MS, newKeysRequiredForDiscovery: false,
       durableFundingLifecycleImplemented: true,
       executionAuthority: 'funding_position_lifecycle_for_bounded_positive_pre_settlement_okx_carry',
+      kalshiExecutionAuthority: false,
+      kalshiExecutionStatus: 'exact_depth_fee_funding_hedge_economics_measured_but_system_capital_provenance_and_lifecycle_adapter_still_required',
       projectedProfitIsDeterministicProfit: false,
       measurableProjectedBpsOutsideEntryWindow: true,
       firstPassPrivateEvidenceForAllOkxRoutes: true,
+      firstPassMeasuredEvidenceForSupportedKalshiRoutes: true,
     });
   }
 
@@ -194,10 +202,6 @@ class FundingRateMonitor {
       let projectedPositive = 0;
       let eligible = 0;
 
-      // Every discovered OKX instrument receives private account/fee evidence in
-      // the same cycle. The existing OKX lane governor remains the pressure/rate
-      // authority, so completeness is not obtained by creating a second request
-      // authority or by dropping routes behind an arbitrary discovery budget.
       const okxCapabilityTargets = batch.observations
         .filter(observation => observation.venue === 'okx')
         .sort(compareFundingEnrichmentPriority)
@@ -212,15 +216,24 @@ class FundingRateMonitor {
         const [spotFee, swapCapability, executionEvidence] = await Promise.all([
           resolveCexFeeEvidence('okx', observation.symbol).catch(() => null),
           getOkxSwapCapability(observation),
-          // Exact entry/exit depth, sizing and slippage evidence remains useful for
-          // projected all-in BPS before the entry window opens. Every supported
-          // positive direction is measured immediately; the window only controls
-          // when an already-measured route can be submitted.
           observation.fundingRate > 0
             ? measureOkxFundingExecutionEvidence({ symbol: observation.symbol, swapInstId: observation.instrumentId, targetNotionalUsd: notionalUsd }).catch(() => null)
             : Promise.resolve(null),
         ]);
         okxEnrichment.set(observation.instrumentId, { spotFee, swapCapability, executionEvidence });
+      }));
+
+      const kalshiTargets = batch.observations
+        .filter(observation => observation.venue === 'kalshi_perps' && observation.fundingRate > 0)
+        .sort(compareFundingEnrichmentPriority)
+        .filter((observation, index, all) => all.findIndex(candidate => candidate.instrumentId === observation.instrumentId) === index);
+      const kalshiEnrichment = new Map<string, KalshiFundingExecutionEvidence | null>();
+      await Promise.all(kalshiTargets.map(async observation => {
+        const evidence = await measureKalshiFundingExecutionEvidence({
+          ticker: observation.instrumentId,
+          targetNotionalUsd: notionalUsd,
+        }).catch(() => null);
+        kalshiEnrichment.set(observation.instrumentId, evidence);
       }));
 
       for (const observation of batch.observations) {
@@ -230,24 +243,29 @@ class FundingRateMonitor {
           ? enrichment?.swapCapability || { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'OKX first-pass private enrichment returned no capability evidence' }
           : { feeBps: null, instrumentVisible: false, accountModeVisible: false, reason: 'not_okx' };
         const executionEvidence = enrichment?.executionEvidence ?? null;
+        const kalshiEvidence = observation.venue === 'kalshi_perps'
+          ? kalshiEnrichment.get(observation.instrumentId) ?? null
+          : null;
         const window = entryWindow(observation);
+        const measuredNotionalUsd = kalshiEvidence?.measuredNotionalUsd ?? notionalUsd;
         const decision = evaluateFundingArbitrage({
-          fundingRate: observation.fundingRate,
-          notionalUsd,
-          spotEntryFeeBps: spotFee?.takerFeeBps ?? null,
-          spotExitFeeBps: spotFee?.takerFeeBps ?? null,
-          perpEntryFeeBps: swapCapability.feeBps,
-          perpExitFeeBps: swapCapability.feeBps,
-          entryBasisBps: executionEvidence?.entryBasisBps ?? observation.entryBasisBps,
-          exitBasisReserveBps: executionEvidence?.exitBasisReserveBps ?? null,
-          expectedSlippageBps: executionEvidence?.expectedSlippageBps ?? null,
+          fundingRate: kalshiEvidence?.fundingRate ?? observation.fundingRate,
+          notionalUsd: measuredNotionalUsd,
+          spotEntryFeeBps: kalshiEvidence?.hedgeTakerFeeBps ?? spotFee?.takerFeeBps ?? null,
+          spotExitFeeBps: kalshiEvidence?.hedgeTakerFeeBps ?? spotFee?.takerFeeBps ?? null,
+          perpEntryFeeBps: kalshiEvidence?.kalshiTakerFeeBps ?? swapCapability.feeBps,
+          perpExitFeeBps: kalshiEvidence?.kalshiTakerFeeBps ?? swapCapability.feeBps,
+          entryBasisBps: kalshiEvidence?.entryBasisBps ?? executionEvidence?.entryBasisBps ?? observation.entryBasisBps,
+          exitBasisReserveBps: kalshiEvidence?.exitBasisReserveBps ?? executionEvidence?.exitBasisReserveBps ?? null,
+          expectedSlippageBps: kalshiEvidence?.expectedSlippageBps ?? executionEvidence?.expectedSlippageBps ?? null,
           borrowCostUsd: observation.fundingRate < 0 ? null : 0,
           fundingRateLocked: false,
           shortSpotCapability: false,
         });
         const projectedNet = decision.projectedNetProfitUsd;
         if (projectedNet !== null && projectedNet > 0) projectedPositive++;
-        const executionCapable = observation.venue === 'okx'
+
+        const okxExecutionCapable = observation.venue === 'okx'
           && observation.fundingRate > 0
           && projectedNet !== null
           && projectedNet > 0
@@ -256,12 +274,19 @@ class FundingRateMonitor {
           && executionEvidence.expiresAt > Date.now()
           && swapCapability.instrumentVisible
           && swapCapability.accountModeVisible;
+        // Kalshi remains fail-closed until its dedicated lifecycle and system-owned
+        // margin-capital provenance authority are both complete. Exact economics
+        // are still published into canonical BPS search immediately.
+        const executionCapable = okxExecutionCapable;
         const opportunityId = `funding:${observation.venue}:${observation.instrumentId}:${observation.symbol}`;
+        const exactEvidenceExpiry = kalshiEvidence?.expiresAt ?? executionEvidence?.expiresAt ?? Number.POSITIVE_INFINITY;
         const expiresAt = executionCapable
-          ? Math.min(observation.observedAt + ttlMs, executionEvidence!.expiresAt, window.expiresAt)
-          : observation.observedAt + ttlMs;
+          ? Math.min(observation.observedAt + ttlMs, exactEvidenceExpiry, window.expiresAt)
+          : kalshiEvidence
+            ? Math.min(observation.observedAt + ttlMs, kalshiEvidence.expiresAt)
+            : observation.observedAt + ttlMs;
 
-        if (executionCapable) {
+        if (okxExecutionCapable) {
           const fees = Math.max(0, decision.expectedTradingFeesUsd ?? 0);
           const basis = Math.max(0, decision.expectedBasisAndSlippageUsd ?? 0);
           const marginFraction = Math.max(0.02, Math.min(0.50, Number(process.env.CRYPTOCRAWL_FUNDING_MARGIN_BUFFER_FRACTION || 0.10)));
@@ -305,12 +330,23 @@ class FundingRateMonitor {
         const missingInformation = [
           ...decision.missingInformation,
           ...(observation.venue === 'okx' && observation.fundingRate > 0 && !executionEvidence ? ['required:measured_entry_exit_depth_margin_capacity'] : []),
-          ...(!window.eligible && observation.venue === 'okx' ? [`advisory:${window.reason}`] : []),
+          ...(observation.venue === 'kalshi_perps' && observation.fundingRate > 0 && !kalshiEvidence ? ['required:kalshi_exact_perps_and_direct_usd_spot_hedge_evidence'] : []),
+          ...(observation.venue === 'kalshi_perps' && kalshiEvidence ? ['required:kalshi_system_owned_margin_capital_provenance', 'required:kalshi_funding_lifecycle_adapter'] : []),
+          ...(!window.eligible && (observation.venue === 'okx' || observation.venue === 'kalshi_perps') ? [`advisory:${window.reason}`] : []),
           ...(observation.venue === 'kraken_futures' ? ['required:kraken_derivatives_execution_credentials'] : []),
           ...(observation.venue === 'binance_futures' ? ['required:binance_execution_capability_intentionally_disabled'] : []),
           ...(observation.venue === 'okx' && !swapCapability.instrumentVisible ? ['required:okx_swap_instrument_capability'] : []),
           ...(observation.venue === 'okx' && !swapCapability.accountModeVisible ? ['required:okx_derivatives_account_mode'] : []),
         ];
+
+        const exactDepthMeasured = executionEvidence !== null || kalshiEvidence !== null;
+        const exactProvenance = [
+          ...(executionEvidence?.provenance ?? []),
+          ...(kalshiEvidence?.provenance ?? []),
+        ];
+        const quotePrice = kalshiEvidence?.kalshiEntryVwap ?? observation.perpReferencePrice;
+        const candidateAssets = kalshiEvidence ? [kalshiEvidence.baseAsset, 'USD'] : quotedAsset(observation.symbol);
+        const candidateVenues = kalshiEvidence ? [observation.venue, kalshiEvidence.hedgeVenue] : [observation.venue];
 
         measuredCandidateRegistry.record({
           opportunityId,
@@ -318,56 +354,74 @@ class FundingRateMonitor {
           observedAt: observation.observedAt,
           expiresAt,
           status: executionCapable ? 'eligible' : 'enriched',
-          assets: quotedAsset(observation.symbol),
-          venues: [observation.venue],
+          assets: candidateAssets,
+          venues: candidateVenues,
           chains: ['cex'],
           rawQuotes: [{
             source: `${observation.venue}:funding_rate`, venue: observation.venue, symbol: observation.symbol,
-            observedAt: observation.observedAt, price: observation.perpReferencePrice, executable: executionCapable,
+            observedAt: observation.observedAt, price: quotePrice, executable: executionCapable,
             provenance: [
               ...observation.provenance,
-              `funding_rate:${observation.fundingRate}`,
+              `funding_rate:${kalshiEvidence?.fundingRate ?? observation.fundingRate}`,
               `funding_rate_kind:${observation.fundingRateKind}`,
               `funding_rate_locked:${observation.fundingRateLocked}`,
               ...(observation.fundingTime ? [`funding_time:${observation.fundingTime}`] : []),
               ...(observation.nextFundingTime ? [`next_funding_time:${observation.nextFundingTime}`] : []),
-              ...(executionEvidence?.provenance ?? []),
+              ...exactProvenance,
             ],
           }],
-          depth: executionEvidence
-            ? { status: 'measured', detail: 'OKX spot and SWAP entry/exit VWAP depth measured at exact contract/base quantities with authenticated contract sizing and max-size capacity' }
-            : { status: 'unavailable', detail: 'All supported positive-direction OKX routes are sent through exact private depth/sizing evidence acquisition in their first discovery cycle; unavailable evidence remains explicit rather than budget-deferred' },
+          depth: exactDepthMeasured
+            ? {
+                status: 'measured',
+                detail: kalshiEvidence
+                  ? `Kalshi perps and ${kalshiEvidence.hedgeVenue} direct-USD spot entry/exit depth measured at the exact hedged contract/base quantity with authenticated fees`
+                  : 'OKX spot and SWAP entry/exit VWAP depth measured at exact contract/base quantities with authenticated contract sizing and max-size capacity',
+              }
+            : {
+                status: 'unavailable',
+                detail: observation.venue === 'kalshi_perps'
+                  ? 'Kalshi positive-funding routes are sent through exact perps plus direct-USD Kraken/OKX hedge depth/fee acquisition; missing exact evidence stays explicit'
+                  : 'All supported positive-direction OKX routes are sent through exact private depth/sizing evidence acquisition in their first discovery cycle; unavailable evidence remains explicit rather than budget-deferred',
+              },
           economics: {
             grossProfitUsd: decision.expectedFundingUsd,
             deterministicNetProfitUsd: null,
             feeUsd: decision.expectedTradingFeesUsd,
             gasUsd: 0,
             bridgeUsd: 0,
-            expectedSlippageBps: executionEvidence?.expectedSlippageBps ?? null,
-            expectedPriceImpactBps: executionEvidence?.exitBasisReserveBps ?? null,
-            notionalUsd,
-            netProfitBps: projectedNet !== null ? projectedNet / notionalUsd * 10_000 : null,
+            expectedSlippageBps: kalshiEvidence?.expectedSlippageBps ?? executionEvidence?.expectedSlippageBps ?? null,
+            expectedPriceImpactBps: kalshiEvidence?.exitBasisReserveBps ?? executionEvidence?.exitBasisReserveBps ?? null,
+            notionalUsd: measuredNotionalUsd,
+            netProfitBps: projectedNet !== null ? projectedNet / measuredNotionalUsd * 10_000 : null,
           },
           quoteAgeMs: Math.max(0, Date.now() - observation.observedAt),
           executableCapability: executionCapable,
           executionCapabilityReason: executionCapable
             ? 'OKX positive projected carry is inside the pre-settlement entry window with authenticated fees, measured SPOT/SWAP depth, exact contract sizing, system-capital-aware lifecycle capability, FOK entry/close, margin monitoring, authenticated funding bills and terminal realized accounting'
-            : observation.venue === 'okx' && projectedNet !== null
-              ? `${swapCapability.reason}; projected all-in BPS is measured independently of entry-window timing; ${window.reason}`
-              : observation.venue === 'okx' ? `${swapCapability.reason}; ${window.reason}`
-                : observation.venue === 'kraken_futures'
-                  ? 'Kraken Futures public funding is visible without authentication, but Kraken Spot credentials are not Derivatives execution credentials'
-                  : 'Binance Futures is public discovery only; Binance live execution remains intentionally disabled in CryptoCrawler',
+            : observation.venue === 'kalshi_perps' && kalshiEvidence
+              ? `Kalshi positive carry has authenticated effective fees and exact Kalshi-perps/${kalshiEvidence.hedgeVenue}-USD hedge depth with measured projected all-in BPS; execution remains blocked until system-owned Kalshi margin capital provenance and the durable Kalshi funding lifecycle are proven`
+              : observation.venue === 'kalshi_perps'
+                ? 'Kalshi public funding is visible, but exact perps/direct-USD hedge execution evidence is incomplete and no economics are fabricated'
+                : observation.venue === 'okx' && projectedNet !== null
+                  ? `${swapCapability.reason}; projected all-in BPS is measured independently of entry-window timing; ${window.reason}`
+                  : observation.venue === 'okx' ? `${swapCapability.reason}; ${window.reason}`
+                    : observation.venue === 'kraken_futures'
+                      ? 'Kraken Futures public funding is visible without authentication, but Kraken Spot credentials are not Derivatives execution credentials'
+                      : 'Binance Futures is public discovery only; Binance live execution remains intentionally disabled in CryptoCrawler',
           missingInformation: [...new Set(missingInformation)],
           provenance: [
             ...observation.provenance,
+            ...exactProvenance,
             'funding_arbitrage_policy:all_in_projected_costs_required',
             'funding_projected_profit_is_not_deterministic_profit',
             'funding_measured_bps:not_gated_by_entry_window',
-            'funding_private_enrichment:all_supported_okx_routes_first_pass',
+            observation.venue === 'kalshi_perps'
+              ? 'funding_private_enrichment:kalshi_authenticated_fee_and_market_entitlement_plus_exact_direct_usd_hedge'
+              : 'funding_private_enrichment:all_supported_okx_routes_first_pass',
             'funding_private_evidence:budget_defer_removed',
             'durable_funding_lifecycle:migration_owned_nonblocking',
-            'okx_funding_lifecycle:authenticated_fills_and_bills',
+            ...(observation.venue === 'okx' ? ['okx_funding_lifecycle:authenticated_fills_and_bills'] : []),
+            ...(observation.venue === 'kalshi_perps' ? ['kalshi_funding_lifecycle:pending_nonpromoting', 'kalshi_margin_balance:not_system_ownership_proof'] : []),
             'unknown_cost_is_not_zero',
             executionCapable ? 'execution_promoted_from_projected_carry_and_minimum_sufficient_execution_evidence' : 'execution_not_promoted_without_required_execution_evidence',
           ],
@@ -383,7 +437,12 @@ class FundingRateMonitor {
         durableFundingLifecycleImplemented: true, okxSwapCapabilityCacheEntries: okxSwapCapabilityCache.size,
         okxPrivateCapabilityTargets: okxTargetIds.size,
         okxPrivateCapabilityDeferred: 0,
+        kalshiExactEvidenceTargets: kalshiTargets.length,
+        kalshiExactEvidenceResolved: [...kalshiEnrichment.values()].filter(Boolean).length,
+        kalshiExecutionEligible: 0,
+        kalshiExecutionBlockedBySystemCapitalAndLifecycle: true,
         firstPassPrivateEvidenceForAllOkxRoutes: true,
+        firstPassMeasuredEvidenceForSupportedKalshiRoutes: true,
         projectedBpsMeasuredOutsideEntryWindow: true,
         publicDiscoveryBlockedByPrivateEnrichment: false,
         note: 'Funding entries are projected carry before settlement; only authenticated terminal fills and funding bills become realized profit truth',
