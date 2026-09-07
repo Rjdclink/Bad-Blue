@@ -69,14 +69,17 @@ must(globalLive, 'additionalPrepared?: readonly NixGenPreparedBid[]', 'pure glob
 must(globalLive, 'additionalPreparedCount: number', 'pure global helper reports additional live-lane participation');
 must(globalLive, 'filtersCanonicalCandidates: false', 'pure global helper remains non-filtering');
 
-// Cross-chain is eligible only from a closed same-asset deterministic value loop.
-must(crossChain, 'cross_chain_profit_model:same_asset_closed_value', 'cross-chain uses closed same-asset value accounting');
+// Cross-chain eligibility is based on a closed deterministic USD-value loop.
+// Same-asset and provider-composed stablecoin cross-swaps are both admitted only
+// from guaranteed minimum output with measured origin/approval gas evidence.
+must(crossChain, 'cross_chain_profit_model:closed_usd_value', 'cross-chain uses closed deterministic USD-value accounting');
 must(crossChain, 'cross_chain_profit_model:minimum_output_not_expected_output', 'cross-chain uses guaranteed minimum rather than optimistic expected output');
 must(crossChain, 'executableCapability: routeExecutable', 'cross-chain capability is derived from complete route evidence');
-must(crossChain, 'const approvalGasCanonical = hasFreshQuote && quote.approvalTransactions === 0;', 'unpriced approval gas cannot be silently admitted');
-must(crossChain, "...(hasFreshQuote && quote.approvalTransactions > 0 ? ['measured_approval_gas_usd'] : []),", 'approval-required routes explicitly reacquire gas economics');
-must(crossChain, 'cross_chain_profit_model:unpriced_approval_gas_blocks_execution', 'approval-gas fail-closed boundary is explicit');
-must(crossChain, 'prepared.quote.expiresAt <= Date.now() || prepared.quote.approvalTransactions > 0', 'prepared route cannot bypass the approval-gas gate');
+must(crossChain, 'const approvalGasCanonical = hasFreshQuote', 'approval gas has an explicit canonical evidence gate');
+must(crossChain, 'quote.approvalGasUsd !== null', 'approval-required routes require measured approval gas');
+must(crossChain, "...(hasFreshQuote && quote.approvalGasUsd === null ? ['measured_approval_gas_usd'] : []),", 'missing approval gas explicitly enters evidence reacquisition');
+must(crossChain, 'cross_chain_approval_gas:measured_buffered_ceiling_included', 'measured approval gas is included conservatively');
+must(crossChain, 'across_terminal_executor:post_approval_profit_revalidation_required', 'principal execution requires fresh post-approval profitability revalidation');
 must(crossEconomics, 'guaranteedOutputHuman', 'cross-chain deterministic economics are based on guaranteed output');
 must(crossEconomics, 'deterministicNetProfitUsd = routeGainUsdBeforeOriginGas - originGasUsd', 'origin gas is subtracted exactly once');
 must(crossTerminal, 'if (inputAmount !== quote.inputAmount) return null;', 'terminal deposit amount must match execution quote input');
