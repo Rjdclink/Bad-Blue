@@ -1,11 +1,14 @@
 # Production-grade Playwright/Puppeteer Dockerfile with multi-stage build
 # Build stage - for compiling the application and installing browsers
-FROM node:20-bookworm-slim AS builder
+FROM node:20-bookworm AS builder
 
 # Railway provides Git metadata to Docker builds through build arguments. Keep
 # this build-only so the immutable source SHA is compiled into the artifact and
 # is never sourced from a mutable runtime variable.
 ARG RAILWAY_GIT_COMMIT_SHA
+# Build-only debconf frontend: unattended package installation must not probe
+# terminal/dialog frontends inside Railway's non-interactive builder.
+ARG DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
