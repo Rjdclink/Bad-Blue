@@ -1,5 +1,9 @@
 import logger from '../../../logger.js';
 import {
+  getKalshiCrossVenueEventArbitrageSnapshot,
+  refreshKalshiCrossVenueEventArbitrage,
+} from '../discovery/kalshi-cross-venue-event-arbitrage.js';
+import {
   getKalshiEventOpportunitySnapshot,
   refreshKalshiEventOpportunities,
 } from '../discovery/kalshi-event-opportunity-generator.js';
@@ -41,13 +45,15 @@ async function refreshPredictionSurface(): Promise<void> {
   refreshInFlight = refreshKalshiPredictionIntelligence(true)
     .then(async snapshot => {
       const calibration = await runKalshiProbabilityCalibrationCycle(snapshot);
-      const [makerResult, cashResult, opportunityResult] = await Promise.allSettled([
+      const [makerResult, cashResult, opportunityResult, crossVenueResult] = await Promise.allSettled([
         refreshKalshiEventMarketMakingFrontier(true),
         getKalshiEventSystemCashSnapshot(true),
         refreshKalshiEventOpportunities(snapshot),
+        refreshKalshiCrossVenueEventArbitrage(snapshot.markets),
       ]);
       const maker = makerResult.status === 'fulfilled' ? makerResult.value : null;
       const opportunity = opportunityResult.status === 'fulfilled' ? opportunityResult.value : null;
+      const crossVenue = crossVenueResult.status === 'fulfilled' ? crossVenueResult.value : null;
       if (cashResult.status === 'fulfilled') {
         eventCash = cashResult.value;
         eventCashError = null;
@@ -59,7 +65,8 @@ async function refreshPredictionSurface(): Promise<void> {
         + calibration.errors
         + (maker?.errors ?? (makerResult.status === 'rejected' ? 1 : 0))
         + (cashResult.status === 'rejected' ? 1 : 0)
-        + (opportunity?.errors ?? (opportunityResult.status === 'rejected' ? 1 : 0));
+        + (opportunity?.errors ?? (opportunityResult.status === 'rejected' ? 1 : 0))
+        + (crossVenueResult.status === 'rejected' ? 1 : 0);
       lastRefreshAt = snapshot.observedAt;
       logger.debug('[KalshiSystem] Prediction intelligence refreshed', {
         component: 'KalshiSystemWiring',
@@ -74,6 +81,8 @@ async function refreshPredictionSurface(): Promise<void> {
         calibrationUnresolved: calibration.unresolved,
         eventEligibleCandidates: opportunity?.eligible ?? 0,
         eventDataCollectionCandidates: opportunity?.dataCollection ?? 0,
+        crossVenueCandidates: crossVenue?.length ?? 0,
+        crossVenueExecutionAuthority: false,
         eventMakerCandidates: maker?.candidates.length ?? 0,
         eventMakerBestMeasuredSpreadAfterFeesBps: maker?.bestMeasuredMakerSpreadAfterFeesBps ?? null,
         eventMakerProjectedSpreadCanCreateProfitability: false,
@@ -111,6 +120,7 @@ export function getKalshiSystemWiringStatus() {
     bps: getKalshiBpsOptimizationSnapshot(),
     eventMarketMaking: getKalshiEventMarketMakingSnapshot(),
     eventOpportunities: getKalshiEventOpportunitySnapshot(),
+    crossVenueEventArbitrage: getKalshiCrossVenueEventArbitrageSnapshot(),
     probabilityCalibration: getKalshiProbabilityCalibrationStatus(),
     eventCash: eventCash ? { ...eventCash } : null,
     eventCashError,
@@ -121,6 +131,7 @@ export function getKalshiSystemWiringStatus() {
     canonicalEconomicAuthorityChanged: false as const,
     canonicalMonteCarloAuthorityChanged: false as const,
     rawMarketProbabilityExecutionAuthority: false as const,
+    crossVenueExecutionAuthority: false as const,
     eventMakerProjectedSpreadCanCreateProfitability: false as const,
     eventIncentiveRewardPrecredited: false as const,
     eventPredictionBalancePromotedToOwnership: false as const,
@@ -153,6 +164,8 @@ export function ensureKalshiSystemWiring(): void {
     chronologicalHoldoutCalibration: true,
     calibrationDriftGate: true,
     automaticEventOpportunityGeneration: true,
+    exactSemanticCrossVenueArbitrageDiscovery: true,
+    crossVenueExecutionFailClosedUntilAuthenticatedSecondVenueAuthority: true,
     eventMarketDepthMeasurement: true,
     eventMarketMakingFrontier: true,
     eventSystemOwnedCashAuthority: true,
