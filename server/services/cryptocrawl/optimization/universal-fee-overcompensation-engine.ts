@@ -8,6 +8,10 @@ import {
   getUniversalBpsOpportunityDiscoveries,
   type BpsOpportunityDiscovery,
 } from '../intelligence/universal-bps-opportunity-discovery.js';
+import {
+  ensureUniversalBpsSearchExpansion,
+  getBroadWebBpsOpportunityDiscoveries,
+} from '../intelligence/universal-bps-search-expansion.js';
 
 export interface UniversalFeeOvercompensationPlan {
   opportunityId: string;
@@ -84,6 +88,18 @@ function candidateVenueKeys(candidate: MeasuredCandidate): string[] {
   return [...new Set(normalized)];
 }
 
+function combinedDiscoveries(venues: readonly string[]): BpsOpportunityDiscovery[] {
+  const merged = [
+    ...getUniversalBpsOpportunityDiscoveries(venues),
+    ...getBroadWebBpsOpportunityDiscoveries(venues),
+  ];
+  const unique = new Map<string, BpsOpportunityDiscovery>();
+  for (const row of merged) unique.set(`${row.venue}:${row.url}:${row.mechanisms.join(',')}`, row);
+  return [...unique.values()]
+    .sort((left, right) => right.observedAt - left.observedAt || left.url.localeCompare(right.url))
+    .slice(0, 48);
+}
+
 function optimizationActionsFor(candidate: MeasuredCandidate, feeBurdenBps: number, discoveries: readonly BpsOpportunityDiscovery[]): string[] {
   const actions = new Set<string>();
   if (feeBurdenBps > 0) {
@@ -109,6 +125,7 @@ function optimizationActionsFor(candidate: MeasuredCandidate, feeBurdenBps: numb
   if (discoveries.length > 0) {
     actions.add('authenticate_discovered_program_eligibility_before_any_economic_credit');
     actions.add('quantify_incremental_benefit_minus_incremental_cost_and_risk');
+    actions.add('attach_verified_program_only_to_matching_account_product_venue_and_strategy');
   }
   actions.add('continue_optimization_beyond_zero_fee_toward_positive_execution_surplus');
   return [...actions];
@@ -138,7 +155,7 @@ export function buildUniversalFeeOvercompensationPlan(candidate: MeasuredCandida
   const canonicalRealizedNetBps = finite(candidate.canonicalBps.realizedNetBps);
   const hardEconomicConditionMet = canonicalNetBps !== null && canonicalNetBps > 0;
   const venueKeys = candidateVenueKeys(candidate);
-  const discoveredOpportunities = getUniversalBpsOpportunityDiscoveries(venueKeys).slice(0, 32);
+  const discoveredOpportunities = combinedDiscoveries(venueKeys);
   const claimedByTopology = candidate.topology === 'ZERO_CAPITAL_ATOMIC';
 
   return {
@@ -223,6 +240,7 @@ export function getUniversalFeeOvercompensationSnapshot() {
     feeOvercompensationCanBlockProfitableTrade: false as const,
     canonicalEconomicsAuthority: 'measured_candidate_registry' as const,
     zeroCapitalHardGateAuthority: 'existing_zero_capital_admission_authority' as const,
+    receivedAccountLevelRecoveryPerTradeCreditWithoutAttribution: false as const,
     authority: 'universal_fee_overcompensation_advisory_and_priority_sidecar' as const,
     executionAuthority: false as const,
   };
@@ -232,6 +250,7 @@ export function ensureUniversalFeeOvercompensationEngine(): void {
   if (installed) return;
   installed = true;
   ensureUniversalBpsOpportunityDiscovery();
+  ensureUniversalBpsSearchExpansion();
   for (const candidate of measuredCandidateRegistry.getRecent(MAX_PLANS)) observeCandidate(candidate);
   unsubscribe = measuredCandidateRegistry.onUpdate(observeCandidate);
 
@@ -244,6 +263,8 @@ export function ensureUniversalFeeOvercompensationEngine(): void {
     profitableTradeBlockedWhenOvercompensationUnavailable: false,
     publicPromotionCanCreateProfitability: false,
     accountEligibilityAuthenticationRequired: true,
+    recursiveOfficialCrawlerInstalled: true,
+    broadWebSearchExpansionInstalled: true,
     realizedEvidenceOverridesForecasts: true,
     canonicalEconomicsMutation: false,
     executionAuthority: false,
