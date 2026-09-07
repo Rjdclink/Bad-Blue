@@ -11,6 +11,7 @@ import {
   reservePolymarketSystemCash,
 } from '../execution/polymarket-system-owned-cash-ledger.js';
 import { getPolymarketAuthenticatedAccountSnapshot } from '../intelligence/polymarket-authenticated-authority.js';
+import { getPolymarketGeographicEligibility, requirePolymarketGeographicEligibility } from '../intelligence/polymarket-geographic-authority.js';
 import {
   fingerprintEventSemantics,
   type EventContractSemantics,
@@ -142,7 +143,7 @@ export class PolymarketEventVenue implements EventVenue {
       semanticsFingerprint: fingerprintEventSemantics(semantics),
       observedAt: now,
       expiresAt: now + TTL_MS,
-      provenance: ['polymarket_gamma:public_market', 'semantic_fields:explicit_only_no_inference', 'execution_authority:conditional_on_authenticated_account_system_cash_and_order_evidence'],
+      provenance: ['polymarket_gamma:public_market', 'semantic_fields:explicit_only_no_inference', 'execution_authority:conditional_on_authenticated_account_system_cash_geography_and_order_evidence'],
     };
   }
 
@@ -194,20 +195,22 @@ export class PolymarketEventVenue implements EventVenue {
         'polymarket_clob:public_exact_orderbook_depth',
         ...(feeBps !== null ? ['polymarket_clob:market_fee_rate_authoritative_account_independent'] : ['polymarket_fee:evidence_missing']),
         authenticated ? 'polymarket_account:l1_l2_authenticated' : 'polymarket_account:authentication_missing',
-        'depth_and_fee_observation:does_not_grant_execution_without_system_owned_cash',
+        'depth_and_fee_observation:does_not_grant_execution_without_system_owned_cash_and_geography',
       ],
     };
   }
 
   async getAccountEvidence(): Promise<EventVenueAccountEvidence> {
     const now = Date.now();
-    const [account, cash] = await Promise.all([
+    const [account, cash, geographic] = await Promise.all([
       getPolymarketAuthenticatedAccountSnapshot().catch(() => null),
       getPolymarketSystemCashSnapshot(true).catch(() => null),
+      getPolymarketGeographicEligibility(true).catch(() => null),
     ]);
     const authenticated = account !== null;
     const accountAccessible = authenticated && account.closedOnly !== true;
-    const orderSubmissionAllowed = accountAccessible && account.collateralAllowanceProven;
+    const geographicExecutionAllowed = geographic?.eligible === true;
+    const orderSubmissionAllowed = accountAccessible && account.collateralAllowanceProven && geographicExecutionAllowed;
     const prefundedSystemOwnedUsd = cash?.authenticatedCapacity ? cash.usableUsd : null;
     return {
       venue: this.venue,
@@ -225,11 +228,13 @@ export class PolymarketEventVenue implements EventVenue {
       // discounts. Authenticated account identity plus the exact per-token fee
       // endpoint therefore completes the execution fee authority at quote time.
       feeEvidenceAuthenticated: authenticated,
-      observedAt: Math.max(now, account?.observedAt ?? 0, cash?.observedAt ?? 0),
+      observedAt: Math.max(now, account?.observedAt ?? 0, cash?.observedAt ?? 0, geographic?.observedAt ?? 0),
       expiresAt: now + TTL_MS,
       provenance: [
         ...(account?.provenance ?? ['polymarket_account:authentication_missing']),
         ...(cash ? ['polymarket_system_cash:canonical_owned_lot_authority'] : ['polymarket_system_cash:evidence_missing']),
+        ...(geographic?.provenance ?? ['polymarket_geographic_execution:evidence_missing_fail_closed']),
+        geographicExecutionAllowed ? 'polymarket_geographic_execution:allowed' : 'polymarket_geographic_execution:not_allowed_or_unproven',
         'polymarket_fee_model:market_specific_not_account_tiered',
         'account_balance_mints_ownership:false',
       ],
@@ -238,6 +243,7 @@ export class PolymarketEventVenue implements EventVenue {
 
   async placeOrRecoverOrder(request: EventVenueOrderRequest): Promise<EventVenueOrderState> {
     if (request.side !== 'buy') throw new Error('POLYMARKET_SYSTEM_OWNED_CONDITIONAL_INVENTORY_AUTHORITY_UNAVAILABLE');
+    await requirePolymarketGeographicEligibility(true);
     const row = await marketById(request.marketId);
     if (!row) throw new Error('POLYMARKET_MARKET_UNAVAILABLE');
     const conditionId = text(row?.conditionId ?? row?.condition_id);
