@@ -1,12 +1,16 @@
 import crypto from 'node:crypto';
 import { assertCryptocrawlRuntimeDatabaseAvailable, pool } from '../runtime/cryptocrawl-runtime-database.js';
 import type { ExactCexOrderAssetDeltaEvidence } from './cex-system-capital-settlement-evidence.js';
+import type { ExactCoinbaseOrderAssetDeltaEvidence } from './coinbase-system-capital-settlement-evidence.js';
 import {
   compareExactDecimals,
   negateExactDecimal,
   requirePositiveExactDecimal,
   subtractExactDecimals,
 } from './exact-decimal.js';
+
+export type SystemOwnedCexVenue = 'coinbase' | 'kraken' | 'okx';
+export type SystemOwnedCexSettlementEvidence = ExactCexOrderAssetDeltaEvidence | ExactCoinbaseOrderAssetDeltaEvidence;
 
 export type CexSystemCapitalSettlementAuthority =
   | {
@@ -44,7 +48,7 @@ export type CexSystemCapitalSettlementAuthority =
 
 export interface AppliedCexOwnershipSettlement {
   settlementReference: string;
-  venue: 'okx' | 'kraken';
+  venue: SystemOwnedCexVenue;
   orderId: string;
   opportunityId?: string;
   strategy?: string;
@@ -112,9 +116,11 @@ async function existingSettlement(client: any, reference: string): Promise<Appli
   if (String(row.status) !== 'APPLIED') {
     throw new Error(`CEX system-capital settlement ${reference} has unexpected durable state ${String(row.status)}`);
   }
+  const venue = String(row.venue) as SystemOwnedCexVenue;
+  if (!['coinbase', 'kraken', 'okx'].includes(venue)) throw new Error(`Unsupported durable CEX ownership venue ${String(row.venue)}`);
   return {
     settlementReference: String(row.settlement_reference),
-    venue: String(row.venue) as 'okx' | 'kraken',
+    venue,
     orderId: String(row.order_id),
     opportunityId: row.opportunity_id ? String(row.opportunity_id) : undefined,
     strategy: row.strategy ? String(row.strategy) : undefined,
@@ -125,7 +131,7 @@ async function existingSettlement(client: any, reference: string): Promise<Appli
   };
 }
 
-async function consumeSystemOwnedAsset(client: any, venue: 'okx' | 'kraken', asset: string, amount: string): Promise<string[]> {
+async function consumeSystemOwnedAsset(client: any, venue: SystemOwnedCexVenue, asset: string, amount: string): Promise<string[]> {
   let remaining = requirePositiveExactDecimal(amount, `${venue}:${asset} system-owned debit`);
   const lots = await client.query(
     `SELECT lot_id::text, remaining_decimal::text
@@ -162,7 +168,7 @@ async function consumeSystemOwnedAsset(client: any, venue: 'okx' | 'kraken', ass
 
 async function createSystemOwnedOutputLot(input: {
   client: any;
-  evidence: ExactCexOrderAssetDeltaEvidence;
+  evidence: SystemOwnedCexSettlementEvidence;
   asset: string;
   amount: string;
   opportunityId?: string;
@@ -213,7 +219,7 @@ async function createSystemOwnedOutputLot(input: {
 }
 
 export async function applyExactCexSystemOwnedSettlement(input: {
-  evidence: ExactCexOrderAssetDeltaEvidence;
+  evidence: SystemOwnedCexSettlementEvidence;
   opportunityId?: string;
   strategy?: string;
   authority: CexSystemCapitalSettlementAuthority;
@@ -221,7 +227,7 @@ export async function applyExactCexSystemOwnedSettlement(input: {
   assertCryptocrawlRuntimeDatabaseAvailable();
   requireAuthority(input.authority);
   const evidence = input.evidence;
-  if (evidence.venue !== 'okx' && evidence.venue !== 'kraken') {
+  if (!['coinbase', 'kraken', 'okx'].includes(evidence.venue)) {
     throw new Error(`Unsupported exact CEX ownership venue ${evidence.venue}`);
   }
 
@@ -312,7 +318,7 @@ export async function applyExactCexSystemOwnedSettlement(input: {
   }
 }
 
-export async function getExactSystemOwnedCexInventory(venue: 'kraken' | 'okx', asset: string): Promise<string> {
+export async function getExactSystemOwnedCexInventory(venue: SystemOwnedCexVenue, asset: string): Promise<string> {
   assertCryptocrawlRuntimeDatabaseAvailable();
   const result = await pool.query(
     `SELECT COALESCE(SUM(remaining_decimal),0)::text AS amount
