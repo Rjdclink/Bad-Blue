@@ -223,8 +223,6 @@ export async function placeOrRecoverKalshiFundingCexOrder(input: KalshiFundingCe
     }
     return { orderId: String(row.ordId), submittedAt };
   } catch (error) {
-    // Ambiguous write outcomes are recovered by the deterministic client id before
-    // any new submission is considered.
     const after = await recoverKalshiFundingCexOrder(input).catch(() => null);
     if (after) return { orderId: after, submittedAt };
     throw error;
@@ -274,6 +272,15 @@ export async function requireTerminalKalshiFundingCexFill(input: {
   return settlement;
 }
 
+export async function getExactKalshiFundingCexOrderAssetDeltas(
+  settlement: NormalizedOrderSettlement,
+): Promise<ExactCexOrderAssetDeltaEvidence> {
+  if (settlement.venue !== 'okx' && settlement.venue !== 'kraken') {
+    throw new Error(`Exact non-Coinbase Kalshi funding settlement evidence unsupported for ${settlement.venue}`);
+  }
+  return getExactSystemCapitalOrderAssetDeltas(settlement) as Promise<ExactCexOrderAssetDeltaEvidence>;
+}
+
 export async function applyKalshiFundingCexSpotOwnership(input: {
   lifecycleId: string;
   opportunityId: string;
@@ -303,7 +310,6 @@ function canonicalFeeAsset(raw: string): string {
   return upper;
 }
 
-/** Returns gross cashflow before fees plus the separately normalized economic fee cost. */
 export function summarizeKalshiFundingCexSpotEconomics(input: {
   settlement: NormalizedOrderSettlement;
   baseAsset: string;
