@@ -127,7 +127,10 @@ for (const [path, text] of [[baseExecutionPath, baseExecution], [providerExecuti
   mustNot(path, text, 'executeSystemOwnedNativeTransaction(', 'Retired zero-capital wrappers must not retain a second owned-native submission path');
 }
 
-must(schemaPath, schema, 'const SCHEMA_VERSION = 15;', 'Runtime schema must advance for the native-gas spend ledger');
+const schemaVersionMatch = schema.match(/const SCHEMA_VERSION = (\d+);/);
+if (!schemaVersionMatch || Number(schemaVersionMatch[1]) < 15) {
+  throw new Error(`Runtime schema must advance for the native-gas spend ledger (${schemaPath})`);
+}
 must(schemaPath, schema, "'045_cryptocrawler_system_native_gas_spend_authority.sql'", 'Runtime schema must provision migration 045');
 must(schemaPath, schema, "'public.cryptocrawler_system_native_gas_spends'", 'Runtime schema must require the gas spend ledger');
 must(schemaPath, schema, "'public.cryptocrawler_reserve_system_native_gas_spend(text,text,text,text,text,numeric)'", 'Runtime schema must require gas reservation authority');
