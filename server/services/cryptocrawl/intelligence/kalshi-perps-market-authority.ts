@@ -10,8 +10,8 @@ import { getKalshiMarginFeeEvidence, type KalshiMarginFeeEvidence } from './kals
 export interface KalshiMarginMarket {
   ticker: string;
   title: string;
-  contractSize: number;
-  tickSize: number;
+  contractSize: number | null;
+  tickSize: number | null;
   status: 'inactive' | 'active' | 'closed' | string;
   fractionalTradingEnabled: boolean;
   isOpen: boolean;
@@ -108,8 +108,8 @@ function normalizeMarket(row: any, observedAt: number): KalshiMarginMarket | nul
   return {
     ticker,
     title: String(row?.title || ''),
-    contractSize: positive(row?.contract_size) ?? 1,
-    tickSize: positive(row?.tick_size) ?? 0,
+    contractSize: positive(row?.contract_size),
+    tickSize: positive(row?.tick_size),
     status: String(row?.status || ''),
     fractionalTradingEnabled: row?.fractional_trading_enabled === true,
     isOpen: row?.schedule?.is_open === true,
@@ -185,7 +185,7 @@ export async function getKalshiPerpFundingEvidence(tickerInput: string): Promise
 }
 
 export async function getKalshiPerpExecutionEvidence(tickerInput: string, forceRefreshFees = false): Promise<{
-  market: KalshiMarginMarket;
+  market: KalshiMarginMarket & { contractSize: number; tickSize: number };
   orderbook: KalshiPerpOrderbook;
   funding: KalshiPerpFundingEvidence | null;
   fees: KalshiMarginFeeEvidence;
@@ -196,7 +196,7 @@ export async function getKalshiPerpExecutionEvidence(tickerInput: string, forceR
   const ticker = safeTicker(tickerInput);
   const markets = await getKalshiMarginMarkets();
   const market = markets.find(row => row.ticker === ticker);
-  if (!market || market.status !== 'active' || !market.isOpen) return null;
+  if (!market || market.status !== 'active' || !market.isOpen || market.contractSize === null || market.tickSize === null) return null;
   const [marginEnabled, orderbook, funding, fees] = await Promise.all([
     getKalshiMarginEnabled().catch(() => false),
     getKalshiPerpOrderbook(ticker),
@@ -204,7 +204,14 @@ export async function getKalshiPerpExecutionEvidence(tickerInput: string, forceR
     getKalshiMarginFeeEvidence(ticker, forceRefreshFees).catch(() => null),
   ]);
   if (!marginEnabled || !fees || orderbook.bids.length === 0 || orderbook.asks.length === 0) return null;
-  return { market, orderbook, funding, fees, marginEnabled: true, observedAt: Date.now() };
+  return {
+    market: market as KalshiMarginMarket & { contractSize: number; tickSize: number },
+    orderbook,
+    funding,
+    fees,
+    marginEnabled: true,
+    observedAt: Date.now(),
+  };
 }
 
 export async function getKalshiMarginAccountReadiness(): Promise<KalshiMarginAccountReadiness> {
