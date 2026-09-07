@@ -6,7 +6,8 @@ export type MeasuredOpportunityTopology =
   | 'MEMPOOL_BACKRUN'
   | 'LIQUIDATION'
   | 'MAKER_CEX'
-  | 'FUNDING_ARBITRAGE';
+  | 'FUNDING_ARBITRAGE'
+  | 'PREDICTION_EVENT';
 
 export type MeasuredCandidateStatus =
   | 'observed'
@@ -277,6 +278,7 @@ function emptyTopologyMetrics() {
     LIQUIDATION: topologyMetric(),
     MAKER_CEX: topologyMetric(),
     FUNDING_ARBITRAGE: topologyMetric(),
+    PREDICTION_EVENT: topologyMetric(),
   } satisfies MeasuredCandidateMetrics['byTopology'];
 }
 
