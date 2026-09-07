@@ -14,7 +14,7 @@ const runtimeSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-over
 const dockerfile = read('Dockerfile');
 
 assert.match(evidence, /KalshiFundingHedgeVenue\s*=\s*'coinbase'\s*\|\s*'kraken'\s*\|\s*'okx'/, 'Kalshi funding hedge venue set must include Coinbase, Kraken, and OKX');
-assert.match(evidence, /\['coinbase', 'kraken', 'okx'\] as const/, 'positive Kalshi funding evidence must compare all three companion venues');
+assert.match(evidence, /fundingRate\s*<\s*0[\s\S]*?\?\s*\['okx'\][\s\S]*?:\s*\['coinbase', 'kraken', 'okx'\]/, 'positive Kalshi funding evidence must compare all three companion venues while inverse funding remains OKX-only');
 assert.match(evidence, /assertCoinbaseSpotTradeReady\(\)/, 'Coinbase Kalshi hedge measurement must require authenticated trade permissions');
 assert.match(evidence, /getCoinbaseAdvancedProductConstraints\(symbol, true\)/, 'Coinbase Kalshi hedge measurement must revalidate fresh product constraints');
 assert.match(evidence, /cexOrderBookStreams\.getQuote/, 'Kalshi companion venue selection must use measured executable depth');
