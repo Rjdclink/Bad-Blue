@@ -9,6 +9,9 @@ const lifecycle = read('server/services/cryptocrawl/execution/kalshi-funding-lif
 const coinbaseExact = read('server/services/cryptocrawl/execution/coinbase-system-capital-settlement-evidence.ts');
 const inventory = read('server/services/cryptocrawl/execution/cex-inventory-ledger.ts');
 const lots = read('server/services/cryptocrawl/execution/cex-system-owned-lot-ledger.ts');
+const migration = read('server/migrations/055_cryptocrawler_coinbase_system_owned_capital.sql');
+const runtimeSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
+const dockerfile = read('Dockerfile');
 
 assert.match(evidence, /KalshiFundingHedgeVenue\s*=\s*'coinbase'\s*\|\s*'kraken'\s*\|\s*'okx'/, 'Kalshi funding hedge venue set must include Coinbase, Kraken, and OKX');
 assert.match(evidence, /\['coinbase', 'kraken', 'okx'\] as const/, 'positive Kalshi funding evidence must compare all three companion venues');
@@ -37,5 +40,11 @@ assert.match(capital, /createProductionCexSettlementAdapters\(\)\[venue\]/, 'Kal
 assert.match(capital, /cexInventoryLedger\.reserve/, 'Kalshi hedge capital must reserve through canonical inventory authority');
 assert.match(lifecycle, /systemOwnedCexHedgeRequired:\s*true/, 'Kalshi funding lifecycle must retain system-owned companion-venue capital requirement');
 assert.match(lifecycle, /accountBalanceCreatesOwnership:\s*false/, 'Kalshi funding lifecycle must explicitly deny account-balance ownership');
+
+assert.match(migration, /CHECK \(venue IN \('coinbase','kraken','okx'\)\)/, 'Coinbase must be admitted by the durable owned-lot and settlement venue constraints');
+assert.match(migration, /account balances never create rows/i, 'Coinbase schema migration must preserve the no-balance-ownership invariant');
+assert.match(runtimeSchema, /SCHEMA_VERSION = 25/, 'Overflow runtime schema version must advance for Coinbase ownership constraints');
+assert.match(runtimeSchema, /055_cryptocrawler_coinbase_system_owned_capital\.sql/, 'Overflow runtime authority must apply the Coinbase ownership migration');
+assert.match(dockerfile, /055_cryptocrawler_coinbase_system_owned_capital\.sql/, 'production image must package the Coinbase ownership migration');
 
 console.log('[kalshi-coinbase-funding-integration] PASS: Coinbase joins Kraken/OKX as a measured positive-funding Kalshi hedge venue without granting operator-balance authority');
