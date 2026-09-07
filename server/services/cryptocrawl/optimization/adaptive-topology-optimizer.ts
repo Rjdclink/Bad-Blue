@@ -50,6 +50,7 @@ const TOPOLOGIES: MeasuredOpportunityTopology[] = [
   'LIQUIDATION',
   'MAKER_CEX',
   'FUNDING_ARBITRAGE',
+  'PREDICTION_EVENT',
 ];
 
 function clamp(value: number, min: number, max: number): number {
