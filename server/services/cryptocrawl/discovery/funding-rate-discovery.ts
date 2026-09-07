@@ -63,6 +63,16 @@ function splitCanonicalSymbol(symbol: string): { base: string; quote: 'USDT' | '
   return match ? { base: match[1], quote: match[2] as 'USDT' | 'USDC' | 'USD' } : null;
 }
 
+function kalshiPerpBase(tickerInput: string): string | null {
+  const ticker = tickerInput.trim().toUpperCase();
+  const current = ticker.match(/^([A-Z0-9]+)-PERP$/);
+  if (current) return canonicalBase(current[1]);
+  const legacyKx = ticker.match(/^KX([A-Z0-9]+)PERP$/);
+  if (legacyKx) return canonicalBase(legacyKx[1]);
+  const legacyCompact = ticker.match(/^([A-Z0-9]+)PERP$/);
+  return legacyCompact ? canonicalBase(legacyCompact[1]) : null;
+}
+
 function midpoint(bid: unknown, ask: unknown, fallback?: unknown): number | null {
   const b = positive(bid);
   const a = positive(ask);
@@ -171,9 +181,9 @@ async function fetchKalshiFunding(symbols: Set<string>): Promise<FundingRateObse
 
   const selected = markets
     .filter(market => market.status === 'active' && market.isOpen)
-    .map(market => ({ market, tickerMatch: market.ticker.match(/^([A-Z0-9]+)PERP$/i) }))
-    .filter((entry): entry is { market: (typeof markets)[number]; tickerMatch: RegExpMatchArray } => !!entry.tickerMatch)
-    .filter(entry => byBase.has(canonicalBase(entry.tickerMatch[1])))
+    .map(market => ({ market, base: kalshiPerpBase(market.ticker) }))
+    .filter((entry): entry is { market: (typeof markets)[number]; base: string } => entry.base !== null)
+    .filter(entry => byBase.has(entry.base))
     .slice(0, Math.max(1, Math.min(32, Number(process.env.CRYPTOCRAWL_KALSHI_FUNDING_SYMBOLS || 16))));
 
   const output: FundingRateObservation[] = [];
@@ -183,11 +193,10 @@ async function fetchKalshiFunding(symbols: Set<string>): Promise<FundingRateObse
     while (true) {
       const index = cursor++;
       if (index >= selected.length) return;
-      const { market, tickerMatch } = selected[index];
+      const { market, base } = selected[index];
       try {
         const funding = await getKalshiPerpFundingEvidence(market.ticker);
         if (!funding) continue;
-        const base = canonicalBase(tickerMatch[1]);
         const matchingSymbols = byBase.get(base) || [];
         const symbol = matchingSymbols.find(item => item.endsWith('USD')) || matchingSymbols[0] || `${base}USD`;
         const spotReferencePrice = market.referencePrice;
