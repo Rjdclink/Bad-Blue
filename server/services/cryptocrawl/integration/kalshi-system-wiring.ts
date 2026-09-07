@@ -1,4 +1,8 @@
 import logger from '../../../logger.js';
+import {
+  getKalshiEventOpportunitySnapshot,
+  refreshKalshiEventOpportunities,
+} from '../discovery/kalshi-event-opportunity-generator.js';
 import { ensureKalshiFundingLifecycleAdapterRegistered } from '../execution/kalshi-funding-lifecycle-adapter.js';
 import {
   getKalshiEventSystemCashSnapshot,
@@ -8,6 +12,10 @@ import {
   getKalshiEventMarketMakingSnapshot,
   refreshKalshiEventMarketMakingFrontier,
 } from '../intelligence/kalshi-event-market-making-authority.js';
+import {
+  getKalshiProbabilityCalibrationStatus,
+  runKalshiProbabilityCalibrationCycle,
+} from '../intelligence/kalshi-probability-calibration-authority.js';
 import { refreshKalshiPredictionIntelligence } from '../intelligence/kalshi-prediction-market-authority.js';
 import { ensureKalshiBpsOptimizationWiring, getKalshiBpsOptimizationSnapshot } from './kalshi-bps-optimization-wiring.js';
 import { ensureCryptaraKalshiPredictionWiring, getCryptaraKalshiPredictionSummary } from './cryptara-kalshi-prediction-wiring.js';
@@ -32,11 +40,14 @@ async function refreshPredictionSurface(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = refreshKalshiPredictionIntelligence(true)
     .then(async snapshot => {
-      const [makerResult, cashResult] = await Promise.allSettled([
+      const calibration = await runKalshiProbabilityCalibrationCycle(snapshot);
+      const [makerResult, cashResult, opportunityResult] = await Promise.allSettled([
         refreshKalshiEventMarketMakingFrontier(true),
         getKalshiEventSystemCashSnapshot(true),
+        refreshKalshiEventOpportunities(snapshot),
       ]);
       const maker = makerResult.status === 'fulfilled' ? makerResult.value : null;
+      const opportunity = opportunityResult.status === 'fulfilled' ? opportunityResult.value : null;
       if (cashResult.status === 'fulfilled') {
         eventCash = cashResult.value;
         eventCashError = null;
@@ -45,8 +56,10 @@ async function refreshPredictionSurface(): Promise<void> {
       }
       refreshCycles += 1;
       refreshErrors = snapshot.errors
+        + calibration.errors
         + (maker?.errors ?? (makerResult.status === 'rejected' ? 1 : 0))
-        + (cashResult.status === 'rejected' ? 1 : 0);
+        + (cashResult.status === 'rejected' ? 1 : 0)
+        + (opportunity?.errors ?? (opportunityResult.status === 'rejected' ? 1 : 0));
       lastRefreshAt = snapshot.observedAt;
       logger.debug('[KalshiSystem] Prediction intelligence refreshed', {
         component: 'KalshiSystemWiring',
@@ -55,6 +68,12 @@ async function refreshPredictionSurface(): Promise<void> {
         marketScanTruncated: snapshot.marketScanTruncated,
         incentives: snapshot.incentives.length,
         feeChanges: snapshot.feeChanges.length,
+        calibrationObservations: calibration.observed,
+        calibrationLabelsAttached: calibration.labelsAttached,
+        calibrationAuthorityModels: calibration.authorityModels,
+        calibrationUnresolved: calibration.unresolved,
+        eventEligibleCandidates: opportunity?.eligible ?? 0,
+        eventDataCollectionCandidates: opportunity?.dataCollection ?? 0,
         eventMakerCandidates: maker?.candidates.length ?? 0,
         eventMakerBestMeasuredSpreadAfterFeesBps: maker?.bestMeasuredMakerSpreadAfterFeesBps ?? null,
         eventMakerProjectedSpreadCanCreateProfitability: false,
@@ -65,7 +84,8 @@ async function refreshPredictionSurface(): Promise<void> {
         eventAuthenticatedPredictionCashCapacityUsd: eventCash?.authenticatedAvailableUsd ?? null,
         eventPredictionBalancePromotedToOwnership: false,
         eventPerpsMarginPromotedToPredictionCash: false,
-        executionAuthority: false,
+        rawMarketProbabilityExecutionAuthority: false,
+        executionAuthority: 'exact_calibrated_event_candidates_only',
       });
     })
     .catch(error => {
@@ -90,6 +110,8 @@ export function getKalshiSystemWiringStatus() {
     lastPredictionRefreshAt: lastRefreshAt,
     bps: getKalshiBpsOptimizationSnapshot(),
     eventMarketMaking: getKalshiEventMarketMakingSnapshot(),
+    eventOpportunities: getKalshiEventOpportunitySnapshot(),
+    probabilityCalibration: getKalshiProbabilityCalibrationStatus(),
     eventCash: eventCash ? { ...eventCash } : null,
     eventCashError,
     cryptara: getCryptaraKalshiPredictionSummary(),
@@ -98,21 +120,15 @@ export function getKalshiSystemWiringStatus() {
     duplicateExecutionSchedulerCreated: false as const,
     canonicalEconomicAuthorityChanged: false as const,
     canonicalMonteCarloAuthorityChanged: false as const,
+    rawMarketProbabilityExecutionAuthority: false as const,
     eventMakerProjectedSpreadCanCreateProfitability: false as const,
     eventIncentiveRewardPrecredited: false as const,
     eventPredictionBalancePromotedToOwnership: false as const,
     eventPerpsMarginPromotedToPredictionCash: false as const,
-    executionAuthority: false as const,
+    executionAuthority: 'exact_calibrated_event_candidates_only' as const,
   };
 }
 
-/**
- * Installs Kalshi as a measured input to existing canonical authorities and
- * registers the dedicated funding lifecycle adapter with the one existing
- * funding-position state machine. It creates no second scheduler and grants no
- * order authority by itself: live entry still requires fresh positive economics,
- * system-owned Kalshi capital, governance and terminal settlement evidence.
- */
 export function ensureKalshiSystemWiring(): void {
   if (installed || process.env.CRYPTOCRAWL_KALSHI_ENABLED === 'false') return;
   installed = true;
@@ -132,6 +148,11 @@ export function ensureKalshiSystemWiring(): void {
     component: 'KalshiSystemWiring',
     bpsMeasurement: true,
     predictionMarketIntelligence: true,
+    probabilityCalibrationDataCollection: true,
+    terminalOutcomeLabelsOnly: true,
+    chronologicalHoldoutCalibration: true,
+    calibrationDriftGate: true,
+    automaticEventOpportunityGeneration: true,
     eventMarketDepthMeasurement: true,
     eventMarketMakingFrontier: true,
     eventSystemOwnedCashAuthority: true,
@@ -146,6 +167,7 @@ export function ensureKalshiSystemWiring(): void {
     duplicateEconomicAuthority: false,
     duplicateExecutionScheduler: false,
     legacyIntelligenceAuthorityRevived: false,
+    rawMarketProbabilityExecutionAuthority: false,
     liveKalshiExecutionGrantedByThisWiring: false,
     liveKalshiExecutionRequiresSystemOwnedCapitalAndFreshAdmission: true,
   });
