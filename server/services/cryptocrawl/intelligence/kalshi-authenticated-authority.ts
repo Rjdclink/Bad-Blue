@@ -52,16 +52,16 @@ function perpsPrivateKeyRaw(): string | null {
  * event requests prefer the generic event key so a configured perps key cannot
  * accidentally shadow a valid prediction-market credential.
  */
-function apiKeyId(scope: KalshiCredentialScope = 'auto'): string | null {
+function apiKeyId(scope: Exclude<KalshiCredentialScope, 'auto'> | 'auto' = 'auto'): string | null {
   if (scope === 'event') return eventApiKeyId() || perpsApiKeyId();
   if (scope === 'perps') return perpsApiKeyId() || eventApiKeyId();
-  return perpsApiKeyId() || eventApiKeyId();
+  return eventApiKeyId() || perpsApiKeyId();
 }
 
-function privateKeyRaw(scope: KalshiCredentialScope = 'auto'): string | null {
+function privateKeyRaw(scope: Exclude<KalshiCredentialScope, 'auto'> | 'auto' = 'auto'): string | null {
   if (scope === 'event') return eventPrivateKeyRaw() || perpsPrivateKeyRaw();
   if (scope === 'perps') return perpsPrivateKeyRaw() || eventPrivateKeyRaw();
-  return perpsPrivateKeyRaw() || eventPrivateKeyRaw();
+  return eventPrivateKeyRaw() || perpsPrivateKeyRaw();
 }
 
 function normalizePem(value: string): string {
@@ -86,7 +86,7 @@ function decodePrivateKey(value: string): KeyObject {
 }
 
 const cachedPrivateKeys = new Map<string, KeyObject>();
-function privateKey(scope: KalshiCredentialScope): KeyObject {
+function privateKey(scope: Exclude<KalshiCredentialScope, 'auto'>): KeyObject {
   const raw = privateKeyRaw(scope);
   if (!raw) throw new Error(`Kalshi ${scope} private key is not configured`);
   const fingerprint = createHash('sha256').update(raw, 'utf8').digest('hex');
@@ -124,7 +124,16 @@ function normalizePath(pathWithQuery: string): string {
   return raw;
 }
 
-function signatureHeaders(method: string, pathWithQuery: string, scope: KalshiCredentialScope): Record<string, string> {
+function inferCredentialScope(pathWithQuery: string): Exclude<KalshiCredentialScope, 'auto'> {
+  const path = normalizePath(pathWithQuery).split('?')[0];
+  return path.startsWith('/trade-api/v2/margin/') ? 'perps' : 'event';
+}
+
+function signatureHeaders(
+  method: string,
+  pathWithQuery: string,
+  scope: Exclude<KalshiCredentialScope, 'auto'>,
+): Record<string, string> {
   const keyId = apiKeyId(scope);
   if (!keyId) throw new Error(`Kalshi ${scope} API key ID is not configured`);
   const timestamp = String(Date.now());
@@ -147,8 +156,9 @@ export async function kalshiAuthenticatedRequest<T>(
   options: KalshiAuthenticatedRequestOptions = {},
 ): Promise<T> {
   const method = options.method || 'GET';
-  const scope = options.credentialScope || 'auto';
   const path = normalizePath(pathWithQuery);
+  const requestedScope = options.credentialScope || 'auto';
+  const scope = requestedScope === 'auto' ? inferCredentialScope(path) : requestedScope;
   const origin = getKalshiApiOrigin(options.environment);
   const headers: Record<string, string> = {
     accept: 'application/json',
@@ -180,6 +190,7 @@ export async function kalshiAuthenticatedRequest<T>(
       component: 'KalshiAuthenticatedAuthority',
       environment: options.environment || getKalshiApiEnvironment(),
       credentialScope: scope,
+      credentialScopeRequested: requestedScope,
       method,
       path: path.split('?')[0],
       status: response.status,
