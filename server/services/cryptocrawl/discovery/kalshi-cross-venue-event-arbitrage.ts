@@ -21,6 +21,7 @@ export interface CrossVenueEventArbitrageCandidate {
   kalshiTicker: string;
   secondVenue: 'polymarket';
   secondVenueMarketId: string;
+  secondVenueConditionId: string;
   matchedContracts: number;
   kalshiOutcome: 'yes' | 'no';
   secondVenueOutcome: 'yes' | 'no';
@@ -29,6 +30,7 @@ export interface CrossVenueEventArbitrageCandidate {
   guaranteedPayoutUsd: number | null;
   kalshiFeeUsd: number | null;
   secondVenueFeeUsd: number | null;
+  /** Observable depth slippage already embedded in secondVenueEntryUsd/VWAP; never subtract twice. */
   slippageUsd: number | null;
   settlementCostReserveUsd: number | null;
   capitalLockCostUsd: number | null;
@@ -70,7 +72,8 @@ function mappings(): EventVenueEquivalenceMapping[] {
         reviewedAt: Number(row?.reviewedAt),
         reviewer: String(row?.reviewer || '').trim(),
       };
-      const complete = mapping.kalshiTicker && mapping.secondVenueMarketId && mapping.secondVenueConditionId
+      const complete = mapping.kalshiTicker && mapping.secondVenueMarketId
+        && /^0x[0-9a-fA-F]{64}$/.test(mapping.secondVenueConditionId)
         && Number.isFinite(mapping.reviewedAt) && mapping.reviewedAt > 0 && mapping.reviewer;
       return complete ? [mapping] : [];
     });
@@ -117,7 +120,10 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
         polymarketEventVenue.getMarket(mapping.secondVenueMarketId).catch(() => null),
         polymarketEventVenue.getAccountEvidence().catch(() => null),
       ]);
-      const conditionMatches = Boolean(secondMarket?.conditionId && secondMarket.conditionId === mapping.secondVenueConditionId);
+      const conditionMatches = Boolean(
+        secondMarket?.conditionId
+        && secondMarket.conditionId.toLowerCase() === mapping.secondVenueConditionId.toLowerCase(),
+      );
       const equivalence = kalshiSemantics?.complete && kalshiSemantics.semantics && secondMarket?.semantics && conditionMatches
         ? compareEventSemantics(kalshiSemantics.semantics, secondMarket.semantics)
         : null;
@@ -152,16 +158,18 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
         if (!secondQuote?.complete || secondQuote.notionalUsd === null) continue;
 
         const kalshiFeeUsd = kalshiFee?.economicCreditAllowed && kalshiFee.takerFeeUsd !== null ? kalshiFee.takerFeeUsd : null;
-        // Public fee schedule evidence is useful for collection/estimation, but it
-        // cannot satisfy the authenticated account/execution evidence requirement.
         const secondVenueFeeUsd = secondQuote.feeUsd;
+        const secondVenueRequiredCashUsd = secondVenueFeeUsd === null
+          ? null
+          : secondQuote.notionalUsd + secondVenueFeeUsd;
         const secondVenueExecutionEvidenceProven = Boolean(
           secondAccount?.authenticated
           && secondAccount.accountAccessible
           && secondAccount.orderSubmissionAllowed
           && secondAccount.feeEvidenceAuthenticated
+          && secondVenueRequiredCashUsd !== null
           && secondAccount.prefundedSystemOwnedUsd !== null
-          && secondAccount.prefundedSystemOwnedUsd >= secondQuote.notionalUsd,
+          && secondAccount.prefundedSystemOwnedUsd + 1e-9 >= secondVenueRequiredCashUsd,
         );
         const settlementCostReserveUsd = secondVenueSettlementCostReserve();
         const deadline = Math.min(
@@ -179,9 +187,11 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
         const guaranteedPayoutUsd = semanticEquivalenceProven ? contracts : null;
         const allCostsProven = kalshiFeeUsd !== null && secondVenueFeeUsd !== null && slippageUsd !== null
           && settlementCostReserveUsd !== null && capitalLockCostUsd !== null;
+        // Both leg notionals are exact depth-weighted VWAP and already embed
+        // order-book slippage. slippageUsd remains attribution/telemetry only.
         const guaranteedResidualUsd = guaranteedPayoutUsd !== null && allCostsProven && secondVenueExecutionEvidenceProven
           ? guaranteedPayoutUsd - kalshi.notionalUsd - secondQuote.notionalUsd - kalshiFeeUsd! - secondVenueFeeUsd!
-            - slippageUsd! - settlementCostReserveUsd! - capitalLockCostUsd!
+            - settlementCostReserveUsd! - capitalLockCostUsd!
           : null;
         const missingEvidence = [
           ...(kalshiSemantics?.complete ? [] : kalshiSemantics?.missing ?? ['required:kalshi_exact_semantics']),
@@ -196,7 +206,9 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
           ...(settlementCostReserveUsd !== null ? [] : ['required:verified_second_venue_settlement_cost']),
           ...(capitalLockCostUsd !== null ? [] : ['required:capital_lock_opportunity_cost']),
           ...(guaranteedResidualUsd !== null && guaranteedResidualUsd > 0 ? [] : ['required:positive_guaranteed_residual_after_every_cost']),
-          'required:durable_non_atomic_one_leg_failure_recovery',
+          // One-leg recovery is now implemented by the durable canonical lifecycle.
+          // Terminal reconciliation remains blocking until Polymarket redemption
+          // and both venue cash settlements are proven end-to-end.
           'required:cross_venue_terminal_settlement_reconciliation',
         ];
         const status: CrossVenueEventArbitrageCandidate['status'] = missingEvidence.length === 0 ? 'eligible' : 'data_collection';
@@ -205,6 +217,7 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
           kalshiTicker: signal.ticker,
           secondVenue: 'polymarket',
           secondVenueMarketId: mapping.secondVenueMarketId,
+          secondVenueConditionId: mapping.secondVenueConditionId,
           matchedContracts: contracts,
           kalshiOutcome: pair.kalshi,
           secondVenueOutcome: pair.second,
@@ -230,13 +243,15 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
             ...secondQuote.provenance,
             ...(kalshiSemantics?.provenance ?? []),
             ...(secondMarket?.provenance ?? []),
+            `second_venue_condition_id:${mapping.secondVenueConditionId}`,
             `semantic_equivalence_mapping:${mappingFingerprint(mapping)}`,
             `mapping_reviewer:${mapping.reviewer}`,
             ...(equivalence ? [`semantic_mismatches:${equivalence.mismatches.join(',') || 'none'}`] : ['semantic_comparison:incomplete']),
             'cross_venue_semantics:independently_derived_not_mapping_asserted',
             'cross_venue_complementary_payout:only_after_exact_semantic_equivalence',
-            'non_atomic_legging:fok_required_before_execution_authority',
-            'one_leg_failure:durable_recovery_required',
+            'depth_vwap_notional:slippage_embedded_exactly_once',
+            'non_atomic_legging:kalshi_fok_then_polymarket_fok',
+            'one_leg_failure:kalshi_reduce_only_fok_recovery_durable',
             'second_venue_account_balance_mints_system_ownership:false',
             'execution_authority:false',
           ],
