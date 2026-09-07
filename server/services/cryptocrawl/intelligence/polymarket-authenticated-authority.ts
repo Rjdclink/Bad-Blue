@@ -1,6 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { Wallet, utils } from 'ethers';
 import { normalizeEvmAddress, normalizePrivateKey } from '../core/wallet-identity.js';
+import { requirePolymarketGeographicEligibility } from './polymarket-geographic-authority.js';
 
 const CLOB_BASE = 'https://clob.polymarket.com';
 const CHAIN_ID = 137;
@@ -8,6 +9,8 @@ const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const EXCHANGE_V2 = '0xE111180000d2663C0091e4f400237545B87B996B';
 const NEG_RISK_EXCHANGE_V2 = '0xe2222d279d744050d28e00520010520000310F59';
 const EXCHANGE_V3 = '0xe3333700cA9d93003F00f0F71f8515005F6c00Aa';
+const INITIAL_CURSOR = 'MA==';
+const END_CURSOR = 'LTE=';
 const ORDER_TYPES = {
   Order: [
     { name: 'salt', type: 'uint256' },
@@ -373,6 +376,10 @@ export async function buildPolymarketSignedOrder(input: {
 }
 
 export async function postPolymarketSignedOrder(body: Record<string, unknown>): Promise<any> {
+  // Geographic execution authority must be checked immediately before every
+  // new opening order. Read/cancel/reconciliation calls deliberately remain
+  // available so a restricted or close-only account can reduce exposure.
+  await requirePolymarketGeographicEligibility(true);
   return polymarketAuthenticatedRequest<any>('/order', { method: 'POST', body });
 }
 
@@ -387,8 +394,25 @@ export async function cancelPolymarketOrder(orderId: string): Promise<any> {
 }
 
 export async function getPolymarketTrades(input: { id?: string; market?: string; assetId?: string } = {}): Promise<any[]> {
-  const payload = await polymarketAuthenticatedRequest<any>('/data/trades', {
-    query: { id: input.id, market: input.market, asset_id: input.assetId, next_cursor: 'MA==' },
-  });
-  return Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+  const rows: any[] = [];
+  const seen = new Set<string>();
+  let cursor = INITIAL_CURSOR;
+  for (let page = 0; page < 100 && cursor !== END_CURSOR; page++) {
+    const payload = await polymarketAuthenticatedRequest<any>('/data/trades', {
+      query: { id: input.id, market: input.market, asset_id: input.assetId, next_cursor: cursor },
+    });
+    const data = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+    for (const trade of data) {
+      const key = String(trade?.id || `${trade?.taker_order_id || ''}:${trade?.transaction_hash || ''}:${trade?.match_time || trade?.matchtime || ''}:${trade?.size || ''}`);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(trade);
+    }
+    if (Array.isArray(payload)) break;
+    const next = String(payload?.next_cursor || END_CURSOR);
+    if (!next || next === cursor) throw new Error('POLYMARKET_TRADES_CURSOR_DID_NOT_ADVANCE');
+    cursor = next;
+  }
+  if (cursor !== END_CURSOR) throw new Error('POLYMARKET_TRADES_PAGINATION_LIMIT_EXCEEDED');
+  return rows;
 }
