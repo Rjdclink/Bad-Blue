@@ -18,6 +18,8 @@ const feeResolver = read('server/services/cryptocrawl/intelligence/cex-fee-resol
 const eventFees = read('server/services/cryptocrawl/intelligence/kalshi-event-fee-authority.ts');
 const marginFees = read('server/services/cryptocrawl/intelligence/kalshi-margin-fee-authority.ts');
 const perpsMarket = read('server/services/cryptocrawl/intelligence/kalshi-perps-market-authority.ts');
+const eventOrders = read('server/services/cryptocrawl/execution/kalshi-event-order-authority.ts');
+const eventMaker = read('server/services/cryptocrawl/execution/kalshi-event-market-maker.ts');
 const fundingDiscovery = read('server/services/cryptocrawl/discovery/funding-rate-discovery.ts');
 const registry = read('server/services/cryptocrawl/discovery/measured-candidate-registry.ts');
 
@@ -45,6 +47,12 @@ must(marginFees.includes("source: 'kalshi_authenticated_effective_margin_fee_tie
 must(marginFees.includes('synthetic: false'), 'margin fee evidence must never be synthetic');
 must(perpsMarket.includes('getKalshiMarginEnabled'), 'perps execution evidence must prove authenticated margin entitlement');
 must(perpsMarket.includes('if (!marginEnabled || !fees'), 'perps execution must fail closed without entitlement or fee evidence');
+
+must(eventOrders.includes('getKalshiEventExchangeIndex'), 'event order authority must resolve the current market exchange shard');
+must(eventOrders.includes('market_ticker: state.ticker'), 'event cancel must auto-route using the exact market ticker');
+must(eventOrders.includes('exchange_index: exchangeIndex'), 'event order groups must bind to the resolved market shard');
+must(eventMaker.includes('createKalshiEventOrderGroup(Math.max(contracts, contracts * 2), plan.ticker)'), 'maker order groups must be created on the candidate market shard');
+mustNot(eventOrders.includes('exchange_index: 0'), 'event order submission/cancel must never hardcode exchange shard zero');
 
 must(superEngine.includes("candidate.topology === 'FUNDING_ARBITRAGE'"), 'Kalshi perps direct comparison must be funding-topology bounded');
 must(superEngine.includes('economicCreditAllowed: false'), 'Kalshi alternative must not directly credit candidate economics');
