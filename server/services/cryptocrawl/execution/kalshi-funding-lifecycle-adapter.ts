@@ -62,6 +62,8 @@ import {
   getOkxBaseLiability,
   proveOkxMarginShortBorrow,
   proveOkxMarginShortRepaid,
+  proveOkxMarginShortSystemOwnedCollateral,
+  recoverOkxMarginShortResidualRepayment,
 } from './okx-margin-short-authority.js';
 import {
   fundingPositionLifecycle,
@@ -200,6 +202,16 @@ async function exclusiveSystemOwnedKalshiAccount(requiredUsd: number): Promise<b
   const activeOrders = (Array.isArray(orders?.orders) ? orders.orders : [])
     .filter((row: any) => Number(row?.remaining_count || 0) > 0);
   return activeOrders.length === 0;
+}
+
+async function exclusiveSystemOwnedInverseCollateral(plan: KalshiFundingExecutionPlan): Promise<boolean> {
+  if (!inversePlan(plan)) return true;
+  if (plan.kalshi.hedgeVenue !== 'okx') return false;
+  const proof = await proveOkxMarginShortSystemOwnedCollateral({
+    quoteAsset: plan.kalshi.quoteAsset,
+    requiredQuoteAmount: hedgeQuoteRequirementUsd(plan),
+  }).catch(() => null);
+  return proof?.exclusiveSystemOwnedCollateral === true;
 }
 
 function walk(levels: readonly { price: number; quantity: number }[], quantity: number): number | null {
@@ -413,17 +425,22 @@ async function neutralizeSpotEntry(input: {
       venue: 'okx', orderId: close.orderId, symbol: plan.kalshi.hedgeSymbol,
       side: 'buy', requestedQuantity: closeQuantity, submittedAt: close.submittedAt,
     });
+    const repayment = await recoverOkxMarginShortResidualRepayment({
+      baseAsset: plan.kalshi.baseAsset,
+      expectedPrincipalBase: filled,
+      maximumRepayableBase: Number(closeSettlement.filledQuantity || 0),
+    });
     const repaid = await proveOkxMarginShortRepaid({
       baseAsset: plan.kalshi.baseAsset,
       expectedRepayBase: filled,
-      closeSubmittedAt: close.submittedAt,
+      closeSubmittedAt: input.submittedAt,
     });
     await applyInversePairAccounting({
       plan,
       lifecycleId,
       spotEntrySettlement: settlement,
       spotCloseSettlement: closeSettlement,
-      terminalLiabilityBase: repaid.liabilityBase,
+      terminalLiabilityBase: Math.max(repayment.liabilityBase, repaid.liabilityBase),
     });
     return input.hold;
   }
@@ -725,7 +742,7 @@ async function closePair(plan: KalshiFundingExecutionPlan, receipt: KalshiFundin
     symbol: plan.kalshi.hedgeSymbol,
     side: spotCloseSide,
     requestedQuantity: receipt.measuredSpotQuantity,
-    submittedAt: Date.now() - 60_000,
+    submittedAt: receipt.openedAt,
   }).catch(() => null);
   let perpState = await getKalshiPerpOrder(perpCloseOrderId).catch(() => null);
 
@@ -777,12 +794,17 @@ async function closePair(plan: KalshiFundingExecutionPlan, receipt: KalshiFundin
   }
 
   if (inverse) {
+    const repayment = await recoverOkxMarginShortResidualRepayment({
+      baseAsset: plan.kalshi.baseAsset,
+      expectedPrincipalBase: receipt.measuredSpotQuantity,
+      maximumRepayableBase: Number(spotSettlement.filledQuantity || 0),
+    });
     const repaid = await proveOkxMarginShortRepaid({
       baseAsset: plan.kalshi.baseAsset,
       expectedRepayBase: receipt.measuredSpotQuantity,
-      closeSubmittedAt: Date.now() - 60_000,
+      closeSubmittedAt: receipt.openedAt,
     });
-    if (repaid.liabilityBase > Math.max(1e-10, receipt.measuredSpotQuantity * 1e-6)) {
+    if (Math.max(repayment.liabilityBase, repaid.liabilityBase) > Math.max(1e-10, receipt.measuredSpotQuantity * 1e-6)) {
       throw new Error('KALSHI_FUNDING_INVERSE_TERMINAL_LIABILITY_NONZERO');
     }
   } else {
@@ -822,7 +844,7 @@ async function terminalEconomics(input: {
       symbol: plan.kalshi.hedgeSymbol,
       side: spotCloseSide,
       requestedQuantity: receipt.measuredSpotQuantity,
-      submittedAt: input.closedAt - 60_000,
+      submittedAt: receipt.openedAt,
     }),
     getKalshiPerpFillsForOrder({ ticker: plan.kalshi.ticker, orderId: receipt.perpOrderId, minObservedAt: receipt.entrySubmittedAt ?? receipt.openedAt, maxObservedAt: input.closedAt }),
     getKalshiPerpFillsForOrder({ ticker: plan.kalshi.ticker, orderId: input.perpCloseOrderId, minObservedAt: receipt.openedAt, maxObservedAt: input.closedAt }),
@@ -976,6 +998,7 @@ const adapter = {
     const refreshed = await currentPlan(plan).catch(() => null);
     if (!refreshed || refreshed.expiresAt <= Date.now()) return false;
     if (!await exclusiveSystemOwnedKalshiAccount(kalshiMarginRequirementUsd(refreshed)).catch(() => false)) return false;
+    if (!await exclusiveSystemOwnedInverseCollateral(refreshed).catch(() => false)) return false;
     Object.assign(rawPlan as any, refreshed);
     preparedPlans.set(refreshed.opportunityId, refreshed);
     return true;
@@ -989,6 +1012,7 @@ const adapter = {
     }
     const requiredMarginUsd = kalshiMarginRequirementUsd(plan);
     if (!await exclusiveSystemOwnedKalshiAccount(requiredMarginUsd)) throw new Error('KALSHI_FUNDING_SYSTEM_OWNED_MARGIN_NOT_EXCLUSIVE_OR_INSUFFICIENT');
+    if (!await exclusiveSystemOwnedInverseCollateral(plan)) throw new Error('KALSHI_FUNDING_OKX_SYSTEM_OWNED_COLLATERAL_NOT_EXCLUSIVE_OR_INSUFFICIENT');
     const expiresAt = holdUntil(plan);
     const margin = await reserveKalshiSystemMargin({ lifecycleId, opportunityId: plan.opportunityId, amountUsd: requiredMarginUsd, expiresAt });
     if (!margin) throw new Error('KALSHI_FUNDING_SYSTEM_OWNED_MARGIN_UNAVAILABLE');
