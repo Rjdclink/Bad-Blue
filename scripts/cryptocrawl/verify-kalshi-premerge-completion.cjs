@@ -19,6 +19,7 @@ const eventCash = read('server/services/cryptocrawl/execution/kalshi-event-syste
 const crossDiscovery = read('server/services/cryptocrawl/discovery/kalshi-cross-venue-event-arbitrage.ts');
 const crossLifecycle = read('server/services/cryptocrawl/execution/kalshi-cross-venue-event-lifecycle.ts');
 const crossTerminal = read('server/services/cryptocrawl/execution/kalshi-cross-venue-terminal-reconciliation.ts');
+const polymarketAuth = read('server/services/cryptocrawl/intelligence/polymarket-authenticated-authority.ts');
 const polymarketSettlement = read('server/services/cryptocrawl/execution/polymarket-event-settlement-authority.ts');
 const polymarketCash = read('server/services/cryptocrawl/execution/polymarket-system-owned-cash-ledger.ts');
 const canonicalDispatch = read('server/services/cryptocrawl/execution/kalshi-event-canonical-dispatch.ts');
@@ -52,6 +53,10 @@ check('cross-venue second leg is gated by fresh semantics/access/quote/profit', 
 check('cross-venue one-leg failure has durable reduce-only Kalshi recovery', has(crossLifecycle, "status: 'ONE_LEG_RECOVERY'", "leg: 'cross-unwind'", 'reduceOnly: true'));
 check('cross-venue terminal reconciliation requires Polymarket cash realization', has(crossTerminal, 'realizePolymarketEventSettlement', 'applyKalshiEventTerminalCashSettlement', 'applyPolymarketTerminalCashSettlement', "status: 'SETTLED'"));
 check('cross-venue terminal accounting releases reservations only after both venue settlements', has(crossTerminal, 'releaseKalshiEventSystemCashReservation', 'releasePolymarketSystemCashReservation', 'reservationsReleasedAfterBothVenueCashSettlements: true'));
+check('Polymarket raw order authority is pinned to production CLOB v2 contracts', has(polymarketAuth, 'const CLOB_VERSION = 2 as const', "const EXCHANGE_V2 = '0xE111180000d2663C0091e4f400237545B87B996B'", "const NEG_RISK_EXCHANGE_V2 = '0xe2222d279d744050d28e00520010520000310F59'", "version: '2'", 'const exchange = input.negRisk ? NEG_RISK_EXCHANGE_V2 : EXCHANGE_V2'));
+check('Polymarket CLOB authority cannot misclassify the Combos exchange as CLOB v3', !polymarketAuth.includes('EXCHANGE_V3') && !polymarketAuth.includes('version === 3'));
+check('Polymarket authenticated collateral authority is explicitly pUSD v2', has(polymarketAuth, 'polymarket_collateral:pUSD_v2', 'polymarket_order:pUSD_collateral_authority'));
+check('Polymarket redemption uses production pUSD and v2 collateral adapters', has(polymarketSettlement, "const COLLATERAL = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB'", "const COLLATERAL_ADAPTER = '0xAdA100Db00Ca00073811820692005400218FcE1f'", "const NEG_RISK_COLLATERAL_ADAPTER = '0xadA2005600Dec949baf300f4C6120000bDB6eAab'", 'pUSD_balance_delta:exact'));
 check('Polymarket redemption uses provenance-backed system-native gas with durable recovery', has(polymarketSettlement, 'executeSystemOwnedNativeTransaction', 'settleSystemNativeGasSpend', 'reconcileExistingSubmission', 'personalGasFallback: false'));
 check('Polymarket account balance cannot mint ownership or use personal fallback', has(polymarketCash, 'accountBalancePromoted: false', 'personalWalletFallback: false'));
 
@@ -78,4 +83,4 @@ if (failed.length) {
   console.error(`[kalshi-premerge-completion] FAIL: ${failed.map(([name]) => name).join('; ')}`);
   process.exit(1);
 }
-console.log('[kalshi-premerge-completion] PASS: bidirectional funding, directional events, post-only maker, Kalshi-Polymarket execution/recovery/redemption, Data Collection, durable system-owned capital, zero-personal-capital strategy coverage, canonical maintenance, and Overflow schema/package invariants are structurally bound');
+console.log('[kalshi-premerge-completion] PASS: bidirectional funding, directional events, post-only maker, production CLOB v2 Kalshi-Polymarket execution/recovery/redemption, Data Collection, durable system-owned capital, zero-personal-capital strategy coverage, canonical maintenance, and Overflow schema/package invariants are structurally bound');
