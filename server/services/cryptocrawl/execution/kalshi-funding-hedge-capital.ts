@@ -1,11 +1,13 @@
 import logger from '../../../logger.js';
-import { okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { cexInventoryLedger, type InventoryReservation } from './cex-inventory-ledger.js';
+import { createProductionCexSettlementAdapters } from './cex-settlement.js';
+import type { KalshiFundingHedgeVenue } from './kalshi-funding-cex-hedge.js';
 
 export interface KalshiFundingHedgeCapitalHold {
   lifecycleId: string;
   opportunityId: string;
+  venue: KalshiFundingHedgeVenue;
   baseAsset: string;
   quoteAsset: string;
   quoteReservationId: string | null;
@@ -29,17 +31,11 @@ function boundedHoldUntil(raw: number): number {
   return Math.min(raw, Date.now() + maxMs);
 }
 
-async function reconcileOkxInventory(): Promise<void> {
-  const response = await okxPrivateRequest('/api/v5/account/balance', 'GET', {}, { lane: 'account_read' });
-  const details = Array.isArray(response.data?.[0]?.details) ? response.data[0].details : [];
-  const balances: Record<string, string> = {};
-  for (const row of details) {
-    const asset = canonicalAsset(String(row?.ccy || ''));
-    const amount = Number(row?.eq ?? row?.cashBal ?? row?.availBal);
-    if (!Number.isFinite(amount) || amount < 0) continue;
-    balances[asset] = String(amount);
-  }
-  await cexInventoryLedger.reconcile('okx', balances);
+async function reconcileInventory(venue: KalshiFundingHedgeVenue): Promise<void> {
+  const adapter = createProductionCexSettlementAdapters()[venue];
+  if (!adapter.getBalances) throw new Error(`${venue} does not expose authenticated hedge-balance reconciliation`);
+  const balances = await adapter.getBalances();
+  await cexInventoryLedger.reconcile(venue, balances);
 }
 
 function remember(lifecycleId: string, reservation: InventoryReservation): void {
@@ -48,33 +44,44 @@ function remember(lifecycleId: string, reservation: InventoryReservation): void 
   liveHandles.set(lifecycleId, map);
 }
 
-async function extend(reservationId: string, opportunityId: string, holdUntil: number): Promise<void> {
+async function extend(input: {
+  reservationId: string;
+  opportunityId: string;
+  venue: KalshiFundingHedgeVenue;
+  holdUntil: number;
+}): Promise<void> {
   const result = await pool.query(
     `UPDATE ${RESERVATIONS}
-     SET expires_at=GREATEST(expires_at,to_timestamp($3/1000.0))
-     WHERE reservation_id=$1 AND opportunity_id=$2 AND venue='okx' AND expires_at > now()
+     SET expires_at=GREATEST(expires_at,to_timestamp($4/1000.0))
+     WHERE reservation_id=$1 AND opportunity_id=$2 AND venue=$3 AND expires_at > now()
      RETURNING reservation_id`,
-    [reservationId, opportunityId, boundedHoldUntil(holdUntil)],
+    [input.reservationId, input.opportunityId, input.venue, boundedHoldUntil(input.holdUntil)],
   );
-  if (result.rowCount !== 1) throw new Error(`Kalshi funding hedge reservation ${reservationId} could not be extended`);
+  if (result.rowCount !== 1) throw new Error(`Kalshi funding hedge reservation ${input.reservationId} could not be extended`);
 }
 
 async function reserveOne(input: {
   lifecycleId: string;
   opportunityId: string;
+  venue: KalshiFundingHedgeVenue;
   asset: string;
   amount: number;
   holdUntil: number;
 }): Promise<InventoryReservation | null> {
   if (!(input.amount > 0) || !Number.isFinite(input.amount)) return null;
   const reservation = await cexInventoryLedger.reserve(input.opportunityId, [{
-    venue: 'okx',
+    venue: input.venue,
     asset: input.asset,
     amount: input.amount,
   }]);
   if (!reservation) return null;
   try {
-    await extend(reservation.reservationId, input.opportunityId, input.holdUntil);
+    await extend({
+      reservationId: reservation.reservationId,
+      opportunityId: input.opportunityId,
+      venue: input.venue,
+      holdUntil: input.holdUntil,
+    });
     remember(input.lifecycleId, reservation);
     return reservation;
   } catch (error) {
@@ -86,18 +93,20 @@ async function reserveOne(input: {
 export async function reserveKalshiFundingHedgeQuote(input: {
   lifecycleId: string;
   opportunityId: string;
+  venue: KalshiFundingHedgeVenue;
   baseAsset: string;
   quoteAsset: string;
   quoteAmount: number;
   holdUntil: number;
 }): Promise<KalshiFundingHedgeCapitalHold> {
-  await reconcileOkxInventory();
+  await reconcileInventory(input.venue);
   const baseAsset = canonicalAsset(input.baseAsset);
   const quoteAsset = canonicalAsset(input.quoteAsset);
   const opportunityId = `${input.opportunityId}:kalshi_funding_hedge_quote`;
   const reservation = await reserveOne({
     lifecycleId: input.lifecycleId,
     opportunityId,
+    venue: input.venue,
     asset: quoteAsset,
     amount: input.quoteAmount,
     holdUntil: input.holdUntil,
@@ -106,6 +115,7 @@ export async function reserveKalshiFundingHedgeQuote(input: {
   return {
     lifecycleId: input.lifecycleId,
     opportunityId: input.opportunityId,
+    venue: input.venue,
     baseAsset,
     quoteAsset,
     quoteReservationId: reservation.reservationId,
@@ -121,11 +131,12 @@ export async function replaceKalshiFundingHedgeQuoteWithBase(input: {
   if (!input.hold.quoteReservationId) return input.hold;
   const amount = Number(input.exactBaseAmount);
   if (!(amount > 0) || !Number.isFinite(amount)) throw new Error('Kalshi funding exact acquired hedge base amount is invalid');
-  await reconcileOkxInventory();
+  await reconcileInventory(input.hold.venue);
   const opportunityId = `${input.hold.opportunityId}:kalshi_funding_hedge_base`;
   const base = await reserveOne({
     lifecycleId: input.hold.lifecycleId,
     opportunityId,
+    venue: input.hold.venue,
     asset: input.hold.baseAsset,
     amount,
     holdUntil: input.hold.holdUntil,
@@ -147,6 +158,7 @@ export async function replaceKalshiFundingHedgeQuoteWithBase(input: {
 export async function recoverKalshiFundingHedgeHold(input: {
   lifecycleId: string;
   opportunityId: string;
+  venue: KalshiFundingHedgeVenue;
   baseAsset: string;
   quoteAsset: string;
   holdUntil: number;
@@ -156,9 +168,9 @@ export async function recoverKalshiFundingHedgeHold(input: {
   const result = await pool.query(
     `SELECT reservation_id::text, opportunity_id, extract(epoch FROM expires_at)*1000 AS expires_at_ms
      FROM ${RESERVATIONS}
-     WHERE opportunity_id = ANY($1::text[]) AND venue='okx' AND expires_at > now()
+     WHERE opportunity_id = ANY($1::text[]) AND venue=$2 AND expires_at > now()
      ORDER BY acquired_at ASC`,
-    [[quoteOpportunityId, baseOpportunityId]],
+    [[quoteOpportunityId, baseOpportunityId], input.venue],
   );
   if (result.rows.length === 0) return null;
   const byOpportunity = new Map(result.rows.map(row => [String(row.opportunity_id), String(row.reservation_id)]));
@@ -172,6 +184,7 @@ export async function recoverKalshiFundingHedgeHold(input: {
   return {
     lifecycleId: input.lifecycleId,
     opportunityId: input.opportunityId,
+    venue: input.venue,
     baseAsset: canonicalAsset(input.baseAsset),
     quoteAsset: canonicalAsset(input.quoteAsset),
     quoteReservationId,
@@ -183,17 +196,28 @@ export async function recoverKalshiFundingHedgeHold(input: {
 export async function renewKalshiFundingHedgeHold(hold: KalshiFundingHedgeCapitalHold): Promise<boolean> {
   try {
     if (hold.quoteReservationId) {
-      await extend(hold.quoteReservationId, `${hold.opportunityId}:kalshi_funding_hedge_quote`, hold.holdUntil);
+      await extend({
+        reservationId: hold.quoteReservationId,
+        opportunityId: `${hold.opportunityId}:kalshi_funding_hedge_quote`,
+        venue: hold.venue,
+        holdUntil: hold.holdUntil,
+      });
     }
     if (hold.baseReservationId) {
-      await extend(hold.baseReservationId, `${hold.opportunityId}:kalshi_funding_hedge_base`, hold.holdUntil);
+      await extend({
+        reservationId: hold.baseReservationId,
+        opportunityId: `${hold.opportunityId}:kalshi_funding_hedge_base`,
+        venue: hold.venue,
+        holdUntil: hold.holdUntil,
+      });
     }
     return true;
   } catch (error) {
-    logger.warn('[KalshiFundingCapital] OKX hedge capital hold renewal failed closed', {
+    logger.warn('[KalshiFundingCapital] CEX hedge capital hold renewal failed closed', {
       component: 'KalshiFundingHedgeCapital',
       lifecycleId: hold.lifecycleId,
       opportunityId: hold.opportunityId,
+      venue: hold.venue,
       error: error instanceof Error ? error.message : String(error),
       capitalReleased: false,
     });
