@@ -103,16 +103,21 @@ must(acrossExecutor, "error: 'REJECT_ACROSS_DURABILITY_CALLBACK_REQUIRED'", 'Acr
 must(acrossExecutor, 'signedOriginTx = await wallet.signTransaction(populated);', 'Across origin transaction is signed before broadcast');
 must(acrossExecutor, 'depositTxnRef = ethers.utils.keccak256(signedOriginTx).toLowerCase();', 'Across recovery identity is the exact signed transaction hash');
 must(acrossExecutor, 'await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });', 'signed origin transaction is durably armed before broadcast');
-must(acrossExecutor, 'submitted = await provider.sendTransaction(signedOriginTx);', 'principal broadcast uses the exact durable signed transaction');
+must(acrossExecutor, 'const result = await executePreparedSystemOwnedNativeTransaction({', 'Across principal broadcast uses canonical system-owned native authority');
+must(acrossExecutor, 'signedTransaction: signedOriginTx', 'principal broadcast uses the exact durable signed transaction');
+must(acrossExecutor, "if (result.transactionHash !== depositTxnRef) throw new Error('ACROSS_SYSTEM_GAS_HASH_MISMATCH');", 'canonical principal broadcast preserves the durable signed transaction hash');
 mustBefore(acrossExecutor, 'await options.onSubmitted({', 'await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });', 'lifecycle row must exist before signed transaction is armed');
-mustBefore(acrossExecutor, 'await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });', 'submitted = await provider.sendTransaction(signedOriginTx);', 'signed transaction must be durable before principal broadcast');
+mustBefore(acrossExecutor, 'await armPreparedAcrossOriginTransaction({ depositTxnRef, signedOriginTx, preparedAt });', 'const result = await executePreparedSystemOwnedNativeTransaction({', 'signed transaction must be durable before canonical principal broadcast');
+mustNot(acrossExecutor, 'submitted = await provider.sendTransaction(signedOriginTx);', 'Across principal path must not bypass canonical system-owned native authority');
 must(acrossExecutor, 'duplicateSubmissionAllowed: false', 'ambiguous broadcast explicitly forbids duplicate principal submission');
 
 // Receipt-backed approval cost is preserved only when the prebroadcast cost is complete.
 must(acrossExecutor, 'approvalTxnRefs?: string[];', 'Across result exposes stable approval receipt identities');
 must(acrossExecutor, 'prebroadcastTerminalCostComplete?: boolean;', 'Across result distinguishes complete prebroadcast cost from ambiguous approval state');
-must(acrossExecutor, 'approvalTxnRefs.push(tx.hash.toLowerCase());', 'approval transaction identity is captured before receipt wait');
-must(acrossExecutor, 'const errorReceipt = (error as { receipt?: ethers.providers.TransactionReceipt } | null)?.receipt;', 'thrown approval receipts are recovered as exact gas evidence');
+must(acrossExecutor, 'const result = await executeSystemOwnedNativeTransaction({', 'approval submission uses canonical system-owned native authority');
+must(acrossExecutor, 'approvalTxnRefs.push(result.transactionHash);', 'approval transaction identity is captured from canonical owned-gas execution');
+must(acrossExecutor, 'nativeFeeWei = nativeFeeWei.add(result.actualSpentWei.toString());', 'approval gas cost uses exact canonical terminal spend');
+must(acrossExecutor, 'ACROSS_SYSTEM_OWNED_APPROVAL_GAS_UNAVAILABLE:', 'approval failures remain explicit without personal gas fallback');
 must(acrossExecutor, '...prebroadcastCost(false)', 'ambiguous approval state cannot be misreported as complete terminal cost');
 must(combinedAdapter, 'async function persistAcrossPrebroadcastTerminalCost', 'prebroadcast approval cost has a durable persistence path');
 must(combinedAdapter, "authority: 'receipt_backed_across_prebroadcast_cost'", 'prebroadcast cost authority is exact receipt-backed evidence');
