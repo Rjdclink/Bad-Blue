@@ -72,7 +72,7 @@ check('funding reserves both margin quote capital and spot-entry quote capital b
 check('OKX funding lifecycle settlement records system-owned lot provenance', funding.includes('cex_system_owned_lot_ledger:exact_spot_and_derivative_transforms'));
 check('funding is multi-period rather than falsely atomic', coverage.includes("topology: 'FUNDING_ARBITRAGE'") && coverage.includes("atomicity: 'multi_period_non_atomic'"));
 check('Kalshi funding requires system-owned margin authority', kalshiFunding.includes('systemOwnedKalshiMarginRequired: true') && kalshiFunding.includes('accountBalanceCreatesOwnership: false'));
-check('Kalshi inverse funding requires authenticated borrow and terminal zero liability', kalshiFunding.includes('proveOkxMarginShortBorrow') && kalshiFunding.includes('proveOkxMarginShortRepaid') && kalshiFunding.includes('baseLiabilityZero'));
+check('Kalshi inverse funding requires authenticated borrow and terminal zero liability', kalshiFunding.includes('proveOkxMarginShortBorrow') && kalshiFunding.includes('proveOkxMarginShortRepaid') && kalshiFunding.includes('KALSHI_FUNDING_INVERSE_TERMINAL_LIABILITY_NONZERO') && kalshiFunding.includes('okx_terminal_base_liability_zero'));
 check('Kalshi margin account balance remains capacity-only', kalshiMargin.includes('operatorBalancePromoted: false') && kalshiMargin.includes('Math.min(spendableOwnedUsd, authenticatedAvailableUsd'));
 check('Kalshi funding policy explicitly keeps borrowed assets liabilities', coverage.includes('borrowed assets remain liabilities') && coverage.includes('repaid before terminal profit ownership'));
 
