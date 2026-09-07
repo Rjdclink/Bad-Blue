@@ -25,6 +25,24 @@ export interface OkxMarginShortEvidence {
   provenance: string[];
 }
 
+export interface OkxMarginShortHealth {
+  baseAsset: string;
+  expectedPrincipalBase: number;
+  liabilityBase: number;
+  adjustedEquityUsd: number | null;
+  maintenanceMarginUsd: number;
+  marginRatio: number | null;
+  tradePermission: boolean;
+  spotBorrowEnabled: boolean;
+  autoRepayEnabled: boolean;
+  liabilityPresent: boolean;
+  liquidationBufferProven: boolean;
+  healthy: boolean;
+  observedAt: number;
+  expiresAt: number;
+  provenance: string[];
+}
+
 function finite(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -83,6 +101,27 @@ function interestRateForBase(response: any, baseAsset: string): number | null {
   return row ? nonnegative(row?.interestRate) : null;
 }
 
+function configFlags(configRow: any): { tradePermission: boolean; spotBorrowEnabled: boolean; autoRepayEnabled: boolean } {
+  return {
+    tradePermission: String(configRow?.perm || '').split(',').map((value: string) => value.trim()).includes('trade'),
+    spotBorrowEnabled: configRow?.enableSpotBorrow === true || String(configRow?.enableSpotBorrow).toLowerCase() === 'true',
+    autoRepayEnabled: configRow?.spotBorrowAutoRepay === true || String(configRow?.spotBorrowAutoRepay).toLowerCase() === 'true',
+  };
+}
+
+function liveLiquidationBuffer(input: {
+  liabilityPresent: boolean;
+  adjustedEquityUsd: number | null;
+  maintenanceMarginUsd: number;
+  marginRatio: number | null;
+}): boolean {
+  if (!input.liabilityPresent) return input.maintenanceMarginUsd <= 1e-9;
+  if (input.marginRatio !== null && input.marginRatio >= minimumMarginRatio()) return true;
+  return input.adjustedEquityUsd !== null
+    && input.maintenanceMarginUsd > 0
+    && input.adjustedEquityUsd >= input.maintenanceMarginUsd * Math.max(1.5, minimumMarginRatio() / 2);
+}
+
 /**
  * Proves the exact inverse-hedge borrowing surface without creating a loan.
  * This authority intentionally supports OKX Spot-mode borrowing first because
@@ -117,12 +156,8 @@ export async function measureOkxMarginShortEvidence(input: {
   const accountRow = balance?.data?.[0] ?? null;
   const detail = findCurrencyDetail(balance, baseAsset);
   const accountMode = String(configRow?.acctLv || '');
-  // Restrict to Spot mode until cross-account liability attribution can be made
-  // lifecycle-exclusive. This is deliberately narrower than OKX product support.
   if (accountMode !== '1') return null;
-  const tradePermission = String(configRow?.perm || '').split(',').map((value: string) => value.trim()).includes('trade');
-  const spotBorrowEnabled = configRow?.enableSpotBorrow === true || String(configRow?.enableSpotBorrow).toLowerCase() === 'true';
-  const autoRepayEnabled = configRow?.spotBorrowAutoRepay === true || String(configRow?.spotBorrowAutoRepay).toLowerCase() === 'true';
+  const { tradePermission, spotBorrowEnabled, autoRepayEnabled } = configFlags(configRow);
   const maxBorrowBase = maxLoanForBase(maxLoan, baseAsset);
   const maxSellBase = nonnegative(maxAvail?.data?.[0]?.availSell);
   const currentLiabilityBase = liabilityAmount(detail?.liab);
@@ -136,11 +171,12 @@ export async function measureOkxMarginShortEvidence(input: {
   const hours = Math.max(1, Math.ceil((input.holdUntil - Date.now()) / 3_600_000));
   const projectedBorrowInterestUsd = input.baseQuantity * input.referencePriceUsd * hourlyBorrowRate * hours;
   const noExistingLiability = currentLiabilityBase <= liabilityTolerance(input.baseQuantity);
-  // With no existing liability/MMR, max-loan/max-sell are the authenticated
-  // pre-trade risk-capacity proof. Otherwise require a conservative live ratio.
-  const liquidationBufferProven = noExistingLiability
-    ? maintenanceMarginUsd <= 1e-9
-    : marginRatio !== null && marginRatio >= minimumMarginRatio();
+  const liquidationBufferProven = liveLiquidationBuffer({
+    liabilityPresent: !noExistingLiability,
+    adjustedEquityUsd,
+    maintenanceMarginUsd,
+    marginRatio,
+  });
   const executable = tradePermission
     && spotBorrowEnabled
     && autoRepayEnabled
@@ -194,6 +230,65 @@ export async function getOkxBaseLiability(baseAssetRaw: string): Promise<{ liabi
   const liabilityBase = liabilityAmount(detail?.liab);
   if (liabilityBase === null) throw new Error('OKX_MARGIN_SHORT_LIABILITY_UNAVAILABLE');
   return { liabilityBase, observedAt: Date.now() };
+}
+
+export async function assessOkxMarginShortHealth(input: {
+  baseAsset: string;
+  expectedPrincipalBase: number;
+}): Promise<OkxMarginShortHealth> {
+  const baseAsset = canonicalAsset(input.baseAsset);
+  if (!(input.expectedPrincipalBase > 0) || !Number.isFinite(input.expectedPrincipalBase)) {
+    throw new Error('OKX_MARGIN_SHORT_EXPECTED_PRINCIPAL_INVALID');
+  }
+  const [config, balance] = await Promise.all([
+    okxPrivateRequest('/api/v5/account/config', 'GET', {}, { lane: 'account_read' }),
+    okxPrivateRequest('/api/v5/account/balance', 'GET', { ccy: baseAsset }, { lane: 'account_read' }),
+  ]);
+  const configRow = config?.data?.[0] ?? null;
+  if (String(configRow?.acctLv || '') !== '1') throw new Error('OKX_MARGIN_SHORT_ACCOUNT_MODE_CHANGED');
+  const { tradePermission, spotBorrowEnabled, autoRepayEnabled } = configFlags(configRow);
+  const accountRow = balance?.data?.[0] ?? null;
+  const detail = findCurrencyDetail(balance, baseAsset);
+  const liabilityBase = liabilityAmount(detail?.liab);
+  if (liabilityBase === null) throw new Error('OKX_MARGIN_SHORT_LIABILITY_UNAVAILABLE');
+  const adjustedEquityUsd = nonnegative(accountRow?.adjEq ?? accountRow?.totalEq);
+  const maintenanceMarginUsd = nonnegative(accountRow?.mmr) ?? 0;
+  const rawMarginRatio = finite(accountRow?.mgnRatio);
+  const marginRatio = rawMarginRatio !== null && rawMarginRatio > 0 ? rawMarginRatio : null;
+  const tolerance = liabilityTolerance(input.expectedPrincipalBase);
+  const liabilityPresent = liabilityBase > tolerance;
+  const principalStillRepresented = liabilityBase + tolerance >= input.expectedPrincipalBase * 0.90;
+  const liquidationBufferProven = liveLiquidationBuffer({ liabilityPresent, adjustedEquityUsd, maintenanceMarginUsd, marginRatio });
+  const healthy = tradePermission
+    && spotBorrowEnabled
+    && autoRepayEnabled
+    && liabilityPresent
+    && principalStillRepresented
+    && liquidationBufferProven;
+  const observedAt = Date.now();
+  return {
+    baseAsset,
+    expectedPrincipalBase: input.expectedPrincipalBase,
+    liabilityBase,
+    adjustedEquityUsd,
+    maintenanceMarginUsd,
+    marginRatio,
+    tradePermission,
+    spotBorrowEnabled,
+    autoRepayEnabled,
+    liabilityPresent,
+    liquidationBufferProven,
+    healthy,
+    observedAt,
+    expiresAt: observedAt + evidenceTtlMs(),
+    provenance: [
+      'okx_margin_short_health:authenticated_account_config_and_balance',
+      'okx_margin_short_liability:must_remain_present_until_close',
+      `okx_margin_ratio_minimum:${minimumMarginRatio()}`,
+      'borrowed_base_ownership:false',
+      'short_sale_proceeds:encumbered_until_terminal_repayment',
+    ],
+  };
 }
 
 export async function proveOkxMarginShortBorrow(input: {
