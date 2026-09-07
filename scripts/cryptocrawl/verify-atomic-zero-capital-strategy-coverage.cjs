@@ -68,7 +68,11 @@ check('CEX account-wide balances are bounded by system-owned spendable lots', in
 check('CEX execution fails closed without durable system ownership', inventory.includes('systemOwnedCapitalRequired: true') && inventory.includes('operatorBalanceAuthorityGranted: false'));
 
 check('funding capital is reserved through the same system-owned CEX lot authority', fundingCapital.includes('cexInventoryLedger.reserve('));
-check('funding reserves both margin quote capital and spot-entry quote capital before opening', fundingCapital.includes("purpose: 'margin'") && fundingCapital.includes("purpose: 'spot_entry'"));
+check('funding reserves both margin quote capital and spot-entry quote capital before opening',
+  fundingCapital.includes('const marginOpportunityId = `${input.opportunityId}:funding_margin`')
+  && fundingCapital.includes('const spotOpportunityId = `${input.opportunityId}:funding_spot_entry`')
+  && fundingCapital.includes("if (!margin) throw new Error('FUNDING_SYSTEM_OWNED_MARGIN_CAPITAL_UNAVAILABLE')")
+  && fundingCapital.includes("throw new Error('FUNDING_SYSTEM_OWNED_SPOT_CAPITAL_UNAVAILABLE')"));
 check('OKX funding lifecycle settlement records system-owned lot provenance', funding.includes('cex_system_owned_lot_ledger:exact_spot_and_derivative_transforms'));
 check('funding is multi-period rather than falsely atomic', coverage.includes("topology: 'FUNDING_ARBITRAGE'") && coverage.includes("atomicity: 'multi_period_non_atomic'"));
 check('Kalshi funding requires system-owned margin authority', kalshiFunding.includes('systemOwnedKalshiMarginRequired: true') && kalshiFunding.includes('accountBalanceCreatesOwnership: false'));
