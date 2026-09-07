@@ -9,6 +9,7 @@ import {
   getKalshiPredictionSignalsForAsset,
   type KalshiPredictionMarketSignal,
 } from '../intelligence/kalshi-prediction-market-authority.js';
+import { prewarmKalshiQuantiContext } from './kalshi-quanti-context.js';
 
 const log = createLogger('CryptaraKalshiPredictionWiring');
 const installed = new WeakSet<object>();
@@ -177,6 +178,7 @@ export function ensureCryptaraKalshiPredictionWiring(): Cryptara {
     const assessment = await originalAssessOpportunity(context);
     const snapshot = buildSnapshot(context);
     storeSnapshot(snapshot);
+    prewarmKalshiQuantiContext(snapshot);
     return {
       ...assessment,
       provenance: [...new Set([
@@ -186,6 +188,7 @@ export function ensureCryptaraKalshiPredictionWiring(): Cryptara {
         `kalshi_prediction_quality:${snapshot.qualityScore.toFixed(6)}`,
         'kalshi_prediction_directional_authority:false',
         'kalshi_prediction_economic_authority:false',
+        'kalshi_quanti_context:parallel_advisory',
       ])],
     };
   };
@@ -193,6 +196,7 @@ export function ensureCryptaraKalshiPredictionWiring(): Cryptara {
   log.info('Cryptara Kalshi prediction-intelligence wiring installed', {
     cachedSignalOnly: true,
     hotPathNetworkRequestsAdded: false,
+    quantiCompParallelContext: true,
     unrelatedProbabilitiesAggregatedDirectionally: false,
     calibratedDirectionalAuthority: false,
     economicsChanged: false,
