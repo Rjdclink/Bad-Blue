@@ -138,11 +138,22 @@ BEGIN
     RETURN NULL;
   END IF;
 
+  -- One durable row per lifecycle/opportunity is deliberately reusable after
+  -- release/expiry. This avoids a restart or prior expired hold permanently
+  -- blocking the same durable lifecycle identity.
   INSERT INTO public.cryptocrawler_kalshi_margin_reservations
     (lifecycle_id, opportunity_id, amount_usd, status, expires_at, authority_evidence)
   VALUES
     (p_lifecycle_id, p_opportunity_id, p_amount_usd, 'HELD', p_expires_at,
      COALESCE(p_authority_evidence,'{}'::jsonb))
+  ON CONFLICT (lifecycle_id, opportunity_id) DO UPDATE
+  SET amount_usd=EXCLUDED.amount_usd,
+      status='HELD',
+      expires_at=EXCLUDED.expires_at,
+      authority_evidence=EXCLUDED.authority_evidence,
+      updated_at=now()
+  WHERE public.cryptocrawler_kalshi_margin_reservations.status <> 'HELD'
+     OR public.cryptocrawler_kalshi_margin_reservations.expires_at <= now()
   RETURNING reservation_id INTO result_id;
   RETURN result_id;
 END;
