@@ -27,6 +27,7 @@ import {
 import type { NormalizedOrderSettlement } from './settlement-types.js';
 
 export type KalshiFundingHedgeVenue = 'coinbase' | 'kraken' | 'okx';
+export type KalshiFundingCexTradeMode = 'cash' | 'cross';
 
 export interface KalshiFundingCexOrderIntent {
   venue: KalshiFundingHedgeVenue;
@@ -37,6 +38,8 @@ export interface KalshiFundingCexOrderIntent {
   quantity: number;
   price?: number;
   ordType?: 'fok' | 'market';
+  /** OKX only. cross is reserved for an already-proven margin/borrow lifecycle. */
+  tradeMode?: KalshiFundingCexTradeMode;
 }
 
 function clientOrderId(lifecycleId: string, leg: string): string {
@@ -145,6 +148,10 @@ export async function placeOrRecoverKalshiFundingCexOrder(input: KalshiFundingCe
   if ((input.ordType || 'fok') === 'fok' && (!(input.price! > 0) || !Number.isFinite(input.price))) {
     throw new Error('Kalshi funding CEX FOK hedge requires a finite positive limit price');
   }
+  const tradeMode = input.tradeMode ?? 'cash';
+  if (tradeMode === 'cross' && input.venue !== 'okx') {
+    throw new Error('Kalshi funding cross-margin hedge mode is authoritative only for OKX');
+  }
   const id = clientOrderId(input.lifecycleId, input.leg);
   const recovered = await recoverKalshiFundingCexOrder(input);
   if (recovered) return { orderId: recovered, submittedAt: Date.now() };
@@ -203,7 +210,7 @@ export async function placeOrRecoverKalshiFundingCexOrder(input: KalshiFundingCe
 
     const response = await okxPrivateRequest('/api/v5/trade/order', 'POST', {
       instId: constraints.exchangeSymbol,
-      tdMode: 'cash',
+      tdMode: tradeMode,
       side: input.side,
       ordType: input.ordType === 'market' ? 'market' : 'fok',
       sz: cexDecimalString(input.quantity),
@@ -217,8 +224,7 @@ export async function placeOrRecoverKalshiFundingCexOrder(input: KalshiFundingCe
     return { orderId: String(row.ordId), submittedAt };
   } catch (error) {
     // Ambiguous write outcomes are recovered by the deterministic client id before
-    // any new submission is considered. Coinbase Create Order itself is also
-    // idempotent by client_order_id, but recovery is attempted first.
+    // any new submission is considered.
     const after = await recoverKalshiFundingCexOrder(input).catch(() => null);
     if (after) return { orderId: after, submittedAt };
     throw error;
