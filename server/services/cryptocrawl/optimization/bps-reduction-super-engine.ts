@@ -1,5 +1,6 @@
 import type { MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { getCexFeeRecoverySnapshot } from '../intelligence/cex-fee-recovery-authority.js';
+import { getKalshiBpsRowForAsset } from '../integration/kalshi-bps-optimization-wiring.js';
 import type { EconomicTransformationAdvice } from './economic-transformation-engine.js';
 import {
   getRawCrossVenueEdge,
@@ -51,6 +52,22 @@ export interface BpsSynergyBundle {
   enabled: boolean;
 }
 
+export interface KalshiBpsAlternative {
+  ticker: string;
+  observedAt: number;
+  makerFeeBps: number;
+  takerFeeBps: number;
+  makerVsTakerSavingsBpsPerLeg: number;
+  makerVsTakerSavingsBpsRoundTrip: number;
+  quotedSpreadBps: number | null;
+  fundingRateBps: number | null;
+  fundingDirectionBenefit: 'short_receives' | 'long_receives' | 'none' | 'unknown';
+  marketOpen: boolean;
+  directEconomicComparisonEligible: boolean;
+  economicCreditAllowed: false;
+  executionAuthority: false;
+}
+
 export interface BpsReductionSuperPlan {
   opportunityId: string;
   symbol: string | null;
@@ -70,6 +87,7 @@ export interface BpsReductionSuperPlan {
   eventTriggers: string[];
   counterfactuals: string[];
   synergyBundles: BpsSynergyBundle[];
+  kalshiAlternative: KalshiBpsAlternative | null;
   governorMultiplier: number;
   effectivePriorityScore: number;
   monteCarloSearchMultiplier: number;
@@ -264,7 +282,7 @@ function synergyBundles(activeIds: readonly number[]): BpsSynergyBundle[] {
   }));
 }
 
-function counterfactualsFor(candidate: MeasuredCandidate): string[] {
+function counterfactualsFor(candidate: MeasuredCandidate, kalshi: KalshiBpsAlternative | null): string[] {
   const common = ['twenty_five_percent_less_notional', 'lower_latency_revalidation'];
   if (candidate.topology === 'CEX_CEX' || candidate.topology === 'MAKER_CEX') {
     return [...common, 'second_best_venue', 'maker_vs_taker_mode', 'prepositioned_inventory'];
@@ -282,9 +300,38 @@ function counterfactualsFor(candidate: MeasuredCandidate): string[] {
     return [...common, 'alternate_flash_provider', 'alternate_collateral_route', 'gas_sponsorship_or_batching'];
   }
   if (candidate.topology === 'FUNDING_ARBITRAGE') {
-    return [...common, 'alternate_venue_pair', 'maker_entry_mode', 'prepositioned_inventory'];
+    return [
+      ...common,
+      'alternate_venue_pair',
+      'maker_entry_mode',
+      'prepositioned_inventory',
+      ...(kalshi ? ['kalshi_perps_measured_alternate_route'] : []),
+    ];
   }
   return common;
+}
+
+function kalshiAlternativeFor(candidate: MeasuredCandidate, symbol: string | null): KalshiBpsAlternative | null {
+  if (!symbol) return null;
+  const row = getKalshiBpsRowForAsset(symbol);
+  if (!row) return null;
+  return {
+    ticker: row.ticker,
+    observedAt: row.observedAt,
+    makerFeeBps: row.makerFeeBps,
+    takerFeeBps: row.takerFeeBps,
+    makerVsTakerSavingsBpsPerLeg: row.makerVsTakerSavingsBpsPerLeg,
+    makerVsTakerSavingsBpsRoundTrip: row.makerVsTakerSavingsBpsRoundTrip,
+    quotedSpreadBps: row.quotedSpreadBps,
+    fundingRateBps: row.fundingRateBps,
+    fundingDirectionBenefit: row.fundingDirectionBenefit,
+    marketOpen: row.marketOpen,
+    // A perp route is mechanically comparable only to funding/derivatives search;
+    // it is never silently substituted for Coinbase/Kraken/OKX spot execution.
+    directEconomicComparisonEligible: candidate.topology === 'FUNDING_ARBITRAGE',
+    economicCreditAllowed: false,
+    executionAuthority: false,
+  };
 }
 
 function tacticState(key: string): TacticOutcomeState {
@@ -360,6 +407,7 @@ export function buildBpsReductionSuperPlan(
   mesh: BpsSuperEngineMeshInput | null,
 ): BpsReductionSuperPlan {
   const symbol = symbolOf(candidate);
+  const kalshiAlternative = kalshiAlternativeFor(candidate, symbol);
   const halfLifeMs = learnedHalfLifeMs(candidate);
   const edge = getRawCrossVenueEdge(candidate)?.grossEdgeBps ?? null;
   const quoteAge = Math.max(0, finite(candidate.quoteAgeMs) ?? 0);
@@ -396,6 +444,9 @@ export function buildBpsReductionSuperPlan(
   if ((advice?.bpsToBreakEven ?? Number.POSITIVE_INFINITY) <= 25) eventTriggers.push('near_break_even_candidate');
   if ((mesh?.cex?.closestRiskAdjustedGapBps ?? Number.POSITIVE_INFINITY) <= 10) eventTriggers.push('portfolio_cex_gap_within_10bps');
   if (weights.filter(row => row.score >= 0.30).length >= 2) eventTriggers.push('multi_venue_consensus_available');
+  if (kalshiAlternative?.directEconomicComparisonEligible && kalshiAlternative.marketOpen) {
+    eventTriggers.push('kalshi_perps_authenticated_fee_and_funding_alternative_available');
+  }
 
   const result: BpsReductionSuperPlan = {
     opportunityId: candidate.opportunityId,
@@ -410,8 +461,9 @@ export function buildBpsReductionSuperPlan(
     cvarBudgetBps,
     deficiencyClass: deficiencyClass(candidate, advice),
     eventTriggers,
-    counterfactuals: counterfactualsFor(candidate),
+    counterfactuals: counterfactualsFor(candidate, kalshiAlternative),
     synergyBundles: bundles,
+    kalshiAlternative,
     governorMultiplier: Number(governorMultiplier.toFixed(8)),
     effectivePriorityScore: Number(effectivePriorityScore.toFixed(8)),
     monteCarloSearchMultiplier: Number(monteCarloSearchMultiplier.toFixed(8)),
@@ -442,6 +494,8 @@ export function getBpsReductionSuperEngineSnapshot() {
     tacticStates,
     edgeHalfLife: [...edgeLife.entries()].map(([symbol, state]) => ({ symbol, ...state })),
     feeRecovery,
+    kalshiAlternativeSearch: 'funding_topology_only_measured_counterfactual_no_economic_credit' as const,
+    kalshiSpotSubstitutionAllowed: false as const,
     feeRecoveryAuthority: 'embedded_canonical_fees_plus_received_only_sidecar' as const,
     unreceivedProgramRecoveryCanCreateProfitability: false as const,
     canonicalBpsAuthority: 'measured_candidate_registry' as const,
