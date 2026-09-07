@@ -20,38 +20,13 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package files
 COPY package*.json ./
-
-# Railway runs this image without a CUDA runtime. onnxruntime-node bundles the
-# CPU runtime; its optional CUDA EP postinstall download is unnecessary here and
-# has repeatedly failed on the external NuGet CDN. Upstream explicitly supports
-# skipping only that extra CUDA download while retaining CPU inference.
 ENV ONNXRUNTIME_NODE_INSTALL=skip
-
-# Clean any existing node_modules and install ALL dependencies (needed for build)
 RUN rm -rf node_modules || true && \
     npm ci --legacy-peer-deps
 
-# NOTE: Playwright browser installation removed - using playwright-core for remote browser connection
-# No local browsers needed; connect to remote browser via BROWSER_WS_ENDPOINT env var
-
-# Copy application code
 COPY . .
 
-# Build application (requires dev dependencies). Payout-recipient truth, the
-# operator/treasury strategy contract, controlled-loss learning, system-owned
-# gas authority, and every Nix-Gen invariant are explicit production gates: the
-# image cannot build if signer-derived payout truth, the 20/30 randomized
-# operator strategy, 90/10 profit routing, provenance-backed $4k/80% treasury
-# sweep, lifecycle-held reservations, randomized post-first-win <=5%
-# controlled-loss learning, native-gas ownership truth, or Nix-Gen authority
-# boundaries regress. Every verifier in the globbed suites is fail-fast so an
-# early failure cannot be masked by a later successful script.
-# The normal build proves the full source tree. The deployed server bundle is
-# then rebuilt through the mandatory CryptoCrawler Overflow authority router so
-# every reachable CryptoCrawler import of server/db resolves to Overflow and
-# canonical runtime install requires the complete Overflow schema proof.
 RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
     node scripts/cryptocrawl/verify-operator-treasury-strategy.cjs && \
     node scripts/cryptocrawl/verify-controlled-loss-learning.cjs && \
@@ -63,48 +38,28 @@ RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
     node scripts/copy-static-assets.cjs && \
     node scripts/verify-build.cjs
 
-# Production stage
 FROM node:20-bookworm-slim AS production
-
-# Avoid installing optional native dependencies in production
 ENV NPM_CONFIG_OPTIONAL=false
 ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
 ENV ONNXRUNTIME_NODE_INSTALL=skip
-
-# NOTE: Chromium installation removed - using playwright-core for remote browser connection
-# Install only minimal dependencies for Node.js runtime
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     chromium \
     wget \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
-
-# Configure Playwright to skip browser downloads (using playwright-core)
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
 WORKDIR /app
-
-# Copy package files and install only production dependencies
-# Skip optional deps to avoid native module build failures
 COPY package*.json ./
 RUN rm -rf node_modules || true && \
     npm ci --omit=dev --legacy-peer-deps --ignore-optional
-
-# NOTE: Playwright browser installation removed
-# Using playwright-core for remote browser connection via BROWSER_WS_ENDPOINT
-
-# Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 
-# CryptoCrawler Overflow is a complete runtime authority plane. Bundle every
-# idempotent state/schema migration required by runtime execution, governance,
-# learning, settlement and payout state. 016 is intentionally omitted because it
-# installs pg_cron/pg_net and an active external payout scheduler; mirroring state
-# must never create a second independent transaction scheduler.
+# CryptoCrawler Overflow runtime authority migrations. 016 is intentionally
+# omitted because it owns an external scheduler and must not be duplicated.
 COPY --from=builder /app/server/migrations/007_zero_capital_execution_ledger.sql ./dist/migrations/007_zero_capital_execution_ledger.sql
 COPY --from=builder /app/server/migrations/008_zero_capital_capital_provenance.sql ./dist/migrations/008_zero_capital_capital_provenance.sql
 COPY --from=builder /app/server/migrations/009_railway_bootstrap_budget.sql ./dist/migrations/009_railway_bootstrap_budget.sql
@@ -147,31 +102,19 @@ COPY --from=builder /app/server/migrations/046_cryptocrawler_kalshi_system_owned
 COPY --from=builder /app/server/migrations/047_cryptocrawler_kalshi_event_system_owned_cash.sql ./dist/migrations/047_cryptocrawler_kalshi_event_system_owned_cash.sql
 COPY --from=builder /app/server/migrations/048_cryptocrawler_kalshi_event_lifecycle.sql ./dist/migrations/048_cryptocrawler_kalshi_event_lifecycle.sql
 COPY --from=builder /app/server/migrations/049_cryptocrawler_kalshi_probability_calibration.sql ./dist/migrations/049_cryptocrawler_kalshi_probability_calibration.sql
-
-# Overflow-only prerequisites complete migration gaps found by the repository-wide
-# authority audit without enabling duplicate schedulers or browser/API access.
+COPY --from=builder /app/server/migrations/050_cryptocrawler_kalshi_event_market_maker.sql ./dist/migrations/050_cryptocrawler_kalshi_event_market_maker.sql
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
 COPY --from=builder /app/server/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql ./dist/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql
 COPY --from=builder /app/server/migrations/overflow/004_cryptocrawler_terminal_support.sql ./dist/migrations/overflow/004_cryptocrawler_terminal_support.sql
 
-# Copy necessary runtime files
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
 COPY --from=builder /app/artifacts/cryptocrawl ./artifacts/cryptocrawl
 COPY --from=builder /app/server/services/cryptocrawl/config/chains.json ./config/chains.json
-
-# Expose application port
 EXPOSE 5000
-
-# Create non-root user for security
-RUN useradd -m appuser && \
-    chown -R appuser:appuser /app
-
+RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
-
-# Health check using dynamic port (Railway sets PORT env var)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD node -e "const port = process.env.PORT || 5000; require('http').get('http://localhost:' + port + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => {process.exit(1)})"
-
 CMD ["npm", "start"]
