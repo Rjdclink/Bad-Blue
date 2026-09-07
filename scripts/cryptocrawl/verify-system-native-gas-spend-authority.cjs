@@ -20,6 +20,12 @@ function ordered(path, text, needles, message) {
     cursor = next;
   }
 }
+function section(path, text, startNeedle, endNeedle) {
+  const start = text.indexOf(startNeedle);
+  if (start < 0) throw new Error(`Missing section start ${startNeedle} (${path})`);
+  const end = endNeedle ? text.indexOf(endNeedle, start + startNeedle.length) : -1;
+  return text.slice(start, end >= 0 ? end : undefined);
+}
 
 const migrationPath = 'server/migrations/045_cryptocrawler_system_native_gas_spend_authority.sql';
 const authorityPath = 'server/services/cryptocrawl/execution/system-native-gas-spend-authority.ts';
@@ -65,18 +71,40 @@ must(authorityPath, authority, 'releaseUnsubmittedSystemNativeGasSpend', 'Runtim
 must(authorityPath, authority, 'quarantineSubmittedSystemNativeGasSpend', 'Runtime must quarantine ambiguous submitted gas spends');
 mustNot(authorityPath, authority, 'getBalance(', 'Raw wallet balance must not be used by the ownership authority itself');
 
-must(txPath, tx, 'wallet.signTransaction(populated)', 'Native transaction must be deterministically signed before broadcast');
-must(txPath, tx, 'reserveSystemNativeGasSpend', 'Native transaction must reserve owned gas before broadcast');
-must(txPath, tx, 'bindSystemNativeGasSpendSubmission', 'Native transaction must bind its exact hash before broadcast');
-must(txPath, tx, 'provider.sendTransaction(signedTransaction)', 'Native transaction must broadcast the already-bound signed payload');
-must(txPath, tx, 'settleSystemNativeGasSpend', 'Native transaction must settle receipt gas against its reservation');
-ordered(txPath, tx, [
+const submitBoundary = section(
+  txPath,
+  tx,
+  'async function reserveBindAndBroadcastWithinSignerLane',
+  'async function waitAndSettleSystemOwnedTransaction',
+);
+const settleBoundary = section(
+  txPath,
+  tx,
+  'async function waitAndSettleSystemOwnedTransaction',
+  'export async function executePreparedSystemOwnedNativeTransaction',
+);
+const signBoundary = section(
+  txPath,
+  tx,
+  'export async function executeSystemOwnedNativeTransaction',
+  undefined,
+);
+
+must(txPath, signBoundary, 'wallet.signTransaction(populated)', 'Native transaction must be deterministically signed before broadcast');
+must(txPath, submitBoundary, 'reserveSystemNativeGasSpend({', 'Native transaction must reserve owned gas before broadcast');
+must(txPath, submitBoundary, 'bindSystemNativeGasSpendSubmission(reservation.spendId, input.envelope.transactionHash)', 'Native transaction must bind its exact hash before broadcast');
+must(txPath, submitBoundary, 'input.provider.sendTransaction(input.signedTransaction)', 'Native transaction must broadcast the already-bound exact signed payload');
+must(txPath, settleBoundary, 'settleSystemNativeGasSpend({', 'Native transaction must settle receipt gas against its reservation');
+must(txPath, signBoundary, 'reserveBindAndBroadcastWithinSignerLane({', 'Signed transaction must hand off to the single reserve/bind/broadcast boundary');
+ordered(txPath, submitBoundary, [
+  'reserveSystemNativeGasSpend({',
+  'bindSystemNativeGasSpendSubmission(reservation.spendId, input.envelope.transactionHash)',
+  'input.provider.sendTransaction(input.signedTransaction)',
+], 'Native gas submit boundary must remain reserve -> bind -> exact signed broadcast');
+ordered(txPath, signBoundary, [
   'wallet.signTransaction(populated)',
-  'reserveSystemNativeGasSpend',
-  'bindSystemNativeGasSpendSubmission',
-  'provider.sendTransaction(signedTransaction)',
-  'settleSystemNativeGasSpend',
-], 'Native gas spend lifecycle must remain sign -> reserve -> bind -> broadcast -> settle');
+  'reserveBindAndBroadcastWithinSignerLane({',
+], 'Native gas signing boundary must remain sign -> canonical submit handoff');
 
 must(proofWiringPath, proofWiring, 'getSystemNativeGasAuthority', 'Strict funding boundary must consume durable native ownership proof');
 must(proofWiringPath, proofWiring, 'sponsorOperatorMonetaryCostProvenZero: false', 'Configured sponsorship must never be promoted to zero-operator-cost proof here');
