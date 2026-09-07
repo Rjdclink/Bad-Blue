@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 16;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v16';
+const SCHEMA_VERSION = 17;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v17';
 
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
@@ -50,6 +50,7 @@ const MIGRATIONS = [
   '044_cryptocrawler_funding_feedback_recovery.sql',
   '045_cryptocrawler_system_native_gas_spend_authority.sql',
   '046_cryptocrawler_kalshi_system_owned_margin_capital.sql',
+  '047_cryptocrawler_kalshi_event_system_owned_cash.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -80,6 +81,9 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_kalshi_system_owned_margin_lots',
   'public.cryptocrawler_kalshi_margin_reservations',
   'public.cryptocrawler_kalshi_margin_settlements',
+  'public.cryptocrawler_kalshi_event_system_owned_cash_lots',
+  'public.cryptocrawler_kalshi_event_cash_reservations',
+  'public.cryptocrawler_kalshi_event_cash_settlements',
   'public.cryptocrawler_onchain_system_owned_lots',
   'public.cryptocrawler_onchain_inventory_reservations',
   'public.cryptocrawler_onchain_system_owned_settlements',
@@ -138,6 +142,9 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_reserve_kalshi_system_margin(text,text,numeric,timestamp with time zone,jsonb)',
   'public.cryptocrawler_release_kalshi_system_margin(uuid)',
   'public.cryptocrawler_renew_kalshi_system_margin(uuid,timestamp with time zone)',
+  'public.cryptocrawler_reserve_kalshi_event_system_cash(text,text,numeric,timestamp with time zone,jsonb)',
+  'public.cryptocrawler_release_kalshi_event_system_cash(uuid)',
+  'public.cryptocrawler_renew_kalshi_event_system_cash(uuid,timestamp with time zone)',
 ] as const;
 
 let schemaReady = false;
