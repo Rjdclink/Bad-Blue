@@ -17,7 +17,8 @@ import {
   fundingCrossChainExecutionAdapter,
   type FundingCrossChainDispatchResult,
 } from './funding-crosschain-execution-adapter.js';
-import { advanceKalshiEventLifecycles } from './kalshi-event-lifecycle.js';
+import { dispatchBestKalshiEventCandidate } from './kalshi-event-canonical-dispatch.js';
+import { maintainKalshiEventLifecycles } from './kalshi-event-canonical-maintenance.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
 import { routeRecentMeasuredOpportunities } from './unified-execution-router.js';
 import { executeCanonicalZeroCapitalOpportunity } from './zero-capital-canonical-executor.js';
@@ -215,6 +216,7 @@ class CanonicalExecutionScheduler {
       operatorStrategyProfitStop: 'daily_random_300_to_3500_minus_50_cushion_realized_profit_only', operatorStrategyParentSerialization: true, operatorStrategyProfitabilityAuthority: false,
       cadenceObjective: 'event_driven_eligibility_wake_with_low_latency_poll_fallback', eligibleWakeAuthority: 'measured_candidate_registry', terminalCalibrationAuthority: 'scheduling_only_confirmed_settlement_evidence',
       measuredTopologyExecutionAdapter: true, fundingCrossChainExecutionAdapter: true, fundingLifecycleMaintenanceBeforeNewEntryGates: true, kalshiEventLifecycleMaintenanceBeforeNewEntryGates: true,
+      kalshiEventCanonicalDispatch: true, kalshiEventExecutionAuthority: 'terminal_calibration_plus_exact_economics_plus_system_owned_cash',
       discoveryExecutionAuthority: false, legacyBusinessCapsAuthoritative: false, distributedResourceLeases: true, runtimeInvariantQuarantine: true, runtimeIdentityMismatchFailClosed: true, exactOpportunityIdentityRequired: true, latencyHarness: 'telemetry_only',
     });
   }
@@ -441,7 +443,7 @@ class CanonicalExecutionScheduler {
 
   private async runDispatch(): Promise<void> {
     try {
-      await advanceKalshiEventLifecycles(4);
+      await maintainKalshiEventLifecycles(4);
       await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);
     } catch (error) {
       this.setIdle('lifecycle_maintenance_failed');
@@ -467,7 +469,21 @@ class CanonicalExecutionScheduler {
     if (!operatorState || !operatorState.executionAllowed) return;
     const measured = await this.dispatchMeasuredTopologies();
     if (measured.submitted) return;
-    const refreshedOperatorState = await this.loadOperatorState();
+    let refreshedOperatorState = await this.loadOperatorState();
+    if (!refreshedOperatorState || !refreshedOperatorState.executionAllowed) return;
+
+    const eventDispatch = await dispatchBestKalshiEventCandidate();
+    if (eventDispatch.attempted && eventDispatch.submitted && eventDispatch.result) {
+      this.attempts++;
+      this.lastDispatchAt = Date.now();
+      this.lastIdleReason = null;
+      if (eventDispatch.result.settlementConfirmed) {
+        if (eventDispatch.result.success) this.settled++;
+        else this.failed++;
+      } else this.pending++;
+      return;
+    }
+    refreshedOperatorState = await this.loadOperatorState();
     if (!refreshedOperatorState || !refreshedOperatorState.executionAllowed) return;
 
     const retryWindowMs = Math.max(250, Number(process.env.CRYPTOCRAWL_EXECUTION_RETRY_WINDOW_MS || 1_000));
