@@ -403,7 +403,7 @@ async function advanceOne(row: MakerRow): Promise<KalshiEventMakerMaintenanceRes
   if (row.status === 'recovery_required' && !row.bidOrderId && row.inventoryContracts <= 1e-9) {
     const contracts = Math.max(1, Math.min(maxInventoryContracts(), row.plan.contracts, Math.floor(levels.bidContracts)));
     try {
-      const orderId = await quoteBid(row, contracts, levels.bid);
+      await quoteBid(row, contracts, levels.bid);
       await updateRow(row.lifecycleId, { status: 'quoting_bid', last_error: null });
       return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'quoting_bid', terminal: false, realizedNetProfitUsd: null };
     } catch (error) {
@@ -452,7 +452,7 @@ async function advanceOne(row: MakerRow): Promise<KalshiEventMakerMaintenanceRes
         await updateRow(row.lifecycleId, { bid_order_id: null, status: 'failed', terminal_at: new Date(), last_error: 'maker_bid_cancelled_event_risk_window' });
         return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'failed', terminal: true, realizedNetProfitUsd: 0 };
       }
-      const orderId = await quoteBid({ ...row, bidOrderId: null }, Math.min(maxInventoryContracts(), row.plan.contracts), levels.bid);
+      await quoteBid({ ...row, bidOrderId: null }, Math.min(maxInventoryContracts(), row.plan.contracts), levels.bid);
       return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'quoting_bid', terminal: false, realizedNetProfitUsd: null };
     }
   }
