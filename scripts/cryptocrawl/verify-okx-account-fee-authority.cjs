@@ -66,13 +66,20 @@ for (const source of [authority, resolver, feeSurface]) {
   assert.ok(!/SELF_REFERRAL|SELF_TRADE_REBATE|WASH_TRADE_REBATE|REFERRAL_REBATE_STACK/i.test(source), 'self-referral/wash-trade rebate logic is prohibited');
 }
 
-assert.match(funding, /OKX_SWAP_CAPABILITY_PROBE_BUDGET/);
-assert.match(funding, /Math\.abs\(right\.fundingRate\) - Math\.abs\(left\.fundingRate\)/);
-assert.match(funding, /\.slice\(0, OKX_SWAP_CAPABILITY_PROBE_BUDGET\)/);
-assert.match(funding, /Private OKX SWAP enrichment deferred by the bounded discovery budget/);
-assert.match(funding, /execution remains fail-closed/);
+// Every discovered OKX funding instrument receives authenticated capability/fee
+// enrichment on its first discovery pass. The existing OKX account-read/trade-fee
+// lane governors, keyed caches and in-flight coalescing remain the sole pressure
+// authorities; an arbitrary discovery budget may not hide otherwise measurable
+// routes or become a second execution/evidence gate.
+assert.match(funding, /firstPassPrivateEvidenceForAllOkxRoutes: true/);
+assert.match(funding, /okxPrivateCapabilityDeferred: 0/);
+assert.match(funding, /funding_private_enrichment:all_supported_okx_routes_first_pass/);
+assert.match(funding, /funding_private_evidence:budget_defer_removed/);
 assert.match(funding, /publicDiscoveryBlockedByPrivateEnrichment: false/);
 assert.match(funding, /const accountContext = await getOkxSwapAccountContext\(\)/);
 assert.match(funding, /instrument\?\.groupId/);
+assert.match(funding, /\.filter\(\(observation, index, all\) => all\.findIndex\(candidate => candidate\.instrumentId === observation\.instrumentId\) === index\)/);
+assert.ok(!funding.includes('OKX_SWAP_CAPABILITY_PROBE_BUDGET'), 'funding evidence may not be arbitrarily budget-deferred');
+assert.ok(!funding.includes('private_funding_evidence_deferred_retry'), 'budget-deferred private evidence retry must remain retired');
 
-console.log('[okx-account-fee-authority] shared semantic caching, <=5s hot-path freshness contract, live Spot-zero group truth, exact zero-BPS maker preservation, no promotional symbol assumptions, prohibited referral/wash rebate tactics, and bounded funding enrichment verified');
+console.log('[okx-account-fee-authority] shared semantic caching, <=5s hot-path freshness contract, live Spot-zero group truth, exact zero-BPS maker preservation, no promotional symbol assumptions, prohibited referral/wash rebate tactics, and first-pass authenticated funding enrichment for every discovered OKX route verified');
