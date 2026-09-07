@@ -68,13 +68,18 @@ export interface KalshiPredictionIntelligenceSnapshot {
   markets: KalshiPredictionMarketSignal[];
   incentives: KalshiIncentiveProgramEvidence[];
   feeChanges: KalshiSeriesFeeChangeEvidence[];
+  marketRowsFetched: number;
+  marketScanCap: number;
+  marketScanTruncated: boolean;
   executionAuthority: false;
   syntheticEvidence: false;
 }
 
 const CACHE_MS = Math.max(2_000, Math.min(120_000, Number(process.env.KALSHI_PREDICTION_CACHE_MS || 15_000)));
 const QUOTE_TTL_MS = Math.max(1_000, Math.min(60_000, Number(process.env.KALSHI_PREDICTION_QUOTE_TTL_MS || 10_000)));
-const MARKET_LIMIT = Math.max(10, Math.min(1_000, Number(process.env.KALSHI_PREDICTION_MARKET_LIMIT || 500)));
+const MARKET_LIMIT = Math.max(10, Math.min(5_000, Math.trunc(Number(process.env.KALSHI_PREDICTION_MARKET_LIMIT || 1_000))));
+const MARKET_PAGE_SIZE = Math.max(10, Math.min(1_000, Math.trunc(Number(process.env.KALSHI_PREDICTION_MARKET_PAGE_SIZE || 1_000))));
+const MARKET_MAX_PAGES = Math.max(1, Math.min(20, Math.trunc(Number(process.env.KALSHI_PREDICTION_MARKET_MAX_PAGES || 8))));
 let snapshot: KalshiPredictionIntelligenceSnapshot = {
   observedAt: null,
   cycles: 0,
@@ -82,6 +87,9 @@ let snapshot: KalshiPredictionIntelligenceSnapshot = {
   markets: [],
   incentives: [],
   feeChanges: [],
+  marketRowsFetched: 0,
+  marketScanCap: MARKET_LIMIT,
+  marketScanTruncated: false,
   executionAuthority: false,
   syntheticEvidence: false,
 };
@@ -170,9 +178,48 @@ async function publicJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function fetchOpenMarkets(): Promise<any[]> {
-  const payload = await publicJson<{ markets?: any[] }>('/trade-api/v2/markets?status=open&limit=' + MARKET_LIMIT);
-  return Array.isArray(payload?.markets) ? payload.markets : [];
+async function fetchOpenMarkets(): Promise<{ rows: any[]; truncated: boolean }> {
+  const rows: any[] = [];
+  const seenTickers = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor = '';
+  let moreAvailable = false;
+
+  for (let page = 0; page < MARKET_MAX_PAGES && rows.length < MARKET_LIMIT; page++) {
+    const remaining = MARKET_LIMIT - rows.length;
+    const query = new URLSearchParams({ status: 'open', limit: String(Math.min(MARKET_PAGE_SIZE, remaining)) });
+    if (cursor) query.set('cursor', cursor);
+    const payload = await publicJson<{ markets?: any[]; cursor?: string }>(`/trade-api/v2/markets?${query.toString()}`);
+    const marketRows = Array.isArray(payload?.markets) ? payload.markets : [];
+    for (const row of marketRows) {
+      const ticker = String(row?.ticker || '').trim().toUpperCase();
+      if (!ticker || seenTickers.has(ticker)) continue;
+      seenTickers.add(ticker);
+      rows.push(row);
+      if (rows.length >= MARKET_LIMIT) break;
+    }
+
+    const nextCursor = String(payload?.cursor || '').trim();
+    moreAvailable = Boolean(nextCursor);
+    if (!nextCursor) break;
+    if (seenCursors.has(nextCursor)) {
+      logger.warn('[KalshiPrediction] Market pagination cursor repeated; stopping without synthetic continuation', {
+        component: 'KalshiPredictionMarketAuthority',
+        page,
+        marketRowsFetched: rows.length,
+        cursorLoopDetected: true,
+        executionAuthority: false,
+      });
+      break;
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  return {
+    rows,
+    truncated: moreAvailable && rows.length >= MARKET_LIMIT,
+  };
 }
 
 async function fetchIncentives(): Promise<KalshiIncentiveProgramEvidence[]> {
@@ -275,9 +322,9 @@ export async function refreshKalshiPredictionIntelligence(forceRefresh = false):
   if (!forceRefresh && snapshot.observedAt !== null && now - snapshot.observedAt <= CACHE_MS) return getKalshiPredictionIntelligenceSnapshot();
   if (inFlight) return inFlight;
   inFlight = (async () => {
-    const marketRows = await fetchOpenMarkets();
+    const marketPage = await fetchOpenMarkets();
     const observedAt = Date.now();
-    const markets = marketRows.map(row => normalizeMarket(row, observedAt)).filter((row): row is KalshiPredictionMarketSignal => row !== null);
+    const markets = marketPage.rows.map(row => normalizeMarket(row, observedAt)).filter((row): row is KalshiPredictionMarketSignal => row !== null);
     const [incentives, feeChanges] = await Promise.all([
       fetchIncentives().catch(() => []),
       fetchFeeChanges().catch(() => []),
@@ -289,6 +336,9 @@ export async function refreshKalshiPredictionIntelligence(forceRefresh = false):
       markets,
       incentives,
       feeChanges,
+      marketRowsFetched: marketPage.rows.length,
+      marketScanCap: MARKET_LIMIT,
+      marketScanTruncated: marketPage.truncated,
       executionAuthority: false,
       syntheticEvidence: false,
     };
@@ -301,6 +351,9 @@ export async function refreshKalshiPredictionIntelligence(forceRefresh = false):
       markets: [],
       incentives: [],
       feeChanges: [],
+      marketRowsFetched: 0,
+      marketScanCap: MARKET_LIMIT,
+      marketScanTruncated: false,
       executionAuthority: false,
       syntheticEvidence: false,
     };
