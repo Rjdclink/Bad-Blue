@@ -44,7 +44,7 @@
     "cryptocrawl:tradingview:verify": "tsx scripts/cryptocrawl/verify-tradingview-live.ts",
     "cryptocrawl:tradingview:provenance": "tsx scripts/cryptocrawl/verify-tradingview-provenance.ts",
     "verify:master-auth": "tsx scripts/verify-master-auth-config.ts",
-    "db:push": "drizzle-kit push",
+    "db:push": "npm exec --yes --package=drizzle-kit@0.31.10 -- drizzle-kit push",
     "migrate": "tsx server/migrations/runMigrations.ts",
     "verify": "node scripts/verify-stage-1.cjs && node scripts/verify-stage-2.cjs && node scripts/verify-stage-3.cjs && node scripts/verify-stage-4.cjs && node scripts/verify-stage-5.cjs && node scripts/verify-stage-6.cjs && node scripts/verify-stage-16.cjs && node scripts/verify-stage-19.cjs && node scripts/verify-stage-20.cjs",
     "verify:routes": "node scripts/route-audit.cjs && node scripts/route-invariants.cjs",
@@ -104,7 +104,6 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/cookie-parser": "^1.4.10",
     "@types/crypto-js": "^4.2.2",
-    "@types/dompurify": "^3.2.0",
     "@types/js-yaml": "^4.0.9",
     "@types/leaflet": "^1.9.21",
     "@types/leaflet.heat": "^0.2.5",
@@ -154,6 +153,7 @@
     "jspdf": "^3.0.4",
     "leaflet": "^1.9.4",
     "leaflet.heat": "^0.2.0",
+    "lodash": "4.17.21",
     "lru-cache": "^11.2.2",
     "lucide-react": "^0.453.0",
     "maplibre-gl": "^4.7.1",
@@ -164,7 +164,7 @@
     "natural": "^8.1.0",
     "next-themes": "^0.4.6",
     "nodemailer": "^7.0.11",
-    "onnxruntime-node": "^1.20.1",
+    "onnxruntime-node": "1.29.0",
     "openid-client": "^6.8.1",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
@@ -218,7 +218,6 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.20",
-    "drizzle-kit": "^0.31.8",
     "esbuild": "^0.25.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
@@ -232,6 +231,8 @@
   },
   "overrides": {
     "glob": "^10.4.5",
-    "rimraf": "^5.0.10"
+    "rimraf": "^5.0.10",
+    "lodash.isequal": "file:vendor/lodash.isequal",
+    "node-domexception": "file:vendor/node-domexception"
   }
 }
