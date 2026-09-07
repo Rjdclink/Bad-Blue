@@ -36,9 +36,25 @@ check('inverse funding lifecycle proves borrow, health, repay, and terminal zero
 check('inverse funding never promotes borrowed base or encumbered proceeds', has(fundingLifecycle, 'borrowedBaseOwnership: false', 'shortSaleProceedsOwnershipBeforeRepayment: false', 'accountBalanceCreatesOwnership: false'));
 check('OKX inverse authority binds authenticated borrow to exclusive system-owned collateral', has(marginShort, 'proveOkxMarginShortSystemOwnedCollateral', 'exclusiveSystemOwnedCollateral === true', 'personal_capital_fallback:false'));
 
-check('directional prediction opportunities use calibrated probability and never deterministic-label probabilistic edge', has(eventGenerator, 'calibratedProbability', 'deterministicNetProfitUsd: null', 'minimumExpectedNetProfitUsd', 'systemOwnedCash'));
+check('directional prediction opportunities use calibrated probability and never deterministic-label probabilistic edge', has(
+  eventGenerator,
+  'calibratedProbability',
+  'deterministicNetProfitUsd: null',
+  'minimumExpectedNetProfitUsd',
+  'getKalshiEventSystemCashSnapshot',
+  'const usableSystemCashUsd = cash?.usableUsd ?? 0',
+  'system_owned_event_cash:required_at_execution',
+  'raw_market_probability_execution_authority:false',
+));
 check('directional event lifecycle requires system-owned cash and exact terminal settlement', has(eventLifecycle, 'reserveKalshiEventSystemCash', 'applyKalshiEventTerminalCashSettlement', 'settlement_unknown', 'quarantined'));
-check('event cash ledger treats account balance as capacity only', has(eventCash, 'predictionBalancePromoted: false', 'accountBalanceMintsOwnership: false', 'Math.min(spendableOwnedUsd, authenticatedAvailableUsd)'));
+check('event cash ledger treats account balance as capacity only', has(
+  eventCash,
+  'predictionBalancePromoted: false',
+  'accountBalanceMintsOwnership: false',
+  'const spendableOwnedUsd = Math.max(0, ownedUsd - reservedUsd)',
+  'Math.min(spendableOwnedUsd, authenticatedAvailableUsd!)',
+  "ownershipAuthority: 'cryptocrawler_kalshi_event_system_owned_cash_lots'",
+));
 
 check('maker uses true post-only quotes', has(eventMaker, 'postOnly: true', "timeInForce: 'good_till_canceled'"));
 check('maker handles quote aging and information shock', has(eventMaker, 'quoteAgeMs()', 'informationShockBps()', 'eventRiskWindowMs()'));
