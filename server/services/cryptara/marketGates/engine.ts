@@ -20,18 +20,22 @@ function isFiniteNumber(x: unknown): x is number {
 }
 
 const DEFAULT_CONFIG: Required<CryptaraMarketGateConfig> = {
-  blockOnUnknownCritical: true,
-  criticalSignals: ['volatilityRegime', 'venueLatency', 'slippage', 'drawdownCaps', 'feesRebates', 'crossVenueFees'],
+  blockOnUnknownCritical: false,
+  criticalSignals: [],
 };
 
 export class CryptaraMarketGateEngine {
   evaluate(context: CryptaraMarketGateContext, config: CryptaraMarketGateConfig = {}): GateEvaluation {
     const cfg: Required<CryptaraMarketGateConfig> = { ...DEFAULT_CONFIG, ...config };
     const signals: GateSignal[] = [];
-    const blockReasons: string[] = [];
+    const advisoryReasons: string[] = [];
     const actions: GateEvaluation['actions'] = {};
 
-    // 1) Volatility regime detection (volatility-gated entries)
+    // Cryptara market-condition signals are advisory by default. Canonical
+    // execution admission remains authoritative for fresh all-in profitability,
+    // executable depth, settlement feasibility, and hard governance constraints.
+
+    // 1) Volatility regime detection
     {
       const c = context.volatilityRegime;
       if (!c) {
@@ -57,7 +61,7 @@ export class CryptaraMarketGateEngine {
             { result }
           )
         );
-        if (status === 'fail') blockReasons.push('Volatility regime unfavorable (poor market conditions)');
+        if (status === 'fail') advisoryReasons.push('Volatility regime unfavorable (advisory)');
       }
     }
 
@@ -75,12 +79,11 @@ export class CryptaraMarketGateEngine {
         const total = buyVol + sellVol;
         const delta = buyVol - sellVol;
         const deltaNorm = total > 0 ? delta / total : 0;
-        // Arbitrage is non-directional: we treat extreme delta as instability/slippage risk.
         const status: SignalStatus = Math.abs(deltaNorm) > 0.6 ? 'fail' : 'pass';
         signals.push(
           mk('orderFlow.volumeDelta', status, `Δ=${delta.toFixed(4)} (norm=${deltaNorm.toFixed(3)})`, { buyVol, sellVol, windowMs: of.windowMs }, clamp(1 - Math.abs(deltaNorm), 0, 1))
         );
-        if (status === 'fail') blockReasons.push('Order flow imbalance suggests unstable price impact/slippage risk');
+        if (status === 'fail') advisoryReasons.push('Order flow imbalance indicates elevated execution risk (advisory)');
       }
     }
 
@@ -96,11 +99,9 @@ export class CryptaraMarketGateEngine {
           signals.push(mk('marketProfile.valueArea', 'unknown', 'Market profile volume is empty'));
         } else {
           const valueAreaPct = isFiniteNumber(mp.valueAreaPct) ? clamp(mp.valueAreaPct, 0.5, 0.9) : 0.7;
-          // POC = max volume bucket, unless overridden.
           const poc = isFiniteNumber(mp.pocPrice)
             ? mp.pocPrice
             : buckets.reduce((best, b) => (b.volume > best.volume ? b : best), buckets[0]).price;
-          // Expand value area around POC until target volume is reached.
           const pocIndex = buckets.findIndex(b => b.price === poc);
           let lo = pocIndex >= 0 ? pocIndex : Math.floor(buckets.length / 2);
           let hi = lo;
@@ -120,12 +121,9 @@ export class CryptaraMarketGateEngine {
           const vah = buckets[hi].price;
           const val = buckets[lo].price;
           const ref = mp.referencePrice;
-          const status: SignalStatus =
-            isFiniteNumber(ref) && (ref < val || ref > vah) ? 'fail' : 'pass';
-          signals.push(
-            mk('marketProfile.valueArea', status, `VAL=${val} POC=${poc} VAH=${vah}`, { val, poc, vah, valueAreaPct, referencePrice: ref })
-          );
-          if (status === 'fail') blockReasons.push('Reference price outside value area (market profile gate)');
+          const status: SignalStatus = isFiniteNumber(ref) && (ref < val || ref > vah) ? 'fail' : 'pass';
+          signals.push(mk('marketProfile.valueArea', status, `VAL=${val} POC=${poc} VAH=${vah}`, { val, poc, vah, valueAreaPct, referencePrice: ref }));
+          if (status === 'fail') advisoryReasons.push('Reference price is outside the modeled value area (advisory)');
         }
       }
     }
@@ -148,7 +146,7 @@ export class CryptaraMarketGateEngine {
           const available = Math.min(bidDepth, askDepth);
           const status: SignalStatus = available >= required ? 'pass' : 'fail';
           signals.push(mk('liquidity.heatmap', status, `depth=${available.toFixed(4)} required=${required}`, { bidDepth, askDepth, required, bandBps }));
-          if (status === 'fail') blockReasons.push('Insufficient liquidity depth near reference price');
+          if (status === 'fail') advisoryReasons.push('Auxiliary heatmap depth is below requested depth (advisory; canonical executable depth remains authoritative)');
         }
       }
     }
@@ -159,12 +157,11 @@ export class CryptaraMarketGateEngine {
       if (!fr || !isFiniteNumber(fr.fundingRate)) {
         signals.push(mk('fundingRates', 'unknown', 'No funding rate provided'));
       } else {
-        // Gate extremes: very high |funding| tends to increase crowding/whipsaw.
         const abs = Math.abs(fr.fundingRate);
-        const maxAbs = fr.unit === 'per8h' ? 0.01 : 2.0; // conservative defaults
+        const maxAbs = fr.unit === 'per8h' ? 0.01 : 2.0;
         const status: SignalStatus = abs > maxAbs ? 'fail' : 'pass';
         signals.push(mk('fundingRates', status, `funding=${fr.fundingRate} (${fr.unit})`, { openInterestUsd: fr.openInterestUsd, maxAbs }));
-        if (status === 'fail') blockReasons.push('Funding rate extreme (crowding risk / unstable basis)');
+        if (status === 'fail') advisoryReasons.push('Funding rate is extreme (advisory)');
       }
     }
 
@@ -174,10 +171,9 @@ export class CryptaraMarketGateEngine {
       if (!c || !isFiniteNumber(c.correlation)) {
         signals.push(mk('interMarket.correlation', 'unknown', 'No correlation input provided'));
       } else {
-        // For non-directional arb, correlation breaks can signal regime shifts and execution risk.
         const status: SignalStatus = Math.abs(c.correlation) < 0.1 ? 'fail' : 'pass';
         signals.push(mk('interMarket.correlation', status, `corr=${c.correlation.toFixed(3)} vs ${c.against}`, { against: c.against }));
-        if (status === 'fail') blockReasons.push('Correlation breakdown suggests unstable cross-market pricing');
+        if (status === 'fail') advisoryReasons.push('Correlation breakdown detected (advisory)');
       }
     }
 
@@ -190,12 +186,11 @@ export class CryptaraMarketGateEngine {
         const hour = Math.floor(t.utcHour);
         const risk = t.riskByHour?.[hour];
         if (!isFiniteNumber(risk)) {
-          // Default: do not block, but mark unknown.
           signals.push(mk('timeOfDay', 'unknown', `No time-of-day risk model for hour=${hour}`));
         } else {
           const status: SignalStatus = risk >= 0.8 ? 'fail' : 'pass';
           signals.push(mk('timeOfDay', status, `hour=${hour} risk=${risk.toFixed(2)}`, { hour, risk }));
-          if (status === 'fail') blockReasons.push('Time-of-day risk gate triggered');
+          if (status === 'fail') advisoryReasons.push('Time-of-day risk model is elevated (advisory)');
         }
       }
     }
@@ -210,15 +205,14 @@ export class CryptaraMarketGateEngine {
         if (!isFiniteNumber(iv)) {
           signals.push(mk('optionsImplied', 'unknown', 'No implied volatility provided'));
         } else {
-          // Conservative: very high IV indicates unstable regime.
           const status: SignalStatus = iv > 1.2 ? 'fail' : 'pass';
           signals.push(mk('optionsImplied', status, `iv=${iv.toFixed(3)} skew=${o.skew ?? 'n/a'} slope=${o.termStructureSlope ?? 'n/a'}`, { ...o }));
-          if (status === 'fail') blockReasons.push('Options-implied volatility regime too elevated');
+          if (status === 'fail') advisoryReasons.push('Options-implied volatility is elevated (advisory)');
         }
       }
     }
 
-    // 9) Latency-aware venue selection (gating if all venues too slow)
+    // 9) Latency-aware venue selection
     {
       const v = context.venueLatency;
       if (!v || !v.p50Ms || Object.keys(v.p50Ms).length === 0) {
@@ -231,11 +225,11 @@ export class CryptaraMarketGateEngine {
         const allTooSlow = entries.length > 0 && entries.every(([, ms]) => ms > max);
         const status: SignalStatus = allTooSlow ? 'fail' : 'pass';
         signals.push(mk('venueLatency', status, `best=${best?.[0] ?? 'n/a'}@${best?.[1] ?? 'n/a'}ms max=${max}ms`, { best, worst, max }));
-        if (status === 'fail') blockReasons.push('Latency gate: no venue under max latency threshold');
+        if (status === 'fail') advisoryReasons.push('Observed venue latency exceeds the advisory target');
       }
     }
 
-    // 10) Fees / rebates (maker-only + rebate optimization)
+    // 10) Fees / rebates
     {
       const f = context.feesRebates;
       if (!f) {
@@ -244,29 +238,26 @@ export class CryptaraMarketGateEngine {
         const makerOnly = f.makerOnly === true;
         const makerFee = isFiniteNumber(f.makerFeeBps) ? f.makerFeeBps : undefined;
         const takerFee = isFiniteNumber(f.takerFeeBps) ? f.takerFeeBps : undefined;
-        const rebate = isFiniteNumber(f.makerRebateBps) ? f.makerRebateBps : undefined;
+        const rebate = isFiniteNumber(f.makerRebateBps) ? Math.max(0, f.makerRebateBps) : undefined;
 
         if (makerOnly) {
-          // Maker-only requires maker fee info (and ideally rebate info).
           if (!isFiniteNumber(makerFee)) {
             signals.push(mk('feesRebates', 'unknown', 'Maker-only strategy but makerFeeBps missing'));
           } else {
-            const effectiveMakerBps = makerFee + (rebate ?? 0);
-            const status: SignalStatus = effectiveMakerBps > 5 ? 'fail' : 'pass'; // conservative cap
-            signals.push(mk('feesRebates', status, `makerOnly effectiveMakerBps=${effectiveMakerBps.toFixed(2)}`, { makerFeeBps: makerFee, makerRebateBps: rebate }));
-            if (status === 'fail') blockReasons.push('Maker-only fee/rebate economics unfavorable');
+            const effectiveMakerBps = makerFee - (rebate ?? 0);
+            signals.push(mk('feesRebates', 'pass', `makerOnly effectiveMakerBps=${effectiveMakerBps.toFixed(2)}; profitability decided by canonical all-in economics`, { makerFeeBps: makerFee, makerRebateBps: rebate, effectiveMakerBps }));
           }
         } else {
           if (!isFiniteNumber(takerFee) && !isFiniteNumber(makerFee)) {
             signals.push(mk('feesRebates', 'unknown', 'Fee data missing'));
           } else {
-            signals.push(mk('feesRebates', 'pass', 'Fee/rebate inputs present', { makerFeeBps: makerFee, takerFeeBps: takerFee, makerRebateBps: rebate }));
+            signals.push(mk('feesRebates', 'pass', 'Fee/rebate inputs present; canonical all-in economics remain authoritative', { makerFeeBps: makerFee, takerFeeBps: takerFee, makerRebateBps: rebate }));
           }
         }
       }
     }
 
-    // 11) Cross-exchange fee asymmetry (spread must beat fees)
+    // 11) Cross-exchange fee asymmetry
     {
       const x = context.crossVenueFees;
       if (!x) {
@@ -276,11 +267,11 @@ export class CryptaraMarketGateEngine {
         const netBps = x.grossSpreadBps - feeBps;
         const status: SignalStatus = netBps > 0 ? 'pass' : 'fail';
         signals.push(mk('crossVenueFees', status, `gross=${x.grossSpreadBps.toFixed(2)}bps fees=${feeBps.toFixed(2)}bps net=${netBps.toFixed(2)}bps`, { ...x, feeBps, netBps }));
-        if (status === 'fail') blockReasons.push('Cross-venue fee asymmetry: spread does not clear fees');
+        if (status === 'fail') advisoryReasons.push('Taker-only fee comparison is not positive (advisory; maker/rebate transformations and canonical all-in economics may supersede it)');
       }
     }
 
-    // 12) Funding rate capture without inventory (delta-neutral requirement)
+    // 12) Funding rate capture without inventory
     {
       const fc = context.fundingCaptureNoInventory;
       if (!fc) {
@@ -289,11 +280,11 @@ export class CryptaraMarketGateEngine {
         const ok = fc.deltaNeutralAvailable && !fc.requiresInventory;
         const status: SignalStatus = ok ? 'pass' : 'fail';
         signals.push(mk('fundingCapture.noInventory', status, ok ? 'Delta-neutral capture available' : 'Inventory-free capture not available', { ...fc }));
-        if (status === 'fail') blockReasons.push('Funding capture requires inventory or cannot be delta-neutral');
+        if (status === 'fail') advisoryReasons.push('Funding capture is not inventory-free/delta-neutral (advisory here; strategy-specific execution authority decides)');
       }
     }
 
-    // 13) Strict drawdown caps
+    // 13) Drawdown caps
     {
       const d = context.drawdownCaps;
       if (!d) {
@@ -308,11 +299,11 @@ export class CryptaraMarketGateEngine {
         }
         const status: SignalStatus = blocks.length ? 'fail' : 'pass';
         signals.push(mk('drawdownCaps', status, blocks.length ? blocks.join('; ') : 'Drawdown within caps', { ...d }));
-        if (status === 'fail') blockReasons.push('Strict drawdown cap exceeded');
+        if (status === 'fail') advisoryReasons.push('Drawdown cap telemetry exceeded (advisory here; canonical governance remains authoritative)');
       }
     }
 
-    // 14) Profit-only reinvestment ladder (risk budget grows only with realized profit)
+    // 14) Profit-only reinvestment ladder
     {
       const p = context.profitReinvestment;
       if (!p) {
@@ -327,12 +318,12 @@ export class CryptaraMarketGateEngine {
         } else {
           const status: SignalStatus = requested <= budget ? 'pass' : 'fail';
           signals.push(mk('profitReinvestment', status, `requested=${requested} budget=${budget.toFixed(2)} (profitOnly)`, { realizedProfitUsd: realized, reinvestFraction: frac, budgetUsd: budget }));
-          if (status === 'fail') blockReasons.push('Profit-only reinvestment ladder: requested notional exceeds profit budget');
+          if (status === 'fail') advisoryReasons.push('Requested notional exceeds advisory realized-profit reinvestment budget');
         }
       }
     }
 
-    // 15) Auto-pause on adverse slippage (expected or observed)
+    // 15) Slippage telemetry
     {
       const s = context.slippage;
       if (!s) {
@@ -349,38 +340,37 @@ export class CryptaraMarketGateEngine {
           const exceedObserved = isFiniteNumber(observed) && observed > max;
           const status: SignalStatus = exceedExpected || exceedObserved ? 'fail' : 'pass';
           signals.push(mk('slippage', status, `expected=${expected ?? 'n/a'}bps observed=${observed ?? 'n/a'}bps max=${max}bps`, { expectedSlippageBps: expected, observedSlippageBps: observed, maxSlippageBps: max }));
-          if (status === 'fail') {
-            blockReasons.push('Slippage gate: adverse slippage detected');
-            actions.requestAutoPause = true;
-            actions.autoPauseReason = `adverse_slippage_bps>${max}`;
-          }
+          if (status === 'fail') advisoryReasons.push('Slippage telemetry exceeds the advisory target');
         }
       }
     }
 
-    // Enforce unknown-critical => block (Stage 1 ask-and-wait semantics; Stage 2+ safety)
-    const unknownById = new Map(signals.filter(s => s.status === 'unknown').map(s => [s.id, s]));
-    const failSignals = signals.filter(s => s.status === 'fail');
-
+    // Only explicitly configured critical signals can turn this analysis-only
+    // engine into a blocker. With default configuration every signal remains
+    // advisory and canonical execution authorities retain sole veto power.
+    const hardBlockReasons: string[] = [];
     for (const critical of cfg.criticalSignals) {
       const match = signals.find(s => s.id === critical || s.id.startsWith(`${critical}.`));
       if (!match) continue;
+      if (match.status === 'fail') hardBlockReasons.push(`Explicit critical signal failed: ${match.id}`);
       if (cfg.blockOnUnknownCritical && match.status === 'unknown') {
-        blockReasons.push(`Critical signal unknown: ${match.id}`);
+        hardBlockReasons.push(`Explicit critical signal unknown: ${match.id}`);
       }
     }
 
-    const decision: GateEvaluation['decision'] = failSignals.length > 0 || blockReasons.length > 0 ? 'BLOCK' : 'ALLOW';
+    const decision: GateEvaluation['decision'] = hardBlockReasons.length > 0 ? 'BLOCK' : 'ALLOW';
 
     return {
       decision,
       signals,
-      blockReasons: Array.from(new Set(blockReasons)),
+      blockReasons: Array.from(new Set(hardBlockReasons)),
       actions,
       metadata: {
         evaluatedAt: Date.now(),
+        stageHint: advisoryReasons.length > 0
+          ? `advisory_only:${Array.from(new Set(advisoryReasons)).length}_signal_reason(s)`
+          : 'advisory_only:no_negative_signal',
       },
     };
   }
 }
-
