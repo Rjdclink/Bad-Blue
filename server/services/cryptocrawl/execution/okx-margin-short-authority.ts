@@ -273,11 +273,11 @@ export async function measureOkxMarginShortEvidence(input: {
 }
 
 export async function proveOkxMarginShortSystemOwnedCollateral(input: {
-  baseAsset: string;
+  baseAsset?: string;
   quoteAsset: string;
   requiredQuoteAmount: number;
 }): Promise<OkxMarginShortCollateralProof> {
-  const baseAsset = canonicalAsset(input.baseAsset);
+  const baseAsset = input.baseAsset ? canonicalAsset(input.baseAsset) : 'UNSPECIFIED';
   const quoteAsset = canonicalAsset(input.quoteAsset);
   if (baseAsset === quoteAsset) throw new Error('OKX_MARGIN_SHORT_COLLATERAL_ASSET_IDENTITY_INVALID');
   if (!(input.requiredQuoteAmount > 0) || !Number.isFinite(input.requiredQuoteAmount)) {
@@ -303,9 +303,6 @@ export async function proveOkxMarginShortSystemOwnedCollateral(input: {
       physicalQuoteAmount = physical;
       systemOwnedQuoteAmount = owned;
     } else if (physical > tolerance) {
-      // A pre-existing base balance could satisfy the sell without borrowing,
-      // while any other positive asset could become unreserved cross collateral.
-      // Both conditions break the isolated inverse-hedge authority and fail closed.
       unexplainedAssets.push(asset);
     }
     if (liability > tolerance) preexistingLiabilityAssets.push(asset);
@@ -329,7 +326,9 @@ export async function proveOkxMarginShortSystemOwnedCollateral(input: {
     provenance: [
       'okx_account_balance:authenticated_all_currency_physical_balance_scan',
       'cex_system_owned_lots:overflow_authoritative_per_asset_ownership',
-      'inverse_entry_base_inventory:must_be_zero_so_sell_requires_borrow',
+      ...(input.baseAsset
+        ? ['inverse_entry_base_inventory:must_be_zero_so_sell_requires_borrow']
+        : ['inverse_base_identity:unspecified_all_nonquote_assets_fail_closed']),
       'nonquote_cross_collateral:must_be_zero_to_prevent_unreserved_exposure',
       'preexisting_liabilities:must_be_zero_before_inverse_open',
       'unexplained_operator_balance:must_be_zero_before_inverse_open',
