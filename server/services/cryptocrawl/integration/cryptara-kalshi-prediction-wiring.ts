@@ -160,7 +160,7 @@ export function getCryptaraKalshiPredictionSummary(): {
 }
 
 /**
- * Makes Kalshi's resolved-market-quality prediction surface visible to Cryptara
+ * Makes Kalshi's live market-implied probability surface visible to Cryptara
  * without pretending unrelated event probabilities are a directional crypto
  * forecast. The wrapper consumes only the already-cached Kalshi snapshot; it adds
  * no hot-path network request and cannot alter deterministic economics, Monte
