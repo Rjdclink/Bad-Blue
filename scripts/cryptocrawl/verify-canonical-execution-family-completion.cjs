@@ -29,16 +29,18 @@ assert(makerRuntime.includes('createPostOnlyMakerAdapters(plan)'), 'maker live e
 assert(runtime.includes("install('stablecoin_maker_execution', () => ensureStablecoinMakerExecutionWiring())"), 'canonical runtime must install maker execution wiring through the isolated component wrapper');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'maker component failure must not globally stop unrelated runtime paths');
 
-assert(across.includes('getAcrossBridgeQuote({'), 'Across execution must refresh the quote immediately before signing');
-assert(across.includes('simulationSuccess !== true'), 'Across execution must reject an unsimulated quote');
-assert(across.includes('freshExecutionPayload'), 'Across execution must fetch a fresh transaction payload');
+assert(across.includes('freshExecutionPayload'), 'Across execution must refresh the exact payload immediately before signing');
+assert(across.includes('simulationVetoAuthority: false'), 'Across provider simulation must be advisory only');
+assert(across.includes('REJECT_ACROSS_MINIMUM_OUTPUT_WORSENED'), 'Across guaranteed minimum output cannot worsen');
+assert(across.includes('postApprovalEconomicsPositive'), 'Across must re-prove positive economics after any approval gas is spent');
 assert(across.includes('getAcrossDepositSettlementEvidence({'), 'Across execution must bind provider status to terminal receipt evidence');
 assert(across.includes('destinationReceiptVerified'), 'successful bridge settlement must require destination receipt verification');
+assert(!across.includes('quote.simulationSuccess !== true'), 'Across quote simulation cannot own execution veto authority');
 
-assert(liquidation.includes('provider.call(request'), 'liquidation must exact-simulate the atomic payload');
-assert(liquidation.includes('provider.estimateGas(request)'), 'liquidation must verify gas feasibility');
+assert(liquidation.includes('provider.estimateGas(request)'), 'exact signed liquidation must verify gas feasibility');
+assert(liquidation.includes('simulationVetoAuthority: false'), 'liquidation eth_call must be advisory only');
 assert(liquidation.includes('deterministicNetProfitUsd <= 0') || liquidation.includes('plan.deterministicNetProfitUsd > 0'), 'liquidation must require strict positive deterministic economics');
-assert(liquidation.includes('provider.sendTransaction(plan.signedAtomicTransaction)'), 'liquidation must submit only the exact simulated signed atomic transaction');
+assert(liquidation.includes('provider.sendTransaction(plan.signedAtomicTransaction)'), 'liquidation must submit only the exact signed atomic transaction');
 assert(liquidation.includes('settlementConfirmed: confirmed'), 'liquidation must expose terminal receipt confirmation');
 
 assert(funding.includes('cryptocrawler_funding_lifecycles'), 'funding lifecycle must be durably persisted');
@@ -50,7 +52,7 @@ assert(funding.includes('settlement.realizedNetProfitUsd !== null'), 'funding le
 
 assert(mev.includes('sandwichOrFrontrun: false'), 'MEV completion must remain backrun-only');
 assert(mev.includes('[plan.signedVictimTransaction, plan.signedBackrunTransaction]'), 'victim must remain before the backrun transaction');
-assert(mev.includes('MultiRelaySubmitter'), 'backrun must use the relay path that performs eth_callBundle simulation');
+assert(mev.includes('MultiRelaySubmitter'), 'backrun must retain the private multi-relay submission path');
 assert(mev.includes('victimReceipt!.transactionIndex < backrunReceipt.transactionIndex'), 'terminal proof must confirm backrun ordering');
 
 assert(rebalance.includes('registerAdapter'), 'rebalancing must have an explicit settlement adapter registry');
@@ -62,4 +64,4 @@ for (const [name, source] of Object.entries({ across, liquidation, funding, mev,
   assert(!source.includes('syntheticProfit'), `${name} must not introduce synthetic profit authority`);
 }
 
-console.log('[canonical-execution-family-completion] PASS: inventory, isolated maker runtime, cross-chain, liquidation, funding, backrun, and rebalancing invariants are present and fail closed locally');
+console.log('[canonical-execution-family-completion] PASS: inventory, maker, cross-chain, liquidation, funding, backrun, and rebalancing retain hard execution/settlement invariants without simulation becoming a generic veto');
