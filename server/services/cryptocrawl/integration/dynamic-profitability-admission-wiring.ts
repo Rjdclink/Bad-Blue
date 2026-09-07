@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { fundingRateMonitor } from '../discovery/funding-rate-monitor.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { centralizedExchangeExecutor } from '../execution/centralized-exchange-executor.js';
@@ -9,6 +10,7 @@ import { resolveCexFeeEvidence, type CexFeeVenue } from '../intelligence/cex-fee
 import { ensureBpsDecompositionObservability } from './bps-decomposition-observability.js';
 import { ensureBpsFrontierWave3Wiring } from './bps-frontier-wave3-wiring.js';
 import { ensureEconomicTransformationWiring } from './economic-transformation-wiring.js';
+import { refreshKalshiSystemEvidenceNow } from './kalshi-system-wiring.js';
 import { ensureZeroCapitalRecoveryObservability } from './zero-capital-recovery-observability.js';
 import { ensureProfitabilityRecoveryCoordinator } from './profitability-recovery-coordinator.js';
 
@@ -112,6 +114,17 @@ function makerEvidenceMissing(candidate: MeasuredCandidate): boolean {
   return candidate.executionCapabilityReason.includes('Paper maker proof accelerates calibration');
 }
 
+function kalshiEvidenceMissing(candidate: MeasuredCandidate): boolean {
+  if (candidate.status === 'expired' || candidate.expiresAt <= Date.now()) return false;
+  const venues = candidate.venues.map(value => String(value).trim().toLowerCase());
+  const kalshiFunding = candidate.topology === 'FUNDING_ARBITRAGE' && venues.includes('kalshi_perps');
+  const kalshiEvent = candidate.topology === 'PREDICTION_EVENT'
+    && venues.some(venue => venue === 'kalshi' || venue === 'kalshi_event' || venue === 'kalshi_prediction' || venue === 'kalshi_perps');
+  if (!kalshiFunding && !kalshiEvent) return false;
+  if (candidate.status === 'observed' || candidate.status === 'enriched') return true;
+  return candidate.missingInformation.some(item => /^(required|critical):|fee|depth|entitlement|access|semantic|equivalence|settlement|system.?capital|borrow|liability|margin|collateral|order|fill|redemption/i.test(item.trim()));
+}
+
 function makerPaperNetProfitUsd(candidate: MeasuredCandidate): number | null {
   for (const item of candidate.provenance) {
     const match = /^paper_net_profit_usd:([-+]?\d+(?:\.\d+)?)$/i.exec(item.trim());
@@ -187,6 +200,53 @@ function requestCexEvidenceReacquisition(
         error: error instanceof Error ? error.message : String(error),
         missingEvidenceIsVerifiedVeto: false,
         hotPathExecutionAuthority: false,
+      });
+    })
+    .finally(() => {
+      evidenceReacquisitionInFlight.delete(key);
+      evidenceReacquisitionCooldownUntil.set(key, Date.now() + evidenceReacquisitionCooldownMs());
+    });
+  evidenceReacquisitionInFlight.set(key, task);
+}
+
+function requestKalshiEvidenceReacquisition(candidate: MeasuredCandidate): void {
+  if (!kalshiEvidenceMissing(candidate)) return;
+  const funding = candidate.topology === 'FUNDING_ARBITRAGE';
+  const key = funding ? 'kalshi:funding' : 'kalshi:event';
+  if (evidenceReacquisitionInFlight.has(key) || (evidenceReacquisitionCooldownUntil.get(key) || 0) > Date.now()) return;
+  const reason = candidate.missingInformation.length > 0
+    ? candidate.missingInformation.join(',')
+    : `${candidate.status}:minimum_execution_evidence_incomplete`;
+
+  const task = (async () => {
+    if (funding) await fundingRateMonitor.scanOnce();
+    else await refreshKalshiSystemEvidenceNow();
+    logger.info('[EvidenceScanner] Targeted Kalshi evidence acquisition completed', {
+      component: 'DynamicProfitabilityAdmissionWiring',
+      opportunityId: candidate.opportunityId,
+      topology: candidate.topology,
+      reason,
+      acquisitionMode: funding
+        ? 'canonical_funding_monitor_exact_directional_fee_depth_borrow_margin_remeasurement'
+        : 'canonical_kalshi_event_semantic_fee_depth_capital_cross_venue_refresh',
+      activeEvidenceAcquisition: true,
+      readOnlyCollection: true,
+      hotPathExecutionAuthority: false,
+      profitabilityAuthority: false,
+      accountBalanceCreatesOwnership: false,
+      missingEvidenceIsPermanentVeto: false,
+    });
+  })()
+    .catch(error => {
+      logger.warn('[EvidenceScanner] Targeted Kalshi evidence acquisition degraded', {
+        component: 'DynamicProfitabilityAdmissionWiring',
+        opportunityId: candidate.opportunityId,
+        topology: candidate.topology,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+        readOnlyCollection: true,
+        hotPathExecutionAuthority: false,
+        missingEvidenceIsPermanentVeto: false,
       });
     })
     .finally(() => {
@@ -291,6 +351,10 @@ function requestMakerEvidenceReacquisition(candidate: MeasuredCandidate): void {
 }
 
 function requestMinimumExecutionEvidence(candidate: MeasuredCandidate): void {
+  if (kalshiEvidenceMissing(candidate)) {
+    requestKalshiEvidenceReacquisition(candidate);
+    return;
+  }
   if (makerEvidenceMissing(candidate)) {
     requestMakerEvidenceReacquisition(candidate);
     return;
@@ -330,8 +394,11 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
       feeAcquisition: 'exact_positive_venue_legs_force_authenticated_refresh',
       remainingEvidenceAcquisition: 'canonical_exact_symbol_revalidation',
       makerEvidenceAcquisition: 'blocked_paper_candidates_bounded_single_flight_to_existing_canonical_maker_evaluator',
+      kalshiFundingEvidenceAcquisition: 'canonical_bidirectional_funding_monitor_remeasurement_including_authenticated_inverse_borrow_liability_and_system_capital',
+      kalshiEventEvidenceAcquisition: 'canonical_prediction_event_maker_semantic_cross_venue_and_system_cash_refresh',
       makerPaperExecutionAuthority: false,
       makerShadowPriorityExecutionAuthority: false,
+      kalshiDataCollectionExecutionAuthority: false,
       missingEvidenceIsVeto: false,
       advisoryOnly: true,
       executionAuthority: false,
@@ -398,7 +465,7 @@ export function ensureDynamicProfitabilityAdmissionWiring(): void {
     component: 'DynamicProfitabilityAdmissionWiring',
     hotPathExecutionAuthority: 'canonical_strategy_executor_only',
     evidenceScoringAuthority: 'parallel_advisory_only',
-    activeMissingEvidenceAcquisition: 'exact_positive_fee_legs_plus_bounded_maker_reacquisition_then_canonical_revalidation_off_hot_path',
+    activeMissingEvidenceAcquisition: 'exact_cex_fee_depth_plus_bounded_maker_plus_kalshi_funding_event_cross_venue_reacquisition_then_canonical_revalidation_off_hot_path',
     missingInformationExecutionVetoAuthority: false,
     adaptiveProfitabilityThresholdAuthority: 'ranking_and_sizing_only',
     bpsFrontierWave3: 'measured_like_notional_total_cost_frontier_plus_keyless_lighter_public_benchmark',
