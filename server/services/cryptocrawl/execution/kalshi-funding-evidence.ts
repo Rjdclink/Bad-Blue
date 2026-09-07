@@ -1,5 +1,7 @@
 import logger from '../../../logger.js';
-import { getSpotProductConstraints, type SpotProductConstraints } from './cex-spot-product-policy.js';
+import { getSpotProductConstraints } from './cex-spot-product-policy.js';
+import { assertCoinbaseSpotTradeReady } from '../intelligence/coinbase-advanced-trade-authority.js';
+import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
 import { cexOrderBookStreams, type CexStreamVenue, type StreamOrderBookLevel } from '../intelligence/cex-order-book-stream.js';
 import { resolveCexFeeEvidence, type CexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 import {
@@ -11,7 +13,7 @@ import {
   type KalshiOrderbookLevel,
 } from '../intelligence/kalshi-perps-market-authority.js';
 
-export type KalshiFundingHedgeVenue = 'kraken' | 'okx';
+export type KalshiFundingHedgeVenue = 'coinbase' | 'kraken' | 'okx';
 
 export interface KalshiFundingExecutionEvidence {
   ticker: string;
@@ -49,6 +51,14 @@ export interface KalshiFundingExecutionEvidence {
   expiresAt: number;
   provenance: string[];
 }
+
+type FundingSpotConstraints = {
+  baseAsset: string;
+  quoteAsset: string;
+  baseIncrement: number;
+  baseMinSize: number;
+  baseMaxSize: number | null;
+};
 
 type WalkResult = {
   filled: number;
@@ -107,7 +117,7 @@ function directUsdSymbol(baseAsset: string): string {
   return `${baseAsset}USD`;
 }
 
-function compatibleSpotBase(constraints: SpotProductConstraints, baseAsset: string): boolean {
+function compatibleSpotBase(constraints: FundingSpotConstraints, baseAsset: string): boolean {
   return constraints.baseAsset.toUpperCase() === baseAsset.toUpperCase() && constraints.quoteAsset.toUpperCase() === 'USD';
 }
 
@@ -115,15 +125,40 @@ function exactAuthenticatedFee(evidence: CexFeeEvidence | null): evidence is Cex
   return !!evidence && evidence.source !== 'configured_override' && Number.isFinite(evidence.takerFeeBps) && evidence.takerFeeBps >= 0;
 }
 
+async function fundingSpotConstraints(venue: KalshiFundingHedgeVenue, symbol: string): Promise<FundingSpotConstraints> {
+  if (venue === 'coinbase') {
+    await assertCoinbaseSpotTradeReady();
+    const constraints = await getCoinbaseAdvancedProductConstraints(symbol, true);
+    if (constraints.isDisabled || constraints.tradingDisabled || constraints.cancelOnly || constraints.postOnly || constraints.auctionMode || constraints.viewOnly) {
+      throw new Error(`Coinbase funding hedge product ${constraints.productId} is not immediately executable`);
+    }
+    return {
+      baseAsset: constraints.baseAsset,
+      quoteAsset: constraints.quoteAsset,
+      baseIncrement: constraints.baseIncrement,
+      baseMinSize: constraints.baseMinSize,
+      baseMaxSize: constraints.baseMaxSize,
+    };
+  }
+  const constraints = await getSpotProductConstraints(venue, symbol);
+  return {
+    baseAsset: constraints.baseAsset,
+    quoteAsset: constraints.quoteAsset,
+    baseIncrement: constraints.baseIncrement,
+    baseMinSize: constraints.baseMinSize,
+    baseMaxSize: constraints.baseMaxSize,
+  };
+}
+
 async function hedgeSurface(
   venue: KalshiFundingHedgeVenue,
   baseAsset: string,
   maxAgeMs: number,
-): Promise<{ venue: KalshiFundingHedgeVenue; symbol: string; constraints: SpotProductConstraints; fee: CexFeeEvidence; asks: StreamOrderBookLevel[]; bids: StreamOrderBookLevel[]; observedAt: number } | null> {
+): Promise<{ venue: KalshiFundingHedgeVenue; symbol: string; constraints: FundingSpotConstraints; fee: CexFeeEvidence; asks: StreamOrderBookLevel[]; bids: StreamOrderBookLevel[]; observedAt: number } | null> {
   const symbol = directUsdSymbol(baseAsset);
   try {
     const [constraints, quote, fee] = await Promise.all([
-      getSpotProductConstraints(venue, symbol),
+      fundingSpotConstraints(venue, symbol),
       cexOrderBookStreams.getQuote(venue as CexStreamVenue, symbol, maxAgeMs),
       resolveCexFeeEvidence(venue, symbol, { maxAgeMs }),
     ]);
@@ -138,7 +173,14 @@ async function hedgeSurface(
       bids: quote.depth.bids,
       observedAt: quote.depth.observedAt,
     };
-  } catch {
+  } catch (error) {
+    logger.debug('[KalshiFunding] CEX hedge surface unavailable', {
+      component: 'KalshiFundingExecutionEvidence',
+      venue,
+      symbol,
+      error: error instanceof Error ? error.message : String(error),
+      executionAuthorityGranted: false,
+    });
     return null;
   }
 }
@@ -148,7 +190,7 @@ function candidateContracts(input: {
   contractSize: number;
   kalshiBids: readonly KalshiOrderbookLevel[];
   fractionalTradingEnabled: boolean;
-  spotConstraints: SpotProductConstraints;
+  spotConstraints: FundingSpotConstraints;
 }): { contracts: number; baseQuantity: number } | null {
   const bestBid = input.kalshiBids.find(level => level.price > 0 && level.quantity > 0);
   if (!bestBid) return null;
@@ -291,7 +333,7 @@ export async function measureKalshiFundingExecutionEvidence(input: {
   if (!kalshi || !kalshi.funding || !(kalshi.funding.fundingRate > 0)) return null;
   if (Date.now() - kalshi.observedAt > maxAgeMs) return null;
 
-  const surfaces = (await Promise.all((['kraken', 'okx'] as const).map(venue => hedgeSurface(venue, baseAsset, maxAgeMs))))
+  const surfaces = (await Promise.all((['coinbase', 'kraken', 'okx'] as const).map(venue => hedgeSurface(venue, baseAsset, maxAgeMs))))
     .filter((value): value is NonNullable<typeof value> => value !== null);
   const measured = (await Promise.all(surfaces.map(venueSurface => measureHedgeCandidate({
     venueSurface,
