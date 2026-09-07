@@ -70,6 +70,14 @@ export interface AtomicZeroCapitalAdmissionEvidence {
     | 'unproven';
   completeAllInCostsMeasured: boolean;
   deterministicNetPositive: boolean;
+  /**
+   * Prediction-event directional trades are probabilistic by definition. They may
+   * satisfy the universal positive-net rule only when a calibrated conservative
+   * expected-net authority is explicitly proven. Deterministic event arbitrage
+   * continues to use deterministicNetPositive instead.
+   */
+  calibratedExpectedNetPositive?: boolean;
+  calibratedProbabilityAuthority?: boolean;
   settlementPathReady: boolean;
   executionPathReady: boolean;
   atomicity: AtomicityGrade;
@@ -101,9 +109,10 @@ const COSTS = [
  * Universal structural policy for every measured execution family.
  *
  * "Zero capital" means zero PERSONAL principal/gas/collateral from the operator.
- * It does not pretend asynchronous CEX, carry, or bridge strategies can be funded
- * by an EVM flash loan. Those lanes may execute only from durable CryptoCrawler-
- * owned retained capital/inventory; until then they remain discovery/learning-only.
+ * It does not pretend asynchronous CEX, prediction-event, carry, or bridge
+ * strategies can be funded by an EVM flash loan. Those lanes may execute only
+ * from durable CryptoCrawler-owned retained capital/inventory; until then they
+ * remain discovery/learning-only.
  */
 export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalStrategyCoverage[] = [
   {
@@ -221,6 +230,25 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
     researchBasis: ['maker/taker fee optimization', 'queue-position execution', 'durable system-owned lot ledger'],
   },
   {
+    topology: 'PREDICTION_EVENT',
+    executionFamily: 'Kalshi directional, maker, and semantically matched cross-venue prediction-event execution',
+    principalSources: ['proven_system_owned_retained_capital'],
+    gasSources: ['venue_internal_no_chain_gas', 'opportunity_backed_external_sponsorship', 'provider_sponsored_zero_operator_cost', 'proven_system_owned_native'],
+    collateralSources: ['none'],
+    coldStart: 'discovery_only_until_system_owned_capital_exists',
+    atomicity: 'venue_coordinated_non_atomic',
+    repaymentModel: 'no false flash-loan claim; Kalshi and companion-venue orders reserve only proven system-owned cash/collateral and retain it until terminal settlement or neutralization',
+    settlementModel: 'durable order/fill recovery + event resolution/void/cancel semantics + redemption where applicable + exactly-once terminal realized PnL',
+    canonicalCostComponents: COSTS,
+    personalPrincipalAllowed: false,
+    personalGasAllowed: false,
+    personalCollateralAllowed: false,
+    accountWideBalanceCreatesOwnership: false,
+    discoveryContinuesWhenExecutionBlocked: true,
+    executionReadinessRule: 'system-owned event cash/collateral + authenticated venue entitlement + exact sized depth/fees + calibrated conservative positive expected net or deterministic matched-payout residual + settlement/recovery readiness',
+    researchBasis: ['Kalshi prediction-event order/fill/settlement APIs', 'Polymarket CLOB and conditional-token settlement where used', 'strict cross-venue semantic equivalence', 'system-owned event cash ledgers'],
+  },
+  {
     topology: 'CROSS_CHAIN',
     executionFamily: 'cross-chain bridge/intent arbitrage',
     principalSources: ['proven_system_owned_retained_capital'],
@@ -241,22 +269,22 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
   },
   {
     topology: 'FUNDING_ARBITRAGE',
-    executionFamily: 'delta-neutral funding carry',
+    executionFamily: 'delta-neutral funding carry including Kalshi perpetual funding',
     principalSources: ['proven_system_owned_retained_capital'],
     gasSources: ['venue_internal_no_chain_gas'],
     collateralSources: ['proven_system_owned_margin_only'],
     coldStart: 'discovery_only_until_system_owned_capital_exists',
     atomicity: 'multi_period_non_atomic',
-    repaymentModel: 'no flash-loan claim; spot/perpetual legs remain open across funding intervals using only system-owned margin/inventory',
-    settlementModel: 'durable lifecycle + margin health + both legs terminally closed + realized funding/fees/PnL',
+    repaymentModel: 'no flash-loan claim; spot/perpetual legs remain open across funding intervals using only system-owned margin/inventory, while authenticated inverse-hedge borrowed assets remain liabilities and must be repaid before terminal profit ownership',
+    settlementModel: 'durable lifecycle + margin/liability health + both legs terminally closed + inverse borrow repaid to zero + realized funding/fees/PnL',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
     personalGasAllowed: false,
     personalCollateralAllowed: false,
     accountWideBalanceCreatesOwnership: false,
     discoveryContinuesWhenExecutionBlocked: true,
-    executionReadinessRule: 'system-owned spot/margin capital + delta-neutral open + margin-health monitoring + complete carry/fee economics + both-leg terminal settlement',
-    researchBasis: ['periodic perpetual funding mechanics', 'authenticated funding bills', 'system-owned CEX lot provenance'],
+    executionReadinessRule: 'system-owned spot/margin/collateral capital + delta-neutral open + margin/liability monitoring + complete carry/fee/borrow economics + both-leg terminal settlement',
+    researchBasis: ['periodic perpetual funding mechanics', 'authenticated funding bills', 'system-owned CEX lot provenance', 'authenticated venue borrow/interest/repayment evidence for inverse hedges'],
   },
 ] as const;
 
@@ -282,6 +310,7 @@ export function getAtomicZeroCapitalStrategyCoverageSnapshot() {
       unsupportedExecutionFallsBackToDiscoveryOnly: true as const,
       completeAllInCostsRequired: true as const,
       strictPositiveNetRequired: true as const,
+      predictionDirectionalRequiresCalibratedConservativeAuthority: true as const,
     },
     executionAuthority: false as const,
   };
@@ -308,7 +337,15 @@ export function evaluateAtomicZeroCapitalAdmission(
   if (evidence.gasProvenance === 'unproven') return reject('REJECT_GAS_PROVENANCE_UNPROVEN');
   if (evidence.collateralProvenance === 'unproven') return reject('REJECT_COLLATERAL_PROVENANCE_UNPROVEN');
   if (!evidence.completeAllInCostsMeasured) return reject('REJECT_ALL_IN_COSTS_INCOMPLETE');
-  if (!evidence.deterministicNetPositive) return reject('REJECT_NONPOSITIVE_ALL_IN_NET');
+  const positiveEconomicsProven = evidence.deterministicNetPositive
+    || (evidence.topology === 'PREDICTION_EVENT'
+      && evidence.calibratedExpectedNetPositive === true
+      && evidence.calibratedProbabilityAuthority === true);
+  if (!positiveEconomicsProven) {
+    return reject(evidence.topology === 'PREDICTION_EVENT'
+      ? 'REJECT_PREDICTION_EVENT_POSITIVE_ECONOMICS_UNPROVEN'
+      : 'REJECT_NONPOSITIVE_ALL_IN_NET');
+  }
   if (!evidence.executionPathReady) return reject('REJECT_EXECUTION_PATH_UNREADY');
   if (!evidence.settlementPathReady) return reject('REJECT_SETTLEMENT_PATH_UNREADY');
   if (evidence.atomicity !== policy.atomicity) return reject(`REJECT_ATOMICITY_MISMATCH:${policy.atomicity}`);

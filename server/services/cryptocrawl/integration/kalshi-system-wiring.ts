@@ -111,6 +111,16 @@ async function refreshPredictionSurface(): Promise<void> {
   return refreshInFlight;
 }
 
+/**
+ * Read-only evidence collection entrypoint used when admission discovers missing
+ * Kalshi event/cross-venue evidence. It refreshes the existing canonical market,
+ * fee, semantic, capital-capacity and calibration surfaces and never grants
+ * execution authority itself.
+ */
+export async function refreshKalshiSystemEvidenceNow(): Promise<void> {
+  await refreshPredictionSurface();
+}
+
 export function getKalshiSystemWiringStatus() {
   return {
     installed,
