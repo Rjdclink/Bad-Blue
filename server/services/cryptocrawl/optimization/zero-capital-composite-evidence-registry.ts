@@ -15,6 +15,9 @@ export interface ZeroCapitalCompositeEvidence {
   sharedPrincipalStackedBps: number;
   stepCount: number;
   estimatedGas: bigint;
+  /** Advisory eth_call validation outcome; never an execution-admission field. */
+  simulated: boolean;
+  simulationAdvisoryError?: string;
   simulatedAt: number;
   expiresAt: number;
   provenance: string[];
