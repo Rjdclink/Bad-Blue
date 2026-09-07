@@ -3,6 +3,7 @@ import {
   discoverPredictionMarketParityOpportunities,
   type PredictionParityOpportunity,
 } from '../discovery/prediction-market-opportunity-generator.js';
+import { ensureKalshiSystemWiring } from './kalshi-system-wiring.js';
 
 let timer: NodeJS.Timeout | null = null;
 let inFlight: Promise<void> | null = null;
@@ -64,6 +65,9 @@ export function getPredictionMarketDiscoverySnapshot() {
 }
 
 export function ensurePredictionMarketDiscoveryWiring(): void {
+  // Canonical runtime already invokes this seam. Kalshi attaches here as a
+  // measured sidecar so no second runtime scheduler/economics authority is born.
+  ensureKalshiSystemWiring();
   if (timer || process.env.PREDICTION_MARKET_DISCOVERY_ENABLED === 'false') return;
   void scan();
   if (process.env.NO_INTERVALS !== 'true') {
@@ -73,6 +77,7 @@ export function ensurePredictionMarketDiscoveryWiring(): void {
   logger.info('[PredictionMarketDiscovery] Public no-auth discovery wiring installed', {
     component: 'PredictionMarketDiscoveryWiring',
     venue: 'polymarket',
+    kalshiSidecarInstalled: process.env.CRYPTOCRAWL_KALSHI_ENABLED !== 'false',
     intervalMs: intervalMs(),
     apiKeyRequiredForDiscovery: false,
     signUpRequiredForDiscovery: false,
