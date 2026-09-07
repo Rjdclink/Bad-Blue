@@ -26,6 +26,7 @@ import { ensureExecutionReadinessProfitabilityWiring } from './execution-readine
 import { ensureFilteredMempoolObservability } from './filtered-mempool-observability.js';
 import { getCryptaraHyperBridgeBootstrapSnapshot } from './cryptara-supabase-hyper-bridge-bootstrap.js';
 import { ensureInventoryConstrainedCexExecutionWiring } from './inventory-constrained-cex-execution-wiring.js';
+import { ensureKalshiBpsOptimizationWiring } from './kalshi-bps-optimization-wiring.js';
 import { ensureMeasuredCandidateExpiryGuardWiring } from './measured-candidate-expiry-guard-wiring.js';
 import { logZeroCapitalReadinessDiagnostics } from './zero-capital-readiness-diagnostics.js';
 import { ensureLearningLifecycleWiring } from './learning-lifecycle-wiring.js';
@@ -252,6 +253,7 @@ function installCanonicalRuntime(): void {
   install('hybrid_cex_execution', () => ensureHybridCexExecutionWiring());
   install('stage_proof_metrics', () => ensureStageProofMetricsWiring());
   install('authenticated_fee_tier_optimization', () => ensureAuthenticatedFeeTierOptimizationWiring());
+  install('kalshi_bps_optimization', () => ensureKalshiBpsOptimizationWiring());
   install('adaptive_profit_operations', () => ensureAdaptiveProfitOperationsWiring());
   install('cex_inventory_readiness', () => ensureCexInventoryReadinessWiring());
   install('execution_readiness_profitability', () => ensureExecutionReadinessProfitabilityWiring());
@@ -307,6 +309,8 @@ function installCanonicalRuntime(): void {
     staleInventoryExecutionAuthority: false,
     cexFourModeEconomics: 'measured_TT_MT_TM_MM_same_fresh_books_authenticated_fees',
     cexAuthenticatedFeeTierOverlay: 'cache_only_observer_canonical_fee_resolver_refreshes_on_demand',
+    kalshiBpsOverlay: 'authenticated_perps_fee_frontier_plus_public_funding_spread_and_prediction_incentive_metadata_advisory_only',
+    kalshiBpsRealizedAuthority: false,
     rebateModeSelection: 'expected_realized_net_value_not_rebate_alone',
     minimumOrderNotionalTierAssumed: false,
     cexMakerExecution: 'coinbase_kraken_okx_post_only_measured_plan_then_inventory_governance_product_and_terminal_settlement',
