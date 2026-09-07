@@ -21,6 +21,10 @@ require('./verify-bps-private-refund-wave4.cjs');
 require('./verify-bps-provider-feedback-wave5.cjs');
 require('./verify-effective-gas-economics.cjs');
 require('./verify-atomic-zero-capital-strategy-coverage.cjs');
+require('./verify-kalshi-bps-integration.cjs');
+require('./verify-kalshi-coinbase-funding-integration.cjs');
+require('./verify-kalshi-negative-funding-inverse.cjs');
+require('./verify-kalshi-premerge-completion.cjs');
 require('./verify-builder-sponsored-coldstart-foundation.cjs');
 require('./verify-zero-capital-route-retention-and-standby-truth.cjs');
 require('./verify-okx-order-expiration.cjs');
@@ -64,4 +68,4 @@ require('./verify-final-evidence-route-resolution.cjs');
 require('./verify-minimum-sufficient-execution-evidence.cjs');
 require('./verify-first-pass-route-measurability.cjs');
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, final evidence/route resolution, and payout invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, final evidence/route resolution, and payout invariants passed; continuing to downstream prebuild/build');
