@@ -35,6 +35,7 @@ async function acquireKalshiEventLease(input: {
   fixedKey: string;
   opportunityId: string;
   expiresAt: number;
+  includePolymarket?: boolean;
 }): Promise<KalshiEventResourceLease | null> {
   if (!input.fixedKey.trim() || !input.opportunityId.trim() || !(input.expiresAt > Date.now())) return null;
   if (!await ensureResourceLeaseAuthority('high')) return null;
@@ -46,6 +47,18 @@ async function acquireKalshiEventLease(input: {
   const venueCapacity = boundedInt(process.env.CRYPTOCRAWL_MAX_CONCURRENT_KALSHI_EVENT, 2, 1, 16);
   const settlementCapacity = boundedInt(process.env.CRYPTOCRAWL_SETTLEMENT_CONCURRENCY, 16, 1, 64);
   const accountCapacity = boundedInt(process.env.CRYPTOCRAWL_KALSHI_EVENT_PRIVATE_EXECUTION_CONCURRENCY, 2, 1, 8);
+  const polymarketVenueCapacity = boundedInt(process.env.CRYPTOCRAWL_MAX_CONCURRENT_POLYMARKET_EVENT, 2, 1, 16);
+  const polymarketAccountCapacity = boundedInt(process.env.CRYPTOCRAWL_POLYMARKET_EVENT_PRIVATE_EXECUTION_CONCURRENCY, 2, 1, 8);
+  const specs = [
+    { prefix: 'cex:global', capacity: globalCapacity },
+    { prefix: 'cex:settlement', capacity: settlementCapacity },
+    { prefix: 'cex:venue:kalshi_event', capacity: venueCapacity },
+    { prefix: 'cex:private:kalshi-event-account', capacity: accountCapacity },
+    ...(input.includePolymarket ? [
+      { prefix: 'cex:venue:polymarket_event', capacity: polymarketVenueCapacity },
+      { prefix: 'cex:private:polymarket-event-account', capacity: polymarketAccountCapacity },
+    ] : []),
+  ];
   const client = await pool.connect();
   const acquired: string[] = [];
   try {
@@ -59,12 +72,7 @@ async function acquireKalshiEventLease(input: {
     });
     if (!fixed) { await client.query('ROLLBACK'); return null; }
     acquired.push(input.fixedKey);
-    for (const spec of [
-      { prefix: 'cex:global', capacity: globalCapacity },
-      { prefix: 'cex:settlement', capacity: settlementCapacity },
-      { prefix: 'cex:venue:kalshi_event', capacity: venueCapacity },
-      { prefix: 'cex:private:kalshi-event-account', capacity: accountCapacity },
-    ]) {
+    for (const spec of specs) {
       const claimed = await claimResourceSlot(client, {
         prefix: spec.prefix,
         capacity: spec.capacity,
@@ -82,7 +90,7 @@ async function acquireKalshiEventLease(input: {
     try { await client.query('ROLLBACK'); } catch { /* preserve original */ }
     logger.error('[KalshiEventResource] Distributed lease acquisition failed closed', {
       component: 'KalshiEventResourceLease', opportunityId: input.opportunityId,
-      fixedKey: input.fixedKey,
+      fixedKey: input.fixedKey, includePolymarket: input.includePolymarket === true,
       error: error instanceof Error ? error.message : String(error), primaryFallbackUsed: false,
     });
     return null;
@@ -110,25 +118,44 @@ async function acquireKalshiEventLease(input: {
   };
 }
 
+function ladderAllowsNotional(opportunityId: string, notionalUsd: number, strategy: string): boolean {
+  if (!opportunityId.trim() || !(notionalUsd > 0) || !Number.isFinite(notionalUsd)) return false;
+  const ladder = getProfitLadderNotionalAuthority();
+  if (!ladder.aligned || !(ladder.maxNotionalUsd > 0) || notionalUsd > ladder.maxNotionalUsd + 1e-9) {
+    logger.info('[KalshiEventResource] Event opportunity exceeds canonical Profit Ladder notional authority', {
+      component: 'KalshiEventResourceLease', opportunityId, strategy,
+      requestedNotionalUsd: notionalUsd, maxNotionalUsd: ladder.maxNotionalUsd,
+      stageTierAligned: ladder.aligned, resourceLeaseCreated: false,
+    });
+    return false;
+  }
+  return true;
+}
+
 export async function acquireKalshiEventResourceLease(input: {
   opportunityId: string;
   notionalUsd: number;
   expiresAt: number;
 }): Promise<KalshiEventResourceLease | null> {
-  if (!input.opportunityId.trim() || !(input.notionalUsd > 0) || !Number.isFinite(input.notionalUsd)) return null;
-  const ladder = getProfitLadderNotionalAuthority();
-  if (!ladder.aligned || !(ladder.maxNotionalUsd > 0) || input.notionalUsd > ladder.maxNotionalUsd + 1e-9) {
-    logger.info('[KalshiEventResource] Event opportunity exceeds canonical Profit Ladder notional authority', {
-      component: 'KalshiEventResourceLease', opportunityId: input.opportunityId,
-      requestedNotionalUsd: input.notionalUsd, maxNotionalUsd: ladder.maxNotionalUsd,
-      stageTierAligned: ladder.aligned, resourceLeaseCreated: false,
-    });
-    return null;
-  }
+  if (!ladderAllowsNotional(input.opportunityId, input.notionalUsd, 'kalshi_event')) return null;
   return acquireKalshiEventLease({
     fixedKey: `kalshi-event:opportunity:${input.opportunityId}`,
     opportunityId: input.opportunityId,
     expiresAt: input.expiresAt,
+  });
+}
+
+export async function acquireKalshiCrossVenueEventResourceLease(input: {
+  opportunityId: string;
+  notionalUsd: number;
+  expiresAt: number;
+}): Promise<KalshiEventResourceLease | null> {
+  if (!ladderAllowsNotional(input.opportunityId, input.notionalUsd, 'kalshi_polymarket_cross_event_arbitrage')) return null;
+  return acquireKalshiEventLease({
+    fixedKey: `kalshi-cross-event:opportunity:${input.opportunityId}`,
+    opportunityId: input.opportunityId,
+    expiresAt: input.expiresAt,
+    includePolymarket: true,
   });
 }
 
@@ -149,5 +176,20 @@ export async function acquireKalshiEventLifecycleLease(input: {
     fixedKey: `kalshi-event:lifecycle:${lifecycleId}`,
     opportunityId,
     expiresAt: Date.now() + leaseTtlMs(),
+  });
+}
+
+/**
+ * Cross-venue maintenance is intentionally serialized across replicas until the
+ * durable lifecycle can own independently renewable per-row leases. This is a
+ * safety ceiling, not an execution shortcut: it claims both venue/private-account
+ * resources and never grants new exposure by itself.
+ */
+export async function acquireKalshiCrossVenueMaintenanceLease(): Promise<KalshiEventResourceLease | null> {
+  return acquireKalshiEventLease({
+    fixedKey: 'kalshi-cross-event:maintenance',
+    opportunityId: 'kalshi-cross-event:maintenance',
+    expiresAt: Date.now() + leaseTtlMs(),
+    includePolymarket: true,
   });
 }
