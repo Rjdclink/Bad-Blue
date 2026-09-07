@@ -39,7 +39,7 @@ export interface BpsDecompositionSnapshot {
   executionAuthority: false;
 }
 
-const TOPOLOGIES: MeasuredOpportunityTopology[] = ['CEX_CEX','DEX_ATOMIC','ZERO_CAPITAL_ATOMIC','CROSS_CHAIN','MEMPOOL_BACKRUN','LIQUIDATION','MAKER_CEX','FUNDING_ARBITRAGE'];
+const TOPOLOGIES: MeasuredOpportunityTopology[] = ['CEX_CEX','DEX_ATOMIC','ZERO_CAPITAL_ATOMIC','CROSS_CHAIN','MEMPOOL_BACKRUN','LIQUIDATION','MAKER_CEX','FUNDING_ARBITRAGE','PREDICTION_EVENT'];
 let timer: NodeJS.Timeout | null = null;
 let latest: BpsDecompositionSnapshot | null = null;
 
