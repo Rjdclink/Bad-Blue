@@ -3,6 +3,7 @@ import { assertCryptocrawlRuntimeDatabaseAvailable, pool } from '../runtime/cryp
 import type { ExactCexOrderAssetDeltaEvidence } from './cex-system-capital-settlement-evidence.js';
 import type { ExactCoinbaseOrderAssetDeltaEvidence } from './coinbase-system-capital-settlement-evidence.js';
 import {
+  addExactDecimals,
   compareExactDecimals,
   negateExactDecimal,
   requirePositiveExactDecimal,
@@ -270,9 +271,6 @@ export async function applyExactCexSystemOwnedSettlement(input: {
       .map(([asset, delta]) => [normalizedAsset(asset), String(delta)] as const)
       .sort(([a], [b]) => a.localeCompare(b));
 
-    // Debit first. No output ownership can be created unless every cost/fee is
-    // fully covered by prior system-owned inventory. A third-token fee therefore
-    // cannot silently consume an operator balance.
     for (const [asset, delta] of entries) {
       if (compareExactDecimals(delta, '0') >= 0) continue;
       consumedLotIds.push(...await consumeSystemOwnedAsset(client, evidence.venue, asset, negateExactDecimal(delta)));
@@ -316,6 +314,79 @@ export async function applyExactCexSystemOwnedSettlement(input: {
   } finally {
     client.release();
   }
+}
+
+/**
+ * Applies only the unencumbered quote-currency result of a fully repaid OKX
+ * margin-short lifecycle. Borrowed base and sale proceeds are liabilities while
+ * the short is open, so neither order may independently mint system ownership.
+ */
+export async function applyVerifiedOkxMarginShortSettlement(input: {
+  lifecycleId: string;
+  opportunityId: string;
+  entryEvidence: ExactCexOrderAssetDeltaEvidence;
+  closeEvidence: ExactCexOrderAssetDeltaEvidence;
+  terminalLiabilityBase: number;
+  expectedPrincipalBase: number;
+  authority: CexSystemCapitalSettlementAuthority;
+}): Promise<AppliedCexOwnershipSettlement> {
+  requireAuthority(input.authority);
+  const entry = input.entryEvidence;
+  const close = input.closeEvidence;
+  if (entry.venue !== 'okx' || close.venue !== 'okx') throw new Error('OKX margin-short settlement requires authenticated OKX order evidence');
+  if (entry.side !== 'sell' || close.side !== 'buy') throw new Error('OKX margin-short settlement requires sell-entry/buy-close identity');
+  if (entry.baseAsset !== close.baseAsset || entry.quoteAsset !== close.quoteAsset || entry.symbol !== close.symbol) {
+    throw new Error('OKX margin-short settlement instrument identity mismatch');
+  }
+  if (!(input.expectedPrincipalBase > 0) || !Number.isFinite(input.expectedPrincipalBase)) throw new Error('OKX margin-short principal identity invalid');
+  const liabilityTolerance = Math.max(1e-10, input.expectedPrincipalBase * 1e-6);
+  if (!Number.isFinite(input.terminalLiabilityBase) || input.terminalLiabilityBase > liabilityTolerance) {
+    throw new Error('OKX margin-short ownership cannot settle before terminal zero liability');
+  }
+
+  const baseAsset = normalizedAsset(entry.baseAsset);
+  const quoteAsset = normalizedAsset(entry.quoteAsset);
+  const thirdAssets = new Set<string>();
+  for (const evidence of [entry, close]) {
+    for (const [asset, delta] of Object.entries(evidence.assetDeltas)) {
+      const normalized = normalizedAsset(asset);
+      if (normalized !== baseAsset && normalized !== quoteAsset && compareExactDecimals(String(delta), '0') !== 0) thirdAssets.add(normalized);
+    }
+  }
+  if (thirdAssets.size > 0) {
+    throw new Error(`OKX margin-short third-asset fee/rebate requires explicit ownership valuation: ${[...thirdAssets].join(',')}`);
+  }
+
+  const quoteDelta = addExactDecimals(entry.assetDeltas[quoteAsset] || '0', close.assetDeltas[quoteAsset] || '0');
+  const composite: ExactCexOrderAssetDeltaEvidence = {
+    venue: 'okx',
+    orderId: `${entry.orderId}+${close.orderId}`,
+    symbol: entry.symbol,
+    side: 'sell',
+    baseAsset,
+    quoteAsset,
+    terminalState: 'fully_repaid',
+    accumulatedFillDecimal: entry.accumulatedFillDecimal,
+    fills: [...entry.fills, ...close.fills],
+    assetDeltas: compareExactDecimals(quoteDelta, '0') === 0 ? {} : { [quoteAsset]: quoteDelta },
+    settlementReference: `okx-margin-short:${input.lifecycleId}`,
+    provenance: [
+      ...entry.provenance,
+      ...close.provenance,
+      'okx_margin_short:authenticated_entry_and_close_fills_composited',
+      'okx_margin_short:terminal_liability_zero_proven',
+      'borrowed_base:excluded_from_system_ownership',
+      'short_sale_proceeds:encumbered_until_full_repayment',
+      'only_terminal_net_quote_delta_promoted_or_debited',
+      'synthetic_profit:false',
+    ],
+  };
+  return applyExactCexSystemOwnedSettlement({
+    evidence: composite,
+    opportunityId: input.opportunityId,
+    strategy: 'kalshi_cex_spot_perp_funding',
+    authority: input.authority,
+  });
 }
 
 export async function getExactSystemOwnedCexInventory(venue: SystemOwnedCexVenue, asset: string): Promise<string> {
