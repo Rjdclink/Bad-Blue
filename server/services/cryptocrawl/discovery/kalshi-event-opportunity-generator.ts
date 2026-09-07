@@ -246,7 +246,7 @@ async function buildOutcomeCandidate(
     calibrationBrierScore: calibration.brierScore,
     calibrationAuthority: 'cryptara_kalshi_terminal_calibration',
     expectedNetProfitUsd,
-    minimumExpectedNetProfitUsd: minExpectedNetUsd(),
+    minimumExpectedNetProfitUsd: minExpectedNetUsd() + settlementCostReserveUsd + capitalLockCostUsd,
     expiresAt,
     settlementDeadlineAt: settleDeadline,
     provenance: baseProvenance,
