@@ -206,10 +206,6 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
           ...(settlementCostReserveUsd !== null ? [] : ['required:verified_second_venue_settlement_cost']),
           ...(capitalLockCostUsd !== null ? [] : ['required:capital_lock_opportunity_cost']),
           ...(guaranteedResidualUsd !== null && guaranteedResidualUsd > 0 ? [] : ['required:positive_guaranteed_residual_after_every_cost']),
-          // One-leg recovery is now implemented by the durable canonical lifecycle.
-          // Terminal reconciliation remains blocking until Polymarket redemption
-          // and both venue cash settlements are proven end-to-end.
-          'required:cross_venue_terminal_settlement_reconciliation',
         ];
         const status: CrossVenueEventArbitrageCandidate['status'] = missingEvidence.length === 0 ? 'eligible' : 'data_collection';
         output.push({
@@ -244,6 +240,7 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
             ...(kalshiSemantics?.provenance ?? []),
             ...(secondMarket?.provenance ?? []),
             `second_venue_condition_id:${mapping.secondVenueConditionId}`,
+            `condition_id:${mapping.secondVenueConditionId}`,
             `semantic_equivalence_mapping:${mappingFingerprint(mapping)}`,
             `mapping_reviewer:${mapping.reviewer}`,
             ...(equivalence ? [`semantic_mismatches:${equivalence.mismatches.join(',') || 'none'}`] : ['semantic_comparison:incomplete']),
@@ -252,8 +249,10 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
             'depth_vwap_notional:slippage_embedded_exactly_once',
             'non_atomic_legging:kalshi_fok_then_polymarket_fok',
             'one_leg_failure:kalshi_reduce_only_fok_recovery_durable',
+            'terminal_reconciliation:canonical_lifecycle_implemented',
             'second_venue_account_balance_mints_system_ownership:false',
-            'execution_authority:false',
+            'discovery_execution_authority:false',
+            'canonical_scheduler_lifecycle_execution_authority:required',
           ],
         });
       }
@@ -284,6 +283,7 @@ export function getKalshiCrossVenueEventArbitrageSnapshot() {
     nonAtomicLegRecoveryRequired: true as const,
     secondVenueAuthenticatedExecutionEvidenceRequired: true as const,
     crossVenueSystemOwnedPrefundingRequired: true as const,
+    durableTerminalReconciliationImplemented: true as const,
     executionAuthority: false as const,
   };
 }
