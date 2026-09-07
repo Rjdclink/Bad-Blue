@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 15;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v15';
+const SCHEMA_VERSION = 16;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v16';
 
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
@@ -49,6 +49,7 @@ const MIGRATIONS = [
   '043_cryptocrawler_cross_chain_lifecycle.sql',
   '044_cryptocrawler_funding_feedback_recovery.sql',
   '045_cryptocrawler_system_native_gas_spend_authority.sql',
+  '046_cryptocrawler_kalshi_system_owned_margin_capital.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -76,6 +77,9 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_system_capital_allocations',
   'public.cryptocrawler_cex_system_owned_lots',
   'public.cryptocrawler_cex_system_owned_settlements',
+  'public.cryptocrawler_kalshi_system_owned_margin_lots',
+  'public.cryptocrawler_kalshi_margin_reservations',
+  'public.cryptocrawler_kalshi_margin_settlements',
   'public.cryptocrawler_onchain_system_owned_lots',
   'public.cryptocrawler_onchain_inventory_reservations',
   'public.cryptocrawler_onchain_system_owned_settlements',
@@ -131,6 +135,9 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_settle_system_native_gas_spend(uuid,text,numeric,jsonb)',
   'public.cryptocrawler_release_system_native_gas_spend(uuid)',
   'public.cryptocrawler_mark_system_native_gas_spend_manual_review(uuid,text)',
+  'public.cryptocrawler_reserve_kalshi_system_margin(text,text,numeric,timestamp with time zone,jsonb)',
+  'public.cryptocrawler_release_kalshi_system_margin(uuid)',
+  'public.cryptocrawler_renew_kalshi_system_margin(uuid,timestamp with time zone)',
 ] as const;
 
 let schemaReady = false;
