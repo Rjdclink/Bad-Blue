@@ -90,12 +90,7 @@ class MultiRelaySubmitter {
     });
   }
 
-  /**
-   * Private relay connectivity is an optional execution enhancement, never a
-   * prerequisite for the canonical direct-broadcast path. Missing/invalid relay
-   * auth therefore marks this component unavailable without fabricating a key or
-   * failing the caller that can still submit the exact signed transaction directly.
-   */
+  /** Private relay connectivity is an optional execution enhancement. */
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
@@ -103,7 +98,7 @@ class MultiRelaySubmitter {
     if (!explicitAuthKey) {
       this.unavailableReason = 'FLASHBOTS_AUTH_KEY is not configured';
       this.initialized = true;
-      logger.info('Private relay enhancement unavailable; direct broadcast remains authoritative', {
+      logger.info('Private relay enhancement unavailable; direct broadcast remains authoritative where the strategy permits it', {
         component: 'MultiRelaySubmitter',
         reason: this.unavailableReason,
         directBroadcastBlocked: false,
@@ -118,7 +113,6 @@ class MultiRelaySubmitter {
       const authSigner = walletFromPrivateKey(authPrivateKey);
 
       logger.info('Initializing multi-relay connections...', { component: 'MultiRelaySubmitter' });
-
       const initPromises = RELAYS.map(async relay => {
         try {
           const flashbotsProvider = await FlashbotsBundleProvider.create(
@@ -138,12 +132,10 @@ class MultiRelaySubmitter {
       });
 
       await Promise.allSettled(initPromises);
-      if (this.providers.size === 0) {
-        this.unavailableReason = 'No private relay connection initialized successfully';
-      }
+      if (this.providers.size === 0) this.unavailableReason = 'No private relay connection initialized successfully';
     } catch (error) {
       this.unavailableReason = error instanceof Error ? error.message : String(error);
-      logger.warn('Private relay initialization failed; direct broadcast remains authoritative', {
+      logger.warn('Private relay initialization failed; direct broadcast remains authoritative where the strategy permits it', {
         component: 'MultiRelaySubmitter',
         reason: this.unavailableReason,
         directBroadcastBlocked: false,
@@ -171,6 +163,12 @@ class MultiRelaySubmitter {
       return { submitted: 0, successful: [], failed: [] };
     }
 
+    // Signed transaction shape and target-block identity are real submission facts,
+    // not simulation. Validate them synchronously before dispatch.
+    if (!bundle.signedTransactions?.length || bundle.signedTransactions.some(transaction => typeof transaction !== 'string' || !transaction.startsWith('0x'))) {
+      logger.warn('Bundle contains invalid signed transaction bytes; skipping submission', { component: 'MultiRelaySubmitter' });
+      return { submitted: 0, successful: [], failed: Array.from(this.providers.keys()) };
+    }
     if (!Number.isSafeInteger(targetBlock) || targetBlock <= 0 || bundle.targetBlock !== targetBlock) {
       logger.warn('Bundle target-block mismatch; skipping submission', {
         component: 'MultiRelaySubmitter',
@@ -179,21 +177,39 @@ class MultiRelaySubmitter {
       });
       return { submitted: 0, successful: [], failed: Array.from(this.providers.keys()) };
     }
-
-    const simulation = await this.simulateBundle(bundle, targetBlock);
-    if (!simulation.valid) {
-      logger.warn('Real eth_callBundle simulation failed, skipping submission', {
-        component: 'MultiRelaySubmitter',
-        reason: simulation.reason,
-        relay: simulation.relay,
-        firstRevert: simulation.firstRevert,
-      });
-      return {
-        submitted: 0,
-        successful: [],
-        failed: Array.from(this.providers.keys()),
-      };
+    if (this.provider) {
+      const currentBlock = await this.provider.getBlockNumber().catch(() => null);
+      if (currentBlock !== null && (targetBlock <= currentBlock || targetBlock > currentBlock + 10)) {
+        logger.warn('Bundle target block is outside the private-relay submission window', {
+          component: 'MultiRelaySubmitter', currentBlock, targetBlock,
+        });
+        return { submitted: 0, successful: [], failed: Array.from(this.providers.keys()) };
+      }
     }
+
+    // Flashbots documents eth_sendBundle and eth_callBundle as separate RPCs.
+    // Simulation remains valuable telemetry, but it must not consume edge lifetime
+    // or acquire veto authority over an otherwise valid exact signed bundle.
+    void this.simulateBundle(bundle, targetBlock)
+      .then(simulation => {
+        logger.debug('Bundle relay simulation completed as advisory telemetry', {
+          component: 'MultiRelaySubmitter',
+          valid: simulation.valid,
+          reason: simulation.reason,
+          relay: simulation.relay,
+          firstRevert: simulation.firstRevert,
+          bundleHash: simulation.bundleHash,
+          totalGasUsed: simulation.totalGasUsed,
+          simulationVetoAuthority: false,
+        });
+      })
+      .catch(error => {
+        logger.debug('Bundle relay simulation unavailable without blocking submission', {
+          component: 'MultiRelaySubmitter',
+          error: error instanceof Error ? error.message : String(error),
+          simulationVetoAuthority: false,
+        });
+      });
 
     const selectedRelays = this.selectOptimalRelays(bundle);
     const result: SubmissionResult = { submitted: 0, successful: [], failed: [] };
@@ -227,9 +243,7 @@ class MultiRelaySubmitter {
         metrics.performance.latency = metrics.avgLatency;
 
         logger.debug(`Bundle submitted to ${name}`, {
-          component: 'MultiRelaySubmitter',
-          targetBlock,
-          latency: `${latency}ms`,
+          component: 'MultiRelaySubmitter', targetBlock, latency: `${latency}ms`,
         });
       } catch (error) {
         const latency = Date.now() - startTime;
@@ -241,8 +255,7 @@ class MultiRelaySubmitter {
         metrics.performance.latency = metrics.avgLatency;
 
         logger.debug(`Failed to submit to ${name}`, {
-          component: 'MultiRelaySubmitter',
-          latency: `${latency}ms`,
+          component: 'MultiRelaySubmitter', latency: `${latency}ms`,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -256,20 +269,14 @@ class MultiRelaySubmitter {
       successful: result.successful.length,
       failed: result.failed.length,
       targetBlock,
-      simulationRelay: simulation.relay,
-      simulationBundleHash: simulation.bundleHash,
-      simulationTotalGasUsed: simulation.totalGasUsed,
-      simulationAuthority: 'eth_callBundle',
+      simulationAuthority: 'advisory_eth_callBundle_only',
+      simulationVetoAuthority: false,
     });
 
     return result;
   }
 
-  /**
-   * Actual Flashbots-compatible eth_callBundle simulation. Structural checks or
-   * synthetic scores are not accepted as execution evidence. A single revert or
-   * relay error blocks submission to every relay.
-   */
+  /** Actual Flashbots-compatible eth_callBundle telemetry. */
   private async simulateBundle(bundle: Bundle, targetBlock: number): Promise<RealBundleSimulation> {
     if (!bundle.signedTransactions?.length) return { valid: false, reason: 'Empty bundle' };
     if (bundle.signedTransactions.some(transaction => typeof transaction !== 'string' || !transaction.startsWith('0x'))) {
@@ -289,11 +296,7 @@ class MultiRelaySubmitter {
 
       const simulation = await simulationProvider.simulate(bundle.signedTransactions, targetBlock);
       if ('error' in simulation) {
-        return {
-          valid: false,
-          relay: relayName,
-          reason: simulation.error?.message || 'Relay returned a simulation error',
-        };
+        return { valid: false, relay: relayName, reason: simulation.error?.message || 'Relay returned a simulation error' };
       }
 
       const firstRevert = (simulation as any).firstRevert ||
@@ -318,9 +321,10 @@ class MultiRelaySubmitter {
         totalGasUsed: Number((simulation as any).totalGasUsed) || undefined,
       };
     } catch (error) {
-      logger.error('Bundle eth_callBundle simulation error', {
+      logger.debug('Bundle eth_callBundle advisory simulation error', {
         component: 'MultiRelaySubmitter',
         error: error instanceof Error ? error.message : String(error),
+        simulationVetoAuthority: false,
       });
       return { valid: false, reason: error instanceof Error ? error.message : String(error) };
     }
