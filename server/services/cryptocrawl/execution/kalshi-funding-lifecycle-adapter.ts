@@ -4,7 +4,6 @@ import { kalshiAuthenticatedRequest } from '../intelligence/kalshi-authenticated
 import {
   getKalshiMarginAccountReadiness,
   getKalshiPerpExecutionEvidence,
-  getKalshiPerpPosition,
   type KalshiOrderbookLevel,
 } from '../intelligence/kalshi-perps-market-authority.js';
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
@@ -36,6 +35,7 @@ import {
   getKalshiFundingPayments,
   getKalshiPerpFillsForOrder,
   getKalshiPerpOrder,
+  getKalshiPerpPosition,
   kalshiFundingClientOrderId,
   placeOrRecoverKalshiPerpOrder,
   requireTerminalKalshiFokFill,
