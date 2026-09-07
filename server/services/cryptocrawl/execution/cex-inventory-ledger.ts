@@ -299,7 +299,7 @@ class CexInventoryLedger {
                payout_reserved=EXCLUDED.payout_reserved,
                target=EXCLUDED.target,
                minimum_reserve=EXCLUDED.minimum_reserve,
-               maximum_venue_exposure=EXCLUDED.maximumVenueExposure,
+               maximum_venue_exposure=EXCLUDED.maximum_venue_exposure,
                reconciled_at=EXCLUDED.reconciled_at`,
             [venue, asset, available, payoutReserved, policy.target, minimumReserve, policy.maximumVenueExposure, now],
           );
