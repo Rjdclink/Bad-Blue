@@ -38,12 +38,13 @@ export interface KalshiCanonicalMaintenanceResult {
 export async function maintainKalshiCanonicalLifecycles(limit = 4): Promise<KalshiCanonicalMaintenanceResult> {
   const directional = await advanceKalshiEventLifecycles(limit);
   for (const result of directional) {
-    if (!result.lifecycleId || !result.settlementConfirmed || result.status !== 'settled') continue;
+    if (!result.lifecycleId || (!result.settlementConfirmed && result.status !== 'failed')) continue;
     try {
       await markOperatorTerminalByLifecycle(result.lifecycleId);
     } catch (error) {
       logger.error('[KalshiEventMaintenance] Terminal operator reservation reconciliation deferred', {
         component: 'KalshiEventCanonicalMaintenance', lifecycleId: result.lifecycleId,
+        status: result.status, settlementConfirmed: result.settlementConfirmed,
         error: error instanceof Error ? error.message : String(error),
         settlementAuthorityChanged: false, extraDailyTradeAllowed: false,
       });
