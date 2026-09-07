@@ -45,6 +45,8 @@ type MakerRow = {
   askOrderId: string | null;
   bidFilledContracts: number;
   askFilledContracts: number;
+  bidFeesUsd: number;
+  askFeesUsd: number;
   inventoryContracts: number;
   inventoryCostUsd: number;
   realizedProceedsUsd: number;
@@ -143,6 +145,7 @@ function parseRow(row: any): MakerRow | null {
     orderGroupId: row.order_group_id ? String(row.order_group_id) : null, bidRevision: Number(row.bid_revision || 0), askRevision: Number(row.ask_revision || 0),
     bidOrderId: row.bid_order_id ? String(row.bid_order_id) : null, askOrderId: row.ask_order_id ? String(row.ask_order_id) : null,
     bidFilledContracts: Number(row.bid_filled_contracts || 0), askFilledContracts: Number(row.ask_filled_contracts || 0),
+    bidFeesUsd: Number(row.bid_fees_usd || 0), askFeesUsd: Number(row.ask_fees_usd || 0),
     inventoryContracts: Number(row.inventory_contracts || 0), inventoryCostUsd: Number(row.inventory_cost_usd || 0),
     realizedProceedsUsd: Number(row.realized_proceeds_usd || 0), realizedFeesUsd: Number(row.realized_fees_usd || 0),
     lastMidpoint: finite(row.last_midpoint), adverseSelectionBps: finite(row.adverse_selection_bps),
@@ -160,7 +163,7 @@ async function loadOpen(limit = 8): Promise<MakerRow[]> {
 
 async function updateRow(lifecycleId: string, patch: Record<string, unknown>): Promise<void> {
   const allowed = new Set([
-    'status','cash_reservation_id','order_group_id','bid_revision','ask_revision','bid_order_id','ask_order_id','bid_filled_contracts','ask_filled_contracts',
+    'status','cash_reservation_id','order_group_id','bid_revision','ask_revision','bid_order_id','ask_order_id','bid_filled_contracts','ask_filled_contracts','bid_fees_usd','ask_fees_usd',
     'inventory_contracts','inventory_cost_usd','realized_proceeds_usd','realized_fees_usd','realized_net_profit_usd','last_midpoint','bid_queue_ahead','ask_queue_ahead',
     'adverse_selection_bps','last_quote_at','terminal_at','last_error',
   ]);
@@ -344,15 +347,15 @@ async function advanceOne(row: MakerRow): Promise<KalshiEventMakerMaintenanceRes
     const newContracts = Math.max(0, economics.contracts - row.bidFilledContracts);
     if (newContracts > 1e-9) {
       const newValue = Math.max(0, economics.costOrProceedsUsd - row.inventoryCostUsd);
-      const newFees = Math.max(0, economics.feesUsd - row.realizedFeesUsd);
+      const newFees = Math.max(0, economics.feesUsd - row.bidFeesUsd);
       const inventory = row.inventoryContracts + newContracts;
       const inventoryCost = row.inventoryCostUsd + newValue;
       const currentAdverse = levels.midpoint > 0 ? Math.max(0, (economics.costOrProceedsUsd / Math.max(economics.contracts, 1e-9) - levels.midpoint) / levels.midpoint * 10_000) : 0;
       await updateRow(row.lifecycleId, {
-        bid_filled_contracts: economics.contracts, inventory_contracts: inventory, inventory_cost_usd: inventoryCost,
+        bid_filled_contracts: economics.contracts, bid_fees_usd: economics.feesUsd, inventory_contracts: inventory, inventory_cost_usd: inventoryCost,
         realized_fees_usd: row.realizedFeesUsd + newFees, adverse_selection_bps: currentAdverse, status: 'inventory_open', last_midpoint: levels.midpoint,
       });
-      row = { ...row, bidFilledContracts: economics.contracts, inventoryContracts: inventory, inventoryCostUsd: inventoryCost, realizedFeesUsd: row.realizedFeesUsd + newFees, adverseSelectionBps: currentAdverse, status: 'inventory_open' };
+      row = { ...row, bidFilledContracts: economics.contracts, bidFeesUsd: economics.feesUsd, inventoryContracts: inventory, inventoryCostUsd: inventoryCost, realizedFeesUsd: row.realizedFeesUsd + newFees, adverseSelectionBps: currentAdverse, status: 'inventory_open' };
       await cancelIfOpen(row.bidOrderId);
     } else if ((staleQuote || shock >= informationShockBps() || nearEvent) && row.status === 'quoting_bid') {
       await cancelIfOpen(row.bidOrderId);
@@ -388,17 +391,16 @@ async function advanceOne(row: MakerRow): Promise<KalshiEventMakerMaintenanceRes
     const newlySold = Math.max(0, askEconomics.contracts - row.askFilledContracts);
     if (newlySold > 1e-9) {
       const newProceeds = Math.max(0, askEconomics.costOrProceedsUsd - row.realizedProceedsUsd);
-      const askFeesAlready = Math.max(0, row.realizedFeesUsd);
-      const newFees = Math.max(0, askEconomics.feesUsd - Math.max(0, askFeesAlready));
+      const newFees = Math.max(0, askEconomics.feesUsd - row.askFeesUsd);
       const remaining = Math.max(0, row.inventoryContracts - newlySold);
       const proceeds = row.realizedProceedsUsd + newProceeds;
       const fees = row.realizedFeesUsd + newFees;
-      await updateRow(row.lifecycleId, { ask_filled_contracts: askEconomics.contracts, inventory_contracts: remaining, realized_proceeds_usd: proceeds, realized_fees_usd: fees, last_midpoint: levels.midpoint });
+      await updateRow(row.lifecycleId, { ask_filled_contracts: askEconomics.contracts, ask_fees_usd: askEconomics.feesUsd, inventory_contracts: remaining, realized_proceeds_usd: proceeds, realized_fees_usd: fees, last_midpoint: levels.midpoint });
       if (remaining <= 1e-9) {
         await cancelIfOpen(row.askOrderId);
-        return finalizeRoundTrip({ ...row, inventoryContracts: 0, realizedProceedsUsd: proceeds, realizedFeesUsd: fees }, proceeds, fees);
+        return finalizeRoundTrip({ ...row, askFeesUsd: askEconomics.feesUsd, inventoryContracts: 0, realizedProceedsUsd: proceeds, realizedFeesUsd: fees }, proceeds, fees);
       }
-      row = { ...row, askFilledContracts: askEconomics.contracts, inventoryContracts: remaining, realizedProceedsUsd: proceeds, realizedFeesUsd: fees };
+      row = { ...row, askFilledContracts: askEconomics.contracts, askFeesUsd: askEconomics.feesUsd, inventoryContracts: remaining, realizedProceedsUsd: proceeds, realizedFeesUsd: fees };
     }
     if (staleQuote || shock >= informationShockBps()) {
       await cancelIfOpen(row.askOrderId);
