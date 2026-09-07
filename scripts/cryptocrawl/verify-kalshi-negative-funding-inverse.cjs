@@ -8,6 +8,9 @@ const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
 const requireText = (source, needle, label) => {
   if (!source.includes(needle)) throw new Error(`missing:${label}`);
 };
+const requirePattern = (source, pattern, label) => {
+  if (!pattern.test(source)) throw new Error(`missing:${label}`);
+};
 const forbidText = (source, needle, label) => {
   if (source.includes(needle)) throw new Error(`forbidden:${label}`);
 };
@@ -24,7 +27,11 @@ requireText(policy, "'long_perp_short_spot'", 'policy_inverse_direction');
 requireText(policy, 'input.shortSpotCapability', 'policy_requires_short_spot_capability');
 
 requireText(evidence, 'type KalshiFundingDirection', 'evidence_direction_type');
-requireText(evidence, "input.fundingRate > 0 ? 'long_spot_short_perp' : 'long_perp_short_spot'", 'evidence_direction_selection');
+requirePattern(
+  evidence,
+  /const\s+direction\s*:\s*KalshiFundingDirection\s*=\s*input\.fundingRate\s*>\s*0\s*\?\s*'long_spot_short_perp'\s*:\s*'long_perp_short_spot'/s,
+  'evidence_direction_selection',
+);
 requireText(evidence, "direction === 'long_perp_short_spot'", 'evidence_inverse_branch');
 requireText(evidence, 'measureOkxMarginShortEvidence', 'evidence_authenticated_okx_borrow_surface');
 requireText(evidence, 'borrowCostUsd', 'evidence_borrow_cost');
