@@ -113,7 +113,7 @@ export interface VenueLatencyContext {
 }
 
 export interface FeeRebateContext {
-  /** Fees in bps; rebates as negative bps. */
+  /** Fees are positive costs in bps; makerRebateBps is a positive rebate credit in bps. */
   makerFeeBps?: number;
   takerFeeBps?: number;
   makerRebateBps?: number;
@@ -189,9 +189,9 @@ export interface CryptaraMarketGateContext {
 }
 
 export interface CryptaraMarketGateConfig {
-  /** If true, unknown critical signals block. Default true. */
+  /** If true, an explicitly configured critical signal also blocks when unknown. Default false. */
   blockOnUnknownCritical?: boolean;
-  /** Critical evaluators; missing data => BLOCK when blockOnUnknownCritical=true */
+  /** Optional explicit critical evaluators. Empty by default; normal Cryptara signals are advisory. */
   criticalSignals?: Array<
     | 'volatilityRegime'
     | 'venueLatency'
@@ -201,4 +201,3 @@ export interface CryptaraMarketGateConfig {
     | 'feesRebates'
   >;
 }
-
