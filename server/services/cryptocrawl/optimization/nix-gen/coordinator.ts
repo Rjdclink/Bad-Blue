@@ -1,5 +1,6 @@
 import { optimizeNixGenBids } from './global-optimizer.js';
 import type { NixGenPreparedBid } from './canonical-bid-adapters.js';
+import { buildNixGenKalshiAdvisory, type NixGenKalshiAdvisorySnapshot } from './kalshi-advisory.js';
 import type { NixGenOptimizationResult, NixGenResourceBudget, NixGenStrategyBid } from './types.js';
 
 const DISPATCH_RESOURCE_KEY = 'scheduler:dispatch_batch';
@@ -11,6 +12,7 @@ export interface NixGenAllocationSnapshot {
   filtersCanonicalCandidates: false;
   preparedBidCount: number;
   priorityIndexByOpportunityId: Readonly<Record<string, number>>;
+  kalshi: NixGenKalshiAdvisorySnapshot;
   result: NixGenOptimizationResult;
 }
 
@@ -53,6 +55,7 @@ export function coordinateNixGenAllocation(
   const priorityIndexByOpportunityId = Object.fromEntries(
     result.priorityOrderOpportunityIds.map((opportunityId, index) => [opportunityId, index]),
   );
+  const kalshi = buildNixGenKalshiAdvisory(prepared);
 
   return {
     generatedAt: input.now,
@@ -61,6 +64,7 @@ export function coordinateNixGenAllocation(
     filtersCanonicalCandidates: false,
     preparedBidCount: prepared.length,
     priorityIndexByOpportunityId,
+    kalshi,
     result,
   };
 }
