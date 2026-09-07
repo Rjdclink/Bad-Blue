@@ -146,6 +146,7 @@ COPY --from=builder /app/server/migrations/045_cryptocrawler_system_native_gas_s
 COPY --from=builder /app/server/migrations/046_cryptocrawler_kalshi_system_owned_margin_capital.sql ./dist/migrations/046_cryptocrawler_kalshi_system_owned_margin_capital.sql
 COPY --from=builder /app/server/migrations/047_cryptocrawler_kalshi_event_system_owned_cash.sql ./dist/migrations/047_cryptocrawler_kalshi_event_system_owned_cash.sql
 COPY --from=builder /app/server/migrations/048_cryptocrawler_kalshi_event_lifecycle.sql ./dist/migrations/048_cryptocrawler_kalshi_event_lifecycle.sql
+COPY --from=builder /app/server/migrations/049_cryptocrawler_kalshi_probability_calibration.sql ./dist/migrations/049_cryptocrawler_kalshi_probability_calibration.sql
 
 # Overflow-only prerequisites complete migration gaps found by the repository-wide
 # authority audit without enabling duplicate schedulers or browser/API access.
