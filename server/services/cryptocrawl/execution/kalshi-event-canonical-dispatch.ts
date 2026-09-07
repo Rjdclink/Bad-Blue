@@ -6,6 +6,7 @@ import { operatorTradingStrategy } from '../governance/operator-trading-strategy
 import { stageManager } from '../governance/stage-management.js';
 import { routeMeasuredOpportunity } from './unified-execution-router.js';
 import { kalshiEventLifecycle, type KalshiEventLifecycleResult } from './kalshi-event-lifecycle.js';
+import { dispatchBestKalshiEventMakerCandidate } from './kalshi-event-market-maker.js';
 import { acquireKalshiEventResourceLease } from './kalshi-event-resource-lease.js';
 
 export interface KalshiEventCanonicalDispatchResult {
@@ -24,6 +25,30 @@ function liveExecutionEnabled(): boolean {
     && process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
     && process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK'
     && process.env.CRYPTOCRAWL_KALSHI_EVENT_LIVE_EXECUTION === 'true';
+}
+
+function makerDispatchResult(
+  maker: Awaited<ReturnType<typeof dispatchBestKalshiEventMakerCandidate>>,
+): KalshiEventCanonicalDispatchResult {
+  const result: KalshiEventLifecycleResult | null = maker.lifecycleId
+    ? {
+      success: maker.submitted && !maker.error,
+      submitted: maker.submitted,
+      settlementConfirmed: false,
+      status: maker.submitted ? 'opening' : 'rejected',
+      lifecycleId: maker.lifecycleId,
+      orderId: maker.orderId ?? undefined,
+      error: maker.error,
+    }
+    : null;
+  return {
+    attempted: maker.attempted,
+    submitted: maker.submitted,
+    opportunityId: maker.opportunityId,
+    lifecycleId: maker.lifecycleId,
+    result,
+    error: maker.error,
+  };
 }
 
 export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCanonicalDispatchResult> {
@@ -68,9 +93,6 @@ export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCan
       }
       const reservationId = operator.reservationId;
       try {
-        // Re-read the exact measured candidate after all reservations. Any evidence
-        // refresh, invalidation or expiry between selection and submission closes
-        // the gate instead of executing a stale event plan.
         const currentMeasured = measuredCandidateRegistry.get(candidate.opportunityId);
         const currentAdmission = currentMeasured ? routeMeasuredOpportunity(currentMeasured) : null;
         if (!currentMeasured
@@ -88,9 +110,6 @@ export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCan
           && result.status === 'opening'
           && result.error === 'KALSHI_EVENT_ENTRY_RECOVERY_REQUIRED';
         if (ambiguousDurableOpening) {
-          // A deterministic client-order-id recovery record can represent a live
-          // venue write even though confirmation was lost. Consume the operator
-          // slot conservatively until lifecycle maintenance proves terminal state.
           await operatorTradingStrategy.markSubmitted(reservationId);
           logger.warn('[KalshiEventDispatch] Ambiguous event entry retained under canonical operator accounting', {
             component: 'KalshiEventCanonicalDispatch', opportunityId: candidate.opportunityId,
@@ -125,8 +144,6 @@ export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCan
         });
         return { attempted: true, submitted: true, opportunityId: candidate.opportunityId, lifecycleId: result.lifecycleId ?? null, result };
       } catch (error) {
-        // Submission state may be ambiguous. Preserve the durable operator
-        // reservation rather than granting an extra daily trade after a timeout.
         logger.error('[KalshiEventDispatch] Canonical event dispatch failed with durable reservation retained', {
           component: 'KalshiEventCanonicalDispatch', opportunityId: candidate.opportunityId,
           error: error instanceof Error ? error.message : String(error), extraDailyTradeAllowed: false,
@@ -136,6 +153,9 @@ export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCan
         await resource.release();
       }
     }
+
+    const maker = await dispatchBestKalshiEventMakerCandidate();
+    if (maker.attempted || maker.submitted || maker.error) return makerDispatchResult(maker);
     return { attempted: false, submitted: false, opportunityId: null, lifecycleId: null, result: null };
   })().finally(() => { dispatchInFlight = null; });
   return dispatchInFlight;
