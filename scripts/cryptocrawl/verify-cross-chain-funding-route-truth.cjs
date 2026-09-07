@@ -33,40 +33,63 @@ const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical
 const retainedProfit = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
 const inventoryReadiness = read('server/services/cryptocrawl/integration/cex-inventory-readiness-wiring.ts');
 
-// Across transport alone is not profit. A route may become executable only when
-// same-asset closed-value economics are based on guaranteed minimum output, live
-// asset value, separately paid origin gas, and no unpriced approval transaction.
+// Across transport becomes a candidate only when the exact current route has a
+// guaranteed minimum output whose closed USD value stays positive after every
+// separately-paid origin transaction cost. Provider simulation is telemetry only.
 requirePattern(crossChain, /getAcrossBridgeReadiness/, 'cross-chain discovery exposes production configuration truth');
-requirePattern(crossChain, /evaluateAcrossSameAssetProfit/, 'cross-chain discovery delegates canonical same-asset profit calculation');
+requirePattern(crossChain, /evaluateAcrossClosedUsdProfit/, 'cross-chain discovery delegates closed-USD profitability to one authority');
 requirePattern(crossChain, /const deterministicPositive = economics\?\.executablePositive === true/, 'cross-chain eligibility requires positive canonical route economics');
-requirePattern(crossChain, /const approvalGasCanonical = hasFreshQuote && quote\.approvalTransactions === 0/, 'approval-required Across routes stay blocked until approval gas is canonically priced');
-requirePattern(crossChain, /const routeExecutable = deterministicPositive[\s\S]{0,240}approvalGasCanonical[\s\S]{0,240}quote!\.minOutputAmount !== null/, 'cross-chain execution requires positive economics, priced gas, and guaranteed output');
+requirePattern(crossChain, /const approvalGasCanonical = hasFreshQuote[\s\S]{0,180}quote\.approvalGasUsd !== null[\s\S]{0,180}quote\.approvalGasUsd >= 0/, 'approval gas must be explicitly measured or measured zero');
+requirePattern(crossChain, /const routeExecutable = deterministicPositive[\s\S]{0,360}readiness\.configured[\s\S]{0,360}hasSigner[\s\S]{0,360}approvalGasCanonical[\s\S]{0,360}swapTransactionPresent === true[\s\S]{0,360}minOutputAmount !== null/, 'cross-chain execution requires positive economics, configuration, signer, gas, payload and guaranteed output');
 requirePattern(crossChain, /status: routeExecutable \? 'eligible' : deterministicPositive \? 'deterministic_positive'/, 'only fully executable positive routes become eligible');
-requirePattern(crossChain, /grossProfitUsd: economics\?\.routeGainUsdBeforeOriginGas \?\? null/, 'cross-chain gross profit comes from measured same-asset route gain');
+requirePattern(crossChain, /grossProfitUsd: economics\?\.routeGainUsdBeforeOriginGas \?\? null/, 'cross-chain gross profit comes from guaranteed closed-value route gain');
 requirePattern(crossChain, /deterministicNetProfitUsd: economics\?\.deterministicNetProfitUsd \?\? null/, 'cross-chain deterministic net comes from canonical route economics');
-requirePattern(crossChain, /cross_chain_profit_output_authority:minimum_guaranteed_output/, 'minimum guaranteed output is the cross-chain profit output authority');
+requirePattern(crossChain, /cross_chain_profit_output_authority:minimum_guaranteed_output/, 'minimum guaranteed output is the cross-chain output authority');
 requirePattern(crossChain, /measured_approval_gas_usd/, 'unpriced approval gas remains explicit missing evidence');
-requirePattern(crossChain, /cross_chain_profit_model:same_asset_closed_value/, 'cross-chain profit model is closed same-asset value');
+requirePattern(crossChain, /cross_chain_profit_model:closed_usd_value/, 'same-asset and cross-asset routes use one closed USD value model');
 requirePattern(crossChain, /cross_chain_profit_model:minimum_output_not_expected_output/, 'expected output cannot become canonical cross-chain profit');
-requirePattern(crossChain, /cross_chain_profit_model:origin_gas_subtracted_once/, 'origin gas is subtracted exactly once');
-requirePattern(crossChain, /cross_chain_profit_model:unpriced_approval_gas_blocks_execution/, 'unpriced approval gas blocks execution');
-requirePattern(crossChain, /prepared\.quote\.expiresAt <= Date\.now\(\) \|\| prepared\.quote\.approvalTransactions > 0/, 'prepared route cache cannot retain stale or approval-gas-incomplete routes');
-forbidPattern(crossChain, /cross_chain_transport_only:not_profit_opportunity|cross_chain_source_destination_profit_leg/, 'retired transport-only/missing-revenue-leg state cannot replace implemented measured profit truth');
+requirePattern(crossChain, /cross_chain_profit_model:swap_origin_gas_subtracted_once/, 'swap origin gas is subtracted exactly once');
+requirePattern(crossChain, /cross_chain_profit_model:approval_gas_subtracted_once_when_required/, 'approval gas is subtracted exactly once when required');
+requirePattern(crossChain, /cross_chain_simulation_execution_authority:false/, 'Across simulation cannot authorize or veto execution');
+requirePattern(crossChain, /advisory:bridge_provider_simulation_unsuccessful_or_unavailable/, 'unsuccessful provider simulation is retained as advisory evidence');
+requirePattern(crossChain, /acquireRouteQuotes\(routes, notionalUsd\)/, 'all structural routes are actively reacquired every cycle');
+requirePattern(crossChain, /acrossQuoteConcurrency\(\)/, 'route acquisition pressure remains concurrency bounded');
+requirePattern(crossChain, /routes\.map\(route => recordRoute/, 'every structural route remains represented');
+requirePattern(crossChain, /prepared\.quote\.expiresAt <= Date\.now\(\)/, 'prepared route cache rejects expired routes');
+forbidPattern(crossChain, /quote!\.simulationSuccess === true/, 'provider simulation cannot be an execution admission gate');
+forbidPattern(crossChain, /Math\.random/, 'route coverage cannot be randomly skipped');
 
 requirePattern(crossChainEconomics, /quote\.minOutputAmount/, 'cross-chain economics require guaranteed minimum output');
-requirePattern(crossChainEconomics, /routeGainUsdBeforeOriginGas = \(guaranteedOutputHuman - inputAmountHuman\) \* price/, 'same-asset gain is measured from guaranteed output minus input');
-requirePattern(crossChainEconomics, /deterministicNetProfitUsd = routeGainUsdBeforeOriginGas - originGasUsd/, 'origin gas is deducted once from route gain');
+requirePattern(crossChainEconomics, /inputValueUsd = inputAmountHuman \* inputPrice/, 'input value uses live input-asset USD price');
+requirePattern(crossChainEconomics, /guaranteedOutputValueUsd = guaranteedOutputHuman \* outputPrice/, 'guaranteed output uses separately live output-asset USD price');
+requirePattern(crossChainEconomics, /routeGainUsdBeforeOriginGas = guaranteedOutputValueUsd - inputValueUsd/, 'closed route gain is output USD value minus input USD value');
+requirePattern(crossChainEconomics, /originGasUsd = swapOriginGasUsd \+ approvalGasUsd/, 'all separately paid origin gas is combined once');
+requirePattern(crossChainEconomics, /deterministicNetProfitUsd = routeGainUsdBeforeOriginGas - originGasUsd/, 'origin gas is deducted once from closed route gain');
 requirePattern(crossChainEconomics, /executablePositive: deterministicNetProfitUsd > 0/, 'cross-chain execution requires strict positive deterministic net');
-requirePattern(crossChainEconomics, /across_min_output_same_asset_plus_live_usd_price/, 'cross-chain economics identify their measured authority');
+requirePattern(crossChainEconomics, /across_min_output_closed_usd_plus_live_input_output_prices/, 'cross-chain economics identify their measured authority');
+forbidPattern(crossChainEconomics, /expectedOutputAmount[^\n]*deterministicNetProfitUsd/, 'expected output cannot manufacture deterministic profit');
 
-requirePattern(acrossExecutor, /getAcrossBridgeQuote\s*\(/, 'Across executor refreshes the route immediately before signing');
+// Immediately before principal broadcast the executor reacquires the uncached
+// approval response and requires real wallet spendability in addition to the
+// upstream receipt-backed system-owned-lot reservation.
+requirePattern(acrossExecutor, /getAcrossCrossSwapQuote\s*\(/, 'Across executor refreshes the route immediately before signing');
 requirePattern(acrossExecutor, /freshExecutionPayload\s*\(/, 'Across executor refreshes executable calldata');
-requirePattern(acrossExecutor, /freshMinimum\s*<\s*oldMinimum/, 'Across executor applies minimum-output drift protection');
+requirePattern(acrossExecutor, /payload\?\.checks\?\.balance/, 'Across executor consumes the fresh depositor balance check');
+requirePattern(acrossExecutor, /balanceToken\.toLowerCase\(\) !== quote\.inputToken\.toLowerCase\(\)/, 'Across balance evidence is token-identity bound');
+requirePattern(acrossExecutor, /balanceActual < balanceExpected/, 'actual depositor balance must cover the provider-required amount');
+requirePattern(acrossExecutor, /balanceExpected < routeInput/, 'provider-required balance may not understate the exact route input');
+requirePattern(acrossExecutor, /simulationVetoAuthority:\s*false/, 'Across simulation remains advisory throughout execution');
+requirePattern(acrossExecutor, /freshMinimum < oldMinimum/, 'Across executor applies minimum-output drift protection');
+requirePattern(acrossExecutor, /liveApprovalGasUsd/, 'approval receipts are converted to actual USD gas cost');
+requirePattern(acrossExecutor, /postApprovalEconomicsPositive/, 'Across executor re-proves positive economics after approval gas is spent');
+requirePattern(acrossExecutor, /postPayload\.approvals\.length > 0/, 'allowance must be satisfied after approval receipts');
 requirePattern(acrossExecutor, /requireAllowed\(\s*'SUBMIT_TX'/, 'Across execution remains governance-gated');
+requirePattern(acrossExecutor, /armPreparedAcrossOriginTransaction/, 'signed origin transaction is durably armed before broadcast');
 requirePattern(acrossExecutor, /getAcrossDepositSettlementEvidence\s*\(/, 'Across execution polls provider settlement evidence');
 requirePattern(acrossExecutor, /destinationReceiptVerified/, 'successful Across fill requires destination receipt verification');
 requirePattern(acrossExecutor, /refundReceiptVerified/, 'Across refund requires receipt verification');
 requirePattern(acrossExecutor, /ACROSS_TERMINAL_SETTLEMENT_TIMEOUT/, 'unknown terminal settlement fails closed');
+forbidPattern(acrossExecutor, /quote\.simulationSuccess !== true/, 'input quote simulation cannot become a hard veto');
 
 // Funding is projected carry before settlement, but OKX execution may be promoted
 // only after authenticated fees, exact contract sizing, measured entry/exit depth,
@@ -78,15 +101,14 @@ requirePattern(funding, /measureOkxFundingExecutionEvidence\s*\(/, 'funding moni
 requirePattern(funding, /ensureOkxFundingLifecycleAdapterRegistered\(\)/, 'funding monitor registers the production OKX lifecycle adapter');
 requirePattern(funding, /exitBasisReserveBps: executionEvidence\?\.exitBasisReserveBps \?\? null/, 'measured exit-basis reserve feeds projected all-in carry economics');
 requirePattern(funding, /expectedSlippageBps: executionEvidence\?\.expectedSlippageBps \?\? null/, 'measured entry/exit slippage feeds projected all-in carry economics');
-requirePattern(funding, /const executionCapable = observation\.venue === 'okx'[\s\S]{0,420}projectedNet !== null[\s\S]{0,120}projectedNet > 0[\s\S]{0,160}window\.eligible[\s\S]{0,160}executionEvidence !== null[\s\S]{0,160}executionEvidence\.expiresAt > Date\.now\(\)[\s\S]{0,160}swapCapability\.instrumentVisible[\s\S]{0,160}swapCapability\.accountModeVisible/, 'funding execution promotion requires positive projected carry and complete fresh OKX execution/account evidence');
+requirePattern(funding, /const executionCapable = observation\.venue === 'okx'[\s\S]{0,520}projectedNet !== null[\s\S]{0,160}projectedNet > 0[\s\S]{0,200}window\.eligible[\s\S]{0,200}executionEvidence !== null[\s\S]{0,200}executionEvidence\.expiresAt > Date\.now\(\)[\s\S]{0,200}swapCapability\.instrumentVisible[\s\S]{0,200}swapCapability\.accountModeVisible/, 'funding execution promotion requires positive projected carry and complete fresh OKX execution/account evidence');
 requirePattern(funding, /status: executionCapable \? 'eligible' : 'enriched'/, 'only fully execution-capable funding observations become eligible');
-requirePattern(funding, /depth: executionEvidence[\s\S]{0,180}status: 'measured'/, 'eligible OKX funding carries measured spot and SWAP depth');
+requirePattern(funding, /depth: executionEvidence[\s\S]{0,220}status: 'measured'/, 'eligible OKX funding carries measured spot and SWAP depth');
 requirePattern(funding, /deterministicNetProfitUsd: null/, 'projected funding carry is not relabeled as canonical deterministic profit');
 requirePattern(funding, /executableCapability: executionCapable/, 'funding candidate execution capability is tied to measured execution evidence');
 requirePattern(funding, /funding_profit_authority:projected_expected_value_until_terminal_bill/, 'pre-settlement funding profit remains explicitly projected');
 requirePattern(funding, /execution_promoted_from_bounded_projected_carry_and_complete_execution_evidence/, 'funding promotion provenance requires bounded projected carry plus complete evidence');
 requirePattern(funding, /durable_funding_lifecycle:migration_owned_nonblocking/, 'discovery records implemented durable lifecycle truth');
-forbidPattern(funding, /persistent_delta_neutral_position_lifecycle|funding_venue_lifecycle_adapter|liquidation_margin_and_collateral_monitoring|terminal_funding_payment_and_close_settlement/, 'retired missing-lifecycle evidence cannot replace implemented OKX lifecycle truth');
 requirePattern(fundingPolicy, /input\.fundingRateLocked\s*&&\s*supportedDirection/, 'deterministic funding P&L still requires locked rate and supported direction');
 requirePattern(fundingPolicy, /projected funding payment into deterministic execution evidence/, 'policy preserves projected-versus-deterministic separation');
 
@@ -140,4 +162,4 @@ requirePattern(canonicalRuntime, /adaptiveProfitCapScope:\s*'retired_no_daily_re
 requirePattern(canonicalRuntime, /retainedProfitRole:\s*'available_for_redeployment_subject_to_profit_ladder_stage_inventory_liquidity_and_risk'/, 'runtime telemetry reports retained-profit redeployment correctly');
 forbidPattern(canonicalRuntime, /persisted_operating_day_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget|new_exposure_only_settlement_hedge_flattening_exempt/, 'stale daily profit-cap authority telemetry');
 
-console.log('[route-truth] guaranteed positive Across same-asset economics, approval-gas fail-closed protection, terminal Across settlement, measured OKX funding entry/exit economics, bounded projected-carry promotion, durable delta-neutral lifecycle, authenticated terminal funding accounting, fixed 90/10 treasury, retained-capital reuse, and retired profit-cap invariants passed');
+console.log('[route-truth] PASS: guaranteed closed-USD Across economics, fresh wallet balance + system-owned capital authority, actual approval gas, advisory provider simulation, terminal Across settlement, measured funding execution, durable lifecycle, authenticated terminal P&L, fixed 90/10 treasury, retained-capital reuse, and retired profit-cap invariants passed');
