@@ -311,10 +311,18 @@ async function updateQueue(row: MakerRow): Promise<void> {
   await updateRow(row.lifecycleId, { bid_queue_ahead: bid, ask_queue_ahead: ask });
 }
 
-async function cancelIfOpen(orderId: string | null): Promise<void> {
-  if (!orderId) return;
-  const state = await getKalshiEventOrder(orderId).catch(() => null);
-  if (state && !state.terminal) await cancelKalshiEventOrder(orderId).catch(() => undefined);
+async function cancelIfOpen(orderId: string | null): Promise<boolean> {
+  if (!orderId) return true;
+  const before = await getKalshiEventOrder(orderId).catch(() => null);
+  if (!before) return false;
+  if (before.terminal) return true;
+  try {
+    await cancelKalshiEventOrder(orderId);
+  } catch {
+    return false;
+  }
+  const after = await getKalshiEventOrder(orderId).catch(() => null);
+  return after?.terminal === true;
 }
 
 async function recordPerformance(row: MakerRow, realizedNetProfitUsd: number, feesUsd: number, terminalAt: number): Promise<void> {
@@ -381,11 +389,29 @@ async function advanceOne(row: MakerRow): Promise<KalshiEventMakerMaintenanceRes
   const nearEvent = row.plan.settlementDeadlineAt - now <= eventRiskWindowMs();
   const staleQuote = row.lastQuoteAt !== null && now - row.lastQuoteAt >= quoteAgeMs();
   if (shock >= informationShockBps()) {
-    await cancelIfOpen(row.bidOrderId); await cancelIfOpen(row.askOrderId);
+    const bidCancelled = await cancelIfOpen(row.bidOrderId);
+    const askCancelled = await cancelIfOpen(row.askOrderId);
     await updateRow(row.lifecycleId, { last_midpoint: levels.midpoint, last_error: `information_shock_bps:${shock.toFixed(4)}` });
+    if (!bidCancelled || !askCancelled) {
+      await updateRow(row.lifecycleId, { status: 'recovery_required', last_error: 'maker_information_shock_cancel_unconfirmed' });
+      return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'recovery_required', terminal: false, realizedNetProfitUsd: null, error: 'KALSHI_MAKER_CANCEL_UNCONFIRMED' };
+    }
   }
 
   if (row.status === 'settlement_wait') return finalizeSettlement(row);
+
+  if (row.status === 'recovery_required' && !row.bidOrderId && row.inventoryContracts <= 1e-9) {
+    const contracts = Math.max(1, Math.min(maxInventoryContracts(), row.plan.contracts, Math.floor(levels.bidContracts)));
+    try {
+      const orderId = await quoteBid(row, contracts, levels.bid);
+      await updateRow(row.lifecycleId, { status: 'quoting_bid', last_error: null });
+      return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'quoting_bid', terminal: false, realizedNetProfitUsd: null };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await updateRow(row.lifecycleId, { status: 'recovery_required', last_error: `maker_bid_recovery_pending:${message}` });
+      return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'recovery_required', terminal: false, realizedNetProfitUsd: null, error: 'KALSHI_MAKER_BID_RECOVERY_PENDING' };
+    }
+  }
 
   if (row.bidOrderId) {
     const fills = await getKalshiEventFillsForOrder({ ticker: row.ticker, orderId: row.bidOrderId }).catch(() => []);
@@ -402,17 +428,43 @@ async function advanceOne(row: MakerRow): Promise<KalshiEventMakerMaintenanceRes
         realized_fees_usd: row.realizedFeesUsd + newFees, adverse_selection_bps: currentAdverse, status: 'inventory_open', last_midpoint: levels.midpoint,
       });
       row = { ...row, bidFilledContracts: economics.contracts, bidFeesUsd: economics.feesUsd, inventoryContracts: inventory, inventoryCostUsd: inventoryCost, realizedFeesUsd: row.realizedFeesUsd + newFees, adverseSelectionBps: currentAdverse, status: 'inventory_open' };
-      await cancelIfOpen(row.bidOrderId);
+      const cancelled = await cancelIfOpen(row.bidOrderId);
+      if (!cancelled) {
+        await updateRow(row.lifecycleId, { status: 'recovery_required', last_error: 'maker_partial_bid_cancel_unconfirmed' });
+        return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'recovery_required', terminal: false, realizedNetProfitUsd: null, error: 'KALSHI_MAKER_CANCEL_UNCONFIRMED' };
+      }
+      await updateRow(row.lifecycleId, { bid_order_id: null });
+      row = { ...row, bidOrderId: null };
+    } else if (row.status === 'recovery_required') {
+      const cancelled = await cancelIfOpen(row.bidOrderId);
+      if (!cancelled) return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'recovery_required', terminal: false, realizedNetProfitUsd: null, error: 'KALSHI_MAKER_CANCEL_UNCONFIRMED' };
+      const nextStatus: MakerStatus = row.inventoryContracts > 1e-9 ? 'inventory_open' : 'quoting_bid';
+      await updateRow(row.lifecycleId, { bid_order_id: null, status: nextStatus, last_error: null });
+      row = { ...row, bidOrderId: null, status: nextStatus };
     } else if ((staleQuote || shock >= informationShockBps() || nearEvent) && row.status === 'quoting_bid') {
-      await cancelIfOpen(row.bidOrderId);
+      const cancelled = await cancelIfOpen(row.bidOrderId);
+      if (!cancelled) {
+        await updateRow(row.lifecycleId, { status: 'recovery_required', last_error: 'maker_bid_cancel_replace_unconfirmed' });
+        return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'recovery_required', terminal: false, realizedNetProfitUsd: null, error: 'KALSHI_MAKER_CANCEL_UNCONFIRMED' };
+      }
       if (nearEvent) {
         if (row.cashReservationId) await releaseKalshiEventSystemCashReservation(row.cashReservationId);
-        await updateRow(row.lifecycleId, { status: 'failed', terminal_at: new Date(), last_error: 'maker_bid_cancelled_event_risk_window' });
+        await updateRow(row.lifecycleId, { bid_order_id: null, status: 'failed', terminal_at: new Date(), last_error: 'maker_bid_cancelled_event_risk_window' });
         return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'failed', terminal: true, realizedNetProfitUsd: 0 };
       }
-      await quoteBid(row, Math.min(maxInventoryContracts(), row.plan.contracts), levels.bid);
+      const orderId = await quoteBid({ ...row, bidOrderId: null }, Math.min(maxInventoryContracts(), row.plan.contracts), levels.bid);
       return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'quoting_bid', terminal: false, realizedNetProfitUsd: null };
     }
+  }
+
+  if (!row.bidOrderId && row.inventoryContracts <= 1e-9 && row.status === 'quoting_bid') {
+    if (nearEvent) {
+      if (row.cashReservationId) await releaseKalshiEventSystemCashReservation(row.cashReservationId);
+      await updateRow(row.lifecycleId, { status: 'failed', terminal_at: new Date(), last_error: 'maker_bid_cancelled_event_risk_window' });
+      return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'failed', terminal: true, realizedNetProfitUsd: 0 };
+    }
+    await quoteBid(row, Math.min(maxInventoryContracts(), row.plan.contracts), levels.bid);
+    return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'quoting_bid', terminal: false, realizedNetProfitUsd: null };
   }
 
   if (row.inventoryContracts > 1e-9) {
@@ -443,13 +495,25 @@ async function advanceOne(row: MakerRow): Promise<KalshiEventMakerMaintenanceRes
       const fees = row.realizedFeesUsd + newFees;
       await updateRow(row.lifecycleId, { ask_filled_contracts: askEconomics.contracts, ask_fees_usd: askEconomics.feesUsd, inventory_contracts: remaining, realized_proceeds_usd: proceeds, realized_fees_usd: fees, last_midpoint: levels.midpoint });
       if (remaining <= 1e-9) {
-        await cancelIfOpen(row.askOrderId);
+        const cancelled = await cancelIfOpen(row.askOrderId);
+        if (!cancelled) {
+          await updateRow(row.lifecycleId, { status: 'recovery_required', last_error: 'maker_terminal_ask_cancel_unconfirmed' });
+          return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'recovery_required', terminal: false, realizedNetProfitUsd: null, error: 'KALSHI_MAKER_CANCEL_UNCONFIRMED' };
+        }
         return finalizeRoundTrip({ ...row, askFeesUsd: askEconomics.feesUsd, inventoryContracts: 0, realizedProceedsUsd: proceeds, realizedFeesUsd: fees }, proceeds, fees);
       }
       row = { ...row, askFilledContracts: askEconomics.contracts, askFeesUsd: askEconomics.feesUsd, inventoryContracts: remaining, realizedProceedsUsd: proceeds, realizedFeesUsd: fees };
     }
-    if (staleQuote || shock >= informationShockBps()) {
-      await cancelIfOpen(row.askOrderId);
+    if (staleQuote || shock >= informationShockBps() || nearEvent) {
+      const cancelled = await cancelIfOpen(row.askOrderId);
+      if (!cancelled) {
+        await updateRow(row.lifecycleId, { status: 'recovery_required', last_error: 'maker_ask_cancel_replace_unconfirmed' });
+        return { lifecycleId: row.lifecycleId, opportunityId: row.opportunityId, status: 'recovery_required', terminal: false, realizedNetProfitUsd: null, error: 'KALSHI_MAKER_CANCEL_UNCONFIRMED' };
+      }
+      if (nearEvent) {
+        await updateRow(row.lifecycleId, { ask_order_id: null, status: 'settlement_wait', last_midpoint: levels.midpoint, last_error: 'maker_ask_cancelled_event_risk_window' });
+        return finalizeSettlement({ ...row, askOrderId: null, status: 'settlement_wait' });
+      }
       await updateRow(row.lifecycleId, { ask_order_id: null, status: 'inventory_open', last_midpoint: levels.midpoint });
     }
   }
