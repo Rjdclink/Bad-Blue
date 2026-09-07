@@ -1,3 +1,16 @@
+import { Contract } from 'ethers';
+import { multiProviderRpcManager } from '../api/blockchain-providers.js';
+import {
+  cancelPolymarketEventOrderState,
+  getPolymarketEventOrderState,
+  placeOrRecoverPolymarketEventOrder,
+} from '../execution/polymarket-event-order-authority.js';
+import {
+  getPolymarketSystemCashSnapshot,
+  recoverPolymarketSystemCashReservation,
+  reservePolymarketSystemCash,
+} from '../execution/polymarket-system-owned-cash-ledger.js';
+import { getPolymarketAuthenticatedAccountSnapshot } from '../intelligence/polymarket-authenticated-authority.js';
 import {
   fingerprintEventSemantics,
   type EventContractSemantics,
@@ -14,6 +27,11 @@ import {
 
 const GAMMA_BASE = 'https://gamma-api.polymarket.com';
 const CLOB_BASE = 'https://clob.polymarket.com';
+const CONDITIONAL_TOKENS = '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045';
+const CTF_ABI = [
+  'function payoutDenominator(bytes32 conditionId) view returns (uint256)',
+  'function payoutNumerators(bytes32 conditionId,uint256 index) view returns (uint256)',
+];
 const TTL_MS = Math.max(1_000, Math.min(30_000, Number(process.env.CRYPTOCRAWL_POLYMARKET_EVENT_TTL_MS || 5_000)));
 
 type MarketRow = Record<string, any>;
@@ -88,6 +106,22 @@ async function feeRate(tokenId: string): Promise<number | null> {
   const raw = Number(payload?.base_fee ?? payload?.fee_rate_bps ?? payload?.feeRateBps);
   return Number.isFinite(raw) && raw >= 0 ? raw : null;
 }
+async function executionMetadata(tokenId: string): Promise<{ tickSize: number; negRisk: boolean } | null> {
+  const [tick, negRisk] = await Promise.all([
+    json<any>(`${CLOB_BASE}/tick-size?token_id=${encodeURIComponent(tokenId)}`).catch(() => null),
+    json<any>(`${CLOB_BASE}/neg-risk?token_id=${encodeURIComponent(tokenId)}`).catch(() => null),
+  ]);
+  const tickSize = Number(tick?.minimum_tick_size ?? tick?.tick_size);
+  if (![0.1, 0.01, 0.005, 0.0025, 0.001, 0.0001].includes(tickSize)) return null;
+  if (typeof negRisk?.neg_risk !== 'boolean') return null;
+  return { tickSize, negRisk: negRisk.neg_risk };
+}
+function reservationExpiry(row: MarketRow): number {
+  const cutoff = timestamp(row?.endDate ?? row?.end_date ?? row?.endDateIso);
+  const grace = Math.max(60_000, Math.min(14 * 24 * 60 * 60_000,
+    Number(process.env.CRYPTOCRAWL_POLYMARKET_SETTLEMENT_GRACE_MS || 7 * 24 * 60 * 60_000)));
+  return Math.max(Date.now() + 60_000, (cutoff ?? Date.now() + 24 * 60 * 60_000) + grace);
+}
 
 export class PolymarketEventVenue implements EventVenue {
   readonly venue = 'polymarket';
@@ -108,7 +142,7 @@ export class PolymarketEventVenue implements EventVenue {
       semanticsFingerprint: fingerprintEventSemantics(semantics),
       observedAt: now,
       expiresAt: now + TTL_MS,
-      provenance: ['polymarket_gamma:public_market', 'semantic_fields:explicit_only_no_inference', 'execution_authority:false'],
+      provenance: ['polymarket_gamma:public_market', 'semantic_fields:explicit_only_no_inference', 'execution_authority:conditional_on_authenticated_account_system_cash_and_order_evidence'],
     };
   }
 
@@ -139,6 +173,7 @@ export class PolymarketEventVenue implements EventVenue {
       : null;
     const top = levels[0]?.price ?? null;
     const slippageUsd = complete && top !== null ? Math.max(0, side === 'buy' ? notional - contracts * top : contracts * top - notional) : null;
+    const authenticated = await getPolymarketAuthenticatedAccountSnapshot().then(() => true).catch(() => false);
     const now = Date.now();
     return {
       venue: this.venue,
@@ -154,38 +189,169 @@ export class PolymarketEventVenue implements EventVenue {
       slippageUsd,
       observedAt: now,
       expiresAt: now + TTL_MS,
-      authenticated: false,
+      authenticated,
       provenance: [
-        'polymarket_clob:public_orderbook',
-        ...(feeBps !== null ? ['polymarket_clob:public_market_fee_rate'] : ['polymarket_fee:evidence_missing']),
-        'account_execution_authentication:false',
-        'execution_authority:false',
+        'polymarket_clob:public_exact_orderbook_depth',
+        ...(feeBps !== null ? ['polymarket_clob:market_fee_rate_authoritative_account_independent'] : ['polymarket_fee:evidence_missing']),
+        authenticated ? 'polymarket_account:l1_l2_authenticated' : 'polymarket_account:authentication_missing',
+        'depth_and_fee_observation:does_not_grant_execution_without_system_owned_cash',
       ],
     };
   }
 
   async getAccountEvidence(): Promise<EventVenueAccountEvidence> {
     const now = Date.now();
+    const [account, cash] = await Promise.all([
+      getPolymarketAuthenticatedAccountSnapshot().catch(() => null),
+      getPolymarketSystemCashSnapshot(true).catch(() => null),
+    ]);
+    const authenticated = account !== null;
+    const accountAccessible = authenticated && account.closedOnly !== true;
+    const orderSubmissionAllowed = accountAccessible && account.collateralAllowanceProven;
+    const prefundedSystemOwnedUsd = cash?.authenticatedCapacity ? cash.usableUsd : null;
     return {
       venue: this.venue,
-      authenticated: false,
-      accountAccessible: false,
-      orderSubmissionAllowed: false,
-      prefundedSystemOwnedUsd: null,
-      systemOwnedProvenance: [],
-      feeEvidenceAuthenticated: false,
-      observedAt: now,
+      authenticated,
+      accountAccessible,
+      orderSubmissionAllowed,
+      prefundedSystemOwnedUsd,
+      systemOwnedProvenance: cash ? [
+        'ownership:cryptocrawler_polymarket_system_owned_cash_lots',
+        'physical_capacity:authenticated_polymarket_collateral_balance',
+        'account_balance_mints_ownership:false',
+        'personal_wallet_fallback:false',
+      ] : [],
+      // Polymarket CLOB fees are market/token schedule facts, not account-tier
+      // discounts. Authenticated account identity plus the exact per-token fee
+      // endpoint therefore completes the execution fee authority at quote time.
+      feeEvidenceAuthenticated: authenticated,
+      observedAt: Math.max(now, account?.observedAt ?? 0, cash?.observedAt ?? 0),
       expiresAt: now + TTL_MS,
-      provenance: ['polymarket_account:authenticated_adapter_not_configured', 'account_balance_mints_ownership:false', 'execution_authority:false'],
+      provenance: [
+        ...(account?.provenance ?? ['polymarket_account:authentication_missing']),
+        ...(cash ? ['polymarket_system_cash:canonical_owned_lot_authority'] : ['polymarket_system_cash:evidence_missing']),
+        'polymarket_fee_model:market_specific_not_account_tiered',
+        'account_balance_mints_ownership:false',
+      ],
     };
   }
 
-  async placeOrRecoverOrder(_request: EventVenueOrderRequest): Promise<EventVenueOrderState> {
-    throw new Error('POLYMARKET_AUTHENTICATED_EXECUTION_ADAPTER_UNAVAILABLE');
+  async placeOrRecoverOrder(request: EventVenueOrderRequest): Promise<EventVenueOrderState> {
+    if (request.side !== 'buy') throw new Error('POLYMARKET_SYSTEM_OWNED_CONDITIONAL_INVENTORY_AUTHORITY_UNAVAILABLE');
+    const row = await marketById(request.marketId);
+    if (!row) throw new Error('POLYMARKET_MARKET_UNAVAILABLE');
+    const conditionId = text(row?.conditionId ?? row?.condition_id);
+    const tokenId = tokenFor(row, request.outcome);
+    if (!conditionId || !tokenId) throw new Error('POLYMARKET_MARKET_EXECUTION_IDENTITY_INCOMPLETE');
+    const metadata = await executionMetadata(tokenId);
+    if (!metadata) throw new Error('POLYMARKET_EXECUTION_METADATA_INCOMPLETE');
+    const feeBps = await feeRate(tokenId);
+    if (feeBps === null) throw new Error('POLYMARKET_EXECUTION_FEE_EVIDENCE_INCOMPLETE');
+    const reserveAmountUsd = request.contracts * request.limitPrice
+      + request.contracts * (feeBps / 10_000) * request.limitPrice * (1 - request.limitPrice);
+    let reservation = await recoverPolymarketSystemCashReservation({
+      lifecycleId: request.clientOrderId,
+      opportunityId: request.marketId,
+    });
+    if (!reservation) {
+      reservation = await reservePolymarketSystemCash({
+        lifecycleId: request.clientOrderId,
+        opportunityId: request.marketId,
+        amountUsd: reserveAmountUsd,
+        expiresAt: reservationExpiry(row),
+      });
+    }
+    if (!reservation || reservation.amountUsd + 1e-9 < reserveAmountUsd) {
+      throw new Error('POLYMARKET_PROVEN_SYSTEM_OWNED_CASH_RESERVATION_UNAVAILABLE');
+    }
+    return placeOrRecoverPolymarketEventOrder({
+      clientOrderId: request.clientOrderId,
+      marketId: request.marketId,
+      conditionId,
+      tokenId,
+      outcome: request.outcome,
+      side: request.side,
+      contracts: request.contracts,
+      limitPrice: request.limitPrice,
+      timeInForce: request.timeInForce,
+      postOnly: request.postOnly,
+      tickSize: metadata.tickSize,
+      negRisk: metadata.negRisk,
+    });
   }
-  async getOrder(_orderId: string): Promise<EventVenueOrderState | null> { return null; }
-  async cancelOrder(_orderId: string): Promise<EventVenueOrderState | null> { return null; }
-  async getSettlement(_marketId: string): Promise<EventVenueSettlement | null> { return null; }
+
+  async getOrder(orderId: string): Promise<EventVenueOrderState | null> {
+    return getPolymarketEventOrderState(orderId);
+  }
+
+  async cancelOrder(orderId: string): Promise<EventVenueOrderState | null> {
+    return cancelPolymarketEventOrderState(orderId);
+  }
+
+  async getSettlement(marketId: string): Promise<EventVenueSettlement | null> {
+    const row = await marketById(marketId);
+    if (!row) return null;
+    const conditionId = text(row?.conditionId ?? row?.condition_id);
+    if (!/^0x[a-fA-F0-9]{64}$/.test(conditionId)) return null;
+    const outcomes = parseArray(row?.outcomes).map(value => value.trim().toLowerCase());
+    const yesIndex = outcomes.indexOf('yes');
+    const noIndex = outcomes.indexOf('no');
+    if (yesIndex < 0 || noIndex < 0) return null;
+    try {
+      const observed = await multiProviderRpcManager.execute('polygon', 'contract_calls', async provider => {
+        const ctf = new Contract(CONDITIONAL_TOKENS, CTF_ABI, provider);
+        const denominator = await ctf.payoutDenominator(conditionId);
+        if (denominator.isZero()) return { denominator: 0n, yes: 0n, no: 0n };
+        const [yes, no] = await Promise.all([
+          ctf.payoutNumerators(conditionId, yesIndex),
+          ctf.payoutNumerators(conditionId, noIndex),
+        ]);
+        return { denominator: BigInt(denominator.toString()), yes: BigInt(yes.toString()), no: BigInt(no.toString()) };
+      });
+      const { denominator, yes, no } = observed.result;
+      const now = Date.now();
+      if (denominator === 0n) {
+        return {
+          venue: this.venue,
+          marketId,
+          terminal: false,
+          result: 'unknown',
+          payoutPerWinningContractUsd: null,
+          realizedSettlementFeeUsd: null,
+          observedAt: now,
+          provenance: ['polymarket_ctf:payout_denominator_zero_not_terminal', `rpc_provider:${observed.provenance.provider}`],
+        };
+      }
+      const explicitlyCancelled = row?.cancelled === true || row?.canceled === true;
+      const result: EventVenueSettlement['result'] = explicitlyCancelled
+        ? 'cancelled'
+        : yes === denominator && no === 0n
+          ? 'yes'
+          : no === denominator && yes === 0n
+            ? 'no'
+            : yes > 0n && yes === no
+              ? 'void'
+              : 'unknown';
+      return {
+        venue: this.venue,
+        marketId,
+        terminal: result !== 'unknown',
+        result,
+        payoutPerWinningContractUsd: result === 'yes' || result === 'no' ? 1 : result === 'void' || result === 'cancelled' ? Number(yes) / Number(denominator) : null,
+        realizedSettlementFeeUsd: result === 'unknown' ? null : 0,
+        observedAt: now,
+        provenance: [
+          'polymarket_ctf:onchain_payout_vector',
+          'polymarket_ctf:protocol_redemption_fee_zero_gas_external',
+          `condition_id:${conditionId}`,
+          `rpc_provider:${observed.provenance.provider}`,
+          result === 'unknown' ? 'settlement:quarantine_unknown_vector' : 'settlement:terminal_authoritative',
+        ],
+      };
+    } catch {
+      return null;
+    }
+  }
 }
 
 export const polymarketEventVenue = new PolymarketEventVenue();
