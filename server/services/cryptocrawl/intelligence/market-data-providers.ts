@@ -89,8 +89,8 @@ export interface MarketDataProviderStatus {
 const COINCAP_TTL_MS = Math.max(10_000, Number(process.env.COINCAP_MARKET_TTL_MS || 60_000));
 const COINGECKO_TTL_MS = Math.max(30_000, Number(process.env.COINGECKO_MARKET_TTL_MS || 300_000));
 const COINSTATS_TTL_MS = Math.max(30_000, Number(process.env.COINSTATS_MARKET_TTL_MS || 300_000));
-const ZEROX_TTL_MS = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
-const ZEROX_AUTH_FAILURE_COOLDOWN_MS = Math.max(60_000, Math.min(3_600_000, Number(process.env.ZEROX_AUTH_FAILURE_COOLDOWN_MS || 300_000)));
+const ZEROX_TTL_MS = Math.max(100, Math.min(5_000, Number(process.env.ZEROX_QUOTE_TTL_MS || 750)));
+const ZEROX_AUTH_FAILURE_COOLDOWN_MS = Math.max(5_000, Math.min(60_000, Number(process.env.ZEROX_AUTH_FAILURE_COOLDOWN_MS || 15_000)));
 const MAX_UNIVERSE_SIZE = Math.min(50, Math.max(3, Number(process.env.CRYPTO_MARKET_UNIVERSE_SIZE || 12)));
 const CEX_PRODUCT_DISCOVERY_EXPANSION = Math.max(0, Math.min(100, Math.floor(Number(process.env.CRYPTO_CEX_PRODUCT_DISCOVERY_EXPANSION || 24))));
 const CEX_PRODUCT_DISCOVERY_CACHE_MS = Math.max(5_000, Math.min(300_000, Number(process.env.CRYPTO_CEX_PRODUCT_DISCOVERY_CACHE_MS || 60_000)));
@@ -115,6 +115,9 @@ const ZEROX_CREDENTIAL_SOURCES = [
   '0X_API_KEY',
   'OX_API_KEY',
   'ZERO_X_API_KEY',
+  'ZERO_X_KEY',
+  'ZEROX_KEY',
+  '0X_KEY',
 ] as const;
 let activeZeroXCredentialSource: typeof ZEROX_CREDENTIAL_SOURCES[number] | null = null;
 
@@ -154,7 +157,7 @@ async function fetchZeroXPayload(url: string): Promise<{ payload: any; sourceNam
   for (const candidate of candidates) {
     try {
       const payload = await fetchJsonWithRetry<any>(url, {
-        init: { headers: { accept: 'application/json', '0x-api-key': candidate.apiKey, '0x-version': 'v2' } },
+        init: { headers: { accept: 'application/json', 'cache-control': 'no-cache', '0x-api-key': candidate.apiKey, '0x-version': 'v2' } },
         maxRetries: activeZeroXCredentialSource === candidate.sourceName ? 2 : 0,
         baseDelayMs: 250,
         maxDelayMs: 2_000,
@@ -294,16 +297,18 @@ class MarketDataProviders {
     buyAmount?: string;
     takerAddress?: string;
     purpose?: ZeroXRequestPurpose;
+    forceRefresh?: boolean;
     slippagePpm?: number;
     tradeSurplusRecipient?: string;
     tradeSurplusMaxBps?: number;
   }): Promise<DexQuoteObservation | null> {
     const now = Date.now();
-    if (this.zeroXUnavailableUntil > now) {
+    const bypassUnavailableCooldown = request.purpose === 'execution' || request.forceRefresh === true;
+    if (this.zeroXUnavailableUntil > now && !bypassUnavailableCooldown) {
       this.setProviderStatus('0x', 'unavailable', `${this.zeroXUnavailableReason || '0x credential/product entitlement unavailable'}; retry after ${new Date(this.zeroXUnavailableUntil).toISOString()}`);
       return null;
     }
-    if (this.zeroXUnavailableUntil > 0) {
+    if (this.zeroXUnavailableUntil > 0 && this.zeroXUnavailableUntil <= now) {
       this.zeroXUnavailableUntil = 0;
       this.zeroXUnavailableReason = null;
     }
@@ -358,7 +363,8 @@ class MarketDataProviders {
       tradeSurplusRequested ? requestedSurplusRecipient.toLowerCase() : 'no-surplus',
       tradeSurplusRequested ? (tradeSurplusMaxBps ?? 10_000) : 'none',
     ].join(':');
-    const cached = this.quoteCache.get(key);
+    const cacheAllowed = policy.purpose === 'discovery' && request.forceRefresh !== true;
+    const cached = cacheAllowed ? this.quoteCache.get(key) : undefined;
     if (cached && cached.expiresAt > Date.now()) {
       this.setProviderStatus('0x', 'cached', `served from the DEX ${policy.endpoint} cache`);
       return cached.value;
@@ -446,21 +452,27 @@ class MarketDataProviders {
         observedAt: Date.now(),
         source: '0x',
       } : null;
-      this.quoteCache.set(key, { value: observation, expiresAt: Date.now() + ZEROX_TTL_MS });
+      if (policy.purpose === 'discovery') {
+        this.quoteCache.set(key, { value: observation, expiresAt: Date.now() + ZEROX_TTL_MS });
+      }
       const features = [
         amountMode === 'exact_out' ? 'exact-out' : 'exact-in',
         slippagePpm !== null ? `slippagePpm=${slippagePpm}` : null,
+        policy.purpose === 'execution' ? 'execution-cache-bypass' : null,
+        request.forceRefresh === true ? 'forced-refresh' : null,
         tradeSurplusRequested ? 'trade-surplus-custom-plan' : null,
       ].filter(Boolean).join(',');
       this.setProviderStatus('0x', observation ? 'live' : 'failed', observation ? `${policy.reason}; ${features}; authenticated via ${sourceName}` : '0x returned no usable buy amount');
       return observation;
     }).catch((error: unknown) => {
-      this.quoteCache.set(key, { value: null, expiresAt: Date.now() + ZEROX_TTL_MS });
+      if (policy.purpose === 'discovery') {
+        this.quoteCache.set(key, { value: null, expiresAt: Date.now() + ZEROX_TTL_MS });
+      }
       const detail = error instanceof Error ? error.message : String(error);
       if (isZeroXAuthenticationOrEntitlementFailure(error)) {
         this.zeroXUnavailableUntil = Date.now() + ZEROX_AUTH_FAILURE_COOLDOWN_MS;
         this.zeroXUnavailableReason = detail;
-        this.setProviderStatus('0x', 'unavailable', `${detail}; bounded retry cooldown ${ZEROX_AUTH_FAILURE_COOLDOWN_MS}ms`);
+        this.setProviderStatus('0x', 'unavailable', `${detail}; bounded retry cooldown ${ZEROX_AUTH_FAILURE_COOLDOWN_MS}ms; execution/forced refresh bypass enabled`);
       } else {
         this.setProviderStatus('0x', 'failed', detail);
       }
