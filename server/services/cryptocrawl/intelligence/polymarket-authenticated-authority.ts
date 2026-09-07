@@ -5,10 +5,10 @@ import { requirePolymarketGeographicEligibility } from './polymarket-geographic-
 
 const CLOB_BASE = 'https://clob.polymarket.com';
 const CHAIN_ID = 137;
+const CLOB_VERSION = 2 as const;
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 const EXCHANGE_V2 = '0xE111180000d2663C0091e4f400237545B87B996B';
 const NEG_RISK_EXCHANGE_V2 = '0xe2222d279d744050d28e00520010520000310F59';
-const EXCHANGE_V3 = '0xe3333700cA9d93003F00f0F71f8515005F6c00Aa';
 const INITIAL_CURSOR = 'MA==';
 const END_CURSOR = 'LTE=';
 const ORDER_TYPES = {
@@ -52,14 +52,13 @@ export interface PolymarketSignedOrderPayload {
   salt: string;
   timestamp: string;
   body: Record<string, unknown>;
-  version: 2 | 3;
+  version: 2;
   negRisk: boolean;
   provenance: string[];
 }
 
 let credentialsCache: PolymarketApiCredentials | null = null;
 let credentialsInFlight: Promise<PolymarketApiCredentials> | null = null;
-let versionCache: { value: 2 | 3; observedAt: number } | null = null;
 let serverTimeCache: { value: number; observedAt: number } | null = null;
 
 function trim(value: string | undefined): string { return value?.trim() ?? ''; }
@@ -210,13 +209,12 @@ export async function polymarketPublicRequest<T>(
   return rawRequest<T>(path, { method: 'GET', headers: { accept: 'application/json' } }, query);
 }
 
-export async function getPolymarketCLOBVersion(forceRefresh = false): Promise<2 | 3> {
-  if (!forceRefresh && versionCache && Date.now() - versionCache.observedAt < 60_000) return versionCache.value;
-  const payload = await polymarketPublicRequest<any>('/version');
-  const parsed = Number(payload?.version ?? payload);
-  if (parsed !== 2 && parsed !== 3) throw new Error(`POLYMARKET_UNSUPPORTED_CLOB_VERSION:${parsed}`);
-  versionCache = { value: parsed, observedAt: Date.now() };
-  return parsed;
+/**
+ * Raw CLOB order signing is deliberately pinned to production CLOB V2. The
+ * separate Combos Exchange contract is not a CLOB V3 signing authority.
+ */
+export async function getPolymarketCLOBVersion(_forceRefresh = false): Promise<2> {
+  return CLOB_VERSION;
 }
 
 function integerBaseUnits(value: unknown): bigint | null {
@@ -257,6 +255,8 @@ export async function getPolymarketAuthenticatedAccountSnapshot(): Promise<Polym
     provenance: [
       'polymarket_clob:l1_eip712_signer_proven',
       `polymarket_clob:l2_hmac_credentials_${credentials.source}`,
+      'polymarket_clob_v2:production_raw_signing_authority',
+      'polymarket_collateral:pUSD_v2',
       'polymarket_clob:collateral_balance_authenticated',
       collateralAllowanceProven ? 'polymarket_clob:collateral_allowance_proven' : 'polymarket_clob:collateral_allowance_missing',
       ban?.closed_only === true ? 'polymarket_clob:closed_only' : 'polymarket_clob:trading_not_closed_only',
@@ -303,8 +303,8 @@ export async function buildPolymarketSignedOrder(input: {
   if (!tickAligned(input.limitPrice, input.tickSize)) throw new Error('POLYMARKET_ORDER_PRICE_NOT_TICK_ALIGNED');
   if (input.postOnly && input.timeInForce !== 'good_till_canceled') throw new Error('POLYMARKET_POST_ONLY_REQUIRES_GTC');
 
-  const version = await getPolymarketCLOBVersion();
-  const exchange = version === 3 ? EXCHANGE_V3 : input.negRisk ? NEG_RISK_EXCHANGE_V2 : EXCHANGE_V2;
+  const version = CLOB_VERSION;
+  const exchange = input.negRisk ? NEG_RISK_EXCHANGE_V2 : EXCHANGE_V2;
   const priceMicros = BigInt(Math.round(input.limitPrice * 1_000_000));
   if (priceMicros <= 0n || priceMicros >= 1_000_000n) throw new Error('POLYMARKET_ORDER_PRICE_INVALID');
   const contractUnits = BigInt(input.contracts) * 1_000_000n;
@@ -326,7 +326,7 @@ export async function buildPolymarketSignedOrder(input: {
   };
   const domain = {
     name: 'Polymarket CTF Exchange',
-    version: String(version),
+    version: '2',
     chainId: CHAIN_ID,
     verifyingContract: exchange,
   };
@@ -366,8 +366,10 @@ export async function buildPolymarketSignedOrder(input: {
     negRisk: input.negRisk,
     provenance: [
       'polymarket_order:eip712_signed_eoa',
-      `polymarket_order:clob_v${version}`,
+      'polymarket_order:clob_v2',
       `polymarket_order:tif_${orderType.toLowerCase()}`,
+      'polymarket_order:v2_official_exchange_contract',
+      'polymarket_order:pUSD_collateral_authority',
       'polymarket_order:deterministic_client_intent_salt',
       'polymarket_order:client_intent_bound_in_metadata',
       'polymarket_order:personal_wallet_fallback_false',
