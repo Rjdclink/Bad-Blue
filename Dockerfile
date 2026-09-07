@@ -6,23 +6,13 @@ FROM node:20-bookworm AS builder
 # this build-only so the immutable source SHA is compiled into the artifact and
 # is never sourced from a mutable runtime variable.
 ARG RAILWAY_GIT_COMMIT_SHA
-# Build-only debconf frontend: unattended package installation must not probe
-# terminal/dialog frontends inside Railway's non-interactive builder.
-ARG DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
-# Install build dependencies for native modules and Playwright browser installation
-RUN apt-get update && apt-get install -y \
-    python3 \
-    build-essential \
-    g++ \
-    make \
-    wget \
-    ca-certificates \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
-
+# The full official Bookworm Node image already carries the native build
+# toolchain, Python, wget and CA trust required by this project. Reinstalling
+# those packages only upgrades/retriggers base-image packages and previously
+# produced certificate rehash/debconf warnings without adding capability.
 COPY package*.json ./
 ENV ONNXRUNTIME_NODE_INSTALL=skip
 RUN rm -rf node_modules || true && \
@@ -46,10 +36,12 @@ FROM node:20-bookworm-slim AS production
 ENV NPM_CONFIG_OPTIONAL=false
 ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
 ENV ONNXRUNTIME_NODE_INSTALL=skip
+ARG DEBIAN_FRONTEND=noninteractive
+# node:20-bookworm-slim already supplies CA trust and wget. Install only the
+# browser that is not part of the base image, avoiding redundant certificate
+# package triggers while preserving the existing runtime capabilities.
 RUN apt-get update && apt-get install -y \
-    ca-certificates \
     chromium \
-    wget \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
