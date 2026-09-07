@@ -17,7 +17,6 @@ import {
   fundingCrossChainExecutionAdapter,
   type FundingCrossChainDispatchResult,
 } from './funding-crosschain-execution-adapter.js';
-import { advanceKalshiEventLifecycles } from './kalshi-event-lifecycle.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
 import { routeRecentMeasuredOpportunities } from './unified-execution-router.js';
 import { executeCanonicalZeroCapitalOpportunity } from './zero-capital-canonical-executor.js';
@@ -214,7 +213,7 @@ class CanonicalExecutionScheduler {
       operatorStrategyAuthority: 'when_and_how_many_parent_trades_only', operatorStrategyCycle: '20_randomized_trade_days_per_30_days', operatorStrategyDailyTradeRange: '1_to_3_submitted_parent_trades',
       operatorStrategyProfitStop: 'daily_random_300_to_3500_minus_50_cushion_realized_profit_only', operatorStrategyParentSerialization: true, operatorStrategyProfitabilityAuthority: false,
       cadenceObjective: 'event_driven_eligibility_wake_with_low_latency_poll_fallback', eligibleWakeAuthority: 'measured_candidate_registry', terminalCalibrationAuthority: 'scheduling_only_confirmed_settlement_evidence',
-      measuredTopologyExecutionAdapter: true, fundingCrossChainExecutionAdapter: true, fundingLifecycleMaintenanceBeforeNewEntryGates: true, kalshiEventLifecycleMaintenanceBeforeNewEntryGates: true,
+      measuredTopologyExecutionAdapter: true, fundingCrossChainExecutionAdapter: true, fundingLifecycleMaintenanceBeforeNewEntryGates: true,
       discoveryExecutionAuthority: false, legacyBusinessCapsAuthoritative: false, distributedResourceLeases: true, runtimeInvariantQuarantine: true, runtimeIdentityMismatchFailClosed: true, exactOpportunityIdentityRequired: true, latencyHarness: 'telemetry_only',
     });
   }
@@ -354,6 +353,11 @@ class CanonicalExecutionScheduler {
             const result = await executeCanonicalZeroCapitalOpportunity(opportunity);
             if (!result.submitted || !result.transactionHash) {
               await operatorTradingStrategy.releaseReservation(reservationId);
+              logger.info('[ExecutionScheduler] ZERO_CAPITAL_ATOMIC deferred before submission', {
+                component: 'CanonicalExecutionScheduler', opportunityId: decision.opportunityId,
+                status: result.status, error: result.error, operatorSlotConsumed: false,
+                schedulerAuthority: 'canonical_only',
+              });
               continue;
             }
 
@@ -367,6 +371,19 @@ class CanonicalExecutionScheduler {
             if (result.settlementConfirmed && result.success) this.settled++;
             else if (terminalReceipt) this.failed++;
             else this.pending++;
+            logger.info('[ExecutionScheduler] ZERO_CAPITAL_ATOMIC parent trade consumed operator slot only after concrete submission', {
+              component: 'CanonicalExecutionScheduler', opportunityId: decision.opportunityId,
+              topology: decision.topology, submissionReference: result.transactionHash,
+              settlementConfirmed: result.settlementConfirmed, success: result.success,
+              realizedNetProfitUsd: result.normalized?.realized.netProfitUsd ?? null,
+              treasuryRecorded: result.treasuryRecorded === true,
+              localDate: this.lastOperatorState.localDate,
+              submittedTrades: this.lastOperatorState.submittedTrades,
+              maxTrades: this.lastOperatorState.maxTrades,
+              realizedProfitUsd: this.lastOperatorState.realizedProfitUsd,
+              stopProfitUsd: this.lastOperatorState.stopProfitUsd,
+              singleSchedulerAuthority: true,
+            });
             return { dispatched: true, submitted: true };
           }
 
@@ -377,6 +394,7 @@ class CanonicalExecutionScheduler {
             if (!result?.transactionHash) { await operatorTradingStrategy.releaseReservation(reservationId); continue; }
             this.lastOperatorState = await operatorTradingStrategy.markSubmitted(reservationId);
             if (measuredTerminal(result)) await operatorTradingStrategy.markTerminal(reservationId);
+            logger.info('[ExecutionScheduler] Measured parent trade consumed operator daily slot', { component: 'CanonicalExecutionScheduler', opportunityId: decision.opportunityId, topology: decision.topology, submissionReference: result.transactionHash, localDate: this.lastOperatorState.localDate, submittedTrades: this.lastOperatorState.submittedTrades, maxTrades: this.lastOperatorState.maxTrades, realizedProfitUsd: this.lastOperatorState.realizedProfitUsd, stopProfitUsd: this.lastOperatorState.stopProfitUsd });
             return { dispatched: true, submitted: true };
           }
 
@@ -386,6 +404,7 @@ class CanonicalExecutionScheduler {
           if (!result?.submitted || !result.submissionReference) { await operatorTradingStrategy.releaseReservation(reservationId); continue; }
           this.lastOperatorState = await operatorTradingStrategy.markSubmitted(reservationId);
           if (result.settlementConfirmed) await operatorTradingStrategy.markTerminal(reservationId);
+          logger.info('[ExecutionScheduler] Funding/cross-chain parent trade consumed operator daily slot', { component: 'CanonicalExecutionScheduler', opportunityId: decision.opportunityId, topology: decision.topology, submissionReference: result.submissionReference, lifecycleId: result.lifecycleId, transactionHash: result.transactionHash, localDate: this.lastOperatorState.localDate, submittedTrades: this.lastOperatorState.submittedTrades, maxTrades: this.lastOperatorState.maxTrades, realizedProfitUsd: this.lastOperatorState.realizedProfitUsd, stopProfitUsd: this.lastOperatorState.stopProfitUsd });
           return { dispatched: true, submitted: true };
         } catch (error) {
           await operatorTradingStrategy.releaseReservation(reservationId).catch(() => undefined);
@@ -409,6 +428,7 @@ class CanonicalExecutionScheduler {
       if (idleReason) {
         this.setIdle(idleReason);
         if (state.learningMode) void operatorTradingStrategy.runLearningDayCycle();
+        logger.info('[ExecutionScheduler] Operator strategy intentionally blocks new trade submission', { component: 'CanonicalExecutionScheduler', localDate: state.localDate, cycleStart: state.cycleStart, cycleEnd: state.cycleEnd, dayOffset: state.dayOffset, learningMode: state.learningMode, maxTrades: state.maxTrades, submittedTrades: state.submittedTrades, profitCeilingUsd: state.profitCeilingUsd, stopProfitUsd: state.stopProfitUsd, realizedProfitUsd: state.realizedProfitUsd, reason: state.blockReason, discoveryAndLearningRemainActive: true });
       }
       return state;
     } catch (error) {
@@ -420,11 +440,10 @@ class CanonicalExecutionScheduler {
 
   private async runDispatch(): Promise<void> {
     try {
-      await advanceKalshiEventLifecycles(4);
       await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);
     } catch (error) {
       this.setIdle('lifecycle_maintenance_failed');
-      logger.error('[ExecutionScheduler] Existing funding/cross-chain/Kalshi event lifecycle maintenance failed closed', {
+      logger.error('[ExecutionScheduler] Existing funding/cross-chain lifecycle maintenance failed closed', {
         component: 'CanonicalExecutionScheduler',
         error: error instanceof Error ? error.message : String(error),
         newExposureGranted: false,
@@ -437,6 +456,7 @@ class CanonicalExecutionScheduler {
     const runtimeAttestation = getCryptoCrawlerRuntimeAttestation();
     if (!isRuntimeIdentitySafe(runtimeAttestation)) {
       this.setIdle('runtime_identity_mismatch');
+      logger.error('[ExecutionScheduler] Live dispatch blocked by runtime identity mismatch', { component: 'CanonicalExecutionScheduler', sourceSha: runtimeAttestation.sourceSha, railwayCommitSha: runtimeAttestation.railwayCommitSha, mismatches: runtimeAttestation.mismatches });
       return;
     }
     const governanceAllowed = endToEndLatencyHarness.measureSync('governance_risk', 'compute', { backend: 'stage_manager', worker: executionResourceScheduler.getOwnerId() }, () => stageManager.canExecuteTrades());
@@ -476,6 +496,7 @@ class CanonicalExecutionScheduler {
       try {
         this.lastIdleReason = null;
         this.lastDispatchAt = Date.now();
+        logger.info('[ExecutionScheduler] Resource-qualified canonical parent selected under operator strategy', { component: 'CanonicalExecutionScheduler', opportunityId: candidate.opportunityId, symbol: candidate.symbol, buyVenue: candidate.plan.buyVenue, sellVenue: candidate.plan.sellVenue, netProfitUsd: candidate.plan.netProfitUsd, probabilityOfProfitableExecution: candidate.assessment?.probabilityOfProfitableExecution, terminalCalibrationFactor: terminalCalibrationFactor(candidate), leaseId: lease.leaseId, resources: lease.resources, stage: stageManager.getCurrentStage(), localDate: reservation.state.localDate, remainingTrades: reservation.state.remainingTrades, realizedProfitUsd: reservation.state.realizedProfitUsd, stopProfitUsd: reservation.state.stopProfitUsd });
         const result = await executeVerifiedArbitragePlan(candidate.plan, { opportunityId: candidate.opportunityId, source: 'master_pipeline', chain: candidate.plan.bridge?.from, observedSlippageBps: candidate.plan.expectedSlippageBps ?? undefined });
         concreteSubmission = cexHasConcreteSubmission(result);
         if (concreteSubmission) {
@@ -486,11 +507,13 @@ class CanonicalExecutionScheduler {
         if (result.success && result.settlementConfirmed) this.settled++;
         else if (!terminalResult(result.status, result.settlementConfirmed)) { this.pending++; retainOpportunityUntilExpiry = true; }
         else this.failed++;
+        logger.info('[ExecutionScheduler] Canonical execution attempt completed', { component: 'CanonicalExecutionScheduler', opportunityId: candidate.opportunityId, symbol: candidate.symbol, status: result.status, success: result.success, settlementConfirmed: result.settlementConfirmed, concreteParentSubmission: concreteSubmission, expectedNetProfitUsd: candidate.plan.netProfitUsd, realizedNetProfitUsd: result.normalized?.realized.netProfitUsd ?? null, latencyMs: result.latencyMs, retainOpportunityUntilExpiry, operatorSubmittedTrades: this.lastOperatorState?.submittedTrades ?? reservation.state.submittedTrades, operatorMaxTrades: this.lastOperatorState?.maxTrades ?? reservation.state.maxTrades, operatorRealizedProfitUsd: this.lastOperatorState?.realizedProfitUsd ?? reservation.state.realizedProfitUsd, operatorStopProfitUsd: this.lastOperatorState?.stopProfitUsd ?? reservation.state.stopProfitUsd, error: result.error });
         if (concreteSubmission) return;
       } catch (error) {
         settlementSpan.end('error');
         this.failed++;
-        try { this.lastOperatorState = await operatorTradingStrategy.markSubmitted(reservationId); } catch { }
+        try { this.lastOperatorState = await operatorTradingStrategy.markSubmitted(reservationId); } catch { /* durable reservation remains safety authority */ }
+        logger.error('[ExecutionScheduler] Canonical execution attempt failed closed with ambiguous submission state', { component: 'CanonicalExecutionScheduler', opportunityId: candidate.opportunityId, symbol: candidate.symbol, error: error instanceof Error ? error.message : String(error), extraDailyTradeAllowed: false });
         return;
       } finally {
         this.activeOpportunityIds.delete(candidate.opportunityId);
