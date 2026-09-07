@@ -146,7 +146,7 @@ function followupQueries(rows: readonly BpsOpportunityDiscovery[]): Array<{ venu
     for (const mechanism of [...mechanisms].slice(0, 2)) {
       result.push({
         venue,
-        query: `${venue} ${mechanism.replaceAll('_', ' ')} new promotion partner reward fee reduction 2026`,
+        query: `${venue} ${mechanism.replace(/_/g, ' ')} new promotion partner reward fee reduction 2026`,
       });
     }
   }
