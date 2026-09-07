@@ -67,7 +67,8 @@ export interface AaveLiquidationPreparation {
   payload: { to: string; data: string; value: string; gasLimit: number };
   unwindQuote: DexQuoteObservation;
   expiresAt: number;
-  simulated: true;
+  simulated: boolean;
+  simulationAdvisoryErrors?: string[];
   provenance: string[];
 }
 
@@ -564,6 +565,7 @@ export function getPreparedAaveLiquidationPlan(opportunityId: string): AaveLiqui
     ...plan,
     payload: { ...plan.payload },
     unwindQuote: { ...plan.unwindQuote },
+    ...(plan.simulationAdvisoryErrors ? { simulationAdvisoryErrors: [...plan.simulationAdvisoryErrors] } : {}),
     provenance: [...plan.provenance],
   };
 }
@@ -571,10 +573,10 @@ export function getPreparedAaveLiquidationPlan(opportunityId: string): AaveLiqui
 /**
  * Read-only liquidation compiler. It discovers the borrower's active Aave reserve
  * bitmap, reads reserve debt/collateral/configuration/oracle state, applies a
- * conservative close-factor haircut, verifies measured Aave flash liquidity and
- * fee, obtains a firm 0x unwind, verifies existing receiver permissions, and then
- * exact-simulates the complete flash-loan -> liquidationCall -> unwind payload.
- * No transaction is submitted from discovery.
+ * bounded close-factor sizing haircut, verifies measured Aave flash liquidity and
+ * fee, obtains a firm 0x unwind, verifies existing receiver permissions, and measures
+ * current gas/all-in economics. eth_call validation is advisory only. No transaction
+ * is submitted from discovery.
  */
 export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Promise<AaveLiquidationPreparation> {
   requestInputs.set(input.opportunityId, { ...input });
@@ -673,6 +675,27 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
       }
       pendingInfrastructure.delete(input.opportunityId);
 
+      const simulationAdvisoryErrors: string[] = [];
+      const advisorySimulate = async (data: string, stage: string): Promise<void> => {
+        try {
+          await provider.call({ from: connectedWallet.address, to: receiver, data, value: 0 });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          simulationAdvisoryErrors.push(`${stage}:${message}`);
+          logger.debug('[LiquidationExecution] Aave liquidation eth_call advisory failed without vetoing positive executable economics', {
+            component: 'AaveLiquidationAtomicExecutor',
+            opportunityId: input.opportunityId,
+            chain: input.chain,
+            borrower: input.borrower,
+            debtAsset: pair.debt.asset,
+            collateralAsset: pair.collateral.asset,
+            stage,
+            error: message,
+            simulationVetoAuthority: false,
+          });
+        }
+      };
+
       const profitRecipient = asAddress('operational profit recipient', resolveOperationalProfitRecipient());
       let minProfit = BigNumber.from(1);
       let data = encodeReceiverPayload({
@@ -687,7 +710,7 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
         minProfit,
         profitRecipient,
       });
-      await provider.call({ from: connectedWallet.address, to: receiver, data, value: 0 });
+      await advisorySimulate(data, 'preliminary_min_profit');
       let estimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data, value: 0 });
       let expectedGasUsd = await liveGasUsd({ chain: input.chain, provider, estimatedGas });
       const gasDebtUnits = usdToTokenUnitsCeil(expectedGasUsd, pair.debt.decimals, pair.debt.price, market.oracleUnit);
@@ -706,7 +729,7 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
         minProfit,
         profitRecipient,
       });
-      await provider.call({ from: connectedWallet.address, to: receiver, data, value: 0 });
+      await advisorySimulate(data, 'gas_backed_min_profit');
       const finalEstimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data, value: 0 });
       if (finalEstimatedGas.gt(estimatedGas)) {
         estimatedGas = finalEstimatedGas;
@@ -726,7 +749,7 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
           minProfit,
           profitRecipient,
         });
-        await provider.call({ from: connectedWallet.address, to: receiver, data, value: 0 });
+        await advisorySimulate(data, 'final_gas_backed_min_profit');
       }
 
       const receiverProfitUsd = baseUnitsToUsd(receiverProfitBeforeGas, pair.debt.decimals, pair.debt.price, market.oracleUnit);
@@ -775,7 +798,8 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
         payload: { to: receiver, data, value: '0', gasLimit: Number(estimatedGas.toString()) },
         unwindQuote: quote,
         expiresAt,
-        simulated: true,
+        simulated: simulationAdvisoryErrors.length === 0,
+        ...(simulationAdvisoryErrors.length > 0 ? { simulationAdvisoryErrors: [...simulationAdvisoryErrors] } : {}),
         provenance: [
           'aave_v3:user_configuration_bitmap',
           'aave_v3:user_reserve_data',
@@ -786,10 +810,12 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
           'aave_v3:close_factor_boundary_haircut',
           'aave_v3:flash_liquidity_and_fee_measured_onchain',
           '0x:v2_allowance_holder_firm_liquidation_unwind',
+          `0x:simulation_incomplete_advisory_only:${quote.simulationIncomplete === true}`,
           'receiver:aave_v3_pool_owner_bytecode_binding_verified',
           'receiver:permissions_verified_read_only',
           'receiver:preexisting_debt_token_balance_zero',
-          'receiver:exact_full_liquidation_eth_call',
+          simulationAdvisoryErrors.length === 0 ? 'receiver:eth_call_simulation_advisory_passed' : 'receiver:eth_call_simulation_advisory_unavailable_or_failed',
+          'receiver:eth_call_simulation_veto_authority:false',
           'receiver:exact_full_liquidation_gas_estimate',
           'gas:live_native_usd_price_no_static_fallback',
           'gas:bounded_pretrade_reserve',
@@ -1037,6 +1063,7 @@ export async function executePreparedAaveLiquidation(
       settlementConfirmed: true,
       personalGasFallbackAllowed: false,
       systemOwnedNativeGasLedgerApplied: fundingModeUsed === 'native',
+      simulationVetoAuthority: false,
       syntheticEvidence: false,
     });
     return {
