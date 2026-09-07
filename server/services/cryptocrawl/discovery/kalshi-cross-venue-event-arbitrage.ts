@@ -2,20 +2,16 @@ import { createHash } from 'node:crypto';
 import logger from '../../../logger.js';
 import { measureKalshiEventSizedDepth } from '../intelligence/kalshi-event-depth-authority.js';
 import { estimateKalshiEventFees } from '../intelligence/kalshi-event-fee-authority.js';
+import { getKalshiEventSemanticsEvidence } from '../intelligence/kalshi-event-semantics-authority.js';
 import type { KalshiPredictionMarketSignal } from '../intelligence/kalshi-prediction-market-authority.js';
+import { compareEventSemantics } from './event-venue.js';
+import { polymarketEventVenue } from './polymarket-event-venue.js';
 
 export interface EventVenueEquivalenceMapping {
   kalshiTicker: string;
   secondVenue: 'polymarket';
   secondVenueMarketId: string;
   secondVenueConditionId: string;
-  resolutionCriteriaFingerprint: string;
-  settlementSourceFingerprint: string;
-  cutoffAt: number;
-  timezone: string;
-  voidTreatmentFingerprint: string;
-  payoutDefinitionFingerprint: string;
-  settlementTimingFingerprint: string;
   reviewedAt: number;
   reviewer: string;
 }
@@ -33,7 +29,9 @@ export interface CrossVenueEventArbitrageCandidate {
   guaranteedPayoutUsd: number | null;
   kalshiFeeUsd: number | null;
   secondVenueFeeUsd: number | null;
-  capitalLockCostUsd: number;
+  slippageUsd: number | null;
+  settlementCostReserveUsd: number | null;
+  capitalLockCostUsd: number | null;
   guaranteedResidualUsd: number | null;
   semanticEquivalenceProven: boolean;
   secondVenueExecutionEvidenceProven: boolean;
@@ -45,32 +43,17 @@ export interface CrossVenueEventArbitrageCandidate {
   provenance: string[];
 }
 
-type GammaMarket = {
-  id?: string;
-  conditionId?: string;
-  condition_id?: string;
-  question?: string;
-  outcomes?: string | string[];
-  clobTokenIds?: string | string[];
-  clob_token_ids?: string[];
-  active?: boolean;
-  closed?: boolean;
-};
-type BookLevel = { price?: string | number; size?: string | number };
-type ClobBook = { asset_id?: string; asks?: BookLevel[]; timestamp?: string | number };
-
-const GAMMA = 'https://gamma-api.polymarket.com';
-const CLOB = 'https://clob.polymarket.com';
 let latest: CrossVenueEventArbitrageCandidate[] = [];
 let cycles = 0;
 let errors = 0;
 let lastCompletedAt: number | null = null;
 
 function sha(value: string): string { return createHash('sha256').update(value).digest('hex'); }
-function parseStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String);
-  if (typeof value !== 'string' || !value.trim()) return [];
-  try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed.map(String) : []; } catch { return []; }
+function boundedInt(raw: unknown, fallback: number, min: number, max: number): number {
+  const value = Number(raw); return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.trunc(value))) : fallback;
+}
+function boundedNumber(raw: unknown, fallback: number, min: number, max: number): number {
+  const value = Number(raw); return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
 function mappings(): EventVenueEquivalenceMapping[] {
   const raw = process.env.CRYPTOCRAWL_PREDICTION_EQUIVALENCE_JSON?.trim();
@@ -79,74 +62,45 @@ function mappings(): EventVenueEquivalenceMapping[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.flatMap((row: any) => {
-      const candidate: EventVenueEquivalenceMapping = {
+      const mapping: EventVenueEquivalenceMapping = {
         kalshiTicker: String(row?.kalshiTicker || '').trim().toUpperCase(),
         secondVenue: 'polymarket',
         secondVenueMarketId: String(row?.secondVenueMarketId || '').trim(),
         secondVenueConditionId: String(row?.secondVenueConditionId || '').trim(),
-        resolutionCriteriaFingerprint: String(row?.resolutionCriteriaFingerprint || '').trim(),
-        settlementSourceFingerprint: String(row?.settlementSourceFingerprint || '').trim(),
-        cutoffAt: Number(row?.cutoffAt),
-        timezone: String(row?.timezone || '').trim(),
-        voidTreatmentFingerprint: String(row?.voidTreatmentFingerprint || '').trim(),
-        payoutDefinitionFingerprint: String(row?.payoutDefinitionFingerprint || '').trim(),
-        settlementTimingFingerprint: String(row?.settlementTimingFingerprint || '').trim(),
         reviewedAt: Number(row?.reviewedAt),
         reviewer: String(row?.reviewer || '').trim(),
       };
-      const complete = candidate.kalshiTicker && candidate.secondVenueMarketId && candidate.secondVenueConditionId
-        && candidate.resolutionCriteriaFingerprint && candidate.settlementSourceFingerprint
-        && Number.isFinite(candidate.cutoffAt) && candidate.cutoffAt > Date.now()
-        && candidate.timezone && candidate.voidTreatmentFingerprint && candidate.payoutDefinitionFingerprint
-        && candidate.settlementTimingFingerprint && Number.isFinite(candidate.reviewedAt) && candidate.reviewedAt > 0 && candidate.reviewer;
-      return complete ? [candidate] : [];
+      const complete = mapping.kalshiTicker && mapping.secondVenueMarketId && mapping.secondVenueConditionId
+        && Number.isFinite(mapping.reviewedAt) && mapping.reviewedAt > 0 && mapping.reviewer;
+      return complete ? [mapping] : [];
     });
   } catch { return []; }
 }
-function binaryTokenIds(market: GammaMarket): { yes: string; no: string } | null {
-  const outcomes = parseStringArray(market.outcomes).map(value => value.trim().toLowerCase());
-  const ids = market.clob_token_ids?.map(String) || parseStringArray(market.clobTokenIds);
-  const yes = outcomes.indexOf('yes');
-  const no = outcomes.indexOf('no');
-  return yes >= 0 && no >= 0 && ids[yes] && ids[no] ? { yes: ids[yes], no: ids[no] } : null;
-}
-async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(4_000) });
-  if (!response.ok) throw new Error(`HTTP ${response.status} from ${new URL(url).host}`);
-  return response.json() as Promise<T>;
-}
-async function secondMarket(mapping: EventVenueEquivalenceMapping): Promise<GammaMarket | null> {
-  const rows = await json<GammaMarket[]>(`${GAMMA}/markets?id=${encodeURIComponent(mapping.secondVenueMarketId)}`, { headers: { accept: 'application/json' } });
-  const market = Array.isArray(rows) ? rows[0] : null;
-  if (!market || market.closed === true || market.active === false) return null;
-  const condition = String(market.conditionId || market.condition_id || '').trim();
-  return condition === mapping.secondVenueConditionId ? market : null;
-}
-async function bestAsk(tokenId: string): Promise<{ price: number; size: number; observedAt: number } | null> {
-  const book = await json<ClobBook>(`${CLOB}/book?token_id=${encodeURIComponent(tokenId)}`, { headers: { accept: 'application/json' } });
-  const levels = (Array.isArray(book?.asks) ? book.asks : []).map(row => ({ price: Number(row.price), size: Number(row.size) }))
-    .filter(row => Number.isFinite(row.price) && row.price > 0 && row.price < 1 && Number.isFinite(row.size) && row.size > 0)
-    .sort((a, b) => a.price - b.price);
-  const top = levels[0];
-  if (!top) return null;
-  const timestamp = Number(book.timestamp);
-  return { ...top, observedAt: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now() };
-}
 function mappingFingerprint(mapping: EventVenueEquivalenceMapping): string {
-  return sha(JSON.stringify({
-    resolution: mapping.resolutionCriteriaFingerprint,
-    settlement: mapping.settlementSourceFingerprint,
-    cutoffAt: mapping.cutoffAt,
-    timezone: mapping.timezone,
-    void: mapping.voidTreatmentFingerprint,
-    payout: mapping.payoutDefinitionFingerprint,
-    timing: mapping.settlementTimingFingerprint,
-  }));
+  return sha(JSON.stringify(mapping));
 }
-function secondVenueExecutionEvidence(): { authenticated: boolean; feeBps: number | null; prefundedSystemOwned: boolean } {
-  // Deliberately no environment-supplied fee number or account balance can mint
-  // execution authority. A future authenticated adapter must replace this seam.
-  return { authenticated: false, feeBps: null, prefundedSystemOwned: false };
+function opportunityApr(): number {
+  return boundedNumber(process.env.CRYPTOCRAWL_CROSS_EVENT_CAPITAL_OPPORTUNITY_APR, 0, 0, 5);
+}
+function maxContracts(): number {
+  return boundedInt(process.env.CRYPTOCRAWL_CROSS_EVENT_MAX_CONTRACTS, 1_000, 1, 100_000);
+}
+function secondVenueSettlementCostReserve(): number | null {
+  const value = Number(process.env.CRYPTOCRAWL_POLYMARKET_VERIFIED_SETTLEMENT_COST_USD);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+async function largestMatchedSize(marketId: string, secondOutcome: 'yes' | 'no', cap: number): Promise<number> {
+  let low = 1;
+  let high = cap;
+  let best = 0;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const quote = await polymarketEventVenue.getSizedQuote(marketId, secondOutcome, 'buy', mid).catch(() => null);
+    if (quote?.complete) { best = mid; low = mid + 1; }
+    else high = mid - 1;
+  }
+  return best;
 }
 
 export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredictionMarketSignal[]): Promise<CrossVenueEventArbitrageCandidate[]> {
@@ -156,72 +110,133 @@ export async function refreshKalshiCrossVenueEventArbitrage(signals: KalshiPredi
     const byTicker = new Map(signals.map(signal => [signal.ticker.trim().toUpperCase(), signal]));
     for (const mapping of mappings()) {
       const signal = byTicker.get(mapping.kalshiTicker);
-      if (!signal || !signal.rulesFingerprint || signal.expiresAt <= now) continue;
-      const market = await secondMarket(mapping).catch(() => null);
-      const ids = market ? binaryTokenIds(market) : null;
-      if (!market || !ids) continue;
-      const executionEvidence = secondVenueExecutionEvidence();
+      if (!signal || signal.expiresAt <= now) continue;
+
+      const [kalshiSemantics, secondMarket, secondAccount] = await Promise.all([
+        getKalshiEventSemanticsEvidence(mapping.kalshiTicker, true).catch(() => null),
+        polymarketEventVenue.getMarket(mapping.secondVenueMarketId).catch(() => null),
+        polymarketEventVenue.getAccountEvidence().catch(() => null),
+      ]);
+      const conditionMatches = Boolean(secondMarket?.conditionId && secondMarket.conditionId === mapping.secondVenueConditionId);
+      const equivalence = kalshiSemantics?.complete && kalshiSemantics.semantics && secondMarket?.semantics && conditionMatches
+        ? compareEventSemantics(kalshiSemantics.semantics, secondMarket.semantics)
+        : null;
+      const semanticEquivalenceProven = equivalence?.equivalent === true;
+
       for (const pair of [
-        { kalshi: 'yes' as const, second: 'no' as const, secondToken: ids.no },
-        { kalshi: 'no' as const, second: 'yes' as const, secondToken: ids.yes },
+        { kalshi: 'yes' as const, second: 'no' as const },
+        { kalshi: 'no' as const, second: 'yes' as const },
       ]) {
-        const [kalshiOne, second] = await Promise.all([
-          measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome: pair.kalshi, side: 'buy', contracts: 1, forceRefresh: true }),
-          bestAsk(pair.secondToken).catch(() => null),
+        const one = await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome: pair.kalshi, side: 'buy', contracts: 1, forceRefresh: true }).catch(() => null);
+        if (!one?.complete) continue;
+        const secondCap = await largestMatchedSize(mapping.secondVenueMarketId, pair.second, maxContracts());
+        if (secondCap < 1) continue;
+
+        let contracts = secondCap;
+        let kalshi = await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome: pair.kalshi, side: 'buy', contracts, forceRefresh: true }).catch(() => null);
+        if (!kalshi?.complete) {
+          let low = 1; let high = contracts; let best = 0;
+          while (low <= high) {
+            const mid = Math.floor((low + high) / 2);
+            const measured = await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome: pair.kalshi, side: 'buy', contracts: mid }).catch(() => null);
+            if (measured?.complete) { best = mid; kalshi = measured; low = mid + 1; }
+            else high = mid - 1;
+          }
+          contracts = best;
+        }
+        if (contracts < 1 || !kalshi?.complete || kalshi.notionalUsd === null || kalshi.vwapPrice === null) continue;
+        const [secondQuote, kalshiFee] = await Promise.all([
+          polymarketEventVenue.getSizedQuote(mapping.secondVenueMarketId, pair.second, 'buy', contracts).catch(() => null),
+          estimateKalshiEventFees({ ticker: signal.ticker, contracts, price: kalshi.vwapPrice, forceRefresh: true }).catch(() => null),
         ]);
-        if (!kalshiOne?.complete || kalshiOne.vwapPrice === null || !second) continue;
-        const maxContracts = Math.max(1, Math.floor(Math.min(1000, second.size)));
-        const kalshi = await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome: pair.kalshi, side: 'buy', contracts: maxContracts });
-        if (!kalshi?.complete || kalshi.notionalUsd === null || kalshi.vwapPrice === null) continue;
-        const fee = await estimateKalshiEventFees({ ticker: signal.ticker, contracts: maxContracts, price: kalshi.vwapPrice, forceRefresh: true });
-        const semanticEquivalenceProven = mapping.resolutionCriteriaFingerprint === signal.rulesFingerprint
-          && Boolean(mapping.settlementSourceFingerprint && mapping.voidTreatmentFingerprint && mapping.payoutDefinitionFingerprint && mapping.settlementTimingFingerprint);
-        const secondVenueExecutionEvidenceProven = executionEvidence.authenticated && executionEvidence.prefundedSystemOwned && executionEvidence.feeBps !== null;
-        const secondVenueEntryUsd = second.price * maxContracts;
-        const secondVenueFeeUsd = executionEvidence.feeBps === null ? null : secondVenueEntryUsd * executionEvidence.feeBps / 10_000;
-        const kalshiFeeUsd = fee?.economicCreditAllowed && fee.takerFeeUsd !== null ? fee.takerFeeUsd : null;
-        const guaranteedPayoutUsd = maxContracts;
-        const capitalLockCostUsd = 0;
-        const guaranteedResidualUsd = kalshiFeeUsd !== null && secondVenueFeeUsd !== null
-          ? guaranteedPayoutUsd - kalshi.notionalUsd - secondVenueEntryUsd - kalshiFeeUsd - secondVenueFeeUsd - capitalLockCostUsd
+        if (!secondQuote?.complete || secondQuote.notionalUsd === null) continue;
+
+        const kalshiFeeUsd = kalshiFee?.economicCreditAllowed && kalshiFee.takerFeeUsd !== null ? kalshiFee.takerFeeUsd : null;
+        // Public fee schedule evidence is useful for collection/estimation, but it
+        // cannot satisfy the authenticated account/execution evidence requirement.
+        const secondVenueFeeUsd = secondQuote.feeUsd;
+        const secondVenueExecutionEvidenceProven = Boolean(
+          secondAccount?.authenticated
+          && secondAccount.accountAccessible
+          && secondAccount.orderSubmissionAllowed
+          && secondAccount.feeEvidenceAuthenticated
+          && secondAccount.prefundedSystemOwnedUsd !== null
+          && secondAccount.prefundedSystemOwnedUsd >= secondQuote.notionalUsd,
+        );
+        const settlementCostReserveUsd = secondVenueSettlementCostReserve();
+        const deadline = Math.min(
+          signal.expiresAt,
+          kalshi.expiresAt,
+          secondQuote.expiresAt,
+          kalshiSemantics?.semantics?.cutoffAt ?? Infinity,
+          secondMarket?.semantics.cutoffAt ?? Infinity,
+        );
+        const principalUsd = kalshi.notionalUsd + secondQuote.notionalUsd;
+        const capitalLockCostUsd = Number.isFinite(deadline) && deadline > now
+          ? principalUsd * opportunityApr() * ((deadline - now) / (365.25 * 24 * 60 * 60_000))
+          : null;
+        const slippageUsd = secondQuote.slippageUsd;
+        const guaranteedPayoutUsd = semanticEquivalenceProven ? contracts : null;
+        const allCostsProven = kalshiFeeUsd !== null && secondVenueFeeUsd !== null && slippageUsd !== null
+          && settlementCostReserveUsd !== null && capitalLockCostUsd !== null;
+        const guaranteedResidualUsd = guaranteedPayoutUsd !== null && allCostsProven && secondVenueExecutionEvidenceProven
+          ? guaranteedPayoutUsd - kalshi.notionalUsd - secondQuote.notionalUsd - kalshiFeeUsd! - secondVenueFeeUsd!
+            - slippageUsd! - settlementCostReserveUsd! - capitalLockCostUsd!
           : null;
         const missingEvidence = [
-          ...(semanticEquivalenceProven ? [] : ['required:exact_semantic_equivalence']),
-          ...(kalshiFeeUsd !== null ? [] : ['required:kalshi_exact_fee']),
-          ...(secondVenueExecutionEvidenceProven ? [] : ['required:authenticated_second_venue_fees_prefunding_and_order_authority']),
-          ...(guaranteedResidualUsd !== null && guaranteedResidualUsd > 0 ? [] : ['required:positive_guaranteed_residual_after_all_costs']),
-          'required:non_atomic_leg_recovery_proof',
+          ...(kalshiSemantics?.complete ? [] : kalshiSemantics?.missing ?? ['required:kalshi_exact_semantics']),
+          ...(secondMarket ? [] : ['required:second_venue_exact_semantics']),
+          ...(conditionMatches ? [] : ['required:second_venue_condition_identity']),
+          ...(semanticEquivalenceProven ? [] : [
+            'required:exact_semantic_equivalence_question_rules_outcomes_source_deadline_timezone_resolution_void_cancel_payout_settlement',
+          ]),
+          ...(kalshiFeeUsd !== null ? [] : ['required:kalshi_authenticated_fee']),
+          ...(secondQuote.feeUsd !== null ? [] : ['required:second_venue_market_fee_schedule']),
+          ...(secondVenueExecutionEvidenceProven ? [] : ['required:authenticated_second_venue_account_fee_execution_and_system_owned_prefunding']),
+          ...(settlementCostReserveUsd !== null ? [] : ['required:verified_second_venue_settlement_cost']),
+          ...(capitalLockCostUsd !== null ? [] : ['required:capital_lock_opportunity_cost']),
+          ...(guaranteedResidualUsd !== null && guaranteedResidualUsd > 0 ? [] : ['required:positive_guaranteed_residual_after_every_cost']),
+          'required:durable_non_atomic_one_leg_failure_recovery',
+          'required:cross_venue_terminal_settlement_reconciliation',
         ];
         const status: CrossVenueEventArbitrageCandidate['status'] = missingEvidence.length === 0 ? 'eligible' : 'data_collection';
         output.push({
-          id: `kalshi-cross-event:${sha(`${signal.ticker}|${mappingFingerprint(mapping)}|${pair.kalshi}|${maxContracts}`).slice(0, 44)}`,
+          id: `kalshi-cross-event:${sha(`${signal.ticker}|${mappingFingerprint(mapping)}|${pair.kalshi}|${contracts}`).slice(0, 44)}`,
           kalshiTicker: signal.ticker,
           secondVenue: 'polymarket',
           secondVenueMarketId: mapping.secondVenueMarketId,
-          matchedContracts: maxContracts,
+          matchedContracts: contracts,
           kalshiOutcome: pair.kalshi,
           secondVenueOutcome: pair.second,
           kalshiEntryUsd: kalshi.notionalUsd,
-          secondVenueEntryUsd,
+          secondVenueEntryUsd: secondQuote.notionalUsd,
           guaranteedPayoutUsd,
           kalshiFeeUsd,
           secondVenueFeeUsd,
+          slippageUsd,
+          settlementCostReserveUsd,
           capitalLockCostUsd,
           guaranteedResidualUsd,
           semanticEquivalenceProven,
           secondVenueExecutionEvidenceProven,
           status,
-          missingEvidence,
-          observedAt: Math.max(kalshi.observedAt, second.observedAt),
-          expiresAt: Math.min(signal.expiresAt, kalshi.expiresAt, mapping.cutoffAt),
+          missingEvidence: [...new Set(missingEvidence)],
+          observedAt: Math.max(kalshi.observedAt, secondQuote.observedAt, kalshiSemantics?.observedAt ?? 0, secondMarket?.observedAt ?? 0),
+          expiresAt: Number.isFinite(deadline) ? deadline : Math.min(signal.expiresAt, kalshi.expiresAt, secondQuote.expiresAt),
           executionAuthority: false,
           provenance: [
             ...signal.provenance,
             ...kalshi.provenance,
+            ...secondQuote.provenance,
+            ...(kalshiSemantics?.provenance ?? []),
+            ...(secondMarket?.provenance ?? []),
             `semantic_equivalence_mapping:${mappingFingerprint(mapping)}`,
             `mapping_reviewer:${mapping.reviewer}`,
-            'cross_venue_complementary_payout:one_dollar_if_semantically_equivalent',
-            'non_atomic_legging_risk:execution_blocking_until_recovery_proven',
+            ...(equivalence ? [`semantic_mismatches:${equivalence.mismatches.join(',') || 'none'}`] : ['semantic_comparison:incomplete']),
+            'cross_venue_semantics:independently_derived_not_mapping_asserted',
+            'cross_venue_complementary_payout:only_after_exact_semantic_equivalence',
+            'non_atomic_legging:fok_required_before_execution_authority',
+            'one_leg_failure:durable_recovery_required',
             'second_venue_account_balance_mints_system_ownership:false',
             'execution_authority:false',
           ],
@@ -249,8 +264,11 @@ export function getKalshiCrossVenueEventArbitrageSnapshot() {
     lastCompletedAt,
     candidates: latest.map(row => ({ ...row, missingEvidence: [...row.missingEvidence], provenance: [...row.provenance] })),
     exactSemanticEquivalenceRequired: true as const,
+    matchedExecutableDepthRequired: true as const,
+    settlementAndCapitalLockCostsRequired: true as const,
     nonAtomicLegRecoveryRequired: true as const,
     secondVenueAuthenticatedExecutionEvidenceRequired: true as const,
+    crossVenueSystemOwnedPrefundingRequired: true as const,
     executionAuthority: false as const,
   };
 }
