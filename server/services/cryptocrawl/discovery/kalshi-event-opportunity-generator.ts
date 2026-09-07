@@ -12,6 +12,7 @@ import type {
   KalshiPredictionIntelligenceSnapshot,
   KalshiPredictionMarketSignal,
 } from '../intelligence/kalshi-prediction-market-authority.js';
+import { measuredCandidateRegistry } from './measured-candidate-registry.js';
 
 export type KalshiEventCandidateStatus = 'data_collection' | 'eligible' | 'blocked' | 'expired';
 
@@ -133,6 +134,98 @@ function dataCollectionCandidate(signal: KalshiPredictionMarketSignal, outcome: 
       'execution_fail_closed_until_calibration_and_exact_economics',
     ],
   };
+}
+
+function recordCanonicalEventCandidate(candidate: KalshiEventCandidate): void {
+  const now = Date.now();
+  const entryCostUsd = candidate.entryCostUsd;
+  const grossProfitUsd = entryCostUsd !== null && candidate.expectedPayoutUsd !== null
+    ? candidate.expectedPayoutUsd - entryCostUsd
+    : null;
+  const allInCostUsd = entryCostUsd !== null && candidate.entryFeeUsd !== null
+    ? candidate.entryFeeUsd + candidate.settlementCostReserveUsd + candidate.capitalLockCostUsd
+    : null;
+  const allInCostBps = entryCostUsd !== null && entryCostUsd > 0 && allInCostUsd !== null
+    ? allInCostUsd / entryCostUsd * 10_000
+    : null;
+  const grossProfitBps = entryCostUsd !== null && entryCostUsd > 0 && grossProfitUsd !== null
+    ? grossProfitUsd / entryCostUsd * 10_000
+    : null;
+  const quotePrice = entryCostUsd !== null && candidate.contracts > 0
+    ? entryCostUsd / candidate.contracts
+    : null;
+  const eligible = candidate.status === 'eligible' && candidate.plan !== null && candidate.expiresAt > now;
+  const status = candidate.status === 'expired'
+    ? 'expired'
+    : candidate.status === 'blocked'
+      ? 'blocked'
+      : eligible
+        ? 'eligible'
+        : 'enriched';
+
+  measuredCandidateRegistry.record({
+    opportunityId: candidate.opportunityId,
+    topology: 'PREDICTION_EVENT',
+    observedAt: candidate.observedAt,
+    expiresAt: candidate.expiresAt,
+    status,
+    assets: [candidate.asset],
+    venues: ['kalshi'],
+    chains: [],
+    rawQuotes: [{
+      source: 'kalshi_event_authenticated_execution_evidence',
+      venue: 'kalshi',
+      symbol: candidate.symbol,
+      observedAt: candidate.observedAt,
+      price: quotePrice,
+      executable: eligible,
+      provenance: candidate.provenance,
+    }],
+    depth: candidate.contracts > 0 && entryCostUsd !== null
+      ? { status: 'measured', detail: `${candidate.outcome}:${candidate.contracts}:authenticated_sized_depth` }
+      : { status: 'unavailable', detail: `${candidate.outcome}:evidence_collection_required` },
+    economics: {
+      grossProfitUsd,
+      // Event edge is calibrated/probabilistic, never mislabeled as deterministic.
+      deterministicNetProfitUsd: null,
+      feeUsd: candidate.entryFeeUsd,
+      gasUsd: 0,
+      bridgeUsd: 0,
+      // Authenticated sized VWAP is the entry-cost authority; depth impact is
+      // already embedded in that cost rather than credited again as a reduction.
+      expectedSlippageBps: entryCostUsd !== null ? 0 : null,
+      expectedPriceImpactBps: entryCostUsd !== null ? 0 : null,
+      notionalUsd: entryCostUsd,
+      grossProfitBps,
+      flashLoanFeeBps: 0,
+      gasCostBps: 0,
+      relayCostBps: 0,
+      allInCostBps,
+      breakEvenBps: allInCostBps,
+      netProfitBps: candidate.expectedNetBps,
+      bpsToBreakEven: candidate.expectedNetBps !== null && candidate.expectedNetBps < 0 ? -candidate.expectedNetBps : 0,
+      realizedNetProfitBps: null,
+    },
+    quoteAgeMs: Math.max(0, now - candidate.observedAt),
+    executableCapability: eligible,
+    executionCapabilityReason: eligible
+      ? 'kalshi_prediction_event_exact_candidate_evidence_complete'
+      : candidate.status === 'data_collection'
+        ? 'kalshi_prediction_event_evidence_collection_required'
+        : candidate.status === 'blocked'
+          ? 'kalshi_prediction_event_all_in_economics_blocked'
+          : 'kalshi_prediction_event_expired',
+    missingInformation: candidate.missingEvidence,
+    provenance: [
+      ...candidate.provenance,
+      'canonical_topology:PREDICTION_EVENT',
+      'spot_quote_venue_assumptions:false',
+      'raw_market_probability_execution_authority:false',
+      'event_expected_net:conservative_calibrated_probability',
+      'event_entry_cost:authenticated_sized_vwap',
+      'event_all_in_cost:fee_plus_settlement_plus_capital_lock',
+    ],
+  });
 }
 
 async function buildOutcomeCandidate(
@@ -298,6 +391,7 @@ export async function refreshKalshiEventOpportunities(snapshot: KalshiPrediction
           ? await buildOutcomeCandidate(signal, calibration, outcome, usableSystemCashUsd)
           : dataCollectionCandidate(signal, outcome, ['required:terminal_probability_calibration_authority']);
         if (!candidate) continue;
+        recordCanonicalEventCandidate(candidate);
         next.set(candidate.opportunityId, candidate);
         if (candidate.plan && candidate.status === 'eligible') nextPlans.set(candidate.opportunityId, candidate.plan);
       }
@@ -311,6 +405,15 @@ export async function refreshKalshiEventOpportunities(snapshot: KalshiPrediction
       error: error instanceof Error ? error.message : String(error),
       staleEligibleCandidatesRetained: false,
       executionAuthorityGranted: false,
+    });
+  }
+
+  for (const previous of candidates.values()) {
+    if (next.has(previous.opportunityId)) continue;
+    measuredCandidateRegistry.updateStatus(previous.opportunityId, 'expired', {
+      executableCapability: false,
+      executionCapabilityReason: 'kalshi_prediction_event_candidate_invalidated_by_refresh',
+      provenance: ['kalshi_event_refresh:stale_candidate_invalidated'],
     });
   }
 
