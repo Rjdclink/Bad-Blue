@@ -43,8 +43,8 @@ export interface KalshiPerpFundingEvidence {
   ticker: string;
   fundingRate: number;
   nextFundingTime: number;
-  computedTime: number;
-  markPrice: number;
+  computedTime: number | null;
+  markPrice: number | null;
   fundingRateLocked: false;
   observedAt: number;
   source: 'kalshi_public_margin_funding_estimate';
@@ -105,6 +105,8 @@ async function publicJson<T>(path: string, timeoutMs = 4_000): Promise<T> {
 function normalizeMarket(row: any, observedAt: number): KalshiMarginMarket | null {
   const ticker = safeTicker(row?.ticker);
   if (!ticker) return null;
+  const schedulePresent = row !== null && typeof row === 'object' && Object.prototype.hasOwnProperty.call(row, 'schedule');
+  const schedule = schedulePresent ? row.schedule : undefined;
   return {
     ticker,
     title: String(row?.title || ''),
@@ -112,9 +114,11 @@ function normalizeMarket(row: any, observedAt: number): KalshiMarginMarket | nul
     tickSize: positive(row?.tick_size),
     status: String(row?.status || ''),
     fractionalTradingEnabled: row?.fractional_trading_enabled === true,
-    isOpen: row?.schedule?.is_open === true,
-    nextCloseTs: timestamp(row?.schedule?.next_close_ts),
-    nextOpenTs: timestamp(row?.schedule?.next_open_ts),
+    // The current margin schema defines schedule=null as a 24/7 market. A missing
+    // required schedule key remains fail-closed instead of being guessed open.
+    isOpen: schedule === null ? true : schedule?.is_open === true,
+    nextCloseTs: timestamp(schedule?.next_close_ts),
+    nextOpenTs: timestamp(schedule?.next_open_ts),
     bid: positive(row?.bid),
     ask: positive(row?.ask),
     settlementMarkPrice: positive(row?.settlement_mark_price?.price),
@@ -170,8 +174,12 @@ export async function getKalshiPerpFundingEvidence(tickerInput: string): Promise
   const fundingRate = finite(payload?.funding_rate);
   const nextFundingTime = timestamp(payload?.next_funding_time);
   const computedTime = timestamp(payload?.computed_time);
-  const markPrice = positive(payload?.mark_price);
-  if (fundingRate === null || nextFundingTime === null || computedTime === null || markPrice === null) return null;
+  const markPrice = positive(payload?.mark_price ?? payload?.mark_price_dollars);
+  // Current Kalshi schema requires next_funding_time; funding_rate, computed_time
+  // and mark_price may be null/omitted while upstream inputs are unavailable.
+  // A route needs a rate to be useful, but optional mark/computed fields must not
+  // erase otherwise valid funding evidence.
+  if (fundingRate === null || nextFundingTime === null) return null;
   return {
     ticker: safeTicker(payload?.market_ticker) || ticker,
     fundingRate,
