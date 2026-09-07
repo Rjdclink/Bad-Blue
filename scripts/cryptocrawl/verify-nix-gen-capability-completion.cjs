@@ -130,7 +130,9 @@ mustNot(combinedAdapter, "pool.query('BEGIN')", 'prebroadcast cost persistence c
 
 must(acrossPrebroadcast, 'ethers.utils.keccak256(raw).toLowerCase() !== hash', 'recovery rejects signed bytes whose hash differs from durable identity');
 must(acrossPrebroadcast, "WHERE (status='PREPARED' OR (status='SUBMITTED' AND origin_fee_complete=false))", 'restart worker recovers both armed and pre-arm durable rows');
-must(acrossPrebroadcast, 'const rebroadcast = await provider.sendTransaction(raw);', 'recovery can only rebroadcast the exact durable signed transaction');
+must(acrossPrebroadcast, 'const recovered = await executePreparedSystemOwnedNativeTransaction({', 'recovery uses canonical system-owned native authority');
+must(acrossPrebroadcast, 'signedTransaction: raw', 'recovery submits only the exact durable signed transaction bytes');
+mustNot(acrossPrebroadcast, 'provider.sendTransaction(raw)', 'recovery cannot bypass canonical system-owned native authority');
 must(acrossPrebroadcast, "return finalizeOriginFailure(row, row.originNativeFeeWei, 'ACROSS_PREBROADCAST_NOT_BROADCAST');", 'proven pre-broadcast crashes terminally release untouched principal');
 must(acrossPrebroadcast, 'WITH released AS (', 'origin failure releases reservation and writes terminal state atomically');
 must(acrossPrebroadcast, "if (receipt.status !== 1) return finalizeOriginFailure(row, feeWei, 'ACROSS_ORIGIN_DEPOSIT_REVERTED');", 'origin revert is terminal realized gas-loss evidence');
