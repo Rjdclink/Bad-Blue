@@ -135,6 +135,17 @@ function liveLiquidationBuffer(input: {
     && input.adjustedEquityUsd >= input.maintenanceMarginUsd * Math.max(1.5, minimumMarginRatio() / 2);
 }
 
+function decimalAmount(value: number): string {
+  if (!(value > 0) || !Number.isFinite(value)) throw new Error('OKX_MARGIN_SHORT_DECIMAL_AMOUNT_INVALID');
+  const text = value.toFixed(18).replace(/0+$/, '').replace(/\.$/, '');
+  if (!text || text === '0') throw new Error('OKX_MARGIN_SHORT_DECIMAL_AMOUNT_ROUNDED_ZERO');
+  return text;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export async function measureOkxMarginShortEvidence(input: {
   symbol: string;
   baseAsset: string;
@@ -161,8 +172,7 @@ export async function measureOkxMarginShortEvidence(input: {
   const configRow = config?.data?.[0] ?? null;
   const accountRow = balance?.data?.[0] ?? null;
   const detail = findCurrencyDetail(balance, baseAsset);
-  const accountMode = String(configRow?.acctLv || '');
-  if (accountMode !== '1') return null;
+  if (String(configRow?.acctLv || '') !== '1') return null;
   const { tradePermission, spotBorrowEnabled, autoRepayEnabled } = configFlags(configRow);
   const maxBorrowBase = maxLoanForBase(maxLoan, baseAsset);
   const maxSellBase = nonnegative(maxAvail?.data?.[0]?.availSell);
@@ -294,6 +304,61 @@ export async function getOkxBaseLiability(baseAssetRaw: string): Promise<{ liabi
   return { liabilityBase, observedAt: Date.now() };
 }
 
+export async function recoverOkxMarginShortResidualRepayment(input: {
+  baseAsset: string;
+  expectedPrincipalBase: number;
+  maximumRepayableBase: number;
+}): Promise<{ liabilityBase: number; manualRepayAttempted: boolean; observedAt: number; provenance: string[] }> {
+  const baseAsset = canonicalAsset(input.baseAsset);
+  if (!(input.expectedPrincipalBase > 0) || !(input.maximumRepayableBase > 0) ||
+      !Number.isFinite(input.expectedPrincipalBase) || !Number.isFinite(input.maximumRepayableBase)) {
+    throw new Error('OKX_MARGIN_SHORT_RESIDUAL_REPAY_INPUT_INVALID');
+  }
+  const tolerance = liabilityTolerance(input.expectedPrincipalBase);
+  let liability = await getOkxBaseLiability(baseAsset);
+  if (liability.liabilityBase <= tolerance) {
+    return {
+      liabilityBase: liability.liabilityBase,
+      manualRepayAttempted: false,
+      observedAt: liability.observedAt,
+      provenance: ['okx_balance:terminal_liability_already_zero', 'manual_repay:not_required'],
+    };
+  }
+  if (liability.liabilityBase > input.maximumRepayableBase + tolerance) {
+    throw new Error('OKX_MARGIN_SHORT_RESIDUAL_EXCEEDS_AUTHENTICATED_CLOSE_ACQUISITION');
+  }
+
+  let postError: unknown = null;
+  try {
+    await okxPrivateRequest('/api/v5/account/spot-manual-borrow-repay', 'POST', {
+      ccy: baseAsset,
+      side: 'repay',
+      amt: decimalAmount(liability.liabilityBase),
+    }, { lane: 'order_write' });
+  } catch (error) {
+    postError = error;
+  }
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    liability = await getOkxBaseLiability(baseAsset);
+    if (liability.liabilityBase <= tolerance) {
+      return {
+        liabilityBase: liability.liabilityBase,
+        manualRepayAttempted: true,
+        observedAt: liability.observedAt,
+        provenance: [
+          'okx_spot_manual_borrow_repay:attempted_after_terminal_close_fill',
+          'okx_balance:terminal_liability_zero',
+          'response_loss_resolved_by_authenticated_liability_state',
+          'borrowed_base_ownership:false',
+        ],
+      };
+    }
+    if (attempt < 5) await sleep(250 * (attempt + 1));
+  }
+  throw new Error(`OKX_MARGIN_SHORT_RESIDUAL_REPAYMENT_UNPROVEN:${postError instanceof Error ? postError.message : String(postError || 'liability_remains')}`);
+}
+
 export async function assessOkxMarginShortHealth(input: {
   baseAsset: string;
   expectedPrincipalBase: number;
@@ -389,13 +454,24 @@ export async function proveOkxMarginShortRepaid(input: {
   closeSubmittedAt: number;
 }): Promise<{ liabilityBase: number; repaidBase: number; observedAt: number; provenance: string[] }> {
   const baseAsset = canonicalAsset(input.baseAsset);
-  const [liability, history] = await Promise.all([
+  const [liability, autoHistory, manualHistory] = await Promise.all([
     getOkxBaseLiability(baseAsset),
     okxPrivateRequest('/api/v5/account/spot-borrow-repay-history', 'GET', { ccy: baseAsset, type: 'auto_repay', limit: '100' }, { lane: 'account_read' }),
+    okxPrivateRequest('/api/v5/account/spot-borrow-repay-history', 'GET', { ccy: baseAsset, type: 'manual_repay', limit: '100' }, { lane: 'account_read' }).catch(() => ({ data: [] })),
   ]);
-  const repaidBase = (Array.isArray(history?.data) ? history.data : [])
+  const rows = [
+    ...(Array.isArray(autoHistory?.data) ? autoHistory.data : []),
+    ...(Array.isArray(manualHistory?.data) ? manualHistory.data : []),
+  ];
+  const seen = new Set<string>();
+  const repaidBase = rows
     .filter((row: any) => Number(row?.ts) + 5_000 >= input.closeSubmittedAt)
-    .reduce((sum: number, row: any) => sum + Math.max(0, Number(row?.amt) || 0), 0);
+    .reduce((sum: number, row: any) => {
+      const identity = `${String(row?.ts || '')}:${String(row?.amt || '')}:${String(row?.type || row?.side || '')}`;
+      if (seen.has(identity)) return sum;
+      seen.add(identity);
+      return sum + Math.max(0, Number(row?.amt) || 0);
+    }, 0);
   const tolerance = liabilityTolerance(input.expectedRepayBase);
   if (liability.liabilityBase > tolerance || repaidBase + tolerance < input.expectedRepayBase) {
     throw new Error('OKX_MARGIN_SHORT_REPAYMENT_NOT_PROVEN');
@@ -406,7 +482,7 @@ export async function proveOkxMarginShortRepaid(input: {
     observedAt: Math.max(liability.observedAt, Date.now()),
     provenance: [
       'okx_balance:base_liability_cleared',
-      'okx_spot_borrow_repay_history:auto_repay_observed',
+      'okx_spot_borrow_repay_history:auto_or_manual_repay_observed',
       'borrowed_base_liability:terminal_zero',
       'short_sale_proceeds:ownership_not_promoted_before_repayment',
     ],
