@@ -45,6 +45,7 @@ export interface OkxMarginShortHealth {
 }
 
 export interface OkxMarginShortCollateralProof {
+  baseAsset: string;
   quoteAsset: string;
   requiredQuoteAmount: number;
   physicalQuoteAmount: number;
@@ -84,6 +85,16 @@ function liabilityTolerance(quantity: number): number {
 function evidenceTtlMs(): number {
   const value = Number(process.env.CRYPTOCRAWL_OKX_MARGIN_SHORT_EVIDENCE_TTL_MS || 3_000);
   return Math.max(500, Math.min(10_000, Number.isFinite(value) ? Math.trunc(value) : 3_000));
+}
+
+function historyRecoveryWindowMs(): number {
+  const value = Number(process.env.CRYPTOCRAWL_OKX_MARGIN_SHORT_HISTORY_RECOVERY_MS || 24 * 60 * 60_000);
+  return Math.max(60_000, Math.min(7 * 24 * 60 * 60_000, Number.isFinite(value) ? Math.trunc(value) : 24 * 60 * 60_000));
+}
+
+function inverseCollateralBufferFraction(): number {
+  const value = Number(process.env.CRYPTOCRAWL_OKX_MARGIN_SHORT_COLLATERAL_BUFFER_FRACTION || 0.25);
+  return Math.max(0.05, Math.min(0.50, Number.isFinite(value) ? value : 0.25));
 }
 
 function minimumMarginRatio(): number {
@@ -146,6 +157,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function historyAmount(rows: any[], since: number): number {
+  const seen = new Set<string>();
+  return rows
+    .filter((row: any) => {
+      const ts = Number(row?.ts);
+      return Number.isFinite(ts) && ts + 5_000 >= since;
+    })
+    .reduce((sum: number, row: any) => {
+      const identity = `${String(row?.ts || '')}:${String(row?.amt || '')}:${String(row?.type || row?.side || '')}:${String(row?.ordId || row?.id || '')}`;
+      if (seen.has(identity)) return sum;
+      seen.add(identity);
+      return sum + Math.max(0, Number(row?.amt) || 0);
+    }, 0);
+}
+
 export async function measureOkxMarginShortEvidence(input: {
   symbol: string;
   baseAsset: string;
@@ -193,7 +219,7 @@ export async function measureOkxMarginShortEvidence(input: {
     maintenanceMarginUsd,
     marginRatio,
   });
-  const executable = tradePermission
+  const capabilityReady = tradePermission
     && spotBorrowEnabled
     && autoRepayEnabled
     && noExistingLiability
@@ -202,6 +228,12 @@ export async function measureOkxMarginShortEvidence(input: {
     && liquidationBufferProven
     && Number.isFinite(projectedBorrowInterestUsd)
     && projectedBorrowInterestUsd >= 0;
+  const requiredQuoteAmount = input.baseQuantity * input.referencePriceUsd * (1 + inverseCollateralBufferFraction())
+    + Math.max(0, projectedBorrowInterestUsd);
+  const collateralProof = capabilityReady
+    ? await proveOkxMarginShortSystemOwnedCollateral({ baseAsset, quoteAsset, requiredQuoteAmount }).catch(() => null)
+    : null;
+  const executable = capabilityReady && collateralProof?.exclusiveSystemOwnedCollateral === true;
   const observedAt = Date.now();
   return {
     symbol: input.symbol,
@@ -232,6 +264,7 @@ export async function measureOkxMarginShortEvidence(input: {
       'okx_account_balance:authenticated_liability_and_margin_risk',
       'preexisting_base_liability:must_be_zero_for_lifecycle_attribution',
       `okx_margin_ratio_minimum:${minimumMarginRatio()}`,
+      ...(collateralProof?.provenance ?? ['okx_inverse_collateral:exclusive_system_owned_proof_unavailable']),
       'borrowed_base_and_short_sale_proceeds:never_system_owned_at_entry',
       'terminal_ownership:only_after_full_liability_repayment_and_realized_pnl',
       'personal_capital_fallback:false',
@@ -240,10 +273,13 @@ export async function measureOkxMarginShortEvidence(input: {
 }
 
 export async function proveOkxMarginShortSystemOwnedCollateral(input: {
+  baseAsset: string;
   quoteAsset: string;
   requiredQuoteAmount: number;
 }): Promise<OkxMarginShortCollateralProof> {
+  const baseAsset = canonicalAsset(input.baseAsset);
   const quoteAsset = canonicalAsset(input.quoteAsset);
+  if (baseAsset === quoteAsset) throw new Error('OKX_MARGIN_SHORT_COLLATERAL_ASSET_IDENTITY_INVALID');
   if (!(input.requiredQuoteAmount > 0) || !Number.isFinite(input.requiredQuoteAmount)) {
     throw new Error('OKX_MARGIN_SHORT_REQUIRED_COLLATERAL_INVALID');
   }
@@ -262,12 +298,17 @@ export async function proveOkxMarginShortSystemOwnedCollateral(input: {
     const ownedRaw = await getExactSystemOwnedCexInventory('okx', asset);
     const owned = Math.max(0, Number(ownedRaw) || 0);
     const tolerance = Math.max(1e-10, Math.max(physical, owned) * 1e-6);
-    if (physical > owned + tolerance) unexplainedAssets.push(asset);
-    if (liability > tolerance) preexistingLiabilityAssets.push(asset);
     if (asset === quoteAsset) {
+      if (physical > owned + tolerance) unexplainedAssets.push(asset);
       physicalQuoteAmount = physical;
       systemOwnedQuoteAmount = owned;
+    } else if (physical > tolerance) {
+      // A pre-existing base balance could satisfy the sell without borrowing,
+      // while any other positive asset could become unreserved cross collateral.
+      // Both conditions break the isolated inverse-hedge authority and fail closed.
+      unexplainedAssets.push(asset);
     }
+    if (liability > tolerance) preexistingLiabilityAssets.push(asset);
   }
   const requiredTolerance = Math.max(1e-8, input.requiredQuoteAmount * 1e-6);
   const sufficientQuote = physicalQuoteAmount + requiredTolerance >= input.requiredQuoteAmount
@@ -276,6 +317,7 @@ export async function proveOkxMarginShortSystemOwnedCollateral(input: {
     && unexplainedAssets.length === 0
     && preexistingLiabilityAssets.length === 0;
   return {
+    baseAsset,
     quoteAsset,
     requiredQuoteAmount: input.requiredQuoteAmount,
     physicalQuoteAmount,
@@ -287,6 +329,8 @@ export async function proveOkxMarginShortSystemOwnedCollateral(input: {
     provenance: [
       'okx_account_balance:authenticated_all_currency_physical_balance_scan',
       'cex_system_owned_lots:overflow_authoritative_per_asset_ownership',
+      'inverse_entry_base_inventory:must_be_zero_so_sell_requires_borrow',
+      'nonquote_cross_collateral:must_be_zero_to_prevent_unreserved_exposure',
       'preexisting_liabilities:must_be_zero_before_inverse_open',
       'unexplained_operator_balance:must_be_zero_before_inverse_open',
       'required_quote_collateral:physical_and_system_owned',
@@ -428,9 +472,10 @@ export async function proveOkxMarginShortBorrow(input: {
     getOkxBaseLiability(baseAsset),
     okxPrivateRequest('/api/v5/account/spot-borrow-repay-history', 'GET', { ccy: baseAsset, type: 'auto_borrow', limit: '100' }, { lane: 'account_read' }),
   ]);
-  const borrowedBase = (Array.isArray(history?.data) ? history.data : [])
-    .filter((row: any) => Number(row?.ts) + 5_000 >= input.submittedAt)
-    .reduce((sum: number, row: any) => sum + Math.max(0, Number(row?.amt) || 0), 0);
+  const rows = Array.isArray(history?.data) ? history.data : [];
+  const primaryBorrowed = historyAmount(rows, input.submittedAt);
+  const recoverySince = Math.max(0, Date.now() - historyRecoveryWindowMs());
+  const borrowedBase = primaryBorrowed > 0 ? primaryBorrowed : historyAmount(rows, recoverySince);
   const tolerance = liabilityTolerance(input.expectedBorrowBase);
   if (liability.liabilityBase + tolerance < input.expectedBorrowBase || borrowedBase + tolerance < input.expectedBorrowBase) {
     throw new Error('OKX_MARGIN_SHORT_BORROW_NOT_PROVEN');
@@ -441,7 +486,10 @@ export async function proveOkxMarginShortBorrow(input: {
     observedAt: Math.max(liability.observedAt, Date.now()),
     provenance: [
       'okx_balance:base_liability_observed',
-      'okx_spot_borrow_repay_history:auto_borrow_observed',
+      primaryBorrowed + tolerance >= input.expectedBorrowBase
+        ? 'okx_spot_borrow_repay_history:auto_borrow_observed_after_submit'
+        : 'okx_spot_borrow_repay_history:auto_borrow_recovered_within_bounded_restart_window',
+      'current_liability:must_still_cover_expected_principal',
       'preexisting_base_liability:zero_required',
       'borrowed_base_ownership:false',
     ],
@@ -463,15 +511,9 @@ export async function proveOkxMarginShortRepaid(input: {
     ...(Array.isArray(autoHistory?.data) ? autoHistory.data : []),
     ...(Array.isArray(manualHistory?.data) ? manualHistory.data : []),
   ];
-  const seen = new Set<string>();
-  const repaidBase = rows
-    .filter((row: any) => Number(row?.ts) + 5_000 >= input.closeSubmittedAt)
-    .reduce((sum: number, row: any) => {
-      const identity = `${String(row?.ts || '')}:${String(row?.amt || '')}:${String(row?.type || row?.side || '')}`;
-      if (seen.has(identity)) return sum;
-      seen.add(identity);
-      return sum + Math.max(0, Number(row?.amt) || 0);
-    }, 0);
+  const primaryRepaid = historyAmount(rows, input.closeSubmittedAt);
+  const recoverySince = Math.max(0, Date.now() - historyRecoveryWindowMs());
+  const repaidBase = primaryRepaid > 0 ? primaryRepaid : historyAmount(rows, recoverySince);
   const tolerance = liabilityTolerance(input.expectedRepayBase);
   if (liability.liabilityBase > tolerance || repaidBase + tolerance < input.expectedRepayBase) {
     throw new Error('OKX_MARGIN_SHORT_REPAYMENT_NOT_PROVEN');
@@ -482,7 +524,9 @@ export async function proveOkxMarginShortRepaid(input: {
     observedAt: Math.max(liability.observedAt, Date.now()),
     provenance: [
       'okx_balance:base_liability_cleared',
-      'okx_spot_borrow_repay_history:auto_or_manual_repay_observed',
+      primaryRepaid + tolerance >= input.expectedRepayBase
+        ? 'okx_spot_borrow_repay_history:auto_or_manual_repay_observed_after_close'
+        : 'okx_spot_borrow_repay_history:auto_or_manual_repay_recovered_within_bounded_restart_window',
       'borrowed_base_liability:terminal_zero',
       'short_sale_proceeds:ownership_not_promoted_before_repayment',
     ],
