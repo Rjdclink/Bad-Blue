@@ -1,5 +1,5 @@
 import logger from '../../../logger.js';
-import { getKalshiApiOrigin } from './kalshi-authenticated-authority.js';
+import { kalshiAuthenticatedRequest } from './kalshi-authenticated-authority.js';
 
 export type KalshiEventOutcome = 'yes' | 'no';
 export type KalshiEventLiquiditySide = 'buy' | 'sell';
@@ -17,7 +17,7 @@ export interface KalshiEventDepthSnapshot {
   noAsks: KalshiEventDepthLevel[];
   observedAt: number;
   expiresAt: number;
-  authenticated: false;
+  authenticated: true;
   executableDepthEvidence: true;
   synthetic: false;
   executionAuthority: false;
@@ -95,18 +95,17 @@ function clone(snapshot: KalshiEventDepthSnapshot): KalshiEventDepthSnapshot {
 }
 
 async function fetchOrderbook(ticker: string): Promise<any> {
-  const response = await fetch(`${getKalshiApiOrigin()}/trade-api/v2/markets/${encodeURIComponent(ticker)}/orderbook?depth=${DEPTH}`, {
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error(`Kalshi event orderbook failed HTTP ${response.status}`);
-  return response.json();
+  return kalshiAuthenticatedRequest<any>(
+    `/trade-api/v2/markets/${encodeURIComponent(ticker)}/orderbook?depth=${DEPTH}`,
+    { timeoutMs: TIMEOUT_MS, credentialScope: 'event' },
+  );
 }
 
 /**
- * Kalshi's event orderbook returns YES bids and NO bids. In a binary $1 payout,
- * a NO bid at p is the executable YES ask at 1-p, and vice versa, with the same
- * contract count. This derives asks mechanically without inventing liquidity.
+ * Kalshi's authenticated event orderbook returns YES bids and NO bids. In a
+ * binary $1 payout, a NO bid at p is the executable YES ask at 1-p, and vice
+ * versa, with the same contract count. This derives asks mechanically without
+ * inventing liquidity.
  */
 export async function getKalshiEventDepth(tickerInput: string, forceRefresh = false): Promise<KalshiEventDepthSnapshot | null> {
   const ticker = tickerInput.trim().toUpperCase();
@@ -132,12 +131,13 @@ export async function getKalshiEventDepth(tickerInput: string, forceRefresh = fa
       noAsks: complementAsks(yesBids),
       observedAt,
       expiresAt: observedAt + CACHE_MS,
-      authenticated: false,
+      authenticated: true,
       executableDepthEvidence: true,
       synthetic: false,
       executionAuthority: false,
       provenance: [
-        'kalshi_event_orderbook:live_public',
+        'kalshi_event_orderbook:live_authenticated',
+        'kalshi_event_credential_scope:event',
         `kalshi_orderbook_depth_levels:${DEPTH}`,
         'kalshi_yes_no_bids:direct_exchange_evidence',
         'binary_complement_asks:mechanically_derived_same_contract_size',
@@ -149,7 +149,7 @@ export async function getKalshiEventDepth(tickerInput: string, forceRefresh = fa
     return snapshot;
   })().catch(error => {
     cache.delete(ticker);
-    logger.debug('[KalshiEventDepth] Live event depth unavailable; route remains fail-closed', {
+    logger.debug('[KalshiEventDepth] Live authenticated event depth unavailable; route remains fail-closed', {
       component: 'KalshiEventDepthAuthority', ticker,
       error: error instanceof Error ? error.message : String(error),
       staleDepthRetained: false,
