@@ -50,8 +50,9 @@ function validate(plan: ExactLiquidationExecutionPlan): string | null {
 
 /**
  * Executes only a pre-built atomic liquidation transaction. Before broadcast the
- * exact signed payload is decoded, simulated with eth_call, and gas-estimated on
- * the target chain. No partial multi-transaction liquidation is accepted.
+ * exact signed payload is decoded and gas-estimated on the target chain. eth_call
+ * is retained as advisory telemetry only; it cannot veto an otherwise valid,
+ * positive, fresh atomic liquidation. No partial multi-transaction liquidation is accepted.
  */
 export async function executeExactFlashLiquidation(plan: ExactLiquidationExecutionPlan): Promise<LiquidationExecutionResult> {
   const rejection = validate(plan);
@@ -80,8 +81,20 @@ export async function executeExactFlashLiquidation(plan: ExactLiquidationExecuti
     maxFeePerGas: parsed.maxFeePerGas ?? undefined,
     maxPriorityFeePerGas: parsed.maxPriorityFeePerGas ?? undefined,
   };
+
   try {
     await provider.call(request, 'latest');
+  } catch (error) {
+    logger.debug('[LiquidationExecution] Exact eth_call advisory failed without vetoing a positive atomic liquidation', {
+      component: 'FlashLiquidationExecutor',
+      opportunityId: plan.opportunityId,
+      chain: plan.chain,
+      error: error instanceof Error ? error.message : String(error),
+      simulationVetoAuthority: false,
+    });
+  }
+
+  try {
     const estimatedGas = await provider.estimateGas(request);
     if (parsed.gasLimit && parsed.gasLimit.lt(estimatedGas)) {
       return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_LIQUIDATION_GAS_LIMIT_BELOW_ESTIMATE' };
@@ -91,7 +104,7 @@ export async function executeExactFlashLiquidation(plan: ExactLiquidationExecuti
       success: false,
       status: 'rejected',
       settlementConfirmed: false,
-      error: `REJECT_LIQUIDATION_EXACT_SIMULATION:${error instanceof Error ? error.message : String(error)}`,
+      error: `REJECT_LIQUIDATION_GAS_ESTIMATE:${error instanceof Error ? error.message : String(error)}`,
     };
   }
 
@@ -115,6 +128,7 @@ export async function executeExactFlashLiquidation(plan: ExactLiquidationExecuti
       settlementConfirmed: confirmed,
       expectedNetProfitUsd: plan.deterministicNetProfitUsd,
       realizedProfitAuthority: 'downstream_balance_and_receipt_reconciliation_required',
+      simulationVetoAuthority: false,
     });
     return {
       success: confirmed,

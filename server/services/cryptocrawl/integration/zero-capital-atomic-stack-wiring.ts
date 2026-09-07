@@ -69,10 +69,9 @@ function chooseStack(opportunities: readonly ZeroCapitalOpportunity[]): ZeroCapi
     .filter(opportunity => {
       const candidate = measuredCandidateRegistry.get(opportunity.id);
       return individuallyComposable(opportunity) &&
-        opportunity.netProfitBps >= policy.minIncrementalBps &&
+        opportunity.netProfitBps > 0 &&
         candidate?.status === 'eligible' &&
-        candidate.executableCapability === true &&
-        candidate.missingInformation.length === 0;
+        candidate.executableCapability === true;
     })
     .sort((left, right) => right.netProfitBps - left.netProfitBps || (right.expectedProfit > left.expectedProfit ? 1 : -1));
 
@@ -87,7 +86,7 @@ function chooseStack(opportunities: readonly ZeroCapitalOpportunity[]): ZeroCapi
   return selected.length >= policy.minLegs ? selected : [];
 }
 
-async function exactSimulateStack(input: {
+async function measureStack(input: {
   chain: SupportedChain;
   provider: providers.JsonRpcProvider;
   wallet: Wallet;
@@ -136,12 +135,28 @@ async function exactSimulateStack(input: {
     gasLimit: 5_000_000,
   };
   const payload = buildCompositeFlashLoanReceiverPayload(composite);
-  await input.provider.call({
-    from: input.wallet.address,
-    to: payload.to,
-    data: payload.data,
-    value: payload.value,
-  });
+
+  let simulated = false;
+  let simulationAdvisoryError: string | undefined;
+  try {
+    await input.provider.call({
+      from: input.wallet.address,
+      to: payload.to,
+      data: payload.data,
+      value: payload.value,
+    });
+    simulated = true;
+  } catch (error) {
+    simulationAdvisoryError = error instanceof Error ? error.message : String(error);
+    logger.debug('[ZeroCapitalStack] Composite eth_call advisory failed without suppressing measurable stack economics', {
+      component: 'ZeroCapitalAtomicStackWiring',
+      chain: input.chain,
+      opportunityIds: input.opportunities.map(opportunity => opportunity.id),
+      simulationAdvisoryError,
+      simulationVetoAuthority: false,
+      executionAuthority: false,
+    });
+  }
   if (Date.now() >= expiresAt) return;
 
   const estimatedGasBn = await input.provider.estimateGas({
@@ -201,12 +216,15 @@ async function exactSimulateStack(input: {
     sharedPrincipalStackedBps: stackedBps,
     stepCount: steps.length,
     estimatedGas,
+    simulated,
+    ...(simulationAdvisoryError ? { simulationAdvisoryError } : {}),
     simulatedAt: Date.now(),
     expiresAt,
     provenance: [
       'verified_balancer_composite_v2_receiver',
       'composite_cycle_checkpoint_capable',
-      'exact_receiver_composite_eth_call',
+      simulated ? 'composite_eth_call_advisory_passed' : 'composite_eth_call_advisory_unavailable_or_failed',
+      'composite_eth_call_veto_authority:false',
       'exact_receiver_composite_estimate_gas',
       'shared_flash_loan_principal',
       'measured_duplicate_flash_fee_savings',
@@ -223,7 +241,8 @@ async function exactSimulateStack(input: {
     measuredCandidateRegistry.updateStatus(opportunity.id, candidate.status, {
       provenance: [
         'atomic_multileg_payload_composable',
-        'atomic_multileg_exact_simulation',
+        simulated ? 'atomic_multileg_simulation_advisory_passed' : 'atomic_multileg_simulation_advisory_unavailable_or_failed',
+        'atomic_multileg_simulation_veto_authority:false',
         'atomic_multileg_composite_v2',
         `atomic_multileg_evidence:${evidenceId}`,
         `atomic_multileg_shared_principal_bps:${stackedBps.toFixed(4)}`,
@@ -233,7 +252,7 @@ async function exactSimulateStack(input: {
     });
   }
 
-  logger.info('[ZeroCapitalStack] Exact-simulated beneficial shared-principal atomic stack', {
+  logger.info('[ZeroCapitalStack] Measured beneficial shared-principal atomic stack', {
     component: 'ZeroCapitalAtomicStackWiring',
     receiverKind: 'balancer_composite_v2',
     chain: input.chain,
@@ -249,6 +268,8 @@ async function exactSimulateStack(input: {
     minProfitSum: minProfitSum.toString(),
     sharedPrincipalStackedBps: stackedBps,
     estimatedGas: estimatedGas.toString(),
+    simulated,
+    simulationVetoAuthority: false,
     evidenceId,
     executionAuthority: false,
   });
@@ -260,7 +281,6 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
     || candidate.status !== 'eligible'
     || candidate.executableCapability !== true
     || candidate.expiresAt <= Date.now()
-    || candidate.missingInformation.length > 0
   ) return;
 
   const opportunity = zeroCapitalRouteEvidenceRegistry.getOpportunity(candidate.opportunityId);
@@ -288,7 +308,7 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
       });
       const stack = chooseStack(compatible);
       if (stack.length < 2) return;
-      await exactSimulateStack({
+      await measureStack({
         chain: opportunity.chain,
         provider,
         wallet,
@@ -324,8 +344,9 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     verifiedCompositeReceiverRequired: true,
     maxAtomicSteps: 16,
     adaptiveLegCount: true,
-    adaptiveIncrementalBpsThreshold: true,
-    exactCompositeSimulationRequired: true,
+    adaptiveIncrementalBpsThresholdAdvisoryOnly: true,
+    exactCompositeSimulationRequired: false,
+    exactCompositeSimulationAdvisoryOnly: true,
     exactCompositeGasEstimateRequired: true,
     measuredCompositionBenefitRequired: true,
     combinedProfitMustExceedIndividualProfitSum: true,

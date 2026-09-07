@@ -290,12 +290,24 @@ async function fetchCoinbaseFeeEvidence(symbolInput: string, forceRefresh = fals
     symbol,
     takerFeeBps: accountFee.takerFeeBps,
     makerFeeBps: stablepairZeroMaker ? 0 : accountFee.makerFeeBps,
-    makerRebateBps: null,
+    makerRebateBps: 0,
     source: stablepairZeroMaker ? 'coinbase_stablepair_live_product' : 'coinbase_transaction_summary',
     observedAt: stablepairZeroMaker
       ? Math.min(accountFee.observedAt, stablepair!.observedAt)
       : accountFee.observedAt,
   };
+}
+
+function krakenFeeRow(
+  table: Record<string, any>,
+  constraints: SpotProductConstraints,
+): Record<string, unknown> | undefined {
+  const keys = [...new Set([constraints.feeLookupKey, constraints.exchangeSymbol].filter((value): value is string => Boolean(value)))];
+  for (const key of keys) {
+    const row = table[key];
+    if (row && typeof row === 'object') return row as Record<string, unknown>;
+  }
+  return undefined;
 }
 
 async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Promise<Map<string, CexFeeEvidence>> {
@@ -376,7 +388,7 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
 
   for (const { symbol, constraints } of resolved) {
     const lookupKey = constraints.feeLookupKey || constraints.exchangeSymbol;
-    const takerRow = fees[lookupKey] as Record<string, unknown> | undefined;
+    const takerRow = krakenFeeRow(fees, constraints);
     if (!takerRow) {
       missingAuthenticatedRows.push({ symbol, feeLookupKey: lookupKey });
       markFeeUnavailable('kraken', symbol, 'authenticated_trade_volume_fee_row_missing');
@@ -388,14 +400,14 @@ async function fetchKrakenFeeEvidenceBatch(symbolInputs: readonly string[]): Pro
       markFeeUnavailable('kraken', symbol, 'authenticated_trade_volume_fee_rate_missing');
       continue;
     }
-    const makerRow = makerFees[lookupKey] as Record<string, unknown> | undefined;
+    const makerRow = krakenFeeRow(makerFees, constraints);
     const makerPct = finiteNumber(makerRow?.fee);
     const evidence: CexFeeEvidence = {
       venue: 'kraken',
       symbol,
       takerFeeBps: Math.max(0, takerPct * 100),
       makerFeeBps: makerPct !== null && makerPct >= 0 ? makerPct * 100 : null,
-      makerRebateBps: makerPct !== null && makerPct < 0 ? Math.abs(makerPct) * 100 : null,
+      makerRebateBps: makerPct !== null ? (makerPct < 0 ? Math.abs(makerPct) * 100 : 0) : null,
       source: 'kraken_account_trade_volume',
       observedAt,
     };
@@ -438,7 +450,7 @@ function okxEvidence(
     // is a genuine zero fee. Preserve 0 as measured evidence rather than turning
     // it into null/missing information.
     makerFeeBps: rates.maker !== null && rates.maker <= 0 ? Math.max(0, -rates.maker * 10_000) : null,
-    makerRebateBps: rates.maker !== null && rates.maker > 0 ? rates.maker * 10_000 : null,
+    makerRebateBps: rates.maker !== null ? (rates.maker > 0 ? rates.maker * 10_000 : 0) : null,
     source: rates.zeroFeeGroup ? 'okx_live_spot_zero_fee_group' : 'okx_account_trade_fee',
     observedAt,
   };

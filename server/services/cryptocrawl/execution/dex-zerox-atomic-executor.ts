@@ -57,7 +57,8 @@ export interface ZeroXAtomicRoundTripPreparation {
   firstQuote: DexQuoteObservation;
   secondQuote: DexQuoteObservation;
   expiresAt: number;
-  simulated: true;
+  simulated: boolean;
+  simulationAdvisoryError?: string;
   provenance: string[];
 }
 
@@ -435,24 +436,37 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   if (grossBaseUnits.lte(0)) throw new Error('0x firm round-trip gross economics are not positive');
   const profitRecipient = asAddress('operational profit recipient', resolveOperationalProfitRecipient());
   const canonicalMinProfit = BigNumber.from(minimumPositiveProfitBaseUnits().toString());
-  const preliminaryData = encodeReceiverPayload({
+  const finalData = encodeReceiverPayload({
     receiver, loanToken: config.usdc, loanAmount: firm.loanAmount, minProfit: canonicalMinProfit, profitRecipient,
     first: firm.first, second: firm.second, intermediateAmount: firm.intermediateAmount, intermediateToken: config.usdt,
   });
-  await provider.call({ from: connectedWallet.address, to: receiver, data: preliminaryData, value: 0 });
-  const estimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data: preliminaryData, value: 0 });
+
+  let simulated = false;
+  let simulationAdvisoryError: string | undefined;
+  try {
+    await provider.call({ from: connectedWallet.address, to: receiver, data: finalData, value: 0 });
+    simulated = true;
+  } catch (error) {
+    simulationAdvisoryError = error instanceof Error ? error.message : String(error);
+    logger.debug('[DexAtomic] eth_call simulation advisory failed; execution admission remains governed by fresh executable economics and required transaction facts', {
+      component: 'DexZeroXAtomicExecutor',
+      opportunityId: input.opportunityId,
+      chain: input.chain,
+      simulationAdvisoryError,
+      simulationVetoAuthority: false,
+    });
+  }
+
+  // Gas-limit/economic measurement remains required because the transaction
+  // cannot be priced all-in or submitted safely without a current gas bound.
+  // This is execution-parameter evidence, not an independent simulation veto.
+  const estimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data: finalData, value: 0 });
   const gas = await gasOracle.getGasPrice(input.chain);
   const gasUsd = gas.usdCost * Number(estimatedGas.toString()) / DEFAULT_GAS_LIMIT;
   if (!Number.isFinite(gasUsd) || gasUsd < 0) throw new Error('Exact DEX atomic gas cost could not be measured');
   const gasBaseUnits = usdToBaseUnitsCeil(gasUsd, firm.inputTokenDecimals);
   const deterministicNetBaseUnits = grossBaseUnits.sub(flashLoanFeeAmount).sub(gasBaseUnits);
   if (deterministicNetBaseUnits.lte(0)) throw new Error('0x firm atomic round-trip is not positive after measured flash fee and gas');
-
-  const finalData = encodeReceiverPayload({
-    receiver, loanToken: config.usdc, loanAmount: firm.loanAmount, minProfit: canonicalMinProfit, profitRecipient,
-    first: firm.first, second: firm.second, intermediateAmount: firm.intermediateAmount, intermediateToken: config.usdt,
-  });
-  await provider.call({ from: connectedWallet.address, to: receiver, data: finalData, value: 0 });
 
   const grossProfitUsd = baseUnitsToUsd(grossBaseUnits, firm.inputTokenDecimals);
   const flashLoanFeeUsd = baseUnitsToUsd(flashLoanFeeAmount, firm.inputTokenDecimals);
@@ -490,7 +504,8 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
     firstQuote: firm.firstQuote,
     secondQuote: firm.secondQuote,
     expiresAt,
-    simulated: true,
+    simulated,
+    ...(simulationAdvisoryError ? { simulationAdvisoryError } : {}),
     provenance: [
       '0x:v2_allowance_holder_firm_quote',
       `0x:sub_bps_slippage_ppm:${firm.secondQuote.slippagePpmApplied ?? 'provider_default'}`,
@@ -500,14 +515,16 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
       '0x:trade_surplus_pretrade_credit:false_terminal_receipt_only',
       '0x:issues_allowance_spender_or_allowance_target_preserved',
       '0x:allowance_spender_equals_transaction_target_verified',
+      `0x:simulation_incomplete_advisory_only:${firm.firstQuote.simulationIncomplete === true || firm.secondQuote.simulationIncomplete === true}`,
       `token_decimals:input:${firm.inputTokenDecimals}`,
       `token_decimals:intermediate:${firm.intermediateTokenDecimals}`,
       'token_decimals:measured_onchain',
       'receiver:existing_deployment_verified_read_only',
       'receiver:permissions_verified_read_only',
       'balancer_v2:flash_fee_measured_onchain',
-      'receiver:exact_eth_call_simulation',
-      'receiver:exact_gas_estimate',
+      simulated ? 'receiver:eth_call_simulation_advisory_passed' : 'receiver:eth_call_simulation_advisory_unavailable_or_failed',
+      'receiver:eth_call_simulation_veto_authority:false',
+      'receiver:exact_gas_estimate_required_for_all_in_cost_and_tx_limit',
       'profit_admission:single_strictly_positive_authority',
       'gas:system_owned_native_reservation_required_at_execution',
       'discovery_infrastructure_mutation:false',

@@ -10,10 +10,10 @@ import { marketDataProviders, type DexQuoteObservation } from '../intelligence/m
 import { inspectZeroXFeeEconomics } from '../intelligence/zerox-fee-economics.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
 
-function executableDiscoveryChains(): ChainId[] {
+function marketDataDiscoveryChains(): ChainId[] {
   return (Object.keys(SUPPORTED_CHAINS) as ChainId[]).filter(chain => {
     const config = SUPPORTED_CHAINS[chain];
-    return Boolean(config?.usdc && config?.usdt && supportsSponsoredReceiverChain(chain));
+    return Boolean(config?.usdc && config?.usdt);
   });
 }
 
@@ -145,8 +145,9 @@ async function discoverChainCandidates(
   ttlMs: number,
 ): Promise<MeasuredCandidate[]> {
   const config = SUPPORTED_CHAINS[chain];
-  if (!config?.usdc || !config?.usdt || !supportsSponsoredReceiverChain(chain)) return [];
+  if (!config?.usdc || !config?.usdt) return [];
   const observed: MeasuredCandidate[] = [];
+  const receiverExecutionSupported = supportsSponsoredReceiverChain(chain);
 
   let usdcDecimals: number;
   let usdtDecimals: number;
@@ -169,22 +170,18 @@ async function discoverChainCandidates(
     }));
   }
 
-  // Flash-provider fee/liquidity evidence is measured once per chain through the
-  // canonical RPC mesh before route economics are formed. This lets every route
-  // with two live 0x price legs carry numeric all-in observation BPS even when
-  // receiver/execution hydration later proves the route non-executable.
-  const balancerEvidence = await multiProviderRpcManager.execute(
-    chain,
-    'contract_calls',
-    provider => measureBalancerFlashLoanEconomics({ chain, provider, asset: config.usdc }),
-  ).then(result => result.result).catch(() => null);
+  const balancerEvidence = receiverExecutionSupported
+    ? await multiProviderRpcManager.execute(
+        chain,
+        'contract_calls',
+        provider => measureBalancerFlashLoanEconomics({ chain, provider, asset: config.usdc }),
+      ).then(result => result.result).catch(() => null)
+    : null;
   const observedFlashFeeBps = balancerEvidence?.feeBps !== null && balancerEvidence?.feeBps !== undefined && Number.isFinite(balancerEvidence.feeBps)
     ? Number(balancerEvidence.feeBps)
     : null;
 
   const indicative: IndicativeRoundTrip[] = [];
-  // Notionals remain sequential within one chain because each second leg depends
-  // on the first leg's measured output. Chains still run in parallel.
   for (const notionalUsd of notionals) {
     const observedAt = Date.now();
     const opportunityId = `dex-0x-roundtrip:${chain}:USDC-USDT:${notionalUsd}:${observedAt}`;
@@ -238,18 +235,18 @@ async function discoverChainCandidates(
     });
   }
 
-  // Every route that has a complete indicative round-trip is hydrated into the
-  // firm atomic path in the same discovery cycle. There is no budget-based class
-  // of indefinitely half-measured routes. The structural candidate set itself is
-  // bounded to at most ten notionals per chain, while chains execute in parallel.
   const hydrationTargets = new Set(indicative.map(item => item.opportunityId));
 
   for (const item of indicative) {
     let prepared: Awaited<ReturnType<typeof prepareZeroXAtomicRoundTrip>> | null = null;
     let preparationUnavailable = false;
-    try {
-      prepared = await prepareZeroXAtomicRoundTrip({ opportunityId: item.opportunityId, chain, notionalUsd: item.notionalUsd });
-    } catch {
+    if (receiverExecutionSupported) {
+      try {
+        prepared = await prepareZeroXAtomicRoundTrip({ opportunityId: item.opportunityId, chain, notionalUsd: item.notionalUsd });
+      } catch {
+        preparationUnavailable = true;
+      }
+    } else {
       preparationUnavailable = true;
     }
 
@@ -283,10 +280,11 @@ async function discoverChainCandidates(
       ...(!explicitFeeTreatmentComplete ? ['required:complete_0x_explicit_fee_economic_treatment'] : []),
     ] : [
       'required:firm_0x_atomic_quote',
+      ...(!receiverExecutionSupported ? ['required:reviewed_receiver_execution_surface'] : []),
       ...((observedFlashFeeBps === null) ? ['required:measured_balancer_flash_loan_fee'] : []),
       ...((balancerEvidence?.availableLiquidity === null || balancerEvidence?.availableLiquidity === undefined) ? ['required:measured_balancer_flash_loan_liquidity'] : []),
       'required:exact_receiver_gas_cost',
-      'required:receiver_permission_and_simulation_readiness',
+      'required:receiver_permission_readiness',
       ...(preparationUnavailable ? ['required:atomic_execution_preparation_currently_unavailable'] : []),
     ];
     const status = prepared && prepared.deterministicNetProfitUsd > 0 && explicitFeeTreatmentComplete
@@ -308,8 +306,8 @@ async function discoverChainCandidates(
       depth: {
         status: 'measured',
         detail: prepared
-          ? '0x indicative route plus two firm allowance-holder quotes, explicit fee treatment, existing receiver permissions, exact receiver simulation and exact gas estimation'
-          : '0x /price liquidityAvailable round-trip plus current Balancer fee/liquidity evidence measured; firm atomic hydration was attempted in the same cycle',
+          ? '0x indicative route plus two firm allowance-holder quotes, explicit fee treatment, existing receiver permissions, and exact gas estimation'
+          : '0x /price liquidityAvailable round-trip measured independently of receiver execution readiness; firm atomic hydration is attempted whenever the chain has a reviewed receiver surface',
       },
       economics: prepared ? {
         grossProfitUsd: prepared.grossProfitUsd,
@@ -347,10 +345,12 @@ async function discoverChainCandidates(
       quoteAgeMs,
       executableCapability: prepared !== null && explicitFeeTreatmentComplete,
       executionCapabilityReason: prepared && explicitFeeTreatmentComplete
-        ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; 0x explicit fee effects are classified without double subtraction, current flash fee and exact receiver gas are measured, existing permissions are verified, and eth_call simulation succeeds'
+        ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; 0x explicit fee effects are classified without double subtraction, current flash fee and exact receiver gas are measured, and existing permissions are verified'
         : prepared
           ? 'Firm 0x atomic preparation exists, but an explicit 0x fee component lacks a complete same-chain economic treatment and therefore cannot be promoted'
-          : 'Numeric observation BPS is preserved from live 0x route outputs plus measured Balancer fee and current gas evidence; every indicative route also receives same-cycle firm hydration, and only that firm minimum-sufficient proof may execute',
+          : receiverExecutionSupported
+            ? 'Numeric observation BPS is preserved from live 0x route outputs while firm atomic hydration remains temporarily unavailable'
+            : '0x market discovery remains active and visible even though this chain does not yet have a reviewed receiver-backed atomic execution surface',
       missingInformation,
       provenance: [
         '0x:price_only_discovery',
@@ -365,7 +365,7 @@ async function discoverChainCandidates(
         ...(observedFlashFeeBps !== null ? ['balancer_v2:flash_fee_measured_onchain_for_observation_bps'] : ['balancer_v2:flash_fee_unavailable']),
         'dex_observation_bps:indicative_not_execution_authority',
         'gas_oracle:measured_when_available',
-        'receiver_chain_capability:verified',
+        receiverExecutionSupported ? 'receiver_chain_capability:verified' : 'receiver_chain_capability:not_yet_available_discovery_continues',
         'discovery_infrastructure_mutation:false',
         'unknown_flash_fee_is_not_zero',
         'synthetic_evidence:false',
@@ -379,7 +379,7 @@ async function discoverChainCandidates(
 export async function discoverMeasuredDexCandidates(): Promise<MeasuredCandidate[]> {
   const ttlMs = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
   const notionals = boundedPositiveList(process.env.CRYPTOCRAWL_DEX_NOTIONAL_USD);
-  const chains = executableDiscoveryChains();
+  const chains = marketDataDiscoveryChains();
   if (chains.length === 0) return [];
 
   const byChain = await Promise.all(

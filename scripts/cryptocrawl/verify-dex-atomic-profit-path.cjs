@@ -33,15 +33,19 @@ const router = read('server/services/cryptocrawl/execution/unified-execution-rou
 const topologyOptimizer = read('server/services/cryptocrawl/optimization/adaptive-topology-optimizer.ts');
 
 // Read-only discovery may rank a route, but it cannot fabricate executable
-// economics or directly mutate receiver infrastructure.
+// economics or directly mutate receiver infrastructure. Market-data discovery
+// must not be suppressed merely because receiver infrastructure is not ready yet.
 requirePattern(discovery, /purpose:\s*'discovery'/, 'DEX discovery uses read-only 0x price mode');
 requirePattern(discovery, /quoteKind\s*===\s*'price'/, 'indicative evidence is explicitly identified as price-only');
 requirePattern(discovery, /deterministicNetProfitUsd:\s*null/, 'indicative route does not claim deterministic net profit');
-requirePattern(discovery, /prepareZeroXAtomicRoundTrip\s*\(/, 'near-profit discovery delegates firm hydration to read-only preparation');
+requirePattern(discovery, /prepareZeroXAtomicRoundTrip\s*\(/, 'eligible execution evidence delegates to firm atomic preparation');
 requirePattern(discovery, /prepared\s*&&\s*prepared\.deterministicNetProfitUsd\s*>\s*0[\s\S]{0,100}'eligible'/, 'eligible DEX status requires prepared positive deterministic economics');
-requirePattern(discovery, /supportsSponsoredReceiverChain/, 'DEX scans only chains with a reviewed/configured receiver surface');
+requirePattern(discovery, /function\s+marketDataDiscoveryChains\s*\(/, 'DEX market-data discovery has an execution-independent chain selector');
+requirePattern(discovery, /return\s+Boolean\(config\?\.usdc\s*&&\s*config\?\.usdt\)/, 'market-data discovery requires token identities but not receiver readiness');
+requirePattern(discovery, /receiverExecutionSupported\s*=\s*supportsSponsoredReceiverChain\(chain\)/, 'receiver readiness is evaluated after discovery rather than before it');
+requirePattern(discovery, /reviewed_receiver_execution_surface/, 'missing receiver execution surface remains explicit execution evidence');
 requirePattern(discovery, /discovery_infrastructure_mutation:false/, 'DEX provenance explicitly forbids discovery infrastructure mutation');
-requirePattern(discovery, /unknown_flash_fee_is_not_zero/, 'unknown flash fee remains fail closed');
+requirePattern(discovery, /unknown_flash_fee_is_not_zero/, 'unknown flash fee remains fail closed for executable economics');
 
 // Preserve 0x v2 allowance evidence instead of silently treating transaction.to
 // as the only field when issues.allowance.spender is present.
@@ -58,8 +62,8 @@ requirePattern(receiverManager, /async\s+buildMissingExplicitPermissionCalls\s*\
 requirePattern(receiverManager, /requireZeroCapitalInfrastructureDeploymentAllowed[\s\S]{0,900}receiver_deployment/, 'receiver deployment remains governance-gated inside deployment authority');
 
 // Firm preparation binds both 0x legs to an already-existing reviewed receiver,
-// verifies permissions read-only, measures flash fee/gas, simulates the whole call,
-// and requires positive all-in economics. Missing readiness is queued, not mutated.
+// verifies permissions read-only, measures flash fee/gas, and requires positive
+// all-in economics. eth_call is advisory-only and cannot veto an otherwise valid trade.
 requirePattern(executor, /inspectExistingReceiver\s*\(/, 'firm preparation inspects an existing receiver instead of deploying');
 requirePattern(executor, /buildMissingExplicitPermissionCalls\s*\(/, 'firm preparation verifies receiver permissions read-only');
 requirePattern(executor, /rememberInfrastructureNeed\s*\(input\)/, 'missing DEX infrastructure is queued for canonical reconciliation');
@@ -67,8 +71,10 @@ requirePattern(executor, /reconcilePendingZeroXAtomicInfrastructure\s*\(/, 'boun
 requirePattern(executor, /tradeSubmitted:\s*false/, 'infrastructure reconciliation does not submit a trade');
 requirePattern(executor, /allowance spender differs from transaction target/, 'unexpected AllowanceHolder spender/target split fails closed');
 requirePattern(executor, /getFlashLoanFeePercentage/, 'Balancer flash-loan fee is measured on-chain');
-requirePattern(executor, /provider\.estimateGas\(/, 'full receiver gas is estimated');
-requirePattern(executor, /provider\.call\(/, 'full receiver transaction is simulated before submission');
+requirePattern(executor, /provider\.estimateGas\(/, 'current receiver gas bound is measured for all-in economics and transaction submission');
+requirePattern(executor, /try\s*\{[\s\S]{0,160}provider\.call\(/, 'eth_call remains available as advisory validation telemetry');
+requirePattern(executor, /simulationVetoAuthority:\s*false/, 'eth_call simulation explicitly has no veto authority');
+requirePattern(executor, /receiver:eth_call_simulation_veto_authority:false/, 'simulation advisory status is preserved in provenance');
 requirePattern(executor, /deterministicNetBaseUnits\.lte\(0\)/, 'non-positive all-in atomic economics are rejected');
 requirePattern(executor, /expiresAt\s*<=\s*Date\.now\(\)/, 'stale prepared quotes are rejected');
 requirePattern(executor, /FlashLoanExecuted/, 'terminal realized profit is sourced from the receiver event');
@@ -104,4 +110,4 @@ requirePattern(topologyOptimizer, /candidate\.status\s*===\s*'eligible'/, 'cold-
 requirePattern(topologyOptimizer, /return\s+clamp\(1\s*\+\s*Math\.tanh\(normalized\)\s*\*\s*0\.35,\s*0\.80,\s*1\.35\)/, 'live topology attention is tightly bounded');
 requirePattern(topologyOptimizer, /Terminal settlement is the primary authority/, 'terminal settlement remains primary topology-learning authority');
 
-console.log('[dex-atomic] read-only discovery, v2 allowance evidence, scheduler-owned readiness reconciliation, exact atomic economics, advisory evidence reacquisition, terminal failure learning, and single scheduling authority invariants passed');
+console.log('[dex-atomic] 0x discovery decoupling, v2 allowance evidence, advisory simulation, exact all-in economics, scheduler-owned readiness reconciliation, terminal failure learning, and single scheduling authority invariants passed');

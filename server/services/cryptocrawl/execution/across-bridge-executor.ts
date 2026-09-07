@@ -63,6 +63,16 @@ function sameRouteIdentity(left: AcrossBridgeQuote, right: AcrossBridgeQuote): b
     && right.destinationChain === left.destinationChain;
 }
 
+function observeAcrossSimulation(label: string, quote: Pick<AcrossBridgeQuote, 'simulationSuccess'>): void {
+  if (quote.simulationSuccess === true) return;
+  logger.debug('[AcrossBridgeExecution] Across simulation advisory unavailable or negative; hard route facts remain authoritative', {
+    component: 'AcrossBridgeExecutor',
+    stage: label,
+    simulationSuccess: quote.simulationSuccess,
+    simulationVetoAuthority: false,
+  });
+}
+
 async function liveApprovalGasUsd(quote: AcrossBridgeQuote, approvalWei: ethers.BigNumber): Promise<number | null> {
   if (approvalWei.isZero()) return 0;
   const symbol = SUPPORTED_CHAINS[quote.originChain].currency;
@@ -93,9 +103,9 @@ async function postApprovalEconomicsPositive(quote: AcrossBridgeQuote, actualApp
 }
 
 /**
- * Reacquire the exact execution payload from Across. The request is intentionally
- * uncached. Its guaranteed minimum may improve but cannot worsen relative to the
- * quote supplied to this function, and provider simulation must still succeed.
+ * Reacquire the exact execution payload from Across without a cache. Expiry,
+ * route identity, calldata and the guaranteed minimum remain hard requirements.
+ * Across simulationSuccess is retained as advisory provider telemetry only.
  */
 async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approvals: TxPayload[]; swap: TxPayload } | null> {
   const apiKey = process.env.ACROSS_API_KEY?.trim();
@@ -121,7 +131,14 @@ async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approv
     try { payload = text ? JSON.parse(text) : null; } catch { return null; }
     if (!response.ok || !payload) return null;
     const expiry = Number(payload.quoteExpiryTimestamp) * 1000;
-    if (!Number.isFinite(expiry) || expiry <= Date.now() || payload?.swapTx?.simulationSuccess !== true) return null;
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) return null;
+    if (payload?.swapTx?.simulationSuccess !== true) {
+      logger.debug('[AcrossBridgeExecution] Fresh Across payload simulation is advisory only', {
+        component: 'AcrossBridgeExecutor',
+        simulationSuccess: payload?.swapTx?.simulationSuccess,
+        simulationVetoAuthority: false,
+      });
+    }
     const swap = parseTx(payload.swapTx);
     if (!swap) return null;
     const rawApprovals = Array.isArray(payload.approvalTxns) ? payload.approvalTxns : [];
@@ -143,8 +160,9 @@ export async function executeAcrossBridgeQuote(
   if (quote.provider !== 'across' || quote.originChain === quote.destinationChain) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_ROUTE' };
   }
-  if (quote.expiresAt <= Date.now() || quote.simulationSuccess !== true || quote.swapTransactionPresent !== true || !quote.minOutputAmount) {
-    return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_STALE_UNSIMULATED_OR_UNBOUNDED' };
+  observeAcrossSimulation('input_quote', quote);
+  if (quote.expiresAt <= Date.now() || quote.swapTransactionPresent !== true || !quote.minOutputAmount) {
+    return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_STALE_OR_UNBOUNDED' };
   }
   if (quote.approvalGasUsd === null || !Number.isFinite(quote.approvalGasUsd) || quote.approvalGasUsd < 0) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_APPROVAL_GAS_EVIDENCE' };
@@ -161,9 +179,10 @@ export async function executeAcrossBridgeQuote(
     outputSymbol: quote.outputSymbol,
     amountHuman,
   }).catch(() => null);
-  if (!refreshedQuote || refreshedQuote.expiresAt <= Date.now() || refreshedQuote.simulationSuccess !== true || !refreshedQuote.minOutputAmount) {
+  if (!refreshedQuote || refreshedQuote.expiresAt <= Date.now() || !refreshedQuote.minOutputAmount) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_REFRESHED_QUOTE' };
   }
+  observeAcrossSimulation('refreshed_quote', refreshedQuote);
   if (!sameRouteIdentity(quote, refreshedQuote)) {
     return { success: false, status: 'rejected', settlementConfirmed: false, error: 'REJECT_ACROSS_REFRESHED_ROUTE_IDENTITY_DRIFT' };
   }
@@ -232,6 +251,7 @@ export async function executeAcrossBridgeQuote(
     if (!postApprovalQuote || !postApprovalQuote.minOutputAmount || !sameRouteIdentity(quote, postApprovalQuote)) {
       return { success: false, status: 'failed', settlementConfirmed: true, ...prebroadcastCost(true), error: 'ACROSS_POST_APPROVAL_QUOTE_UNAVAILABLE' };
     }
+    observeAcrossSimulation('post_approval_quote', postApprovalQuote);
     if (BigInt(postApprovalQuote.minOutputAmount) < BigInt(quote.minOutputAmount)) {
       return { success: false, status: 'failed', settlementConfirmed: true, ...prebroadcastCost(true), error: 'ACROSS_POST_APPROVAL_MINIMUM_OUTPUT_WORSENED' };
     }
@@ -340,7 +360,7 @@ export async function executeAcrossBridgeQuote(
         component: 'AcrossBridgeExecutor', depositTxnRef, inputSymbol: quote.inputSymbol, outputSymbol: quote.outputSymbol,
         providerStatus: last.providerStatus, financiallyTerminal: last.financiallyTerminal,
         destinationReceiptVerified: last.destinationReceiptVerified, refundReceiptVerified: last.refundReceiptVerified,
-        originNativeFeeWei: nativeFeeWei.toString(),
+        originNativeFeeWei: nativeFeeWei.toString(), simulationVetoAuthority: false,
       });
       return {
         success: confirmed,

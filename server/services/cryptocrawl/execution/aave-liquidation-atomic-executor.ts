@@ -67,7 +67,8 @@ export interface AaveLiquidationPreparation {
   payload: { to: string; data: string; value: string; gasLimit: number };
   unwindQuote: DexQuoteObservation;
   expiresAt: number;
-  simulated: true;
+  simulated: boolean;
+  simulationAdvisoryErrors?: string[];
   provenance: string[];
 }
 
@@ -100,6 +101,7 @@ export interface AaveLiquidationInfrastructureResult {
 }
 
 type ReservePosition = {
+  reserveId: number | null;
   asset: string;
   symbol: string;
   decimals: number;
@@ -110,6 +112,8 @@ type ReservePosition = {
   liquidationProtocolFeeBps: number;
   usageAsCollateralEnabled: boolean;
   isActive: boolean;
+  isPaused: boolean;
+  liquidationGracePeriodUntil: number;
 };
 
 type PairEconomics = {
@@ -118,9 +122,17 @@ type PairEconomics = {
   debtToCover: BigNumber;
   collateralReceived: BigNumber;
   collateralSellAmount: BigNumber;
+  liquidationProtocolFeeAmount: BigNumber;
   debtNotionalUsd: number;
   liquidationBonusUsd: number;
   fairSellValueUsd: number;
+};
+
+type ExactLiquidationAmounts = {
+  debtAmount: BigNumber;
+  collateralToLiquidator: BigNumber;
+  protocolFee: BigNumber;
+  grossCollateralConsumed: BigNumber;
 };
 
 type PendingInfrastructureNeed = {
@@ -134,8 +146,13 @@ type PendingInfrastructureNeed = {
 const POOL_ABI = [
   'function ADDRESSES_PROVIDER() view returns (address)',
   'function getReservesList() view returns (address[])',
-  'function getUserConfiguration(address user) view returns (uint256 data)',
+  'function getReservesCount() view returns (uint256)',
+  'function getReserveAddressById(uint16 id) view returns (address)',
   'function getUserAccountData(address user) view returns (uint256 totalCollateralBase,uint256 totalDebtBase,uint256 availableBorrowsBase,uint256 currentLiquidationThreshold,uint256 ltv,uint256 healthFactor)',
+  'function getUserEMode(address user) view returns (uint256)',
+  'function getEModeCategoryCollateralConfig(uint8 id) view returns (uint16 ltv,uint16 liquidationThreshold,uint16 liquidationBonus)',
+  'function getEModeCategoryCollateralBitmap(uint8 id) view returns (uint128)',
+  'function getLiquidationGracePeriod(address asset) view returns (uint40)',
   'function liquidationCall(address collateralAsset,address debtAsset,address user,uint256 debtToCover,bool receiveAToken)',
 ];
 const ADDRESSES_PROVIDER_ABI = [
@@ -146,6 +163,7 @@ const DATA_PROVIDER_ABI = [
   'function getUserReserveData(address asset,address user) view returns (uint256 currentATokenBalance,uint256 currentStableDebt,uint256 currentVariableDebt,uint256 principalStableDebt,uint256 scaledVariableDebt,uint256 stableBorrowRate,uint256 liquidityRate,uint40 stableRateLastUpdated,bool usageAsCollateralEnabled)',
   'function getReserveConfigurationData(address asset) view returns (uint256 decimals,uint256 ltv,uint256 liquidationThreshold,uint256 liquidationBonus,uint256 reserveFactor,bool usageAsCollateralEnabled,bool borrowingEnabled,bool stableBorrowRateEnabled,bool isActive,bool isFrozen)',
   'function getLiquidationProtocolFee(address asset) view returns (uint256)',
+  'function getPaused(address asset) view returns (bool isPaused)',
 ];
 const ORACLE_ABI = [
   'function getAssetPrice(address asset) view returns (uint256)',
@@ -170,7 +188,13 @@ const NATIVE_SYMBOLS: Record<ExecutableAaveLiquidationChain, string> = {
   polygon: 'POL',
 };
 const PERCENTAGE_FACTOR = BigNumber.from(10_000);
+const HALF_PERCENTAGE_FACTOR = BigNumber.from(5_000);
 const CLOSE_FACTOR_HF_THRESHOLD = BigNumber.from('950000000000000000');
+const HEALTH_FACTOR_LIQUIDATION_THRESHOLD = BigNumber.from('1000000000000000000');
+const DEFAULT_LIQUIDATION_CLOSE_FACTOR_BPS = 5_000;
+const AAVE_USD_BASE_UNIT = BigNumber.from(100_000_000);
+const MIN_BASE_MAX_CLOSE_FACTOR_THRESHOLD = BigNumber.from('200000000000');
+const MIN_LEFTOVER_BASE = BigNumber.from('100000000000');
 const preparedPlans = new Map<string, AaveLiquidationPreparation>();
 const requestInputs = new Map<string, AaveLiquidationRequest>();
 const pendingInfrastructure = new Map<string, PendingInfrastructureNeed>();
@@ -210,6 +234,12 @@ function percentMulFloor(value: BigNumber, bps: number): BigNumber {
   return value.mul(boundedInt(bps, 0, 0, 100_000)).div(PERCENTAGE_FACTOR);
 }
 
+function percentMulHalfUp(value: BigNumber, bps: number): BigNumber {
+  const normalized = boundedInt(bps, 0, 0, 100_000);
+  if (value.isZero() || normalized === 0) return BigNumber.from(0);
+  return value.mul(normalized).add(HALF_PERCENTAGE_FACTOR).div(PERCENTAGE_FACTOR);
+}
+
 function percentMulCeil(value: BigNumber, bps: number): BigNumber {
   return ceilDiv(value.mul(boundedInt(bps, 0, 0, 100_000)), PERCENTAGE_FACTOR);
 }
@@ -217,6 +247,15 @@ function percentMulCeil(value: BigNumber, bps: number): BigNumber {
 function percentDivFloor(value: BigNumber, bps: number): BigNumber {
   const normalized = boundedInt(bps, 0, 1, 100_000);
   return value.mul(PERCENTAGE_FACTOR).div(normalized);
+}
+
+function percentDivCeil(value: BigNumber, bps: number): BigNumber {
+  const normalized = boundedInt(bps, 0, 1, 100_000);
+  return ceilDiv(value.mul(PERCENTAGE_FACTOR), BigNumber.from(normalized));
+}
+
+function mulDivCeil(left: BigNumber, right: BigNumber, denominator: BigNumber): BigNumber {
+  return ceilDiv(left.mul(right), denominator);
 }
 
 function baseUnitsToUsd(amount: BigNumber, decimals: number, price: BigNumber, oracleUnit: BigNumber): number {
@@ -313,22 +352,60 @@ function encodeReceiverPayload(input: {
   ]);
 }
 
+async function resolveReserveIds(
+  pool: Contract,
+  reserveAddresses: readonly string[],
+  blockTag: number,
+): Promise<Map<string, number>> {
+  const byAddress = new Map<string, number>();
+  try {
+    const countRaw = await pool.getReservesCount({ blockTag });
+    const count = Number(BigNumber.from(countRaw).toString());
+    if (!Number.isInteger(count) || count < 0 || count > 256) throw new Error(`invalid reserve count ${count}`);
+    const rows = await Promise.all(Array.from({ length: count }, (_, id) =>
+      pool.getReserveAddressById(id, { blockTag }).then((asset: string) => ({ id, asset })).catch(() => null),
+    ));
+    for (const row of rows) {
+      if (!row || !ethers.utils.isAddress(row.asset) || sameAddress(row.asset, ethers.constants.AddressZero)) continue;
+      byAddress.set(row.asset.toLowerCase(), row.id);
+    }
+  } catch (error) {
+    logger.debug('[LiquidationExecution] Exact Aave reserve-id map unavailable', {
+      component: 'AaveLiquidationAtomicExecutor',
+      blockTag,
+      error: error instanceof Error ? error.message : String(error),
+      listOrderSubstitutionAllowed: false,
+    });
+  }
+  for (const asset of reserveAddresses) {
+    if (!byAddress.has(asset.toLowerCase())) continue;
+  }
+  return byAddress;
+}
+
 async function inspectReserve(input: {
   asset: string;
+  reserveId: number | null;
   borrower: string;
+  pool: Contract;
   dataProvider: Contract;
   oracle: Contract;
-  borrowing: boolean;
-  collateral: boolean;
+  blockTag: number;
+  eModeCategory: number;
+  eModeCollateralBitmap: BigNumber | null;
+  eModeLiquidationBonusBps: number | null;
 }): Promise<ReservePosition | null> {
-  const [userRaw, configRaw, priceRaw, symbolRaw] = await Promise.all([
-    input.dataProvider.getUserReserveData(input.asset, input.borrower),
-    input.dataProvider.getReserveConfigurationData(input.asset),
-    input.oracle.getAssetPrice(input.asset),
-    new Contract(input.asset, ERC20_ABI, input.dataProvider.provider).symbol().catch(() => input.asset.slice(0, 10)),
+  const calls = { blockTag: input.blockTag };
+  const [userRaw, configRaw, priceRaw, symbolRaw, pausedRaw, graceRaw] = await Promise.all([
+    input.dataProvider.getUserReserveData(input.asset, input.borrower, calls),
+    input.dataProvider.getReserveConfigurationData(input.asset, calls),
+    input.oracle.getAssetPrice(input.asset, calls),
+    new Contract(input.asset, ERC20_ABI, input.dataProvider.provider).symbol(calls).catch(() => input.asset.slice(0, 10)),
+    input.dataProvider.getPaused(input.asset, calls),
+    input.pool.getLiquidationGracePeriod(input.asset, calls).catch(() => BigNumber.from(0)),
   ]);
   const decimals = Number(configRaw.decimals ?? configRaw[0]);
-  const liquidationBonusBps = Number(configRaw.liquidationBonus ?? configRaw[3]);
+  const reserveLiquidationBonusBps = Number(configRaw.liquidationBonus ?? configRaw[3]);
   const isActive = Boolean(configRaw.isActive ?? configRaw[8]);
   const currentATokenBalance = BigNumber.from(userRaw.currentATokenBalance ?? userRaw[0] ?? 0);
   const stableDebt = BigNumber.from(userRaw.currentStableDebt ?? userRaw[1] ?? 0);
@@ -336,17 +413,33 @@ async function inspectReserve(input: {
   const currentDebt = stableDebt.add(variableDebt);
   const usageAsCollateralEnabled = Boolean(userRaw.usageAsCollateralEnabled ?? userRaw[8]);
   const price = BigNumber.from(priceRaw);
-  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36 || !isActive || price.lte(0)) return null;
-  if (input.borrowing && currentDebt.lte(0)) return null;
-  if (input.collateral && (!usageAsCollateralEnabled || currentATokenBalance.lte(0))) return null;
+  const isPaused = Boolean(pausedRaw?.isPaused ?? pausedRaw?.[0] ?? pausedRaw);
+  const liquidationGracePeriodUntil = Number(BigNumber.from(graceRaw || 0).toString());
+
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36 || price.lte(0)) return null;
+  if (currentDebt.lte(0) && (!usageAsCollateralEnabled || currentATokenBalance.lte(0))) return null;
+  if (!Number.isSafeInteger(liquidationGracePeriodUntil) || liquidationGracePeriodUntil < 0) return null;
+
   let liquidationProtocolFeeBps = 0;
-  if (input.collateral) {
-    const raw = await input.dataProvider.getLiquidationProtocolFee(input.asset);
+  if (usageAsCollateralEnabled && currentATokenBalance.gt(0)) {
+    const raw = await input.dataProvider.getLiquidationProtocolFee(input.asset, calls);
     liquidationProtocolFeeBps = Number(raw.toString());
     if (!Number.isFinite(liquidationProtocolFeeBps) || liquidationProtocolFeeBps < 0 || liquidationProtocolFeeBps > 10_000) return null;
   }
+
+  let liquidationBonusBps = reserveLiquidationBonusBps;
+  if (input.eModeCategory !== 0 && usageAsCollateralEnabled && currentATokenBalance.gt(0)) {
+    if (input.reserveId === null || input.reserveId < 0 || input.reserveId >= 128 || !input.eModeCollateralBitmap || input.eModeLiquidationBonusBps === null) {
+      throw new Error(`Aave eMode collateral reserve ${input.asset} lacks exact reserve-id/category authority`);
+    }
+    if (!input.eModeCollateralBitmap.shr(input.reserveId).and(1).isZero()) {
+      liquidationBonusBps = input.eModeLiquidationBonusBps;
+    }
+  }
+
   if (!Number.isFinite(liquidationBonusBps) || liquidationBonusBps < 10_000 || liquidationBonusBps > 20_000) return null;
   return {
+    reserveId: input.reserveId,
     asset: asAddress('Aave reserve asset', input.asset),
     symbol: safeSymbol(symbolRaw, input.asset),
     decimals,
@@ -357,67 +450,164 @@ async function inspectReserve(input: {
     liquidationProtocolFeeBps,
     usageAsCollateralEnabled,
     isActive,
+    isPaused,
+    liquidationGracePeriodUntil,
   };
+}
+
+function calculateAaveLiquidationAmounts(
+  debt: ReservePosition,
+  collateral: ReservePosition,
+  requestedDebt: BigNumber,
+): ExactLiquidationAmounts | null {
+  if (requestedDebt.lte(0)) return null;
+  const collateralUnit = BigNumber.from(10).pow(collateral.decimals);
+  const debtUnit = BigNumber.from(10).pow(debt.decimals);
+  const baseCollateral = debt.price
+    .mul(requestedDebt)
+    .mul(collateralUnit)
+    .div(collateral.price.mul(debtUnit));
+  const maxCollateral = percentMulFloor(baseCollateral, collateral.liquidationBonusBps);
+  let grossCollateralConsumed: BigNumber;
+  let debtAmount: BigNumber;
+
+  if (maxCollateral.gt(collateral.currentATokenBalance)) {
+    grossCollateralConsumed = collateral.currentATokenBalance;
+    const debtValueInTokenRatio = collateral.price
+      .mul(grossCollateralConsumed)
+      .mul(debtUnit)
+      .div(debt.price.mul(collateralUnit));
+    debtAmount = percentDivCeil(debtValueInTokenRatio, collateral.liquidationBonusBps);
+  } else {
+    grossCollateralConsumed = maxCollateral;
+    debtAmount = requestedDebt;
+  }
+  if (debtAmount.lte(0) || grossCollateralConsumed.lte(0)) return null;
+
+  let protocolFee = BigNumber.from(0);
+  let collateralToLiquidator = grossCollateralConsumed;
+  if (collateral.liquidationProtocolFeeBps > 0) {
+    const noBonusCollateral = percentDivFloor(grossCollateralConsumed, collateral.liquidationBonusBps);
+    const bonusCollateral = grossCollateralConsumed.gt(noBonusCollateral)
+      ? grossCollateralConsumed.sub(noBonusCollateral)
+      : BigNumber.from(0);
+    protocolFee = percentMulCeil(bonusCollateral, collateral.liquidationProtocolFeeBps);
+    if (protocolFee.gte(grossCollateralConsumed)) return null;
+    collateralToLiquidator = grossCollateralConsumed.sub(protocolFee);
+  }
+  if (collateralToLiquidator.lte(0)) return null;
+  return { debtAmount, collateralToLiquidator, protocolFee, grossCollateralConsumed };
+}
+
+function liquidationLeavesValidDust(
+  debt: ReservePosition,
+  collateral: ReservePosition,
+  amounts: ExactLiquidationAmounts,
+): boolean {
+  if (amounts.debtAmount.gte(debt.currentDebt)) return true;
+  if (amounts.grossCollateralConsumed.gte(collateral.currentATokenBalance)) return true;
+  const debtUnit = BigNumber.from(10).pow(debt.decimals);
+  const collateralUnit = BigNumber.from(10).pow(collateral.decimals);
+  const leftoverDebtBase = mulDivCeil(debt.currentDebt.sub(amounts.debtAmount), debt.price, debtUnit);
+  const leftoverCollateralBase = collateral.currentATokenBalance
+    .sub(amounts.grossCollateralConsumed)
+    .mul(collateral.price)
+    .div(collateralUnit);
+  return leftoverDebtBase.gte(MIN_LEFTOVER_BASE) && leftoverCollateralBase.gte(MIN_LEFTOVER_BASE);
+}
+
+function maximumProtocolValidLiquidation(input: {
+  debt: ReservePosition;
+  collateral: ReservePosition;
+  healthFactor: BigNumber;
+  totalDebtBase: BigNumber;
+}): ExactLiquidationAmounts | null {
+  const debtUnit = BigNumber.from(10).pow(input.debt.decimals);
+  const collateralUnit = BigNumber.from(10).pow(input.collateral.decimals);
+  const reserveDebtBase = mulDivCeil(input.debt.currentDebt, input.debt.price, debtUnit);
+  const reserveCollateralBase = input.collateral.currentATokenBalance
+    .mul(input.collateral.price)
+    .div(collateralUnit);
+
+  let maxLiquidatableDebt = input.debt.currentDebt;
+  if (
+    reserveCollateralBase.gte(MIN_BASE_MAX_CLOSE_FACTOR_THRESHOLD) &&
+    reserveDebtBase.gte(MIN_BASE_MAX_CLOSE_FACTOR_THRESHOLD) &&
+    input.healthFactor.gt(CLOSE_FACTOR_HF_THRESHOLD)
+  ) {
+    const totalDefaultLiquidatableDebtBase = percentMulHalfUp(input.totalDebtBase, DEFAULT_LIQUIDATION_CLOSE_FACTOR_BPS);
+    if (reserveDebtBase.gt(totalDefaultLiquidatableDebtBase)) {
+      maxLiquidatableDebt = totalDefaultLiquidatableDebtBase.mul(debtUnit).div(input.debt.price);
+    }
+  }
+  if (maxLiquidatableDebt.lte(0)) return null;
+
+  const normalize = (requested: BigNumber): ExactLiquidationAmounts | null => {
+    let amounts = calculateAaveLiquidationAmounts(input.debt, input.collateral, requested);
+    if (!amounts) return null;
+    // When collateral is the binding constraint Aave returns debtAmountNeeded,
+    // which can be below the requested close-factor cap. Re-evaluate at that exact
+    // debt amount so the flash principal and Aave repayment are identical.
+    for (let index = 0; index < 3 && amounts.debtAmount.lt(requested); index++) {
+      requested = amounts.debtAmount;
+      const recalculated = calculateAaveLiquidationAmounts(input.debt, input.collateral, requested);
+      if (!recalculated) return null;
+      amounts = recalculated;
+    }
+    return amounts;
+  };
+
+  const maximum = normalize(maxLiquidatableDebt);
+  if (maximum && liquidationLeavesValidDust(input.debt, input.collateral, maximum)) return maximum;
+
+  // If the protocol maximum would create forbidden residual dust, find the
+  // greatest smaller amount that leaves both reserve debt and collateral at or
+  // above Aave's MIN_LEFTOVER_BASE. No arbitrary percentage haircut is applied.
+  let low = BigNumber.from(0);
+  let high = maxLiquidatableDebt;
+  while (low.lt(high)) {
+    const midpoint = low.add(high).add(1).div(2);
+    const amounts = normalize(midpoint);
+    if (amounts && liquidationLeavesValidDust(input.debt, input.collateral, amounts)) low = midpoint;
+    else high = midpoint.sub(1);
+  }
+  if (low.lte(0)) return null;
+  const result = normalize(low);
+  return result && liquidationLeavesValidDust(input.debt, input.collateral, result) ? result : null;
 }
 
 function pairEconomics(input: {
   debt: ReservePosition;
   collateral: ReservePosition;
   healthFactor: BigNumber;
+  totalDebtBase: BigNumber;
   oracleUnit: BigNumber;
+  blockTimestamp: number;
 }): PairEconomics | null {
   if (sameAddress(input.debt.asset, input.collateral.asset)) return null;
   if (input.debt.currentDebt.lte(0) || input.collateral.currentATokenBalance.lte(0)) return null;
+  if (!input.debt.isActive || !input.collateral.isActive || input.debt.isPaused || input.collateral.isPaused) return null;
+  if (!input.collateral.usageAsCollateralEnabled) return null;
+  if (input.debt.liquidationGracePeriodUntil >= input.blockTimestamp || input.collateral.liquidationGracePeriodUntil >= input.blockTimestamp) return null;
 
-  // Current Aave V3 liquidation logic permits 50% by default above HF 0.95 and
-  // may permit 100% below it (and for certain small/dust positions). We stay
-  // deliberately inside those maxima: 49% / 99%, then apply another 0.5% sizing
-  // haircut so execution never depends on exact close-factor or dust boundaries.
-  const closeFactorBps = input.healthFactor.gt(CLOSE_FACTOR_HF_THRESHOLD) ? 4_900 : 9_900;
-  const debtCloseCap = percentMulFloor(input.debt.currentDebt, closeFactorBps);
-  if (debtCloseCap.lte(0)) return null;
+  const amounts = maximumProtocolValidLiquidation({
+    debt: input.debt,
+    collateral: input.collateral,
+    healthFactor: input.healthFactor,
+    totalDebtBase: input.totalDebtBase,
+  });
+  if (!amounts || amounts.debtAmount.lte(0) || amounts.collateralToLiquidator.lte(0)) return null;
 
-  const collateralUnit = BigNumber.from(10).pow(input.collateral.decimals);
-  const debtUnit = BigNumber.from(10).pow(input.debt.decimals);
-  const collateralDebtCapacityNumerator = input.collateral.price
-    .mul(input.collateral.currentATokenBalance)
-    .mul(debtUnit)
-    .mul(PERCENTAGE_FACTOR);
-  const collateralDebtCapacityDenominator = input.debt.price
-    .mul(collateralUnit)
-    .mul(input.collateral.liquidationBonusBps);
-  if (collateralDebtCapacityDenominator.lte(0)) return null;
-  const collateralDebtCap = collateralDebtCapacityNumerator.div(collateralDebtCapacityDenominator);
-  let debtToCover = minBigNumber(debtCloseCap, collateralDebtCap);
-  debtToCover = percentMulFloor(debtToCover, 9_950);
-  if (debtToCover.lte(0)) return null;
-
-  const baseCollateral = input.debt.price
-    .mul(debtToCover)
-    .mul(collateralUnit)
-    .div(input.collateral.price.mul(debtUnit));
-  let collateralReceived = percentMulFloor(baseCollateral, input.collateral.liquidationBonusBps);
-  collateralReceived = minBigNumber(collateralReceived, input.collateral.currentATokenBalance);
-  if (collateralReceived.lte(1)) return null;
-
-  if (input.collateral.liquidationProtocolFeeBps > 0) {
-    const noBonusCollateral = percentDivFloor(collateralReceived, input.collateral.liquidationBonusBps);
-    const bonusCollateral = collateralReceived.gt(noBonusCollateral)
-      ? collateralReceived.sub(noBonusCollateral)
-      : BigNumber.from(0);
-    const protocolFee = percentMulCeil(bonusCollateral, input.collateral.liquidationProtocolFeeBps);
-    if (protocolFee.gte(collateralReceived)) return null;
-    collateralReceived = collateralReceived.sub(protocolFee);
-  }
-
-  const sellBps = boundedInt(process.env.CRYPTOCRAWL_LIQUIDATION_COLLATERAL_SELL_BPS, 9_990, 9_500, 9_999);
-  const collateralSellAmount = percentMulFloor(collateralReceived, sellBps);
-  if (collateralSellAmount.lte(0)) return null;
-
+  const debtToCover = amounts.debtAmount;
+  const collateralReceived = amounts.collateralToLiquidator;
+  // The full protocol-computed amount received by the liquidator is unwound. The
+  // former 10 BPS collateral haircut was not a protocol requirement and silently
+  // discarded measurable profit.
+  const collateralSellAmount = collateralReceived;
   const debtNotionalUsd = baseUnitsToUsd(debtToCover, input.debt.decimals, input.debt.price, input.oracleUnit);
   const receivedValueUsd = baseUnitsToUsd(collateralReceived, input.collateral.decimals, input.collateral.price, input.oracleUnit);
-  const fairSellValueUsd = baseUnitsToUsd(collateralSellAmount, input.collateral.decimals, input.collateral.price, input.oracleUnit);
-  const liquidationBonusUsd = Math.max(0, receivedValueUsd - debtNotionalUsd);
+  const fairSellValueUsd = receivedValueUsd;
+  const liquidationBonusUsd = receivedValueUsd - debtNotionalUsd;
   if (!(debtNotionalUsd > 0) || !(liquidationBonusUsd > 0)) return null;
   return {
     debt: input.debt,
@@ -425,6 +615,7 @@ function pairEconomics(input: {
     debtToCover,
     collateralReceived,
     collateralSellAmount,
+    liquidationProtocolFeeAmount: amounts.protocolFee,
     debtNotionalUsd,
     liquidationBonusUsd,
     fairSellValueUsd,
@@ -442,61 +633,106 @@ async function marketAuthorities(input: {
   oracle: Contract;
   oracleUnit: BigNumber;
   healthFactor: BigNumber;
+  totalDebtBase: BigNumber;
+  blockTag: number;
+  blockTimestamp: number;
+  userEModeCategory: number;
   reserves: ReservePosition[];
 }> {
   const poolAddress = resolveAaveV3Pool(input.chain as SupportedExecutionChain);
   if (!poolAddress) throw new Error(`Aave V3 pool is not configured for ${input.chain}`);
   const pool = new Contract(poolAddress, POOL_ABI, input.provider);
-  const [addressesProviderRaw, reservesRaw, userConfigurationRaw, accountRaw] = await Promise.all([
-    pool.ADDRESSES_PROVIDER(),
-    pool.getReservesList(),
-    pool.getUserConfiguration(input.borrower),
-    pool.getUserAccountData(input.borrower),
+  const blockTag = await input.provider.getBlockNumber();
+  const block = await input.provider.getBlock(blockTag);
+  if (!block || !Number.isFinite(block.timestamp)) throw new Error('Aave liquidation snapshot block timestamp is unavailable');
+  const calls = { blockTag };
+
+  const [addressesProviderRaw, reservesRaw, accountRaw, userEModeRaw] = await Promise.all([
+    pool.ADDRESSES_PROVIDER(calls),
+    pool.getReservesList(calls),
+    pool.getUserAccountData(input.borrower, calls),
+    pool.getUserEMode(input.borrower, calls),
   ]);
   const addressesProvider = new Contract(asAddress('Aave addresses provider', addressesProviderRaw), ADDRESSES_PROVIDER_ABI, input.provider);
   const [dataProviderAddressRaw, oracleAddressRaw] = await Promise.all([
-    addressesProvider.getPoolDataProvider(),
-    addressesProvider.getPriceOracle(),
+    addressesProvider.getPoolDataProvider(calls),
+    addressesProvider.getPriceOracle(calls),
   ]);
   const dataProvider = new Contract(asAddress('Aave pool data provider', dataProviderAddressRaw), DATA_PROVIDER_ABI, input.provider);
   const oracle = new Contract(asAddress('Aave price oracle', oracleAddressRaw), ORACLE_ABI, input.provider);
   const [baseCurrencyRaw, oracleUnitRaw] = await Promise.all([
-    oracle.BASE_CURRENCY(),
-    oracle.BASE_CURRENCY_UNIT(),
+    oracle.BASE_CURRENCY(calls),
+    oracle.BASE_CURRENCY_UNIT(calls),
   ]);
   if (!sameAddress(String(baseCurrencyRaw), ethers.constants.AddressZero)) {
-    throw new Error('Aave liquidation USD economics require a USD-base oracle; non-USD base currency fails closed');
+    throw new Error('Aave liquidation exact threshold economics require a USD-base oracle; non-USD base currency fails closed');
   }
   const oracleUnit = BigNumber.from(oracleUnitRaw);
-  if (oracleUnit.lte(0)) throw new Error('Aave oracle base currency unit is invalid');
-  const healthFactor = BigNumber.from(accountRaw.healthFactor ?? accountRaw[5] ?? 0);
-  if (healthFactor.gte(BigNumber.from('1000000000000000000')) || healthFactor.lte(0)) {
-    throw new Error('Aave borrower is no longer currently liquidatable');
+  if (!oracleUnit.eq(AAVE_USD_BASE_UNIT)) {
+    throw new Error(`Aave liquidation exact v3 close-factor thresholds require 1e8 USD base units; observed ${oracleUnit.toString()}`);
   }
 
-  const userConfiguration = BigNumber.from(userConfigurationRaw.data ?? userConfigurationRaw[0] ?? userConfigurationRaw);
-  const reserveAddresses = (Array.isArray(reservesRaw) ? reservesRaw : []).map((asset: string) => asAddress('Aave reserve', asset));
-  const activeRequests = reserveAddresses.flatMap((asset, index) => {
-    const borrowing = !userConfiguration.shr(index * 2).and(1).isZero();
-    const collateral = !userConfiguration.shr(index * 2 + 1).and(1).isZero();
-    return borrowing || collateral ? [{ asset, borrowing, collateral }] : [];
-  });
-  if (activeRequests.length === 0) throw new Error('Aave user configuration has no active borrow/collateral reserves');
+  const totalDebtBase = BigNumber.from(accountRaw.totalDebtBase ?? accountRaw[1] ?? 0);
+  const healthFactor = BigNumber.from(accountRaw.healthFactor ?? accountRaw[5] ?? 0);
+  if (healthFactor.gte(HEALTH_FACTOR_LIQUIDATION_THRESHOLD) || healthFactor.lte(0) || totalDebtBase.lte(0)) {
+    throw new Error('Aave borrower is no longer currently liquidatable');
+  }
+  const userEModeCategory = Number(BigNumber.from(userEModeRaw || 0).toString());
+  if (!Number.isInteger(userEModeCategory) || userEModeCategory < 0 || userEModeCategory > 255) {
+    throw new Error('Aave borrower eMode category is invalid');
+  }
 
-  const settled = await Promise.allSettled(activeRequests.map(request => inspectReserve({
-    asset: request.asset,
+  const reserveAddresses = (Array.isArray(reservesRaw) ? reservesRaw : []).map((asset: string) => asAddress('Aave reserve', asset));
+  if (reserveAddresses.length === 0) throw new Error('Aave pool returned no active reserve addresses');
+  const reserveIds = await resolveReserveIds(pool, reserveAddresses, blockTag);
+
+  let eModeCollateralBitmap: BigNumber | null = null;
+  let eModeLiquidationBonusBps: number | null = null;
+  if (userEModeCategory !== 0) {
+    const [configRaw, bitmapRaw] = await Promise.all([
+      pool.getEModeCategoryCollateralConfig(userEModeCategory, calls),
+      pool.getEModeCategoryCollateralBitmap(userEModeCategory, calls),
+    ]);
+    eModeLiquidationBonusBps = Number(configRaw.liquidationBonus ?? configRaw[2]);
+    eModeCollateralBitmap = BigNumber.from(bitmapRaw);
+    if (!Number.isFinite(eModeLiquidationBonusBps) || eModeLiquidationBonusBps < 10_000 || eModeLiquidationBonusBps > 20_000) {
+      throw new Error('Aave eMode liquidation bonus is invalid');
+    }
+    if (reserveIds.size === 0) throw new Error('Aave eMode liquidation requires exact reserve-id mapping');
+  }
+
+  const settled = await Promise.allSettled(reserveAddresses.map(asset => inspectReserve({
+    asset,
+    reserveId: reserveIds.get(asset.toLowerCase()) ?? null,
     borrower: input.borrower,
+    pool,
     dataProvider,
     oracle,
-    borrowing: request.borrowing,
-    collateral: request.collateral,
+    blockTag,
+    eModeCategory: userEModeCategory,
+    eModeCollateralBitmap,
+    eModeLiquidationBonusBps,
   })));
+  const reserveFailures = settled.filter(result => result.status === 'rejected').length;
   const reserves = settled.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
+  if (reserveFailures > 0 && reserves.length === 0) throw new Error('Aave reserve-level liquidation authority could not be read at the snapshot block');
   if (!reserves.some(reserve => reserve.currentDebt.gt(0))) throw new Error('Aave borrower has no measured reserve debt');
   if (!reserves.some(reserve => reserve.usageAsCollateralEnabled && reserve.currentATokenBalance.gt(0))) {
     throw new Error('Aave borrower has no measured collateral reserve');
   }
-  return { poolAddress, pool, dataProvider, oracle, oracleUnit, healthFactor, reserves };
+  return {
+    poolAddress,
+    pool,
+    dataProvider,
+    oracle,
+    oracleUnit,
+    healthFactor,
+    totalDebtBase,
+    blockTag,
+    blockTimestamp: block.timestamp,
+    userEModeCategory,
+    reserves,
+  };
 }
 
 async function liveGasUsd(input: {
@@ -564,17 +800,16 @@ export function getPreparedAaveLiquidationPlan(opportunityId: string): AaveLiqui
     ...plan,
     payload: { ...plan.payload },
     unwindQuote: { ...plan.unwindQuote },
+    ...(plan.simulationAdvisoryErrors ? { simulationAdvisoryErrors: [...plan.simulationAdvisoryErrors] } : {}),
     provenance: [...plan.provenance],
   };
 }
 
 /**
- * Read-only liquidation compiler. It discovers the borrower's active Aave reserve
- * bitmap, reads reserve debt/collateral/configuration/oracle state, applies a
- * conservative close-factor haircut, verifies measured Aave flash liquidity and
- * fee, obtains a firm 0x unwind, verifies existing receiver permissions, and then
- * exact-simulates the complete flash-loan -> liquidationCall -> unwind payload.
- * No transaction is submitted from discovery.
+ * Read-only liquidation compiler. It binds one same-block Aave state snapshot to
+ * exact current close-factor, reserve-value, dust, pause/grace, eMode bonus and
+ * protocol-fee rules, then measures flash liquidity, a firm 0x unwind and gas.
+ * eth_call validation is advisory only. No transaction is submitted from discovery.
  */
 export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Promise<AaveLiquidationPreparation> {
   requestInputs.set(input.opportunityId, { ...input });
@@ -601,6 +836,7 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
   });
   if (!receiverCapability) throw new Error('AAVE_LIQUIDATION_AAVE_RECEIVER_CAPABILITY_NOT_VERIFIED');
   const receiver = receiverCapability.address;
+  if (sameAddress(receiver, input.borrower)) throw new Error('AAVE_LIQUIDATION_BORROWER_EQUALS_LIQUIDATOR_RECEIVER');
 
   const market = await marketAuthorities({ chain: input.chain, borrower: input.borrower, provider });
   if (!sameAddress(market.poolAddress, receiverCapability.infrastructure)) {
@@ -609,10 +845,17 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
   const debtReserves = market.reserves.filter(reserve => reserve.currentDebt.gt(0));
   const collateralReserves = market.reserves.filter(reserve => reserve.usageAsCollateralEnabled && reserve.currentATokenBalance.gt(0));
   const pairs = debtReserves.flatMap(debt => collateralReserves.flatMap(collateral => {
-    const pair = pairEconomics({ debt, collateral, healthFactor: market.healthFactor, oracleUnit: market.oracleUnit });
+    const pair = pairEconomics({
+      debt,
+      collateral,
+      healthFactor: market.healthFactor,
+      totalDebtBase: market.totalDebtBase,
+      oracleUnit: market.oracleUnit,
+      blockTimestamp: market.blockTimestamp,
+    });
     return pair ? [pair] : [];
   })).sort((left, right) => right.liquidationBonusUsd - left.liquidationBonusUsd);
-  if (pairs.length === 0) throw new Error('Aave liquidation has no conservative debt/collateral pair');
+  if (pairs.length === 0) throw new Error('Aave liquidation has no protocol-valid debt/collateral pair');
 
   const failures: string[] = [];
   let bestPlan: AaveLiquidationPreparation | null = null;
@@ -673,6 +916,27 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
       }
       pendingInfrastructure.delete(input.opportunityId);
 
+      const simulationAdvisoryErrors: string[] = [];
+      const advisorySimulate = async (data: string, stage: string): Promise<void> => {
+        try {
+          await provider.call({ from: connectedWallet.address, to: receiver, data, value: 0 });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          simulationAdvisoryErrors.push(`${stage}:${message}`);
+          logger.debug('[LiquidationExecution] Aave liquidation eth_call advisory failed without vetoing positive executable economics', {
+            component: 'AaveLiquidationAtomicExecutor',
+            opportunityId: input.opportunityId,
+            chain: input.chain,
+            borrower: input.borrower,
+            debtAsset: pair.debt.asset,
+            collateralAsset: pair.collateral.asset,
+            stage,
+            error: message,
+            simulationVetoAuthority: false,
+          });
+        }
+      };
+
       const profitRecipient = asAddress('operational profit recipient', resolveOperationalProfitRecipient());
       let minProfit = BigNumber.from(1);
       let data = encodeReceiverPayload({
@@ -687,7 +951,7 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
         minProfit,
         profitRecipient,
       });
-      await provider.call({ from: connectedWallet.address, to: receiver, data, value: 0 });
+      await advisorySimulate(data, 'preliminary_min_profit');
       let estimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data, value: 0 });
       let expectedGasUsd = await liveGasUsd({ chain: input.chain, provider, estimatedGas });
       const gasDebtUnits = usdToTokenUnitsCeil(expectedGasUsd, pair.debt.decimals, pair.debt.price, market.oracleUnit);
@@ -706,7 +970,7 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
         minProfit,
         profitRecipient,
       });
-      await provider.call({ from: connectedWallet.address, to: receiver, data, value: 0 });
+      await advisorySimulate(data, 'gas_backed_min_profit');
       const finalEstimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data, value: 0 });
       if (finalEstimatedGas.gt(estimatedGas)) {
         estimatedGas = finalEstimatedGas;
@@ -726,7 +990,7 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
           minProfit,
           profitRecipient,
         });
-        await provider.call({ from: connectedWallet.address, to: receiver, data, value: 0 });
+        await advisorySimulate(data, 'final_gas_backed_min_profit');
       }
 
       const receiverProfitUsd = baseUnitsToUsd(receiverProfitBeforeGas, pair.debt.decimals, pair.debt.price, market.oracleUnit);
@@ -775,26 +1039,38 @@ export async function prepareAaveLiquidation(input: AaveLiquidationRequest): Pro
         payload: { to: receiver, data, value: '0', gasLimit: Number(estimatedGas.toString()) },
         unwindQuote: quote,
         expiresAt,
-        simulated: true,
+        simulated: simulationAdvisoryErrors.length === 0,
+        ...(simulationAdvisoryErrors.length > 0 ? { simulationAdvisoryErrors: [...simulationAdvisoryErrors] } : {}),
         provenance: [
-          'aave_v3:user_configuration_bitmap',
-          'aave_v3:user_reserve_data',
+          `aave_v3:snapshot_block:${market.blockTag}`,
+          'aave_v3:user_reserve_data_all_active_reserves',
+          'aave_v3:reserve_id_map_exact_not_list_index',
+          `aave_v3:user_emode_category:${market.userEModeCategory}`,
+          'aave_v3:emode_liquidation_bonus_applied_when_bitmap_enabled',
+          'aave_v3:reserve_active_pause_and_liquidation_grace_period_verified',
           'aave_v3:reserve_configuration_live',
           'aave_v3:liquidation_protocol_fee_live',
           'aave_v3:usd_base_oracle_live',
-          'aave_v3:conservative_close_factor_49_or_99_percent',
-          'aave_v3:close_factor_boundary_haircut',
+          'aave_v3:close_factor_total_debt_and_2000usd_reserve_threshold_exact',
+          'aave_v3:1000usd_residual_dust_rule_exact',
+          'aave_v3:percentage_rounding_floor_ceil_half_up_bound',
+          'aave_v3:arbitrary_49_99_close_factor_haircut:false',
+          'aave_v3:arbitrary_9950_debt_haircut:false',
+          'aave_v3:arbitrary_collateral_sell_bps_haircut:false',
+          `aave_v3:liquidation_protocol_fee_amount:${pair.liquidationProtocolFeeAmount.toString()}`,
           'aave_v3:flash_liquidity_and_fee_measured_onchain',
           '0x:v2_allowance_holder_firm_liquidation_unwind',
+          `0x:simulation_incomplete_advisory_only:${quote.simulationIncomplete === true}`,
           'receiver:aave_v3_pool_owner_bytecode_binding_verified',
           'receiver:permissions_verified_read_only',
           'receiver:preexisting_debt_token_balance_zero',
-          'receiver:exact_full_liquidation_eth_call',
+          simulationAdvisoryErrors.length === 0 ? 'receiver:eth_call_simulation_advisory_passed' : 'receiver:eth_call_simulation_advisory_unavailable_or_failed',
+          'receiver:eth_call_simulation_veto_authority:false',
           'receiver:exact_full_liquidation_gas_estimate',
           'gas:live_native_usd_price_no_static_fallback',
           'gas:bounded_pretrade_reserve',
           'gas:system_owned_native_reservation_required_at_execution',
-          'residual_collateral:not_counted_as_profit',
+          'residual_collateral:full_measured_liquidator_amount_unwound',
           'discovery_infrastructure_mutation:false',
           'synthetic_evidence:false',
         ],
@@ -1037,6 +1313,7 @@ export async function executePreparedAaveLiquidation(
       settlementConfirmed: true,
       personalGasFallbackAllowed: false,
       systemOwnedNativeGasLedgerApplied: fundingModeUsed === 'native',
+      simulationVetoAuthority: false,
       syntheticEvidence: false,
     });
     return {
