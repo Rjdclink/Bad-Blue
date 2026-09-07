@@ -9,6 +9,8 @@ export interface KalshiEventFeeMetadata {
   seriesTicker: string;
   feeType: KalshiEventFeeType;
   feeMultiplier: number;
+  eventFeeOverrideActive: boolean;
+  eventFeeOverrideId: string | null;
   feeWaiverExpirationAt: number | null;
   feeWaiverActive: boolean;
   scheduledChangeAt: number | null;
@@ -40,6 +42,15 @@ export interface KalshiEventFeeEstimate {
   expiresAt: number;
   provenance: string[];
 }
+
+type EventFeeChange = {
+  id: string;
+  eventTicker: string;
+  seriesTicker: string;
+  feeTypeOverride: KalshiEventFeeType | null;
+  feeMultiplierOverride: number | null;
+  scheduledAt: number;
+};
 
 const CACHE_MS = Math.max(5_000, Math.min(300_000, Number(process.env.KALSHI_EVENT_FEE_CACHE_MS || 60_000)));
 const TAKER_QUADRATIC_COEFFICIENT = 0.07;
@@ -85,6 +96,60 @@ function seriesChangeFor(rows: any[], seriesTicker: string, observedAt: number):
   return future[0] ?? null;
 }
 
+function parseEventFeeChange(row: any): EventFeeChange | null {
+  const id = String(row?.id || '').trim();
+  const eventTicker = String(row?.event_ticker || '').trim().toUpperCase();
+  const seriesTicker = String(row?.series_ticker || '').trim().toUpperCase();
+  const scheduledAt = timestamp(row?.scheduled_ts);
+  if (!id || !eventTicker || !seriesTicker || scheduledAt === null) return null;
+  const rawType = row?.fee_type_override;
+  const feeTypeOverride = rawType === null || rawType === undefined || String(rawType).trim() === ''
+    ? null
+    : String(rawType).trim();
+  const feeMultiplierOverride = row?.fee_multiplier_override === null || row?.fee_multiplier_override === undefined
+    ? null
+    : nonnegative(row.fee_multiplier_override);
+  if (row?.fee_multiplier_override !== null && row?.fee_multiplier_override !== undefined && feeMultiplierOverride === null) return null;
+  return { id, eventTicker, seriesTicker, feeTypeOverride, feeMultiplierOverride, scheduledAt };
+}
+
+async function getEventFeeChanges(eventTicker: string): Promise<EventFeeChange[]> {
+  const rows: EventFeeChange[] = [];
+  let cursor = '';
+  const seen = new Set<string>();
+  for (let page = 0; page < 100; page += 1) {
+    const params = new URLSearchParams({ event_ticker: eventTicker, limit: '1000' });
+    if (cursor) params.set('cursor', cursor);
+    const payload = await publicJson<any>(`/trade-api/v2/events/fee_changes?${params.toString()}`);
+    const pageRows = Array.isArray(payload?.event_fee_changes) ? payload.event_fee_changes : [];
+    for (const raw of pageRows) {
+      const parsed = parseEventFeeChange(raw);
+      if (!parsed || parsed.eventTicker !== eventTicker || seen.has(parsed.id)) continue;
+      seen.add(parsed.id);
+      rows.push(parsed);
+    }
+    const next = String(payload?.cursor || '').trim();
+    if (!next) break;
+    if (next === cursor) throw new Error('KALSHI_EVENT_FEE_CHANGE_CURSOR_DID_NOT_ADVANCE');
+    cursor = next;
+    if (page === 99) throw new Error('KALSHI_EVENT_FEE_CHANGE_PAGINATION_LIMIT_EXCEEDED');
+  }
+  return rows.sort((left, right) => left.scheduledAt - right.scheduledAt || left.id.localeCompare(right.id));
+}
+
+function effectiveEventOverride(changes: EventFeeChange[], observedAt: number): {
+  active: EventFeeChange | null;
+  future: EventFeeChange | null;
+} {
+  let active: EventFeeChange | null = null;
+  let future: EventFeeChange | null = null;
+  for (const row of changes) {
+    if (row.scheduledAt <= observedAt) active = row;
+    else if (!future) future = row;
+  }
+  return { active, future };
+}
+
 export async function getKalshiEventFeeMetadata(tickerInput: string, forceRefresh = false): Promise<KalshiEventFeeMetadata | null> {
   const ticker = tickerInput.trim().toUpperCase();
   if (!ticker) return null;
@@ -101,17 +166,39 @@ export async function getKalshiEventFeeMetadata(tickerInput: string, forceRefres
     const eventPayload = await publicJson<any>(`/trade-api/v2/events/${encodeURIComponent(eventTicker)}`);
     const seriesTicker = String(eventPayload?.event?.series_ticker || '').trim().toUpperCase();
     if (!seriesTicker) return null;
-    const [seriesPayload, changesPayload] = await Promise.all([
+    const [seriesPayload, seriesChangesPayload, eventChanges] = await Promise.all([
       publicJson<any>(`/trade-api/v2/series/${encodeURIComponent(seriesTicker)}`),
       publicJson<any>('/trade-api/v2/series/fee_changes?show_historical=false').catch(() => ({ series_fee_change_arr: [] })),
+      getEventFeeChanges(eventTicker),
     ]);
     const series = seriesPayload?.series;
-    const feeType = String(series?.fee_type || '').trim();
-    const feeMultiplier = nonnegative(series?.fee_multiplier);
-    if (!feeType || feeMultiplier === null) return null;
+    const parentFeeType = String(series?.fee_type || '').trim();
+    const parentFeeMultiplier = nonnegative(series?.fee_multiplier);
+    if (!parentFeeType || parentFeeMultiplier === null) return null;
     const observedAt = Date.now();
+    const override = effectiveEventOverride(eventChanges, observedAt);
+    if (override.active && override.active.seriesTicker !== seriesTicker) return null;
+    const eventOverrideActive = Boolean(override.active && (override.active.feeTypeOverride !== null || override.active.feeMultiplierOverride !== null));
+    const feeType = eventOverrideActive && override.active?.feeTypeOverride !== null
+      ? override.active!.feeTypeOverride!
+      : parentFeeType;
+    const feeMultiplier = eventOverrideActive && override.active?.feeMultiplierOverride !== null
+      ? override.active!.feeMultiplierOverride!
+      : parentFeeMultiplier;
+    if (!feeType || feeMultiplier < 0) return null;
     const feeWaiverExpirationAt = timestamp(market?.fee_waiver_expiration_time);
-    const change = seriesChangeFor(Array.isArray(changesPayload?.series_fee_change_arr) ? changesPayload.series_fee_change_arr : [], seriesTicker, observedAt);
+    const seriesChange = seriesChangeFor(Array.isArray(seriesChangesPayload?.series_fee_change_arr) ? seriesChangesPayload.series_fee_change_arr : [], seriesTicker, observedAt);
+    const nextEvent = override.future;
+    const scheduledChangeAt = [seriesChange?.at ?? null, nextEvent?.scheduledAt ?? null]
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => left - right)[0] ?? null;
+    let scheduledFeeType: KalshiEventFeeType | null = seriesChange ? String(seriesChange?.fee_type || '').trim() || null : null;
+    let scheduledFeeMultiplier: number | null = seriesChange ? nonnegative(seriesChange?.fee_multiplier) : null;
+    if (nextEvent && (seriesChange?.at === undefined || nextEvent.scheduledAt <= seriesChange.at)) {
+      const futureOverrideActive = nextEvent.feeTypeOverride !== null || nextEvent.feeMultiplierOverride !== null;
+      scheduledFeeType = futureOverrideActive ? (nextEvent.feeTypeOverride ?? parentFeeType) : parentFeeType;
+      scheduledFeeMultiplier = futureOverrideActive ? (nextEvent.feeMultiplierOverride ?? parentFeeMultiplier) : parentFeeMultiplier;
+    }
     const settlementSources = (Array.isArray(series?.settlement_sources) ? series.settlement_sources : []).flatMap((row: any) => {
       const name = String(row?.name || '').trim();
       const url = String(row?.url || '').trim();
@@ -123,11 +210,13 @@ export async function getKalshiEventFeeMetadata(tickerInput: string, forceRefres
       seriesTicker,
       feeType,
       feeMultiplier,
+      eventFeeOverrideActive,
+      eventFeeOverrideId: eventOverrideActive ? override.active?.id ?? null : null,
       feeWaiverExpirationAt,
       feeWaiverActive: feeWaiverExpirationAt !== null && feeWaiverExpirationAt > observedAt,
-      scheduledChangeAt: change?.at ?? null,
-      scheduledFeeType: change ? String(change?.fee_type || '').trim() || null : null,
-      scheduledFeeMultiplier: change ? nonnegative(change?.fee_multiplier) : null,
+      scheduledChangeAt,
+      scheduledFeeType,
+      scheduledFeeMultiplier,
       observedAt,
       expiresAt: observedAt + CACHE_MS,
       settlementSources,
@@ -136,6 +225,8 @@ export async function getKalshiEventFeeMetadata(tickerInput: string, forceRefres
         'kalshi_market:live_public_metadata',
         'kalshi_event:live_public_series_identity',
         'kalshi_series:live_fee_type_and_multiplier',
+        'kalshi_event_fee_changes:historical_and_scheduled_override_authority',
+        eventOverrideActive ? 'kalshi_event_fee_override:applied' : 'kalshi_event_fee_override:parent_series_effective',
         'kalshi_series_fee_changes:live_scheduled_change_surface',
         'kalshi_current_fee_schedule:quadratic_coefficients',
         'fee_waiver_metadata:advisory_until_fill_fee_proof',
