@@ -12,13 +12,16 @@ import {
   kalshiPerpBaseAsset,
   type KalshiOrderbookLevel,
 } from '../intelligence/kalshi-perps-market-authority.js';
+import { measureOkxMarginShortEvidence } from './okx-margin-short-authority.js';
 
 export type KalshiFundingHedgeVenue = 'coinbase' | 'kraken' | 'okx';
+export type KalshiFundingDirection = 'long_spot_short_perp' | 'long_perp_short_spot';
 
 export interface KalshiFundingExecutionEvidence {
   ticker: string;
   baseAsset: string;
   quoteAsset: 'USD';
+  direction: KalshiFundingDirection;
   hedgeVenue: KalshiFundingHedgeVenue;
   hedgeSymbol: string;
   contracts: number;
@@ -40,6 +43,8 @@ export interface KalshiFundingExecutionEvidence {
   entryBasisBps: number;
   exitBasisReserveBps: number;
   expectedSlippageBps: number;
+  borrowCostUsd: number;
+  shortSpotCapability: boolean;
   fundingRate: number;
   nextFundingTime: number;
   fundingRateLocked: false;
@@ -125,6 +130,11 @@ function exactAuthenticatedFee(evidence: CexFeeEvidence | null): evidence is Cex
   return !!evidence && evidence.source !== 'configured_override' && Number.isFinite(evidence.takerFeeBps) && evidence.takerFeeBps >= 0;
 }
 
+function inverseHoldUntil(nextFundingTime: number): number {
+  const maxHoldMs = Math.max(60_000, Math.min(24 * 60 * 60_000, Number(process.env.CRYPTOCRAWL_FUNDING_MAX_HOLD_MS || 8 * 60 * 60_000)));
+  return Math.max(Date.now() + 60_000, nextFundingTime + maxHoldMs);
+}
+
 async function fundingSpotConstraints(venue: KalshiFundingHedgeVenue, symbol: string): Promise<FundingSpotConstraints> {
   if (venue === 'coinbase') {
     await assertCoinbaseSpotTradeReady();
@@ -188,19 +198,18 @@ async function hedgeSurface(
 function candidateContracts(input: {
   targetNotionalUsd: number;
   contractSize: number;
-  kalshiBids: readonly KalshiOrderbookLevel[];
+  kalshiEntryLevels: readonly KalshiOrderbookLevel[];
   fractionalTradingEnabled: boolean;
   spotConstraints: FundingSpotConstraints;
 }): { contracts: number; baseQuantity: number } | null {
-  const bestBid = input.kalshiBids.find(level => level.price > 0 && level.quantity > 0);
-  if (!bestBid) return null;
-  const availableContracts = input.kalshiBids.reduce((sum, level) => sum + (level.quantity > 0 ? level.quantity : 0), 0);
-  const requestedContracts = Math.min(availableContracts, input.targetNotionalUsd / bestBid.price);
+  const bestEntry = input.kalshiEntryLevels.find(level => level.price > 0 && level.quantity > 0);
+  if (!bestEntry) return null;
+  const availableContracts = input.kalshiEntryLevels.reduce((sum, level) => sum + (level.quantity > 0 ? level.quantity : 0), 0);
+  const requestedContracts = Math.min(availableContracts, input.targetNotionalUsd / bestEntry.price);
   const contractStep = contractIncrement(input.fractionalTradingEnabled);
   let contracts = floorTo(requestedContracts, contractStep);
   if (!(contracts > 0)) return null;
 
-  // Quantize both legs until they represent the same underlying base exposure.
   let baseQuantity = floorTo(contracts * input.contractSize, input.spotConstraints.baseIncrement);
   if (!(baseQuantity >= input.spotConstraints.baseMinSize)) return null;
   contracts = floorTo(baseQuantity / input.contractSize, contractStep);
@@ -229,20 +238,25 @@ async function measureHedgeCandidate(input: {
   kalshiObservedAt: number;
   maxAgeMs: number;
 }): Promise<KalshiFundingExecutionEvidence | null> {
+  const direction: KalshiFundingDirection = input.fundingRate > 0
+    ? 'long_spot_short_perp'
+    : 'long_perp_short_spot';
+  if (direction === 'long_perp_short_spot' && input.venueSurface.venue !== 'okx') return null;
+
+  const kalshiEntryLevels = direction === 'long_spot_short_perp' ? input.kalshiBids : input.kalshiAsks;
   const quantity = candidateContracts({
     targetNotionalUsd: input.targetNotionalUsd,
     contractSize: input.contractSize,
-    kalshiBids: input.kalshiBids,
+    kalshiEntryLevels,
     fractionalTradingEnabled: input.fractionalTradingEnabled,
     spotConstraints: input.venueSurface.constraints,
   });
   if (!quantity) return null;
 
-  // Positive funding: short Kalshi perp by crossing bids; long USD spot by crossing asks.
-  const perpEntry = walk(input.kalshiBids, quantity.contracts);
-  const perpExitReference = walk(input.kalshiAsks, quantity.contracts);
-  const spotEntry = walk(input.venueSurface.asks, quantity.baseQuantity);
-  const spotExitReference = walk(input.venueSurface.bids, quantity.baseQuantity);
+  const perpEntry = walk(direction === 'long_spot_short_perp' ? input.kalshiBids : input.kalshiAsks, quantity.contracts);
+  const perpExitReference = walk(direction === 'long_spot_short_perp' ? input.kalshiAsks : input.kalshiBids, quantity.contracts);
+  const spotEntry = walk(direction === 'long_spot_short_perp' ? input.venueSurface.asks : input.venueSurface.bids, quantity.baseQuantity);
+  const spotExitReference = walk(direction === 'long_spot_short_perp' ? input.venueSurface.bids : input.venueSurface.asks, quantity.baseQuantity);
   if (!perpEntry || !perpExitReference || !spotEntry || !spotExitReference) return null;
 
   const perpEntryUnderlying = underlyingPrice(perpEntry.vwap, input.contractSize);
@@ -253,11 +267,33 @@ async function measureHedgeCandidate(input: {
   const measuredNotionalUsd = Math.max(perpEntry.vwap * quantity.contracts, spotEntry.vwap * quantity.baseQuantity);
   if (!(measuredNotionalUsd > 0)) return null;
 
+  const marginShort = direction === 'long_perp_short_spot'
+    ? await measureOkxMarginShortEvidence({
+        symbol: input.venueSurface.symbol,
+        baseAsset: input.baseAsset,
+        quoteAsset: 'USD',
+        baseQuantity: quantity.baseQuantity,
+        referencePriceUsd: spotEntry.vwap,
+        holdUntil: inverseHoldUntil(input.nextFundingTime),
+      }).catch(() => null)
+    : null;
+  if (direction === 'long_perp_short_spot' && (!marginShort?.executable || marginShort.expiresAt <= Date.now())) return null;
+  const borrowCostUsd = marginShort?.projectedBorrowInterestUsd ?? 0;
+
   const expectedTradingFeesUsd = measuredNotionalUsd * (
     2 * input.kalshiTakerFeeBps + 2 * input.venueSurface.fee.takerFeeBps
   ) / 10_000;
-  const measuredAt = Math.min(input.kalshiObservedAt, input.venueSurface.observedAt, input.venueSurface.fee.observedAt, Date.now());
-  const expiresAt = measuredAt + input.maxAgeMs;
+  const measuredAt = Math.min(
+    input.kalshiObservedAt,
+    input.venueSurface.observedAt,
+    input.venueSurface.fee.observedAt,
+    marginShort?.observedAt ?? Date.now(),
+    Date.now(),
+  );
+  const expiresAt = Math.min(
+    measuredAt + input.maxAgeMs,
+    marginShort?.expiresAt ?? Number.POSITIVE_INFINITY,
+  );
 
   const [exchangeStatus, riskLimit] = await Promise.all([
     getKalshiMarginExchangeStatus().catch(() => null),
@@ -271,6 +307,7 @@ async function measureHedgeCandidate(input: {
     ticker: input.ticker,
     baseAsset: input.baseAsset,
     quoteAsset: 'USD',
+    direction,
     hedgeVenue: input.venueSurface.venue,
     hedgeSymbol: input.venueSurface.symbol,
     contracts: quantity.contracts,
@@ -292,6 +329,8 @@ async function measureHedgeCandidate(input: {
     entryBasisBps,
     exitBasisReserveBps,
     expectedSlippageBps,
+    borrowCostUsd,
+    shortSpotCapability: direction === 'long_perp_short_spot' ? marginShort?.executable === true : false,
     fundingRate: input.fundingRate,
     nextFundingTime: input.nextFundingTime,
     fundingRateLocked: false,
@@ -310,8 +349,15 @@ async function measureHedgeCandidate(input: {
       `${input.venueSurface.venue}_spot_orderbook:fresh_stream_depth`,
       `${input.venueSurface.venue}_spot_fee:authenticated`,
       'hedge_quote_currency:direct_usd_only',
-      'entry_exit_depth:fully_walked',
+      'entry_exit_depth:fully_walked_directionally',
       'basis_reserve:measured_current_absolute_conservative',
+      `funding_direction:${direction}`,
+      ...(marginShort ? marginShort.provenance : []),
+      ...(direction === 'long_perp_short_spot' ? [
+        'okx_inverse_hedge:authenticated_borrow_capacity_and_interest',
+        'borrowed_base:liability_not_system_owned_capital',
+        'short_sale_proceeds:encumbered_until_terminal_repayment',
+      ] : []),
       'funding_projection:not_deterministic_profit',
       'system_owned_margin_capital:not_yet_proven_by_market_evidence',
     ],
@@ -330,10 +376,13 @@ export async function measureKalshiFundingExecutionEvidence(input: {
   if (!baseAsset || targetNotionalUsd === null || !(targetNotionalUsd > 0)) return null;
 
   const kalshi = await getKalshiPerpExecutionEvidence(ticker, true).catch(() => null);
-  if (!kalshi || !kalshi.funding || !(kalshi.funding.fundingRate > 0)) return null;
+  if (!kalshi || !kalshi.funding || !Number.isFinite(kalshi.funding.fundingRate) || kalshi.funding.fundingRate === 0) return null;
   if (Date.now() - kalshi.observedAt > maxAgeMs) return null;
 
-  const surfaces = (await Promise.all((['coinbase', 'kraken', 'okx'] as const).map(venue => hedgeSurface(venue, baseAsset, maxAgeMs))))
+  const venues: readonly KalshiFundingHedgeVenue[] = kalshi.funding.fundingRate < 0
+    ? ['okx']
+    : ['coinbase', 'kraken', 'okx'];
+  const surfaces = (await Promise.all(venues.map(venue => hedgeSurface(venue, baseAsset, maxAgeMs))))
     .filter((value): value is NonNullable<typeof value> => value !== null);
   const measured = (await Promise.all(surfaces.map(venueSurface => measureHedgeCandidate({
     venueSurface,
@@ -353,18 +402,13 @@ export async function measureKalshiFundingExecutionEvidence(input: {
 
   if (measured.length === 0) return null;
   measured.sort((left, right) => {
-    const leftCost = left.expectedTradingFeesUsd + left.measuredNotionalUsd * (left.entryBasisBps + left.exitBasisReserveBps + left.expectedSlippageBps) / 10_000;
-    const rightCost = right.expectedTradingFeesUsd + right.measuredNotionalUsd * (right.entryBasisBps + right.exitBasisReserveBps + right.expectedSlippageBps) / 10_000;
+    const leftCost = left.expectedTradingFeesUsd + left.borrowCostUsd + left.measuredNotionalUsd * (left.entryBasisBps + left.exitBasisReserveBps + left.expectedSlippageBps) / 10_000;
+    const rightCost = right.expectedTradingFeesUsd + right.borrowCostUsd + right.measuredNotionalUsd * (right.entryBasisBps + right.exitBasisReserveBps + right.expectedSlippageBps) / 10_000;
     return leftCost - rightCost || right.measuredNotionalUsd - left.measuredNotionalUsd || left.hedgeVenue.localeCompare(right.hedgeVenue);
   });
   return measured[0];
 }
 
-/**
- * Expensive authenticated available-balance computation is deferred until a
- * projected-positive route already exists. This is capital readiness evidence,
- * never system-ownership provenance by itself.
- */
 export async function hydrateKalshiFundingCapitalReadiness(
   evidence: KalshiFundingExecutionEvidence,
 ): Promise<KalshiFundingExecutionEvidence | null> {
@@ -385,11 +429,11 @@ export async function hydrateKalshiFundingCapitalReadiness(
 
 export function kalshiFundingEvidenceProjectedCostUsd(evidence: KalshiFundingExecutionEvidence): number {
   const bpsCost = evidence.entryBasisBps + evidence.exitBasisReserveBps + evidence.expectedSlippageBps;
-  return evidence.expectedTradingFeesUsd + evidence.measuredNotionalUsd * bpsCost / 10_000;
+  return evidence.expectedTradingFeesUsd + evidence.borrowCostUsd + evidence.measuredNotionalUsd * bpsCost / 10_000;
 }
 
 export function kalshiFundingEvidenceProjectedFundingUsd(evidence: KalshiFundingExecutionEvidence): number {
-  return evidence.measuredNotionalUsd * evidence.fundingRate;
+  return evidence.measuredNotionalUsd * Math.abs(evidence.fundingRate);
 }
 
 export function kalshiFundingEvidenceProjectedNetUsd(evidence: KalshiFundingExecutionEvidence): number {
