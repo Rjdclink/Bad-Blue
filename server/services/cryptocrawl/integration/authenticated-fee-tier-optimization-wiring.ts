@@ -5,6 +5,7 @@ import {
   type CexFeeEvidence,
   type CexFeeVenue,
 } from '../intelligence/cex-fee-resolver.js';
+import { ensureUniversalFeeOvercompensationEngine } from '../optimization/universal-fee-overcompensation-engine.js';
 import { ensureCexFeeRecoveryWiring, getCexFeeRecoveryWiringStatus } from './cex-fee-recovery-wiring.js';
 
 export interface AuthenticatedFeeTierSnapshot {
@@ -160,6 +161,7 @@ async function scanOnce(symbolsInput?: readonly string[]): Promise<void> {
       observationIntervalMs: observationIntervalMs(),
       feeAuthority: 'cex_fee_resolver_only',
       feeRecoveryObserverInstalled: getCexFeeRecoveryWiringStatus().installed,
+      universalFeeOvercompensationInstalled: true,
       directPrivateExchangeRequests: false,
       observationGeneratesExchangeTraffic: false,
       organicVolumeOnly: true,
@@ -210,10 +212,11 @@ export function getAuthenticatedFeeTierTrajectory(): AuthenticatedFeeTierTraject
 export function ensureAuthenticatedFeeTierOptimizationWiring(): void {
   if (schedulerInstalled) return;
   schedulerInstalled = true;
-  // The fee-recovery observer is attached to the already-canonical authenticated
-  // fee wiring so both runtime installers receive it without creating a second
-  // lifecycle/economics authority.
+  // The fee-recovery observer and universal overcompensation sidecar attach to
+  // the already-canonical fee lifecycle; neither creates order authority or a
+  // competing economics pipeline.
   ensureCexFeeRecoveryWiring();
+  ensureUniversalFeeOvercompensationEngine();
   void scanOnce().catch(error => {
     logger.debug('[AuthenticatedFeeTier] Initial canonical fee telemetry observation deferred', {
       component: 'AuthenticatedFeeTierOptimizationWiring',
@@ -227,6 +230,7 @@ export function ensureAuthenticatedFeeTierOptimizationWiring(): void {
     historySamples: historyLimit(),
     feeAuthority: 'cex_fee_resolver_only',
     feeRecoveryAuthority: 'embedded_canonical_fees_plus_received_only_recovery_observer',
+    universalFeeOvercompensation: 'all_measured_topologies_plus_recursive_external_discovery_advisory',
     privateRateAuthority: 'existing_exchange_rate_lanes_and_fee_cache',
     signedMakerEconomics: true,
     organicAuthenticatedFeeTrajectory: true,
