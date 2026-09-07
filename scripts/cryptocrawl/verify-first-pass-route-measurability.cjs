@@ -38,12 +38,16 @@ has(makerAdmission, 'allGovernedMakerSymbolsEvaluated: makerSymbols.length === g
 has(makerAdmission, "privateFeeHydrationPolicy: 'all_governed_symbols_first_pass_ordered_by_measured_recovery_value'", 'maker runtime all-route first-pass policy is missing');
 lacks(makerAdmission, '.slice(0, makerAdmissionSymbolBudget())', 'maker admission must not slice governed routes');
 
-// Every liquidatable position on an exact execution chain must receive full
-// hydration. Concurrency can bound pressure but cannot slice away positions.
+// Every liquidatable position on an exact execution chain must receive full hard-
+// fact hydration. Concurrency can bound pressure but cannot slice away positions.
+// eth_call remains optional telemetry and cannot become a required evidence fact.
 has(liquidation, 'runBounded(prioritized, liquidationHydrationConcurrency()', 'all liquidatable positions must be hydrated in the same cycle');
 has(liquidation, 'liquidation_first_pass:full_hydration_same_cycle', 'liquidation first-pass provenance is missing');
-has(liquidation, 'required:liquidation_debt_reserve_and_amount', 'liquidation hard execution evidence must be explicitly required');
-has(liquidation, 'required:exact_liquidation_simulation', 'exact liquidation simulation must remain a hard execution fact');
+has(liquidation, 'required:liquidation_debt_reserve_and_amount', 'liquidation debt evidence must be explicitly required');
+has(liquidation, 'required:liquidation_close_factor_total_debt_thresholds_and_dust', 'liquidation close-factor and dust evidence must be explicit');
+has(liquidation, 'required:liquidation_reserve_pause_grace_and_emode_state', 'liquidation pause/grace/eMode evidence must be explicit');
+has(liquidation, 'liquidation_simulation_veto_authority:false', 'simulation must remain advisory');
+lacks(liquidation, 'required:exact_liquidation_simulation', 'simulation must not reappear as a hard execution fact');
 lacks(liquidation, 'CRYPTOCRAWL_LIQUIDATION_FIRM_HYDRATION_PER_CHAIN', 'per-chain liquidation hydration cap must remain retired');
 lacks(liquidation, '.slice(0, hydrationLimit)', 'liquidation hydration must not slice viable positions');
 
@@ -54,8 +58,13 @@ has(liquidationExecutor, 'for (const pair of pairs)', 'liquidation compiler must
 has(liquidationExecutor, 'liquidation_pair_hydration:all_structural_pairs_same_cycle', 'all-pair liquidation hydration provenance is missing');
 has(liquidationExecutor, 'liquidation_pair_selection:highest_measured_positive_all_in_net_profit_usd', 'liquidation pair selection must use the highest measured positive all-in net plan');
 has(liquidationExecutor, 'if (!bestPlan || plan.deterministicNetProfitUsd > bestPlan.deterministicNetProfitUsd) bestPlan = plan;', 'liquidation compiler must compare all positive prepared plans');
+has(liquidationExecutor, 'maximumProtocolValidLiquidation', 'liquidation sizing must use protocol-valid maximum rather than an arbitrary haircut');
+has(liquidationExecutor, 'getReservesCount', 'liquidation must resolve full reserve topology');
+has(liquidationExecutor, 'getReserveAddressById', 'liquidation must preserve stable reserve-id authority');
+has(liquidationExecutor, 'simulationVetoAuthority: false', 'liquidation simulation must remain non-authoritative');
 lacks(liquidationExecutor, 'CRYPTOCRAWL_LIQUIDATION_PAIR_HYDRATION_LIMIT', 'liquidation pair hydration limit must remain retired');
 lacks(liquidationExecutor, 'pairs.slice(0, pairLimit)', 'liquidation pair hydration must not slice structural pairs');
+lacks(liquidationExecutor, 'CRYPTOCRAWL_LIQUIDATION_COLLATERAL_SELL_BPS', 'arbitrary liquidation collateral haircut must remain retired');
 
 // Minimum-sufficient execution semantics remain canonical: optional/advisory facts
 // cannot veto a trade, while explicit required/critical facts remain blocking.
@@ -64,4 +73,4 @@ has(registry, "normalized.startsWith('required:')", 'required execution facts mu
 has(registry, "normalized.startsWith('optional:')", 'optional facts must remain recognized as nonblocking');
 has(registry, "normalized.startsWith('advisory:')", 'advisory facts must remain recognized as nonblocking');
 
-console.log('[first-pass-route-measurability] PASS: maker discovery/admission and liquidation position/pair formation no longer use route-dropping evidence budgets; compatibility selectors are non-constraining, provider pressure remains bounded by canonical rate/concurrency authorities, and minimum-sufficient execution evidence remains enforced');
+console.log('[first-pass-route-measurability] PASS: maker and liquidation routes retain all-route hard-fact hydration without route-dropping budgets; simulation and adaptive evidence remain advisory while minimum-sufficient execution facts stay enforced');
