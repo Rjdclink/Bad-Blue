@@ -31,6 +31,7 @@ RUN node scripts/cryptocrawl/verify-payout-recipient-truth.cjs && \
     node scripts/cryptocrawl/verify-operator-treasury-strategy.cjs && \
     node scripts/cryptocrawl/verify-controlled-loss-learning.cjs && \
     node scripts/cryptocrawl/verify-system-native-gas-spend-authority.cjs && \
+    node scripts/cryptocrawl/verify-kalshi-coinbase-funding-integration.cjs && \
     for script in scripts/cryptocrawl/verify-nix-gen-*.cjs; do node "$script" || exit 1; done && \
     for script in scripts/cryptocrawl/verify-nix-gen-*.ts; do npx --no-install tsx "$script" || exit 1; done && \
     npm run build && \
