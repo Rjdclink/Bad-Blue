@@ -142,7 +142,7 @@ export function buildUniversalFeeOvercompensationPlan(candidate: MeasuredCandida
     candidate.canonicalBps.bridgeBps,
     candidate.canonicalBps.flashLoanFeeBps,
     candidate.canonicalBps.relayBps,
-  ].reduce((sum, value) => sum + positive(value), 0);
+  ].reduce<number>((sum, value) => sum + positive(value), 0);
   const totalMeasuredExecutionCostBps = feeBurdenBps + nonFeeMandatoryExecutionCostBps;
 
   // Signed canonical exchange fees already contain authenticated/quoted negative
