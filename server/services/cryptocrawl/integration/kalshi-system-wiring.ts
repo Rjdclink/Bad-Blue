@@ -1,6 +1,10 @@
 import logger from '../../../logger.js';
 import { ensureKalshiFundingLifecycleAdapterRegistered } from '../execution/kalshi-funding-lifecycle-adapter.js';
 import {
+  getKalshiEventSystemCashSnapshot,
+  type KalshiEventSystemCashSnapshot,
+} from '../execution/kalshi-event-system-owned-cash-ledger.js';
+import {
   getKalshiEventMarketMakingSnapshot,
   refreshKalshiEventMarketMakingFrontier,
 } from '../intelligence/kalshi-event-market-making-authority.js';
@@ -16,6 +20,8 @@ let refreshInFlight: Promise<void> | null = null;
 let refreshCycles = 0;
 let refreshErrors = 0;
 let lastRefreshAt: number | null = null;
+let eventCash: KalshiEventSystemCashSnapshot | null = null;
+let eventCashError: string | null = null;
 
 function predictionRefreshMs(): number {
   const configured = Number(process.env.KALSHI_PREDICTION_REFRESH_MS || 15_000);
@@ -26,9 +32,21 @@ async function refreshPredictionSurface(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = refreshKalshiPredictionIntelligence(true)
     .then(async snapshot => {
-      const maker = await refreshKalshiEventMarketMakingFrontier(true).catch(() => null);
+      const [makerResult, cashResult] = await Promise.allSettled([
+        refreshKalshiEventMarketMakingFrontier(true),
+        getKalshiEventSystemCashSnapshot(true),
+      ]);
+      const maker = makerResult.status === 'fulfilled' ? makerResult.value : null;
+      if (cashResult.status === 'fulfilled') {
+        eventCash = cashResult.value;
+        eventCashError = null;
+      } else {
+        eventCashError = cashResult.reason instanceof Error ? cashResult.reason.message : String(cashResult.reason);
+      }
       refreshCycles += 1;
-      refreshErrors = snapshot.errors + (maker?.errors ?? 0);
+      refreshErrors = snapshot.errors
+        + (maker?.errors ?? (makerResult.status === 'rejected' ? 1 : 0))
+        + (cashResult.status === 'rejected' ? 1 : 0);
       lastRefreshAt = snapshot.observedAt;
       logger.debug('[KalshiSystem] Prediction intelligence refreshed', {
         component: 'KalshiSystemWiring',
@@ -41,6 +59,12 @@ async function refreshPredictionSurface(): Promise<void> {
         eventMakerBestMeasuredSpreadAfterFeesBps: maker?.bestMeasuredMakerSpreadAfterFeesBps ?? null,
         eventMakerProjectedSpreadCanCreateProfitability: false,
         eventIncentiveRewardPrecredited: false,
+        eventSystemOwnedCashUsd: eventCash?.ownedUsd ?? null,
+        eventSystemOwnedCashReservedUsd: eventCash?.reservedUsd ?? null,
+        eventSystemOwnedCashUsableUsd: eventCash?.usableUsd ?? null,
+        eventAuthenticatedPredictionCashCapacityUsd: eventCash?.authenticatedAvailableUsd ?? null,
+        eventPredictionBalancePromotedToOwnership: false,
+        eventPerpsMarginPromotedToPredictionCash: false,
         executionAuthority: false,
       });
     })
@@ -66,6 +90,8 @@ export function getKalshiSystemWiringStatus() {
     lastPredictionRefreshAt: lastRefreshAt,
     bps: getKalshiBpsOptimizationSnapshot(),
     eventMarketMaking: getKalshiEventMarketMakingSnapshot(),
+    eventCash: eventCash ? { ...eventCash } : null,
+    eventCashError,
     cryptara: getCryptaraKalshiPredictionSummary(),
     quanti: getKalshiQuantiStatus(),
     fundingLifecycleAdapterRegistered: installed,
@@ -74,6 +100,8 @@ export function getKalshiSystemWiringStatus() {
     canonicalMonteCarloAuthorityChanged: false as const,
     eventMakerProjectedSpreadCanCreateProfitability: false as const,
     eventIncentiveRewardPrecredited: false as const,
+    eventPredictionBalancePromotedToOwnership: false as const,
+    eventPerpsMarginPromotedToPredictionCash: false as const,
     executionAuthority: false as const,
   };
 }
@@ -106,6 +134,9 @@ export function ensureKalshiSystemWiring(): void {
     predictionMarketIntelligence: true,
     eventMarketDepthMeasurement: true,
     eventMarketMakingFrontier: true,
+    eventSystemOwnedCashAuthority: true,
+    eventPredictionBalancePromotedToOwnership: false,
+    eventPerpsMarginPromotedToPredictionCash: false,
     eventMakerProjectedSpreadCanCreateProfitability: false,
     eventIncentiveRewardPrecredited: false,
     cryptaraContext: true,
