@@ -11,6 +11,7 @@ import {
   hydrateKalshiFundingCapitalReadiness,
   kalshiFundingEvidenceProjectedNetUsd,
   measureKalshiFundingExecutionEvidence,
+  type KalshiFundingDirection,
   type KalshiFundingExecutionEvidence,
 } from './kalshi-funding-evidence.js';
 import {
@@ -51,7 +52,17 @@ import {
   reserveKalshiSystemMargin,
   type KalshiSystemMarginReservation,
 } from './kalshi-system-owned-margin-ledger.js';
-import type { CexSystemCapitalSettlementAuthority } from './cex-system-owned-lot-ledger.js';
+import { getExactSystemCapitalOrderAssetDeltas } from './cex-system-capital-settlement-evidence.js';
+import {
+  applyVerifiedOkxMarginShortSettlement,
+  type CexSystemCapitalSettlementAuthority,
+} from './cex-system-owned-lot-ledger.js';
+import {
+  assessOkxMarginShortHealth,
+  getOkxBaseLiability,
+  proveOkxMarginShortBorrow,
+  proveOkxMarginShortRepaid,
+} from './okx-margin-short-authority.js';
 import {
   fundingPositionLifecycle,
   type FundingExecutionPlan,
@@ -67,12 +78,15 @@ export type KalshiFundingExecutionPlan = Omit<FundingExecutionPlan, 'venue'> & {
     ticker: string;
     baseAsset: string;
     quoteAsset: 'USD';
+    direction?: KalshiFundingDirection;
     hedgeVenue: KalshiFundingHedgeVenue;
     hedgeSymbol: string;
     contracts: number;
     contractSize: number;
     baseQuantity: number;
     fundingRate: number;
+    borrowCostUsd?: number;
+    shortSpotCapability?: boolean;
     evidenceMeasuredAt: number;
     evidenceExpiresAt: number;
     kalshiTakerFeeBps: number;
@@ -81,6 +95,9 @@ export type KalshiFundingExecutionPlan = Omit<FundingExecutionPlan, 'venue'> & {
       kalshiEntryLimit: number;
       spotEntryLimit: number;
     };
+    exitReference?: {
+      spotLimit: number;
+    };
   };
 };
 
@@ -88,6 +105,9 @@ type KalshiFundingOpenReceipt = FundingOpenReceipt & {
   hedgeVenue: KalshiFundingHedgeVenue;
   kalshiContracts: number;
   contractSize: number;
+  direction?: KalshiFundingDirection;
+  borrowedBase?: number;
+  borrowObservedAt?: number;
 };
 
 const preparedPlans = new Map<string, KalshiFundingExecutionPlan>();
@@ -101,6 +121,15 @@ function asKalshiPlan(plan: FundingExecutionPlan): KalshiFundingExecutionPlan | 
   return candidate.venue === 'kalshi_perps' && candidate.kalshi
     ? candidate as KalshiFundingExecutionPlan
     : null;
+}
+
+function planDirection(plan: KalshiFundingExecutionPlan): KalshiFundingDirection {
+  if (plan.kalshi.direction === 'long_perp_short_spot' || plan.kalshi.direction === 'long_spot_short_perp') return plan.kalshi.direction;
+  return plan.kalshi.fundingRate < 0 ? 'long_perp_short_spot' : 'long_spot_short_perp';
+}
+
+function inversePlan(plan: KalshiFundingExecutionPlan): boolean {
+  return planDirection(plan) === 'long_perp_short_spot';
 }
 
 function fundingAuthority(lifecycleId: string): CexSystemCapitalSettlementAuthority {
@@ -133,16 +162,25 @@ function holdUntil(plan: KalshiFundingExecutionPlan, openedAt = Date.now()): num
 }
 
 function kalshiMarginRequirementUsd(plan: KalshiFundingExecutionPlan): number {
-  // Reserve a full-notional system-owned backing envelope rather than assuming
-  // leverage lowers capital consumption. This prevents a mixed account balance
-  // from silently becoming the source of margin.
   const feesAndExit = Math.max(0, plan.expectedEntryCostUsd) + Math.max(0, plan.expectedExitCostUsd);
   const cushion = Math.max(1, plan.notionalUsd * 0.01);
   return plan.notionalUsd + feesAndExit + cushion;
 }
 
+function inverseHedgeBufferFraction(): number {
+  const raw = Number(process.env.CRYPTOCRAWL_OKX_MARGIN_SHORT_COLLATERAL_BUFFER_FRACTION || 0.25);
+  return Math.max(0.05, Math.min(0.50, Number.isFinite(raw) ? raw : 0.25));
+}
+
 function hedgeQuoteRequirementUsd(plan: KalshiFundingExecutionPlan): number {
-  const raw = plan.kalshi.entry.spotEntryLimit * plan.kalshi.baseQuantity;
+  const entry = plan.kalshi.entry.spotEntryLimit;
+  if (inversePlan(plan)) {
+    const exitReference = plan.kalshi.exitReference?.spotLimit ?? entry;
+    const raw = Math.max(entry, exitReference) * plan.kalshi.baseQuantity;
+    return raw * (1 + plan.kalshi.hedgeTakerFeeBps / 10_000 + inverseHedgeBufferFraction())
+      + Math.max(0, plan.kalshi.borrowCostUsd ?? 0);
+  }
+  const raw = entry * plan.kalshi.baseQuantity;
   return raw * (1 + plan.kalshi.hedgeTakerFeeBps / 10_000 + 0.0025);
 }
 
@@ -156,8 +194,6 @@ async function exclusiveSystemOwnedKalshiAccount(requiredUsd: number): Promise<b
   if (snapshot.usableUsd + 1e-9 < requiredUsd) return false;
   const equity = finite(readiness.accountEquityUsd);
   if (equity === null || equity < 0) return false;
-  // New Kalshi exposure is allowed only when all physical equity is covered by
-  // the system-ownership ledger. Extra unexplained cash could be personal funds.
   const unexplained = Math.max(0, equity - snapshot.ownedUsd);
   const tolerance = Math.max(0.01, equity * 1e-6);
   if (unexplained > tolerance) return false;
@@ -180,22 +216,14 @@ function walk(levels: readonly { price: number; quantity: number }[], quantity: 
   return null;
 }
 
-async function freshExitLimits(plan: KalshiFundingExecutionPlan, contracts: number, baseQuantity: number): Promise<{
-  kalshiBuyLimit: number;
-  spotSellLimit: number;
-}> {
+async function freshSpotCloseLimit(plan: KalshiFundingExecutionPlan, baseQuantity: number): Promise<number> {
   const maxAgeMs = Math.max(500, Math.min(10_000, Number(process.env.CRYPTOCRAWL_KALSHI_FUNDING_EVIDENCE_TTL_MS || 3_000)));
-  const [kalshi, spot] = await Promise.all([
-    getKalshiPerpExecutionEvidence(plan.kalshi.ticker, true),
-    cexOrderBookStreams.getQuote(plan.kalshi.hedgeVenue, plan.kalshi.hedgeSymbol, maxAgeMs),
-  ]);
-  if (!kalshi || !spot) throw new Error('KALSHI_FUNDING_EXIT_DEPTH_UNAVAILABLE');
-  const kalshiBuyLimit = walk(kalshi.orderbook.asks, contracts);
-  const spotSellLimit = walk(spot.depth.bids, baseQuantity);
-  if (!(kalshiBuyLimit && kalshiBuyLimit > 0) || !(spotSellLimit && spotSellLimit > 0)) {
-    throw new Error('KALSHI_FUNDING_EXIT_DEPTH_INSUFFICIENT');
-  }
-  return { kalshiBuyLimit, spotSellLimit };
+  const spot = await cexOrderBookStreams.getQuote(plan.kalshi.hedgeVenue, plan.kalshi.hedgeSymbol, maxAgeMs);
+  if (!spot) throw new Error('KALSHI_FUNDING_EXIT_DEPTH_UNAVAILABLE');
+  const levels = inversePlan(plan) ? spot.depth.asks : spot.depth.bids;
+  const limit = walk(levels, baseQuantity);
+  if (!(limit && limit > 0)) throw new Error('KALSHI_FUNDING_EXIT_DEPTH_INSUFFICIENT');
+  return limit;
 }
 
 async function currentPlan(plan: KalshiFundingExecutionPlan): Promise<KalshiFundingExecutionPlan | null> {
@@ -204,10 +232,12 @@ async function currentPlan(plan: KalshiFundingExecutionPlan): Promise<KalshiFund
     targetNotionalUsd: plan.notionalUsd,
   });
   if (!evidence || evidence.hedgeVenue !== plan.kalshi.hedgeVenue || evidence.hedgeSymbol !== plan.kalshi.hedgeSymbol) return null;
+  if (evidence.direction !== planDirection(plan)) return null;
   const hydrated = await hydrateKalshiFundingCapitalReadiness(evidence).catch(() => null);
   if (!hydrated || hydrated.expiresAt <= Date.now()) return null;
   const projected = kalshiFundingEvidenceProjectedNetUsd(hydrated);
-  if (!(projected > 0) || hydrated.fundingRate <= 0) return null;
+  if (!(projected > 0) || hydrated.fundingRate === 0) return null;
+  if (hydrated.direction === 'long_perp_short_spot' && (hydrated.hedgeVenue !== 'okx' || hydrated.shortSpotCapability !== true)) return null;
   const baseTolerance = Math.max(1e-10, plan.kalshi.baseQuantity * 1e-6);
   const contractTolerance = Math.max(1e-8, plan.kalshi.contracts * 1e-6);
   if (Math.abs(hydrated.baseQuantity - plan.kalshi.baseQuantity) > baseTolerance || Math.abs(hydrated.contracts - plan.kalshi.contracts) > contractTolerance) return null;
@@ -218,8 +248,8 @@ async function currentPlan(plan: KalshiFundingExecutionPlan): Promise<KalshiFund
     notionalUsd: hydrated.measuredNotionalUsd,
     expectedNetProfitUsd: projected,
     expectedEntryCostUsd: fees / 2 + basisAndSlip / 2,
-    expectedExitCostUsd: fees / 2 + basisAndSlip / 2,
-    expectedFundingUsd: hydrated.measuredNotionalUsd * hydrated.fundingRate,
+    expectedExitCostUsd: fees / 2 + basisAndSlip / 2 + Math.max(0, hydrated.borrowCostUsd),
+    expectedFundingUsd: hydrated.measuredNotionalUsd * Math.abs(hydrated.fundingRate),
     fundingTimestamp: hydrated.nextFundingTime,
     expiresAt: Math.min(plan.expiresAt, hydrated.expiresAt, hydrated.nextFundingTime - 1),
     provenance: [...plan.provenance, ...hydrated.provenance, 'kalshi_funding_plan:live_reverified'],
@@ -227,12 +257,15 @@ async function currentPlan(plan: KalshiFundingExecutionPlan): Promise<KalshiFund
       ticker: hydrated.ticker,
       baseAsset: hydrated.baseAsset,
       quoteAsset: hydrated.quoteAsset,
+      direction: hydrated.direction,
       hedgeVenue: hydrated.hedgeVenue,
       hedgeSymbol: hydrated.hedgeSymbol,
       contracts: hydrated.contracts,
       contractSize: hydrated.contractSize,
       baseQuantity: hydrated.baseQuantity,
       fundingRate: hydrated.fundingRate,
+      borrowCostUsd: hydrated.borrowCostUsd,
+      shortSpotCapability: hydrated.shortSpotCapability,
       evidenceMeasuredAt: hydrated.measuredAt,
       evidenceExpiresAt: hydrated.expiresAt,
       kalshiTakerFeeBps: hydrated.kalshiTakerFeeBps,
@@ -241,6 +274,7 @@ async function currentPlan(plan: KalshiFundingExecutionPlan): Promise<KalshiFund
         kalshiEntryLimit: hydrated.kalshiEntryLimit,
         spotEntryLimit: hydrated.spotEntryLimit,
       },
+      exitReference: { spotLimit: hydrated.spotExitLimit },
     },
   };
 }
@@ -335,17 +369,118 @@ async function closeKalshiExposure(plan: KalshiFundingExecutionPlan, lifecycleId
   throw new Error(`KALSHI_EMERGENCY_CLOSE_UNPROVEN:${lastError instanceof Error ? lastError.message : String(lastError || 'unknown')}`);
 }
 
+async function applyInversePairAccounting(input: {
+  plan: KalshiFundingExecutionPlan;
+  lifecycleId: string;
+  spotEntrySettlement: Awaited<ReturnType<typeof requireTerminalKalshiFundingCexFill>>;
+  spotCloseSettlement: Awaited<ReturnType<typeof requireTerminalKalshiFundingCexFill>>;
+  terminalLiabilityBase: number;
+}): Promise<void> {
+  const [entryEvidence, closeEvidence] = await Promise.all([
+    getExactSystemCapitalOrderAssetDeltas(input.spotEntrySettlement),
+    getExactSystemCapitalOrderAssetDeltas(input.spotCloseSettlement),
+  ]);
+  await applyVerifiedOkxMarginShortSettlement({
+    lifecycleId: input.lifecycleId,
+    opportunityId: input.plan.opportunityId,
+    entryEvidence,
+    closeEvidence,
+    terminalLiabilityBase: input.terminalLiabilityBase,
+    expectedPrincipalBase: input.plan.kalshi.baseQuantity,
+    authority: fundingAuthority(input.lifecycleId),
+  });
+}
+
+async function neutralizeSpotEntry(input: {
+  plan: KalshiFundingExecutionPlan;
+  lifecycleId: string;
+  settlement: Awaited<ReturnType<typeof queryKalshiFundingCexOrder>>;
+  submittedAt: number;
+  hold: KalshiFundingHedgeCapitalHold;
+}): Promise<KalshiFundingHedgeCapitalHold> {
+  const { plan, lifecycleId, settlement } = input;
+  const filled = Number(settlement.filledQuantity || 0);
+  if (!(filled > 0)) return input.hold;
+  if (inversePlan(plan)) {
+    if (plan.kalshi.hedgeVenue !== 'okx') throw new Error('KALSHI_FUNDING_INVERSE_HEDGE_VENUE_INVALID');
+    const liability = await getOkxBaseLiability(plan.kalshi.baseAsset);
+    const closeQuantity = Math.max(filled, liability.liabilityBase);
+    const close = await placeOrRecoverKalshiFundingCexOrder({
+      venue: 'okx', lifecycleId, leg: 'cs-entry-emergency', symbol: plan.kalshi.hedgeSymbol,
+      side: 'buy', quantity: closeQuantity, ordType: 'market', tradeMode: 'cross',
+    });
+    const closeSettlement = await requireTerminalKalshiFundingCexFill({
+      venue: 'okx', orderId: close.orderId, symbol: plan.kalshi.hedgeSymbol,
+      side: 'buy', requestedQuantity: closeQuantity, submittedAt: close.submittedAt,
+    });
+    const repaid = await proveOkxMarginShortRepaid({
+      baseAsset: plan.kalshi.baseAsset,
+      expectedRepayBase: filled,
+      closeSubmittedAt: close.submittedAt,
+    });
+    await applyInversePairAccounting({
+      plan,
+      lifecycleId,
+      spotEntrySettlement: settlement,
+      spotCloseSettlement: closeSettlement,
+      terminalLiabilityBase: repaid.liabilityBase,
+    });
+    return input.hold;
+  }
+
+  const entryEvidence = await applyKalshiFundingCexSpotOwnership({
+    lifecycleId,
+    opportunityId: plan.opportunityId,
+    settlement,
+    authority: fundingAuthority(lifecycleId),
+  });
+  const acquired = entryEvidence.assetDeltas[plan.kalshi.baseAsset];
+  if (!acquired || Number(acquired) <= 0) throw new Error('KALSHI_FUNDING_ORPHAN_SPOT_BASE_OWNERSHIP_UNPROVEN');
+  const liveHedge = await replaceKalshiFundingHedgeQuoteWithBase({ hold: input.hold, exactBaseAmount: acquired });
+  hedgeHolds.set(lifecycleId, liveHedge);
+  const close = await placeOrRecoverKalshiFundingCexOrder({
+    venue: plan.kalshi.hedgeVenue,
+    lifecycleId,
+    leg: 'cs-entry-emergency',
+    symbol: plan.kalshi.hedgeSymbol,
+    side: 'sell',
+    quantity: Number(acquired),
+    ordType: 'market',
+  });
+  const closeSettlement = await requireTerminalKalshiFundingCexFill({
+    venue: plan.kalshi.hedgeVenue,
+    orderId: close.orderId,
+    symbol: plan.kalshi.hedgeSymbol,
+    side: 'sell',
+    requestedQuantity: Number(acquired),
+    submittedAt: close.submittedAt,
+  });
+  await applyKalshiFundingCexSpotOwnership({
+    lifecycleId,
+    opportunityId: plan.opportunityId,
+    settlement: closeSettlement,
+    authority: fundingAuthority(lifecycleId),
+  });
+  return liveHedge;
+}
+
 async function submitEntry(plan: KalshiFundingExecutionPlan, lifecycleId: string, capital: {
   margin: KalshiSystemMarginReservation;
   hedge: KalshiFundingHedgeCapitalHold;
 }): Promise<KalshiFundingOpenReceipt> {
+  const inverse = inversePlan(plan);
+  if (inverse && (plan.kalshi.hedgeVenue !== 'okx' || plan.kalshi.shortSpotCapability !== true)) {
+    throw new Error('KALSHI_FUNDING_INVERSE_SHORT_SPOT_CAPABILITY_UNPROVEN');
+  }
+  const perpSide: 'bid' | 'ask' = inverse ? 'bid' : 'ask';
+  const spotSide: 'buy' | 'sell' = inverse ? 'sell' : 'buy';
   const submittedAt = Date.now();
   const [perpSubmitted, spotSubmitted] = await Promise.allSettled([
     placeOrRecoverKalshiPerpOrder({
       lifecycleId,
       leg: 'kp-entry',
       ticker: plan.kalshi.ticker,
-      side: 'ask',
+      side: perpSide,
       contracts: plan.kalshi.contracts,
       price: plan.kalshi.entry.kalshiEntryLimit,
       timeInForce: 'fill_or_kill',
@@ -356,10 +491,11 @@ async function submitEntry(plan: KalshiFundingExecutionPlan, lifecycleId: string
       lifecycleId,
       leg: 'cs-entry',
       symbol: plan.kalshi.hedgeSymbol,
-      side: 'buy',
+      side: spotSide,
       quantity: plan.kalshi.baseQuantity,
       price: plan.kalshi.entry.spotEntryLimit,
       ordType: 'fok',
+      ...(inverse ? { tradeMode: 'cross' as const } : {}),
     }),
   ]);
 
@@ -374,7 +510,7 @@ async function submitEntry(plan: KalshiFundingExecutionPlan, lifecycleId: string
           venue: plan.kalshi.hedgeVenue,
           orderId: spotOrder.orderId,
           symbol: plan.kalshi.hedgeSymbol,
-          side: 'buy',
+          side: spotSide,
           requestedQuantity: plan.kalshi.baseQuantity,
           submittedAt: spotOrder.submittedAt,
         })
@@ -382,15 +518,13 @@ async function submitEntry(plan: KalshiFundingExecutionPlan, lifecycleId: string
   ]);
 
   if (perpTerminal.status !== 'fulfilled' || spotTerminal.status !== 'fulfilled') {
-    // Do not release capital until any real orphan exposure is neutralized and
-    // system-owned accounting is applied. Deterministic IDs make this restart-safe.
     let spotEntrySettlement = spotTerminal.status === 'fulfilled' ? spotTerminal.value : null;
     if (!spotEntrySettlement && spotOrder) {
       spotEntrySettlement = await queryKalshiFundingCexOrder({
         venue: plan.kalshi.hedgeVenue,
         orderId: spotOrder.orderId,
         symbol: plan.kalshi.hedgeSymbol,
-        side: 'buy',
+        side: spotSide,
         requestedQuantity: plan.kalshi.baseQuantity,
         submittedAt: spotOrder.submittedAt,
       }).catch(() => null);
@@ -398,41 +532,17 @@ async function submitEntry(plan: KalshiFundingExecutionPlan, lifecycleId: string
     try {
       let liveHedge = capital.hedge;
       if (spotEntrySettlement && (spotEntrySettlement.filledQuantity ?? 0) > 0) {
-        const entryEvidence = await applyKalshiFundingCexSpotOwnership({
-          lifecycleId,
-          opportunityId: plan.opportunityId,
-          settlement: spotEntrySettlement,
-          authority: fundingAuthority(lifecycleId),
-        });
-        const acquired = entryEvidence.assetDeltas[plan.kalshi.baseAsset];
-        if (!acquired || Number(acquired) <= 0) throw new Error('KALSHI_FUNDING_ORPHAN_SPOT_BASE_OWNERSHIP_UNPROVEN');
-        liveHedge = await replaceKalshiFundingHedgeQuoteWithBase({ hold: liveHedge, exactBaseAmount: acquired });
-        hedgeHolds.set(lifecycleId, liveHedge);
-        const close = await placeOrRecoverKalshiFundingCexOrder({
-          venue: plan.kalshi.hedgeVenue,
-          lifecycleId,
-          leg: 'cs-entry-emergency',
-          symbol: plan.kalshi.hedgeSymbol,
-          side: 'sell',
-          quantity: Number(acquired),
-          ordType: 'market',
-        });
-        const closeSettlement = await requireTerminalKalshiFundingCexFill({
-          venue: plan.kalshi.hedgeVenue,
-          orderId: close.orderId,
-          symbol: plan.kalshi.hedgeSymbol,
-          side: 'sell',
-          requestedQuantity: Number(acquired),
-          submittedAt: close.submittedAt,
-        });
-        await applyKalshiFundingCexSpotOwnership({
-          lifecycleId,
-          opportunityId: plan.opportunityId,
-          settlement: closeSettlement,
-          authority: fundingAuthority(lifecycleId),
+        liveHedge = await neutralizeSpotEntry({
+          plan, lifecycleId, settlement: spotEntrySettlement, submittedAt, hold: liveHedge,
         });
       }
       await closeKalshiExposure(plan, lifecycleId, 'kp-entry-emergency');
+      if (inverse) {
+        const liability = await getOkxBaseLiability(plan.kalshi.baseAsset);
+        if (liability.liabilityBase > Math.max(1e-10, plan.kalshi.baseQuantity * 1e-6)) {
+          throw new Error('KALSHI_FUNDING_ENTRY_RECOVERY_RESIDUAL_LIABILITY');
+        }
+      }
       await releaseKalshiFundingHedgeHold(liveHedge);
       await releaseKalshiSystemMarginReservation(capital.margin.reservationId);
       hedgeHolds.delete(lifecycleId);
@@ -442,6 +552,7 @@ async function submitEntry(plan: KalshiFundingExecutionPlan, lifecycleId: string
       if (error instanceof Error && error.message === 'KALSHI_FUNDING_ENTRY_LEG_MISMATCH_NEUTRALIZED') throw error;
       logger.error('[KalshiFunding] Entry mismatch recovery failed; durable capital remains held', {
         component: 'KalshiFundingLifecycleAdapter', lifecycleId, opportunityId: plan.opportunityId,
+        direction: planDirection(plan),
         error: error instanceof Error ? error.message : String(error),
         capitalReleased: false, exposureForgotten: false,
       });
@@ -457,6 +568,15 @@ async function submitEntry(plan: KalshiFundingExecutionPlan, lifecycleId: string
   const tolerance = Math.max(1e-10, Math.max(measuredPerpBase, measuredSpotBase) * 1e-6);
   if (mismatch > tolerance) throw new Error('KALSHI_FUNDING_DELTA_NEUTRALITY_MISMATCH');
 
+  let borrowProof: Awaited<ReturnType<typeof proveOkxMarginShortBorrow>> | null = null;
+  if (inverse) {
+    borrowProof = await proveOkxMarginShortBorrow({
+      baseAsset: plan.kalshi.baseAsset,
+      expectedBorrowBase: measuredSpotBase,
+      submittedAt: spotOrder!.submittedAt,
+    }).catch(() => null);
+  }
+
   lifecyclePlans.set(lifecycleId, plan);
   return {
     lifecycleId,
@@ -467,7 +587,7 @@ async function submitEntry(plan: KalshiFundingExecutionPlan, lifecycleId: string
     deltaNeutral: true,
     measuredSpotQuantity: measuredSpotBase,
     measuredPerpQuantity: measuredPerpBase,
-    entryOwnershipConfirmed: false,
+    entryOwnershipConfirmed: inverse ? borrowProof !== null : false,
     marginReservationId: capital.margin.reservationId,
     spotEntryReservationId: capital.hedge.quoteReservationId,
     baseReservationId: capital.hedge.baseReservationId,
@@ -475,6 +595,9 @@ async function submitEntry(plan: KalshiFundingExecutionPlan, lifecycleId: string
     hedgeVenue: plan.kalshi.hedgeVenue,
     kalshiContracts: plan.kalshi.contracts,
     contractSize: plan.kalshi.contractSize,
+    direction: planDirection(plan),
+    borrowedBase: borrowProof?.borrowedBase,
+    borrowObservedAt: borrowProof?.observedAt,
   };
 }
 
@@ -482,14 +605,34 @@ async function reconcileEntryOwnership(plan: KalshiFundingExecutionPlan, receipt
   if (receipt.entryOwnershipConfirmed === true) return receipt;
   const capital = await recoverCapital(plan, receipt.lifecycleId, receipt);
   if (!capital.margin || !capital.hedge) throw new Error('KALSHI_FUNDING_DURABLE_CAPITAL_HOLD_UNAVAILABLE');
+  const inverse = inversePlan(plan);
+  const spotSide: 'buy' | 'sell' = inverse ? 'sell' : 'buy';
   const spot = await requireTerminalKalshiFundingCexFill({
     venue: plan.kalshi.hedgeVenue,
     orderId: receipt.spotOrderId,
     symbol: plan.kalshi.hedgeSymbol,
-    side: 'buy',
+    side: spotSide,
     requestedQuantity: receipt.measuredSpotQuantity,
     submittedAt: receipt.entrySubmittedAt ?? receipt.openedAt,
   });
+
+  if (inverse) {
+    if (plan.kalshi.hedgeVenue !== 'okx') throw new Error('KALSHI_FUNDING_INVERSE_HEDGE_VENUE_INVALID');
+    const proof = await proveOkxMarginShortBorrow({
+      baseAsset: plan.kalshi.baseAsset,
+      expectedBorrowBase: receipt.measuredSpotQuantity,
+      submittedAt: receipt.entrySubmittedAt ?? receipt.openedAt,
+    });
+    return {
+      ...receipt,
+      entryOwnershipConfirmed: true,
+      direction: 'long_perp_short_spot',
+      borrowedBase: proof.borrowedBase,
+      borrowObservedAt: proof.observedAt,
+      capitalReservationIds: [capital.margin.reservationId, capital.hedge.quoteReservationId].filter((value): value is string => Boolean(value)),
+    };
+  }
+
   const evidence = await applyKalshiFundingCexSpotOwnership({
     lifecycleId: receipt.lifecycleId,
     opportunityId: plan.opportunityId,
@@ -503,6 +646,7 @@ async function reconcileEntryOwnership(plan: KalshiFundingExecutionPlan, receipt
   return {
     ...receipt,
     entryOwnershipConfirmed: true,
+    direction: 'long_spot_short_perp',
     spotEntryReservationId: null,
     baseReservationId: updated.baseReservationId,
     capitalReservationIds: [capital.margin.reservationId, updated.baseReservationId].filter((value): value is string => Boolean(value)),
@@ -515,6 +659,9 @@ async function closePair(plan: KalshiFundingExecutionPlan, receipt: KalshiFundin
   spotCloseSettlement: Awaited<ReturnType<typeof requireTerminalKalshiFundingCexFill>>;
   closedAt: number;
 }> {
+  const inverse = inversePlan(plan);
+  const spotCloseSide: 'buy' | 'sell' = inverse ? 'buy' : 'sell';
+  const perpCloseSide: 'bid' | 'ask' = inverse ? 'ask' : 'bid';
   let spotCloseOrderId = await recoverKalshiFundingCexOrder({
     venue: plan.kalshi.hedgeVenue,
     lifecycleId: receipt.lifecycleId,
@@ -528,69 +675,92 @@ async function closePair(plan: KalshiFundingExecutionPlan, receipt: KalshiFundin
     .find((row: any) => String(row?.client_order_id || '') === existingPerpClientId);
   if (existingPerp?.order_id) perpCloseOrderId = String(existingPerp.order_id);
 
-  if (!spotCloseOrderId || !perpCloseOrderId) {
-    const limits = await freshExitLimits(plan, receipt.kalshiContracts, receipt.measuredSpotQuantity);
-    const [perpSubmit, spotSubmit] = await Promise.allSettled([
-      perpCloseOrderId
-        ? Promise.resolve(await getKalshiPerpOrder(perpCloseOrderId))
-        : placeOrRecoverKalshiPerpOrder({
-            lifecycleId: receipt.lifecycleId,
-            leg: 'kp-close',
-            ticker: plan.kalshi.ticker,
-            side: 'bid',
-            contracts: receipt.kalshiContracts,
-            price: limits.kalshiBuyLimit,
-            timeInForce: 'fill_or_kill',
-            reduceOnly: true,
-          }),
-      spotCloseOrderId
-        ? Promise.resolve({ orderId: spotCloseOrderId, submittedAt: Date.now() })
-        : placeOrRecoverKalshiFundingCexOrder({
-            venue: plan.kalshi.hedgeVenue,
-            lifecycleId: receipt.lifecycleId,
-            leg: 'cs-close',
-            symbol: plan.kalshi.hedgeSymbol,
-            side: 'sell',
-            quantity: receipt.measuredSpotQuantity,
-            price: limits.spotSellLimit,
-            ordType: 'fok',
-          }),
-    ]);
-    if (perpSubmit.status === 'fulfilled') perpCloseOrderId = perpSubmit.value.orderId;
-    if (spotSubmit.status === 'fulfilled') spotCloseOrderId = spotSubmit.value.orderId;
+  let spotRequestedQuantity = receipt.measuredSpotQuantity;
+  if (!spotCloseOrderId && inverse) {
+    const health = await assessOkxMarginShortHealth({
+      baseAsset: plan.kalshi.baseAsset,
+      expectedPrincipalBase: receipt.measuredSpotQuantity,
+    });
+    if (!health.healthy) throw new Error('KALSHI_FUNDING_INVERSE_MARGIN_HEALTH_UNPROVEN');
+    spotRequestedQuantity = health.liabilityBase;
+    if (!(spotRequestedQuantity > Math.max(1e-10, receipt.measuredSpotQuantity * 1e-6))) {
+      throw new Error('KALSHI_FUNDING_INVERSE_LIABILITY_DISAPPEARED_BEFORE_CLOSE');
+    }
   }
 
-  let spotSettlement = spotCloseOrderId
-    ? await queryKalshiFundingCexOrder({
-        venue: plan.kalshi.hedgeVenue,
-        orderId: spotCloseOrderId,
-        symbol: plan.kalshi.hedgeSymbol,
-        side: 'sell',
-        requestedQuantity: receipt.measuredSpotQuantity,
-        submittedAt: Date.now(),
-      }).catch(() => null)
-    : null;
-  let perpState = perpCloseOrderId ? await getKalshiPerpOrder(perpCloseOrderId).catch(() => null) : null;
+  if (!perpCloseOrderId) {
+    const price = await kalshiCloseLimit(plan.kalshi.ticker, perpCloseSide, receipt.kalshiContracts);
+    const state = await placeOrRecoverKalshiPerpOrder({
+      lifecycleId: receipt.lifecycleId,
+      leg: 'kp-close',
+      ticker: plan.kalshi.ticker,
+      side: perpCloseSide,
+      contracts: receipt.kalshiContracts,
+      price,
+      timeInForce: 'fill_or_kill',
+      reduceOnly: true,
+    });
+    perpCloseOrderId = state.orderId;
+  }
 
-  const spotFull = Boolean(spotSettlement?.terminal && (spotSettlement.filledQuantity ?? 0) >= receipt.measuredSpotQuantity * (1 - 1e-8));
+  if (!spotCloseOrderId) {
+    const price = await freshSpotCloseLimit(plan, spotRequestedQuantity);
+    const order = await placeOrRecoverKalshiFundingCexOrder({
+      venue: plan.kalshi.hedgeVenue,
+      lifecycleId: receipt.lifecycleId,
+      leg: 'cs-close',
+      symbol: plan.kalshi.hedgeSymbol,
+      side: spotCloseSide,
+      quantity: spotRequestedQuantity,
+      price,
+      ordType: 'fok',
+      ...(inverse ? { tradeMode: 'cross' as const } : {}),
+    });
+    spotCloseOrderId = order.orderId;
+  }
+
+  let spotSettlement = await queryKalshiFundingCexOrder({
+    venue: plan.kalshi.hedgeVenue,
+    orderId: spotCloseOrderId,
+    symbol: plan.kalshi.hedgeSymbol,
+    side: spotCloseSide,
+    requestedQuantity: receipt.measuredSpotQuantity,
+    submittedAt: Date.now() - 60_000,
+  }).catch(() => null);
+  let perpState = await getKalshiPerpOrder(perpCloseOrderId).catch(() => null);
+
+  const spotFilled = Number(spotSettlement?.filledQuantity || 0);
+  const spotFull = Boolean(spotSettlement?.terminal && spotFilled >= receipt.measuredSpotQuantity * (1 - 1e-8));
   const perpFull = Boolean(perpState?.terminal && perpState.filledContracts >= receipt.kalshiContracts * (1 - 1e-8));
 
   if (!spotFull) {
+    if (spotFilled > Math.max(1e-10, receipt.measuredSpotQuantity * 1e-8)) {
+      throw new Error('KALSHI_FUNDING_CEX_FOK_PARTIAL_FILL_QUARANTINE');
+    }
+    let emergencyQuantity = receipt.measuredSpotQuantity;
+    if (inverse) {
+      const liability = await getOkxBaseLiability(plan.kalshi.baseAsset);
+      emergencyQuantity = liability.liabilityBase;
+      if (!(emergencyQuantity > Math.max(1e-10, receipt.measuredSpotQuantity * 1e-6))) {
+        throw new Error('KALSHI_FUNDING_INVERSE_CLOSE_LIABILITY_IDENTITY_UNPROVEN');
+      }
+    }
     const emergency = await placeOrRecoverKalshiFundingCexOrder({
       venue: plan.kalshi.hedgeVenue,
       lifecycleId: receipt.lifecycleId,
       leg: 'cs-close-emergency',
       symbol: plan.kalshi.hedgeSymbol,
-      side: 'sell',
-      quantity: receipt.measuredSpotQuantity,
+      side: spotCloseSide,
+      quantity: emergencyQuantity,
       ordType: 'market',
+      ...(inverse ? { tradeMode: 'cross' as const } : {}),
     });
     spotSettlement = await requireTerminalKalshiFundingCexFill({
       venue: plan.kalshi.hedgeVenue,
       orderId: emergency.orderId,
       symbol: plan.kalshi.hedgeSymbol,
-      side: 'sell',
-      requestedQuantity: receipt.measuredSpotQuantity,
+      side: spotCloseSide,
+      requestedQuantity: emergencyQuantity,
       submittedAt: emergency.submittedAt,
     });
     spotCloseOrderId = emergency.orderId;
@@ -605,12 +775,24 @@ async function closePair(plan: KalshiFundingExecutionPlan, receipt: KalshiFundin
   if (!spotSettlement || !spotCloseOrderId || !perpCloseOrderId || !await requireKalshiPositionClosed(plan.kalshi.ticker)) {
     throw new Error('KALSHI_FUNDING_CLOSE_EXPOSURE_UNPROVEN');
   }
-  await applyKalshiFundingCexSpotOwnership({
-    lifecycleId: receipt.lifecycleId,
-    opportunityId: plan.opportunityId,
-    settlement: spotSettlement,
-    authority: fundingAuthority(receipt.lifecycleId),
-  });
+
+  if (inverse) {
+    const repaid = await proveOkxMarginShortRepaid({
+      baseAsset: plan.kalshi.baseAsset,
+      expectedRepayBase: receipt.measuredSpotQuantity,
+      closeSubmittedAt: Date.now() - 60_000,
+    });
+    if (repaid.liabilityBase > Math.max(1e-10, receipt.measuredSpotQuantity * 1e-6)) {
+      throw new Error('KALSHI_FUNDING_INVERSE_TERMINAL_LIABILITY_NONZERO');
+    }
+  } else {
+    await applyKalshiFundingCexSpotOwnership({
+      lifecycleId: receipt.lifecycleId,
+      opportunityId: plan.opportunityId,
+      settlement: spotSettlement,
+      authority: fundingAuthority(receipt.lifecycleId),
+    });
+  }
   return { spotCloseOrderId, perpCloseOrderId, spotCloseSettlement: spotSettlement, closedAt: Date.now() };
 }
 
@@ -622,12 +804,15 @@ async function terminalEconomics(input: {
   closedAt: number;
 }): Promise<FundingTerminalSettlement> {
   const { plan, receipt } = input;
+  const inverse = inversePlan(plan);
+  const spotEntrySide: 'buy' | 'sell' = inverse ? 'sell' : 'buy';
+  const spotCloseSide: 'buy' | 'sell' = inverse ? 'buy' : 'sell';
   const [spotOpen, spotClose, perpOpenFills, perpCloseFills, funding] = await Promise.all([
     requireTerminalKalshiFundingCexFill({
       venue: plan.kalshi.hedgeVenue,
       orderId: receipt.spotOrderId,
       symbol: plan.kalshi.hedgeSymbol,
-      side: 'buy',
+      side: spotEntrySide,
       requestedQuantity: receipt.measuredSpotQuantity,
       submittedAt: receipt.entrySubmittedAt ?? receipt.openedAt,
     }),
@@ -635,7 +820,7 @@ async function terminalEconomics(input: {
       venue: plan.kalshi.hedgeVenue,
       orderId: input.spotCloseOrderId,
       symbol: plan.kalshi.hedgeSymbol,
-      side: 'sell',
+      side: spotCloseSide,
       requestedQuantity: receipt.measuredSpotQuantity,
       submittedAt: input.closedAt - 60_000,
     }),
@@ -666,7 +851,13 @@ async function terminalEconomics(input: {
       realizedFeesUsd: null,
       realizedNetProfitUsd: null,
       settledAt: null,
-      provenance: ['kalshi_both_legs_closed', 'kalshi_funding_history_pending', 'system_owned_capital_retained', 'synthetic_evidence:false'],
+      provenance: [
+        'kalshi_both_legs_closed',
+        ...(inverse ? ['okx_margin_short_closed_repayment_recheck_required'] : []),
+        'kalshi_funding_history_pending',
+        'system_owned_capital_retained',
+        'synthetic_evidence:false',
+      ],
       error: 'KALSHI_FUNDING_HISTORY_PENDING',
     };
   }
@@ -677,6 +868,37 @@ async function terminalEconomics(input: {
   const realizedFeesUsd = spotOpenEcon.feeCostQuote + spotCloseEcon.feeCostQuote + perpOpen.feesUsd + perpClose.feesUsd;
   const realizedNetProfitUsd = realizedEntryExitPnlUsd + fundingPaymentUsd - realizedFeesUsd;
   const kalshiMarginDeltaUsd = perpGrossPnl + fundingPaymentUsd - perpOpen.feesUsd - perpClose.feesUsd;
+
+  let terminalLiabilityBase = 0;
+  if (inverse) {
+    const liability = await getOkxBaseLiability(plan.kalshi.baseAsset);
+    terminalLiabilityBase = liability.liabilityBase;
+    if (terminalLiabilityBase > Math.max(1e-10, receipt.measuredSpotQuantity * 1e-6)) {
+      return {
+        lifecycleId: receipt.lifecycleId,
+        terminal: false,
+        settlementConfirmed: false,
+        spotClosed: false,
+        perpClosed: true,
+        spotCloseOrderId: input.spotCloseOrderId,
+        perpCloseOrderId: input.perpCloseOrderId,
+        fundingPaymentUsd,
+        realizedEntryExitPnlUsd: null,
+        realizedFeesUsd: null,
+        realizedNetProfitUsd: null,
+        settledAt: null,
+        provenance: ['okx_margin_short_liability_nonzero', 'system_owned_capital_retained', 'synthetic_evidence:false'],
+        error: 'KALSHI_FUNDING_INVERSE_TERMINAL_LIABILITY_NONZERO',
+      };
+    }
+    await applyInversePairAccounting({
+      plan,
+      lifecycleId: receipt.lifecycleId,
+      spotEntrySettlement: spotOpen,
+      spotCloseSettlement: spotClose,
+      terminalLiabilityBase,
+    });
+  }
 
   await applyKalshiTerminalMarginSettlement({
     settlementReference: `kalshi-funding:${receipt.lifecycleId}`,
@@ -689,6 +911,7 @@ async function terminalEconomics(input: {
     realizedFundingUsd: decimal(fundingPaymentUsd),
     settlementEvidence: {
       ticker: plan.kalshi.ticker,
+      direction: planDirection(plan),
       hedgeVenue: plan.kalshi.hedgeVenue,
       hedgeSymbol: plan.kalshi.hedgeSymbol,
       perpEntryOrderId: receipt.perpOrderId,
@@ -698,6 +921,9 @@ async function terminalEconomics(input: {
       perpEntryFills: perpOpenFills,
       perpCloseFills,
       fundingPayments: funding,
+      terminalLiabilityBase,
+      borrowedBaseOwnership: false,
+      shortSaleProceedsOwnershipBeforeRepayment: false,
       accountBalanceMintsOwnership: false,
       syntheticEvidence: false,
     },
@@ -728,8 +954,13 @@ async function terminalEconomics(input: {
       'kalshi_authenticated_perp_entry_exit_fills',
       'kalshi_authenticated_funding_history_or_pre_funding_zero',
       `${plan.kalshi.hedgeVenue}_authenticated_spot_entry_exit_fills`,
+      ...(inverse ? [
+        'okx_authenticated_borrow_and_repayment_history',
+        'okx_terminal_base_liability_zero',
+        'okx_margin_short_pair:net_quote_ownership_applied_only_after_repayment',
+        'borrowed_base_and_short_proceeds:never_system_owned_while_encumbered',
+      ] : ['cex_system_owned_lot_ledger:spot_transforms_applied']),
       'kalshi_system_owned_margin_ledger:terminal_delta_applied',
-      'cex_system_owned_lot_ledger:spot_transforms_applied',
       'capital_released_only_after_terminal_accounting',
       'synthetic_evidence:false',
     ],
@@ -753,6 +984,9 @@ const adapter = {
   async openDeltaNeutral(rawPlan: FundingExecutionPlan, lifecycleId: string): Promise<FundingOpenReceipt> {
     const plan = asKalshiPlan(rawPlan);
     if (!plan) throw new Error('KALSHI_FUNDING_PLAN_INVALID');
+    if (inversePlan(plan) && (plan.kalshi.hedgeVenue !== 'okx' || plan.kalshi.shortSpotCapability !== true)) {
+      throw new Error('KALSHI_FUNDING_INVERSE_SHORT_SPOT_CAPABILITY_UNPROVEN');
+    }
     const requiredMarginUsd = kalshiMarginRequirementUsd(plan);
     if (!await exclusiveSystemOwnedKalshiAccount(requiredMarginUsd)) throw new Error('KALSHI_FUNDING_SYSTEM_OWNED_MARGIN_NOT_EXCLUSIVE_OR_INSUFFICIENT');
     const expiresAt = holdUntil(plan);
@@ -785,8 +1019,34 @@ const adapter = {
     const capital = await recoverCapital(plan, lifecycleId);
     if (!capital.margin || !capital.hedge) return { status: 'failed', error: 'KALSHI_FUNDING_DURABLE_CAPITAL_HOLD_UNAVAILABLE' };
     if (plan.fundingTimestamp <= Date.now() || plan.expiresAt <= Date.now()) {
-      await closeKalshiExposure(plan, lifecycleId, 'kp-opening-expired').catch(() => undefined);
-      return { status: 'failed', error: 'KALSHI_FUNDING_OPENING_WINDOW_EXPIRED' };
+      try {
+        const side: 'buy' | 'sell' = inversePlan(plan) ? 'sell' : 'buy';
+        const spotOrderId = await recoverKalshiFundingCexOrder({
+          venue: plan.kalshi.hedgeVenue, lifecycleId, leg: 'cs-entry', symbol: plan.kalshi.hedgeSymbol,
+        });
+        let liveHedge = capital.hedge;
+        if (spotOrderId) {
+          const settlement = await queryKalshiFundingCexOrder({
+            venue: plan.kalshi.hedgeVenue, orderId: spotOrderId, symbol: plan.kalshi.hedgeSymbol,
+            side, requestedQuantity: plan.kalshi.baseQuantity, submittedAt: Date.now() - 24 * 60 * 60_000,
+          });
+          if ((settlement.filledQuantity ?? 0) > 0) {
+            liveHedge = await neutralizeSpotEntry({ plan, lifecycleId, settlement, submittedAt: Date.now() - 24 * 60 * 60_000, hold: liveHedge });
+          }
+        }
+        await closeKalshiExposure(plan, lifecycleId, 'kp-opening-expired');
+        if (inversePlan(plan)) {
+          const liability = await getOkxBaseLiability(plan.kalshi.baseAsset);
+          if (liability.liabilityBase > Math.max(1e-10, plan.kalshi.baseQuantity * 1e-6)) throw new Error('KALSHI_FUNDING_OPENING_EXPIRED_RESIDUAL_LIABILITY');
+        }
+        await releaseKalshiFundingHedgeHold(liveHedge);
+        await releaseKalshiSystemMarginReservation(capital.margin.reservationId);
+        hedgeHolds.delete(lifecycleId);
+        marginReservations.delete(lifecycleId);
+        return { status: 'failed', error: 'KALSHI_FUNDING_OPENING_WINDOW_EXPIRED_NEUTRALIZED' };
+      } catch (error) {
+        return { status: 'pending', error: `KALSHI_FUNDING_OPENING_EXPIRED_RECOVERY_REQUIRED:${error instanceof Error ? error.message : String(error)}` };
+      }
     }
     try {
       const receipt = await submitEntry(plan, lifecycleId, { margin: capital.margin, hedge: capital.hedge });
@@ -820,10 +1080,19 @@ const adapter = {
     ]);
     if (!renewed.every(Boolean)) return false;
     const expectedContracts = receipt.kalshiContracts;
-    if (!(position.contracts < 0) || Math.abs(Math.abs(position.contracts) - expectedContracts) > Math.max(1e-8, expectedContracts * 1e-6)) return false;
+    const inverse = inversePlan(plan);
+    const signCorrect = inverse ? position.contracts > 0 : position.contracts < 0;
+    if (!signCorrect || Math.abs(Math.abs(position.contracts) - expectedContracts) > Math.max(1e-8, expectedContracts * 1e-6)) return false;
     const equity = finite(readiness.accountEquityUsd);
     const maintenance = finite(readiness.maintenanceMarginUsd);
     if (equity === null || maintenance === null || equity <= Math.max(0, maintenance) * 1.20) return false;
+    if (inverse) {
+      const health = await assessOkxMarginShortHealth({
+        baseAsset: plan.kalshi.baseAsset,
+        expectedPrincipalBase: receipt.measuredSpotQuantity,
+      }).catch(() => null);
+      if (!health?.healthy) return false;
+    }
     return true;
   },
 
@@ -870,14 +1139,19 @@ export function ensureKalshiFundingLifecycleAdapterRegistered(): void {
   if (registered) return;
   fundingPositionLifecycle.registerAdapter(adapter);
   registered = true;
-  logger.info('[KalshiFunding] Durable Kalshi spot-perp funding lifecycle adapter registered', {
+  logger.info('[KalshiFunding] Durable bidirectional Kalshi spot-perp funding lifecycle adapter registered', {
     component: 'KalshiFundingLifecycleAdapter',
     venue: 'kalshi_perps',
+    supportedDirections: ['long_spot_short_perp', 'long_perp_short_spot'],
+    negativeFundingInverseHedgeVenue: 'okx_authenticated_spot_borrow_only',
     deterministicOrderRecovery: true,
     fillOrKillEntryAndClose: true,
     emergencyNeutralization: true,
     systemOwnedKalshiMarginRequired: true,
     systemOwnedCexHedgeRequired: true,
+    borrowedBaseCreatesOwnership: false,
+    shortSaleProceedsCreateOwnershipBeforeRepayment: false,
+    terminalZeroLiabilityRequired: true,
     accountBalanceCreatesOwnership: false,
     terminalFundingAndFeeEvidenceRequired: true,
     projectedFundingIsDeterministicProfit: false,
