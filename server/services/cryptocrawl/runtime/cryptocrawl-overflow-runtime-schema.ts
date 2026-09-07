@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 22;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v22';
+const SCHEMA_VERSION = 24;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v24';
 
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
@@ -56,6 +56,8 @@ const MIGRATIONS = [
   '050_cryptocrawler_kalshi_event_market_maker.sql',
   '051_cryptocrawler_polymarket_event_order_recovery.sql',
   '052_cryptocrawler_polymarket_system_owned_cash.sql',
+  '053_cryptocrawler_cross_venue_event_lifecycle.sql',
+  '054_cryptocrawler_polymarket_redemption_recovery.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -98,6 +100,8 @@ const REQUIRED_TABLES = [
   'public.cryptocrawler_polymarket_system_owned_cash_lots',
   'public.cryptocrawler_polymarket_cash_reservations',
   'public.cryptocrawler_polymarket_cash_settlements',
+  'private.cryptocrawler_cross_venue_event_lifecycles',
+  'private.cryptocrawler_polymarket_redemption_intents',
   'public.cryptocrawler_onchain_system_owned_lots',
   'public.cryptocrawler_onchain_inventory_reservations',
   'public.cryptocrawler_onchain_system_owned_settlements',
