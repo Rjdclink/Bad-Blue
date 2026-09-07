@@ -199,24 +199,23 @@ async function fetchIncentives(): Promise<KalshiIncentiveProgramEvidence[]> {
   });
 }
 
-async function fetchFeeChanges(seriesTickers: string[]): Promise<KalshiSeriesFeeChangeEvidence[]> {
+async function fetchFeeChanges(): Promise<KalshiSeriesFeeChangeEvidence[]> {
   const observedAt = Date.now();
-  const selected = [...new Set(seriesTickers.filter(Boolean))].slice(0, Math.max(1, Math.min(40, Number(process.env.KALSHI_SERIES_FEE_SCAN_LIMIT || 20))));
-  const settled = await Promise.allSettled(selected.map(async seriesTicker => {
-    const payload = await publicJson<{ series_fee_change_arr?: any[] }>(
-      `/trade-api/v2/series/fee_changes?series_ticker=${encodeURIComponent(seriesTicker)}&show_historical=false`,
-    );
-    return (Array.isArray(payload?.series_fee_change_arr) ? payload.series_fee_change_arr : []).map(row => ({
-      id: String(row?.id || ''),
-      seriesTicker: String(row?.series_ticker || seriesTicker).toUpperCase(),
+  const payload = await publicJson<{ series_fee_change_arr?: any[] }>('/trade-api/v2/series/fee_changes?show_historical=false');
+  return (Array.isArray(payload?.series_fee_change_arr) ? payload.series_fee_change_arr : []).flatMap(row => {
+    const id = String(row?.id || '').trim();
+    const seriesTicker = String(row?.series_ticker || '').trim().toUpperCase();
+    if (!id || !seriesTicker) return [];
+    return [{
+      id,
+      seriesTicker,
       feeType: String(row?.fee_type || ''),
       feeMultiplier: finite(row?.fee_multiplier),
       scheduledAt: timestamp(row?.scheduled_ts),
       observedAt,
       pretradeFeeBpsDerived: false as const,
-    }));
-  }));
-  return settled.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+    }];
+  });
 }
 
 function normalizeMarket(row: any, observedAt: number): KalshiPredictionMarketSignal | null {
@@ -279,10 +278,9 @@ export async function refreshKalshiPredictionIntelligence(forceRefresh = false):
     const marketRows = await fetchOpenMarkets();
     const observedAt = Date.now();
     const markets = marketRows.map(row => normalizeMarket(row, observedAt)).filter((row): row is KalshiPredictionMarketSignal => row !== null);
-    const seriesTickers = markets.map(row => row.eventTicker.split('-')[0]).filter(Boolean);
     const [incentives, feeChanges] = await Promise.all([
       fetchIncentives().catch(() => []),
-      fetchFeeChanges(seriesTickers).catch(() => []),
+      fetchFeeChanges().catch(() => []),
     ]);
     snapshot = {
       observedAt,
