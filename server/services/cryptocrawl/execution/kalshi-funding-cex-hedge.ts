@@ -1,6 +1,13 @@
 import { createHash } from 'node:crypto';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import {
+  assertCoinbaseSpotTradeReady,
+  coinbasePrivateRequest,
+} from '../intelligence/coinbase-advanced-trade-authority.js';
+import { getCoinbaseAdvancedProductConstraints } from '../intelligence/coinbase-advanced-market-data.js';
 import { krakenPrivateRequest, OkxPrivateApiError, okxPrivateRequest } from '../intelligence/cex-private-authority.js';
+import { coinbaseDecimalString } from './coinbase-spot-settlement-adapter.js';
+import { getExactCoinbaseOrderAssetDeltas } from './coinbase-system-capital-settlement-evidence.js';
 import { cexDecimalString } from './cex-order-serialization.js';
 import { getSpotProductConstraints } from './cex-spot-product-policy.js';
 import {
@@ -10,6 +17,7 @@ import {
 import {
   applyExactCexSystemOwnedSettlement,
   type CexSystemCapitalSettlementAuthority,
+  type SystemOwnedCexSettlementEvidence,
 } from './cex-system-owned-lot-ledger.js';
 import {
   createProductionCexSettlementAdapters,
@@ -18,7 +26,7 @@ import {
 } from './cex-settlement.js';
 import type { NormalizedOrderSettlement } from './settlement-types.js';
 
-export type KalshiFundingHedgeVenue = 'kraken' | 'okx';
+export type KalshiFundingHedgeVenue = 'coinbase' | 'kraken' | 'okx';
 
 export interface KalshiFundingCexOrderIntent {
   venue: KalshiFundingHedgeVenue;
@@ -38,6 +46,38 @@ function clientOrderId(lifecycleId: string, leg: string): string {
 function finite(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function recoverCoinbaseOrder(symbol: string, clientId: string): Promise<string | null> {
+  await assertCoinbaseSpotTradeReady();
+  const constraints = await getCoinbaseAdvancedProductConstraints(symbol, true);
+  let cursor = '';
+  const matches: string[] = [];
+  for (let page = 0; page < 4; page++) {
+    const response = await coinbasePrivateRequest('/api/v3/brokerage/orders/historical/batch', 'GET', {
+      query: {
+        product_ids: [constraints.productId],
+        product_type: 'SPOT',
+        order_placement_source: 'RETAIL_ADVANCED',
+        limit: '250',
+        ...(cursor ? { cursor } : {}),
+      },
+    });
+    for (const order of Array.isArray(response?.orders) ? response.orders : []) {
+      if (String(order?.client_order_id || '') !== clientId) continue;
+      if (String(order?.product_id || '').trim().toUpperCase() !== constraints.productId.toUpperCase()) {
+        throw new Error(`Coinbase Kalshi hedge client-order identity conflicts with product ${clientId}`);
+      }
+      const orderId = String(order?.order_id || '').trim();
+      if (orderId) matches.push(orderId);
+    }
+    const next = String(response?.cursor || '').trim();
+    if (!response?.has_next || !next || next === cursor) break;
+    cursor = next;
+  }
+  const unique = [...new Set(matches)];
+  if (unique.length > 1) throw new Error(`Multiple Coinbase orders match Kalshi funding client id ${clientId}`);
+  return unique[0] || null;
 }
 
 async function recoverKrakenOrder(clientId: string): Promise<string | null> {
@@ -89,6 +129,7 @@ export async function recoverKalshiFundingCexOrder(input: {
   symbol: string;
 }): Promise<string | null> {
   const id = clientOrderId(input.lifecycleId, input.leg);
+  if (input.venue === 'coinbase') return recoverCoinbaseOrder(input.symbol, id);
   return input.venue === 'kraken'
     ? recoverKrakenOrder(id)
     : recoverOkxOrder(input.symbol, id);
@@ -104,7 +145,6 @@ export async function placeOrRecoverKalshiFundingCexOrder(input: KalshiFundingCe
   if ((input.ordType || 'fok') === 'fok' && (!(input.price! > 0) || !Number.isFinite(input.price))) {
     throw new Error('Kalshi funding CEX FOK hedge requires a finite positive limit price');
   }
-  const constraints = await getSpotProductConstraints(input.venue, input.symbol, true);
   const id = clientOrderId(input.lifecycleId, input.leg);
   const recovered = await recoverKalshiFundingCexOrder(input);
   if (recovered) return { orderId: recovered, submittedAt: Date.now() };
@@ -116,6 +156,36 @@ export async function placeOrRecoverKalshiFundingCexOrder(input: KalshiFundingCe
   });
   const submittedAt = Date.now();
   try {
+    if (input.venue === 'coinbase') {
+      await assertCoinbaseSpotTradeReady();
+      const constraints = await getCoinbaseAdvancedProductConstraints(input.symbol, true);
+      if (constraints.isDisabled || constraints.tradingDisabled || constraints.cancelOnly || constraints.postOnly || constraints.auctionMode || constraints.viewOnly) {
+        throw new Error(`Coinbase Kalshi funding hedge product ${constraints.productId} is not immediately executable`);
+      }
+      const response = await coinbasePrivateRequest('/api/v3/brokerage/orders', 'POST', {
+        body: {
+          client_order_id: id,
+          product_id: constraints.productId,
+          side: input.side.toUpperCase(),
+          order_configuration: input.ordType === 'market'
+            ? { market_market_ioc: { base_size: coinbaseDecimalString(input.quantity), rfq_disabled: true } }
+            : {
+                limit_limit_fok: {
+                  base_size: coinbaseDecimalString(input.quantity),
+                  limit_price: coinbaseDecimalString(input.price!),
+                  rfq_disabled: true,
+                },
+              },
+        },
+      });
+      const orderId = String(response?.success_response?.order_id || response?.order_id || '').trim();
+      if (response?.success !== true || !orderId) {
+        throw new Error(`Coinbase Kalshi funding hedge rejected: ${String(response?.error_response?.message || response?.error_response?.error_details || 'missing order id')}`);
+      }
+      return { orderId, submittedAt };
+    }
+
+    const constraints = await getSpotProductConstraints(input.venue, input.symbol, true);
     if (input.venue === 'kraken') {
       const response = await krakenPrivateRequest('/0/private/AddOrder', {
         pair: constraints.exchangeSymbol,
@@ -147,7 +217,8 @@ export async function placeOrRecoverKalshiFundingCexOrder(input: KalshiFundingCe
     return { orderId: String(row.ordId), submittedAt };
   } catch (error) {
     // Ambiguous write outcomes are recovered by the deterministic client id before
-    // any new submission is considered.
+    // any new submission is considered. Coinbase Create Order itself is also
+    // idempotent by client_order_id, but recovery is attempted first.
     const after = await recoverKalshiFundingCexOrder(input).catch(() => null);
     if (after) return { orderId: after, submittedAt };
     throw error;
@@ -202,11 +273,13 @@ export async function applyKalshiFundingCexSpotOwnership(input: {
   opportunityId: string;
   settlement: NormalizedOrderSettlement;
   authority: CexSystemCapitalSettlementAuthority;
-}): Promise<ExactCexOrderAssetDeltaEvidence> {
-  if (input.settlement.venue !== 'kraken' && input.settlement.venue !== 'okx') {
+}): Promise<SystemOwnedCexSettlementEvidence> {
+  if (input.settlement.venue !== 'coinbase' && input.settlement.venue !== 'kraken' && input.settlement.venue !== 'okx') {
     throw new Error(`Unsupported Kalshi funding hedge ownership venue ${input.settlement.venue}`);
   }
-  const evidence = await getExactSystemCapitalOrderAssetDeltas(input.settlement);
+  const evidence: SystemOwnedCexSettlementEvidence = input.settlement.venue === 'coinbase'
+    ? await getExactCoinbaseOrderAssetDeltas(input.settlement)
+    : await getExactSystemCapitalOrderAssetDeltas(input.settlement) as ExactCexOrderAssetDeltaEvidence;
   await applyExactCexSystemOwnedSettlement({
     evidence,
     opportunityId: input.opportunityId,
