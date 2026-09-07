@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { estimateKalshiEventFees } from '../intelligence/kalshi-event-fee-authority.js';
 import { getKalshiMarginFeeMap } from '../intelligence/kalshi-margin-fee-authority.js';
 import {
   getKalshiMarginAccountReadiness,
@@ -31,21 +32,47 @@ export interface KalshiBpsOptimizationRow {
   provenance: string[];
 }
 
+export interface KalshiEventBpsOptimizationRow {
+  ticker: string;
+  asset: string | null;
+  observedAt: number;
+  referenceContracts: number;
+  referencePrice: number;
+  referenceNotionalUsd: number;
+  makerFeeBps: number | null;
+  takerFeeBps: number | null;
+  makerVsTakerSavingsBps: number | null;
+  feeType: string;
+  feeMultiplier: number;
+  feeWaiverActiveAdvisory: boolean;
+  activeIncentiveProgram: boolean;
+  exactSizedRouteRequiredForEconomicCredit: true;
+  incentiveRewardCreditedBeforePayment: false;
+  zeroFeeCreditedFromWaiverMetadata: false;
+  executionAuthority: false;
+  provenance: string[];
+}
+
 export interface KalshiBpsOptimizationSnapshot {
   observedAt: number | null;
   cycles: number;
   errors: number;
   marginEnabled: boolean;
   rows: KalshiBpsOptimizationRow[];
+  eventRows: KalshiEventBpsOptimizationRow[];
   bestMakerSavingsBpsRoundTrip: number | null;
+  bestEventMakerSavingsBps: number | null;
   lowestMakerFeeBps: number | null;
   lowestTakerFeeBps: number | null;
+  lowestEventReferenceMakerFeeBps: number | null;
+  lowestEventReferenceTakerFeeBps: number | null;
   activePredictionIncentivePrograms: number;
   marketsWithFeeWaiverMetadata: number;
   scheduledSeriesFeeChanges: number;
   capitalEfficiency: KalshiCapitalEfficiencyEvidence | null;
   apiCapacity: KalshiApiCapacityEvidence | null;
   exactFeeAuthority: 'kalshi_authenticated_effective_margin_fee_tiers';
+  eventFeeAuthority: 'kalshi_live_series_fee_type_multiplier_and_current_schedule';
   makerSavingsCounterfactualUntilFill: true;
   fundingEstimateCreditedAsRealizedBps: false;
   predictionIncentiveRewardCreditedAsBpsBeforePayment: false;
@@ -65,6 +92,7 @@ let errors = 0;
 let observedAt: number | null = null;
 let marginEnabled = false;
 let rows: KalshiBpsOptimizationRow[] = [];
+let eventRows: KalshiEventBpsOptimizationRow[] = [];
 let capitalEfficiency: KalshiCapitalEfficiencyEvidence | null = null;
 let apiCapacity: KalshiApiCapacityEvidence | null = null;
 let activePredictionIncentivePrograms = 0;
@@ -78,8 +106,6 @@ function intervalMs(): number {
 
 function baseFromTicker(ticker: string): string | null {
   const normalized = ticker.trim().toUpperCase();
-  // Current Perps API examples/spec use BASE-PERP. Retain the historical
-  // KXBASEPERP/BASEPERP forms only for compatibility with already-observed rows.
   const current = normalized.match(/^([A-Z0-9]+)-PERP$/);
   if (current) return current[1];
   const legacyKx = normalized.match(/^KX([A-Z0-9]+)PERP$/);
@@ -92,6 +118,67 @@ function spreadBps(bid: number | null, ask: number | null): number | null {
   if (bid === null || ask === null || !(bid > 0) || !(ask >= bid)) return null;
   const mid = (bid + ask) / 2;
   return mid > 0 ? (ask - bid) / mid * 10_000 : null;
+}
+
+function finiteValues(values: Array<number | null>): number[] {
+  return values.filter((value): value is number => value !== null && Number.isFinite(value));
+}
+
+function eventReferenceContracts(): number {
+  const configured = Number(process.env.KALSHI_EVENT_BPS_REFERENCE_CONTRACTS || 100);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(10_000, configured)) : 100;
+}
+
+async function scanEventFeeFrontier(): Promise<KalshiEventBpsOptimizationRow[]> {
+  const prediction = getKalshiPredictionIntelligenceSnapshot();
+  const now = Date.now();
+  const referenceContracts = eventReferenceContracts();
+  const limit = Math.max(1, Math.min(64, Number(process.env.KALSHI_EVENT_BPS_SCAN_LIMIT || 24)));
+  const incentiveTickers = new Set(prediction.incentives.filter(program =>
+    (program.startAt === null || program.startAt <= now)
+      && (program.endAt === null || program.endAt > now)
+      && !program.paidOut,
+  ).map(program => program.marketTicker));
+  const candidates = prediction.markets
+    .filter(market => market.status === 'open' || market.status === 'active')
+    .map(market => ({ market, price: market.yesAsk ?? market.impliedProbability }))
+    .filter((entry): entry is { market: (typeof prediction.markets)[number]; price: number } =>
+      entry.price !== null && entry.price > 0 && entry.price < 1)
+    .sort((left, right) =>
+      (right.market.liquidityUsd ?? 0) - (left.market.liquidityUsd ?? 0)
+      || (right.market.volume24h ?? 0) - (left.market.volume24h ?? 0)
+      || left.market.ticker.localeCompare(right.market.ticker))
+    .slice(0, limit);
+
+  const estimates = await Promise.all(candidates.map(async ({ market, price }) => ({
+    market,
+    estimate: await estimateKalshiEventFees({ ticker: market.ticker, contracts: referenceContracts, price }).catch(() => null),
+  })));
+  return estimates.flatMap(({ market, estimate }) => estimate ? [{
+    ticker: market.ticker,
+    asset: market.asset,
+    observedAt: Math.min(market.observedAt, estimate.observedAt),
+    referenceContracts,
+    referencePrice: estimate.price,
+    referenceNotionalUsd: estimate.notionalUsd,
+    makerFeeBps: estimate.makerFeeBps,
+    takerFeeBps: estimate.takerFeeBps,
+    makerVsTakerSavingsBps: estimate.makerVsTakerSavingsBps,
+    feeType: estimate.feeType,
+    feeMultiplier: estimate.feeMultiplier,
+    feeWaiverActiveAdvisory: estimate.feeWaiverActiveAdvisory,
+    activeIncentiveProgram: incentiveTickers.has(market.ticker),
+    exactSizedRouteRequiredForEconomicCredit: true as const,
+    incentiveRewardCreditedBeforePayment: false as const,
+    zeroFeeCreditedFromWaiverMetadata: false as const,
+    executionAuthority: false as const,
+    provenance: [
+      ...estimate.provenance,
+      'event_bps_reference_size:ranking_only',
+      'exact_candidate_size:required_before_admission',
+      incentiveTickers.has(market.ticker) ? 'active_incentive:advisory_not_precredited' : 'active_incentive:none_observed',
+    ],
+  }] : []);
 }
 
 async function scan(): Promise<void> {
@@ -163,25 +250,33 @@ async function scan(): Promise<void> {
       right.makerVsTakerSavingsBpsRoundTrip - left.makerVsTakerSavingsBpsRoundTrip
       || left.makerFeeBps - right.makerFeeBps
       || left.ticker.localeCompare(right.ticker));
+    eventRows = (await scanEventFeeFrontier()).sort((left, right) =>
+      (right.makerVsTakerSavingsBps ?? -Infinity) - (left.makerVsTakerSavingsBps ?? -Infinity)
+      || (left.makerFeeBps ?? Infinity) - (right.makerFeeBps ?? Infinity)
+      || left.ticker.localeCompare(right.ticker));
     observedAt = now;
     cycles += 1;
     logger.info('[KalshiBPS] Measured Kalshi BPS frontier refreshed', {
       component: 'KalshiBpsOptimizationWiring',
-      markets: active.length,
+      marginMarkets: active.length,
       authenticatedFeeMarkets: rows.length,
+      eventFeeMarkets: eventRows.length,
       marginEnabled,
       bestMakerSavingsBpsRoundTrip: rows[0]?.makerVsTakerSavingsBpsRoundTrip ?? null,
+      bestEventMakerSavingsBps: eventRows[0]?.makerVsTakerSavingsBps ?? null,
       activePredictionIncentivePrograms,
       marketsWithFeeWaiverMetadata,
       scheduledSeriesFeeChanges,
       collateralReturnPotential: capitalEfficiency?.collateralReturnPotential ?? false,
       apiUsageTier: apiCapacity?.usageTier ?? null,
+      eventReferenceEconomicsCreditedToExecution: false,
       theoreticalSavingsCreditedAsRealized: false,
       executionAuthority: false,
     });
   })().catch(error => {
     errors += 1;
     rows = [];
+    eventRows = [];
     observedAt = Date.now();
     marginEnabled = false;
     capitalEfficiency = null;
@@ -204,21 +299,30 @@ async function scan(): Promise<void> {
 
 export function getKalshiBpsOptimizationSnapshot(): KalshiBpsOptimizationSnapshot {
   const copy = rows.map(row => ({ ...row, provenance: [...row.provenance] }));
+  const eventCopy = eventRows.map(row => ({ ...row, provenance: [...row.provenance] }));
+  const eventMaker = finiteValues(eventCopy.map(row => row.makerFeeBps));
+  const eventTaker = finiteValues(eventCopy.map(row => row.takerFeeBps));
+  const eventSavings = finiteValues(eventCopy.map(row => row.makerVsTakerSavingsBps));
   return {
     observedAt,
     cycles,
     errors,
     marginEnabled,
     rows: copy,
+    eventRows: eventCopy,
     bestMakerSavingsBpsRoundTrip: copy.length ? Math.max(...copy.map(row => row.makerVsTakerSavingsBpsRoundTrip)) : null,
+    bestEventMakerSavingsBps: eventSavings.length ? Math.max(...eventSavings) : null,
     lowestMakerFeeBps: copy.length ? Math.min(...copy.map(row => row.makerFeeBps)) : null,
     lowestTakerFeeBps: copy.length ? Math.min(...copy.map(row => row.takerFeeBps)) : null,
+    lowestEventReferenceMakerFeeBps: eventMaker.length ? Math.min(...eventMaker) : null,
+    lowestEventReferenceTakerFeeBps: eventTaker.length ? Math.min(...eventTaker) : null,
     activePredictionIncentivePrograms,
     marketsWithFeeWaiverMetadata,
     scheduledSeriesFeeChanges,
     capitalEfficiency: capitalEfficiency ? structuredClone(capitalEfficiency) : null,
     apiCapacity: apiCapacity ? structuredClone(apiCapacity) : null,
     exactFeeAuthority: 'kalshi_authenticated_effective_margin_fee_tiers',
+    eventFeeAuthority: 'kalshi_live_series_fee_type_multiplier_and_current_schedule',
     makerSavingsCounterfactualUntilFill: true,
     fundingEstimateCreditedAsRealizedBps: false,
     predictionIncentiveRewardCreditedAsBpsBeforePayment: false,
@@ -238,6 +342,10 @@ export function getKalshiBpsRowForAsset(assetInput: string): KalshiBpsOptimizati
   return match ? { ...match, provenance: [...match.provenance] } : null;
 }
 
+export function getKalshiEventBpsRows(): KalshiEventBpsOptimizationRow[] {
+  return eventRows.map(row => ({ ...row, provenance: [...row.provenance] }));
+}
+
 export function ensureKalshiBpsOptimizationWiring(): void {
   if (installed || process.env.KALSHI_BPS_OPTIMIZATION_ENABLED === 'false') return;
   installed = true;
@@ -249,7 +357,9 @@ export function ensureKalshiBpsOptimizationWiring(): void {
   logger.info('[KalshiBPS] Kalshi BPS optimization wiring installed', {
     component: 'KalshiBpsOptimizationWiring',
     intervalMs: intervalMs(),
-    authenticatedEffectiveFeeAuthority: true,
+    authenticatedEffectivePerpsFeeAuthority: true,
+    liveEventSeriesFeeAuthority: true,
+    eventReferenceSizeRankingOnly: true,
     makerTakerModeComparison: true,
     fundingDirectionMeasurement: true,
     predictionIncentiveDiscovery: true,
