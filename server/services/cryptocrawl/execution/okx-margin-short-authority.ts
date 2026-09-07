@@ -1,5 +1,6 @@
 import { okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { getSpotProductConstraints } from './cex-spot-product-policy.js';
+import { getExactSystemOwnedCexInventory } from './cex-system-owned-lot-ledger.js';
 
 export interface OkxMarginShortEvidence {
   symbol: string;
@@ -40,6 +41,18 @@ export interface OkxMarginShortHealth {
   healthy: boolean;
   observedAt: number;
   expiresAt: number;
+  provenance: string[];
+}
+
+export interface OkxMarginShortCollateralProof {
+  quoteAsset: string;
+  requiredQuoteAmount: number;
+  physicalQuoteAmount: number;
+  systemOwnedQuoteAmount: number;
+  unexplainedAssets: string[];
+  preexistingLiabilityAssets: string[];
+  exclusiveSystemOwnedCollateral: boolean;
+  observedAt: number;
   provenance: string[];
 }
 
@@ -122,13 +135,6 @@ function liveLiquidationBuffer(input: {
     && input.adjustedEquityUsd >= input.maintenanceMarginUsd * Math.max(1.5, minimumMarginRatio() / 2);
 }
 
-/**
- * Proves the exact inverse-hedge borrowing surface without creating a loan.
- * This authority intentionally supports OKX Spot-mode borrowing first because
- * current OKX APIs expose explicit enableSpotBorrow/spotBorrowAutoRepay state,
- * max-loan, max-sell and hourly interest evidence for that mode. Other account
- * modes remain fail closed until equivalent liability isolation is proven.
- */
 export async function measureOkxMarginShortEvidence(input: {
   symbol: string;
   baseAsset: string;
@@ -218,6 +224,62 @@ export async function measureOkxMarginShortEvidence(input: {
       `okx_margin_ratio_minimum:${minimumMarginRatio()}`,
       'borrowed_base_and_short_sale_proceeds:never_system_owned_at_entry',
       'terminal_ownership:only_after_full_liability_repayment_and_realized_pnl',
+      'personal_capital_fallback:false',
+    ],
+  };
+}
+
+export async function proveOkxMarginShortSystemOwnedCollateral(input: {
+  quoteAsset: string;
+  requiredQuoteAmount: number;
+}): Promise<OkxMarginShortCollateralProof> {
+  const quoteAsset = canonicalAsset(input.quoteAsset);
+  if (!(input.requiredQuoteAmount > 0) || !Number.isFinite(input.requiredQuoteAmount)) {
+    throw new Error('OKX_MARGIN_SHORT_REQUIRED_COLLATERAL_INVALID');
+  }
+  const balance = await okxPrivateRequest('/api/v5/account/balance', 'GET', {}, { lane: 'account_read' });
+  const rows = Array.isArray(balance?.data?.[0]?.details) ? balance.data[0].details : [];
+  const unexplainedAssets: string[] = [];
+  const preexistingLiabilityAssets: string[] = [];
+  let physicalQuoteAmount = 0;
+  let systemOwnedQuoteAmount = 0;
+  for (const row of rows) {
+    const rawAsset = String(row?.ccy || '').trim();
+    if (!rawAsset) continue;
+    const asset = canonicalAsset(rawAsset);
+    const physical = Math.max(0, finite(row?.cashBal ?? row?.availBal ?? row?.eq) ?? 0);
+    const liability = liabilityAmount(row?.liab) ?? 0;
+    const ownedRaw = await getExactSystemOwnedCexInventory('okx', asset);
+    const owned = Math.max(0, Number(ownedRaw) || 0);
+    const tolerance = Math.max(1e-10, Math.max(physical, owned) * 1e-6);
+    if (physical > owned + tolerance) unexplainedAssets.push(asset);
+    if (liability > tolerance) preexistingLiabilityAssets.push(asset);
+    if (asset === quoteAsset) {
+      physicalQuoteAmount = physical;
+      systemOwnedQuoteAmount = owned;
+    }
+  }
+  const requiredTolerance = Math.max(1e-8, input.requiredQuoteAmount * 1e-6);
+  const sufficientQuote = physicalQuoteAmount + requiredTolerance >= input.requiredQuoteAmount
+    && systemOwnedQuoteAmount + requiredTolerance >= input.requiredQuoteAmount;
+  const exclusiveSystemOwnedCollateral = sufficientQuote
+    && unexplainedAssets.length === 0
+    && preexistingLiabilityAssets.length === 0;
+  return {
+    quoteAsset,
+    requiredQuoteAmount: input.requiredQuoteAmount,
+    physicalQuoteAmount,
+    systemOwnedQuoteAmount,
+    unexplainedAssets: [...new Set(unexplainedAssets)].sort(),
+    preexistingLiabilityAssets: [...new Set(preexistingLiabilityAssets)].sort(),
+    exclusiveSystemOwnedCollateral,
+    observedAt: Date.now(),
+    provenance: [
+      'okx_account_balance:authenticated_all_currency_physical_balance_scan',
+      'cex_system_owned_lots:overflow_authoritative_per_asset_ownership',
+      'preexisting_liabilities:must_be_zero_before_inverse_open',
+      'unexplained_operator_balance:must_be_zero_before_inverse_open',
+      'required_quote_collateral:physical_and_system_owned',
       'personal_capital_fallback:false',
     ],
   };
