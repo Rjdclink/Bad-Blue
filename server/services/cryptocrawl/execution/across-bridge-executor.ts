@@ -50,6 +50,11 @@ function bounded(raw: unknown, fallback: number, min: number, max: number): numb
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
 }
+function unsignedInteger(value: unknown): bigint | null {
+  const raw = String(value ?? '').trim();
+  if (!/^\d+$/.test(raw)) return null;
+  try { return BigInt(raw); } catch { return null; }
+}
 function gasIntentKey(parts: readonly string[]): string {
   return parts.map(part => part.trim().toLowerCase().replace(/[^a-z0-9:_-]/g, '_')).join(':').slice(0, 220);
 }
@@ -104,8 +109,8 @@ async function postApprovalEconomicsPositive(quote: AcrossBridgeQuote, actualApp
 
 /**
  * Reacquire the exact execution payload from Across without a cache. Expiry,
- * route identity, calldata and the guaranteed minimum remain hard requirements.
- * Across simulationSuccess is retained as advisory provider telemetry only.
+ * route identity, depositor token balance, calldata and guaranteed minimum output
+ * remain hard facts. Across simulationSuccess is advisory provider telemetry only.
  */
 async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approvals: TxPayload[]; swap: TxPayload } | null> {
   const apiKey = process.env.ACROSS_API_KEY?.trim();
@@ -132,6 +137,34 @@ async function freshExecutionPayload(quote: AcrossBridgeQuote): Promise<{ approv
     if (!response.ok || !payload) return null;
     const expiry = Number(payload.quoteExpiryTimestamp) * 1000;
     if (!Number.isFinite(expiry) || expiry <= Date.now()) return null;
+
+    const balance = payload?.checks?.balance;
+    const balanceToken = typeof balance?.token === 'string' ? balance.token : '';
+    const balanceActual = unsignedInteger(balance?.actual);
+    const balanceExpected = unsignedInteger(balance?.expected);
+    const routeInput = unsignedInteger(quote.inputAmount);
+    if (
+      !validAddress(balanceToken)
+      || balanceToken.toLowerCase() !== quote.inputToken.toLowerCase()
+      || balanceActual === null
+      || balanceExpected === null
+      || routeInput === null
+      || balanceExpected < routeInput
+      || balanceActual < balanceExpected
+    ) {
+      logger.info('[AcrossBridgeExecution] Fresh Across depositor balance check rejected principal broadcast', {
+        component: 'AcrossBridgeExecutor',
+        inputToken: quote.inputToken,
+        reportedBalanceToken: balanceToken || null,
+        actual: balanceActual?.toString() ?? null,
+        expected: balanceExpected?.toString() ?? null,
+        routeInput: routeInput?.toString() ?? null,
+        actualWalletSpendabilityRequired: true,
+        systemOwnedLotReservationAlsoRequiredUpstream: true,
+      });
+      return null;
+    }
+
     if (payload?.swapTx?.simulationSuccess !== true) {
       logger.debug('[AcrossBridgeExecution] Fresh Across payload simulation is advisory only', {
         component: 'AcrossBridgeExecutor',
@@ -232,10 +265,6 @@ export async function executeAcrossBridgeQuote(
     }
   }
 
-  // Approval receipts change allowance state. Reacquire the canonical quote and
-  // payload after those receipts, then prove that the exact current route remains
-  // positive after the actual approval gas already spent. Principal is never
-  // broadcast when the post-approval economics no longer clear zero.
   if (approvalTxnRefs.length > 0) {
     const actualApprovalGasUsd = await liveApprovalGasUsd(quote, nativeFeeWei);
     if (actualApprovalGasUsd === null) {
