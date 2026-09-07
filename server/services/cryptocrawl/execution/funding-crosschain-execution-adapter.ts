@@ -31,6 +31,7 @@ import {
   type FundingLifecycleResult,
   type FundingTerminalSettlement,
 } from './funding-position-lifecycle.js';
+import { getPreparedKalshiFundingPlan } from './kalshi-funding-lifecycle-adapter.js';
 import { getPreparedOkxFundingPlan } from './okx-funding-lifecycle-adapter.js';
 import {
   reserveOnchainSystemCapital,
@@ -228,6 +229,26 @@ async function markOperatorTerminalByOpportunity(opportunityId: string): Promise
   }
 }
 
+function fundingTelemetryIdentity(plan: FundingExecutionPlan): {
+  chain: string;
+  strategy: string;
+  route: string;
+} {
+  const venue = String((plan as any)?.venue || '').trim().toLowerCase();
+  if (venue === 'kalshi_perps') {
+    return {
+      chain: 'cex:kalshi_perps',
+      strategy: 'kalshi_cex_spot_perp_funding',
+      route: 'kalshi_cex_spot_perp_funding',
+    };
+  }
+  return {
+    chain: venue ? `cex:${venue}` : 'cex:unknown_funding',
+    strategy: venue === 'okx' ? 'okx_spot_perp_funding' : `${venue || 'unknown'}_spot_perp_funding`,
+    route: venue === 'okx' ? 'okx_spot_perp_funding' : `${venue || 'unknown'}_spot_perp_funding`,
+  };
+}
+
 async function recordFundingTerminal(result: FundingLifecycleResult): Promise<void> {
   if (!result.lifecycleId || !result.settlementConfirmed || !result.settlement?.terminal) return;
   const context = await fundingContext(result.lifecycleId);
@@ -236,12 +257,14 @@ async function recordFundingTerminal(result: FundingLifecycleResult): Promise<vo
   const realized = settlement.realizedNetProfitUsd;
   const settledAt = settlement.settledAt ?? Date.now();
   const latencyMs = context.openedAt !== null ? Math.max(0, settledAt - context.openedAt) : 0;
+  const telemetry = fundingTelemetryIdentity(context.plan);
+  const isKalshi = String((context.plan as any)?.venue || '').toLowerCase() === 'kalshi_perps';
   await recordCryptaraExecutionEvidence({
     source: 'master_pipeline',
     opportunityId: context.plan.opportunityId,
-    chain: 'cex:okx',
+    chain: telemetry.chain,
     symbol: context.plan.symbol,
-    strategy: 'okx_spot_perp_funding',
+    strategy: telemetry.strategy,
     success: realized !== null && Number.isFinite(realized) && realized > 0,
     expectedProfitUsd: context.plan.expectedNetProfitUsd,
     realizedProfitUsd: realized,
@@ -258,6 +281,7 @@ async function recordFundingTerminal(result: FundingLifecycleResult): Promise<vo
       ...settlement.provenance,
       'funding_projected_entry_vs_realized_terminal_separated',
       'system_owned_capital_provenance_required',
+      ...(isKalshi ? ['zero_personal_capital:system_owned_kalshi_margin_and_cex_hedge_only'] : []),
     ],
     settlement: {
       status: settlement.settlementConfirmed ? 'filled' : 'settlement_unknown',
@@ -265,8 +289,8 @@ async function recordFundingTerminal(result: FundingLifecycleResult): Promise<vo
       settlementConfirmed: settlement.settlementConfirmed,
       submittedAt: context.openedAt ?? settledAt,
       settledAt,
-      venueOrRoute: 'okx_spot_perp_funding',
-      chain: 'cex:okx',
+      venueOrRoute: telemetry.route,
+      chain: telemetry.chain,
       predicted: { profitUsd: context.plan.expectedNetProfitUsd, feeUsd: context.plan.expectedEntryCostUsd + context.plan.expectedExitCostUsd, slippageBps: null },
       realized: {
         acquisitionCostUsd: null,
@@ -352,10 +376,6 @@ async function recordCrossChainTerminal(result: CrossChainLifecycleResult): Prom
   const sameAsset = routeInputAsset === routeOutputAsset;
   const inputHuman = terminal ? Number(ethers.utils.formatUnits(terminal.inputAmount, result.quote.inputTokenDecimals)) : null;
   const outputHuman = terminal ? Number(ethers.utils.formatUnits(terminal.outputAmount, result.quote.outputTokenDecimals)) : null;
-  // The durable lifecycle already computed cross-asset realized P/L from separate
-  // live input/output prices. A single compatibility assetUsd is intentionally
-  // absent on cross-asset routes, so never reconstruct false acquisition/proceeds
-  // from one price here.
   const acquisitionCostUsd = sameAsset && inputHuman !== null && result.assetUsd !== null && Number.isFinite(inputHuman)
     ? inputHuman * result.assetUsd
     : null;
@@ -540,7 +560,9 @@ async function dispatchCrossChain(decision: UnifiedExecutionDecision): Promise<F
 
 async function dispatchFunding(decision: UnifiedExecutionDecision): Promise<FundingCrossChainDispatchResult> {
   const candidate = measuredCandidateRegistry.get(decision.opportunityId);
-  const plan = getPreparedOkxFundingPlan(decision.opportunityId);
+  const okxPlan = getPreparedOkxFundingPlan(decision.opportunityId);
+  const kalshiPlan = getPreparedKalshiFundingPlan(decision.opportunityId);
+  const plan = (okxPlan ?? kalshiPlan) as unknown as FundingExecutionPlan | null;
   if (!candidate || !plan || !decision.admitted || candidate.status !== 'eligible' || !candidate.executableCapability) {
     return { opportunityId: decision.opportunityId, topology: 'FUNDING_ARBITRAGE', path: 'SPOT_PERP_FUNDING', dispatched: false, submitted: false, success: false, settlementConfirmed: false, error: 'FUNDING_PREPARED_PLAN_UNAVAILABLE' };
   }
