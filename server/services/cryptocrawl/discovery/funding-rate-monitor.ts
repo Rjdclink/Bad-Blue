@@ -6,11 +6,20 @@ import { evaluateFundingArbitrage } from './funding-arbitrage-policy.js';
 import { resolveCexFeeEvidence } from '../intelligence/cex-fee-resolver.js';
 import { okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { resolveOkxAccountFeeRates } from '../intelligence/okx-account-fee-authority.js';
+import { getKalshiMarginAccountReadiness } from '../intelligence/kalshi-perps-market-authority.js';
+import { getExactSystemOwnedCexInventory } from '../execution/cex-system-owned-lot-ledger.js';
 import { measureOkxFundingExecutionEvidence, type OkxFundingExecutionEvidence } from '../execution/okx-funding-evidence.js';
 import {
+  hydrateKalshiFundingCapitalReadiness,
   measureKalshiFundingExecutionEvidence,
   type KalshiFundingExecutionEvidence,
 } from '../execution/kalshi-funding-evidence.js';
+import {
+  ensureKalshiFundingLifecycleAdapterRegistered,
+  rememberPreparedKalshiFundingPlan,
+  type KalshiFundingExecutionPlan,
+} from '../execution/kalshi-funding-lifecycle-adapter.js';
+import { getKalshiSystemMarginSnapshot } from '../execution/kalshi-system-owned-margin-ledger.js';
 import {
   ensureOkxFundingLifecycleAdapterRegistered,
   rememberPreparedOkxFundingPlan,
@@ -28,6 +37,18 @@ interface OkxSwapAccountContext {
   instruments: any[];
   accountModeVisible: boolean;
   observedAt: number;
+}
+
+interface KalshiCapitalAdmission {
+  ready: boolean;
+  requiredMarginUsd: number;
+  requiredHedgeUsd: number;
+  systemOwnedMarginUsd: number;
+  usableMarginUsd: number;
+  systemOwnedHedgeUsd: number;
+  accountEquityUsd: number | null;
+  unexplainedAccountEquityUsd: number | null;
+  reasons: string[];
 }
 
 const FALLBACK_SYMBOLS = [
@@ -147,6 +168,47 @@ function compareFundingEnrichmentPriority(left: FundingRateObservation, right: F
   return b[0] - a[0] || b[1] - a[1] || b[2] - a[2];
 }
 
+async function kalshiCapitalAdmission(
+  evidence: KalshiFundingExecutionEvidence,
+  expectedEntryCostUsd: number,
+  expectedExitCostUsd: number,
+): Promise<KalshiCapitalAdmission> {
+  const hydrated = await hydrateKalshiFundingCapitalReadiness(evidence).catch(() => null);
+  const [snapshot, readiness, hedgeOwnedRaw] = await Promise.all([
+    getKalshiSystemMarginSnapshot(true).catch(() => null),
+    getKalshiMarginAccountReadiness(true, true).catch(() => null),
+    getExactSystemOwnedCexInventory(evidence.hedgeVenue, evidence.quoteAsset).catch(() => '0'),
+  ]);
+  const requiredMarginUsd = evidence.measuredNotionalUsd
+    + Math.max(0, expectedEntryCostUsd)
+    + Math.max(0, expectedExitCostUsd)
+    + Math.max(1, evidence.measuredNotionalUsd * 0.01);
+  const requiredHedgeUsd = evidence.spotEntryLimit * evidence.baseQuantity
+    * (1 + evidence.hedgeTakerFeeBps / 10_000 + 0.0025);
+  const hedgeOwned = Number(hedgeOwnedRaw);
+  const equity = finite(readiness?.accountEquityUsd);
+  const systemOwnedMarginUsd = snapshot?.ownedUsd ?? 0;
+  const usableMarginUsd = snapshot?.usableUsd ?? 0;
+  const unexplained = equity === null ? null : Math.max(0, equity - systemOwnedMarginUsd);
+  const equityTolerance = equity === null ? 0 : Math.max(0.01, equity * 1e-6);
+  const reasons: string[] = [];
+  if (!hydrated || hydrated.authenticatedMarginAvailableComputed !== true) reasons.push('required:kalshi_authenticated_computed_margin_available');
+  if (!snapshot?.authenticatedCapacity || usableMarginUsd + 1e-9 < requiredMarginUsd) reasons.push('required:kalshi_system_owned_margin_capital_provenance');
+  if (equity === null || unexplained === null || unexplained > equityTolerance) reasons.push('required:kalshi_margin_account_exclusive_system_ownership');
+  if (!Number.isFinite(hedgeOwned) || hedgeOwned + 1e-9 < requiredHedgeUsd) reasons.push(`required:${evidence.hedgeVenue}_system_owned_usd_hedge_inventory`);
+  return {
+    ready: reasons.length === 0,
+    requiredMarginUsd,
+    requiredHedgeUsd,
+    systemOwnedMarginUsd,
+    usableMarginUsd,
+    systemOwnedHedgeUsd: Number.isFinite(hedgeOwned) ? Math.max(0, hedgeOwned) : 0,
+    accountEquityUsd: equity,
+    unexplainedAccountEquityUsd: unexplained,
+    reasons,
+  };
+}
+
 class FundingRateMonitor {
   private timer: NodeJS.Timeout | null = null;
   private inFlight: Promise<void> | null = null;
@@ -169,9 +231,9 @@ class FundingRateMonitor {
       component: 'FundingRateMonitor', intervalMs, venues: ['okx', 'kraken_futures', 'binance_futures', 'kalshi_perps'],
       okxPrivateAccountContextTtlMs: OKX_SWAP_CONTEXT_TTL_MS, newKeysRequiredForDiscovery: false,
       durableFundingLifecycleImplemented: true,
-      executionAuthority: 'funding_position_lifecycle_for_bounded_positive_pre_settlement_okx_carry',
-      kalshiExecutionAuthority: false,
-      kalshiExecutionStatus: 'exact_depth_fee_funding_hedge_economics_measured_but_system_capital_provenance_and_lifecycle_adapter_still_required',
+      executionAuthority: 'funding_position_lifecycle_for_bounded_positive_pre_settlement_okx_and_kalshi_carry',
+      kalshiExecutionAuthority: 'funding_position_lifecycle_fail_closed_on_system_owned_capital',
+      kalshiExecutionStatus: 'registered_and_promotable_only_with_exclusive_system_owned_margin_plus_system_owned_direct_usd_hedge_inventory',
       projectedProfitIsDeterministicProfit: false,
       measurableProjectedBpsOutsideEntryWindow: true,
       firstPassPrivateEvidenceForAllOkxRoutes: true,
@@ -196,11 +258,13 @@ class FundingRateMonitor {
     const symbols = [...new Set([...(universe.length ? universe : FALLBACK_SYMBOLS), ...FALLBACK_SYMBOLS])];
     try {
       ensureOkxFundingLifecycleAdapterRegistered();
+      ensureKalshiFundingLifecycleAdapterRegistered();
       const batch = await discoverFundingRates(symbols);
       const notionalUsd = Math.max(1, Number(process.env.CRYPTOCRAWL_FUNDING_REFERENCE_NOTIONAL_USD || 250));
       const ttlMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_FUNDING_CANDIDATE_TTL_MS || 45_000));
       let projectedPositive = 0;
       let eligible = 0;
+      let kalshiEligible = 0;
 
       const okxCapabilityTargets = batch.observations
         .filter(observation => observation.venue === 'okx')
@@ -265,6 +329,8 @@ class FundingRateMonitor {
         const projectedNet = decision.projectedNetProfitUsd;
         if (projectedNet !== null && projectedNet > 0) projectedPositive++;
 
+        const fees = Math.max(0, decision.expectedTradingFeesUsd ?? 0);
+        const basis = Math.max(0, decision.expectedBasisAndSlippageUsd ?? 0);
         const okxExecutionCapable = observation.venue === 'okx'
           && observation.fundingRate > 0
           && projectedNet !== null
@@ -274,10 +340,23 @@ class FundingRateMonitor {
           && executionEvidence.expiresAt > Date.now()
           && swapCapability.instrumentVisible
           && swapCapability.accountModeVisible;
-        // Kalshi remains fail-closed until its dedicated lifecycle and system-owned
-        // margin-capital provenance authority are both complete. Exact economics
-        // are still published into canonical BPS search immediately.
-        const executionCapable = okxExecutionCapable;
+
+        const kalshiCapital = observation.venue === 'kalshi_perps'
+          && kalshiEvidence
+          && projectedNet !== null
+          && projectedNet > 0
+          && window.eligible
+          ? await kalshiCapitalAdmission(kalshiEvidence, fees / 2 + basis / 2, fees / 2 + basis / 2).catch(() => null)
+          : null;
+        const kalshiExecutionCapable = observation.venue === 'kalshi_perps'
+          && observation.fundingRate > 0
+          && projectedNet !== null
+          && projectedNet > 0
+          && window.eligible
+          && kalshiEvidence !== null
+          && kalshiEvidence.expiresAt > Date.now()
+          && kalshiCapital?.ready === true;
+        const executionCapable = okxExecutionCapable || kalshiExecutionCapable;
         const opportunityId = `funding:${observation.venue}:${observation.instrumentId}:${observation.symbol}`;
         const exactEvidenceExpiry = kalshiEvidence?.expiresAt ?? executionEvidence?.expiresAt ?? Number.POSITIVE_INFINITY;
         const expiresAt = executionCapable
@@ -287,8 +366,6 @@ class FundingRateMonitor {
             : observation.observedAt + ttlMs;
 
         if (okxExecutionCapable) {
-          const fees = Math.max(0, decision.expectedTradingFeesUsd ?? 0);
-          const basis = Math.max(0, decision.expectedBasisAndSlippageUsd ?? 0);
           const marginFraction = Math.max(0.02, Math.min(0.50, Number(process.env.CRYPTOCRAWL_FUNDING_MARGIN_BUFFER_FRACTION || 0.10)));
           const plan: OkxFundingExecutionPlan = {
             opportunityId,
@@ -327,11 +404,60 @@ class FundingRateMonitor {
           eligible++;
         }
 
+        if (kalshiExecutionCapable && kalshiEvidence && kalshiCapital) {
+          const plan: KalshiFundingExecutionPlan = {
+            opportunityId,
+            venue: 'kalshi_perps',
+            symbol: observation.symbol,
+            notionalUsd: kalshiEvidence.measuredNotionalUsd,
+            expectedNetProfitUsd: projectedNet!,
+            expectedEntryCostUsd: fees / 2 + basis / 2,
+            expectedExitCostUsd: fees / 2 + basis / 2,
+            expectedFundingUsd: decision.expectedFundingUsd ?? 0,
+            marginBufferUsd: kalshiCapital.requiredMarginUsd,
+            fundingTimestamp: kalshiEvidence.nextFundingTime,
+            expiresAt,
+            provenance: [
+              ...observation.provenance,
+              ...kalshiEvidence.provenance,
+              'funding_profit_authority:projected_expected_value_until_terminal_fills_and_funding_history',
+              'funding_entry:before_settlement_assessment',
+              'funding_entry_exit_depth:kalshi_perps_plus_direct_usd_cex_measured',
+              'funding_lifecycle:kalshi_registered',
+              'kalshi_margin:exclusive_system_owned_capital_provenance_proven',
+              `${kalshiEvidence.hedgeVenue}_usd_hedge:system_owned_inventory_proven`,
+            ],
+            kalshi: {
+              ticker: kalshiEvidence.ticker,
+              baseAsset: kalshiEvidence.baseAsset,
+              quoteAsset: kalshiEvidence.quoteAsset,
+              hedgeVenue: kalshiEvidence.hedgeVenue,
+              hedgeSymbol: kalshiEvidence.hedgeSymbol,
+              contracts: kalshiEvidence.contracts,
+              contractSize: kalshiEvidence.contractSize,
+              baseQuantity: kalshiEvidence.baseQuantity,
+              fundingRate: kalshiEvidence.fundingRate,
+              evidenceMeasuredAt: kalshiEvidence.measuredAt,
+              evidenceExpiresAt: kalshiEvidence.expiresAt,
+              kalshiTakerFeeBps: kalshiEvidence.kalshiTakerFeeBps,
+              hedgeTakerFeeBps: kalshiEvidence.hedgeTakerFeeBps,
+              entry: {
+                kalshiEntryLimit: kalshiEvidence.kalshiEntryLimit,
+                spotEntryLimit: kalshiEvidence.spotEntryLimit,
+              },
+            },
+          };
+          rememberPreparedKalshiFundingPlan(plan);
+          eligible++;
+          kalshiEligible++;
+        }
+
         const missingInformation = [
           ...decision.missingInformation,
           ...(observation.venue === 'okx' && observation.fundingRate > 0 && !executionEvidence ? ['required:measured_entry_exit_depth_margin_capacity'] : []),
           ...(observation.venue === 'kalshi_perps' && observation.fundingRate > 0 && !kalshiEvidence ? ['required:kalshi_exact_perps_and_direct_usd_spot_hedge_evidence'] : []),
-          ...(observation.venue === 'kalshi_perps' && kalshiEvidence ? ['required:kalshi_system_owned_margin_capital_provenance', 'required:kalshi_funding_lifecycle_adapter'] : []),
+          ...(observation.venue === 'kalshi_perps' && kalshiEvidence && kalshiCapital ? kalshiCapital.reasons : []),
+          ...(observation.venue === 'kalshi_perps' && kalshiEvidence && !kalshiCapital && projectedNet !== null && projectedNet > 0 && window.eligible ? ['required:kalshi_system_capital_readiness_evidence'] : []),
           ...(!window.eligible && (observation.venue === 'okx' || observation.venue === 'kalshi_perps') ? [`advisory:${window.reason}`] : []),
           ...(observation.venue === 'kraken_futures' ? ['required:kraken_derivatives_execution_credentials'] : []),
           ...(observation.venue === 'binance_futures' ? ['required:binance_execution_capability_intentionally_disabled'] : []),
@@ -343,6 +469,14 @@ class FundingRateMonitor {
         const exactProvenance = [
           ...(executionEvidence?.provenance ?? []),
           ...(kalshiEvidence?.provenance ?? []),
+          ...(kalshiCapital ? [
+            `kalshi_system_owned_margin_usd:${kalshiCapital.systemOwnedMarginUsd}`,
+            `kalshi_usable_margin_usd:${kalshiCapital.usableMarginUsd}`,
+            `kalshi_required_margin_usd:${kalshiCapital.requiredMarginUsd}`,
+            `kalshi_system_owned_hedge_usd:${kalshiCapital.systemOwnedHedgeUsd}`,
+            `kalshi_required_hedge_usd:${kalshiCapital.requiredHedgeUsd}`,
+            `kalshi_unexplained_account_equity_usd:${kalshiCapital.unexplainedAccountEquityUsd ?? 'unknown'}`,
+          ] : []),
         ];
         const quotePrice = kalshiEvidence?.kalshiEntryVwap ?? observation.perpReferencePrice;
         const candidateAssets = kalshiEvidence ? [kalshiEvidence.baseAsset, 'USD'] : quotedAsset(observation.symbol);
@@ -397,9 +531,11 @@ class FundingRateMonitor {
           quoteAgeMs: Math.max(0, Date.now() - observation.observedAt),
           executableCapability: executionCapable,
           executionCapabilityReason: executionCapable
-            ? 'OKX positive projected carry is inside the pre-settlement entry window with authenticated fees, measured SPOT/SWAP depth, exact contract sizing, system-capital-aware lifecycle capability, FOK entry/close, margin monitoring, authenticated funding bills and terminal realized accounting'
+            ? kalshiExecutionCapable
+              ? `Kalshi positive projected carry is inside the pre-settlement entry window with authenticated effective fees, exact Kalshi-perps/${kalshiEvidence!.hedgeVenue}-USD depth, exclusive system-owned Kalshi margin, system-owned hedge inventory, deterministic FOK recovery, margin monitoring and terminal funding/fill accounting`
+              : 'OKX positive projected carry is inside the pre-settlement entry window with authenticated fees, measured SPOT/SWAP depth, exact contract sizing, system-capital-aware lifecycle capability, FOK entry/close, margin monitoring, authenticated funding bills and terminal realized accounting'
             : observation.venue === 'kalshi_perps' && kalshiEvidence
-              ? `Kalshi positive carry has authenticated effective fees and exact Kalshi-perps/${kalshiEvidence.hedgeVenue}-USD hedge depth with measured projected all-in BPS; execution remains blocked until system-owned Kalshi margin capital provenance and the durable Kalshi funding lifecycle are proven`
+              ? `Kalshi positive carry has authenticated effective fees and exact Kalshi-perps/${kalshiEvidence.hedgeVenue}-USD hedge depth with measured projected all-in BPS; live execution remains fail-closed on the listed system-capital evidence only`
               : observation.venue === 'kalshi_perps'
                 ? 'Kalshi public funding is visible, but exact perps/direct-USD hedge execution evidence is incomplete and no economics are fabricated'
                 : observation.venue === 'okx' && projectedNet !== null
@@ -421,7 +557,11 @@ class FundingRateMonitor {
             'funding_private_evidence:budget_defer_removed',
             'durable_funding_lifecycle:migration_owned_nonblocking',
             ...(observation.venue === 'okx' ? ['okx_funding_lifecycle:authenticated_fills_and_bills'] : []),
-            ...(observation.venue === 'kalshi_perps' ? ['kalshi_funding_lifecycle:pending_nonpromoting', 'kalshi_margin_balance:not_system_ownership_proof'] : []),
+            ...(observation.venue === 'kalshi_perps' ? [
+              'kalshi_funding_lifecycle:registered_nonblocking',
+              'kalshi_margin_balance:capacity_only_not_ownership',
+              kalshiCapital?.ready === true ? 'kalshi_system_capital:execution_proven' : 'kalshi_system_capital:missing_nonpromoting',
+            ] : []),
             'unknown_cost_is_not_zero',
             executionCapable ? 'execution_promoted_from_projected_carry_and_minimum_sufficient_execution_evidence' : 'execution_not_promoted_without_required_execution_evidence',
           ],
@@ -439,13 +579,13 @@ class FundingRateMonitor {
         okxPrivateCapabilityDeferred: 0,
         kalshiExactEvidenceTargets: kalshiTargets.length,
         kalshiExactEvidenceResolved: [...kalshiEnrichment.values()].filter(Boolean).length,
-        kalshiExecutionEligible: 0,
-        kalshiExecutionBlockedBySystemCapitalAndLifecycle: true,
+        kalshiExecutionEligible: kalshiEligible,
+        kalshiExecutionBlockedByMissingSystemCapital: kalshiEligible === 0 && [...kalshiEnrichment.values()].some(Boolean),
         firstPassPrivateEvidenceForAllOkxRoutes: true,
         firstPassMeasuredEvidenceForSupportedKalshiRoutes: true,
         projectedBpsMeasuredOutsideEntryWindow: true,
         publicDiscoveryBlockedByPrivateEnrichment: false,
-        note: 'Funding entries are projected carry before settlement; only authenticated terminal fills and funding bills become realized profit truth',
+        note: 'Funding entries are projected carry before settlement; only authenticated terminal fills and funding bills/history become realized profit truth',
       });
     } catch (error) {
       this.cycles++;
