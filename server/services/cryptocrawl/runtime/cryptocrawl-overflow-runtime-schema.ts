@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 20;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v20';
+const SCHEMA_VERSION = 22;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v22';
 
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
@@ -54,6 +54,8 @@ const MIGRATIONS = [
   '048_cryptocrawler_kalshi_event_lifecycle.sql',
   '049_cryptocrawler_kalshi_probability_calibration.sql',
   '050_cryptocrawler_kalshi_event_market_maker.sql',
+  '051_cryptocrawler_polymarket_event_order_recovery.sql',
+  '052_cryptocrawler_polymarket_system_owned_cash.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -92,6 +94,10 @@ const REQUIRED_TABLES = [
   'private.cryptocrawler_kalshi_probability_models',
   'private.cryptocrawler_kalshi_event_maker_lifecycles',
   'private.cryptocrawler_kalshi_event_maker_performance',
+  'private.cryptocrawler_polymarket_event_order_intents',
+  'public.cryptocrawler_polymarket_system_owned_cash_lots',
+  'public.cryptocrawler_polymarket_cash_reservations',
+  'public.cryptocrawler_polymarket_cash_settlements',
   'public.cryptocrawler_onchain_system_owned_lots',
   'public.cryptocrawler_onchain_inventory_reservations',
   'public.cryptocrawler_onchain_system_owned_settlements',
@@ -124,6 +130,7 @@ const REQUIRED_TABLES = [
 const REQUIRED_FUNCTIONS = [
   'private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)',
   'private.cryptocrawler_seed_cex_system_owned_lot()',
+  'private.cryptocrawler_seed_polymarket_system_owned_cash_lot()',
   'public.cryptocrawler_treasury_worker_claim(text,integer)',
   'public.cryptocrawler_treasury_worker_release(text)',
   'public.cryptocrawler_terminal_sweep_truth_guard()',
@@ -153,6 +160,9 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_reserve_kalshi_event_system_cash(text,text,numeric,timestamp with time zone,jsonb)',
   'public.cryptocrawler_release_kalshi_event_system_cash(uuid)',
   'public.cryptocrawler_renew_kalshi_event_system_cash(uuid,timestamp with time zone)',
+  'public.cryptocrawler_reserve_polymarket_system_cash(text,text,numeric,timestamp with time zone,jsonb)',
+  'public.cryptocrawler_release_polymarket_system_cash(uuid)',
+  'public.cryptocrawler_renew_polymarket_system_cash(uuid,timestamp with time zone)',
 ] as const;
 
 let schemaReady = false;
