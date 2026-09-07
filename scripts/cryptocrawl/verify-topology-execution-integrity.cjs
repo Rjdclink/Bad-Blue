@@ -32,19 +32,37 @@ assert(makerRuntime.includes('createPostOnlyMakerAdapters(plan)'), 'maker live e
 assert(runtime.includes("install('stablecoin_maker_execution', () => ensureStablecoinMakerExecutionWiring())"), 'canonical runtime must install maker execution wiring through an isolated component');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'maker wiring failure must not own global runtime shutdown');
 
-assert(across.includes('getAcrossBridgeQuote({'), 'Across execution must refresh the quote immediately before signing');
-assert(across.includes('simulationSuccess !== true'), 'Across execution must reject an unsimulated quote');
+// Across provider simulation is advisory. Fresh route identity, guaranteed output,
+// actual approval gas, positive post-approval economics, signer/chain identity,
+// durable origin submission and terminal destination/refund evidence stay hard.
 assert(across.includes('freshExecutionPayload'), 'Across execution must fetch a fresh transaction payload');
+assert(across.includes('simulationVetoAuthority: false'), 'Across simulation must be advisory only');
+assert(across.includes('REJECT_ACROSS_MINIMUM_OUTPUT_WORSENED'), 'Across must reject worse guaranteed output');
+assert(across.includes('liveApprovalGasUsd'), 'Across must price actual approval gas');
+assert(across.includes('postApprovalEconomicsPositive'), 'Across must re-prove positive economics after approvals');
+assert(across.includes('armPreparedAcrossOriginTransaction'), 'Across signed origin transaction must be durable before broadcast');
 assert(across.includes('getAcrossDepositSettlementEvidence({'), 'Across execution must bind provider status to terminal receipt evidence');
 assert(across.includes('destinationReceiptVerified'), 'successful bridge settlement must require destination receipt verification');
-assert(liquidation.includes('getUserAccountData'), 'liquidation must re-read Aave account health');
+assert(!across.includes("quote.simulationSuccess !== true"), 'Across input quote simulation must not be an execution veto');
+
+// Aave liquidation authority is current protocol state and measured economics,
+// while eth_call remains advisory telemetry.
+assert(liquidation.includes('getUserAccountData'), 'liquidation must re-read Aave account health and total debt');
+assert(liquidation.includes('getReservesCount'), 'liquidation must bind exact reserve count');
+assert(liquidation.includes('getReserveAddressById'), 'liquidation must resolve stable reserve ids');
 assert(liquidation.includes('getUserReserveData'), 'liquidation must inspect reserve-level debt/collateral');
+assert(liquidation.includes('getUserEMode'), 'liquidation must bind eMode state');
+assert(liquidation.includes('getPaused'), 'liquidation must bind reserve pause state');
+assert(liquidation.includes('getLiquidationGracePeriod'), 'liquidation must bind liquidation grace period');
+assert(liquidation.includes('MIN_BASE_MAX_CLOSE_FACTOR_THRESHOLD'), 'liquidation must implement current Aave reserve-value close-factor threshold');
+assert(liquidation.includes('MIN_LEFTOVER_BASE'), 'liquidation must implement current Aave residual dust threshold');
 assert(liquidation.includes('measureAaveV3FlashLoanEconomics'), 'liquidation must measure current flash-loan economics');
 assert(liquidation.includes("purpose: 'execution'"), 'liquidation unwind must use a firm execution quote');
-assert(liquidation.includes('provider.call('), 'liquidation must exact-simulate the receiver payload');
 assert(liquidation.includes('provider.estimateGas('), 'liquidation must measure gas feasibility');
+assert(liquidation.includes('simulationVetoAuthority: false'), 'liquidation eth_call must not own veto authority');
 assert(liquidation.includes('deterministicNetProfitUsd'), 'liquidation must calculate deterministic all-in economics');
 assert(liquidation.includes('settlementConfirmed: true'), 'liquidation must expose terminal confirmed receipt outcomes');
+assert(!liquidation.includes('CRYPTOCRAWL_LIQUIDATION_COLLATERAL_SELL_BPS'), 'liquidation must not reintroduce an arbitrary collateral haircut');
 
 assert(fundingMigration.includes('private.cryptocrawler_funding_lifecycles'), 'funding lifecycle schema must be migration-owned');
 assert(funding.includes("const TABLE = 'private.cryptocrawler_funding_lifecycles'"), 'funding runtime must use the migration-owned lifecycle table');
@@ -61,7 +79,7 @@ assert(router.includes('funding_lifecycle_adapter_unavailable'), 'router must fa
 
 assert(mev.includes('sandwichOrFrontrun: false'), 'MEV execution must remain backrun-only');
 assert(mev.includes('signedBackrunTransaction'), 'MEV executor must accept exact signed backrun bytes');
-assert(mev.includes('MultiRelaySubmitter'), 'backrun must use relay simulation/submission authority');
+assert(mev.includes('MultiRelaySubmitter'), 'backrun must use relay submission authority');
 assert(mev.includes('transactionIndex'), 'terminal proof must confirm same-block victim-before-backrun ordering');
 assert(mempoolCapability.includes('transactionChainBinding'), 'mempool capability must report exact per-transaction chain binding');
 assert(mempoolCapability.includes('executableBackrunEvidence: false'), 'pending-feed capability alone must never become executable backrun evidence');
@@ -77,4 +95,4 @@ for (const [name, source] of Object.entries({ across, liquidation, funding, mev,
   assert(!source.includes('syntheticProfit'), `${name} must not introduce synthetic profit authority`);
 }
 
-console.log('[topology-execution-integrity] PASS: inventory, isolated maker runtime, cross-chain, liquidation, funding, MEV fail-closed compiler boundary, and rebalancing invariants are preserved');
+console.log('[topology-execution-integrity] PASS: inventory, maker, cross-chain, exact Aave liquidation, funding, MEV and rebalancing retain hard execution/settlement truth while simulation remains advisory');
