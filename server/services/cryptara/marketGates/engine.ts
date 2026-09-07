@@ -238,7 +238,10 @@ export class CryptaraMarketGateEngine {
         const makerOnly = f.makerOnly === true;
         const makerFee = isFiniteNumber(f.makerFeeBps) ? f.makerFeeBps : undefined;
         const takerFee = isFiniteNumber(f.takerFeeBps) ? f.takerFeeBps : undefined;
-        const rebate = isFiniteNumber(f.makerRebateBps) ? Math.max(0, f.makerRebateBps) : undefined;
+        // Canonical fee evidence carries rebate magnitude as a positive credit,
+        // while older Cryptara/test contexts encoded the same credit as negative
+        // BPS. Normalize both representations without changing economic meaning.
+        const rebate = isFiniteNumber(f.makerRebateBps) ? Math.abs(f.makerRebateBps) : undefined;
 
         if (makerOnly) {
           if (!isFiniteNumber(makerFee)) {
