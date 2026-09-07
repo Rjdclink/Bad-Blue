@@ -2,12 +2,14 @@ import { constants, createHash, createPrivateKey, sign, type KeyObject } from 'n
 import logger from '../../../logger.js';
 
 export type KalshiApiEnvironment = 'production' | 'demo';
+export type KalshiCredentialScope = 'auto' | 'event' | 'perps';
 
 export interface KalshiAuthenticatedRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
   timeoutMs?: number;
   environment?: KalshiApiEnvironment;
+  credentialScope?: KalshiCredentialScope;
 }
 
 const PROD_ORIGIN = 'https://external-api.kalshi.com';
@@ -26,21 +28,40 @@ function cleanSecret(raw: string | undefined): string | null {
   return value || null;
 }
 
-/**
- * Kalshi recommends separate credentials for the Perps/margin surface. Prefer
- * those when present while retaining the already-deployed generic variables as
- * a compatibility fallback. Secrets are never logged or emitted in snapshots.
- */
-function apiKeyId(): string | null {
-  return cleanSecret(process.env.KALSHI_PERPS_API_KEY)
-    || cleanSecret(process.env.KALSHI_PERPS_KEY_ID)
-    || cleanSecret(process.env.KALSHI_API_KEY)
+function eventApiKeyId(): string | null {
+  return cleanSecret(process.env.KALSHI_API_KEY)
     || cleanSecret(process.env.KALSHI_API_KEY_ID);
 }
 
-function privateKeyRaw(): string | null {
-  return cleanSecret(process.env.KALSHI_PERPS_PRIVATE_KEY)
-    || cleanSecret(process.env.KALSHI_PRIVATE_KEY);
+function eventPrivateKeyRaw(): string | null {
+  return cleanSecret(process.env.KALSHI_PRIVATE_KEY);
+}
+
+function perpsApiKeyId(): string | null {
+  return cleanSecret(process.env.KALSHI_PERPS_API_KEY)
+    || cleanSecret(process.env.KALSHI_PERPS_KEY_ID);
+}
+
+function perpsPrivateKeyRaw(): string | null {
+  return cleanSecret(process.env.KALSHI_PERPS_PRIVATE_KEY);
+}
+
+/**
+ * Kalshi may use separate credentials for event/prediction and perps surfaces.
+ * Existing generic credentials remain a compatibility fallback for perps, while
+ * event requests prefer the generic event key so a configured perps key cannot
+ * accidentally shadow a valid prediction-market credential.
+ */
+function apiKeyId(scope: KalshiCredentialScope = 'auto'): string | null {
+  if (scope === 'event') return eventApiKeyId() || perpsApiKeyId();
+  if (scope === 'perps') return perpsApiKeyId() || eventApiKeyId();
+  return perpsApiKeyId() || eventApiKeyId();
+}
+
+function privateKeyRaw(scope: KalshiCredentialScope = 'auto'): string | null {
+  if (scope === 'event') return eventPrivateKeyRaw() || perpsPrivateKeyRaw();
+  if (scope === 'perps') return perpsPrivateKeyRaw() || eventPrivateKeyRaw();
+  return perpsPrivateKeyRaw() || eventPrivateKeyRaw();
 }
 
 function normalizePem(value: string): string {
@@ -64,20 +85,21 @@ function decodePrivateKey(value: string): KeyObject {
   }
 }
 
-let cachedPrivateKey: { fingerprint: string; key: KeyObject } | null = null;
-function privateKey(): KeyObject {
-  const raw = privateKeyRaw();
-  if (!raw) throw new Error('Kalshi private key is not configured');
+const cachedPrivateKeys = new Map<string, KeyObject>();
+function privateKey(scope: KalshiCredentialScope): KeyObject {
+  const raw = privateKeyRaw(scope);
+  if (!raw) throw new Error(`Kalshi ${scope} private key is not configured`);
   const fingerprint = createHash('sha256').update(raw, 'utf8').digest('hex');
-  if (cachedPrivateKey?.fingerprint === fingerprint) return cachedPrivateKey.key;
+  const cached = cachedPrivateKeys.get(fingerprint);
+  if (cached) return cached;
   const key = decodePrivateKey(raw);
   if (key.asymmetricKeyType !== 'rsa') throw new Error('Kalshi private key must be an RSA key');
-  cachedPrivateKey = { fingerprint, key };
+  cachedPrivateKeys.set(fingerprint, key);
   return key;
 }
 
-export function kalshiCredentialsPresent(): boolean {
-  return Boolean(apiKeyId() && privateKeyRaw());
+export function kalshiCredentialsPresent(scope: KalshiCredentialScope = 'auto'): boolean {
+  return Boolean(apiKeyId(scope) && privateKeyRaw(scope));
 }
 
 export function getKalshiApiEnvironment(): KalshiApiEnvironment {
@@ -102,14 +124,14 @@ function normalizePath(pathWithQuery: string): string {
   return raw;
 }
 
-function signatureHeaders(method: string, pathWithQuery: string): Record<string, string> {
-  const keyId = apiKeyId();
-  if (!keyId) throw new Error('Kalshi API key ID is not configured');
+function signatureHeaders(method: string, pathWithQuery: string, scope: KalshiCredentialScope): Record<string, string> {
+  const keyId = apiKeyId(scope);
+  if (!keyId) throw new Error(`Kalshi ${scope} API key ID is not configured`);
   const timestamp = String(Date.now());
   const pathWithoutQuery = normalizePath(pathWithQuery).split('?')[0];
   const message = Buffer.from(`${timestamp}${method.toUpperCase()}${pathWithoutQuery}`, 'utf8');
   const signature = sign('sha256', message, {
-    key: privateKey(),
+    key: privateKey(scope),
     padding: constants.RSA_PKCS1_PSS_PADDING,
     saltLength: 32,
   }).toString('base64');
@@ -125,11 +147,12 @@ export async function kalshiAuthenticatedRequest<T>(
   options: KalshiAuthenticatedRequestOptions = {},
 ): Promise<T> {
   const method = options.method || 'GET';
+  const scope = options.credentialScope || 'auto';
   const path = normalizePath(pathWithQuery);
   const origin = getKalshiApiOrigin(options.environment);
   const headers: Record<string, string> = {
     accept: 'application/json',
-    ...signatureHeaders(method, path),
+    ...signatureHeaders(method, path, scope),
   };
   let body: string | undefined;
   if (options.body !== undefined) {
@@ -156,18 +179,16 @@ export async function kalshiAuthenticatedRequest<T>(
     logger.warn('[KalshiAuth] Authenticated request failed closed', {
       component: 'KalshiAuthenticatedAuthority',
       environment: options.environment || getKalshiApiEnvironment(),
+      credentialScope: scope,
       method,
       path: path.split('?')[0],
       status: response.status,
       latencyMs: Date.now() - startedAt,
       message: message.slice(0, 240) || null,
-      apiKeyPresent: Boolean(apiKeyId()),
-      privateKeyPresent: Boolean(privateKeyRaw()),
-      perpsSpecificCredentialPreferred: Boolean(
-        cleanSecret(process.env.KALSHI_PERPS_API_KEY)
-        || cleanSecret(process.env.KALSHI_PERPS_KEY_ID)
-        || cleanSecret(process.env.KALSHI_PERPS_PRIVATE_KEY),
-      ),
+      scopedApiKeyPresent: Boolean(apiKeyId(scope)),
+      scopedPrivateKeyPresent: Boolean(privateKeyRaw(scope)),
+      eventCredentialPresent: Boolean(eventApiKeyId() && eventPrivateKeyRaw()),
+      perpsCredentialPresent: Boolean(perpsApiKeyId() && perpsPrivateKeyRaw()),
       secretsLogged: false,
       executionAuthorityGranted: false,
     });
@@ -177,9 +198,10 @@ export async function kalshiAuthenticatedRequest<T>(
 }
 
 export async function getKalshiMarginEnabled(forceEnvironment?: KalshiApiEnvironment): Promise<boolean> {
-  if (!kalshiCredentialsPresent()) return false;
+  if (!kalshiCredentialsPresent('perps')) return false;
   const result = await kalshiAuthenticatedRequest<{ enabled?: boolean }>('/trade-api/v2/margin/enabled', {
     environment: forceEnvironment,
+    credentialScope: 'perps',
   });
   return result?.enabled === true;
 }
