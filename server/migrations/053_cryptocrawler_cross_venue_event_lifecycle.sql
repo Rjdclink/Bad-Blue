@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS private.cryptocrawler_cross_venue_event_lifecycles (
   opportunity_id text NOT NULL UNIQUE,
   kalshi_ticker text NOT NULL,
   polymarket_market_id text NOT NULL,
-  polymarket_condition_id text NOT NULL CHECK (polymarket_condition_id ~ '^0x[0-9a-fA-F]{64}$'),
+  polymarket_condition_id text NOT NULL CHECK (
+    polymarket_condition_id ~ '^0x[0-9a-fA-F]{64}$'
+    AND lower(polymarket_condition_id) <> ('0x' || repeat('0', 64))
+  ),
   matched_contracts integer NOT NULL CHECK (matched_contracts > 0),
   kalshi_outcome text NOT NULL CHECK (kalshi_outcome IN ('yes','no')),
   polymarket_outcome text NOT NULL CHECK (polymarket_outcome IN ('yes','no')),
@@ -47,4 +50,4 @@ REVOKE ALL ON TABLE private.cryptocrawler_cross_venue_event_lifecycles FROM PUBL
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE private.cryptocrawler_cross_venue_event_lifecycles TO service_role;
 
 COMMENT ON TABLE private.cryptocrawler_cross_venue_event_lifecycles IS
-  'Durable cross-venue prediction-event state. Kalshi is sequenced first because its authenticated reduce-only FOK unwind is the defined one-leg recovery path; Polymarket is never submitted while Kalshi entry state is ambiguous.';
+  'Durable cross-venue prediction-event state. Kalshi is sequenced first because its authenticated reduce-only FOK unwind is the defined one-leg recovery path; Polymarket is never submitted while Kalshi entry state is ambiguous. Exact non-zero Polymarket condition identity is mandatory.';
