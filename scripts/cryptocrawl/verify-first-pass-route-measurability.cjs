@@ -38,12 +38,23 @@ has(makerAdmission, 'allGovernedMakerSymbolsEvaluated: makerSymbols.length === g
 has(makerAdmission, "privateFeeHydrationPolicy: 'all_governed_symbols_first_pass_ordered_by_measured_recovery_value'", 'maker runtime all-route first-pass policy is missing');
 lacks(makerAdmission, '.slice(0, makerAdmissionSymbolBudget())', 'maker admission must not slice governed routes');
 
-// Every liquidatable position on an exact execution chain must receive full
-// hydration. Concurrency can bound pressure but cannot slice away positions.
+// Every liquidatable position on an exact execution chain must receive full hard-
+// fact hydration. eth_call simulation is advisory only and cannot be required for
+// submission; current protocol/oracle/size/flash/unwind/gas evidence is required.
 has(liquidation, 'runBounded(prioritized, liquidationHydrationConcurrency()', 'all liquidatable positions must be hydrated in the same cycle');
 has(liquidation, 'liquidation_first_pass:full_hydration_same_cycle', 'liquidation first-pass provenance is missing');
-has(liquidation, 'required:liquidation_debt_reserve_and_amount', 'liquidation hard execution evidence must be explicitly required');
-has(liquidation, 'required:exact_liquidation_simulation', 'exact liquidation simulation must remain a hard execution fact');
+has(liquidation, 'required:liquidation_debt_reserve_and_amount', 'liquidation debt reserve/amount evidence must be explicitly required');
+has(liquidation, 'required:liquidation_collateral_reserve_and_amount', 'liquidation collateral reserve/amount evidence must be explicitly required');
+has(liquidation, 'required:liquidation_bonus_and_protocol_fee', 'liquidation bonus/protocol-fee evidence must be explicitly required');
+has(liquidation, 'required:liquidation_close_factor_total_debt_thresholds_and_dust', 'liquidation close-factor and dust evidence must be explicitly required');
+has(liquidation, 'required:liquidation_reserve_pause_grace_and_emode_state', 'liquidation pause/grace/eMode evidence must be explicitly required');
+has(liquidation, 'required:liquidation_oracle_values', 'liquidation oracle evidence must be explicitly required');
+has(liquidation, 'required:measured_flash_loan_provider_liquidity_and_fee', 'liquidation flash-liquidity/fee evidence must be explicitly required');
+has(liquidation, 'required:liquidation_collateral_unwind_quote', 'liquidation unwind evidence must be explicitly required');
+has(liquidation, 'required:liquidation_gas_cost', 'liquidation gas evidence must be explicitly required');
+has(liquidation, 'liquidation_eth_call_simulation_execution_authority:false', 'liquidation simulation must remain non-authoritative');
+has(liquidation, 'liquidation_simulation_veto_authority:false', 'eligible liquidation simulation must remain non-vetoing');
+lacks(liquidation, 'required:exact_liquidation_simulation', 'simulation must not become required liquidation execution evidence');
 lacks(liquidation, 'CRYPTOCRAWL_LIQUIDATION_FIRM_HYDRATION_PER_CHAIN', 'per-chain liquidation hydration cap must remain retired');
 lacks(liquidation, '.slice(0, hydrationLimit)', 'liquidation hydration must not slice viable positions');
 
@@ -57,11 +68,13 @@ has(liquidationExecutor, 'if (!bestPlan || plan.deterministicNetProfitUsd > best
 lacks(liquidationExecutor, 'CRYPTOCRAWL_LIQUIDATION_PAIR_HYDRATION_LIMIT', 'liquidation pair hydration limit must remain retired');
 lacks(liquidationExecutor, 'pairs.slice(0, pairLimit)', 'liquidation pair hydration must not slice structural pairs');
 
-// Minimum-sufficient execution semantics remain canonical: optional/advisory facts
-// cannot veto a trade, while explicit required/critical facts remain blocking.
-has(registry, 'hasMinimumSufficientExecutionEvidence', 'minimum-sufficient execution invariant must remain installed');
-has(registry, "normalized.startsWith('required:')", 'required execution facts must remain blocking');
-has(registry, "normalized.startsWith('optional:')", 'optional facts must remain recognized as nonblocking');
-has(registry, "normalized.startsWith('advisory:')", 'advisory facts must remain recognized as nonblocking');
+// Required/critical execution evidence remains blocking. Optional/redundant/
+// advisory evidence remains observable but cannot become an execution veto.
+has(registry, "normalized.startsWith('required:')", 'required execution evidence must remain blocking');
+has(registry, "normalized.startsWith('critical:')", 'critical execution evidence must remain blocking');
+has(registry, "normalized.startsWith('optional:')", 'optional evidence must remain nonblocking');
+has(registry, "normalized.startsWith('redundant:')", 'redundant evidence must remain nonblocking');
+has(registry, "normalized.startsWith('advisory:')", 'advisory evidence must remain nonblocking');
+has(registry, 'executionBlockingMissingInformation(candidate)', 'execution consumers must receive the actual blocking evidence gaps');
 
-console.log('[first-pass-route-measurability] PASS: maker discovery/admission and liquidation position/pair formation no longer use route-dropping evidence budgets; compatibility selectors are non-constraining, provider pressure remains bounded by canonical rate/concurrency authorities, and minimum-sufficient execution evidence remains enforced');
+console.log('[first-pass-route-measurability] PASS: maker and liquidation routes receive same-cycle required evidence hydration without route-dropping budgets; liquidation simulation is advisory-only; required/critical execution evidence remains authoritative');

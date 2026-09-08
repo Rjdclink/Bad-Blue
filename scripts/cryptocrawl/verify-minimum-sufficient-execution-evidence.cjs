@@ -10,30 +10,35 @@ const scheduler = read('server/services/cryptocrawl/execution/canonical-executio
 const stack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 const multileg = read('server/services/cryptocrawl/optimization/unified-multileg-arbitrage-engine.ts');
 
-has(registry, 'hasMinimumSufficientExecutionEvidence', 'registry must define the minimum-sufficient execution invariant');
-has(registry, "candidate.status === 'eligible'", 'minimum-sufficient evidence must require current eligibility');
-has(registry, 'candidate.executableCapability === true', 'minimum-sufficient evidence must require authoritative executable capability');
-has(registry, "candidate.depth.status !== 'unavailable'", 'minimum-sufficient evidence must retain actual depth requirements');
-has(registry, 'netBps > 0', 'minimum-sufficient evidence must retain positive canonical net economics');
-has(registry, "normalized.startsWith('optional:')", 'optional evidence must be explicitly nonblocking');
-has(registry, "normalized.startsWith('redundant:')", 'redundant evidence must be explicitly nonblocking');
-has(registry, "normalized.startsWith('advisory:')", 'advisory evidence must be explicitly nonblocking');
-has(registry, "normalized.startsWith('required:')", 'future explicitly-required gaps must remain blocking');
-has(registry, "normalized.startsWith('critical:')", 'future explicitly-critical gaps must remain blocking');
-has(registry, 'executionBlockingMissingInformation(candidate)', 'consumer snapshots must expose only execution-blocking missing information');
-has(registry, 'const next = clone(previous, true);', 'internal updates must preserve complete diagnostic missing evidence');
-has(registry, 'advisory_missing_nonblocking:', 'nonblocking missing evidence must remain observable through provenance');
+// Required execution evidence is authoritative. Optional, redundant, advisory,
+// telemetry and learning fields remain observable but cannot become shadow vetoes.
+has(registry, "normalized.startsWith('required:')", 'required execution evidence must remain blocking');
+has(registry, "normalized.startsWith('critical:')", 'critical execution evidence must remain blocking');
+has(registry, "normalized.startsWith('optional:')", 'optional evidence must remain explicitly nonblocking');
+has(registry, "normalized.startsWith('redundant:')", 'redundant evidence must remain explicitly nonblocking');
+has(registry, "normalized.startsWith('advisory:')", 'advisory evidence must remain explicitly nonblocking');
+has(registry, 'executionBlockingMissingInformation(candidate)', 'consumer snapshots must expose execution-blocking evidence gaps');
+has(registry, 'const next = clone(previous, true);', 'internal updates must preserve complete diagnostic evidence');
+has(registry, 'advisory_missing_nonblocking:', 'nonblocking evidence gaps must remain observable through provenance');
 
-// Existing hard gates may still test missingInformation.length, but every execution
-// consumer receives the filtered registry snapshot. This preserves those guards as
-// a defense-in-depth check for explicit required/critical gaps without allowing
-// optional/redundant/irrelevant completeness fields to veto a trade.
-has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler defense-in-depth missing-information guard should remain');
-has(stack, 'candidate.missingInformation.length === 0', 'atomic stack defense-in-depth missing-information guard should remain');
-has(multileg, 'candidate.missingInformation.length', 'multileg defense-in-depth missing-information guard should remain');
+// Canonical execution requires the concrete facts needed to submit this route:
+// positive all-in economics for its domain, an available execution path,
+// authoritative capability, freshness and executable depth.
+has(router, 'const admitted = economicsAdmitted && pathAvailable && candidate.executableCapability && fresh && depthReady && hardVetoReasons.length === 0;', 'router must require all concrete execution evidence and no hard veto');
+has(router, 'advisory:missing_information:', 'non-required missing information must remain advisory');
+has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler must retain defense-in-depth over registry-filtered required gaps');
 
-// Unified admission already separates acquisition/telemetry from execution.
-has(router, 'const admitted = economicsAdmitted && pathAvailable && candidate.executableCapability && fresh && depthReady;', 'router admission must remain based on minimum execution facts, not completeness scoring');
-has(router, 'advisory:missing_information:', 'missing information must remain visible as advisory evidence');
+// Advisory optimizers may consume already-qualified candidates but cannot invent
+// new execution evidence requirements or simulation vetoes.
+has(stack, "candidate.status !== 'eligible'", 'atomic stack advisory must consume current eligible candidates');
+has(stack, 'candidate.executableCapability !== true', 'atomic stack advisory must require authoritative executable capability');
+has(stack, 'candidate.expiresAt <= Date.now()', 'atomic stack advisory must require fresh evidence');
+has(stack, 'executionAuthority: false', 'atomic stack must remain advisory-only');
 
-console.log('[minimum-sufficient-execution-evidence] PASS: optional/redundant/advisory missing information cannot veto a minimum-proven profitable executable trade; explicit required/critical gaps still fail closed');
+has(multileg, "candidate.expiresAt <= now || candidate.status !== 'eligible' || !candidate.executableCapability", 'multileg selection must require fresh eligible executable candidates');
+has(multileg, "candidate.depth.status === 'unavailable'", 'multileg selection must require executable depth');
+has(multileg, 'netProfitUsd <= 0', 'multileg selection must require positive deterministic all-in economics');
+has(multileg, 'if (!pathDecision?.executableNow) return null;', 'multileg selection must require an executable path');
+has(multileg, 'requiresIndependentFinalAdmission: true', 'multileg optimization cannot bypass final execution admission');
+
+console.log('[required-execution-evidence] PASS: execution is guarded by the evidence actually required for profitable live submission; optional/advisory completeness and simulations cannot become shadow vetoes');

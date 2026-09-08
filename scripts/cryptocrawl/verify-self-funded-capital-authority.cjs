@@ -119,8 +119,10 @@ assert.match(lotLedger, /SystemOwnedCexVenue\s*=\s*'coinbase'\s*\|\s*'kraken'\s*
 assert.match(lotLedger, /SYSTEM_CAPITAL_PROVENANCE_DEFICIT/, 'unowned trade or fee debit must be a hard provenance deficit');
 assert.match(lotLedger, /WHERE venue=\$1 AND asset=\$2 AND status='ACTIVE'/, 'lot consumption must lock only active system-owned inventory');
 assert.match(lotLedger, /FOR UPDATE/, 'CEX ownership mutation must lock consumed lots transactionally');
-const debitIndex = lotLedger.indexOf('// Debit first.');
-const creditIndex = lotLedger.indexOf('for (const [asset, delta] of entries) {', debitIndex + 1);
+assert.match(lotLedger, /if \(compareExactDecimals\(delta, '0'\) >= 0\) continue;[\s\S]*consumeSystemOwnedAsset/, 'negative ownership deltas must be consumed before outputs are created');
+assert.match(lotLedger, /if \(compareExactDecimals\(delta, '0'\) <= 0\) continue;[\s\S]*createSystemOwnedOutputLot/, 'positive ownership deltas must create output lots only after debit handling');
+const debitIndex = lotLedger.indexOf('consumeSystemOwnedAsset(client, evidence.venue, asset, negateExactDecimal(delta))');
+const creditIndex = lotLedger.indexOf('createSystemOwnedOutputLot({');
 assert.ok(debitIndex >= 0 && creditIndex > debitIndex, 'CEX ownership transformation must debit before creating outputs');
 assert.match(lotLedger, /cryptocrawler_cex_system_owned_settlements/, 'terminal CEX ownership application must have a durable idempotency boundary');
 assert.match(lotLedger, /status='APPLIED'/, 'terminal CEX ownership transformation must become durable only after all debits and credits succeed');
