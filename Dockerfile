@@ -105,7 +105,7 @@ COPY --from=builder /app/server/migrations/045_cryptocrawler_system_native_gas_s
 COPY --from=builder /app/server/migrations/046_cryptocrawler_kalshi_system_owned_margin_capital.sql ./dist/migrations/046_cryptocrawler_kalshi_system_owned_margin_capital.sql
 COPY --from=builder /app/server/migrations/047_cryptocrawler_kalshi_event_system_owned_cash.sql ./dist/migrations/047_cryptocrawler_kalshi_event_system_owned_cash.sql
 COPY --from=builder /app/server/migrations/048_cryptocrawler_kalshi_event_lifecycle.sql ./dist/migrations/048_cryptocrawler_kalshi_event_lifecycle.sql
-COPY --from=builder /app/server/migrations/049_cryptocrawler_kalshi_probability_calibration.sql ./dist/migrations/049_cryptocrawler_kalshi_probability_calibration.sql
+COPY --from=builder /app/server/migrations/049_cryptocrawler_probability_calibration.sql ./dist/migrations/049_cryptocrawler_probability_calibration.sql
 COPY --from=builder /app/server/migrations/050_cryptocrawler_kalshi_event_market_maker.sql ./dist/migrations/050_cryptocrawler_kalshi_event_market_maker.sql
 COPY --from=builder /app/server/migrations/051_cryptocrawler_polymarket_event_order_recovery.sql ./dist/migrations/051_cryptocrawler_polymarket_event_order_recovery.sql
 COPY --from=builder /app/server/migrations/052_cryptocrawler_polymarket_system_owned_cash.sql ./dist/migrations/052_cryptocrawler_polymarket_system_owned_cash.sql
@@ -122,7 +122,11 @@ COPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
 COPY --from=builder /app/artifacts/cryptocrawl ./artifacts/cryptocrawl
 COPY --from=builder /app/server/services/cryptocrawl/config/chains.json ./config/chains.json
 EXPOSE 5000
-RUN useradd -m appuser && chown -R appuser:appuser /app
+# Runtime dependencies are immutable/read-only. Avoid recursively changing the
+# very large node_modules tree; only application-owned paths need writable owner.
+RUN useradd -m appuser && \
+    chown appuser:appuser /app && \
+    chown -R appuser:appuser /app/dist /app/public /app/scripts /app/contracts /app/artifacts /app/config
 USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD node -e "const port = process.env.PORT || 5000; require('http').get('http://localhost:' + port + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => {process.exit(1)})"
