@@ -1,1653 +1,975 @@
-# Bad-Blue / LegalWhat
+<div align="center">
 
-## A Multi-Agent Intelligence, Legal Automation, OSINT, Geospatial, and Market-Research Platform
+# Bad-Blue
 
-**Legal AI • OSINT • Geospatial Reconstruction • Voice AI • Agent Orchestration • Probabilistic Analysis • Defensive Research • Multi-Chain Market Automation**
+### LegalWhat + CryptoCrawler
 
-Bad-Blue / LegalWhat is a platform-scale experimental intelligence codebase that began as a consumer law-enforcement-accountability product and expanded into a much broader architecture for legal automation, multi-model AI orchestration, public-record research, entity resolution, geospatial reconstruction, adaptive learning, distributed computation, crawler swarms, probabilistic analysis, and cryptocurrency market research/execution.
+**Two distinct product systems. One governed intelligence codebase.**
 
-The repository is not one application with a collection of unrelated demos. Its defining concept is **orchestration**: specialized systems collect evidence, transform it into structured observations, validate hypotheses, route expensive computation through shared infrastructure, preserve useful outcomes, enforce governance, and expose results to human-facing applications.
+Legal intelligence • Evidence analysis • Legal drafting • Public-record research  
+Market intelligence • Multi-topology arbitrage • Adaptive cognition • Verified execution
 
-> **Important engineering status note**
+</div>
+
+---
+
+## Repository at a Glance
+
+Bad-Blue contains **two primary product systems that are intentionally separated by domain authority**:
+
+| System | Purpose | Primary intelligence | Critical boundary |
+|---|---|---|---|
+| **LegalWhat** | Legal assistance, evidence analysis, legal research, drafting, public-record/accountability workflows | **LEXARA / ALEXARA**, F.M.I., C.A.D.E. | Legal intelligence does **not** receive crypto/blockchain execution authority |
+| **CryptoCrawler** | Market observation, arbitrage discovery, deterministic economics, probabilistic assessment, governance, execution, settlement, learning | **CRYPTARA**, CryptoCrawler canonical runtime, QuantiComp/Monte Carlo | Market intelligence does **not** receive legal-data authority |
+
+They may reuse shared infrastructure—compute routing, persistence, provider governance, observability, and orchestration—but they are **not one blended application**.
+
+> **Engineering status**
 >
-> This repository is under active integration and production hardening. Some components are operational, some depend on external credentials or deployed infrastructure, and some are experimental, simulated, compatibility-oriented, or partially connected. The terminology below describes the architectural role of each subsystem; it should not be interpreted as a claim that every subsystem is production-certified.
+> This is an actively integrated and hardened codebase. Some components are production-oriented, some require external credentials or deployed infrastructure, and some remain experimental or compatibility-oriented. Architectural descriptions below describe implemented responsibilities and authority boundaries; they are not a claim that every optional integration is currently live or production-certified.
 
 ---
 
-# Executive Architecture Summary
+## Navigation
 
-At the highest level, Bad-Blue is organized into five cooperating layers:
-
-1. **Human and application interfaces** — LegalWhat, Lexara, GeoConsole, People Finder, inmate/corrections tools, administrative interfaces, and other React/TypeScript surfaces.
-2. **Domain intelligence systems** — ALEXARA for legal/strategic reasoning, CRYPTARA for crypto/OSINT assessment, PANTHEON for targeted information extraction, and specialized crawler ecosystems.
-3. **Shared computational systems** — the Computational Reactor, Computational Beam, QuantiComp heavy-compute authority, Monte Carlo fabric, provider-routing controls, and resource schedulers.
-4. **State, learning, and memory systems** — Neural Spine, Eden, Tree of Knowledge, calibration stores, settlement-derived feedback, and controlled evolution mechanisms.
-5. **Governance and execution systems** — StageManager, governance envelopes, rate/nonce/resource controls, execution adapters, flash-loan and sponsored-gas infrastructure, terminal settlement, verification, and kill-switch controls.
-
-The names are intentionally distinctive, but every named component maps to a conventional engineering responsibility. The remainder of this README explains those responsibilities directly.
+- [Architecture: Two Systems, Shared Infrastructure](#architecture-two-systems-shared-infrastructure)
+- [LegalWhat](#legalwhat)
+- [LEXARA Legal Brain](#lexara-legal-brain)
+- [CryptoCrawler](#cryptocrawler)
+- [CRYPTARA](#cryptara)
+- [CRYPTARA Sovereign Cortex](#cryptara-sovereign-cortex)
+- [How CRYPTARA Learns](#how-cryptara-learns)
+- [Zero-Initial-Capital Architecture](#zero-initial-capital-architecture)
+- [Hot-State / Overflow Architecture](#hot-state--overflow-architecture)
+- [Recent Hardening and Optimization](#recent-hardening-and-optimization)
+- [Shared Computational Systems](#shared-computational-systems)
+- [Extended Intelligence Systems](#extended-intelligence-systems)
+- [Engineering Principles](#engineering-principles)
+- [Repository Guide](#repository-guide)
+- [Glossary](#glossary)
 
 ---
 
-# End-to-End System Flow
-
-The following is the practical end-to-end model for how the major systems fit together.
+# Architecture: Two Systems, Shared Infrastructure
 
 ```mermaid
-flowchart TD
-    U[User / Admin / External Data] --> UI[React / TypeScript Interfaces]
-    UI --> API[Express API / Service Layer]
+flowchart LR
+    subgraph LEGAL["LEGALWHAT DOMAIN"]
+        LU["User / Legal Matter"] --> LEX["LEXARA"]
+        LEX --> FMI["F.M.I.\nEvidence Intelligence"]
+        LEX --> LAW["Legal Knowledge Layer"]
+        LEX --> CADE["C.A.D.E.\nLegal Drafting"]
+        CADE --> LO["Legal Work Product"]
+    end
 
-    API --> LEX[Lexara - Conversational Legal Interface]
-    API --> LEGAL[LegalWhat - Legal Workflow Platform]
-    API --> PEOPLE[People Finder / OSINT]
-    API --> GEO[Hybrid GeoConsole / TSHPE]
-    API --> PAN[PANTHEON Intelligence Platform]
-    API --> CC[CryptoCrawler / CryptoCrawl]
+    subgraph CRYPTO["CRYPTOCRAWLER DOMAIN"]
+        MD["Live Market Evidence"] --> DISC["Canonical Discovery"]
+        DISC --> ECON["Deterministic Economics"]
+        ECON --> CTX["CRYPTARA + Evidence"]
+        CTX --> GOV["Governance / Readiness"]
+        GOV --> EXEC["Canonical Execution"]
+        EXEC --> SETTLE["Terminal Settlement"]
+        SETTLE --> LEARN["Calibration / Learning"]
+    end
 
-    ORCH[4JI - Top-Level Orchestration] --> ALEX[ALEXARA - Legal / Strategic Intelligence]
-    ORCH --> CRYPT[CRYPTARA - Crypto / OSINT Assessment]
-    ORCH --> MID[Middle Brain - Cross-Domain Integration]
-    ORCH --> LITTLE[Little Brain - Monitoring / Micro-Optimization]
+    subgraph SHARED["SHARED INFRASTRUCTURE — NOT SHARED DOMAIN AUTHORITY"]
+        REACTOR["Computational Reactor"]
+        BEAM["Computational Beam"]
+        QC["QuantiComp"]
+        DB["Runtime Persistence / Overflow"]
+        OBS["Observability / Provider Governance"]
+    end
 
-    CC --> DISC[Measured Discovery]
-    DISC --> REG[Measured Candidate Registry]
-    REG --> ECON[Deterministic Economics]
-    ECON --> SIZE[Atomic / Progressive Sizing]
-    SIZE --> ASSESS[Cryptara + Technical + Oracle Evidence]
-    ASSESS --> BEAM[Computational Beam]
-    BEAM --> QC[QuantiComp Heavy-Compute Authority]
-    QC --> MC[Monte Carlo / Tail-Risk Analysis]
-    MC --> GOV[StageManager + Governance]
-    GOV --> SCHED[Resource / Nonce / Rate Scheduling]
-    SCHED --> EXEC[Execution Adapters]
-    EXEC --> SETTLE[Terminal Settlement Verification]
-    SETTLE --> LEARN[Learning / Calibration]
-    LEARN --> EDEN[Eden / Neural Spine / Knowledge Memory]
-    LEARN --> SCALE[DynamicScale / Search-Pressure Adaptation]
+    LEX -. bounded compute .-> REACTOR
+    CTX -. bounded compute .-> BEAM
+    BEAM --> QC
+    REACTOR -. infrastructure .-> DB
+    QC -. infrastructure .-> DB
+    LEGAL -. telemetry .-> OBS
+    CRYPTO -. telemetry .-> OBS
 
-    PAN --> RAZORS[10 PANTHEON Razors]
-    PAN --> CRAWLERS[Specialized Crawler Ecosystem]
-
-    ALEX <--> REACTOR[Computational Reactor]
-    CRYPT <--> BEAM
-    PAN <--> BEAM
-    PEOPLE <--> BEAM
-    ORCH <--> SPINE[Neural Spine]
+    LEX -. "NO crypto execution authority" .- CTX
 ```
 
-In plain English:
+The architecture follows a simple rule:
 
-**Data comes in → specialized systems observe it → observations become candidates → candidates are enriched → all known costs are applied → sizing is optimized → intelligence systems assess the evidence → heavy computation is routed through the shared compute layer → probabilistic analysis tests robustness → governance decides whether execution is even permitted → bounded schedulers reserve resources → execution occurs → settlement is independently verified → only terminal realized results are allowed to become learning data.**
+> **Infrastructure may be shared. Domain authority is not.**
 
-That last rule matters throughout the architecture: **predicted profit, submitted transactions, and partial execution are not treated as realized truth.**
-
----
-
-# Core Terminology: What the Names Actually Mean
-
-## 4JI — Sovereign Orchestrator
-
-**Conventional description:** top-level multi-domain orchestration layer.
-
-4JI is the architectural coordinator intended to connect the platform's legal, OSINT, crypto, geospatial, AI, monitoring, memory, repair, optimization, and evolution systems.
-
-Its purpose is not to perform every task itself. It determines which domain system should handle a task, passes structured context among those systems, coordinates shared infrastructure, and maintains separation between domains that should not directly control one another.
-
-4JI-related concepts include:
-
-- **ALEXARA** for legal and strategic work.
-- **CRYPTARA** for crypto and OSINT analysis.
-- **Middle Brain** for cross-domain integration and reconciliation.
-- **Little Brain** for health checks, micro-optimization, and connection validation.
-- **Evolution Lock** for controlling whether adaptive systems are permitted to modify learned behavior.
-- **Reactor Bridge** for sending heavy jobs into shared computational infrastructure.
-- **Crown / Jewels concepts** for weighted high-level preferences and decision biases in experimental orchestration code.
-
-In ordinary engineering terminology, 4JI is best understood as a **domain-aware orchestration and policy layer**.
-
----
-
-## ALEXARA — Legal / Strategic Intelligence
-
-**Conventional description:** legal-domain reasoning and strategic analysis service.
-
-ALEXARA represents the platform's legal and structured strategic reasoning side. Its intended responsibilities include:
-
-- identifying legal issues;
-- interpreting regulations, statutes, precedent, and procedural requirements;
-- retrieving legal-domain information;
-- organizing arguments and recommendations;
-- maintaining legal-domain context;
-- validating outputs against other domain systems where appropriate;
-- supporting LegalWhat and Lexara workflows.
-
-ALEXARA is deliberately separated from the market-execution responsibilities of CRYPTARA and CryptoCrawler. That separation allows the platform to use different rules, evidence standards, and provider configurations for legal work and financial-market work.
-
----
-
-## CRYPTARA — Crypto / OSINT Assessment and Decision Layer
-
-**Conventional description:** higher-level market/OSINT assessment, pattern-analysis, and execution-feedback intelligence layer.
-
-When the project says **CRYPTARA**, it does not mean an exchange, trading bot, or blockchain. CRYPTARA sits above raw observations and tries to answer questions such as:
-
-- Is this pattern meaningful or noise?
-- Is the market condition consistent with the proposed strategy?
-- Does the observed topology resemble previously successful or failed conditions?
-- How confident should the system be in the candidate?
-- Does the current autonomous directive permit this execution mode or chain?
-- What did terminal settlement teach us about the prediction?
-
-CRYPTARA-related analysis includes pattern detection, network analysis, prediction, temporal behavior, transaction-pattern clustering, market-state interpretation, confidence scoring, execution feedback, and governance integration.
-
-Within CryptoCrawler, CRYPTARA is an **assessment layer**, not the sole execution authority. Deterministic economics, governance, resource scheduling, execution, and settlement remain separate responsibilities.
-
----
-
-## Lexara — Conversational Legal Intelligence
-
-**Conventional description:** human-facing conversational legal assistant and multimodal interaction layer.
-
-Lexara is the interface designed to make the legal-intelligence stack usable as a conversation rather than only through forms and API calls.
-
-Its architecture includes combinations of:
-
-- text conversation;
-- microphone input;
-- speech generation and playback;
-- persona and voice profiles;
-- document context;
-- legal consultation workflows;
-- visual/avatar interfaces;
-- optional geospatial overlays;
-- provider routing and fallback behavior;
-- voice-quality experimentation and optimization.
-
-Lexara is therefore the **interaction layer**, while ALEXARA and the LegalWhat services provide much of the underlying domain intelligence.
-
----
-
-## Computational Reactor
-
-**Conventional description:** centralized workload queue, concurrency controller, and compute-resource scheduler.
-
-The Computational Reactor manages expensive or asynchronous computational jobs. Its responsibilities include:
-
-- priority queues;
-- concurrency limits;
-- CPU/memory/resource monitoring;
-- retries;
-- job lifecycle tracking;
-- heat/throttling concepts;
-- routing of Monte Carlo, crawler, AI, and OSINT work;
-- preventing every subsystem from independently creating unlimited expensive work.
-
-The Reactor answers: **What work should run, when should it run, and how much shared capacity may it consume?**
-
----
-
-## Computational Beam
-
-**Conventional description:** shared distributed workload-routing and compatibility facade.
-
-The name **Computational Beam** can sound abstract, but its role is concrete: it is a routing layer that accepts computational workloads from different parts of the platform and directs them toward the appropriate compute implementation.
-
-Beam-related behavior includes:
-
-- workload classification;
-- batching;
-- deduplication;
-- caching;
-- connector selection;
-- queue/backlog handling;
-- cancellation semantics;
-- throughput telemetry;
-- compatibility between older callers and newer compute infrastructure.
-
-For CryptoCrawler specifically, Beam is intended to be the **routing facade**, not an independent heavy-compute authority.
-
----
-
-## QuantiComp
-
-**Conventional description:** authoritative heavy-computation engine for quantitative workloads.
-
-QuantiComp is the component intended to own expensive quantitative computation once a workload has been routed through Beam.
-
-Examples include:
-
-- Monte Carlo simulation;
-- tail-distribution calculations;
-- scenario expansion;
-- adaptive sample-depth decisions;
-- compute-heavy candidate comparisons;
-- statistically intensive optimization.
-
-The architecture uses a deliberate authority boundary:
-
-**Beam routes; QuantiComp computes.**
-
-That prevents two different systems from independently becoming competing authorities for the same heavy-compute responsibility.
-
----
-
-## Monte Carlo Fabric
-
-**Conventional description:** cross-cutting probabilistic simulation and uncertainty-analysis framework.
-
-Monte Carlo is not one isolated trading feature. Simulation and probabilistic analysis appear across several domains, including market profitability, geospatial reconstruction, voice experimentation, routing, and evolutionary systems.
-
-In CryptoCrawler, the Monte Carlo layer is intentionally downstream of deterministic economics. A candidate must first prove positive all-in deterministic economics before stochastic analysis is allowed to strengthen or reject the case.
-
-The current profitability framework can evaluate concepts such as:
-
-- probability of profitable outcome;
-- confidence intervals;
-- probability that all required legs fill;
-- partial-fill risk;
-- p50 / p25 / p10 / p5 / p1 net-profit outcomes;
-- Value at Risk;
-- Expected Shortfall;
-- execution-horizon effects;
-- quote freshness;
-- calibration sample counts;
-- Gaussian, Student-t, or empirical-bootstrap distributions;
-- adaptive simulation depth based on uncertainty and proximity to a decision boundary.
-
-Monte Carlo is therefore a **robustness and uncertainty layer**, not a substitute for known costs.
-
----
-
-## Neural Spine
-
-**Conventional description:** shared experience, memory, and controlled-learning substrate.
-
-The Neural Spine is the architecture for retaining useful outcomes and relationships across subsystems.
-
-Its concepts include:
-
-- experience storage;
-- synapse-like associations;
-- fingerprints;
-- plasticity/adaptation;
-- memory retrieval;
-- adapters between domain systems and shared memory;
-- evolution-lock integration.
-
-The engineering objective is to let systems reuse prior evidence without allowing unverified predictions to silently become training truth.
-
----
-
-## Googolplex Neural Lattice
-
-**Conventional description:** experimental sparse/procedural neural-structure abstraction.
-
-The Googolplex Neural Lattice explores very large logical state spaces through sparse, procedural, fractal, or lazy representations rather than materializing an impossibly large dense network.
-
-It should be understood as an **experimental representation and coherence architecture**, not literally as a physically instantiated googolplex-sized neural network.
-
----
-
-# Monitoring, Rate Control, and Evolution Safety
-
-## 3D Geiger — Provider Pressure / Rate-Limit Controller
-
-**Conventional description:** provider-health and usage-pressure scoring system.
-
-The provider-routing Geiger combines signals such as:
-
-- time decay;
-- recent request intensity;
-- provider health;
-- failure history;
-- cooldown state;
-- pressure or “radiation” score.
-
-The purpose is to move work away from unhealthy or overloaded providers before a full outage or rate-limit cascade occurs.
-
----
-
-## Evolution-Lock Geiger
-
-**Conventional description:** adaptation-risk monitor and evolution gate.
-
-A separate Geiger concept is used for deciding whether learning/evolution processes should continue. It evaluates rule-based risk signals and can place adaptive systems into restricted or locked states.
-
-The key principle is simple: **the component being evolved should not be the only component deciding whether its own evolution is safe.**
-
----
-
-## Evolution Lock
-
-**Conventional description:** explicit permission boundary for training, adaptation, distillation, and learned-state modification.
-
-Evolution Lock prevents adaptive behavior from being treated as an always-on background privilege. Systems can continue observing and calculating while modification of learned state remains separately controlled.
-
----
-
-# GENESIS Evolution Laboratory
-
-**Conventional description:** experimental controlled-evolution and strategy-variation environment.
-
-GENESIS groups several metaphorically named components that explore how strategies are generated, challenged, selected, and remembered.
-
-## Original Sin
-
-Represents baseline assumptions, inherited constraints, or initial strategy tendencies that an evolutionary process begins with.
-
-## Serpent
-
-Represents mutation, challenge, alternative hypotheses, or pressure that tests existing assumptions.
-
-## Angel
-
-Represents validation, protection, corrective constraints, or conservative evaluation of proposed changes.
-
-## Tree of Knowledge
-
-**Conventional description:** persistent outcome/strategy knowledge repository.
-
-The Tree stores and retrieves information such as:
-
-- strategy outcomes;
-- frequency and correlation patterns;
-- reusable successful structures;
-- failed structures;
-- environmental observations;
-- exported/imported learned knowledge.
-
-GENESIS should therefore be understood as a **controlled strategy-evolution laboratory**, not as a religious or metaphysical claim.
-
----
-
-# Six Cane Swarm Intelligence
-
-**Conventional description:** multi-perspective market-intelligence ensemble.
-
-The Six Cane architecture separates market interpretation into multiple specialized analytical perspectives rather than asking one monolithic agent to infer everything.
-
-Its lanes cover concepts such as:
-
-- market mapping;
-- liquidity;
-- volatility;
-- order flow;
-- behavioral analysis;
-- broader orchestration and synthesis.
-
-Each “Cane” can analyze a different aspect of the market, after which the outputs are reconciled into a larger view.
-
----
-
-# PANTHEON Intelligence Platform
-
-**Conventional description:** specialized crawler orchestration, targeted extraction, and intelligence assembly platform.
-
-PANTHEON coordinates crawler tasks and targeted extraction modules for public information. Its architecture includes task queues, resource controls, crawler specialization, metrics, adaptive behavior, and structured output assembly.
-
-## The 10 PANTHEON Razors
-
-**Conventional description:** narrow-purpose extraction modules.
-
-Rather than using one crawler to infer every category of information, PANTHEON uses specialized “Razors” focused on specific data classes. The repository's Razor architecture targets categories such as:
-
-1. identity information;
-2. contact information;
-3. addresses and location history;
-4. social / online presence;
-5. public records;
-6. assets and property-related information;
-7. court and legal records;
-8. business / organizational records;
-9. relationships and associations;
-10. media / news / contextual references.
-
-A Razor is therefore simply a **specialized extractor with a narrow responsibility and output schema**.
-
----
-
-# Specialized Crawler Ecosystem
-
-The repository contains multiple crawler families because different information sources require different crawling, parsing, rate-limiting, verification, and failure-recovery behavior.
-
-Specialization allows each crawler to have:
-
-- source-specific adapters;
-- independent rate controls;
-- tailored parsing rules;
-- distinct confidence logic;
-- different blind spots;
-- source provenance;
-- independent health and lifecycle telemetry.
-
-The goal is not “more agents for the sake of more agents.” It is fault isolation and specialization.
-
----
-
-# Seven-Crawler Defensive Research Initiative
-
-**Conventional description:** multi-agent authorized defensive-research ensemble with intentionally different analytical perspectives.
-
-The seven-crawler architecture is designed so that different agents investigate an authorized defensive-research problem using different heuristics and assumptions. Their findings can then be compared for overlap, disagreement, and blind spots.
-
-The intended value is **diversity of analysis**, not autonomous offensive action.
-
----
-
-# Cain and The Reaper
-
-## Cain
-
-**Conventional description:** crawler/swarm lifecycle, population, and strategy supervision architecture.
-
-Cain-related implementations manage concepts such as:
-
-- crawler creation and retirement;
-- micro-crawler populations;
-- health;
-- adaptation;
-- role assignment;
-- resource use;
-- uncertainty;
-- strategy generations.
-
-## The Reaper
-
-**Conventional description:** lifecycle cleanup, retirement, and unhealthy-agent control.
-
-The Reaper complements Cain by identifying agents, crawlers, or strategy instances that should be retired, recalled, quarantined, or replaced.
-
-Together, Cain and Reaper form a **population lifecycle-control system**.
-
----
-
-# Eden
-
-**Conventional description:** persistent swarm memory and strategy repository.
-
-Eden stores reusable crawler/strategy knowledge so a restarted process does not have to rediscover everything from scratch.
-
-Its role includes:
-
-- persistent memory;
-- strategy placement;
-- historical outcomes;
-- reusable state;
-- closed-loop learning support;
-- database-backed swarm continuity.
-
-In simple terms, **Cain manages the population; Eden remembers what the population learned.**
-
----
-
-# Babel / Tower of Babel
-
-**Conventional description:** experimental identity, trust, meaning-segmentation, and controlled-recombination architecture.
-
-Babel explores ways to represent information through entity signatures, trust relationships, segmented meaning, layered transformations, and controlled recombination.
-
-The system's terminology is intentionally conceptual. It should not be interpreted as cryptographic security merely because it uses terms such as signatures, trust, or encoded meaning. Where cryptographic guarantees are required, they must come from conventional cryptographic primitives and verified implementations.
-
----
-
-# Light Language
-
-**Conventional description:** experimental machine-generated vocabulary / dialect and translation abstraction.
-
-Light Language explores fingerprint-derived vocabularies, grammars, phoneme systems, compact representation, and translation through a common metalanguage.
-
-Its engineering purpose is experimentation with machine-to-machine representation and interoperability, not the invention of a mystical language.
-
----
-
-# People Finder / OSINT
-
-**Conventional description:** public-record research, entity-resolution, relationship-mapping, and report-assembly system.
-
-People Finder coordinates multiple research paths to build structured reports from authorized/public sources. Its architecture includes:
-
-- public-record searching;
-- social/professional/news research;
-- court-record research;
-- entity resolution;
-- deduplication;
-- relationship mapping;
-- NLP/ML enrichment;
-- PANTHEON integration;
-- tiered report generation.
-
-The system must distinguish evidence, inference, and unresolved identity matches. Entity resolution is not treated as proof merely because two records look similar.
-
----
-
-# “Eye of God” / Tiered Reporting
-
-**Conventional description:** deep multi-source report tier and aggregation concept.
-
-The dramatic label refers to the depth of aggregation, not omniscience. The architecture combines more sources, more relationship analysis, and more enrichment as report depth increases.
-
-A professional interpretation is **multi-tier OSINT report generation with progressively broader source coverage and analysis**.
-
----
-
-# Hybrid GeoConsole
-
-**Conventional description:** geospatial evidence fusion, reconstruction, visualization, and probabilistic path-analysis interface.
-
-GeoConsole combines location-related observations into a common map and timeline. Its features include concepts such as:
-
-- trail visualization;
-- heatmaps;
-- radar/timeline views;
-- GeoJSON;
-- path interpolation;
-- Monte Carlo reconstruction;
-- futurecast experimentation;
-- multiple location-source fusion.
-
-The purpose is to distinguish **measured locations** from **interpolated or probabilistic locations** rather than drawing a continuous line and pretending every point was directly observed.
-
----
-
-# TSHPE — Triangulated Satellite-Hybrid Positioning Engine
-
-**Conventional description:** multi-source positioning, smoothing, and confidence-estimation engine.
-
-TSHPE combines available positioning evidence, which may include browser GPS and IP-derived location today and is architected to incorporate additional sources where legitimately available.
-
-Its concepts include:
-
-- source weighting;
-- Kalman-style smoothing;
-- Monte Carlo weighting;
-- history/playback;
-- prediction;
-- confidence and health telemetry;
-- fallback logic.
-
-The term “satellite-hybrid” describes the architecture's intent to combine heterogeneous location evidence. It does not imply access to private carrier or satellite telemetry unless such a source is actually configured and authorized.
-
----
-
-# Inmate / Corrections Search
-
-**Conventional description:** corrections-record aggregation and search interface.
-
-This area of the platform combines UI, server routes, shared schemas, and source/provider adapters for locating public corrections or inmate information across supported jurisdictions.
+LegalWhat can use common compute and persistence without becoming a trading system. CryptoCrawler can use common compute and persistence without gaining access to legal matters, legal research, or legal-document authority.
 
 ---
 
 # LegalWhat
 
-**Conventional description:** multi-domain legal assistance and workflow platform.
+**LegalWhat** is the legal-assistance and workflow side of Bad-Blue. It combines conversational legal intelligence, evidence analysis, legal research, document drafting, domain routing, public-record/accountability workflows, and commercial application infrastructure.
 
-LegalWhat is the original product foundation and remains one of the most mature domain groupings in the repository.
+Its core design is **one user-facing legal intelligence layer coordinating specialized internal legal subsystems** rather than exposing every subsystem as a separate, disconnected tool.
 
-It includes architecture for:
+## LegalWhat System Flow
 
-- legal consultation;
-- issue/domain routing;
-- document generation;
-- uploads and evidence;
-- legal research integration;
-- account/authentication flows;
-- public-record requests;
-- complaint drafting;
+```mermaid
+flowchart TD
+    U["User story / question / evidence"] --> MATTER["Matter Intake"]
+    MATTER --> LEX["LEXARA\nUnified Legal Brain"]
+
+    LEX --> FMI["F.M.I.\nForensic Media Intelligence"]
+    LEX --> KNOW["External Legal Knowledge Layer\nStatutes • Cases • Rules • Regulations"]
+    LEX --> CADE["C.A.D.E.\nCase Adaptive Drafting Entity"]
+
+    FMI --> FACTS["Evidence findings / factual structure"]
+    KNOW --> LAW["Applicable legal authority"]
+    FACTS --> LEX
+    LAW --> LEX
+    LEX --> CADE
+
+    CADE --> DOC["Jurisdiction-aware legal draft"]
+    LEX --> RESPONSE["Unified consultation / guidance"]
+    DOC --> REVIEW["Review / delivery / export workflow"]
+    RESPONSE --> REVIEW
+```
+
+## Core LegalWhat Components
+
+### LEXARA
+
+**Legal Expert eXamination And Resource Advisor** — the unified legal brain and primary legal persona.
+
+LEXARA interprets the matter, coordinates evidence analysis, retrieves applicable legal knowledge, determines when drafting is needed, and returns the user-facing legal response.
+
+### F.M.I.
+
+**Forensic Media Intelligence** — LEXARA's internal evidence-analysis engine.
+
+F.M.I. is responsible for converting uploaded or supplied evidence into structured findings that can be used by the legal reasoning and drafting layers.
+
+### C.A.D.E.
+
+**Case Adaptive Drafting Entity** — LEXARA's internal legal-document drafting engine.
+
+C.A.D.E. is designed to produce context-aware, jurisdiction-aware legal work product from the factual and legal record assembled by LEXARA.
+
+### Legal Knowledge Layer
+
+The legal knowledge layer is the retrieval/research side of the legal brain: statutes, regulations, precedent, procedural authority, and other legal reference material.
+
+### Domain Routing
+
+LegalWhat supports many areas of law through domain-specific routing rather than treating “law” as one undifferentiated prompt. The architectural objective is to vary research, questioning, evidence requirements, drafting behavior, and workflow according to the legal domain and jurisdiction.
+
+## LegalWhat Authority Boundary
+
+The legal brain is explicitly isolated from the crypto domain:
+
+- no crypto exchange authority;
+- no blockchain transaction authority;
+- no CryptoCrawler execution authority;
+- no market-execution decision authority.
+
+That separation is intentional. Legal work and financial-market execution use different evidence standards, permissions, risks, and terminal truth.
+
+## Legal / Accountability / Research Surfaces
+
+The repository also contains or supports adjacent legal/research surfaces including:
+
+- law-enforcement-accountability workflows;
+- public-record request support;
+- complaint and petition drafting;
 - authority/contact routing;
-- petitions and other legal workflows;
-- payment/subscription infrastructure.
+- People Finder / public-record research;
+- inmate/corrections search;
+- geospatial evidence and reconstruction tooling;
+- document and evidence ingestion;
+- Square-based commercial/payment infrastructure;
+- email and workflow-delivery infrastructure.
+
+These surfaces may support LegalWhat, but they do not collapse the LegalWhat and CryptoCrawler domains into one authority model.
 
 ---
 
-# 30 Areas of Law
+# LEXARA Legal Brain
 
-LegalWhat uses a domain registry covering many distinct areas of law so the system can route a user's problem into more appropriate prompts, research sources, documents, and workflows instead of treating “law” as one undifferentiated subject.
+```mermaid
+flowchart LR
+    INPUT["Matter + Evidence"] --> INTERPRET["Interpret\nJurisdiction • posture • domain"]
+    INTERPRET --> EVIDENCE["F.M.I.\nWhat do the facts show?"]
+    INTERPRET --> RESEARCH["Legal Knowledge\nWhat law controls?"]
 
-The important architectural idea is **domain-specific routing with a shared legal platform**, not thirty completely separate applications.
+    EVIDENCE --> SYNTH["LEXARA Synthesis"]
+    RESEARCH --> SYNTH
 
----
+    SYNTH --> DRAFTQ{"Draft needed?"}
+    DRAFTQ -->|Yes| CADE["C.A.D.E.\nGenerate / adapt document"]
+    DRAFTQ -->|No| CONSULT["Consultation / guidance"]
 
-# Law-Enforcement Accountability
+    CADE --> OUTPUT["Unified LegalWhat Output"]
+    CONSULT --> OUTPUT
+```
 
-This is the origin of the Bad-Blue product concept.
+### Why LEXARA is structured this way
 
-The repository includes architecture for:
+A legal assistant becomes harder to validate when evidence extraction, legal research, factual inference, drafting, and user conversation are all performed by one opaque step. LEXARA separates these responsibilities so the system can preserve provenance and distinguish:
 
-- complaint intake;
-- officer/agency information;
-- complaint drafting;
-- civil-rights issue identification;
-- public-record requests;
-- oversight-body discovery;
-- authority routing;
-- lawsuits/court information;
-- evidence workflows;
-- mail/email submission support.
-
-The system is designed to assist with organization and routing; legal conclusions and jurisdiction-specific procedural requirements still require current validation.
-
----
-
-# Legal Routing, Drafting, and Submission Support
-
-The legal workflow is intentionally separated into stages:
-
-1. identify the legal domain;
-2. collect facts and evidence;
-3. retrieve applicable legal/reference information;
-4. draft a structured document;
-5. identify the correct recipient, agency, court, or portal;
-6. validate submission requirements;
-7. hand off through supported email/mail/filing pathways.
-
-Direct e-filing is a materially harder capability than document drafting because every court may impose different authentication, fee, service, formatting, and portal requirements. The README therefore distinguishes drafting/routing infrastructure from verified direct filing.
+- **what the user supplied**;
+- **what evidence analysis found**;
+- **what legal authority says**;
+- **what the system inferred**;
+- **what C.A.D.E. drafted**.
 
 ---
 
-# Commercial Infrastructure — Email and Square
+# CryptoCrawler
 
-## Email
+**CryptoCrawler** is the cryptocurrency market-intelligence and execution side of Bad-Blue.
 
-**Conventional description:** outbound transactional and workflow delivery infrastructure.
+It is not merely a price-difference scanner. It is a multi-topology architecture for:
 
-Email supports legal-document delivery, account communication, operational alerts, and other application workflows. Delivery remains dependent on current domain configuration, credentials, provider limits, and deliverability status.
-
-## Square
-
-**Conventional description:** payment, checkout, subscription, and webhook infrastructure.
-
-The repository contains Square client/configuration code, signed webhook handling, payment/subscription state updates, and related migration/database infrastructure.
-
----
-
-# AI / ML / NLP Architecture
-
-Bad-Blue uses multiple AI providers and internal routing layers rather than assuming one model should perform every function.
-
-Common architectural concerns include:
-
-- provider selection;
-- fallback;
-- rate limiting;
-- health scoring;
-- task/domain routing;
-- NLP extraction;
-- summarization;
-- classification;
-- entity resolution;
-- generation;
-- confidence and validation;
-- background maintenance and optimization.
-
-The platform attempts to separate **model output** from **evidence**, particularly in systems that later affect legal or financial decisions.
-
----
-
-# CryptoCrawler / CryptoCrawl
-
-**Conventional description:** multi-topology cryptocurrency market observation, candidate formation, validation, quantitative assessment, governance, and execution architecture.
-
-CryptoCrawler is much larger than a simple arbitrage scanner. It includes systems for:
-
-- centralized-exchange market data;
-- DEX route quoting;
-- cross-chain observations;
-- funding-rate monitoring;
-- maker/taker economics;
-- filtered mempool evidence;
-- zero-initial-capital / flash-loan routes;
-- technical analysis;
-- oracle evidence;
-- candidate registries;
-- deterministic economics;
-- adaptive sizing;
-- Monte Carlo analysis;
-- governance;
-- rate/nonce/resource scheduling;
-- execution;
-- receipt and balance verification;
+- market evidence ingestion;
+- opportunity discovery;
+- candidate normalization;
+- exact deterministic economics;
+- fee and liquidity evidence;
+- dynamic sizing;
+- probabilistic/tail-risk analysis;
+- technical and oracle evidence;
+- CRYPTARA cognition;
+- staged governance;
+- execution readiness;
+- bounded resource scheduling;
+- venue/protocol execution;
 - terminal settlement;
-- learning/calibration;
-- observability and dynamic scaling.
+- realized-profit accounting;
+- calibration and bounded adaptation.
 
-The production goal is not “find a price difference and trade it.” The goal is to establish a chain of evidence that remains economically positive after every known execution cost and operational constraint.
+## Canonical CryptoCrawler Flow
 
----
+```mermaid
+flowchart TD
+    DATA["Streaming + REST Market Evidence"] --> MESH["Provider Mesh / Normalization"]
+    MESH --> DISC["Multi-Topology Discovery"]
+    DISC --> REG["Measured Candidate Registry"]
+    REG --> ECON["Deterministic Economics"]
 
-# MeasuredOpportunityGraph
+    ECON -->|"netProfitUsd <= 0"| OBS["Observe / Optimize / Expire"]
+    ECON -->|"netProfitUsd > 0"| SIZE["Sizing + Route Preparation"]
 
-**Conventional description:** canonical measured CEX opportunity formation and economics pipeline.
+    SIZE --> EVID["Technical • Oracle • Market Truth"]
+    EVID --> CRYPTARA["CRYPTARA Assessment"]
+    CRYPTARA --> BEAM["Computational Beam"]
+    BEAM --> QUANTI["QuantiComp / Monte Carlo"]
 
-MeasuredOpportunityGraph turns public and authenticated exchange observations into standardized candidates. It can report the economic barrier preventing a candidate from progressing, including:
+    QUANTI --> READY["Readiness + Governance"]
+    READY --> SCHED["Canonical Resource Scheduler"]
+    SCHED --> EXEC["Canonical Execution Adapter"]
+    EXEC --> SETTLE["Terminal Settlement"]
 
-- gross spread BPS;
-- combined authenticated taker fee BPS;
-- net spread after taker fees;
-- fee reduction required for fee-only break-even;
-- maker-economics observations;
-- market-universe coverage;
-- candidate counts and backlog.
+    SETTLE --> REAL["Normalized Realized Economics"]
+    REAL --> CAL["Calibration"]
+    REAL --> CORTEX["CRYPTARA Terminal Learning"]
+    CAL --> SCALE["DynamicScale / Search Pressure"]
+    CORTEX --> PREFETCH["Bounded Predictive Prefetch Tuning"]
+```
 
-This makes “why no trade?” observable instead of reducing everything to a zero-trade counter.
+## Supported Opportunity Topologies
 
----
+The measured-candidate architecture distinguishes materially different opportunity types instead of pretending they share identical execution mechanics:
 
-# MultiTopologyDiscoveryController
+- `CEX_CEX`
+- `DEX_ATOMIC`
+- `ZERO_CAPITAL_ATOMIC`
+- `CROSS_CHAIN`
+- `MEMPOOL_BACKRUN`
+- `MAKER_CEX`
+- `FUNDING_ARBITRAGE`
+- prediction-market opportunities where the corresponding discovery/execution authority is wired
 
-**Conventional description:** coordinator for non-CEX and alternate market-opportunity topologies.
+## Deterministic Economics First
 
-It coordinates measured discovery across categories such as:
+The canonical economic rule is intentionally simple:
 
-- DEX atomic opportunities;
-- cross-chain opportunities;
-- mempool backrun evidence;
-- maker opportunities;
-- funding-rate opportunities;
-- zero-capital atomic opportunities as they are wired into the canonical registry.
+> **`netProfitUsd > 0` after all known verified costs.**
 
----
-
-# Measured Candidate Registry
-
-**Conventional description:** canonical lifecycle registry for market opportunities.
-
-The registry gives different discovery systems a common representation and lifecycle.
-
-Candidate states include:
-
-- `observed` — raw evidence exists;
-- `enriched` — additional required information has been attached;
-- `deterministic_positive` — all known deterministic economics are strictly positive;
-- `eligible` — downstream validation and capability requirements are satisfied;
-- `blocked` — a known requirement failed;
-- `expired` — the evidence is too old to use.
-
-The registry tracks separate topologies such as:
-
-- `CEX_CEX`;
-- `DEX_ATOMIC`;
-- `ZERO_CAPITAL_ATOMIC`;
-- `CROSS_CHAIN`;
-- `MEMPOOL_BACKRUN`;
-- `MAKER_CEX`;
-- `FUNDING_ARBITRAGE`.
-
-It also records missing-information frequency and blocked reasons so engineering effort can target the actual bottleneck.
-
----
-
-# CEX Fee Resolver
-
-**Conventional description:** authenticated exchange-fee evidence service.
-
-A spread is meaningless if the system does not know what it will actually pay to trade. The CEX Fee Resolver therefore attempts to obtain authenticated maker/taker fee evidence for supported venues and products.
-
-Important behaviors include:
-
-- authenticated fee discovery;
-- venue/product translation;
-- live-instrument validation;
-- explicitly supported fallback evidence only;
-- fail-closed behavior when executable fee evidence is unknown;
-- rate-lane throttling and provider health handling.
-
----
-
-# Maker / Taker Policy
-
-**Conventional description:** explicit execution-mode economics and order-behavior policy.
-
-The architecture distinguishes maker economics from taker economics. An IOC order is treated as a taker path. Positive maker economics do not automatically prove that a maker order is executable because maker execution introduces additional lifecycle, fill, inventory, cancellation, and adverse-selection considerations.
-
----
-
-# TradingView Engine
-
-**Conventional description:** technical-analysis evidence provider.
-
-The TradingView integration supplies market-analysis evidence such as indicators and scanner data. It includes caching, retries, rate limiting, circuit-breaker behavior, and fallback handling.
-
-Technical analysis is an **assessment input**, not a replacement for deterministic economics or settlement truth.
-
----
-
-# Oracle / Multi-Oracle Validation
-
-**Conventional description:** independent price/reference-data cross-checking layer.
-
-Oracle validation reduces dependence on one market-data source. Consensus, freshness, source diversity, and provenance are used to determine whether a reference price is credible enough for the decision being made.
-
----
-
-# Aries
-
-**Conventional description:** additional candidate assessment / analytical evidence layer used in the CryptoCrawler validation path.
-
-Where Aries appears in candidate requirements, it is part of the broader strategy of requiring more than raw spread evidence before execution. Aries assessment is complementary to CRYPTARA and other technical/oracle evidence; it does not replace deterministic profit calculation, governance, or settlement verification.
-
----
-
-# Deterministic Economics
-
-**Conventional description:** exact known-cost profitability gate.
-
-This is one of the most important concepts in CryptoCrawler.
-
-Before probabilistic analysis or execution, the system attempts to account for all known costs, which may include:
+Known costs can include:
 
 - exchange fees;
 - DEX fees;
 - flash-loan premium;
 - gas;
-- sponsored-gas reimbursement;
-- relay fees;
-- bridge fees;
+- sponsored-gas reimbursement/provider billing;
+- relay/builder cost;
 - slippage;
 - market impact;
-- borrow/funding costs;
-- transfer or inventory constraints where relevant.
+- bridge cost;
+- funding/borrow cost;
+- route-specific repayment cost.
 
-The governing economic rule is intentionally simple:
+Monte Carlo, technical analysis, ranking, or CRYPTARA cannot make a deterministically negative route positive by assertion.
 
-> **`netProfitUsd > 0` after all known verified costs.**
+## BPS Integrity
 
-BPS can describe, rank, debug, and optimize opportunities, but a BPS display value is not allowed to override the all-in positive-profit gate.
+CryptoCrawler uses basis points for high-resolution economics:
 
----
+- **1 BPS = 0.01%**
+- **100 BPS = 1%**
 
-# BPS — Basis Points
+The current architecture preserves exact strictly positive economics even when profit is **below one whole basis point**. Integer truncation is not allowed to convert a genuinely positive route into zero or vice versa.
 
-A **basis point (BPS)** is one hundredth of one percent.
+Important telemetry includes:
 
-- 1 BPS = 0.01%
-- 10 BPS = 0.10%
-- 100 BPS = 1.00%
-
-CryptoCrawler uses BPS because many arbitrage and execution differences are too small to describe conveniently as whole percentages.
-
-For a zero-capital route, the intended telemetry should distinguish:
-
-- **grossProfitBps** — gross route advantage before costs;
-- **flashLoanFeeBps** — flash-liquidity premium expressed against notional;
-- **gasCostBps** — expected execution gas expressed against notional;
-- **relayCostBps** — private relay / submission cost where applicable;
-- **expectedSlippageBps** — expected execution slippage;
-- **allInCostBps** — combined known execution burden;
-- **netProfitBps** — expected profit after known costs;
-- **breakEvenBps** — gross BPS required to reach zero all-in profit;
-- **bpsToBreakEven** — how far a near-miss sits below break-even;
-- **realizedNetProfitBps** — terminal measured result after settlement.
+- gross profit BPS;
+- all-in cost BPS;
+- flash-loan fee BPS;
+- gas cost BPS;
+- relay cost BPS;
+- expected slippage BPS;
+- break-even BPS;
+- BPS to break even;
+- expected net-profit BPS;
+- realized net-profit BPS.
 
 ---
 
-# Zero Initial Capital / ZERO_CAPITAL_ATOMIC
+# CRYPTARA
 
-**Conventional description:** atomic market strategy that uses borrowed transaction liquidity and/or sponsored execution resources instead of requiring the operator to pre-fund the trade notional.
+**CRYPTARA** is CryptoCrawler's adaptive market-intelligence and decision-support brain.
 
-“Zero initial capital” does **not** mean the transaction has no economic costs. It means the trading notional is obtained inside the execution flow rather than being supplied as pre-positioned operator capital.
+She is not the exchange, the wallet, the scheduler, the canonical executor, or the settlement authority. Her job is to **turn market evidence and realized outcomes into better assessments, priorities, and bounded predictive preparation without silently acquiring transaction authority.**
 
-The zero-capital architecture may combine:
+## Why CRYPTARA Exists
+
+Raw price differences do not answer the questions an execution system actually needs answered:
+
+- Is the evidence fresh and diverse enough to trust?
+- Is a candidate economically real or merely a data artifact?
+- Does current market structure resemble conditions that previously executed well or poorly?
+- How much confidence should be placed in the route?
+- Is latency or slippage degrading the expected edge?
+- Which information should be prefetched before the next similar candidate arrives?
+- Did the prediction match the terminal financial result?
+
+CRYPTARA exists to connect those questions **without replacing deterministic economics, governance, resource scheduling, or settlement truth**.
+
+---
+
+# CRYPTARA Sovereign Cortex
+
+The current CRYPTARA architecture includes a **Sovereign Cortex** that evaluates each opportunity in the context of current evidence quality and a history of terminal confirmed outcomes.
+
+## CRYPTARA Brain — Functional Schematic
+
+```mermaid
+flowchart TD
+    subgraph INPUTS["LIVE INPUTS"]
+        PLAN["Verified Arbitrage Plan\nExact economics"]
+        TV["TradingView / Technical Evidence"]
+        ORACLE["Oracle / Market Evidence"]
+        MEM["Mempool Evidence"]
+        ROUTE["DEX / Route Observation"]
+        PROVIDERS["Provider Consensus\nFreshness + diversity + provenance"]
+    end
+
+    INPUTS --> ASSESS["Base CRYPTARA Opportunity Assessment"]
+
+    ASSESS --> PAR["Parallel Cognition"]
+    PAR --> MT["Market-Truth Helper"]
+    PAR --> PE["Profit-Efficiency Helper"]
+    MT --> FRAME["Read-Only Cognition Frame"]
+    PE --> FRAME
+
+    PROVIDERS --> CORTEX["Sovereign Cortex"]
+    ASSESS --> CORTEX
+    FRAME --> CORTEX
+
+    CORTEX --> VECTOR["Capability Vector"]
+    CORTEX --> CONF["Evidence Confidence"]
+    CORTEX --> REC["Recommendation\nobserve • consider • reject"]
+    CORTEX --> PRI["Request Priority\ncritical • high • normal • low"]
+
+    subgraph VECTOR_AXES["CAPABILITY VECTOR"]
+        A["Alpha Generation"]
+        E["Execution Precision"]
+        P["Pattern Recognition"]
+        R["Risk Control"]
+        S["Strategic Depth"]
+        AD["Adaptation Speed"]
+        SE["System Efficiency"]
+        SO["Sovereignty"]
+    end
+
+    VECTOR --> VECTOR_AXES
+
+    REC --> GOVERNANCE["Governance / Readiness"]
+    PRI --> COMPUTE["Bounded Compute Priority"]
+
+    CORTEX -. "executionAuthority = false" .-> EXEC["Canonical Executor"]
+```
+
+### Cortex evidence discipline
+
+The cortex can **downgrade** an otherwise favorable recommendation when evidence quality is weak. Examples in the current wiring include:
+
+- stale or missing provider consensus can reduce `consider` to `observe`;
+- single-source evidence can require stronger Monte Carlo confidence;
+- evidence confidence adjusts execution-confidence/ranking telemetry;
+- provider provenance is retained rather than discarded.
+
+The cortex does not fabricate missing truth.
+
+## CRYPTARA Decision Priority
+
+The current decision-priority order is deliberately economic and evidence-first:
+
+1. **Market truth**
+2. **Profitability / BPS**
+3. **Latency / slippage**
+4. **Notional**
+5. **Exploration**
+
+That ordering prevents exploratory intelligence from outranking the facts required to prove an executable opportunity.
+
+## Parallel Cognition
+
+CRYPTARA can prewarm parallel helper lanes for:
+
+- **market truth**; and
+- **profit efficiency**.
+
+These lanes are deliberately bounded:
+
+- read-only;
+- no execution authority;
+- no write authority over canonical trade state;
+- zero-retry on the latency-sensitive cognition path;
+- stale frames cannot substitute for the current observation;
+- a negative deterministic plan is not rescued by helper cognition.
+
+---
+
+# How CRYPTARA Learns
+
+CRYPTARA's rank and adaptive behavior are driven by **terminal confirmed external settlement**, not by simulation success, shadow trades, or self-reported confidence.
+
+## Learning and Rank Schematic
+
+```mermaid
+flowchart TD
+    EXEC["Execution Attempt"] --> SETTLE{"Terminal settlement confirmed?"}
+    SETTLE -->|No| STOP["No authoritative rank evidence"]
+    SETTLE -->|Yes| OUTCOME["Realized Outcome"]
+
+    OUTCOME --> METRICS["Measure\nWin/Loss • Profit Error • Slippage • Latency"]
+    METRICS --> SCORE["Terminal Rank Score"]
+
+    SCORE --> OBS["Observer"]
+    SCORE --> ANA["Analyst"]
+    SCORE --> STR["Strategist"]
+    SCORE --> SOV["Sovereign"]
+
+    OBS -. "learn / diagnose" .-> NEXT["Future Assessments"]
+    ANA -. "learn / diagnose" .-> NEXT
+    STR --> EDIT["Bounded Prefetch Micro-Edit"]
+    SOV --> EDIT
+
+    EDIT --> PROB["Probation"]
+    PROB --> VALIDATE["3 terminal validation samples"]
+    VALIDATE --> IMPROVE{"Proven improvement?"}
+    IMPROVE -->|Yes| ACCEPT["Accept edit / advance strategy generation"]
+    IMPROVE -->|No| ROLLBACK["Rollback automatically"]
+
+    ACCEPT --> NEXT
+    ROLLBACK --> NEXT
+```
+
+## What Can Raise CRYPTARA's Rank?
+
+Authoritative rank evidence requires terminal settlement with measured realized economics. Rank quality considers dimensions including:
+
+- realized win rate;
+- expected-vs-realized profit error;
+- realized slippage control;
+- execution latency control;
+- sample depth.
+
+**Simulations cannot raise rank. Shadow trades cannot raise rank. Strategy projections cannot raise rank.**
+
+The current rank ladder is:
+
+`observer → analyst → strategist → sovereign`
+
+Promotion requires both quality and sufficient terminal samples. The minimum promotion sample count is configurable; the current default cortex configuration uses a promotion baseline of 20 terminal samples.
+
+## What Can CRYPTARA Adapt?
+
+The current persistent adaptive surface is intentionally narrow:
+
+- editable parameter: **predictive prefetch aggression**;
+- minimum shared-edit rank: **Strategist**;
+- each edit enters **probation**;
+- terminal outcomes must prove improvement;
+- failed edits are **rolled back**;
+- no source-code write authority;
+- no execution-strategy mutation authority;
+- no direct execution authority.
+
+This gives CRYPTARA a real learn/adapt loop without allowing “adaptive” to become an unrestricted permission to rewrite trading economics or governance.
+
+---
+
+# Zero-Initial-Capital Architecture
+
+`ZERO_CAPITAL_ATOMIC` describes an execution topology where trade notional and/or transaction resources are obtained within the execution path instead of requiring the operator to pre-position the full trading notional.
+
+It does **not** mean execution has no economic cost.
+
+```mermaid
+flowchart TD
+    DISC["Measured Atomic Opportunity"] --> QUOTE["Protocol-Specific Quote Authority"]
+    QUOTE --> SIZE["Dynamic Notional / Route Selection"]
+    SIZE --> COST["All-In Economics"]
+
+    COST --> FLASH["Flash Liquidity"]
+    COST --> GAS["Gas Funding / Paymaster / Sponsor"]
+    COST --> REPAY["Dynamic Repayment Route"]
+
+    FLASH --> PREP["Deterministic Receiver / Payload"]
+    GAS --> PREP
+    REPAY --> PREP
+
+    PREP --> SCHED["Canonical Resource Scheduler"]
+    SCHED --> GOV["Governance"]
+    GOV --> SUBMIT["Bounded Submission"]
+    SUBMIT --> RECEIPT["Receipt / Inclusion Evidence"]
+    RECEIPT --> SETTLE["Terminal Settlement"]
+    SETTLE --> REALIZED["Realized BPS / Profit Truth"]
+```
+
+Current architecture includes concepts such as:
 
 - flash-loan liquidity;
 - deterministic receiver contracts;
-- sponsored execution where supported;
-- EIP-7702 / ERC-4337-related smart-account paths where configured;
-- dynamic gas-funding decisions;
-- DEX route quoting;
+- sponsored/paymaster execution where verified;
+- dynamic gas-funding policy;
+- protocol-specific route quoting;
 - atomic repayment;
-- receipt verification;
-- balance verification;
-- realized-profit verification.
+- dynamic repayment-path selection;
+- bounded multi-block builder validity;
+- receipt and balance verification;
+- realized cost attribution.
 
-A zero-capital route must still pay or account for:
-
-- flash-loan premiums;
-- swap fees;
-- gas or sponsored-gas reimbursement;
-- relay costs;
-- slippage and price impact;
-- any other route-specific cost.
-
-Therefore **zero initial capital is a funding topology, not a claim of zero fees or risk.**
+A sponsored transaction can satisfy **zero-upfront-capital** requirements while still carrying a real provider/billing liability. Provider-fronted gas is therefore not treated as free money: realized economics must still charge the corresponding gas liability/cost.
 
 ---
 
-# Zero-Capital Discovery Envelope
+# Hot-State / Overflow Architecture
 
-**Conventional description:** widened observation band used to retain near-break-even opportunities for optimization without making them executable.
+Recent hardening moved hot runtime state away from cold/legacy database authority and into the dedicated **Overflow runtime database**.
 
-The architecture distinguishes **discovery** from **execution**.
+```mermaid
+flowchart LR
+    LIVE["Live Runtime"] --> OVER["OVERFLOW\nHot Operational Authority"]
 
-A route can be retained as an observed near-miss even when it is not yet profitable. For example, a configurable discovery envelope may retain routes down to roughly 100 BPS below break-even so the optimization stack can determine whether sizing, route selection, gas sponsorship, protocol selection, or other legitimate improvements can move the route above zero.
+    OVER --> SEARCH["Search Sessions"]
+    OVER --> POP["Population Priority Queue"]
+    OVER --> SELF["Self-Improvement Runtime State"]
+    OVER --> AI["AI Usage / Quota Metrics"]
+    OVER --> CRYPT["CRYPTARA Runtime State / Bridges"]
 
-That does **not** weaken execution safety:
+    PRIMARY["PRIMARY\nCold / archive-oriented authority"] -. "bridge / archive access where required" .-> OVER
 
-- below break-even → observation/optimization only;
-- above zero all-in deterministic profit → may proceed to later validation;
-- execution still requires every downstream governance and safety gate.
+    LIVE -. "no direct hot-state dependency" .-> PRIMARY
+```
 
----
+The purpose of this split is operational:
 
-# Atomic Size Optimizer
-
-**Conventional description:** notional-selection engine for atomic strategies.
-
-Profitability is not necessarily linear with trade size. A route may be attractive at one flash-loan amount and unattractive at another because liquidity, fee tiers, slippage, and market impact change with notional.
-
-The atomic sizing system therefore evaluates multiple candidate notionals and retains explicit **sizing provenance** so the system can explain why a particular amount was selected.
-
----
-
-# Progressive Position Sizing
-
-**Conventional description:** risk-aware sizing policy that adjusts exposure according to stage, confidence, evidence, and operating constraints.
-
-This is distinct from simply selecting the largest mathematically possible trade.
+- hot services query the hot authority;
+- cold/archive storage is not placed under normal runtime query pressure;
+- missing Overflow prerequisites fail visibly rather than silently falling back to Primary;
+- runtime schemas are versioned and verified;
+- internal public-schema tables can retain RLS without granting unintended public policies.
 
 ---
 
-# Flash-Loan Aggregator
+# Recent Hardening and Optimization
 
-**Conventional description:** abstraction for selecting and coordinating supported flash-liquidity sources.
+The current `develop` branch includes a substantial September 8, 2026 hardening sequence. Highlights include:
 
-A flash loan is only considered useful when the implementation proves the entire atomic lifecycle:
+| Area | Current hardening / optimization |
+|---|---|
+| **Live market evidence** | Concurrent provider mesh with shared normalization across CoinGecko, CoinMarketCap, CoinCap, and Coinbase paths; route/request-local cooldown behavior; incomplete live-price results are not promoted into long-lived complete-cache truth |
+| **Provider resilience** | Healthy providers remain usable when another provider is rate-limited or degraded; failures are isolated instead of globally poisoning unrelated routes |
+| **Exact economics** | Strictly positive sub-one-BPS opportunities remain representable without integer truncation |
+| **Candidate integrity** | Preparation is prevented from mutating canonical opportunity economics; rejected preparation does not contaminate later attempts; valid evidence is preserved across preparation cycles |
+| **Zero-capital discovery** | Ethereum zero-capital discovery restored without making Ethereum the mandatory cold-start dependency |
+| **Protocol coverage** | Route-local PancakeSwap V2 / BSC and Trader Joe V1 / Avalanche execution paths added; protocol quote authority aligned with the routers used by payload construction |
+| **Repayment routing** | Repayment selection expanded from a single direct-WETH assumption to a router × path mesh including supported stablecoin intermediates |
+| **Builder submission** | Validity expanded from next-block-only behavior to a bounded multi-block window with clearer inclusion/ambiguity handling |
+| **Gas sponsorship** | Hosted paymaster sponsorship can satisfy zero-upfront-capital funding while provider-fronted gas remains explicit in realized economics |
+| **Execution truth** | Confirmed execution, settlement, reconciliation, payout, and exception states are kept distinct instead of allowing telemetry/reconciliation failure to erase on-chain execution truth |
+| **Kalshi evidence** | Event-fee authority, cache/single-flight behavior, request-local backoff, and exact strictly-positive event admission strengthened |
+| **Overflow runtime** | SearchSessionManager, PopulationPriorityQueue, SelfImprovementEngine, and AI quota metrics moved to Overflow runtime authority with schema prerequisites and verifier coverage |
+| **Runtime isolation** | Canonical runtime components can degrade and retry independently without granting the failed component global-shutdown authority over unrelated components |
+| **Cost governance** | Paid filtered-Alchemy pending-stream behavior is explicit opt-in rather than starting merely because an API key exists |
 
-**borrow → execute route → repay principal + premium → verify receipt and realized result.**
-
-A provider returning liquidity is not by itself proof of a successful strategy.
-
----
-
-# Flash-Loan Receiver
-
-**Conventional description:** on-chain contract/receiver responsible for the atomic callback and repayment lifecycle.
-
-The receiver is expected to enforce authorization, execute the planned route, repay the flash loan, and reject or revert execution that cannot satisfy required conditions.
-
----
-
-# Sponsored Receiver Manager
-
-**Conventional description:** deterministic deployment and lifecycle manager for execution receivers that can use supported sponsored-account infrastructure.
-
-This layer helps avoid ad hoc contract identities and gives the system an explicit registry of which receiver belongs to which supported chain and funding mode.
+The important pattern is **capability monotonicity**: repairs are expected to preserve previously proven behavior unless an older behavior is intentionally replaced by a stronger canonical authority.
 
 ---
 
-# Dynamic Gas Funding Engine
+# Canonical Runtime and Authority Model
 
-**Conventional description:** policy that determines how a zero-capital transaction can obtain the native gas required for execution.
+CryptoCrawler deliberately separates responsibilities that are easy to accidentally merge in an automated market system.
 
-Possible modes may include:
+## Discovery Authority
 
-- existing native reserve;
-- supported sponsored execution;
-- internally generated proceeds that can be converted/refueled;
-- other explicitly verified funding paths.
+Finds and normalizes measured opportunities. Discovery may be broad and aggressive, but it does not authorize execution.
 
-The engine is required because “flash loan” does not mean “gas is free.”
+## Candidate Registry
 
----
+Provides a common lifecycle for measured opportunities and tracks enrichment, missing information, blocking reasons, expiry, and topology.
 
-# Native Gas Funding Coordinator
+## Deterministic Economics Authority
 
-**Conventional description:** execution coordinator for verified native-gas acquisition/refuel strategies.
+Calculates known costs and establishes whether the candidate is strictly positive after verified costs.
 
-It separates gas-funding strategy selection, quoting, submission, reconciliation, and settlement from the trading strategy itself.
+## CRYPTARA / Intelligence Authority
 
----
+Assesses market context, evidence confidence, pattern quality, and learned execution performance. It can prioritize or downgrade; it does not own canonical transaction submission.
 
-# Alchemy Integration
+## Governance Authority
 
-**Conventional description:** blockchain RPC/data integration with explicit cost and request governance.
+Controls whether the system is allowed to progress from analysis toward execution.
 
-The Alchemy subsystem includes:
+## Resource / Nonce / Rate Authority
 
-- configured chain endpoints;
-- request-rate limits;
-- per-minute request budgets;
-- estimated daily compute-unit budgets;
-- retries/backoff;
-- token metadata/balance caching;
-- filtered pending-transaction support;
-- readiness/health state.
+Ensures scarce runtime resources are reserved rather than independently guessed by competing executors.
 
-Alchemy is used as infrastructure; it does not receive market-execution authority simply because it supplies data.
+## Canonical Executor
 
----
+Owns the actual venue/protocol transaction or order submission path.
 
-# Filtered Mempool Observability
+## Terminal Settlement Authority
 
-**Conventional description:** evidence-only pending-transaction observation system.
+Determines what actually happened financially from receipts, fills, balances, fees, gas, repayment, and other terminal evidence.
 
-The filtered mempool path can collect relevant pending-transaction evidence while remaining explicitly separated from execution authority.
+## Learning Authority
 
-This distinction lets mempool information improve assessment without silently turning observation infrastructure into a transaction-submission system.
+Consumes normalized terminal truth. Submission, simulation, and partial execution are not allowed to masquerade as realized learning evidence.
 
 ---
 
-# Backrun
+# Market Evidence and Provider Mesh
 
-**Conventional description:** strategy that reacts after an observed transaction rather than attempting to front-run it.
+CryptoCrawler treats data-provider availability as a routing problem rather than a single-provider dependency.
 
-Mempool strategies must still satisfy the same deterministic economics, governance, legality/compliance, resource, and settlement requirements as other strategies.
+Key design properties include:
 
----
+- streaming-first ingestion where available;
+- REST fallback/augmentation;
+- shared symbol/value normalization;
+- request-local and route-local cooldowns;
+- in-flight deduplication/single-flight behavior;
+- partial-result cache safety;
+- source provenance;
+- freshness tracking;
+- provider consensus;
+- provider health/circuit-breaker behavior;
+- fail-closed execution when required truth remains unknown.
 
-# Funding-Rate Monitor
-
-**Conventional description:** derivatives carry/funding observation layer.
-
-Funding is not treated as an instantaneous arbitrage spread. A viable funding strategy requires evidence for the lifecycle, including entry, exit, liquidation exposure, fees, and timing.
-
-Unknown exit economics fail closed.
-
----
-
-# Cross-Chain Architecture
-
-**Conventional description:** observation and route-planning system for opportunities requiring multiple blockchains or bridge domains.
-
-Cross-chain strategies are inherently different from atomic same-chain routes because they introduce:
-
-- bridge fees;
-- finality delays;
-- chain-specific gas;
-- message/bridge failure modes;
-- settlement latency;
-- inventory requirements;
-- asynchronous execution risk.
-
-For that reason, cross-chain opportunities have their own topology and Monte Carlo execution horizon rather than being treated like fast CEX spreads.
+A provider outage should reduce evidence quality for the affected route—not quietly convert missing information into a favorable assumption.
 
 ---
 
-# Superchain Integration
+# Multi-Topology Discovery
 
-**Conventional description:** OP-stack / multi-L2 experimentation layer for routing, relaying, paymaster concepts, and multi-network operation.
+The **MultiTopologyDiscoveryController** coordinates opportunity families with different execution requirements. The shared registry makes them comparable at the lifecycle level without pretending they are mechanically identical.
 
-The Superchain module contains architecture for chain configuration, cross-chain messaging, relayer behavior, paymaster sponsorship concepts, and local multi-chain simulation.
+Examples:
 
-Experimental profitability-control concepts inside this module must remain downstream of verified realized accounting; target profitability must never be confused with actual realized profit.
-
----
-
-# Meson + 0x Native-Gas Strategy
-
-**Conventional description:** bridge/refuel workflow that can move internally generated proceeds and convert them into destination native gas through verified quotes and settlement.
-
-This path is designed to prove each step instead of assuming a bridge or gasless provider succeeded. It checks quote economics, signatures, destination balances, receipts, and delivered native value.
-
----
-
-# Canonical Execution Scheduler
-
-**Conventional description:** final bounded scheduler for execution-ready candidates.
-
-The scheduler is responsible for ensuring that a candidate that passed economic analysis does not execute unless the required runtime resources can actually be reserved.
+- CEX ↔ CEX spread;
+- atomic DEX route;
+- flash-liquidity / zero-upfront-capital route;
+- cross-chain route;
+- maker opportunity;
+- derivatives funding/carry opportunity;
+- mempool backrun evidence;
+- prediction-market opportunities.
 
 ---
 
-# Zero-Capital Resource Scheduler
+# Monte Carlo and QuantiComp
 
-**Conventional description:** distributed/local lease system for preventing conflicting zero-capital executions.
+Monte Carlo is a **robustness and uncertainty layer**, not an alternative accounting system.
 
-Resources may include:
+The sequence is:
 
-- global execution slots;
-- per-chain capacity;
-- wallet nonce lanes;
-- receiver capacity;
-- provider capacity;
-- sponsor capacity;
-- protocol-specific capacity.
+> **Known costs → deterministic positive economics → probabilistic analysis → governance/readiness → execution**
 
-The scheduler can use database-backed leases across replicas and local counters inside a process. Expiring leases provide a fail-safe against abandoned resources.
+Monte Carlo/QuantiComp can evaluate concepts such as:
 
----
+- probability of profitable execution;
+- confidence intervals;
+- partial-fill risk;
+- tail outcomes;
+- Value at Risk;
+- Expected Shortfall;
+- execution horizon;
+- empirical calibration residuals;
+- adaptive simulation depth.
 
-# Nonce Authority
-
-**Conventional description:** exclusive ownership of transaction nonce allocation for a wallet/chain lane.
-
-Nonce conflicts can invalidate otherwise profitable transactions. The architecture therefore treats nonce allocation as a scarce resource rather than letting multiple executors independently guess the next nonce.
+Simulation does not become realized truth merely because it is statistically persuasive.
 
 ---
 
-# Rate Authority
+# Terminal Settlement and Realized Truth
 
-**Conventional description:** bounded ownership of provider/exchange request capacity.
+Terminal settlement is where predictions are replaced by measured facts.
 
-Rate limits are treated as operational resources. Discovery should not starve execution, and one subsystem should not unknowingly exhaust a provider budget needed by another critical subsystem.
+Authoritative evidence may include:
 
----
-
-# Governance
-
-**Conventional description:** explicit policy and human-authority layer controlling whether the system may progress from analysis to execution.
-
-Governance is intentionally independent of profitability. A profitable trade is still not executable if governance does not authorize it.
-
-Governance controls include concepts such as:
-
-- pause/unpause;
-- kill switch;
-- stage permission;
-- execution envelopes;
-- explicit live-risk confirmations;
-- environment/readiness checks;
-- execution-attempt accounting.
-
----
-
-# StageManager
-
-**Conventional description:** authoritative staged-autonomy progression controller.
-
-StageManager represents the principle that an autonomous system should earn progressively broader permissions through evidence rather than enabling every behavior on first boot.
-
-Progression can depend on proof metrics, market gates, profit/settlement evidence, readiness, and explicit stage criteria.
-
-Stage state is therefore distinct from a strategy's confidence score.
-
----
-
-# Six-Stage CryptoCrawler Governance
-
-The staged governance architecture separates observation, validation, controlled progression, and execution authority. Exact stage criteria may evolve, but the guiding pattern remains:
-
-**observe first → prove correctness → accumulate terminal evidence → broaden authority only when explicit criteria are satisfied.**
-
----
-
-# Execution Readiness
-
-**Conventional description:** capability assessment that distinguishes “the software can submit” from “this trade is currently allowed and resourced.”
-
-Readiness is decomposed into concepts such as:
-
-- application/runtime readiness;
-- configuration readiness;
-- data readiness;
-- discovery readiness;
-- execution capability readiness;
-- inventory/resource readiness;
-- candidate readiness;
-- governance readiness;
-- final trade readiness.
-
-This prevents a green RPC connection or configured private key from being incorrectly reported as “ready to trade.”
-
----
-
-# Execution Adapters
-
-**Conventional description:** venue/protocol-specific submission implementations behind the canonical execution layer.
-
-Adapters exist to isolate the mechanics of:
-
-- centralized exchange orders;
-- DEX transactions;
-- flash-loan receivers;
-- sponsored smart-account calls;
-- private relay submissions;
-- bridge/refuel workflows;
-- settlement observation.
-
-Adapters do not define system-wide policy; they implement a specific execution mechanism.
-
----
-
-# Ultra-Low-Latency Executor
-
-**Conventional description:** optimized transaction-submission path.
-
-Low latency can improve opportunity capture, but submission success is not treated as realized profit. The execution path remains subject to later receipt and settlement verification.
-
----
-
-# Multi-Relay Submitter
-
-**Conventional description:** private relay/builder submission coordinator.
-
-Where signed raw transactions are available and policy permits, the same valid payload can be submitted through multiple supported relays/builders. The system does not fabricate a bundle from a transaction hash.
-
----
-
-# Terminal Settlement
-
-**Conventional description:** authoritative end state that determines what actually happened financially.
-
-Settlement is where predictions are replaced with measured facts.
-
-The terminal settlement layer can use evidence such as:
-
-- confirmed transaction receipt;
-- order/fill state;
+- transaction receipt;
+- order/fill status;
 - pre/post balances;
-- fees;
-- gas paid;
-- output received;
-- repayment success;
+- flash-loan repayment;
+- gas actually consumed or economically owed;
+- exchange/protocol fees;
+- realized output;
 - realized slippage;
 - realized net profit;
-- failure/revert state.
+- terminal revert/failure state.
 
-A submitted transaction is **not** settlement.
-A transaction hash is **not** settlement.
-A predicted fill is **not** settlement.
+> **Submitted is not settled. Predicted is not realized. Simulated is not settled.**
 
----
-
-# Normalized Realized Execution
-
-**Conventional description:** common settlement schema used to represent realized execution outcomes across different execution topologies.
-
-Normalization allows the learning and governance systems to compare CEX, DEX, and other execution results without pretending their mechanics are identical.
+Only normalized terminal outcomes are eligible to become authoritative calibration/learning evidence.
 
 ---
 
-# Settlement Before Learning
+# Shared Computational Systems
 
-One of the central integrity rules of the architecture is:
+The two product domains reuse infrastructure where reuse is safe and semantically correct.
 
-> **Only terminal settlement may become authoritative realized learning data, and terminal learning should be recorded exactly once.**
+## Computational Reactor
 
-This prevents duplicated feedback, partial fills, submitted-but-unconfirmed transactions, or synthetic estimates from contaminating calibration.
+Centralized workload queue, concurrency controller, and compute-resource scheduler for expensive or asynchronous jobs.
 
----
+## Computational Beam
 
-# Profit Estimator
+Shared workload-routing/compatibility facade. Beam routes work; it is not intended to become a second competing heavy-compute authority.
 
-**Conventional description:** structured store/telemetry layer for predicted opportunity economics.
+## QuantiComp
 
-For zero-capital routes it can retain values such as gross profit, estimated costs, expected net profit, BPS, confidence, and observation time.
+Authoritative heavy quantitative-computation engine for workloads such as Monte Carlo, tail-distribution analysis, scenario expansion, and other statistically intensive operations.
 
-Predictions remain distinct from realized settlement records.
+> **Beam routes; QuantiComp computes.**
 
----
+## Neural Spine / Persistent Learning Infrastructure
 
-# Calibration
+Shared memory abstractions preserve useful experience and relationships while maintaining domain boundaries and requiring verified outcomes before they become authoritative learning truth.
 
-**Conventional description:** process of comparing predictions with terminal outcomes and using the residuals to improve future uncertainty estimates.
+## Provider Governance
 
-Examples include:
-
-- predicted vs realized profit residual;
-- predicted vs realized slippage;
-- predicted vs realized cost;
-- measured latency;
-- fill success;
-- provider failure;
-- partial-fill outcomes.
-
-These measurements can feed later Monte Carlo empirical distributions.
+Rate limits, health, cooldowns, request pressure, capability readiness, and optional integrations are treated as governed runtime resources.
 
 ---
 
-# DynamicScale
+# Extended Intelligence Systems
 
-**Conventional description:** adaptive search/resource-pressure controller.
+Bad-Blue contains a broader research and orchestration ecosystem beyond the two primary product surfaces.
 
-DynamicScale should not treat every signal as one generic “more/less” dial. The architecture distinguishes concepts such as:
+<details>
+<summary><strong>Show extended architecture vocabulary</strong></summary>
 
-- search pressure;
-- positive-opportunity density;
-- queue backlog;
-- verified profitability;
-- provider/resource pressure.
+| Name | Plain-English engineering role |
+|---|---|
+| **4JI** | Top-level multi-domain orchestration/policy layer |
+| **PANTHEON** | Specialized crawler/extraction orchestration platform |
+| **Razors** | Narrow-purpose PANTHEON extraction modules |
+| **People Finder** | Public-record research, entity resolution, relationship mapping, report assembly |
+| **GeoConsole** | Geospatial evidence fusion, reconstruction, visualization, and probabilistic path analysis |
+| **TSHPE** | Multi-source positioning, smoothing, and confidence-estimation engine |
+| **Cain** | Crawler/swarm population and lifecycle management |
+| **Reaper** | Retirement, quarantine, cleanup, and unhealthy-agent control |
+| **Eden** | Persistent swarm/strategy memory |
+| **GENESIS** | Controlled strategy-evolution laboratory |
+| **Tree of Knowledge** | Outcome/strategy knowledge repository |
+| **Six Cane** | Multi-perspective market-intelligence ensemble |
+| **Babel** | Experimental identity/trust/meaning transformation architecture |
+| **Light Language** | Experimental machine vocabulary/translation abstraction |
+| **Googolplex Neural Lattice** | Experimental sparse/procedural representation architecture |
+| **3D Geiger** | Provider pressure/health/rate-limit scoring |
+| **Evolution Lock / Geiger** | Controlled adaptation permission and adaptation-risk gating |
+| **Disco-Ball Environmental Mirror** | Experimental high-dimensional environment/state representation |
+| **Faucet / Faucet Mesh** | Governed strategy-flow and experimental multi-node market-operation abstractions |
 
-For example, a high backlog may require less discovery pressure even when the market is active, while a high density of profitable opportunities may justify allocating more bounded resources to candidate enrichment.
+</details>
 
----
-
-# Search Pressure
-
-**Conventional description:** how aggressively the system expands or revisits the market universe.
-
-Search pressure is separate from execution concurrency. Finding more opportunities does not automatically authorize more trades.
-
----
-
-# Backlog
-
-**Conventional description:** observed candidates or computational jobs waiting for enrichment/assessment/processing.
-
-Backlog telemetry identifies when the bottleneck is downstream processing rather than insufficient market discovery.
-
----
-
-# Candidate Ranking
-
-**Conventional description:** advisory ordering of otherwise valid candidates.
-
-Ranking can prioritize scarce compute or execution attention, but it is never allowed to turn an economically invalid candidate into an executable one.
+These names are project vocabulary. Their value is in the engineering responsibility behind them, not in the metaphor itself.
 
 ---
 
-# Fail Closed
+# Engineering Principles
 
-**Conventional description:** when a required economic or safety fact is unknown, the system refuses to treat the candidate as executable.
+## 1. One Authority Per Critical Responsibility
 
-Examples include unknown:
+Discovery, economics, nonce allocation, scheduling, execution, settlement, and learning should not each have multiple competing production authorities.
 
-- fees;
-- liquidity;
-- product support;
-- gas economics;
-- repayment conditions;
-- settlement state;
-- permissions;
-- required balances;
-- bridge outcome.
+## 2. Deterministic Before Probabilistic
 
-Unknown information may remain useful for observation and debugging, but it is not silently assumed favorable.
+Known economics are calculated before stochastic analysis is allowed to influence a candidate.
 
----
+## 3. Observation Is Not Execution
 
-# No Synthetic Truth
+A crawler, oracle, indicator, mempool feed, ranking model, or CRYPTARA helper can provide evidence without receiving transaction authority.
 
-The architecture distinguishes simulation and fallback behavior from production evidence.
+## 4. Capability Is Not Permission
 
-Synthetic fills, random profits, placeholder outcomes, or simulated market behavior may exist in test/experimental modules, but they must not be promoted into production settlement or realized-profit records.
+A configured wallet, key, RPC, venue account, or receiver proves capability—not current authorization.
 
----
+## 5. Submission Is Not Settlement
 
-# Disco-Ball Environmental Mirror
+A transaction hash, accepted bundle, or submitted order is an intermediate state.
 
-**Conventional description:** experimental high-dimensional environment/state representation.
+## 6. Learning Requires Terminal Truth
 
-The Disco-Ball model represents many small environmental “shards” or perspectives across variables such as liquidity, volume, volatility, mempool conditions, order books, gas, and latency.
+Realized learning is downstream of terminal settlement and is recorded without allowing simulation or partial state to become canonical truth.
 
-It is best understood as an **environmental feature-mirroring experiment**. Its usefulness depends on replacing scaffolded/simulated inputs with measured data and proving that the additional dimensionality improves decisions.
+## 7. Fail Closed on Missing Critical Facts
 
----
+Unknown fees, liquidity, gas economics, repayment conditions, permissions, balances, or settlement state remain unknown until proven.
 
-# Autonomous Faucet
+## 8. Preserve Proven Capability
 
-**Conventional description:** strategy/state machine for regulating market-operation behavior according to health, confidence, risk, and session state.
+Repairs should remove the root cause without casually regressing previously verified capability elsewhere in the system.
 
-The Faucet concept includes market state, emergency/cooldown logic, confidence/risk gates, and execution decisions.
+## 9. Route-Local Failure Isolation
 
-“Faucet” does not mean free money; it is an orchestration metaphor for controlled flow.
+A degraded provider, chain, venue, or optional component should not unnecessarily halt unrelated healthy routes.
 
----
+## 10. Domain Isolation
 
-# Higher-Order Faucet Mesh
-
-**Conventional description:** multi-node experimental strategy ensemble with shared learning and Monte Carlo evaluation.
-
-The mesh combines multiple strategy nodes and shared outcome/violation memory. Any simulated or target-profit behavior in this architecture remains non-authoritative until connected to measured data and terminal accounting.
-
----
-
-# Market Universe
-
-**Conventional description:** the set of assets, products, chains, venues, and routes currently admitted to discovery.
-
-The expanded-market-universe architecture can increase coverage while still filtering unsupported venue/product combinations before they consume expensive private/API calls.
-
----
-
-# Provider Readiness and Circuit Breakers
-
-**Conventional description:** health-state machinery that temporarily excludes an unhealthy provider or authenticated integration.
-
-Repeated 401s, rate limits, timeouts, or unsupported products should not trigger an expensive retry for every symbol. Circuit breakers and capability caches reduce noise and preserve request capacity.
-
----
-
-# Optional Integrations
-
-Some providers are intentionally optional. For example, a centralized venue may contribute discovery when healthy but should not become a single point of failure for the entire architecture when equivalent safe paths exist elsewhere.
-
-Optional means **the system can operate without it**; it does not mean unknown data from that provider may be guessed.
-
----
-
-# Document, Evidence, and Research Workflows
-
-Across LegalWhat, OSINT, and other systems, documents and evidence move through recurring stages:
-
-- ingestion;
-- parsing;
-- metadata extraction;
-- source/provenance retention;
-- domain routing;
-- analysis;
-- drafting/report assembly;
-- review;
-- delivery or export.
-
-Where evidence is incomplete, the platform should preserve the distinction between **known**, **inferred**, and **unknown**.
-
----
-
-# Core Technology
-
-The repository includes combinations of:
-
-- TypeScript;
-- React;
-- Vite;
-- Node.js;
-- Express;
-- PostgreSQL;
-- Drizzle / SQL migrations;
-- Supabase-related infrastructure;
-- Ethers / EVM integrations;
-- REST and WebSocket providers;
-- AI/LLM provider integrations;
-- Monte Carlo and quantitative-analysis modules;
-- background workers and schedulers;
-- GitHub-based development and CI workflows;
-- Railway-oriented runtime/deployment configuration.
-
----
-
-# Engineering Principles Used Throughout the Repository
-
-## One Authority Per Responsibility
-
-When two components can independently decide the same critical fact, drift becomes inevitable. The hardening work therefore aims to establish one canonical authority for responsibilities such as heavy compute, stage progression, nonce allocation, settlement truth, and candidate lifecycle.
-
-## Deterministic Before Probabilistic
-
-Known economics are calculated first. Monte Carlo analyzes uncertainty only after deterministic positive economics have been established.
-
-## Observation Is Not Execution
-
-A crawler, oracle, technical indicator, mempool feed, or ranking model can produce evidence without receiving transaction authority.
-
-## Capability Is Not Permission
-
-Having a key, wallet, RPC connection, or executor available does not mean governance currently permits execution.
-
-## Submission Is Not Settlement
-
-A transaction hash or accepted order is an intermediate state. Realized accounting waits for terminal evidence.
-
-## Learning Requires Realized Evidence
-
-Predicted profit and simulated profit remain predictions. Calibration uses terminal measured outcomes.
-
-## Human Authority Remains Supreme
-
-Pause/unpause, risk confirmations, deployment controls, and kill-switch mechanisms remain explicit control boundaries.
-
----
-
-# CryptoCrawler End-to-End Example
-
-A representative CEX opportunity moves through the system like this:
-
-1. Public market feeds produce bids/asks.
-2. The measured opportunity graph forms a spread candidate.
-3. Product directories establish whether both venue/symbol combinations are actually supported.
-4. Authenticated fee evidence is resolved.
-5. Taker/maker economics are calculated separately.
-6. Depth, slippage, and inventory requirements are attached.
-7. The candidate registry records its lifecycle and missing information.
-8. Only all-in deterministic positive candidates progress.
-9. CRYPTARA / Aries / technical / oracle evidence can assess the candidate.
-10. Beam routes required quantitative work.
-11. QuantiComp performs the heavy computation, including Monte Carlo where admitted.
-12. Governance and StageManager determine whether the current autonomy stage permits execution.
-13. The scheduler reserves venue, nonce, rate, inventory, and other required resources.
-14. The execution adapter submits the order/transaction.
-15. Settlement adapters wait for terminal fills/receipts.
-16. Normalized realized economics are calculated.
-17. Exactly one terminal learning/calibration event is recorded.
-18. DynamicScale and memory systems may adjust future search and assessment based on that realized evidence.
-
-A representative zero-capital atomic opportunity follows the same philosophy with different resources:
-
-1. A configured DEX route is quoted across multiple candidate notionals.
-2. Gross route output is measured.
-3. Flash-loan premium, gas, relay, DEX fees, slippage, and other known costs are applied.
-4. Gross/all-in/net BPS are reported.
-5. Near-break-even routes may remain observable for optimization even when not executable.
-6. Strict positive all-in net profit is required before deterministic-positive status.
-7. CRYPTARA and quantitative analysis assess robustness.
-8. The gas-funding policy proves how transaction gas can be supplied or reimbursed.
-9. A deterministic receiver and flash-liquidity source are selected.
-10. Resource leases reserve chain, wallet nonce, receiver, provider, sponsor, and protocol capacity.
-11. Governance authorizes execution.
-12. The receiver borrows, swaps, repays, and completes atomically or reverts.
-13. Receipt and pre/post balance evidence establish the terminal outcome.
-14. Realized profit/BPS are normalized.
-15. Only then does the result enter calibration and learning.
+Legal intelligence and market-execution intelligence may cooperate through safe infrastructure but do not inherit each other's authority.
 
 ---
 
 # Repository Guide
 
-Major areas of the repository include:
+Major repository areas include:
 
-- **client/** — React/TypeScript user interfaces and application surfaces.
-- **server/** — API, services, integrations, orchestration, market systems, legal workflows, data services, AI providers, and backend infrastructure.
-- **server/services/cryptocrawl/** — CryptoCrawler discovery, market data, validation, risk, governance, execution, settlement, capital-free, runtime, and supporting services.
-- **server/services/cryptara/** — CRYPTARA service-layer intelligence and feedback integration.
-- **server/services/computationalBeam/** — shared workload-routing / compute-facade architecture.
-- **migrations / database modules** — persistence schemas and application state evolution.
-- **scripts/** — verification, migration, diagnostic, operational, and maintenance utilities.
-- **tests / verification assets** — regression, integration, policy, and runtime validation code.
+- **`client/`** — React/TypeScript application surfaces.
+- **`server/`** — API, orchestration, providers, persistence, workers, and backend services.
+- **`server/services/alexara/`** — LEXARA legal brain, F.M.I., C.A.D.E., and legal research integration.
+- **`server/services/cryptara/`** — CRYPTARA market-surveillance/assessment intelligence.
+- **`server/services/cryptocrawl/`** — CryptoCrawler discovery, economics, validation, governance, execution, settlement, capital-free, runtime, scaling, and integration systems.
+- **`server/services/computationalBeam/`** — shared compute-routing facade.
+- **`server/migrations/overflow/`** — Overflow hot-state schema evolution.
+- **`scripts/cryptocrawl/`** — structural and runtime invariant verifiers for CryptoCrawler hardening.
+- **database / migration modules** — persistence schema and state evolution.
+- **tests / verifier assets** — regression, integration, authority, economic, and runtime validation.
 
-Because the repository contains multiple generations of some ideas, a major hardening objective is to clearly label compatibility/legacy implementations and ensure only the intended canonical authority is active in production.
+Because the repository contains multiple generations of some concepts, canonical runtime wiring and structural verifiers are important for preventing older compatibility paths from regaining unintended authority.
 
 ---
 
 # Deployment and Verification Philosophy
 
-A successful build is necessary but not sufficient for production confidence.
+A successful build is necessary but not sufficient.
 
-Deployment verification should include:
+Production verification should establish, as applicable:
 
-- compilation/type checks;
-- unit/integration tests;
-- runtime identity checks;
-- environment/config readiness;
+- compile/type correctness;
+- schema/migration readiness;
 - provider health;
-- database connectivity;
-- discovery heartbeats;
-- candidate-registry telemetry;
+- database authority/routing;
+- discovery heartbeat;
+- evidence freshness;
+- candidate lifecycle health;
+- deterministic economics;
 - governance state;
-- scheduler health;
-- execution capability state;
-- settlement observers;
-- error/retry/rate-limit telemetry;
-- clean end-to-end regression passes.
+- resource/nonce/rate readiness;
+- execution capability;
+- receipt/fill observation;
+- terminal settlement;
+- realized accounting;
+- payout/reconciliation state;
+- calibration/learning integrity;
+- regression/invariant verifier results.
 
-Where a subsystem requires money-moving credentials or live-risk confirmation, verification should prove the wiring without silently bypassing those controls.
-
----
-
-# Production and Handoff Status
-
-Bad-Blue is best understood as a **large active codebase with substantial implementation and unusual architectural breadth**, not a single polished SaaS application whose every experimental subsystem has already completed production certification.
-
-For a buyer, successor, or engineering team, the value lies in both:
-
-1. the implemented product and service code; and
-2. the architectural IP represented by the way legal intelligence, OSINT, geospatial analysis, agent specialization, shared compute, memory, probabilistic validation, governance, and market automation are composed.
-
-The highest-value continuing engineering work is generally not inventing more names or more subsystems. It is **canonicalization, end-to-end wiring, measurement, regression protection, and proof that each subsystem contributes useful information without duplicating another subsystem's authority.**
+The canonical runtime is designed so a degraded optional component can retry independently rather than obtaining global shutdown authority over unrelated components.
 
 ---
 
-# Quick Glossary
+# Production / Handoff Perspective
 
-| Term | Plain-English meaning |
+Bad-Blue is best understood as a **large active codebase with two distinct product systems and a substantial shared intelligence/runtime architecture**.
+
+For engineering handoff or technical diligence, the important value is not merely the number of modules. It is the implemented separation and composition of:
+
+- legal reasoning and legal workflow;
+- evidence analysis and drafting;
+- public-record research;
+- multi-provider market data;
+- multi-topology opportunity formation;
+- exact economic validation;
+- adaptive market cognition;
+- bounded probabilistic analysis;
+- staged governance;
+- resource-controlled execution;
+- terminal settlement;
+- realized-evidence learning;
+- hot/cold state separation;
+- regression-protected canonical authority.
+
+The continued engineering priority is **proof, canonicalization, observability, and end-to-end realization**—not simply adding more named subsystems.
+
+---
+
+# Glossary
+
+| Term | Meaning |
 |---|---|
-| **4JI** | Top-level multi-domain orchestrator |
-| **ALEXARA** | Legal and strategic reasoning layer |
-| **CRYPTARA** | Crypto/OSINT assessment, pattern analysis, and execution-feedback intelligence |
-| **Lexara** | Conversational/multimodal legal user interface |
-| **Computational Reactor** | Shared job queue and resource scheduler |
+| **LegalWhat** | Legal-assistance and workflow product system |
+| **LEXARA** | Unified legal brain / primary legal persona |
+| **ALEXARA** | Legal/strategic service architecture associated with the LEXARA domain |
+| **F.M.I.** | Forensic Media Intelligence evidence-analysis subsystem |
+| **C.A.D.E.** | Case Adaptive Drafting Entity |
+| **CryptoCrawler** | Multi-topology market discovery, validation, governance, execution, settlement, and learning system |
+| **CRYPTARA** | Adaptive crypto-market assessment and execution-feedback intelligence |
+| **Sovereign Cortex** | CRYPTARA evidence-quality, capability-vector, rank, and bounded-adaptation layer |
+| **Capability Vector** | Eight-axis CRYPTARA assessment of alpha, precision, pattern recognition, risk, depth, adaptation, efficiency, and sovereignty |
+| **Measured Candidate Registry** | Shared opportunity lifecycle and missing-information authority |
+| **Deterministic Economics** | Exact known-cost profitability authority |
+| **BPS** | Basis points; 100 BPS = 1% |
+| **ZERO_CAPITAL_ATOMIC** | Atomic route using internally acquired liquidity/resources rather than pre-funded trade notional |
+| **Paymaster / Sponsorship** | Mechanism that can remove upfront gas funding while preserving real gas liability in economics |
+| **Canonical Scheduler** | Resource-leasing authority for execution-ready candidates |
+| **Nonce Authority** | Exclusive nonce-allocation responsibility for a wallet/chain lane |
+| **Rate Authority** | Bounded provider/exchange request-capacity authority |
+| **Terminal Settlement** | Verified final execution outcome and realized financial truth |
+| **Normalized Realized Execution** | Common schema for terminal outcomes across execution topologies |
+| **Calibration** | Prediction-vs-realized comparison used to improve uncertainty estimates |
+| **Predictive Prefetch** | Bounded advance acquisition/preparation of likely-needed market evidence |
+| **Overflow** | Hot operational runtime-state authority |
+| **Primary** | Cold/archive-oriented database authority where retained by architecture |
+| **Computational Reactor** | Shared job queue/concurrency/resource scheduler |
 | **Computational Beam** | Workload-routing and compatibility facade |
 | **QuantiComp** | Heavy quantitative-computation authority |
-| **Monte Carlo Fabric** | Probabilistic uncertainty and tail-risk analysis |
-| **Neural Spine** | Shared experience/memory substrate |
-| **Googolplex Neural Lattice** | Experimental sparse/procedural neural representation |
-| **3D Geiger** | Provider pressure / health / rate-limit scoring |
-| **Evolution Geiger** | Adaptation-risk/evolution gate |
-| **GENESIS** | Controlled strategy-evolution laboratory |
-| **Tree of Knowledge** | Outcome and strategy knowledge repository |
-| **Six Cane** | Multi-perspective market-intelligence ensemble |
-| **PANTHEON** | Specialized crawler / extraction orchestration platform |
-| **Razors** | Narrow-purpose PANTHEON extractors |
-| **Cain** | Crawler/swarm population and lifecycle manager |
-| **Reaper** | Retirement / cleanup / unhealthy-agent controller |
-| **Eden** | Persistent swarm memory and strategy repository |
-| **Babel** | Experimental identity/trust/meaning transformation layer |
-| **Light Language** | Experimental machine vocabulary/translation abstraction |
-| **People Finder** | Public-record OSINT and entity-resolution system |
-| **GeoConsole** | Geospatial evidence fusion and visualization |
-| **TSHPE** | Multi-source positioning/smoothing/confidence engine |
-| **LegalWhat** | Multi-domain legal workflow platform |
-| **CryptoCrawler** | Multi-topology market discovery, validation, governance, and execution platform |
-| **MeasuredOpportunityGraph** | Canonical measured CEX candidate/economics pipeline |
-| **Candidate Registry** | Shared opportunity lifecycle and telemetry store |
-| **CEX Fee Resolver** | Authenticated venue fee-evidence service |
-| **Aries** | Additional candidate assessment/evidence layer |
-| **Atomic Size Optimizer** | Finds better notional sizes for atomic routes |
-| **Zero Initial Capital** | Flash/sponsored funding topology without pre-funded trade notional |
-| **BPS** | Basis points; 100 BPS = 1% |
-| **Flash-Loan Aggregator** | Selects/coordinatess supported flash-liquidity sources |
-| **Sponsored Receiver Manager** | Deterministic managed receiver/smart-account infrastructure |
-| **Dynamic Gas Funding** | Determines how execution gas is legitimately supplied/reimbursed |
-| **Alchemy Integration** | Cost-governed blockchain RPC/data provider integration |
-| **Filtered Mempool** | Evidence-only pending-transaction observation |
-| **Funding Monitor** | Funding/carry opportunity observation |
-| **StageManager** | Authoritative staged-autonomy progression controller |
-| **Governance** | Pause/kill-switch/permission/risk-control layer |
-| **Resource Scheduler** | Bounded leases for chain, provider, nonce, receiver, sponsor, etc. |
-| **Terminal Settlement** | Verified final execution outcome and realized accounting |
-| **Calibration** | Uses prediction-vs-realized residuals to improve uncertainty models |
-| **DynamicScale** | Adapts discovery/search pressure and bounded resource allocation |
-| **Fail Closed** | Unknown critical economics or permissions block execution |
+| **Monte Carlo** | Probabilistic robustness/tail-risk analysis downstream of deterministic economics |
+| **DynamicScale** | Adaptive discovery/search-pressure and bounded resource controller |
+| **Fail Closed** | Required unknown facts block execution instead of being guessed favorable |
 
 ---
 
-# Final Perspective
+# The Architectural Idea
 
-The unusual aspect of Bad-Blue is not that it assigns memorable names to components. The unusual aspect is the attempted **composition of many normally separate technical disciplines into one governed architecture**:
+Bad-Blue's defining characteristic is not simply that it combines legal AI and crypto automation in one repository. It is that the repository attempts to keep **different forms of intelligence explainable, bounded, and governed** while still allowing them to reuse serious infrastructure.
 
-- legal intelligence;
-- conversational AI;
-- public-record research;
-- entity resolution;
-- geospatial reconstruction;
-- specialized crawler swarms;
-- distributed computation;
-- adaptive memory;
-- probabilistic simulation;
-- provider/rate governance;
-- multi-chain market observation;
-- deterministic economic validation;
-- staged autonomy;
-- verifiable execution and settlement.
+**LegalWhat asks:**
 
-The names—CRYPTARA, Computational Beam, Cain, Eden, PANTHEON, GENESIS, Babel, and the rest—are project vocabulary. The engineering responsibilities behind them are concrete.
+> What happened, what law applies, what evidence matters, and what legal work product should be created?
 
-That distinction is intentional: **the identity can remain memorable while the architecture remains explainable.**
+**CryptoCrawler asks:**
+
+> What market condition exists, is the opportunity economically real, is execution permitted and resourced, what actually settled, and what did that realized outcome teach the system?
+
+**CRYPTARA asks:**
+
+> Given the evidence and what terminal outcomes have proven so far, how should CryptoCrawler interpret and prepare for the next opportunity—without confusing intelligence with execution authority?
+
+That separation is intentional.
