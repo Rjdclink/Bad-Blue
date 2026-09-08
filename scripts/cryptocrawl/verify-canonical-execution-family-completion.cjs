@@ -29,9 +29,12 @@ assert(makerRuntime.includes('createPostOnlyMakerAdapters(plan)'), 'maker live e
 assert(runtime.includes("install('stablecoin_maker_execution', () => ensureStablecoinMakerExecutionWiring())"), 'canonical runtime must install maker execution wiring through the isolated component wrapper');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'maker component failure must not globally stop unrelated runtime paths');
 
-assert(across.includes('getAcrossBridgeQuote({'), 'Across execution must refresh the quote immediately before signing');
-assert(across.includes('simulationSuccess !== true'), 'Across execution must reject an unsimulated quote');
+assert(across.includes('getAcrossCrossSwapQuote({'), 'Across execution must refresh the exact cross-swap quote immediately before signing');
 assert(across.includes('freshExecutionPayload'), 'Across execution must fetch a fresh transaction payload');
+assert(across.includes('simulationVetoAuthority: false'), 'Across provider simulation remains advisory and cannot veto hard executable route facts');
+assert(across.includes('executeSystemOwnedNativeTransaction({'), 'Across approval gas must use system-owned native-gas authority');
+assert(across.includes('postApprovalEconomicsPositive'), 'Across execution must revalidate positive economics after approval receipts');
+assert(across.includes('ACROSS_POST_APPROVAL_NONPOSITIVE_NET'), 'Across principal broadcast must fail closed when post-approval economics are nonpositive');
 assert(across.includes('getAcrossDepositSettlementEvidence({'), 'Across execution must bind provider status to terminal receipt evidence');
 assert(across.includes('destinationReceiptVerified'), 'successful bridge settlement must require destination receipt verification');
 
@@ -62,4 +65,4 @@ for (const [name, source] of Object.entries({ across, liquidation, funding, mev,
   assert(!source.includes('syntheticProfit'), `${name} must not introduce synthetic profit authority`);
 }
 
-console.log('[canonical-execution-family-completion] PASS: inventory, isolated maker runtime, cross-chain, liquidation, funding, backrun, and rebalancing invariants are present and fail closed locally');
+console.log('[canonical-execution-family-completion] PASS: inventory, isolated maker runtime, measured approval-safe cross-chain execution, liquidation, funding, backrun, and rebalancing invariants are present and fail closed locally');
