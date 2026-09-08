@@ -43,7 +43,8 @@ assert.match(lifecycle, /accountBalanceCreatesOwnership:\s*false/, 'Kalshi fundi
 
 assert.match(migration, /CHECK \(venue IN \('coinbase','kraken','okx'\)\)/, 'Coinbase must be admitted by the durable owned-lot and settlement venue constraints');
 assert.match(migration, /account balances never create rows/i, 'Coinbase schema migration must preserve the no-balance-ownership invariant');
-assert.match(runtimeSchema, /SCHEMA_VERSION = 25/, 'Overflow runtime schema version must advance for Coinbase ownership constraints');
+const schemaVersionMatch = runtimeSchema.match(/const SCHEMA_VERSION = (\d+);/);
+assert.ok(schemaVersionMatch && Number(schemaVersionMatch[1]) >= 25, 'Overflow runtime schema version must retain or advance beyond Coinbase ownership schema v25');
 assert.match(runtimeSchema, /055_cryptocrawler_coinbase_system_owned_capital\.sql/, 'Overflow runtime authority must apply the Coinbase ownership migration');
 assert.match(dockerfile, /055_cryptocrawler_coinbase_system_owned_capital\.sql/, 'production image must package the Coinbase ownership migration');
 

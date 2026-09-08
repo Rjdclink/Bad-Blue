@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 25;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v25';
+const SCHEMA_VERSION = 26;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v26';
 
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
@@ -59,6 +59,7 @@ const MIGRATIONS = [
   '053_cryptocrawler_cross_venue_event_lifecycle.sql',
   '054_cryptocrawler_polymarket_redemption_recovery.sql',
   '055_cryptocrawler_coinbase_system_owned_capital.sql',
+  '056_subagent_runtime_prerequisites.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -129,6 +130,14 @@ const REQUIRED_TABLES = [
   'private.cryptara_state_snapshots',
   'private.cryptara_patterns',
   'private.cryptara_outbox',
+  'public.subagent_capabilities',
+  'public.subagent_learning_patterns',
+  'public.subagent_performance_metrics',
+  'public.subagent_self_improvement_actions',
+  'public.jurisdiction_populations',
+  'public.officer_category_priority',
+  'public.subagent_search_queue',
+  'public.subagent_search_sessions',
   'private.cryptocrawler_overflow_runtime_meta',
 ] as const;
 
