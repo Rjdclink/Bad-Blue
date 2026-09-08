@@ -64,8 +64,8 @@ function finite(value: unknown): number | null {
 }
 
 function positive(value: unknown): number | null {
-  const value = finite(value);
-  return value !== null && value > 0 ? value : null;
+  const parsed = finite(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
 }
 
 function nonnegative(value: unknown): number | null {
