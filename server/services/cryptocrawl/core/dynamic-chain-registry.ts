@@ -19,7 +19,12 @@ const DEFINITIONS: ReadonlyArray<Omit<DynamicChainConfig, 'rpcUrl'>> = [
   { id: 'polygon', family: 'evm', nativeAsset: 'POL', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
   { id: 'arbitrum', family: 'evm', nativeAsset: 'ETH', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
   { id: 'optimism', family: 'evm', nativeAsset: 'ETH', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
-  { id: 'bsc', family: 'evm', nativeAsset: 'BNB', sponsoredBootstrap: false, executionMode: 'native_only' },
+  // Alchemy Wallet APIs currently expose Gas Sponsorship and ERC-20 Gas Payments
+  // on BNB Mainnet. This is a route-local capability only: the live sponsorship
+  // manager and exact policy still have to prove readiness before execution.
+  { id: 'bsc', family: 'evm', nativeAsset: 'BNB', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
+  // Keep Avalanche native-only until the Wallet-API sponsorship surface is
+  // independently proven; generic RPC availability is not sponsorship authority.
   { id: 'avalanche', family: 'evm', nativeAsset: 'AVAX', sponsoredBootstrap: false, executionMode: 'native_only' },
   { id: 'solana', family: 'solana', nativeAsset: 'SOL', sponsoredBootstrap: false, executionMode: 'native_only' },
   { id: 'tron', family: 'tron', nativeAsset: 'TRX', sponsoredBootstrap: false, executionMode: 'native_only' },
