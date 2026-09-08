@@ -26,7 +26,10 @@ const DEFINITIONS: ReadonlyArray<Omit<DynamicChainConfig, 'rpcUrl'>> = [
 ];
 
 const ENV: Record<DynamicChainId, string[]> = {
-  ethereum: ['ETHEREUM_RPC_URL'], polygon: ['POLYGON_RPC_URL'], arbitrum: ['ARBITRUM_RPC_URL'],
+  // Preserve the historical Railway typo as a route-local compatibility fallback.
+  // ETHEREUM_RPC_URL remains canonical and wins whenever both are present.
+  ethereum: ['ETHEREUM_RPC_URL', 'ETHEREM_RPC_URL'],
+  polygon: ['POLYGON_RPC_URL'], arbitrum: ['ARBITRUM_RPC_URL'],
   optimism: ['OPTIMISM_RPC_URL'], bsc: ['BSC_RPC_URL', 'BNB_SMART_CHAIN_RPC_URL'],
   avalanche: ['AVALANCHE_RPC_URL'], solana: ['SOLANA_RPC_URL'], tron: ['TRON_RPC_URL'],
 };
