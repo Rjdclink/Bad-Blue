@@ -26,6 +26,7 @@ const nativeGasExecution = read('server/services/cryptocrawl/execution/system-ow
 const liquidation = read('server/services/cryptocrawl/execution/flash-liquidation-executor.ts');
 const mev = read('server/services/cryptocrawl/execution/mev-backrun-executor.ts');
 const zeroCapital = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
+const zeroCapitalExecutor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 
 const topologies = [
   'CEX_CEX',
@@ -107,10 +108,10 @@ check('durable native gas proof requires system ownership authority', nativeGasP
 check('prepared exact signed transactions reserve provenance-backed gas before broadcast', nativeGasExecution.includes('executePreparedSystemOwnedNativeTransaction') && nativeGasExecution.includes('reserveSystemNativeGasSpend({') && nativeGasExecution.includes('bindSystemNativeGasSpendSubmission('));
 check('prepared gas authority quarantines ambiguous submissions', nativeGasExecution.includes('quarantineSubmittedSystemNativeGasSpend'));
 
-check('zero-capital atomic engine uses external flash-loan route planning', zeroCapital.includes('buildFlashLoanExecutionPlanFromOpportunity'));
-check('zero-capital atomic engine requires positive verified receiver profit', zeroCapital.includes('No positive verified FlashLoanExecuted profit was emitted'));
-check('zero-capital atomic engine records receipt gas truth', zeroCapital.includes('receipt.gasUsed') && zeroCapital.includes('receipt.effectiveGasPrice'));
-check('Kalshi is not falsely injected into the same-transaction flash-loan engine', !zeroCapital.includes('kalshi_perps') && !zeroCapital.includes('PREDICTION_EVENT'));
+check('zero-capital runtime delegates external flash-loan route planning to canonical executor', zeroCapital.includes("executionAuthority: 'CanonicalZeroCapitalExecutor'") && zeroCapitalExecutor.includes('buildFlashLoanExecutionPlanFromOpportunity'));
+check('canonical zero-capital executor requires positive verified receiver profit', zeroCapitalExecutor.includes('Terminal receipt did not emit a positive FlashLoanExecuted profit'));
+check('canonical zero-capital executor records receipt gas truth', zeroCapitalExecutor.includes('receipt.gasUsed') && zeroCapitalExecutor.includes('receipt.effectiveGasPrice'));
+check('Kalshi is not falsely injected into the same-transaction flash-loan engine', !zeroCapital.includes('kalshi_perps') && !zeroCapital.includes('PREDICTION_EVENT') && !zeroCapitalExecutor.includes('kalshi_perps') && !zeroCapitalExecutor.includes('PREDICTION_EVENT'));
 check('liquidation exact-simulates before submit', liquidation.includes('provider.call(request') && liquidation.includes('provider.estimateGas(request)'));
 check('MEV stays backrun-only', mev.includes('sandwichOrFrontrun: false'));
 check('MEV has private ordered victim-before-backrun proof', mev.includes('victimReceipt!.transactionIndex < backrunReceipt.transactionIndex'));
