@@ -1,6 +1,5 @@
 import logger from '../../../logger.js';
-import { buildDynamicZeroCapitalRouteTemplates } from '../discovery/dynamic-zero-capital-routes.js';
-import { loadConfiguredZeroCapitalRoutes } from '../execution/adapters/onchain-route-quoter.js';
+import { getCanonicalZeroCapitalRouteSnapshot } from '../discovery/zero-capital-route-authority.js';
 import {
   getSponsoredReceiverManager,
   supportsSponsoredReceiverChain,
@@ -13,25 +12,22 @@ export function logZeroCapitalReadinessDiagnostics(): void {
   emitted = true;
 
   try {
-    const configured = loadConfiguredZeroCapitalRoutes();
-    const dynamic = [
-      ...buildDynamicZeroCapitalRouteTemplates('polygon'),
-      ...buildDynamicZeroCapitalRouteTemplates('arbitrum'),
-    ];
-    const allRoutes = [...new Map([...configured, ...dynamic].map(route => [route.id, route])).values()];
-    const eligible = allRoutes.filter(route => route.chain !== 'europa' && supportsSponsoredReceiverChain(route.chain));
+    const routeSnapshot = getCanonicalZeroCapitalRouteSnapshot();
+    const eligible = routeSnapshot.routes.filter(route => supportsSponsoredReceiverChain(route.chain));
     const receiverRecords = getSponsoredReceiverManager().getRecords();
     const canonicalExecutionRequested = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
       && process.env.NO_EXECUTION !== 'true';
 
-    logger.info('[ZeroCapitalDiagnostics] Route ownership and runtime readiness', {
+    logger.info('[ZeroCapitalDiagnostics] Canonical route and runtime readiness', {
       component: 'ZeroCapitalDiagnostics',
-      explicitConfiguredRoutes: configured.length,
-      dynamicStructuralRoutes: dynamic.length,
-      totalKnownStructuralRoutes: allRoutes.length,
+      explicitConfiguredRoutes: routeSnapshot.explicitRoutes,
+      dynamicStructuralRoutes: routeSnapshot.dynamicRoutes,
+      graphlessStructuralRoutes: routeSnapshot.graphlessRoutes,
+      totalKnownStructuralRoutes: routeSnapshot.routes.length,
       sponsoredReceiverEligibleRoutes: eligible.length,
-      routeChains: [...new Set(eligible.map(route => route.chain))],
-      flashLoanExecutionOwner: 'AutonomousZeroCapitalEngine',
+      routeChains: routeSnapshot.chains,
+      routeAuthority: 'zero_capital_route_authority',
+      flashLoanExecutionOwner: 'CanonicalZeroCapitalExecutor',
       genericExecutionFlashLoanOwner: false,
       canonicalExecutionRequested,
       zeroCapitalSpecificExecutionFlagAuthority: false,
@@ -41,11 +37,11 @@ export function logZeroCapitalReadinessDiagnostics(): void {
         process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER?.trim() ||
         process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVERS?.trim()
       ),
-      explicitRouteConfigPresent: configured.length > 0,
-      dynamicRouteDiscoveryPresent: dynamic.length > 0,
-      routeAuthority: 'explicit_plus_dynamic_measured_routes',
-      receiverAuthority: 'deterministic_runtime_deploy_and_verify',
-      executionAuthority: 'canonical_stage_manager_plus_hard_execution_facts',
+      explicitRouteConfigPresent: routeSnapshot.explicitRoutes > 0,
+      dynamicRouteDiscoveryPresent: routeSnapshot.dynamicRoutes > 0,
+      receiverAuthority: 'canonical_zero_capital_discovery_resource_stage',
+      gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
+      executionAuthority: 'canonical_execution_scheduler_to_canonical_zero_capital_executor',
       zeroXReadOnlyConfigured: !!process.env.ZEROX_API_KEY?.trim(),
       zeroXStaticPairConfigured: !!(
         process.env.ZEROX_CHAIN_ID?.trim() &&
@@ -55,9 +51,10 @@ export function logZeroCapitalReadinessDiagnostics(): void {
       ),
     });
   } catch (error) {
-    logger.warn('[ZeroCapitalDiagnostics] Route configuration is invalid', {
+    logger.warn('[ZeroCapitalDiagnostics] Canonical route authority is unavailable', {
       component: 'ZeroCapitalDiagnostics',
-      flashLoanExecutionOwner: 'AutonomousZeroCapitalEngine',
+      routeAuthority: 'zero_capital_route_authority',
+      executionAuthority: false,
       error: error instanceof Error ? error.message : String(error),
     });
   }
