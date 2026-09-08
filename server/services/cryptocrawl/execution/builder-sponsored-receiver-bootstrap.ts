@@ -256,7 +256,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     maxFeePerGas: fees.maxFeePerGas,
     maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
   } as const;
-  const prefixTransactions: Array<Record<string, unknown>> = [];
+  const prefixTransactions: providers.TransactionRequest[] = [];
   prefixTransactions.push({
     ...common,
     nonce,
