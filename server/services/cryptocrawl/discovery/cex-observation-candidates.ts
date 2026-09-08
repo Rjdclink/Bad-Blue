@@ -1,10 +1,18 @@
 import type { MeasuredCandidate } from './measured-candidate-registry.js';
 import type { PublicCexBboObservation } from './public-cex-discovery.js';
 
+const INTEGRATED_EXECUTABLE_CEX_VENUES = new Set(['coinbase', 'kraken', 'okx']);
+
 /**
  * Convert measured discovery-only public BBOs into non-executable CEX_CEX
  * observation candidates. This is observability/search evidence only: no fee,
  * depth, deterministic-profit, eligibility, or execution evidence is invented.
+ *
+ * Public venues without a settlement-safe integrated executor are deliberately
+ * advisory discovery surfaces. Their unavailable private fees/depth/settlement
+ * are not "missing" evidence for CryptoCrawler to repeatedly reacquire. Only a
+ * symbol observed on at least two integrated executable venues is allowed to
+ * advertise execution-hydration requirements.
  */
 export function buildObservedCexCandidates(
   observations: readonly PublicCexBboObservation[],
@@ -29,6 +37,10 @@ export function buildObservedCexCandidates(
     const measured = [...latestByVenue.values()].sort((left, right) => left.venue.localeCompare(right.venue));
     if (measured.length < 2) continue;
 
+    const integratedVenues = [...new Set(measured
+      .map(row => row.venue.trim().toLowerCase())
+      .filter(venue => INTEGRATED_EXECUTABLE_CEX_VENUES.has(venue)))];
+    const executionHydrationPossible = integratedVenues.length >= 2;
     const observedAt = Math.max(...measured.map(row => row.observedAt));
     const expiry = observedAt + Math.max(250, ttlMs);
     candidates.push({
@@ -48,11 +60,19 @@ export function buildObservedCexCandidates(
         bid: row.bid,
         ask: row.ask,
         executable: false,
-        provenance: [`public_cex:${row.venue}`, 'discovery_only'],
+        provenance: [
+          `public_cex:${row.venue}`,
+          'discovery_only',
+          INTEGRATED_EXECUTABLE_CEX_VENUES.has(row.venue.trim().toLowerCase())
+            ? 'integrated_venue_public_measurement'
+            : 'public_only_venue_advisory_measurement',
+        ],
       })),
       depth: {
         status: 'unavailable',
-        detail: 'Public top-of-book discovery does not establish executable depth',
+        detail: executionHydrationPossible
+          ? 'Public top-of-book discovery is a signal only; integrated venue depth is measured by the canonical executable CEX verifier when a positive integrated edge warrants hydration'
+          : 'Public-only venue observations remain advisory because no two settlement-safe integrated execution legs exist for this symbol in the observation',
       },
       economics: {
         grossProfitUsd: null,
@@ -65,17 +85,25 @@ export function buildObservedCexCandidates(
       },
       quoteAgeMs: Math.max(0, Date.now() - observedAt),
       executableCapability: false,
-      executionCapabilityReason: 'Discovery-only public venues are signal sources; executable admission requires settlement-safe venue adapters, authenticated fees, depth, sizing, and deterministic positive all-in economics',
-      missingInformation: [
-        'settlement_safe_executable_venue_pair_required',
-        'authenticated_fee_evidence_required',
-        'executable_depth_required',
-        'deterministic_all_in_economics_required',
-      ],
+      executionCapabilityReason: executionHydrationPossible
+        ? 'Two integrated execution venues are observed publicly; canonical authenticated fees, measured depth, product constraints, sizing and deterministic positive all-in economics are still required before execution'
+        : 'Discovery-only public venues are signal sources, not incomplete execution adapters; unavailable private execution evidence is classified as advisory capability scope rather than a reacquisition backlog',
+      missingInformation: executionHydrationPossible
+        ? [
+            'required:authenticated_fee_evidence',
+            'required:executable_depth',
+            'required:deterministic_all_in_economics',
+          ]
+        : [
+            'advisory:public_only_venue_pair_not_integrated_for_execution',
+          ],
       provenance: [
         'measured_public_cex_bbo',
         'cross_venue_observation',
         'discovery_only_non_authoritative_for_execution',
+        executionHydrationPossible
+          ? 'execution_hydration_possible:two_or_more_integrated_venues'
+          : 'execution_hydration_not_applicable:public_only_venue_scope',
       ],
     });
   }
