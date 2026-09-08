@@ -103,6 +103,12 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     provider?: FlashLoanProviderKind;
     /** Offline/test override only when WALLET_PRIVATE_KEY is absent. */
     profitRecipient?: string;
+    /**
+     * Exact all-in minimum profit required by an execution transport. A caller
+     * may raise the canonical positive floor (for example, to repay a builder),
+     * but may never claim more than the measured opportunity itself can produce.
+     */
+    minProfitBaseUnits?: bigint | string;
     minOutputBps?: number;
     maxRouteHops?: number;
     deadlineBufferSeconds?: number;
@@ -148,6 +154,20 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
   }
   if (!isStrictlyPositiveProfitBaseUnits(expectedProfit)) {
     throw new Error('Autonomous zero-capital expected all-in profit must be strictly greater than zero');
+  }
+
+  const canonicalMinimumProfit = minimumPositiveProfitBaseUnits();
+  const requestedMinimumProfit = options?.minProfitBaseUnits === undefined
+    ? canonicalMinimumProfit
+    : BigInt(bigintishToString(options.minProfitBaseUnits));
+  if (!isStrictlyPositiveProfitBaseUnits(requestedMinimumProfit)) {
+    throw new Error('Autonomous zero-capital minimum execution profit must be strictly greater than zero');
+  }
+  if (requestedMinimumProfit < canonicalMinimumProfit) {
+    throw new Error('Autonomous zero-capital minimum execution profit cannot weaken the canonical positive-profit floor');
+  }
+  if (requestedMinimumProfit > expectedProfit) {
+    throw new Error('Autonomous zero-capital minimum execution profit exceeds the measured expected profit');
   }
 
   const minOutputBps = boundedBps(
@@ -210,7 +230,7 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     provider: options?.provider || 'balancer_v2',
     loanToken: inputToken,
     loanAmount: flashLoanAmount.toString(),
-    minProfit: minimumPositiveProfitBaseUnits().toString(),
+    minProfit: requestedMinimumProfit.toString(),
     profitRecipient,
     steps,
     gasLimit: 1400000,
