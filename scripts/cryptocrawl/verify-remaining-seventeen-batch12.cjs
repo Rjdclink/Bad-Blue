@@ -16,6 +16,7 @@ const memory = read('server/services/cryptocrawl/intelligence/canonical-intellig
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
 const atomicSize = read('server/services/cryptocrawl/execution/adapters/atomic-size-optimizer.ts');
 const zeroCapitalCore = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
+const canonicalZeroCapitalExecutor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 const zeroCapitalRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts');
 const ladderNotional = read('server/services/cryptocrawl/governance/profit-ladder-notional-authority.ts');
 const hyperHybrid = read('server/services/cryptocrawl/execution/hyper-hybrid-cex-execution.ts');
@@ -51,7 +52,11 @@ assert(dynamicRoutes.includes('state.measuredQuotes += quotes.length'), 'measure
 assert(atomicSize.includes('profit > 0n') && atomicSize.includes('bestPositive'), 'atomic size optimizer must prefer strict-positive measured dollar profit');
 assert(atomicSize.includes('bpsToBreakEven') && atomicSize.includes('bestNearMiss'), 'all-negative atomic size fallback must preserve the closest measured BPS near miss only');
 assert(zeroCapitalCore.includes('runZeroCapitalProfitabilityRescueV2({'), 'canonical zero-capital scan must invoke BPS rescue directly');
-assert(zeroCapitalCore.includes('resolveInputAssetUsdPrice(opportunity)'), 'pre-trade zero-capital USD economics must require live token price');
+assert(zeroCapitalCore.includes('tokenUnitEqualsUsdAssumption: false'), 'zero-capital runtime context must explicitly reject token-unit-equals-USD authority');
+assert(canonicalZeroCapitalExecutor.includes("import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';"), 'canonical zero-capital executor must own live token-price lookup');
+assert(canonicalZeroCapitalExecutor.includes('coinGeckoPriceClient.getLiveSymbolPrices([...new Set(symbols)])'), 'canonical zero-capital terminal economics must request live token prices');
+assert(canonicalZeroCapitalExecutor.includes('inputTokenUsdPrice: prices.get(input.opportunity.inputAssetSymbol) ?? null'), 'canonical zero-capital realized USD economics must consume live input-token price');
+assert(canonicalZeroCapitalExecutor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']"), 'builder-funded zero-capital execution must fail closed when live token USD valuation is unavailable');
 assert(zeroCapitalRescue.includes('getProfitLadderNotionalAuthority().maxNotionalUsd'), 'canonical rescue must consume Profit Ladder notional authority');
 assert(!zeroCapitalRescue.includes('ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD'), 'zero-capital rescue must not retain an independent notional ceiling');
 assert(zeroCapitalRescue.includes('measureFlashLoanProviders({'), 'canonical rescue must use measured provider evidence');
@@ -97,4 +102,4 @@ assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVe
 assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring())"), 'candidate expiry guard must be isolated and installed');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and live token USD pricing, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder zero-capital notional authority, canonical direct BPS rescue with measured provider fees/liquidity and canonical-executor live token USD pricing, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
