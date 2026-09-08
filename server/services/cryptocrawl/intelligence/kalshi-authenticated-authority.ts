@@ -47,20 +47,21 @@ function perpsPrivateKeyRaw(): string | null {
 }
 
 /**
- * Kalshi may use separate credentials for event/prediction and perps surfaces.
- * Existing generic credentials remain a compatibility fallback for perps, while
- * event requests prefer the generic event key so a configured perps key cannot
- * accidentally shadow a valid prediction-market credential.
+ * Event and perps credentials are separate capability authorities. An explicit
+ * scope must never silently borrow credentials from the other scope: production
+ * proved that doing so turns an absent perps entitlement into a repeating 403
+ * acquisition loop. `auto` may select whichever credential family actually
+ * exists only after the request path has selected its required scope.
  */
 function apiKeyId(scope: Exclude<KalshiCredentialScope, 'auto'> | 'auto' = 'auto'): string | null {
-  if (scope === 'event') return eventApiKeyId() || perpsApiKeyId();
-  if (scope === 'perps') return perpsApiKeyId() || eventApiKeyId();
+  if (scope === 'event') return eventApiKeyId();
+  if (scope === 'perps') return perpsApiKeyId();
   return eventApiKeyId() || perpsApiKeyId();
 }
 
 function privateKeyRaw(scope: Exclude<KalshiCredentialScope, 'auto'> | 'auto' = 'auto'): string | null {
-  if (scope === 'event') return eventPrivateKeyRaw() || perpsPrivateKeyRaw();
-  if (scope === 'perps') return perpsPrivateKeyRaw() || eventPrivateKeyRaw();
+  if (scope === 'event') return eventPrivateKeyRaw();
+  if (scope === 'perps') return perpsPrivateKeyRaw();
   return eventPrivateKeyRaw() || perpsPrivateKeyRaw();
 }
 
@@ -99,7 +100,12 @@ function privateKey(scope: Exclude<KalshiCredentialScope, 'auto'>): KeyObject {
 }
 
 export function kalshiCredentialsPresent(scope: KalshiCredentialScope = 'auto'): boolean {
-  return Boolean(apiKeyId(scope) && privateKeyRaw(scope));
+  if (scope === 'event') return Boolean(eventApiKeyId() && eventPrivateKeyRaw());
+  if (scope === 'perps') return Boolean(perpsApiKeyId() && perpsPrivateKeyRaw());
+  return Boolean(
+    (eventApiKeyId() && eventPrivateKeyRaw())
+    || (perpsApiKeyId() && perpsPrivateKeyRaw()),
+  );
 }
 
 export function getKalshiApiEnvironment(): KalshiApiEnvironment {
