@@ -48,7 +48,10 @@ export function buildObservedCexCandidates(
       topology: 'CEX_CEX',
       observedAt,
       expiresAt: expiry,
-      status: 'observed',
+      // A public-only venue pair is terminally non-executable for the current
+      // integration set, not an active evidence backlog. It remains visible as
+      // blocked advisory market intelligence while broad discovery keeps moving.
+      status: executionHydrationPossible ? 'observed' : 'blocked',
       assets: [symbol],
       venues: measured.map(row => row.venue),
       chains: ['cex'],
@@ -87,7 +90,7 @@ export function buildObservedCexCandidates(
       executableCapability: false,
       executionCapabilityReason: executionHydrationPossible
         ? 'Two integrated execution venues are observed publicly; canonical authenticated fees, measured depth, product constraints, sizing and deterministic positive all-in economics are still required before execution'
-        : 'Discovery-only public venues are signal sources, not incomplete execution adapters; unavailable private execution evidence is classified as advisory capability scope rather than a reacquisition backlog',
+        : 'Advisory public-only venue pair has no two integrated settlement-safe execution legs; this is an explicit capability boundary, not missing evidence and not a reacquisition target',
       missingInformation: executionHydrationPossible
         ? [
             'required:authenticated_fee_evidence',
