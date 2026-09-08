@@ -4,13 +4,14 @@ import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
-import type { GasFundingMode } from '../capital-free/dynamic-gas-funding-engine.js';
+import type { GasFundingDecision, GasFundingMode } from '../capital-free/dynamic-gas-funding-engine.js';
 import {
   quoteConfiguredZeroCapitalRoutesForChain,
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
 import type { SupportedExecutionChain, UniswapV3FeeTier } from '../execution/adapters/onchain-payload-builder.js';
+import { getLatestProvenZeroCapitalGasFundingDecisions } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import { discoverGraphlessDexTokens, type GraphlessDexTokenCandidate } from './graphless-dex-scout.js';
 import {
   recordZeroCapitalRouteQuoteCycle,
@@ -38,7 +39,7 @@ export interface DynamicZeroCapitalDiscoveryState {
     measuredQuotes: number;
     positiveQuotes: number;
     gasCostUsd: number | null;
-    gasCostAuthority: 'verified_sponsored_user_cost_zero' | 'measured_native_gas' | 'unavailable';
+    gasCostAuthority: 'verified_sponsored_user_cost_zero' | 'measured_sponsored_billing_proxy' | 'measured_native_gas' | 'unavailable';
     fundingMode: GasFundingMode | 'unknown';
     quoteBudget: number;
     scoredCandidates: number;
@@ -78,11 +79,40 @@ const TRIANGLE_PROTOCOL_PATHS = [
 type DynamicProtocol = 'uniswapV3' | 'sushiswap';
 
 type DynamicStableConfig = { usdc: string; usdt: string };
+type DynamicGasFundingContext = GasFundingDecision | GasFundingMode | 'unknown';
 
 function bounded(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
   const normalized = Number.isFinite(parsed) ? parsed : fallback;
   return Math.max(min, Math.min(max, normalized));
+}
+
+function fundingModeFromContext(funding: DynamicGasFundingContext): GasFundingMode | 'unknown' {
+  return typeof funding === 'string' ? funding : funding.mode;
+}
+
+function resolveFundingContext(
+  chain: SupportedExecutionChain,
+  funding: DynamicGasFundingContext,
+): DynamicGasFundingContext {
+  if (typeof funding === 'object') return funding;
+  if (funding === 'unknown') return funding;
+  const proven = getLatestProvenZeroCapitalGasFundingDecisions()
+    .find(decision => decision.chain === chain && decision.mode === funding);
+  return proven ?? funding;
+}
+
+function sponsorCostProvenZero(funding: DynamicGasFundingContext): boolean {
+  return typeof funding === 'object'
+    && funding.mode === 'sponsored'
+    && funding.sponsorOperatorMonetaryCostProvenZero === true
+    && funding.providerBillingLiability === false;
+}
+
+function sponsoredBillingLiability(funding: DynamicGasFundingContext): boolean {
+  return typeof funding === 'object'
+    && funding.mode === 'sponsored'
+    && funding.providerBillingLiability === true;
 }
 
 function dynamicStableConfig(chain: SupportedExecutionChain): DynamicStableConfig | null {
@@ -348,16 +378,17 @@ export function getCachedGraphlessDynamicRouteTemplates(chain?: SupportedExecuti
 type GasEnrichment = {
   routes: ConfiguredZeroCapitalRoute[];
   gasCostUsd: number;
-  gasCostAuthority: 'verified_sponsored_user_cost_zero' | 'measured_native_gas';
+  gasCostAuthority: 'verified_sponsored_user_cost_zero' | 'measured_sponsored_billing_proxy' | 'measured_native_gas';
 };
 
 async function enrichMeasuredGasCost(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
   routes: ConfiguredZeroCapitalRoute[],
-  fundingMode: GasFundingMode | 'unknown',
+  funding: DynamicGasFundingContext,
 ): Promise<GasEnrichment> {
-  if (fundingMode === 'sponsored') {
+  const fundingMode = fundingModeFromContext(funding);
+  if (fundingMode === 'sponsored' && sponsorCostProvenZero(funding)) {
     return {
       gasCostUsd: 0,
       gasCostAuthority: 'verified_sponsored_user_cost_zero',
@@ -369,7 +400,13 @@ async function enrichMeasuredGasCost(
     DEFAULT_GAS_LIMIT,
     Math.floor(bounded(process.env.ZERO_CAPITAL_DYNAMIC_EXECUTION_GAS_UNITS, 1_400_000, 100_000, 5_000_000)),
   );
-  const safetyMultiplier = bounded(process.env.ZERO_CAPITAL_DYNAMIC_GAS_SAFETY_MULTIPLIER, 1.25, 1, 3);
+  const configuredSafetyMultiplier = bounded(process.env.ZERO_CAPITAL_DYNAMIC_GAS_SAFETY_MULTIPLIER, 1.25, 1, 3);
+  // Hosted mainnet sponsorship removes the upfront native-token prerequisite but
+  // creates a provider billing liability. Keep a conservative pre-trade buffer so
+  // PAYG Gas Manager fees cannot be silently treated as free execution economics.
+  const safetyMultiplier = sponsoredBillingLiability(funding)
+    ? Math.max(1.25, configuredSafetyMultiplier)
+    : configuredSafetyMultiplier;
   let gasCostUsd: number;
 
   if (chain === 'ethereum') {
@@ -393,7 +430,7 @@ async function enrichMeasuredGasCost(
   const gasCostBaseUnits = BigInt(Math.max(0, Math.ceil(gasCostUsd * 1_000_000))).toString();
   return {
     gasCostUsd,
-    gasCostAuthority: 'measured_native_gas',
+    gasCostAuthority: sponsoredBillingLiability(funding) ? 'measured_sponsored_billing_proxy' : 'measured_native_gas',
     routes: routes.map(route => ({ ...route, estimatedGasCostInInputToken: gasCostBaseUnits })),
   };
 }
@@ -419,8 +456,10 @@ function recoveryQuoteRoutes(
 export async function discoverDynamicZeroCapitalQuotes(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
-  fundingMode: GasFundingMode | 'unknown' = 'unknown',
+  funding: DynamicGasFundingContext = 'unknown',
 ): Promise<QuotedZeroCapitalRoute[]> {
+  const fundingContext = resolveFundingContext(chain, funding);
+  const fundingMode = fundingModeFromContext(fundingContext);
   const stableTemplates = buildDynamicZeroCapitalRouteTemplates(chain);
   let graphless = { routes: [] as ConfiguredZeroCapitalRoute[], tokens: 0, sources: [] as string[], triangularTemplates: 0 };
   try {
@@ -464,7 +503,7 @@ export async function discoverDynamicZeroCapitalQuotes(
   }
 
   try {
-    const enriched = await enrichMeasuredGasCost(chain, provider, templates, fundingMode);
+    const enriched = await enrichMeasuredGasCost(chain, provider, templates, fundingContext);
     const preselection = selectZeroCapitalRoutesForQuote(enriched.routes, enriched.gasCostUsd);
     const selected = preselection.selectedRoutes;
     const primaryQuotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
@@ -535,6 +574,8 @@ export async function discoverDynamicZeroCapitalQuotes(
       gasCostUsd: enriched.gasCostUsd,
       gasCostAuthority: enriched.gasCostAuthority,
       sponsoredGasDiscountAppliedOnlyFromVerifiedFundingDecision: true,
+      sponsorOperatorMonetaryCostProvenZero: sponsorCostProvenZero(fundingContext),
+      providerBillingLiability: sponsoredBillingLiability(fundingContext),
       preScoreAuthority: preselection.authority,
       formationAuthority: 'scan_priority_advisory_only',
       deterministicProfitAuthority: preselection.deterministicProfitAuthority,
