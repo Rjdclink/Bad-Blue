@@ -21,6 +21,10 @@ const routeQuoter = read('server/services/cryptocrawl/execution/adapters/onchain
 const payloadBuilder = read('server/services/cryptocrawl/execution/adapters/onchain-payload-builder.ts');
 const routePlanner = read('server/services/cryptocrawl/execution/adapters/autonomous-route-planner.ts');
 const receiverCapability = read('server/services/cryptocrawl/execution/adapters/flash-loan-receiver-capability.ts');
+const repaymentRoute = read('server/services/cryptocrawl/execution/adapters/builder-repayment-route.ts');
+const builderTransport = read('server/services/cryptocrawl/execution/adapters/builder-sponsored-bundle.ts');
+const builderColdStart = read('server/services/cryptocrawl/execution/builder-sponsored-zero-capital-coldstart.ts');
+const builderReceiverBootstrap = read('server/services/cryptocrawl/execution/builder-sponsored-receiver-bootstrap.ts');
 
 for (const field of [
   'grossProfitBps',
@@ -37,7 +41,6 @@ for (const field of [
 assert.match(registry, /zeroCapitalBps:/);
 assert.match(registry, /nearBreakEven:/);
 
-// One merged route authority feeds the sole recurring discovery lane.
 assert.match(routeAuthority, /loadConfiguredZeroCapitalRoutes/);
 assert.match(routeAuthority, /buildDynamicZeroCapitalRouteTemplates/);
 assert.match(routeAuthority, /getCachedGraphlessDynamicRouteTemplates/);
@@ -54,7 +57,6 @@ assert.match(discovery, /eligibilityAuthority: 'canonical_provider_repricing_sta
 assert.match(discovery, /executionAuthority: false/);
 assert.match(discovery, /synthetic_evidence:false/);
 
-// Historical compatibility surfaces remain authority-free.
 assert.match(compatibilityResource, /discoveryAuthority: 'CanonicalZeroCapitalDiscovery'/);
 assert.match(compatibilityResource, /resourceAuthority: 'getProvenZeroCapitalGasFundingDecision'/);
 assert.match(compatibilityResource, /eligibilityAuthority: 'canonical_provider_repricing_stage_only'/);
@@ -69,7 +71,6 @@ assert.doesNotMatch(compatibilityResource, /getGasFundingDecision\s*\(/);
 assert.doesNotMatch(shadow, /target\.dispatchExecutableOpportunities\s*=/);
 assert.match(shadow, /runtimeMethodMutation: false/);
 
-// Runtime context cannot form a parallel scan/dispatch/submission loop.
 assert.match(engine, /independentScanLoop:\s*false/);
 assert.match(engine, /independentExecutionLoop:\s*false/);
 assert.match(engine, /runtimeMethodMutation:\s*false/);
@@ -79,12 +80,9 @@ assert.doesNotMatch(engine, /computationalBeam/);
 assert.doesNotMatch(engine, /runProfitabilityMonteCarlo/);
 assert.match(engine, /monteCarloExecutionAuthority:\s*false/);
 
-// Strict gas truth has one proof boundary; consumers cannot manufacture it.
 assert.match(gasAuthority, /getProvenZeroCapitalGasFundingDecision/);
 assert.match(engine, /return getProvenZeroCapitalGasFundingDecision\(this, chain\)/);
 
-// Provider selection measures current liquidity/fees and can promote only a
-// strictly-positive exact reprice. It remains advisory to the canonical scheduler.
 assert.match(providerReprice, /measureFlashLoanProviders\(/);
 assert.match(providerReprice, /selectMeasuredFlashLoanProvider\(/);
 assert.match(providerReprice, /function repriceOpportunity\(/);
@@ -95,8 +93,9 @@ assert.match(providerReprice, /synthetic_evidence:false/);
 assert.match(providerReprice, /executionAuthority: false/);
 assert.doesNotMatch(providerReprice, /target\.scanChain\s*=/);
 assert.doesNotMatch(providerReprice, /target\.executeFunded\s*=/);
+assert.match(providerReprice, /BPS_PRECISION_SCALE\s*=\s*1_000_000n/);
+assert.match(providerReprice, /bootstrapFlashFee/);
 
-// One parent scheduler owns ZERO_CAPITAL_ATOMIC.
 assert.match(scheduler, /decision\.topology === 'ZERO_CAPITAL_ATOMIC'/);
 assert.match(scheduler, /candidate\.expiresAt > Date\.now\(\)/);
 assert.match(scheduler, /opportunity\.expiresAt > Date\.now\(\)/);
@@ -104,7 +103,6 @@ assert.match(scheduler, /opportunity\.expectedProfit > 0n/);
 assert.doesNotMatch(scheduler, /opportunity\.netProfitBps > 0/);
 assert.match(scheduler, /executeCanonicalZeroCapitalOpportunity\(/);
 
-// The single executor repeats hard facts at the money boundary.
 assert.match(executor, /Date\.now\(\) >= opportunity\.expiresAt/);
 assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
@@ -119,7 +117,6 @@ assert.match(executor, /extractProfit\(receipt/);
 assert.match(executor, /terminalEconomics\(/);
 assert.match(executor, /synthetic_evidence:false/);
 
-// BPS rescue is advisory measurement/formation only.
 assert.match(rescue, /buildBpsReductionSuperPlan/);
 assert.match(rescue, /buildResearchBpsExecutionPlan/);
 assert.match(rescue, /adviseEconomicTransformations/);
@@ -134,7 +131,6 @@ assert.match(rescue, /executionAuthority: false/);
 assert.doesNotMatch(rescue, /expectedProfit\s*=\s*Math\.max/);
 assert.doesNotMatch(rescue, /netProfitBps\s*=\s*Math\.max/);
 
-// Uniswap V3 official 0.01% tier remains end-to-end.
 assert.match(payloadBuilder, /export type UniswapV3FeeTier = 100 \| 500 \| 3000 \| 10000/);
 assert.match(dynamicRoutes, /ZERO_CAPITAL_DYNAMIC_UNISWAP_FEE_TIERS \|\| '100,500,3000'/);
 assert.match(dynamicRoutes, /value === 100 \|\| value === 500 \|\| value === 3000 \|\| value === 10000/);
@@ -144,7 +140,28 @@ assert.match(routePlanner, /if \(fee <= 0\.0001\) return 100/);
 assert.match(receiverCapability, /if \(fee <= 0\.0001\) return 100/);
 assert.match(routeQuoter, /return \(feeTier \|\| 3000\) \/ 1_000_000/);
 
-// Near-break-even density affects search pressure only.
+// Builder cold-start repayment is a measured route mesh, not a mandatory Sushi path.
+assert.match(repaymentRoute, /BuilderRepaymentRouteName = 'uniswap_v2' \| 'sushiswap_v2'/);
+assert.match(repaymentRoute, /0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D/);
+assert.match(repaymentRoute, /0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F/);
+assert.match(repaymentRoute, /Promise\.all\(ROUTES\.map/);
+assert.match(repaymentRoute, /builder_repayment_selection:lowest_measured_exact_input/);
+assert.match(repaymentRoute, /swapTokensForExactETH/);
+assert.doesNotMatch(builderColdStart, /SUSHISWAP_V2_ROUTER|ROUTER_VIEW_ABI/);
+assert.doesNotMatch(builderReceiverBootstrap, /SUSHISWAP_V2_ROUTER|ROUTER_VIEW_ABI/);
+assert.match(builderColdStart, /selectBuilderRepaymentRoute\(/);
+assert.match(builderReceiverBootstrap, /selectBuilderRepaymentRoute\(/);
+assert.match(builderColdStart, /sub_bps_precision_preserved:true/);
+assert.match(builderReceiverBootstrap, /sub_bps_precision_preserved:true/);
+
+// Builder transport remains one canonical caller while a candidate can survive a bounded block window.
+assert.match(builderTransport, /ZERO_CAPITAL_BUILDER_BLOCK_WINDOW \|\| 3/);
+assert.match(builderTransport, /Math\.max\(1, Math\.min\(5, Math\.trunc\(raw\)\)\)/);
+assert.match(builderTransport, /maxTargetBlock/);
+assert.match(builderTransport, /only a fully missed block may[\s\S]{0,200}advance to the next block/);
+assert.match(builderTransport, /included\.length > 0[\s\S]{0,180}ambiguous/);
+assert.match(builderTransport, /amountInMax\/minProfit\/deadline constraints/);
+
 assert.match(scale, /zeroCapitalNearBreakEvenPressure/);
 assert.match(scale, /nearBreakEvenAuthority: 'fresh_unexpired_search_formation_pressure_only'/);
 assert.match(scale, /staleNearBreakEvenEconomicAuthority: false/);
@@ -164,6 +181,9 @@ console.log(JSON.stringify({
   positiveExecutionFloorPreserved: true,
   zeroPersonalCostGasTruthBound: true,
   uniswapV3OneBpsFeeTierEndToEnd: true,
+  builderRepaymentRouteMesh: true,
+  boundedBuilderBlockWindow: true,
+  subBpsBuilderAdmissionPreserved: true,
   monteCarloExecutionAuthority: false,
   dynamicScaleUse: 'fresh_unexpired_bounded_search_pressure_only',
   realizedProfitabilityAuthorityPreserved: true,
