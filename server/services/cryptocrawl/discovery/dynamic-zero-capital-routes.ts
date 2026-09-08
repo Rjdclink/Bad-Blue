@@ -1,6 +1,7 @@
 import type { providers } from 'ethers';
 import logger from '../../../logger.js';
 import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
+import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
 import type { GasFundingMode } from '../capital-free/dynamic-gas-funding-engine.js';
@@ -60,7 +61,11 @@ const state: DynamicZeroCapitalDiscoveryState = {
 };
 
 const cachedGraphlessTemplates = new Map<SupportedExecutionChain, ConfiguredZeroCapitalRoute[]>();
-const DYNAMIC_EXECUTABLE_CHAINS = new Set<ChainId>(['polygon', 'arbitrum']);
+const DYNAMIC_EXECUTABLE_CHAINS = new Set<SupportedExecutionChain>(['ethereum', 'polygon', 'arbitrum']);
+const ETHEREUM_STABLE_CONFIG = {
+  usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  usdt: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+} as const;
 const DYNAMIC_PROTOCOL_PAIRS = [
   ['uniswapV3', 'sushiswap'],
   ['sushiswap', 'uniswapV3'],
@@ -72,10 +77,19 @@ const TRIANGLE_PROTOCOL_PATHS = [
 
 type DynamicProtocol = 'uniswapV3' | 'sushiswap';
 
+type DynamicStableConfig = { usdc: string; usdt: string };
+
 function bounded(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
   const normalized = Number.isFinite(parsed) ? parsed : fallback;
   return Math.max(min, Math.min(max, normalized));
+}
+
+function dynamicStableConfig(chain: SupportedExecutionChain): DynamicStableConfig | null {
+  if (!DYNAMIC_EXECUTABLE_CHAINS.has(chain)) return null;
+  if (chain === 'ethereum') return ETHEREUM_STABLE_CONFIG;
+  const config = SUPPORTED_CHAINS[chain as ChainId];
+  return config?.usdc && config?.usdt ? { usdc: config.usdc, usdt: config.usdt } : null;
 }
 
 function notionalsUsd(): number[] {
@@ -181,9 +195,8 @@ function triangleCandidatePairs(candidates: readonly GraphlessDexTokenCandidate[
 }
 
 export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionChain): ConfiguredZeroCapitalRoute[] {
-  if (!DYNAMIC_EXECUTABLE_CHAINS.has(chain as ChainId)) return [];
-  const config = SUPPORTED_CHAINS[chain as ChainId];
-  if (!config?.usdc || !config?.usdt) return [];
+  const config = dynamicStableConfig(chain);
+  if (!config) return [];
 
   const routes: ConfiguredZeroCapitalRoute[] = [];
   const tiers = feeTiers();
@@ -237,9 +250,8 @@ async function buildGraphlessProfitSurfaceTemplates(
   chain: SupportedExecutionChain,
   provider: providers.Provider,
 ): Promise<{ routes: ConfiguredZeroCapitalRoute[]; tokens: number; sources: string[]; triangularTemplates: number }> {
-  if (!DYNAMIC_EXECUTABLE_CHAINS.has(chain as ChainId)) return { routes: [], tokens: 0, sources: [], triangularTemplates: 0 };
-  const config = SUPPORTED_CHAINS[chain as ChainId];
-  if (!config?.usdc || !config?.usdt) return { routes: [], tokens: 0, sources: [], triangularTemplates: 0 };
+  const config = dynamicStableConfig(chain);
+  if (!config) return { routes: [], tokens: 0, sources: [], triangularTemplates: 0 };
 
   const scout = await discoverGraphlessDexTokens(chain, provider, [config.usdc, config.usdt]);
   const routes: ConfiguredZeroCapitalRoute[] = [];
@@ -344,7 +356,8 @@ type GasEnrichment = {
 };
 
 async function enrichMeasuredGasCost(
-  chain: ChainId,
+  chain: SupportedExecutionChain,
+  provider: providers.Provider,
   routes: ConfiguredZeroCapitalRoute[],
   fundingMode: GasFundingMode | 'unknown',
 ): Promise<GasEnrichment> {
@@ -356,14 +369,31 @@ async function enrichMeasuredGasCost(
     };
   }
 
-  const gas = await gasOracle.getGasPrice(chain);
-  if (!Number.isFinite(gas.usdCost) || gas.usdCost < 0) throw new Error(`Measured gas cost unavailable for ${chain}`);
   const estimatedGasUnits = Math.max(
     DEFAULT_GAS_LIMIT,
     Math.floor(bounded(process.env.ZERO_CAPITAL_DYNAMIC_EXECUTION_GAS_UNITS, 1_400_000, 100_000, 5_000_000)),
   );
   const safetyMultiplier = bounded(process.env.ZERO_CAPITAL_DYNAMIC_GAS_SAFETY_MULTIPLIER, 1.25, 1, 3);
-  const gasCostUsd = gas.usdCost * (estimatedGasUnits / DEFAULT_GAS_LIMIT) * safetyMultiplier;
+  let gasCostUsd: number;
+
+  if (chain === 'ethereum') {
+    const [feeData, prices] = await Promise.all([
+      provider.getFeeData(),
+      coinGeckoPriceClient.getLiveSymbolPrices(['ETH']),
+    ]);
+    const gasPriceWei = feeData.maxFeePerGas ?? feeData.gasPrice;
+    const ethUsd = prices.get('ETH');
+    const gasPrice = gasPriceWei ? Number(gasPriceWei.toString()) : Number.NaN;
+    if (!Number.isFinite(gasPrice) || gasPrice <= 0 || !Number.isFinite(ethUsd) || !ethUsd || ethUsd <= 0) {
+      throw new Error('Measured Ethereum gas or reusable ETH/USD evidence unavailable');
+    }
+    gasCostUsd = (gasPrice * estimatedGasUnits / 1e18) * ethUsd * safetyMultiplier;
+  } else {
+    const gas = await gasOracle.getGasPrice(chain as ChainId);
+    if (!Number.isFinite(gas.usdCost) || gas.usdCost < 0) throw new Error(`Measured gas cost unavailable for ${chain}`);
+    gasCostUsd = gas.usdCost * (estimatedGasUnits / DEFAULT_GAS_LIMIT) * safetyMultiplier;
+  }
+
   const gasCostBaseUnits = BigInt(Math.max(0, Math.ceil(gasCostUsd * 1_000_000))).toString();
   return {
     gasCostUsd,
@@ -436,7 +466,7 @@ export async function discoverDynamicZeroCapitalQuotes(
   }
 
   try {
-    const enriched = await enrichMeasuredGasCost(chain as ChainId, templates, fundingMode);
+    const enriched = await enrichMeasuredGasCost(chain, provider, templates, fundingMode);
     const preselection = selectZeroCapitalRoutesForQuote(enriched.routes, enriched.gasCostUsd);
     const selected = preselection.selectedRoutes;
     let quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
