@@ -23,30 +23,45 @@ function requireText(relative, content, text, description) {
   if (!content.includes(text)) failures.push(`${relative}: ${description}`);
 }
 
+function forbidText(relative, content, text, description) {
+  if (content.includes(text)) failures.push(`${relative}: ${description}`);
+}
+
 const operatorPath = 'server/services/cryptocrawl/governance/operator-trading-strategy.ts';
 const operator = read(operatorPath);
-requireText(operatorPath, operator, 'const CYCLE_DAYS = 30;', '30-day cycle must remain exact');
-requireText(operatorPath, operator, 'const TRADE_DAYS_PER_CYCLE = 20;', 'exactly 20 trade days must remain configured');
-requireText(operatorPath, operator, 'const LEARNING_DAYS_PER_CYCLE = 10;', 'exactly 10 learning days must remain configured');
-requireText(operatorPath, operator, 'const MIN_DAILY_TRADES = 1;', 'daily trade minimum must remain 1');
-requireText(operatorPath, operator, 'const MAX_DAILY_TRADES = 3;', 'daily trade maximum must remain 3');
-requireText(operatorPath, operator, 'const MIN_DAILY_PROFIT_CEILING_USD = 300;', 'daily profit ceiling minimum must remain $300');
-requireText(operatorPath, operator, 'const MAX_DAILY_PROFIT_CEILING_USD = 3_500;', 'daily profit ceiling maximum must remain $3,500');
-requireText(operatorPath, operator, 'const PROFIT_CUSHION_USD = 50;', '$50 stop cushion must remain exact');
-requireText(operatorPath, operator, 'randomInt(0, index + 1)', '20 trade days must remain randomized rather than deterministic');
-requireText(operatorPath, operator, 'ceiling - PROFIT_CUSHION_USD', 'daily stop must remain ceiling minus $50');
-requireText(operatorPath, operator, "blockReason = 'learning_day'", 'non-trading days must remain execution-blocked learning days');
-requireText(operatorPath, operator, 'runMonteCarloSimulation', 'learning days must continue running Cryptara Monte Carlo learning');
+requireText(operatorPath, operator, 'const CYCLE_DAYS = 30;', '30-day operator cadence telemetry must remain exact');
+requireText(operatorPath, operator, 'const TRADE_DAYS_PER_CYCLE = 20;', '20 preferred trade days must remain configured for advisory pacing');
+requireText(operatorPath, operator, 'const LEARNING_DAYS_PER_CYCLE = 10;', '10 preferred learning days must remain configured for advisory pacing');
+requireText(operatorPath, operator, 'const MIN_DAILY_TRADES = 1;', 'daily trade preference minimum must remain 1');
+requireText(operatorPath, operator, 'const MAX_DAILY_TRADES = 3;', 'daily trade preference maximum must remain 3');
+requireText(operatorPath, operator, 'const MIN_DAILY_PROFIT_CEILING_USD = 300;', 'daily profit telemetry minimum must remain $300');
+requireText(operatorPath, operator, 'const MAX_DAILY_PROFIT_CEILING_USD = 3_500;', 'daily profit telemetry maximum must remain $3,500');
+requireText(operatorPath, operator, 'const PROFIT_CUSHION_USD = 50;', '$50 telemetry cushion must remain exact');
+requireText(operatorPath, operator, 'randomInt(0, index + 1)', 'preferred trade days must remain randomized rather than deterministic');
+requireText(operatorPath, operator, 'ceiling - PROFIT_CUSHION_USD', 'daily stop telemetry must remain ceiling minus $50');
+requireText(operatorPath, operator, "advisorySignals.push('learning_day')", 'learning-day state must remain observable as advisory telemetry');
+requireText(operatorPath, operator, "advisorySignals.push('daily_profit_stop')", 'profit-stop state must remain observable as advisory telemetry');
+requireText(operatorPath, operator, "advisorySignals.push('daily_trade_limit')", 'trade-count state must remain observable as advisory telemetry');
+requireText(operatorPath, operator, 'learningMode: false', 'learning cadence must never become an exclusive execution mode');
+requireText(operatorPath, operator, 'learningDayScheduled: !isTradeDay', 'scheduled learning cadence must remain observable separately from execution authority');
+requireText(operatorPath, operator, 'executionAllowed: true', 'operator calendar must not veto otherwise canonical profitable execution');
+requireText(operatorPath, operator, 'blockReason: null', 'calendar/trade-count/profit pacing must not become an operator execution block');
+requireText(operatorPath, operator, "['RESERVED','SUBMITTED','TERMINAL']", 'same-opportunity reservation/submission idempotency must remain hard');
+requireText(operatorPath, operator, "reason: 'duplicate_opportunity'", 'duplicate opportunity must remain the only operator-layer hard rejection');
+requireText(operatorPath, operator, 'void this.runLearningDayCycle()', 'advisory learning must continue without blocking trading');
+requireText(operatorPath, operator, 'runMonteCarloSimulation', 'advisory learning days must continue running Cryptara Monte Carlo learning');
+requireText(operatorPath, operator, "learningAuthority: 'advisory_only'", 'learning simulation must explicitly remain advisory');
+requireText(operatorPath, operator, 'executionAuthority: false', 'operator pacing must explicitly declare no execution authority');
+forbidText(operatorPath, operator, 'if (!state.executionAllowed)', 'operator state must not gate reservations');
+forbidText(operatorPath, operator, 'state.submittedTrades + reservedCount >= state.maxTrades', 'daily trade preference must not hard-block reservations');
+forbidText(operatorPath, operator, 'Operator daily trade limit was reached before reservation', 'daily trade preference must not hard-block concrete submission');
 
 const schedulerPath = 'server/services/cryptocrawl/execution/canonical-execution-scheduler.ts';
 const scheduler = read(schedulerPath);
-requireText(schedulerPath, scheduler, 'operatorTradingStrategy', 'canonical scheduler must remain wired to operator strategy authority');
-requireText(schedulerPath, scheduler, 'reserveTrade', 'trade-slot reservation must occur before canonical submission');
-requireText(schedulerPath, scheduler, 'runLearningDayCycle', 'canonical scheduler must invoke Cryptara learning on learning days');
-requireText(schedulerPath, scheduler, 'learning_day', 'learning-day block must reach canonical scheduler');
-requireText(schedulerPath, scheduler, 'daily_profit_stop', 'realized daily profit stop must reach canonical scheduler');
+requireText(schedulerPath, scheduler, 'operatorTradingStrategy', 'canonical scheduler must remain wired to operator reservation/accounting');
+requireText(schedulerPath, scheduler, 'reserveTrade', 'idempotent parent reservation must occur before canonical submission');
 requireText(schedulerPath, scheduler, 'nixGenExecutionAuthority: false', 'Nix-Gen must remain advisory rather than execution authority');
-requireText(schedulerPath, scheduler, 'operatorStrategyProfitabilityAuthority: false', 'operator timing policy must never replace canonical profitability authority');
+requireText(schedulerPath, scheduler, 'operatorStrategyProfitabilityAuthority: false', 'operator pacing policy must never replace canonical profitability authority');
 
 const retainedPath = 'server/services/cryptocrawl/compensation/retained-profit-ledger.ts';
 const retained = read(retainedPath);
@@ -54,7 +69,7 @@ requireText(retainedPath, retained, 'const PAYOUT_FRACTION = 0.90;', 'new profit
 requireText(retainedPath, retained, 'const RETAINED_FRACTION = 0.10;', 'new profitable settlements must retain 10%');
 requireText(retainedPath, retained, "const RETAINED_TARGET_VENUES = ['kraken', 'okx'] as const;", 'retained capital targets must remain Kraken/OKX only');
 requireText(retainedPath, retained, 'randomInt(0, RETAINED_TARGET_VENUES.length)', 'retained Kraken/OKX target must remain randomized');
-requireText(retainedPath, retained, 'cryptocrawler_operator_strategy_record_profit', 'terminal realized profit must feed daily stop authority');
+requireText(retainedPath, retained, 'cryptocrawler_operator_strategy_record_profit', 'terminal realized profit must feed operator pacing telemetry');
 requireText(retainedPath, retained, "payout_asset, payout_network", 'payout asset/network must remain durable state');
 requireText(retainedPath, retained, "'ETH','ethereum'", 'new payouts must remain ETH on Ethereum');
 

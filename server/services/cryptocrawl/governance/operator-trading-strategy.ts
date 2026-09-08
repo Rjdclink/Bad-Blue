@@ -12,10 +12,18 @@ const MIN_DAILY_PROFIT_CEILING_USD = 300;
 const MAX_DAILY_PROFIT_CEILING_USD = 3_500;
 const PROFIT_CUSHION_USD = 50;
 
-export type OperatorStrategyBlockReason =
+/**
+ * The operator calendar is an advisory pacing/learning policy only. Canonical
+ * profitability, governance, resource, freshness, settlement and circuit-breaker
+ * authorities decide whether a trade may execute. The only operator-layer hard
+ * rejection retained here is idempotency for an already-reserved/submitted/
+ * terminal opportunity.
+ */
+export type OperatorStrategyAdvisorySignal =
   | 'learning_day'
   | 'daily_trade_limit'
   | 'daily_profit_stop';
+export type OperatorStrategyBlockReason = OperatorStrategyAdvisorySignal | 'duplicate_opportunity';
 
 export interface OperatorTradingStrategyState {
   localDate: string;
@@ -24,6 +32,7 @@ export interface OperatorTradingStrategyState {
   dayOffset: number;
   isTradeDay: boolean;
   learningMode: boolean;
+  learningDayScheduled: boolean;
   maxTrades: number;
   submittedTrades: number;
   remainingTrades: number;
@@ -32,6 +41,7 @@ export interface OperatorTradingStrategyState {
   realizedProfitUsd: number;
   executionAllowed: boolean;
   blockReason: OperatorStrategyBlockReason | null;
+  advisorySignals: OperatorStrategyAdvisorySignal[];
 }
 
 export interface OperatorTradeReservation {
@@ -99,12 +109,7 @@ function randomizedTradeOffsets(): number[] {
   if (selected.length !== TRADE_DAYS_PER_CYCLE || new Set(selected).size !== TRADE_DAYS_PER_CYCLE) {
     throw new Error('Operator strategy failed to generate exactly 20 unique trade days');
   }
-  // Twenty completely non-adjacent days cannot exist inside a 30-day window.
-  // The governing strategy means the twenty selected days must be randomized,
-  // persisted and not a deterministic twenty-day consecutive block.
-  if (selected.every((value, index) => value === index)) {
-    return randomizedTradeOffsets();
-  }
+  if (selected.every((value, index) => value === index)) return randomizedTradeOffsets();
   return selected;
 }
 
@@ -119,25 +124,28 @@ function stateFromRow(row: any): OperatorTradingStrategyState {
   const stopProfitUsd = Number(row.stop_profit_usd);
   const realizedProfitUsd = Number(row.realized_profit_usd);
   const isTradeDay = row.is_trade_day === true;
-  let blockReason: OperatorStrategyBlockReason | null = null;
-  if (!isTradeDay) blockReason = 'learning_day';
-  else if (realizedProfitUsd + 1e-9 >= stopProfitUsd) blockReason = 'daily_profit_stop';
-  else if (submittedTrades >= maxTrades) blockReason = 'daily_trade_limit';
+  const advisorySignals: OperatorStrategyAdvisorySignal[] = [];
+  if (!isTradeDay) advisorySignals.push('learning_day');
+  if (realizedProfitUsd + 1e-9 >= stopProfitUsd) advisorySignals.push('daily_profit_stop');
+  if (submittedTrades >= maxTrades) advisorySignals.push('daily_trade_limit');
   return {
     localDate: canonicalSqlDate(row.local_date),
     cycleStart: canonicalSqlDate(row.cycle_start),
     cycleEnd: canonicalSqlDate(row.cycle_end),
     dayOffset: Number(row.day_offset),
     isTradeDay,
-    learningMode: !isTradeDay,
+    // Learning is concurrent/advisory. It never becomes an exclusive runtime mode.
+    learningMode: false,
+    learningDayScheduled: !isTradeDay,
     maxTrades,
     submittedTrades,
     remainingTrades: Math.max(0, maxTrades - submittedTrades),
     profitCeilingUsd,
     stopProfitUsd,
     realizedProfitUsd,
-    executionAllowed: blockReason === null,
-    blockReason,
+    executionAllowed: true,
+    blockReason: null,
+    advisorySignals,
   };
 }
 
@@ -263,7 +271,9 @@ async function loadLockedDay(client: any, dateKey: string): Promise<OperatorTrad
 
 class OperatorTradingStrategy {
   async getState(epochMs = Date.now()): Promise<OperatorTradingStrategyState> {
-    return ensureDayForDate(localDateKey(epochMs));
+    const state = await ensureDayForDate(localDateKey(epochMs));
+    if (state.learningDayScheduled) void this.runLearningDayCycle();
+    return state;
   }
 
   async reserveTrade(opportunityId: string, strategy: string): Promise<OperatorTradeReservation> {
@@ -276,7 +286,7 @@ class OperatorTradingStrategy {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      let state = await loadLockedDay(client, dateKey);
+      const state = await loadLockedDay(client, dateKey);
       const existing = await client.query(
         `SELECT reservation_id, status, local_date
          FROM public.cryptocrawler_operator_trade_reservations
@@ -284,27 +294,9 @@ class OperatorTradingStrategy {
          FOR UPDATE`,
         [normalizedOpportunityId],
       );
-      if (existing.rowCount === 1 && ['SUBMITTED','TERMINAL'].includes(String(existing.rows[0].status))) {
+      if (existing.rowCount === 1 && ['RESERVED','SUBMITTED','TERMINAL'].includes(String(existing.rows[0].status))) {
         await client.query('COMMIT');
-        return { allowed: false, reservationId: null, state, reason: 'daily_trade_limit' };
-      }
-
-      if (!state.executionAllowed) {
-        await client.query('COMMIT');
-        return { allowed: false, reservationId: null, state, reason: state.blockReason };
-      }
-
-      const active = await client.query(
-        `SELECT count(*)::int AS count
-         FROM public.cryptocrawler_operator_trade_reservations
-         WHERE local_date=$1::date AND status='RESERVED'`,
-        [dateKey],
-      );
-      const reservedCount = Number(active.rows[0]?.count || 0);
-      if (state.submittedTrades + reservedCount >= state.maxTrades) {
-        state = { ...state, executionAllowed: false, blockReason: 'daily_trade_limit', remainingTrades: 0 };
-        await client.query('COMMIT');
-        return { allowed: false, reservationId: null, state, reason: 'daily_trade_limit' };
+        return { allowed: false, reservationId: null, state, reason: 'duplicate_opportunity' };
       }
 
       const reservationId = existing.rowCount === 1
@@ -352,9 +344,6 @@ class OperatorTradingStrategy {
       let state = await loadLockedDay(client, dateKey);
       const status = String(reservation.rows[0].status);
       if (status === 'RESERVED') {
-        if (state.submittedTrades >= state.maxTrades) {
-          throw new Error(`Operator daily trade limit was reached before reservation ${reservationId} submitted`);
-        }
         await client.query(
           `UPDATE public.cryptocrawler_operator_trade_reservations
            SET status='SUBMITTED', submitted_at=now(), updated_at=now()
@@ -399,8 +388,7 @@ class OperatorTradingStrategy {
 
   async claimLearningAttempt(): Promise<boolean> {
     const dateKey = localDateKey();
-    const state = await ensureDayForDate(dateKey);
-    if (!state.learningMode) return false;
+    await ensureDayForDate(dateKey);
     const result = await pool.query(
       `UPDATE public.cryptocrawler_operator_strategy_days
        SET learning_last_attempt_at=now(), updated_at=now()
@@ -418,21 +406,20 @@ class OperatorTradingStrategy {
     try {
       const { getCryptara } = await import('../../cryptara/index.js');
       await getCryptara().runMonteCarloSimulation();
-      logger.info('[OperatorStrategy] Cryptara learning-day simulation completed', {
+      logger.info('[OperatorStrategy] Advisory learning-day simulation completed without execution veto', {
         component: 'OperatorTradingStrategy',
         localDate: localDateKey(),
         timezone: STRATEGY_TIMEZONE,
-        executionAllowed: false,
+        executionAllowed: true,
+        learningAuthority: 'advisory_only',
       });
     } catch (error) {
-      // Missing fresh evidence is not fabricated. Continuous surveillance and
-      // ordinary Cryptara learning remain active; another bounded attempt is
-      // permitted after one hour when fresh context may exist.
-      logger.debug('[OperatorStrategy] Learning-day simulation deferred until measured context is sufficient', {
+      logger.debug('[OperatorStrategy] Advisory learning simulation deferred until measured context is sufficient', {
         component: 'OperatorTradingStrategy',
         localDate: localDateKey(),
         error: error instanceof Error ? error.message : String(error),
         syntheticLearningEvidenceUsed: false,
+        executionBlocked: false,
       });
     }
   }
@@ -449,4 +436,6 @@ export const OPERATOR_STRATEGY_CONSTANTS = Object.freeze({
   minDailyProfitCeilingUsd: MIN_DAILY_PROFIT_CEILING_USD,
   maxDailyProfitCeilingUsd: MAX_DAILY_PROFIT_CEILING_USD,
   profitCushionUsd: PROFIT_CUSHION_USD,
+  executionAuthority: false,
+  advisoryOnly: true,
 });
