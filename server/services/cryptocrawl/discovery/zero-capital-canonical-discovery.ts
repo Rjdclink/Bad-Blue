@@ -370,9 +370,9 @@ function schedule(): void {
 }
 
 export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
-  if (started) return;
-  started = true;
+  if (started || cycleInFlight) return;
   await zeroCapitalEngine.initialize();
+  started = true;
   cycleInFlight = cycle().finally(() => { cycleInFlight = null; schedule(); });
   await cycleInFlight;
   logger.info('[ZeroCapitalDiscovery] Canonical zero-capital discovery started', {
@@ -386,6 +386,7 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     bpsAuthority: 'measured_candidate_registry',
     dynamicGraphlessDiscovery: true,
     runtimeMethodMutation: false,
+    startupRetryableAfterInitializationFailure: true,
   });
 }
 
