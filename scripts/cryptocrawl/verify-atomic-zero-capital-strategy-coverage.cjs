@@ -101,7 +101,22 @@ check('Across executor has no direct raw-provider principal submission bypass', 
 check('Across recovery reuses exact signed bytes through system-owned gas authority', acrossRecovery.includes('executePreparedSystemOwnedNativeTransaction({') && acrossRecovery.includes("idempotencyKey: `across-origin:${row.depositTxnRef.toLowerCase()}`"));
 check('Across recovery has no raw-provider rebroadcast bypass', !acrossRecovery.includes('provider.sendTransaction(raw)'));
 
-check('strict gas policy rejects hosted sponsor without zero-operator-cost proof', gasPolicy.includes('sponsorOperatorMonetaryCostProvenZero') && gasPolicy.includes('configured hosted sponsorship does not prove zero operator monetary cost'));
+// The production objective is zero INITIAL capital, not the stronger claim that a
+// hosted sponsor is economically free forever. Provider-fronted sponsorship may
+// remove the native-wallet prerequisite while still creating a bill that canonical
+// economics must charge. A separate strict mode retains the stronger fail-closed
+// zero-operator-cost requirement.
+check('hosted sponsorship remains an explicit billing liability unless independently proven free',
+  gasPolicy.includes('providerBillingLiability: !sponsorCostProvenZero')
+  && gasPolicy.includes('provider-fronted gas remains a billing liability that canonical realized economics must charge'));
+check('strict zero-operator-cost mode requires independent sponsor-cost proof',
+  gasPolicy.includes('strictZeroOperatorCostRequired()')
+  && gasPolicy.includes('if (!requireZeroOperatorCost || sponsorCostProvenZero)')
+  && gasPolicy.includes('explicit zero-operator-cost mode requires independent proof that the provider bill is zero'));
+check('sponsored zero-initial-capital lane still requires explicit provider-sponsored provenance',
+  gasPolicy.includes("paymentSource: 'provider_sponsored'")
+  && gasPolicy.includes('strictZeroInitialCapitalEligible: true')
+  && gasPolicy.includes('operatorMonetaryInputRequired: false'));
 check('raw native balance is not promoted without system-owned proof', gasPolicy.includes('nativeSystemOwnedProven') && gasPolicy.includes('native balance exists but SELF_FUNDED system ownership is not proven'));
 check('durable native gas proof wiring keeps hosted sponsorship unproven', nativeGasProof.includes('sponsorOperatorMonetaryCostProvenZero: false'));
 check('durable native gas proof requires system ownership authority', nativeGasProof.includes('getSystemNativeGasAuthority'));
