@@ -40,9 +40,13 @@ assert.match(verifier, /isStrictlyPositiveAllInNetProfit\(plan\.netProfitUsd\)/)
 assert.ok(!verifier.includes('minNetProfitUsd'), 'CEX verifier must not expose a second dollar-profit threshold');
 assert.ok(!verifier.includes('CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD'), 'CEX verifier must not expose an environment profit floor');
 
-// Atomic route planning uses exactly one smallest base unit as the integer form of >0.
+// Atomic route planning uses the canonical one-base-unit floor, while allowing an
+// execution transport to raise (never weaken) that floor when its exact costs require it.
 assert.match(planner, /profit-admission-authority\.js/);
-assert.match(planner, /minimumPositiveProfitBaseUnits\(\)\.toString\(\)/);
+assert.match(planner, /const canonicalMinimumProfit = minimumPositiveProfitBaseUnits\(\);/);
+assert.match(planner, /requestedMinimumProfit < canonicalMinimumProfit/);
+assert.match(planner, /requestedMinimumProfit > expectedProfit/);
+assert.match(planner, /minProfit: requestedMinimumProfit\.toString\(\)/);
 assert.ok(!planner.includes('ZERO_CAPITAL_MIN_PROFIT_BPS'), 'autonomous planner must not contain a separate profit BPS authority');
 assert.ok(!planner.includes('minProfitBps'), 'autonomous planner must not accept a strategy-specific profit-floor option');
 
@@ -115,4 +119,4 @@ for (const token of ['AutonomousOptimizer', 'NexGenProtocolLayer']) {
 }
 assert.ok(!optimizationBarrel.includes('DivineOptimizationEngine'), 'DivineOptimizationEngine must remain outside the production optimization namespace');
 
-console.log('[single-profit-admission-authority] PASS: one non-configurable >0 all-in-net-profit authority; no live dollar/BPS magnitude floor; no runtime profit patch; deployment templates cannot resurrect retired floors; advisory compatibility telemetry has no execution authority; atomic minProfit is one smallest base unit; legacy threshold engines remain non-production');
+console.log('[single-profit-admission-authority] PASS: one non-configurable >0 all-in-net-profit authority; no live dollar/BPS magnitude floor; no runtime profit patch; deployment templates cannot resurrect retired floors; advisory compatibility telemetry has no execution authority; atomic minProfit preserves the canonical one-base-unit floor and may only be raised within measured expected profit; legacy threshold engines remain non-production');
