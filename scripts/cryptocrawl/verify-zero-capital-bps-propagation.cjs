@@ -140,12 +140,17 @@ assert.match(routePlanner, /if \(fee <= 0\.0001\) return 100/);
 assert.match(receiverCapability, /if \(fee <= 0\.0001\) return 100/);
 assert.match(routeQuoter, /return \(feeTier \|\| 3000\) \/ 1_000_000/);
 
-// Builder cold-start repayment is a measured route mesh, not a mandatory Sushi path.
+// Builder cold-start repayment is a measured route+path mesh, not a mandatory Sushi/direct-WETH path.
 assert.match(repaymentRoute, /BuilderRepaymentRouteName = 'uniswap_v2' \| 'sushiswap_v2'/);
 assert.match(repaymentRoute, /0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D/);
 assert.match(repaymentRoute, /0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F/);
-assert.match(repaymentRoute, /Promise\.all\(ROUTES\.map/);
+assert.match(repaymentRoute, /const direct = \[inputToken, WETH\]/);
+assert.match(repaymentRoute, /const intermediates = \[USDC, USDT, DAI\]/);
+assert.match(repaymentRoute, /ROUTES\.flatMap\(route => paths\.map\(path => quoteRoute\(/);
+assert.match(repaymentRoute, /Promise\.all\(attempts\)/);
+assert.match(repaymentRoute, /builder_repayment_route_failure_isolated:true/);
 assert.match(repaymentRoute, /builder_repayment_selection:lowest_measured_exact_input/);
+assert.match(repaymentRoute, /builder_repayment_direct_weth_not_mandatory:true/);
 assert.match(repaymentRoute, /swapTokensForExactETH/);
 assert.doesNotMatch(builderColdStart, /SUSHISWAP_V2_ROUTER|ROUTER_VIEW_ABI/);
 assert.doesNotMatch(builderReceiverBootstrap, /SUSHISWAP_V2_ROUTER|ROUTER_VIEW_ABI/);
@@ -182,6 +187,7 @@ console.log(JSON.stringify({
   zeroPersonalCostGasTruthBound: true,
   uniswapV3OneBpsFeeTierEndToEnd: true,
   builderRepaymentRouteMesh: true,
+  builderRepaymentMultihopMesh: true,
   boundedBuilderBlockWindow: true,
   subBpsBuilderAdmissionPreserved: true,
   monteCarloExecutionAuthority: false,
