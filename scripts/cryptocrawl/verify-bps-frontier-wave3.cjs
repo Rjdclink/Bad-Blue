@@ -13,10 +13,23 @@ const check = (name, ok) => checks.push([name, Boolean(ok)]);
 
 check('Lighter official public funding endpoint is used', frontier.includes("https://mainnet.zklighter.elliot.ai/api/v1/funding-rates"));
 check('Lighter discovery introduces no API key requirement', !/LIGHTER_[A-Z_]*API_KEY|LIGHTER_API_KEY/.test(frontier));
-check('Lighter observation is never executable authority', frontier.includes("executableCapability: false") && frontier.includes("execution_promotion:false"));
-check('Lighter account tier fee is unknown until measured', frontier.includes('feeUsd: null') && frontier.includes('lighter_exact_account_tier_fee_evidence'));
-check('Lighter hidden latency is never assigned synthetic BPS', frontier.includes('lighter_measured_execution_latency_cost') && frontier.includes('hiddenLatencyBpsAssumed: false'));
-check('Lighter system-owned collateral provenance is required', frontier.includes('lighter_system_owned_margin_collateral_provenance') && frontier.includes('personal_collateral_allowed:false'));
+check('Lighter observation is advisory benchmark only and never canonical execution authority',
+  frontier.includes("benchmarkClassification: 'external_advisory_only_until_authenticated_execution_adapter_exists'")
+  && frontier.includes('canonicalCandidateRowsCreated: 0')
+  && frontier.includes('executionAuthority: false'));
+check('Lighter public funding does not create impossible authenticated fee/depth/settlement backlog',
+  frontier.includes("externalVenueBenchmark: 'lighter_public_funding_keyless_discovery_only_no_candidate_backlog'")
+  && !frontier.includes('lighter_exact_account_tier_fee_evidence')
+  && !frontier.includes('lighter_measured_entry_exit_depth')
+  && !frontier.includes('lighter_terminal_settlement_adapter'));
+check('Lighter account tier fee is never assumed from public funding data',
+  frontier.includes('accountTierFeeAssumed: false')
+  && frontier.includes('authenticated account, fees, depth, margin and settlement'));
+check('Lighter hidden latency is never assigned synthetic BPS', frontier.includes('hiddenLatencyBpsAssumed: false'));
+check('Lighter collateral cannot become execution evidence without authenticated adapter provenance',
+  frontier.includes('userCollateralAllowed: false')
+  && frontier.includes('personalCollateralAllowed: false')
+  && frontier.includes('authenticated account, fees, depth, margin and settlement'));
 check('smart-order frontier requires canonical measured net and all-in BPS', frontier.includes('candidate.canonicalBps.netBps') && frontier.includes('candidate.canonicalBps.allInCostBps'));
 check('smart-order frontier compares exact like-sized notionals', frontier.includes('candidate.canonicalBps.notionalUsd') && frontier.includes('notionalUsd.toFixed(2)') && frontier.includes("`${assets.join('/')}:${chains}:${notionalUsd.toFixed(2)}`"));
 check('route tournament ranks fresh canonical net outcome before explicit-cost tiebreak', frontier.includes('right.netBps - left.netBps') && frontier.includes('left.allInCostBps - right.allInCostBps'));
@@ -45,4 +58,4 @@ if (failed.length) {
   process.exit(1);
 }
 
-console.log('[bps-frontier-wave3] PASS: keyless Lighter benchmarking plus contemporaneous exact-notional net-outcome SOR and explicit 0x fee attribution are consolidated under canonical BPS truth; embedded quote fees are not double-subtracted and no synthetic savings, personal funding, collateral fallback, or independent execution authority are admitted');
+console.log('[bps-frontier-wave3] PASS: keyless Lighter public funding is retained as external advisory benchmarking without manufacturing impossible authenticated candidate backlogs; contemporaneous exact-notional net-outcome SOR and explicit 0x fee attribution remain consolidated under canonical BPS truth with no synthetic savings, personal funding, collateral fallback, or independent execution authority');
