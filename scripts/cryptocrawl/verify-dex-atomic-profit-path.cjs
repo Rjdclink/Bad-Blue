@@ -94,12 +94,14 @@ forbidPattern(adapter, /setInterval|setTimeout\s*\(/, 'DEX adapter owns no indep
 requirePattern(canonicalScheduler, /measuredTopologyExecutionAdapter\.dispatch/, 'canonical scheduler alone invokes the measured topology adapter');
 forbidFile('server/services/cryptocrawl/execution/measured-topology-execution-scheduler.ts', 'duplicate measured topology scheduler exists');
 
-// Unified routing requires strict positive deterministic economics plus concrete
-// path/capability/freshness/depth facts. Optional registry gaps remain advisory;
-// DEX eligibility itself is established upstream by firm prepared evidence.
+// Unified routing requires strict positive economics appropriate to each domain
+// plus concrete path/capability/freshness/depth facts. Deterministic DEX routes
+// retain deterministic-positive admission while funding and calibrated prediction
+// events retain their distinct expected-value authority. Optional registry gaps
+// remain advisory; DEX eligibility itself is established upstream by firm evidence.
 requirePattern(router, /case\s+'DEX_ATOMIC':[\s\S]{0,80}return\s+'FLASH_LOAN'/, 'DEX_ATOMIC routes through the unified flash-loan path');
 requirePattern(router, /const\s+deterministicPositive\s*=\s*Number\.isFinite\(deterministicNet\)\s*&&\s*deterministicNet\s*>\s*0/, 'unified route admission requires positive deterministic net');
-requirePattern(router, /const\s+economicsAdmitted\s*=\s*isFunding\s*\?\s*fundingProjectedPositive\s*:\s*deterministicPositive[\s\S]{0,180}const\s+admitted\s*=\s*economicsAdmitted\s*&&\s*pathAvailable\s*&&\s*candidate\.executableCapability\s*&&\s*fresh\s*&&\s*depthReady/, 'unified DEX route retains deterministic-positive economics and concrete execution readiness');
+requirePattern(router, /const\s+economicsAdmitted\s*=\s*isFunding\s*\?\s*fundingProjectedPositive\s*:\s*isPredictionEvent\s*\?\s*predictionProjectedPositive\s*:\s*deterministicPositive\s*;[\s\S]{0,220}const\s+admitted\s*=\s*economicsAdmitted\s*&&\s*pathAvailable\s*&&\s*candidate\.executableCapability\s*&&\s*fresh\s*&&\s*depthReady\s*&&\s*hardVetoReasons\.length\s*===\s*0/, 'unified DEX route retains deterministic-positive economics and concrete execution readiness without erasing calibrated prediction-event admission');
 requirePattern(router, /evidenceReacquisitionRequired/, 'unified router explicitly reacquires incomplete evidence');
 forbidPattern(router, /candidate\.missingInformation\.length\s*===\s*0/, 'optional missing-information list regained independent execution veto authority');
 
@@ -110,4 +112,4 @@ requirePattern(topologyOptimizer, /candidate\.status\s*===\s*'eligible'/, 'cold-
 requirePattern(topologyOptimizer, /return\s+clamp\(1\s*\+\s*Math\.tanh\(normalized\)\s*\*\s*0\.35,\s*0\.80,\s*1\.35\)/, 'live topology attention is tightly bounded');
 requirePattern(topologyOptimizer, /Terminal settlement is the primary authority/, 'terminal settlement remains primary topology-learning authority');
 
-console.log('[dex-atomic] 0x discovery decoupling, v2 allowance evidence, advisory simulation, exact all-in economics, scheduler-owned readiness reconciliation, terminal failure learning, and single scheduling authority invariants passed');
+console.log('[dex-atomic] 0x discovery decoupling, v2 allowance evidence, advisory simulation, exact all-in economics, scheduler-owned readiness reconciliation, terminal failure learning, domain-correct admission, and single scheduling authority invariants passed');
