@@ -22,6 +22,7 @@ import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-
 import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
 import type { ReceiverFundingMode } from '../execution/adapters/sponsored-receiver-manager.js';
 import { prepareBuilderSponsoredZeroCapitalColdStart } from '../execution/builder-sponsored-zero-capital-coldstart.js';
+import { prepareBuilderSponsoredReceiverBootstrap } from '../execution/builder-sponsored-receiver-bootstrap.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
@@ -74,6 +75,7 @@ function updateCandidate(input: {
   reason: string;
   missingInformation?: string[];
   extraProvenance?: string[];
+  receiverBindingProvenance?: string;
 }): void {
   const candidate = measuredCandidateRegistry.get(input.opportunity.id);
   if (!candidate) return;
@@ -85,11 +87,7 @@ function updateCandidate(input: {
       economics: {
         ...candidate.economics,
         deterministicNetProfitUsd: Number(input.opportunity.expectedProfit) / (10 ** input.opportunity.inputTokenDecimals),
-        // Flash premium is not an exchange/CEX fee. Keep it exclusively in its
-        // canonical field so BPS attribution cannot count the same cost twice.
         feeUsd: 0,
-        // Current route amountOut already embeds the measured AMM/router result.
-        // Min-output tolerance is an execution guard, not measured expected loss.
         expectedSlippageBps: 0,
         flashLoanFeeBps: bpsFromBaseUnits(input.opportunity.flashLoanFeeInInputToken || 0n, input.opportunity.flashLoanAmount),
         allInCostBps: bpsFromBaseUnits(input.opportunity.estimatedExecutionCostInInputToken, input.opportunity.flashLoanAmount),
@@ -106,7 +104,7 @@ function updateCandidate(input: {
             `flash_loan_provider:${input.selected.provider}`,
             'measured_flash_loan_fee_exact_rate',
             'measured_flash_loan_liquidity',
-            'provider_selection_bound_to_verified_receiver',
+            input.receiverBindingProvenance || 'provider_selection_bound_to_verified_receiver',
             'flash_premium_attribution:flashLoanFeeBps_only',
             'min_output_tolerance_not_expected_slippage_cost',
             ...(input.eligible ? ['canonical_positive_all_in_net', 'zero_capital_hard_facts_eligible'] : []),
@@ -222,14 +220,6 @@ function strictFundingReady(funding: GasFundingDecision): boolean {
     && (funding.paymentSource === 'system_owned_native' || funding.paymentSource === 'provider_sponsored');
 }
 
-/**
- * Canonical provider repricing stage for ZERO_CAPITAL_ATOMIC discovery.
- *
- * This is a normal function, not a runtime method replacement. The caller owns
- * discovery order explicitly. It may measure provider fees/liquidity, prepare a
- * verified receiver permission, reprice the exact opportunity, and update the
- * same measured candidate/evidence record. It never schedules or submits a trade.
- */
 export async function repriceZeroCapitalProviderEconomics(input: {
   chain: SupportedChain;
   provider: providers.JsonRpcProvider;
@@ -406,14 +396,52 @@ export async function repriceZeroCapitalProviderEconomics(input: {
       }
 
       if (!selectedSingle || !selectedCapability) {
+        const balancerEvidence = evidence.find(item =>
+          item.provider === 'balancer_v2'
+          && item.executableEvidenceComplete
+          && item.availableLiquidity !== null
+          && item.availableLiquidity >= opportunity.flashLoanAmount,
+        ) || null;
+        if (chain === 'ethereum' && wallet && !balancerReceiver && balancerEvidence) {
+          const bootstrapEvidence = await prepareBuilderSponsoredReceiverBootstrap({
+            opportunity,
+            balancerEvidence,
+            provider,
+            wallet,
+          }).catch(error => {
+            logger.debug('[ZeroCapitalFlashProvider] Atomic first-receiver bootstrap not admissible for this exact opportunity', {
+              component: 'ZeroCapitalFlashProviderWiring',
+              opportunityId: opportunity.id,
+              error: error instanceof Error ? error.message : String(error),
+              executionAuthority: false,
+            });
+            return null;
+          });
+          if (bootstrapEvidence && opportunity.expectedProfit > 0n && opportunity.netProfitBps > 0) {
+            const bootstrapValues = currentReprice(opportunity);
+            recordReprice(opportunity, chain, bootstrapValues);
+            zeroCapitalRouteEvidenceRegistry.record(opportunity);
+            updateCandidate({
+              opportunity,
+              selected: balancerEvidence,
+              eligible: true,
+              reason: 'Measured Balancer route has an exact Titan/Quasar atomic bundle that deploys and permissions the first receiver, executes the profitable flash route, and repays sponsorship from execution-created value; canonical scheduler remains sole submitter',
+              receiverBindingProvenance: 'provider_receiver_binding:atomic_same_bundle_create2_bootstrap',
+              extraProvenance: bootstrapEvidence.provenance,
+            });
+            repriced.push(opportunity);
+            continue;
+          }
+        }
+
         zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
         updateCandidate({
           opportunity,
           selected: null,
           eligible: false,
-          reason: 'No execution-ready Morpho, Aave, Balancer, or combined Aave+Balancer path has complete measured fee, liquidity, and verified receiver evidence for this exact amount',
+          reason: 'No execution-ready Morpho, Aave, Balancer, combined Aave+Balancer, or exact atomic first-receiver builder path has complete measured fee, liquidity, and receiver evidence for this amount',
           missingInformation: ['measured_flash_loan_provider_liquidity_and_fee'],
-          extraProvenance: ['provider_mesh_checked:true'],
+          extraProvenance: ['provider_mesh_checked:true', 'atomic_first_receiver_bootstrap_checked:true'],
         });
         continue;
       }
@@ -603,11 +631,6 @@ export async function repriceZeroCapitalProviderEconomics(input: {
   return repriced;
 }
 
-/**
- * Compatibility export only. Provider repricing is now called explicitly by the
- * canonical zero-capital discovery pipeline; this function never rewrites engine
- * methods and never creates a second execution or discovery authority.
- */
 export function ensureZeroCapitalFlashProviderWiring(): void {
   if (compatibilityNoticeLogged) return;
   compatibilityNoticeLogged = true;
