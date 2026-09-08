@@ -27,18 +27,12 @@ import { ensureKalshiMonteCarloContextWiring } from './kalshi-monte-carlo-contex
 import { getKalshiQuantiStatus } from './kalshi-quanti-context.js';
 
 let installed = false;
-let predictionTimer: NodeJS.Timeout | null = null;
 let refreshInFlight: Promise<void> | null = null;
 let refreshCycles = 0;
 let refreshErrors = 0;
 let lastRefreshAt: number | null = null;
 let eventCash: KalshiEventSystemCashSnapshot | null = null;
 let eventCashError: string | null = null;
-
-function predictionRefreshMs(): number {
-  const configured = Number(process.env.KALSHI_PREDICTION_REFRESH_MS || 15_000);
-  return Number.isFinite(configured) ? Math.max(5_000, Math.min(300_000, Math.trunc(configured))) : 15_000;
-}
 
 async function refreshPredictionSurface(): Promise<void> {
   if (refreshInFlight) return refreshInFlight;
@@ -112,12 +106,12 @@ async function refreshPredictionSurface(): Promise<void> {
 }
 
 /**
- * Read-only evidence collection entrypoint used when admission discovers missing
- * Kalshi event/cross-venue evidence. It refreshes the existing canonical market,
- * fee, semantic, capital-capacity and calibration surfaces and never grants
- * execution authority itself.
+ * Sole Kalshi prediction refresh entrypoint. The prediction-market discovery
+ * controller owns cadence; evidence-repair callers may request this same
+ * in-flight-deduplicated refresh but cannot create another timer/loop.
  */
 export async function refreshKalshiSystemEvidenceNow(): Promise<void> {
+  if (!installed || process.env.CRYPTOCRAWL_KALSHI_ENABLED === 'false') return;
   await refreshPredictionSurface();
 }
 
@@ -137,6 +131,8 @@ export function getKalshiSystemWiringStatus() {
     cryptara: getCryptaraKalshiPredictionSummary(),
     quanti: getKalshiQuantiStatus(),
     fundingLifecycleAdapterRegistered: installed,
+    duplicatePredictionRefreshTimerCreated: false as const,
+    canonicalPredictionCadenceOwner: 'prediction_market_discovery_wiring' as const,
     duplicateExecutionSchedulerCreated: false as const,
     canonicalEconomicAuthorityChanged: false as const,
     canonicalMonteCarloAuthorityChanged: false as const,
@@ -158,15 +154,11 @@ export function ensureKalshiSystemWiring(): void {
   ensureKalshiBpsOptimizationWiring();
   ensureCryptaraKalshiPredictionWiring();
   ensureKalshiMonteCarloContextWiring();
-  void refreshPredictionSurface();
-
-  if (process.env.NO_INTERVALS !== 'true') {
-    predictionTimer = setInterval(() => void refreshPredictionSurface(), predictionRefreshMs());
-    predictionTimer.unref?.();
-  }
 
   logger.info('[KalshiSystem] Consolidated Kalshi measurement/intelligence wiring installed', {
     component: 'KalshiSystemWiring',
+    predictionRefreshCadenceOwner: 'PredictionMarketDiscoveryWiring',
+    duplicatePredictionRefreshTimerCreated: false,
     bpsMeasurement: true,
     predictionMarketIntelligence: true,
     probabilityCalibrationDataCollection: true,
