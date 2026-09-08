@@ -26,7 +26,16 @@ They may reuse shared infrastructure—compute routing, persistence, provider go
 
 > **Evidence / claim discipline**
 >
-> This README distinguishes between **canonical runtime wiring**, **implemented modules**, **incorporation targets**, and **design shorthand**. A module being present in the repository is not automatically a claim that it is currently authoritative in production. Optional external providers require their own credentials, availability, and deployment conditions. No outside institutional affiliation or proprietary research provenance is claimed here; named third-party services identify integrations or interfaces only.
+> This README distinguishes between **canonical runtime wiring**, **implemented modules**, **incorporation targets**, **heritage / compatibility surfaces**, and **design shorthand**. A module being present in the repository is not automatically a claim that it is currently authoritative in production. Optional external providers require their own credentials, availability, and deployment conditions. No outside institutional affiliation or proprietary research provenance is claimed here; named third-party services identify integrations or interfaces only.
+
+### Status Vocabulary
+
+| Label | Meaning |
+|---|---|
+| **Canonical / authority-bearing** | Current code assigns the component a defined production responsibility or hard truth boundary |
+| **Advisory / bounded** | Implemented and wired, but deliberately cannot override canonical economics, governance, execution, settlement, or treasury truth |
+| **Heritage compatibility surface** | Preserved interface or architecture from an earlier generation; useful for continuity, observability, or future reincorporation, while authority is intentionally quarantined |
+| **Incorporation target / experimental** | Code exists and may be sophisticated, but it must enter through canonical measured pathways before being treated as production authority |
 
 ---
 
@@ -37,21 +46,33 @@ They may reuse shared infrastructure—compute routing, persistence, provider go
 - [LEXARA Legal Brain](#lexara-legal-brain)
 - [CryptoCrawler](#cryptocrawler)
 - [CryptoCrawler Compute Stack](#cryptocrawler-compute-stack)
+- [QuantiComp — Expanded Quantitative Compute Architecture](#quanticomp--expanded-quantitative-compute-architecture)
 - [CRYPTARA](#cryptara)
 - [CRYPTARA Sovereign Cortex](#cryptara-sovereign-cortex)
 - [How CRYPTARA Learns](#how-cryptara-learns)
+- [Aries Vault + Edge Formation Reactor](#aries-vault--edge-formation-reactor)
+- [Nix-Gen Global Opportunity Allocation](#nix-gen-global-opportunity-allocation)
+- [BPS Reduction + Economic Transformation Stack](#bps-reduction--economic-transformation-stack)
+- [Risk, Profit Ladder + Governance Stack](#risk-profit-ladder--governance-stack)
+- [Worker + Data-Plane Hierarchy](#worker--data-plane-hierarchy)
+- [Rainbow Treasury + Profit Bridge Architecture](#rainbow-treasury--profit-bridge-architecture)
 - [Crawler Ecology](#crawler-ecology)
 - [Eden](#eden)
 - [Eden Protection Envelope](#eden-protection-envelope--double-bubble--one-way-iron-mirror)
 - [Disco-Ball Mirroring + Light Communication](#disco-ball-mirroring--light-communication)
 - [Zero-Initial-Capital Architecture](#zero-initial-capital-architecture)
+- [Prediction-Market Architecture](#prediction-market-architecture)
+- [CEX, Cross-Chain + MEV Execution Surfaces](#cex-cross-chain--mev-execution-surfaces)
 - [Hot-State / Overflow Architecture](#hot-state--overflow-architecture)
+- [Learning + Evolution Architecture](#learning--evolution-architecture)
+- [Heritage + Compatibility Architecture](#heritage--compatibility-architecture)
 - [Recent Hardening and Optimization](#recent-hardening-and-optimization)
 - [Canonical Runtime and Authority Model](#canonical-runtime-and-authority-model)
 - [Extended Intelligence Systems](#extended-intelligence-systems)
 - [Engineering Principles](#engineering-principles)
 - [Repository Guide](#repository-guide)
 - [Glossary](#glossary)
+- [License](#license)
 
 ---
 
@@ -211,12 +232,16 @@ It is a multi-topology architecture spanning:
 - probabilistic/tail-risk analysis;
 - technical and oracle evidence;
 - CRYPTARA cognition;
+- Aries horizon-aware execution intelligence;
+- Nix-Gen cross-strategy opportunity allocation;
+- BPS reduction and economic-transformation analysis;
 - staged governance;
 - execution readiness;
 - bounded resource scheduling;
 - venue/protocol execution paths;
 - terminal settlement;
 - realized-profit accounting;
+- payout/retained-capital treasury handling;
 - calibration and bounded adaptation.
 
 ## Canonical CryptoCrawler Flow
@@ -232,9 +257,11 @@ flowchart TD
     ECON -->|"netProfitUsd <= 0"| OBS["Observe / Optimize / Expire"]
     ECON -->|"netProfitUsd > 0"| SIZE["Sizing + Route Preparation"]
 
-    SIZE --> EVID["Technical • Oracle • Market Truth"]
+    SIZE --> ARIES["Aries Vault / Edge Formation"]
+    ARIES --> EVID["Technical • Oracle • Market Truth"]
     EVID --> CRYPTARA["CRYPTARA Assessment"]
-    CRYPTARA --> REACTOR["Computational Reactor"]
+    CRYPTARA --> NIX["Nix-Gen\nGlobal Advisory Allocation"]
+    NIX --> REACTOR["Computational Reactor"]
     REACTOR --> BEAM["Directional Beam"]
     BEAM --> QUANTI["QuantiComp / Monte Carlo"]
 
@@ -244,6 +271,7 @@ flowchart TD
     EXEC --> SETTLE["Terminal Settlement"]
 
     SETTLE --> REAL["Normalized Realized Economics"]
+    REAL --> RAINBOW["Rainbow Treasury / Profit Lifecycle"]
     REAL --> CAL["Calibration"]
     REAL --> CORTEX["CRYPTARA Terminal Learning"]
     CAL --> SCALE["DynamicScale / Search Pressure"]
@@ -259,6 +287,7 @@ flowchart TD
 - `MEMPOOL_BACKRUN`
 - `MAKER_CEX`
 - `FUNDING_ARBITRAGE`
+- `LIQUIDATION` where the corresponding measured/execution adapter is wired
 - prediction-market paths where the corresponding discovery/execution authority is wired
 
 ## Deterministic Economics First
@@ -269,7 +298,7 @@ The canonical economic rule is:
 
 Known costs can include exchange fees, DEX fees, flash-loan premium, gas, sponsored-gas reimbursement/provider billing, relay/builder cost, slippage, market impact, bridge cost, funding/borrow cost, and route-specific repayment cost.
 
-Probabilistic analysis or CRYPTARA cognition is not intended to redefine a deterministically negative route as profitable.
+Probabilistic analysis, Aries advice, Nix-Gen ordering, BPS-reduction tactics, or CRYPTARA cognition is not intended to redefine a deterministically negative route as profitable.
 
 ## BPS Integrity
 
@@ -284,7 +313,7 @@ Current hardening includes exact strictly-positive handling below one whole basi
 
 # CryptoCrawler Compute Stack
 
-The compute subsystem is more than just QuantiComp. It contains a **Reactor → Battery → Router → Antenna/Beam → QuantiComp** pattern.
+The compute subsystem is more than just QuantiComp. It contains a **Reactor → Battery → Router → Antenna/Beam → QuantiComp** pattern, with a separate database-pressure/COMP hierarchy for shared state.
 
 ```mermaid
 flowchart LR
@@ -295,9 +324,9 @@ flowchart LR
     ROUTER -->|"lightweight / latency-sensitive"| ANT["Omni Antenna\nmarket-data hot path"]
     ROUTER -->|"moderate / heavy / extreme"| BEAM["Directional Beam\nheavy compute lane"]
 
-    BEAM --> QC["QuantiComp\nMonte Carlo • tail analysis • scenario work"]
+    BEAM --> QC["QuantiComp\nquantitative execution fabric"]
     ANT --> HOT["Fresh Market Frames / Quotes"]
-    QC --> RESULT["Quantitative Evidence"]
+    QC --> RESULT["Validated Quantitative Evidence"]
 
     HOT --> CRYPTARA["CRYPTARA / Canonical Market Pipeline"]
     RESULT --> CRYPTARA
@@ -306,6 +335,8 @@ flowchart LR
 ## Computational Reactor
 
 Central measured compute and optimization engine for job scheduling, queue pressure, CPU/memory pressure, rate budgets, and expensive optimization work.
+
+The Reactor is the broad scheduler/orchestrator; it is not itself the quantitative model. It feeds work into bounded compute paths and measures the pressure under which those paths are operating.
 
 ## Omni Antenna
 
@@ -332,9 +363,82 @@ Some optimization interfaces remain implementation-dependent; the README does no
 
 ## QuantiComp
 
-**QuantiComp** is the heavy quantitative-computation authority for workloads such as Monte Carlo, tail-distribution analysis, scenario expansion, and other statistically intensive operations.
+**QuantiComp** is the heavy quantitative-computation authority for workloads such as Monte Carlo, tail-distribution analysis, scenario expansion, resource-aware optimization, and other statistically intensive operations.
 
 > **Antenna stays light. Beam carries heavy work. Battery reduces waste. Reactor schedules. QuantiComp computes.**
+
+---
+
+# QuantiComp — Expanded Quantitative Compute Architecture
+
+The repository's QuantiComp system is substantially broader than a single Monte Carlo function. It is a bounded quantitative execution fabric with workload lanes, queue ordering, adaptive scheduling, backend selection, shared numeric state, concurrency control, validation, profiling, and interaction learning.
+
+```mermaid
+flowchart TD
+    QIN["Quantitative Workload"] --> LANE{"Lane / urgency"}
+
+    LANE --> U["ultra_hot"]
+    LANE --> H["hot"]
+    LANE --> W["warm"]
+    LANE --> B["batch"]
+    LANE --> BG["background"]
+
+    U --> HEAP["Priority Heap\nLane → deadline → priority → queue age"]
+    H --> HEAP
+    W --> HEAP
+    B --> HEAP
+    BG --> HEAP
+
+    HEAP --> PAR["Parallelism Governor"]
+    PAR --> ADAPT["Adaptive Optimizer"]
+    ADAPT --> BACKEND["Backend Registry / Routing"]
+    BACKEND --> EXEC["Workload Execution"]
+
+    FABRIC["Quanti Data Fabric\nshared Float64 state / leases"] --> EXEC
+    PROF["Resource Profiler"] --> ADAPT
+    INTERACT["Interaction Model"] --> ADAPT
+
+    EXEC --> VALIDATE["Deterministic Result Validation"]
+    VALIDATE --> METRICS["Latency • CPU • throughput • failure profiles"]
+    METRICS --> ADAPT
+    METRICS --> INTERACT
+```
+
+## QuantiComp Runtime
+
+The runtime uses a priority heap and bounded concurrency. Current lane ranking is:
+
+1. `ultra_hot`
+2. `hot`
+3. `warm`
+4. `batch`
+5. `background`
+
+Within that structure the runtime also considers deadlines, explicit priority, queue age/order, cancellation, timeout, and result validation. Optional deduplication can make simultaneous callers follow one shared in-flight computation instead of duplicating heavy work.
+
+## Adaptive Optimizer
+
+The Quanti adaptive optimizer learns from measured workload behavior and can influence how future work is scheduled. It is intended to improve compute efficiency, not rewrite canonical trading economics.
+
+## Backend Registry + Backend Runtime
+
+QuantiComp has a backend registry and routing layer so computational work can be matched to available capabilities. Optional accelerated/heavier backends can be selected when appropriate, while deterministic inline/classical execution remains an important fallback path.
+
+## Quanti Data Fabric
+
+The **Quanti Data Fabric** provides shared numeric state and lease-oriented access to Float64-oriented data. It supports low-copy reuse of computational state and is also used by other resource-control systems to publish measured signals.
+
+## Parallelism Governor
+
+The parallelism governor limits and allocates concurrent quantitative work rather than allowing every subsystem to independently consume all compute capacity.
+
+## Resource Profiler + Interaction Model
+
+QuantiComp profiles execution latency, CPU use, throughput, failures, and related runtime signals. The interaction model records workload behavior so the adaptive layer can learn from measured interactions rather than rely only on static tuning.
+
+## Validation Boundary
+
+A Quanti workload is expected to provide both an execution function and a validation function. A completed calculation is not automatically accepted merely because it returned a value.
 
 ---
 
@@ -369,6 +473,7 @@ flowchart TD
         ROUTE["DEX / Route Observation"]
         PROVIDERS["Provider Consensus\nFreshness + diversity + provenance"]
         ANTQ["Antenna Quality\nlatency + source age + confidence"]
+        ARIES["Aries Advisory\nhorizon + microstructure + edge formation"]
     end
 
     INPUTS --> ASSESS["Base CRYPTARA Opportunity Assessment"]
@@ -381,6 +486,7 @@ flowchart TD
 
     PROVIDERS --> CORTEX["Sovereign Cortex"]
     ANTQ --> CORTEX
+    ARIES --> CORTEX
     ASSESS --> CORTEX
     FRAME --> CORTEX
 
@@ -457,6 +563,402 @@ flowchart TD
 ```
 
 The persistent adaptive surface is intentionally narrow: current code scopes adaptive edits to predictive-prefetch aggression, with rank gates, probation, validation, and rollback behavior.
+
+---
+
+# Aries Vault + Edge Formation Reactor
+
+**Aries Vault** is CryptoCrawler's horizon-aware profitability and execution-intelligence layer. It sits between raw candidate economics and later governance/intelligence layers and asks a broader question than “is the spread positive right now?”
+
+> **What is the horizon-adjusted, risk-adjusted, capacity-aware value of acting now, waiting, changing execution mode, changing size, changing route, or acquiring more information?**
+
+Aries remains **advisory** and explicitly reports `executionAuthority: false`.
+
+## Aries Vault Capability Surface
+
+Implemented Aries primitives include:
+
+- dynamic venue fee-tier projection;
+- conservative fee-tier transition value;
+- maker-vs-taker expected-cost modeling;
+- continuous maker/taker crossover share;
+- order-book walking for executable depth and impact;
+- latency-decayed spread survival;
+- adverse-selection and non-fill opportunity cost;
+- topological/graph/temporal novelty proxies;
+- probabilistic state-lattice evaluation;
+- evolutionary Beam candidate ranking;
+- marginal capital-efficiency scoring;
+- robust route selection using scenario regret;
+- counterfactual execution regret;
+- expected value of information;
+- liquidity-event-horizon sizing;
+- fail-closed composite opportunity assessment.
+
+## Aries Microstructure Layer
+
+The repository also contains `aries-microstructure.ts`, which extends the execution-intelligence surface with measured microstructure concepts such as queue-depletion proxies, estimated queue-clear time, TTL fill probability, realized movement, bounded persistence/Hurst signals, cross-venue lead/lag evidence, and deterministic spread stress testing.
+
+These are probability/quality inputs; they do not silently convert post-only execution into taker execution or bypass authenticated fee/inventory/governance constraints.
+
+## Aries Edge Formation Reactor
+
+The **Aries Edge Formation Reactor** changes the optimization target from merely reducing execution drag to increasing the rate at which CryptoCrawler discovers genuinely executable high-dislocation opportunities.
+
+It does not create edge by assumption. It is designed to:
+
+- search more expressive route topologies;
+- direct scarce quote/compute resources toward likely edge formation;
+- rank route-formation evidence;
+- optimize measured size curves;
+- coordinate with zero-capital route preselection;
+- focus attention on CEX edge formation;
+- attribute lost edge after the fact.
+
+```mermaid
+flowchart LR
+    MARKET["Measured Market Structure"] --> FORM["Aries Edge Formation Reactor"]
+    FORM --> ROUTES["Route / topology formation scores"]
+    FORM --> ATT["Attention allocation"]
+    FORM --> SIZE["Measured size-curve search"]
+
+    ROUTES --> VAULT["Aries Vault"]
+    ATT --> VAULT
+    SIZE --> VAULT
+
+    VAULT --> CRYPTARA["CRYPTARA"]
+    VAULT -. advisory only .-> EXEC["Canonical Execution"]
+```
+
+---
+
+# Nix-Gen Global Opportunity Allocation
+
+**Nix-Gen** is CryptoCrawler's additive global opportunity-allocation layer. It compares already-authoritative profitable opportunities under shared scarce resources and improves scheduling/resource decisions without becoming a second economics, governance, execution, settlement, treasury, payout, or learning authority.
+
+## Nix-Gen Implemented Architecture
+
+The Nix-Gen subsystem includes:
+
+- standardized cross-strategy bids backed by canonical measured economics;
+- bounded exact branch-and-bound allocation;
+- deterministic resource-aware fallback for larger candidate sets;
+- continuous fingerprinted replanning and expiry invalidation;
+- shared live priority across multiple strategy lanes;
+- defer-not-reject behavior when a valid profitable opportunity temporarily loses a resource contest;
+- strategy-finger/limb registry;
+- read-only canonical resource projections;
+- scarcity diagnostics;
+- finite-difference marginal resource value;
+- approximate Lagrangian dual-resource prices;
+- robust uncertainty diagnostics where unknown stays unknown;
+- terminal-settlement calibration;
+- capital/inventory routing recommendations without treasury authority;
+- optional QuantiComp heavy analysis with deterministic inline fallback.
+
+## Nix-Gen Live Portfolio
+
+Currently represented deterministic-profit lanes include:
+
+- CEX arbitrage;
+- maker-CEX / market-making;
+- measured DEX atomic + liquidation;
+- zero-capital atomic;
+- deterministic same-asset cross-chain routes when their full value loop and costs are authoritative.
+
+Funding-rate entry remains expected-value territory rather than deterministic dollar profit at entry; terminal authenticated outcomes can later become calibration evidence.
+
+```mermaid
+flowchart TD
+    CEX["CEX Arbitrage"] --> BIDS["Canonical Nix-Gen Bids"]
+    MAKER["Maker CEX"] --> BIDS
+    DEX["DEX / Liquidation"] --> BIDS
+    ZERO["Zero-Capital"] --> BIDS
+    CROSS["Deterministic Cross-Chain"] --> BIDS
+
+    BIDS --> ROBUST["Uncertainty + Resource Intelligence"]
+    ROBUST --> OPT["Branch-and-Bound / Resource-Aware Optimizer"]
+    OPT --> PORT["Global Advisory Portfolio"]
+    PORT --> PRIORITY["Live Priority Registry"]
+
+    PRIORITY -. "orders work; does not execute" .-> SCHED["Canonical Schedulers / Executors"]
+```
+
+Nix-Gen does not read signer private keys, submit transactions, move treasury funds, or manufacture economics.
+
+---
+
+# BPS Reduction + Economic Transformation Stack
+
+CryptoCrawler contains a dedicated family of systems for understanding **where BPS is being lost**, which losses are structurally reducible, which near-misses are transformable, and which tactics deserve compute/resources.
+
+## BPS Reduction Super Engine
+
+The **BPS Reduction Super Engine** tracks measured BPS attribution and builds adaptive plans around fields such as:
+
+- gross BPS;
+- exchange-fee BPS;
+- slippage BPS;
+- impact BPS;
+- gas BPS;
+- bridge BPS;
+- latency-decay BPS;
+- adverse-selection BPS;
+- queue-loss BPS;
+- canonical net BPS;
+- realized net BPS.
+
+It also models:
+
+- venue consensus weights;
+- learned edge half-life;
+- expected edge decay;
+- maker/taker execution-mode alternatives (`TT`, `MT`, `TM`, `MM`);
+- residual-notional fractions;
+- CVaR-oriented BPS budget inputs;
+- dominant deficiency classes;
+- event triggers;
+- counterfactuals;
+- tactic synergy bundles;
+- resource-pressure multipliers;
+- Monte Carlo search multipliers.
+
+Its declared authority is adaptive BPS measurement/revalidation/scheduling—not execution—and it explicitly disallows synthetic economics.
+
+## Hyperdynamic BPS Solution Engine
+
+The repository includes a **Hyperdynamic BPS Solution Engine** used in route/candidate preparation to build BPS-focused plans around fixable economic deficiencies and route preselection.
+
+## Fee-Surface Hyperdynamic Strategy Engine
+
+The fee-surface strategy layer focuses specifically on how fee structures, execution mode, and route selection interact with profitability.
+
+## Economic Transformation Engine
+
+The **Economic Transformation Engine** examines near-break-even or deficient candidates and identifies whether the dominant cost driver is plausibly transformable through a different measured tactic rather than simply rejecting every near-miss forever.
+
+## Research BPS Execution Tactics
+
+The research-tactics layer represents candidate tactics such as evidence reacquisition, timing/latency changes, execution-mode changes, route alternatives, inventory effects, sizing changes, and settlement-friction reduction. These tactics remain subordinate to measured canonical economics.
+
+## Adaptive Profitability Search + Topology Optimization
+
+Separate optimization modules include adaptive profitability-search policy and adaptive topology optimization, allowing the system to spend attention on areas where measured evidence suggests a better chance of finding genuinely executable positive economics.
+
+---
+
+# Risk, Profit Ladder + Governance Stack
+
+CryptoCrawler's governance surface contains more than one generic “risk gate.” Distinct modules separate stage progression, scaling, sizing, drawdown/risk controls, treasury barriers, and execution safety.
+
+## Profit Ladder
+
+The **Profit Ladder** is a progressive profit-tier tracking/scaling system tied to terminal-confirmed evidence. StageManager remains the stage-progression authority.
+
+The current implementation preserves the distinction between:
+
+- roadmap/telemetry profit targets;
+- terminal-confirmed realized profit;
+- capital verification;
+- drawdown constraints;
+- later-tier historical performance requirements.
+
+Tier-1/Stage-2 logic is specifically structured so arbitrary historical-performance requirements do not override a terminal-confirmed positive proof plus hard scale facts.
+
+## Risk Modules
+
+The repository also contains:
+
+- **Kelly Criterion** sizing logic;
+- **Progressive Position Sizing**;
+- **Mandatory Risk Shield**;
+- **Circuit Breaker**;
+- adaptive profit operating envelope;
+- governance stage management;
+- treasury execution barriers;
+- kill-switch / execution-safety controls;
+- resource leases and quota boundaries.
+
+Risk intelligence can reduce or block exposure where it owns that boundary; it does not get to fabricate profitability.
+
+---
+
+# Worker + Data-Plane Hierarchy
+
+CryptoCrawler has a real worker hierarchy around compute/data pressure and hot/cold database access. It is not simply “the app talks to Supabase.”
+
+## Database / COMP Worker Chain
+
+```mermaid
+flowchart TD
+    APP["CryptoCrawler Runtime / Consumers"] --> SUPER["CRYPTARA Super Worker\nshared information broker"]
+
+    SUPER --> ADMIT["Supabase Admission Worker\nranked permit governor"]
+    ADMIT --> SWITCH["COMP Switch\nnormal ↔ comp pressure path"]
+
+    SWITCH --> OWS["Overflow Super Worker\nlocal coherence + single-flight"]
+    OWS --> HYPER["HyperBridge\napplication-facing information fabric"]
+    HYPER --> OVER["Overflow Supabase Worker\nhot auxiliary state"]
+
+    OVER -->|"true miss + explicit archive request only"| ARCH["Primary Archive Worker\nLOW rank"]
+    ARCH --> GATE["Overflow ↔ Primary Gateway"]
+    GATE --> PRIMARY["Primary\nCold Archive"]
+
+    ADMIT -. priorities .-> P["critical → high → normal → low\nwith age promotion"]
+```
+
+### 1. CRYPTARA Supabase Admission Worker
+
+The admission worker is an autonomous pool custodian for ordinary CryptoCrawler database work. It:
+
+- ranks work as `critical`, `high`, `normal`, or `low`;
+- age-promotes queued work to reduce starvation;
+- tracks acquisition/hold latency and pool waiters;
+- contracts concurrency under measured pressure;
+- restores permits progressively after healthy evidence;
+- queues rather than silently dropping work;
+- creates no second ordinary database pool;
+- has no execution, governance, profitability, or write authority of its own.
+
+### 2. COMP Switch
+
+The COMP switch observes admission pressure and changes the resource path between `normal` and `comp` modes.
+
+In COMP mode it can favor more reuse/batching and reduce background/observability chatter while preserving these invariants:
+
+- work is not dropped;
+- critical durability remains direct;
+- execution truth does not become cacheable merely because pressure exists;
+- the switch has resource-path authority only.
+
+### 3. CRYPTARA Super Worker
+
+The Super Worker is a shared information broker. It provides:
+
+- bounded shared caching;
+- single-flight origin loading;
+- active information leases;
+- per-consumer projection/allow-list support;
+- information-class-specific freshness limits;
+- retained-byte / retained-entry bounds;
+- Overflow-assisted reuse in COMP mode;
+- Quanti Data Fabric integration.
+
+Information classes include execution truth, connector readiness, schema authority, market snapshots, resource snapshots, and background information. Execution truth remains zero-retention.
+
+### 4. Overflow Super Worker
+
+The **Overflow Super Worker** is the dedicated control worker for the Overflow lane. Its lookup order is:
+
+> **shared local coherence → Overflow → Primary only after a genuine miss and only through the gateway**
+
+It performs single-flight acquisition and shares successful results back into local coherence so duplicate consumers do not immediately repeat the same upstream request.
+
+### 5. HyperBridge
+
+The **CRYPTARA Supabase HyperBridge** is the application-facing information fabric for Overflow mode. Normal live reads enter the Overflow worker path; there is no direct application-to-Primary branch and no speculative Primary health race.
+
+It also maintains bounded queues/directories for snapshot/event persistence, replica freshness, coalescing, and fallback handling.
+
+### 6. Overflow Supabase Worker
+
+The Overflow worker owns a small, separate, lazy pool for allowed hot/auxiliary workload classes such as cache, analytics, telemetry, observability, and background learning. It validates that the configured Overflow project is separate from Primary and bounds pool size, payload size, batching, retry/cooldown, schema checks, and cleanup.
+
+### 7. Primary Archive Worker
+
+The **Primary Archive Worker** is the sole CryptoCrawler path to Primary cold storage for explicit archival writes and historical lookups. Its declared communication path is:
+
+> **worker → COMP rank → bridge gateway → Primary**
+
+It always enters the shared admission queue at **LOW** rank, creates no new pool, and declares no hot-runtime, execution, financial, or governance authority.
+
+## QuantiComp Work Hierarchy
+
+The quantitative side has a separate urgency hierarchy:
+
+| Quanti lane | Intended character |
+|---|---|
+| `ultra_hot` | Highest urgency quantitative work |
+| `hot` | Hot-path quantitative work |
+| `warm` | Important but less latency-critical work |
+| `batch` | Throughput-oriented grouped work |
+| `background` | Lowest-urgency analytical work |
+
+That hierarchy is resolved alongside deadlines, explicit priority, concurrency, deduplication, cancellation, backend capability, and validation.
+
+---
+
+# Rainbow Treasury + Profit Bridge Architecture
+
+The repo contains **multiple Rainbow components with different responsibilities**. They should not be collapsed into one vague “bridge.”
+
+## What the Rainbow family actually contains
+
+### Rainbow Profit Bridge
+
+`RainbowProfitBridge` is a **wake-up client** for the durable treasury worker on Supabase Overflow. It is deliberately **not** an exchange-withdrawal signer or second payout authority.
+
+Its job is to ask the single durable `cryptocrawler-terminal-sweeper` worker to process already-persisted treasury state sooner. If that immediate wake is unavailable, durable scheduled state remains pending for scheduler retry.
+
+### Rainbow Profit Bridge Wiring
+
+The runtime wiring listens to terminal-confirmed CRYPTARA execution evidence, records realized-profit allocation, records source metadata, starts observability/recipient confirmation, ensures the persistent treasury lifecycle, and wakes the durable worker.
+
+The current runtime policy text records a **90% wallet / 10% retained-capital** split for new terminal profit events, with ETH/Ethereum as the payout target path. This describes the current code policy; actual payout still depends on settlement, venue capability, credentials, balances, network availability, and recipient confirmation.
+
+### Terminal Treasury Lifecycle
+
+The terminal treasury lifecycle manages durable treasury states such as:
+
+- `RUNNING`;
+- `TERMINATE_AND_SWEEP`;
+- `SWEEPING`;
+- `SWEPT`;
+- `MANUAL_REVIEW`.
+
+It also coordinates restart-drain behavior, payout destination resolution, worker-secret synchronization, treasury execution barriers, and finalized Ethereum recipient confirmation prerequisites.
+
+### Rainbow Profit Source Ledger
+
+The **Rainbow Profit Source Ledger** is a provenance/data bridge rather than the money mover. It records where terminal profit came from—execution source, strategy, symbol, chain, venue/route, assets, and transaction hash.
+
+Its read behavior is **Overflow first**. Historical misses may use the low-priority Primary Archive Worker, and a successful archive hit is immediately rehydrated into Overflow so repeated runtime reads remain on the hot plane.
+
+### Rainbow Maker Fuel Reserve
+
+The **Rainbow Maker Fuel Reserve** tracks a dynamic payout reserve tied to maker-canary evidence so payout handling does not blindly consume resources needed for bounded maker verification/fuel behavior.
+
+### Rainbow Profit Observability
+
+Provides a consolidated view of the Rainbow profit lifecycle and destination/source state without becoming transfer authority.
+
+### Payout Recipient Confirmation Observer
+
+Observes whether the intended recipient and Ethereum-side confirmation evidence line up with the payout lifecycle. Observation does not itself move funds.
+
+## Rainbow Schematic
+
+```mermaid
+flowchart TD
+    SETTLE["Terminal Confirmed Profit"] --> LEDGER["Retained Profit Ledger\nallocation"]
+    SETTLE --> SOURCE["Rainbow Profit Source Ledger\nprovenance"]
+
+    SOURCE --> OVER["Overflow Hot Mirror"]
+    OVER -. "historical miss" .-> ARCH["Primary Archive Worker\nLOW priority"]
+
+    LEDGER --> WIRING["Rainbow Profit Bridge Wiring"]
+    WIRING --> WAKE["Rainbow Profit Bridge\nwake client"]
+    WAKE --> SWEEPER["Supabase Overflow\nTerminal Sweeper Worker"]
+
+    FUEL["Rainbow Maker Fuel Reserve"] --> WIRING
+    OBS["Rainbow Profit Observability"] --> WIRING
+    CONF["Recipient Confirmation Observer"] --> WIRING
+
+    SWEEPER --> PAYOUT["ETH / Ethereum payout path"]
+    SWEEPER --> RETAIN["Retained trading-capital path"]
+```
+
+So the user's remembered distinction is real at the architectural level: there is a **Rainbow Overflow/control-plane path**, a **Rainbow profit/payout lifecycle**, and a **Rainbow source/provenance mirror** rather than only one generic bridge.
 
 ---
 
@@ -760,6 +1262,124 @@ flowchart TD
 
 Current architecture contains flash-liquidity, deterministic receiver, sponsorship/paymaster, protocol-specific quote, repayment, builder-window, receipt, balance-verification, and realized-cost concepts. Availability of a specific route remains dependent on the actual provider, chain, account, deployed contracts, credentials, balances, and runtime evidence required by that route.
 
+## Capital-Free Namespace: Canonical vs Heritage
+
+The `capital-free/` namespace deliberately separates the current zero-capital boundary from historical experiments.
+
+### Canonical / current boundary
+
+- measured Alchemy telemetry;
+- governed zero-capital execution through the canonical zero-capital engine;
+- verified settlement before learning.
+
+### Heritage / incorporation-target modules
+
+The repository still contains earlier capital-free concepts such as:
+
+- Barter System;
+- Partnership Formation;
+- Eden Placement Strategy;
+- autonomous optimizer;
+- synthetic protocol orchestration;
+- historical Starburst scaling concepts;
+- dynamic gas-funding / gas-acquisition modules;
+- NexGen protocol-layer experiments.
+
+Those modules remain valuable architecture/IP references, but the namespace barrel intentionally does not export the historical synthetic systems as current production authority.
+
+---
+
+# Prediction-Market Architecture
+
+CryptoCrawler contains a substantial event/prediction-market architecture rather than only a small Kalshi data adapter.
+
+## Kalshi
+
+Kalshi-related architecture includes event-market discovery/evidence, fee/BPS integration, execution lifecycle support, resource leasing, persistence, probability calibration, and settlement-oriented state.
+
+## Polymarket
+
+The repository contains distinct Polymarket authorities for:
+
+- authenticated account/capability evidence;
+- geographic-access evidence;
+- event-venue discovery;
+- signed order submission authority;
+- durable order-intent recovery;
+- system-owned cash accounting;
+- terminal settlement/redemption recovery;
+- cross-venue event lifecycle support.
+
+## Cross-Venue Event Arbitrage
+
+The event abstraction is designed to support semantically matched opportunities across venues such as Kalshi and Polymarket, with durable lifecycle state and settlement truth separated from initial discovery.
+
+```mermaid
+flowchart LR
+    K["Kalshi Event"] --> EQ["Semantic / Payout Equivalence"]
+    P["Polymarket Event"] --> EQ
+    EQ --> ECON["Matched Contract Economics"]
+    ECON --> GOV["Governance / Resource Lease"]
+    GOV --> KO["Kalshi Order Authority"]
+    GOV --> PO["Polymarket Order Authority"]
+    KO --> LIFE["Cross-Venue Event Lifecycle"]
+    PO --> LIFE
+    LIFE --> SETTLE["Terminal Settlement / Redemption"]
+```
+
+Actual execution remains conditional on account capability, venue rules, geography, credentials, balances, market state, and the corresponding canonical admission path.
+
+---
+
+# CEX, Cross-Chain + MEV Execution Surfaces
+
+The repository contains several execution-support families that deserve to be visible even when they remain subordinate to the canonical scheduler and settlement model.
+
+## CEX Intelligence + Execution
+
+Representative CEX modules include:
+
+- order-book streaming;
+- authenticated fee resolution;
+- fee-recovery authority;
+- CEX four-mode matrix;
+- cross-impact advisory;
+- order-control health;
+- economic-barrier policy;
+- edge attention;
+- observation-candidate formation;
+- residual replan;
+- centralized-exchange executor;
+- CEX inventory ledger;
+- order-mode policy;
+- order serialization;
+- private WebSocket order transport.
+
+## Cross-Chain + Bridge Stack
+
+Representative cross-chain/bridge modules include:
+
+- Across bridge provider;
+- approval-gas evidence;
+- terminal-amount evidence;
+- network health;
+- gas oracle;
+- balance monitoring;
+- route optimization;
+- position recommendation;
+- withdraw/deposit support;
+- Across bridge executor;
+- pre-broadcast durability;
+- deterministic cross-chain opportunity generation and route economics.
+
+## Atomic Liquidation
+
+The execution directory also contains an Aave liquidation atomic executor. Its presence documents an atomic liquidation execution surface; admission still depends on the measured opportunity, resource, governance, and settlement boundaries around it.
+
+## MEV / Builder Surfaces
+
+The repository contains Flashbots/builder-oriented and mempool-related modules, including bounded builder submission and backrun-oriented paths. Some older MEV files retain heritage names from earlier architecture generations. These should be read as implementation/compatibility surfaces unless their specific canonical execution path and settlement proof are currently wired.
+
 ---
 
 # Hot-State / Overflow Architecture
@@ -775,11 +1395,87 @@ flowchart LR
     OVER --> SELF["Self-Improvement Runtime State"]
     OVER --> AI["AI Usage / Quota Metrics"]
     OVER --> CRYPT["CRYPTARA Runtime State / Bridges"]
+    OVER --> RAIN["Rainbow Runtime / Provenance State"]
 
-    PRIMARY["PRIMARY\nCold / archive-oriented authority"] -. "bridge / archive access where required" .-> OVER
+    PRIMARY["PRIMARY\nCold / archive-oriented authority"] -. "Bridge + low-rank archive worker only" .-> OVER
 
     LIVE -. "no intended direct hot-state dependency" .-> PRIMARY
 ```
+
+The worker hierarchy above makes this separation operational: normal live reads do not directly race or probe Primary, while explicit historical misses can route through the low-priority archive worker and gateway.
+
+---
+
+# Learning + Evolution Architecture
+
+CryptoCrawler has multiple learning/evolution modules beyond CRYPTARA's rank logic.
+
+## Learning Layer
+
+The `learning/` namespace includes:
+
+- **Deep Learning Store** — persistent/structured learning state;
+- **Execution Outcome** normalization;
+- **Instant Learning Engine**;
+- **Reinforcement Learning Bidder**;
+- **Settlement Profit Calibrator**;
+- **Terminal Feedback Identity**;
+- Supabase compatibility support for learning persistence.
+
+## Evolution Layer
+
+The `evolution/` namespace includes:
+
+- **Hyper Evolution Engine**;
+- **Swarm Intelligence**;
+- **Measured Execution Feedback**;
+- **Frontier Research Integration**;
+- **Terminal Network Funding Learning**;
+- **Zero-Capital Funding Lifecycle Observer**.
+
+The authority rule remains the same: evolutionary or learning code must ultimately learn from measured/terminal evidence if its output is going to influence live financial behavior.
+
+---
+
+# Heritage + Compatibility Architecture
+
+Bad-Blue deliberately retains several earlier systems as **heritage compatibility surfaces**. That does not make them worthless or “dead”; it means their interfaces, concepts, and history remain in the codebase while canonical authority has moved elsewhere.
+
+## Crypto Faucet — Heritage Compatibility Surface
+
+`AutonomousCryptoFaucet` remains exported as a canonical lifecycle-compatibility facade. Earlier versions included their own trading state machine, targets, stealth heuristics, and open/close decisions. Those independent authorities are now intentionally removed.
+
+The current facade delegates truth to:
+
+- canonical runtime wiring;
+- canonical opportunity state;
+- StageManager;
+- canonical execution scheduler;
+- terminal settlement / realized-profit evidence.
+
+It can report state/health/lifecycle compatibility without becoming a second trading authority.
+
+## Higher-Order Faucet Mesh
+
+`HigherOrderFaucetMesh` is preserved as a historical multi-node strategy/learning abstraction. The old synthetic Monte Carlo strategy generator and learning loop are intentionally disabled and throw rather than fabricate market intelligence.
+
+That makes the Faucet Mesh a good example of **preserved architecture with quarantined authority**: the idea remains documented in code, but current measured Hyper Monte Carlo / QuantiComp owns the corresponding quantitative truth.
+
+## Faucet Gateway
+
+The root-level **Faucet Gateway** is a separate outward-facing transaction/policy interface originating in the broader 4JI architecture. It includes token-bucket rate limiting, policy controls, audit logging, transaction state, signer/approval abstractions, and action routing. It should not be confused with the CryptoCrawler autonomous-faucet compatibility facade.
+
+## Heritage Capital-Free Systems
+
+Barter, partnership, Eden-placement, Starburst-scaling, autonomous-optimizer, and synthetic protocol-orchestration modules remain present as earlier capital-free architecture. Canonical zero-capital execution now lives through the measured zero-capital engine and governed adapters.
+
+## Heritage Crawler / Swarm Systems
+
+Enhanced Micro-Crawler, Starburst replication, Swarm Orchestrator, Cain/Twin variants, and related modules are preserved as incorporation targets or compatibility systems. Useful behavior can be reincorporated through the canonical pipeline without restoring parallel profit/execution authority.
+
+## Heritage MEV / Optimizer Names
+
+Some older MEV/optimizer modules—including earlier Flashbots, validator-tipping/bribing-named files, Divine Engine concepts, and synthetic optimization experiments—remain part of the repository's engineering history. Their current authority must be determined from actual canonical wiring, not from filename alone.
 
 ---
 
@@ -801,8 +1497,12 @@ The September 8, 2026 hardening sequence on `develop` includes work in areas suc
 | **Execution truth** | Execution, settlement, reconciliation, payout, and exception states separated so telemetry failure does not erase on-chain truth |
 | **Kalshi evidence** | Event-fee, cache/single-flight, request-local backoff, and exact-positive admission hardening |
 | **Overflow runtime** | Additional hot runtime state moved to Overflow with schema/verifier coverage |
+| **Worker hierarchy** | Ranked database admission, COMP pressure path, Super Worker sharing, Overflow-first HyperBridge, low-rank Primary archive path |
 | **Runtime isolation** | Optional/degraded components can fail or retry without automatically gaining global shutdown authority |
 | **Cost governance** | Paid pending-stream behavior remains explicit opt-in rather than activating solely because a key exists |
+| **BPS optimization** | Super Engine / economic-transformation / near-miss reassessment wiring tied to measured attribution rather than synthetic credit |
+| **Global allocation** | Nix-Gen resource-aware portfolio ordering while preserving canonical execution/settlement authority |
+| **Aries intelligence** | Horizon-aware microstructure, route formation, capacity, regret, and value-of-information advisory surfaces |
 
 ---
 
@@ -822,9 +1522,17 @@ Provides a common lifecycle for measured opportunities and tracks enrichment, mi
 
 Calculates known costs and establishes whether the candidate remains strictly positive after verified costs.
 
+## Aries / Horizon Intelligence
+
+Evaluates horizon, microstructure, route formation, capacity, regret, and value-of-information. Advisory only.
+
 ## CRYPTARA / Intelligence Authority
 
 Assesses market context, evidence confidence, pattern quality, and learned execution performance. It can prioritize or downgrade without owning canonical transaction submission.
+
+## Nix-Gen Allocation Authority
+
+Orders already-valid opportunities under scarce resources. It does not create eligibility, economics, leases, execution, or settlement.
 
 ## Governance Authority
 
@@ -841,6 +1549,10 @@ Owns the actual venue/protocol submission path for execution-authorized work.
 ## Terminal Settlement Authority
 
 Determines what actually happened financially from receipts, fills, balances, fees, gas, repayment, and other terminal evidence.
+
+## Treasury / Payout Authority
+
+Durable payout/retained-capital handling is separated from execution and settlement. Rainbow wake/observability components do not become independent withdrawal signers.
 
 ## Learning Authority
 
@@ -878,6 +1590,8 @@ QuantiComp/Monte Carlo can be used for concepts such as probability of profitabl
 
 Simulation is not realized financial truth.
 
+QuantiComp additionally provides the workload scheduler, lane hierarchy, adaptive optimizer, backend registry, Data Fabric, parallelism governor, profiling, validation, and interaction-model infrastructure described earlier.
+
 ---
 
 # Terminal Settlement and Realized Truth
@@ -905,6 +1619,16 @@ Bad-Blue contains a broader research and orchestration ecosystem beyond the two 
 | **People Finder** | Public-record research, entity resolution, relationship mapping, report assembly |
 | **GeoConsole** | Geospatial evidence fusion, reconstruction, visualization, probabilistic path analysis |
 | **TSHPE** | Multi-source positioning, smoothing, confidence-estimation engine |
+| **CRYPTARA** | Adaptive market-intelligence and terminal-feedback cognition |
+| **Aries Vault** | Horizon-aware execution intelligence: microstructure, capacity, regret, robust routing, value of information |
+| **Aries Edge Formation Reactor** | Route/topology/attention system for increasing discovery of measured executable edge |
+| **Nix-Gen** | Global resource-aware opportunity allocation and advisory scheduling layer |
+| **BPS Reduction Super Engine** | Measured BPS attribution, decay, tactic, deficiency and revalidation/scheduling intelligence |
+| **Economic Transformation Engine** | Near-miss cost-driver analysis and transformability advice |
+| **Profit Ladder** | Terminal-evidence-linked scale/profit tier tracking |
+| **Rainbow Profit Bridge** | Overflow treasury-worker wake client; not a withdrawal signer |
+| **Rainbow Source Ledger** | Profit-source provenance mirror across Overflow / cold archive |
+| **Rainbow Maker Fuel Reserve** | Dynamic reserve around maker-canary fuel requirements |
 | **Cain** | Knowledge-bearing crawler/lifecycle archetype |
 | **Reaper** | Retirement, quarantine, cleanup, unhealthy-agent control concept |
 | **Eden** | Protected crawler knowledge/lifecycle home |
@@ -919,7 +1643,15 @@ Bad-Blue contains a broader research and orchestration ecosystem beyond the two 
 | **Googolplex Neural Lattice** | Experimental sparse/procedural representation architecture |
 | **3D Geiger** | Provider pressure/health/rate-limit scoring vocabulary |
 | **Evolution Lock / Geiger** | Controlled adaptation permission and adaptation-risk gating |
-| **Faucet / Faucet Mesh** | Governed strategy-flow and experimental multi-node market-operation abstractions |
+| **Faucet** | Preserved CryptoCrawler lifecycle compatibility facade backed by canonical runtime truth |
+| **Faucet Mesh** | Heritage higher-order multi-node strategy/learning architecture with synthetic authority quarantined |
+| **Faucet Gateway** | Broader 4JI outward-facing policy/rate-limit/audit transaction interface |
+| **Supabase Admission Worker** | Ranked critical/high/normal/low DB resource governor |
+| **COMP Switch** | Pressure-responsive normal/comp resource-path selector |
+| **CRYPTARA Super Worker** | Shared information broker, single-flight, leases, bounded reuse |
+| **Overflow Super Worker** | Overflow-first transport/coherence worker with gateway-only archive fallback |
+| **HyperBridge** | Application-facing Overflow information fabric |
+| **Primary Archive Worker** | Low-rank, gateway-only CryptoCrawler cold-archive access path |
 
 </details>
 
@@ -931,7 +1663,7 @@ These names are project vocabulary. Their engineering value depends on the respo
 
 ## 1. One Authority Per Critical Responsibility
 
-Discovery, economics, nonce allocation, scheduling, execution, settlement, and learning should not each have multiple competing production authorities.
+Discovery, economics, nonce allocation, scheduling, execution, settlement, treasury, and learning should not each have multiple competing production authorities.
 
 ## 2. Deterministic Before Probabilistic
 
@@ -939,7 +1671,7 @@ Known economics are calculated before stochastic analysis is allowed to influenc
 
 ## 3. Observation Is Not Execution
 
-A crawler, oracle, indicator, mempool feed, ranking model, CRYPTARA helper, Disco-Ball shard, or Eden memory item can provide evidence without receiving transaction authority.
+A crawler, oracle, indicator, mempool feed, ranking model, CRYPTARA helper, Aries model, Nix-Gen portfolio, Disco-Ball shard, or Eden memory item can provide evidence without receiving transaction authority.
 
 ## 4. Capability Is Not Permission
 
@@ -971,7 +1703,11 @@ Legal intelligence and market-execution intelligence can reuse infrastructure wi
 
 ## 11. Metaphor Must Map to Mechanism
 
-Names such as Eden, Tower, Angel, Disco Ball, Antenna, Beam, Battery, and Cain are useful when the README also explains the real data, control, security, compute, or lifecycle responsibility underneath them.
+Names such as Eden, Tower, Angel, Disco Ball, Antenna, Beam, Battery, Cain, Aries, Rainbow, and Nix-Gen are useful when the README also explains the real data, control, security, compute, treasury, or lifecycle responsibility underneath them.
+
+## 12. Compatibility Must Not Masquerade as Authority
+
+Heritage systems may remain valuable interfaces, experiments, and IP. Their preserved presence must not silently restore retired parallel economics, execution, risk, or learning authority.
 
 ---
 
@@ -983,7 +1719,24 @@ Major repository areas include:
 - **`server/`** — API, orchestration, providers, persistence, workers, and backend services.
 - **`server/services/alexara/`** — LEXARA legal brain, F.M.I., C.A.D.E., and legal research integration.
 - **`server/services/cryptara/`** — CRYPTARA market-surveillance/assessment intelligence.
+- **`server/services/quantiComp/`** — QuantiComp runtime, adaptive optimizer, backend registry/routing, Data Fabric, parallelism governor, profiler, interaction model.
 - **`server/services/cryptocrawl/`** — CryptoCrawler discovery, economics, validation, governance, execution, settlement, zero-capital, runtime, scaling, crawler research, Eden, Babel, and integration systems.
+- **`server/services/cryptocrawl/intelligence/`** — Aries Vault, Aries microstructure/edge formation, CEX fee/order-book intelligence, canonical opportunity/intelligence state, prediction-market authority surfaces, provider-quality intelligence.
+- **`server/services/cryptocrawl/optimization/`** — BPS Super Engine, economic transformation, hyperdynamic BPS/fee surfaces, Nix-Gen, adaptive profitability/topology optimization, execution-path selection.
+- **`server/services/cryptocrawl/optimization/nix-gen/`** — Nix-Gen bids, global optimizer, resource pricing, replanning, portfolio view, live priority, Quanti integration.
+- **`server/services/cryptocrawl/compensation/`** — Rainbow profit bridge/source/observability/fuel reserve, retained-profit accounting, payout scheduler/confirmation, compensation modules.
+- **`server/services/cryptocrawl/integration/`** — canonical wiring, CRYPTARA Supabase admission/COMP/Super Worker/Overflow/HyperBridge hierarchy, BPS/Aries/CRYPTARA integrations.
+- **`server/services/cryptocrawl/runtime/`** — core runtime, treasury lifecycle, Rainbow wiring, hot-state schemas, positive-profit capture and runtime authority wiring.
+- **`server/services/cryptocrawl/governance/`** — StageManager, Profit Ladder, Composer interface, risk/governance controls, operating envelope, resource/gating policy.
+- **`server/services/cryptocrawl/risk/`** — circuit breaker, Kelly criterion, mandatory risk shield, progressive position sizing.
+- **`server/services/cryptocrawl/learning/`** — deep/instant learning, execution outcome, RL bidder, terminal identity, settlement-profit calibration.
+- **`server/services/cryptocrawl/evolution/`** — Hyper Evolution, swarm intelligence, measured feedback, funding lifecycle learning/observation.
+- **`server/services/cryptocrawl/faucet/`** — Faucet lifecycle compatibility facade plus historical facet/mesh source.
+- **`server/services/cryptocrawl/capital-free/`** — canonical zero-capital boundary, Alchemy telemetry, and heritage capital-free architecture.
+- **`server/services/cryptocrawl/execution/`** — canonical scheduler/executors, CEX/private transport, cross-chain, liquidations, builder/zero-capital, event-market execution and recovery.
+- **`server/services/cryptocrawl/discovery/`** — CEX/DEX/cross-chain/funding/event opportunity formation, graphless DEX, zero-capital route generation/preselection.
+- **`server/services/cryptocrawl/bridge/`** — Across bridge/evidence, balance/network/gas/route helpers.
+- **`server/services/cryptocrawl/mev/`** — MEV/builder-oriented modules and heritage surfaces.
 - **`server/services/cryptocrawl/agents/`** — Cain/Twin/Micro/Starburst/Swarm crawler modules and compatibility boundaries.
 - **`server/services/cryptocrawl/eden/`** — Eden lesson/state/strategy memory architecture.
 - **`server/services/cryptocrawl/babel/`** — Tower of Babel, crawler fingerprint, Cain reasoning, Light Language, related experimental architecture.
@@ -991,8 +1744,9 @@ Major repository areas include:
 - **`server/services/computationalBeam/`** — workload router, Omni Antenna, Directional Beam, Super Battery, and related compute-routing infrastructure.
 - **`server/reactor/`** — Computational Reactor implementation and metrics.
 - **`server/services/crawlers/`** — Six-Crawler Initiative and other analytic crawler systems.
+- **`server/faucetGateway.ts`** — broader 4JI Faucet Gateway interface.
 - **`server/migrations/overflow/`** — Overflow hot-state schema evolution.
-- **`scripts/cryptocrawl/`** — structural/runtime invariant verifiers for CryptoCrawler hardening.
+- **`scripts/cryptocrawl/`** — structural/runtime invariant verifiers for CryptoCrawler hardening, Nix-Gen, Aries, Rainbow, BPS, workers, prediction markets, treasury, and authority boundaries.
 - **database / migration modules** — persistence schema and state evolution.
 - **tests / verifier assets** — regression, integration, authority, economic, and runtime validation.
 
@@ -1008,17 +1762,20 @@ Production verification should establish, as applicable:
 - schema/migration readiness;
 - provider health;
 - database authority/routing;
+- worker/COMP/Overflow routing health;
 - discovery heartbeat;
 - evidence freshness;
 - candidate lifecycle health;
 - deterministic economics;
+- BPS attribution/optimization integrity;
+- Aries/Nix advisory integrity;
 - governance state;
 - resource/nonce/rate readiness;
 - execution capability;
 - receipt/fill observation;
 - terminal settlement;
 - realized accounting;
-- payout/reconciliation state;
+- Rainbow payout/reconciliation state;
 - calibration/learning integrity;
 - regression/invariant verifier results.
 
@@ -1036,17 +1793,26 @@ For technical diligence, the important value is not merely the number of named m
 - multi-provider market data;
 - multi-topology opportunity formation;
 - exact economic validation;
+- advanced BPS attribution/transformation;
+- Aries horizon/microstructure/edge-formation intelligence;
+- Nix-Gen global resource-aware allocation;
 - adaptive market cognition;
 - bounded probabilistic analysis;
+- QuantiComp adaptive compute/runtime infrastructure;
+- CRYPTARA worker/COMP/Overflow hierarchy;
 - crawler ecology and lifecycle concepts;
 - Eden knowledge return;
 - protected/split-meaning communication concepts;
 - Antenna/Beam/Battery/Reactor compute routing;
-- staged governance;
+- staged governance and Profit Ladder scaling;
 - resource-controlled execution;
+- prediction-market execution/recovery architecture;
+- cross-chain and zero-capital execution architecture;
 - terminal settlement;
-- realized-evidence learning;
+- Rainbow treasury/payout/provenance handling;
+- realized-evidence learning/evolution;
 - hot/cold state separation;
+- heritage architecture preserved without restoring parallel authority;
 - regression-protected canonical authority.
 
 The continued engineering priority is **proof, canonicalization, observability, safe incorporation, and end-to-end realization**.
@@ -1065,6 +1831,12 @@ The continued engineering priority is **proof, canonicalization, observability, 
 | **CryptoCrawler** | Multi-topology market discovery, validation, governance, execution, settlement, and learning architecture |
 | **CRYPTARA** | Adaptive crypto-market assessment and execution-feedback intelligence |
 | **Sovereign Cortex** | CRYPTARA evidence-quality, capability-vector, rank, and bounded-adaptation layer |
+| **Aries Vault** | Horizon-aware profitability/execution intelligence layer with microstructure, capacity, regret and value-of-information modeling |
+| **Aries Edge Formation Reactor** | Measured route/topology/attention engine focused on finding executable edge |
+| **Nix-Gen** | Cross-strategy scarce-resource opportunity allocation and scheduling-advisory layer |
+| **BPS Reduction Super Engine** | Measured BPS attribution, edge-decay, tactic, deficiency and revalidation/scheduling layer |
+| **Economic Transformation Engine** | Near-miss dominant-cost analysis and measured transformability advice |
+| **Profit Ladder** | Terminal-evidence-linked profit/scale tier tracker subordinate to StageManager |
 | **Eden** | Crawler knowledge/lifecycle home and strategy/lesson memory concept |
 | **Tree of Knowledge** | Outcome/pattern record that intentionally separates storage from causal understanding |
 | **Tower of Babel** | Split-meaning / role-access / dimensional-gate architecture between outer and inner bubbles |
@@ -1083,7 +1855,22 @@ The continued engineering priority is **proof, canonicalization, observability, 
 | **Omni Antenna** | Lightweight latency-sensitive compute/market-transport lane |
 | **Directional Beam** | Heavier compute-routing lane |
 | **Super Battery** | Task-efficiency layer for caching, deduplication, batching, and related optimization hooks |
-| **QuantiComp** | Heavy quantitative-computation authority |
+| **QuantiComp** | Heavy quantitative-computation runtime and authority for bounded statistical/optimization workloads |
+| **Quanti Data Fabric** | Shared numeric state/lease fabric used by QuantiComp and resource-control integrations |
+| **Quanti Parallelism Governor** | Concurrency allocation/control for quantitative workloads |
+| **COMP Switch** | Pressure-responsive normal/comp database resource-path selector |
+| **Supabase Admission Worker** | Ranked database-resource governor using critical/high/normal/low priorities |
+| **CRYPTARA Super Worker** | Shared information broker with leases, bounded reuse and single-flight origin loading |
+| **Overflow Super Worker** | Overflow-first coherence/transport worker with gateway-only cold-archive fallback |
+| **HyperBridge** | Application-facing Overflow information fabric and persistence/routing queue |
+| **Primary Archive Worker** | Low-priority, gateway-only CryptoCrawler cold archive path |
+| **Rainbow Profit Bridge** | Immediate wake client for the durable Overflow treasury worker |
+| **Rainbow Profit Source Ledger** | Terminal-profit provenance mirror with Overflow-first reads and cold-archive fallback |
+| **Rainbow Maker Fuel Reserve** | Dynamic maker-canary-related treasury reserve |
+| **Terminal Treasury Lifecycle** | Durable payout/restart-sweep state machine and treasury coordination layer |
+| **Faucet** | Preserved lifecycle compatibility facade tied to canonical CryptoCrawler truth |
+| **Faucet Mesh** | Heritage higher-order strategy/learning mesh with synthetic runtime authority disabled |
+| **Faucet Gateway** | Broader 4JI policy/rate-limit/audit transaction interface |
 | **Measured Candidate Registry** | Shared opportunity lifecycle and missing-information authority |
 | **Deterministic Economics** | Known-cost profitability authority |
 | **BPS** | Basis points; 100 BPS = 1% |
@@ -1098,6 +1885,17 @@ The continued engineering priority is **proof, canonicalization, observability, 
 | **Monte Carlo** | Probabilistic robustness/tail-risk analysis downstream of deterministic economics |
 | **DynamicScale** | Adaptive discovery/search-pressure and bounded resource controller |
 | **Fail Closed** | Required unknown facts block execution instead of being guessed favorable |
+| **Heritage Compatibility Surface** | Preserved interface/architecture whose former parallel authority is intentionally quarantined |
+
+---
+
+# License
+
+This repository is distributed under the proprietary terms in [`LICENSE.md`](LICENSE.md).
+
+**Copyright © 2026 Robert Clinkenbeard. All rights reserved.**
+
+Use, copying, modification, distribution, sublicensing, or transfer requires prior written permission from the Owner as stated in the license file.
 
 ---
 
@@ -1116,6 +1914,18 @@ Bad-Blue's defining characteristic is not simply that it combines legal AI and c
 **CRYPTARA asks:**
 
 > Given the evidence and what terminal outcomes have proven so far, how should CryptoCrawler interpret and prepare for the next opportunity without confusing intelligence with execution authority?
+
+**Aries asks:**
+
+> How much of this edge is likely to survive latency, fees, queue dynamics, size, uncertainty, and time—and is more information worth acquiring before acting?
+
+**Nix-Gen asks:**
+
+> Among already-valid opportunities, which combination creates the most measured value under the resources actually available right now?
+
+**Rainbow asks:**
+
+> Once profit is terminal and real, where did it come from, what must remain available to the system, what is due for payout, and has that payout actually reached the intended destination?
 
 **Cain asks:**
 
