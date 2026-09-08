@@ -184,10 +184,11 @@ async function liveStableUsd(symbol: 'USDC' | 'USDT'): Promise<number> {
 }
 
 /**
- * Prepare an opportunity-specific Ethereum builder sponsorship proof. This is not
- * a chain-wide gas-ready flag. The signed bundle itself must create the ETH used
- * to repay the builder, and the stablecoin route must remain positive after the
- * maximum stablecoin input required for that repayment.
+ * Prepare an opportunity-specific Ethereum private-builder path. Standard EOA
+ * bundles do not remove the sender's base-fee obligation, so this path is not a
+ * zero-native-capital authority. The conversion therefore creates enough ETH both
+ * to pay the builder and to replenish the bounded sender gas expenditure. The
+ * stablecoin residual consequently carries both costs before terminal BPS learning.
  */
 export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
   opportunity: ZeroCapitalOpportunity;
@@ -215,12 +216,13 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
   );
   if (minimumBuilderResidualWei <= 0n) throw new Error('ZERO_CAPITAL_BUILDER_MIN_RESIDUAL_WEI must be positive');
   const builderPaymentWei = requiredSponsorshipWei + minimumBuilderResidualWei;
+  const conversionOutputWei = builderPaymentWei + requiredSponsorshipWei;
 
   const conversionSlippageBps = boundedInteger(process.env.ZERO_CAPITAL_BUILDER_CONVERSION_MAX_SLIPPAGE_BPS, 50, 1, 500);
   const repaymentRoute = await selectBuilderRepaymentRoute({
     provider,
     inputToken: opportunity.inputToken,
-    amountOutWei: builderPaymentWei,
+    amountOutWei: conversionOutputWei,
     slippageBps: conversionSlippageBps,
   });
   if (!repaymentRoute) return null;
@@ -307,7 +309,7 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
       to: repaymentRoute.router,
       data: buildBuilderRepaymentSwapData({
         route: repaymentRoute,
-        amountOutWei: builderPaymentWei,
+        amountOutWei: conversionOutputWei,
         recipient: wallet.address,
         deadline,
       }),
@@ -366,21 +368,23 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
     minimumBuilderResidualWei,
     candidates,
     provenance: [
-      'builder_sponsorship:opportunity_specific',
+      'builder_private_bundle:opportunity_specific',
       'builder_payment_source:execution_created_value',
       'builder_payment_transport:titan_or_quasar',
       ...repaymentRoute.provenance,
-      'builder_gas_cost_attribution:stablecoin_input_max',
+      'builder_all_in_cost_attribution:stablecoin_input_max',
+      'sender_native_gas_replenishment:execution_created_value',
+      'sender_native_gas_ceiling:included_in_stablecoin_residual',
       'gas_fee_ceiling:eip1559_base_fee_x2_plus_priority',
       'generic_gas_authority_not_overridden',
-      'operator_native_gas_input:false',
+      'system_owned_native_gas_required:true',
       'strict_positive_all_in_residual',
       'sub_bps_precision_preserved:true',
       'synthetic_evidence:false',
     ],
   };
   builderSponsoredZeroCapitalRegistry.record(evidence);
-  logger.info('[ZeroCapitalBuilderColdStart] Exact builder-funded cold-start candidate prepared', {
+  logger.info('[ZeroCapitalBuilderColdStart] Exact builder private-bundle candidate prepared', {
     component: 'BuilderSponsoredZeroCapitalColdStart',
     opportunityId: opportunity.id,
     builders: candidates.map(candidate => candidate.builder),
@@ -392,7 +396,10 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
     guaranteedResidualProfitUsd,
     requiredSponsorshipWei: requiredSponsorshipWei.toString(),
     builderPaymentWei: builderPaymentWei.toString(),
+    conversionOutputWei: conversionOutputWei.toString(),
     operatorNativeGasInputRequired: false,
+    systemOwnedNativeGasRequired: true,
+    senderGasReplenishmentIncludedInResidual: true,
     chainWideFundingAuthorityChanged: false,
     executionAuthority: false,
   });

@@ -11,6 +11,10 @@ const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canon
 const providerReprice = read('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
+const realizedPolicy = read('server/services/cryptocrawl/execution/zero-capital-realized-profit-policy.ts');
+const gasFunding = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
+const dynamicChainRegistry = read('server/services/cryptocrawl/core/dynamic-chain-registry.ts');
+const sponsoredReceiverManager = read('server/services/cryptocrawl/execution/adapters/sponsored-receiver-manager.ts');
 const rescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts');
 const scale = read('server/services/cryptocrawl/scaling/dynamic-scale-pressure-wiring.ts');
 const engine = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
@@ -117,6 +121,24 @@ assert.match(executor, /extractProfit\(receipt/);
 assert.match(executor, /terminalEconomics\(/);
 assert.match(executor, /synthetic_evidence:false/);
 
+// Zero INITIAL capital is distinct from zero lifetime provider cost. Paymaster
+// sponsorship may remove the native-balance prerequisite while its receipt cost
+// remains a real BPS expense. Strong zero-operator-cost mode is explicit opt-in.
+assert.match(gasFunding, /ZERO_INITIAL_CAPITAL_STRICT_OPERATOR_ZERO_COST[^\n]*=== 'true'/);
+assert.match(gasFunding, /strictZeroInitialCapitalEligible: true/);
+assert.match(gasFunding, /operatorMonetaryInputRequired: false/);
+assert.match(gasFunding, /providerBillingLiability: !sponsorCostProvenZero/);
+assert.match(gasFunding, /sponsorOperatorMonetaryCostProvenZero: sponsorCostProvenZero/);
+assert.match(realizedPolicy, /provider_sponsored_receipt_equivalent_gas_cost/);
+assert.match(realizedPolicy, /sponsorOperatorMonetaryCostProvenZero/);
+assert.match(executor, /nativeFeeWei = BigInt\(receipt\.gasUsed\.toString\(\)\) \* BigInt\(receipt\.effectiveGasPrice\.toString\(\)\)/);
+assert.match(executor, /providerBillingLiability: funding\.providerBillingLiability === true/);
+assert.doesNotMatch(executor, /zeroMonetaryGasVerified:\s*sponsoredExecution\s*[,}]/);
+assert.match(executor, /Legacy EOA builder cold-start is not zero-native-capital authority/);
+assert.match(sponsoredReceiverManager, /await this\.sponsor\.execute\(/);
+assert.match(sponsoredReceiverManager, /ZERO_CAPITAL_SPONSORED_RECEIVER_DEPLOY_TIMEOUT_MS/);
+assert.match(dynamicChainRegistry, /id: 'bsc'[\s\S]{0,100}sponsoredBootstrap: true/);
+
 assert.match(rescue, /buildBpsReductionSuperPlan/);
 assert.match(rescue, /buildResearchBpsExecutionPlan/);
 assert.match(rescue, /adviseEconomicTransformations/);
@@ -132,6 +154,8 @@ assert.doesNotMatch(rescue, /expectedProfit\s*=\s*Math\.max/);
 assert.doesNotMatch(rescue, /netProfitBps\s*=\s*Math\.max/);
 
 assert.match(payloadBuilder, /export type UniswapV3FeeTier = 100 \| 500 \| 3000 \| 10000/);
+assert.match(payloadBuilder, /'pancakeswapV2'/);
+assert.match(payloadBuilder, /'traderJoeV1'/);
 assert.match(dynamicRoutes, /ZERO_CAPITAL_DYNAMIC_UNISWAP_FEE_TIERS \|\| '100,500,3000'/);
 assert.match(dynamicRoutes, /value === 100 \|\| value === 500 \|\| value === 3000 \|\| value === 10000/);
 assert.match(routeQuoter, /feeTier !== 100 && feeTier !== 500 && feeTier !== 3000 && feeTier !== 10000/);
@@ -184,8 +208,11 @@ console.log(JSON.stringify({
   runtimeDispatchMutation: false,
   zeroCapitalBpsSuperEngineOperational: true,
   positiveExecutionFloorPreserved: true,
-  zeroPersonalCostGasTruthBound: true,
+  zeroInitialCapitalPaymasterTruthBound: true,
+  providerSponsoredGasChargedInRealizedEconomics: true,
+  legacyEoaBuilderNotGasSponsor: true,
   uniswapV3OneBpsFeeTierEndToEnd: true,
+  routeLocalPancakeAndTraderJoeExecutionAdapters: true,
   builderRepaymentRouteMesh: true,
   builderRepaymentMultihopMesh: true,
   boundedBuilderBlockWindow: true,

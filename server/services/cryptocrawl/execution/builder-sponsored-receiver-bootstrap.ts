@@ -160,10 +160,10 @@ function permissionCallsForPlan(receiver: string, plan: ReturnType<typeof buildF
 }
 
 /**
- * First-receiver cold start for Ethereum. The receiver deployment, its exact route
- * permissions, the profitable flash execution, stablecoin-to-ETH reimbursement,
- * and terminal builder payment are one nonce-contiguous private bundle. This
- * prepares evidence only; canonical scheduling/execution remains the sole submitter.
+ * First-receiver private bundle for Ethereum. EOA sender gas must already be
+ * system-owned; it is not builder-sponsored at protocol level. Execution-created
+ * value therefore funds both the explicit builder payment and a bounded native-gas
+ * replenishment, making the observed stablecoin residual conservative all-in BPS.
  */
 export async function prepareBuilderSponsoredReceiverBootstrap(input: {
   opportunity: ZeroCapitalOpportunity;
@@ -209,12 +209,13 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
   const minimumBuilderResidualWei = BigInt(process.env.ZERO_CAPITAL_BUILDER_MIN_RESIDUAL_WEI || '10000000000000');
   if (minimumBuilderResidualWei <= 0n) throw new Error('ZERO_CAPITAL_BUILDER_MIN_RESIDUAL_WEI must be positive');
   const builderPaymentWei = requiredSponsorshipWei + minimumBuilderResidualWei;
+  const conversionOutputWei = builderPaymentWei + requiredSponsorshipWei;
 
   const conversionSlippageBps = boundedInteger(process.env.ZERO_CAPITAL_BUILDER_CONVERSION_MAX_SLIPPAGE_BPS, 50, 1, 500);
   const repaymentRoute = await selectBuilderRepaymentRoute({
     provider,
     inputToken: opportunity.inputToken,
-    amountOutWei: builderPaymentWei,
+    amountOutWei: conversionOutputWei,
     slippageBps: conversionSlippageBps,
   });
   if (!repaymentRoute) return null;
@@ -299,7 +300,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     to: repaymentRoute.router,
     data: buildBuilderRepaymentSwapData({
       route: repaymentRoute,
-      amountOutWei: builderPaymentWei,
+      amountOutWei: conversionOutputWei,
       recipient: wallet.address,
       deadline,
     }),
@@ -371,7 +372,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     minimumBuilderResidualWei,
     candidates,
     provenance: [
-      'builder_sponsorship:opportunity_specific',
+      'builder_private_bundle:opportunity_specific',
       'receiver_bootstrap:create2_deployment_in_same_atomic_bundle',
       'receiver_bootstrap:exact_route_permissions_in_same_atomic_bundle',
       'receiver_bootstrap:predicted_address_matches_reviewed_artifact',
@@ -380,8 +381,10 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
       'builder_payment_source:execution_created_value',
       'builder_payment_transport:titan_or_quasar',
       ...repaymentRoute.provenance,
-      'builder_gas_cost_attribution:deployment_permissions_execution_repayment_upper_bound',
-      'operator_native_gas_input:false',
+      'builder_all_in_cost_attribution:deployment_permissions_execution_repayment_upper_bound',
+      'sender_native_gas_replenishment:execution_created_value',
+      'sender_native_gas_ceiling:included_in_stablecoin_residual',
+      'system_owned_native_gas_required:true',
       'strict_positive_all_in_residual',
       'sub_bps_precision_preserved:true',
       'canonical_execution_authority_unchanged',
@@ -389,7 +392,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     ],
   };
   builderSponsoredZeroCapitalRegistry.record(evidence);
-  logger.info('[ZeroCapitalReceiverBootstrap] Exact builder-funded first-receiver candidate prepared', {
+  logger.info('[ZeroCapitalReceiverBootstrap] Exact builder private-bundle first-receiver candidate prepared', {
     component: 'BuilderSponsoredReceiverBootstrap',
     opportunityId: opportunity.id,
     receiver: identity.receiver,
@@ -400,7 +403,12 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     builderRepaymentRoute: repaymentRoute.name,
     builderRepaymentRouter: repaymentRoute.router,
     guaranteedResidualProfitUsd,
+    requiredSponsorshipWei: requiredSponsorshipWei.toString(),
+    builderPaymentWei: builderPaymentWei.toString(),
+    conversionOutputWei: conversionOutputWei.toString(),
     operatorNativeGasInputRequired: false,
+    systemOwnedNativeGasRequired: true,
+    senderGasReplenishmentIncludedInResidual: true,
     executionAuthority: false,
   });
   return evidence;

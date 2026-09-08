@@ -222,13 +222,19 @@ export class SponsoredReceiverManager {
 
     let deploymentTransactionHash: string | undefined;
     if (input.fundingMode === 'sponsored') {
-      // A configured hosted policy is not evidence that the operator bears zero
-      // monetary cost. Until the canonical sponsorship authority can supply that
-      // proof, receiver deployment remains on the provenance-backed native path.
       const sponsorReadiness = this.sponsor.getReadiness();
-      throw new Error(sponsorReadiness.ready
-        ? 'Receiver deployment sponsorship is configured but zero-operator-cost provenance is unproven'
-        : sponsorReadiness.reason || 'Receiver deployment sponsorship is unavailable');
+      if (!sponsorReadiness.ready) throw new Error(sponsorReadiness.reason || 'Receiver deployment sponsorship is unavailable');
+      const sponsored = await this.sponsor.execute({
+        wallet: input.wallet,
+        chainId: identity.chainId,
+        calls: [{
+          to: DEFAULT_CREATE2_DEPLOYER,
+          data: deploymentData,
+          value: BigNumber.from(0),
+        }],
+        timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_RECEIVER_DEPLOY_TIMEOUT_MS || 90_000)),
+      });
+      deploymentTransactionHash = sponsored.transactionHash;
     } else {
       const result = await executeSystemOwnedNativeTransaction({
         chain: input.chain,

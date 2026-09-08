@@ -140,9 +140,11 @@ async function terminalEconomics(input: {
   grossProfit: bigint;
   nativeFeeWei: bigint;
   sponsoredExecution: boolean;
+  sponsorOperatorMonetaryCostProvenZero?: boolean;
 }): Promise<ReturnType<typeof evaluateZeroCapitalRealizedProfit>> {
   const symbols = [input.opportunity.inputAssetSymbol];
-  const nativeSymbol = input.sponsoredExecution ? null : NATIVE_SYMBOL[input.opportunity.chain] || null;
+  const sponsorCostProvenZero = input.sponsoredExecution && input.sponsorOperatorMonetaryCostProvenZero === true;
+  const nativeSymbol = sponsorCostProvenZero ? null : NATIVE_SYMBOL[input.opportunity.chain] || null;
   if (nativeSymbol) symbols.push(nativeSymbol as any);
   let prices = new Map<string, number>();
   try { prices = await coinGeckoPriceClient.getLiveSymbolPrices([...new Set(symbols)]); } catch { /* fail closed below */ }
@@ -151,6 +153,7 @@ async function terminalEconomics(input: {
     inputTokenDecimals: input.opportunity.inputTokenDecimals,
     inputTokenUsdPrice: prices.get(input.opportunity.inputAssetSymbol) ?? null,
     sponsoredExecution: input.sponsoredExecution,
+    sponsorOperatorMonetaryCostProvenZero: input.sponsorOperatorMonetaryCostProvenZero === true,
     nativeFeeWei: input.nativeFeeWei,
     nativeUsdPrice: nativeSymbol ? prices.get(nativeSymbol) ?? null : null,
   });
@@ -199,6 +202,7 @@ function normalizedSettlement(input: {
   grossProfit: bigint;
   economics: ZeroCapitalRealizedProfitDecision;
   sponsoredExecution: boolean;
+  sponsorOperatorMonetaryCostProvenZero?: boolean;
   providerLabel: string;
   builderExecution?: boolean;
   builderReceiverBootstrap?: boolean;
@@ -214,7 +218,7 @@ function normalizedSettlement(input: {
         input.builderReceiverBootstrap ? 'canonical_builder_receiver_bootstrap_evidence' : 'canonical_provider_selection_registry',
         input.builderReceiverBootstrap ? 'receiver_bootstrap:create2_deployment_and_permissions_same_atomic_bundle' : 'receiver_capability:preverified',
         'builder_bundle:exact_signed_execution_conversion_payment',
-        'builder_sponsorship:operator_native_input_zero',
+        'builder_private_bundle:requires_system_owned_native_sender_gas',
         'builder_payment_source:execution_created_value',
         'receiver_starting_loan_token_balance_zero',
         'receiver_event:gross_profit_before_builder_repayment',
@@ -230,7 +234,11 @@ function normalizedSettlement(input: {
         'receiver_starting_loan_token_balance_zero',
         'receiver_event:gross_profit',
         'operational_profit_recipient_delta:matches_receiver_event',
-        input.sponsoredExecution ? 'sponsored_gas:user_native_cost_zero_verified' : 'system_owned_native_receipt_gas:measured',
+        input.sponsoredExecution
+          ? input.sponsorOperatorMonetaryCostProvenZero === true
+            ? 'sponsored_gas:operator_cost_proven_zero'
+            : 'sponsored_gas:provider_fronted_receipt_cost_measured'
+          : 'system_owned_native_receipt_gas:measured',
         economics.economicsComplete ? 'realized_all_in_net_profit' : 'realized_all_in_economics_incomplete',
         'synthetic_evidence:false',
       ];
@@ -271,6 +279,7 @@ function confirmedExecutionReconciliationException(input: {
   startedAt: number;
   reason: string;
   sponsoredExecution: boolean;
+  sponsorOperatorMonetaryCostProvenZero?: boolean;
   providerLabel: string;
   builderExecution?: boolean;
   builderReceiverBootstrap?: boolean;
@@ -309,6 +318,7 @@ function confirmedExecutionReconciliationException(input: {
       grossProfit: input.grossProfit ?? 0n,
       economics,
       sponsoredExecution: input.sponsoredExecution,
+      sponsorOperatorMonetaryCostProvenZero: input.sponsorOperatorMonetaryCostProvenZero,
       providerLabel: input.providerLabel,
       builderExecution: input.builderExecution,
       builderReceiverBootstrap: input.builderReceiverBootstrap,
@@ -348,6 +358,18 @@ async function executeBuilderColdStart(input: {
   if (opportunity.chain !== 'ethereum' || evidence.inputToken.toLowerCase() !== opportunity.inputToken.toLowerCase()) {
     return failed(opportunity, 'Builder-sponsored evidence does not match the exact Ethereum opportunity');
   }
+
+  // Standard EOA eth_sendBundle does not remove the protocol requirement that the
+  // sender can fund its own gas. Keep this private-bundle path only after native gas
+  // is already proven system-owned; true zero-initial startup uses the paymaster lane.
+  const builderFunding = await getProvenZeroCapitalGasFundingDecision(runtime(), opportunity.chain);
+  if (builderFunding.mode !== 'native' || builderFunding.paymentSource !== 'system_owned_native') {
+    return {
+      ...failed(opportunity, 'Legacy EOA builder cold-start is not zero-native-capital authority; canonical paymaster or proven system-owned native gas is required'),
+      status: 'deferred',
+    };
+  }
+
   if (evidence.receiver.toLowerCase() !== receiver.toLowerCase() || evidence.providerLabel !== input.providerLabel) {
     return failed(opportunity, 'Builder-sponsored receiver/provider evidence no longer matches canonical execution input');
   }
@@ -413,7 +435,7 @@ async function executeBuilderColdStart(input: {
       return confirmedExecutionReconciliationException({
         opportunity, transactionHash, receipt, startedAt,
         reason: 'Builder bundle landed but deterministic receiver bootstrap could not be verified',
-        sponsoredExecution: true, providerLabel: input.providerLabel,
+        sponsoredExecution: false, providerLabel: input.providerLabel,
         builderExecution: true, builderReceiverBootstrap: true,
       });
     }
@@ -423,7 +445,7 @@ async function executeBuilderColdStart(input: {
     return confirmedExecutionReconciliationException({
       opportunity, transactionHash, receipt, startedAt,
       reason: 'Builder bundle flash-loan receipt did not emit positive gross profit',
-      sponsoredExecution: true, providerLabel: input.providerLabel,
+      sponsoredExecution: false, providerLabel: input.providerLabel,
       builderExecution: true, builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
     });
   }
@@ -436,7 +458,7 @@ async function executeBuilderColdStart(input: {
     return confirmedExecutionReconciliationException({
       opportunity, transactionHash, receipt, startedAt, grossProfit,
       reason: `Builder terminal profit-recipient balance is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      sponsoredExecution: true, providerLabel: input.providerLabel,
+      sponsoredExecution: false, providerLabel: input.providerLabel,
       builderExecution: true, builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
     });
   }
@@ -445,7 +467,7 @@ async function executeBuilderColdStart(input: {
     return confirmedExecutionReconciliationException({
       opportunity, transactionHash, receipt, startedAt, grossProfit,
       reason: `Builder terminal stablecoin delta is inconsistent with positive gross-profit repayment: gross=${grossProfit.toString()} residual=${residualProfit.toString()}`,
-      sponsoredExecution: true, providerLabel: input.providerLabel,
+      sponsoredExecution: false, providerLabel: input.providerLabel,
       builderExecution: true, builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
     });
   }
@@ -454,7 +476,7 @@ async function executeBuilderColdStart(input: {
     return confirmedExecutionReconciliationException({
       opportunity, transactionHash, receipt, startedAt, grossProfit,
       reason: `Builder repayment exceeded the exact admitted stablecoin cost ceiling: realized=${realizedBuilderCostBaseUnits.toString()} ceiling=${evidence.builderGasCostInInputToken.toString()}`,
-      sponsoredExecution: true, providerLabel: input.providerLabel,
+      sponsoredExecution: false, providerLabel: input.providerLabel,
       builderExecution: true, builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
     });
   }
@@ -467,7 +489,7 @@ async function executeBuilderColdStart(input: {
     startedAt,
     grossProfit,
     economics,
-    sponsoredExecution: true,
+    sponsoredExecution: false,
     builderExecution: true,
     builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
     providerLabel: input.providerLabel,
@@ -488,16 +510,16 @@ async function executeBuilderColdStart(input: {
     profitVerified: positive,
     economicsVerified: economics.economicsComplete,
     receiptStatus: 1,
-    nativeFeeWei: 0n,
-    zeroMonetaryGasVerified: true,
+    nativeFeeWei: receipt.effectiveGasPrice ? BigInt(receipt.gasUsed.toString()) * BigInt(receipt.effectiveGasPrice.toString()) : 0n,
+    zeroMonetaryGasVerified: false,
     realizedFeeUsd: economics.gasUsd ?? undefined,
     latencyMs: Date.now() - startedAt,
     blockNumber: receipt.blockNumber,
     normalized,
-    capitalProvenanceVerified: positive && receiverStarting === 0n,
+    capitalProvenanceVerified: false,
     error: positive ? undefined : economics.economicsComplete
-      ? 'Builder-sponsored terminal settlement realized non-positive residual profit'
-      : `Builder-sponsored terminal economics are incomplete: ${economics.missingInformation.join(', ')}`,
+      ? 'Builder-funded terminal settlement realized non-positive residual profit'
+      : `Builder-funded terminal economics are incomplete: ${economics.missingInformation.join(', ')}`,
   };
 
   const feedback = await persistTerminalLearning(opportunity, result);
@@ -513,7 +535,7 @@ async function executeBuilderColdStart(input: {
     }
   }
 
-  logger.info('[ZeroCapitalExecutor] Builder-sponsored zero-capital terminal result', {
+  logger.info('[ZeroCapitalExecutor] Builder private-bundle terminal result', {
     component: 'CanonicalZeroCapitalExecutor', opportunityId: opportunity.id, chain: opportunity.chain,
     provider: input.providerLabel, builder: submitted.candidate.builder, transactionHash,
     bundleHash: submitted.result.bundleHash, settlementConfirmed: true,
@@ -521,7 +543,8 @@ async function executeBuilderColdStart(input: {
     grossProfitBaseUnits: grossProfit.toString(), realizedBuilderCostBaseUnits: realizedBuilderCostBaseUnits.toString(),
     residualProfitBaseUnits: residualProfit.toString(), realizedNetProfitUsd: economics.netProfitUsd,
     realizedBuilderCostUsd: economics.gasUsd, positiveAfterAllInCost: positive,
-    operatorNativeGasInputRequired: false, receiverStartingBalanceZero: receiverStarting === 0n,
+    operatorNativeGasInputRequired: false, systemOwnedNativeGasRequired: true,
+    receiverStartingBalanceZero: receiverStarting === 0n,
     treasuryRecorded: result.treasuryRecorded === true, singleSchedulerAuthority: true,
   });
   return result;
@@ -529,9 +552,10 @@ async function executeBuilderColdStart(input: {
 
 /**
  * Sole ZERO_CAPITAL_ATOMIC execution route. The canonical parent scheduler is the
- * only caller. Generic sponsored/native execution keeps the canonical gas authority.
- * Ethereum builder sponsorship is deliberately separate and opportunity-specific:
- * the exact signed bundle itself proves repayment from execution-created value.
+ * only caller. Provider paymaster sponsorship is the cold-start authority because
+ * it can remove the execution account's native-balance prerequisite. Legacy EOA
+ * builder bundles are private-inclusion transports only and require already-proven
+ * system-owned native sender gas.
  */
 export async function executeCanonicalZeroCapitalOpportunity(
   opportunity: ZeroCapitalOpportunity,
@@ -660,7 +684,7 @@ export async function executeCanonicalZeroCapitalOpportunity(
   }
 
   let systemCapitalAttempt: SponsoredSystemCapitalAttempt | null = null;
-  if (funding.mode === 'sponsored') {
+  if (funding.mode === 'sponsored' && funding.sponsorOperatorMonetaryCostProvenZero === true) {
     try {
       systemCapitalAttempt = await prepareSponsoredSystemCapital({
         chain: opportunity.chain,
@@ -669,7 +693,7 @@ export async function executeCanonicalZeroCapitalOpportunity(
         opportunityId: opportunity.id,
       });
     } catch (error) {
-      logger.warn('[ZeroCapitalExecutor] Sponsored system-capital bookkeeping preparation degraded without changing settlement truth', {
+      logger.warn('[ZeroCapitalExecutor] Zero-cost sponsored system-capital bookkeeping preparation degraded without changing settlement truth', {
         component: 'CanonicalZeroCapitalExecutor', opportunityId: opportunity.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -721,6 +745,9 @@ export async function executeCanonicalZeroCapitalOpportunity(
       receipt = await provider.getTransactionReceipt(transactionHash);
       if (!receipt) receipt = await provider.waitForTransaction(transactionHash, 1, 15_000);
       sponsoredExecution = true;
+      if (receipt?.effectiveGasPrice) {
+        nativeFeeWei = BigInt(receipt.gasUsed.toString()) * BigInt(receipt.effectiveGasPrice.toString());
+      }
     } else {
       const native = await executeSystemOwnedNativeTransaction({
         chain: opportunity.chain,
@@ -762,7 +789,9 @@ export async function executeCanonicalZeroCapitalOpportunity(
     return confirmedExecutionReconciliationException({
       opportunity, transactionHash, receipt, startedAt,
       reason: 'Terminal receipt did not emit a positive FlashLoanExecuted profit',
-      sponsoredExecution, providerLabel: selection.provider,
+      sponsoredExecution,
+      sponsorOperatorMonetaryCostProvenZero: funding.sponsorOperatorMonetaryCostProvenZero,
+      providerLabel: selection.provider,
     });
   }
 
@@ -773,7 +802,9 @@ export async function executeCanonicalZeroCapitalOpportunity(
     return confirmedExecutionReconciliationException({
       opportunity, transactionHash, receipt, startedAt, grossProfit,
       reason: `Operational profit-recipient terminal balance is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      sponsoredExecution, providerLabel: selection.provider,
+      sponsoredExecution,
+      sponsorOperatorMonetaryCostProvenZero: funding.sponsorOperatorMonetaryCostProvenZero,
+      providerLabel: selection.provider,
     });
   }
   const recipientDelta = recipientEnding - recipientStarting;
@@ -781,13 +812,22 @@ export async function executeCanonicalZeroCapitalOpportunity(
     return confirmedExecutionReconciliationException({
       opportunity, transactionHash, receipt, startedAt, grossProfit,
       reason: `Receiver event profit does not equal operational profit-recipient delta: event=${grossProfit.toString()} delta=${recipientDelta.toString()}`,
-      sponsoredExecution, providerLabel: selection.provider,
+      sponsoredExecution,
+      sponsorOperatorMonetaryCostProvenZero: funding.sponsorOperatorMonetaryCostProvenZero,
+      providerLabel: selection.provider,
     });
   }
 
-  const economics = await terminalEconomics({ opportunity, grossProfit, nativeFeeWei, sponsoredExecution });
+  const economics = await terminalEconomics({
+    opportunity,
+    grossProfit,
+    nativeFeeWei,
+    sponsoredExecution,
+    sponsorOperatorMonetaryCostProvenZero: funding.sponsorOperatorMonetaryCostProvenZero,
+  });
   const normalized = normalizedSettlement({
     opportunity, transactionHash, receipt, startedAt, grossProfit, economics, sponsoredExecution,
+    sponsorOperatorMonetaryCostProvenZero: funding.sponsorOperatorMonetaryCostProvenZero,
     providerLabel: selection.provider,
   });
   const positive = economics.economicsComplete && economics.positiveAfterAllInCost;
@@ -809,7 +849,7 @@ export async function executeCanonicalZeroCapitalOpportunity(
     effectiveGasPriceWei: receipt.effectiveGasPrice ? BigInt(receipt.effectiveGasPrice.toString()) : 0n,
     receiptStatus: 1,
     nativeFeeWei,
-    zeroMonetaryGasVerified: sponsoredExecution,
+    zeroMonetaryGasVerified: sponsoredExecution && funding.sponsorOperatorMonetaryCostProvenZero === true,
     realizedFeeUsd: economics.gasUsd ?? undefined,
     latencyMs: Date.now() - startedAt,
     blockNumber: receipt.blockNumber,
@@ -824,7 +864,7 @@ export async function executeCanonicalZeroCapitalOpportunity(
     try {
       const allocation = await retainedProfitLedger.recordTerminalSettlement(feedback);
       result.treasuryRecorded = allocation !== null;
-      if (allocation && sponsoredExecution && systemCapitalAttempt) {
+      if (allocation && sponsoredExecution && systemCapitalAttempt && funding.sponsorOperatorMonetaryCostProvenZero === true) {
         const split = splitGrossBaseUnits(grossProfit, allocation.retainedFraction);
         if (split.retainedProfitBaseUnits > 0n) {
           await persistVerifiedSponsoredProfit(systemCapitalAttempt, {
@@ -861,6 +901,9 @@ export async function executeCanonicalZeroCapitalOpportunity(
     provider: selection.provider, transactionHash, settlementConfirmed: true,
     grossProfitBaseUnits: grossProfit.toString(), realizedNetProfitUsd: economics.netProfitUsd,
     realizedGasUsd: economics.gasUsd, positiveAfterAllInCost: positive,
+    sponsoredExecution,
+    providerBillingLiability: funding.providerBillingLiability === true,
+    zeroOperatorMonetaryGasVerified: funding.sponsorOperatorMonetaryCostProvenZero === true,
     treasuryRecorded: result.treasuryRecorded === true,
     capitalProvenanceVerified: result.capitalProvenanceVerified === true,
     singleSchedulerAuthority: true, runtimeMethodMutation: false,
