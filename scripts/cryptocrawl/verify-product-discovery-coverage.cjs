@@ -48,14 +48,24 @@ assert(expanded.includes('preservedProductTail'), 'expanded universe must preser
 assert(expanded.includes('productDiscoveryDiscardedByMarketScore: false'), 'runtime telemetry must assert that market-score ranking cannot discard the tail');
 assert(expanded.includes('productDiscoveryExecutionAuthority: false'), 'product discovery remains search coverage, not execution authority');
 
-// Public prediction-market parity is also discovery-only. The generator owns a
+// Public prediction-market parity is discovery-only. The generator owns a
 // short quote TTL and the runtime presentation boundary must remove an opportunity
 // immediately after expiresAt rather than waiting for the slower periodic scan.
 assert(predictionGenerator.includes('expiresAt: observedAt + ttlMs'), 'prediction parity observations must carry a bounded quote expiry');
 assert(predictionGenerator.includes('executableCapability: false'), 'prediction parity discovery must remain non-executable');
 assert(/function\s+freshLatest\s*\([\s\S]{0,300}item\.expiresAt\s*>\s*now/.test(predictionWiring), 'prediction discovery snapshot must filter expired opportunity rows');
 assert(/getPredictionMarketDiscoverySnapshot\(\)[\s\S]{0,180}const fresh = freshLatest\(\)/.test(predictionWiring), 'prediction discovery getter must consume only fresh rows');
-assert(/catch\s*\(error\)\s*\{[\s\S]{0,180}latest\s*=\s*\[\];/.test(predictionWiring), 'unexpected prediction scan failures must clear prior advisory opportunities');
-assert(predictionWiring.includes('staleOpportunityReadable: false'), 'prediction discovery telemetry must explicitly deny stale opportunity presentation');
 
-console.log('[product-discovery-coverage] PASS: Coinbase/Kraken/OKX live products expand the bounded searchable universe, public OKX discovery cannot spend private fee quota, transient catalog failures cannot become product-negative evidence, product tails survive the final runtime boundary, and expired prediction-market parity observations fail closed at presentation');
+// The canonical prediction cadence now runs public parity and Kalshi evidence as
+// isolated siblings. Public parity failure must still fail closed by clearing its
+// prior advisory rows, while a Kalshi-only failure must not erase fresh parity data.
+assert(predictionWiring.includes('Promise.allSettled(['), 'prediction cadence must isolate sibling provider failures');
+assert(predictionWiring.includes('discoverPredictionMarketParityOpportunities()'), 'public parity remains a member of the canonical prediction cadence');
+assert(predictionWiring.includes('refreshKalshiSystemEvidenceNow()'), 'Kalshi evidence refresh must share the canonical prediction cadence');
+assert(/if\s*\(parityResult\.status\s*===\s*'fulfilled'\)[\s\S]{0,500}else\s*\{[\s\S]{0,250}staleRowsCleared\s*=\s*latest\.length;[\s\S]{0,120}latest\s*=\s*\[\];/.test(predictionWiring), 'public parity scan failure must clear prior advisory opportunities');
+assert(predictionWiring.includes('staleOpportunityReadable: false'), 'prediction discovery telemetry must explicitly deny stale opportunity presentation');
+assert(/if\s*\(kalshiResult\.status\s*===\s*'rejected'\)[\s\S]{0,400}publicParityRefreshContinued:\s*true/.test(predictionWiring), 'Kalshi-only failure must not erase fresh public parity observations');
+assert(predictionWiring.includes("refreshCadenceAuthority: 'prediction_market_discovery_wiring'"), 'one canonical prediction refresh cadence must own the strategy family');
+assert(predictionWiring.includes('duplicateKalshiTimer: false'), 'Kalshi must not recreate an independent recurring prediction timer');
+
+console.log('[product-discovery-coverage] PASS: Coinbase/Kraken/OKX live products expand the bounded searchable universe, public OKX discovery cannot spend private fee quota, transient catalog failures cannot become product-negative evidence, product tails survive the final runtime boundary, and prediction-market sibling failures remain isolated while stale public parity observations fail closed at presentation');
