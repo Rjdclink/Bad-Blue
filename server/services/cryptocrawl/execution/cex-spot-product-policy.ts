@@ -110,8 +110,8 @@ function canonicalKrakenAsset(value: unknown): string | null {
 // These aliases are backed by the venues' own asset/listing documentation and
 // prevent economically unrelated products from becoming false-positive spreads.
 const VERIFIED_VENUE_ASSET_ALIASES: Readonly<Record<ConstrainedSpotVenue, Readonly<Record<string, string>>>> = Object.freeze({
-  kraken: Object.freeze({ LUNA: 'LUNC', UST: 'USTC' }),
-  okx: Object.freeze({ LIT: 'LIGHTER', LUNA: 'WLUNA' }),
+  kraken: Object.freeze({ EDGE: 'DEFINITIVE', LUNA: 'LUNC', UST: 'USTC' }),
+  okx: Object.freeze({ EDGE: 'EDGEX', LIT: 'LIGHTER', LUNA: 'WLUNA' }),
 });
 
 function canonicalVenueAsset(venue: ConstrainedSpotVenue, value: unknown): string | null {
