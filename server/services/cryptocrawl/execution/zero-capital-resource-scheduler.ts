@@ -122,8 +122,7 @@ function completeMeasuredAtomicEconomics(candidate: MeasuredCandidate, expectedN
     && Number.isFinite(Number(candidate.economics.deterministicNetProfitUsd))
     && Number(candidate.economics.deterministicNetProfitUsd) > 0
     && Number.isFinite(Number(candidate.canonicalBps.allInCostBps))
-    && Number.isFinite(Number(candidate.canonicalBps.netBps))
-    && Number(candidate.canonicalBps.netBps) > 0;
+    && Number.isFinite(Number(candidate.canonicalBps.netBps));
 }
 
 class ZeroCapitalResourceScheduler {
@@ -355,7 +354,7 @@ class ZeroCapitalResourceScheduler {
         opportunity.estimatedExecutionCostInInputToken >= 0n
         && opportunity.gasEstimate > 0n
         && Number.isFinite(opportunity.netProfitBps),
-      deterministicNetPositive: opportunity.expectedProfit > 0n && opportunity.netProfitBps > 0,
+      deterministicNetPositive: opportunity.expectedProfit > 0n,
       executionPathReady: true,
       settlementPathReady: true,
       atomicity: 'same_transaction_atomic',

@@ -123,7 +123,6 @@ function toLeg(candidate: MeasuredCandidate, now: number): CompositeArbitrageLeg
 
   const notionalUsd = legNotional(candidate);
   const netProfitBps = legBps(candidate, notionalUsd);
-  if (netProfitBps !== null && netProfitBps <= 0) return null;
   const pathDecision = selectCompositeExecutionPath([candidate])[0];
   if (!pathDecision?.executableNow) return null;
   const priorityWeight = adaptiveTopologyOptimizer.getPriority(candidate.topology);

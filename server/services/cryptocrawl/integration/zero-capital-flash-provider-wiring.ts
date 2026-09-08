@@ -303,10 +303,17 @@ export async function repriceZeroCapitalProviderEconomics(input: {
             provenance: [...dualProvenance, 'builder_cold_start_preparation_pending'],
           };
           const builderEvidence = await prepareBuilderSponsoredZeroCapitalColdStart({ opportunity, selection, provider, wallet }).catch(() => null);
-          if (builderEvidence && opportunity.expectedProfit > 0n && opportunity.netProfitBps > 0) {
-            const builderValues = currentReprice(opportunity);
-            recordReprice(opportunity, chain, builderValues);
-            zeroCapitalRouteEvidenceRegistry.record(opportunity);
+          if (builderEvidence && builderEvidence.guaranteedNetProfitInInputToken > 0n) {
+            const builderOpportunity: ZeroCapitalOpportunity = {
+              ...opportunity,
+              estimatedGasCostInInputToken: builderEvidence.builderGasCostInInputToken,
+              estimatedExecutionCostInInputToken: selectedDual.totalFee + (opportunity.relayFeeInInputToken || 0n) + builderEvidence.builderGasCostInInputToken,
+              expectedProfit: builderEvidence.guaranteedNetProfitInInputToken,
+              netProfitBps: builderEvidence.admittedNetProfitBps,
+            };
+            const builderValues = currentReprice(builderOpportunity);
+            recordReprice(builderOpportunity, chain, builderValues);
+            zeroCapitalRouteEvidenceRegistry.record(builderOpportunity);
             dualFlashLoanProviderSelectionRegistry.record({
               ...selection,
               provenance: [
@@ -322,13 +329,13 @@ export async function repriceZeroCapitalProviderEconomics(input: {
               ],
             });
             updateCandidate({
-              opportunity,
+              opportunity: builderOpportunity,
               selected: selectedDual.balancer,
               eligible: true,
               reason: 'Measured Aave+Balancer route has an exact builder-sponsored Ethereum repayment bundle with positive residual; canonical scheduler owns submission',
               extraProvenance: [...dualProvenance, ...builderEvidence.provenance],
             });
-            repriced.push(opportunity);
+            repriced.push(builderOpportunity);
             continue;
           }
         }
@@ -417,19 +424,27 @@ export async function repriceZeroCapitalProviderEconomics(input: {
             });
             return null;
           });
-          if (bootstrapEvidence && opportunity.expectedProfit > 0n && opportunity.netProfitBps > 0) {
-            const bootstrapValues = currentReprice(opportunity);
-            recordReprice(opportunity, chain, bootstrapValues);
-            zeroCapitalRouteEvidenceRegistry.record(opportunity);
+          if (bootstrapEvidence && bootstrapEvidence.guaranteedNetProfitInInputToken > 0n) {
+            const bootstrapOpportunity: ZeroCapitalOpportunity = {
+              ...opportunity,
+              flashLoanFeeInInputToken: measuredFlashFee,
+              estimatedGasCostInInputToken: bootstrapEvidence.builderGasCostInInputToken,
+              estimatedExecutionCostInInputToken: measuredFlashFee + (opportunity.relayFeeInInputToken || 0n) + bootstrapEvidence.builderGasCostInInputToken,
+              expectedProfit: bootstrapEvidence.guaranteedNetProfitInInputToken,
+              netProfitBps: bootstrapEvidence.admittedNetProfitBps,
+            };
+            const bootstrapValues = currentReprice(bootstrapOpportunity);
+            recordReprice(bootstrapOpportunity, chain, bootstrapValues);
+            zeroCapitalRouteEvidenceRegistry.record(bootstrapOpportunity);
             updateCandidate({
-              opportunity,
+              opportunity: bootstrapOpportunity,
               selected: balancerEvidence,
               eligible: true,
               reason: 'Measured Balancer route has an exact Titan/Quasar atomic bundle that deploys and permissions the first receiver, executes the profitable flash route, and repays sponsorship from execution-created value; canonical scheduler remains sole submitter',
               receiverBindingProvenance: 'provider_receiver_binding:atomic_same_bundle_create2_bootstrap',
               extraProvenance: bootstrapEvidence.provenance,
             });
-            repriced.push(opportunity);
+            repriced.push(bootstrapOpportunity);
             continue;
           }
         }
@@ -496,10 +511,17 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           provenance: [...providerProvenance, 'builder_cold_start_preparation_pending'],
         };
         const builderEvidence = await prepareBuilderSponsoredZeroCapitalColdStart({ opportunity, selection, provider, wallet }).catch(() => null);
-        if (builderEvidence && opportunity.expectedProfit > 0n && opportunity.netProfitBps > 0) {
-          const builderValues = currentReprice(opportunity);
-          recordReprice(opportunity, chain, builderValues);
-          zeroCapitalRouteEvidenceRegistry.record(opportunity);
+        if (builderEvidence && builderEvidence.guaranteedNetProfitInInputToken > 0n) {
+          const builderOpportunity: ZeroCapitalOpportunity = {
+            ...opportunity,
+            estimatedGasCostInInputToken: builderEvidence.builderGasCostInInputToken,
+            estimatedExecutionCostInInputToken: measuredFlashFee + (opportunity.relayFeeInInputToken || 0n) + builderEvidence.builderGasCostInInputToken,
+            expectedProfit: builderEvidence.guaranteedNetProfitInInputToken,
+            netProfitBps: builderEvidence.admittedNetProfitBps,
+          };
+          const builderValues = currentReprice(builderOpportunity);
+          recordReprice(builderOpportunity, chain, builderValues);
+          zeroCapitalRouteEvidenceRegistry.record(builderOpportunity);
           flashLoanProviderSelectionRegistry.record({
             ...selection,
             provenance: [
@@ -515,13 +537,13 @@ export async function repriceZeroCapitalProviderEconomics(input: {
             ],
           });
           updateCandidate({
-            opportunity,
+            opportunity: builderOpportunity,
             selected: selectedSingle,
             eligible: true,
             reason: `Measured ${selectedSingle.provider} route has an exact builder-sponsored Ethereum repayment bundle with positive residual; canonical scheduler owns submission`,
             extraProvenance: [...providerProvenance, ...builderEvidence.provenance],
           });
-          repriced.push(opportunity);
+          repriced.push(builderOpportunity);
           continue;
         }
       }

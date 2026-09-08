@@ -99,15 +99,15 @@ assert.doesNotMatch(providerReprice, /target\.executeFunded\s*=/);
 // One parent scheduler owns ZERO_CAPITAL_ATOMIC.
 assert.match(scheduler, /decision\.topology === 'ZERO_CAPITAL_ATOMIC'/);
 assert.match(scheduler, /candidate\.expiresAt > Date\.now\(\)/);
-assert.match(scheduler, /Number\(candidate\.canonicalBps\?\.netBps\) > 0/);
 assert.match(scheduler, /opportunity\.expiresAt > Date\.now\(\)/);
 assert.match(scheduler, /opportunity\.expectedProfit > 0n/);
-assert.match(scheduler, /opportunity\.netProfitBps > 0/);
+assert.doesNotMatch(scheduler, /opportunity\.netProfitBps > 0/);
 assert.match(scheduler, /executeCanonicalZeroCapitalOpportunity\(/);
 
 // The single executor repeats hard facts at the money boundary.
 assert.match(executor, /Date\.now\(\) >= opportunity\.expiresAt/);
-assert.match(executor, /opportunity\.expectedProfit <= 0n \|\| !\(opportunity\.netProfitBps > 0\)/);
+assert.match(executor, /opportunity\.expectedProfit <= 0n/);
+assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /flashLoanProviderSelectionRegistry\.get\(opportunity\.id\)/);
 assert.match(executor, /getProvenZeroCapitalGasFundingDecision\(target, opportunity\.chain\)/);
 assert.match(executor, /funding\.strictZeroInitialCapitalEligible !== true/);

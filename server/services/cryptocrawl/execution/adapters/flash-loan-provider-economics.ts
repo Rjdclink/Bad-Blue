@@ -338,7 +338,7 @@ export async function measureFlashLoanProviders(input: {
 export function selectMeasuredFlashLoanProvider(
   evidence: readonly FlashLoanProviderEconomics[],
   requestedAmount: bigint,
-  allowedProviders: readonly FlashLoanProviderKind[] = ['balancer_v2'],
+  allowedProviders: readonly FlashLoanProviderKind[] = ['morpho_blue', 'aave_v3', 'balancer_v2'],
 ): FlashLoanProviderEconomics | null {
   const allowed = new Set<FlashLoanProviderKind>(allowedProviders);
   const eligible = evidence

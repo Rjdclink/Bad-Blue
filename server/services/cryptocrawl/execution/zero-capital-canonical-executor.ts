@@ -13,6 +13,7 @@ import { buildFlashLoanExecutionPlanFromOpportunity } from './adapters/autonomou
 import { buildDualFlashLoanReceiverPayload } from './adapters/dual-flashloan-receiver-builder.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from './adapters/flashloan-receiver-builder.js';
 import { flashLoanProviderSelectionRegistry } from './adapters/flash-loan-provider-selection-registry.js';
+import { buildMissingReceiverPermissionCalls, verifyFlashLoanReceiverCapability } from './adapters/flash-loan-receiver-capability.js';
 import { getSponsoredReceiverManager } from './adapters/sponsored-receiver-manager.js';
 import {
   builderSponsoredZeroCapitalRegistry,
@@ -66,6 +67,8 @@ export interface CanonicalZeroCapitalExecutionResult extends ExecutionResult {
   economicsVerified?: boolean;
   capitalProvenanceVerified?: boolean;
   treasuryRecorded?: boolean;
+  executionConfirmed?: boolean;
+  economicReconciliationStatus?: 'not_started' | 'pending' | 'confirmed' | 'exception';
 }
 
 function runtime(): CanonicalRuntimeContext {
@@ -201,7 +204,6 @@ function normalizedSettlement(input: {
   builderReceiverBootstrap?: boolean;
 }): NormalizedRealizedExecution {
   const { opportunity, receipt, economics } = input;
-  const positive = economics.economicsComplete && economics.positiveAfterAllInCost;
   const predictedPrice = Number(opportunity.inputAssetUsdPrice || 0);
   const predictedProfitUsd = predictedPrice > 0
     ? Number(ethers.utils.formatUnits(opportunity.expectedProfit.toString(), opportunity.inputTokenDecimals)) * predictedPrice
@@ -233,7 +235,7 @@ function normalizedSettlement(input: {
         'synthetic_evidence:false',
       ];
   return {
-    status: positive ? 'filled' : 'failed',
+    status: receipt.status === 1 ? 'filled' : 'failed',
     terminal: true,
     settlementConfirmed: receipt.status === 1,
     submittedAt: input.startedAt,
@@ -259,6 +261,59 @@ function normalizedSettlement(input: {
     transactionHash: input.transactionHash,
     blockNumber: receipt.blockNumber,
     receiptStatus: receipt.status as 0 | 1,
+  };
+}
+
+function confirmedExecutionReconciliationException(input: {
+  opportunity: ZeroCapitalOpportunity;
+  transactionHash: string;
+  receipt: providers.TransactionReceipt;
+  startedAt: number;
+  reason: string;
+  sponsoredExecution: boolean;
+  providerLabel: string;
+  builderExecution?: boolean;
+  builderReceiverBootstrap?: boolean;
+  grossProfit?: bigint;
+}): CanonicalZeroCapitalExecutionResult {
+  const economics: ZeroCapitalRealizedProfitDecision = {
+    economicsComplete: false,
+    grossProfitUsd: 0,
+    gasUsd: null,
+    netProfitUsd: null,
+    netProfitBaseUnits: null,
+    positiveAfterAllInCost: false,
+    missingInformation: [input.reason],
+  };
+  return {
+    opportunityId: input.opportunity.id,
+    submitted: true,
+    settlementConfirmed: true,
+    executionConfirmed: true,
+    economicReconciliationStatus: 'exception',
+    status: 'filled',
+    success: false,
+    transactionHash: input.transactionHash,
+    txHash: input.transactionHash,
+    receiptStatus: 1,
+    blockNumber: input.receipt.blockNumber,
+    grossProfit: input.grossProfit,
+    economicsVerified: false,
+    profitVerified: false,
+    latencyMs: Date.now() - input.startedAt,
+    normalized: normalizedSettlement({
+      opportunity: input.opportunity,
+      transactionHash: input.transactionHash,
+      receipt: input.receipt,
+      startedAt: input.startedAt,
+      grossProfit: input.grossProfit ?? 0n,
+      economics,
+      sponsoredExecution: input.sponsoredExecution,
+      providerLabel: input.providerLabel,
+      builderExecution: input.builderExecution,
+      builderReceiverBootstrap: input.builderReceiverBootstrap,
+    }),
+    error: input.reason,
   };
 }
 
@@ -355,34 +410,52 @@ async function executeBuilderColdStart(input: {
       owner: wallet.address,
     }).catch(() => null);
     if (!verified || verified.address.toLowerCase() !== receiver.toLowerCase()) {
-      return failed(opportunity, 'Builder bundle landed but deterministic receiver bootstrap could not be verified', {
-        submitted: true,
-        transactionHash,
-        txHash: transactionHash,
-        receiptStatus: 1,
-        blockNumber: receipt.blockNumber,
+      return confirmedExecutionReconciliationException({
+        opportunity, transactionHash, receipt, startedAt,
+        reason: 'Builder bundle landed but deterministic receiver bootstrap could not be verified',
+        sponsoredExecution: true, providerLabel: input.providerLabel,
+        builderExecution: true, builderReceiverBootstrap: true,
       });
     }
   }
   const grossProfit = extractProfit(receipt, receiver);
   if (grossProfit === null || grossProfit <= 0n) {
-    return failed(opportunity, 'Builder bundle flash-loan receipt did not emit positive gross profit', {
-      submitted: true, transactionHash, txHash: transactionHash, receiptStatus: 1, blockNumber: receipt.blockNumber,
+    return confirmedExecutionReconciliationException({
+      opportunity, transactionHash, receipt, startedAt,
+      reason: 'Builder bundle flash-loan receipt did not emit positive gross profit',
+      sponsoredExecution: true, providerLabel: input.providerLabel,
+      builderExecution: true, builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
     });
   }
 
   const token = new Contract(opportunity.inputToken, ERC20_BALANCE_ABI, provider);
-  const recipientEnding = BigInt((await token.balanceOf(profitRecipient)).toString());
+  let recipientEnding: bigint;
+  try {
+    recipientEnding = BigInt((await token.balanceOf(profitRecipient)).toString());
+  } catch (error) {
+    return confirmedExecutionReconciliationException({
+      opportunity, transactionHash, receipt, startedAt, grossProfit,
+      reason: `Builder terminal profit-recipient balance is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      sponsoredExecution: true, providerLabel: input.providerLabel,
+      builderExecution: true, builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
+    });
+  }
   const residualProfit = recipientEnding - recipientStarting;
   if (residualProfit <= 0n || residualProfit >= grossProfit) {
-    return failed(opportunity, `Builder terminal stablecoin delta is inconsistent with positive gross-profit repayment: gross=${grossProfit.toString()} residual=${residualProfit.toString()}`, {
-      submitted: true, transactionHash, txHash: transactionHash, receiptStatus: 1, blockNumber: receipt.blockNumber, grossProfit,
+    return confirmedExecutionReconciliationException({
+      opportunity, transactionHash, receipt, startedAt, grossProfit,
+      reason: `Builder terminal stablecoin delta is inconsistent with positive gross-profit repayment: gross=${grossProfit.toString()} residual=${residualProfit.toString()}`,
+      sponsoredExecution: true, providerLabel: input.providerLabel,
+      builderExecution: true, builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
     });
   }
   const realizedBuilderCostBaseUnits = grossProfit - residualProfit;
   if (realizedBuilderCostBaseUnits > evidence.builderGasCostInInputToken) {
-    return failed(opportunity, `Builder repayment exceeded the exact admitted stablecoin cost ceiling: realized=${realizedBuilderCostBaseUnits.toString()} ceiling=${evidence.builderGasCostInInputToken.toString()}`, {
-      submitted: true, transactionHash, txHash: transactionHash, receiptStatus: 1, blockNumber: receipt.blockNumber, grossProfit,
+    return confirmedExecutionReconciliationException({
+      opportunity, transactionHash, receipt, startedAt, grossProfit,
+      reason: `Builder repayment exceeded the exact admitted stablecoin cost ceiling: realized=${realizedBuilderCostBaseUnits.toString()} ceiling=${evidence.builderGasCostInInputToken.toString()}`,
+      sponsoredExecution: true, providerLabel: input.providerLabel,
+      builderExecution: true, builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
     });
   }
 
@@ -404,7 +477,9 @@ async function executeBuilderColdStart(input: {
     opportunityId: opportunity.id,
     submitted: true,
     settlementConfirmed: true,
-    status: positive ? 'filled' : 'failed',
+    executionConfirmed: true,
+    economicReconciliationStatus: economics.economicsComplete ? 'confirmed' : 'pending',
+    status: 'filled',
     success: positive,
     txHash: transactionHash,
     transactionHash,
@@ -465,7 +540,7 @@ export async function executeCanonicalZeroCapitalOpportunity(
   const target = runtime();
   if (opportunity.chain === 'europa') return failed(opportunity, 'Europa execution is retired');
   if (Date.now() >= opportunity.expiresAt) return failed(opportunity, 'Exact zero-capital opportunity expired before canonical execution');
-  if (opportunity.expectedProfit <= 0n || !(opportunity.netProfitBps > 0)) return failed(opportunity, 'Canonical all-in net economics are not strictly positive');
+  if (opportunity.expectedProfit <= 0n) return failed(opportunity, 'Canonical all-in net economics are not strictly positive');
 
   const provider = target.providers.get(opportunity.chain);
   const wallet = target.executionWallets.get(opportunity.chain);
@@ -478,33 +553,57 @@ export async function executeCanonicalZeroCapitalOpportunity(
 
   const profitRecipient = resolveOperationalProfitRecipient();
   const token = new Contract(opportunity.inputToken, ERC20_BALANCE_ABI, provider);
-  const builderEvidence = builderSponsoredZeroCapitalRegistry.get(opportunity.id);
+  let builderEvidence = builderSponsoredZeroCapitalRegistry.get(opportunity.id);
 
   if (builderEvidence?.receiverBootstrap) {
     if (opportunity.chain !== 'ethereum') return failed(opportunity, 'First-receiver builder bootstrap is Ethereum-only');
     if (builderEvidence.receiverBootstrap.owner.toLowerCase() !== wallet.address.toLowerCase()) {
       return failed(opportunity, 'First-receiver builder bootstrap owner does not match canonical execution wallet');
     }
-    const [receiverStartingRaw, recipientStartingRaw] = await Promise.all([
-      token.balanceOf(builderEvidence.receiver), token.balanceOf(profitRecipient),
-    ]);
-    const receiverStarting = BigInt(receiverStartingRaw.toString());
-    const recipientStarting = BigInt(recipientStartingRaw.toString());
-    if (receiverStarting !== 0n) {
-      return failed(opportunity, `Predicted bootstrap receiver starting loan-token balance is nonzero: ${receiverStarting.toString()}`);
+    const code = await provider.getCode(builderEvidence.receiver);
+    if (code !== '0x' && builderEvidence.bootstrapProviderEconomics) {
+      const capability = await verifyFlashLoanReceiverCapability({
+        kind: 'balancer_v1', chain: 'ethereum', provider,
+        expectedOwner: wallet.address, address: builderEvidence.receiver,
+      }).catch(() => null);
+      const missingPermissions = capability
+        ? await buildMissingReceiverPermissionCalls({
+            chain: 'ethereum', provider, receiver: capability.address, route: opportunity.route,
+          }).catch(() => [{ reason: 'receiver_permission_revalidation_failed' }])
+        : [{ reason: 'receiver_capability_revalidation_failed' }];
+      if (capability && missingPermissions.length === 0) {
+        flashLoanProviderSelectionRegistry.record({
+          kind: 'single', opportunityId: opportunity.id, provider: 'balancer_v2',
+          receiver: capability.address, economics: builderEvidence.bootstrapProviderEconomics,
+          receiverCapability: capability, selectedAt: Date.now(), expiresAt: builderEvidence.expiresAt,
+          provenance: [...builderEvidence.provenance, 'receiver_appeared:fell_through_to_verified_standard_path'],
+        });
+        builderSponsoredZeroCapitalRegistry.remove(opportunity.id);
+        builderEvidence = null;
+      }
     }
-    return executeBuilderColdStart({
-      opportunity,
-      evidence: builderEvidence,
-      provider,
-      wallet,
-      receiver: builderEvidence.receiver,
-      profitRecipient,
-      receiverStarting,
-      recipientStarting,
-      startedAt,
-      providerLabel: builderEvidence.providerLabel,
-    });
+    if (builderEvidence) {
+      const [receiverStartingRaw, recipientStartingRaw] = await Promise.all([
+        token.balanceOf(builderEvidence.receiver), token.balanceOf(profitRecipient),
+      ]);
+      const receiverStarting = BigInt(receiverStartingRaw.toString());
+      const recipientStarting = BigInt(recipientStartingRaw.toString());
+      if (receiverStarting !== 0n) {
+        return failed(opportunity, `Predicted bootstrap receiver starting loan-token balance is nonzero: ${receiverStarting.toString()}`);
+      }
+      return executeBuilderColdStart({
+        opportunity,
+        evidence: builderEvidence,
+        provider,
+        wallet,
+        receiver: builderEvidence.receiver,
+        profitRecipient,
+        receiverStarting,
+        recipientStarting,
+        startedAt,
+        providerLabel: builderEvidence.providerLabel,
+      });
+    }
   }
 
   const selection = flashLoanProviderSelectionRegistry.get(opportunity.id);
@@ -660,9 +759,10 @@ export async function executeCanonicalZeroCapitalOpportunity(
 
   const grossProfit = extractProfit(receipt, receiver);
   if (grossProfit === null || grossProfit <= 0n) {
-    await releaseFailedSponsoredBootstrap(systemCapitalAttempt).catch(() => undefined);
-    return failed(opportunity, 'Terminal receipt did not emit a positive FlashLoanExecuted profit', {
-      submitted: true, transactionHash, txHash: transactionHash, receiptStatus: 1, blockNumber: receipt.blockNumber, latencyMs: Date.now() - startedAt,
+    return confirmedExecutionReconciliationException({
+      opportunity, transactionHash, receipt, startedAt,
+      reason: 'Terminal receipt did not emit a positive FlashLoanExecuted profit',
+      sponsoredExecution, providerLabel: selection.provider,
     });
   }
 
@@ -670,14 +770,18 @@ export async function executeCanonicalZeroCapitalOpportunity(
   try {
     recipientEnding = BigInt((await token.balanceOf(profitRecipient)).toString());
   } catch (error) {
-    return failed(opportunity, `Operational profit-recipient terminal balance is unavailable: ${error instanceof Error ? error.message : String(error)}`, {
-      submitted: true, transactionHash, txHash: transactionHash, receiptStatus: 1, blockNumber: receipt.blockNumber, grossProfit, latencyMs: Date.now() - startedAt,
+    return confirmedExecutionReconciliationException({
+      opportunity, transactionHash, receipt, startedAt, grossProfit,
+      reason: `Operational profit-recipient terminal balance is unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      sponsoredExecution, providerLabel: selection.provider,
     });
   }
   const recipientDelta = recipientEnding - recipientStarting;
   if (recipientDelta !== grossProfit) {
-    return failed(opportunity, `Receiver event profit does not equal operational profit-recipient delta: event=${grossProfit.toString()} delta=${recipientDelta.toString()}`, {
-      submitted: true, transactionHash, txHash: transactionHash, receiptStatus: 1, blockNumber: receipt.blockNumber, grossProfit, latencyMs: Date.now() - startedAt,
+    return confirmedExecutionReconciliationException({
+      opportunity, transactionHash, receipt, startedAt, grossProfit,
+      reason: `Receiver event profit does not equal operational profit-recipient delta: event=${grossProfit.toString()} delta=${recipientDelta.toString()}`,
+      sponsoredExecution, providerLabel: selection.provider,
     });
   }
 
@@ -691,7 +795,9 @@ export async function executeCanonicalZeroCapitalOpportunity(
     opportunityId: opportunity.id,
     submitted: true,
     settlementConfirmed: true,
-    status: positive ? 'filled' : 'failed',
+    executionConfirmed: true,
+    economicReconciliationStatus: economics.economicsComplete ? 'confirmed' : 'pending',
+    status: 'filled',
     success: positive,
     txHash: transactionHash,
     transactionHash,

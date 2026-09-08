@@ -4,7 +4,7 @@ import { BigNumber, Contract, Wallet, ethers, providers } from 'ethers';
 import logger from '../../../logger.js';
 import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
-import { minimumPositiveProfitBaseUnits } from '../governance/profit-admission-authority.js';
+import { isStrictlyPositiveProfitBaseUnits, minimumPositiveProfitBaseUnits } from '../governance/profit-admission-authority.js';
 import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../governance/zero-capital-infrastructure-policy.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from './adapters/autonomous-route-planner.js';
 import {
@@ -176,7 +176,6 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
   wallet: Wallet;
 }): Promise<BuilderSponsoredZeroCapitalEvidence | null> {
   const { opportunity, balancerEvidence, provider, wallet } = input;
-  builderSponsoredZeroCapitalRegistry.remove(opportunity.id);
   if (opportunity.chain !== 'ethereum' || Date.now() >= opportunity.expiresAt) return null;
   if (!sameAddress(opportunity.inputToken, stableAddress(opportunity.inputAssetSymbol)) || opportunity.inputTokenDecimals !== 6) return null;
   if (balancerEvidence.provider !== 'balancer_v2' || !balancerEvidence.executableEvidenceComplete) return null;
@@ -244,7 +243,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     provider.getBlockNumber(),
   ]);
   const targetBlock = currentBlock + 1;
-  const ttlMs = boundedInteger(process.env.ZERO_CAPITAL_BUILDER_EVIDENCE_TTL_MS, 2_500, 500, 8_000);
+  const ttlMs = boundedInteger(process.env.ZERO_CAPITAL_BUILDER_EVIDENCE_TTL_MS, 30_000, 1_000, 120_000);
   const observedAt = Date.now();
   const expiresAt = Math.min(opportunity.expiresAt, observedAt + ttlMs);
   if (expiresAt <= observedAt) return null;
@@ -339,14 +338,10 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
   if (candidates.length === 0) return null;
   if (candidates.some(candidate => !candidate.transactionHashes[executionTransactionIndex])) return null;
 
-  opportunity.flashLoanFeeInInputToken = measuredFlashFee;
-  opportunity.estimatedGasCostInInputToken = builderGasCostInInputToken;
-  opportunity.estimatedExecutionCostInInputToken = allInCost;
-  opportunity.expectedProfit = guaranteedNetProfitInInputToken;
-  opportunity.netProfitBps = opportunity.flashLoanAmount > 0n
+  const admittedNetProfitBps = opportunity.flashLoanAmount > 0n
     ? Number((guaranteedNetProfitInInputToken * 10_000n) / opportunity.flashLoanAmount)
     : Number.NEGATIVE_INFINITY;
-  if (!(opportunity.netProfitBps > 0)) return null;
+  if (!isStrictlyPositiveProfitBaseUnits(guaranteedNetProfitInInputToken)) return null;
 
   const evidence: BuilderSponsoredZeroCapitalEvidence = {
     opportunityId: opportunity.id,
@@ -365,8 +360,14 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
       deploymentTransactionIndex: 0,
       permissionTransactionCount: permissionCalls.length,
     },
+    bootstrapProviderEconomics: {
+      ...balancerEvidence,
+      missingEvidence: [...balancerEvidence.missingEvidence],
+      provenance: [...balancerEvidence.provenance],
+    },
     builderGasCostInInputToken,
     guaranteedNetProfitInInputToken,
+    admittedNetProfitBps,
     guaranteedResidualProfitUsd,
     requiredSponsorshipWei,
     builderPaymentWei,
