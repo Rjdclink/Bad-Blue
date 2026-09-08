@@ -21,6 +21,7 @@ import { verifyDualFlashLoanReceiverCapability } from '../execution/adapters/dua
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
 import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
 import type { ReceiverFundingMode } from '../execution/adapters/sponsored-receiver-manager.js';
+import { prepareBuilderSponsoredZeroCapitalColdStart } from '../execution/builder-sponsored-zero-capital-coldstart.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
@@ -139,6 +140,16 @@ function repriceOpportunity(
   return { grossProfit, allInCost, netProfit, netProfitBps };
 }
 
+function currentReprice(opportunity: ZeroCapitalOpportunity) {
+  const grossProfit = opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
+  return {
+    grossProfit,
+    allInCost: opportunity.estimatedExecutionCostInInputToken,
+    netProfit: opportunity.expectedProfit,
+    netProfitBps: opportunity.netProfitBps,
+  };
+}
+
 function recordReprice(
   opportunity: ZeroCapitalOpportunity,
   chain: SupportedChain,
@@ -252,8 +263,6 @@ export async function repriceZeroCapitalProviderEconomics(input: {
 
       if (selectedDual && capabilities.dual) {
         const values = repriceOpportunity(opportunity, selectedDual.totalFee);
-        recordReprice(opportunity, chain, values);
-        zeroCapitalRouteEvidenceRegistry.record(opportunity);
         const feeSavings = selectedDual.measuredFeeSavingsVsBestSingle;
         const dualProvenance = [
           'flash_loan_provider:aave_balancer_dual',
@@ -265,17 +274,6 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           'same_asset_nested_atomicity_required',
         ];
 
-        if (values.netProfit <= 0n) {
-          updateCandidate({
-            opportunity,
-            selected: selectedDual.balancer,
-            eligible: false,
-            reason: `Measured Aave+Balancer provider mesh repriced the exact route to ${values.netProfitBps} BPS; observation only`,
-            extraProvenance: dualProvenance,
-          });
-          continue;
-        }
-
         const missing = await buildMissingReceiverPermissionCalls({
           chain: chain as any,
           provider,
@@ -286,12 +284,73 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           for (const call of missing) permissionCalls.set(setupCallIdentity(call), call);
           permissionDeferred.add(opportunity.id);
           zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+          recordReprice(opportunity, chain, values);
           updateCandidate({
             opportunity,
             selected: selectedDual.balancer,
             eligible: false,
-            reason: 'Measured dual-provider route is positive, but receiver permissions must settle before a fresh quote can become executable',
+            reason: 'Measured dual-provider route requires receiver permissions before a fresh quote can become executable',
             missingInformation: ['fresh_quote_after_provider_receiver_permissions'],
+            extraProvenance: dualProvenance,
+          });
+          continue;
+        }
+
+        if (!resourceReady && wallet && chain === 'ethereum') {
+          const selection = {
+            kind: 'dual' as const,
+            opportunityId: opportunity.id,
+            provider: 'aave_balancer_dual' as const,
+            receiver: capabilities.dual.address,
+            balancerAmount: selectedDual.balancerAmount,
+            aaveAmount: selectedDual.aaveAmount,
+            balancerEconomics: selectedDual.balancer,
+            aaveEconomics: selectedDual.aave,
+            receiverCapability: capabilities.dual,
+            totalMeasuredFlashFee: selectedDual.totalFee,
+            selectedAt: Date.now(),
+            expiresAt: opportunity.expiresAt,
+            provenance: [...dualProvenance, 'builder_cold_start_preparation_pending'],
+          };
+          const builderEvidence = await prepareBuilderSponsoredZeroCapitalColdStart({ opportunity, selection, provider, wallet }).catch(() => null);
+          if (builderEvidence && opportunity.expectedProfit > 0n && opportunity.netProfitBps > 0) {
+            const builderValues = currentReprice(opportunity);
+            recordReprice(opportunity, chain, builderValues);
+            zeroCapitalRouteEvidenceRegistry.record(opportunity);
+            dualFlashLoanProviderSelectionRegistry.record({
+              ...selection,
+              provenance: [
+                'measured_combined_provider_economics',
+                'verified_dual_receiver_capability',
+                'verified_dual_receiver_route_permissions',
+                'builder_sponsored_exact_repayment_plan',
+                'operator_native_gas_input:false',
+                'balancer_outer_aave_nested',
+                selectedDual.reason,
+                'strict_positive_repriced_net',
+                'synthetic_evidence:false',
+              ],
+            });
+            updateCandidate({
+              opportunity,
+              selected: selectedDual.balancer,
+              eligible: true,
+              reason: 'Measured Aave+Balancer route has an exact builder-sponsored Ethereum repayment bundle with positive residual; canonical scheduler owns submission',
+              extraProvenance: [...dualProvenance, ...builderEvidence.provenance],
+            });
+            repriced.push(opportunity);
+            continue;
+          }
+        }
+
+        zeroCapitalRouteEvidenceRegistry.record(opportunity);
+        recordReprice(opportunity, chain, values);
+        if (values.netProfit <= 0n) {
+          updateCandidate({
+            opportunity,
+            selected: selectedDual.balancer,
+            eligible: false,
+            reason: `Measured Aave+Balancer provider mesh repriced the exact route to ${values.netProfitBps} BPS; observation only`,
             extraProvenance: dualProvenance,
           });
           continue;
@@ -373,20 +432,7 @@ export async function repriceZeroCapitalProviderEconomics(input: {
       }
 
       const values = repriceOpportunity(opportunity, measuredFlashFee);
-      recordReprice(opportunity, chain, values);
-      zeroCapitalRouteEvidenceRegistry.record(opportunity);
       const providerProvenance = selectedSingle.provider === 'morpho_blue' ? ['morpho_zero_flash_fee_applied:true'] : [];
-      if (values.netProfit <= 0n) {
-        updateCandidate({
-          opportunity,
-          selected: selectedSingle,
-          eligible: false,
-          reason: `Measured ${selectedSingle.provider} exact fee/liquidity repriced the route to ${values.netProfitBps} BPS; observation only`,
-          extraProvenance: providerProvenance,
-        });
-        continue;
-      }
-
       const missing = await buildMissingReceiverPermissionCalls({
         chain: chain as any,
         provider,
@@ -397,12 +443,69 @@ export async function repriceZeroCapitalProviderEconomics(input: {
         for (const call of missing) permissionCalls.set(setupCallIdentity(call), call);
         permissionDeferred.add(opportunity.id);
         zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+        recordReprice(opportunity, chain, values);
         updateCandidate({
           opportunity,
           selected: selectedSingle,
           eligible: false,
-          reason: `Measured ${selectedSingle.provider} route is positive, but receiver permissions must settle before a fresh quote can become executable`,
+          reason: `Measured ${selectedSingle.provider} route requires receiver permissions before a fresh quote can become executable`,
           missingInformation: ['fresh_quote_after_provider_receiver_permissions'],
+          extraProvenance: providerProvenance,
+        });
+        continue;
+      }
+
+      if (!resourceReady && wallet && chain === 'ethereum') {
+        const selection = {
+          kind: 'single' as const,
+          opportunityId: opportunity.id,
+          provider: selectedSingle.provider,
+          receiver: selectedCapability.address,
+          economics: selectedSingle,
+          receiverCapability: selectedCapability,
+          selectedAt: Date.now(),
+          expiresAt: opportunity.expiresAt,
+          provenance: [...providerProvenance, 'builder_cold_start_preparation_pending'],
+        };
+        const builderEvidence = await prepareBuilderSponsoredZeroCapitalColdStart({ opportunity, selection, provider, wallet }).catch(() => null);
+        if (builderEvidence && opportunity.expectedProfit > 0n && opportunity.netProfitBps > 0) {
+          const builderValues = currentReprice(opportunity);
+          recordReprice(opportunity, chain, builderValues);
+          zeroCapitalRouteEvidenceRegistry.record(opportunity);
+          flashLoanProviderSelectionRegistry.record({
+            ...selection,
+            provenance: [
+              'measured_provider_economics',
+              'verified_receiver_capability',
+              'verified_receiver_route_permissions',
+              'builder_sponsored_exact_repayment_plan',
+              'operator_native_gas_input:false',
+              'provider_receiver_binding',
+              ...(selectedSingle.provider === 'morpho_blue' ? ['morpho_blue_zero_flash_fee'] : []),
+              'strict_positive_repriced_net',
+              'synthetic_evidence:false',
+            ],
+          });
+          updateCandidate({
+            opportunity,
+            selected: selectedSingle,
+            eligible: true,
+            reason: `Measured ${selectedSingle.provider} route has an exact builder-sponsored Ethereum repayment bundle with positive residual; canonical scheduler owns submission`,
+            extraProvenance: [...providerProvenance, ...builderEvidence.provenance],
+          });
+          repriced.push(opportunity);
+          continue;
+        }
+      }
+
+      zeroCapitalRouteEvidenceRegistry.record(opportunity);
+      recordReprice(opportunity, chain, values);
+      if (values.netProfit <= 0n) {
+        updateCandidate({
+          opportunity,
+          selected: selectedSingle,
+          eligible: false,
+          reason: `Measured ${selectedSingle.provider} exact fee/liquidity repriced the route to ${values.netProfitBps} BPS; observation only`,
           extraProvenance: providerProvenance,
         });
         continue;
