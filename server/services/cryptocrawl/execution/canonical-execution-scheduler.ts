@@ -343,11 +343,9 @@ class CanonicalExecutionScheduler {
               && candidate.executableCapability === true
               && candidate.missingInformation.length === 0
               && candidate.expiresAt > Date.now()
-              && Number(candidate.canonicalBps?.netBps) > 0
               && opportunity !== null
               && opportunity.expiresAt > Date.now()
-              && opportunity.expectedProfit > 0n
-              && opportunity.netProfitBps > 0;
+              && opportunity.expectedProfit > 0n;
             if (!exactEligible || !opportunity) {
               await operatorTradingStrategy.releaseReservation(reservationId);
               continue;
@@ -371,7 +369,7 @@ class CanonicalExecutionScheduler {
             this.lastOperatorState = await operatorTradingStrategy.markSubmitted(reservationId);
             const terminalReceipt = result.settlementConfirmed || result.receiptStatus === 0 || result.receiptStatus === 1;
             if (terminalReceipt) await operatorTradingStrategy.markTerminal(reservationId);
-            if (result.settlementConfirmed && result.success) this.settled++;
+            if (result.settlementConfirmed && result.executionConfirmed === true) this.settled++;
             else if (terminalReceipt) this.failed++;
             else this.pending++;
             logger.info('[ExecutionScheduler] ZERO_CAPITAL_ATOMIC parent trade consumed operator slot only after concrete submission', {

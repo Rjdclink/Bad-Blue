@@ -37,7 +37,8 @@ assert.match(discovery, /executionAuthority:\s*false/);
 
 // Execution remains strict positive all-in and belongs only to the canonical executor.
 assert.match(executor, /Sole ZERO_CAPITAL_ATOMIC execution route/);
-assert.match(executor, /opportunity\.expectedProfit <= 0n \|\| !\(opportunity\.netProfitBps > 0\)/);
+assert.match(executor, /opportunity\.expectedProfit <= 0n/);
+assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /Canonical all-in net economics are not strictly positive/);
 
 console.log('[zero-capital-quote-liveness] redundant RPC mesh, bounded quote deadlines, numeric negative-route measurement, canonical recurring discovery, and positive-only canonical execution verified');

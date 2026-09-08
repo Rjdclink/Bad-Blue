@@ -44,6 +44,6 @@ mustNot(/(?:CexFeeVenue|CexStreamVenue|QuoteVenue)[\s\S]{0,220}kalshi/i.test(fee
 mustNot(/\['coinbase'\s*,\s*'kraken'\s*,\s*'okx'\s*,\s*'kalshi'/i.test(fourMode), 'Kalshi perps must not become a spot four-mode peer');
 
 must(registry.includes('syntheticEconomicsAllowed: false'), 'canonical measured economics must remain non-synthetic');
-must(registry.includes('netBps !== null') && registry.includes('netBps > 0'), 'minimum execution evidence must retain positive canonical net BPS');
+must(registry.includes('netBps !== null') && registry.includes('deterministicNetProfitUsd > 0'), 'minimum execution evidence must use canonical positive net economics without requiring rounded BPS to exceed zero');
 
 console.log('[verify-kalshi-bps-integration] PASS');

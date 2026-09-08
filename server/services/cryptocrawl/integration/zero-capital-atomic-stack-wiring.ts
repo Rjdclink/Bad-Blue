@@ -69,7 +69,6 @@ function chooseStack(opportunities: readonly ZeroCapitalOpportunity[]): ZeroCapi
     .filter(opportunity => {
       const candidate = measuredCandidateRegistry.get(opportunity.id);
       return individuallyComposable(opportunity) &&
-        opportunity.netProfitBps > 0 &&
         candidate?.status === 'eligible' &&
         candidate.executableCapability === true;
     })

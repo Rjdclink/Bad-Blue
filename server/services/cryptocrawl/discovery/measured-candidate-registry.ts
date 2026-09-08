@@ -214,6 +214,7 @@ function explicitlyRequiredMissingInformation(item: string): boolean {
 export function hasMinimumSufficientExecutionEvidence(candidate: MeasuredCandidate, now = Date.now()): boolean {
   const notionalUsd = finite(candidate.canonicalBps.notionalUsd);
   const netBps = finite(candidate.canonicalBps.netBps);
+  const deterministicNetProfitUsd = finite(candidate.economics.deterministicNetProfitUsd);
   return candidate.status === 'eligible'
     && candidate.executableCapability === true
     && candidate.expiresAt > now
@@ -221,7 +222,8 @@ export function hasMinimumSufficientExecutionEvidence(candidate: MeasuredCandida
     && notionalUsd !== null
     && notionalUsd > 0
     && netBps !== null
-    && netBps > 0;
+    && deterministicNetProfitUsd !== null
+    && deterministicNetProfitUsd > 0;
 }
 
 /**
