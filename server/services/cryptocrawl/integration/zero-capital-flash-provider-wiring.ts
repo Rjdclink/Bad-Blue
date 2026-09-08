@@ -204,6 +204,13 @@ async function verifiedCapabilities(input: {
   return { single, dual };
 }
 
+function strictFundingReady(funding: GasFundingDecision): boolean {
+  return funding.mode !== 'unavailable'
+    && funding.strictZeroInitialCapitalEligible === true
+    && funding.operatorMonetaryInputRequired === false
+    && (funding.paymentSource === 'system_owned_native' || funding.paymentSource === 'provider_sponsored');
+}
+
 /**
  * Canonical provider repricing stage for ZERO_CAPITAL_ATOMIC discovery.
  *
@@ -224,6 +231,8 @@ export async function repriceZeroCapitalProviderEconomics(input: {
   const wallet = context.executionWallets.get(chain);
   const balancerReceiver = context.receiverManager.getReceiver(chain);
   const capabilities = await verifiedCapabilities({ chain, provider, wallet, balancerReceiver });
+  const funding = await context.getGasFundingDecision(chain);
+  const resourceReady = strictFundingReady(funding);
   const repriced: ZeroCapitalOpportunity[] = [];
   const permissionCalls = new Map<string, any>();
   const permissionDeferred = new Set<string>();
@@ -288,6 +297,18 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           continue;
         }
 
+        if (!resourceReady) {
+          updateCandidate({
+            opportunity,
+            selected: selectedDual.balancer,
+            eligible: false,
+            reason: `Measured Aave+Balancer route is positive, but strict zero-personal-cost execution funding is not currently proven: ${funding.reason}`,
+            missingInformation: ['required:zero_personal_cost_execution_resource'],
+            extraProvenance: [...dualProvenance, 'provider_reprice_does_not_override_funding_authority'],
+          });
+          continue;
+        }
+
         dualFlashLoanProviderSelectionRegistry.record({
           opportunityId: opportunity.id,
           provider: 'aave_balancer_dual',
@@ -304,6 +325,7 @@ export async function repriceZeroCapitalProviderEconomics(input: {
             'measured_combined_provider_economics',
             'verified_dual_receiver_capability',
             'verified_dual_receiver_route_permissions',
+            'strict_zero_personal_cost_funding_proven',
             'balancer_outer_aave_nested',
             selectedDual.reason,
             ...(feeSavings !== null ? ['dual_fee_split_strictly_beats_best_single'] : []),
@@ -316,9 +338,9 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           selected: selectedDual.balancer,
           eligible: true,
           reason: selectedDual.reason === 'fee_split_beats_single_provider'
-            ? 'Measured Aave+Balancer fee split beats the best executable single-provider flash fee; canonical scheduler owns submission'
-            : 'Measured Aave+Balancer combined liquidity unlocks the exact profitable size; canonical scheduler owns submission',
-          extraProvenance: dualProvenance,
+            ? 'Measured Aave+Balancer fee split beats the best executable single-provider flash fee with strict zero-personal-cost funding proven; canonical scheduler owns submission'
+            : 'Measured Aave+Balancer combined liquidity unlocks the exact profitable size with strict zero-personal-cost funding proven; canonical scheduler owns submission',
+          extraProvenance: [...dualProvenance, 'strict_zero_personal_cost_funding_proven'],
         });
         repriced.push(opportunity);
         continue;
@@ -386,6 +408,18 @@ export async function repriceZeroCapitalProviderEconomics(input: {
         continue;
       }
 
+      if (!resourceReady) {
+        updateCandidate({
+          opportunity,
+          selected: selectedSingle,
+          eligible: false,
+          reason: `Measured ${selectedSingle.provider} route is positive, but strict zero-personal-cost execution funding is not currently proven: ${funding.reason}`,
+          missingInformation: ['required:zero_personal_cost_execution_resource'],
+          extraProvenance: [...providerProvenance, 'provider_reprice_does_not_override_funding_authority'],
+        });
+        continue;
+      }
+
       flashLoanProviderSelectionRegistry.record({
         opportunityId: opportunity.id,
         provider: selectedSingle.provider,
@@ -398,6 +432,7 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           'measured_provider_economics',
           'verified_receiver_capability',
           'verified_receiver_route_permissions',
+          'strict_zero_personal_cost_funding_proven',
           'provider_receiver_binding',
           ...(selectedSingle.provider === 'morpho_blue' ? ['morpho_blue_zero_flash_fee'] : []),
           'strict_positive_repriced_net',
@@ -408,8 +443,8 @@ export async function repriceZeroCapitalProviderEconomics(input: {
         opportunity,
         selected: selectedSingle,
         eligible: true,
-        reason: `Measured ${selectedSingle.provider} exact fee/liquidity plus verified receiver/permissions keep the route positive; canonical scheduler owns submission`,
-        extraProvenance: providerProvenance,
+        reason: `Measured ${selectedSingle.provider} exact fee/liquidity plus verified receiver/permissions and strict zero-personal-cost funding keep the route positive; canonical scheduler owns submission`,
+        extraProvenance: [...providerProvenance, 'strict_zero_personal_cost_funding_proven'],
       });
       repriced.push(opportunity);
     } catch (error) {
@@ -432,36 +467,33 @@ export async function repriceZeroCapitalProviderEconomics(input: {
     }
   }
 
-  if (permissionCalls.size > 0 && wallet) {
-    const funding = await context.getGasFundingDecision(chain);
-    if (funding.mode !== 'unavailable') {
-      try {
-        await context.executeSetupCalls(
-          chain as any,
-          provider,
-          wallet,
-          funding.mode as ReceiverFundingMode,
-          [...permissionCalls.values()],
-        );
-        logger.info('[ZeroCapitalFlashProvider] Selected positive-route receiver permissions prepared; stale quotes remain invalid until the next canonical discovery cycle', {
-          component: 'ZeroCapitalFlashProviderWiring',
-          chain,
-          setupCalls: permissionCalls.size,
-          deferredOpportunityIds: [...permissionDeferred],
-          staleQuoteExecutionAllowed: false,
-          nextAuthority: 'canonical_fresh_discovery_cycle',
-          executionAuthority: false,
-        });
-      } catch (error) {
-        logger.warn('[ZeroCapitalFlashProvider] Selected positive-route receiver permission preparation failed closed', {
-          component: 'ZeroCapitalFlashProviderWiring',
-          chain,
-          deferredOpportunityIds: [...permissionDeferred],
-          error: error instanceof Error ? error.message : String(error),
-          personalFundingRequested: false,
-          executionAuthority: false,
-        });
-      }
+  if (permissionCalls.size > 0 && wallet && resourceReady) {
+    try {
+      await context.executeSetupCalls(
+        chain as any,
+        provider,
+        wallet,
+        funding.mode as ReceiverFundingMode,
+        [...permissionCalls.values()],
+      );
+      logger.info('[ZeroCapitalFlashProvider] Selected positive-route receiver permissions prepared; stale quotes remain invalid until the next canonical discovery cycle', {
+        component: 'ZeroCapitalFlashProviderWiring',
+        chain,
+        setupCalls: permissionCalls.size,
+        deferredOpportunityIds: [...permissionDeferred],
+        staleQuoteExecutionAllowed: false,
+        nextAuthority: 'canonical_fresh_discovery_cycle',
+        executionAuthority: false,
+      });
+    } catch (error) {
+      logger.warn('[ZeroCapitalFlashProvider] Selected positive-route receiver permission preparation failed closed', {
+        component: 'ZeroCapitalFlashProviderWiring',
+        chain,
+        deferredOpportunityIds: [...permissionDeferred],
+        error: error instanceof Error ? error.message : String(error),
+        personalFundingRequested: false,
+        executionAuthority: false,
+      });
     }
   }
 
