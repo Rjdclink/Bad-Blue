@@ -1,4 +1,5 @@
 import { Contract, BigNumber, ethers } from 'ethers';
+import logger from '../../../logger.js';
 import {
   multiProviderRpcManager,
   type SupportedChain as RpcSupportedChain,
@@ -20,6 +21,8 @@ const AAVE_POOL_ABI = [
 const DISCOVERY_CHAINS: RpcSupportedChain[] = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'avalanche', 'bsc'];
 const EXACT_EXECUTION_CHAINS = new Set<ExecutableAaveLiquidationChain>(['ethereum', 'polygon']);
 const borrowerUniverse = new Map<RpcSupportedChain, Map<string, number>>();
+const borrowerHealthCheckedAt = new Map<RpcSupportedChain, Map<string, number>>();
+const borrowerBackfillCursor = new Map<RpcSupportedChain, number>();
 
 type LiquidatableObservation = {
   candidate: MeasuredCandidate;
@@ -57,12 +60,46 @@ function rememberBorrower(chain: RpcSupportedChain, address: string, blockNumber
   const normalized = ethers.utils.getAddress(address);
   const universe = borrowerUniverse.get(chain) || new Map<string, number>();
   universe.set(normalized, Math.max(blockNumber, universe.get(normalized) || 0));
-  const maxUniverse = boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_BORROWER_UNIVERSE_MAX, 2048, 64, 20_000);
+  const maxUniverse = boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_BORROWER_UNIVERSE_MAX, 4096, 64, 20_000);
   if (universe.size > maxUniverse) {
     const oldest = [...universe.entries()].sort((left, right) => left[1] - right[1]);
-    for (let index = 0; index < universe.size - maxUniverse; index++) universe.delete(oldest[index][0]);
+    const checked = borrowerHealthCheckedAt.get(chain);
+    for (let index = 0; index < universe.size - maxUniverse; index++) {
+      universe.delete(oldest[index][0]);
+      checked?.delete(oldest[index][0]);
+    }
   }
   borrowerUniverse.set(chain, universe);
+}
+
+function selectBorrowersForHealthCheck(chain: RpcSupportedChain, maxChecks: number): string[] {
+  const universe = borrowerUniverse.get(chain) || new Map<string, number>();
+  const checked = borrowerHealthCheckedAt.get(chain) || new Map<string, number>();
+  borrowerHealthCheckedAt.set(chain, checked);
+  return [...universe.entries()]
+    .sort((left, right) => {
+      const leftCheckedAt = checked.get(left[0]) || 0;
+      const rightCheckedAt = checked.get(right[0]) || 0;
+      if (leftCheckedAt !== rightCheckedAt) return leftCheckedAt - rightCheckedAt;
+      return right[1] - left[1];
+    })
+    .slice(0, maxChecks)
+    .map(([address]) => address);
+}
+
+async function collectBorrowEvents(input: {
+  chain: RpcSupportedChain;
+  contract: Contract;
+  fromBlock: number;
+  toBlock: number;
+}): Promise<number> {
+  if (input.toBlock < input.fromBlock) return 0;
+  const events = await input.contract.queryFilter(input.contract.filters.Borrow(), input.fromBlock, input.toBlock);
+  for (const event of events) {
+    const borrower = String(event.args?.onBehalfOf || event.args?.user || '');
+    rememberBorrower(input.chain, borrower, event.blockNumber);
+  }
+  return events.length;
 }
 
 function healthFactorNumber(raw: BigNumber): number {
@@ -143,6 +180,8 @@ function baseCandidate(input: {
     ],
     provenance: [
       'aave_v3_borrow_event_universe',
+      'aave_v3_progressive_historical_borrow_backfill',
+      'aave_v3_rotating_health_factor_coverage',
       'aave_v3_getUserAccountData',
       'health_factor_below_one',
       `exact_execution_chain_reviewed:${executionReviewed}`,
@@ -262,18 +301,47 @@ async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<Meas
   const lookback = Math.min(maxLookback, baseLookback * coverageMultiplier);
   const fromBlock = Math.max(0, latestBlock - lookback);
 
-  const events = await contract.queryFilter(contract.filters.Borrow(), fromBlock, latestBlock);
-  for (const event of events) {
-    const borrower = String(event.args?.onBehalfOf || event.args?.user || '');
-    rememberBorrower(chain, borrower, event.blockNumber);
+  await collectBorrowEvents({ chain, contract, fromBlock, toBlock: latestBlock });
+
+  // Health factor can cross below one because collateral/oracle values change long
+  // after the latest Borrow event. Walk older Borrow history in bounded windows so
+  // long-lived positions are eventually represented instead of treating a recent
+  // event window as the complete active borrower set.
+  const historicalLookback = boundedInteger(
+    process.env.CRYPTOCRAWL_LIQUIDATION_HISTORICAL_LOOKBACK_BLOCKS,
+    2_000_000,
+    maxLookback,
+    20_000_000,
+  );
+  const backfillWindow = boundedInteger(
+    process.env.CRYPTOCRAWL_LIQUIDATION_BACKFILL_BLOCKS_PER_SCAN,
+    10_000,
+    100,
+    100_000,
+  );
+  const oldestAllowedBlock = Math.max(0, latestBlock - historicalLookback);
+  const priorCursor = Math.min(borrowerBackfillCursor.get(chain) ?? fromBlock, fromBlock);
+  if (priorCursor > oldestAllowedBlock) {
+    const backfillTo = priorCursor - 1;
+    const backfillFrom = Math.max(oldestAllowedBlock, backfillTo - backfillWindow + 1);
+    try {
+      await collectBorrowEvents({ chain, contract, fromBlock: backfillFrom, toBlock: backfillTo });
+      borrowerBackfillCursor.set(chain, backfillFrom);
+    } catch (error) {
+      logger.debug('[LiquidationDiscovery] Historical borrower backfill deferred', {
+        component: 'LiquidationOpportunityGenerator',
+        chain,
+        fromBlock: backfillFrom,
+        toBlock: backfillTo,
+        error: error instanceof Error ? error.message : String(error),
+        recentBorrowerScanContinued: true,
+        executionAuthority: false,
+      });
+    }
   }
 
-  const currentUniverse = borrowerUniverse.get(chain) || new Map<string, number>();
   const maxChecks = boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_HEALTH_CHECKS_PER_CYCLE, 64, 4, 512);
-  const borrowers = [...currentUniverse.entries()]
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, maxChecks)
-    .map(([address]) => address);
+  const borrowers = selectBorrowersForHealthCheck(chain, maxChecks);
   const ttlMs = boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_CANDIDATE_TTL_MS, 15_000, 1_000, 60_000);
   const settled = await Promise.allSettled(borrowers.map(borrower => inspectBorrower({
     chain,
@@ -282,6 +350,10 @@ async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<Meas
     borrower,
     ttlMs,
   })));
+  const checked = borrowerHealthCheckedAt.get(chain) || new Map<string, number>();
+  const checkedAt = Date.now();
+  for (const borrower of borrowers) checked.set(borrower, checkedAt);
+  borrowerHealthCheckedAt.set(chain, checked);
   const observations = settled.flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
 
   if (!EXACT_EXECUTION_CHAINS.has(chain as ExecutableAaveLiquidationChain) || observations.length === 0) {
