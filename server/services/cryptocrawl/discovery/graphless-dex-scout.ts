@@ -1,6 +1,5 @@
 import { ethers, type providers } from 'ethers';
 import logger from '../../../logger.js';
-import type { ChainId } from '../bridge/types.js';
 import type { SupportedExecutionChain } from '../execution/adapters/onchain-payload-builder.js';
 
 const UNISWAP_V3_FACTORY = '0x1F98431c8aD98523631AE4a59f267346ea31F984';
@@ -82,6 +81,11 @@ function cacheTtlMs(): number {
 
 function minLiquidityUsd(): number {
   return bounded(process.env.ZERO_CAPITAL_GRAPHLESS_MIN_LIQUIDITY_USD, 25_000, 0, 100_000_000);
+}
+
+function meshSafeHeadLagBlocks(chain: SupportedExecutionChain): number {
+  const fallback = chain === 'polygon' ? 8 : chain === 'arbitrum' ? 4 : 2;
+  return Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_HEAD_LAG_BLOCKS, fallback, 1, 128));
 }
 
 async function fetchGeckoCandidates(
@@ -188,7 +192,9 @@ async function scanFactoryLogs(input: {
   output: Map<string, GraphlessDexTokenCandidate>;
 }): Promise<void> {
   const bootstrapBlocks = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_BOOTSTRAP_BLOCKS, 512, 64, 100_000));
-  const fromBlock = Math.max(0, lastFactoryBlock.get(input.chainKey) ?? input.currentBlock - bootstrapBlocks);
+  const priorCursor = lastFactoryBlock.get(input.chainKey);
+  const bootstrapStart = Math.max(0, input.currentBlock - bootstrapBlocks);
+  const fromBlock = Math.max(0, Math.min(input.currentBlock, priorCursor ?? bootstrapStart));
   const chunk = Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_LOG_CHUNK, 512, 64, 10_000));
   for (let start = fromBlock; start <= input.currentBlock; start += chunk) {
     const end = Math.min(input.currentBlock, start + chunk - 1);
@@ -219,7 +225,14 @@ async function fetchRecentFactoryCandidates(
   if (chain !== 'polygon' && chain !== 'arbitrum') return [];
   const network = await provider.getNetwork();
   if (!Number.isSafeInteger(network.chainId) || network.chainId <= 0) return [];
-  const current = await provider.getBlockNumber();
+  const observedHead = await provider.getBlockNumber();
+  const headLagBlocks = meshSafeHeadLagBlocks(chain);
+  // A provider mesh can report the head from one backend and serve eth_getLogs
+  // from another backend that is a few blocks behind. Querying the unfinalized
+  // tip can therefore produce a standards-compliant invalid-range error even
+  // when fromBlock === toBlock. The canonical discovery head is deliberately
+  // lagged so every healthy mesh member can serve the same bounded range.
+  const current = Math.max(0, observedHead - headLagBlocks);
   const candidates = new Map<string, GraphlessDexTokenCandidate>();
   const anchors = new Set(anchorTokens.map(token => token.toLowerCase()));
   const observedAt = Date.now();
@@ -266,6 +279,15 @@ async function fetchRecentFactoryCandidates(
     }
   }
 
+  logger.debug('[GraphlessDexScout] Mesh-safe factory-log head selected', {
+    component: 'GraphlessDexScout',
+    chain,
+    chainId: network.chainId,
+    observedHead,
+    canonicalScanHead: current,
+    headLagBlocks,
+    executionAuthority: false,
+  });
   return [...candidates.values()];
 }
 
@@ -330,6 +352,7 @@ export async function discoverGraphlessDexTokens(
     v2ForkRpcScanning: process.env.ZERO_CAPITAL_V2_FORK_RPC_SCANNING !== 'false',
     v2Factories: (V2_FACTORIES[chain] || []).map(factory => factory.name),
     factoryBootstrapBlocks: Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_FACTORY_BOOTSTRAP_BLOCKS, 512, 64, 100_000)),
+    meshSafeHeadLagBlocks: meshSafeHeadLagBlocks(chain),
     errors,
     apiKeysRequired: false,
     executionAuthority: false,
