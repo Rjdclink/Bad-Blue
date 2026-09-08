@@ -183,9 +183,14 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const runtime = getCryptoCrawlerRuntimeAttestation();
     const execution = executionConfiguration();
     const providerStatuses = marketDataProviders.getProviderStatuses();
-    const coreMarketDataReady = providerStatuses.some(status =>
-      status.provider === 'coingecko' && ['live', 'cached', 'stale'].includes(status.state),
+    const usableMarketUniverseProviders = providerStatuses.filter(status =>
+      status.provider !== '0x' && ['live', 'cached', 'stale'].includes(status.state),
     );
+    // Aggregator feeds expand/rank the universe but are not the sole authority for
+    // core CEX discovery. Fresh directly-evaluated CEX market evidence is also a
+    // valid core data proof, so a CoinGecko 429 can never globally poison discovery.
+    const directCexMarketEvidenceReady = !!graph && graph.evaluatedSymbols > 0;
+    const coreMarketDataReady = usableMarketUniverseProviders.length > 0 || directCexMarketEvidenceReady;
     const coinStatsEnvironment = resolveCoinStatsEnvironment();
     const rpcSnapshot = blockchainProviderSnapshot();
     const criticalRpcReady = rpcSnapshot.some(chain => chain.providers.some(provider => provider.http === 'healthy'));
@@ -348,12 +353,18 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         alchemy,
         rpc: rpcSnapshot,
         mempoolCapabilities,
+        marketDataAuthority: {
+          coinGeckoRequiredForCoreCexDiscovery: false,
+          directCexMarketEvidenceReady,
+          usableParallelUniverseProviders: usableMarketUniverseProviders.map(status => status.provider),
+        },
         marketData: providerStatuses.map(status => ({
           provider: status.provider,
           state: status.state,
           observedAt: status.observedAt,
           detail: status.detail,
-          requiredForCoreCexDiscovery: status.provider === 'coingecko',
+          requiredForCoreCexDiscovery: false,
+          memberOfParallelMarketUniverseMesh: status.provider !== '0x',
         })),
         optional: {
           coinStats: {

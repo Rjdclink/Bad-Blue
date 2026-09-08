@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const read = path => fs.readFileSync(path, 'utf8');
 
 const prices = read('server/services/cryptocrawl/bridge/coingecko-client.ts');
+const runtimeObservability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
 const eventFees = read('server/services/cryptocrawl/intelligence/kalshi-event-fee-authority.ts');
 const prediction = read('server/services/cryptocrawl/intelligence/kalshi-prediction-market-authority.ts');
 const generator = read('server/services/cryptocrawl/discovery/kalshi-event-opportunity-generator.ts');
@@ -18,6 +19,10 @@ assert.match(prices, /export function mergeLivePriceEvidence/, 'parallel price e
 assert.match(prices, /Math\.abs\(value - median\) \/ median <= 0\.2/, 'price consensus must discard material multi-provider outliers');
 assert.match(prices, /merged\[coinId\] = primary/, 'healthy pre-existing CoinGecko evidence must retain precedence when consistent');
 assert.match(prices, /if \(complete\) \{\s*this\.cache\.set/, 'partial evidence must not receive the full cache TTL');
+assert.match(runtimeObservability, /usableMarketUniverseProviders/, 'runtime readiness must consume the parallel market-universe provider mesh');
+assert.match(runtimeObservability, /directCexMarketEvidenceReady/, 'fresh direct CEX evidence must remain a CoinGecko-independent readiness path');
+assert.match(runtimeObservability, /coinGeckoRequiredForCoreCexDiscovery: false/, 'CoinGecko must never be a global core-CEX discovery requirement');
+assert.doesNotMatch(runtimeObservability, /requiredForCoreCexDiscovery:\s*status\.provider\s*===\s*['"]coingecko['"]/, 'provider telemetry must not reintroduce CoinGecko as a required authority');
 
 for (const [name, source] of [['event fee authority', eventFees], ['prediction intelligence', prediction]]) {
   assert.match(source, /\/trade-api\/v2\/events\/fee_changes/, `${name} must use the documented event fee-change endpoint`);
@@ -34,4 +39,4 @@ assert.doesNotMatch(generator, /minExpectedNetUsd/, 'Kalshi discovery must not i
 assert.doesNotMatch(lifecycle, /minimumExpectedNetUsd/, 'Kalshi execution must not reintroduce an arbitrary profit magnitude floor');
 assert.match(lifecycle, /currentExpectedNetProfitUsd > requiredNet/, 'fresh execution economics must remain strictly positive after route-specific costs');
 
-console.log('[market-evidence-kalshi-capability] PASS: parallel redundant live pricing and rate-safe, override-correct, exact-positive Kalshi evidence preserve capability');
+console.log('[market-evidence-kalshi-capability] PASS: CoinGecko-independent parallel pricing, truthful core-data readiness, and rate-safe exact-positive Kalshi evidence preserve capability');
