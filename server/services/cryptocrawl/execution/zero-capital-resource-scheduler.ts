@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import logger from '../../../logger.js';
 import { isDatabaseConfigured, pool } from '../../../db.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
-import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { evaluateAtomicZeroCapitalAdmission } from '../governance/atomic-zero-capital-strategy-coverage.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import { getCanonicalZeroCapitalGasDecision } from '../runtime/zero-capital-gas-authority.js';
 import {
   RESOURCE_LEASE_TABLE as TABLE,
   claimFixedResource,
@@ -95,13 +96,7 @@ function gasAdmissionProvenance(decision: GasFundingDecision): 'external_zero_op
 
 async function strictCanonicalGasDecision(chain: string): Promise<GasFundingDecision | null> {
   try {
-    // Dynamic import avoids making the resource scheduler part of the engine's
-    // construction cycle. At lease time the runtime wiring has already replaced
-    // getGasFundingDecision with the durable system-owned-gas proof authority.
-    const { zeroCapitalEngine } = await import('../core/zero-capital-engine.js');
-    const runtime = zeroCapitalEngine as any;
-    if (typeof runtime.getGasFundingDecision !== 'function') return null;
-    const decision = await runtime.getGasFundingDecision(chain) as GasFundingDecision;
+    const decision = await getCanonicalZeroCapitalGasDecision(chain as SupportedChain);
     if (!decision || decision.mode === 'unavailable') return null;
     if (decision.strictZeroInitialCapitalEligible !== true || decision.operatorMonetaryInputRequired !== false) return null;
     if (gasAdmissionProvenance(decision) === 'unproven') return null;
@@ -111,6 +106,7 @@ async function strictCanonicalGasDecision(chain: string): Promise<GasFundingDeci
       component: 'ZeroCapitalResourceScheduler',
       chain,
       error: error instanceof Error ? error.message : String(error),
+      gasFundingAuthority: 'getCanonicalZeroCapitalGasDecision',
       personalGasFallbackAllowed: false,
     });
     return null;
@@ -389,9 +385,6 @@ class ZeroCapitalResourceScheduler {
     if (!completeMeasuredAtomicEconomics(candidate, input.expectedNetProfitUsd)) return null;
 
     const gasDecision = await strictCanonicalGasDecision(input.chain);
-    // Callers may request a mode, but they may not manufacture funding truth. A
-    // lease exists only when their requested transport matches the canonical
-    // provenance-backed decision exactly.
     if (!gasDecision || gasDecision.mode !== input.fundingMode) return null;
     const admission = evaluateAtomicZeroCapitalAdmission({
       topology: candidate.topology,

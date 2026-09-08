@@ -27,6 +27,7 @@ require('./verify-kalshi-negative-funding-inverse.cjs');
 require('./verify-kalshi-premerge-completion.cjs');
 require('./verify-builder-sponsored-coldstart-foundation.cjs');
 require('./verify-zero-capital-route-retention-and-standby-truth.cjs');
+require('./verify-zero-capital-single-route-pipeline.cjs');
 require('./verify-okx-order-expiration.cjs');
 require('./verify-kraken-l3-queue-amend.cjs');
 require('./verify-profitability-recovery-coordinator.cjs');
@@ -69,4 +70,4 @@ require('./verify-minimum-sufficient-execution-evidence.cjs');
 require('./verify-first-pass-route-measurability.cjs');
 require('./verify-canonical-refresh-capability-authority.cjs');
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, final evidence/route resolution, and payout invariants passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, final evidence/route resolution, payout invariants, and single zero-capital route authority passed; continuing to downstream prebuild/build');

@@ -1,0 +1,43 @@
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+
+const read = path => fs.readFileSync(path, 'utf8');
+const routeAuthority = read('server/services/cryptocrawl/discovery/zero-capital-route-authority.ts');
+const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
+const diagnostics = read('server/services/cryptocrawl/integration/zero-capital-readiness-diagnostics.ts');
+const engine = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
+const shadow = read('server/services/cryptocrawl/integration/zero-capital-shadow-priority-wiring.ts');
+const gasAuthority = read('server/services/cryptocrawl/runtime/zero-capital-gas-authority.ts');
+const gasProof = read('server/services/cryptocrawl/runtime/system-owned-gas-funding-proof-wiring.ts');
+const resourceScheduler = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
+const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
+
+assert.match(routeAuthority, /loadConfiguredZeroCapitalRoutes/);
+assert.match(routeAuthority, /buildDynamicZeroCapitalRouteTemplates/);
+assert.match(routeAuthority, /getCachedGraphlessDynamicRouteTemplates/);
+assert.match(routeAuthority, /new Map<string, ConfiguredZeroCapitalRoute>/);
+assert.match(discovery, /getCanonicalZeroCapitalRoutes/);
+assert.doesNotMatch(discovery, /buildDynamicZeroCapitalRouteTemplates/);
+assert.doesNotMatch(discovery, /getCachedGraphlessDynamicRouteTemplates/);
+assert.match(diagnostics, /getCanonicalZeroCapitalRouteSnapshot/);
+assert.doesNotMatch(diagnostics, /loadConfiguredZeroCapitalRoutes/);
+assert.match(engine, /independentScanLoop:\s*false/);
+assert.match(engine, /independentExecutionLoop:\s*false/);
+assert.doesNotMatch(engine, /this\.startScanningLoop\s*\(\s*\)/);
+assert.doesNotMatch(engine, /this\.startExecutionLoop\s*\(\s*\)/);
+assert.doesNotMatch(shadow, /target\.dispatchExecutableOpportunities\s*=/);
+assert.match(shadow, /runtimeMethodMutation:\s*false/);
+assert.match(gasAuthority, /getProvenZeroCapitalGasFundingDecision/);
+assert.match(gasProof, /Sole strict ZERO_CAPITAL_ATOMIC gas-selection boundary/);
+assert.match(resourceScheduler, /getCanonicalZeroCapitalGasDecision/);
+assert.doesNotMatch(resourceScheduler, /runtime\.getGasFundingDecision/);
+assert.match(executor, /getProvenZeroCapitalGasFundingDecision/);
+assert.match(executor, /Sole ZERO_CAPITAL_ATOMIC execution route/);
+
+console.log('Canonical ZERO_CAPITAL_ATOMIC single-route pipeline verification PASSED');
+console.log(' - one route-composition authority');
+console.log(' - one strict gas-proof authority');
+console.log(' - one discovery cadence');
+console.log(' - one parent scheduler');
+console.log(' - one topology executor');
+console.log(' - no runtime dispatch monkeypatch');
