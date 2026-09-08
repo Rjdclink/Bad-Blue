@@ -1,4 +1,4 @@
-import { db } from './db';
+import { db } from './services/cryptocrawl/runtime/cryptocrawl-runtime-database.js';
 import { sql } from 'drizzle-orm';
 import { 
   subagentSearchSessions, 
