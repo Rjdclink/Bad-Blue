@@ -101,7 +101,12 @@ check('Across executor has no direct raw-provider principal submission bypass', 
 check('Across recovery reuses exact signed bytes through system-owned gas authority', acrossRecovery.includes('executePreparedSystemOwnedNativeTransaction({') && acrossRecovery.includes("idempotencyKey: `across-origin:${row.depositTxnRef.toLowerCase()}`"));
 check('Across recovery has no raw-provider rebroadcast bypass', !acrossRecovery.includes('provider.sendTransaction(raw)'));
 
-check('strict gas policy rejects hosted sponsor without zero-operator-cost proof', gasPolicy.includes('sponsorOperatorMonetaryCostProvenZero') && gasPolicy.includes('configured hosted sponsorship does not prove zero operator monetary cost'));
+check('hosted sponsor satisfies zero-initial-capital while billed gas remains explicit',
+  gasPolicy.includes('strictZeroInitialCapitalEligible: true')
+  && gasPolicy.includes('operatorMonetaryInputRequired: false')
+  && gasPolicy.includes('providerBillingLiability: !sponsorCostProvenZero')
+  && zeroCapitalExecutor.includes('providerBillingLiability: funding.providerBillingLiability === true')
+  && zeroCapitalExecutor.includes('zeroMonetaryGasVerified: sponsoredExecution && funding.sponsorOperatorMonetaryCostProvenZero === true'));
 check('raw native balance is not promoted without system-owned proof', gasPolicy.includes('nativeSystemOwnedProven') && gasPolicy.includes('native balance exists but SELF_FUNDED system ownership is not proven'));
 check('durable native gas proof wiring keeps hosted sponsorship unproven', nativeGasProof.includes('sponsorOperatorMonetaryCostProvenZero: false'));
 check('durable native gas proof requires system ownership authority', nativeGasProof.includes('getSystemNativeGasAuthority'));
