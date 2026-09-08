@@ -8,10 +8,12 @@ import type { DynamicChainConfig } from '../core/dynamic-chain-registry.js';
 import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
+import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../governance/zero-capital-infrastructure-policy.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from './adapters/autonomous-route-planner.js';
 import { buildDualFlashLoanReceiverPayload } from './adapters/dual-flashloan-receiver-builder.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from './adapters/flashloan-receiver-builder.js';
 import { flashLoanProviderSelectionRegistry } from './adapters/flash-loan-provider-selection-registry.js';
+import { getSponsoredReceiverManager } from './adapters/sponsored-receiver-manager.js';
 import {
   builderSponsoredZeroCapitalRegistry,
   submitPreparedBuilderSponsoredZeroCapital,
@@ -196,6 +198,7 @@ function normalizedSettlement(input: {
   sponsoredExecution: boolean;
   providerLabel: string;
   builderExecution?: boolean;
+  builderReceiverBootstrap?: boolean;
 }): NormalizedRealizedExecution {
   const { opportunity, receipt, economics } = input;
   const positive = economics.economicsComplete && economics.positiveAfterAllInCost;
@@ -206,7 +209,8 @@ function normalizedSettlement(input: {
   const provenance = input.builderExecution
     ? [
         'canonical_zero_capital_single_executor',
-        'canonical_provider_selection_registry',
+        input.builderReceiverBootstrap ? 'canonical_builder_receiver_bootstrap_evidence' : 'canonical_provider_selection_registry',
+        input.builderReceiverBootstrap ? 'receiver_bootstrap:create2_deployment_and_permissions_same_atomic_bundle' : 'receiver_capability:preverified',
         'builder_bundle:exact_signed_execution_conversion_payment',
         'builder_sponsorship:operator_native_input_zero',
         'builder_payment_source:execution_created_value',
@@ -285,12 +289,28 @@ async function executeBuilderColdStart(input: {
   startedAt: number;
   providerLabel: string;
 }): Promise<CanonicalZeroCapitalExecutionResult> {
-  const { opportunity, evidence, provider, receiver, profitRecipient, receiverStarting, recipientStarting, startedAt } = input;
+  const { opportunity, evidence, provider, wallet, receiver, profitRecipient, receiverStarting, recipientStarting, startedAt } = input;
   if (opportunity.chain !== 'ethereum' || evidence.inputToken.toLowerCase() !== opportunity.inputToken.toLowerCase()) {
     return failed(opportunity, 'Builder-sponsored evidence does not match the exact Ethereum opportunity');
   }
+  if (evidence.receiver.toLowerCase() !== receiver.toLowerCase() || evidence.providerLabel !== input.providerLabel) {
+    return failed(opportunity, 'Builder-sponsored receiver/provider evidence no longer matches canonical execution input');
+  }
   if (evidence.guaranteedNetProfitInInputToken !== opportunity.expectedProfit || evidence.expiresAt <= Date.now()) {
     return failed(opportunity, 'Builder-sponsored economics evidence is stale or no longer matches canonical net profit');
+  }
+  if (evidence.receiverBootstrap) {
+    if (evidence.receiverBootstrap.owner.toLowerCase() !== wallet.address.toLowerCase()) {
+      return failed(opportunity, 'Builder receiver-bootstrap owner no longer matches canonical execution wallet');
+    }
+    requireZeroCapitalInfrastructureDeploymentAllowed({ chain: 'ethereum', operation: 'receiver_deployment' });
+    const codeBefore = await provider.getCode(receiver);
+    if (codeBefore !== '0x') {
+      return {
+        ...failed(opportunity, 'Prepared receiver-bootstrap bundle is stale because the deterministic receiver is already deployed'),
+        status: 'deferred',
+      };
+    }
   }
 
   getCryptocrawlGovernance().recordExecutionAttempt();
@@ -328,6 +348,22 @@ async function executeBuilderColdStart(input: {
       latencyMs: Date.now() - startedAt,
     });
   }
+  if (evidence.receiverBootstrap) {
+    const verified = await getSponsoredReceiverManager().inspectExistingReceiver({
+      chain: 'ethereum',
+      provider,
+      owner: wallet.address,
+    }).catch(() => null);
+    if (!verified || verified.address.toLowerCase() !== receiver.toLowerCase()) {
+      return failed(opportunity, 'Builder bundle landed but deterministic receiver bootstrap could not be verified', {
+        submitted: true,
+        transactionHash,
+        txHash: transactionHash,
+        receiptStatus: 1,
+        blockNumber: receipt.blockNumber,
+      });
+    }
+  }
   const grossProfit = extractProfit(receipt, receiver);
   if (grossProfit === null || grossProfit <= 0n) {
     return failed(opportunity, 'Builder bundle flash-loan receipt did not emit positive gross profit', {
@@ -360,6 +396,7 @@ async function executeBuilderColdStart(input: {
     economics,
     sponsoredExecution: true,
     builderExecution: true,
+    builderReceiverBootstrap: Boolean(evidence.receiverBootstrap),
     providerLabel: input.providerLabel,
   });
   const positive = economics.economicsComplete && economics.positiveAfterAllInCost;
@@ -405,6 +442,7 @@ async function executeBuilderColdStart(input: {
     component: 'CanonicalZeroCapitalExecutor', opportunityId: opportunity.id, chain: opportunity.chain,
     provider: input.providerLabel, builder: submitted.candidate.builder, transactionHash,
     bundleHash: submitted.result.bundleHash, settlementConfirmed: true,
+    receiverBootstrappedInBundle: Boolean(evidence.receiverBootstrap),
     grossProfitBaseUnits: grossProfit.toString(), realizedBuilderCostBaseUnits: realizedBuilderCostBaseUnits.toString(),
     residualProfitBaseUnits: residualProfit.toString(), realizedNetProfitUsd: economics.netProfitUsd,
     realizedBuilderCostUsd: economics.gasUsd, positiveAfterAllInCost: positive,
@@ -431,20 +469,51 @@ export async function executeCanonicalZeroCapitalOpportunity(
 
   const provider = target.providers.get(opportunity.chain);
   const wallet = target.executionWallets.get(opportunity.chain);
-  const selection = flashLoanProviderSelectionRegistry.get(opportunity.id);
-  if (!provider || !wallet || !selection) return failed(opportunity, 'Provider, execution wallet, or canonical flash-provider selection is unavailable');
-  if (selection.expiresAt <= Date.now()) return failed(opportunity, 'Canonical flash-provider selection expired before execution');
-  if (selection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()) return failed(opportunity, 'Selected receiver owner no longer matches canonical execution wallet');
-  if (selection.kind === 'dual' && selection.balancerAmount + selection.aaveAmount !== opportunity.flashLoanAmount) return failed(opportunity, 'Selected dual-provider principal no longer matches exact opportunity notional');
+  if (!provider || !wallet) return failed(opportunity, 'Provider or execution wallet is unavailable');
 
   const governance = getCryptocrawlGovernance();
   const pair = `${opportunity.inputAssetSymbol}/CYCLIC`;
   governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opportunity.chain, pair });
   governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair });
 
-  const receiver = selection.receiver;
   const profitRecipient = resolveOperationalProfitRecipient();
   const token = new Contract(opportunity.inputToken, ERC20_BALANCE_ABI, provider);
+  const builderEvidence = builderSponsoredZeroCapitalRegistry.get(opportunity.id);
+
+  if (builderEvidence?.receiverBootstrap) {
+    if (opportunity.chain !== 'ethereum') return failed(opportunity, 'First-receiver builder bootstrap is Ethereum-only');
+    if (builderEvidence.receiverBootstrap.owner.toLowerCase() !== wallet.address.toLowerCase()) {
+      return failed(opportunity, 'First-receiver builder bootstrap owner does not match canonical execution wallet');
+    }
+    const [receiverStartingRaw, recipientStartingRaw] = await Promise.all([
+      token.balanceOf(builderEvidence.receiver), token.balanceOf(profitRecipient),
+    ]);
+    const receiverStarting = BigInt(receiverStartingRaw.toString());
+    const recipientStarting = BigInt(recipientStartingRaw.toString());
+    if (receiverStarting !== 0n) {
+      return failed(opportunity, `Predicted bootstrap receiver starting loan-token balance is nonzero: ${receiverStarting.toString()}`);
+    }
+    return executeBuilderColdStart({
+      opportunity,
+      evidence: builderEvidence,
+      provider,
+      wallet,
+      receiver: builderEvidence.receiver,
+      profitRecipient,
+      receiverStarting,
+      recipientStarting,
+      startedAt,
+      providerLabel: builderEvidence.providerLabel,
+    });
+  }
+
+  const selection = flashLoanProviderSelectionRegistry.get(opportunity.id);
+  if (!selection) return failed(opportunity, 'Canonical flash-provider selection is unavailable');
+  if (selection.expiresAt <= Date.now()) return failed(opportunity, 'Canonical flash-provider selection expired before execution');
+  if (selection.receiverCapability.owner.toLowerCase() !== wallet.address.toLowerCase()) return failed(opportunity, 'Selected receiver owner no longer matches canonical execution wallet');
+  if (selection.kind === 'dual' && selection.balancerAmount + selection.aaveAmount !== opportunity.flashLoanAmount) return failed(opportunity, 'Selected dual-provider principal no longer matches exact opportunity notional');
+
+  const receiver = selection.receiver;
   const [receiverStartingRaw, recipientStartingRaw] = await Promise.all([
     token.balanceOf(receiver), token.balanceOf(profitRecipient),
   ]);
@@ -452,10 +521,6 @@ export async function executeCanonicalZeroCapitalOpportunity(
   const recipientStarting = BigInt(recipientStartingRaw.toString());
   if (receiverStarting !== 0n) return failed(opportunity, `Selected receiver starting loan-token balance is nonzero: ${receiverStarting.toString()}`);
 
-  // Builder sponsorship is never promoted into the chain-wide gas authority. It
-  // is admitted only when this exact opportunity has a fresh signed repayment
-  // bundle whose all-in stablecoin residual remains strictly positive.
-  const builderEvidence = builderSponsoredZeroCapitalRegistry.get(opportunity.id);
   if (builderEvidence) {
     return executeBuilderColdStart({
       opportunity,
