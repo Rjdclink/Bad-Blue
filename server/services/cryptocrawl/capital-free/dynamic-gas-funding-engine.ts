@@ -11,8 +11,9 @@ export type GasFundingPaymentSource =
 export interface GasFundingProofContext {
   /**
    * True only when the provider/paymaster's monetary gas obligation is proven not
-   * to be charged to the operator/application. A configured hosted sponsorship
-   * policy by itself is not that proof.
+   * to be charged to the operator/application. This is stronger than zero initial
+   * wallet capital: hosted sponsorship can remove the native-balance prerequisite
+   * while still creating a provider-billing liability that belongs in economics.
    */
   sponsorOperatorMonetaryCostProvenZero?: boolean;
   /** True only when durable capital provenance proves the native reserve is system-owned. */
@@ -26,27 +27,37 @@ export interface GasFundingDecision {
   reserveFloor: bigint;
   reason: string;
   paymentSource?: GasFundingPaymentSource;
+  /** True when this lane can execute without any pre-existing operator/wallet capital injection. */
   strictZeroInitialCapitalEligible?: boolean;
+  /** True only when an operator must add money before this exact execution can run. */
   operatorMonetaryInputRequired?: boolean;
-}
-
-function strictZeroOperatorCostRequired(): boolean {
-  return process.env.ZERO_INITIAL_CAPITAL_STRICT_OPERATOR_ZERO_COST?.trim().toLowerCase() !== 'false';
+  /** Hosted sponsorship may be billed later even though it requires no upfront native balance. */
+  providerBillingLiability?: boolean;
+  /** Independent proof that the sponsor itself creates no operator monetary cost. */
+  sponsorOperatorMonetaryCostProvenZero?: boolean;
 }
 
 /**
- * Selects execution gas without converting a wallet-level gas abstraction into a
- * false zero-operator-cost claim.
+ * Zero INITIAL capital is the production objective. A stronger "zero operator
+ * monetary cost ever" mode is available only when explicitly requested. Keeping
+ * it opt-in prevents a provider-fronted paymaster bill from being confused with an
+ * upfront native-token requirement while preserving a strict fail-closed option.
+ */
+export function strictZeroOperatorCostRequired(): boolean {
+  return process.env.ZERO_INITIAL_CAPITAL_STRICT_OPERATOR_ZERO_COST?.trim().toLowerCase() === 'true';
+}
+
+/**
+ * Select the funding lane for an exact zero-initial-capital attempt.
  *
- * In strict zero-initial-capital mode (the default), a hosted paymaster is not
- * bootstrap-eligible merely because the execution wallet spends zero native gas:
- * the provider's monetary charge must independently be proven not to fall on the
- * operator/application. Likewise, a positive execution-wallet native balance is
- * not system capital merely because it exists; SELF_FUNDED provenance must prove
- * ownership before that balance can satisfy strict zero-capital funding.
+ * A real paymaster/Wallet-API sponsorship can satisfy zero initial capital because
+ * the execution account needs no pre-existing native gas. It does NOT imply free
+ * gas: unless independent proof establishes zero sponsor cost, the provider-fronted
+ * gas remains a billing liability and must be charged by canonical economics.
  *
- * Non-strict mode preserves the legacy sponsored/native behavior for callers that
- * explicitly opt out of the strict zero-operator-cost requirement.
+ * Native gas can satisfy zero initial capital only after durable provenance proves
+ * that the reserve was generated/retained by the system itself. An unexplained
+ * wallet balance never becomes bootstrap authority merely because it exists.
  */
 export function chooseGasFundingMode(
   chain: DynamicChainConfig,
@@ -57,46 +68,47 @@ export function chooseGasFundingMode(
   const defaultFloor = ethers.utils.parseEther(process.env.DYNAMIC_GAS_RESERVE_NATIVE || '0.002').toBigInt();
   const specific = process.env[`DYNAMIC_GAS_RESERVE_${chain.nativeAsset}`];
   const reserveFloor = specific ? ethers.utils.parseUnits(specific, 18).toBigInt() : defaultFloor;
-  const strict = strictZeroOperatorCostRequired();
+  const requireZeroOperatorCost = strictZeroOperatorCostRequired();
+  const sponsorCostProvenZero = proof.sponsorOperatorMonetaryCostProvenZero === true;
 
   if (chain.sponsoredBootstrap && sponsorReady) {
-    const strictEligible = proof.sponsorOperatorMonetaryCostProvenZero === true;
-    if (!strict || strictEligible) {
+    if (!requireZeroOperatorCost || sponsorCostProvenZero) {
       return {
         chain: chain.id,
         mode: 'sponsored',
         nativeBalance,
         reserveFloor,
         paymentSource: 'provider_sponsored',
-        strictZeroInitialCapitalEligible: strictEligible,
-        operatorMonetaryInputRequired: !strictEligible,
-        reason: strictEligible
-          ? 'Sponsored execution is proven to impose zero operator monetary gas input; provider cost remains in canonical economics/provenance'
-          : 'Non-strict mode permits configured sponsorship even though zero operator monetary cost is not independently proven',
+        strictZeroInitialCapitalEligible: true,
+        operatorMonetaryInputRequired: false,
+        providerBillingLiability: !sponsorCostProvenZero,
+        sponsorOperatorMonetaryCostProvenZero: sponsorCostProvenZero,
+        reason: sponsorCostProvenZero
+          ? 'Provider sponsorship proves zero upfront wallet capital and independently proves zero operator monetary gas cost'
+          : 'Provider sponsorship proves zero upfront wallet/native capital; provider-fronted gas remains a billing liability that canonical realized economics must charge',
       };
     }
   }
 
-  if (nativeBalance >= reserveFloor) {
-    const strictEligible = proof.nativeSystemOwnedProven === true;
-    if (!strict || strictEligible) {
-      return {
-        chain: chain.id,
-        mode: 'native',
-        nativeBalance,
-        reserveFloor,
-        paymentSource: strictEligible ? 'system_owned_native' : 'unproven_native_balance',
-        strictZeroInitialCapitalEligible: strictEligible,
-        operatorMonetaryInputRequired: !strictEligible,
-        reason: strictEligible
-          ? 'Native reserve is sufficient and durable provenance proves it is system-owned; actual receipt gas is terminally converted and subtracted from realized economics'
-          : 'Non-strict mode permits the available native balance without treating it as proven system-owned bootstrap capital',
-      };
-    }
+  if (nativeBalance >= reserveFloor && proof.nativeSystemOwnedProven === true) {
+    return {
+      chain: chain.id,
+      mode: 'native',
+      nativeBalance,
+      reserveFloor,
+      paymentSource: 'system_owned_native',
+      strictZeroInitialCapitalEligible: true,
+      operatorMonetaryInputRequired: false,
+      providerBillingLiability: false,
+      sponsorOperatorMonetaryCostProvenZero: false,
+      reason: 'Native reserve is sufficient and durable provenance proves it is system-owned; actual receipt gas is terminally converted and subtracted from realized economics',
+    };
   }
 
   const sponsorReason = chain.sponsoredBootstrap && sponsorReady
-    ? 'configured hosted sponsorship does not prove zero operator monetary cost'
+    ? requireZeroOperatorCost
+      ? 'sponsorship removes upfront native funding but explicit zero-operator-cost mode requires independent proof that the provider bill is zero'
+      : 'configured sponsorship is not execution-ready at this boundary'
     : 'no configured sponsored lane is ready';
   const nativeReason = nativeBalance >= reserveFloor
     ? 'native balance exists but SELF_FUNDED system ownership is not proven at this boundary'
@@ -110,9 +122,9 @@ export function chooseGasFundingMode(
     paymentSource: nativeBalance >= reserveFloor ? 'unproven_native_balance' : 'unavailable',
     strictZeroInitialCapitalEligible: false,
     operatorMonetaryInputRequired: true,
-    reason: strict
-      ? `Strict zero-initial-capital funding rejected: ${sponsorReason}; ${nativeReason}`
-      : 'Neither configured sponsorship nor the required native gas reserve is available',
+    providerBillingLiability: false,
+    sponsorOperatorMonetaryCostProvenZero: false,
+    reason: `Zero-initial-capital funding rejected: ${sponsorReason}; ${nativeReason}`,
   };
 }
 
