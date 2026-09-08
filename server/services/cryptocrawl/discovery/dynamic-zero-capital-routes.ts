@@ -11,6 +11,7 @@ import {
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
 import type { SupportedExecutionChain, UniswapV3FeeTier } from '../execution/adapters/onchain-payload-builder.js';
+import { getLatestProvenZeroCapitalGasFundingDecisions } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import { discoverGraphlessDexTokens, type GraphlessDexTokenCandidate } from './graphless-dex-scout.js';
 import {
   recordZeroCapitalRouteQuoteCycle,
@@ -88,6 +89,17 @@ function bounded(value: unknown, fallback: number, min: number, max: number): nu
 
 function fundingModeFromContext(funding: DynamicGasFundingContext): GasFundingMode | 'unknown' {
   return typeof funding === 'string' ? funding : funding.mode;
+}
+
+function resolveFundingContext(
+  chain: SupportedExecutionChain,
+  funding: DynamicGasFundingContext,
+): DynamicGasFundingContext {
+  if (typeof funding === 'object') return funding;
+  if (funding === 'unknown') return funding;
+  const proven = getLatestProvenZeroCapitalGasFundingDecisions()
+    .find(decision => decision.chain === chain && decision.mode === funding);
+  return proven ?? funding;
 }
 
 function sponsorCostProvenZero(funding: DynamicGasFundingContext): boolean {
@@ -446,7 +458,8 @@ export async function discoverDynamicZeroCapitalQuotes(
   provider: providers.Provider,
   funding: DynamicGasFundingContext = 'unknown',
 ): Promise<QuotedZeroCapitalRoute[]> {
-  const fundingMode = fundingModeFromContext(funding);
+  const fundingContext = resolveFundingContext(chain, funding);
+  const fundingMode = fundingModeFromContext(fundingContext);
   const stableTemplates = buildDynamicZeroCapitalRouteTemplates(chain);
   let graphless = { routes: [] as ConfiguredZeroCapitalRoute[], tokens: 0, sources: [] as string[], triangularTemplates: 0 };
   try {
@@ -490,7 +503,7 @@ export async function discoverDynamicZeroCapitalQuotes(
   }
 
   try {
-    const enriched = await enrichMeasuredGasCost(chain, provider, templates, funding);
+    const enriched = await enrichMeasuredGasCost(chain, provider, templates, fundingContext);
     const preselection = selectZeroCapitalRoutesForQuote(enriched.routes, enriched.gasCostUsd);
     const selected = preselection.selectedRoutes;
     const primaryQuotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
@@ -561,8 +574,8 @@ export async function discoverDynamicZeroCapitalQuotes(
       gasCostUsd: enriched.gasCostUsd,
       gasCostAuthority: enriched.gasCostAuthority,
       sponsoredGasDiscountAppliedOnlyFromVerifiedFundingDecision: true,
-      sponsorOperatorMonetaryCostProvenZero: sponsorCostProvenZero(funding),
-      providerBillingLiability: sponsoredBillingLiability(funding),
+      sponsorOperatorMonetaryCostProvenZero: sponsorCostProvenZero(fundingContext),
+      providerBillingLiability: sponsoredBillingLiability(fundingContext),
       preScoreAuthority: preselection.authority,
       formationAuthority: 'scan_priority_advisory_only',
       deterministicProfitAuthority: preselection.deterministicProfitAuthority,
