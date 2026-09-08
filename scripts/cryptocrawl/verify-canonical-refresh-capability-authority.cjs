@@ -7,6 +7,7 @@ const graph = read('server/services/cryptocrawl/discovery/opportunity-graph.ts')
 const observations = read('server/services/cryptocrawl/discovery/cex-observation-candidates.ts');
 const fast = read('server/services/cryptocrawl/integration/cryptara-two-speed-revalidation-wiring.ts');
 const discovery = read('server/services/cryptocrawl/discovery/multi-topology-discovery-controller.ts');
+const graphlessDex = read('server/services/cryptocrawl/discovery/graphless-dex-scout.ts');
 const prediction = read('server/services/cryptocrawl/integration/prediction-market-discovery-wiring.ts');
 const kalshi = read('server/services/cryptocrawl/integration/kalshi-system-wiring.ts');
 const kalshiAuth = read('server/services/cryptocrawl/intelligence/kalshi-authenticated-authority.ts');
@@ -46,6 +47,11 @@ for (const producer of [
 }
 requireText(discovery, 'cexDiscoveryBlockedByRpcBootstrap: false', 'CEX independence from RPC bootstrap');
 
+requireText(graphlessDex, 'function meshSafeHeadLagBlocks(chain: SupportedExecutionChain)', 'single mesh-safe DEX head policy');
+requireText(graphlessDex, 'const current = Math.max(0, observedHead - headLagBlocks);', 'DEX log queries must avoid an unfinalized cross-provider tip');
+requireText(graphlessDex, 'Math.min(input.currentBlock, priorCursor ?? bootstrapStart)', 'factory cursors cannot point beyond the canonical mesh-safe head');
+requireText(graphlessDex, 'meshSafeHeadLagBlocks: meshSafeHeadLagBlocks(chain)', 'mesh-safe DEX head telemetry');
+
 requireText(prediction, "refreshCadenceAuthority: 'prediction_market_discovery_wiring'", 'single prediction cadence authority');
 requireText(prediction, 'refreshKalshiSystemEvidenceNow()', 'Kalshi refresh joined to prediction cadence');
 requireText(prediction, 'duplicateKalshiTimer: false', 'no duplicate Kalshi recurring timer');
@@ -66,5 +72,6 @@ console.log('Canonical refresh/capability authority verification PASSED');
 console.log(' - CEX global and exact-symbol refresh share one serialized execution authority');
 console.log(' - public-only CEX observations cannot create impossible evidence-reacquisition loops');
 console.log(' - on-chain discovery waits for the canonical RPC mesh without blocking CEX discovery');
+console.log(' - graphless DEX factory scans use a mesh-safe lagged head rather than an unfinalized provider tip');
 console.log(' - prediction/Kalshi refresh uses one recurring cadence authority');
 console.log(' - Kalshi margin requests cannot silently borrow event credentials');
