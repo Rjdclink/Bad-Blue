@@ -33,11 +33,6 @@ const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical
 const retainedProfit = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
 const inventoryReadiness = read('server/services/cryptocrawl/integration/cex-inventory-readiness-wiring.ts');
 
-// Across cross-swaps may legitimately require approval transactions. Those
-// approvals may not become a discovery dead end: their gas must be measured,
-// included exactly once, and revalidated from terminal receipts before principal
-// broadcast. Guaranteed min output and separately live input/output USD prices
-// remain the canonical closed-value profit authority.
 requirePattern(crossChain, /getAcrossBridgeReadiness/, 'cross-chain discovery exposes production configuration truth');
 requirePattern(crossChain, /evaluateAcrossClosedUsdProfit/, 'cross-chain discovery delegates canonical closed-USD profit calculation');
 requirePattern(crossChain, /const deterministicPositive = economics\?\.executablePositive === true/, 'cross-chain eligibility requires positive canonical route economics');
@@ -78,25 +73,24 @@ requirePattern(acrossExecutor, /destinationReceiptVerified/, 'successful Across 
 requirePattern(acrossExecutor, /refundReceiptVerified/, 'Across refund requires receipt verification');
 requirePattern(acrossExecutor, /ACROSS_TERMINAL_SETTLEMENT_TIMEOUT/, 'unknown terminal settlement fails closed');
 
-// Funding is projected carry before settlement, but OKX execution may be promoted
-// only after authenticated fees, exact contract sizing, measured entry/exit depth,
-// exit reserve/slippage, account mode/capacity and a bounded entry window are all
-// proven. Terminal fills + funding bills remain realized-profit authority.
 requirePattern(funding, /getOkxSwapCapability\s*\(/, 'funding monitor hydrates authenticated OKX SWAP capability');
 requirePattern(funding, /resolveCexFeeEvidence\(\s*'okx'/, 'funding monitor consumes canonical authenticated spot fees');
 requirePattern(funding, /measureOkxFundingExecutionEvidence\s*\(/, 'funding monitor measures exact OKX entry/exit execution evidence');
 requirePattern(funding, /ensureOkxFundingLifecycleAdapterRegistered\(\)/, 'funding monitor registers the production OKX lifecycle adapter');
-requirePattern(funding, /exitBasisReserveBps: executionEvidence\?\.exitBasisReserveBps \?\? null/, 'measured exit-basis reserve feeds projected all-in carry economics');
-requirePattern(funding, /expectedSlippageBps: executionEvidence\?\.expectedSlippageBps \?\? null/, 'measured entry/exit slippage feeds projected all-in carry economics');
-requirePattern(funding, /const executionCapable = observation\.venue === 'okx'[\s\S]{0,420}projectedNet !== null[\s\S]{0,120}projectedNet > 0[\s\S]{0,160}window\.eligible[\s\S]{0,160}executionEvidence !== null[\s\S]{0,160}executionEvidence\.expiresAt > Date\.now\(\)[\s\S]{0,160}swapCapability\.instrumentVisible[\s\S]{0,160}swapCapability\.accountModeVisible/, 'funding execution promotion requires positive projected carry and complete fresh OKX execution/account evidence');
+requirePattern(funding, /exitBasisReserveBps: kalshiEvidence\?\.exitBasisReserveBps \?\? executionEvidence\?\.exitBasisReserveBps \?\? null/, 'measured exit-basis reserve feeds projected all-in carry economics across supported venues');
+requirePattern(funding, /expectedSlippageBps: kalshiEvidence\?\.expectedSlippageBps \?\? executionEvidence\?\.expectedSlippageBps \?\? null/, 'measured entry/exit slippage feeds projected all-in carry economics across supported venues');
+requirePattern(funding, /const okxExecutionCapable = observation\.venue === 'okx'[\s\S]{0,420}projectedNet !== null[\s\S]{0,120}projectedNet > 0[\s\S]{0,160}window\.eligible[\s\S]{0,160}executionEvidence !== null[\s\S]{0,160}executionEvidence\.expiresAt > Date\.now\(\)[\s\S]{0,160}swapCapability\.instrumentVisible[\s\S]{0,160}swapCapability\.accountModeVisible/, 'OKX funding promotion requires positive projected carry and complete fresh execution/account evidence');
+requirePattern(funding, /const executionCapable = okxExecutionCapable \|\| kalshiExecutionCapable/, 'funding eligibility is the union of venue-specific hard execution capability');
 requirePattern(funding, /status: executionCapable \? 'eligible' : 'enriched'/, 'only fully execution-capable funding observations become eligible');
-requirePattern(funding, /depth: executionEvidence[\s\S]{0,180}status: 'measured'/, 'eligible OKX funding carries measured spot and SWAP depth');
+requirePattern(funding, /const exactDepthMeasured = executionEvidence !== null \|\| kalshiEvidence !== null/, 'funding depth is measured from venue-specific exact execution evidence');
+requirePattern(funding, /OKX spot and SWAP entry\/exit VWAP depth measured at exact contract\/base quantities/, 'eligible OKX funding carries measured spot and SWAP depth');
 requirePattern(funding, /deterministicNetProfitUsd: null/, 'projected funding carry is not relabeled as canonical deterministic profit');
 requirePattern(funding, /executableCapability: executionCapable/, 'funding candidate execution capability is tied to measured execution evidence');
-requirePattern(funding, /funding_profit_authority:projected_expected_value_until_terminal_bill/, 'pre-settlement funding profit remains explicitly projected');
-requirePattern(funding, /execution_promoted_from_bounded_projected_carry_and_complete_execution_evidence/, 'funding promotion provenance requires bounded projected carry plus complete evidence');
+requirePattern(funding, /funding_profit_authority:projected_expected_value_until_terminal_bill/, 'OKX pre-settlement funding profit remains explicitly projected');
+requirePattern(funding, /funding_profit_authority:projected_expected_value_until_terminal_fills_and_funding_history/, 'Kalshi pre-settlement funding profit remains explicitly projected');
+requirePattern(funding, /execution_promoted_from_projected_carry_and_minimum_sufficient_execution_evidence/, 'funding promotion provenance requires positive projected carry plus minimum sufficient execution evidence');
 requirePattern(funding, /durable_funding_lifecycle:migration_owned_nonblocking/, 'discovery records implemented durable lifecycle truth');
-forbidPattern(funding, /persistent_delta_neutral_position_lifecycle|funding_venue_lifecycle_adapter|liquidation_margin_and_collateral_monitoring|terminal_funding_payment_and_close_settlement/, 'retired missing-lifecycle evidence cannot replace implemented OKX lifecycle truth');
+forbidPattern(funding, /persistent_delta_neutral_position_lifecycle|funding_venue_lifecycle_adapter|liquidation_margin_and_collateral_monitoring|terminal_funding_payment_and_close_settlement/, 'retired missing-lifecycle evidence cannot replace implemented lifecycle truth');
 requirePattern(fundingPolicy, /input\.fundingRateLocked\s*&&\s*supportedDirection/, 'deterministic funding P&L still requires locked rate and supported direction');
 requirePattern(fundingPolicy, /projected funding payment into deterministic execution evidence/, 'policy preserves projected-versus-deterministic separation');
 
@@ -146,4 +140,4 @@ requirePattern(canonicalRuntime, /adaptiveProfitCapScope:\s*'retired_no_daily_re
 requirePattern(canonicalRuntime, /retainedProfitRole:\s*'available_for_redeployment_subject_to_profit_ladder_stage_inventory_liquidity_and_risk'/, 'runtime telemetry reports retained-profit redeployment correctly');
 forbidPattern(canonicalRuntime, /persisted_operating_day_terminal_realized_cap_plus_dynamic_notional_and_cycle_budget|new_exposure_only_settlement_hedge_flattening_exempt/, 'stale daily profit-cap authority telemetry');
 
-console.log('[route-truth] guaranteed-minimum closed-USD Across economics, measured approval-gas inclusion and post-approval revalidation, terminal Across settlement, measured OKX funding entry/exit economics, bounded projected-carry promotion, durable delta-neutral lifecycle, authenticated terminal funding accounting, fixed 90/10 treasury, retained-capital reuse, and retired profit-cap invariants passed');
+console.log('[route-truth] guaranteed-minimum closed-USD Across economics, measured approval-gas inclusion and post-approval revalidation, venue-specific measured funding execution evidence, terminal settlement truth, fixed 90/10 treasury, retained-capital reuse, and retired profit-cap invariants passed');
