@@ -384,10 +384,12 @@ function adaptiveQuoteBudget(
 ): { base: number; budget: number; delta: number } {
   const base = boundedInteger(process.env.ZERO_CAPITAL_DYNAMIC_QUOTE_BUDGET, 16, 1, 256);
   const cap = Math.max(base, boundedInteger(process.env.ZERO_CAPITAL_ADAPTIVE_QUOTE_BUDGET_MAX, 64, base, 256));
+  const baseForRoutes = Math.min(routes.length, base);
   if (process.env.ZERO_CAPITAL_ADAPTIVE_QUOTE_BUDGET === 'false' || routes.length <= base) {
-    const raw = Math.min(routes.length, base);
-    const budget = Math.max(1, Math.min(routes.length, Math.round(raw * plan.quoteBudgetMultiplier)));
-    return { base: Math.min(routes.length, base), budget, delta: budget - Math.min(routes.length, base) };
+    const raw = baseForRoutes;
+    const scaled = Math.round(raw * plan.quoteBudgetMultiplier);
+    const budget = Math.max(1, Math.min(routes.length, Math.max(raw, scaled)));
+    return { base: baseForRoutes, budget, delta: budget - baseForRoutes };
   }
 
   const scaleBps = boundedNumber(process.env.ZERO_CAPITAL_NEAR_BREAK_EVEN_SCALE_BPS, 50, 1, 500);
@@ -405,12 +407,21 @@ function adaptiveQuoteBudget(
     if (rankingNet >= -scaleBps) promising += 1;
   }
 
-  const signal = measured > 0 ? (promising + positive * 2) / measured : 0;
+  const measuredCoverage = routes.length > 0 ? measured / routes.length : 0;
+  const measuredSignal = measured > 0 ? (promising + positive * 2) / measured : 0;
   const structuralPressure = Math.min(1, routes.length / Math.max(base * 8, 1));
-  const expansion = Math.floor((cap - base) * Math.min(1, signal) * (0.5 + 0.5 * structuralPressure));
+  // A cold or severely under-sampled route universe must expand measurement even
+  // before it has enough observations to generate a profitability signal. BPS
+  // scheduling may increase this budget, but cannot contract below the bounded
+  // bootstrap exploration floor while measured coverage is below five percent.
+  const bootstrapSignal = measuredCoverage < 0.05 ? (measured === 0 ? 0.5 : 0.35) : 0;
+  const expansionSignal = Math.min(1, Math.max(measuredSignal, bootstrapSignal));
+  const expansion = Math.floor((cap - base) * expansionSignal * (0.5 + 0.5 * structuralPressure));
   const rawBudget = Math.min(routes.length, cap, base + Math.max(0, expansion));
-  const budget = Math.max(1, Math.min(routes.length, cap, Math.round(rawBudget * plan.quoteBudgetMultiplier)));
-  return { base: Math.min(routes.length, base), budget, delta: budget - Math.min(routes.length, base) };
+  const scaledBudget = Math.round(rawBudget * plan.quoteBudgetMultiplier);
+  const bootstrapFloor = measuredCoverage < 0.05 && structuralPressure >= 0.5 ? baseForRoutes : 1;
+  const budget = Math.max(bootstrapFloor, Math.min(routes.length, cap, scaledBudget));
+  return { base: baseForRoutes, budget, delta: budget - baseForRoutes };
 }
 
 export function selectZeroCapitalRoutesForQuote(
@@ -548,10 +559,11 @@ export function recordZeroCapitalRouteQuoteCycle(
       const notional = Number(quote.amountIn) / Math.pow(10, quote.inputTokenDecimals);
       if (Number.isFinite(notional) && notional > 0) observationNotionalUsd = notional;
       current.recentMeasuredNotionalUsd = observationNotionalUsd;
-    } else {
-      current.recentNetProfitBps = null;
-      current.recentMeasuredNotionalUsd = null;
     }
+    // A transient quote miss is an attempt outcome, not evidence that the last
+    // measured economics never existed. Preserve the prior measurement until its
+    // normal freshness TTL expires so one failed reacquisition cannot poison the
+    // next recovery/exploitation selection.
 
     if (deterministicPositive && quote) {
       current.positiveQuotes += 1;
