@@ -49,6 +49,10 @@ for (const forbidden of [
 }
 assert.match(ladder, /stageTwoSoftHistoricalGateAuthority: false/);
 assert.match(ladder, /terminal_positive_plus_hard_scale_facts/);
+assert.doesNotMatch(ladder, /blockers\.push\('Capital is not verified from live balance evidence'\)/, 'Fixed owned-capital verification must not be a global stage-advancement veto');
+assert.doesNotMatch(ladder, /blockers\.push\(`Verified capital \$\$\{this\.currentCapitalUSD\}/, 'Fixed next-tier owned-capital thresholds must not block stage advancement');
+assert.match(ladder, /capitalAdvancementGateAuthority: false/);
+assert.match(ladder, /topology-specific resource admission remains authoritative at execution/);
 
 // Deterministic positive CEX economics plus hard execution facts own live
 // admission. Monte Carlo may run concurrently for future calibration/ranking but
@@ -68,4 +72,4 @@ assert.match(cex, /REJECT_NEGATIVE_NET_EDGE/);
 assert.match(cex, /REJECT_STALE_QUOTE/);
 assert.match(cex, /REJECT_PROFIT_LADDER_NOTIONAL/);
 
-console.log('[stage-soft-gate-retirement] PASS: Stage 2 has no trade-count/days-at-target/win-rate/Sharpe/Monte-Carlo/uptime gate, Tier 1 retains terminal-positive plus hard scale facts, and Monte Carlo has no stage, risk-governor, or CEX hot-path execution veto authority');
+console.log('[stage-soft-gate-retirement] PASS: Stage 2 has no trade-count/days-at-target/win-rate/Sharpe/Monte-Carlo/uptime/fixed-capital advancement gate, Tier 1 retains terminal-positive proof, topology-specific resources remain fail-closed at execution, and Monte Carlo has no stage, risk-governor, or CEX hot-path execution veto authority');
