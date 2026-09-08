@@ -27,6 +27,7 @@ require('./verify-kalshi-negative-funding-inverse.cjs');
 require('./verify-kalshi-premerge-completion.cjs');
 require('./verify-builder-sponsored-coldstart-foundation.cjs');
 require('./verify-zero-capital-capability-monotonicity.cjs');
+require('./verify-market-evidence-kalshi-capability.cjs');
 require('./verify-zero-capital-route-retention-and-standby-truth.cjs');
 require('./verify-zero-capital-single-route-pipeline.cjs');
 require('./verify-okx-order-expiration.cjs');

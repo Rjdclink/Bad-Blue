@@ -53,8 +53,9 @@ export interface KalshiIncentiveProgramEvidence {
 
 export interface KalshiSeriesFeeChangeEvidence {
   id: string;
+  eventTicker: string;
   seriesTicker: string;
-  feeType: 'quadratic' | 'quadratic_with_maker_fees' | 'flat' | string;
+  feeType: 'quadratic' | 'quadratic_with_maker_fees' | 'flat' | string | null;
   feeMultiplier: number | null;
   scheduledAt: number | null;
   observedAt: number;
@@ -170,12 +171,19 @@ function spreadBps(yesBid: number | null, yesAsk: number | null): number | null 
 
 async function publicJson<T>(path: string): Promise<T> {
   if (!path.startsWith('/trade-api/v2/')) throw new Error('Kalshi public path rejected');
-  const response = await fetch(`${getKalshiApiOrigin()}${path}`, {
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!response.ok) throw new Error(`Kalshi public request failed HTTP ${response.status} for ${path.split('?')[0]}`);
-  return response.json() as Promise<T>;
+  const maxAttempts = 4;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const response = await fetch(`${getKalshiApiOrigin()}${path}`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (response.ok) return response.json() as Promise<T>;
+    if (response.status !== 429 || attempt === maxAttempts - 1) {
+      throw new Error(`Kalshi public request failed HTTP ${response.status} for ${path.split('?')[0]}`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 125 * 2 ** attempt));
+  }
+  throw new Error(`Kalshi public request exhausted retries for ${path.split('?')[0]}`);
 }
 
 async function fetchOpenMarkets(): Promise<{ rows: any[]; truncated: boolean }> {
@@ -248,16 +256,18 @@ async function fetchIncentives(): Promise<KalshiIncentiveProgramEvidence[]> {
 
 async function fetchFeeChanges(): Promise<KalshiSeriesFeeChangeEvidence[]> {
   const observedAt = Date.now();
-  const payload = await publicJson<{ series_fee_change_arr?: any[] }>('/trade-api/v2/series/fee_changes?show_historical=false');
-  return (Array.isArray(payload?.series_fee_change_arr) ? payload.series_fee_change_arr : []).flatMap(row => {
+  const payload = await publicJson<{ event_fee_changes?: any[] }>('/trade-api/v2/events/fee_changes?limit=1000');
+  return (Array.isArray(payload?.event_fee_changes) ? payload.event_fee_changes : []).flatMap(row => {
     const id = String(row?.id || '').trim();
+    const eventTicker = String(row?.event_ticker || '').trim().toUpperCase();
     const seriesTicker = String(row?.series_ticker || '').trim().toUpperCase();
-    if (!id || !seriesTicker) return [];
+    if (!id || !eventTicker || !seriesTicker) return [];
     return [{
       id,
+      eventTicker,
       seriesTicker,
-      feeType: String(row?.fee_type || ''),
-      feeMultiplier: finite(row?.fee_multiplier),
+      feeType: row?.fee_type_override == null ? null : String(row.fee_type_override),
+      feeMultiplier: finite(row?.fee_multiplier_override),
       scheduledAt: timestamp(row?.scheduled_ts),
       observedAt,
       pretradeFeeBpsDerived: false as const,
