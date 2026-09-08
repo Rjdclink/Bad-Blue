@@ -188,7 +188,6 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
 
   const inputTokenDecimals = Number(candidate.inputTokenDecimals);
   if (!Number.isInteger(inputTokenDecimals) || inputTokenDecimals < 0 || inputTokenDecimals > 36) throw new Error(`Route ${index} inputTokenDecimals must be an integer from 0 to 36`);
-  if (inputTokenDecimals !== 6) throw new Error(`Route ${index} must use six-decimal USDC or USDT accounting`);
 
   const rawLegs = candidate.legs;
   if (!Array.isArray(rawLegs) || rawLegs.length < 2) throw new Error(`Route ${index} must contain at least two legs`);
@@ -474,12 +473,30 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
   };
 }
 
-function baseUnitsFromUsd(usd: number): string {
-  return BigInt(Math.max(1, Math.round(usd * 1_000_000))).toString();
+function pow10(decimals: number): bigint {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`Unsupported input token decimals: ${decimals}`);
+  }
+  return 10n ** BigInt(decimals);
 }
 
-function usdFromBaseUnits(value: bigint): number {
-  const usd = Number(value) / 1_000_000;
+function baseUnitsFromUsd(usd: number, decimals: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) throw new Error(`USD notional must be a finite positive number: ${usd}`);
+  const precision = Math.min(decimals, 12);
+  const fixed = usd.toFixed(precision);
+  const [whole, fraction = ''] = fixed.split('.');
+  const scale = pow10(decimals);
+  const wholeUnits = BigInt(whole) * scale;
+  const fractionUnits = decimals === 0
+    ? 0n
+    : BigInt(fraction.slice(0, decimals).padEnd(decimals, '0') || '0');
+  const total = wholeUnits + fractionUnits;
+  return (total > 0n ? total : 1n).toString();
+}
+
+function usdFromBaseUnits(value: bigint, decimals: number): number {
+  const scale = Number(pow10(decimals));
+  const usd = Number(value) / scale;
   return Number.isFinite(usd) ? usd : 0;
 }
 
@@ -493,7 +510,7 @@ function quoteLiquidityConfidence(quote: QuotedZeroCapitalRoute): number {
 }
 
 function routeNotionalCandidates(route: ConfiguredZeroCapitalRoute): number[] {
-  const seedUsd = Math.max(0.000001, Number(route.amountIn) / 1_000_000);
+  const seedUsd = Math.max(0.000001, usdFromBaseUnits(BigInt(route.amountIn), route.inputTokenDecimals));
   const stage = stageManager.getStageConfig();
   const stageCanExecute = stageManager.canExecuteTrades();
   const discoveryCeiling = Math.max(seedUsd, Math.min(10_000, Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000)));
@@ -513,12 +530,13 @@ function executionSizeApproved(route: ConfiguredZeroCapitalRoute, quote: QuotedZ
   if (quote.netProfit <= 0n) return false;
   const expectedCostUsd = usdFromBaseUnits(
     quote.estimatedGasCostInInputToken + quote.flashLoanFeeInInputToken + quote.relayFeeInInputToken,
+    route.inputTokenDecimals,
   );
   const expectedSlippageBps = quoteExpectedSlippageBps(route);
   const decision = calculateProgressivePositionSize({
-    requestedNotionalUsd: usdFromBaseUnits(quote.amountIn),
+    requestedNotionalUsd: usdFromBaseUnits(quote.amountIn, route.inputTokenDecimals),
     availableCapitalUsd: 0,
-    expectedNetProfitUsd: usdFromBaseUnits(quote.netProfit),
+    expectedNetProfitUsd: usdFromBaseUnits(quote.netProfit, route.inputTokenDecimals),
     expectedCostUsd,
     expectedSlippageBps,
     liquidityScore: quoteLiquidityConfidence(quote),
@@ -535,7 +553,7 @@ async function quoteBestRouteSize(
 ): Promise<QuotedZeroCapitalRoute | null> {
   const sizes = routeNotionalCandidates(route);
   const settled = await Promise.allSettled(sizes.map(notionalUsd =>
-    quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(notionalUsd) }, provider),
+    quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(notionalUsd, route.inputTokenDecimals) }, provider),
   ));
   const observed = settled
     .filter((result): result is PromiseFulfilledResult<QuotedZeroCapitalRoute | null> => result.status === 'fulfilled')
