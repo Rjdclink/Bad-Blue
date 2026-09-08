@@ -124,35 +124,48 @@ async function runBounded<T, R>(items: readonly T[], concurrency: number, worker
 
 class MeasuredOpportunityGraph {
   private timer: NodeJS.Timeout | null = null;
+  /** Sole market-refresh execution authority. Continuous and targeted cycles never overlap. */
   private scanInFlight: Promise<MeasuredOpportunityGraphCycle> | null = null;
-  private targetedScans = new Map<string, Promise<MeasuredOpportunityGraphCycle>>();
+  /** Coalesced exact-symbol requests waiting behind the sole scan authority. */
+  private targetedDrainPromise: Promise<MeasuredOpportunityGraphCycle> | null = null;
+  private readonly pendingTargetedSymbols = new Set<string>();
+  /** Symbols currently being refreshed are not allowed to enqueue themselves recursively. */
+  private readonly activeTargetedSymbols = new Set<string>();
+  private targetedRequestsCoalesced = 0;
   private latestCycle: MeasuredOpportunityGraphCycle | null = null;
   private running = false;
 
   async scanOnce(): Promise<MeasuredOpportunityGraphCycle> {
+    // Targeted recovery owns the same serialized refresh lane. A global scan never
+    // races a targeted scan and therefore cannot produce competing candidate snapshots.
+    if (this.targetedDrainPromise) return this.targetedDrainPromise;
     if (this.scanInFlight) return this.scanInFlight;
-    const promise = this.runCycle().finally(() => {
-      this.scanInFlight = null;
-    });
-    this.scanInFlight = promise;
-    return promise;
+    return this.runExclusiveCycle();
   }
 
   async revalidateSymbols(symbolsInput: readonly string[]): Promise<MeasuredOpportunityGraphCycle> {
     const symbols = [...new Set(symbolsInput.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))].slice(0, 16);
     if (symbols.length === 0) return this.scanOnce();
-    const signature = symbols.sort().join(',');
-    const existing = this.targetedScans.get(signature);
-    if (existing) return existing;
 
-    const promise = this.runCycle({
-      symbols,
-      trigger: 'positive_observation_revalidation',
-    }).finally(() => {
-      this.targetedScans.delete(signature);
-    });
-    this.targetedScans.set(signature, promise);
-    return promise;
+    for (const symbol of symbols) {
+      // Candidate-update subscribers may all request the same refresh. More
+      // importantly, a candidate emitted by the active targeted cycle must never
+      // recursively schedule that same symbol again. The active cycle already is
+      // the freshest canonical measurement for that request.
+      if (this.activeTargetedSymbols.has(symbol) || this.pendingTargetedSymbols.has(symbol)) {
+        this.targetedRequestsCoalesced += 1;
+        continue;
+      }
+      this.pendingTargetedSymbols.add(symbol);
+    }
+
+    if (!this.targetedDrainPromise) {
+      const promise = this.drainTargetedQueue().finally(() => {
+        if (this.targetedDrainPromise === promise) this.targetedDrainPromise = null;
+      });
+      this.targetedDrainPromise = promise;
+    }
+    return this.targetedDrainPromise;
   }
 
   start(): void {
@@ -178,6 +191,8 @@ class MeasuredOpportunityGraph {
       scanAttention: 'formation_probability_plus_value_of_information',
       scanAttentionAuthority: 'advisory_only',
       candidateAuthority: 'measured_candidate_registry_positive_all_in_net',
+      refreshAuthority: 'single_serialized_opportunity_graph_pipeline',
+      targetedRequestPolicy: 'coalesced_exact_symbol_non_recursive',
       syntheticEvidenceAllowed: false,
       executionPausedDuringLowActivity: false,
     });
@@ -187,6 +202,48 @@ class MeasuredOpportunityGraph {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.pendingTargetedSymbols.clear();
+    this.activeTargetedSymbols.clear();
+  }
+
+  private async runExclusiveCycle(options?: {
+    symbols?: readonly string[];
+    trigger?: MeasuredOpportunityGraphCycle['cycleTrigger'];
+  }): Promise<MeasuredOpportunityGraphCycle> {
+    // This method is the only path allowed to execute runCycle. If an earlier
+    // cycle is still draining, wait for it rather than creating a second authority.
+    while (this.scanInFlight) {
+      try { await this.scanInFlight; } catch { /* the next canonical refresh may still proceed */ }
+    }
+    const promise = this.runCycle(options).finally(() => {
+      if (this.scanInFlight === promise) this.scanInFlight = null;
+    });
+    this.scanInFlight = promise;
+    return promise;
+  }
+
+  private async drainTargetedQueue(): Promise<MeasuredOpportunityGraphCycle> {
+    let latest: MeasuredOpportunityGraphCycle | null = this.latestCycle;
+    while (this.pendingTargetedSymbols.size > 0) {
+      if (this.scanInFlight) {
+        try { await this.scanInFlight; } catch { /* retry through the same canonical lane */ }
+      }
+      const batch = [...this.pendingTargetedSymbols].slice(0, 16);
+      for (const symbol of batch) {
+        this.pendingTargetedSymbols.delete(symbol);
+        this.activeTargetedSymbols.add(symbol);
+      }
+      try {
+        latest = await this.runExclusiveCycle({
+          symbols: batch,
+          trigger: 'positive_observation_revalidation',
+        });
+      } finally {
+        for (const symbol of batch) this.activeTargetedSymbols.delete(symbol);
+      }
+    }
+    if (latest) return latest;
+    return this.runExclusiveCycle();
   }
 
   private scheduleNext(intervalMs?: number): void {
@@ -416,6 +473,11 @@ class MeasuredOpportunityGraph {
       topAttentionScores,
       attentionAuthority: formationSelection.authority,
       economicEvaluationMode: 'single_authoritative_batch',
+      refreshAuthority: 'single_serialized_opportunity_graph_pipeline',
+      targetedQueueDepth: this.pendingTargetedSymbols.size,
+      activeTargetedSymbols: [...this.activeTargetedSymbols],
+      targetedRequestsCoalesced: this.targetedRequestsCoalesced,
+      recursiveTargetedRevalidationAllowed: false,
       publicDiscoveryObservations: cycle.publicDiscoveryObservations,
       publicDiscoveryVenues: cycle.publicDiscoveryVenues,
       publicDiscoveryFailures: cycle.publicDiscoveryFailures,
