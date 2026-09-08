@@ -11,6 +11,7 @@ let flushTimer: NodeJS.Timeout | null = null;
 let flushInFlight = false;
 const pendingSymbols = new Set<string>();
 const lastTriggeredAt = new Map<string, number>();
+const INTEGRATED_EXECUTABLE_CEX_VENUES = new Set(['coinbase', 'kraken', 'okx']);
 
 function boundedInt(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
@@ -39,13 +40,23 @@ function candidateSymbol(candidate: MeasuredCandidate): string | null {
 }
 
 function hasCrossVenueExecutableObservation(candidate: MeasuredCandidate): boolean {
-  const venues = new Set(
+  const executableQuoteVenues = new Set(
     candidate.rawQuotes
-      .filter(quote => quote.executable !== false && quote.venue)
+      .filter(quote => quote.executable === true && quote.venue)
       .map(quote => String(quote.venue).trim().toLowerCase())
-      .filter(Boolean),
+      .filter(venue => INTEGRATED_EXECUTABLE_CEX_VENUES.has(venue)),
   );
-  return venues.size >= 2 || candidate.venues.length >= 2;
+  if (executableQuoteVenues.size >= 2) return true;
+
+  // A public BBO may request one canonical hydration pass only when at least two
+  // of its venues are already integrated execution venues. Public-only venue
+  // pairs (Huobi/Gate/etc.) remain market intelligence and cannot create an
+  // impossible private-fee/depth/settlement reacquisition loop.
+  if (!candidate.provenance.includes('execution_hydration_possible:two_or_more_integrated_venues')) return false;
+  const integratedObservedVenues = new Set(candidate.venues
+    .map(venue => String(venue).trim().toLowerCase())
+    .filter(venue => INTEGRATED_EXECUTABLE_CEX_VENUES.has(venue)));
+  return integratedObservedVenues.size >= 2;
 }
 
 function shouldFastRevalidate(candidate: MeasuredCandidate): boolean {
@@ -65,8 +76,8 @@ function shouldFastRevalidate(candidate: MeasuredCandidate): boolean {
   const deterministicNetProfitUsd = finite(candidate.economics.deterministicNetProfitUsd);
   if (deterministicNetProfitUsd !== null && deterministicNetProfitUsd > 0) return true;
 
-  // A gross-positive public cross-venue observation is enough to request a fresh
-  // canonical fee/depth/economics evaluation. It is never enough to execute.
+  // A gross-positive integrated cross-venue observation is enough to request a
+  // fresh canonical fee/depth/economics evaluation. It is never enough to execute.
   const grossProfitUsd = finite(candidate.economics.grossProfitUsd);
   return grossProfitUsd !== null && grossProfitUsd > 0;
 }
@@ -95,8 +106,8 @@ async function flushPending(): Promise<void> {
       evaluatedSymbols: cycle.evaluatedSymbols,
       deterministicPositive: cycle.deterministicPositive,
       eligibleCandidates: cycle.eligibleCandidates,
-      slowGlobalController: 'measured_opportunity_graph_continuous_scan',
-      fastController: 'measured_candidate_update_exact_symbol_revalidation',
+      refreshAuthority: 'single_serialized_measured_opportunity_graph',
+      requestProducer: 'candidate_event_integrated_exact_symbol',
       economicAuthority: 'arbitrage_verifier_only',
       executionAuthority: false,
       stageAuthority: false,
@@ -131,10 +142,11 @@ export function ensureCryptaraTwoSpeedRevalidationWiring(): void {
   if (installed) return;
   installed = true;
   unsubscribe = measuredCandidateRegistry.onUpdate(onCandidateUpdate);
-  logger.info('[CryptaraTwoSpeed] Two-speed opportunity controller installed', {
+  logger.info('[CryptaraTwoSpeed] Integrated-edge revalidation requester installed', {
     component: 'CryptaraTwoSpeedRevalidationWiring',
-    slowGlobalController: 'measured_opportunity_graph_continuous_scan',
-    fastController: 'candidate_event_exact_symbol_revalidation',
+    refreshAuthority: 'single_serialized_measured_opportunity_graph',
+    requestProducer: 'candidate_event_integrated_exact_symbol',
+    publicOnlyVenuePairRevalidationAllowed: false,
     batchDelayMs: flushDelayMs(),
     symbolCooldownMs: symbolCooldownMs(),
     maxSymbolsPerFastBatch: 16,
