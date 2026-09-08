@@ -138,6 +138,7 @@ const REQUIRED_TABLES = [
   'public.officer_category_priority',
   'public.subagent_search_queue',
   'public.subagent_search_sessions',
+  'public.ai_usage_metrics',
   'private.cryptocrawler_overflow_runtime_meta',
 ] as const;
 
