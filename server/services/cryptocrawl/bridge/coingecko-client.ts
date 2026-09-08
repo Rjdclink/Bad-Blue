@@ -38,12 +38,49 @@ const DEFAULT_COINGECKO_COOLDOWN_MS = Math.max(
 );
 const CMC_KEYLESS_BASE = 'https://pro-api.coinmarketcap.com/public-api';
 
+export function normalizeCoinMarketCapQuotes(
+  payload: unknown,
+  requested: ReadonlyArray<{ coinId: string; cmcId: number }>,
+): Record<string, number> {
+  const data = payload && typeof payload === 'object'
+    ? (payload as { data?: unknown }).data
+    : null;
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray(data)
+      ? data
+      : data && typeof data === 'object'
+        ? Object.values(data as Record<string, unknown>)
+        : [];
+  const byCmcId = new Map<number, number>();
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const record = row as { id?: unknown; quote?: unknown };
+    const cmcId = Number(record.id);
+    const quote = record.quote;
+    const usdQuote = Array.isArray(quote)
+      ? quote.find(item => String((item as { symbol?: unknown })?.symbol || '').toUpperCase() === 'USD') || quote[0]
+      : quote && typeof quote === 'object'
+        ? (quote as Record<string, unknown>).USD || Object.values(quote as Record<string, unknown>)[0]
+        : null;
+    const price = Number((usdQuote as { price?: unknown } | null)?.price);
+    if (Number.isInteger(cmcId) && Number.isFinite(price) && price > 0) byCmcId.set(cmcId, price);
+  }
+
+  const normalized: Record<string, number> = {};
+  for (const entry of requested) {
+    const price = byCmcId.get(entry.cmcId);
+    if (typeof price === 'number' && Number.isFinite(price) && price > 0) normalized[entry.coinId] = price;
+  }
+  return normalized;
+}
+
 class CoinGeckoPriceClient {
   private cache = new Map<string, CachedPriceEntry>();
   private inFlight = new Map<string, Promise<Record<string, number>>>();
   private requestQueue: Promise<void> = Promise.resolve();
   private lastRequestAt = 0;
-  private coinGeckoUnavailableUntil = 0;
+  private coinGeckoUnavailableUntilByRequest = new Map<string, number>();
 
   private buildCacheKey(coinIds: string[], vsCurrency: string): string {
     return `${vsCurrency}:${[...coinIds].sort().join(',')}`;
@@ -105,32 +142,19 @@ class CoinGeckoPriceClient {
       maxDelayMs: 8000,
       timeoutMs: 8000,
     });
-    const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
-    const byCmcId = new Map<number, number>();
-    for (const row of rows) {
-      const cmcId = Number(row?.id);
-      const quotes = Array.isArray(row?.quote) ? row.quote : row?.quote && typeof row.quote === 'object' ? Object.values(row.quote) : [];
-      const usdQuote = quotes.find((quote: any) => String(quote?.symbol || '').toUpperCase() === 'USD') || quotes[0];
-      const price = Number((usdQuote as any)?.price);
-      if (Number.isInteger(cmcId) && Number.isFinite(price) && price > 0) byCmcId.set(cmcId, price);
-    }
-
-    const normalized: Record<string, number> = {};
-    for (const entry of requested) {
-      const price = byCmcId.get(entry.cmcId);
-      if (typeof price === 'number' && Number.isFinite(price) && price > 0) normalized[entry.coinId] = price;
-    }
-    return normalized;
+    return normalizeCoinMarketCapQuotes(payload, requested);
   }
 
   private async fetchLivePriceMesh(coinIds: string[], vsCurrency: string): Promise<Record<string, number>> {
     let coinGeckoPrices: Record<string, number> = {};
-    if (Date.now() >= this.coinGeckoUnavailableUntil) {
+    const requestKey = this.buildCacheKey(coinIds, vsCurrency);
+    const unavailableUntil = this.coinGeckoUnavailableUntilByRequest.get(requestKey) || 0;
+    if (Date.now() >= unavailableUntil) {
       try {
         coinGeckoPrices = await this.fetchCoinGeckoByCoinIds(coinIds, vsCurrency);
-        if (Object.keys(coinGeckoPrices).length > 0) this.coinGeckoUnavailableUntil = 0;
+        if (Object.keys(coinGeckoPrices).length > 0) this.coinGeckoUnavailableUntilByRequest.delete(requestKey);
       } catch {
-        this.coinGeckoUnavailableUntil = Date.now() + DEFAULT_COINGECKO_COOLDOWN_MS;
+        this.coinGeckoUnavailableUntilByRequest.set(requestKey, Date.now() + DEFAULT_COINGECKO_COOLDOWN_MS);
       }
     }
 
@@ -159,10 +183,13 @@ class CoinGeckoPriceClient {
     const requestPromise = this.enqueueRequest(async () => {
       const normalized = await this.fetchLivePriceMesh(dedupedIds, vsCurrency);
       if (Object.keys(normalized).length === 0) throw new Error('No live price provider returned usable market evidence');
-      this.cache.set(cacheKey, {
-        expiresAt: Date.now() + DEFAULT_CACHE_TTL_MS,
-        pricesByCoinId: normalized,
-      });
+      const complete = dedupedIds.every(coinId => normalized[coinId] !== undefined);
+      if (complete) {
+        this.cache.set(cacheKey, {
+          expiresAt: Date.now() + DEFAULT_CACHE_TTL_MS,
+          pricesByCoinId: normalized,
+        });
+      }
       return normalized;
     }).finally(() => {
       this.inFlight.delete(cacheKey);
