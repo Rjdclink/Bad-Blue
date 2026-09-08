@@ -240,6 +240,33 @@ function measuredExecutionCostUsd(candidate: MeasuredCandidate): number {
     .reduce((sum, value) => sum + value, 0);
 }
 
+function monteCarloTopologyForCandidate(candidate: MeasuredCandidate):
+  | 'CEX_CEX'
+  | 'DEX_ATOMIC'
+  | 'MEMPOOL_BACKRUN'
+  | 'CROSS_CHAIN'
+  | 'ZERO_CAPITAL'
+  | 'MARKET_MAKING'
+  | 'UNKNOWN' {
+  switch (candidate.topology) {
+    case 'CEX_CEX': return 'CEX_CEX';
+    case 'DEX_ATOMIC': return 'DEX_ATOMIC';
+    case 'MEMPOOL_BACKRUN': return 'MEMPOOL_BACKRUN';
+    case 'CROSS_CHAIN': return 'CROSS_CHAIN';
+    case 'ZERO_CAPITAL_ATOMIC': return 'ZERO_CAPITAL';
+    case 'MAKER_CEX': return 'MARKET_MAKING';
+    // Liquidation, funding and prediction-event residuals have materially
+    // different failure modes from atomic DEX swaps. Until each has a dedicated
+    // Monte Carlo policy, use the conservative UNKNOWN policy rather than
+    // laundering them through DEX_ATOMIC assumptions.
+    case 'LIQUIDATION':
+    case 'FUNDING_ARBITRAGE':
+    case 'PREDICTION_EVENT':
+    default:
+      return 'UNKNOWN';
+  }
+}
+
 export async function runResearchBpsQuantiMonteCarlo(
   candidate: MeasuredCandidate,
   plan: ResearchBpsExecutionPlan,
@@ -299,7 +326,7 @@ export async function runResearchBpsQuantiMonteCarlo(
         confidence: completeness,
         samples: requestedSamples,
         baselineSlippageAlreadyIncluded: true,
-        topology: candidate.topology === 'CEX_CEX' || candidate.topology === 'MAKER_CEX' ? 'CEX_CEX' : 'DEX_ATOMIC',
+        topology: monteCarloTopologyForCandidate(candidate),
         quoteMaxAgeMs: Math.max(250, candidate.expiresAt - candidate.observedAt),
         executionHorizonMs: Math.max(250, candidate.expiresAt - now),
         advisoryOnly: true,

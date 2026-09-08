@@ -36,8 +36,13 @@ function cloneMap(source: Map<string, KalshiMarginFeeEvidence>): Map<string, Kal
 }
 
 async function fetchEffectiveFeeMap(): Promise<Map<string, KalshiMarginFeeEvidence>> {
-  if (!kalshiCredentialsPresent()) return new Map();
-  const payload = await kalshiAuthenticatedRequest<FeeTierPayload>('/trade-api/v2/margin/fee_tiers');
+  // Margin fee tiers are a perps-scoped authenticated resource. Event-market
+  // credentials are not a fallback; treating them as one caused recurring 403s
+  // and falsely presented a missing entitlement as transient missing data.
+  if (!kalshiCredentialsPresent('perps')) return new Map();
+  const payload = await kalshiAuthenticatedRequest<FeeTierPayload>('/trade-api/v2/margin/fee_tiers', {
+    credentialScope: 'perps',
+  });
   const makers = payload?.maker_fee_rates && typeof payload.maker_fee_rates === 'object' ? payload.maker_fee_rates : {};
   const takers = payload?.taker_fee_rates && typeof payload.taker_fee_rates === 'object' ? payload.taker_fee_rates : {};
   const tickers = new Set([...Object.keys(makers), ...Object.keys(takers)].map(canonicalTicker).filter(Boolean));

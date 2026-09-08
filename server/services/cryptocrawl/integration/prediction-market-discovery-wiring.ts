@@ -3,7 +3,10 @@ import {
   discoverPredictionMarketParityOpportunities,
   type PredictionParityOpportunity,
 } from '../discovery/prediction-market-opportunity-generator.js';
-import { ensureKalshiSystemWiring } from './kalshi-system-wiring.js';
+import {
+  ensureKalshiSystemWiring,
+  refreshKalshiSystemEvidenceNow,
+} from './kalshi-system-wiring.js';
 
 let timer: NodeJS.Timeout | null = null;
 let inFlight: Promise<void> | null = null;
@@ -29,22 +32,36 @@ function freshLatest(now = Date.now()): PredictionParityOpportunity[] {
 async function scan(): Promise<void> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
-    try {
-      latest = await discoverPredictionMarketParityOpportunities();
-      cycles += 1;
-      lastCompletedAt = Date.now();
-    } catch (error) {
+    const [parityResult, kalshiResult] = await Promise.allSettled([
+      discoverPredictionMarketParityOpportunities(),
+      refreshKalshiSystemEvidenceNow(),
+    ]);
+    if (parityResult.status === 'fulfilled') {
+      latest = parityResult.value;
+    } else {
       errors += 1;
       const staleRowsCleared = latest.length;
       latest = [];
-      logger.warn('[PredictionMarketDiscovery] Runtime scan failed closed', {
+      logger.warn('[PredictionMarketDiscovery] Public parity scan failed closed', {
         component: 'PredictionMarketDiscoveryWiring',
         staleRowsCleared,
         staleOpportunityReadable: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: parityResult.reason instanceof Error ? parityResult.reason.message : String(parityResult.reason),
+        siblingKalshiRefreshContinued: true,
         executionAuthority: false,
       });
     }
+    if (kalshiResult.status === 'rejected') {
+      errors += 1;
+      logger.warn('[PredictionMarketDiscovery] Kalshi refresh isolated inside canonical prediction cadence', {
+        component: 'PredictionMarketDiscoveryWiring',
+        error: kalshiResult.reason instanceof Error ? kalshiResult.reason.message : String(kalshiResult.reason),
+        publicParityRefreshContinued: true,
+        executionAuthority: false,
+      });
+    }
+    cycles += 1;
+    lastCompletedAt = Date.now();
   })().finally(() => {
     inFlight = null;
   });
@@ -59,28 +76,34 @@ export function getPredictionMarketDiscoverySnapshot() {
     errors,
     lastCompletedAt,
     opportunities: fresh.map(item => ({ ...item, provenance: [...item.provenance] })),
+    refreshCadenceAuthority: 'prediction_market_discovery_wiring' as const,
+    kalshiRefreshUsesSameCadence: true as const,
+    duplicateKalshiTimer: false as const,
     staleOpportunityReadable: false as const,
     executionAuthority: false as const,
   };
 }
 
 export function ensurePredictionMarketDiscoveryWiring(): void {
-  // Canonical runtime already invokes this seam. Kalshi attaches here as a
-  // measured sidecar so no second runtime scheduler/economics authority is born.
-  ensureKalshiSystemWiring();
   if (timer || process.env.PREDICTION_MARKET_DISCOVERY_ENABLED === 'false') return;
+  // One strategy cadence owns both public parity discovery and the Kalshi event
+  // evidence surface. Targeted evidence repair joins the same in-flight Kalshi
+  // refresh and cannot create an independent recurring loop.
+  ensureKalshiSystemWiring();
   void scan();
   if (process.env.NO_INTERVALS !== 'true') {
     timer = setInterval(() => void scan(), intervalMs());
     timer.unref?.();
   }
-  logger.info('[PredictionMarketDiscovery] Public no-auth discovery wiring installed', {
+  logger.info('[PredictionMarketDiscovery] Canonical prediction-market discovery wiring installed', {
     component: 'PredictionMarketDiscoveryWiring',
-    venue: 'polymarket',
+    venues: ['polymarket', 'kalshi'],
+    refreshCadenceAuthority: 'prediction_market_discovery_wiring',
+    duplicateKalshiTimer: false,
     kalshiSidecarInstalled: process.env.CRYPTOCRAWL_KALSHI_ENABLED !== 'false',
     intervalMs: intervalMs(),
-    apiKeyRequiredForDiscovery: false,
-    signUpRequiredForDiscovery: false,
+    apiKeyRequiredForPublicParityDiscovery: false,
+    signUpRequiredForPublicParityDiscovery: false,
     staleOpportunityReadable: false,
     executionAuthority: false,
     exactNetProfitAuthority: false,

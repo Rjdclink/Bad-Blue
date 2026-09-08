@@ -237,7 +237,7 @@ export async function getKalshiPerpExecutionEvidence(tickerInput: string, forceR
   marginEnabled: true;
   observedAt: number;
 } | null> {
-  if (!kalshiCredentialsPresent()) return null;
+  if (!kalshiCredentialsPresent('perps')) return null;
   const ticker = safeTicker(tickerInput);
   const markets = await getKalshiMarginMarkets();
   const market = markets.find(row => row.ticker === ticker);
@@ -261,7 +261,7 @@ export async function getKalshiPerpExecutionEvidence(tickerInput: string, forceR
 
 async function loadMarginAccountReadiness(computeAvailableBalance: boolean): Promise<KalshiMarginAccountReadiness> {
   const observedAt = Date.now();
-  if (!kalshiCredentialsPresent()) {
+  if (!kalshiCredentialsPresent('perps')) {
     return {
       observedAt,
       credentialsPresent: false,
@@ -277,15 +277,15 @@ async function loadMarginAccountReadiness(computeAvailableBalance: boolean): Pro
       accountLeverage: null,
       authenticated: false,
       executionAuthorityGranted: false,
-      provenance: ['kalshi_credentials_absent', 'fail_closed'],
+      provenance: ['kalshi_perps_credentials_absent', 'capability_unavailable_not_transient_missing_data', 'fail_closed'],
     };
   }
   try {
     const balancePath = `/trade-api/v2/margin/balance?compute_available_balance=${computeAvailableBalance ? 'true' : 'false'}`;
     const [enabled, balance, risk] = await Promise.all([
       getKalshiMarginEnabled(),
-      kalshiAuthenticatedRequest<any>(balancePath),
-      kalshiAuthenticatedRequest<any>('/trade-api/v2/margin/risk'),
+      kalshiAuthenticatedRequest<any>(balancePath, { credentialScope: 'perps' }),
+      kalshiAuthenticatedRequest<any>('/trade-api/v2/margin/risk', { credentialScope: 'perps' }),
     ]);
     const primary = Array.isArray(balance?.subaccount_balances)
       ? balance.subaccount_balances.find((row: any) => Number(row?.subaccount) === 0) || balance.subaccount_balances[0]
@@ -310,6 +310,7 @@ async function loadMarginAccountReadiness(computeAvailableBalance: boolean): Pro
         'kalshi_margin_enabled_authenticated',
         `kalshi_margin_balance_authenticated:available_computed=${computeAvailableBalance}`,
         'kalshi_margin_risk_authenticated',
+        'kalshi_credential_scope:perps',
       ],
     };
   } catch (error) {
@@ -335,7 +336,7 @@ async function loadMarginAccountReadiness(computeAvailableBalance: boolean): Pro
       accountLeverage: null,
       authenticated: false,
       executionAuthorityGranted: false,
-      provenance: ['kalshi_margin_readiness_unavailable', 'fail_closed'],
+      provenance: ['kalshi_margin_readiness_unavailable', 'kalshi_credential_scope:perps', 'fail_closed'],
     };
   }
 }
@@ -367,14 +368,16 @@ export async function getKalshiPerpsApiLimits(forceRefresh = false): Promise<Kal
     return { ...limitsCache.value, grants: limitsCache.value.grants.map(row => ({ ...row })) };
   }
   const observedAt = Date.now();
-  if (!kalshiCredentialsPresent()) {
+  if (!kalshiCredentialsPresent('perps')) {
     return {
       observedAt, usageTier: null, readRefillRate: null, readBucketCapacity: null,
       writeRefillRate: null, writeBucketCapacity: null, grants: [], authenticated: false,
     };
   }
   try {
-    const payload = await kalshiAuthenticatedRequest<any>('/trade-api/v2/account/limits/perps');
+    // This path is outside /margin/, so automatic path inference cannot identify
+    // its credential family. Pin it to the perps scope explicitly.
+    const payload = await kalshiAuthenticatedRequest<any>('/trade-api/v2/account/limits/perps', { credentialScope: 'perps' });
     const value: KalshiPerpsApiLimits = {
       observedAt,
       usageTier: payload?.usage_tier ? String(payload.usage_tier) : null,
@@ -411,9 +414,9 @@ export async function getKalshiMarginExchangeStatus(): Promise<KalshiMarginExcha
 
 export async function getKalshiNotionalRiskLimit(): Promise<KalshiNotionalRiskLimit> {
   const observedAt = Date.now();
-  if (!kalshiCredentialsPresent()) return { observedAt, defaultNotionalUsd: null, byTicker: {}, authenticated: false };
+  if (!kalshiCredentialsPresent('perps')) return { observedAt, defaultNotionalUsd: null, byTicker: {}, authenticated: false };
   try {
-    const payload = await kalshiAuthenticatedRequest<any>('/trade-api/v2/margin/notional_risk_limit');
+    const payload = await kalshiAuthenticatedRequest<any>('/trade-api/v2/margin/notional_risk_limit', { credentialScope: 'perps' });
     const byTicker: Record<string, number> = {};
     for (const [ticker, raw] of Object.entries(payload?.notional_value_risk_limits_by_market_ticker || {})) {
       const value = finite(raw);

@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { unifiedMultiLegArbitrageEngine } from '../optimization/unified-multileg-arbitrage-engine.js';
 import { routeRecentMeasuredOpportunities } from '../execution/unified-execution-router.js';
@@ -93,6 +94,8 @@ class MultiTopologyDiscoveryController {
       realizedPerformanceAdjustsAttention: true,
       liveMeasuredEvidenceAdjustsColdStartAttention: true,
       minimumCoveragePreserved: true,
+      onchainProviderReadinessAuthority: 'dynamic_rpc_provider_wiring_single_installation_promise',
+      cexDiscoveryBlockedByRpcBootstrap: false,
       executionDispatchAuthority: 'canonical_execution_scheduler_only',
       discoveryMaySubmitTransactions: false,
       makerOrdersAssumedFilled: false,
@@ -183,15 +186,21 @@ class MultiTopologyDiscoveryController {
         ? measuredCandidateRegistry.getRecent(4096).filter(candidate => candidate.topology === 'FUNDING_ARBITRAGE').length
         : 0;
 
+      // The canonical RPC mesh owns one installation promise. On-chain producers
+      // wait for that shared readiness boundary so their first evidence cycle cannot
+      // observe provider candidates while they are still being admitted/probed.
+      // CEX, maker and funding discovery remain independent and start immediately.
+      const rpcReady = ensureDynamicRpcProviderWiring();
+
       // Producers selected for this cycle still start in the same event-loop turn;
       // adaptive cadence only reduces search-resource pressure and never changes
       // execution, governance, settlement or evidence authority.
       const [cex, dex, cross, mempool, liquidation, maker, funding] = await Promise.allSettled([
         timedOptional(runCex, () => measuredOpportunityGraph.scanOnce()),
-        timedOptional(runDex, () => discoverMeasuredDexCandidates()),
-        timedOptional(runCross, () => discoverMeasuredCrossChainCandidates()),
-        timedOptional(runMempool, () => discoverMeasuredMempoolCandidates()),
-        timedOptional(runLiquidation, () => discoverMeasuredLiquidationCandidates()),
+        timedOptional(runDex, async () => { await rpcReady; return discoverMeasuredDexCandidates(); }),
+        timedOptional(runCross, async () => { await rpcReady; return discoverMeasuredCrossChainCandidates(); }),
+        timedOptional(runMempool, async () => { await rpcReady; return discoverMeasuredMempoolCandidates(); }),
+        timedOptional(runLiquidation, async () => { await rpcReady; return discoverMeasuredLiquidationCandidates(); }),
         timedOptional(runMaker, () => discoverMeasuredMakerCandidates()),
         timedOptional(runFunding, () => fundingRateMonitor.scanOnce()),
       ]);
