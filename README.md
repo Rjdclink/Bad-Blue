@@ -46,6 +46,7 @@ They may reuse shared infrastructure—compute routing, persistence, provider go
 - [LEXARA Legal Brain](#lexara-legal-brain)
 - [CryptoCrawler](#cryptocrawler)
 - [CryptoCrawler Compute Stack](#cryptocrawler-compute-stack)
+- [Market Proximity + Low-Latency Fabric](#market-proximity--low-latency-fabric)
 - [QuantiComp — Expanded Quantitative Compute Architecture](#quanticomp--expanded-quantitative-compute-architecture)
 - [CRYPTARA](#cryptara)
 - [CRYPTARA Sovereign Cortex](#cryptara-sovereign-cortex)
@@ -154,7 +155,7 @@ flowchart TD
     LEX --> CADE
 
     CADE --> DOC["Jurisdiction-aware drafting path"]
-    LEX --> RESPONSE["Unified consultation / guidance path"]
+    LEX --> RESPONSE["Consultation / guidance"]
     DOC --> REVIEW["Review / delivery / export workflow"]
     RESPONSE --> REVIEW
 ```
@@ -342,11 +343,15 @@ The Reactor is the broad scheduler/orchestrator; it is not itself the quantitati
 
 The **Omni Antenna** is the lightweight compute/transport lane. Current routing semantics explicitly pin latency-sensitive market tasks—such as WebSocket pings, order-book frames, trade streams, freshness checks, and fee-resolution work—to Antenna so they are not accidentally sent through a heavier compute path.
 
+The current implementation is a real in-process hot path for transport/parse/sequence/freshness acceleration. It executes ordered market-frame parsing and application inline where needed to preserve order, measures hot-path latency, and exposes no independent market-truth or execution authority.
+
 A separate Antenna quality layer tracks provider observations such as hit rate, failure rate, latency, source age, recency, sample confidence, and confidence-adjusted quality. That quality can change attention/cadence; it does not independently authorize a trade.
 
 ## Directional Beam
 
-The **Directional Beam** is the heavier compute lane for moderate, heavy, and extreme workloads. It is a routing/execution layer for computational work, not a competing trading authority.
+The **Directional Beam** is the heavier compute lane for moderate, heavy, and extreme workloads. In current code it is a compatibility facade over QuantiComp-owned measured scheduling, deadlines, validation, resource telemetry, and execution of heavy computational work.
+
+The Beam should therefore not be confused with the separate network broadcast path. Its job is to concentrate compute; the low-latency market/network path is documented below.
 
 ## Super Battery
 
@@ -366,6 +371,63 @@ Some optimization interfaces remain implementation-dependent; the README does no
 **QuantiComp** is the heavy quantitative-computation authority for workloads such as Monte Carlo, tail-distribution analysis, scenario expansion, resource-aware optimization, and other statistically intensive operations.
 
 > **Antenna stays light. Beam carries heavy work. Battery reduces waste. Reactor schedules. QuantiComp computes.**
+
+---
+
+# Market Proximity + Low-Latency Fabric
+
+CryptoCrawler also contains a distinct **software-defined market-proximity fabric** whose purpose is to minimize avoidable application-side latency around market observation and transaction submission.
+
+It is best understood as a **near-colocation software analogue**: the code attempts to keep critical market-data work extremely close to the live transport path, preserve warm connections, select region-compatible endpoints, avoid unnecessary compute hops, and fan an already-signed transaction outward across multiple submission paths. It does **not** claim physical rack-level exchange colocation unless the deployment itself actually provides it.
+
+## Inbound Market Proximity — Antenna Hot Path
+
+The inbound side uses direct exchange WebSocket connectivity and Antenna-owned hot-path processing for latency-sensitive work.
+
+Current CEX streaming architecture includes:
+
+- direct public WebSocket market-data connectivity for Coinbase, Kraken, and OKX;
+- region-aligned OKX endpoint selection so observation can stay on the same regional surface as authenticated execution;
+- primary and warm-standby connection lanes;
+- standby frame intake, warmup serving, and handover telemetry;
+- ordered in-process frame parsing and order-book application through the Omni Antenna hot path;
+- sequence-gap, checksum/integrity, stale-reset, reconnect, heartbeat, and liveness handling;
+- freshness validation without routing every frame through the heavier Beam/Quanti path.
+
+## Outbound Market Proximity — Multipath Execution Broadcast
+
+The outward execution side uses a separate low-latency submission path. A fully populated transaction is signed once, then the **same signed payload** can be broadcast concurrently through multiple routes, including configured private RPC, Flashbots RPC, and bloXroute RPC paths. First-success semantics allow the fastest successful path to win without creating competing payloads for one nonce.
+
+```mermaid
+flowchart LR
+    subgraph INBOUND["INBOUND — LIVE MARKET PROXIMITY"]
+        CB["Coinbase WebSocket"] --> ANT["Omni Antenna\ninline parse • sequence • freshness"]
+        KR["Kraken WebSocket"] --> ANT
+        OKX["OKX Regional WebSocket"] --> ANT
+        STBY["Warm Standby Connections"] --> ANT
+        ANT --> BOOK["Fresh Sequenced Books / Quotes"]
+    end
+
+    BOOK --> PIPE["Canonical Discovery → Economics → Governance"]
+    PIPE --> SIGN["One Fully Populated Signed Payload"]
+
+    subgraph OUTBOUND["OUTBOUND — LOW-LATENCY MULTIPATH"]
+        SIGN --> P1["Private RPC"]
+        SIGN --> P2["Flashbots RPC"]
+        SIGN --> P3["bloXroute RPC"]
+        P1 --> FIRST["First Successful Submission"]
+        P2 --> FIRST
+        P3 --> FIRST
+    end
+
+    FIRST --> CHAIN["Network / Builder / Chain"]
+```
+
+The design objective is to reduce avoidable latency at both edges of the system:
+
+> **Listen as close to the market as the deployment permits; process the hot path without unnecessary detours; submit one canonical payload over several independent routes; accept the first real success.**
+
+Physical distance, hosting region, provider infrastructure, venue architecture, internet routing, and account/provider capabilities still determine the absolute latency floor.
 
 ---
 
@@ -1498,6 +1560,7 @@ The September 8, 2026 hardening sequence on `develop` includes work in areas suc
 | **Kalshi evidence** | Event-fee, cache/single-flight, request-local backoff, and exact-positive admission hardening |
 | **Overflow runtime** | Additional hot runtime state moved to Overflow with schema/verifier coverage |
 | **Worker hierarchy** | Ranked database admission, COMP pressure path, Super Worker sharing, Overflow-first HyperBridge, low-rank Primary archive path |
+| **Market proximity** | Direct streaming hot path, warm standby CEX connections, region-aligned market endpoints, and identical-payload multipath submission |
 | **Runtime isolation** | Optional/degraded components can fail or retry without automatically gaining global shutdown authority |
 | **Cost governance** | Paid pending-stream behavior remains explicit opt-in rather than activating solely because a key exists |
 | **BPS optimization** | Super Engine / economic-transformation / near-miss reassessment wiring tied to measured attribution rather than synthetic credit |
@@ -1646,6 +1709,7 @@ Bad-Blue contains a broader research and orchestration ecosystem beyond the two 
 | **Faucet** | Preserved CryptoCrawler lifecycle compatibility facade backed by canonical runtime truth |
 | **Faucet Mesh** | Heritage higher-order multi-node strategy/learning architecture with synthetic authority quarantined |
 | **Faucet Gateway** | Broader 4JI outward-facing policy/rate-limit/audit transaction interface |
+| **Market Proximity Fabric** | Direct streaming hot path plus identical-payload multipath submission designed to minimize avoidable application-side latency |
 | **Supabase Admission Worker** | Ranked critical/high/normal/low DB resource governor |
 | **COMP Switch** | Pressure-responsive normal/comp resource-path selector |
 | **CRYPTARA Super Worker** | Shared information broker, single-flight, leases, bounded reuse |
@@ -1726,14 +1790,14 @@ Major repository areas include:
 - **`server/services/cryptocrawl/optimization/nix-gen/`** — Nix-Gen bids, global optimizer, resource pricing, replanning, portfolio view, live priority, Quanti integration.
 - **`server/services/cryptocrawl/compensation/`** — Rainbow profit bridge/source/observability/fuel reserve, retained-profit accounting, payout scheduler/confirmation, compensation modules.
 - **`server/services/cryptocrawl/integration/`** — canonical wiring, CRYPTARA Supabase admission/COMP/Super Worker/Overflow/HyperBridge hierarchy, BPS/Aries/CRYPTARA integrations.
-- **`server/services/cryptocrawl/runtime/`** — core runtime, treasury lifecycle, Rainbow wiring, hot-state schemas, positive-profit capture and runtime authority wiring.
+- **`server/services/cryptocrawl/runtime/`** — core runtime, treasury lifecycle, Rainbow wiring, hot-state schemas, positive-profit capture, low-latency execution wiring, and runtime authority wiring.
 - **`server/services/cryptocrawl/governance/`** — StageManager, Profit Ladder, Composer interface, risk/governance controls, operating envelope, resource/gating policy.
 - **`server/services/cryptocrawl/risk/`** — circuit breaker, Kelly criterion, mandatory risk shield, progressive position sizing.
 - **`server/services/cryptocrawl/learning/`** — deep/instant learning, execution outcome, RL bidder, terminal identity, settlement-profit calibration.
 - **`server/services/cryptocrawl/evolution/`** — Hyper Evolution, swarm intelligence, measured feedback, funding lifecycle learning/observation.
 - **`server/services/cryptocrawl/faucet/`** — Faucet lifecycle compatibility facade plus historical facet/mesh source.
 - **`server/services/cryptocrawl/capital-free/`** — canonical zero-capital boundary, Alchemy telemetry, and heritage capital-free architecture.
-- **`server/services/cryptocrawl/execution/`** — canonical scheduler/executors, CEX/private transport, cross-chain, liquidations, builder/zero-capital, event-market execution and recovery.
+- **`server/services/cryptocrawl/execution/`** — canonical scheduler/executors, CEX/private transport, low-latency multipath execution, cross-chain, liquidations, builder/zero-capital, event-market execution and recovery.
 - **`server/services/cryptocrawl/discovery/`** — CEX/DEX/cross-chain/funding/event opportunity formation, graphless DEX, zero-capital route generation/preselection.
 - **`server/services/cryptocrawl/bridge/`** — Across bridge/evidence, balance/network/gas/route helpers.
 - **`server/services/cryptocrawl/mev/`** — MEV/builder-oriented modules and heritage surfaces.
@@ -1746,7 +1810,7 @@ Major repository areas include:
 - **`server/services/crawlers/`** — Six-Crawler Initiative and other analytic crawler systems.
 - **`server/faucetGateway.ts`** — broader 4JI Faucet Gateway interface.
 - **`server/migrations/overflow/`** — Overflow hot-state schema evolution.
-- **`scripts/cryptocrawl/`** — structural/runtime invariant verifiers for CryptoCrawler hardening, Nix-Gen, Aries, Rainbow, BPS, workers, prediction markets, treasury, and authority boundaries.
+- **`scripts/cryptocrawl/`** — structural/runtime invariant verifiers for CryptoCrawler hardening, Nix-Gen, Aries, Rainbow, BPS, workers, prediction markets, treasury, market latency, and authority boundaries.
 - **database / migration modules** — persistence schema and state evolution.
 - **tests / verifier assets** — regression, integration, authority, economic, and runtime validation.
 
@@ -1771,6 +1835,8 @@ Production verification should establish, as applicable:
 - Aries/Nix advisory integrity;
 - governance state;
 - resource/nonce/rate readiness;
+- inbound market-data latency and connection health;
+- outbound submission-path readiness;
 - execution capability;
 - receipt/fill observation;
 - terminal settlement;
@@ -1791,6 +1857,7 @@ For technical diligence, the important value is not merely the number of named m
 - evidence analysis and drafting;
 - public-record research;
 - multi-provider market data;
+- software-defined market proximity and low-latency transport;
 - multi-topology opportunity formation;
 - exact economic validation;
 - advanced BPS attribution/transformation;
@@ -1806,6 +1873,7 @@ For technical diligence, the important value is not merely the number of named m
 - Antenna/Beam/Battery/Reactor compute routing;
 - staged governance and Profit Ladder scaling;
 - resource-controlled execution;
+- identical-payload multipath submission;
 - prediction-market execution/recovery architecture;
 - cross-chain and zero-capital execution architecture;
 - terminal settlement;
@@ -1852,8 +1920,10 @@ The continued engineering priority is **proof, canonicalization, observability, 
 | **Disco-Ball Mirror** | Multi-shard environmental reflection model |
 | **Light Communication** | Compressed frequency/channel-style crawler signaling model |
 | **Computational Reactor** | Measured job scheduling and compute-resource orchestration layer |
-| **Omni Antenna** | Lightweight latency-sensitive compute/market-transport lane |
-| **Directional Beam** | Heavier compute-routing lane |
+| **Omni Antenna** | Lightweight latency-sensitive in-process market transport/parse/sequence/freshness lane |
+| **Directional Beam** | Heavy-compute compatibility/routing facade over QuantiComp-owned measured execution |
+| **Market Proximity Fabric** | Software-defined near-colocation analogue using direct streaming hot paths, warm connections, regional endpoint alignment, and multipath submission |
+| **Multipath Execution Broadcast** | One canonical signed payload submitted concurrently across independent RPC/relay paths with first-success semantics |
 | **Super Battery** | Task-efficiency layer for caching, deduplication, batching, and related optimization hooks |
 | **QuantiComp** | Heavy quantitative-computation runtime and authority for bounded statistical/optimization workloads |
 | **Quanti Data Fabric** | Shared numeric state/lease fabric used by QuantiComp and resource-control integrations |
@@ -1896,6 +1966,12 @@ This repository is distributed under the proprietary terms in [`LICENSE.md`](LIC
 **Copyright © 2026 Robert Clinkenbeard. All rights reserved.**
 
 Use, copying, modification, distribution, sublicensing, or transfer requires prior written permission from the Owner as stated in the license file.
+
+## Independent Creation + Prior-Use Statement
+
+> **Owner declaration:** All names, branding, and intellectual property used in this project were independently conceived and developed by Robert Clinkenbeard beginning **September 15, 2025**. The Owner states that he had no prior knowledge of any third-party projects, trademarks, or entities using similar names. Any similarities are asserted to be entirely coincidental. The Owner's development records and continuous work beginning September 15, 2025 are relied upon as evidence of good-faith independent creation and prior use.
+
+The earliest commit currently visible in this repository's Git history is dated **November 9, 2025**; the September 15, 2025 date above is the Owner's stated development start date and is not presented as a Git-derived timestamp.
 
 ---
 
