@@ -33,7 +33,9 @@ function measuredTopologySettlementCapable(decision: UnifiedExecutionDecision): 
     || (decision.topology === 'CROSS_CHAIN' && decision.path === 'BRIDGE_FLASH_LOAN');
 }
 function measuredTopologyAuthoritativePath(decision: UnifiedExecutionDecision): string {
-  if (decision.topology === 'ZERO_CAPITAL_ATOMIC' && decision.path === 'FLASH_LOAN') return 'zero_capital_engine:dispatchExecutableOpportunities';
+  if (decision.topology === 'ZERO_CAPITAL_ATOMIC' && decision.path === 'FLASH_LOAN') {
+    return 'canonical_execution_scheduler:executeCanonicalZeroCapitalOpportunity';
+  }
   if (decision.topology === 'CROSS_CHAIN' && decision.path === 'BRIDGE_FLASH_LOAN') return 'funding_crosschain_execution_adapter:across_same_asset_terminal';
   return `measured_topology_execution_adapter:${decision.path}`;
 }
@@ -128,8 +130,6 @@ export function prepareMeasuredTopologyNixGenBid(candidate: MeasuredCandidate, d
       execution: { eligible: candidate.status === 'eligible' && decision.admitted, executable: candidate.executableCapability && decision.admitted, settlementCapable: true, authoritativePath: measuredTopologyAuthoritativePath(decision) },
       advisory: {
         probabilityOfProfitableExecution: Number.isFinite(decision.score.confidenceLevel) ? decision.score.confidenceLevel : undefined,
-        // Do not feed UnifiedExecutionScore.profitabilityScore back into Nix-Gen:
-        // that score already contains profit/confidence and would double-count them.
         rankScore: undefined,
       },
       resources: projection.demands,
@@ -137,7 +137,7 @@ export function prepareMeasuredTopologyNixGenBid(candidate: MeasuredCandidate, d
       metadata: {
         topology: candidate.topology, chain, destinationChain: candidate.chains[1] ?? null, path: decision.path,
         executionCapabilityAuthority: candidate.topology === 'ZERO_CAPITAL_ATOMIC'
-          ? 'zero_capital_engine:terminal_realized_profit_wiring'
+          ? 'canonical_zero_capital_discovery:provider_repricing_plus_zero_personal_cost_resource_truth'
           : candidate.topology === 'CROSS_CHAIN'
             ? 'funding_crosschain_execution_adapter:authenticated_across_terminal_settlement'
             : 'measured_topology_execution_adapter:terminal_settlement',
