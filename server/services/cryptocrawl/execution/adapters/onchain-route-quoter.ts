@@ -15,7 +15,7 @@ const UNISWAP_V3_QUOTER_ABI = [
   'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
 ];
 
-const SUSHISWAP_ROUTER_ABI = [
+const V2_ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
 ];
 
@@ -26,12 +26,20 @@ const UNISWAP_V3_QUOTERS: Partial<Record<SupportedExecutionChain, string>> = {
   optimism: '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6',
 };
 
-const SUSHISWAP_ROUTERS: Partial<Record<SupportedExecutionChain, string>> = {
-  ethereum: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
-  polygon: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-  arbitrum: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-  bsc: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-  avalanche: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+const V2_ROUTERS: Partial<Record<SupportedSwapProtocol, Partial<Record<SupportedExecutionChain, string>>>> = {
+  sushiswap: {
+    ethereum: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
+    polygon: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+    arbitrum: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+    bsc: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+    avalanche: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+  },
+  pancakeswapV2: {
+    bsc: '0x10ED43C718714eb63d5aA57B78B54704E256024E',
+  },
+  traderJoeV1: {
+    avalanche: '0x60aE616a2155Ee3d9A68541Ba4544862310933d4',
+  },
 };
 
 export interface ConfiguredRouteLeg {
@@ -117,6 +125,8 @@ function normalizeProtocol(value: unknown): SupportedSwapProtocol {
   if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') return 'uniswapV3';
   if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
   if (normalized === 'sushiswapv3' || normalized === 'sushi_v3' || normalized === 'sushi-v3') return 'sushiswapV3';
+  if (normalized === 'pancakeswapv2' || normalized === 'pancakeswap_v2' || normalized === 'pancakeswap-v2' || normalized === 'pancakev2' || normalized === 'pancake-v2') return 'pancakeswapV2';
+  if (normalized === 'traderjoev1' || normalized === 'traderjoe_v1' || normalized === 'traderjoe-v1' || normalized === 'joev1' || normalized === 'joe-v1') return 'traderJoeV1';
   throw new Error(`Unsupported route protocol: ${String(value)}`);
 }
 
@@ -286,11 +296,17 @@ async function quoteLegAgainstProvider(
     return BigNumber.from(await quoter.callStatic.quoteExactInputSingle(leg.tokenIn, leg.tokenOut, leg.feeTier || 3000, amountIn, 0));
   }
 
-  const routerAddress = chain === 'europa' ? process.env.EUROPA_SUSHISWAP_ROUTER?.trim() : SUSHISWAP_ROUTERS[chain];
-  if (!routerAddress) throw new Error(`No SushiSwap router configured for ${chain}`);
-  const router = new Contract(routerAddress, SUSHISWAP_ROUTER_ABI, rpcProvider);
+  if (leg.protocol === 'sushiswapV3') {
+    throw new Error(`Sushi V3 ${chain} routes require a verified V3 quote authority`);
+  }
+
+  const routerAddress = chain === 'europa' && leg.protocol === 'sushiswap'
+    ? process.env.EUROPA_SUSHISWAP_ROUTER?.trim()
+    : V2_ROUTERS[leg.protocol]?.[chain];
+  if (!routerAddress || !isAddress(routerAddress)) throw new Error(`No ${leg.protocol} V2 quote router configured for ${chain}`);
+  const router = new Contract(routerAddress, V2_ROUTER_ABI, rpcProvider);
   const amounts = await router.getAmountsOut(amountIn, [leg.tokenIn, leg.tokenOut]);
-  if (!Array.isArray(amounts) || amounts.length < 2) throw new Error('SushiSwap quote returned no output amount');
+  if (!Array.isArray(amounts) || amounts.length < 2) throw new Error(`${leg.protocol} quote returned no output amount`);
   return BigNumber.from(amounts[amounts.length - 1]);
 }
 
