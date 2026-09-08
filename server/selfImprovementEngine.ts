@@ -14,7 +14,7 @@
  * - subagent_performance_metrics: tracks KPIs over time
  */
 
-import { db } from './db';
+import { db } from './services/cryptocrawl/runtime/cryptocrawl-runtime-database.js';
 import { 
   subAgentSelfImprovementActions, 
   subAgentLearningPatterns, 
@@ -1007,9 +1007,9 @@ class SelfImprovementEngine {
   private async identifyFastestProvider(): Promise<AIProviderName | null> {
     const stats = await this.getProviderStats(60);
     const validStats = stats.filter(s => s.totalRequests >= 5);
-    
+
     if (validStats.length === 0) return null;
-    
+
     validStats.sort((a, b) => a.averageLatencyMs - b.averageLatencyMs);
     return validStats[0].provider;
   }
