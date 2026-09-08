@@ -26,7 +26,12 @@ check('canonical residual profit must stay positive', adapter.includes('guarante
 check('signed payment covers sponsorship plus builder residual', adapter.includes('proof.builderPaymentWei < required + builderResidual') && adapter.includes('candidate.builderPaymentWei < candidate.requiredSponsorshipWei + candidate.minimumBuilderResidualWei'));
 check('submission uses standard eth_sendBundle', adapter.includes("method: 'eth_sendBundle'"));
 check('partial inclusion is quarantinable ambiguity', adapter.includes("Only part of the sponsored bundle was observed on chain") && adapter.includes("status: 'ambiguous'"));
-check('accepted bundle uncertainty remains ambiguous rather than retry-safe', adapter.includes("bundleHash ? 'ambiguous' : 'definitive_failure'"));
+check('accepted bundle without a valid hash remains ambiguous', adapter.includes('accepted request without a valid bundle hash') && adapter.includes("this.result(attempt, 'ambiguous'"));
+check('accepted bundle transport uncertainty remains ambiguous', adapter.includes("lastBundleHash ? 'ambiguous' : 'definitive_failure'"));
+check('only a fully mined target-block miss is retry-safe', adapter.includes("included.length > 0") && adapter.includes("Target block mined without the sponsored bundle landing") && adapter.includes("return { status: 'definitive_failure', blockNumber"));
+check('bounded block retargeting is explicitly capped', adapter.includes('ZERO_CAPITAL_BUILDER_BLOCK_WINDOW') && adapter.includes('Math.max(1, Math.min(5, Math.trunc(raw)))') && adapter.includes('targetBlock <= candidate.maxTargetBlock'));
+check('ambiguous reconciliation stops block-window advancement', adapter.includes("if (landed.status === 'ambiguous')") && adapter.includes("return this.result(attempt, 'ambiguous'"));
+check('same signed bundle is reused across bounded targets', adapter.includes('txs: attempt.signedTransactions') && !adapter.includes('signTransaction('));
 check('terminal builder payment receipt is reconciled in target block', adapter.includes('paymentReceipt.blockNumber !== candidate.targetBlock'));
 check('adapter explicitly owns no independent execution authority', adapter.includes('executionAuthority: false') && !adapter.includes('getZeroInitialCapitalDynamicOrchestrator'));
 check('existing strict gas proof still refuses to promote hosted sponsor billing', gasProof.includes('sponsorOperatorMonetaryCostProvenZero: false'));
@@ -39,4 +44,4 @@ if (failed.length) {
   process.exit(1);
 }
 
-console.log('[builder-sponsored-coldstart-foundation] Titan/Quasar keyless sponsored-bundle transport is bound to signed builder payment, fresh positive canonical residual economics, ambiguous-submission quarantine, and the existing zero-personal-cost authority; operator-billed hosted sponsorship remains unproven');
+console.log('[builder-sponsored-coldstart-foundation] Titan/Quasar keyless sponsored-bundle transport is bound to signed builder payment, fresh positive canonical residual economics, bounded exact-target-block retry after fully reconciled misses only, ambiguous-submission quarantine, and the existing zero-personal-cost authority; operator-billed hosted sponsorship remains unproven');
