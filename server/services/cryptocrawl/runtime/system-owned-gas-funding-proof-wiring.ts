@@ -11,6 +11,30 @@ export interface StrictZeroCapitalGasContext {
   gasSponsor: { getReadiness: () => { ready: boolean } };
 }
 
+const latestDecisions = new Map<SupportedChain, GasFundingDecision>();
+
+function rememberDecision(chain: SupportedChain, decision: GasFundingDecision): GasFundingDecision {
+  latestDecisions.set(chain, {
+    ...decision,
+    nativeBalance: BigInt(decision.nativeBalance),
+    reserveFloor: BigInt(decision.reserveFloor),
+  });
+  return decision;
+}
+
+/**
+ * Read-only snapshot of decisions already proven by the canonical gas boundary.
+ * Observability consumes this cache instead of issuing its own wallet/RPC probes
+ * or inferring zero-capital readiness from generic StageManager state.
+ */
+export function getLatestProvenZeroCapitalGasFundingDecisions(): GasFundingDecision[] {
+  return [...latestDecisions.values()].map(decision => ({
+    ...decision,
+    nativeBalance: BigInt(decision.nativeBalance),
+    reserveFloor: BigInt(decision.reserveFloor),
+  }));
+}
+
 /**
  * Sole strict ZERO_CAPITAL_ATOMIC gas-selection boundary. It composes the live
  * wallet/provider reading with the durable system-native ownership ledger. It
@@ -22,7 +46,7 @@ export async function getProvenZeroCapitalGasFundingDecision(
   chain: SupportedChain,
 ): Promise<GasFundingDecision> {
   if (chain === 'europa') {
-    return {
+    return rememberDecision(chain, {
       chain,
       mode: 'unavailable',
       nativeBalance: 0n,
@@ -31,14 +55,14 @@ export async function getProvenZeroCapitalGasFundingDecision(
       strictZeroInitialCapitalEligible: false,
       operatorMonetaryInputRequired: true,
       reason: 'Europa execution is retired',
-    };
+    });
   }
 
   const provider = runtime.providers.get(chain);
   const wallet = runtime.executionWallets.get(chain);
   const config = runtime.dynamicChainConfigs.get(chain);
   if (!provider || !wallet || !config) {
-    return {
+    return rememberDecision(chain, {
       chain,
       mode: 'unavailable',
       nativeBalance: 0n,
@@ -47,7 +71,7 @@ export async function getProvenZeroCapitalGasFundingDecision(
       strictZeroInitialCapitalEligible: false,
       operatorMonetaryInputRequired: true,
       reason: `No live strict zero-capital funding context is available for ${chain}`,
-    };
+    });
   }
 
   try {
@@ -58,18 +82,20 @@ export async function getProvenZeroCapitalGasFundingDecision(
       nativeSystemOwnedProven: false,
     });
 
-    if (nativeBalance < unproven.reserveFloor || unproven.reserveFloor <= 0n) return unproven;
+    if (nativeBalance < unproven.reserveFloor || unproven.reserveFloor <= 0n) {
+      return rememberDecision(chain, unproven);
+    }
     const authority = await getSystemNativeGasAuthority({
       chain,
       wallet: wallet.address,
       minimumWei: unproven.reserveFloor.toString(),
     });
-    return chooseGasFundingMode(config, nativeBalance, sponsorReady, {
+    return rememberDecision(chain, chooseGasFundingMode(config, nativeBalance, sponsorReady, {
       sponsorOperatorMonetaryCostProvenZero: false,
       nativeSystemOwnedProven: authority !== null && BigInt(authority.spendableWei) >= unproven.reserveFloor,
-    });
+    }));
   } catch (error) {
-    return {
+    return rememberDecision(chain, {
       chain,
       mode: 'unavailable',
       nativeBalance: 0n,
@@ -78,7 +104,7 @@ export async function getProvenZeroCapitalGasFundingDecision(
       strictZeroInitialCapitalEligible: false,
       operatorMonetaryInputRequired: true,
       reason: `Strict zero-capital gas proof failed closed: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    });
   }
 }
 
