@@ -122,7 +122,11 @@ COPY --from=builder /app/contracts/cryptocrawl ./contracts/cryptocrawl
 COPY --from=builder /app/artifacts/cryptocrawl ./artifacts/cryptocrawl
 COPY --from=builder /app/server/services/cryptocrawl/config/chains.json ./config/chains.json
 EXPOSE 5000
-RUN useradd -m appuser && chown -R appuser:appuser /app
+# Runtime dependencies are immutable/read-only. Avoid recursively changing the
+# very large node_modules tree; only application-owned paths need writable owner.
+RUN useradd -m appuser && \
+    chown appuser:appuser /app && \
+    chown -R appuser:appuser /app/dist /app/public /app/scripts /app/contracts /app/artifacts /app/config
 USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD node -e "const port = process.env.PORT || 5000; require('http').get('http://localhost:' + port + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => {process.exit(1)})"
