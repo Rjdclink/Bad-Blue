@@ -221,10 +221,6 @@ export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionC
         }
       }
 
-      // Stablecoin pairs commonly concentrate liquidity in low-fee V3 pools.
-      // Quote cross-tier V3/V3 loops directly so the 0.01% pool can compete with
-      // 0.05%/0.30% pools without forcing an unrelated 0.30% Sushi leg. Missing
-      // pools simply fail their independent quote; execution remains strict net+.
       for (const firstTier of tiers) {
         for (const secondTier of tiers) {
           if (firstTier === secondTier) continue;
@@ -407,7 +403,9 @@ function recoveryQuoteRoutes(
   attempted: readonly ConfiguredZeroCapitalRoute[],
 ): ConfiguredZeroCapitalRoute[] {
   const attemptedIds = new Set(attempted.map(route => route.id));
-  const limit = Math.floor(bounded(process.env.ZERO_CAPITAL_QUOTE_RECOVERY_BUDGET, 8, 2, 24));
+  const configuredRecoveryBudget = process.env.ZERO_CAPITAL_RECOVERY_QUOTE_BUDGET
+    ?? process.env.ZERO_CAPITAL_QUOTE_RECOVERY_BUDGET;
+  const limit = Math.floor(bounded(configuredRecoveryBudget, 8, 2, 48));
   return routes
     .filter(route => !attemptedIds.has(route.id))
     .sort((left, right) => {
@@ -469,15 +467,17 @@ export async function discoverDynamicZeroCapitalQuotes(
     const enriched = await enrichMeasuredGasCost(chain, provider, templates, fundingMode);
     const preselection = selectZeroCapitalRoutesForQuote(enriched.routes, enriched.gasCostUsd);
     const selected = preselection.selectedRoutes;
-    let quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
+    const primaryQuotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, selected);
+    let quotes = [...primaryQuotes];
     let recoverySelected: ConfiguredZeroCapitalRoute[] = [];
     let recoveryQuotes: QuotedZeroCapitalRoute[] = [];
 
-    if (quotes.length === 0 && selected.length > 0) {
+    const primaryHasPositive = primaryQuotes.some(quote => quote.executablePositive === true && quote.netProfit > 0n);
+    if (!primaryHasPositive && selected.length > 0) {
       recoverySelected = recoveryQuoteRoutes(enriched.routes, selected);
       if (recoverySelected.length > 0) {
         recoveryQuotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, recoverySelected);
-        quotes = recoveryQuotes;
+        quotes = [...primaryQuotes, ...recoveryQuotes];
       }
     }
 
