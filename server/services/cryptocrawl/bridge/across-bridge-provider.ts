@@ -98,6 +98,7 @@ export interface AcrossBridgeMetrics {
   quotesFailed: number;
   expiredQuotesRejected: number;
   tokenResolutionFailures: number;
+  ambiguousTokenSymbolMatches: number;
   settlementChecks: number;
   settlementChecksSucceeded: number;
   settlementIdentityMismatches: number;
@@ -129,6 +130,7 @@ const evidenceMetrics = {
   quotesFailed: 0,
   expiredQuotesRejected: 0,
   tokenResolutionFailures: 0,
+  ambiguousTokenSymbolMatches: 0,
   settlementChecks: 0,
   settlementChecksSucceeded: 0,
   settlementIdentityMismatches: 0,
@@ -230,10 +232,15 @@ async function resolveAcrossToken(
   const catalog = await fetchAcrossTokenCatalog(credentials);
   if (!catalog) return null;
   const chainId = SUPPORTED_CHAINS[chain].chainId;
+  // Across documents /swap/tokens as the current token-address source of truth
+  // and its integration guide selects the first matching symbol on a chain. Do
+  // not reject a supported route merely because legacy/alternate representations
+  // of the same symbol are also listed. Preserve API order and make ambiguity
+  // visible in telemetry rather than substituting our potentially stale address.
   const matches = catalog.tokens.filter(token => token.chainId === chainId && token.symbol.toUpperCase() === symbol);
-  const unique = new Map(matches.map(token => [token.address.toLowerCase(), token]));
-  if (unique.size !== 1) return null;
-  const token = [...unique.values()][0];
+  if (matches.length === 0) return null;
+  if (matches.length > 1) evidenceMetrics.ambiguousTokenSymbolMatches += 1;
+  const token = matches[0];
   return { chainId, address: token.address, symbol, decimals: token.decimals, observedAt: catalog.observedAt, source: 'across_swap_tokens' };
 }
 
@@ -285,6 +292,7 @@ export function getAcrossBridgeMetrics(): AcrossBridgeMetrics {
     quotesFailed: evidenceMetrics.quotesFailed,
     expiredQuotesRejected: evidenceMetrics.expiredQuotesRejected,
     tokenResolutionFailures: evidenceMetrics.tokenResolutionFailures,
+    ambiguousTokenSymbolMatches: evidenceMetrics.ambiguousTokenSymbolMatches,
     settlementChecks: evidenceMetrics.settlementChecks,
     settlementChecksSucceeded: evidenceMetrics.settlementChecksSucceeded,
     settlementIdentityMismatches: evidenceMetrics.settlementIdentityMismatches,
