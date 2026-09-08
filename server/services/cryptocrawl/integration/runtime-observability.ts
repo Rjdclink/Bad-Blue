@@ -24,6 +24,7 @@ import { getPerformanceEvidenceContract } from '../runtime/performance-evidence-
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { computeCryptoRuntimeReadiness } from '../runtime/readiness-policy.js';
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
+import { getLatestProvenZeroCapitalGasFundingDecisions } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 
 const CHAINS: SupportedChain[] = [
   'ethereum',
@@ -219,6 +220,12 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const bookEvolution = orderBookEvolutionStore.getStatus();
     const mempoolCapabilities = getMempoolCapabilities();
     const zeroCapitalExecutionEnabled = process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true';
+    const zeroCapitalFundingDecisions = getLatestProvenZeroCapitalGasFundingDecisions();
+    const zeroCapitalFundingReady = zeroCapitalFundingDecisions.some(decision =>
+      decision.mode !== 'unavailable'
+      && decision.strictZeroInitialCapitalEligible === true
+      && decision.operatorMonetaryInputRequired === false,
+    );
     const stageCanExecute = stageManager.canExecuteTrades();
 
     const readiness = computeCryptoRuntimeReadiness({
@@ -243,6 +250,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       stageCanExecute,
       currentStage: stage.currentStage,
       initialGasReady: stageManager.isInitialGasReady(),
+      zeroCapitalFundingReady,
       zeroCapitalExecutionEnabled,
     });
 
@@ -391,6 +399,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       executionPosture: {
         ...execution,
         zeroCapitalExecutionEnabled,
+        zeroCapitalFundingReady,
       },
     });
   } catch (error) {

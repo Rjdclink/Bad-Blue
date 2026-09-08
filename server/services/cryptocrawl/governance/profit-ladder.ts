@@ -451,7 +451,7 @@ export class ProfitLadder extends EventEmitter {
         // Stage 2 / Proof-of-Signal deliberately has no trade-count, days-at-
         // target, win-rate, Sharpe, Monte Carlo, or uptime requirement. One
         // terminal-confirmed positive realized settlement proves the signal;
-        // capital and drawdown below are hard scale/resource facts only.
+        // topology-specific resource admission remains authoritative at execution.
         if (performance.terminalWinningSamples <= 0) {
           blockers.push('No terminal-confirmed positive realized settlement for Stage 2 proof-of-signal');
         }
@@ -483,12 +483,10 @@ export class ProfitLadder extends EventEmitter {
         }
       }
 
-      if (this.capitalVerificationStatus !== 'verified') {
-        blockers.push('Capital is not verified from live balance evidence');
-      }
-      if (nextTier && this.currentCapitalUSD < nextTier.minCapitalUSD) {
-        blockers.push(`Verified capital $${this.currentCapitalUSD} < $${nextTier.minCapitalUSD} required`);
-      }
+      // Fixed owned-capital thresholds remain roadmap/notional telemetry, not a
+      // global stage-advancement veto. CEX inventory, zero-capital funding,
+      // Profit-Ladder notional ceilings and topology-specific leases still fail
+      // closed at actual execution/resource admission.
       if (performance.maxDrawdown > tier.maxDrawdownPercent / 100) {
         blockers.push(`Realized max drawdown ${(performance.maxDrawdown * 100).toFixed(1)}% > ${tier.maxDrawdownPercent}%`);
       }
@@ -510,6 +508,7 @@ export class ProfitLadder extends EventEmitter {
           tier: tier.name,
           terminalPositiveSettlements: performance.terminalWinningSamples,
           verifiedCapitalUsd: this.currentCapitalUSD,
+          capitalAdvancementGateAuthority: false,
           realizedMaxDrawdown: performance.maxDrawdown,
           tradeCountAuthority: false,
           daysAtTargetAuthority: false,
@@ -525,6 +524,7 @@ export class ProfitLadder extends EventEmitter {
           daysAtTarget: performance.daysAtTarget,
           successRate: (performance.successRate * 100).toFixed(1),
           sharpeRatio: performance.sharpeRatio.toFixed(2),
+          capitalAdvancementGateAuthority: false,
         });
       }
       this.emit('advancement-criteria-met', {

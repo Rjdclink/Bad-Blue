@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
 import { canonicalOpportunityState, type CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 import { ensureCanonicalCryptoCrawlerRuntimeWiring } from '../integration/canonical-runtime-wiring.js';
+import { ensureCryptoCrawlerCoreRuntime } from '../runtime/core-runtime.js';
 import { stageManager } from '../governance/stage-management.js';
 
 export interface MarketConditions {
@@ -207,7 +208,7 @@ export class AutonomousCryptoFaucet {
   async runAutonomousLoop(): Promise<void> {
     if (this.active) return;
     ensureCanonicalCryptoCrawlerRuntimeWiring();
-    canonicalExecutionScheduler.start();
+    await ensureCryptoCrawlerCoreRuntime();
     this.active = true;
     this.startedAt = Date.now();
     this.lastModeChange = this.startedAt;
@@ -223,7 +224,8 @@ export class AutonomousCryptoFaucet {
     this.lastModeChange = Date.now();
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
-    canonicalExecutionScheduler.stop();
+    // This class is a compatibility facade, not a scheduler lifecycle owner.
+    // The canonical core runtime starts/stops discovery and scheduling together.
   }
 
   isActive(): boolean {

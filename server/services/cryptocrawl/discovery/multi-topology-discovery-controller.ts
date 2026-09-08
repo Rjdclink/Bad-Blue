@@ -67,6 +67,7 @@ const TOPOLOGY_PHASE: Record<MeasuredOpportunityTopology, number> = {
   LIQUIDATION: 5,
   MAKER_CEX: 6,
   FUNDING_ARBITRAGE: 7,
+  PREDICTION_EVENT: 8,
 };
 
 class MultiTopologyDiscoveryController {
@@ -88,8 +89,10 @@ class MultiTopologyDiscoveryController {
       baseIntervalMs: this.baseIntervalMs,
       fixedTopologyPriority: false,
       adaptiveScanAllocationApplied: true,
-      topologies: ['CEX_CEX', 'DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE', 'ZERO_CAPITAL_ATOMIC'],
-      zeroCapitalDiscoveryAuthority: 'zero_capital_engine_parallel_runtime',
+      topologies: ['CEX_CEX', 'DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE'],
+      externalTopologyCadences: ['ZERO_CAPITAL_ATOMIC', 'PREDICTION_EVENT'],
+      zeroCapitalDiscoveryAuthority: 'CanonicalZeroCapitalDiscovery',
+      predictionEventDiscoveryAuthority: 'prediction_market_discovery_wiring',
       candidateAuthority: 'measured_candidate_registry',
       realizedPerformanceAdjustsAttention: true,
       liveMeasuredEvidenceAdjustsColdStartAttention: true,

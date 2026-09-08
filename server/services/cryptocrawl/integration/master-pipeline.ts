@@ -15,6 +15,10 @@ import {
   getCanonicalExecutionCapabilities,
 } from '../execution/execution-readiness.js';
 import { canonicalExecutionScheduler } from '../execution/canonical-execution-scheduler.js';
+import {
+  ensureCryptoCrawlerCoreRuntime,
+  stopCryptoCrawlerCoreRuntime,
+} from '../runtime/core-runtime.js';
 import { ensureCanonicalCryptoCrawlerRuntimeWiring } from './canonical-runtime-wiring.js';
 import { ensureCryptaraAssessmentWiring } from './cryptara-assessment-wiring.js';
 import { getCryptaraSharedConnectorReadiness } from './cryptara-shared-readiness.js';
@@ -220,15 +224,17 @@ class MasterPipeline {
   }
 
   /**
-   * Historical lifecycle entry point. Delegates only to canonical authorities.
+   * Historical lifecycle entry point. Delegates only to the canonical core
+   * lifecycle so discovery and the scheduler cannot be started or stopped apart.
    */
   async run(): Promise<void> {
     await this.initialize();
-    canonicalExecutionScheduler.start();
-    logger.info('MasterPipeline compatibility run delegated to canonical scheduler', {
+    await ensureCryptoCrawlerCoreRuntime();
+    logger.info('MasterPipeline compatibility run delegated to canonical core runtime', {
       component: 'MasterPipeline',
       authority: 'canonical_lifecycle_delegate',
       legacyExecutionAuthority: false,
+      schedulerLifecycleAuthority: false,
     });
   }
 
@@ -237,7 +243,7 @@ class MasterPipeline {
   }
 
   async stop(): Promise<void> {
-    canonicalExecutionScheduler.stop();
+    await stopCryptoCrawlerCoreRuntime();
   }
 
   getMetrics() {
