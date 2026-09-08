@@ -80,24 +80,9 @@ function pollIntervalMs(): number {
   return Number.isFinite(parsed) ? Math.max(10_000, Math.min(120_000, Math.trunc(parsed))) : 30_000;
 }
 
-function candidateTtlMs(): number {
-  const parsed = Number(process.env.CRYPTOCRAWL_LIGHTER_BENCHMARK_TTL_MS || 45_000);
-  return Number.isFinite(parsed) ? Math.max(5_000, Math.min(120_000, Math.trunc(parsed))) : 45_000;
-}
-
 function comparisonSkewMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_BPS_ROUTE_COMPARISON_MAX_SKEW_MS || 2_000);
   return Number.isFinite(parsed) ? Math.max(100, Math.min(10_000, Math.trunc(parsed))) : 2_000;
-}
-
-function referenceNotionalUsd(): number {
-  const parsed = Number(process.env.CRYPTOCRAWL_FUNDING_REFERENCE_NOTIONAL_USD || 250);
-  return Number.isFinite(parsed) ? Math.max(1, parsed) : 250;
-}
-
-function splitCanonicalSymbol(symbol: string): { base: string; quote: string } | null {
-  const match = symbol.trim().toUpperCase().match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
-  return match ? { base: match[1], quote: match[2] } : null;
 }
 
 function canonicalLighterSymbol(raw: unknown, wanted: Set<string>): string | null {
@@ -225,14 +210,11 @@ async function pollLighterFundingBenchmark(): Promise<void> {
       timeoutMs: 3_000,
     });
 
-    // The official Lighter SDK documents code=200 for this successful response.
     if (!payload || (payload.code !== undefined && payload.code !== 200) || !Array.isArray(payload.funding_rates)) {
       throw new Error(`Lighter public funding response unavailable${payload?.message ? `: ${payload.message}` : ''}`);
     }
 
     const now = Date.now();
-    const ttlMs = candidateTtlMs();
-    const notionalUsd = referenceNotionalUsd();
     const rows = payload.funding_rates.filter(row => String(row.exchange || '').trim().toLowerCase() === 'lighter');
     const matchedSymbols = new Set<string>();
     let recorded = 0;
@@ -241,76 +223,19 @@ async function pollLighterFundingBenchmark(): Promise<void> {
       const symbol = canonicalLighterSymbol(row.symbol, requested);
       const rate = finite(row.rate);
       if (!symbol || rate === null) continue;
-      const split = splitCanonicalSymbol(symbol);
-      if (!split) continue;
       const marketId = Number.isFinite(Number(row.market_id)) ? Number(row.market_id) : -1;
       matchedSymbols.add(symbol);
 
-      measuredCandidateRegistry.record({
-        opportunityId: `funding:lighter_public:${marketId}:${symbol}`,
-        topology: 'FUNDING_ARBITRAGE',
-        observedAt: now,
-        expiresAt: now + ttlMs,
-        status: 'enriched',
-        assets: [split.base, split.quote],
-        venues: ['lighter'],
-        chains: ['lighter_zk_rollup'],
-        rawQuotes: [{
-          source: 'lighter:public_funding_rates',
-          venue: 'lighter',
-          symbol,
-          observedAt: now,
-          price: null,
-          executable: false,
-          provenance: [
-            'lighter_official_public_rest:/api/v1/funding-rates',
-            'lighter_official_rate_normalization:8h_equivalent',
-            `lighter_market_id:${marketId}`,
-            `lighter_funding_rate:${rate}`,
-            'public_no_auth',
-          ],
-        }],
-        depth: {
-          status: 'unavailable',
-          detail: 'Lighter public funding is a keyless frontier input only; executable entry/exit depth, account tier, latency and margin capacity are not inferred',
-        },
-        economics: {
-          // A single venue funding rate is not itself arbitrage profit. The
-          // counter-leg, basis, fees, depth, latency and settlement must be
-          // measured before canonical gross/net economics exist.
-          grossProfitUsd: null,
-          deterministicNetProfitUsd: null,
-          feeUsd: null,
-          gasUsd: null,
-          bridgeUsd: null,
-          expectedSlippageBps: null,
-          expectedPriceImpactBps: null,
-          notionalUsd,
-          netProfitBps: null,
-        },
-        quoteAgeMs: 0,
-        executableCapability: false,
-        executionCapabilityReason: 'Lighter public data is admitted only as a BPS/funding benchmark. Execution requires authenticated signing, exact account-tier fees, measured counter-leg/depth/latency and provenance-backed system-owned margin/collateral; no user-funded collateral path is admitted.',
-        missingInformation: [
-          'lighter_authenticated_execution_account',
-          'lighter_exact_account_tier_fee_evidence',
-          'lighter_measured_counter_leg',
-          'lighter_measured_entry_exit_depth',
-          'lighter_measured_execution_latency_cost',
-          'lighter_system_owned_margin_collateral_provenance',
-          'lighter_terminal_settlement_adapter',
-        ],
-        provenance: [
-          'bps_frontier_wave3:external_zero_fee_low_fee_venue_benchmark',
-          'lighter_public_funding_discovery:keyless',
-          'execution_promotion:false',
-          'personal_capital_allowed:false',
-          'personal_collateral_allowed:false',
-          'single_funding_rate_is_not_profit',
-          'unknown_cost_is_not_zero',
-          'synthetic_bps_savings:false',
-        ],
-      });
+      // Lighter's public funding endpoint is external search/BPS intelligence,
+      // not an executable funding strategy in the present integration. Do not
+      // register it as a canonical candidate carrying impossible authenticated
+      // account/depth/settlement "missing information". That polluted the
+      // funding backlog with 60 permanently incomplete candidates every poll.
+      // The measured public row remains represented by this benchmark snapshot
+      // and can become a candidate only after a real Lighter execution adapter
+      // supplies authenticated account, fees, depth, margin and settlement.
+      void marketId;
+      void rate;
       recorded++;
     }
 
@@ -326,6 +251,8 @@ async function pollLighterFundingBenchmark(): Promise<void> {
       matchedObservations: recorded,
       matchedSymbols: lastLighterSymbols.slice(0, 24),
       apiKeyRequired: false,
+      canonicalCandidateRowsCreated: 0,
+      benchmarkClassification: 'external_advisory_only_until_authenticated_execution_adapter_exists',
       executionAuthority: false,
       accountTierFeeAssumed: false,
       hiddenLatencyBpsAssumed: false,
@@ -390,7 +317,7 @@ export function ensureBpsFrontierWave3Wiring(): void {
     smartOrderRoutingUpgrade: 'compare_only_like_notional_contemporaneous_fresh_canonical_net_outcomes_then_explicit_costs',
     routeComparisonMaxSkewMs: comparisonSkewMs(),
     quoteEmbeddedCostPolicy: 'canonical_net_outcome_wins_before_explicit_cost_field_tiebreak_so_embedded_fees_are_not_ignored_or_double_subtracted',
-    externalVenueBenchmark: 'lighter_public_funding_keyless_discovery_only',
+    externalVenueBenchmark: 'lighter_public_funding_keyless_discovery_only_no_candidate_backlog',
     directVsAggregatorPolicy: 'only_measured_canonical_net_outcomes_and_costs_may_report_route_advantage',
     uniswapV4Policy: 'dynamic_fee_hook_flash_accounting_surface_requires_exact_pool_quote_before_economic_credit',
     intentSolverPolicy: 'cow_uniswapx_style_solver_surfaces_require_exact_executable_quote_and_zero_personal_resource_proof_before_admission',
