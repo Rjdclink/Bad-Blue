@@ -34,6 +34,14 @@ const APPROVAL_GAS = 100_000;
 const CONVERSION_GAS = 300_000;
 const PAYMENT_GAS = 21_000;
 
+export interface BuilderSponsoredReceiverBootstrapEvidence {
+  owner: string;
+  vault: string;
+  factory: string;
+  deploymentTransactionIndex: number;
+  permissionTransactionCount: number;
+}
+
 export interface BuilderSponsoredZeroCapitalEvidence {
   opportunityId: string;
   observedAt: number;
@@ -41,6 +49,10 @@ export interface BuilderSponsoredZeroCapitalEvidence {
   targetBlock: number;
   inputToken: string;
   inputAssetSymbol: 'USDC' | 'USDT';
+  receiver: string;
+  providerLabel: string;
+  executionTransactionIndex: number;
+  receiverBootstrap?: BuilderSponsoredReceiverBootstrapEvidence;
   builderGasCostInInputToken: bigint;
   guaranteedNetProfitInInputToken: bigint;
   guaranteedResidualProfitUsd: number;
@@ -92,6 +104,7 @@ function cloneCandidate(candidate: BuilderSponsoredBundleCandidate): BuilderSpon
 function cloneEvidence(evidence: BuilderSponsoredZeroCapitalEvidence): BuilderSponsoredZeroCapitalEvidence {
   return {
     ...evidence,
+    receiverBootstrap: evidence.receiverBootstrap ? { ...evidence.receiverBootstrap } : undefined,
     candidates: evidence.candidates.map(cloneCandidate),
     provenance: [...evidence.provenance],
   };
@@ -103,6 +116,7 @@ class BuilderSponsoredZeroCapitalRegistry {
 
   record(evidence: BuilderSponsoredZeroCapitalEvidence): void {
     if (!evidence.opportunityId || evidence.expiresAt <= evidence.observedAt || evidence.candidates.length === 0) return;
+    if (!ethers.utils.isAddress(evidence.receiver) || !Number.isSafeInteger(evidence.executionTransactionIndex) || evidence.executionTransactionIndex < 0) return;
     this.entries.set(evidence.opportunityId, cloneEvidence(evidence));
     this.prune();
   }
@@ -223,8 +237,6 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
   const guaranteedResidualProfitUsd = Number(guaranteedNetProfitInInputToken) / 1_000_000 * stableUsd;
   if (!Number.isFinite(guaranteedResidualProfitUsd) || guaranteedResidualProfitUsd <= 0) return null;
 
-  // The receiver's minProfit is pre-builder-repayment profit. Canonical candidate
-  // economics below remain post-builder-repayment all-in net profit.
   const planningOpportunity = {
     ...opportunity,
     expectedProfit: preBuilderProfit,
@@ -329,9 +341,6 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
   });
   if (candidates.length === 0) return null;
 
-  // Replace the earlier generic/native gas estimate with the exact maximum
-  // stablecoin conversion needed to reimburse the builder. This is the value the
-  // BPS engine must see; sponsorship is transport, not a zero-cost fiction.
   opportunity.estimatedGasCostInInputToken = builderGasCostInInputToken;
   opportunity.estimatedExecutionCostInInputToken = allInCost;
   opportunity.expectedProfit = guaranteedNetProfitInInputToken;
@@ -347,6 +356,9 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
     targetBlock,
     inputToken: opportunity.inputToken,
     inputAssetSymbol: opportunity.inputAssetSymbol,
+    receiver: selection.receiver,
+    providerLabel: selection.provider,
+    executionTransactionIndex: 0,
     builderGasCostInInputToken,
     guaranteedNetProfitInInputToken,
     guaranteedResidualProfitUsd,
@@ -397,15 +409,16 @@ export async function submitPreparedBuilderSponsoredZeroCapital(input: {
 
   for (const candidate of evidence.candidates) {
     const result = await adapter.submitCandidate(candidate);
-    const executionTransactionHash = candidate.transactionHashes[0];
+    const executionTransactionHash = candidate.transactionHashes[evidence.executionTransactionIndex];
+    if (!executionTransactionHash) {
+      return null;
+    }
     if (result.status === 'confirmed') {
       return { evidence, candidate, result, executionTransactionHash };
     }
     if (result.status === 'ambiguous') {
       return { evidence, candidate, result, executionTransactionHash };
     }
-    // Definitive pre-inclusion failure may try the next independently signed
-    // builder candidate. An ambiguous accepted bundle is never raced.
   }
   return null;
 }
