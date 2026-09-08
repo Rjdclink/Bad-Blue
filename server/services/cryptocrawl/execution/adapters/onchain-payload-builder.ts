@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 
 export type SupportedExecutionChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
-export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3';
+export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3' | 'pancakeswapV2' | 'traderJoeV1';
 export type UniswapV3FeeTier = 100 | 500 | 3000 | 10000;
 
 export interface OnchainSwapLeg {
@@ -44,7 +44,7 @@ const UNISWAP_V3_ROUTER_ABI = [
   'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)',
 ];
 
-const SUSHISWAP_ROUTER_ABI = [
+const V2_ROUTER_ABI = [
   'function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) external returns (uint256[] amounts)',
 ];
 
@@ -61,6 +61,12 @@ const DEX_ROUTERS: Record<SupportedSwapProtocol, Partial<Record<SupportedExecuti
     arbitrum: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
     bsc: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
     avalanche: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+  },
+  pancakeswapV2: {
+    bsc: '0x10ED43C718714eb63d5aA57B78B54704E256024E',
+  },
+  traderJoeV1: {
+    avalanche: '0x60aE616a2155Ee3d9A68541Ba4544862310933d4',
   },
   sushiswapV3: {},
 };
@@ -145,7 +151,7 @@ export function buildSwapCallFromLeg(
     throw new Error('Sushi V3 Europa routes must use the verified Route Processor payload builder');
   }
 
-  const iface = new ethers.utils.Interface(SUSHISWAP_ROUTER_ABI);
+  const iface = new ethers.utils.Interface(V2_ROUTER_ABI);
   return {
     target: router,
     data: iface.encodeFunctionData('swapExactTokensForTokens', [
