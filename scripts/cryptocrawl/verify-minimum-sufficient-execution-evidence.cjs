@@ -24,16 +24,16 @@ has(registry, 'executionBlockingMissingInformation(candidate)', 'consumer snapsh
 has(registry, 'const next = clone(previous, true);', 'internal updates must preserve complete diagnostic missing evidence');
 has(registry, 'advisory_missing_nonblocking:', 'nonblocking missing evidence must remain observable through provenance');
 
-// Existing hard gates may still test missingInformation.length, but every execution
-// consumer receives the filtered registry snapshot. This preserves those guards as
-// a defense-in-depth check for explicit required/critical gaps without allowing
-// optional/redundant/irrelevant completeness fields to veto a trade.
+// Execution consumers keep defense-in-depth guards over the registry-filtered
+// snapshot. The atomic stack is advisory-only, so it must consume authoritative
+// eligible/executable candidates without creating an additional completeness veto.
 has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler defense-in-depth missing-information guard should remain');
-has(stack, 'candidate.missingInformation.length === 0', 'atomic stack defense-in-depth missing-information guard should remain');
+has(stack, "candidate.status !== 'eligible'", 'atomic stack advisory must require current eligible candidates');
+has(stack, 'candidate.executableCapability !== true', 'atomic stack advisory must require authoritative executable capability');
+has(stack, 'executionAuthority: false', 'atomic stack must remain advisory-only without independent execution authority');
 has(multileg, 'candidate.missingInformation.length', 'multileg defense-in-depth missing-information guard should remain');
 
-// Unified admission already separates acquisition/telemetry from execution.
 has(router, 'const admitted = economicsAdmitted && pathAvailable && candidate.executableCapability && fresh && depthReady;', 'router admission must remain based on minimum execution facts, not completeness scoring');
 has(router, 'advisory:missing_information:', 'missing information must remain visible as advisory evidence');
 
-console.log('[minimum-sufficient-execution-evidence] PASS: optional/redundant/advisory missing information cannot veto a minimum-proven profitable executable trade; explicit required/critical gaps still fail closed');
+console.log('[minimum-sufficient-execution-evidence] PASS: optional/redundant/advisory missing information cannot veto a minimum-proven profitable executable trade; explicit required/critical gaps still fail closed and advisory optimizers cannot create shadow completeness vetoes');
