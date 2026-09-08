@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const read = path => fs.readFileSync(path, 'utf8');
 const registry = read('server/services/cryptocrawl/discovery/measured-candidate-registry.ts');
 const compatibilityResource = read('server/services/cryptocrawl/integration/zero-capital-resource-wiring.ts');
+const routeAuthority = read('server/services/cryptocrawl/discovery/zero-capital-route-authority.ts');
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const providerReprice = read('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
@@ -13,14 +14,14 @@ const executor = read('server/services/cryptocrawl/execution/zero-capital-canoni
 const rescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts');
 const scale = read('server/services/cryptocrawl/scaling/dynamic-scale-pressure-wiring.ts');
 const engine = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
+const shadow = read('server/services/cryptocrawl/integration/zero-capital-shadow-priority-wiring.ts');
+const gasAuthority = read('server/services/cryptocrawl/runtime/zero-capital-gas-authority.ts');
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
 const routeQuoter = read('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts');
 const payloadBuilder = read('server/services/cryptocrawl/execution/adapters/onchain-payload-builder.ts');
 const routePlanner = read('server/services/cryptocrawl/execution/adapters/autonomous-route-planner.ts');
 const receiverCapability = read('server/services/cryptocrawl/execution/adapters/flash-loan-receiver-capability.ts');
 
-// BPS decomposition remains first-class measured evidence. These fields describe
-// measured economics; none of them independently grants execution authority.
 for (const field of [
   'grossProfitBps',
   'flashLoanFeeBps',
@@ -36,8 +37,13 @@ for (const field of [
 assert.match(registry, /zeroCapitalBps:/);
 assert.match(registry, /nearBreakEven:/);
 
-// PR #565 retired the old resource runtime wrapper. Discovery now measures fresh
-// routes and gas truth; provider repricing is the sole eligibility-promotion stage.
+// One merged route authority feeds the sole recurring discovery lane.
+assert.match(routeAuthority, /loadConfiguredZeroCapitalRoutes/);
+assert.match(routeAuthority, /buildDynamicZeroCapitalRouteTemplates/);
+assert.match(routeAuthority, /getCachedGraphlessDynamicRouteTemplates/);
+assert.match(discovery, /getCanonicalZeroCapitalRoutes/);
+assert.doesNotMatch(discovery, /buildDynamicZeroCapitalRouteTemplates/);
+assert.doesNotMatch(discovery, /getCachedGraphlessDynamicRouteTemplates/);
 assert.match(discovery, /async function strictFunding[\s\S]{0,260}getProvenZeroCapitalGasFundingDecision\(target, chain\)/);
 assert.match(discovery, /const funding = await strictFunding\(target, chain\)/);
 assert.match(discovery, /discoverDynamicZeroCapitalQuotes\(chain, provider, funding\.mode\)/);
@@ -48,8 +54,7 @@ assert.match(discovery, /eligibilityAuthority: 'canonical_provider_repricing_sta
 assert.match(discovery, /executionAuthority: false/);
 assert.match(discovery, /synthetic_evidence:false/);
 
-// The compatibility file must stay authority-free; no stale wrapper may mutate the
-// scanner, dispatcher, executor, gas decision, or route quote path again.
+// Historical compatibility surfaces remain authority-free.
 assert.match(compatibilityResource, /discoveryAuthority: 'CanonicalZeroCapitalDiscovery'/);
 assert.match(compatibilityResource, /resourceAuthority: 'getProvenZeroCapitalGasFundingDecision'/);
 assert.match(compatibilityResource, /eligibilityAuthority: 'canonical_provider_repricing_stage_only'/);
@@ -61,6 +66,22 @@ assert.doesNotMatch(compatibilityResource, /target\.dispatchExecutableOpportunit
 assert.doesNotMatch(compatibilityResource, /target\.executeFunded\s*=/);
 assert.doesNotMatch(compatibilityResource, /discoverDynamicZeroCapitalQuotes\s*\(/);
 assert.doesNotMatch(compatibilityResource, /getGasFundingDecision\s*\(/);
+assert.doesNotMatch(shadow, /target\.dispatchExecutableOpportunities\s*=/);
+assert.match(shadow, /runtimeMethodMutation: false/);
+
+// Runtime context cannot form a parallel scan/dispatch/submission loop.
+assert.match(engine, /independentScanLoop:\s*false/);
+assert.match(engine, /independentExecutionLoop:\s*false/);
+assert.match(engine, /runtimeMethodMutation:\s*false/);
+assert.doesNotMatch(engine, /this\.startScanningLoop\s*\(\s*\)/);
+assert.doesNotMatch(engine, /this\.startExecutionLoop\s*\(\s*\)/);
+assert.doesNotMatch(engine, /computationalBeam/);
+assert.doesNotMatch(engine, /runProfitabilityMonteCarlo/);
+assert.match(engine, /monteCarloExecutionAuthority:\s*false/);
+
+// Strict gas truth has one proof boundary; consumers cannot manufacture it.
+assert.match(gasAuthority, /getProvenZeroCapitalGasFundingDecision/);
+assert.match(engine, /return getProvenZeroCapitalGasFundingDecision\(this, chain\)/);
 
 // Provider selection measures current liquidity/fees and can promote only a
 // strictly-positive exact reprice. It remains advisory to the canonical scheduler.
@@ -75,8 +96,7 @@ assert.match(providerReprice, /executionAuthority: false/);
 assert.doesNotMatch(providerReprice, /target\.scanChain\s*=/);
 assert.doesNotMatch(providerReprice, /target\.executeFunded\s*=/);
 
-// One parent scheduler owns ZERO_CAPITAL_ATOMIC. It independently rechecks current
-// candidate/route freshness and positive BPS immediately before canonical dispatch.
+// One parent scheduler owns ZERO_CAPITAL_ATOMIC.
 assert.match(scheduler, /decision\.topology === 'ZERO_CAPITAL_ATOMIC'/);
 assert.match(scheduler, /candidate\.expiresAt > Date\.now\(\)/);
 assert.match(scheduler, /Number\(candidate\.canonicalBps\?\.netBps\) > 0/);
@@ -85,8 +105,7 @@ assert.match(scheduler, /opportunity\.expectedProfit > 0n/);
 assert.match(scheduler, /opportunity\.netProfitBps > 0/);
 assert.match(scheduler, /executeCanonicalZeroCapitalOpportunity\(/);
 
-// The single executor repeats hard facts at the money boundary: exact freshness,
-// current provider selection, zero-personal-cost gas provenance and terminal truth.
+// The single executor repeats hard facts at the money boundary.
 assert.match(executor, /Date\.now\(\) >= opportunity\.expiresAt/);
 assert.match(executor, /opportunity\.expectedProfit <= 0n \|\| !\(opportunity\.netProfitBps > 0\)/);
 assert.match(executor, /flashLoanProviderSelectionRegistry\.get\(opportunity\.id\)/);
@@ -100,16 +119,7 @@ assert.match(executor, /extractProfit\(receipt/);
 assert.match(executor, /terminalEconomics\(/);
 assert.match(executor, /synthetic_evidence:false/);
 
-// Monte Carlo / Computational Beam stays parallel advisory intelligence and cannot
-// become a second execution veto after canonical hard facts have approved a route.
-assert.match(engine, /Parallel Monte Carlo advisory completed/);
-assert.match(engine, /simulationApproved: monteCarlo\.approved/);
-assert.match(engine, /Canonical hard facts approved; Monte Carlo runs in parallel as advisory evidence only/);
-assert.match(engine, /monteCarloExecutionAuthority: false/);
-assert.doesNotMatch(engine, /if \(!monteCarlo\.approved\) return \{ approved: false/);
-
-// Zero-capital rescue consumes the shared BPS Super Engine and can only request
-// fresh exact remeasurement. It never fabricates economics or submits execution.
+// BPS rescue is advisory measurement/formation only.
 assert.match(rescue, /buildBpsReductionSuperPlan/);
 assert.match(rescue, /buildResearchBpsExecutionPlan/);
 assert.match(rescue, /adviseEconomicTransformations/);
@@ -124,8 +134,7 @@ assert.match(rescue, /executionAuthority: false/);
 assert.doesNotMatch(rescue, /expectedProfit\s*=\s*Math\.max/);
 assert.doesNotMatch(rescue, /netProfitBps\s*=\s*Math\.max/);
 
-// Uniswap V3's official 0.01% (fee=100, one BPS) tier remains end-to-end through
-// measured discovery, quote validation, route planning and receiver preparation.
+// Uniswap V3 official 0.01% tier remains end-to-end.
 assert.match(payloadBuilder, /export type UniswapV3FeeTier = 100 \| 500 \| 3000 \| 10000/);
 assert.match(dynamicRoutes, /ZERO_CAPITAL_DYNAMIC_UNISWAP_FEE_TIERS \|\| '100,500,3000'/);
 assert.match(dynamicRoutes, /value === 100 \|\| value === 500 \|\| value === 3000 \|\| value === 10000/);
@@ -135,8 +144,7 @@ assert.match(routePlanner, /if \(fee <= 0\.0001\) return 100/);
 assert.match(receiverCapability, /if \(fee <= 0\.0001\) return 100/);
 assert.match(routeQuoter, /return \(feeTier \|\| 3000\) \/ 1_000_000/);
 
-// Near-break-even density may affect bounded search pressure only. Realized
-// profitability remains terminal-confirmed settlement truth.
+// Near-break-even density affects search pressure only.
 assert.match(scale, /zeroCapitalNearBreakEvenPressure/);
 assert.match(scale, /nearBreakEvenAuthority: 'fresh_unexpired_search_formation_pressure_only'/);
 assert.match(scale, /staleNearBreakEvenEconomicAuthority: false/);
@@ -144,18 +152,19 @@ assert.match(scale, /profitabilityAuthority: 'terminal_confirmed_realized_only'/
 assert.doesNotMatch(scale, /profitabilityPressure\s*=\s*[^;]*zeroCapitalNearBreakEvenPressure/);
 
 console.log(JSON.stringify({
-  zeroCapitalBpsPropagation: 'verified_on_canonical_authority_path',
+  zeroCapitalBpsPropagation: 'verified_on_single_canonical_pipeline',
+  canonicalRouteAuthority: true,
   canonicalDiscoveryOwnsFreshMeasurement: true,
   canonicalProviderRepricingOwnsEligibilityPromotion: true,
   canonicalParentSchedulerOwnsDispatch: true,
   canonicalZeroCapitalExecutorOwnsMoneyBoundary: true,
-  retiredResourceRuntimeMutation: false,
+  runtimeParallelScheduler: false,
+  runtimeDispatchMutation: false,
   zeroCapitalBpsSuperEngineOperational: true,
   positiveExecutionFloorPreserved: true,
   zeroPersonalCostGasTruthBound: true,
   uniswapV3OneBpsFeeTierEndToEnd: true,
   monteCarloExecutionAuthority: false,
-  advisoryWorkRunsInParallel: true,
   dynamicScaleUse: 'fresh_unexpired_bounded_search_pressure_only',
   realizedProfitabilityAuthorityPreserved: true,
 }, null, 2));
