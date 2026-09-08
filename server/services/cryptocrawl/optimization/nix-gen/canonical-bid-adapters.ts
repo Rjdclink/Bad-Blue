@@ -122,6 +122,8 @@ export function prepareMeasuredTopologyNixGenBid(candidate: MeasuredCandidate, d
   const chain = candidate.chains[0]?.trim();
   if (!chain) return null;
 
+  // decision.score.profitabilityScore already reflects canonical profitability;
+  // mapping it into Nix-Gen rankScore would double-count the same economic signal.
   return {
     bid: {
       bidId: `${candidate.topology.toLowerCase()}:${candidate.opportunityId}`, opportunityId: candidate.opportunityId,
