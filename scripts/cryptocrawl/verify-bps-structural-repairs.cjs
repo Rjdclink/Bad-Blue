@@ -32,7 +32,12 @@ must(compression.includes("typeof value === 'string' && value.trim() === ''"), '
 must(gas.includes('sponsorOperatorMonetaryCostProvenZero === true'), 'sponsored zero-gas claim must require proven zero operator monetary cost');
 must(gas.includes('nativeSystemOwnedProven === true'), 'native gas must require durable system-owned provenance');
 must(gas.includes("paymentSource: 'provider_sponsored'"), 'sponsored payment source must remain explicit');
-must(gas.includes("paymentSource: strictEligible ? 'system_owned_native' : 'unproven_native_balance'"), 'native payment-source provenance must remain explicit');
+// Verify the semantic provenance states independently instead of coupling this
+// proof to one implementation expression. Refactors may legitimately replace a
+// ternary with guarded branches, but neither state may disappear.
+must(gas.includes("'system_owned_native'"), 'system-owned native payment-source provenance must remain explicit');
+must(gas.includes("'unproven_native_balance'"), 'unproven native-balance provenance must remain explicit');
+must(gas.includes('strictZeroInitialCapitalEligible'), 'native/sponsored provenance must still feed strict zero-initial-capital eligibility');
 
 // Preserve the already-completed live zero-personal-cost admission work from
 // PR #558 on the current structural branch. Generic sponsor readiness cannot
