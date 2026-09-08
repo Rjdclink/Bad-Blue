@@ -46,16 +46,21 @@ const fundingCapital = read('server/services/cryptocrawl/execution/funding-capit
 const combinedAdapter = read('server/services/cryptocrawl/execution/funding-crosschain-execution-adapter.ts');
 const manifest = read('server/services/cryptocrawl/optimization/nix-gen/completion-manifest.ts');
 
-must(index, "./zero-capital-ordering.js", 'zero-capital ordering is exported');
+must(index, "./zero-capital-ordering.js", 'zero-capital advisory ordering helper is exported');
 must(index, "./live-priority-registry.js", 'shared live priority registry is exported');
 
 must(bids, "strategyClass: 'market_making'", 'maker CEX plans map to the market-making finger');
-must(bids, "zero_capital_engine:dispatchExecutableOpportunities", 'zero-capital authoritative execution path is explicit');
-must(bids, "zero_capital_engine:terminal_realized_profit_wiring", 'zero-capital terminal settlement capability authority is explicit');
+must(bids, "canonical_execution_scheduler:executeCanonicalZeroCapitalOpportunity", 'zero-capital authoritative scheduler-to-executor path is explicit');
+must(bids, "canonical_zero_capital_discovery:provider_repricing_plus_zero_personal_cost_resource_truth", 'zero-capital execution capability authority is canonical resource/economic truth');
+mustNot(bids, "zero_capital_engine:dispatchExecutableOpportunities", 'Nix bid metadata cannot resurrect engine-local zero-capital dispatch');
+mustNot(bids, "zero_capital_engine:terminal_realized_profit_wiring", 'Nix bid metadata cannot resurrect engine-local settlement authority');
 
-must(zeroWiring, 'orderZeroCapitalOpportunitiesWithNixGen', 'existing zero-capital queue consumes Nix-Gen ordering');
-must(zeroWiring, 'applyPreviousResourceShadowOrdering', 'previous zero-capital ordering remains fail-open fallback');
-must(zeroWiring, 'executionAuthorityChanged: false', 'zero-capital Nix-Gen wiring does not acquire execution authority');
+must(zeroWiring, 'Legacy shadow dispatch wrapper retired', 'legacy zero-capital Nix dispatch wrapper is explicitly retired');
+must(zeroWiring, 'runtimeMethodMutation: false', 'zero-capital Nix compatibility hook cannot mutate runtime methods');
+must(zeroWiring, 'dispatchMutation: false', 'zero-capital Nix compatibility hook cannot replace parent dispatch');
+must(zeroWiring, 'executionAuthorityChanged: false', 'zero-capital Nix compatibility hook does not acquire execution authority');
+mustNot(zeroWiring, 'orderZeroCapitalOpportunitiesWithNixGen', 'zero-capital-local queue ordering is not a live path');
+mustNot(zeroWiring, 'target.dispatchExecutableOpportunities =', 'zero-capital-local dispatch monkeypatch is forbidden');
 
 must(live, "authority: 'nix_gen_shared_live_priority_registry'", 'shared global live priority authority is explicit');
 must(live, 'executionAuthority: false', 'shared registry cannot execute');
@@ -63,15 +68,13 @@ must(live, 'resourceAuthority: false', 'shared registry cannot acquire resources
 must(live, 'filtersCanonicalCandidates: false', 'shared registry cannot filter canonical candidates');
 must(cexOrdering, "source: 'cex'", 'CEX lane publishes to global live priority');
 must(measuredOrdering, "source: 'measured_atomic'", 'measured deterministic lane publishes to global live priority');
-must(zeroOrdering, "source: 'zero_capital'", 'zero-capital lane publishes to global live priority');
+must(zeroOrdering, "source: 'zero_capital'", 'zero-capital helper remains advisory-only data preparation');
 
 must(globalLive, 'additionalPrepared?: readonly NixGenPreparedBid[]', 'pure global helper accepts already-prepared independent live lanes');
 must(globalLive, 'additionalPreparedCount: number', 'pure global helper reports additional live-lane participation');
 must(globalLive, 'filtersCanonicalCandidates: false', 'pure global helper remains non-filtering');
 
 // Cross-chain eligibility is based on a closed deterministic USD-value loop.
-// Same-asset and provider-composed stablecoin cross-swaps are both admitted only
-// from guaranteed minimum output with measured origin/approval gas evidence.
 must(crossChain, 'cross_chain_profit_model:closed_usd_value', 'cross-chain uses closed deterministic USD-value accounting');
 must(crossChain, 'cross_chain_profit_model:minimum_output_not_expected_output', 'cross-chain uses guaranteed minimum rather than optimistic expected output');
 must(crossChain, 'executableCapability: routeExecutable', 'cross-chain capability is derived from complete route evidence');
@@ -197,6 +200,8 @@ must(fundingCapital, '30 * 24 * 60 * 60_000', 'recovery horizon remains bounded 
 must(measuredOrdering, "decision.topology === 'CROSS_CHAIN'", 'deterministic cross-chain enters measured Nix portfolio');
 mustNot(measuredOrdering, "decision.topology === 'FUNDING_ARBITRAGE'", 'projected funding must not enter deterministic Nix portfolio');
 
+must(manifest, "zero_capital_runtime_ordering', state: 'implemented'", 'manifest records canonical zero-capital measured ordering');
+must(manifest, 'no zero-capital-local queue wrapper, scheduler, or dispatch mutation exists', 'manifest records zero-capital single-scheduler boundary');
 must(manifest, "cross_chain_live_finger', state: 'implemented'", 'manifest records cross-chain finger completion');
 must(manifest, "funding_rate_live_finger', state: 'implemented'", 'manifest records funding lifecycle completion');
 must(manifest, 'entry carry remains projected expected value', 'manifest preserves funding deterministic-profit boundary');
