@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BigNumber, Contract, Wallet, ethers, providers } from 'ethers';
+import { BigNumber, Wallet, ethers, providers } from 'ethers';
 import logger from '../../../logger.js';
 import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
@@ -11,6 +11,7 @@ import {
   BuilderSponsoredBundleAdapter,
   type BuilderSpecificSignedBundle,
 } from './adapters/builder-sponsored-bundle.js';
+import { buildBuilderRepaymentSwapData, selectBuilderRepaymentRoute } from './adapters/builder-repayment-route.js';
 import {
   calculateMeasuredFlashLoanFee,
   type FlashLoanProviderEconomics,
@@ -28,8 +29,6 @@ const CREATE2_DEPLOYER_CODE_HASH = '0x2fa86add0aed31f33a762c9d88e807c475bd51d0f5
 const RECEIVER_SALT = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('bad-blue:cryptocrawl-balancer-receiver:v1'));
 const ETHEREUM_USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 const ETHEREUM_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
-const WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
-const SUSHISWAP_V2_ROUTER = '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F';
 
 const DEPLOYMENT_GAS = 1_500_000;
 const PERMISSION_GAS = 100_000;
@@ -37,6 +36,7 @@ const FLASH_GAS = 1_400_000;
 const APPROVAL_GAS = 100_000;
 const CONVERSION_GAS = 300_000;
 const PAYMENT_GAS = 21_000;
+const BPS_PRECISION = 1_000_000n;
 
 const RECEIVER_ADMIN_INTERFACE = new ethers.utils.Interface([
   'function setAllowedTarget(address target,bool allowed)',
@@ -45,11 +45,6 @@ const RECEIVER_ADMIN_INTERFACE = new ethers.utils.Interface([
 const ERC20_INTERFACE = new ethers.utils.Interface([
   'function approve(address spender,uint256 amount) returns (bool)',
 ]);
-const ROUTER_INTERFACE = new ethers.utils.Interface([
-  'function getAmountsIn(uint256 amountOut,address[] path) view returns (uint256[] amounts)',
-  'function swapTokensForExactETH(uint256 amountOut,uint256 amountInMax,address[] path,address to,uint256 deadline) returns (uint256[] amounts)',
-]);
-const ROUTER_VIEW_ABI = ['function getAmountsIn(uint256 amountOut,address[] path) view returns (uint256[] amounts)'];
 
 interface ReceiverArtifact {
   contractName: string;
@@ -71,8 +66,9 @@ function sameAddress(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
 }
 
-function ceilBps(value: bigint, bps: number): bigint {
-  return (value * BigInt(10_000 + bps) + 9_999n) / 10_000n;
+function preciseBps(value: bigint, notional: bigint): number {
+  if (notional <= 0n) return Number.NEGATIVE_INFINITY;
+  return Number((value * 10_000n * BPS_PRECISION) / notional) / Number(BPS_PRECISION);
 }
 
 function maxBigNumber(left: BigNumber | null | undefined, right: BigNumber): BigNumber {
@@ -214,11 +210,15 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
   if (minimumBuilderResidualWei <= 0n) throw new Error('ZERO_CAPITAL_BUILDER_MIN_RESIDUAL_WEI must be positive');
   const builderPaymentWei = requiredSponsorshipWei + minimumBuilderResidualWei;
 
-  const router = new Contract(SUSHISWAP_V2_ROUTER, ROUTER_VIEW_ABI, provider);
-  const amounts = await router.getAmountsIn(BigNumber.from(builderPaymentWei.toString()), [opportunity.inputToken, WETH]) as BigNumber[];
-  if (!Array.isArray(amounts) || amounts.length !== 2 || !amounts[0] || amounts[0].lte(0)) return null;
   const conversionSlippageBps = boundedInteger(process.env.ZERO_CAPITAL_BUILDER_CONVERSION_MAX_SLIPPAGE_BPS, 50, 1, 500);
-  const builderGasCostInInputToken = ceilBps(BigInt(amounts[0].toString()), conversionSlippageBps);
+  const repaymentRoute = await selectBuilderRepaymentRoute({
+    provider,
+    inputToken: opportunity.inputToken,
+    amountOutWei: builderPaymentWei,
+    slippageBps: conversionSlippageBps,
+  });
+  if (!repaymentRoute) return null;
+  const builderGasCostInInputToken = repaymentRoute.maxInput;
   const minimumRetained = BigInt(process.env.ZERO_CAPITAL_BUILDER_MIN_RETAINED_PROFIT_BASE_UNITS || minimumPositiveProfitBaseUnits().toString());
   const minimumReceiverProfit = builderGasCostInInputToken + minimumRetained;
   if (minimumRetained <= 0n || preBuilderProfit < minimumReceiverProfit) return null;
@@ -289,21 +289,20 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     ...common,
     nonce: nonce + prefixTransactions.length,
     to: opportunity.inputToken,
-    data: ERC20_INTERFACE.encodeFunctionData('approve', [SUSHISWAP_V2_ROUTER, amountInMax]),
+    data: ERC20_INTERFACE.encodeFunctionData('approve', [repaymentRoute.router, amountInMax]),
     value: BigNumber.from(0),
     gasLimit: BigNumber.from(APPROVAL_GAS),
   });
   prefixTransactions.push({
     ...common,
     nonce: nonce + prefixTransactions.length,
-    to: SUSHISWAP_V2_ROUTER,
-    data: ROUTER_INTERFACE.encodeFunctionData('swapTokensForExactETH', [
-      BigNumber.from(builderPaymentWei.toString()),
-      amountInMax,
-      [opportunity.inputToken, WETH],
-      wallet.address,
+    to: repaymentRoute.router,
+    data: buildBuilderRepaymentSwapData({
+      route: repaymentRoute,
+      amountOutWei: builderPaymentWei,
+      recipient: wallet.address,
       deadline,
-    ]),
+    }),
     value: BigNumber.from(0),
     gasLimit: BigNumber.from(CONVERSION_GAS),
   });
@@ -338,9 +337,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
   if (candidates.length === 0) return null;
   if (candidates.some(candidate => !candidate.transactionHashes[executionTransactionIndex])) return null;
 
-  const admittedNetProfitBps = opportunity.flashLoanAmount > 0n
-    ? Number((guaranteedNetProfitInInputToken * 10_000n) / opportunity.flashLoanAmount)
-    : Number.NEGATIVE_INFINITY;
+  const admittedNetProfitBps = preciseBps(guaranteedNetProfitInInputToken, opportunity.flashLoanAmount);
   if (!isStrictlyPositiveProfitBaseUnits(guaranteedNetProfitInInputToken)) return null;
 
   const evidence: BuilderSponsoredZeroCapitalEvidence = {
@@ -382,10 +379,11 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
       'flash_provider:balancer_v2_measured_fee_liquidity',
       'builder_payment_source:execution_created_value',
       'builder_payment_transport:titan_or_quasar',
-      'builder_repayment_conversion:sushiswap_v2_exact_eth',
+      ...repaymentRoute.provenance,
       'builder_gas_cost_attribution:deployment_permissions_execution_repayment_upper_bound',
       'operator_native_gas_input:false',
       'strict_positive_all_in_residual',
+      'sub_bps_precision_preserved:true',
       'canonical_execution_authority_unchanged',
       'synthetic_evidence:false',
     ],
@@ -399,6 +397,8 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     executionTransactionIndex,
     builders: candidates.map(candidate => candidate.builder),
     targetBlock,
+    builderRepaymentRoute: repaymentRoute.name,
+    builderRepaymentRouter: repaymentRoute.router,
     guaranteedResidualProfitUsd,
     operatorNativeGasInputRequired: false,
     executionAuthority: false,
