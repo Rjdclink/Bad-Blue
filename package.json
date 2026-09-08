@@ -233,6 +233,7 @@
     "rimraf": "^5.0.10",
     "lodash.isequal": "file:vendor/lodash.isequal",
     "node-domexception": "file:vendor/node-domexception",
+    "uuid": "11.1.1",
     "fdir": {
       "picomatch": "4.0.7"
     },
@@ -244,12 +245,6 @@
     },
     "body-parser": {
       "qs": "6.16.0"
-    },
-    "gaxios": {
-      "uuid": "11.1.1"
-    },
-    "teeny-request": {
-      "uuid": "11.1.1"
     }
   }
 }
