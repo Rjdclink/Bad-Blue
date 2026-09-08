@@ -38,13 +38,9 @@ const BUILDERS: readonly SponsoredBuilderConfig[] = [
 ] as const;
 
 export interface BuilderSponsoredEconomicsProof {
-  /** The builder payment must be funded by value created inside this bundle. */
   source: 'execution_created_value';
-  /** Exact/simulated ETH the builder must front for this bundle. */
   requiredSponsorshipWei: bigint;
-  /** Minimum builder value left after reimbursement. */
   minimumBuilderResidualWei: bigint;
-  /** Canonical all-in residual profit after builder payment/conversion/costs. */
   guaranteedResidualProfitUsd: number;
   observedAt: number;
   expiresAt: number;
@@ -65,6 +61,7 @@ export interface BuilderSponsoredBundleCandidate {
   paymentTransactionHash: string;
   paymentSender: string;
   targetBlock: number;
+  maxTargetBlock: number;
   expiresAt: number;
   replacementUuid: string;
   requiredSponsorshipWei: bigint;
@@ -116,6 +113,11 @@ function normalizedAddress(label: string, value: string): string {
 
 function randomReplacementUuid(): string {
   return ethers.utils.hexlify(ethers.utils.randomBytes(16)).slice(2);
+}
+
+function blockWindow(): number {
+  const raw = Number(process.env.ZERO_CAPITAL_BUILDER_BLOCK_WINDOW || 3);
+  return Number.isFinite(raw) ? Math.max(1, Math.min(5, Math.trunc(raw))) : 3;
 }
 
 function parseSignedTransaction(serialized: string): ParsedSignedTransaction {
@@ -178,14 +180,6 @@ function economicsProofIsFresh(proof: BuilderSponsoredEconomicsProof, candidateE
   return proof.observedAt > 0 && proof.observedAt <= now && proof.expiresAt > now && candidateExpiresAt > now && proof.expiresAt >= candidateExpiresAt;
 }
 
-/**
- * A transport adapter only. It does not discover opportunities, approve
- * economics, or create an independent execution authority.
- *
- * Critical invariant: builderPaymentWei is derived from the actual terminal
- * signed transaction. A caller cannot claim a synthetic/estimated builder
- * payment that is absent from the bundle.
- */
 export class BuilderSponsoredBundleAdapter {
   constructor(private readonly provider: providers.JsonRpcProvider) {}
 
@@ -208,9 +202,7 @@ export class BuilderSponsoredBundleAdapter {
     if (network.chainId !== 1) return [];
     if (!Number.isSafeInteger(input.targetBlock) || input.targetBlock <= 0) throw new Error('Sponsored bundle targetBlock must be a positive integer');
     if (input.economics.source !== 'execution_created_value') throw new Error('Builder sponsorship must be repaid from execution-created value');
-    if (!Number.isFinite(input.economics.guaranteedResidualProfitUsd) || input.economics.guaranteedResidualProfitUsd <= 0) {
-      return [];
-    }
+    if (!Number.isFinite(input.economics.guaranteedResidualProfitUsd) || input.economics.guaranteedResidualProfitUsd <= 0) return [];
     if (!economicsProofIsFresh(input.economics, input.expiresAt)) return [];
 
     const required = positiveWei('requiredSponsorshipWei', input.economics.requiredSponsorshipWei);
@@ -218,6 +210,7 @@ export class BuilderSponsoredBundleAdapter {
     const expectedPaymentSender = normalizedAddress('expectedPaymentSender', input.expectedPaymentSender);
     const seenBuilders = new Set<SponsoredBuilderName>();
     const candidates: BuilderSponsoredBundleCandidate[] = [];
+    const maxTargetBlock = input.targetBlock + blockWindow() - 1;
 
     for (const supplied of input.bundles) {
       if (seenBuilders.has(supplied.builder)) throw new Error(`Duplicate signed bundle supplied for ${supplied.builder}`);
@@ -242,6 +235,7 @@ export class BuilderSponsoredBundleAdapter {
         paymentTransactionHash: proof.paymentTransactionHash,
         paymentSender: proof.paymentSender,
         targetBlock: input.targetBlock,
+        maxTargetBlock,
         expiresAt: Math.min(input.expiresAt, input.economics.expiresAt),
         replacementUuid: randomReplacementUuid(),
         requiredSponsorshipWei: required,
@@ -259,10 +253,12 @@ export class BuilderSponsoredBundleAdapter {
   }
 
   /**
-   * Submission is one builder at a time. Any multi-builder retry ordering must be
-   * owned by the existing canonical execution authority. Once a valid bundle hash
-   * exists, uncertain reconciliation is reported as ambiguous so a caller cannot
-   * safely race a redundant submission.
+   * The canonical caller still owns the single submission attempt. Inside that
+   * attempt, the transport may retarget the same nonce-contiguous signed bundle
+   * across a small bounded future-block window. A partial inclusion or uncertain
+   * accepted bundle stops immediately as ambiguous; only a fully missed block may
+   * advance to the next block. On-chain amountInMax/minProfit/deadline constraints
+   * keep stale economics fail-atomic rather than making them executable.
    */
   async submitCandidate(
     candidate: BuilderSponsoredBundleCandidate,
@@ -294,8 +290,9 @@ export class BuilderSponsoredBundleAdapter {
     }
 
     const currentBlock = await this.provider.getBlockNumber();
-    if (candidate.targetBlock <= currentBlock) {
-      return this.result(candidate, 'definitive_failure', undefined, currentBlock, 'Sponsored bundle target block is no longer in the future');
+    const firstTargetBlock = Math.max(candidate.targetBlock, currentBlock + 1);
+    if (firstTargetBlock > candidate.maxTargetBlock) {
+      return this.result(candidate, 'definitive_failure', undefined, currentBlock, 'Sponsored bundle bounded block window is exhausted');
     }
 
     const timeoutMs = Math.max(1_000, options.timeoutMs ?? Number(process.env.ZERO_INITIAL_CAPITAL_BUILDER_TIMEOUT_MS || 30_000));
@@ -304,54 +301,63 @@ export class BuilderSponsoredBundleAdapter {
     const externalAbort = () => controller.abort();
     options.signal?.addEventListener('abort', externalAbort, { once: true });
 
-    let bundleHash: string | undefined;
+    let lastBundleHash: string | undefined;
+    let lastMinedBlock: number | undefined;
     try {
-      const response = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'eth_sendBundle',
-          params: [{
-            txs: candidate.signedTransactions,
-            blockNumber: ethers.utils.hexValue(candidate.targetBlock),
-            replacementUuid: candidate.replacementUuid,
-          }],
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        return this.result(candidate, 'definitive_failure', undefined, undefined, `${candidate.builder} HTTP ${response.status}`);
-      }
-      const envelope = await response.json() as RpcEnvelope<any>;
-      if (envelope.error) {
-        return this.result(
-          candidate,
-          'definitive_failure',
-          undefined,
-          undefined,
-          `${candidate.builder} rejected sponsored bundle: ${envelope.error.message || envelope.error.code || 'unknown error'}`,
-        );
-      }
-      bundleHash = String(envelope.result?.bundleHash || envelope.result || '');
-      if (!/^0x[a-fA-F0-9]{64}$/.test(bundleHash)) {
-        return this.result(candidate, 'ambiguous', undefined, undefined, `${candidate.builder} accepted request without a valid bundle hash`);
-      }
+      for (let targetBlock = firstTargetBlock; targetBlock <= candidate.maxTargetBlock; targetBlock += 1) {
+        if (Date.now() >= candidate.expiresAt || controller.signal.aborted) break;
+        const attempt = {
+          ...candidate,
+          targetBlock,
+          replacementUuid: targetBlock === candidate.targetBlock ? candidate.replacementUuid : randomReplacementUuid(),
+        };
+        const response = await fetch(config.endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: Date.now(),
+            method: 'eth_sendBundle',
+            params: [{
+              txs: attempt.signedTransactions,
+              blockNumber: ethers.utils.hexValue(targetBlock),
+              replacementUuid: attempt.replacementUuid,
+            }],
+          }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          return this.result(attempt, 'definitive_failure', undefined, undefined, `${candidate.builder} HTTP ${response.status}`);
+        }
+        const envelope = await response.json() as RpcEnvelope<any>;
+        if (envelope.error) {
+          return this.result(attempt, 'definitive_failure', undefined, undefined, `${candidate.builder} rejected sponsored bundle: ${envelope.error.message || envelope.error.code || 'unknown error'}`);
+        }
+        const bundleHash = String(envelope.result?.bundleHash || envelope.result || '');
+        if (!/^0x[a-fA-F0-9]{64}$/.test(bundleHash)) {
+          return this.result(attempt, 'ambiguous', undefined, undefined, `${candidate.builder} accepted request without a valid bundle hash`);
+        }
+        lastBundleHash = bundleHash;
 
-      const landed = await this.waitForTargetBlock(candidate, controller.signal);
-      if (landed.status === 'confirmed') {
-        const trace = await this.tryTrace(config, bundleHash);
-        return this.result(candidate, 'confirmed', bundleHash, landed.blockNumber, undefined, trace.builderPaymentWei);
+        const landed = await this.waitForTargetBlock(attempt, controller.signal);
+        lastMinedBlock = landed.blockNumber;
+        if (landed.status === 'confirmed') {
+          const trace = await this.tryTrace(config, bundleHash);
+          return this.result(attempt, 'confirmed', bundleHash, landed.blockNumber, undefined, trace.builderPaymentWei);
+        }
+        if (landed.status === 'ambiguous') {
+          return this.result(attempt, 'ambiguous', bundleHash, landed.blockNumber, landed.reason || 'Bundle acceptance could not be reconciled');
+        }
+        if (targetBlock >= candidate.maxTargetBlock) {
+          const trace = await this.tryTrace(config, bundleHash);
+          return this.result(attempt, 'definitive_failure', bundleHash, landed.blockNumber, trace.reason || landed.reason, trace.builderPaymentWei);
+        }
       }
-      if (landed.status === 'definitive_failure') {
-        const trace = await this.tryTrace(config, bundleHash);
-        return this.result(candidate, 'definitive_failure', bundleHash, landed.blockNumber, trace.reason || landed.reason, trace.builderPaymentWei);
-      }
-      return this.result(candidate, 'ambiguous', bundleHash, landed.blockNumber, landed.reason || 'Bundle acceptance could not be reconciled');
+      return this.result(candidate, controller.signal.aborted ? 'ambiguous' : 'definitive_failure', lastBundleHash, lastMinedBlock,
+        controller.signal.aborted ? 'Timed out during bounded builder block window' : 'Builder evidence expired before bounded block window completed');
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      return this.result(candidate, bundleHash ? 'ambiguous' : 'definitive_failure', bundleHash, undefined, reason);
+      return this.result(candidate, lastBundleHash ? 'ambiguous' : 'definitive_failure', lastBundleHash, lastMinedBlock, reason);
     } finally {
       clearTimeout(timeout);
       options.signal?.removeEventListener('abort', externalAbort);
@@ -410,7 +416,6 @@ export class BuilderSponsoredBundleAdapter {
       const reason = envelope.result?.error ? String(envelope.result.error) : undefined;
       return { builderPaymentWei, reason };
     } catch {
-      // Builder tracing is delayed/best-effort and never execution authority.
       return {};
     }
   }
@@ -430,6 +435,8 @@ export class BuilderSponsoredBundleAdapter {
       status,
       bundleHash,
       blockNumber,
+      targetBlock: candidate.targetBlock,
+      maxTargetBlock: candidate.maxTargetBlock,
       signedBuilderPaymentWei: candidate.builderPaymentWei.toString(),
       tracedBuilderPaymentWei: tracedBuilderPaymentWei?.toString(),
       guaranteedResidualProfitUsd: candidate.guaranteedResidualProfitUsd,

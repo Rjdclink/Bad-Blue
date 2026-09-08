@@ -31,6 +31,13 @@ const GECKO_NETWORK: Partial<Record<SupportedExecutionChain, string>> = {
   optimism: 'optimism',
 };
 
+const V3_FACTORY_SCAN_CHAINS = new Set<SupportedExecutionChain>([
+  'ethereum',
+  'polygon',
+  'arbitrum',
+  'optimism',
+]);
+
 export interface GraphlessDexTokenCandidate {
   token: string;
   liquidityUsd: number | null;
@@ -52,6 +59,7 @@ type CacheEntry = { expiresAt: number; result: GraphlessDexScoutResult };
 const cache = new Map<string, CacheEntry>();
 const lastFactoryBlock = new Map<string, number>();
 const archiveRestrictedKeys = new Set<string>();
+const geckoCooldownUntil = new Map<string, number>();
 
 function bounded(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
@@ -79,6 +87,10 @@ function cacheTtlMs(): number {
   return Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_SCOUT_TTL_MS, 60_000, 15_000, 10 * 60_000));
 }
 
+function geckoRateLimitCooldownMs(): number {
+  return Math.floor(bounded(process.env.ZERO_CAPITAL_GECKO_RATE_LIMIT_COOLDOWN_MS, 60_000, 5_000, 10 * 60_000));
+}
+
 function minLiquidityUsd(): number {
   return bounded(process.env.ZERO_CAPITAL_GRAPHLESS_MIN_LIQUIDITY_USD, 25_000, 0, 100_000_000);
 }
@@ -88,12 +100,29 @@ function meshSafeHeadLagBlocks(chain: SupportedExecutionChain): number {
   return Math.floor(bounded(process.env.ZERO_CAPITAL_GRAPHLESS_HEAD_LAG_BLOCKS, fallback, 1, 128));
 }
 
+function geckoRetryAfterMs(response: Response): number {
+  const retryAfter = response.headers.get('retry-after')?.trim();
+  if (!retryAfter) return geckoRateLimitCooldownMs();
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1_000, Math.min(10 * 60_000, Math.ceil(seconds * 1_000)));
+  const date = Date.parse(retryAfter);
+  if (Number.isFinite(date)) return Math.max(1_000, Math.min(10 * 60_000, date - Date.now()));
+  return geckoRateLimitCooldownMs();
+}
+
 async function fetchGeckoCandidates(
   chain: SupportedExecutionChain,
   anchorTokens: string[],
 ): Promise<GraphlessDexTokenCandidate[]> {
   const network = GECKO_NETWORK[chain];
   if (!network || process.env.ZERO_CAPITAL_GRAPHLESS_PUBLIC_SCOUTS === 'false') return [];
+  const cooldownKey = network;
+  const blockedUntil = geckoCooldownUntil.get(cooldownKey) || 0;
+  if (blockedUntil > Date.now()) {
+    throw new Error(`GeckoTerminal ${network} route-local cooldown active until ${new Date(blockedUntil).toISOString()}`);
+  }
+  if (blockedUntil > 0) geckoCooldownUntil.delete(cooldownKey);
+
   const observedAt = Date.now();
   const result = new Map<string, GraphlessDexTokenCandidate>();
   const maxAnchors = Math.min(2, anchorTokens.length);
@@ -107,7 +136,14 @@ async function fetchGeckoCandidates(
       },
       signal: AbortSignal.timeout(2_500),
     });
-    if (!response.ok) throw new Error(`GeckoTerminal ${network} token-pools returned HTTP ${response.status}`);
+    if (!response.ok) {
+      if (response.status === 429) {
+        const until = Date.now() + geckoRetryAfterMs(response);
+        geckoCooldownUntil.set(cooldownKey, until);
+        throw new Error(`GeckoTerminal ${network} token-pools returned HTTP 429; route-local cooldown until ${new Date(until).toISOString()}`);
+      }
+      throw new Error(`GeckoTerminal ${network} token-pools returned HTTP ${response.status}`);
+    }
     const payload = await response.json() as { data?: Array<Record<string, any>> };
     for (const pool of payload.data || []) {
       const liquidityUsdRaw = Number(pool?.attributes?.reserve_in_usd ?? pool?.attributes?.liquidity_usd);
@@ -222,16 +258,11 @@ async function fetchRecentFactoryCandidates(
   provider: providers.Provider,
   anchorTokens: string[],
 ): Promise<GraphlessDexTokenCandidate[]> {
-  if (chain !== 'polygon' && chain !== 'arbitrum') return [];
+  if (!V3_FACTORY_SCAN_CHAINS.has(chain)) return [];
   const network = await provider.getNetwork();
   if (!Number.isSafeInteger(network.chainId) || network.chainId <= 0) return [];
   const observedHead = await provider.getBlockNumber();
   const headLagBlocks = meshSafeHeadLagBlocks(chain);
-  // A provider mesh can report the head from one backend and serve eth_getLogs
-  // from another backend that is a few blocks behind. Querying the unfinalized
-  // tip can therefore produce a standards-compliant invalid-range error even
-  // when fromBlock === toBlock. The canonical discovery head is deliberately
-  // lagged so every healthy mesh member can serve the same bounded range.
   const current = Math.max(0, observedHead - headLagBlocks);
   const candidates = new Map<string, GraphlessDexTokenCandidate>();
   const anchors = new Set(anchorTokens.map(token => token.toLowerCase()));
@@ -348,6 +379,8 @@ export async function discoverGraphlessDexTokens(
     sources: result.sources,
     publicScoutAvailable,
     directRpcAvailable,
+    geckoCooldownUntil: geckoCooldownUntil.get(GECKO_NETWORK[chain] || '') || null,
+    geckoFailureIsRouteLocal: true,
     archiveRestrictedCapabilities: archiveRestrictedKeys.size,
     v2ForkRpcScanning: process.env.ZERO_CAPITAL_V2_FORK_RPC_SCANNING !== 'false',
     v2Factories: (V2_FACTORIES[chain] || []).map(factory => factory.name),

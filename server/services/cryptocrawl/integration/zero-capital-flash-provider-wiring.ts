@@ -63,9 +63,11 @@ async function providerEvidence(
   return evidence.map(item => ({ ...item }));
 }
 
+const BPS_PRECISION_SCALE = 1_000_000n;
+
 function bpsFromBaseUnits(value: bigint, notional: bigint): number | null {
   if (notional <= 0n) return null;
-  return Number((value * 10_000n) / notional);
+  return Number((value * 10_000n * BPS_PRECISION_SCALE) / notional) / Number(BPS_PRECISION_SCALE);
 }
 
 function updateCandidate(input: {
@@ -128,9 +130,7 @@ function repriceOpportunity(
   const allInCost = flashFee + gas + relay;
   const grossProfit = opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
   const netProfit = grossProfit - allInCost;
-  const netProfitBps = opportunity.flashLoanAmount > 0n
-    ? Number((netProfit * 10_000n) / opportunity.flashLoanAmount)
-    : Number.NEGATIVE_INFINITY;
+  const netProfitBps = bpsFromBaseUnits(netProfit, opportunity.flashLoanAmount) ?? Number.NEGATIVE_INFINITY;
   opportunity.flashLoanFeeInInputToken = flashFee;
   opportunity.estimatedExecutionCostInInputToken = allInCost;
   opportunity.expectedProfit = netProfit;
@@ -409,7 +409,10 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           && item.availableLiquidity !== null
           && item.availableLiquidity >= opportunity.flashLoanAmount,
         ) || null;
-        if (chain === 'ethereum' && wallet && !balancerReceiver && balancerEvidence) {
+        const bootstrapFlashFee = balancerEvidence
+          ? calculateMeasuredFlashLoanFee(balancerEvidence, opportunity.flashLoanAmount)
+          : null;
+        if (chain === 'ethereum' && wallet && !balancerReceiver && balancerEvidence && bootstrapFlashFee !== null) {
           const bootstrapEvidence = await prepareBuilderSponsoredReceiverBootstrap({
             opportunity,
             balancerEvidence,
@@ -427,9 +430,9 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           if (bootstrapEvidence && bootstrapEvidence.guaranteedNetProfitInInputToken > 0n) {
             const bootstrapOpportunity: ZeroCapitalOpportunity = {
               ...opportunity,
-              flashLoanFeeInInputToken: measuredFlashFee,
+              flashLoanFeeInInputToken: bootstrapFlashFee,
               estimatedGasCostInInputToken: bootstrapEvidence.builderGasCostInInputToken,
-              estimatedExecutionCostInInputToken: measuredFlashFee + (opportunity.relayFeeInInputToken || 0n) + bootstrapEvidence.builderGasCostInInputToken,
+              estimatedExecutionCostInInputToken: bootstrapFlashFee + (opportunity.relayFeeInInputToken || 0n) + bootstrapEvidence.builderGasCostInInputToken,
               expectedProfit: bootstrapEvidence.guaranteedNetProfitInInputToken,
               netProfitBps: bootstrapEvidence.admittedNetProfitBps,
             };
