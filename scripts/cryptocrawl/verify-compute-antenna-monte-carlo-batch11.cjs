@@ -82,7 +82,9 @@ const required = [
   ['fourModeWiring', 'measuredOpportunityGraph.revalidateSymbols(symbols)', 'positive observation triggers exact-symbol canonical revalidation'],
   ['fourModeWiring', 'coalescedIntoOlderFullScan: false', 'positive revalidation cannot reuse a pre-observation full scan'],
   ['graph', 'positive_observation_revalidation', 'targeted canonical cycle is explicitly identified'],
-  ['graph', 'private targetedScans = new Map', 'duplicate targeted revalidations are bounded'],
+  ['graph', 'private readonly pendingTargetedSymbols = new Set<string>()', 'duplicate targeted revalidations are coalesced into the canonical queue'],
+  ['graph', 'private readonly activeTargetedSymbols = new Set<string>()', 'active targeted symbols cannot recursively requeue themselves'],
+  ['graph', 'private async runExclusiveCycle(', 'continuous and targeted refresh share one serialized execution authority'],
   ['stageProof', 'realizedSharpe(profits)', 'realized profit history remains available as telemetry'],
   ['stageProof', 'realizedMaxDrawdown(profits)', 'realized profit history remains available as telemetry'],
   ['stageProof', 'monteCarloValidation', 'executed canonical Monte Carlo is calibrated against terminal outcome'],
@@ -114,9 +116,10 @@ const forbidden = [
   ['stageProof', 'tradeCountRequirementChanged: false', 'stale claim that the Stage 2 trade-count requirement remains authoritative'],
   ['fourMode', 'sequential_partial_fill_safe_hybrid_executor', 'stale four-mode claim that the installed hybrid executor is missing'],
   ['fourMode', 'fresh_taker_requote_after_maker_fill', 'stale four-mode claim that installed fresh hedge re-quote is missing'],
+  ['graph', 'private targetedScans = new Map', 'parallel per-symbol refresh authority may not return'],
 ];
 for (const [fileKey, token, name] of forbidden) {
   if (source[fileKey].includes(token)) throw new Error(`[compute-antenna-monte-carlo-batch11] forbidden regression: ${name}`);
 }
 
-console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, adaptive Antenna scheduling, isolated canonical component startup, TT/MT/TM/MM execution timing, advisory-only realized/Monte-Carlo stage telemetry, and retained hard safety boundaries verified');
+console.log('[compute-antenna-monte-carlo-batch11] PASS: measured compute pressure, adaptive Antenna scheduling, isolated canonical component startup, TT/MT/TM/MM execution timing, single-authority coalesced exact-symbol revalidation, advisory-only realized/Monte-Carlo stage telemetry, and retained hard safety boundaries verified');
