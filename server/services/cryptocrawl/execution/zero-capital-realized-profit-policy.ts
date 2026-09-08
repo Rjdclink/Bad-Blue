@@ -3,8 +3,15 @@ export interface ZeroCapitalRealizedProfitInput {
   inputTokenDecimals: number;
   inputTokenUsdPrice: number | null;
   sponsoredExecution: boolean;
+  /**
+   * Receipt-equivalent network gas consumed by the transaction. For a hosted
+   * paymaster this is still an economic cost unless independent zero-cost proof
+   * exists; sponsorship removes the upfront native-balance requirement, not the
+   * provider bill.
+   */
   nativeFeeWei: bigint;
   nativeUsdPrice: number | null;
+  sponsorOperatorMonetaryCostProvenZero?: boolean;
 }
 
 export interface ZeroCapitalRealizedProfitDecision {
@@ -43,11 +50,10 @@ function unitsToNumber(units: bigint, decimals: number): number {
  * inherently in USD. Terminal realized economics therefore require a live USD
  * price for that exact token before the receipt can become realized-profit truth.
  *
- * Native-funded gas is independently measured in native wei and converted to USD.
- * Its USD cost is then converted back into input-token base units with the same
- * live input-token price, rounded upward by one base unit when necessary. This
- * keeps the conservative base-unit result and its USD representation aligned and
- * prevents the legacy implicit assumption that every profit token is worth $1.
+ * Sponsorship is a funding mechanism, not automatically a discount. Unless the
+ * sponsor's operator monetary cost is independently proven zero, receipt-equivalent
+ * network gas is charged exactly like native-funded gas. This prevents provider-
+ * fronted gas from manufacturing positive realized BPS.
  */
 export function evaluateZeroCapitalRealizedProfit(
   input: ZeroCapitalRealizedProfitInput,
@@ -56,11 +62,12 @@ export function evaluateZeroCapitalRealizedProfit(
   if (input.nativeFeeWei < 0n) throw new Error('Native fee cannot be negative');
 
   const inputTokenUsdPrice = finitePositive(input.inputTokenUsdPrice);
+  const sponsorCostProvenZero = input.sponsoredExecution && input.sponsorOperatorMonetaryCostProvenZero === true;
   if (inputTokenUsdPrice === null) {
     return {
       economicsComplete: false,
       grossProfitUsd: 0,
-      gasUsd: input.sponsoredExecution ? 0 : null,
+      gasUsd: sponsorCostProvenZero ? 0 : null,
       netProfitUsd: null,
       netProfitBaseUnits: null,
       positiveAfterAllInCost: false,
@@ -74,7 +81,7 @@ export function evaluateZeroCapitalRealizedProfit(
     return {
       economicsComplete: false,
       grossProfitUsd: 0,
-      gasUsd: input.sponsoredExecution ? 0 : null,
+      gasUsd: sponsorCostProvenZero ? 0 : null,
       netProfitUsd: null,
       netProfitBaseUnits: null,
       positiveAfterAllInCost: false,
@@ -82,7 +89,7 @@ export function evaluateZeroCapitalRealizedProfit(
     };
   }
 
-  if (input.sponsoredExecution) {
+  if (sponsorCostProvenZero) {
     return {
       economicsComplete: true,
       grossProfitUsd,
@@ -91,6 +98,18 @@ export function evaluateZeroCapitalRealizedProfit(
       netProfitBaseUnits: input.grossProfitBaseUnits,
       positiveAfterAllInCost: input.grossProfitBaseUnits > 0n,
       missingInformation: [],
+    };
+  }
+
+  if (input.sponsoredExecution && input.nativeFeeWei <= 0n) {
+    return {
+      economicsComplete: false,
+      grossProfitUsd,
+      gasUsd: null,
+      netProfitUsd: null,
+      netProfitBaseUnits: null,
+      positiveAfterAllInCost: false,
+      missingInformation: ['provider_sponsored_receipt_equivalent_gas_cost'],
     };
   }
 
