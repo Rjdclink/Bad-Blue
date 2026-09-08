@@ -26,17 +26,77 @@ const SYMBOL_TO_CMC_ID: Record<string, number> = {
   USDC: 3408,
 };
 
+const SYMBOL_TO_COINCAP_ID: Record<string, string> = {
+  POL: 'polygon',
+  ETH: 'ethereum',
+  AVAX: 'avalanche',
+  BNB: 'binance-coin',
+  USDT: 'tether',
+  USDC: 'usd-coin',
+};
+
+const SYMBOL_TO_COINBASE_PRODUCT: Record<string, string> = {
+  POL: 'POL-USD',
+  ETH: 'ETH-USD',
+  AVAX: 'AVAX-USD',
+  BNB: 'BNB-USD',
+  USDT: 'USDT-USD',
+  USDC: 'USDC-USD',
+};
+
 const COIN_ID_TO_SYMBOL = Object.fromEntries(
   Object.entries(SYMBOL_TO_COIN_ID).map(([symbol, coinId]) => [coinId, symbol]),
 ) as Record<string, string>;
 
 const DEFAULT_MIN_INTERVAL_MS = Number(process.env.COINGECKO_MIN_INTERVAL_MS || 1500);
 const DEFAULT_CACHE_TTL_MS = Number(process.env.COINGECKO_CACHE_TTL_MS || 90000);
+const DEFAULT_PRICE_CONSENSUS_WINDOW_MS = Math.max(
+  0,
+  Math.min(1_000, Number(process.env.LIVE_PRICE_CONSENSUS_WINDOW_MS || 250)),
+);
 const DEFAULT_COINGECKO_COOLDOWN_MS = Math.max(
   30_000,
   Number(process.env.COINGECKO_FAILURE_COOLDOWN_MS || 300_000),
 );
 const CMC_KEYLESS_BASE = 'https://pro-api.coinmarketcap.com/public-api';
+const COINBASE_EXCHANGE_BASE = 'https://api.exchange.coinbase.com';
+
+function positivePrice(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function mergeLivePriceEvidence(
+  coinIds: ReadonlyArray<string>,
+  providerPrices: ReadonlyArray<Record<string, number>>,
+): Record<string, number> {
+  const merged: Record<string, number> = {};
+  for (const coinId of coinIds) {
+    const values = providerPrices
+      .map(prices => positivePrice(prices[coinId]))
+      .filter((price): price is number => price !== null)
+      .sort((left, right) => left - right);
+    if (values.length === 0) continue;
+    const midpoint = Math.floor(values.length / 2);
+    const median = values.length % 2 === 1
+      ? values[midpoint]
+      : (values[midpoint - 1] + values[midpoint]) / 2;
+    const consistent = values.length >= 3
+      ? values.filter(value => Math.abs(value - median) / median <= 0.2)
+      : values;
+    const primary = positivePrice(providerPrices[0]?.[coinId]);
+    if (primary !== null && (values.length < 3 || Math.abs(primary - median) / median <= 0.2)) {
+      merged[coinId] = primary;
+      continue;
+    }
+    const selected = consistent.length > 0 ? consistent : values;
+    const selectedMidpoint = Math.floor(selected.length / 2);
+    merged[coinId] = selected.length % 2 === 1
+      ? selected[selectedMidpoint]
+      : (selected[selectedMidpoint - 1] + selected[selectedMidpoint]) / 2;
+  }
+  return merged;
+}
 
 export function normalizeCoinMarketCapQuotes(
   payload: unknown,
@@ -86,7 +146,7 @@ class CoinGeckoPriceClient {
     return `${vsCurrency}:${[...coinIds].sort().join(',')}`;
   }
 
-  private async enqueueRequest<T>(task: () => Promise<T>): Promise<T> {
+  private async enqueueCoinGeckoRequest<T>(task: () => Promise<T>): Promise<T> {
     const runTask = this.requestQueue.then(async () => {
       const elapsed = Date.now() - this.lastRequestAt;
       if (elapsed < DEFAULT_MIN_INTERVAL_MS) {
@@ -103,25 +163,27 @@ class CoinGeckoPriceClient {
   }
 
   private async fetchCoinGeckoByCoinIds(coinIds: string[], vsCurrency: string): Promise<Record<string, number>> {
-    const idsQuery = coinIds.join(',');
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(idsQuery)}&vs_currencies=${encodeURIComponent(vsCurrency)}`;
-    const headers: HeadersInit = { accept: 'application/json' };
-    const apiKey = process.env.COINGECKO_API_KEY?.trim();
-    if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
-    const payload = await fetchJsonWithRetry<Record<string, { [currency: string]: number }>>(url, {
-      init: { headers },
-      maxRetries: 2,
-      baseDelayMs: 750,
-      maxDelayMs: 5000,
-      timeoutMs: 8000,
-    });
+    return this.enqueueCoinGeckoRequest(async () => {
+      const idsQuery = coinIds.join(',');
+      const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(idsQuery)}&vs_currencies=${encodeURIComponent(vsCurrency)}`;
+      const headers: HeadersInit = { accept: 'application/json' };
+      const apiKey = process.env.COINGECKO_API_KEY?.trim();
+      if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
+      const payload = await fetchJsonWithRetry<Record<string, { [currency: string]: number }>>(url, {
+        init: { headers },
+        maxRetries: 2,
+        baseDelayMs: 750,
+        maxDelayMs: 5000,
+        timeoutMs: 8000,
+      });
 
-    const normalized: Record<string, number> = {};
-    for (const coinId of coinIds) {
-      const value = payload[coinId]?.[vsCurrency];
-      if (typeof value === 'number' && Number.isFinite(value) && value > 0) normalized[coinId] = value;
-    }
-    return normalized;
+      const normalized: Record<string, number> = {};
+      for (const coinId of coinIds) {
+        const value = payload[coinId]?.[vsCurrency];
+        if (typeof value === 'number' && Number.isFinite(value) && value > 0) normalized[coinId] = value;
+      }
+      return normalized;
+    });
   }
 
   private async fetchCoinMarketCapKeylessByCoinIds(coinIds: string[], vsCurrency: string): Promise<Record<string, number>> {
@@ -145,28 +207,103 @@ class CoinGeckoPriceClient {
     return normalizeCoinMarketCapQuotes(payload, requested);
   }
 
+  private async fetchCoinCapByCoinIds(coinIds: string[], vsCurrency: string): Promise<Record<string, number>> {
+    if (vsCurrency.toLowerCase() !== 'usd') return {};
+    const apiKey = process.env.COINCAP_API_KEY?.trim();
+    if (!apiKey) return {};
+    const requested = coinIds.flatMap(coinId => {
+      const symbol = COIN_ID_TO_SYMBOL[coinId];
+      const assetId = symbol ? SYMBOL_TO_COINCAP_ID[symbol] : undefined;
+      return assetId ? [{ coinId, assetId }] : [];
+    });
+    if (requested.length === 0) return {};
+    const baseUrl = (process.env.COINCAP_API_BASE_URL?.trim() || 'https://rest.coincap.io/v3').replace(/\/$/, '');
+    const ids = [...new Set(requested.map(entry => entry.assetId))].join(',');
+    const payload = await fetchJsonWithRetry<any>(`${baseUrl}/assets?ids=${encodeURIComponent(ids)}`, {
+      init: { headers: { accept: 'application/json', Authorization: `Bearer ${apiKey}` } },
+      maxRetries: 2,
+      baseDelayMs: 300,
+      maxDelayMs: 2_000,
+      timeoutMs: 5_000,
+    });
+    const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+    const byAssetId = new Map<string, number>();
+    for (const row of rows) {
+      const assetId = String(row?.id || '').trim();
+      const price = positivePrice(row?.priceUsd);
+      if (assetId && price !== null) byAssetId.set(assetId, price);
+    }
+    const normalized: Record<string, number> = {};
+    for (const entry of requested) {
+      const price = byAssetId.get(entry.assetId);
+      if (price !== undefined) normalized[entry.coinId] = price;
+    }
+    return normalized;
+  }
+
+  private async fetchCoinbaseByCoinIds(coinIds: string[], vsCurrency: string): Promise<Record<string, number>> {
+    if (vsCurrency.toLowerCase() !== 'usd') return {};
+    const requested = coinIds.flatMap(coinId => {
+      const symbol = COIN_ID_TO_SYMBOL[coinId];
+      const product = symbol ? SYMBOL_TO_COINBASE_PRODUCT[symbol] : undefined;
+      return product ? [{ coinId, product }] : [];
+    });
+    const settled = await Promise.allSettled(requested.map(async entry => {
+      const payload = await fetchJsonWithRetry<any>(`${COINBASE_EXCHANGE_BASE}/products/${encodeURIComponent(entry.product)}/ticker`, {
+        init: { headers: { accept: 'application/json' } },
+        maxRetries: 1,
+        baseDelayMs: 250,
+        maxDelayMs: 1_000,
+        timeoutMs: 4_000,
+      });
+      const price = positivePrice(payload?.price);
+      return price === null ? null : { coinId: entry.coinId, price };
+    }));
+    const normalized: Record<string, number> = {};
+    for (const result of settled) {
+      if (result.status === 'fulfilled' && result.value) normalized[result.value.coinId] = result.value.price;
+    }
+    return normalized;
+  }
+
   private async fetchLivePriceMesh(coinIds: string[], vsCurrency: string): Promise<Record<string, number>> {
-    let coinGeckoPrices: Record<string, number> = {};
     const requestKey = this.buildCacheKey(coinIds, vsCurrency);
     const unavailableUntil = this.coinGeckoUnavailableUntilByRequest.get(requestKey) || 0;
-    if (Date.now() >= unavailableUntil) {
-      try {
-        coinGeckoPrices = await this.fetchCoinGeckoByCoinIds(coinIds, vsCurrency);
-        if (Object.keys(coinGeckoPrices).length > 0) this.coinGeckoUnavailableUntilByRequest.delete(requestKey);
-      } catch {
-        this.coinGeckoUnavailableUntilByRequest.set(requestKey, Date.now() + DEFAULT_COINGECKO_COOLDOWN_MS);
+    const coinGeckoTask = Date.now() >= unavailableUntil
+      ? this.fetchCoinGeckoByCoinIds(coinIds, vsCurrency).then(prices => {
+          if (Object.keys(prices).length > 0) this.coinGeckoUnavailableUntilByRequest.delete(requestKey);
+          return prices;
+        }).catch(() => {
+          this.coinGeckoUnavailableUntilByRequest.set(requestKey, Date.now() + DEFAULT_COINGECKO_COOLDOWN_MS);
+          return {};
+        })
+      : Promise.resolve({});
+    const providerTasks = [
+      coinGeckoTask,
+      this.fetchCoinMarketCapKeylessByCoinIds(coinIds, vsCurrency),
+      this.fetchCoinCapByCoinIds(coinIds, vsCurrency),
+      this.fetchCoinbaseByCoinIds(coinIds, vsCurrency),
+    ];
+    const providerPrices: Record<string, number>[] = providerTasks.map(() => ({}));
+    let firstUsableResolved = false;
+    let resolveFirstUsable!: () => void;
+    const firstUsable = new Promise<void>(resolve => { resolveFirstUsable = resolve; });
+    const tracked = providerTasks.map((task, index) => task.then(prices => {
+      providerPrices[index] = prices;
+      if (!firstUsableResolved && Object.keys(prices).length > 0) {
+        firstUsableResolved = true;
+        resolveFirstUsable();
       }
+    }).catch(() => undefined));
+    const allSettled = Promise.allSettled(tracked).then(() => undefined);
+    await Promise.race([firstUsable, allSettled]);
+    if (firstUsableResolved) {
+      await Promise.race([
+        allSettled,
+        new Promise(resolve => setTimeout(resolve, DEFAULT_PRICE_CONSENSUS_WINDOW_MS)),
+      ]);
     }
-
-    const missing = coinIds.filter(coinId => coinGeckoPrices[coinId] === undefined);
-    if (missing.length === 0) return coinGeckoPrices;
-
-    try {
-      const cmcPrices = await this.fetchCoinMarketCapKeylessByCoinIds(missing, vsCurrency);
-      return { ...cmcPrices, ...coinGeckoPrices };
-    } catch {
-      return coinGeckoPrices;
-    }
+    return mergeLivePriceEvidence(coinIds, providerPrices);
   }
 
   private async fetchByCoinIds(coinIds: string[], vsCurrency: string = 'usd'): Promise<Record<string, number>> {
@@ -180,7 +317,7 @@ class CoinGeckoPriceClient {
     const inflight = this.inFlight.get(cacheKey);
     if (inflight) return inflight;
 
-    const requestPromise = this.enqueueRequest(async () => {
+    const requestPromise = (async () => {
       const normalized = await this.fetchLivePriceMesh(dedupedIds, vsCurrency);
       if (Object.keys(normalized).length === 0) throw new Error('No live price provider returned usable market evidence');
       const complete = dedupedIds.every(coinId => normalized[coinId] !== undefined);
@@ -191,7 +328,7 @@ class CoinGeckoPriceClient {
         });
       }
       return normalized;
-    }).finally(() => {
+    })().finally(() => {
       this.inFlight.delete(cacheKey);
     });
 

@@ -71,7 +71,6 @@ function boundedNumber(raw: unknown, fallback: number, min: number, max: number)
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
 function maxContractsPerCandidate(): number { return boundedInt(process.env.CRYPTOCRAWL_KALSHI_EVENT_MAX_CONTRACTS, 250, 1, 100_000); }
-function minExpectedNetUsd(): number { return boundedNumber(process.env.CRYPTOCRAWL_KALSHI_EVENT_MIN_EXPECTED_NET_USD, 0.01, 0.01, 10_000); }
 function capitalOpportunityApr(): number { return boundedNumber(process.env.CRYPTOCRAWL_KALSHI_EVENT_CAPITAL_OPPORTUNITY_APR, 0, 0, 5); }
 function settlementGraceMs(): number { return boundedInt(process.env.CRYPTOCRAWL_KALSHI_EVENT_SETTLEMENT_GRACE_MS, 24 * 60 * 60_000, 60_000, 14 * 24 * 60 * 60_000); }
 function scanLimit(): number { return boundedInt(process.env.CRYPTOCRAWL_KALSHI_EVENT_OPPORTUNITY_SCAN_LIMIT, 64, 1, 500); }
@@ -261,7 +260,7 @@ async function buildOutcomeCandidate(
   }
 
   let contracts = requestedContracts;
-  let depth = await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome, side: 'buy', contracts, forceRefresh: true });
+  let depth = await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome, side: 'buy', contracts });
   if (!depth?.complete) {
     // Find the largest integer size that current authenticated depth can execute.
     let low = 1;
@@ -279,7 +278,7 @@ async function buildOutcomeCandidate(
     return dataCollectionCandidate(signal, outcome, ['required:authenticated_sized_depth']);
   }
 
-  const fee = await estimateKalshiEventFees({ ticker: signal.ticker, contracts, price: depth.vwapPrice, forceRefresh: true });
+  const fee = await estimateKalshiEventFees({ ticker: signal.ticker, contracts, price: depth.vwapPrice });
   if (!fee?.economicCreditAllowed || fee.takerFeeUsd === null) {
     return dataCollectionCandidate(signal, outcome, ['required:authenticated_sized_fee_economics']);
   }
@@ -324,7 +323,7 @@ async function buildOutcomeCandidate(
     'system_owned_event_cash:required_at_execution',
     'expected_net:all_in_positive_required',
   ];
-  const positive = Number.isFinite(expectedNetProfitUsd) && expectedNetProfitUsd >= minExpectedNetUsd() && expiresAt > now;
+  const positive = Number.isFinite(expectedNetProfitUsd) && expectedNetProfitUsd > 0 && expiresAt > now;
   const plan: KalshiEventExecutionPlan | null = positive ? {
     opportunityId,
     ticker: signal.ticker,
@@ -339,7 +338,7 @@ async function buildOutcomeCandidate(
     calibrationBrierScore: calibration.brierScore,
     calibrationAuthority: 'cryptara_kalshi_terminal_calibration',
     expectedNetProfitUsd,
-    minimumExpectedNetProfitUsd: minExpectedNetUsd() + settlementCostReserveUsd + capitalLockCostUsd,
+    minimumExpectedNetProfitUsd: settlementCostReserveUsd + capitalLockCostUsd,
     expiresAt,
     settlementDeadlineAt: settleDeadline,
     provenance: baseProvenance,

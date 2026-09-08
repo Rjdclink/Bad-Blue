@@ -128,11 +128,6 @@ function maxCalibrationAgeMs(): number {
   return bounded(process.env.CRYPTOCRAWL_KALSHI_EVENT_MAX_CALIBRATION_AGE_MS, 60_000, 5_000, 24 * 60 * 60_000);
 }
 
-function minimumExpectedNetUsd(): number {
-  const parsed = Number(process.env.CRYPTOCRAWL_KALSHI_EVENT_MIN_EXPECTED_NET_USD || 0.01);
-  return Number.isFinite(parsed) ? Math.max(0.01, Math.min(10_000, parsed)) : 0.01;
-}
-
 function liveEventExecutionEnabled(): boolean {
   return process.env.NO_EXECUTION !== 'true'
     && process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
@@ -173,7 +168,7 @@ function validatePlan(plan: KalshiEventExecutionPlan): string | null {
   if (plan.calibrationBrierScore !== null && (!Number.isFinite(plan.calibrationBrierScore) || plan.calibrationBrierScore < 0 || plan.calibrationBrierScore > 1)) return 'KALSHI_EVENT_CALIBRATION_BRIER_INVALID';
   if (plan.calibrationAuthority !== 'cryptara_kalshi_terminal_calibration') return 'KALSHI_EVENT_CALIBRATION_AUTHORITY_INVALID';
   if (!(plan.expectedNetProfitUsd > 0) || !Number.isFinite(plan.expectedNetProfitUsd)) return 'KALSHI_EVENT_EXPECTED_NET_INVALID';
-  if (!(plan.minimumExpectedNetProfitUsd > 0) || !Number.isFinite(plan.minimumExpectedNetProfitUsd)) return 'KALSHI_EVENT_MINIMUM_NET_INVALID';
+  if (plan.minimumExpectedNetProfitUsd < 0 || !Number.isFinite(plan.minimumExpectedNetProfitUsd)) return 'KALSHI_EVENT_MINIMUM_NET_INVALID';
   if (!Number.isFinite(plan.expiresAt) || plan.expiresAt <= now) return 'KALSHI_EVENT_PLAN_EXPIRED';
   if (!Number.isFinite(plan.settlementDeadlineAt) || plan.settlementDeadlineAt <= now) return 'KALSHI_EVENT_SETTLEMENT_DEADLINE_INVALID';
   return null;
@@ -217,7 +212,6 @@ async function currentAdmission(plan: KalshiEventExecutionPlan): Promise<{
     ticker: plan.ticker,
     contracts: plan.contracts,
     price: feeReservePrice,
-    forceRefresh: true,
   });
   if (!reserveFee?.economicCreditAllowed || reserveFee.takerFeeUsd === null) {
     throw new Error('KALSHI_EVENT_MAX_FEE_RESERVE_UNPROVEN');
@@ -225,8 +219,8 @@ async function currentAdmission(plan: KalshiEventExecutionPlan): Promise<{
 
   const expectedGrossValueUsd = plan.contracts * plan.calibratedProbability;
   const currentExpectedNetProfitUsd = expectedGrossValueUsd - depth.notionalUsd - currentFee.takerFeeUsd;
-  const requiredNet = Math.max(minimumExpectedNetUsd(), plan.minimumExpectedNetProfitUsd);
-  if (!(currentExpectedNetProfitUsd >= requiredNet)) {
+  const requiredNet = plan.minimumExpectedNetProfitUsd;
+  if (!(currentExpectedNetProfitUsd > requiredNet)) {
     throw new Error(`KALSHI_EVENT_CURRENT_EXPECTED_NET_BELOW_FLOOR:${currentExpectedNetProfitUsd.toFixed(8)}`);
   }
 

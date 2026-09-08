@@ -1,0 +1,37 @@
+'use strict';
+
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const read = path => fs.readFileSync(path, 'utf8');
+
+const prices = read('server/services/cryptocrawl/bridge/coingecko-client.ts');
+const eventFees = read('server/services/cryptocrawl/intelligence/kalshi-event-fee-authority.ts');
+const prediction = read('server/services/cryptocrawl/intelligence/kalshi-prediction-market-authority.ts');
+const generator = read('server/services/cryptocrawl/discovery/kalshi-event-opportunity-generator.ts');
+const lifecycle = read('server/services/cryptocrawl/execution/kalshi-event-lifecycle.ts');
+
+assert.match(prices, /const providerTasks = \[[\s\S]*coinGeckoTask,[\s\S]*fetchCoinMarketCapKeylessByCoinIds[\s\S]*fetchCoinCapByCoinIds[\s\S]*fetchCoinbaseByCoinIds/, 'live price providers must run concurrently');
+assert.match(prices, /enqueueCoinGeckoRequest/, 'CoinGecko must retain its own rate queue');
+assert.doesNotMatch(prices, /const requestPromise = this\.enqueue/, 'CoinGecko pacing must not serialize the provider mesh');
+assert.match(prices, /Promise\.race\(\[firstUsable, allSettled\]\)/, 'one slow provider must not bottleneck usable parallel evidence');
+assert.match(prices, /export function mergeLivePriceEvidence/, 'parallel price evidence must normalize through one shared merge');
+assert.match(prices, /Math\.abs\(value - median\) \/ median <= 0\.2/, 'price consensus must discard material multi-provider outliers');
+assert.match(prices, /merged\[coinId\] = primary/, 'healthy pre-existing CoinGecko evidence must retain precedence when consistent');
+assert.match(prices, /if \(complete\) \{\s*this\.cache\.set/, 'partial evidence must not receive the full cache TTL');
+
+for (const [name, source] of [['event fee authority', eventFees], ['prediction intelligence', prediction]]) {
+  assert.match(source, /\/trade-api\/v2\/events\/fee_changes/, `${name} must use the documented event fee-change endpoint`);
+  assert.doesNotMatch(source, /\/trade-api\/v2\/series\/fee_changes/, `${name} must not call the removed series fee-change endpoint`);
+  assert.match(source, /event_fee_changes/, `${name} must parse the documented response schema`);
+  assert.match(source, /2 \*\* attempt/, `${name} must exponentially back off request-local 429s`);
+}
+assert.match(eventFees, /fee_type_override/, 'event fee overrides must layer over parent series fees');
+assert.match(eventFees, /resourceCache/, 'event and series evidence must be shared across market tickers');
+assert.match(eventFees, /resourceInFlight/, 'event and series refreshes must be single-flight');
+
+assert.match(generator, /expectedNetProfitUsd > 0/, 'Kalshi admission must use exact strictly-positive all-in economics');
+assert.doesNotMatch(generator, /minExpectedNetUsd/, 'Kalshi discovery must not impose an arbitrary profit magnitude floor');
+assert.doesNotMatch(lifecycle, /minimumExpectedNetUsd/, 'Kalshi execution must not reintroduce an arbitrary profit magnitude floor');
+assert.match(lifecycle, /currentExpectedNetProfitUsd > requiredNet/, 'fresh execution economics must remain strictly positive after route-specific costs');
+
+console.log('[market-evidence-kalshi-capability] PASS: parallel redundant live pricing and rate-safe, override-correct, exact-positive Kalshi evidence preserve capability');
