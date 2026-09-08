@@ -19,11 +19,11 @@ const PROFIT_CUSHION_USD = 50;
  * rejection retained here is idempotency for an already-reserved/submitted/
  * terminal opportunity.
  */
-export type OperatorStrategyBlockReason = 'duplicate_opportunity';
 export type OperatorStrategyAdvisorySignal =
   | 'learning_day'
   | 'daily_trade_limit'
   | 'daily_profit_stop';
+export type OperatorStrategyBlockReason = OperatorStrategyAdvisorySignal | 'duplicate_opportunity';
 
 export interface OperatorTradingStrategyState {
   localDate: string;
