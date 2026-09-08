@@ -2,12 +2,9 @@ import { BigNumber, type Wallet, type providers } from 'ethers';
 import logger from '../../../logger.js';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { DynamicChainConfig } from '../core/dynamic-chain-registry.js';
-import {
-  buildDynamicZeroCapitalRouteTemplates,
-  discoverDynamicZeroCapitalQuotes,
-  getCachedGraphlessDynamicRouteTemplates,
-} from './dynamic-zero-capital-routes.js';
+import { discoverDynamicZeroCapitalQuotes } from './dynamic-zero-capital-routes.js';
 import { measuredCandidateRegistry } from './measured-candidate-registry.js';
+import { getCanonicalZeroCapitalRoutes } from './zero-capital-route-authority.js';
 import {
   zeroCapitalDiscoveryFloorBps,
   type ConfiguredZeroCapitalRoute,
@@ -89,13 +86,10 @@ function bpsFromBaseUnits(value: bigint | undefined, notional: bigint): number |
 }
 
 function executionRoutes(target: CanonicalZeroCapitalRuntime): ConfiguredZeroCapitalRoute[] {
-  const byId = new Map<string, ConfiguredZeroCapitalRoute>();
-  for (const route of [
-    ...target.configuredRoutes,
-    ...[...target.providers.keys()].flatMap(chain => buildDynamicZeroCapitalRouteTemplates(chain)),
-    ...getCachedGraphlessDynamicRouteTemplates(),
-  ]) byId.set(route.id, route);
-  return [...byId.values()];
+  return getCanonicalZeroCapitalRoutes({
+    providerChains: target.providers.keys(),
+    configuredRoutes: target.configuredRoutes,
+  });
 }
 
 async function strictFunding(target: CanonicalZeroCapitalRuntime, chain: SupportedChain): Promise<GasFundingDecision> {
@@ -264,7 +258,7 @@ function recordPreselectionCandidate(input: {
         ? 'Deterministic-positive exact quote awaits the sole canonical flash-provider/receiver repricing stage'
         : `Deterministic-positive exact quote is resource-blocked before provider selection: ${input.resourceReason}`
       : `Measured route is ${opportunity.netProfitBps} BPS net and remains observation-only for measured provider-cost optimization`,
-    missingInformation: positive && !input.resourceReady ? ['zero_personal_cost_execution_resource'] : [],
+    missingInformation: positive && !input.resourceReady ? ['required:zero_personal_cost_execution_resource'] : [],
     provenance: [
       input.source === 'dynamic' ? 'dynamic_zero_capital_route' : 'configured_zero_capital_route',
       'direct_contract_quotes',
@@ -383,6 +377,7 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
   await cycleInFlight;
   logger.info('[ZeroCapitalDiscovery] Canonical zero-capital discovery started', {
     component: 'CanonicalZeroCapitalDiscovery',
+    routeAuthority: 'zero_capital_route_authority',
     executionAuthority: false,
     schedulerAuthority: false,
     eligibilityAuthority: 'canonical_provider_repricing_stage_only',
