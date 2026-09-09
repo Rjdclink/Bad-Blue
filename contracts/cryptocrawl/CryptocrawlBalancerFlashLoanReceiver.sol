@@ -196,7 +196,9 @@ contract CryptocrawlBalancerFlashLoanReceiver {
     /// @dev Morpho transfers seized collateral to this receiver before invoking
     ///      onMorphoLiquidate. The callback atomically unwinds that collateral,
     ///      proves a strictly positive loan-token delta, and only then approves the
-    ///      exact repayment that Morpho pulls after the callback returns.
+    ///      exact repayment that Morpho pulls after the callback returns. Returning
+    ///      the exact repayment/profit lets eth_call use protocol execution itself
+    ///      as the read-only pricing authority instead of duplicating Morpho math.
     function executeMorphoLiquidation(
         address morpho,
         IMorphoLiquidationCore.MarketParams calldata marketParams,
@@ -205,7 +207,7 @@ contract CryptocrawlBalancerFlashLoanReceiver {
         Step[] calldata steps,
         uint256 minProfit,
         address profitRecipient
-    ) external onlyController onlyIdle {
+    ) external onlyController onlyIdle returns (uint256 repaidAssets, uint256 profit) {
         require(morpho != address(0) && allowedTargets[morpho], "morpho_not_allowed");
         require(marketParams.loanToken != address(0), "loan_token_required");
         require(marketParams.collateralToken != address(0), "collateral_token_required");
@@ -240,6 +242,8 @@ contract CryptocrawlBalancerFlashLoanReceiver {
         require(phase == ExecutionPhase.AwaitingMorphoLiquidation, "morpho_callback_incomplete");
         require(morphoCallbackRepaidAssets > 0, "morpho_repayment_missing");
 
+        repaidAssets = morphoCallbackRepaidAssets;
+        profit = morphoCallbackProfit;
         emit MorphoLiquidationExecuted(
             expectedController,
             expectedMorpho,
@@ -247,8 +251,8 @@ contract CryptocrawlBalancerFlashLoanReceiver {
             expectedLoanToken,
             expectedCollateralToken,
             expectedSeizedAssets,
-            morphoCallbackRepaidAssets,
-            morphoCallbackProfit
+            repaidAssets,
+            profit
         );
 
         expectedMorpho = address(0);
