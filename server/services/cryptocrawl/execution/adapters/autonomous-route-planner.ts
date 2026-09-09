@@ -19,6 +19,7 @@ export interface RoutePlanningSwapStep {
   amountIn: bigint | string;
   expectedAmountOut: bigint | string;
   fee: number;
+  pool?: string;
 }
 
 export interface RoutePlanningOpportunity {
@@ -51,7 +52,9 @@ function normalizeProtocol(protocol: string): SupportedSwapProtocol {
   if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
   if (normalized === 'pancakeswapv2' || normalized === 'pancakeswap_v2' || normalized === 'pancakeswap-v2' || normalized === 'pancakev2' || normalized === 'pancake-v2') return 'pancakeswapV2';
   if (normalized === 'traderjoev1' || normalized === 'traderjoe_v1' || normalized === 'traderjoe-v1' || normalized === 'joev1' || normalized === 'joe-v1') return 'traderJoeV1';
-  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushiswap-v3' || normalized === 'sushi-v3') return 'sushiswapV3';
+  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushi-v3') return 'sushiswapV3';
+  if (normalized === 'aaveghogsm' || normalized === 'aave_gho_gsm' || normalized === 'aave-gho-gsm') return 'aaveGhoGsm';
+  if (normalized === 'fluiddext1' || normalized === 'fluid_dex_t1' || normalized === 'fluid-dex-t1') return 'fluidDexT1';
   throw new Error(`Unsupported autonomous route protocol: ${protocol}`);
 }
 
@@ -180,13 +183,21 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     if (requestedAmountIn !== requiredAmountIn) throw new Error(`Autonomous zero-capital route step ${index} amountIn does not match the preceding quoted output`);
     previousExpectedOut = expectedAmountOut;
 
+    const protocol = normalizeProtocol(step.protocol);
+    const protocolAnchor = protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1';
+    const pool = protocolAnchor ? requireAddress(`route[${index}].pool`, step.pool) : step.pool;
     return {
-      protocol: normalizeProtocol(step.protocol),
+      protocol,
       chain: opportunity.chain,
       tokenIn,
       tokenOut,
       amountIn: requiredAmountIn.toString(),
-      minAmountOut: applyHaircut(expectedAmountOut, minOutputBps),
+      // GSM conversion is a protocol-defined exact quote, so execution asks for
+      // that exact measured output and fails closed if governance/state changes.
+      minAmountOut: protocol === 'aaveGhoGsm'
+        ? expectedAmountOut.toString()
+        : applyHaircut(expectedAmountOut, minOutputBps),
+      ...(pool ? { pool } : {}),
       feeTier: mapFeeToTier(step.fee),
       recipient: receiver,
       deadlineBufferSeconds,
