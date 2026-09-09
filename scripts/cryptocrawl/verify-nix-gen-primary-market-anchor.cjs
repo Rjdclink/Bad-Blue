@@ -9,6 +9,7 @@ const routes = read('server/services/cryptocrawl/execution/adapters/primary-mark
 const quoter = read('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts');
 const payload = read('server/services/cryptocrawl/execution/adapters/onchain-payload-builder.ts');
 const planner = read('server/services/cryptocrawl/execution/adapters/autonomous-route-planner.ts');
+const receiverCapability = read('server/services/cryptocrawl/execution/adapters/flash-loan-receiver-capability.ts');
 const receiver = read('contracts/cryptocrawl/CryptocrawlBalancerFlashLoanReceiver.sol');
 
 // Reviewed current Sky Ethereum primary-market identities.
@@ -52,6 +53,15 @@ assert.match(payload, /resolveSkyPrimaryMarketPool/);
 assert.match(planner, /protocol === 'skyLitePsm'/);
 assert.match(planner, /protocol === 'skyDaiUsds'/);
 
+// Permission acquisition must recognize every current protocol-anchor producer;
+// otherwise a profitable candidate would fail before receiver simulation.
+for (const protocol of ['aaveGhoGsm', 'fluidDexT1', 'skyLitePsm', 'skyDaiUsds']) {
+  assert.match(receiverCapability, new RegExp(protocol));
+}
+assert.match(receiverCapability, /buildSwapCallFromLeg/);
+assert.match(receiverCapability, /setAllowedTarget/);
+assert.match(receiverCapability, /setAllowedApprovalToken/);
+
 // Profit authority and receiver safety remain unchanged.
 assert.match(quoter, /executablePositive:\s*netProfit\s*>\s*0n/);
 assert.match(planner, /isStrictlyPositiveProfitBaseUnits\(expectedProfit\)/);
@@ -66,6 +76,7 @@ console.log(JSON.stringify({
   skyDaiUsdsIdentityProof: true,
   fluidOfficialResolverPreferred: true,
   directFluidExactFallbackPreserved: true,
+  protocolAnchorPermissioning: true,
   syntheticProfitAllowed: false,
   canonicalStrictPositiveProfitPreserved: true,
   receiverAllowListPreserved: true,
