@@ -1,8 +1,9 @@
 import { ethers } from 'ethers';
 import { buildProtocolAnchorCall, resolveProtocolAnchorPool } from './protocol-anchor-adapter.js';
+import { buildSkyPrimaryMarketCall, resolveSkyPrimaryMarketPool } from './primary-market-anchor-adapter.js';
 
 export type SupportedExecutionChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
-export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3' | 'pancakeswapV2' | 'traderJoeV1' | 'aaveGhoGsm' | 'fluidDexT1';
+export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3' | 'pancakeswapV2' | 'traderJoeV1' | 'aaveGhoGsm' | 'fluidDexT1' | 'skyLitePsm' | 'skyDaiUsds';
 export type UniswapV3FeeTier = 100 | 500 | 3000 | 10000;
 
 export interface OnchainSwapLeg {
@@ -73,6 +74,8 @@ const DEX_ROUTERS: Record<SupportedSwapProtocol, Partial<Record<SupportedExecuti
   sushiswapV3: {},
   aaveGhoGsm: {},
   fluidDexT1: {},
+  skyLitePsm: {},
+  skyDaiUsds: {},
 };
 
 function isAddress(value: string): boolean {
@@ -87,8 +90,15 @@ function parseAmount(label: string, raw: string): ethers.BigNumber {
   return ethers.BigNumber.from(raw);
 }
 
+function isProtocolAnchor(protocol: SupportedSwapProtocol): boolean {
+  return protocol === 'aaveGhoGsm'
+    || protocol === 'fluidDexT1'
+    || protocol === 'skyLitePsm'
+    || protocol === 'skyDaiUsds';
+}
+
 function resolveRouter(protocol: SupportedSwapProtocol, chain: SupportedExecutionChain): string {
-  if (protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1') {
+  if (isProtocolAnchor(protocol)) {
     throw new Error(`${protocol} uses its reviewed protocol-anchor target rather than a generic DEX router`);
   }
   if (chain === 'europa') {
@@ -109,6 +119,8 @@ function resolveRouter(protocol: SupportedSwapProtocol, chain: SupportedExecutio
 function defaultGasLimit(protocol: SupportedSwapProtocol): number {
   if (protocol === 'aaveGhoGsm') return 300000;
   if (protocol === 'fluidDexT1') return 450000;
+  if (protocol === 'skyLitePsm') return 275000;
+  if (protocol === 'skyDaiUsds') return 325000;
   return protocol === 'uniswapV3' ? 250000 : 300000;
 }
 
@@ -132,6 +144,17 @@ export function buildSwapCallFromLeg(
 
   const amountIn = parseAmount('amountIn', leg.amountIn);
   const minAmountOut = parseAmount('minAmountOut', leg.minAmountOut);
+
+  if (leg.protocol === 'skyLitePsm' || leg.protocol === 'skyDaiUsds') {
+    if (chain !== 'ethereum') throw new Error(`${leg.protocol} primary-market execution is currently reviewed only for Ethereum`);
+    const pool = resolveSkyPrimaryMarketPool(leg.protocol, leg.tokenIn, leg.tokenOut, leg.pool);
+    return buildSkyPrimaryMarketCall({
+      leg: { protocol: leg.protocol, tokenIn: leg.tokenIn, tokenOut: leg.tokenOut, pool },
+      amountIn: amountIn.toString(),
+      minAmountOut: minAmountOut.toString(),
+      recipient,
+    });
+  }
 
   if (leg.protocol === 'aaveGhoGsm' || leg.protocol === 'fluidDexT1') {
     if (chain !== 'ethereum') throw new Error(`${leg.protocol} anchor execution is currently reviewed only for Ethereum`);
