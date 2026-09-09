@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { buildProtocolAnchorCall } from './protocol-anchor-adapter.js';
+import { buildProtocolAnchorCall, resolveProtocolAnchorPool } from './protocol-anchor-adapter.js';
 
 export type SupportedExecutionChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
 export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3' | 'pancakeswapV2' | 'traderJoeV1' | 'aaveGhoGsm' | 'fluidDexT1';
@@ -135,9 +135,9 @@ export function buildSwapCallFromLeg(
 
   if (leg.protocol === 'aaveGhoGsm' || leg.protocol === 'fluidDexT1') {
     if (chain !== 'ethereum') throw new Error(`${leg.protocol} anchor execution is currently reviewed only for Ethereum`);
-    if (!leg.pool || !isAddress(leg.pool)) throw new Error(`${leg.protocol} anchor execution requires a reviewed pool/module address`);
+    const pool = resolveProtocolAnchorPool(leg.protocol, leg.tokenIn, leg.tokenOut, leg.pool);
     return buildProtocolAnchorCall({
-      leg: { protocol: leg.protocol, tokenIn: leg.tokenIn, tokenOut: leg.tokenOut, pool: leg.pool },
+      leg: { protocol: leg.protocol, tokenIn: leg.tokenIn, tokenOut: leg.tokenOut, pool },
       amountIn: amountIn.toString(),
       minAmountOut: minAmountOut.toString(),
       recipient,
