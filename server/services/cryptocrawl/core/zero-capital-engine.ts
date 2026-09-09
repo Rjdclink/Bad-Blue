@@ -179,133 +179,76 @@ function executionReadiness(ready: boolean, reason?: string): InitialGasReadines
   };
 }
 
-export class AutonomousZeroCapitalEngine {
-  readonly gasSponsor = getGasSponsorManager();
-  readonly receiverManager = getSponsoredReceiverManager();
-  readonly providers = new Map<SupportedChain, providers.JsonRpcProvider>();
-  readonly executionWallets = new Map<SupportedChain, Wallet>();
-  readonly dynamicChainConfigs = new Map<ActiveExecutionChain, DynamicChainConfig>();
-  configuredRoutes: ConfiguredZeroCapitalRoute[] = [];
+function boundedPositiveMs(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  const finite = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(min, Math.min(max, Math.trunc(finite)));
+}
 
+export class ZeroCapitalEngine {
   private initialized = false;
-  private state: SystemState;
-
-  constructor() {
-    this.state = {
-      isRunning: false,
-      totalProfit: 0n,
-      totalTrades: 0,
-      successfulTrades: 0,
-      includedUnverifiedTrades: 0,
-      failedTrades: 0,
-      lastTradeTimestamp: 0,
-      currentOpportunities: 0,
-      gaslessTransactions: 0,
-      fundingCycleActive: false,
-      fundingCycles: 0,
-      lastFundingCycleAt: 0,
-      walletResources: [],
-      receiverRegistry: [],
-      bootstrapState: 'PRE_STAGE_1_BOOTSTRAP',
-      initialGasReadiness: executionReadiness(false, 'Canonical zero-capital resource stage has not yet proven a route'),
-      marketOperationsEnabled: false,
-      gasFundingDecisions: [],
-      profitEstimates: [],
-      activeExecutions: 0,
-      activeExecutionChains: [],
-      maxConcurrentExecutions: 0,
-    };
-  }
+  private providers = new Map<SupportedChain, providers.JsonRpcProvider>();
+  private executionWallets = new Map<SupportedChain, Wallet>();
+  private configuredRoutes: ConfiguredZeroCapitalRoute[] = [];
+  private dynamicChainConfigs = new Map<Exclude<SupportedChain, 'europa'>, DynamicChainConfig>();
+  private receiverManager = getSponsoredReceiverManager();
+  private gasSponsor = getGasSponsorManager();
+  private state: SystemState = {
+    isRunning: false,
+    totalProfit: 0n,
+    totalTrades: 0,
+    successfulTrades: 0,
+    includedUnverifiedTrades: 0,
+    failedTrades: 0,
+    lastTradeTimestamp: 0,
+    currentOpportunities: 0,
+    gaslessTransactions: 0,
+    fundingCycleActive: false,
+    fundingCycles: 0,
+    lastFundingCycleAt: 0,
+    walletResources: [],
+    receiverRegistry: [],
+    bootstrapState: 'PRE_STAGE_1_BOOTSTRAP',
+    initialGasReadiness: executionReadiness(false, 'Runtime has not completed canonical initialization'),
+    marketOperationsEnabled: false,
+    gasFundingDecisions: [],
+    profitEstimates: [],
+    activeExecutions: 0,
+    activeExecutionChains: [],
+    maxConcurrentExecutions: 1,
+  };
 
   async initialize(): Promise<void> {
     if (this.initialized) {
-      await this.refreshWalletResources();
-      this.state.receiverRegistry = this.receiverManager.getRecords();
       this.state.isRunning = true;
       return;
     }
 
+    const configured = resolveConfiguredWalletAddress();
+    if (!configured.address) throw new Error('Zero-capital runtime requires a configured execution wallet address');
+    const privateKey = normalizePrivateKey(process.env.EXECUTION_WALLET_PRIVATE_KEY || process.env.WALLET_PRIVATE_KEY || '');
+    if (!privateKey) throw new Error('Zero-capital runtime requires an execution wallet private key');
+    assertConfiguredWalletAddress(configured.address, configured.source, privateKey);
+
+    this.dynamicChainConfigs = loadDynamicChainRegistry();
     this.configuredRoutes = composeConfiguredZeroCapitalRoutes(loadConfiguredZeroCapitalRoutes());
-    const configuredDynamicChains = loadDynamicChainRegistry();
-    const dynamicEvmOverrides = new Map<ActiveExecutionChain, DynamicChainConfig>();
-    for (const chain of configuredDynamicChains) {
-      if (chain.family !== 'evm') {
-        logger.info('[ZeroCapitalEngine] Non-EVM chain retained outside ethers execution context', {
-          component: 'ZeroCapitalEngine',
-          chain: chain.id,
-          family: chain.family,
-          executionAuthority: false,
-        });
-        continue;
-      }
-      if (!(chain.id in RPC_ENDPOINTS)) continue;
-      dynamicEvmOverrides.set(chain.id as ActiveExecutionChain, chain);
+    this.providers.clear();
+    this.executionWallets.clear();
+    for (const chain of Object.keys(RPC_ENDPOINTS) as ActiveExecutionChain[]) {
+      const rpcUrl = RPC_ENDPOINTS[chain];
+      if (!rpcUrl) continue;
+      const provider = new providers.JsonRpcProvider(rpcUrl);
+      this.providers.set(chain, provider);
+      this.executionWallets.set(chain, walletFromPrivateKey(privateKey, provider));
     }
 
-    const chains = Object.keys(RPC_ENDPOINTS) as ActiveExecutionChain[];
-    for (const chain of chains) {
-      const fallback: DynamicChainConfig = {
-        id: chain,
-        family: 'evm',
-        rpcUrl: RPC_ENDPOINTS[chain],
-        nativeAsset: NATIVE_ASSETS[chain],
-        sponsoredBootstrap: supportsSponsoredReceiverChain(chain),
-        executionMode: supportsSponsoredReceiverChain(chain) ? 'sponsored_or_native' : 'native_only',
-      };
-      this.dynamicChainConfigs.set(chain, dynamicEvmOverrides.get(chain) || fallback);
-    }
-
-    await multiProviderRpcManager.initialize(chains as RpcSupportedChain[]);
-    for (const chain of chains) {
-      try {
-        const chainConfig = this.dynamicChainConfigs.get(chain)!;
-        let managed;
-        try {
-          managed = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
-        } catch {
-          await multiProviderRpcManager.registerProvider({
-            provider: 'ZeroCapitalConfiguredRPC',
-            chain: chain as RpcSupportedChain,
-            httpUrl: chainConfig.rpcUrl,
-            priority: 1,
-          });
-          managed = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
-        }
-        const network = await managed.http.getNetwork();
-        if (!Number.isSafeInteger(network.chainId) || network.chainId <= 0) throw new Error('RPC returned an invalid chain id');
-        this.providers.set(chain, managed.http);
-      } catch (error) {
-        logger.warn('[ZeroCapitalEngine] RPC unavailable to canonical zero-capital runtime context', {
-          component: 'ZeroCapitalEngine',
-          chain,
-          error: error instanceof Error ? error.message : String(error),
-          executionAuthority: false,
-        });
-      }
-    }
-
-    const rawPrivateKey = process.env.WALLET_PRIVATE_KEY;
-    const privateKey = normalizePrivateKey(rawPrivateKey) || undefined;
-    if (rawPrivateKey && !privateKey) throw new Error('WALLET_PRIVATE_KEY is not a valid 32-byte EVM private key');
-    if (privateKey) {
-      assertConfiguredWalletAddress(privateKey);
-      for (const [chain, provider] of this.providers) {
-        this.executionWallets.set(chain, walletFromPrivateKey(privateKey).connect(provider));
-      }
-    }
-
-    const alchemyNetworks = (['ethereum', 'polygon', 'arbitrum', 'optimism'] as const)
-      .filter(chain => this.providers.has(chain));
-    if (alchemyNetworks.length > 0) await alchemyIntegration.start([...alchemyNetworks]);
-
-    await this.refreshWalletResources();
-    this.state.receiverRegistry = this.receiverManager.getRecords();
-    this.state.isRunning = true;
     this.initialized = true;
-
+    this.state.isRunning = true;
+    this.state.marketOperationsEnabled = true;
+    this.state.receiverRegistry = this.receiverManager.getRecords();
     logger.info('[ZeroCapitalEngine] Canonical zero-capital runtime context initialized', {
       component: 'ZeroCapitalEngine',
-      connectedChains: Array.from(this.providers.keys()),
+      connectedChains: [...this.providers.keys()],
       explicitConfiguredRoutes: this.configuredRoutes.length,
       routeAuthority: 'zero_capital_route_authority',
       discoveryAuthority: 'CanonicalZeroCapitalDiscovery',
@@ -321,42 +264,26 @@ export class AutonomousZeroCapitalEngine {
     });
   }
 
-  /**
-   * Compatibility lifecycle entrypoint. It starts only the runtime context; it
-   * never starts a strategy-local scanner or dispatcher.
-   */
-  async start(options: {
-    onInitialGasReady?: () => Promise<void>;
-    onInitialGasLost?: () => Promise<void>;
-  } = {}): Promise<void> {
-    await this.initialize();
-    this.state.isRunning = true;
-    if (options.onInitialGasReady) await options.onInitialGasReady();
-    if (options.onInitialGasLost) {
-      logger.debug('[ZeroCapitalEngine] Legacy local funding-loss callback retained but has no zero-capital shutdown authority', {
-        component: 'ZeroCapitalEngine',
-        callbackRegistered: true,
-        callbackInvoked: false,
-        globalHaltAuthority: false,
-      });
-    }
+  getState(): SystemState {
+    return { ...this.state, activeExecutionChains: [...this.state.activeExecutionChains], gasFundingDecisions: this.state.gasFundingDecisions.map(item => ({ ...item })), walletResources: this.state.walletResources.map(item => ({ ...item, assetBalances: { ...item.assetBalances } })), receiverRegistry: this.state.receiverRegistry.map(item => ({ ...item })), profitEstimates: this.state.profitEstimates.map(item => ({ ...item })) };
   }
 
-  /** Sole compatibility funding method; delegates to the canonical proof boundary. */
-  async getGasFundingDecision(chain: SupportedChain): Promise<GasFundingDecision> {
-    return getProvenZeroCapitalGasFundingDecision(this, chain);
+  getRuntimeContext() {
+    return {
+      providers: this.providers,
+      executionWallets: this.executionWallets,
+      dynamicChainConfigs: this.dynamicChainConfigs,
+      receiverManager: this.receiverManager,
+      gasSponsor: this.gasSponsor,
+    };
   }
 
-  /** Explicit-route measurement helper used only by CanonicalZeroCapitalDiscovery. */
-  async scanChain(
-    chain: SupportedChain,
-    provider: providers.JsonRpcProvider,
-  ): Promise<ZeroCapitalOpportunity[]> {
+  async scanChain(chain: SupportedChain, provider: providers.JsonRpcProvider): Promise<ZeroCapitalOpportunity[]> {
     if (chain === 'europa') return [];
     const explicitRoutes = this.configuredRoutes.filter(route => route.chain === chain);
     if (explicitRoutes.length === 0) return [];
-    const block = await provider.getBlock('latest');
     const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, explicitRoutes);
+    const block = await provider.getBlock('latest');
     const accepted = quotes.map(quote => this.fromQuotedRoute(quote, block.timestamp));
     return runZeroCapitalProfitabilityRescueV2({
       chain,
@@ -368,7 +295,7 @@ export class AutonomousZeroCapitalEngine {
   }
 
   fromQuotedRoute(quote: QuotedZeroCapitalRoute, blockTimestamp: number): ZeroCapitalOpportunity {
-    const ttlMs = Math.max(1000, Number(process.env.ZERO_CAPITAL_ROUTE_TTL_MS || 3000));
+    const ttlMs = boundedPositiveMs(process.env.ZERO_CAPITAL_ROUTE_TTL_MS, 3_000, 500, 15_000);
     const executionCost = quote.estimatedGasCostInInputToken + quote.flashLoanFeeInInputToken + quote.relayFeeInInputToken;
     const observedAt = Date.now();
     return {
@@ -405,7 +332,8 @@ export class AutonomousZeroCapitalEngine {
   }
 
   private expectedSlippageBps(legs: number): number {
-    const minOutputBps = Math.max(9000, Math.min(10000, Number(process.env.ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS || 9990)));
+    const raw = Number(process.env.ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS);
+    const minOutputBps = Number.isFinite(raw) ? Math.max(9000, Math.min(10000, raw)) : 9990;
     return Math.max(0, legs * (10000 - minOutputBps));
   }
 
@@ -463,16 +391,16 @@ export class AutonomousZeroCapitalEngine {
           assetBalances: {},
           observedAt,
           status: 'unavailable' as const,
-          error: configured.reason || 'No execution wallet is configured',
+          error: 'no configured wallet address',
         };
       }
       try {
-        const balance = await provider.getBalance(address);
+        const native = await provider.getBalance(address);
         return {
           chain,
           walletAddress: address,
-          walletAddressSource: wallet ? 'execution_wallet' as const : configured.source || undefined,
-          nativeBalance: balance.toString(),
+          walletAddressSource: wallet ? 'execution_wallet' as const : 'bridge_wallet' as const,
+          nativeBalance: native.toString(),
           assetBalances: {},
           observedAt,
           status: 'available' as const,
@@ -481,7 +409,7 @@ export class AutonomousZeroCapitalEngine {
         return {
           chain,
           walletAddress: address,
-          walletAddressSource: wallet ? 'execution_wallet' as const : configured.source || undefined,
+          walletAddressSource: wallet ? 'execution_wallet' as const : 'bridge_wallet' as const,
           nativeBalance: '0',
           assetBalances: {},
           observedAt,
@@ -494,85 +422,9 @@ export class AutonomousZeroCapitalEngine {
     return snapshots;
   }
 
-  stop(): void {
-    this.state.isRunning = false;
-    this.state.fundingCycleActive = false;
-    this.state.marketOperationsEnabled = false;
-    this.state.currentOpportunities = 0;
-    this.state.activeExecutions = 0;
-    this.state.activeExecutionChains = [];
-  }
-
-  getState(): SystemState {
-    const receivers = this.receiverManager.getRecords();
-    const receiverReady = receivers.length > 0;
-    this.state.receiverRegistry = receivers;
-    this.state.bootstrapState = receiverReady ? 'INITIAL_GAS_READY' : 'PRE_STAGE_1_BOOTSTRAP';
-    this.state.initialGasReadiness = executionReadiness(
-      receiverReady,
-      receiverReady
-        ? undefined
-        : 'Canonical zero-capital discovery has not yet proven a funded receiver route',
-    );
-    this.state.profitEstimates = getProfitEstimates(50);
-    return {
-      ...this.state,
-      walletResources: this.state.walletResources.map(item => ({ ...item, assetBalances: { ...item.assetBalances } })),
-      receiverRegistry: receivers.map(item => ({ ...item })),
-      profitEstimates: [...this.state.profitEstimates],
-      initialGasReadiness: {
-        ...this.state.initialGasReadiness,
-        measurements: this.state.initialGasReadiness.measurements.map(item => ({ ...item })),
-        provenance: [...this.state.initialGasReadiness.provenance],
-      },
-    };
-  }
-
-  getStats() {
-    const state = this.getState();
-    return {
-      isRunning: state.isRunning,
-      totalProfit: ethers.utils.formatUnits(state.totalProfit.toString(), 6),
-      totalTrades: state.totalTrades,
-      successfulTrades: state.successfulTrades,
-      includedUnverifiedTrades: state.includedUnverifiedTrades,
-      failedTrades: state.failedTrades,
-      successRate: state.totalTrades > 0
-        ? `${((state.successfulTrades / state.totalTrades) * 100).toFixed(2)}%`
-        : '0%',
-      currentOpportunities: state.currentOpportunities,
-      gaslessTransactions: state.gaslessTransactions,
-      fundingCycleActive: state.fundingCycleActive,
-      fundingCycles: state.fundingCycles,
-      lastFundingCycleAt: state.lastFundingCycleAt,
-      lastFundingError: state.lastFundingError,
-      walletResources: state.walletResources,
-      receiverRegistry: state.receiverRegistry,
-      profitEstimates: state.profitEstimates,
-      activeExecutionChains: state.activeExecutionChains,
-      bootstrapState: state.bootstrapState,
-      initialGasReadiness: state.initialGasReadiness,
-      marketOperationsEnabled: state.marketOperationsEnabled,
-      gasFundingDecisions: state.gasFundingDecisions,
-      activeExecutions: state.activeExecutions,
-      maxConcurrentExecutions: state.maxConcurrentExecutions,
-      routeAuthority: 'zero_capital_route_authority',
-      discoveryAuthority: 'CanonicalZeroCapitalDiscovery',
-      gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
-      receiverSetupAuthority: 'CanonicalZeroCapitalDiscovery',
-      schedulingAuthority: 'CanonicalExecutionScheduler',
-      executionAuthority: 'CanonicalZeroCapitalExecutor',
-      independentScanLoop: false,
-      independentExecutionLoop: false,
-      runtimeMethodMutation: false,
-      capitalRequired: 'Zero-personal-capital execution is admitted only from externally sponsored or proven system-owned resources',
-      zeroCapitalSpecificExecutionFlagAuthority: false,
-      tokenUnitEqualsUsdAssumption: false,
-      monteCarloExecutionAuthority: false,
-      zeroInitialCapitalGlobalHaltAuthority: false,
-    };
+  private async getGasFundingDecision(chain: SupportedChain): Promise<GasFundingDecision> {
+    return getProvenZeroCapitalGasFundingDecision(this, chain);
   }
 }
 
-export const zeroCapitalEngine = new AutonomousZeroCapitalEngine();
-export default zeroCapitalEngine;
+export const zeroCapitalEngine = new ZeroCapitalEngine();
