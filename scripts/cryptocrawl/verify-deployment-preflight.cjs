@@ -61,6 +61,7 @@ require('./verify-product-discovery-coverage.cjs');
 require('./verify-cross-venue-asset-identity.cjs');
 require('./verify-dex-atomic-profit-path.cjs');
 require('./verify-zero-capital-quote-liveness.cjs');
+require('./verify-multi-topology-discovery-liveness.cjs');
 require('./verify-aave-liquidation-profit-integrity.cjs');
 require('./verify-topology-execution-integrity.cjs');
 require('./verify-cross-chain-funding-route-truth.cjs');
@@ -73,4 +74,4 @@ require('./verify-first-pass-route-measurability.cjs');
 require('./verify-canonical-refresh-capability-authority.cjs');
 require('./verify-bps-zero-capital-event-handoff.cjs');
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, final evidence/route resolution, payout invariants, and single zero-capital route authority passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, and single zero-capital route authority passed; continuing to downstream prebuild/build');
