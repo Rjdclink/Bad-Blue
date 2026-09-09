@@ -125,36 +125,57 @@ function decodeFluidSwapResult(raw: string | null): BigNumber | null {
   return result.gt(0) ? result : null;
 }
 
+function assertGsmIdentityAndState(input: {
+  ghoToken: string;
+  underlyingAsset: string;
+  expectedUnderlying: string;
+  canSwap: boolean;
+  frozen: boolean;
+  seized: boolean;
+}): void {
+  if (!sameAddress(input.ghoToken, ETHEREUM_PROTOCOL_ANCHORS.gho) || !sameAddress(input.underlyingAsset, input.expectedUnderlying)) {
+    throw new Error('Aave GHO GSM live identity does not match reviewed anchor');
+  }
+  if (!input.canSwap || input.frozen || input.seized) throw new Error('Aave GHO GSM is not currently swappable');
+}
+
 async function quoteGsm(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
   const { ghoIn, underlying } = validateKnownGsmLeg(leg);
   const gsm = new Contract(leg.pool, GSM_ABI, provider);
-  const [ghoToken, underlyingAsset, canSwap, frozen, seized] = await Promise.all([
-    gsm.GHO_TOKEN() as Promise<string>,
-    gsm.UNDERLYING_ASSET() as Promise<string>,
-    gsm.canSwap() as Promise<boolean>,
-    gsm.getIsFrozen() as Promise<boolean>,
-    gsm.getIsSeized() as Promise<boolean>,
-  ]);
-  if (!sameAddress(ghoToken, ETHEREUM_PROTOCOL_ANCHORS.gho) || !sameAddress(underlyingAsset, underlying)) {
-    throw new Error('Aave GHO GSM live identity does not match reviewed anchor');
-  }
-  if (!canSwap || frozen || seized) throw new Error('Aave GHO GSM is not currently swappable');
 
   if (ghoIn) {
-    const quoted = await gsm.getAssetAmountForBuyAsset(amountIn);
+    const [ghoToken, underlyingAsset, canSwap, frozen, seized, quoted, liquidityRaw] = await Promise.all([
+      gsm.GHO_TOKEN() as Promise<string>,
+      gsm.UNDERLYING_ASSET() as Promise<string>,
+      gsm.canSwap() as Promise<boolean>,
+      gsm.getIsFrozen() as Promise<boolean>,
+      gsm.getIsSeized() as Promise<boolean>,
+      gsm.getAssetAmountForBuyAsset(amountIn),
+      gsm.getAvailableLiquidity(),
+    ]);
+    assertGsmIdentityAndState({ ghoToken, underlyingAsset, expectedUnderlying: underlying, canSwap, frozen, seized });
     const assetAmount = BigNumber.from(quoted.assetAmount ?? quoted[0]);
     const exactGhoAmount = BigNumber.from(quoted.ghoAmount ?? quoted[1]);
-    const liquidity = BigNumber.from(await gsm.getAvailableLiquidity());
+    const liquidity = BigNumber.from(liquidityRaw);
     if (assetAmount.lte(0) || exactGhoAmount.lte(0) || exactGhoAmount.gt(amountIn) || liquidity.lt(assetAmount)) {
       throw new Error('Aave GHO GSM buy-side capacity is insufficient');
     }
     return assetAmount;
   }
 
-  const quoted = await gsm.getGhoAmountForSellAsset(amountIn);
+  const [ghoToken, underlyingAsset, canSwap, frozen, seized, quoted, exposureRaw] = await Promise.all([
+    gsm.GHO_TOKEN() as Promise<string>,
+    gsm.UNDERLYING_ASSET() as Promise<string>,
+    gsm.canSwap() as Promise<boolean>,
+    gsm.getIsFrozen() as Promise<boolean>,
+    gsm.getIsSeized() as Promise<boolean>,
+    gsm.getGhoAmountForSellAsset(amountIn),
+    gsm.getAvailableUnderlyingExposure(),
+  ]);
+  assertGsmIdentityAndState({ ghoToken, underlyingAsset, expectedUnderlying: underlying, canSwap, frozen, seized });
   const assetAmount = BigNumber.from(quoted.assetAmount ?? quoted[0]);
   const ghoAmount = BigNumber.from(quoted.ghoAmount ?? quoted[1]);
-  const exposure = BigNumber.from(await gsm.getAvailableUnderlyingExposure());
+  const exposure = BigNumber.from(exposureRaw);
   if (assetAmount.lte(0) || ghoAmount.lte(0) || assetAmount.gt(amountIn) || exposure.lt(assetAmount)) {
     throw new Error('Aave GHO GSM sell-side capacity is insufficient');
   }
@@ -163,8 +184,6 @@ async function quoteGsm(provider: providers.Provider, leg: ProtocolAnchorLeg, am
 
 async function quoteFluid(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
   const swap0to1 = validateFluidGhoUsdcLeg(leg);
-  const code = await provider.getCode(leg.pool);
-  if (code === '0x') throw new Error('Fluid GHO/USDC pool bytecode is unavailable');
   const iface = new ethers.utils.Interface(FLUID_DEX_ABI);
   const data = iface.encodeFunctionData('swapIn', [swap0to1, amountIn, 0, DEAD]);
   try {
