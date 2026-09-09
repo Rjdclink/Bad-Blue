@@ -50,6 +50,10 @@ const COIN_ID_TO_SYMBOL = Object.fromEntries(
 
 const DEFAULT_MIN_INTERVAL_MS = Number(process.env.COINGECKO_MIN_INTERVAL_MS || 1500);
 const DEFAULT_CACHE_TTL_MS = Number(process.env.COINGECKO_CACHE_TTL_MS || 90000);
+const DEFAULT_LIVE_CACHE_TTL_MS = Math.max(
+  500,
+  Math.min(15_000, Number(process.env.LIVE_PRICE_CACHE_TTL_MS || 5000)),
+);
 const DEFAULT_PRICE_CONSENSUS_WINDOW_MS = Math.max(
   0,
   Math.min(1_000, Number(process.env.LIVE_PRICE_CONSENSUS_WINDOW_MS || 250)),
@@ -84,11 +88,6 @@ export function mergeLivePriceEvidence(
     const consistent = values.length >= 3
       ? values.filter(value => Math.abs(value - median) / median <= 0.2)
       : values;
-    const primary = positivePrice(providerPrices[0]?.[coinId]);
-    if (primary !== null && (values.length < 3 || Math.abs(primary - median) / median <= 0.2)) {
-      merged[coinId] = primary;
-      continue;
-    }
     const selected = consistent.length > 0 ? consistent : values;
     const selectedMidpoint = Math.floor(selected.length / 2);
     merged[coinId] = selected.length % 2 === 1
@@ -142,8 +141,8 @@ class CoinGeckoPriceClient {
   private lastRequestAt = 0;
   private coinGeckoUnavailableUntilByRequest = new Map<string, number>();
 
-  private buildCacheKey(coinIds: string[], vsCurrency: string): string {
-    return `${vsCurrency}:${[...coinIds].sort().join(',')}`;
+  private buildCacheKey(coinIds: string[], vsCurrency: string, cacheClass: 'standard' | 'live' = 'standard'): string {
+    return `${cacheClass}:${vsCurrency}:${[...coinIds].sort().join(',')}`;
   }
 
   private async enqueueCoinGeckoRequest<T>(task: () => Promise<T>): Promise<T> {
@@ -267,29 +266,17 @@ class CoinGeckoPriceClient {
   }
 
   private async fetchLivePriceMesh(coinIds: string[], vsCurrency: string): Promise<Record<string, number>> {
-    const requestKey = this.buildCacheKey(coinIds, vsCurrency);
-    const unavailableUntil = this.coinGeckoUnavailableUntilByRequest.get(requestKey) || 0;
-    const coinGeckoTask = Date.now() >= unavailableUntil
-      ? this.fetchCoinGeckoByCoinIds(coinIds, vsCurrency).then(prices => {
-          if (Object.keys(prices).length > 0) this.coinGeckoUnavailableUntilByRequest.delete(requestKey);
-          return prices;
-        }).catch(() => {
-          this.coinGeckoUnavailableUntilByRequest.set(requestKey, Date.now() + DEFAULT_COINGECKO_COOLDOWN_MS);
-          return {};
-        })
-      : Promise.resolve({});
-    const providerTasks = [
-      coinGeckoTask,
+    const alternateTasks = [
       this.fetchCoinMarketCapKeylessByCoinIds(coinIds, vsCurrency),
       this.fetchCoinCapByCoinIds(coinIds, vsCurrency),
       this.fetchCoinbaseByCoinIds(coinIds, vsCurrency),
     ];
-    const providerPrices: Record<string, number>[] = providerTasks.map(() => ({}));
+    const alternatePrices: Record<string, number>[] = alternateTasks.map(() => ({}));
     let firstUsableResolved = false;
     let resolveFirstUsable!: () => void;
     const firstUsable = new Promise<void>(resolve => { resolveFirstUsable = resolve; });
-    const tracked = providerTasks.map((task, index) => task.then(prices => {
-      providerPrices[index] = prices;
+    const tracked = alternateTasks.map((task, index) => task.then(prices => {
+      alternatePrices[index] = prices;
       if (!firstUsableResolved && Object.keys(prices).length > 0) {
         firstUsableResolved = true;
         resolveFirstUsable();
@@ -303,14 +290,35 @@ class CoinGeckoPriceClient {
         new Promise(resolve => setTimeout(resolve, DEFAULT_PRICE_CONSENSUS_WINDOW_MS)),
       ]);
     }
-    return mergeLivePriceEvidence(coinIds, providerPrices);
+
+    const merged = mergeLivePriceEvidence(coinIds, alternatePrices);
+    const missing = coinIds.filter(coinId => positivePrice(merged[coinId]) === null);
+    if (missing.length === 0) return merged;
+
+    // CoinGecko is deliberately last-resort redundancy. It is not queried for
+    // symbols already covered by the alternate parallel provider mesh.
+    const requestKey = this.buildCacheKey(missing, vsCurrency, 'live');
+    const unavailableUntil = this.coinGeckoUnavailableUntilByRequest.get(requestKey) || 0;
+    if (Date.now() < unavailableUntil) return merged;
+    const fallback = await this.fetchCoinGeckoByCoinIds(missing, vsCurrency).then(prices => {
+      if (Object.keys(prices).length > 0) this.coinGeckoUnavailableUntilByRequest.delete(requestKey);
+      return prices;
+    }).catch(() => {
+      this.coinGeckoUnavailableUntilByRequest.set(requestKey, Date.now() + DEFAULT_COINGECKO_COOLDOWN_MS);
+      return {};
+    });
+    return { ...merged, ...mergeLivePriceEvidence(missing, [fallback]) };
   }
 
-  private async fetchByCoinIds(coinIds: string[], vsCurrency: string = 'usd'): Promise<Record<string, number>> {
+  private async fetchByCoinIds(
+    coinIds: string[],
+    vsCurrency: string = 'usd',
+    cacheClass: 'standard' | 'live' = 'standard',
+  ): Promise<Record<string, number>> {
     if (coinIds.length === 0) return {};
 
     const dedupedIds = [...new Set(coinIds)].sort();
-    const cacheKey = this.buildCacheKey(dedupedIds, vsCurrency);
+    const cacheKey = this.buildCacheKey(dedupedIds, vsCurrency, cacheClass);
     const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.pricesByCoinId;
 
@@ -322,8 +330,9 @@ class CoinGeckoPriceClient {
       if (Object.keys(normalized).length === 0) throw new Error('No live price provider returned usable market evidence');
       const complete = dedupedIds.every(coinId => normalized[coinId] !== undefined);
       if (complete) {
+        const ttlMs = cacheClass === 'live' ? DEFAULT_LIVE_CACHE_TTL_MS : DEFAULT_CACHE_TTL_MS;
         this.cache.set(cacheKey, {
-          expiresAt: Date.now() + DEFAULT_CACHE_TTL_MS,
+          expiresAt: Date.now() + ttlMs,
           pricesByCoinId: normalized,
         });
       }
@@ -347,7 +356,7 @@ class CoinGeckoPriceClient {
 
     const result = new Map<string, number>();
     try {
-      const pricesByCoinId = await this.fetchByCoinIds(coinIds, 'usd');
+      const pricesByCoinId = await this.fetchByCoinIds(coinIds, 'usd', 'standard');
       for (const symbol of normalizedSymbols) {
         const coinId = SYMBOL_TO_COIN_ID[symbol];
         const livePrice = coinId ? pricesByCoinId[coinId] : undefined;
@@ -371,7 +380,7 @@ class CoinGeckoPriceClient {
     const coinIds = normalizedSymbols
       .map(symbol => SYMBOL_TO_COIN_ID[symbol])
       .filter((coinId): coinId is string => Boolean(coinId));
-    const pricesByCoinId = await this.fetchByCoinIds(coinIds, 'usd');
+    const pricesByCoinId = await this.fetchByCoinIds(coinIds, 'usd', 'live');
     const result = new Map<string, number>();
     for (const symbol of normalizedSymbols) {
       const coinId = SYMBOL_TO_COIN_ID[symbol];
