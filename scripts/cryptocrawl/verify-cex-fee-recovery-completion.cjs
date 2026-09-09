@@ -48,6 +48,22 @@ assert.match(recovery, /creditUnits \* 0\.01/);
 assert.match(recovery, /crossReplicaKfeeReservationImplemented: false/);
 assert.match(recovery, /preTradeKfeeCreditAllowed: false/);
 
+// Kraken authenticated fee hydration has one resolver-owned batch lane. Normal
+// local pacing waits inside that lane instead of being reported as missing fee
+// evidence, while a genuine account rate-limit cooldown remains fail-closed.
+assert.match(resolver, /let krakenFeeBatchTail: Promise<void> = Promise\.resolve\(\)/);
+assert.match(resolver, /function serializeKrakenFeeBatch<T>/);
+assert.match(resolver, /return serializeKrakenFeeBatch\(async \(\) =>/);
+assert.match(resolver, /await waitForKrakenFeePacingWindow\(\)/);
+assert.match(resolver, /function suppressKrakenFeeRequestDuringCooldown/);
+assert.match(resolver, /KRAKEN_FEE_RATE_COOLDOWN_MS/);
+assert.match(resolver, /kraken_account_rate_limit_cooldown/);
+assert.match(resolver, /pair: requestPairs\.join\(','\)/);
+assert.match(resolver, /'fee-info': 'true'/);
+assert.match(resolver, /intentionalPacingReturnsMissingEvidence: false/);
+assert.ok(!resolver.includes('kraken_account_fee_gate_active'), 'Normal Kraken fee pacing must not masquerade as missing authenticated fee evidence');
+assert.ok(!resolver.includes('suppressKrakenFeeRequestWhileGated'), 'Legacy fail-fast Kraken pacing gate must not return unresolved evidence before its bounded wait');
+
 // OKX Rebate Card/fee-rebate recovery is recognized only after an authenticated
 // funding-account bill proves a positive received credit. Forecasts are zero and
 // stablecoin credits are not synthetically treated as exactly USD.
@@ -108,4 +124,4 @@ for (const forbidden of [
   assert.ok(!combined.includes(forbidden), `Unexpected new credential dependency: ${forbidden}`);
 }
 
-console.log('[cex-fee-recovery-completion] PASS: coalesced live Coinbase stablepair zero-maker pricing, existing Kraken/OKX signed fee economics, received-only OKX recovery with exact currency truth, conservative KFEE observation, explicit researched-program classification, one fee lifecycle, one BPS authority, no new trading API key, and no synthetic profitability');
+console.log('[cex-fee-recovery-completion] PASS: coalesced live Coinbase stablepair zero-maker pricing, serialized bounded-wait Kraken authenticated fee hydration with fail-closed true cooldowns, existing Kraken/OKX signed fee economics, received-only OKX recovery with exact currency truth, conservative KFEE observation, explicit researched-program classification, one fee lifecycle, one BPS authority, no new trading API key, and no synthetic profitability');
