@@ -57,6 +57,9 @@ export interface CryptaraSupabaseAdmissionSnapshot {
   executionAuthority: false;
   mode: 'steady' | 'recovering' | 'pressure';
   targetConcurrency: number;
+  adaptiveCeiling: number;
+  pressureStrikes: number;
+  nextRecoveryProbeMs: number;
   inFlight: number;
   queued: number;
   pool: PoolStats;
@@ -84,6 +87,18 @@ const PRESSURE_HOLD_MS = Math.max(1_000, Math.min(60_000, Number(process.env.CRY
 const MIN_COOLDOWN_MS = Math.max(250, Math.min(10_000, Number(process.env.CRYPTARA_DB_MIN_COOLDOWN_MS || 1_500)));
 const MAX_COOLDOWN_MS = Math.max(MIN_COOLDOWN_MS, Math.min(30_000, Number(process.env.CRYPTARA_DB_MAX_COOLDOWN_MS || 6_000)));
 const HEALTHY_SUCCESSES_TO_GROW = Math.max(2, Math.min(32, Number(process.env.CRYPTARA_DB_HEALTHY_SUCCESSES_TO_GROW || 3)));
+const HEALTHY_SUCCESSES_TO_PROBE = Math.max(
+  HEALTHY_SUCCESSES_TO_GROW,
+  Math.min(128, Number(process.env.CRYPTARA_DB_HEALTHY_SUCCESSES_TO_PROBE || 12)),
+);
+const MIN_STABILITY_PROBE_MS = Math.max(
+  10_000,
+  Math.min(5 * 60_000, Number(process.env.CRYPTARA_DB_MIN_STABILITY_PROBE_MS || 60_000)),
+);
+const MAX_STABILITY_PROBE_MS = Math.max(
+  MIN_STABILITY_PROBE_MS,
+  Math.min(15 * 60_000, Number(process.env.CRYPTARA_DB_MAX_STABILITY_PROBE_MS || 15 * 60_000)),
+);
 
 let recoveryAdvisor: RecoveryAdvisor | null = null;
 
@@ -135,6 +150,7 @@ function isAdmissionPressureError(error: unknown): boolean {
     text.includes('remaining connection slots') ||
     text.includes('failed to connect to database: {:error, :timeout}') ||
     text.includes('connection terminated due to connection timeout') ||
+    (text.includes('failed to run sql query') && timeoutContext) ||
     (text.includes('08006') && timeoutContext);
 }
 
@@ -143,6 +159,9 @@ class CryptaraSupabaseResourceGovernor {
   private nextWaiterId = 1;
   private inFlight = 0;
   private targetConcurrency = 1;
+  private adaptiveCeiling = 1;
+  private pressureStrikes = 0;
+  private recoveryProbeAfter = 0;
   private ewmaAcquireMs = 0;
   private ewmaHoldMs = 0;
   private healthySuccesses = 0;
@@ -170,7 +189,7 @@ class CryptaraSupabaseResourceGovernor {
   private mode(now = Date.now()): CryptaraSupabaseAdmissionSnapshot['mode'] {
     const stats = this.poolSnapshot();
     if (now < this.pressureUntil || stats.waiting > 0) return 'pressure';
-    if (this.targetConcurrency < stats.max) return 'recovering';
+    if (this.targetConcurrency < stats.max || this.adaptiveCeiling < stats.max) return 'recovering';
     return 'steady';
   }
 
@@ -178,13 +197,20 @@ class CryptaraSupabaseResourceGovernor {
     const stats = this.poolSnapshot();
     const ceiling = stats.max;
     this.healthySuccesses = 0;
+    this.adaptiveCeiling = ceiling;
+    this.pressureStrikes = 0;
+    this.recoveryProbeAfter = 0;
 
     // Start at the already-configured safe pool ceiling. Only measured existing
     // waiters justify a contracted cold start. Merely having every pool client in
     // use is healthy capacity utilization and must not be treated as an incident.
     if (stats.waiting > 0) {
       this.targetConcurrency = Math.max(1, Math.floor(ceiling / 2));
-      this.pressureUntil = Date.now() + this.pressureCooldown();
+      this.adaptiveCeiling = this.targetConcurrency;
+      this.pressureStrikes = 1;
+      const now = Date.now();
+      this.recoveryProbeAfter = now + this.stabilityProbeWindowMs();
+      this.pressureUntil = now + this.pressureCooldown();
       this.lastMode = 'pressure';
       this.lastPressureReason = 'startup_pool_waiters';
       return;
@@ -206,6 +232,11 @@ class CryptaraSupabaseResourceGovernor {
     return jitterMs(MIN_COOLDOWN_MS, MAX_COOLDOWN_MS);
   }
 
+  private stabilityProbeWindowMs(): number {
+    const exponent = Math.max(0, Math.min(4, this.pressureStrikes - 1));
+    return Math.min(MAX_STABILITY_PROBE_MS, MIN_STABILITY_PROBE_MS * (2 ** exponent));
+  }
+
   private schedulePressureResume(now = Date.now()): void {
     if (this.pressureResumeTimer || this.queue.length === 0) return;
     const delayMs = Math.max(1, this.pressureUntil - now);
@@ -217,19 +248,36 @@ class CryptaraSupabaseResourceGovernor {
   }
 
   private contract(reason: string): void {
+    const now = Date.now();
     const previous = this.targetConcurrency;
+    const previousAdaptiveCeiling = this.adaptiveCeiling;
     const next = Math.max(1, Math.floor(previous / 2));
     this.targetConcurrency = next;
+    this.adaptiveCeiling = Math.max(1, Math.min(previousAdaptiveCeiling, next));
+    this.pressureStrikes = Math.min(8, this.pressureStrikes + 1);
     this.healthySuccesses = 0;
-    this.pressureUntil = Math.max(this.pressureUntil, Date.now() + this.pressureCooldown());
+    this.pressureUntil = Math.max(this.pressureUntil, now + this.pressureCooldown());
+    this.recoveryProbeAfter = Math.max(this.recoveryProbeAfter, now + this.stabilityProbeWindowMs());
 
-    // One warning per actual transition/reason. Healthy full utilization never
-    // enters this path, which prevents expected queueing from becoming Railway red.
-    if (previous !== next || this.lastMode !== 'pressure' || this.lastPressureReason !== reason) {
+    // Pressure lowers both the active permit count and the adaptive recovery
+    // ceiling. The physical pool remains unchanged, so no capability is removed;
+    // queued work is simply serialized until sustained healthy evidence justifies
+    // probing one permit higher again. This prevents 2->1->2 oscillation while a
+    // throttled Supabase database is still recovering.
+    if (
+      previous !== next ||
+      previousAdaptiveCeiling !== this.adaptiveCeiling ||
+      this.lastMode !== 'pressure' ||
+      this.lastPressureReason !== reason
+    ) {
       log.warn('[CRYPTARA][SUPABASE-WORKER] measured pressure; autonomous contraction applied', {
         reason,
         previousConcurrency: previous,
         targetConcurrency: next,
+        previousAdaptiveCeiling,
+        adaptiveCeiling: this.adaptiveCeiling,
+        pressureStrikes: this.pressureStrikes,
+        nextRecoveryProbeMs: Math.max(0, this.recoveryProbeAfter - now),
         queued: this.queue.length,
         inFlight: this.inFlight,
         pool: this.poolSnapshot(),
@@ -242,7 +290,9 @@ class CryptaraSupabaseResourceGovernor {
   private considerRecovery(acquireMs: number): void {
     const now = Date.now();
     const stats = this.poolSnapshot();
-    const ceiling = stats.max;
+    const physicalCeiling = stats.max;
+    this.adaptiveCeiling = Math.max(1, Math.min(this.adaptiveCeiling, physicalCeiling));
+    const ceiling = Math.min(physicalCeiling, this.adaptiveCeiling);
     this.targetConcurrency = Math.max(1, Math.min(this.targetConcurrency, ceiling));
 
     // Actual node-postgres waiters or slow acquisition prove contention. A pool
@@ -270,24 +320,70 @@ class CryptaraSupabaseResourceGovernor {
 
     this.healthySuccesses += 1;
     const recoveryAcceleration = boundedRecoveryAcceleration();
-    const healthySuccessThreshold = Math.max(2, Math.ceil(HEALTHY_SUCCESSES_TO_GROW / recoveryAcceleration));
-    if (this.healthySuccesses < healthySuccessThreshold || this.targetConcurrency >= ceiling) {
+    const normalHealthyThreshold = Math.max(2, Math.ceil(HEALTHY_SUCCESSES_TO_GROW / recoveryAcceleration));
+
+    if (this.targetConcurrency < ceiling) {
+      if (this.healthySuccesses < normalHealthyThreshold) {
+        this.lastMode = this.mode(now);
+        return;
+      }
+      const previous = this.targetConcurrency;
+      this.targetConcurrency = Math.min(ceiling, previous + 1);
+      this.healthySuccesses = 0;
+      if (previous !== this.targetConcurrency) {
+        log.info('[CRYPTARA][SUPABASE-WORKER] healthy evidence restored one concurrency permit', {
+          previousConcurrency: previous,
+          targetConcurrency: this.targetConcurrency,
+          adaptiveCeiling: this.adaptiveCeiling,
+          pool: stats,
+          healthyEvidenceRequired: normalHealthyThreshold,
+          recoveryAdvisor: Number(recoveryAcceleration.toFixed(2)),
+        });
+      }
       this.lastMode = this.mode(now);
-      if (this.lastMode === 'steady') this.lastPressureReason = null;
       return;
     }
 
-    const previous = this.targetConcurrency;
-    this.targetConcurrency = Math.min(ceiling, previous + 1);
-    this.healthySuccesses = 0;
-    if (previous !== this.targetConcurrency) {
-      log.info('[CRYPTARA][SUPABASE-WORKER] healthy evidence restored one concurrency permit', {
+    // Once pressure has lowered the adaptive ceiling, do not immediately regrow
+    // to the physical pool maximum after a handful of fast acquisitions. Require
+    // both a time-based stability window and a larger healthy sample before one
+    // bounded probe. Repeated failures exponentially lengthen the next probe
+    // window up to the configured cap.
+    if (this.adaptiveCeiling < physicalCeiling) {
+      const probeHealthyThreshold = Math.max(
+        normalHealthyThreshold,
+        Math.ceil(HEALTHY_SUCCESSES_TO_PROBE / recoveryAcceleration),
+      );
+      if (now < this.recoveryProbeAfter || this.healthySuccesses < probeHealthyThreshold) {
+        this.lastMode = 'recovering';
+        return;
+      }
+
+      const previous = this.targetConcurrency;
+      this.adaptiveCeiling = Math.min(physicalCeiling, this.adaptiveCeiling + 1);
+      const probeCeiling = this.adaptiveCeiling;
+      this.targetConcurrency = Math.min(probeCeiling, previous + 1);
+      this.healthySuccesses = 0;
+      this.recoveryProbeAfter = now + MIN_STABILITY_PROBE_MS;
+      log.info('[CRYPTARA][SUPABASE-WORKER] sustained health permits one bounded recovery probe', {
         previousConcurrency: previous,
         targetConcurrency: this.targetConcurrency,
-        pool: stats,
-        healthyEvidenceRequired: healthySuccessThreshold,
-        recoveryAdvisor: Number(recoveryAcceleration.toFixed(2)),
+        adaptiveCeiling: this.adaptiveCeiling,
+        physicalPoolMax: physicalCeiling,
+        pressureStrikes: this.pressureStrikes,
+        healthyEvidenceRequired: probeHealthyThreshold,
+        stabilityWindowMs: this.stabilityProbeWindowMs(),
       });
+      this.lastMode = this.mode(now);
+      return;
+    }
+
+    // Healthy operation at the physical ceiling slowly forgives old pressure
+    // history. This affects only the duration of a future recovery probe; it does
+    // not alter the current connection budget or grant new authority.
+    if (this.pressureStrikes > 0 && this.healthySuccesses >= HEALTHY_SUCCESSES_TO_PROBE) {
+      this.pressureStrikes = Math.max(0, this.pressureStrikes - 1);
+      this.healthySuccesses = 0;
     }
     this.lastMode = this.mode(now);
     if (this.lastMode === 'steady') this.lastPressureReason = null;
@@ -327,7 +423,8 @@ class CryptaraSupabaseResourceGovernor {
 
   private drain(): void {
     const stats = this.poolSnapshot();
-    const ceiling = stats.max;
+    this.adaptiveCeiling = Math.max(1, Math.min(this.adaptiveCeiling, stats.max));
+    const ceiling = Math.min(stats.max, this.adaptiveCeiling);
     this.targetConcurrency = Math.max(1, Math.min(this.targetConcurrency, ceiling));
 
     const now = Date.now();
@@ -391,6 +488,9 @@ class CryptaraSupabaseResourceGovernor {
       executionAuthority: false,
       mode: this.mode(now),
       targetConcurrency: this.targetConcurrency,
+      adaptiveCeiling: this.adaptiveCeiling,
+      pressureStrikes: this.pressureStrikes,
+      nextRecoveryProbeMs: Math.max(0, this.recoveryProbeAfter - now),
       inFlight: this.inFlight,
       queued: this.queue.length,
       pool: stats,
@@ -502,6 +602,7 @@ export function installCryptaraSupabaseAdmissionWorker(): void {
     operatorPromptsRequired: false,
     interventionPolicy: 'measured_pressure_only',
     initialConcurrency: snapshot.targetConcurrency,
+    adaptiveCeiling: snapshot.adaptiveCeiling,
     poolMax: snapshot.pool.max,
   });
 }
