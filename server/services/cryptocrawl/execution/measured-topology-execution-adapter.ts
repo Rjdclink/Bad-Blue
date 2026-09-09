@@ -47,6 +47,9 @@ type ReceiptBearingExecution = {
   gasUsed?: string;
   effectiveGasPriceWei?: string;
   receiptStatus?: 0 | 1;
+  providerBillingLiability?: boolean;
+  operatorMonetaryCostProvenZero?: boolean;
+  sponsorProvider?: string;
 };
 
 type StrictAtomicFundingMode = 'sponsored' | 'native';
@@ -90,16 +93,24 @@ async function actualGasFromCurrency(
   const gasUsed = result.gasUsed || null;
   const effectiveGasPriceWei = result.effectiveGasPriceWei || null;
   const receiptStatus = result.receiptStatus ?? null;
-  if (result.fundingModeUsed === 'sponsored') {
+  const sponsored = result.fundingModeUsed === 'sponsored';
+  const provenZeroSponsorCost = sponsored
+    && result.operatorMonetaryCostProvenZero === true
+    && result.providerBillingLiability === false;
+  if (provenZeroSponsorCost) {
     return {
       gasUsd: 0,
       gasUsed,
       effectiveGasPriceWei,
       receiptStatus,
-      provenance: ['gas:sponsored_zero_user_monetary_cost', ...(gasUsed ? ['receipt:gas_measured'] : [])],
+      provenance: [
+        'gas:sponsored_zero_operator_monetary_cost_proven',
+        ...(result.sponsorProvider ? [`gas:sponsor_provider:${result.sponsorProvider}`] : []),
+        ...(gasUsed ? ['receipt:gas_measured'] : []),
+      ],
     };
   }
-  if (result.fundingModeUsed !== 'native') {
+  if (result.fundingModeUsed !== 'native' && !sponsored) {
     return {
       gasUsd: null,
       gasUsed,
@@ -114,7 +125,10 @@ async function actualGasFromCurrency(
       gasUsed,
       effectiveGasPriceWei,
       receiptStatus,
-      provenance: ['gas:receipt_cost_fields_incomplete'],
+      provenance: [
+        sponsored ? 'gas:sponsor_fronted_provider_billed_or_unproven_zero' : 'gas:system_owned_native',
+        'gas:receipt_cost_fields_incomplete',
+      ],
     };
   }
   const normalizedCurrency = currency.toUpperCase();
@@ -126,7 +140,12 @@ async function actualGasFromCurrency(
       gasUsed,
       effectiveGasPriceWei,
       receiptStatus,
-      provenance: ['gas:receipt_measured', 'gas:live_native_price_unavailable', 'static_price_fallback_forbidden'],
+      provenance: [
+        sponsored ? 'gas:sponsor_fronted_provider_billed_or_unproven_zero' : 'gas:system_owned_native',
+        'gas:receipt_measured',
+        'gas:live_native_price_unavailable',
+        'static_price_fallback_forbidden',
+      ],
     };
   }
   const feeWei = BigNumber.from(gasUsed).mul(BigNumber.from(effectiveGasPriceWei));
@@ -137,7 +156,12 @@ async function actualGasFromCurrency(
     gasUsed,
     effectiveGasPriceWei,
     receiptStatus,
-    provenance: ['gas:receipt_measured', 'gas:coingecko_live_native_price'],
+    provenance: [
+      sponsored ? 'gas:sponsor_fronted_provider_billed_or_unproven_zero' : 'gas:system_owned_native',
+      ...(result.sponsorProvider ? [`gas:sponsor_provider:${result.sponsorProvider}`] : []),
+      'gas:receipt_measured',
+      'gas:live_native_price_mesh',
+    ],
   };
 }
 
