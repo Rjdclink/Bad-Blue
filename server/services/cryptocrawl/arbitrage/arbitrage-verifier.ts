@@ -730,7 +730,7 @@ export class ArbitrageVerifier {
     // must never turn a non-positive raw market edge into an executable plan.
     if (!rawPositive) return null;
 
-    const quantityFractions = [0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
+    const quantityFractions = [0.02, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
     let bestPlan: VerifiedArbitragePlan | null = null;
     for (const buy of freshQuotes) {
       for (const sell of freshQuotes) {
