@@ -250,8 +250,9 @@ function routeBase(input: {
     amountIn: stableBaseUnits(input.amountUsd, input.tokenDecimals),
     estimatedGasCostInInputToken: '0',
     relayFeeInInputToken: '0',
-    flashLoanFeeBps: bounded(process.env.ZERO_CAPITAL_DYNAMIC_FLASH_LOAN_FEE_BPS, 12, 0, 1000),
-    // Compatibility telemetry only. Executable admission is strictly netProfit > 0.
+    // Preliminary discovery intentionally leaves flash-loan cost unpriced. Exact,
+    // route/notional/provider-specific fee measurement is applied only by the
+    // canonical provider repricing stage before any execution eligibility.
     minNetProfitBps: 0,
     legs: input.legs,
   };
