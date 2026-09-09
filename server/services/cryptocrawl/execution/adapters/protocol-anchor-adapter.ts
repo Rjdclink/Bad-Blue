@@ -24,8 +24,8 @@ const GSM_ABI = [
   'function getAvailableLiquidity() view returns (uint256)',
   'function getAssetAmountForBuyAsset(uint256 maxGhoAmount) view returns (uint256 assetAmount, uint256 ghoAmount, uint256 grossAmount, uint256 fee)',
   'function getGhoAmountForSellAsset(uint256 maxAssetAmount) view returns (uint256 assetAmount, uint256 ghoAmount, uint256 grossAmount, uint256 fee)',
-  'function buyAsset(uint256 minAmount, address receiver) returns (uint256)',
-  'function sellAsset(uint256 maxAmount, address receiver) returns (uint256)',
+  'function buyAsset(uint256 minAmount, address receiver) returns (uint256 assetAmount, uint256 ghoAmount)',
+  'function sellAsset(uint256 maxAmount, address receiver) returns (uint256 assetAmount, uint256 ghoAmount)',
 ];
 
 const FLUID_DEX_ABI = [
@@ -118,6 +118,13 @@ function extractRevertData(error: unknown): string | null {
   return null;
 }
 
+function decodeFluidSwapResult(raw: string | null): BigNumber | null {
+  if (!raw || raw.length < 74 || raw.slice(0, 10).toLowerCase() !== FLUID_SWAP_RESULT_SELECTOR) return null;
+  const [amountOut] = ethers.utils.defaultAbiCoder.decode(['uint256'], `0x${raw.slice(10)}`);
+  const result = BigNumber.from(amountOut);
+  return result.gt(0) ? result : null;
+}
+
 async function quoteGsm(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
   const { ghoIn, underlying } = validateKnownGsmLeg(leg);
   const gsm = new Contract(leg.pool, GSM_ABI, provider);
@@ -161,15 +168,14 @@ async function quoteFluid(provider: providers.Provider, leg: ProtocolAnchorLeg, 
   const iface = new ethers.utils.Interface(FLUID_DEX_ABI);
   const data = iface.encodeFunctionData('swapIn', [swap0to1, amountIn, 0, DEAD]);
   try {
-    await provider.call({ to: leg.pool, data });
+    const returned = await provider.call({ to: leg.pool, data });
+    const result = decodeFluidSwapResult(returned);
+    if (result) return result;
     throw new Error('Fluid simulation unexpectedly returned without FluidDexSwapResult');
   } catch (error) {
-    const revertData = extractRevertData(error);
-    if (!revertData || revertData.length < 74 || revertData.slice(0, 10).toLowerCase() !== FLUID_SWAP_RESULT_SELECTOR) throw error;
-    const [amountOut] = ethers.utils.defaultAbiCoder.decode(['uint256'], `0x${revertData.slice(10)}`);
-    const result = BigNumber.from(amountOut);
-    if (result.lte(0)) throw new Error('Fluid GHO/USDC live quote returned zero output');
-    return result;
+    const result = decodeFluidSwapResult(extractRevertData(error));
+    if (result) return result;
+    throw error;
   }
 }
 
