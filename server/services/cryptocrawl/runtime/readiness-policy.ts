@@ -17,6 +17,10 @@ export interface CryptoRuntimeReadinessInput {
   eligibleCandidates: number;
   eligibleCexCandidates: number;
   eligibleZeroCapitalCandidates: number;
+  /** Kalshi prediction/funding candidates are a separate non-CEX topology. */
+  eligibleKalshiCandidates?: number;
+  /** True only when at least one authenticated Kalshi execution credential family exists. */
+  kalshiExecutionConfigured?: boolean;
   stageCanExecute: boolean;
   currentStage: number;
   /**
@@ -55,29 +59,51 @@ export type CryptoRuntimeReadiness = {
 /**
  * Pure readiness policy used only for truthful observability. It does not grant
  * execution permission and does not replace StageManager, the canonical
- * scheduler, deterministic economics, resource reservations, or settlement.
+ * scheduler, deterministic economics, topology-specific resource reservations,
+ * or settlement.
  *
- * EXECUTION_READY/TRADING_READY describe the canonical centralized-exchange
- * scheduler. Zero-capital gas readiness is a different topology and therefore
- * cannot satisfy a missing CEX inventory requirement. Likewise, optional
- * blockchain RPC health does not make core CEX market-data readiness false.
+ * Overall readiness is topology-aware. CEX inventory is required only for CEX
+ * plans. A proven zero-initial-capital atomic lane may satisfy resource/trading
+ * readiness without CEX balances. Kalshi remains a separate execution domain;
+ * credentials and candidates are surfaced here, while its own canonical cash /
+ * margin reservation authorities remain fail-closed at admission/execution time.
  */
 export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput): CryptoRuntimeReadiness {
-  const executionCapabilityReady = input.runtimeIdentitySafe
+  const baseExecutionCapabilityReady = input.runtimeIdentitySafe
     && !input.noExecutionGuardEnabled
     && input.liveExecutionEnabled
     && input.liveExecutionConfirmed
-    && input.centralizedExecutionConfigured
     && input.schedulerRunning;
+
+  const cexExecutionCapabilityReady = baseExecutionCapabilityReady && input.centralizedExecutionConfigured;
+  const zeroCapitalExecutionCapabilityReady = baseExecutionCapabilityReady && input.zeroCapitalExecutionEnabled;
+  const kalshiExecutionConfigured = input.kalshiExecutionConfigured === true;
+  const kalshiExecutionCapabilityReady = baseExecutionCapabilityReady && kalshiExecutionConfigured;
+  const executionCapabilityReady = cexExecutionCapabilityReady
+    || zeroCapitalExecutionCapabilityReady
+    || kalshiExecutionCapabilityReady;
 
   const inventoryReady = input.spendableInventoryAssets > 0 && input.spendableInventoryVenues >= 2;
   const zeroCapitalFundingReady = input.zeroCapitalFundingReady === true;
   const zeroCapitalResourceReady = input.zeroCapitalExecutionEnabled && zeroCapitalFundingReady && input.criticalRpcReady;
+  const resourceReady = inventoryReady || zeroCapitalResourceReady;
+
   const cexCandidateReady = input.eligibleCexCandidates > 0;
+  const zeroCapitalCandidateReady = input.eligibleZeroCapitalCandidates > 0;
+  const eligibleKalshiCandidates = Math.max(0, input.eligibleKalshiCandidates ?? 0);
+  const kalshiCandidateReady = eligibleKalshiCandidates > 0;
+  const candidateReady = cexCandidateReady || zeroCapitalCandidateReady || kalshiCandidateReady;
   const governanceReady = input.stageCanExecute;
-  const cexResourceReady = inventoryReady;
-  const tradingReady = executionCapabilityReady && governanceReady && cexCandidateReady && cexResourceReady;
-  const tradingDetail = `runtimeIdentitySafe=${input.runtimeIdentitySafe}; canonicalCexCapability=${executionCapabilityReady}; governance=${governanceReady}; cexCandidate=${cexCandidateReady}; cexInventory=${cexResourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; spendableInventoryAssets=${input.spendableInventoryAssets}; spendableInventoryVenues=${input.spendableInventoryVenues}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Zero-capital resources never substitute for CEX inventory. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`;
+
+  const cexTradingReady = cexExecutionCapabilityReady && governanceReady && cexCandidateReady && inventoryReady;
+  const zeroCapitalTradingReady = zeroCapitalExecutionCapabilityReady
+    && governanceReady
+    && zeroCapitalCandidateReady
+    && zeroCapitalResourceReady;
+  // Kalshi resource ownership/reservation is intentionally not inferred here.
+  // Its event/funding lifecycles remain the authority for cash/margin readiness.
+  const tradingReady = cexTradingReady || zeroCapitalTradingReady;
+  const tradingDetail = `runtimeIdentitySafe=${input.runtimeIdentitySafe}; baseCapability=${baseExecutionCapabilityReady}; cexCapability=${cexExecutionCapabilityReady}; zeroCapitalCapability=${zeroCapitalExecutionCapabilityReady}; kalshiCapability=${kalshiExecutionCapabilityReady}; governance=${governanceReady}; cexCandidate=${cexCandidateReady}; zeroCapitalCandidate=${zeroCapitalCandidateReady}; kalshiCandidate=${kalshiCandidateReady}; cexInventory=${inventoryReady}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; spendableInventoryAssets=${input.spendableInventoryAssets}; spendableInventoryVenues=${input.spendableInventoryVenues}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; eligibleKalshiCandidates=${eligibleKalshiCandidates}. CEX inventory gates only CEX plans; proven zero-capital resources are a first-class primary resource path. Kalshi cash/margin remains topology-local and fail-closed. Final trade admission still requires deterministic positive economics and canonical resource reservation.`;
 
   return {
     APP_READY: {
@@ -90,11 +116,9 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
           : 'runtime identity lacks independently verified build/deployment agreement',
     },
     CONFIG_READY: {
-      ready: input.centralizedExecutionConfigured,
+      ready: input.centralizedExecutionConfigured || input.zeroCapitalExecutionEnabled || kalshiExecutionConfigured,
       scope: 'configuration',
-      detail: input.centralizedExecutionConfigured
-        ? 'at least two settlement-safe centralized execution venues are configured'
-        : 'fewer than two settlement-safe centralized execution venues are configured',
+      detail: `cexConfigured=${input.centralizedExecutionConfigured}; zeroCapitalExecutionEnabled=${input.zeroCapitalExecutionEnabled}; kalshiExecutionConfigured=${kalshiExecutionConfigured}`,
     },
     DATA_READY: {
       ready: input.coreMarketDataReady,
@@ -112,17 +136,17 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
     EXECUTION_CAPABILITY_READY: {
       ready: executionCapabilityReady,
       scope: 'capability',
-      detail: `runtimeIdentitySafe=${input.runtimeIdentitySafe}; guard=${input.noExecutionGuardEnabled}; enabled=${input.liveExecutionEnabled}; confirmed=${input.liveExecutionConfirmed}; cexConfigured=${input.centralizedExecutionConfigured}; schedulerRunning=${input.schedulerRunning}. Capability readiness does not imply that a trade has CEX inventory, an eligible CEX candidate, or governance authorization.`,
+      detail: `runtimeIdentitySafe=${input.runtimeIdentitySafe}; guard=${input.noExecutionGuardEnabled}; enabled=${input.liveExecutionEnabled}; confirmed=${input.liveExecutionConfirmed}; schedulerRunning=${input.schedulerRunning}; cexCapability=${cexExecutionCapabilityReady}; zeroCapitalCapability=${zeroCapitalExecutionCapabilityReady}; kalshiCapability=${kalshiExecutionCapabilityReady}. Capability readiness does not imply that any topology has resources or an eligible candidate.`,
     },
     INVENTORY_READY: {
-      ready: inventoryReady,
+      ready: resourceReady,
       scope: 'resource',
-      detail: `reconciledCexInventoryAssets=${input.reconciledInventoryAssets}; spendableCexInventoryAssets=${input.spendableInventoryAssets}; spendableCexInventoryVenues=${input.spendableInventoryVenues}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Generic CEX inventory readiness requires positive spendable capital on at least two venues; candidate admission still requires the exact buy-quote and sell-base assets.`,
+      detail: `resourceReady=${resourceReady}; cexInventoryReady=${inventoryReady}; reconciledCexInventoryAssets=${input.reconciledInventoryAssets}; spendableCexInventoryAssets=${input.spendableInventoryAssets}; spendableCexInventoryVenues=${input.spendableInventoryVenues}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. CEX inventory is redundancy for the zero-capital topology and remains mandatory only for CEX plans.`,
     },
     CANDIDATE_READY: {
-      ready: cexCandidateReady,
+      ready: candidateReady,
       scope: 'candidate',
-      detail: `eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleCandidatesAllTopologies=${input.eligibleCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}`,
+      detail: `eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; eligibleKalshiCandidates=${eligibleKalshiCandidates}; eligibleCandidatesAllTopologies=${input.eligibleCandidates}`,
     },
     GOVERNANCE_READY: {
       ready: governanceReady,
@@ -132,7 +156,7 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
     EXECUTION_READY: {
       ready: tradingReady,
       scope: 'trade',
-      detail: `strict canonical CEX execution readiness alias; ${tradingDetail}`,
+      detail: `topology-aware execution readiness; ${tradingDetail}`,
     },
     TRADING_READY: {
       ready: tradingReady,
