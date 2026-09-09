@@ -165,6 +165,8 @@ function normalizeShares(
 ): { cex: number; zero: number; exploration: number } {
   const configuredExplorationFloor = bounded(process.env.CRYPTOCRAWL_BPS_MESH_EXPLORATION_FLOOR, 0.10, 0.05, 0.30);
   const explorationFloor = Math.max(0.05, Math.min(0.30, configuredExplorationFloor * explorationMultiplier));
+  // This is an exploration floor, not an economic BPS claim. It keeps a bounded
+  // zero-capital discovery lane alive even when no current candidate exists.
   const zeroFloor = bounded(process.env.CRYPTOCRAWL_BPS_MESH_ZERO_CAPITAL_FLOOR, 0.10, 0.05, 0.35);
   const available = Math.max(0, 1 - explorationFloor - zeroFloor);
   const denominator = Math.max(1e-9, cexRaw + zeroRaw);
@@ -194,12 +196,20 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
 
   const zero = getZeroCapitalRecoverySnapshot();
   const dynamic = getDynamicZeroCapitalDiscoveryState();
+  const zeroObserved = zero?.observedCandidates ?? 0;
   const zeroPositive = zero?.positiveCandidates ?? 0;
   const zeroGap = zero?.closestCandidateBpsToBreakEven ?? null;
   const zeroCostCompressibleGap = zero?.closestCostCompressibleBpsToBreakEven ?? null;
   const zeroNonPositiveGrossEdge = zero?.nonPositiveGrossEdgeCandidates ?? 0;
-  const zeroQuoteUtilization = dynamic.structuralCandidates > 0 ? dynamic.measuredQuotes / dynamic.structuralCandidates : null;
-  const zeroPositiveYield = dynamic.measuredQuotes > 0 ? dynamic.positiveQuotes / dynamic.measuredQuotes : null;
+  // Cumulative discovery counters cannot grant current scheduling pressure after
+  // the canonical candidate set has gone empty. Preserve them as telemetry, but
+  // only current unexpired candidates may activate profitability allocation.
+  const zeroQuoteUtilization = zeroObserved > 0 && dynamic.structuralCandidates > 0
+    ? dynamic.measuredQuotes / dynamic.structuralCandidates
+    : null;
+  const zeroPositiveYield = zeroObserved > 0 && dynamic.measuredQuotes > 0
+    ? dynamic.positiveQuotes / dynamic.measuredQuotes
+    : null;
 
   const freshness = modes.map(mode => finite(mode.feeFreshnessScore)).filter((value): value is number => value !== null);
   const feeFreshnessShare = freshness.length > 0 ? freshness.filter(value => value >= 0.75).length / freshness.length : null;
@@ -233,10 +243,10 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
     rpiSavingsBps: maxRpiSavingsVsTakerBps,
     rpiEligibleSymbols: rpi.length,
     heatPressure: scarcity.combinedPressure,
-    zeroCapitalGapBps: zeroCostCompressibleGap,
+    zeroCapitalGapBps: zeroObserved > 0 ? zeroCostCompressibleGap : null,
     zeroCapitalPositiveYield: zeroPositiveYield,
     zeroCapitalQuoteUtilization: zeroQuoteUtilization,
-    relativeCexAdvantageBps,
+    relativeCexAdvantageBps: zeroObserved > 0 ? relativeCexAdvantageBps : null,
   };
   const hyperdynamic = buildHyperdynamicBpsPlan(hyperdynamicInput);
   const marginalAllocation = buildMarginalBpsAllocation(hyperdynamicInput, hyperdynamic);
@@ -268,8 +278,8 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
       rpiSavingsVsTakerBps: item.rpiSavingsVsTakerBps,
       rpiSavingsVsStandardMakerBps: item.rpiSavingsVsStandardMakerBps,
     })),
-    zeroCapitalGapBps: zeroCostCompressibleGap,
-    zeroCapitalGapImproving: zero?.closestCandidateGapImproving ?? null,
+    zeroCapitalGapBps: zeroObserved > 0 ? zeroCostCompressibleGap : null,
+    zeroCapitalGapImproving: zeroObserved > 0 ? (zero?.closestCandidateGapImproving ?? null) : null,
   });
 
   let cexRaw = bestPositiveBps !== null
@@ -284,18 +294,25 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
   cexRaw /= scarcity.cexScarcityMultiplier;
   if (positives.length > 0) cexRaw = Math.max(cexRaw, 1.5);
 
-  let zeroRaw = zeroPositive > 0
-    ? 3 + Math.min(4, zeroPositive)
-    : zeroCostCompressibleGap !== null
-      ? gapPriority(zeroCostCompressibleGap, 25)
-      : zeroNonPositiveGrossEdge > 0
-        ? 0.35
-        : gapPriority(zeroGap, 25);
-  if (zero?.closestCandidateGapImproving === true) zeroRaw *= 1.20;
-  if (zero?.closestCandidateGapImproving === false) zeroRaw *= 0.90;
-  zeroRaw *= hyperdynamic.zeroCapitalPriorityMultiplier;
-  zeroRaw *= feeSurfaceStrategies.zeroCapitalPriorityMultiplier;
-  zeroRaw *= marginalAllocation.zeroCapitalEfficiencyMultiplier;
+  // No current unexpired candidate means there is no current profitability signal
+  // to exploit. Keep only normalizeShares()' bounded exploration floor; stale
+  // cumulative discovery history cannot command variable compute allocation.
+  let zeroRaw = zeroObserved <= 0
+    ? 0
+    : zeroPositive > 0
+      ? 3 + Math.min(4, zeroPositive)
+      : zeroCostCompressibleGap !== null
+        ? gapPriority(zeroCostCompressibleGap, 25)
+        : zeroNonPositiveGrossEdge > 0
+          ? 0.35
+          : gapPriority(zeroGap, 25);
+  if (zeroRaw > 0) {
+    if (zero?.closestCandidateGapImproving === true) zeroRaw *= 1.20;
+    if (zero?.closestCandidateGapImproving === false) zeroRaw *= 0.90;
+    zeroRaw *= hyperdynamic.zeroCapitalPriorityMultiplier;
+    zeroRaw *= feeSurfaceStrategies.zeroCapitalPriorityMultiplier;
+    zeroRaw *= marginalAllocation.zeroCapitalEfficiencyMultiplier;
+  }
 
   const shares = normalizeShares(cexRaw, zeroRaw, hyperdynamic.explorationMultiplier);
   const baseBreadth = Math.max(0.40, Math.min(1, 0.40 + 0.60 * shares.cex / Math.max(0.01, 1 - shares.exploration)));
@@ -316,7 +333,7 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
       attentionShare: shares.cex,
     },
     zeroCapital: {
-      observedCandidates: zero?.observedCandidates ?? 0,
+      observedCandidates: zeroObserved,
       positiveCandidates: zeroPositive,
       nonPositiveGrossEdgeCandidates: zeroNonPositiveGrossEdge,
       grossPositiveNetNegativeCandidates: zero?.grossPositiveNetNegativeCandidates ?? 0,
@@ -342,6 +359,7 @@ export function refreshBpsCompressionMesh(): BpsCompressionMeshSnapshot {
   logger.info('[BpsCompressionMesh] Cross-topology profitability attention refreshed', {
     component: 'BpsCompressionMesh',
     ...latest,
+    zeroCapitalCurrentCandidateAuthority: zeroObserved > 0 ? 'current_unexpired_candidates' : 'exploration_floor_only',
     zeroCapitalGapClassification: zeroCostCompressibleGap !== null
       ? 'gross_positive_cost_compressible'
       : zeroNonPositiveGrossEdge > 0
