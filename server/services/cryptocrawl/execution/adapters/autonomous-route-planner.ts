@@ -185,7 +185,7 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
 
     const protocol = normalizeProtocol(step.protocol);
     const protocolAnchor = protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1';
-    const pool = protocolAnchor ? requireAddress(`route[${index}].pool`, step.pool) : step.pool;
+    const pool = step.pool ? requireAddress(`route[${index}].pool`, step.pool) : undefined;
     return {
       protocol,
       chain: opportunity.chain,
