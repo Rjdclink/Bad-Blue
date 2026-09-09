@@ -62,10 +62,15 @@ const state: DynamicZeroCapitalDiscoveryState = {
 };
 
 const cachedGraphlessTemplates = new Map<SupportedExecutionChain, ConfiguredZeroCapitalRoute[]>();
-const DYNAMIC_EXECUTABLE_CHAINS = new Set<SupportedExecutionChain>(['ethereum', 'polygon', 'arbitrum']);
+const DYNAMIC_EXECUTABLE_CHAINS = new Set<SupportedExecutionChain>(['ethereum', 'polygon', 'arbitrum', 'optimism']);
+const CROSS_PROTOCOL_DYNAMIC_CHAINS = new Set<SupportedExecutionChain>(['ethereum', 'polygon', 'arbitrum']);
 const ETHEREUM_STABLE_CONFIG = {
   usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
   usdt: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+} as const;
+const OPTIMISM_STABLE_CONFIG = {
+  usdc: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
+  usdt: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58',
 } as const;
 const DYNAMIC_PROTOCOL_PAIRS = [
   ['uniswapV3', 'sushiswap'],
@@ -118,8 +123,17 @@ function sponsoredBillingLiability(funding: DynamicGasFundingContext): boolean {
 function dynamicStableConfig(chain: SupportedExecutionChain): DynamicStableConfig | null {
   if (!DYNAMIC_EXECUTABLE_CHAINS.has(chain)) return null;
   if (chain === 'ethereum') return ETHEREUM_STABLE_CONFIG;
+  if (chain === 'optimism') return OPTIMISM_STABLE_CONFIG;
   const config = SUPPORTED_CHAINS[chain as ChainId];
   return config?.usdc && config?.usdt ? { usdc: config.usdc, usdt: config.usdt } : null;
+}
+
+function dynamicProtocolPairs(chain: SupportedExecutionChain): ReadonlyArray<readonly [DynamicProtocol, DynamicProtocol]> {
+  return CROSS_PROTOCOL_DYNAMIC_CHAINS.has(chain) ? DYNAMIC_PROTOCOL_PAIRS : [];
+}
+
+function triangleProtocolPaths(chain: SupportedExecutionChain): ReadonlyArray<readonly [DynamicProtocol, DynamicProtocol, DynamicProtocol]> {
+  return CROSS_PROTOCOL_DYNAMIC_CHAINS.has(chain) ? TRIANGLE_PROTOCOL_PATHS : [];
 }
 
 function notionalsUsd(): number[] {
@@ -235,7 +249,7 @@ export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionC
     { symbol: 'USDT' as const, token: config.usdt, other: config.usdc },
   ]) {
     for (const notional of notionalsUsd()) {
-      for (const [firstProtocol, secondProtocol] of DYNAMIC_PROTOCOL_PAIRS) {
+      for (const [firstProtocol, secondProtocol] of dynamicProtocolPairs(chain)) {
         for (const feeTier of tiers) {
           routes.push(routeBase({
             id: `dynamic-${chain}-${input.symbol}-${notional}-${firstProtocol}-${secondProtocol}-${feeTier}`,
@@ -292,7 +306,7 @@ async function buildGraphlessProfitSurfaceTemplates(
     for (const input of inputs) {
       if (middle.toLowerCase() === input.token.toLowerCase()) continue;
       for (const notional of notionalsUsd()) {
-        for (const [firstProtocol, secondProtocol] of DYNAMIC_PROTOCOL_PAIRS) {
+        for (const [firstProtocol, secondProtocol] of dynamicProtocolPairs(chain)) {
           for (const feeTier of tiers) {
             routes.push(routeBase({
               id: `graphless-${chain}-${input.symbol}-${middle.toLowerCase()}-${notional}-${firstProtocol}-${secondProtocol}-${feeTier}`,
@@ -338,7 +352,7 @@ async function buildGraphlessProfitSurfaceTemplates(
       for (const input of inputs) {
         if (firstMiddle.toLowerCase() === input.token.toLowerCase() || secondMiddle.toLowerCase() === input.token.toLowerCase()) continue;
         for (const notional of triangleSeedNotionalsUsd()) {
-          for (const path of TRIANGLE_PROTOCOL_PATHS) {
+          for (const path of triangleProtocolPaths(chain)) {
             for (const feeTier of tiers) {
               routes.push(routeBase({
                 id: `graphless-tri-${chain}-${input.symbol}-${firstMiddle.toLowerCase()}-${secondMiddle.toLowerCase()}-${notional}-${path.join('-')}-${feeTier}`,
@@ -409,7 +423,7 @@ async function enrichMeasuredGasCost(
     : configuredSafetyMultiplier;
   let gasCostUsd: number;
 
-  if (chain === 'ethereum') {
+  if (chain === 'ethereum' || chain === 'optimism') {
     const [feeData, prices] = await Promise.all([
       provider.getFeeData(),
       coinGeckoPriceClient.getLiveSymbolPrices(['ETH']),
@@ -418,9 +432,13 @@ async function enrichMeasuredGasCost(
     const ethUsd = prices.get('ETH');
     const gasPrice = gasPriceWei ? Number(gasPriceWei.toString()) : Number.NaN;
     if (!Number.isFinite(gasPrice) || gasPrice <= 0 || !Number.isFinite(ethUsd) || !ethUsd || ethUsd <= 0) {
-      throw new Error('Measured Ethereum gas or reusable ETH/USD evidence unavailable');
+      throw new Error(`Measured ${chain} gas or reusable ETH/USD evidence unavailable`);
     }
-    gasCostUsd = (gasPrice * estimatedGasUnits / 1e18) * ethUsd * safetyMultiplier;
+    // OP Mainnet has an L1 data-fee component in addition to L2 execution gas.
+    // Dynamic discovery is only a pre-trade economic screen, so use a conservative
+    // route-local reserve here; exact signed-call/receipt economics remain canonical.
+    const chainSafetyMultiplier = chain === 'optimism' ? Math.max(1.75, safetyMultiplier) : safetyMultiplier;
+    gasCostUsd = (gasPrice * estimatedGasUnits / 1e18) * ethUsd * chainSafetyMultiplier;
   } else {
     const gas = await gasOracle.getGasPrice(chain as ChainId);
     if (!Number.isFinite(gas.usdCost) || gas.usdCost < 0) throw new Error(`Measured gas cost unavailable for ${chain}`);
