@@ -50,6 +50,14 @@ function predictionEventAuthority(candidate: MeasuredCandidate): boolean {
     && candidate.provenance.some(value => value.startsWith('kalshi_event_calibration_model:'));
 }
 
+function exactBackrunAuthority(candidate: MeasuredCandidate): boolean {
+  return candidate.topology === 'MEMPOOL_BACKRUN'
+    && candidate.executableCapability === true
+    && candidate.provenance.includes('exact_post_victim_backrun_compiler:passed')
+    && candidate.provenance.includes('exact_victim_first_eth_callBundle_simulation:passed')
+    && candidate.provenance.includes('sandwichOrFrontrun:false');
+}
+
 function preferredPath(candidate: MeasuredCandidate): UnifiedExecutionPath {
   switch (candidate.topology) {
     case 'ZERO_CAPITAL_ATOMIC':
@@ -63,7 +71,7 @@ function preferredPath(candidate: MeasuredCandidate): UnifiedExecutionPath {
         ? 'SPOT_PERP_FUNDING'
         : 'UNAVAILABLE';
     case 'PREDICTION_EVENT': return predictionEventAuthority(candidate) ? 'PREDICTION_EVENT_ORDER' : 'UNAVAILABLE';
-    case 'MEMPOOL_BACKRUN': return 'UNAVAILABLE';
+    case 'MEMPOOL_BACKRUN': return exactBackrunAuthority(candidate) ? 'MEV_ATOMIC' : 'UNAVAILABLE';
     default: return 'UNAVAILABLE';
   }
 }
@@ -96,6 +104,7 @@ function evidenceScores(candidate: MeasuredCandidate, path: UnifiedExecutionPath
   const projectedPredictionEvent = projectedPredictionEventNet(candidate);
   const isFunding = candidate.topology === 'FUNDING_ARBITRAGE';
   const isPredictionEvent = candidate.topology === 'PREDICTION_EVENT';
+  const isExactBackrun = candidate.topology === 'MEMPOOL_BACKRUN' && exactBackrunAuthority(candidate);
   const economicsKnown = isFunding
     ? projectedFunding !== null
     : isPredictionEvent
@@ -111,8 +120,8 @@ function evidenceScores(candidate: MeasuredCandidate, path: UnifiedExecutionPath
   const quoteEvidence = candidate.rawQuotes.filter(quote => quote.executable === true).length;
   const fresh = candidate.expiresAt > Date.now();
   const depthKnown = candidate.depth.status === 'measured' || candidate.depth.status === 'not_applicable';
-  const quoteCredit = isPredictionEvent ? (quoteEvidence >= 1 ? 15 : 0) : (quoteEvidence >= 2 ? 15 : quoteEvidence === 1 ? 7.5 : 0);
-  const validationQuoteCredit = isPredictionEvent ? (quoteEvidence >= 1 ? 30 : 0) : (quoteEvidence >= 2 ? 30 : quoteEvidence === 1 ? 15 : 0);
+  const quoteCredit = isExactBackrun ? 15 : isPredictionEvent ? (quoteEvidence >= 1 ? 15 : 0) : (quoteEvidence >= 2 ? 15 : quoteEvidence === 1 ? 7.5 : 0);
+  const validationQuoteCredit = isExactBackrun ? 30 : isPredictionEvent ? (quoteEvidence >= 1 ? 30 : 0) : (quoteEvidence >= 2 ? 30 : quoteEvidence === 1 ? 15 : 0);
   const marketEconomics = clampPercent((economicsPositive ? 60 : economicsKnown ? 30 : 0) + (feeKnown ? 15 : 0) + (notionalKnown ? 10 : 0) + quoteCredit);
   const executionResources = clampPercent((candidate.executableCapability ? 60 : 0) + (path !== 'UNAVAILABLE' ? 20 : 0) + (fresh ? 20 : 0));
   const validation = clampPercent((depthKnown ? 40 : 0) + validationQuoteCredit + (candidate.provenance.length > 0 ? 30 : 0));
@@ -152,7 +161,7 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   if (!pathAvailable) {
     if (isFunding) hardVetoReasons.push('blocked:funding_lifecycle_adapter_unavailable');
     else if (isPredictionEvent) hardVetoReasons.push('blocked:prediction_event_exact_execution_path_unavailable');
-    else if (candidate.topology === 'MEMPOOL_BACKRUN') hardVetoReasons.push('blocked:exact_post_victim_backrun_compiler_unavailable');
+    else if (candidate.topology === 'MEMPOOL_BACKRUN') hardVetoReasons.push('blocked:exact_post_victim_backrun_evidence_unavailable');
     else hardVetoReasons.push('blocked:no_authoritative_execution_path');
   }
 
@@ -185,6 +194,10 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
     `evidence_overall=${evidence.overall.toFixed(2)}`,
     ...(isFunding ? [`funding_projected_net_usd=${projectedFunding ?? 'unknown'}`, 'funding_projected_profit_is_not_deterministic_profit'] : []),
     ...(isPredictionEvent ? [`prediction_event_expected_net_usd=${projectedPredictionEvent ?? 'unknown'}`, 'prediction_event_expected_profit_is_calibrated_not_deterministic', 'raw_market_probability_execution_authority=false'] : []),
+    ...(candidate.topology === 'MEMPOOL_BACKRUN' ? [
+      `exact_post_victim_authority=${exactBackrunAuthority(candidate)}`,
+      'sandwichOrFrontrun=false',
+    ] : []),
   ];
   reasons.push(...hardVetoReasons);
   if (!isFunding && !isPredictionEvent && deterministicZero) reasons.push('reacquire:deterministic_all_in_net_equals_zero');
@@ -196,10 +209,6 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   if (candidate.missingInformation.length > 0) reasons.push(`advisory:missing_information:${candidate.missingInformation.join(',')}`);
   if (!aboveAdaptiveThreshold) reasons.push('advisory:adaptive_profitability_or_confidence_below_ranking_threshold');
 
-  // Deterministic strategies retain strict deterministic-positive admission.
-  // Funding and calibrated prediction events are explicit expected-value domains;
-  // both remain fail-closed on exact execution evidence, and neither expected
-  // value is ever promoted to terminal realized-profit authority.
   const economicsAdmitted = isFunding
     ? fundingProjectedPositive
     : isPredictionEvent
