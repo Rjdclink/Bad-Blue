@@ -40,7 +40,7 @@ check('frontier cannot manufacture same-route savings', frontier.includes('Multi
 check('frontier advertises no independent execution authority', frontier.includes("executionAuthority: false") && !frontier.includes('executionAuthority: true'));
 check('frontier does not import a strategy executor', !/centralizedExchangeExecutor|zeroCapitalEngine|executePrepared|submitOrder/.test(frontier));
 check('direct-vs-aggregator credit requires canonical net measurement', frontier.includes("directVsAggregatorPolicy: 'only_measured_canonical_net_outcomes_and_costs_may_report_route_advantage'"));
-check('Uniswap v4 cannot receive unmeasured BPS credit', frontier.includes('requires_exact_pool_quote_before_economic_credit'));
+check('Uniswap v4 cannot receive unmeasured BPS credit', /uniswapV4Policy:[\s\S]{0,180}require(?:s)?_exact_pool_quote_before_economic_credit/.test(frontier));
 check('intent/solver surfaces cannot bypass zero-personal-resource proof', frontier.includes('zero_personal_resource_proof_before_admission'));
 check('MEV/private builder reductions require terminal realized evidence', frontier.includes('terminal_realized_evidence_before_bps_credit'));
 check('0x explicit fee object is normalized', zeroXFees.includes("field === 'zeroExFee'") && zeroXFees.includes("field === 'integratorFee'") && zeroXFees.includes("field === 'integratorFees'"));
