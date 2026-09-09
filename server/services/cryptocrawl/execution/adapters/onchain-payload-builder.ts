@@ -1,7 +1,8 @@
 import { ethers } from 'ethers';
+import { buildProtocolAnchorCall } from './protocol-anchor-adapter.js';
 
 export type SupportedExecutionChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
-export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3' | 'pancakeswapV2' | 'traderJoeV1';
+export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3' | 'pancakeswapV2' | 'traderJoeV1' | 'aaveGhoGsm' | 'fluidDexT1';
 export type UniswapV3FeeTier = 100 | 500 | 3000 | 10000;
 
 export interface OnchainSwapLeg {
@@ -11,6 +12,7 @@ export interface OnchainSwapLeg {
   tokenOut: string;
   amountIn: string;
   minAmountOut: string;
+  pool?: string;
   feeTier?: UniswapV3FeeTier;
   recipient?: string;
   deadlineBufferSeconds?: number;
@@ -69,6 +71,8 @@ const DEX_ROUTERS: Record<SupportedSwapProtocol, Partial<Record<SupportedExecuti
     avalanche: '0x60aE616a2155Ee3d9A68541Ba4544862310933d4',
   },
   sushiswapV3: {},
+  aaveGhoGsm: {},
+  fluidDexT1: {},
 };
 
 function isAddress(value: string): boolean {
@@ -84,6 +88,9 @@ function parseAmount(label: string, raw: string): ethers.BigNumber {
 }
 
 function resolveRouter(protocol: SupportedSwapProtocol, chain: SupportedExecutionChain): string {
+  if (protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1') {
+    throw new Error(`${protocol} uses its reviewed protocol-anchor target rather than a generic DEX router`);
+  }
   if (chain === 'europa') {
     const envKey = protocol === 'uniswapV3' ? 'EUROPA_UNISWAP_V3_ROUTER' : 'EUROPA_SUSHISWAP_ROUTER';
     const configured = process.env[envKey]?.trim();
@@ -100,6 +107,8 @@ function resolveRouter(protocol: SupportedSwapProtocol, chain: SupportedExecutio
 }
 
 function defaultGasLimit(protocol: SupportedSwapProtocol): number {
+  if (protocol === 'aaveGhoGsm') return 300000;
+  if (protocol === 'fluidDexT1') return 450000;
   return protocol === 'uniswapV3' ? 250000 : 300000;
 }
 
@@ -123,6 +132,18 @@ export function buildSwapCallFromLeg(
 
   const amountIn = parseAmount('amountIn', leg.amountIn);
   const minAmountOut = parseAmount('minAmountOut', leg.minAmountOut);
+
+  if (leg.protocol === 'aaveGhoGsm' || leg.protocol === 'fluidDexT1') {
+    if (chain !== 'ethereum') throw new Error(`${leg.protocol} anchor execution is currently reviewed only for Ethereum`);
+    if (!leg.pool || !isAddress(leg.pool)) throw new Error(`${leg.protocol} anchor execution requires a reviewed pool/module address`);
+    return buildProtocolAnchorCall({
+      leg: { protocol: leg.protocol, tokenIn: leg.tokenIn, tokenOut: leg.tokenOut, pool: leg.pool },
+      amountIn: amountIn.toString(),
+      minAmountOut: minAmountOut.toString(),
+      recipient,
+    });
+  }
+
   const router = resolveRouter(leg.protocol, chain);
   const deadline = Math.floor(Date.now() / 1000) + Math.max(30, leg.deadlineBufferSeconds || 120);
 
