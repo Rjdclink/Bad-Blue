@@ -10,6 +10,10 @@ import { EUROPA_SUSHI } from './europa-sushi-registry.js';
 import { buildAtomicNotionalCandidates, selectHighestNetProfit } from './atomic-size-optimizer.js';
 import { calculateProgressivePositionSize } from '../../risk/progressive-position-sizing.js';
 import { stageManager } from '../../governance/stage-management.js';
+import {
+  defaultEthereumProtocolAnchorRoutes,
+  quoteProtocolAnchorLeg,
+} from './protocol-anchor-adapter.js';
 
 const UNISWAP_V3_QUOTER_ABI = [
   'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
@@ -125,8 +129,10 @@ function normalizeProtocol(value: unknown): SupportedSwapProtocol {
   if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') return 'uniswapV3';
   if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
   if (normalized === 'sushiswapv3' || normalized === 'sushi_v3' || normalized === 'sushi-v3') return 'sushiswapV3';
-  if (normalized === 'pancakeswapv2' || normalized === 'pancakeswap_v2' || normalized === 'pancakeswap-v2' || normalized === 'pancakev2' || normalized === 'pancake-v2') return 'pancakeswapV2';
+  if (normalized === 'pancakeswapv2' || normalized === 'pancakeswap_v2' || normalized === 'pancake-v2' || normalized === 'pancakeswap-v2' || normalized === 'pancakev2') return 'pancakeswapV2';
   if (normalized === 'traderjoev1' || normalized === 'traderjoe_v1' || normalized === 'traderjoe-v1' || normalized === 'joev1' || normalized === 'joe-v1') return 'traderJoeV1';
+  if (normalized === 'aaveghogsm' || normalized === 'aave_gho_gsm' || normalized === 'aave-gho-gsm') return 'aaveGhoGsm';
+  if (normalized === 'fluiddext1' || normalized === 'fluid_dex_t1' || normalized === 'fluid-dex-t1') return 'fluidDexT1';
   throw new Error(`Unsupported route protocol: ${String(value)}`);
 }
 
@@ -258,7 +264,11 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
 }
 
 export function loadConfiguredZeroCapitalRoutes(raw: string = process.env.ZERO_CAPITAL_ROUTE_CONFIG || ''): ConfiguredZeroCapitalRoute[] {
-  if (!raw.trim()) return [];
+  const includeProtocolAnchors = arguments.length === 0 && process.env.ZERO_CAPITAL_PROTOCOL_ANCHORS !== 'false';
+  const anchorRoutes = includeProtocolAnchors
+    ? defaultEthereumProtocolAnchorRoutes().map((route, index) => parseConfiguredRoute(route, index))
+    : [];
+  if (!raw.trim()) return anchorRoutes;
 
   let parsed: unknown;
   try {
@@ -268,14 +278,15 @@ export function loadConfiguredZeroCapitalRoutes(raw: string = process.env.ZERO_C
   }
   if (!Array.isArray(parsed)) throw new Error('ZERO_CAPITAL_ROUTE_CONFIG must be a JSON array');
 
-  const routes = parsed.map(parseConfiguredRoute);
+  const routes = parsed.map((route, index) => parseConfiguredRoute(route, anchorRoutes.length + index));
+  const merged = [...anchorRoutes, ...routes];
   const routeIds = new Set<string>();
-  for (const route of routes) {
+  for (const route of merged) {
     const normalizedId = route.id.toLowerCase();
     if (routeIds.has(normalizedId)) throw new Error(`ZERO_CAPITAL_ROUTE_CONFIG contains duplicate route id: ${route.id}`);
     routeIds.add(normalizedId);
   }
-  return routes;
+  return merged;
 }
 
 function legQuoteKey(chain: SupportedExecutionChain, leg: ConfiguredRouteLeg, amountIn: BigNumber): string {
@@ -288,6 +299,17 @@ async function quoteLegAgainstProvider(
   leg: ConfiguredRouteLeg,
   amountIn: BigNumber,
 ): Promise<BigNumber> {
+  if (leg.protocol === 'aaveGhoGsm' || leg.protocol === 'fluidDexT1') {
+    if (chain !== 'ethereum') throw new Error(`${leg.protocol} protocol anchor is currently reviewed only for Ethereum`);
+    if (!leg.pool) throw new Error(`${leg.protocol} protocol anchor requires an exact module/pool address`);
+    return quoteProtocolAnchorLeg(rpcProvider, {
+      protocol: leg.protocol,
+      tokenIn: leg.tokenIn,
+      tokenOut: leg.tokenOut,
+      pool: leg.pool,
+    }, amountIn);
+  }
+
   if (leg.protocol === 'uniswapV3') {
     const quoterAddress = chain === 'europa' ? process.env.EUROPA_UNISWAP_V3_QUOTER?.trim() : UNISWAP_V3_QUOTERS[chain];
     if (!quoterAddress) throw new Error(`No Uniswap V3 quoter configured for ${chain}`);
@@ -394,6 +416,7 @@ async function quoteLeg(
 }
 
 function feeToDecimal(protocol: SupportedSwapProtocol, feeTier?: number, fee?: number): number {
+  if (protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1') return 0;
   if (fee !== undefined) return fee;
   if (protocol === 'uniswapV3') return (feeTier || 3000) / 1_000_000;
   return 0.003;
@@ -427,6 +450,7 @@ export async function quoteConfiguredZeroCapitalRoute(route: ConfiguredZeroCapit
       amountIn: currentAmount.toString(),
       expectedAmountOut: amountOut.toString(),
       fee: feeToDecimal(leg.protocol, leg.feeTier, leg.fee),
+      ...(leg.pool ? { pool: leg.pool } : {}),
     });
     currentAmount = amountOut;
   }
