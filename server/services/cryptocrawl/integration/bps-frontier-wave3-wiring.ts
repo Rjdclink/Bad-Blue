@@ -5,6 +5,17 @@ import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 
 const LIGHTER_FUNDING_URL = 'https://mainnet.zklighter.elliot.ai/api/v1/funding-rates';
 const LIGHTER_DEFAULT_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT'];
+const UNISWAPX_ORDERS_URL = 'https://api.uniswap.org/v2/orders';
+const GHO = '0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f';
+const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+const USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
+const ANCHOR_TOKENS = new Set([GHO, USDC, USDT]);
+const UNISWAPX_PUBLIC_LANES = [
+  { chain: 'ethereum', chainId: 1, orderType: 'Dutch_V2' },
+  { chain: 'arbitrum', chainId: 42161, orderType: 'Dutch_V3' },
+  { chain: 'avalanche', chainId: 43114, orderType: 'Dutch_V3' },
+  { chain: 'bsc', chainId: 56, orderType: 'Dutch_V3' },
+] as const;
 
 interface LighterFundingRow {
   market_id?: number;
@@ -17,6 +28,36 @@ interface LighterFundingResponse {
   code?: number;
   message?: string;
   funding_rates?: LighterFundingRow[];
+}
+
+interface UniswapXOrderToken {
+  token?: string;
+  startAmount?: string;
+  endAmount?: string;
+  amount?: string;
+  recipient?: string;
+  isFeeOutput?: boolean;
+}
+
+interface UniswapXOpenOrder {
+  type?: string;
+  encodedOrder?: string;
+  signature?: string;
+  orderStatus?: string;
+  orderHash?: string;
+  orderId?: string;
+  chainId?: number;
+  input?: UniswapXOrderToken;
+  outputs?: UniswapXOrderToken[];
+  cosignerData?: {
+    decayStartTime?: number;
+    decayEndTime?: number;
+    exclusiveFiller?: string;
+  };
+}
+
+interface UniswapXOrdersResponse {
+  orders?: UniswapXOpenOrder[];
 }
 
 export interface MeasuredBpsFrontierRoute {
@@ -54,6 +95,17 @@ export interface BpsFrontierWave3Snapshot {
     lastError: string | null;
     executionAuthority: false;
   };
+  uniswapX: {
+    lastPollAt: number | null;
+    lane: string | null;
+    openOrders: number;
+    anchorCompatibleOrders: number;
+    standingTargetMarginBps: number;
+    lastError: string | null;
+    apiKeyRequired: false;
+    candidateRowsCreated: 0;
+    executionAuthority: false;
+  };
   authority: 'measured_total_cost_frontier_and_external_discovery_only';
   executionAuthority: false;
   syntheticSavingsAllowed: false;
@@ -62,13 +114,21 @@ export interface BpsFrontierWave3Snapshot {
 let installed = false;
 let timer: NodeJS.Timeout | null = null;
 let frontierTimer: NodeJS.Timeout | null = null;
+let intentTimer: NodeJS.Timeout | null = null;
 let lighterInFlight: Promise<void> | null = null;
+let intentInFlight: Promise<void> | null = null;
 let unsubscribe: (() => void) | null = null;
 let latestGroups: MeasuredBpsFrontierGroup[] = [];
 let lastLighterPollAt: number | null = null;
 let lastLighterObservations = 0;
 let lastLighterSymbols: string[] = [];
 let lastLighterError: string | null = null;
+let uniswapLaneCursor = 0;
+let lastUniswapPollAt: number | null = null;
+let lastUniswapLane: string | null = null;
+let lastUniswapOpenOrders = 0;
+let lastUniswapAnchorCompatibleOrders = 0;
+let lastUniswapError: string | null = null;
 
 function finite(value: unknown): number | null {
   const parsed = Number(value);
@@ -78,6 +138,16 @@ function finite(value: unknown): number | null {
 function pollIntervalMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_BPS_FRONTIER_POLL_MS || 30_000);
   return Number.isFinite(parsed) ? Math.max(10_000, Math.min(120_000, Math.trunc(parsed))) : 30_000;
+}
+
+function intentPollIntervalMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_UNISWAPX_ORDER_POLL_MS || 1_000);
+  return Number.isFinite(parsed) ? Math.max(1_000, Math.min(10_000, Math.trunc(parsed))) : 1_000;
+}
+
+function standingTargetMarginBps(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_STANDING_MARGIN_TARGET_BPS || 25);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(500, parsed)) : 25;
 }
 
 function comparisonSkewMs(): number {
@@ -194,6 +264,79 @@ function scheduleFrontierRefresh(): void {
   frontierTimer.unref?.();
 }
 
+function normalizedToken(value: unknown): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function anchorCompatible(order: UniswapXOpenOrder): boolean {
+  const input = normalizedToken(order.input?.token);
+  const outputs = Array.isArray(order.outputs)
+    ? order.outputs.filter(output => output.isFeeOutput !== true).map(output => normalizedToken(output.token)).filter(Boolean)
+    : [];
+  if (!ANCHOR_TOKENS.has(input) || outputs.length !== 1 || !ANCHOR_TOKENS.has(outputs[0])) return false;
+  return input !== outputs[0] && (input === GHO || outputs[0] === GHO);
+}
+
+async function pollUniswapXIntentReservoir(): Promise<void> {
+  if (intentInFlight || process.env.CRYPTOCRAWL_UNISWAPX_PUBLIC_DISCOVERY === 'false') {
+    return intentInFlight || Promise.resolve();
+  }
+
+  const lane = UNISWAPX_PUBLIC_LANES[uniswapLaneCursor % UNISWAPX_PUBLIC_LANES.length];
+  uniswapLaneCursor = (uniswapLaneCursor + 1) % UNISWAPX_PUBLIC_LANES.length;
+  intentInFlight = (async () => {
+    const url = `${UNISWAPX_ORDERS_URL}?orderStatus=open&chainId=${lane.chainId}&orderType=${lane.orderType}&limit=50`;
+    const payload = await fetchJsonWithRetry<UniswapXOrdersResponse>(url, {
+      maxRetries: 0,
+      baseDelayMs: 100,
+      maxDelayMs: 100,
+      timeoutMs: 2_500,
+    });
+    if (!payload || !Array.isArray(payload.orders)) throw new Error('UniswapX public orders response is unavailable');
+
+    const orders = payload.orders.filter(order => order?.orderStatus === undefined || order.orderStatus === 'open');
+    const anchors = orders.filter(anchorCompatible);
+    lastUniswapPollAt = Date.now();
+    lastUniswapLane = `${lane.chain}:${lane.orderType}`;
+    lastUniswapOpenOrders = orders.length;
+    lastUniswapAnchorCompatibleOrders = anchors.length;
+    lastUniswapError = null;
+
+    logger.info('[BpsFrontierWave3] Permissionless UniswapX intent reservoir refreshed', {
+      component: 'BpsFrontierWave3Wiring',
+      lane: lastUniswapLane,
+      openOrders: orders.length,
+      anchorCompatibleOrders: anchors.length,
+      standingTargetMarginBps: standingTargetMarginBps(),
+      standingQuotePolicy: 'measured_execution_cost_plus_positive_target_margin',
+      pollRatePolicy: 'one_lane_per_tick_below_public_4_rps_limit',
+      apiKeyRequired: false,
+      canonicalCandidateRowsCreated: 0,
+      candidatePromotionPolicy: 'only_after_exact_current_order_resolution_plus_callback_execution_proof_plus_strict_positive_all_in_net',
+      callbackExecutionModel: 'uniswapx_executeWithCallback_zero_prefund_capable_when_executor_proven',
+      syntheticProfitAllowed: false,
+      independentExecutionAuthority: false,
+    });
+  })().catch(error => {
+    lastUniswapPollAt = Date.now();
+    lastUniswapLane = `${lane.chain}:${lane.orderType}`;
+    lastUniswapOpenOrders = 0;
+    lastUniswapAnchorCompatibleOrders = 0;
+    lastUniswapError = error instanceof Error ? error.message : String(error);
+    logger.debug('[BpsFrontierWave3] UniswapX public intent lane unavailable; unrelated discovery continues', {
+      component: 'BpsFrontierWave3Wiring',
+      lane: lastUniswapLane,
+      error: lastUniswapError,
+      existingDiscoveryBlocked: false,
+      executionAuthority: false,
+    });
+  }).finally(() => {
+    intentInFlight = null;
+  });
+
+  return intentInFlight;
+}
+
 async function pollLighterFundingBenchmark(): Promise<void> {
   if (lighterInFlight || process.env.CRYPTOCRAWL_LIGHTER_PUBLIC_DISCOVERY === 'false') {
     return lighterInFlight || Promise.resolve();
@@ -294,6 +437,17 @@ export function getBpsFrontierWave3Snapshot(): BpsFrontierWave3Snapshot {
       lastError: lastLighterError,
       executionAuthority: false,
     },
+    uniswapX: {
+      lastPollAt: lastUniswapPollAt,
+      lane: lastUniswapLane,
+      openOrders: lastUniswapOpenOrders,
+      anchorCompatibleOrders: lastUniswapAnchorCompatibleOrders,
+      standingTargetMarginBps: standingTargetMarginBps(),
+      lastError: lastUniswapError,
+      apiKeyRequired: false,
+      candidateRowsCreated: 0,
+      executionAuthority: false,
+    },
     authority: 'measured_total_cost_frontier_and_external_discovery_only',
     executionAuthority: false,
     syntheticSavingsAllowed: false,
@@ -306,10 +460,13 @@ export function ensureBpsFrontierWave3Wiring(): void {
   recomputeMeasuredFrontier();
   unsubscribe = measuredCandidateRegistry.onUpdate(() => scheduleFrontierRefresh());
   void pollLighterFundingBenchmark();
+  void pollUniswapXIntentReservoir();
 
   if (process.env.NO_INTERVALS !== 'true') {
     timer = setInterval(() => void pollLighterFundingBenchmark(), pollIntervalMs());
     timer.unref?.();
+    intentTimer = setInterval(() => void pollUniswapXIntentReservoir(), intentPollIntervalMs());
+    intentTimer.unref?.();
   }
 
   logger.info('[BpsFrontierWave3] Measured total-cost frontier installed', {
@@ -319,8 +476,14 @@ export function ensureBpsFrontierWave3Wiring(): void {
     quoteEmbeddedCostPolicy: 'canonical_net_outcome_wins_before_explicit_cost_field_tiebreak_so_embedded_fees_are_not_ignored_or_double_subtracted',
     externalVenueBenchmark: 'lighter_public_funding_keyless_discovery_only_no_candidate_backlog',
     directVsAggregatorPolicy: 'only_measured_canonical_net_outcomes_and_costs_may_report_route_advantage',
-    uniswapV4Policy: 'dynamic_fee_hook_flash_accounting_surface_requires_exact_pool_quote_before_economic_credit',
-    intentSolverPolicy: 'cow_uniswapx_style_solver_surfaces_require_exact_executable_quote_and_zero_personal_resource_proof_before_admission',
+    uniswapV4Policy: 'active_liquidity_and_custom_accounting_are_standing_quote_surfaces_but_require_exact_pool_quote_before_economic_credit',
+    intentSolverPolicy: 'uniswapx_permissionless_order_reservoir_continuous_plus_cow_erc7683_expansion; exact_executable_quote_and_zero_personal_resource_proof_before_admission',
+    standingPositiveMarginPolicy: 'continuously_offer_or_search_for_measured_execution_cost_plus_positive_target_margin_without_fabricating_realized_profit',
+    standingTargetMarginBps: standingTargetMarginBps(),
+    uniswapXPublicOrderPolling: true,
+    uniswapXPollingApiKeyRequired: false,
+    uniswapXCallbackModel: 'input_tokens_arrive_before_callback_route_output_payment',
+    realizedProfitStillRequiresCounterpartyFill: true,
     mevPolicy: 'private_builder_or_refund_value_requires_terminal_realized_evidence_before_bps_credit',
     syntheticSavingsAllowed: false,
     independentExecutionAuthority: false,
@@ -332,8 +495,10 @@ export function ensureBpsFrontierWave3Wiring(): void {
 export function stopBpsFrontierWave3WiringForTests(): void {
   if (timer) clearInterval(timer);
   if (frontierTimer) clearTimeout(frontierTimer);
+  if (intentTimer) clearInterval(intentTimer);
   timer = null;
   frontierTimer = null;
+  intentTimer = null;
   unsubscribe?.();
   unsubscribe = null;
   installed = false;
