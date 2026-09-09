@@ -320,15 +320,45 @@ export async function measureMorphoBlueFlashLoanEconomics(input: {
   };
 }
 
+function providerMeasurementTimeoutMs(): number {
+  const configured = Number(process.env.ZERO_CAPITAL_FLASH_PROVIDER_MEASUREMENT_TIMEOUT_MS || 5_000);
+  return Number.isFinite(configured) ? Math.max(250, Math.min(15_000, Math.trunc(configured))) : 5_000;
+}
+
+function withProviderMeasurementTimeout<T>(promise: Promise<T>, timeoutMs: number, provider: FlashLoanProviderKind): Promise<T> {
+  const boundedMs = Math.max(1, Math.trunc(timeoutMs));
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${provider} flash-loan measurement exceeded ${boundedMs}ms evidence deadline`)),
+      boundedMs,
+    );
+    timer.unref?.();
+    promise.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      error => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function measureFlashLoanProviders(input: {
   chain: SupportedExecutionChain;
   provider: providers.Provider;
   asset: string;
 }): Promise<FlashLoanProviderEconomics[]> {
+  const timeoutMs = providerMeasurementTimeoutMs();
+  // Each provider is independently bounded. A silent RPC on one protocol must not
+  // prevent measured evidence from healthy providers from reaching canonical
+  // repricing. Timed-out evidence is omitted, never guessed or synthesized.
   const settled = await Promise.allSettled([
-    measureBalancerFlashLoanEconomics(input),
-    measureAaveV3FlashLoanEconomics(input),
-    measureMorphoBlueFlashLoanEconomics(input),
+    withProviderMeasurementTimeout(measureBalancerFlashLoanEconomics(input), timeoutMs, 'balancer_v2'),
+    withProviderMeasurementTimeout(measureAaveV3FlashLoanEconomics(input), timeoutMs, 'aave_v3'),
+    withProviderMeasurementTimeout(measureMorphoBlueFlashLoanEconomics(input), timeoutMs, 'morpho_blue'),
   ]);
   return settled.flatMap(result =>
     result.status === 'fulfilled' && result.value ? [result.value] : [],
