@@ -1,5 +1,5 @@
 import logger from '../../../logger.js';
-import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
+import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { getZeroCapitalRoutePreselectionEvidence } from '../discovery/zero-capital-route-preselection.js';
 
 export interface ZeroCapitalRecoverySnapshot {
@@ -35,10 +35,16 @@ export interface ZeroCapitalRecoverySnapshot {
   syntheticProfitAllowed: false;
 }
 
+type ZeroCapitalRecoveryUpdateListener = (snapshot: ZeroCapitalRecoverySnapshot) => void;
+
+let installed = false;
 let timer: NodeJS.Timeout | null = null;
+let candidateRefreshTimer: NodeJS.Timeout | null = null;
+let unsubscribeCandidateUpdate: (() => void) | null = null;
 let previousClosestCandidateGapBps: number | null = null;
 let previousClosestRoute: { routeId: string; gapBps: number } | null = null;
 let latest: ZeroCapitalRecoverySnapshot | null = null;
+const updateListeners = new Set<ZeroCapitalRecoveryUpdateListener>();
 
 function finite(value: unknown): number | null {
   if (value === null || value === undefined || typeof value === 'boolean') return null;
@@ -57,6 +63,21 @@ function percentile(values: number[], p: number): number | null {
 function routeEvidenceMaxAgeMs(): number {
   const parsed = Number(process.env.ZERO_CAPITAL_ROUTE_EVIDENCE_MAX_AGE_MS || 60_000);
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(300_000, parsed)) : 60_000;
+}
+
+function cloneSnapshot(snapshot: ZeroCapitalRecoverySnapshot): ZeroCapitalRecoverySnapshot {
+  return {
+    ...snapshot,
+    closestMeasuredRoute: snapshot.closestMeasuredRoute ? { ...snapshot.closestMeasuredRoute } : null,
+  };
+}
+
+function notifyUpdate(): void {
+  if (!latest || updateListeners.size === 0) return;
+  const snapshot = cloneSnapshot(latest);
+  for (const listener of updateListeners) {
+    try { listener(cloneSnapshot(snapshot)); } catch { /* telemetry listeners cannot corrupt recovery state */ }
+  }
 }
 
 function refresh(): void {
@@ -174,21 +195,48 @@ function refresh(): void {
   previousClosestRoute = closestRoute && closestRouteGapBps !== null
     ? { routeId: closestRoute.routeId, gapBps: closestRouteGapBps }
     : null;
+  notifyUpdate();
+}
+
+function scheduleCandidateRefresh(candidate: MeasuredCandidate): void {
+  if (candidate.topology !== 'ZERO_CAPITAL_ATOMIC' || candidateRefreshTimer) return;
+  // Candidate production is bursty. Coalesce each burst into one current-state
+  // projection rather than forcing consumers to wait for a coarse polling tick.
+  candidateRefreshTimer = setTimeout(() => {
+    candidateRefreshTimer = null;
+    refresh();
+  }, 250);
+  candidateRefreshTimer.unref?.();
+}
+
+export function onZeroCapitalRecoveryUpdate(listener: ZeroCapitalRecoveryUpdateListener): () => void {
+  updateListeners.add(listener);
+  return () => updateListeners.delete(listener);
 }
 
 export function getZeroCapitalRecoverySnapshot(): ZeroCapitalRecoverySnapshot | null {
-  return latest ? {
-    ...latest,
-    closestMeasuredRoute: latest.closestMeasuredRoute ? { ...latest.closestMeasuredRoute } : null,
-  } : null;
+  return latest ? cloneSnapshot(latest) : null;
 }
 
 export function ensureZeroCapitalRecoveryObservability(): void {
-  if (timer || process.env.ZERO_CAPITAL_RECOVERY_OBSERVABILITY_ENABLED === 'false') return;
+  if (installed || process.env.ZERO_CAPITAL_RECOVERY_OBSERVABILITY_ENABLED === 'false') return;
+  installed = true;
   refresh();
+  unsubscribeCandidateUpdate = measuredCandidateRegistry.onUpdate(scheduleCandidateRefresh);
   if (process.env.NO_INTERVALS !== 'true') {
     const intervalMs = Math.max(5_000, Math.min(120_000, Number(process.env.ZERO_CAPITAL_RECOVERY_OBSERVABILITY_INTERVAL_MS || 15_000)));
     timer = setInterval(refresh, intervalMs);
     timer.unref?.();
   }
+}
+
+export function stopZeroCapitalRecoveryObservabilityForTests(): void {
+  if (timer) clearInterval(timer);
+  if (candidateRefreshTimer) clearTimeout(candidateRefreshTimer);
+  timer = null;
+  candidateRefreshTimer = null;
+  unsubscribeCandidateUpdate?.();
+  unsubscribeCandidateUpdate = null;
+  updateListeners.clear();
+  installed = false;
 }
