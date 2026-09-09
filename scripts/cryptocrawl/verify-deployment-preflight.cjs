@@ -46,6 +46,7 @@ require('./verify-resource-bps-coordination.cjs');
 require('./verify-migration-authority-runtime.cjs');
 require('./verify-railway-config-compatibility.cjs');
 require('./verify-startup-database-admission.cjs');
+require('./verify-runtime-db-disconnect-resilience.cjs');
 require('./verify-free-tier-startup-gate.cjs');
 require('./verify-cryptara-supabase-admission-worker.cjs');
 require('./verify-cryptara-supabase-comp-switch.cjs');
@@ -74,4 +75,4 @@ require('./verify-first-pass-route-measurability.cjs');
 require('./verify-canonical-refresh-capability-authority.cjs');
 require('./verify-bps-zero-capital-event-handoff.cjs');
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, and single zero-capital route authority passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, and single zero-capital route authority passed; continuing to downstream prebuild/build');
