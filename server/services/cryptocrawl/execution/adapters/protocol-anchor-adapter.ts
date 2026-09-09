@@ -1,4 +1,5 @@
 import { BigNumber, Contract, ethers, providers } from 'ethers';
+import logger from '../../../logger.js';
 
 export type ProtocolAnchorProtocol = 'aaveGhoGsm' | 'fluidDexT1';
 
@@ -203,10 +204,43 @@ export async function quoteProtocolAnchorLeg(
   leg: ProtocolAnchorLeg,
   amountIn: BigNumber,
 ): Promise<BigNumber> {
-  requireEthereumAnchorLeg(leg);
-  if (amountIn.lte(0)) throw new Error('Protocol anchor quote amount must be positive');
-  if (leg.protocol === 'aaveGhoGsm') return quoteGsm(provider, leg, amountIn);
-  return quoteFluid(provider, leg, amountIn);
+  const startedAt = Date.now();
+  try {
+    requireEthereumAnchorLeg(leg);
+    if (amountIn.lte(0)) throw new Error('Protocol anchor quote amount must be positive');
+    const amountOut = leg.protocol === 'aaveGhoGsm'
+      ? await quoteGsm(provider, leg, amountIn)
+      : await quoteFluid(provider, leg, amountIn);
+    logger.info('[ProtocolAnchor] Exact live anchor leg quoted', {
+      component: 'ProtocolAnchorAdapter',
+      protocol: leg.protocol,
+      pool: leg.pool,
+      tokenIn: leg.tokenIn,
+      tokenOut: leg.tokenOut,
+      amountIn: amountIn.toString(),
+      amountOut: amountOut.toString(),
+      latencyMs: Date.now() - startedAt,
+      quoteAuthority: 'direct_live_contract_state',
+      executionAuthority: false,
+      syntheticEconomicsAllowed: false,
+    });
+    return amountOut;
+  } catch (error) {
+    logger.warn('[ProtocolAnchor] Exact live anchor leg failed closed', {
+      component: 'ProtocolAnchorAdapter',
+      protocol: leg.protocol,
+      pool: leg.pool,
+      tokenIn: leg.tokenIn,
+      tokenOut: leg.tokenOut,
+      amountIn: amountIn.toString(),
+      latencyMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+      quoteProduced: false,
+      executionAuthority: false,
+      syntheticEconomicsAllowed: false,
+    });
+    throw error;
+  }
 }
 
 export function buildProtocolAnchorCall(input: {
