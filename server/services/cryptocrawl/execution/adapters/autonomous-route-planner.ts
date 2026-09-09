@@ -1,6 +1,7 @@
 import type { FlashLoanReceiverExecutionPlan } from './flashloan-receiver-builder.js';
 import type { FlashLoanProviderKind } from './flash-loan-provider-economics.js';
 import type {
+  MorphoLiquidationMarketParams,
   OnchainSwapLeg,
   SupportedExecutionChain,
   SupportedSwapProtocol,
@@ -20,6 +21,10 @@ export interface RoutePlanningSwapStep {
   expectedAmountOut: bigint | string;
   fee: number;
   pool?: string;
+  morphoMarketId?: string;
+  morphoBorrower?: string;
+  morphoSeizedAssets?: bigint | string;
+  morphoMarketParams?: MorphoLiquidationMarketParams;
 }
 
 export interface RoutePlanningOpportunity {
@@ -55,6 +60,7 @@ function normalizeProtocol(protocol: string): SupportedSwapProtocol {
   if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushi-v3') return 'sushiswapV3';
   if (normalized === 'aaveghogsm' || normalized === 'aave_gho_gsm' || normalized === 'aave-gho-gsm') return 'aaveGhoGsm';
   if (normalized === 'fluiddext1' || normalized === 'fluid_dex_t1' || normalized === 'fluid-dex-t1') return 'fluidDexT1';
+  if (normalized === 'morpholiquidation' || normalized === 'morpho_liquidation' || normalized === 'morpho-liquidation') return 'morphoLiquidation';
   throw new Error(`Unsupported autonomous route protocol: ${protocol}`);
 }
 
@@ -184,17 +190,18 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     previousExpectedOut = expectedAmountOut;
 
     const protocol = normalizeProtocol(step.protocol);
-    const protocolAnchor = protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1';
+    const exactStructuralLeg = protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1' || protocol === 'morphoLiquidation';
     const pool = step.pool ? requireAddress(`route[${index}].pool`, step.pool) : undefined;
-    return {
+    const result: OnchainSwapLeg = {
       protocol,
       chain: opportunity.chain,
       tokenIn,
       tokenOut,
       amountIn: requiredAmountIn.toString(),
-      // Anchor legs use the exact measured output. A changed protocol/pool state
-      // must fail closed instead of silently changing the next atomic leg size.
-      minAmountOut: protocolAnchor
+      // Protocol anchors and liquidation seizure use an exact measured output.
+      // A changed market state must fail closed instead of silently changing
+      // the amount consumed by the next atomic leg.
+      minAmountOut: exactStructuralLeg
         ? expectedAmountOut.toString()
         : applyHaircut(expectedAmountOut, minOutputBps),
       ...(pool ? { pool } : {}),
@@ -202,6 +209,15 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
       recipient: receiver,
       deadlineBufferSeconds,
     };
+    if (protocol === 'morphoLiquidation') {
+      const seized = BigInt(bigintishToString(step.morphoSeizedAssets ?? expectedAmountOut));
+      if (seized !== expectedAmountOut) throw new Error('Morpho liquidation seized amount must equal the exact measured route output');
+      result.morphoMarketId = step.morphoMarketId;
+      result.morphoBorrower = step.morphoBorrower;
+      result.morphoSeizedAssets = seized.toString();
+      result.morphoMarketParams = step.morphoMarketParams;
+    }
+    return result;
   });
 
   if (!sameAddress(steps[steps.length - 1].tokenOut, inputToken)) throw new Error('Autonomous zero-capital route must return to the borrowed token for atomic repayment');
