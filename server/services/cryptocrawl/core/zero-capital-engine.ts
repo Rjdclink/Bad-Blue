@@ -30,6 +30,7 @@ import type { NormalizedRealizedExecution } from '../execution/settlement-types.
 import type { InitialGasReadiness } from '../initial-gas-readiness.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 import { getProfitEstimates, type ProfitEstimate } from '../intelligence/profit-estimator.js';
+import { enrichConfiguredZeroCapitalGasEconomics } from '../discovery/configured-zero-capital-gas-economics.js';
 import { runZeroCapitalProfitabilityRescueV2 } from '../integration/zero-capital-profitability-rescue-v2.js';
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import { assertConfiguredWalletAddress, normalizePrivateKey, resolveConfiguredWalletAddress, walletFromPrivateKey } from './wallet-identity.js';
@@ -355,14 +356,24 @@ export class AutonomousZeroCapitalEngine {
     if (chain === 'europa') return [];
     const explicitRoutes = this.configuredRoutes.filter(route => route.chain === chain);
     if (explicitRoutes.length === 0) return [];
+    const funding = await this.getGasFundingDecision(chain);
+    const gasEconomics = await enrichConfiguredZeroCapitalGasEconomics(chain, provider, explicitRoutes, funding);
     const block = await provider.getBlock('latest');
-    const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, explicitRoutes);
+    const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, gasEconomics.routes);
     const accepted = quotes.map(quote => this.fromQuotedRoute(quote, block.timestamp));
+    logger.debug('[ZeroCapitalEngine] Configured-route gas economics measured before BPS admission', {
+      component: 'ZeroCapitalEngine',
+      chain,
+      routes: gasEconomics.routes.length,
+      gasCostAuthority: gasEconomics.gasCostAuthority,
+      estimatedGasUnits: gasEconomics.estimatedGasUnits,
+      zeroSeedPromotedToExecutableEconomics: false,
+    });
     return runZeroCapitalProfitabilityRescueV2({
       chain,
       provider,
       opportunities: accepted,
-      configuredRoutes: explicitRoutes,
+      configuredRoutes: gasEconomics.routes,
       fromQuotedRoute: (quote, blockTimestamp) => this.fromQuotedRoute(quote, blockTimestamp),
     });
   }
