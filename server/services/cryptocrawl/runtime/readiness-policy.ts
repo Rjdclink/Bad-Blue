@@ -57,27 +57,36 @@ export type CryptoRuntimeReadiness = {
  * execution permission and does not replace StageManager, the canonical
  * scheduler, deterministic economics, resource reservations, or settlement.
  *
- * EXECUTION_READY/TRADING_READY describe the canonical centralized-exchange
- * scheduler. Zero-capital gas readiness is a different topology and therefore
- * cannot satisfy a missing CEX inventory requirement. Likewise, optional
- * blockchain RPC health does not make core CEX market-data readiness false.
+ * ZERO_CAPITAL_ATOMIC is the bootstrap/primary capital topology. Existing CEX
+ * inventory is a parallel/redundant topology once capital exists; it is never a
+ * prerequisite for a strictly proven zero-capital route. Resource truth remains
+ * topology-local: zero-capital funding cannot authorize a CEX plan, and CEX
+ * balances cannot authorize a zero-capital plan.
  */
 export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput): CryptoRuntimeReadiness {
-  const executionCapabilityReady = input.runtimeIdentitySafe
+  const baseExecutionCapability = input.runtimeIdentitySafe
     && !input.noExecutionGuardEnabled
     && input.liveExecutionEnabled
     && input.liveExecutionConfirmed
-    && input.centralizedExecutionConfigured
     && input.schedulerRunning;
+  const cexExecutionCapability = baseExecutionCapability && input.centralizedExecutionConfigured;
+  const zeroCapitalExecutionCapability = baseExecutionCapability && input.zeroCapitalExecutionEnabled;
+  const configuredTopologyReady = input.centralizedExecutionConfigured || input.zeroCapitalExecutionEnabled;
 
-  const inventoryReady = input.spendableInventoryAssets > 0 && input.spendableInventoryVenues >= 2;
+  const cexInventoryReady = input.spendableInventoryAssets > 0 && input.spendableInventoryVenues >= 2;
   const zeroCapitalFundingReady = input.zeroCapitalFundingReady === true;
   const zeroCapitalResourceReady = input.zeroCapitalExecutionEnabled && zeroCapitalFundingReady && input.criticalRpcReady;
+  const anyResourceReady = cexInventoryReady || zeroCapitalResourceReady;
+
   const cexCandidateReady = input.eligibleCexCandidates > 0;
+  const zeroCapitalCandidateReady = input.eligibleZeroCapitalCandidates > 0;
+  const anyCandidateReady = cexCandidateReady || zeroCapitalCandidateReady;
   const governanceReady = input.stageCanExecute;
-  const cexResourceReady = inventoryReady;
-  const tradingReady = executionCapabilityReady && governanceReady && cexCandidateReady && cexResourceReady;
-  const tradingDetail = `runtimeIdentitySafe=${input.runtimeIdentitySafe}; canonicalCexCapability=${executionCapabilityReady}; governance=${governanceReady}; cexCandidate=${cexCandidateReady}; cexInventory=${cexResourceReady}; inventoryAssets=${input.reconciledInventoryAssets}; spendableInventoryAssets=${input.spendableInventoryAssets}; spendableInventoryVenues=${input.spendableInventoryVenues}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Zero-capital resources never substitute for CEX inventory. Final trade admission still requires topology-specific deterministic economics and canonical scheduler resource reservation.`;
+
+  const cexTradingReady = cexExecutionCapability && governanceReady && cexCandidateReady && cexInventoryReady;
+  const zeroCapitalTradingReady = zeroCapitalExecutionCapability && governanceReady && zeroCapitalCandidateReady && zeroCapitalResourceReady;
+  const tradingReady = cexTradingReady || zeroCapitalTradingReady;
+  const tradingDetail = `runtimeIdentitySafe=${input.runtimeIdentitySafe}; baseCapability=${baseExecutionCapability}; governance=${governanceReady}; cexCapability=${cexExecutionCapability}; cexCandidate=${cexCandidateReady}; cexInventory=${cexInventoryReady}; zeroCapitalCapability=${zeroCapitalExecutionCapability}; zeroCapitalCandidate=${zeroCapitalCandidateReady}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalRpcReady=${input.criticalRpcReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}; cexTradingReady=${cexTradingReady}; zeroCapitalTradingReady=${zeroCapitalTradingReady}; reconciledCexInventoryAssets=${input.reconciledInventoryAssets}; spendableCexInventoryAssets=${input.spendableInventoryAssets}; spendableCexInventoryVenues=${input.spendableInventoryVenues}; eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}. Each topology still requires its own deterministic economics, exact resource proof, canonical scheduler admission and terminal settlement.`;
 
   return {
     APP_READY: {
@@ -90,16 +99,14 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
           : 'runtime identity lacks independently verified build/deployment agreement',
     },
     CONFIG_READY: {
-      ready: input.centralizedExecutionConfigured,
+      ready: configuredTopologyReady,
       scope: 'configuration',
-      detail: input.centralizedExecutionConfigured
-        ? 'at least two settlement-safe centralized execution venues are configured'
-        : 'fewer than two settlement-safe centralized execution venues are configured',
+      detail: `centralizedExecutionConfigured=${input.centralizedExecutionConfigured}; zeroCapitalExecutionEnabled=${input.zeroCapitalExecutionEnabled}. At least one canonical execution topology must be configured; configuration alone never grants trade authority.`,
     },
     DATA_READY: {
       ready: input.coreMarketDataReady,
       scope: 'data',
-      detail: `coreCexMarketData=${input.coreMarketDataReady}; blockchainRpc=${input.criticalRpcReady} (RPC is topology-local and not required for core CEX discovery)`,
+      detail: `coreCexMarketData=${input.coreMarketDataReady}; blockchainRpc=${input.criticalRpcReady} (RPC is topology-local and required for zero-capital/on-chain execution, not for core CEX discovery)`,
     },
     DISCOVERY_READY: {
       // Discovery answers whether measured search is running and producing
@@ -110,19 +117,22 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
       detail: `graphFresh=${input.graphReady}; discoveryEvidence=${input.discoveryEvidenceCount}; canonicalObserved=${input.canonicalObservedOpportunities}`,
     },
     EXECUTION_CAPABILITY_READY: {
-      ready: executionCapabilityReady,
+      ready: baseExecutionCapability && configuredTopologyReady,
       scope: 'capability',
-      detail: `runtimeIdentitySafe=${input.runtimeIdentitySafe}; guard=${input.noExecutionGuardEnabled}; enabled=${input.liveExecutionEnabled}; confirmed=${input.liveExecutionConfirmed}; cexConfigured=${input.centralizedExecutionConfigured}; schedulerRunning=${input.schedulerRunning}. Capability readiness does not imply that a trade has CEX inventory, an eligible CEX candidate, or governance authorization.`,
+      detail: `runtimeIdentitySafe=${input.runtimeIdentitySafe}; guard=${input.noExecutionGuardEnabled}; enabled=${input.liveExecutionEnabled}; confirmed=${input.liveExecutionConfirmed}; schedulerRunning=${input.schedulerRunning}; cexConfigured=${input.centralizedExecutionConfigured}; zeroCapitalEnabled=${input.zeroCapitalExecutionEnabled}. Capability readiness does not imply that a topology has a qualifying candidate or its exact resource proof.`,
     },
     INVENTORY_READY: {
-      ready: inventoryReady,
+      // Historical name retained for API compatibility. This now reports whether
+      // at least one canonical trading topology has its required resource. Zero-
+      // capital bootstrap intentionally does not require pre-existing CEX funds.
+      ready: anyResourceReady,
       scope: 'resource',
-      detail: `reconciledCexInventoryAssets=${input.reconciledInventoryAssets}; spendableCexInventoryAssets=${input.spendableInventoryAssets}; spendableCexInventoryVenues=${input.spendableInventoryVenues}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. Generic CEX inventory readiness requires positive spendable capital on at least two venues; candidate admission still requires the exact buy-quote and sell-base assets.`,
+      detail: `cexInventoryReady=${cexInventoryReady}; reconciledCexInventoryAssets=${input.reconciledInventoryAssets}; spendableCexInventoryAssets=${input.spendableInventoryAssets}; spendableCexInventoryVenues=${input.spendableInventoryVenues}; zeroCapitalFundingReady=${zeroCapitalFundingReady}; zeroCapitalResourceReady=${zeroCapitalResourceReady}. CEX inventory is a parallel/redundant resource and is not a prerequisite for a proven ZERO_CAPITAL_ATOMIC route. Resources never cross-authorize another topology.`,
     },
     CANDIDATE_READY: {
-      ready: cexCandidateReady,
+      ready: anyCandidateReady,
       scope: 'candidate',
-      detail: `eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleCandidatesAllTopologies=${input.eligibleCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}`,
+      detail: `eligibleCexCandidates=${input.eligibleCexCandidates}; eligibleZeroCapitalCandidates=${input.eligibleZeroCapitalCandidates}; eligibleCandidatesAllTopologies=${input.eligibleCandidates}. Candidate readiness means at least one supported canonical topology has an eligible candidate; execution still requires the matching topology resource.`,
     },
     GOVERNANCE_READY: {
       ready: governanceReady,
@@ -132,7 +142,7 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
     EXECUTION_READY: {
       ready: tradingReady,
       scope: 'trade',
-      detail: `strict canonical CEX execution readiness alias; ${tradingDetail}`,
+      detail: `topology-specific canonical execution readiness; ${tradingDetail}`,
     },
     TRADING_READY: {
       ready: tradingReady,
