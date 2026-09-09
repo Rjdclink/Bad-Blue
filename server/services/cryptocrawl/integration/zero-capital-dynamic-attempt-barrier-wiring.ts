@@ -1,5 +1,6 @@
-import type { Wallet, providers } from 'ethers';
+import { BigNumber, type Wallet, type providers } from 'ethers';
 import logger from '../../../logger.js';
+import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
@@ -13,6 +14,8 @@ type BarrierProviderKind = FlashLoanProviderKind | 'aave_balancer_dual';
 interface FundingDecisionLike {
   mode: 'sponsored' | 'native' | 'unavailable';
   reason: string;
+  sponsorOperatorMonetaryCostProvenZero?: boolean;
+  providerBillingLiability?: boolean;
 }
 
 export interface ZeroCapitalBarrierContext {
@@ -33,6 +36,9 @@ export interface DynamicAttemptBarrierDecision {
   exactCallPassed: boolean;
   exactGasEstimatePassed: boolean;
   estimatedGasUnits: bigint | null;
+  measuredFeePerGasWei: bigint | null;
+  measuredGasCostInInputToken: bigint | null;
+  preBroadcastNetProfit: bigint | null;
   expectedNetProfit: bigint;
   failedAttemptExposure: bigint;
   dynamicBarrier: bigint;
@@ -44,6 +50,17 @@ export interface DynamicAttemptBarrierDecision {
   authority: 'canonical_pre_broadcast_validation';
   executionAuthority: false;
 }
+
+const NATIVE_SYMBOL: Partial<Record<SupportedChain, 'ETH' | 'POL' | 'BNB' | 'AVAX'>> = {
+  ethereum: 'ETH',
+  polygon: 'POL',
+  arbitrum: 'ETH',
+  optimism: 'ETH',
+  bsc: 'BNB',
+  avalanche: 'AVAX',
+};
+const PRICE_SCALE = 100_000_000n;
+const ONE_NATIVE = 1_000_000_000_000_000_000n;
 
 let latest: DynamicAttemptBarrierDecision | null = null;
 let deferrals = 0;
@@ -71,6 +88,98 @@ function quoteAgeFraction(opportunity: ZeroCapitalOpportunity, now = Date.now())
   return clamp((now - opportunity.timestamp) / lifetime, 0, 2);
 }
 
+function scaledUsdPrice(value: number | undefined): bigint | null {
+  if (!Number.isFinite(value) || Number(value) <= 0) return null;
+  const scaled = Math.round(Number(value) * Number(PRICE_SCALE));
+  return Number.isSafeInteger(scaled) && scaled > 0 ? BigInt(scaled) : null;
+}
+
+function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  if (denominator <= 0n) throw new Error('Gas conversion denominator must be positive');
+  return (numerator + denominator - 1n) / denominator;
+}
+
+/**
+ * EIP-1559 constrains the next-block base-fee increase. Use the current block plus
+ * the maximum one-block increase and current priority-fee suggestion, bounded by
+ * maxFeePerGas. Legacy/non-1559 chains use the provider's current gasPrice.
+ * This is a current pre-broadcast cost bound, not a hard-coded gas constant.
+ */
+async function currentFeePerGasWei(provider: providers.JsonRpcProvider): Promise<bigint | null> {
+  const [feeData, block] = await Promise.all([
+    provider.getFeeData().catch(() => null),
+    provider.getBlock('latest').catch(() => null),
+  ]);
+  if (!feeData) return null;
+  const maxFee = feeData.maxFeePerGas ? BigInt(feeData.maxFeePerGas.toString()) : null;
+  const priority = feeData.maxPriorityFeePerGas ? BigInt(feeData.maxPriorityFeePerGas.toString()) : 0n;
+  const base = block?.baseFeePerGas ? BigInt(block.baseFeePerGas.toString()) : null;
+  if (base !== null && base > 0n) {
+    // Base-fee maximum change denominator is 8, so ceil(base/8) is the safe
+    // next-block increase bound before adding the suggested priority fee.
+    const nextBaseBound = base + ceilDiv(base, 8n);
+    const expected = nextBaseBound + priority;
+    return maxFee !== null && maxFee > 0n ? (expected < maxFee ? expected : maxFee) : expected;
+  }
+  const gasPrice = feeData.gasPrice ? BigInt(feeData.gasPrice.toString()) : null;
+  if (gasPrice !== null && gasPrice > 0n) return gasPrice;
+  if (maxFee !== null && maxFee > 0n) return maxFee;
+  return null;
+}
+
+async function measuredGasEconomics(input: {
+  provider: providers.JsonRpcProvider;
+  opportunity: ZeroCapitalOpportunity;
+  funding: FundingDecisionLike;
+  estimatedGasUnits: bigint;
+}): Promise<{ feePerGasWei: bigint; gasCostInputBaseUnits: bigint } | null> {
+  const { opportunity, funding } = input;
+  if (funding.mode === 'sponsored' && funding.sponsorOperatorMonetaryCostProvenZero === true) {
+    return { feePerGasWei: 0n, gasCostInputBaseUnits: 0n };
+  }
+
+  // Native system-owned gas and provider sponsorship that is billed back to the
+  // operator both remain real all-in economic costs.
+  const hasEconomicGasLiability = funding.mode === 'native'
+    || (funding.mode === 'sponsored' && funding.providerBillingLiability !== false);
+  if (!hasEconomicGasLiability) return { feePerGasWei: 0n, gasCostInputBaseUnits: 0n };
+
+  const nativeSymbol = NATIVE_SYMBOL[opportunity.chain];
+  if (!nativeSymbol) return null;
+  const feePerGasWei = await currentFeePerGasWei(input.provider);
+  if (feePerGasWei === null || feePerGasWei <= 0n || input.estimatedGasUnits <= 0n) return null;
+
+  let inputPrice = scaledUsdPrice(opportunity.inputAssetUsdPrice);
+  let nativePrice: bigint | null = null;
+  try {
+    const prices = await coinGeckoPriceClient.getLiveSymbolPrices([opportunity.inputAssetSymbol, nativeSymbol]);
+    inputPrice = inputPrice ?? scaledUsdPrice(prices.get(opportunity.inputAssetSymbol));
+    nativePrice = scaledUsdPrice(prices.get(nativeSymbol));
+  } catch {
+    return null;
+  }
+  if (inputPrice === null || nativePrice === null) return null;
+
+  const nativeFeeWei = input.estimatedGasUnits * feePerGasWei;
+  const inputScale = 10n ** BigInt(Math.max(0, Math.min(36, opportunity.inputTokenDecimals)));
+  const gasCostInputBaseUnits = ceilDiv(
+    nativeFeeWei * nativePrice * inputScale,
+    ONE_NATIVE * inputPrice,
+  );
+  return { feePerGasWei, gasCostInputBaseUnits };
+}
+
+function reconstructedGrossProfit(opportunity: ZeroCapitalOpportunity): bigint {
+  if (opportunity.grossProfit !== undefined) return opportunity.grossProfit;
+  return opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken;
+}
+
+function preBroadcastNetProfit(opportunity: ZeroCapitalOpportunity, gasCostInputBaseUnits: bigint): bigint {
+  const flash = opportunity.flashLoanFeeInInputToken ?? 0n;
+  const relay = opportunity.relayFeeInInputToken ?? 0n;
+  return reconstructedGrossProfit(opportunity) - flash - relay - gasCostInputBaseUnits;
+}
+
 /**
  * Advisory risk telemetry only. This multiple may rank or explain opportunities,
  * but it cannot impose a second profit floor after canonical strictly-positive
@@ -94,7 +203,9 @@ function denied(
   funding: FundingDecisionLike,
   flashLoanProvider: BarrierProviderKind,
   reason: string,
-  extra: Partial<Pick<DynamicAttemptBarrierDecision, 'exactCallPassed' | 'exactGasEstimatePassed' | 'estimatedGasUnits' | 'failedAttemptExposure'>> = {},
+  extra: Partial<Pick<DynamicAttemptBarrierDecision,
+    'exactCallPassed' | 'exactGasEstimatePassed' | 'estimatedGasUnits' | 'measuredFeePerGasWei'
+    | 'measuredGasCostInInputToken' | 'preBroadcastNetProfit' | 'failedAttemptExposure'>> = {},
 ): DynamicAttemptBarrierDecision {
   const age = quoteAgeFraction(opportunity, observedAt);
   const failedAttemptExposure = extra.failedAttemptExposure ?? 0n;
@@ -109,6 +220,9 @@ function denied(
     exactCallPassed: extra.exactCallPassed ?? false,
     exactGasEstimatePassed: extra.exactGasEstimatePassed ?? false,
     estimatedGasUnits: extra.estimatedGasUnits ?? null,
+    measuredFeePerGasWei: extra.measuredFeePerGasWei ?? null,
+    measuredGasCostInInputToken: extra.measuredGasCostInInputToken ?? null,
+    preBroadcastNetProfit: extra.preBroadcastNetProfit ?? null,
     expectedNetProfit: opportunity.expectedProfit,
     failedAttemptExposure,
     dynamicBarrier: 0n,
@@ -127,8 +241,8 @@ function denied(
  * ZERO_CAPITAL_ATOMIC executor. Hard rejection is limited to facts required to
  * execute the selected atomic route: positive canonical economics, freshness,
  * exact provider/receiver identity and sizing, an available funding lane, exact
- * payload construction, and a usable gas estimate. eth_call simulation plus the
- * historical dynamic-attempt multiple are advisory telemetry only.
+ * payload construction, current gas units, and current all-in gas economics.
+ * eth_call simulation plus the historical dynamic-attempt multiple are advisory.
  */
 export async function evaluateZeroCapitalDynamicAttemptBarrier(
   context: ZeroCapitalBarrierContext,
@@ -203,7 +317,6 @@ export async function evaluateZeroCapitalDynamicAttemptBarrier(
 
   const request = { from: wallet.address, to: payload.to, data: payload.data, value: payload.value };
   const [call, gas] = await Promise.allSettled([provider.call(request), provider.estimateGas(request)]);
-  const nativeExposure = funding.mode === 'native' ? opportunity.estimatedGasCostInInputToken || 0n : 0n;
 
   // eth_call is useful validation telemetry, but it is not a consensus execution
   // prerequisite and cannot veto an otherwise executable, positive atomic trade.
@@ -219,43 +332,84 @@ export async function evaluateZeroCapitalDynamicAttemptBarrier(
     });
   }
 
-  // A current gas bound remains required: it is an actual transaction parameter
-  // and part of the all-in cost/exposure evidence, rather than an advisory signal.
   if (gas.status !== 'fulfilled') {
     const result = denied(opportunity, observedAt, funding, flashLoanProvider,
       `Exact provider gas estimation rejected; defer and re-quote: ${gas.reason instanceof Error ? gas.reason.message : String(gas.reason)}`,
-      { exactCallPassed, failedAttemptExposure: nativeExposure });
+      { exactCallPassed });
+    latest = result; deferrals++; return result;
+  }
+
+  const estimatedGasUnits = BigInt(gas.value.toString());
+  const gasEconomics = await measuredGasEconomics({ provider, opportunity, funding, estimatedGasUnits });
+  if (!gasEconomics) {
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider,
+      'Fresh pre-broadcast gas economics could not be resolved from current fee data and live provider-mesh prices',
+      { exactCallPassed, exactGasEstimatePassed: true, estimatedGasUnits });
+    latest = result; deferrals++; return result;
+  }
+
+  const exactNetProfit = preBroadcastNetProfit(opportunity, gasEconomics.gasCostInputBaseUnits);
+  if (exactNetProfit <= 0n) {
+    const result = denied(opportunity, observedAt, funding, flashLoanProvider,
+      'Fresh exact gas repricing removed the strictly-positive all-in net profit; defer and re-quote',
+      {
+        exactCallPassed,
+        exactGasEstimatePassed: true,
+        estimatedGasUnits,
+        measuredFeePerGasWei: gasEconomics.feePerGasWei,
+        measuredGasCostInInputToken: gasEconomics.gasCostInputBaseUnits,
+        preBroadcastNetProfit: exactNetProfit,
+        failedAttemptExposure: gasEconomics.gasCostInputBaseUnits,
+      });
     latest = result; deferrals++; return result;
   }
 
   const age = quoteAgeFraction(opportunity, observedAt);
-  const barrierMultiple = dynamicBarrierMultiple(opportunity, age);
-  const estimatedGasUnits = BigInt(gas.value.toString());
-  const dynamicBarrier = multiplyCeil(nativeExposure, barrierMultiple);
-  const clearsHistoricalBarrier = nativeExposure <= 0n || opportunity.expectedProfit > dynamicBarrier;
+  if (Date.now() >= opportunity.expiresAt) {
+    const result = denied(opportunity, Date.now(), funding, flashLoanProvider,
+      'Opportunity expired while resolving exact pre-broadcast gas economics',
+      {
+        exactCallPassed,
+        exactGasEstimatePassed: true,
+        estimatedGasUnits,
+        measuredFeePerGasWei: gasEconomics.feePerGasWei,
+        measuredGasCostInInputToken: gasEconomics.gasCostInputBaseUnits,
+        preBroadcastNetProfit: exactNetProfit,
+        failedAttemptExposure: gasEconomics.gasCostInputBaseUnits,
+      });
+    latest = result; deferrals++; return result;
+  }
 
-  // Canonical positive all-in economics already admitted this opportunity. The
-  // former dynamic multiple is retained only to rank/learn from failed-attempt
-  // exposure; it no longer creates a second minimum-profit threshold.
+  const barrierMultiple = dynamicBarrierMultiple(opportunity, age);
+  const failedAttemptExposure = gasEconomics.gasCostInputBaseUnits;
+  const dynamicBarrier = multiplyCeil(failedAttemptExposure, barrierMultiple);
+  const clearsHistoricalBarrier = failedAttemptExposure <= 0n || exactNetProfit > dynamicBarrier;
+
+  // The exact gas-cost repricing above is a hard all-in economics gate. The
+  // historical dynamic multiple remains advisory and cannot create a second
+  // minimum-profit threshold once strict positive economics are proven.
   const result: DynamicAttemptBarrierDecision = {
     opportunityId: opportunity.id,
     chain: opportunity.chain,
     observedAt,
     approved: true,
-    reason: funding.mode === 'sponsored'
-      ? `Required ${flashLoanProvider} payload/gas/funding facts are current; eth_call and dynamic-attempt risk are advisory`
+    reason: funding.mode === 'sponsored' && funding.sponsorOperatorMonetaryCostProvenZero === true
+      ? `Required ${flashLoanProvider} payload/gas/funding facts are current and sponsorship cost is proven zero; dynamic-attempt risk is advisory`
       : clearsHistoricalBarrier
-        ? `Required ${flashLoanProvider} payload/gas/funding facts are current; advisory failed-attempt multiple is also cleared (${barrierMultiple.toFixed(3)}x)`
-        : `Required ${flashLoanProvider} payload/gas/funding facts are current; advisory failed-attempt multiple is not cleared (${barrierMultiple.toFixed(3)}x) but has no veto authority`,
+        ? `Required ${flashLoanProvider} payload/gas/funding facts and exact gas economics are current; advisory failed-attempt multiple is also cleared (${barrierMultiple.toFixed(3)}x)`
+        : `Required ${flashLoanProvider} payload/gas/funding facts and exact gas economics are current; advisory failed-attempt multiple is not cleared (${barrierMultiple.toFixed(3)}x) but has no veto authority`,
     fundingMode: funding.mode,
     flashLoanProvider,
     exactCallPassed,
     exactGasEstimatePassed: true,
     estimatedGasUnits,
+    measuredFeePerGasWei: gasEconomics.feePerGasWei,
+    measuredGasCostInInputToken: gasEconomics.gasCostInputBaseUnits,
+    preBroadcastNetProfit: exactNetProfit,
     expectedNetProfit: opportunity.expectedProfit,
-    failedAttemptExposure: nativeExposure,
+    failedAttemptExposure,
     dynamicBarrier,
-    profitToFailureExposureRatio: ratio(opportunity.expectedProfit, nativeExposure),
+    profitToFailureExposureRatio: ratio(exactNetProfit, failedAttemptExposure),
     quoteAgeFraction: age,
     confidence: opportunity.confidence,
     expectedSlippageBps: opportunity.expectedSlippageBps,
@@ -279,6 +433,7 @@ export function ensureZeroCapitalDynamicAttemptBarrierWiring(): void {
   logger.info('[ZeroCapitalBarrier] Compatibility installer retained without runtime mutation', {
     component: 'ZeroCapitalDynamicAttemptBarrier',
     validationAuthority: 'canonical_zero_capital_executor_direct_call',
+    exactGasEconomicsRequiredBeforeBroadcast: true,
     executeAndRecordMutation: false,
     executionAuthority: false,
   });
