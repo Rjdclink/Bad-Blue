@@ -13,10 +13,15 @@ assert.match(controller, /function topologyTaskWatchdogMs\(\): number/);
 assert.match(controller, /CRYPTOCRAWL_TOPOLOGY_TASK_WATCHDOG_MS/);
 assert.match(controller, /function withTopologyWatchdog<T>/);
 assert.match(controller, /private readonly topologyTasks = new Map<TopologyTaskKey, Promise<unknown>>\(\)/);
+assert.match(controller, /private readonly timedOutTopologyTasks = new Set<TopologyTaskKey>\(\)/);
 assert.match(controller, /private async runTopologyTask<T>/);
 assert.match(controller, /const reusedInFlight = Boolean\(tracked\)/);
-assert.match(controller, /if \(this\.topologyTasks\.get\(key\) === owned\) this\.topologyTasks\.delete\(key\)/);
+assert.match(controller, /if \(tracked && this\.timedOutTopologyTasks\.has\(key\)\)/);
+assert.match(controller, /controllerCycleBlockedByPendingTask: false/);
+assert.match(controller, /if \(this\.topologyTasks\.get\(key\) === owned\) \{[\s\S]{0,220}this\.topologyTasks\.delete\(key\);[\s\S]{0,220}this\.timedOutTopologyTasks\.delete\(key\);/);
 assert.match(controller, /await withTopologyWatchdog\(tracked, key\)/);
+assert.match(controller, /this\.timedOutTopologyTasks\.add\(key\)/);
+assert.match(controller, /futureCyclesWaitAgainOnSameHungTask: false/);
 assert.match(controller, /duplicateTaskSuppressedWhilePending: true/);
 
 // All producer families still begin concurrently, but each member is independently
@@ -28,8 +33,11 @@ assert.match(controller, /await Promise\.allSettled\(\[/);
 assert.match(controller, /private runScheduledCycle\(\): void/);
 assert.match(controller, /recurring schedule continues/);
 assert.match(controller, /\.finally\(\(\) => this\.scheduleNext\(\)\)/);
+assert.match(controller, /this\.markTopologyScanned\('CEX_CEX', cex\.status === 'fulfilled' && !cex\.value\.skipped/);
+assert.match(controller, /this\.markTopologyScanned\('MAKER_CEX', maker\.status === 'fulfilled' && !maker\.value\.skipped/);
 assert.match(controller, /isolatedPendingTopologyTasks: \[\.\.\.this\.topologyTasks\.keys\(\)\]/);
-assert.doesNotMatch(controller, /async function timedOptional</);
+assert.match(controller, /isolatedTimedOutTopologyTasks: \[\.\.\.this\.timedOutTopologyTasks\]/);
+assert.doesNotMatch(controller, /async function timedOptional/);
 
 // Liveness isolation is discovery-only and must not create an execution shortcut.
 assert.match(controller, /executionDispatchAuthority: 'canonical_execution_scheduler_only'/);
@@ -37,4 +45,4 @@ assert.match(controller, /discoveryMaySubmitTransactions: false/);
 assert.match(controller, /syntheticEvidenceAllowed: false/);
 assert.match(controller, /executionAuthority: false/);
 
-console.log('[multi-topology-discovery-liveness] PASS: each producer is independently bounded and single-flight, hung topology work cannot freeze the controller, recurring scheduling survives failures, and execution/evidence authority remains unchanged');
+console.log('[multi-topology-discovery-liveness] PASS: each producer is independently bounded and single-flight, previously timed-out work cannot reblock later cycles, recurring scheduling survives failures, and execution/evidence authority remains unchanged');
