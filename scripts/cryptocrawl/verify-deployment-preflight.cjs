@@ -71,5 +71,6 @@ require('./verify-final-evidence-route-resolution.cjs');
 require('./verify-minimum-sufficient-execution-evidence.cjs');
 require('./verify-first-pass-route-measurability.cjs');
 require('./verify-canonical-refresh-capability-authority.cjs');
+require('./verify-bps-zero-capital-event-handoff.cjs');
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, final evidence/route resolution, payout invariants, and single zero-capital route authority passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, final evidence/route resolution, payout invariants, and single zero-capital route authority passed; continuing to downstream prebuild/build');
