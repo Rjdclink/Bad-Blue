@@ -21,6 +21,8 @@ const engine = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
 const shadow = read('server/services/cryptocrawl/integration/zero-capital-shadow-priority-wiring.ts');
 const gasAuthority = read('server/services/cryptocrawl/runtime/zero-capital-gas-authority.ts');
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
+const configuredGasEconomics = read('server/services/cryptocrawl/discovery/configured-zero-capital-gas-economics.ts');
+const priceMesh = read('server/services/cryptocrawl/bridge/coingecko-client.ts');
 const routeQuoter = read('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts');
 const payloadBuilder = read('server/services/cryptocrawl/execution/adapters/onchain-payload-builder.ts');
 const routePlanner = read('server/services/cryptocrawl/execution/adapters/autonomous-route-planner.ts');
@@ -86,6 +88,35 @@ assert.match(engine, /monteCarloExecutionAuthority:\s*false/);
 
 assert.match(gasAuthority, /getProvenZeroCapitalGasFundingDecision/);
 assert.match(engine, /return getProvenZeroCapitalGasFundingDecision\(this, chain\)/);
+
+// Configured topology is not allowed to promote its static zero gas seed into BPS economics.
+// The exact funding decision and live market/gas evidence must be applied first, and the same
+// enriched route set must be reused by rescue requotes so sizing cannot erase gas cost.
+assert.match(engine, /enrichConfiguredZeroCapitalGasEconomics/);
+assert.match(engine, /const funding = await this\.getGasFundingDecision\(chain\);[\s\S]{0,300}enrichConfiguredZeroCapitalGasEconomics\(chain, provider, explicitRoutes, funding\)[\s\S]{0,300}quoteConfiguredZeroCapitalRoutesForChain\(chain, provider, gasEconomics\.routes\)/);
+assert.match(engine, /configuredRoutes: gasEconomics\.routes/);
+assert.match(engine, /zeroSeedPromotedToExecutableEconomics: false/);
+assert.match(configuredGasEconomics, /provider\.getFeeData\(\)/);
+assert.match(configuredGasEconomics, /coinGeckoPriceClient\.getLiveSymbolPrices\(\[nativeSymbol, \.\.\.inputSymbols\]\)/);
+assert.match(configuredGasEconomics, /funding\.mode === 'sponsored'/);
+assert.match(configuredGasEconomics, /funding\.paymentSource === 'provider_sponsored'/);
+assert.match(configuredGasEconomics, /funding\.sponsorOperatorMonetaryCostProvenZero === true/);
+assert.match(configuredGasEconomics, /funding\.providerBillingLiability === false/);
+assert.match(configuredGasEconomics, /funding\.mode === 'native' && funding\.paymentSource === 'system_owned_native'/);
+assert.match(configuredGasEconomics, /estimatedGasCostInInputToken: gasUsdToTokenBaseUnits/);
+assert.match(configuredGasEconomics, /ZERO_CAPITAL_CONFIGURED_EXECUTION_GAS_UNITS/);
+assert.match(configuredGasEconomics, /ZERO_CAPITAL_CONFIGURED_GAS_SAFETY_MULTIPLIER/);
+
+// Live USD conversion is alternate-first. CoinGecko is last-resort redundancy for symbols
+// the parallel CMC/CoinCap/Coinbase mesh did not cover; no first-provider price is authoritative.
+assert.match(priceMesh, /mergeLivePriceEvidence/);
+assert.match(priceMesh, /const median = values\.length % 2 === 1/);
+assert.match(priceMesh, /this\.fetchCoinMarketCapKeylessByCoinIds\(coinIds, vsCurrency\)/);
+assert.match(priceMesh, /this\.fetchCoinCapByCoinIds\(coinIds, vsCurrency\)/);
+assert.match(priceMesh, /this\.fetchCoinbaseByCoinIds\(coinIds, vsCurrency\)/);
+assert.match(priceMesh, /const missing = coinIds\.filter/);
+assert.match(priceMesh, /this\.fetchCoinGeckoByCoinIds\(missing, vsCurrency\)/);
+assert.doesNotMatch(priceMesh, /this\.fetchCoinGeckoByCoinIds\(coinIds, vsCurrency\)[\s\S]{0,600}Promise\.allSettled\(providerTasks\)/);
 
 assert.match(providerReprice, /measureFlashLoanProviders\(/);
 assert.match(providerReprice, /selectMeasuredFlashLoanProvider\(/);
@@ -201,6 +232,9 @@ console.log(JSON.stringify({
   zeroCapitalBpsPropagation: 'verified_on_single_canonical_pipeline',
   canonicalRouteAuthority: true,
   canonicalDiscoveryOwnsFreshMeasurement: true,
+  configuredRouteGasPricedBeforeBpsAdmission: true,
+  configuredRouteZeroGasRequiresProvenZeroOperatorCost: true,
+  livePriceMeshAlternateFirstCoinGeckoLastResort: true,
   canonicalProviderRepricingOwnsEligibilityPromotion: true,
   canonicalParentSchedulerOwnsDispatch: true,
   canonicalZeroCapitalExecutorOwnsMoneyBoundary: true,
