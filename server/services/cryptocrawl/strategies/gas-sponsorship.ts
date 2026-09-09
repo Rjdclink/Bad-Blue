@@ -52,9 +52,19 @@ function stripEip712Domain(types: Record<string, Array<{ name: string; type: str
   return rest;
 }
 
+function sponsorshipConfigurationFailure(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes('policy id(s) not found')
+    || normalized.includes('policy not found')
+    || normalized.includes('policy is not active')
+    || normalized.includes('network is not allowed');
+}
+
 export class AlchemyGasSponsorshipManager {
   private readonly apiKey: string;
   private readonly policyId: string;
+  private hardFailureReason: string | null = null;
+  private hardFailureObservedAt: number | null = null;
 
   constructor(environment: NodeJS.ProcessEnv = process.env) {
     this.apiKey = String(environment.ALCHEMY_API_KEY || '').trim();
@@ -72,7 +82,30 @@ export class AlchemyGasSponsorshipManager {
     if (!this.policyId) {
       return { ready: false, provider: 'alchemy-gas-manager', reason: 'ALCHEMY_GAS_POLICY_ID is not configured' };
     }
+    if (this.hardFailureReason) {
+      return {
+        ready: false,
+        provider: 'alchemy-gas-manager',
+        reason: `Alchemy sponsorship configuration failed live validation: ${this.hardFailureReason}`,
+      };
+    }
     return { ready: true, provider: 'alchemy-gas-manager' };
+  }
+
+  getRuntimeValidationState(): {
+    hardFailureReason: string | null;
+    hardFailureObservedAt: number | null;
+  } {
+    return {
+      hardFailureReason: this.hardFailureReason,
+      hardFailureObservedAt: this.hardFailureObservedAt,
+    };
+  }
+
+  private recordHardConfigurationFailure(message: string): void {
+    if (!sponsorshipConfigurationFailure(message)) return;
+    this.hardFailureReason = message;
+    this.hardFailureObservedAt = Date.now();
   }
 
   private async rpc<T>(method: string, params: unknown[], timeoutMs = 15_000): Promise<T> {
@@ -91,7 +124,9 @@ export class AlchemyGasSponsorshipManager {
       if (!response.ok) throw new Error(`Alchemy Wallet API HTTP ${response.status}`);
       const envelope = await response.json() as JsonRpcEnvelope<T>;
       if (envelope.error) {
-        throw new Error(`Alchemy Wallet API ${method} failed: ${envelope.error.message || envelope.error.code || 'unknown error'}`);
+        const message = `Alchemy Wallet API ${method} failed: ${envelope.error.message || envelope.error.code || 'unknown error'}`;
+        if (method === 'wallet_prepareCalls') this.recordHardConfigurationFailure(message);
+        throw new Error(message);
       }
       if (envelope.result === undefined) throw new Error(`Alchemy Wallet API ${method} returned no result`);
       return envelope.result;
