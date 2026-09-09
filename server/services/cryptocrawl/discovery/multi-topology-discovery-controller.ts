@@ -44,18 +44,47 @@ export interface MultiTopologyDiscoveryCycle {
   errors: string[];
 }
 
+type TopologyTaskKey = 'cex' | 'dex' | 'cross_chain' | 'mempool' | 'liquidation' | 'maker' | 'funding';
+
+interface TimedTopologyResult<T> {
+  value: T | null;
+  durationMs: number | null;
+  skipped: boolean;
+  reusedInFlight: boolean;
+}
+
+class TopologyTaskWatchdogError extends Error {
+  constructor(key: TopologyTaskKey, timeoutMs: number) {
+    super(`${key} topology discovery watchdog expired after ${timeoutMs}ms`);
+    this.name = 'TopologyTaskWatchdogError';
+  }
+}
+
 function elapsedMs(startedAt: bigint): number {
   return Number(process.hrtime.bigint() - startedAt) / 1_000_000;
 }
 
-async function timedOptional<T>(
-  enabled: boolean,
-  operation: () => Promise<T> | T,
-): Promise<{ value: T | null; durationMs: number | null; skipped: boolean }> {
-  if (!enabled) return { value: null, durationMs: null, skipped: true };
-  const startedAt = process.hrtime.bigint();
-  const value = await operation();
-  return { value, durationMs: elapsedMs(startedAt), skipped: false };
+function topologyTaskWatchdogMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_TOPOLOGY_TASK_WATCHDOG_MS || 90_000);
+  return Number.isFinite(parsed) ? Math.max(15_000, Math.min(180_000, Math.trunc(parsed))) : 90_000;
+}
+
+function withTopologyWatchdog<T>(task: Promise<T>, key: TopologyTaskKey): Promise<T> {
+  const timeoutMs = topologyTaskWatchdogMs();
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new TopologyTaskWatchdogError(key, timeoutMs)), timeoutMs);
+    timer.unref?.();
+    task.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      error => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 const TOPOLOGY_PHASE: Record<MeasuredOpportunityTopology, number> = {
@@ -78,15 +107,19 @@ class MultiTopologyDiscoveryController {
   private baseIntervalMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_MULTI_TOPOLOGY_SCAN_INTERVAL_MS || 15_000));
   private cycleSequence = 0;
   private readonly lastTopologyScanAt = new Map<MeasuredOpportunityTopology, number>();
+  private readonly topologyTasks = new Map<TopologyTaskKey, Promise<unknown>>();
 
   start(): void {
     if (this.running) return;
     this.running = true;
     this.baseIntervalMs = Math.max(5_000, Number(process.env.CRYPTOCRAWL_MULTI_TOPOLOGY_SCAN_INTERVAL_MS || 15_000));
-    void this.scanOnce().finally(() => this.scheduleNext());
+    this.runScheduledCycle();
     logger.info('[OpportunityGraph] Unified adaptive discovery controller started', {
       component: 'MultiTopologyDiscoveryController',
       baseIntervalMs: this.baseIntervalMs,
+      topologyTaskWatchdogMs: topologyTaskWatchdogMs(),
+      hungTopologyIsolation: true,
+      duplicateHungTopologySuppression: true,
       fixedTopologyPriority: false,
       adaptiveScanAllocationApplied: true,
       topologies: ['CEX_CEX', 'DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE'],
@@ -114,14 +147,65 @@ class MultiTopologyDiscoveryController {
     this.timer = null;
   }
 
+  private runScheduledCycle(): void {
+    void this.scanOnce()
+      .catch(error => {
+        logger.warn('[OpportunityGraph] Unified adaptive discovery cycle failed closed; recurring schedule continues', {
+          component: 'MultiTopologyDiscoveryController',
+          error: error instanceof Error ? error.message : String(error),
+          recurringSchedulePreserved: true,
+          executionAuthority: false,
+        });
+      })
+      .finally(() => this.scheduleNext());
+  }
+
   private scheduleNext(): void {
     if (!this.running) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;
-      void this.scanOnce().finally(() => this.scheduleNext());
+      this.runScheduledCycle();
     }, this.baseIntervalMs);
     this.timer.unref?.();
+  }
+
+  private async runTopologyTask<T>(
+    key: TopologyTaskKey,
+    enabled: boolean,
+    operation: () => Promise<T> | T,
+  ): Promise<TimedTopologyResult<T>> {
+    if (!enabled) return { value: null, durationMs: null, skipped: true, reusedInFlight: false };
+    const startedAt = process.hrtime.bigint();
+    let tracked = this.topologyTasks.get(key) as Promise<T> | undefined;
+    const reusedInFlight = Boolean(tracked);
+    if (!tracked) {
+      let owned!: Promise<T>;
+      owned = Promise.resolve()
+        .then(operation)
+        .finally(() => {
+          if (this.topologyTasks.get(key) === owned) this.topologyTasks.delete(key);
+        });
+      tracked = owned;
+      this.topologyTasks.set(key, owned as Promise<unknown>);
+    }
+
+    try {
+      const value = await withTopologyWatchdog(tracked, key);
+      return { value, durationMs: elapsedMs(startedAt), skipped: false, reusedInFlight };
+    } catch (error) {
+      if (error instanceof TopologyTaskWatchdogError) {
+        logger.warn('[OpportunityGraph] Topology discovery task exceeded its watchdog; other topologies and future controller cycles continue', {
+          component: 'MultiTopologyDiscoveryController',
+          topologyTask: key,
+          timeoutMs: topologyTaskWatchdogMs(),
+          reusedInFlight,
+          duplicateTaskSuppressedWhilePending: true,
+          executionAuthority: false,
+        });
+      }
+      throw error;
+    }
   }
 
   /**
@@ -195,17 +279,18 @@ class MultiTopologyDiscoveryController {
       // CEX, maker and funding discovery remain independent and start immediately.
       const rpcReady = ensureDynamicRpcProviderWiring();
 
-      // Producers selected for this cycle still start in the same event-loop turn;
-      // adaptive cadence only reduces search-resource pressure and never changes
-      // execution, governance, settlement or evidence authority.
+      // Every selected producer is bounded independently. Promise.allSettled alone
+      // cannot finish while any member remains permanently pending, so each task has
+      // a watchdog and a single-flight identity. A timed-out underlying task remains
+      // isolated and cannot be duplicated until it eventually settles.
       const [cex, dex, cross, mempool, liquidation, maker, funding] = await Promise.allSettled([
-        timedOptional(runCex, () => measuredOpportunityGraph.scanOnce()),
-        timedOptional(runDex, async () => { await rpcReady; return discoverMeasuredDexCandidates(); }),
-        timedOptional(runCross, async () => { await rpcReady; return discoverMeasuredCrossChainCandidates(); }),
-        timedOptional(runMempool, async () => { await rpcReady; return discoverMeasuredMempoolCandidates(); }),
-        timedOptional(runLiquidation, async () => { await rpcReady; return discoverMeasuredLiquidationCandidates(); }),
-        timedOptional(runMaker, () => discoverMeasuredMakerCandidates()),
-        timedOptional(runFunding, () => fundingRateMonitor.scanOnce()),
+        this.runTopologyTask('cex', runCex, () => measuredOpportunityGraph.scanOnce()),
+        this.runTopologyTask('dex', runDex, async () => { await rpcReady; return discoverMeasuredDexCandidates(); }),
+        this.runTopologyTask('cross_chain', runCross, async () => { await rpcReady; return discoverMeasuredCrossChainCandidates(); }),
+        this.runTopologyTask('mempool', runMempool, async () => { await rpcReady; return discoverMeasuredMempoolCandidates(); }),
+        this.runTopologyTask('liquidation', runLiquidation, async () => { await rpcReady; return discoverMeasuredLiquidationCandidates(); }),
+        this.runTopologyTask('maker', runMaker, () => discoverMeasuredMakerCandidates()),
+        this.runTopologyTask('funding', runFunding, () => fundingRateMonitor.scanOnce()),
       ]);
 
       this.markTopologyScanned('CEX_CEX', runCex, startedAt);
@@ -289,6 +374,8 @@ class MultiTopologyDiscoveryController {
         cycleId,
         durationMs: completedAt - startedAt,
         durationMsByTopology,
+        topologyTaskWatchdogMs: topologyTaskWatchdogMs(),
+        isolatedPendingTopologyTasks: [...this.topologyTasks.keys()],
         fixedTopologyPriority: false,
         adaptiveScanAllocationApplied: true,
         skippedTopologies,
