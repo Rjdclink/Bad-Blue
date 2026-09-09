@@ -8,7 +8,11 @@ import { buildFeeSurfaceHyperdynamicStrategyPlan, type FeeSurfaceHyperdynamicStr
 import { buildHyperdynamicBpsPlan, type HyperdynamicBpsInput, type HyperdynamicBpsPlan } from '../optimization/hyperdynamic-bps-solution-engine.js';
 import { buildMarginalBpsAllocation, type MarginalBpsAllocation } from '../optimization/marginal-bps-allocator.js';
 import { getCexFourModeSnapshot } from './cex-four-mode-observability-wiring.js';
-import { getZeroCapitalRecoverySnapshot } from './zero-capital-recovery-observability.js';
+import {
+  ensureZeroCapitalRecoveryObservability,
+  getZeroCapitalRecoverySnapshot,
+  onZeroCapitalRecoveryUpdate,
+} from './zero-capital-recovery-observability.js';
 
 export interface BpsCompressionMeshSnapshot {
   observedAt: number;
@@ -54,8 +58,11 @@ export interface BpsCompressionMeshSnapshot {
   syntheticEvidenceAllowed: false;
 }
 
+let installed = false;
 let latest: BpsCompressionMeshSnapshot | null = null;
 let timer: NodeJS.Timeout | null = null;
+let recoveryRefreshTimer: NodeJS.Timeout | null = null;
+let unsubscribeRecoveryUpdate: (() => void) | null = null;
 
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
@@ -382,13 +389,38 @@ export function getBpsCompressionMeshSnapshot(): BpsCompressionMeshSnapshot | nu
   } : null;
 }
 
+function scheduleRecoveryDrivenRefresh(): void {
+  if (recoveryRefreshTimer) return;
+  recoveryRefreshTimer = setTimeout(() => {
+    recoveryRefreshTimer = null;
+    refreshBpsCompressionMesh();
+  }, 50);
+  recoveryRefreshTimer.unref?.();
+}
+
 export function ensureBpsCompressionMesh(): void {
-  if (timer || process.env.CRYPTOCRAWL_BPS_COMPRESSION_MESH_ENABLED === 'false') return;
+  if (installed || process.env.CRYPTOCRAWL_BPS_COMPRESSION_MESH_ENABLED === 'false') return;
+  installed = true;
   ensureOkxRpiFeeAdvisory();
+  // Recovery is the canonical zero-capital projection consumed by this mesh.
+  // Ensure it is current before the first BPS snapshot, then react to its
+  // measured-candidate-driven updates instead of waiting for unrelated polls.
+  ensureZeroCapitalRecoveryObservability();
+  unsubscribeRecoveryUpdate = onZeroCapitalRecoveryUpdate(() => scheduleRecoveryDrivenRefresh());
   refreshBpsCompressionMesh();
   if (process.env.NO_INTERVALS !== 'true') {
     const intervalMs = bounded(process.env.CRYPTOCRAWL_BPS_COMPRESSION_MESH_INTERVAL_MS, 15_000, 5_000, 120_000);
     timer = setInterval(refreshBpsCompressionMesh, intervalMs);
     timer.unref?.();
   }
+}
+
+export function stopBpsCompressionMeshForTests(): void {
+  if (timer) clearInterval(timer);
+  if (recoveryRefreshTimer) clearTimeout(recoveryRefreshTimer);
+  timer = null;
+  recoveryRefreshTimer = null;
+  unsubscribeRecoveryUpdate?.();
+  unsubscribeRecoveryUpdate = null;
+  installed = false;
 }
