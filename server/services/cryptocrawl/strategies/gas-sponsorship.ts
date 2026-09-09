@@ -36,6 +36,8 @@ interface JsonRpcEnvelope<T> {
   error?: { code?: number; message?: string; data?: unknown };
 }
 
+type SponsorshipHardFailure = { reason: string; observedAt: number };
+
 function requireHexAddress(label: string, value: string): string {
   if (!/^0x[a-fA-F0-9]{40}$/.test(value)) throw new Error(`${label} must be a valid EVM address`);
   return value;
@@ -63,8 +65,7 @@ function sponsorshipConfigurationFailure(message: string): boolean {
 export class AlchemyGasSponsorshipManager {
   private readonly apiKey: string;
   private readonly policyId: string;
-  private hardFailureReason: string | null = null;
-  private hardFailureObservedAt: number | null = null;
+  private readonly hardFailuresByChainId = new Map<number, SponsorshipHardFailure>();
 
   constructor(environment: NodeJS.ProcessEnv = process.env) {
     this.apiKey = String(environment.ALCHEMY_API_KEY || '').trim();
@@ -75,37 +76,41 @@ export class AlchemyGasSponsorshipManager {
     return this.apiKey.length > 0 && this.policyId.length > 0;
   }
 
-  getReadiness(): GasSponsorshipReadiness {
+  getReadiness(chainId?: number): GasSponsorshipReadiness {
     if (!this.apiKey) {
       return { ready: false, provider: 'alchemy-gas-manager', reason: 'ALCHEMY_API_KEY is not configured' };
     }
     if (!this.policyId) {
       return { ready: false, provider: 'alchemy-gas-manager', reason: 'ALCHEMY_GAS_POLICY_ID is not configured' };
     }
-    if (this.hardFailureReason) {
-      return {
-        ready: false,
-        provider: 'alchemy-gas-manager',
-        reason: `Alchemy sponsorship configuration failed live validation: ${this.hardFailureReason}`,
-      };
+    if (chainId !== undefined) {
+      const failure = this.hardFailuresByChainId.get(chainId);
+      if (failure) {
+        return {
+          ready: false,
+          provider: 'alchemy-gas-manager',
+          reason: `Alchemy sponsorship failed live validation for chain ${chainId}: ${failure.reason}`,
+        };
+      }
     }
     return { ready: true, provider: 'alchemy-gas-manager' };
   }
 
   getRuntimeValidationState(): {
-    hardFailureReason: string | null;
-    hardFailureObservedAt: number | null;
+    hardFailuresByChainId: Array<{ chainId: number; reason: string; observedAt: number }>;
   } {
     return {
-      hardFailureReason: this.hardFailureReason,
-      hardFailureObservedAt: this.hardFailureObservedAt,
+      hardFailuresByChainId: [...this.hardFailuresByChainId.entries()].map(([chainId, failure]) => ({
+        chainId,
+        reason: failure.reason,
+        observedAt: failure.observedAt,
+      })),
     };
   }
 
-  private recordHardConfigurationFailure(message: string): void {
+  private recordHardConfigurationFailure(chainId: number, message: string): void {
     if (!sponsorshipConfigurationFailure(message)) return;
-    this.hardFailureReason = message;
-    this.hardFailureObservedAt = Date.now();
+    this.hardFailuresByChainId.set(chainId, { reason: message, observedAt: Date.now() });
   }
 
   private async rpc<T>(method: string, params: unknown[], timeoutMs = 15_000): Promise<T> {
@@ -124,9 +129,7 @@ export class AlchemyGasSponsorshipManager {
       if (!response.ok) throw new Error(`Alchemy Wallet API HTTP ${response.status}`);
       const envelope = await response.json() as JsonRpcEnvelope<T>;
       if (envelope.error) {
-        const message = `Alchemy Wallet API ${method} failed: ${envelope.error.message || envelope.error.code || 'unknown error'}`;
-        if (method === 'wallet_prepareCalls') this.recordHardConfigurationFailure(message);
-        throw new Error(message);
+        throw new Error(`Alchemy Wallet API ${method} failed: ${envelope.error.message || envelope.error.code || 'unknown error'}`);
       }
       if (envelope.result === undefined) throw new Error(`Alchemy Wallet API ${method} returned no result`);
       return envelope.result;
@@ -200,6 +203,8 @@ export class AlchemyGasSponsorshipManager {
   }): Promise<SponsoredExecutionResult> {
     if (!Number.isSafeInteger(input.chainId) || input.chainId <= 0) throw new Error('chainId must be a positive integer');
     if (!Array.isArray(input.calls) || input.calls.length === 0) throw new Error('At least one sponsored call is required');
+    const readiness = this.getReadiness(input.chainId);
+    if (!readiness.ready) throw new Error(readiness.reason || `Alchemy Gas Manager is unavailable on chain ${input.chainId}`);
 
     const from = requireHexAddress('wallet.address', input.wallet.address);
     const calls = input.calls.map((call, index) => ({
@@ -208,14 +213,21 @@ export class AlchemyGasSponsorshipManager {
       value: toHexValue(call.value),
     }));
 
-    const prepared = await this.rpc<any>('wallet_prepareCalls', [{
-      calls,
-      from,
-      chainId: ethers.utils.hexValue(input.chainId),
-      capabilities: {
-        paymasterService: { policyId: this.policyId },
-      },
-    }]);
+    let prepared: any;
+    try {
+      prepared = await this.rpc<any>('wallet_prepareCalls', [{
+        calls,
+        from,
+        chainId: ethers.utils.hexValue(input.chainId),
+        capabilities: {
+          paymasterService: { policyId: this.policyId },
+        },
+      }]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.recordHardConfigurationFailure(input.chainId, message);
+      throw error;
+    }
 
     const signed = await this.signPreparedCalls(input.wallet, prepared, input.chainId);
     const sendResult = await this.rpc<any>('wallet_sendPreparedCalls', [signed]);
