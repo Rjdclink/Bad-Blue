@@ -15,7 +15,13 @@ assert.match(verifier, /governance\.completeAdvisoryCycle\('system', 'arb_verifi
 
 // All original deterministic authorities remain in the one reused batch path.
 assert.match(verifier, /primeCexFeeEvidence\(economicsSymbols\)/);
-assert.match(verifier, /quantityFractions = \[0\.02, 0\.05/);
+const quantityFractionsMatch = verifier.match(/const quantityFractions = \[([^\]]+)\]/);
+assert(quantityFractionsMatch, 'CEX depth-aware quantity ladder must remain explicit');
+assert.deepEqual(
+  quantityFractionsMatch[1].split(',').map(value => Number(value.trim())),
+  [0.02, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1],
+  '2% micro-notional support may only extend, not replace or reorder, the proven sizing ladder',
+);
 assert.match(verifier, /topSpreadBps <= breakEvenBps/);
 assert.match(verifier, /candidate\.netProfitUsd > bestPlan\.netProfitUsd/);
 
