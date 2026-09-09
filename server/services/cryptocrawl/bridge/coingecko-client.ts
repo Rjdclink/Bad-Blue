@@ -54,6 +54,10 @@ const DEFAULT_PRICE_CONSENSUS_WINDOW_MS = Math.max(
   0,
   Math.min(1_000, Number(process.env.LIVE_PRICE_CONSENSUS_WINDOW_MS || 250)),
 );
+const DEFAULT_PRIMARY_PRICE_WAIT_MS = Math.max(
+  250,
+  Math.min(3_000, Number(process.env.LIVE_PRICE_PRIMARY_WAIT_MS || 1_250)),
+);
 const DEFAULT_COINGECKO_COOLDOWN_MS = Math.max(
   30_000,
   Number(process.env.COINGECKO_FAILURE_COOLDOWN_MS || 300_000),
@@ -66,6 +70,12 @@ function positivePrice(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+/**
+ * Merge independent live price evidence by robust consensus. Provider array order
+ * carries no authority: a website cannot become the price source merely because
+ * it responded first. With three or more observations, obvious 20% outliers are
+ * discarded before the median is selected.
+ */
 export function mergeLivePriceEvidence(
   coinIds: ReadonlyArray<string>,
   providerPrices: ReadonlyArray<Record<string, number>>,
@@ -84,11 +94,6 @@ export function mergeLivePriceEvidence(
     const consistent = values.length >= 3
       ? values.filter(value => Math.abs(value - median) / median <= 0.2)
       : values;
-    const primary = positivePrice(providerPrices[0]?.[coinId]);
-    if (primary !== null && (values.length < 3 || Math.abs(primary - median) / median <= 0.2)) {
-      merged[coinId] = primary;
-      continue;
-    }
     const selected = consistent.length > 0 ? consistent : values;
     const selectedMidpoint = Math.floor(selected.length / 2);
     merged[coinId] = selected.length % 2 === 1
@@ -171,10 +176,10 @@ class CoinGeckoPriceClient {
       if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
       const payload = await fetchJsonWithRetry<Record<string, { [currency: string]: number }>>(url, {
         init: { headers },
-        maxRetries: 2,
+        maxRetries: 1,
         baseDelayMs: 750,
-        maxDelayMs: 5000,
-        timeoutMs: 8000,
+        maxDelayMs: 2_000,
+        timeoutMs: 5_000,
       });
 
       const normalized: Record<string, number> = {};
@@ -199,10 +204,10 @@ class CoinGeckoPriceClient {
     const url = `${CMC_KEYLESS_BASE}/v3/cryptocurrency/quotes/latest?id=${encodeURIComponent(ids)}&convert=USD&skip_invalid=true`;
     const payload = await fetchJsonWithRetry<any>(url, {
       init: { headers: { accept: 'application/json' } },
-      maxRetries: 3,
-      baseDelayMs: 750,
-      maxDelayMs: 8000,
-      timeoutMs: 8000,
+      maxRetries: 2,
+      baseDelayMs: 500,
+      maxDelayMs: 2_000,
+      timeoutMs: 4_000,
     });
     return normalizeCoinMarketCapQuotes(payload, requested);
   }
@@ -221,10 +226,10 @@ class CoinGeckoPriceClient {
     const ids = [...new Set(requested.map(entry => entry.assetId))].join(',');
     const payload = await fetchJsonWithRetry<any>(`${baseUrl}/assets?ids=${encodeURIComponent(ids)}`, {
       init: { headers: { accept: 'application/json', Authorization: `Bearer ${apiKey}` } },
-      maxRetries: 2,
+      maxRetries: 1,
       baseDelayMs: 300,
-      maxDelayMs: 2_000,
-      timeoutMs: 5_000,
+      maxDelayMs: 1_500,
+      timeoutMs: 3_500,
     });
     const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
     const byAssetId = new Map<string, number>();
@@ -252,9 +257,9 @@ class CoinGeckoPriceClient {
       const payload = await fetchJsonWithRetry<any>(`${COINBASE_EXCHANGE_BASE}/products/${encodeURIComponent(entry.product)}/ticker`, {
         init: { headers: { accept: 'application/json' } },
         maxRetries: 1,
-        baseDelayMs: 250,
-        maxDelayMs: 1_000,
-        timeoutMs: 4_000,
+        baseDelayMs: 200,
+        maxDelayMs: 750,
+        timeoutMs: 2_500,
       });
       const price = positivePrice(payload?.price);
       return price === null ? null : { coinId: entry.coinId, price };
@@ -266,44 +271,61 @@ class CoinGeckoPriceClient {
     return normalized;
   }
 
+  /**
+   * Direct/exchange and alternate-provider observations are started in parallel.
+   * CoinGecko is an absolute redundancy: it is contacted only for symbols the
+   * primary mesh could not resolve inside a bounded low-latency window.
+   */
   private async fetchLivePriceMesh(coinIds: string[], vsCurrency: string): Promise<Record<string, number>> {
-    const requestKey = this.buildCacheKey(coinIds, vsCurrency);
-    const unavailableUntil = this.coinGeckoUnavailableUntilByRequest.get(requestKey) || 0;
-    const coinGeckoTask = Date.now() >= unavailableUntil
-      ? this.fetchCoinGeckoByCoinIds(coinIds, vsCurrency).then(prices => {
-          if (Object.keys(prices).length > 0) this.coinGeckoUnavailableUntilByRequest.delete(requestKey);
-          return prices;
-        }).catch(() => {
-          this.coinGeckoUnavailableUntilByRequest.set(requestKey, Date.now() + DEFAULT_COINGECKO_COOLDOWN_MS);
-          return {};
-        })
-      : Promise.resolve({});
-    const providerTasks = [
-      coinGeckoTask,
+    const primaryTasks = [
+      this.fetchCoinbaseByCoinIds(coinIds, vsCurrency),
       this.fetchCoinMarketCapKeylessByCoinIds(coinIds, vsCurrency),
       this.fetchCoinCapByCoinIds(coinIds, vsCurrency),
-      this.fetchCoinbaseByCoinIds(coinIds, vsCurrency),
     ];
-    const providerPrices: Record<string, number>[] = providerTasks.map(() => ({}));
+    const primaryPrices: Record<string, number>[] = primaryTasks.map(() => ({}));
     let firstUsableResolved = false;
     let resolveFirstUsable!: () => void;
     const firstUsable = new Promise<void>(resolve => { resolveFirstUsable = resolve; });
-    const tracked = providerTasks.map((task, index) => task.then(prices => {
-      providerPrices[index] = prices;
+    const tracked = primaryTasks.map((task, index) => task.then(prices => {
+      primaryPrices[index] = prices;
       if (!firstUsableResolved && Object.keys(prices).length > 0) {
         firstUsableResolved = true;
         resolveFirstUsable();
       }
     }).catch(() => undefined));
     const allSettled = Promise.allSettled(tracked).then(() => undefined);
-    await Promise.race([firstUsable, allSettled]);
+
+    await Promise.race([
+      firstUsable,
+      allSettled,
+      new Promise(resolve => setTimeout(resolve, DEFAULT_PRIMARY_PRICE_WAIT_MS)),
+    ]);
     if (firstUsableResolved) {
       await Promise.race([
         allSettled,
         new Promise(resolve => setTimeout(resolve, DEFAULT_PRICE_CONSENSUS_WINDOW_MS)),
       ]);
     }
-    return mergeLivePriceEvidence(coinIds, providerPrices);
+
+    const primaryMerged = mergeLivePriceEvidence(coinIds, primaryPrices);
+    const missingCoinIds = coinIds.filter(coinId => primaryMerged[coinId] === undefined);
+    if (missingCoinIds.length === 0) return primaryMerged;
+
+    const requestKey = this.buildCacheKey(missingCoinIds, vsCurrency);
+    const unavailableUntil = this.coinGeckoUnavailableUntilByRequest.get(requestKey) || 0;
+    if (Date.now() < unavailableUntil) return primaryMerged;
+
+    const coinGeckoPrices = await this.fetchCoinGeckoByCoinIds(missingCoinIds, vsCurrency)
+      .then(prices => {
+        if (Object.keys(prices).length > 0) this.coinGeckoUnavailableUntilByRequest.delete(requestKey);
+        return prices;
+      })
+      .catch(() => {
+        this.coinGeckoUnavailableUntilByRequest.set(requestKey, Date.now() + DEFAULT_COINGECKO_COOLDOWN_MS);
+        return {};
+      });
+
+    return mergeLivePriceEvidence(coinIds, [...primaryPrices, coinGeckoPrices]);
   }
 
   private async fetchByCoinIds(coinIds: string[], vsCurrency: string = 'usd'): Promise<Record<string, number>> {
@@ -382,4 +404,6 @@ class CoinGeckoPriceClient {
   }
 }
 
+// Historical export name retained to avoid broad call-site churn. The implementation
+// is a provider-neutral live-price mesh; CoinGecko is redundancy only.
 export const coinGeckoPriceClient = new CoinGeckoPriceClient();
