@@ -2,6 +2,7 @@ export type CryptoCrawlerCexVenue =
   | 'coinbase'
   | 'kraken'
   | 'okx'
+  | 'kalshi'
   | 'binance'
   | 'kucoin'
   | 'bybit'
@@ -26,8 +27,12 @@ export interface VenueCapability {
 /**
  * Capability means the codebase has an end-to-end implementation, not that a
  * particular runtime account is ready. Runtime permission, authenticated fee,
- * exact-product market data, inventory, governance and settlement evidence still
- * fail closed independently for every plan.
+ * exact-product market data, inventory/capital provenance, governance and
+ * settlement evidence still fail closed independently for every plan.
+ *
+ * The historical type name is retained for compatibility, but Kalshi is included
+ * because it is a canonical exchange venue for prediction-event and margin/funding
+ * topologies. It is deliberately NOT added to the spot-CEX quote-venue helper.
  */
 const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = Object.freeze({
   coinbase: Object.freeze({
@@ -39,7 +44,7 @@ const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = O
     authenticatedFeeEvidence: true,
     liveExecution: true,
     settlementVerification: true,
-    reason: 'Advanced Trade quote, authenticated fee, IOC execution, inventory reconciliation, and terminal settlement path; runtime credentials and permissions remain fail-closed',
+    reason: 'Advanced Trade quote, authenticated fee, IOC/maker execution, inventory reconciliation, and terminal settlement path; runtime credentials and permissions remain fail-closed',
   }),
   kraken: Object.freeze({
     venue: 'kraken',
@@ -62,6 +67,17 @@ const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = O
     liveExecution: true,
     settlementVerification: true,
     reason: 'current production CEX quote, fee, execution, and settlement path',
+  }),
+  kalshi: Object.freeze({
+    venue: 'kalshi',
+    enabled: true,
+    publicDiscovery: true,
+    executableQuotes: true,
+    measuredOrderBook: true,
+    authenticatedFeeEvidence: true,
+    liveExecution: true,
+    settlementVerification: true,
+    reason: 'canonical Kalshi prediction-event and margin/funding discovery, exact order-book/fee evidence, authenticated lifecycle adapters, system-owned-capital gates, order recovery, and terminal settlement; runtime product entitlement and topology-specific capital still fail closed',
   }),
   binance: Object.freeze({
     venue: 'binance', enabled: true, publicDiscovery: true, executableQuotes: false,
@@ -113,6 +129,11 @@ export function getVenueCapabilities(): ReadonlyArray<Readonly<VenueCapability>>
   return Object.values(CAPABILITIES).map(capability => ({ ...capability }));
 }
 
+/**
+ * Spot-CEX arbitrage remains intentionally restricted to the three settlement-
+ * safe spot adapters. Kalshi is routed through its own prediction/funding
+ * lifecycle and must never be cast into the spot-CEX executor.
+ */
 export function getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'> {
   return (['coinbase', 'kraken', 'okx'] as const).filter(venue => {
     const capability = CAPABILITIES[venue];
