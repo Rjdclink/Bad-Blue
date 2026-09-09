@@ -57,6 +57,26 @@ function requireAddress(label: string, value: string): string {
   return ethers.utils.getAddress(value);
 }
 
+export function resolveProtocolAnchorPool(
+  protocol: ProtocolAnchorProtocol,
+  tokenIn: string,
+  tokenOut: string,
+  configuredPool?: string,
+): string {
+  if (configuredPool) return requireAddress('protocol anchor pool', configuredPool);
+  const A = ETHEREUM_PROTOCOL_ANCHORS;
+  if (protocol === 'fluidDexT1') {
+    const isPair = (sameAddress(tokenIn, A.gho) && sameAddress(tokenOut, A.usdc))
+      || (sameAddress(tokenIn, A.usdc) && sameAddress(tokenOut, A.gho));
+    if (!isPair) throw new Error('Fluid anchor target inference supports only the reviewed GHO/USDC pool');
+    return A.fluidGhoUsdc;
+  }
+  const other = sameAddress(tokenIn, A.gho) ? tokenOut : sameAddress(tokenOut, A.gho) ? tokenIn : '';
+  if (sameAddress(other, A.usdc)) return A.gsmUsdc;
+  if (sameAddress(other, A.usdt)) return A.gsmUsdt;
+  throw new Error('Aave GHO GSM target inference supports only reviewed USDC/USDT modules');
+}
+
 function requireEthereumAnchorLeg(leg: ProtocolAnchorLeg): void {
   requireAddress('protocol anchor pool', leg.pool);
   requireAddress('protocol anchor tokenIn', leg.tokenIn);
