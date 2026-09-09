@@ -10,6 +10,15 @@ const payload = read('server/services/cryptocrawl/execution/adapters/onchain-pay
 const planner = read('server/services/cryptocrawl/execution/adapters/autonomous-route-planner.ts');
 const receiver = read('contracts/cryptocrawl/CryptocrawlBalancerFlashLoanReceiver.sol');
 
+// Current Aave Ethereum address-book truth. Legacy direct-underlying GSM addresses
+// must not silently return because current Gsm4626 UNDERLYING_ASSET is StataToken.
+assert.match(adapter, /0x3A3868898305f04beC7FEa77BecFf04C13444112/);
+assert.match(adapter, /0x882285E62656b9623AF136Ce3078c6BdCc33F5E3/);
+assert.match(adapter, /0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E/);
+assert.match(adapter, /0x7Bc3485026Ac48b6cf9BaF0A377477Fff5703Af8/);
+assert.doesNotMatch(adapter, /0xFeeb6FE430B7523fEF2a38327241eE7153779535/i);
+assert.doesNotMatch(adapter, /0x535b2f7C20B9C83d70e519cf9991578eF9816B7B/i);
+
 assert.match(adapter, /getAssetAmountForBuyAsset/);
 assert.match(adapter, /getGhoAmountForSellAsset/);
 assert.match(adapter, /getAvailableLiquidity/);
@@ -17,11 +26,22 @@ assert.match(adapter, /getAvailableUnderlyingExposure/);
 assert.match(adapter, /canSwap/);
 assert.match(adapter, /getIsFrozen/);
 assert.match(adapter, /getIsSeized/);
+assert.match(adapter, /previewDeposit/);
+assert.match(adapter, /previewRedeem/);
+assert.match(adapter, /maxDeposit/);
+assert.match(adapter, /function asset\(\)/);
+assert.match(adapter, /quoteStata/);
+assert.match(adapter, /wrapUsdc/);
+assert.match(adapter, /unwrapUsdc/);
+assert.match(adapter, /wrapUsdt/);
+assert.match(adapter, /unwrapUsdt/);
 assert.match(adapter, /FluidDexSwapResult\(uint256\)/);
 assert.match(adapter, /provider\.call/);
 assert.match(adapter, /resolveProtocolAnchorPool/);
 assert.match(adapter, /Unreviewed Aave GHO GSM address/);
+assert.match(adapter, /Unreviewed Aave StataToken vault address/);
 assert.match(adapter, /Unreviewed Fluid GHO\/USDC pool address/);
+assert.match(adapter, /Gsm4626/);
 assert.doesNotMatch(adapter, /assumed.*1:1|hard.?coded.*10\s*BPS/i);
 
 for (const routeId of [
@@ -32,6 +52,13 @@ for (const routeId of [
   'anchor-ethereum-usdt-gsm-gho-fluid-usdc-usdt',
   'anchor-ethereum-usdt-usdc-fluid-gho-gsm-usdt',
 ]) assert.match(adapter, new RegExp(routeId));
+
+// Route definitions must explicitly traverse raw stable <-> StataToken rather than
+// pretending a current Remote GSM accepts raw USDC/USDT.
+assert.match(adapter, /fluidUsdcToGho, gsmGhoToStataUsdc, unwrapUsdc/);
+assert.match(adapter, /wrapUsdc, gsmStataUsdcToGho, fluidGhoToUsdc/);
+assert.match(adapter, /fluidUsdcToGho, gsmGhoToStataUsdt, unwrapUsdt, usdtToUsdc/);
+assert.match(adapter, /usdcToUsdt, wrapUsdt, gsmStataUsdtToGho, fluidGhoToUsdc/);
 
 assert.match(quoter, /defaultEthereumProtocolAnchorRoutes/);
 assert.match(quoter, /quoteProtocolAnchorLeg/);
@@ -56,7 +83,11 @@ assert.match(receiver, /require\(allowedApprovalTokens\[step\.approvalToken\], "
 console.log(JSON.stringify({
   ok: true,
   protocolAnchorRoutes: 6,
+  currentRemoteGsmAddresses: true,
+  currentStataTokenWrappers: true,
+  legacyGsmAddressesRejected: true,
   liveGsmEconomics: true,
+  liveStataConversion: true,
   fluidCallSimulation: true,
   exactAnchorHandoff: true,
   canonicalStrictPositiveProfitPreserved: true,

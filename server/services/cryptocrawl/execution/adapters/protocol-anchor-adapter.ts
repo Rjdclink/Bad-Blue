@@ -3,12 +3,23 @@ import logger from '../../../logger.js';
 
 export type ProtocolAnchorProtocol = 'aaveGhoGsm' | 'fluidDexT1';
 
+/**
+ * Current Ethereum GHO protocol-anchor surfaces.
+ *
+ * Aave's current mainnet GSMs are Gsm4626 deployments: their UNDERLYING_ASSET is
+ * the Aave ERC4626 StataToken share, not raw USDC/USDT. Raw stablecoins must
+ * therefore be wrapped/unwrapped through the reviewed StataToken vault around
+ * the GSM leg. Addresses are current Aave address-book values; live contract
+ * identity/state remains authoritative at quote time.
+ */
 export const ETHEREUM_PROTOCOL_ANCHORS = {
   gho: '0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f',
   usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
   usdt: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-  gsmUsdc: '0xFeeb6FE430B7523fEF2a38327241eE7153779535',
-  gsmUsdt: '0x535b2f7C20B9C83d70e519cf9991578eF9816B7B',
+  gsmUsdc: '0x3A3868898305f04beC7FEa77BecFf04C13444112',
+  gsmUsdt: '0x882285E62656b9623AF136Ce3078c6BdCc33F5E3',
+  stataUsdc: '0xD4fa2D31b7968E448877f69A96DE69f5de8cD23E',
+  stataUsdt: '0x7Bc3485026Ac48b6cf9BaF0A377477Fff5703Af8',
   fluidGhoUsdc: '0xdE632C3a214D5f14C1d8ddF0b92F8BCd188fee45',
 } as const;
 
@@ -27,6 +38,15 @@ const GSM_ABI = [
   'function getGhoAmountForSellAsset(uint256 maxAssetAmount) view returns (uint256 assetAmount, uint256 ghoAmount, uint256 grossAmount, uint256 fee)',
   'function buyAsset(uint256 minAmount, address receiver) returns (uint256 assetAmount, uint256 ghoAmount)',
   'function sellAsset(uint256 maxAmount, address receiver) returns (uint256 assetAmount, uint256 ghoAmount)',
+];
+
+const STATA_ABI = [
+  'function asset() view returns (address)',
+  'function previewDeposit(uint256 assets) view returns (uint256 shares)',
+  'function previewRedeem(uint256 shares) view returns (uint256 assets)',
+  'function maxDeposit(address receiver) view returns (uint256 assets)',
+  'function deposit(uint256 assets, address receiver) returns (uint256 shares)',
+  'function redeem(uint256 shares, address receiver, address owner) returns (uint256 assets)',
 ];
 
 const FLUID_DEX_ABI = [
@@ -58,6 +78,18 @@ function requireAddress(label: string, value: string): string {
   return ethers.utils.getAddress(value);
 }
 
+function reviewedStataForRaw(raw: string): string | null {
+  if (sameAddress(raw, ETHEREUM_PROTOCOL_ANCHORS.usdc)) return ETHEREUM_PROTOCOL_ANCHORS.stataUsdc;
+  if (sameAddress(raw, ETHEREUM_PROTOCOL_ANCHORS.usdt)) return ETHEREUM_PROTOCOL_ANCHORS.stataUsdt;
+  return null;
+}
+
+function reviewedRawForStata(stata: string): string | null {
+  if (sameAddress(stata, ETHEREUM_PROTOCOL_ANCHORS.stataUsdc)) return ETHEREUM_PROTOCOL_ANCHORS.usdc;
+  if (sameAddress(stata, ETHEREUM_PROTOCOL_ANCHORS.stataUsdt)) return ETHEREUM_PROTOCOL_ANCHORS.usdt;
+  return null;
+}
+
 export function resolveProtocolAnchorPool(
   protocol: ProtocolAnchorProtocol,
   tokenIn: string,
@@ -72,10 +104,21 @@ export function resolveProtocolAnchorPool(
     if (!isPair) throw new Error('Fluid anchor target inference supports only the reviewed GHO/USDC pool');
     return A.fluidGhoUsdc;
   }
-  const other = sameAddress(tokenIn, A.gho) ? tokenOut : sameAddress(tokenOut, A.gho) ? tokenIn : '';
-  if (sameAddress(other, A.usdc)) return A.gsmUsdc;
-  if (sameAddress(other, A.usdt)) return A.gsmUsdt;
-  throw new Error('Aave GHO GSM target inference supports only reviewed USDC/USDT modules');
+
+  // Current Gsm4626 modules exchange GHO <-> StataToken shares.
+  if ((sameAddress(tokenIn, A.gho) && sameAddress(tokenOut, A.stataUsdc))
+    || (sameAddress(tokenOut, A.gho) && sameAddress(tokenIn, A.stataUsdc))) return A.gsmUsdc;
+  if ((sameAddress(tokenIn, A.gho) && sameAddress(tokenOut, A.stataUsdt))
+    || (sameAddress(tokenOut, A.gho) && sameAddress(tokenIn, A.stataUsdt))) return A.gsmUsdt;
+
+  // The same protocol family also owns the required raw stable <-> StataToken
+  // wrapper legs so the existing canonical route/executor authority is reused.
+  if ((sameAddress(tokenIn, A.usdc) && sameAddress(tokenOut, A.stataUsdc))
+    || (sameAddress(tokenOut, A.usdc) && sameAddress(tokenIn, A.stataUsdc))) return A.stataUsdc;
+  if ((sameAddress(tokenIn, A.usdt) && sameAddress(tokenOut, A.stataUsdt))
+    || (sameAddress(tokenOut, A.usdt) && sameAddress(tokenIn, A.stataUsdt))) return A.stataUsdt;
+
+  throw new Error('Aave GHO GSM target inference supports only reviewed GHO/StataToken and raw/StataToken pairs');
 }
 
 function requireEthereumAnchorLeg(leg: ProtocolAnchorLeg): void {
@@ -86,8 +129,8 @@ function requireEthereumAnchorLeg(leg: ProtocolAnchorLeg): void {
 }
 
 function knownGsmUnderlying(pool: string): string | null {
-  if (sameAddress(pool, ETHEREUM_PROTOCOL_ANCHORS.gsmUsdc)) return ETHEREUM_PROTOCOL_ANCHORS.usdc;
-  if (sameAddress(pool, ETHEREUM_PROTOCOL_ANCHORS.gsmUsdt)) return ETHEREUM_PROTOCOL_ANCHORS.usdt;
+  if (sameAddress(pool, ETHEREUM_PROTOCOL_ANCHORS.gsmUsdc)) return ETHEREUM_PROTOCOL_ANCHORS.stataUsdc;
+  if (sameAddress(pool, ETHEREUM_PROTOCOL_ANCHORS.gsmUsdt)) return ETHEREUM_PROTOCOL_ANCHORS.stataUsdt;
   return null;
 }
 
@@ -98,8 +141,26 @@ function validateKnownGsmLeg(leg: ProtocolAnchorLeg): { ghoIn: boolean; underlyi
   const ghoOut = sameAddress(leg.tokenOut, ETHEREUM_PROTOCOL_ANCHORS.gho);
   if (ghoIn === ghoOut) throw new Error('Aave GHO GSM leg must contain exactly one GHO side');
   const other = ghoIn ? leg.tokenOut : leg.tokenIn;
-  if (!sameAddress(other, underlying)) throw new Error('Aave GHO GSM underlying does not match reviewed module');
+  if (!sameAddress(other, underlying)) throw new Error('Aave GHO GSM underlying does not match reviewed StataToken module');
   return { ghoIn, underlying };
+}
+
+function validateStataLeg(leg: ProtocolAnchorLeg): { rawIn: boolean; raw: string; stata: string } {
+  const pool = requireAddress('Aave StataToken vault', leg.pool);
+  const rawFromPool = reviewedRawForStata(pool);
+  if (!rawFromPool) throw new Error('Unreviewed Aave StataToken vault address');
+  const stata = reviewedStataForRaw(rawFromPool);
+  if (!stata || !sameAddress(stata, pool)) throw new Error('Aave StataToken registry mismatch');
+
+  const rawIn = sameAddress(leg.tokenIn, rawFromPool) && sameAddress(leg.tokenOut, stata);
+  const sharesIn = sameAddress(leg.tokenIn, stata) && sameAddress(leg.tokenOut, rawFromPool);
+  if (!rawIn && !sharesIn) throw new Error('Aave StataToken wrapper leg does not match reviewed raw/share pair');
+  return { rawIn, raw: rawFromPool, stata };
+}
+
+function isReviewedStataPool(pool: string): boolean {
+  return sameAddress(pool, ETHEREUM_PROTOCOL_ANCHORS.stataUsdc)
+    || sameAddress(pool, ETHEREUM_PROTOCOL_ANCHORS.stataUsdt);
 }
 
 function validateFluidGhoUsdcLeg(leg: ProtocolAnchorLeg): boolean {
@@ -183,6 +244,35 @@ async function quoteGsm(provider: providers.Provider, leg: ProtocolAnchorLeg, am
   return ghoAmount;
 }
 
+async function quoteStata(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
+  const { rawIn, raw } = validateStataLeg(leg);
+  const vault = new Contract(leg.pool, STATA_ABI, provider);
+  if (rawIn) {
+    const [asset, sharesRaw, maxDepositRaw] = await Promise.all([
+      vault.asset() as Promise<string>,
+      vault.previewDeposit(amountIn),
+      vault.maxDeposit(DEAD),
+    ]);
+    if (!sameAddress(asset, raw)) throw new Error('Aave StataToken live asset identity does not match reviewed raw stablecoin');
+    const shares = BigNumber.from(sharesRaw);
+    const maxDeposit = BigNumber.from(maxDepositRaw);
+    if (shares.lte(0) || maxDeposit.lt(amountIn)) throw new Error('Aave StataToken deposit capacity is insufficient');
+    return shares;
+  }
+
+  const [asset, assetsRaw] = await Promise.all([
+    vault.asset() as Promise<string>,
+    vault.previewRedeem(amountIn),
+  ]);
+  if (!sameAddress(asset, raw)) throw new Error('Aave StataToken live asset identity does not match reviewed raw stablecoin');
+  const assets = BigNumber.from(assetsRaw);
+  if (assets.lte(0)) throw new Error('Aave StataToken redeem preview returned no assets');
+  // Exact withdrawal liquidity is rechecked by the canonical pre-broadcast full
+  // receiver simulation because maxRedeem(owner) is balance-dependent before the
+  // preceding GSM leg has minted the shares into the receiver.
+  return assets;
+}
+
 async function quoteFluid(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
   const swap0to1 = validateFluidGhoUsdcLeg(leg);
   const iface = new ethers.utils.Interface(FLUID_DEX_ABI);
@@ -199,6 +289,12 @@ async function quoteFluid(provider: providers.Provider, leg: ProtocolAnchorLeg, 
   }
 }
 
+async function quoteAaveAnchor(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
+  return isReviewedStataPool(leg.pool)
+    ? quoteStata(provider, leg, amountIn)
+    : quoteGsm(provider, leg, amountIn);
+}
+
 export async function quoteProtocolAnchorLeg(
   provider: providers.Provider,
   leg: ProtocolAnchorLeg,
@@ -209,7 +305,7 @@ export async function quoteProtocolAnchorLeg(
     requireEthereumAnchorLeg(leg);
     if (amountIn.lte(0)) throw new Error('Protocol anchor quote amount must be positive');
     const amountOut = leg.protocol === 'aaveGhoGsm'
-      ? await quoteGsm(provider, leg, amountIn)
+      ? await quoteAaveAnchor(provider, leg, amountIn)
       : await quoteFluid(provider, leg, amountIn);
     logger.info('[ProtocolAnchor] Exact live anchor leg quoted', {
       component: 'ProtocolAnchorAdapter',
@@ -256,6 +352,21 @@ export function buildProtocolAnchorCall(input: {
   if (amountIn.lte(0) || minAmountOut.lte(0)) throw new Error('Protocol anchor execution amounts must be positive');
 
   if (input.leg.protocol === 'aaveGhoGsm') {
+    if (isReviewedStataPool(input.leg.pool)) {
+      const { rawIn } = validateStataLeg(input.leg);
+      const iface = new ethers.utils.Interface(STATA_ABI);
+      return {
+        target: ethers.utils.getAddress(input.leg.pool),
+        data: rawIn
+          ? iface.encodeFunctionData('deposit', [amountIn, recipient])
+          : iface.encodeFunctionData('redeem', [amountIn, recipient, recipient]),
+        value: '0',
+        gasLimit: 400000,
+        approvalToken: ethers.utils.getAddress(input.leg.tokenIn),
+        approvalAmount: amountIn.toString(),
+      };
+    }
+
     const { ghoIn } = validateKnownGsmLeg(input.leg);
     const iface = new ethers.utils.Interface(GSM_ABI);
     return {
@@ -310,21 +421,26 @@ export function defaultEthereumProtocolAnchorRoutes() {
     minNetProfitBps: 0,
     legs,
   });
+
   const fluidUsdcToGho = { protocol: 'fluidDexT1', tokenIn: A.usdc, tokenOut: A.gho, pool: A.fluidGhoUsdc, fee: 0 };
   const fluidGhoToUsdc = { protocol: 'fluidDexT1', tokenIn: A.gho, tokenOut: A.usdc, pool: A.fluidGhoUsdc, fee: 0 };
-  const gsmUsdcToGho = { protocol: 'aaveGhoGsm', tokenIn: A.usdc, tokenOut: A.gho, pool: A.gsmUsdc, fee: 0 };
-  const gsmGhoToUsdc = { protocol: 'aaveGhoGsm', tokenIn: A.gho, tokenOut: A.usdc, pool: A.gsmUsdc, fee: 0 };
-  const gsmUsdtToGho = { protocol: 'aaveGhoGsm', tokenIn: A.usdt, tokenOut: A.gho, pool: A.gsmUsdt, fee: 0 };
-  const gsmGhoToUsdt = { protocol: 'aaveGhoGsm', tokenIn: A.gho, tokenOut: A.usdt, pool: A.gsmUsdt, fee: 0 };
+  const wrapUsdc = { protocol: 'aaveGhoGsm', tokenIn: A.usdc, tokenOut: A.stataUsdc, pool: A.stataUsdc, fee: 0 };
+  const unwrapUsdc = { protocol: 'aaveGhoGsm', tokenIn: A.stataUsdc, tokenOut: A.usdc, pool: A.stataUsdc, fee: 0 };
+  const wrapUsdt = { protocol: 'aaveGhoGsm', tokenIn: A.usdt, tokenOut: A.stataUsdt, pool: A.stataUsdt, fee: 0 };
+  const unwrapUsdt = { protocol: 'aaveGhoGsm', tokenIn: A.stataUsdt, tokenOut: A.usdt, pool: A.stataUsdt, fee: 0 };
+  const gsmStataUsdcToGho = { protocol: 'aaveGhoGsm', tokenIn: A.stataUsdc, tokenOut: A.gho, pool: A.gsmUsdc, fee: 0 };
+  const gsmGhoToStataUsdc = { protocol: 'aaveGhoGsm', tokenIn: A.gho, tokenOut: A.stataUsdc, pool: A.gsmUsdc, fee: 0 };
+  const gsmStataUsdtToGho = { protocol: 'aaveGhoGsm', tokenIn: A.stataUsdt, tokenOut: A.gho, pool: A.gsmUsdt, fee: 0 };
+  const gsmGhoToStataUsdt = { protocol: 'aaveGhoGsm', tokenIn: A.gho, tokenOut: A.stataUsdt, pool: A.gsmUsdt, fee: 0 };
   const usdcToUsdt = { protocol: 'uniswapV3', tokenIn: A.usdc, tokenOut: A.usdt, feeTier: 100, fee: 0.0001 };
   const usdtToUsdc = { protocol: 'uniswapV3', tokenIn: A.usdt, tokenOut: A.usdc, feeTier: 100, fee: 0.0001 };
 
   return [
-    usdc('anchor-ethereum-usdc-fluid-gho-gsm-usdc', [fluidUsdcToGho, gsmGhoToUsdc]),
-    usdc('anchor-ethereum-usdc-gsm-gho-fluid-usdc', [gsmUsdcToGho, fluidGhoToUsdc]),
-    usdc('anchor-ethereum-usdc-fluid-gho-gsm-usdt-usdc', [fluidUsdcToGho, gsmGhoToUsdt, usdtToUsdc]),
-    usdc('anchor-ethereum-usdc-usdt-gsm-gho-fluid-usdc', [usdcToUsdt, gsmUsdtToGho, fluidGhoToUsdc]),
-    usdt('anchor-ethereum-usdt-gsm-gho-fluid-usdc-usdt', [gsmUsdtToGho, fluidGhoToUsdc, usdcToUsdt]),
-    usdt('anchor-ethereum-usdt-usdc-fluid-gho-gsm-usdt', [usdtToUsdc, fluidUsdcToGho, gsmGhoToUsdt]),
+    usdc('anchor-ethereum-usdc-fluid-gho-gsm-usdc', [fluidUsdcToGho, gsmGhoToStataUsdc, unwrapUsdc]),
+    usdc('anchor-ethereum-usdc-gsm-gho-fluid-usdc', [wrapUsdc, gsmStataUsdcToGho, fluidGhoToUsdc]),
+    usdc('anchor-ethereum-usdc-fluid-gho-gsm-usdt-usdc', [fluidUsdcToGho, gsmGhoToStataUsdt, unwrapUsdt, usdtToUsdc]),
+    usdc('anchor-ethereum-usdc-usdt-gsm-gho-fluid-usdc', [usdcToUsdt, wrapUsdt, gsmStataUsdtToGho, fluidGhoToUsdc]),
+    usdt('anchor-ethereum-usdt-gsm-gho-fluid-usdc-usdt', [wrapUsdt, gsmStataUsdtToGho, fluidGhoToUsdc, usdcToUsdt]),
+    usdt('anchor-ethereum-usdt-usdc-fluid-gho-gsm-usdt', [usdtToUsdc, fluidUsdcToGho, gsmGhoToStataUsdt, unwrapUsdt]),
   ];
 }
