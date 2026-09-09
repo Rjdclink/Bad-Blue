@@ -108,6 +108,7 @@ class MultiTopologyDiscoveryController {
   private cycleSequence = 0;
   private readonly lastTopologyScanAt = new Map<MeasuredOpportunityTopology, number>();
   private readonly topologyTasks = new Map<TopologyTaskKey, Promise<unknown>>();
+  private readonly timedOutTopologyTasks = new Set<TopologyTaskKey>();
 
   start(): void {
     if (this.running) return;
@@ -120,6 +121,7 @@ class MultiTopologyDiscoveryController {
       topologyTaskWatchdogMs: topologyTaskWatchdogMs(),
       hungTopologyIsolation: true,
       duplicateHungTopologySuppression: true,
+      previouslyTimedOutTasksSkippedWithoutReblockingController: true,
       fixedTopologyPriority: false,
       adaptiveScanAllocationApplied: true,
       topologies: ['CEX_CEX', 'DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE'],
@@ -179,12 +181,31 @@ class MultiTopologyDiscoveryController {
     const startedAt = process.hrtime.bigint();
     let tracked = this.topologyTasks.get(key) as Promise<T> | undefined;
     const reusedInFlight = Boolean(tracked);
+
+    // Once a task has already exceeded its watchdog, do not make every later
+    // controller cycle spend another full watchdog interval waiting on the same
+    // unresolved promise. Keep it isolated and single-flight until it settles;
+    // healthy topologies continue at the normal recurring cadence.
+    if (tracked && this.timedOutTopologyTasks.has(key)) {
+      logger.debug('[OpportunityGraph] Previously timed-out topology task remains isolated; current controller cycle skips it without duplicate work', {
+        component: 'MultiTopologyDiscoveryController',
+        topologyTask: key,
+        duplicateTaskSuppressedWhilePending: true,
+        controllerCycleBlockedByPendingTask: false,
+        executionAuthority: false,
+      });
+      return { value: null, durationMs: 0, skipped: true, reusedInFlight: true };
+    }
+
     if (!tracked) {
       let owned!: Promise<T>;
       owned = Promise.resolve()
         .then(operation)
         .finally(() => {
-          if (this.topologyTasks.get(key) === owned) this.topologyTasks.delete(key);
+          if (this.topologyTasks.get(key) === owned) {
+            this.topologyTasks.delete(key);
+            this.timedOutTopologyTasks.delete(key);
+          }
         });
       tracked = owned;
       this.topologyTasks.set(key, owned as Promise<unknown>);
@@ -195,12 +216,14 @@ class MultiTopologyDiscoveryController {
       return { value, durationMs: elapsedMs(startedAt), skipped: false, reusedInFlight };
     } catch (error) {
       if (error instanceof TopologyTaskWatchdogError) {
+        this.timedOutTopologyTasks.add(key);
         logger.warn('[OpportunityGraph] Topology discovery task exceeded its watchdog; other topologies and future controller cycles continue', {
           component: 'MultiTopologyDiscoveryController',
           topologyTask: key,
           timeoutMs: topologyTaskWatchdogMs(),
           reusedInFlight,
           duplicateTaskSuppressedWhilePending: true,
+          futureCyclesWaitAgainOnSameHungTask: false,
           executionAuthority: false,
         });
       }
@@ -226,8 +249,8 @@ class MultiTopologyDiscoveryController {
     return (this.cycleSequence + TOPOLOGY_PHASE[topology]) % stride === 0;
   }
 
-  private markTopologyScanned(topology: MeasuredOpportunityTopology, enabled: boolean, now: number): void {
-    if (enabled) this.lastTopologyScanAt.set(topology, now);
+  private markTopologyScanned(topology: MeasuredOpportunityTopology, successful: boolean, now: number): void {
+    if (successful) this.lastTopologyScanAt.set(topology, now);
   }
 
   async scanOnce(): Promise<MultiTopologyDiscoveryCycle> {
@@ -293,13 +316,13 @@ class MultiTopologyDiscoveryController {
         this.runTopologyTask('funding', runFunding, () => fundingRateMonitor.scanOnce()),
       ]);
 
-      this.markTopologyScanned('CEX_CEX', runCex, startedAt);
-      this.markTopologyScanned('DEX_ATOMIC', runDex, startedAt);
-      this.markTopologyScanned('CROSS_CHAIN', runCross, startedAt);
-      this.markTopologyScanned('MEMPOOL_BACKRUN', runMempool, startedAt);
-      this.markTopologyScanned('LIQUIDATION', runLiquidation, startedAt);
-      this.markTopologyScanned('MAKER_CEX', runMaker, startedAt);
-      this.markTopologyScanned('FUNDING_ARBITRAGE', runFunding, startedAt);
+      this.markTopologyScanned('CEX_CEX', cex.status === 'fulfilled' && !cex.value.skipped, startedAt);
+      this.markTopologyScanned('DEX_ATOMIC', dex.status === 'fulfilled' && !dex.value.skipped, startedAt);
+      this.markTopologyScanned('CROSS_CHAIN', cross.status === 'fulfilled' && !cross.value.skipped, startedAt);
+      this.markTopologyScanned('MEMPOOL_BACKRUN', mempool.status === 'fulfilled' && !mempool.value.skipped, startedAt);
+      this.markTopologyScanned('LIQUIDATION', liquidation.status === 'fulfilled' && !liquidation.value.skipped, startedAt);
+      this.markTopologyScanned('MAKER_CEX', maker.status === 'fulfilled' && !maker.value.skipped, startedAt);
+      this.markTopologyScanned('FUNDING_ARBITRAGE', funding.status === 'fulfilled' && !funding.value.skipped, startedAt);
 
       if (cex.status === 'fulfilled' && cex.value.value) {
         cexCandidates = cex.value.value.deterministicPositive;
@@ -376,6 +399,7 @@ class MultiTopologyDiscoveryController {
         durationMsByTopology,
         topologyTaskWatchdogMs: topologyTaskWatchdogMs(),
         isolatedPendingTopologyTasks: [...this.topologyTasks.keys()],
+        isolatedTimedOutTopologyTasks: [...this.timedOutTopologyTasks],
         fixedTopologyPriority: false,
         adaptiveScanAllocationApplied: true,
         skippedTopologies,
