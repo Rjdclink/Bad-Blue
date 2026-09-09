@@ -8,8 +8,17 @@ export interface StrictZeroCapitalGasContext {
   providers: Map<SupportedChain, providers.JsonRpcProvider>;
   executionWallets: Map<SupportedChain, Wallet>;
   dynamicChainConfigs: Map<Exclude<SupportedChain, 'europa'>, DynamicChainConfig>;
-  gasSponsor: { getReadiness: () => { ready: boolean } };
+  gasSponsor: { getReadiness: (chainId?: number) => { ready: boolean; reason?: string } };
 }
+
+const EVM_CHAIN_IDS: Partial<Record<SupportedChain, number>> = {
+  ethereum: 1,
+  polygon: 137,
+  arbitrum: 42161,
+  optimism: 10,
+  bsc: 56,
+  avalanche: 43114,
+};
 
 const latestDecisions = new Map<SupportedChain, GasFundingDecision>();
 
@@ -40,6 +49,11 @@ export function getLatestProvenZeroCapitalGasFundingDecisions(): GasFundingDecis
  * wallet/provider reading with the durable system-native ownership ledger. It
  * never rewrites engine methods and it never promotes configured sponsorship to
  * zero-operator-cost proof without independent billing evidence.
+ *
+ * Sponsorship readiness is chain-local and incorporates live Wallet-API policy
+ * failures learned by the sponsorship manager. If an exact policy/network path
+ * proves invalid, subsequent decisions on that chain fall through to proven
+ * system-owned native gas rather than repeatedly selecting a broken sponsor.
  */
 export async function getProvenZeroCapitalGasFundingDecision(
   runtime: StrictZeroCapitalGasContext,
@@ -76,13 +90,18 @@ export async function getProvenZeroCapitalGasFundingDecision(
 
   try {
     const nativeBalance = (await provider.getBalance(wallet.address)).toBigInt();
-    const sponsorReady = runtime.gasSponsor.getReadiness().ready === true;
+    const chainId = EVM_CHAIN_IDS[chain];
+    const sponsorReadiness = runtime.gasSponsor.getReadiness(chainId);
+    const sponsorReady = sponsorReadiness.ready === true;
     const unproven = chooseGasFundingMode(config, nativeBalance, sponsorReady, {
       sponsorOperatorMonetaryCostProvenZero: false,
       nativeSystemOwnedProven: false,
     });
 
     if (nativeBalance < unproven.reserveFloor || unproven.reserveFloor <= 0n) {
+      if (!sponsorReady && config.sponsoredBootstrap && sponsorReadiness.reason) {
+        unproven.reason = `${unproven.reason}; sponsorLiveValidation=${sponsorReadiness.reason}`;
+      }
       return rememberDecision(chain, unproven);
     }
     const authority = await getSystemNativeGasAuthority({
@@ -90,10 +109,14 @@ export async function getProvenZeroCapitalGasFundingDecision(
       wallet: wallet.address,
       minimumWei: unproven.reserveFloor.toString(),
     });
-    return rememberDecision(chain, chooseGasFundingMode(config, nativeBalance, sponsorReady, {
+    const proven = chooseGasFundingMode(config, nativeBalance, sponsorReady, {
       sponsorOperatorMonetaryCostProvenZero: false,
       nativeSystemOwnedProven: authority !== null && BigInt(authority.spendableWei) >= unproven.reserveFloor,
-    }));
+    });
+    if (!sponsorReady && config.sponsoredBootstrap && sponsorReadiness.reason) {
+      proven.reason = `${proven.reason}; sponsorLiveValidation=${sponsorReadiness.reason}`;
+    }
+    return rememberDecision(chain, proven);
   } catch (error) {
     return rememberDecision(chain, {
       chain,
