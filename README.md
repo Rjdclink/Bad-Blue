@@ -2,7 +2,7 @@
 
 # Bad-Blue
 
-### LegalWhat + CryptoCrawler
+### LegalWhat + T.H.W.A.R.T.
 
 **Two distinct product systems. One governed intelligence codebase.**
 
@@ -20,7 +20,7 @@ Bad-Blue contains **two primary product systems intentionally separated by domai
 | System | Purpose | Primary intelligence | Critical boundary |
 |---|---|---|---|
 | **LegalWhat** | Legal assistance, evidence analysis, legal research, drafting, public-record/accountability workflows | **LEXARA / ALEXARA**, F.M.I., C.A.D.E. | Legal intelligence does **not** receive crypto/blockchain execution authority |
-| **CryptoCrawler** | Market observation, arbitrage discovery, deterministic economics, probabilistic assessment, governance, execution architecture, settlement, learning | **CRYPTARA**, CryptoCrawler canonical runtime, QuantiComp/Monte Carlo | Market intelligence does **not** receive legal-data authority |
+| **T.H.W.A.R.T.** | Market observation, arbitrage discovery, deterministic economics, probabilistic assessment, governance, execution architecture, settlement, learning | **CRYPTARA**, T.H.W.A.R.T. canonical runtime, QuantiComp/Monte Carlo | Market intelligence does **not** receive legal-data authority |
 
 They may reuse shared infrastructure—compute routing, persistence, provider governance, observability, and orchestration—but they are **not one blended application**.
 
@@ -44,8 +44,8 @@ They may reuse shared infrastructure—compute routing, persistence, provider go
 - [Architecture: Two Systems, Shared Infrastructure](#architecture-two-systems-shared-infrastructure)
 - [LegalWhat](#legalwhat)
 - [LEXARA Legal Brain](#lexara-legal-brain)
-- [CryptoCrawler](#cryptocrawler)
-- [CryptoCrawler Compute Stack](#cryptocrawler-compute-stack)
+- [T.H.W.A.R.T.](#thwart)
+- [T.H.W.A.R.T. Compute Stack](#thwart-compute-stack)
 - [Market Proximity + Low-Latency Fabric](#market-proximity--low-latency-fabric)
 - [QuantiComp — Expanded Quantitative Compute Architecture](#quanticomp--expanded-quantitative-compute-architecture)
 - [CRYPTARA](#cryptara)
@@ -89,7 +89,7 @@ flowchart LR
         CADE --> LO["Legal Work Product"]
     end
 
-    subgraph CRYPTO["CRYPTOCRAWLER DOMAIN"]
+    subgraph CRYPTO["T.H.W.A.R.T. DOMAIN"]
         MD["Live Market Evidence"] --> DISC["Canonical Discovery"]
         DISC --> ECON["Deterministic Economics"]
         ECON --> CTX["CRYPTARA + Evidence"]
@@ -190,7 +190,7 @@ The legal brain is intentionally isolated from the crypto domain:
 
 - no crypto exchange authority;
 - no blockchain transaction authority;
-- no CryptoCrawler execution authority;
+- no T.H.W.A.R.T. execution authority;
 - no market-execution decision authority.
 
 ---
@@ -218,9 +218,9 @@ LEXARA's separation of evidence, law, inference, drafting, and user-facing synth
 
 ---
 
-# CryptoCrawler
+# T.H.W.A.R.T.
 
-**CryptoCrawler** is the cryptocurrency market-intelligence and execution-architecture side of Bad-Blue.
+**T.H.W.A.R.T.** (**Trading Heuristic With Adaptive Reasoning & Tactics**) is the cryptocurrency market-intelligence and execution-architecture side of Bad-Blue.
 
 It is a multi-topology architecture spanning:
 
@@ -245,7 +245,7 @@ It is a multi-topology architecture spanning:
 - payout/retained-capital treasury handling;
 - calibration and bounded adaptation.
 
-## Canonical CryptoCrawler Flow
+## Canonical T.H.W.A.R.T. Flow
 
 ```mermaid
 flowchart TD
@@ -303,7 +303,7 @@ Probabilistic analysis, Aries advice, Nix-Gen ordering, BPS-reduction tactics, o
 
 ## BPS Integrity
 
-CryptoCrawler uses basis points for high-resolution economics:
+T.H.W.A.R.T. uses basis points for high-resolution economics:
 
 - **1 BPS = 0.01%**
 - **100 BPS = 1%**
@@ -312,7 +312,7 @@ Current hardening includes exact strictly-positive handling below one whole basi
 
 ---
 
-# CryptoCrawler Compute Stack
+# T.H.W.A.R.T. Compute Stack
 
 The compute subsystem is more than just QuantiComp. It contains a **Reactor → Battery → Router → Antenna/Beam → QuantiComp** pattern, with a separate database-pressure/COMP hierarchy for shared state.
 
@@ -376,7 +376,7 @@ Some optimization interfaces remain implementation-dependent; the README does no
 
 # Market Proximity + Low-Latency Fabric
 
-CryptoCrawler also contains a distinct **software-defined market-proximity fabric** whose purpose is to minimize avoidable application-side latency around market observation and transaction submission.
+T.H.W.A.R.T. also contains a distinct **software-defined market-proximity fabric** whose purpose is to minimize avoidable application-side latency around market observation and transaction submission.
 
 It is best understood as a **near-colocation software analogue**: the code attempts to keep critical market-data work extremely close to the live transport path, preserve warm connections, select region-compatible endpoints, avoid unnecessary compute hops, and fan an already-signed transaction outward across multiple submission paths. It does **not** claim physical rack-level exchange colocation unless the deployment itself actually provides it.
 
@@ -506,7 +506,7 @@ A Quanti workload is expected to provide both an execution function and a valida
 
 # CRYPTARA
 
-**CRYPTARA** is CryptoCrawler's adaptive market-intelligence and decision-support brain.
+**CRYPTARA** is T.H.W.A.R.T.'s adaptive market-intelligence and decision-support brain.
 
 She is not the exchange, wallet, canonical scheduler, canonical executor, or settlement authority. Her role is to turn market evidence and realized outcomes into assessments, priorities, and bounded predictive preparation without silently acquiring transaction authority.
 
@@ -630,7 +630,7 @@ The persistent adaptive surface is intentionally narrow: current code scopes ada
 
 # Aries Vault + Edge Formation Reactor
 
-**Aries Vault** is CryptoCrawler's horizon-aware profitability and execution-intelligence layer. It sits between raw candidate economics and later governance/intelligence layers and asks a broader question than “is the spread positive right now?”
+**Aries Vault** is T.H.W.A.R.T.'s horizon-aware profitability and execution-intelligence layer. It sits between raw candidate economics and later governance/intelligence layers and asks a broader question than “is the spread positive right now?”
 
 > **What is the horizon-adjusted, risk-adjusted, capacity-aware value of acting now, waiting, changing execution mode, changing size, changing route, or acquiring more information?**
 
@@ -665,7 +665,7 @@ These are probability/quality inputs; they do not silently convert post-only exe
 
 ## Aries Edge Formation Reactor
 
-The **Aries Edge Formation Reactor** changes the optimization target from merely reducing execution drag to increasing the rate at which CryptoCrawler discovers genuinely executable high-dislocation opportunities.
+The **Aries Edge Formation Reactor** changes the optimization target from merely reducing execution drag to increasing the rate at which T.H.W.A.R.T. discovers genuinely executable high-dislocation opportunities.
 
 It does not create edge by assumption. It is designed to:
 
@@ -696,7 +696,7 @@ flowchart LR
 
 # Nix-Gen Global Opportunity Allocation
 
-**Nix-Gen** is CryptoCrawler's additive global opportunity-allocation layer. It compares already-authoritative profitable opportunities under shared scarce resources and improves scheduling/resource decisions without becoming a second economics, governance, execution, settlement, treasury, payout, or learning authority.
+**Nix-Gen** is T.H.W.A.R.T.'s additive global opportunity-allocation layer. It compares already-authoritative profitable opportunities under shared scarce resources and improves scheduling/resource decisions without becoming a second economics, governance, execution, settlement, treasury, payout, or learning authority.
 
 ## Nix-Gen Implemented Architecture
 
@@ -752,7 +752,7 @@ Nix-Gen does not read signer private keys, submit transactions, move treasury fu
 
 # BPS Reduction + Economic Transformation Stack
 
-CryptoCrawler contains a dedicated family of systems for understanding **where BPS is being lost**, which losses are structurally reducible, which near-misses are transformable, and which tactics deserve compute/resources.
+T.H.W.A.R.T. contains a dedicated family of systems for understanding **where BPS is being lost**, which losses are structurally reducible, which near-misses are transformable, and which tactics deserve compute/resources.
 
 ## BPS Reduction Super Engine
 
@@ -811,7 +811,7 @@ Separate optimization modules include adaptive profitability-search policy and a
 
 # Risk, Profit Ladder + Governance Stack
 
-CryptoCrawler's governance surface contains more than one generic “risk gate.” Distinct modules separate stage progression, scaling, sizing, drawdown/risk controls, treasury barriers, and execution safety.
+T.H.W.A.R.T.'s governance surface contains more than one generic “risk gate.” Distinct modules separate stage progression, scaling, sizing, drawdown/risk controls, treasury barriers, and execution safety.
 
 ## Profit Ladder
 
@@ -847,13 +847,13 @@ Risk intelligence can reduce or block exposure where it owns that boundary; it d
 
 # Worker + Data-Plane Hierarchy
 
-CryptoCrawler has a real worker hierarchy around compute/data pressure and hot/cold database access. It is not simply “the app talks to Supabase.”
+T.H.W.A.R.T. has a real worker hierarchy around compute/data pressure and hot/cold database access. It is not simply “the app talks to Supabase.”
 
 ## Database / COMP Worker Chain
 
 ```mermaid
 flowchart TD
-    APP["CryptoCrawler Runtime / Consumers"] --> SUPER["CRYPTARA Super Worker\nshared information broker"]
+    APP["T.H.W.A.R.T. Runtime / Consumers"] --> SUPER["CRYPTARA Super Worker\nshared information broker"]
 
     SUPER --> ADMIT["Supabase Admission Worker\nranked permit governor"]
     ADMIT --> SWITCH["COMP Switch\nnormal ↔ comp pressure path"]
@@ -871,7 +871,7 @@ flowchart TD
 
 ### 1. CRYPTARA Supabase Admission Worker
 
-The admission worker is an autonomous pool custodian for ordinary CryptoCrawler database work. It:
+The admission worker is an autonomous pool custodian for ordinary T.H.W.A.R.T. database work. It:
 
 - ranks work as `critical`, `high`, `normal`, or `low`;
 - age-promotes queued work to reduce starvation;
@@ -928,7 +928,7 @@ The Overflow worker owns a small, separate, lazy pool for allowed hot/auxiliary 
 
 ### 7. Primary Archive Worker
 
-The **Primary Archive Worker** is the sole CryptoCrawler path to Primary cold storage for explicit archival writes and historical lookups. Its declared communication path is:
+The **Primary Archive Worker** is the sole T.H.W.A.R.T. path to Primary cold storage for explicit archival writes and historical lookups. Its declared communication path is:
 
 > **worker → COMP rank → bridge gateway → Primary**
 
@@ -960,7 +960,7 @@ The repo contains **multiple Rainbow components with different responsibilities*
 
 `RainbowProfitBridge` is a **wake-up client** for the durable treasury worker on Supabase Overflow. It is deliberately **not** an exchange-withdrawal signer or second payout authority.
 
-Its job is to ask the single durable `cryptocrawler-terminal-sweeper` worker to process already-persisted treasury state sooner. If that immediate wake is unavailable, durable scheduled state remains pending for scheduler retry.
+Its job is to ask the single durable `thwart-terminal-sweeper` worker to process already-persisted treasury state sooner. If that immediate wake is unavailable, durable scheduled state remains pending for scheduler retry.
 
 ### Rainbow Profit Bridge Wiring
 
@@ -1026,9 +1026,9 @@ So the user's remembered distinction is real at the architectural level: there i
 
 # Crawler Ecology
 
-CryptoCrawler contains a distinctive crawler/swarm vocabulary. Several crawler modules exist in code but are currently outside the canonical production-agent export boundary. They are documented here as **implemented incorporation targets**: the objective is to bring useful behavior back through canonical evidence, economics, governance, scheduling, execution, settlement, and learning authorities rather than letting a crawler become a parallel trading authority.
+T.H.W.A.R.T. contains a distinctive crawler/swarm vocabulary. Several crawler modules exist in code but are currently outside the canonical production-agent export boundary. They are documented here as **implemented incorporation targets**: the objective is to bring useful behavior back through canonical evidence, economics, governance, scheduling, execution, settlement, and learning authorities rather than letting a crawler become a parallel trading authority.
 
-## CryptoCrawler Swarm Family
+## T.H.W.A.R.T. Swarm Family
 
 ```mermaid
 flowchart TD
@@ -1050,7 +1050,7 @@ flowchart TD
     ORCH --> MICRO
     ORCH --> STAR
 
-    STAR -. "must re-enter canonical measured pipeline before authority" .-> CANON["Canonical CryptoCrawler Runtime"]
+    STAR -. "must re-enter canonical measured pipeline before authority" .-> CANON["Canonical T.H.W.A.R.T. Runtime"]
     TWINS -. "must re-enter canonical measured pipeline before authority" .-> CANON
     MICRO -. "must re-enter canonical measured pipeline before authority" .-> CANON
 ```
@@ -1081,7 +1081,7 @@ A coordination layer for Cain/micro/replication populations. Reintegration shoul
 
 ## Six-Crawler Analytic Initiative
 
-The repository also contains a separate six-crawler analytic/security initiative. These are not presented as CryptoCrawler trading executors; they are specialized analytic crawler archetypes that can potentially contribute observations or infrastructure under controlled boundaries.
+The repository also contains a separate six-crawler analytic/security initiative. These are not presented as T.H.W.A.R.T. trading executors; they are specialized analytic crawler archetypes that can potentially contribute observations or infrastructure under controlled boundaries.
 
 | Crawler | Character | Repository role |
 |---|---|---|
@@ -1353,7 +1353,7 @@ Those modules remain valuable architecture/IP references, but the namespace barr
 
 # Prediction-Market Architecture
 
-CryptoCrawler contains a substantial event/prediction-market architecture rather than only a small Kalshi data adapter.
+T.H.W.A.R.T. contains a substantial event/prediction-market architecture rather than only a small Kalshi data adapter.
 
 ## Kalshi
 
@@ -1470,7 +1470,7 @@ The worker hierarchy above makes this separation operational: normal live reads 
 
 # Learning + Evolution Architecture
 
-CryptoCrawler has multiple learning/evolution modules beyond CRYPTARA's rank logic.
+T.H.W.A.R.T. has multiple learning/evolution modules beyond CRYPTARA's rank logic.
 
 ## Learning Layer
 
@@ -1525,7 +1525,7 @@ That makes the Faucet Mesh a good example of **preserved architecture with quara
 
 ## Faucet Gateway
 
-The root-level **Faucet Gateway** is a separate outward-facing transaction/policy interface originating in the broader 4JI architecture. It includes token-bucket rate limiting, policy controls, audit logging, transaction state, signer/approval abstractions, and action routing. It should not be confused with the CryptoCrawler autonomous-faucet compatibility facade.
+The root-level **Faucet Gateway** is a separate outward-facing transaction/policy interface originating in the broader 4JI architecture. It includes token-bucket rate limiting, policy controls, audit logging, transaction state, signer/approval abstractions, and action routing. It should not be confused with the T.H.W.A.R.T. autonomous-faucet compatibility facade.
 
 ## Heritage Capital-Free Systems
 
@@ -1571,7 +1571,7 @@ The September 8, 2026 hardening sequence on `develop` includes work in areas suc
 
 # Canonical Runtime and Authority Model
 
-CryptoCrawler separates responsibilities that are easy to accidentally merge.
+T.H.W.A.R.T. separates responsibilities that are easy to accidentally merge.
 
 ## Discovery Authority
 
@@ -1625,7 +1625,7 @@ Consumes normalized terminal truth. Simulation, submission, and partial state ar
 
 # Market Evidence and Provider Mesh
 
-CryptoCrawler treats provider availability as a routing problem rather than a single-provider dependency.
+T.H.W.A.R.T. treats provider availability as a routing problem rather than a single-provider dependency.
 
 Key design properties represented in the architecture include:
 
@@ -1706,7 +1706,7 @@ Bad-Blue contains a broader research and orchestration ecosystem beyond the two 
 | **Googolplex Neural Lattice** | Experimental sparse/procedural representation architecture |
 | **3D Geiger** | Provider pressure/health/rate-limit scoring vocabulary |
 | **Evolution Lock / Geiger** | Controlled adaptation permission and adaptation-risk gating |
-| **Faucet** | Preserved CryptoCrawler lifecycle compatibility facade backed by canonical runtime truth |
+| **Faucet** | Preserved T.H.W.A.R.T. lifecycle compatibility facade backed by canonical runtime truth |
 | **Faucet Mesh** | Heritage higher-order multi-node strategy/learning architecture with synthetic authority quarantined |
 | **Faucet Gateway** | Broader 4JI outward-facing policy/rate-limit/audit transaction interface |
 | **Market Proximity Fabric** | Direct streaming hot path plus identical-payload multipath submission designed to minimize avoidable application-side latency |
@@ -1715,7 +1715,7 @@ Bad-Blue contains a broader research and orchestration ecosystem beyond the two 
 | **CRYPTARA Super Worker** | Shared information broker, single-flight, leases, bounded reuse |
 | **Overflow Super Worker** | Overflow-first transport/coherence worker with gateway-only archive fallback |
 | **HyperBridge** | Application-facing Overflow information fabric |
-| **Primary Archive Worker** | Low-rank, gateway-only CryptoCrawler cold-archive access path |
+| **Primary Archive Worker** | Low-rank, gateway-only T.H.W.A.R.T. cold-archive access path |
 
 </details>
 
@@ -1784,7 +1784,7 @@ Major repository areas include:
 - **`server/services/alexara/`** — LEXARA legal brain, F.M.I., C.A.D.E., and legal research integration.
 - **`server/services/cryptara/`** — CRYPTARA market-surveillance/assessment intelligence.
 - **`server/services/quantiComp/`** — QuantiComp runtime, adaptive optimizer, backend registry/routing, Data Fabric, parallelism governor, profiler, interaction model.
-- **`server/services/cryptocrawl/`** — CryptoCrawler discovery, economics, validation, governance, execution, settlement, zero-capital, runtime, scaling, crawler research, Eden, Babel, and integration systems.
+- **`server/services/cryptocrawl/`** — T.H.W.A.R.T. discovery, economics, validation, governance, execution, settlement, zero-capital, runtime, scaling, crawler research, Eden, Babel, and integration systems.
 - **`server/services/cryptocrawl/intelligence/`** — Aries Vault, Aries microstructure/edge formation, CEX fee/order-book intelligence, canonical opportunity/intelligence state, prediction-market authority surfaces, provider-quality intelligence.
 - **`server/services/cryptocrawl/optimization/`** — BPS Super Engine, economic transformation, hyperdynamic BPS/fee surfaces, Nix-Gen, adaptive profitability/topology optimization, execution-path selection.
 - **`server/services/cryptocrawl/optimization/nix-gen/`** — Nix-Gen bids, global optimizer, resource pricing, replanning, portfolio view, live priority, Quanti integration.
@@ -1810,7 +1810,7 @@ Major repository areas include:
 - **`server/services/crawlers/`** — Six-Crawler Initiative and other analytic crawler systems.
 - **`server/faucetGateway.ts`** — broader 4JI Faucet Gateway interface.
 - **`server/migrations/overflow/`** — Overflow hot-state schema evolution.
-- **`scripts/cryptocrawl/`** — structural/runtime invariant verifiers for CryptoCrawler hardening, Nix-Gen, Aries, Rainbow, BPS, workers, prediction markets, treasury, market latency, and authority boundaries.
+- **`scripts/cryptocrawl/`** — structural/runtime invariant verifiers for T.H.W.A.R.T. hardening, Nix-Gen, Aries, Rainbow, BPS, workers, prediction markets, treasury, market latency, and authority boundaries.
 - **database / migration modules** — persistence schema and state evolution.
 - **tests / verifier assets** — regression, integration, authority, economic, and runtime validation.
 
@@ -1896,7 +1896,7 @@ The continued engineering priority is **proof, canonicalization, observability, 
 | **ALEXARA** | Legal/strategic service architecture associated with the LEXARA domain |
 | **F.M.I.** | Forensic Media Intelligence evidence-analysis subsystem |
 | **C.A.D.E.** | Case Adaptive Drafting Entity |
-| **CryptoCrawler** | Multi-topology market discovery, validation, governance, execution, settlement, and learning architecture |
+| **T.H.W.A.R.T.** | **Trading Heuristic With Adaptive Reasoning & Tactics** — multi-topology market discovery, validation, governance, execution, settlement, and learning architecture |
 | **CRYPTARA** | Adaptive crypto-market assessment and execution-feedback intelligence |
 | **Sovereign Cortex** | CRYPTARA evidence-quality, capability-vector, rank, and bounded-adaptation layer |
 | **Aries Vault** | Horizon-aware profitability/execution intelligence layer with microstructure, capacity, regret and value-of-information modeling |
@@ -1933,12 +1933,12 @@ The continued engineering priority is **proof, canonicalization, observability, 
 | **CRYPTARA Super Worker** | Shared information broker with leases, bounded reuse and single-flight origin loading |
 | **Overflow Super Worker** | Overflow-first coherence/transport worker with gateway-only cold-archive fallback |
 | **HyperBridge** | Application-facing Overflow information fabric and persistence/routing queue |
-| **Primary Archive Worker** | Low-priority, gateway-only CryptoCrawler cold archive path |
+| **Primary Archive Worker** | Low-priority, gateway-only T.H.W.A.R.T. cold archive path |
 | **Rainbow Profit Bridge** | Immediate wake client for the durable Overflow treasury worker |
 | **Rainbow Profit Source Ledger** | Terminal-profit provenance mirror with Overflow-first reads and cold-archive fallback |
 | **Rainbow Maker Fuel Reserve** | Dynamic maker-canary-related treasury reserve |
 | **Terminal Treasury Lifecycle** | Durable payout/restart-sweep state machine and treasury coordination layer |
-| **Faucet** | Preserved lifecycle compatibility facade tied to canonical CryptoCrawler truth |
+| **Faucet** | Preserved lifecycle compatibility facade tied to canonical T.H.W.A.R.T. truth |
 | **Faucet Mesh** | Heritage higher-order strategy/learning mesh with synthetic runtime authority disabled |
 | **Faucet Gateway** | Broader 4JI policy/rate-limit/audit transaction interface |
 | **Measured Candidate Registry** | Shared opportunity lifecycle and missing-information authority |
@@ -1983,13 +1983,13 @@ Bad-Blue's defining characteristic is not simply that it combines legal AI and c
 
 > What happened, what law applies, what evidence matters, and what legal work product should be created?
 
-**CryptoCrawler asks:**
+**T.H.W.A.R.T. asks:**
 
 > What market condition exists, is the opportunity economically real, is execution permitted and resourced, what actually settled, and what did that realized outcome teach the system?
 
 **CRYPTARA asks:**
 
-> Given the evidence and what terminal outcomes have proven so far, how should CryptoCrawler interpret and prepare for the next opportunity without confusing intelligence with execution authority?
+> Given the evidence and what terminal outcomes have proven so far, how should T.H.W.A.R.T. interpret and prepare for the next opportunity without confusing intelligence with execution authority?
 
 **Aries asks:**
 
