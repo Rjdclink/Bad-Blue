@@ -46,6 +46,8 @@ function normalizeProtocol(protocol: string): SupportedSwapProtocol {
   if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') return 'uniswapV3';
   if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
   if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushiswap-v3' || normalized === 'sushi-v3') return 'sushiswapV3';
+  if (normalized === 'pancakeswapv2' || normalized === 'pancakeswap_v2' || normalized === 'pancakeswap-v2' || normalized === 'pancakev2' || normalized === 'pancake-v2') return 'pancakeswapV2';
+  if (normalized === 'traderjoev1' || normalized === 'traderjoe_v1' || normalized === 'traderjoe-v1' || normalized === 'joev1' || normalized === 'joe-v1') return 'traderJoeV1';
   throw new Error(`Unsupported receiver permission protocol: ${protocol}`);
 }
 

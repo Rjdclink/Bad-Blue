@@ -47,12 +47,11 @@ function applyHaircut(raw: bigint, bps: number): string {
 
 function normalizeProtocol(protocol: string): SupportedSwapProtocol {
   const normalized = protocol.trim().toLowerCase();
-  if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') {
-    return 'uniswapV3';
-  }
-  if (normalized === 'sushiswap' || normalized === 'sushi') {
-    return 'sushiswap';
-  }
+  if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') return 'uniswapV3';
+  if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
+  if (normalized === 'pancakeswapv2' || normalized === 'pancakeswap_v2' || normalized === 'pancakeswap-v2' || normalized === 'pancakev2' || normalized === 'pancake-v2') return 'pancakeswapV2';
+  if (normalized === 'traderjoev1' || normalized === 'traderjoe_v1' || normalized === 'traderjoe-v1' || normalized === 'joev1' || normalized === 'joe-v1') return 'traderJoeV1';
+  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushiswap-v3' || normalized === 'sushi-v3') return 'sushiswapV3';
   throw new Error(`Unsupported autonomous route protocol: ${protocol}`);
 }
 
@@ -139,9 +138,6 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     'ZERO_CAPITAL_FLASHLOAN_RECEIVER',
     options?.receiver || process.env.ZERO_CAPITAL_FLASHLOAN_RECEIVER,
   );
-  // Runtime profit must remain in the operational signer wallet so it can be
-  // redeployed/compounded. CRYPTO_PROFIT_WALLET_ADDRESS is reserved exclusively
-  // for the independent terminal treasury sweep.
   const profitRecipient = requireAddress(
     'operational CryptoCrawler profit recipient',
     resolveOperationalProfitRecipient(options?.profitRecipient),
@@ -149,26 +145,16 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
 
   const flashLoanAmount = BigInt(bigintishToString(opportunity.flashLoanAmount));
   const expectedProfit = BigInt(bigintishToString(opportunity.expectedProfit));
-  if (flashLoanAmount <= 0n) {
-    throw new Error('Autonomous zero-capital flash-loan amount must be greater than zero');
-  }
-  if (!isStrictlyPositiveProfitBaseUnits(expectedProfit)) {
-    throw new Error('Autonomous zero-capital expected all-in profit must be strictly greater than zero');
-  }
+  if (flashLoanAmount <= 0n) throw new Error('Autonomous zero-capital flash-loan amount must be greater than zero');
+  if (!isStrictlyPositiveProfitBaseUnits(expectedProfit)) throw new Error('Autonomous zero-capital expected all-in profit must be strictly greater than zero');
 
   const canonicalMinimumProfit = minimumPositiveProfitBaseUnits();
   const requestedMinimumProfit = options?.minProfitBaseUnits === undefined
     ? canonicalMinimumProfit
     : BigInt(bigintishToString(options.minProfitBaseUnits));
-  if (!isStrictlyPositiveProfitBaseUnits(requestedMinimumProfit)) {
-    throw new Error('Autonomous zero-capital minimum execution profit must be strictly greater than zero');
-  }
-  if (requestedMinimumProfit < canonicalMinimumProfit) {
-    throw new Error('Autonomous zero-capital minimum execution profit cannot weaken the canonical positive-profit floor');
-  }
-  if (requestedMinimumProfit > expectedProfit) {
-    throw new Error('Autonomous zero-capital minimum execution profit exceeds the measured expected profit');
-  }
+  if (!isStrictlyPositiveProfitBaseUnits(requestedMinimumProfit)) throw new Error('Autonomous zero-capital minimum execution profit must be strictly greater than zero');
+  if (requestedMinimumProfit < canonicalMinimumProfit) throw new Error('Autonomous zero-capital minimum execution profit cannot weaken the canonical positive-profit floor');
+  if (requestedMinimumProfit > expectedProfit) throw new Error('Autonomous zero-capital minimum execution profit exceeds the measured expected profit');
 
   const minOutputBps = boundedBps(
     'ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS',
@@ -183,28 +169,15 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
   const steps: OnchainSwapLeg[] = opportunity.route.map((step, index) => {
     const tokenIn = requireAddress(`route[${index}].tokenIn`, step.tokenIn);
     const tokenOut = requireAddress(`route[${index}].tokenOut`, step.tokenOut);
-    if (sameAddress(tokenIn, tokenOut)) {
-      throw new Error(`Autonomous zero-capital route step ${index} cannot swap a token into itself`);
-    }
-
-    if (index === 0 && !sameAddress(tokenIn, inputToken)) {
-      throw new Error('Autonomous zero-capital route must begin with the borrowed token');
-    }
-    if (index > 0 && !sameAddress(opportunity.route[index - 1].tokenOut, tokenIn)) {
-      throw new Error(`Autonomous zero-capital route is not token-contiguous at step ${index}`);
-    }
+    if (sameAddress(tokenIn, tokenOut)) throw new Error(`Autonomous zero-capital route step ${index} cannot swap a token into itself`);
+    if (index === 0 && !sameAddress(tokenIn, inputToken)) throw new Error('Autonomous zero-capital route must begin with the borrowed token');
+    if (index > 0 && !sameAddress(opportunity.route[index - 1].tokenOut, tokenIn)) throw new Error(`Autonomous zero-capital route is not token-contiguous at step ${index}`);
 
     const expectedAmountOut = BigInt(bigintishToString(step.expectedAmountOut));
     const requestedAmountIn = BigInt(bigintishToString(step.amountIn));
-    if (expectedAmountOut <= 0n) {
-      throw new Error(`Autonomous zero-capital route step ${index} expected output must be greater than zero`);
-    }
-
+    if (expectedAmountOut <= 0n) throw new Error(`Autonomous zero-capital route step ${index} expected output must be greater than zero`);
     const requiredAmountIn = index === 0 ? flashLoanAmount : previousExpectedOut;
-    if (requestedAmountIn !== requiredAmountIn) {
-      throw new Error(`Autonomous zero-capital route step ${index} amountIn does not match the preceding quoted output`);
-    }
-
+    if (requestedAmountIn !== requiredAmountIn) throw new Error(`Autonomous zero-capital route step ${index} amountIn does not match the preceding quoted output`);
     previousExpectedOut = expectedAmountOut;
 
     return {
@@ -220,9 +193,7 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     };
   });
 
-  if (!sameAddress(steps[steps.length - 1].tokenOut, inputToken)) {
-    throw new Error('Autonomous zero-capital route must return to the borrowed token for atomic repayment');
-  }
+  if (!sameAddress(steps[steps.length - 1].tokenOut, inputToken)) throw new Error('Autonomous zero-capital route must return to the borrowed token for atomic repayment');
 
   return {
     chain: opportunity.chain,

@@ -62,24 +62,66 @@ const state: DynamicZeroCapitalDiscoveryState = {
 };
 
 const cachedGraphlessTemplates = new Map<SupportedExecutionChain, ConfiguredZeroCapitalRoute[]>();
-const DYNAMIC_EXECUTABLE_CHAINS = new Set<SupportedExecutionChain>(['ethereum', 'polygon', 'arbitrum']);
-const ETHEREUM_STABLE_CONFIG = {
-  usdc: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-  usdt: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-} as const;
-const DYNAMIC_PROTOCOL_PAIRS = [
-  ['uniswapV3', 'sushiswap'],
-  ['sushiswap', 'uniswapV3'],
-] as const;
-const TRIANGLE_PROTOCOL_PATHS = [
-  ['uniswapV3', 'sushiswap', 'uniswapV3'],
-  ['sushiswap', 'uniswapV3', 'sushiswap'],
-] as const;
+const DYNAMIC_EXECUTABLE_CHAINS = new Set<SupportedExecutionChain>([
+  'ethereum', 'polygon', 'arbitrum', 'optimism', 'bsc', 'avalanche',
+]);
+const UNISWAP_V3_DYNAMIC_CHAINS = new Set<SupportedExecutionChain>([
+  'ethereum', 'polygon', 'arbitrum', 'optimism',
+]);
 
-type DynamicProtocol = 'uniswapV3' | 'sushiswap';
-
-type DynamicStableConfig = { usdc: string; usdt: string };
+type DynamicProtocol = 'uniswapV3' | 'sushiswap' | 'pancakeswapV2' | 'traderJoeV1';
+type DynamicStableToken = { address: string; decimals: number };
+type DynamicStableConfig = { usdc: DynamicStableToken; usdt: DynamicStableToken };
 type DynamicGasFundingContext = GasFundingDecision | GasFundingMode | 'unknown';
+
+const ETHEREUM_STABLE_CONFIG: DynamicStableConfig = {
+  usdc: { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
+  usdt: { address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
+};
+const OPTIMISM_STABLE_CONFIG: DynamicStableConfig = {
+  usdc: { address: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', decimals: 6 },
+  usdt: { address: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58', decimals: 6 },
+};
+const LEGACY_STABLE_DECIMALS: Record<ChainId, { usdc: number; usdt: number }> = {
+  polygon: { usdc: 6, usdt: 6 },
+  arbitrum: { usdc: 6, usdt: 6 },
+  avalanche: { usdc: 6, usdt: 6 },
+  bsc: { usdc: 18, usdt: 18 },
+};
+
+const DYNAMIC_PROTOCOL_PAIRS: Partial<Record<SupportedExecutionChain, ReadonlyArray<readonly [DynamicProtocol, DynamicProtocol]>>> = {
+  ethereum: [['uniswapV3', 'sushiswap'], ['sushiswap', 'uniswapV3']],
+  polygon: [['uniswapV3', 'sushiswap'], ['sushiswap', 'uniswapV3']],
+  arbitrum: [['uniswapV3', 'sushiswap'], ['sushiswap', 'uniswapV3']],
+  bsc: [['pancakeswapV2', 'sushiswap'], ['sushiswap', 'pancakeswapV2']],
+  avalanche: [['traderJoeV1', 'sushiswap'], ['sushiswap', 'traderJoeV1']],
+};
+const TRIANGLE_PROTOCOL_PATHS: Partial<Record<SupportedExecutionChain, ReadonlyArray<readonly [DynamicProtocol, DynamicProtocol, DynamicProtocol]>>> = {
+  ethereum: [
+    ['uniswapV3', 'sushiswap', 'uniswapV3'],
+    ['sushiswap', 'uniswapV3', 'sushiswap'],
+    ['uniswapV3', 'uniswapV3', 'uniswapV3'],
+  ],
+  polygon: [
+    ['uniswapV3', 'sushiswap', 'uniswapV3'],
+    ['sushiswap', 'uniswapV3', 'sushiswap'],
+    ['uniswapV3', 'uniswapV3', 'uniswapV3'],
+  ],
+  arbitrum: [
+    ['uniswapV3', 'sushiswap', 'uniswapV3'],
+    ['sushiswap', 'uniswapV3', 'sushiswap'],
+    ['uniswapV3', 'uniswapV3', 'uniswapV3'],
+  ],
+  optimism: [['uniswapV3', 'uniswapV3', 'uniswapV3']],
+  bsc: [
+    ['pancakeswapV2', 'sushiswap', 'pancakeswapV2'],
+    ['sushiswap', 'pancakeswapV2', 'sushiswap'],
+  ],
+  avalanche: [
+    ['traderJoeV1', 'sushiswap', 'traderJoeV1'],
+    ['sushiswap', 'traderJoeV1', 'sushiswap'],
+  ],
+};
 
 function bounded(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
@@ -118,8 +160,24 @@ function sponsoredBillingLiability(funding: DynamicGasFundingContext): boolean {
 function dynamicStableConfig(chain: SupportedExecutionChain): DynamicStableConfig | null {
   if (!DYNAMIC_EXECUTABLE_CHAINS.has(chain)) return null;
   if (chain === 'ethereum') return ETHEREUM_STABLE_CONFIG;
-  const config = SUPPORTED_CHAINS[chain as ChainId];
-  return config?.usdc && config?.usdt ? { usdc: config.usdc, usdt: config.usdt } : null;
+  if (chain === 'optimism') return OPTIMISM_STABLE_CONFIG;
+  const legacyChain = chain as ChainId;
+  const config = SUPPORTED_CHAINS[legacyChain];
+  const decimals = LEGACY_STABLE_DECIMALS[legacyChain];
+  return config?.usdc && config?.usdt && decimals
+    ? {
+        usdc: { address: config.usdc, decimals: decimals.usdc },
+        usdt: { address: config.usdt, decimals: decimals.usdt },
+      }
+    : null;
+}
+
+function dynamicProtocolPairs(chain: SupportedExecutionChain): ReadonlyArray<readonly [DynamicProtocol, DynamicProtocol]> {
+  return DYNAMIC_PROTOCOL_PAIRS[chain] || [];
+}
+
+function triangleProtocolPaths(chain: SupportedExecutionChain): ReadonlyArray<readonly [DynamicProtocol, DynamicProtocol, DynamicProtocol]> {
+  return TRIANGLE_PROTOCOL_PATHS[chain] || [];
 }
 
 function notionalsUsd(): number[] {
@@ -145,8 +203,22 @@ function feeTiers(): UniswapV3FeeTier[] {
   return parsed.length > 0 ? [...new Set(parsed)] : [100, 500, 3000];
 }
 
-function stableBaseUnits(usd: number): string {
-  return BigInt(Math.max(1, Math.floor(usd * 1_000_000))).toString();
+function stableBaseUnits(usd: number, decimals: number): string {
+  const normalizedDecimals = Math.max(0, Math.min(36, Math.trunc(decimals)));
+  const microUsd = BigInt(Math.max(1, Math.floor(usd * 1_000_000)));
+  if (normalizedDecimals === 6) return microUsd.toString();
+  if (normalizedDecimals > 6) return (microUsd * (10n ** BigInt(normalizedDecimals - 6))).toString();
+  const divisor = 10n ** BigInt(6 - normalizedDecimals);
+  return ((microUsd + divisor - 1n) / divisor).toString();
+}
+
+function gasUsdToBaseUnits(usd: number, decimals: number): string {
+  const normalizedDecimals = Math.max(0, Math.min(36, Math.trunc(decimals)));
+  const microUsd = BigInt(Math.max(0, Math.ceil(usd * 1_000_000)));
+  if (normalizedDecimals === 6) return microUsd.toString();
+  if (normalizedDecimals > 6) return (microUsd * (10n ** BigInt(normalizedDecimals - 6))).toString();
+  const divisor = 10n ** BigInt(6 - normalizedDecimals);
+  return ((microUsd + divisor - 1n) / divisor).toString();
 }
 
 function protocolLeg(
@@ -165,6 +237,7 @@ function routeBase(input: {
   chain: SupportedExecutionChain;
   symbol: 'USDC' | 'USDT';
   token: string;
+  tokenDecimals: number;
   amountUsd: number;
   legs: ConfiguredZeroCapitalRoute['legs'];
 }): ConfiguredZeroCapitalRoute {
@@ -173,8 +246,8 @@ function routeBase(input: {
     chain: input.chain,
     inputAssetSymbol: input.symbol,
     inputToken: input.token,
-    inputTokenDecimals: 6,
-    amountIn: stableBaseUnits(input.amountUsd),
+    inputTokenDecimals: input.tokenDecimals,
+    amountIn: stableBaseUnits(input.amountUsd, input.tokenDecimals),
     estimatedGasCostInInputToken: '0',
     relayFeeInInputToken: '0',
     flashLoanFeeBps: bounded(process.env.ZERO_CAPITAL_DYNAMIC_FLASH_LOAN_FEE_BPS, 12, 0, 1000),
@@ -231,17 +304,18 @@ export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionC
   const routes: ConfiguredZeroCapitalRoute[] = [];
   const tiers = feeTiers();
   for (const input of [
-    { symbol: 'USDC' as const, token: config.usdc, other: config.usdt },
-    { symbol: 'USDT' as const, token: config.usdt, other: config.usdc },
+    { symbol: 'USDC' as const, token: config.usdc.address, decimals: config.usdc.decimals, other: config.usdt.address },
+    { symbol: 'USDT' as const, token: config.usdt.address, decimals: config.usdt.decimals, other: config.usdc.address },
   ]) {
     for (const notional of notionalsUsd()) {
-      for (const [firstProtocol, secondProtocol] of DYNAMIC_PROTOCOL_PAIRS) {
+      for (const [firstProtocol, secondProtocol] of dynamicProtocolPairs(chain)) {
         for (const feeTier of tiers) {
           routes.push(routeBase({
             id: `dynamic-${chain}-${input.symbol}-${notional}-${firstProtocol}-${secondProtocol}-${feeTier}`,
             chain,
             symbol: input.symbol,
             token: input.token,
+            tokenDecimals: input.decimals,
             amountUsd: notional,
             legs: [
               protocolLeg(firstProtocol, input.token, input.other, feeTier),
@@ -251,20 +325,23 @@ export function buildDynamicZeroCapitalRouteTemplates(chain: SupportedExecutionC
         }
       }
 
-      for (const firstTier of tiers) {
-        for (const secondTier of tiers) {
-          if (firstTier === secondTier) continue;
-          routes.push(routeBase({
-            id: `dynamic-${chain}-${input.symbol}-${notional}-univ3-${firstTier}-${secondTier}`,
-            chain,
-            symbol: input.symbol,
-            token: input.token,
-            amountUsd: notional,
-            legs: [
-              protocolLeg('uniswapV3', input.token, input.other, firstTier),
-              protocolLeg('uniswapV3', input.other, input.token, secondTier),
-            ],
-          }));
+      if (UNISWAP_V3_DYNAMIC_CHAINS.has(chain)) {
+        for (const firstTier of tiers) {
+          for (const secondTier of tiers) {
+            if (firstTier === secondTier) continue;
+            routes.push(routeBase({
+              id: `dynamic-${chain}-${input.symbol}-${notional}-univ3-${firstTier}-${secondTier}`,
+              chain,
+              symbol: input.symbol,
+              token: input.token,
+              tokenDecimals: input.decimals,
+              amountUsd: notional,
+              legs: [
+                protocolLeg('uniswapV3', input.token, input.other, firstTier),
+                protocolLeg('uniswapV3', input.other, input.token, secondTier),
+              ],
+            }));
+          }
         }
       }
     }
@@ -279,12 +356,12 @@ async function buildGraphlessProfitSurfaceTemplates(
   const config = dynamicStableConfig(chain);
   if (!config) return { routes: [], tokens: 0, sources: [], triangularTemplates: 0 };
 
-  const scout = await discoverGraphlessDexTokens(chain, provider, [config.usdc, config.usdt]);
+  const scout = await discoverGraphlessDexTokens(chain, provider, [config.usdc.address, config.usdt.address]);
   const routes: ConfiguredZeroCapitalRoute[] = [];
   const tiers = feeTiers();
   const inputs = [
-    { symbol: 'USDC' as const, token: config.usdc },
-    { symbol: 'USDT' as const, token: config.usdt },
+    { symbol: 'USDC' as const, token: config.usdc.address, decimals: config.usdc.decimals },
+    { symbol: 'USDT' as const, token: config.usdt.address, decimals: config.usdt.decimals },
   ];
 
   for (const candidate of scout.candidates) {
@@ -292,13 +369,14 @@ async function buildGraphlessProfitSurfaceTemplates(
     for (const input of inputs) {
       if (middle.toLowerCase() === input.token.toLowerCase()) continue;
       for (const notional of notionalsUsd()) {
-        for (const [firstProtocol, secondProtocol] of DYNAMIC_PROTOCOL_PAIRS) {
+        for (const [firstProtocol, secondProtocol] of dynamicProtocolPairs(chain)) {
           for (const feeTier of tiers) {
             routes.push(routeBase({
               id: `graphless-${chain}-${input.symbol}-${middle.toLowerCase()}-${notional}-${firstProtocol}-${secondProtocol}-${feeTier}`,
               chain,
               symbol: input.symbol,
               token: input.token,
+              tokenDecimals: input.decimals,
               amountUsd: notional,
               legs: [
                 protocolLeg(firstProtocol, input.token, middle, feeTier),
@@ -308,20 +386,23 @@ async function buildGraphlessProfitSurfaceTemplates(
           }
         }
 
-        for (const firstTier of tiers) {
-          for (const secondTier of tiers) {
-            if (firstTier === secondTier) continue;
-            routes.push(routeBase({
-              id: `graphless-${chain}-${input.symbol}-${middle.toLowerCase()}-${notional}-univ3-${firstTier}-${secondTier}`,
-              chain,
-              symbol: input.symbol,
-              token: input.token,
-              amountUsd: notional,
-              legs: [
-                protocolLeg('uniswapV3', input.token, middle, firstTier),
-                protocolLeg('uniswapV3', middle, input.token, secondTier),
-              ],
-            }));
+        if (UNISWAP_V3_DYNAMIC_CHAINS.has(chain)) {
+          for (const firstTier of tiers) {
+            for (const secondTier of tiers) {
+              if (firstTier === secondTier) continue;
+              routes.push(routeBase({
+                id: `graphless-${chain}-${input.symbol}-${middle.toLowerCase()}-${notional}-univ3-${firstTier}-${secondTier}`,
+                chain,
+                symbol: input.symbol,
+                token: input.token,
+                tokenDecimals: input.decimals,
+                amountUsd: notional,
+                legs: [
+                  protocolLeg('uniswapV3', input.token, middle, firstTier),
+                  protocolLeg('uniswapV3', middle, input.token, secondTier),
+                ],
+              }));
+            }
           }
         }
       }
@@ -338,13 +419,14 @@ async function buildGraphlessProfitSurfaceTemplates(
       for (const input of inputs) {
         if (firstMiddle.toLowerCase() === input.token.toLowerCase() || secondMiddle.toLowerCase() === input.token.toLowerCase()) continue;
         for (const notional of triangleSeedNotionalsUsd()) {
-          for (const path of TRIANGLE_PROTOCOL_PATHS) {
+          for (const path of triangleProtocolPaths(chain)) {
             for (const feeTier of tiers) {
               routes.push(routeBase({
                 id: `graphless-tri-${chain}-${input.symbol}-${firstMiddle.toLowerCase()}-${secondMiddle.toLowerCase()}-${notional}-${path.join('-')}-${feeTier}`,
                 chain,
                 symbol: input.symbol,
                 token: input.token,
+                tokenDecimals: input.decimals,
                 amountUsd: notional,
                 legs: [
                   protocolLeg(path[0], input.token, firstMiddle, feeTier),
@@ -409,7 +491,7 @@ async function enrichMeasuredGasCost(
     : configuredSafetyMultiplier;
   let gasCostUsd: number;
 
-  if (chain === 'ethereum') {
+  if (chain === 'ethereum' || chain === 'optimism') {
     const [feeData, prices] = await Promise.all([
       provider.getFeeData(),
       coinGeckoPriceClient.getLiveSymbolPrices(['ETH']),
@@ -418,20 +500,26 @@ async function enrichMeasuredGasCost(
     const ethUsd = prices.get('ETH');
     const gasPrice = gasPriceWei ? Number(gasPriceWei.toString()) : Number.NaN;
     if (!Number.isFinite(gasPrice) || gasPrice <= 0 || !Number.isFinite(ethUsd) || !ethUsd || ethUsd <= 0) {
-      throw new Error('Measured Ethereum gas or reusable ETH/USD evidence unavailable');
+      throw new Error(`Measured ${chain} gas or reusable ETH/USD evidence unavailable`);
     }
-    gasCostUsd = (gasPrice * estimatedGasUnits / 1e18) * ethUsd * safetyMultiplier;
+    // OP Mainnet has an L1 data-fee component in addition to L2 execution gas.
+    // Dynamic discovery is only a pre-trade economic screen, so use a conservative
+    // route-local reserve here; exact signed-call/receipt economics remain canonical.
+    const chainSafetyMultiplier = chain === 'optimism' ? Math.max(1.75, safetyMultiplier) : safetyMultiplier;
+    gasCostUsd = (gasPrice * estimatedGasUnits / 1e18) * ethUsd * chainSafetyMultiplier;
   } else {
     const gas = await gasOracle.getGasPrice(chain as ChainId);
     if (!Number.isFinite(gas.usdCost) || gas.usdCost < 0) throw new Error(`Measured gas cost unavailable for ${chain}`);
     gasCostUsd = gas.usdCost * (estimatedGasUnits / DEFAULT_GAS_LIMIT) * safetyMultiplier;
   }
 
-  const gasCostBaseUnits = BigInt(Math.max(0, Math.ceil(gasCostUsd * 1_000_000))).toString();
   return {
     gasCostUsd,
     gasCostAuthority: sponsoredBillingLiability(funding) ? 'measured_sponsored_billing_proxy' : 'measured_native_gas',
-    routes: routes.map(route => ({ ...route, estimatedGasCostInInputToken: gasCostBaseUnits })),
+    routes: routes.map(route => ({
+      ...route,
+      estimatedGasCostInInputToken: gasUsdToBaseUnits(gasCostUsd, route.inputTokenDecimals),
+    })),
   };
 }
 
