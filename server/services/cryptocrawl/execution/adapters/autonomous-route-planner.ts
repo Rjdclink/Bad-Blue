@@ -192,9 +192,9 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
       tokenIn,
       tokenOut,
       amountIn: requiredAmountIn.toString(),
-      // GSM conversion is a protocol-defined exact quote, so execution asks for
-      // that exact measured output and fails closed if governance/state changes.
-      minAmountOut: protocol === 'aaveGhoGsm'
+      // Anchor legs use the exact measured output. A changed protocol/pool state
+      // must fail closed instead of silently changing the next atomic leg size.
+      minAmountOut: protocolAnchor
         ? expectedAmountOut.toString()
         : applyHaircut(expectedAmountOut, minOutputBps),
       ...(pool ? { pool } : {}),
