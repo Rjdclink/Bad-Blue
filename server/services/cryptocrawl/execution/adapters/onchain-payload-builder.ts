@@ -2,8 +2,16 @@ import { ethers } from 'ethers';
 import { buildProtocolAnchorCall, resolveProtocolAnchorPool } from './protocol-anchor-adapter.js';
 
 export type SupportedExecutionChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
-export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3' | 'pancakeswapV2' | 'traderJoeV1' | 'aaveGhoGsm' | 'fluidDexT1';
+export type SupportedSwapProtocol = 'uniswapV3' | 'sushiswap' | 'sushiswapV3' | 'pancakeswapV2' | 'traderJoeV1' | 'aaveGhoGsm' | 'fluidDexT1' | 'morphoLiquidation';
 export type UniswapV3FeeTier = 100 | 500 | 3000 | 10000;
+
+export interface MorphoLiquidationMarketParams {
+  loanToken: string;
+  collateralToken: string;
+  oracle: string;
+  irm: string;
+  lltv: string;
+}
 
 export interface OnchainSwapLeg {
   protocol: SupportedSwapProtocol;
@@ -16,6 +24,10 @@ export interface OnchainSwapLeg {
   feeTier?: UniswapV3FeeTier;
   recipient?: string;
   deadlineBufferSeconds?: number;
+  morphoMarketId?: string;
+  morphoBorrower?: string;
+  morphoSeizedAssets?: string;
+  morphoMarketParams?: MorphoLiquidationMarketParams;
 }
 
 export interface OnchainExecutionPlan {
@@ -50,6 +62,11 @@ const V2_ROUTER_ABI = [
   'function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) external returns (uint256[] amounts)',
 ];
 
+const MORPHO_BLUE = '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb';
+const MORPHO_LIQUIDATE_ABI = [
+  'function liquidate((address loanToken,address collateralToken,address oracle,address irm,uint256 lltv) marketParams,address borrower,uint256 seizedAssets,uint256 repaidShares,bytes data) external returns (uint256 assetsSeized,uint256 assetsRepaid)',
+];
+
 const DEX_ROUTERS: Record<SupportedSwapProtocol, Partial<Record<SupportedExecutionChain, string>>> = {
   uniswapV3: {
     ethereum: '0xE592427A0AEce92De3Edee1F18E0157C05861564',
@@ -73,6 +90,7 @@ const DEX_ROUTERS: Record<SupportedSwapProtocol, Partial<Record<SupportedExecuti
   sushiswapV3: {},
   aaveGhoGsm: {},
   fluidDexT1: {},
+  morphoLiquidation: {},
 };
 
 function isAddress(value: string): boolean {
@@ -88,8 +106,8 @@ function parseAmount(label: string, raw: string): ethers.BigNumber {
 }
 
 function resolveRouter(protocol: SupportedSwapProtocol, chain: SupportedExecutionChain): string {
-  if (protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1') {
-    throw new Error(`${protocol} uses its reviewed protocol-anchor target rather than a generic DEX router`);
+  if (protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1' || protocol === 'morphoLiquidation') {
+    throw new Error(`${protocol} uses its reviewed protocol target rather than a generic DEX router`);
   }
   if (chain === 'europa') {
     const envKey = protocol === 'uniswapV3' ? 'EUROPA_UNISWAP_V3_ROUTER' : 'EUROPA_SUSHISWAP_ROUTER';
@@ -109,7 +127,50 @@ function resolveRouter(protocol: SupportedSwapProtocol, chain: SupportedExecutio
 function defaultGasLimit(protocol: SupportedSwapProtocol): number {
   if (protocol === 'aaveGhoGsm') return 300000;
   if (protocol === 'fluidDexT1') return 450000;
+  if (protocol === 'morphoLiquidation') return 500000;
   return protocol === 'uniswapV3' ? 250000 : 300000;
+}
+
+function buildMorphoLiquidationCall(leg: OnchainSwapLeg, amountIn: ethers.BigNumber, minAmountOut: ethers.BigNumber): BuiltSwapCall {
+  if (leg.chain !== 'ethereum') throw new Error('Morpho liquidation execution is currently reviewed only for Ethereum');
+  if (leg.pool && leg.pool.toLowerCase() !== MORPHO_BLUE.toLowerCase()) throw new Error('Morpho liquidation target must be the canonical Ethereum Morpho Blue singleton');
+  if (!leg.morphoMarketId || !/^0x[a-fA-F0-9]{64}$/.test(leg.morphoMarketId)) throw new Error('Morpho liquidation market id must be a bytes32 value');
+  if (!leg.morphoBorrower || !isAddress(leg.morphoBorrower)) throw new Error('Morpho liquidation borrower must be a valid EVM address');
+  const params = leg.morphoMarketParams;
+  if (!params) throw new Error('Morpho liquidation market parameters are required');
+  if (![params.loanToken, params.collateralToken, params.oracle, params.irm].every(isAddress)) throw new Error('Morpho liquidation market parameters must contain valid EVM addresses');
+  if (params.loanToken.toLowerCase() !== leg.tokenIn.toLowerCase() || params.collateralToken.toLowerCase() !== leg.tokenOut.toLowerCase()) {
+    throw new Error('Morpho liquidation route tokens do not match the exact market parameters');
+  }
+  if (!/^\d+$/.test(params.lltv)) throw new Error('Morpho liquidation LLTV must be an integer string');
+  const lltv = ethers.BigNumber.from(params.lltv);
+  if (lltv.lte(0) || lltv.gte(ethers.constants.WeiPerEther)) throw new Error('Morpho liquidation LLTV is outside the valid WAD range');
+  const encodedParams = ethers.utils.defaultAbiCoder.encode(
+    ['address', 'address', 'address', 'address', 'uint256'],
+    [params.loanToken, params.collateralToken, params.oracle, params.irm, lltv],
+  );
+  if (ethers.utils.keccak256(encodedParams).toLowerCase() !== leg.morphoMarketId.toLowerCase()) {
+    throw new Error('Morpho liquidation market id does not hash to the supplied market parameters');
+  }
+  const seizedAssets = parseAmount('morphoSeizedAssets', leg.morphoSeizedAssets || '0');
+  if (seizedAssets.lte(0) || !seizedAssets.eq(minAmountOut)) {
+    throw new Error('Morpho liquidation seized collateral must equal the exact measured first-leg output');
+  }
+  const iface = new ethers.utils.Interface(MORPHO_LIQUIDATE_ABI);
+  return {
+    target: MORPHO_BLUE,
+    data: iface.encodeFunctionData('liquidate', [
+      [params.loanToken, params.collateralToken, params.oracle, params.irm, lltv],
+      leg.morphoBorrower,
+      seizedAssets,
+      0,
+      '0x',
+    ]),
+    value: '0',
+    gasLimit: defaultGasLimit('morphoLiquidation'),
+    approvalToken: leg.tokenIn,
+    approvalAmount: amountIn.toString(),
+  };
 }
 
 export function buildSwapCallFromLeg(
@@ -132,6 +193,10 @@ export function buildSwapCallFromLeg(
 
   const amountIn = parseAmount('amountIn', leg.amountIn);
   const minAmountOut = parseAmount('minAmountOut', leg.minAmountOut);
+
+  if (leg.protocol === 'morphoLiquidation') {
+    return buildMorphoLiquidationCall(leg, amountIn, minAmountOut);
+  }
 
   if (leg.protocol === 'aaveGhoGsm' || leg.protocol === 'fluidDexT1') {
     if (chain !== 'ethereum') throw new Error(`${leg.protocol} anchor execution is currently reviewed only for Ethereum`);
