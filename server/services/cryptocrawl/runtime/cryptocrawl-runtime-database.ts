@@ -102,6 +102,56 @@ export const coordinationPool = new Pool({
   application_name: 'cryptocrawl-overflow-coordination',
 });
 
+/**
+ * node-postgres installs its pool-level idle-client error listener only while a
+ * client is idle. pool.connect() removes that listener while the client is checked
+ * out, so a network/Supavisor disconnect during a checked-out transaction can
+ * otherwise surface as an unhandled client `error` event and terminate Node.
+ *
+ * Add a temporary client listener for exactly the checked-out lifetime. The pool's
+ * own idle listener is already restored before the `release` event fires, so this
+ * guard is removed on release to avoid duplicate idle-client handling. A failed
+ * client is left to node-postgres' normal release/remove path; we never double-
+ * release or create a second pool/retry authority here.
+ */
+function attachCheckedOutClientErrorGuard(targetPool: any, lane: 'ordinary' | 'coordination'): void {
+  const activeGuards = new WeakMap<object, (error: Error) => void>();
+
+  targetPool.on('acquire', (client: any) => {
+    if (activeGuards.has(client)) return;
+
+    const guard = (error: Error) => {
+      logger.warn('[CryptoCrawlerRuntimeDB] Checked-out Overflow client disconnected; caller remains fail-closed and pool may replace the dead client', {
+        component: 'CryptoCrawlerRuntimeDatabase',
+        lane,
+        error: error instanceof Error ? error.message : String(error),
+        primaryFallbackUsed: false,
+        processShutdownAuthority: false,
+      });
+    };
+
+    activeGuards.set(client, guard);
+    client.on('error', guard);
+  });
+
+  targetPool.on('release', (_releaseError: unknown, client: any) => {
+    const guard = activeGuards.get(client);
+    if (!guard) return;
+    client.removeListener('error', guard);
+    activeGuards.delete(client);
+  });
+
+  targetPool.on('remove', (client: any) => {
+    const guard = activeGuards.get(client);
+    if (!guard) return;
+    client.removeListener('error', guard);
+    activeGuards.delete(client);
+  });
+}
+
+attachCheckedOutClientErrorGuard(pool, 'ordinary');
+attachCheckedOutClientErrorGuard(coordinationPool, 'coordination');
+
 pool.on('error', error => {
   logger.warn('[CryptoCrawlerRuntimeDB] Overflow ordinary pool idle client failed', {
     component: 'CryptoCrawlerRuntimeDatabase',
