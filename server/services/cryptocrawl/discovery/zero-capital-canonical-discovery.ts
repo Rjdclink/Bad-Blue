@@ -66,7 +66,6 @@ let started = false;
 let timer: NodeJS.Timeout | null = null;
 let cycleInFlight: Promise<void> | null = null;
 let receiverFleetTask: Promise<void> | null = null;
-let receiverFleetTimedOut = false;
 const chainScanTasks = new Map<SupportedChain, Promise<void>>();
 let lastCycleAt = 0;
 let lastError: string | null = null;
@@ -82,38 +81,36 @@ function runtime(): CanonicalZeroCapitalRuntime {
   return zeroCapitalEngine as unknown as CanonicalZeroCapitalRuntime;
 }
 
-function scanDelayMs(): number {
-  const raw = Number(process.env.ZERO_CAPITAL_SCAN_MIN_MS || 2500);
-  return Number.isFinite(raw) ? Math.max(500, Math.min(15_000, Math.trunc(raw))) : 2500;
+function boundedMs(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  const finite = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(min, Math.min(max, Math.trunc(finite)));
 }
 
-function boundedWatchdogMs(raw: string | undefined, fallback: number, min: number, max: number): number {
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
+function scanDelayMs(): number {
+  return boundedMs(process.env.ZERO_CAPITAL_SCAN_MIN_MS, 2_500, 500, 15_000);
 }
 
 function receiverFleetWatchdogMs(): number {
-  return boundedWatchdogMs(process.env.ZERO_CAPITAL_RECEIVER_FLEET_WATCHDOG_MS, 30_000, 5_000, 120_000);
+  return boundedMs(process.env.ZERO_CAPITAL_RECEIVER_FLEET_WATCHDOG_MS, 30_000, 5_000, 120_000);
 }
 
 function chainScanWatchdogMs(): number {
-  return boundedWatchdogMs(process.env.ZERO_CAPITAL_CHAIN_SCAN_WATCHDOG_MS, 45_000, 5_000, 120_000);
+  return boundedMs(process.env.ZERO_CAPITAL_CHAIN_SCAN_WATCHDOG_MS, 45_000, 5_000, 120_000);
+}
+
+function graphlessRouteTtlMs(): number {
+  return boundedMs(process.env.ZERO_CAPITAL_GRAPHLESS_ROUTE_TTL_MS, 1_500, 500, 3_000);
 }
 
 function withWatchdog<T>(task: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  const boundedMs = Math.max(1, Math.trunc(timeoutMs));
+  const bounded = Math.max(1, Math.trunc(timeoutMs));
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new DiscoveryWatchdogTimeoutError(label, boundedMs)), boundedMs);
-    timer.unref?.();
+    const watchdog = setTimeout(() => reject(new DiscoveryWatchdogTimeoutError(label, bounded)), bounded);
+    watchdog.unref?.();
     task.then(
-      value => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      error => {
-        clearTimeout(timer);
-        reject(error);
-      },
+      value => { clearTimeout(watchdog); resolve(value); },
+      error => { clearTimeout(watchdog); reject(error); },
     );
   });
 }
@@ -159,7 +156,7 @@ async function executeSetupCalls(input: {
       wallet: input.wallet,
       chainId: network.chainId,
       calls: input.calls.map(call => ({ to: call.to, data: call.data, value: BigNumber.from(call.value || 0) })),
-      timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_SETUP_TIMEOUT_MS || 90_000)),
+      timeoutMs: boundedMs(process.env.ZERO_CAPITAL_SPONSORED_SETUP_TIMEOUT_MS, 90_000, 10_000, 180_000),
     });
     return;
   }
@@ -181,16 +178,21 @@ async function executeSetupCalls(input: {
   }
 }
 
+/**
+ * Receiver preparation is chain-local infrastructure. A slow deployment on one
+ * chain must not block measurement or already-ready receivers on another chain.
+ * The manager remains single-flight per global fleet task, while independent
+ * chains are prepared in parallel and every failure remains isolated/fail-closed.
+ */
 async function ensureReceiverFleet(target: CanonicalZeroCapitalRuntime): Promise<void> {
   const routes = executionRoutes(target);
   const chains = [...new Set(routes.map(route => route.chain as SupportedChain))]
     .filter(chain => chain !== 'europa' && supportsSponsoredReceiverChain(chain as any));
-  let ready = 0;
-  const failures: string[] = [];
-  for (const chain of chains) {
+
+  const results = await Promise.all(chains.map(async chain => {
     const provider = target.providers.get(chain);
     const wallet = target.executionWallets.get(chain);
-    if (!provider || !wallet) { failures.push(`${chain}:provider_or_wallet_unavailable`); continue; }
+    if (!provider || !wallet) return { chain, ready: false, error: 'provider_or_wallet_unavailable' };
     try {
       const funding = await strictFunding(target, chain);
       if (funding.mode === 'unavailable') throw new Error(funding.reason);
@@ -207,61 +209,58 @@ async function ensureReceiverFleet(target: CanonicalZeroCapitalRuntime): Promise
         provider,
         routes: chainRoutes,
       });
-      if (calls.length > 0) {
-        await executeSetupCalls({ target, chain, provider, wallet, funding, calls });
-      }
-      ready++;
+      if (calls.length > 0) await executeSetupCalls({ target, chain, provider, wallet, funding, calls });
+      return { chain, ready: true, error: null as string | null };
     } catch (error) {
-      failures.push(`${chain}:${error instanceof Error ? error.message : String(error)}`);
+      return { chain, ready: false, error: error instanceof Error ? error.message : String(error) };
     }
-  }
-  readyReceiverChains = ready;
-  if (ready === 0 && chains.length > 0) {
+  }));
+
+  readyReceiverChains = results.filter(result => result.ready).length;
+  const failures = results.filter(result => !result.ready).map(result => `${result.chain}:${result.error}`);
+  if (readyReceiverChains === 0 && chains.length > 0) {
     logger.debug('[ZeroCapitalDiscovery] No strict zero-capital receiver chain is execution-ready; discovery remains active', {
       component: 'CanonicalZeroCapitalDiscovery', failures, executionAuthority: false,
     });
   } else if (failures.length > 0) {
     logger.debug('[ZeroCapitalDiscovery] Receiver fleet is partially ready; failed chains remain discovery-only', {
-      component: 'CanonicalZeroCapitalDiscovery', readyReceiverChains: ready, failures,
+      component: 'CanonicalZeroCapitalDiscovery', readyReceiverChains, failures,
     });
   }
 }
 
 function currentReceiverFleetTask(target: CanonicalZeroCapitalRuntime): Promise<void> {
   if (receiverFleetTask) return receiverFleetTask;
-  receiverFleetTask = ensureReceiverFleet(target).finally(() => {
-    receiverFleetTask = null;
-    receiverFleetTimedOut = false;
+  let tracked: Promise<void>;
+  tracked = ensureReceiverFleet(target).finally(() => {
+    if (receiverFleetTask === tracked) receiverFleetTask = null;
   });
-  return receiverFleetTask;
-}
-
-async function receiverAdmissionAllowedForCycle(target: CanonicalZeroCapitalRuntime): Promise<boolean> {
-  if (receiverFleetTimedOut && receiverFleetTask) {
-    lastObservationOnlyReason = 'receiver_fleet_watchdog_still_pending';
-    return false;
-  }
-  try {
-    await withWatchdog(currentReceiverFleetTask(target), receiverFleetWatchdogMs(), 'zero-capital receiver fleet');
-    lastObservationOnlyReason = null;
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof DiscoveryWatchdogTimeoutError) {
-      receiverFleetTimedOut = true;
-      receiverWatchdogExpirations++;
-    }
-    lastObservationOnlyReason = message;
-    logger.warn('[ZeroCapitalDiscovery] Receiver readiness did not complete inside its watchdog; recurring discovery continues observation-only', {
+  receiverFleetTask = tracked;
+  // The fleet has its own sponsored/native transaction timeouts. This watchdog is
+  // telemetry only; it never blocks recurring market measurement.
+  void withWatchdog(tracked, receiverFleetWatchdogMs(), 'zero-capital receiver fleet').catch(error => {
+    if (error instanceof DiscoveryWatchdogTimeoutError) receiverWatchdogExpirations++;
+    logger.warn('[ZeroCapitalDiscovery] Receiver fleet preparation is still pending; market scans continue and ready chains admit independently', {
       component: 'CanonicalZeroCapitalDiscovery',
-      error: message,
+      error: error instanceof Error ? error.message : String(error),
       receiverWatchdogExpirations,
-      observationOnly: true,
-      eligibilityAuthority: false,
+      marketMeasurementBlocked: false,
+      globalProviderAdmissionBlocked: false,
       executionAuthority: false,
     });
-    return false;
-  }
+  });
+  return tracked;
+}
+
+function receiverAdmissionAllowedForCycle(target: CanonicalZeroCapitalRuntime): boolean {
+  void currentReceiverFleetTask(target).catch(error => {
+    lastObservationOnlyReason = error instanceof Error ? error.message : String(error);
+  });
+  const records = target.receiverManager.getRecords();
+  readyReceiverChains = records.length;
+  const anyReady = records.length > 0;
+  lastObservationOnlyReason = anyReady ? null : 'receiver_fleet_initializing_no_chain_ready_yet';
+  return anyReady;
 }
 
 function canonicalEconomics(opportunity: ZeroCapitalOpportunity, quote?: QuotedZeroCapitalRoute) {
@@ -301,6 +300,16 @@ function recordPreselectionCandidate(input: {
   resourceReason: string;
 }): void {
   const { opportunity, quote } = input;
+  if (!Number.isFinite(opportunity.timestamp) || !Number.isFinite(opportunity.expiresAt) || opportunity.expiresAt < opportunity.timestamp) {
+    logger.warn('[ZeroCapitalDiscovery] Invalid route lifetime rejected before candidate registry', {
+      component: 'CanonicalZeroCapitalDiscovery',
+      opportunityId: opportunity.id,
+      timestamp: opportunity.timestamp,
+      expiresAt: opportunity.expiresAt,
+      executionAuthority: false,
+    });
+    return;
+  }
   const positive = opportunity.expectedProfit > 0n && (quote?.executablePositive ?? true);
   const existing = measuredCandidateRegistry.get(opportunity.id);
   if (existing?.status === 'eligible') {
@@ -360,12 +369,13 @@ function recordPreselectionCandidate(input: {
 async function scanOneChain(
   chain: SupportedChain,
   provider: providers.JsonRpcProvider,
-  allowProviderAdmission: boolean,
+  allowAnyProviderAdmission: boolean,
 ): Promise<void> {
   if (chain === 'europa') return;
   const target = runtime();
   const funding = await strictFunding(target, chain);
   const receiverReady = Boolean(target.receiverManager.getReceiver(chain));
+  const allowProviderAdmission = allowAnyProviderAdmission && receiverReady;
   const resourceReady = funding.mode !== 'unavailable'
     && funding.strictZeroInitialCapitalEligible === true
     && funding.operatorMonetaryInputRequired === false
@@ -385,7 +395,7 @@ async function scanOneChain(
     recordPreselectionCandidate({ opportunity, source: 'configured', resourceReady, resourceReason });
   }
 
-  const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode).catch(error => {
+  const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider, funding).catch(error => {
     logger.warn('[ZeroCapitalDiscovery] Dynamic graphless measurement degraded', {
       component: 'CanonicalZeroCapitalDiscovery', chain,
       error: error instanceof Error ? error.message : String(error),
@@ -397,20 +407,22 @@ async function scanOneChain(
   for (const quote of dynamicQuotes) {
     const opportunity = target.fromQuotedRoute(quote, block?.timestamp || Math.floor(Date.now() / 1000));
     if (quote.id.startsWith('graphless-')) {
-      const ttl = Math.max(500, Math.min(3000, Number(process.env.ZERO_CAPITAL_GRAPHLESS_ROUTE_TTL_MS || 1500)));
-      opportunity.expiresAt = Math.min(opportunity.expiresAt, Date.now() + ttl);
+      opportunity.expiresAt = Math.min(opportunity.expiresAt, Date.now() + graphlessRouteTtlMs());
     }
     recordPreselectionCandidate({ opportunity, quote, source: 'dynamic', resourceReady, resourceReason });
     dynamic.push(opportunity);
   }
 
-  const exact = [...configured, ...dynamic].filter(opportunity => opportunity.expiresAt > Date.now());
+  const exact = [...configured, ...dynamic].filter(opportunity =>
+    Number.isFinite(opportunity.expiresAt) && opportunity.expiresAt > Date.now(),
+  );
   if (exact.length === 0) return;
   if (!allowProviderAdmission) {
-    logger.debug('[ZeroCapitalDiscovery] Fresh route observations retained while provider admission is disabled for this degraded receiver cycle', {
+    logger.debug('[ZeroCapitalDiscovery] Fresh route observations retained while this chain awaits its verified receiver', {
       component: 'CanonicalZeroCapitalDiscovery',
       chain,
       observations: exact.length,
+      receiverReady,
       observationOnly: true,
       providerRepricingSkipped: true,
       executionAuthority: false,
@@ -479,10 +491,10 @@ async function runChainScanWithWatchdog(
 async function cycle(): Promise<void> {
   const target = runtime();
   try {
-    const allowProviderAdmission = await receiverAdmissionAllowedForCycle(target);
-    if (!allowProviderAdmission) observationOnlyCycles++;
+    const allowAnyProviderAdmission = receiverAdmissionAllowedForCycle(target);
+    if (!allowAnyProviderAdmission) observationOnlyCycles++;
     await Promise.allSettled([...target.providers.entries()].map(([chain, provider]) =>
-      runChainScanWithWatchdog(chain, provider, allowProviderAdmission),
+      runChainScanWithWatchdog(chain, provider, allowAnyProviderAdmission),
     ));
     lastCycleAt = Date.now();
     lastError = null;
@@ -517,11 +529,13 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     schedulerAuthority: false,
     eligibilityAuthority: 'canonical_provider_repricing_stage_only',
     gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
-    receiverSetupAuthority: 'canonical_discovery_resource_stage_with_system_owned_native_reservations',
+    receiverSetupAuthority: 'chain_local_background_resource_stage_with_system_owned_native_reservations',
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
     chainScanWatchdogMs: chainScanWatchdogMs(),
-    degradedReceiverCycleMode: 'observation_only_no_provider_admission',
+    degradedReceiverCycleMode: 'measurement_continues_chain_local_admission_only',
+    receiverFleetBlocksMarketMeasurement: false,
+    globalReceiverGateRemoved: true,
     duplicateHungTaskSuppression: true,
     dynamicGraphlessDiscovery: true,
     runtimeMethodMutation: false,
