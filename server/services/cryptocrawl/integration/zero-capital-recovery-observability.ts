@@ -53,6 +53,11 @@ function finite(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function bounded(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
+}
+
 function percentile(values: number[], p: number): number | null {
   if (values.length === 0) return null;
   const ordered = [...values].sort((left, right) => left - right);
@@ -60,9 +65,26 @@ function percentile(values: number[], p: number): number | null {
   return ordered[index] ?? null;
 }
 
-function routeEvidenceMaxAgeMs(): number {
-  const parsed = Number(process.env.ZERO_CAPITAL_ROUTE_EVIDENCE_MAX_AGE_MS || 60_000);
-  return Number.isFinite(parsed) ? Math.max(5_000, Math.min(300_000, parsed)) : 60_000;
+/**
+ * Route-preselection evidence can live slightly longer for learning/ranking, but
+ * the published "closest measured route" is actionable telemetry and must never
+ * outlive the route itself. This closes the old 60-second telemetry window that
+ * allowed a 3-second opportunity to remain the reported closest route long after
+ * it had ceased to be executable.
+ */
+function actionableRouteEvidenceMaxAgeMs(): number {
+  const routeTtlMs = bounded(process.env.ZERO_CAPITAL_ROUTE_TTL_MS, 3_000, 500, 15_000);
+  const configured = bounded(
+    process.env.ZERO_CAPITAL_ACTIONABLE_ROUTE_EVIDENCE_MAX_AGE_MS,
+    Math.min(3_000, routeTtlMs),
+    250,
+    15_000,
+  );
+  return Math.max(250, Math.min(routeTtlMs, configured));
+}
+
+function historicalRouteEvidenceMaxAgeMs(): number {
+  return bounded(process.env.ZERO_CAPITAL_ROUTE_EVIDENCE_MAX_AGE_MS, 5_000, 500, 300_000);
 }
 
 function cloneSnapshot(snapshot: ZeroCapitalRecoverySnapshot): ZeroCapitalRecoverySnapshot {
@@ -82,9 +104,9 @@ function notifyUpdate(): void {
 
 function refresh(): void {
   const now = Date.now();
-  // Recovery telemetry describes routes that could still be acted on now. Pull
-  // the complete default registry capacity before applying topology/freshness so
-  // high-volume CEX churn cannot crowd zero-capital candidates out of the view.
+  // Recovery telemetry describes candidates that remain actionable now. The
+  // registry expiry guard is authoritative; historical throughput stays in the
+  // separate registry metrics and is never mixed into this current frontier.
   const candidates = measuredCandidateRegistry.getRecent(4096)
     .filter(candidate =>
       candidate.topology === 'ZERO_CAPITAL_ATOMIC'
@@ -123,12 +145,12 @@ function refresh(): void {
     ? null
     : Math.max(0, -closestCandidateGrossBps);
 
-  const maxRouteEvidenceAgeMs = routeEvidenceMaxAgeMs();
+  const maxActionableRouteAgeMs = actionableRouteEvidenceMaxAgeMs();
   const routeEvidence = getZeroCapitalRoutePreselectionEvidence();
   const measuredRoutes = routeEvidence.filter(item =>
     item.lastMeasuredAt !== null
     && item.lastMeasuredAt <= now
-    && now - item.lastMeasuredAt <= maxRouteEvidenceAgeMs
+    && now - item.lastMeasuredAt <= maxActionableRouteAgeMs
     && item.recentNetProfitBps !== null
     && Number.isFinite(item.recentNetProfitBps),
   );
@@ -182,8 +204,10 @@ function refresh(): void {
   logger.info('[ZeroCapitalRecovery] Exact recovery-gap telemetry refreshed', {
     component: 'ZeroCapitalRecoveryObservability',
     ...latest,
-    routeEvidenceMaxAgeMs: maxRouteEvidenceAgeMs,
+    actionableRouteEvidenceMaxAgeMs: maxActionableRouteAgeMs,
+    historicalRouteEvidenceMaxAgeMs: historicalRouteEvidenceMaxAgeMs(),
     candidateAuthority: 'unexpired_canonical_bps_only',
+    routeTelemetryAuthority: 'actionable_route_lifetime_only',
     costCompressionAuthority: 'gross_positive_net_nonpositive_measured_candidates_only',
     nonPositiveGrossEdgeTreatment: 'route_pool_market_edge_search_not_fee_compression',
     staleCandidateEconomicAuthority: false,
@@ -205,7 +229,7 @@ function scheduleCandidateRefresh(candidate: MeasuredCandidate): void {
   candidateRefreshTimer = setTimeout(() => {
     candidateRefreshTimer = null;
     refresh();
-  }, 250);
+  }, 100);
   candidateRefreshTimer.unref?.();
 }
 
@@ -224,7 +248,7 @@ export function ensureZeroCapitalRecoveryObservability(): void {
   refresh();
   unsubscribeCandidateUpdate = measuredCandidateRegistry.onUpdate(scheduleCandidateRefresh);
   if (process.env.NO_INTERVALS !== 'true') {
-    const intervalMs = Math.max(5_000, Math.min(120_000, Number(process.env.ZERO_CAPITAL_RECOVERY_OBSERVABILITY_INTERVAL_MS || 15_000)));
+    const intervalMs = bounded(process.env.ZERO_CAPITAL_RECOVERY_OBSERVABILITY_INTERVAL_MS, 1_000, 500, 30_000);
     timer = setInterval(refresh, intervalMs);
     timer.unref?.();
   }
