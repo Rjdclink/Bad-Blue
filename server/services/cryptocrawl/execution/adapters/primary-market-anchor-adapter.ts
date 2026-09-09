@@ -13,11 +13,16 @@ export const ETHEREUM_PRIMARY_MARKET_ANCHORS = {
   usds: '0xdC035D45d973E3EC169d2276DDab16f1e407384F',
   skyLitePsmUsdc: '0xf6e72Db5454dd049d0788e411b06CfAF16853042',
   skyDaiUsds: '0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A',
+  // Current official Fluid DEX reserves resolver deployment from the public
+  // protocol deployment manifest. The older compatible deployment remains in
+  // Fluid's history, but current resolver deployments are preferred dynamically.
   fluidDexReservesResolver: '0xF38082d58bF0f1e07C04684FF718d69a70f21e62',
 } as const;
 
 const WAD = BigNumber.from('1000000000000000000');
 const MAX_UINT256 = ethers.constants.MaxUint256;
+const DEAD = '0x000000000000000000000000000000000000dEaD';
+const FLUID_SWAP_RESULT_SELECTOR = ethers.utils.id('FluidDexSwapResult(uint256)').slice(0, 10).toLowerCase();
 
 const ERC20_READ_ABI = [
   'function balanceOf(address account) view returns (uint256)',
@@ -46,6 +51,10 @@ const FLUID_RESOLVER_ABI = [
   'function estimateSwapIn(address dex, bool swap0to1, uint256 amountIn, uint256 amountOutMin) payable returns (uint256 amountOut)',
 ];
 
+const FLUID_POOL_ABI = [
+  'function swapIn(bool swap0to1, uint256 amountIn, uint256 amountOutMin, address to) payable returns (uint256 amountOut)',
+];
+
 export interface SkyPrimaryMarketLeg {
   protocol: SkyPrimaryMarketProtocol;
   tokenIn: string;
@@ -69,6 +78,22 @@ function sameAddress(left: string, right: string): boolean {
 function requireAddress(label: string, value: string): string {
   if (!ethers.utils.isAddress(value)) throw new Error(`${label} must be a valid EVM address`);
   return ethers.utils.getAddress(value);
+}
+
+function extractRevertData(error: unknown): string | null {
+  const candidate = error as any;
+  const values = [candidate?.data, candidate?.error?.data, candidate?.error?.error?.data, candidate?.receipt?.revertReason];
+  for (const value of values) {
+    if (typeof value === 'string' && ethers.utils.isHexString(value)) return value;
+  }
+  return null;
+}
+
+function decodeFluidSwapResult(raw: string | null): BigNumber | null {
+  if (!raw || raw.length < 74 || raw.slice(0, 10).toLowerCase() !== FLUID_SWAP_RESULT_SELECTOR) return null;
+  const [amountOut] = ethers.utils.defaultAbiCoder.decode(['uint256'], `0x${raw.slice(10)}`);
+  const result = BigNumber.from(amountOut);
+  return result.gt(0) ? result : null;
 }
 
 export function resolveSkyPrimaryMarketPool(
@@ -181,9 +206,6 @@ async function quoteSkyDaiUsds(
     throw new Error('Sky DaiUsds live identity does not match the reviewed DAI/USDS converter');
   }
   if (amountIn.lte(0)) throw new Error('Sky DaiUsds quote amount must be positive');
-  // The reviewed converter exchanges equal 18-decimal wad amounts in either
-  // direction. Identity is read live above; execution is still re-simulated by
-  // the canonical receiver before broadcast.
   return amountIn;
 }
 
@@ -240,10 +262,42 @@ export function buildSkyPrimaryMarketCall(input: {
   };
 }
 
+async function quoteFluidDirectExact(
+  provider: providers.Provider,
+  pool: string,
+  swap0to1: boolean,
+  amountIn: BigNumber,
+): Promise<BigNumber> {
+  const iface = new ethers.utils.Interface(FLUID_POOL_ABI);
+  const data = iface.encodeFunctionData('swapIn', [swap0to1, amountIn, 0, DEAD]);
+  try {
+    const returned = await provider.call({ to: pool, data });
+    // Current Fluid pools may return the exact amount normally during eth_call;
+    // older quote semantics reverted with FluidDexSwapResult. Both are exact live
+    // simulations and neither persists state.
+    if (returned && returned !== '0x') {
+      try {
+        const [normalAmountOut] = iface.decodeFunctionResult('swapIn', returned);
+        const normal = BigNumber.from(normalAmountOut);
+        if (normal.gt(0)) return normal;
+      } catch {
+        const custom = decodeFluidSwapResult(returned);
+        if (custom) return custom;
+      }
+    }
+    throw new Error('Fluid direct eth_call returned no decodable exact output');
+  } catch (error) {
+    const custom = decodeFluidSwapResult(extractRevertData(error));
+    if (custom) return custom;
+    throw error;
+  }
+}
+
 /**
- * Fluid publishes a resolver that intentionally performs the same DEAD-recipient
- * swap simulation and decodes FluidDexSwapResult itself. Using it first avoids
- * RPC-specific custom-error normalization while preserving exact live pool state.
+ * Prefer Fluid's official resolver. If a provider/resolver combination rejects
+ * that call, fall back to a direct non-persistent eth_call and accept either the
+ * modern normal uint256 return or the legacy FluidDexSwapResult custom-error
+ * quote. No synthetic reserve formula is introduced.
  */
 export async function quoteFluidSwapInViaOfficialResolver(
   provider: providers.Provider,
@@ -256,10 +310,14 @@ export async function quoteFluidSwapInViaOfficialResolver(
   if (amountIn.lte(0)) throw new Error('Fluid resolver quote amount must be positive');
   const iface = new ethers.utils.Interface(FLUID_RESOLVER_ABI);
   const data = iface.encodeFunctionData('estimateSwapIn', [pool, swap0to1, amountIn, 0]);
-  const returned = await provider.call({ to: resolver, data });
-  if (!returned || returned === '0x') throw new Error('Fluid official resolver returned no quote data');
-  const [amountOutRaw] = iface.decodeFunctionResult('estimateSwapIn', returned);
-  const amountOut = BigNumber.from(amountOutRaw);
-  if (amountOut.lte(0)) throw new Error('Fluid official resolver returned zero output');
-  return amountOut;
+  try {
+    const returned = await provider.call({ to: resolver, data });
+    if (!returned || returned === '0x') throw new Error('Fluid official resolver returned no quote data');
+    const [amountOutRaw] = iface.decodeFunctionResult('estimateSwapIn', returned);
+    const amountOut = BigNumber.from(amountOutRaw);
+    if (amountOut.lte(0)) throw new Error('Fluid official resolver returned zero output');
+    return amountOut;
+  } catch {
+    return quoteFluidDirectExact(provider, pool, swap0to1, amountIn);
+  }
 }
