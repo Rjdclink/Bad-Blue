@@ -57,15 +57,6 @@ function quoteFreshness(candidate: MeasuredCandidate): number {
   return Math.max(0, Math.min(1, 1 - ageMs / quoteLifetimeMs(candidate)));
 }
 
-function latencyDecayBps(candidate: MeasuredCandidate): number | null {
-  const ageMs = Math.max(0, candidate.quoteAgeMs ?? 0);
-  const lifetime = quoteLifetimeMs(candidate);
-  if (ageMs <= lifetime * 0.25) return null;
-  const pressure = Math.min(1, ageMs / lifetime);
-  const gross = Math.abs(candidate.canonicalBps.grossBps ?? candidate.canonicalBps.netBps ?? 0);
-  return Math.max(0.01, gross * pressure);
-}
-
 /**
  * Depth walking already measures the BBO-to-average-fill effect for CEX plans.
  * Older CEX producers exposed that same measurement under both slippage and
@@ -84,6 +75,13 @@ function combinedSlippageImpactBps(candidate: MeasuredCandidate): number | null 
   return aliasedCexDepthImpact ? impact : slippage + impact;
 }
 
+/**
+ * Dominant economic cost is intentionally restricted to canonical measured BPS.
+ * Quote age/latency is a freshness and survivability signal, not a synthetic
+ * monetary charge. Treating inferred age pressure as BPS previously allowed
+ * `latency_decay` to outrank gas/fees even when no latency cost had actually been
+ * measured. Stale evidence is rejected by freshness/expiry gates instead.
+ */
 function dominant(candidate: MeasuredCandidate): { driver: EconomicCostDriver; bps: number | null } {
   const canonical = candidate.canonicalBps;
   const slippageImpact = combinedSlippageImpactBps(candidate);
@@ -94,7 +92,6 @@ function dominant(candidate: MeasuredCandidate): { driver: EconomicCostDriver; b
     ['relay', canonical.relayBps],
     ['slippage_impact', slippageImpact],
     ['bridge', canonical.bridgeBps],
-    ['latency_decay', latencyDecayBps(candidate)],
   ];
   const measured = costs.filter((entry): entry is [EconomicCostDriver, number] => entry[1] !== null && Number.isFinite(entry[1]));
   if (measured.length === 0) return { driver: 'unknown', bps: null };
@@ -118,6 +115,8 @@ function transformationsFor(driver: EconomicCostDriver, topology: MeasuredCandid
       return ['smaller_or_split_notional', 'alternate_route_or_pool', 'retain_for_measurement'];
     case 'bridge':
       return ['same_chain_or_direct_path', 'alternate_route_or_pool', 'retain_for_measurement'];
+    // Retained for compatibility with externally supplied, genuinely measured
+    // latency-cost evidence. This engine no longer manufactures that BPS value.
     case 'latency_decay':
       return ['fresher_provider_or_prefetch', 'smaller_or_split_notional', 'retain_for_measurement'];
     default:
@@ -177,7 +176,8 @@ export function adviseEconomicTransformations(candidate: MeasuredCandidate): Eco
     provenance: [
       'canonical_bps:measured_candidate_registry',
       'measured_break_even_gap',
-      'quote_latency_decay_penalty_advisory_only',
+      'quote_age:freshness_and_expiry_advisory_only',
+      'synthetic_latency_bps:not_created',
       'evidence_completeness_weighted',
       'freshness_weighted',
       'dominant_cost_coverage_scheduling_hint',
