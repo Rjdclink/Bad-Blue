@@ -15,7 +15,7 @@ assert.match(verifier, /governance\.completeAdvisoryCycle\('system', 'arb_verifi
 
 // All original deterministic authorities remain in the one reused batch path.
 assert.match(verifier, /primeCexFeeEvidence\(economicsSymbols\)/);
-assert.match(verifier, /quantityFractions = \[0\.05/);
+assert.match(verifier, /quantityFractions = \[0\.02, 0\.05/);
 assert.match(verifier, /topSpreadBps <= breakEvenBps/);
 assert.match(verifier, /candidate\.netProfitUsd > bestPlan\.netProfitUsd/);
 
@@ -57,6 +57,7 @@ console.log(JSON.stringify({
   governanceAdvisoryEnvelopePreserved: true,
   authenticatedFeeAuthorityPreserved: true,
   depthAwareSizingPreserved: true,
+  microNotionalSizingPreserved: true,
   deterministicNetEconomicsPreserved: true,
   singleProfitAdmissionAuthority: true,
   batchFailureFailsClosed: true,
