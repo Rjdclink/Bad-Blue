@@ -19,6 +19,7 @@ assert.match(adapter, /getIsFrozen/);
 assert.match(adapter, /getIsSeized/);
 assert.match(adapter, /FluidDexSwapResult\(uint256\)/);
 assert.match(adapter, /provider\.call/);
+assert.match(adapter, /resolveProtocolAnchorPool/);
 assert.match(adapter, /Unreviewed Aave GHO GSM address/);
 assert.match(adapter, /Unreviewed Fluid GHO\/USDC pool address/);
 assert.doesNotMatch(adapter, /assumed.*1:1|hard.?coded.*10\s*BPS/i);
@@ -45,7 +46,7 @@ assert.match(payload, /fluidDexT1/);
 assert.match(payload, /resolveProtocolAnchorPool/);
 assert.match(payload, /buildProtocolAnchorCall/);
 assert.match(planner, /isStrictlyPositiveProfitBaseUnits\(expectedProfit\)/);
-assert.match(planner, /protocol === 'aaveGhoGsm'\s*\?\s*expectedAmountOut\.toString\(\)/);
+assert.match(planner, /minAmountOut:\s*protocolAnchor\s*\?\s*expectedAmountOut\.toString\(\)/);
 assert.match(planner, /route\[\$\{index\}\]\.pool/);
 
 assert.match(receiver, /require\(finalBalance >= amountOwed \+ minProfit, "profit_below_threshold"\)/);
@@ -57,6 +58,7 @@ console.log(JSON.stringify({
   protocolAnchorRoutes: 6,
   liveGsmEconomics: true,
   fluidCallSimulation: true,
+  exactAnchorHandoff: true,
   canonicalStrictPositiveProfitPreserved: true,
   receiverAllowListPreserved: true,
 }));
