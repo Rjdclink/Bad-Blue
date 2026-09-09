@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import pg from 'pg';
-import { getPoolStats, pool } from '../../../db.js';
+import { getPoolStats, pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { createLogger } from '../../../logger.js';
 
 /**

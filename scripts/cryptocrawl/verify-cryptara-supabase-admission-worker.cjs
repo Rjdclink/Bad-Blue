@@ -32,7 +32,8 @@ const calibration = read('server/services/cryptocrawl/validation/monte-carlo-cal
 const migration = read('server/migrations/023_cryptocrawler_hot_path_schema_authority.sql');
 
 // One resource brain, zero extra connection budget.
-requirePattern(worker, /import\s+\{\s*getPoolStats,\s*pool\s*\}\s+from\s+'\.\.\/\.\.\/\.\.\/db\.js'/, 'worker consumes the existing ordinary pool and its telemetry');
+requirePattern(worker, /import\s+\{\s*getPoolStats,\s*pool\s*\}\s+from\s+'\.\.\/runtime\/cryptocrawl-runtime-database\.js'/, 'worker consumes the canonical Overflow runtime ordinary pool and its telemetry');
+forbidPattern(worker, /from\s+'\.\.\/\.\.\/\.\.\/db\.js'/, 'worker regressing to the legacy application database pool');
 forbidPattern(worker, /\bnew\s+Pool\s*\(/, 'worker creating a second application pool');
 forbidPattern(worker, /coordinationPool/, 'worker consuming or modifying the session-capable coordination lane');
 forbidPattern(worker, /setInterval\s*\(/, 'polling loop adding idle worker overhead');
