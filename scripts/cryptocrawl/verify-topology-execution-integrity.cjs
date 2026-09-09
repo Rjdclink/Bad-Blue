@@ -14,6 +14,7 @@ const liquidation = read('server/services/cryptocrawl/execution/aave-liquidation
 const funding = read('server/services/cryptocrawl/execution/funding-position-lifecycle.ts');
 const fundingMigration = read('server/migrations/024_cryptocrawler_funding_lifecycle.sql');
 const mev = read('server/services/cryptocrawl/execution/mev-backrun-executor.ts');
+const backrunCompiler = read('server/services/cryptocrawl/execution/exact-post-victim-backrun-compiler.ts');
 const mempoolCapability = read('server/services/cryptocrawl/discovery/mempool-capability-registry.ts');
 const router = read('server/services/cryptocrawl/execution/unified-execution-router.ts');
 const rebalance = read('server/services/cryptocrawl/execution/inventory-rebalance-executor.ts');
@@ -83,16 +84,21 @@ assert(mev.includes('MultiRelaySubmitter'), 'backrun must use relay submission a
 assert(mev.includes('transactionIndex'), 'terminal proof must confirm same-block victim-before-backrun ordering');
 assert(mempoolCapability.includes('transactionChainBinding'), 'mempool capability must report exact per-transaction chain binding');
 assert(mempoolCapability.includes('executableBackrunEvidence: false'), 'pending-feed capability alone must never become executable backrun evidence');
+assert(backrunCompiler.includes('exact_post_victim_backrun_compiler:passed'), 'canonical compiler must stamp exact post-victim authority only after compilation succeeds');
+assert(backrunCompiler.includes('exact_victim_first_eth_callBundle_simulation:passed'), 'canonical compiler must require exact victim-first private-bundle simulation');
+assert(backrunCompiler.includes('no_frontrun_or_sandwich'), 'canonical compiler must remain backrun-only');
 assert(router.includes("case 'MEMPOOL_BACKRUN':"), 'router must explicitly handle backrun topology');
-assert(router.includes('exact_post_victim_backrun_compiler_unavailable'), 'router must fail closed until the canonical backrun compiler exists');
+assert(router.includes('exact_post_victim_backrun_evidence_unavailable'), 'router must fail closed when exact compiler evidence is absent');
+assert(router.includes("candidate.provenance.includes('exact_post_victim_backrun_compiler:passed')"), 'router must require compiler provenance before MEV admission');
+assert(router.includes("candidate.provenance.includes('sandwichOrFrontrun:false')"), 'router must require explicit no-front-run/no-sandwich provenance');
 
 assert(rebalance.includes('registerAdapter'), 'rebalancing must have an explicit settlement adapter registry');
 assert(rebalance.includes("requireAllowed('SUBMIT_TX'"), 'rebalancing must pass live governance');
 assert(rebalance.includes('settlementConfirmed === true && last.successful === true'), 'rebalancing must require terminal successful settlement');
 assert(rebalance.includes('REJECT_REBALANCE_ADAPTER_UNAVAILABLE'), 'unsupported transfer routes must fail closed');
 
-for (const [name, source] of Object.entries({ across, liquidation, funding, mev, rebalance })) {
+for (const [name, source] of Object.entries({ across, liquidation, funding, mev, backrunCompiler, rebalance })) {
   assert(!source.includes('syntheticProfit'), `${name} must not introduce synthetic profit authority`);
 }
 
-console.log('[topology-execution-integrity] PASS: inventory, maker, cross-chain, exact Aave liquidation, funding, MEV and rebalancing retain hard execution/settlement truth while simulation remains advisory');
+console.log('[topology-execution-integrity] PASS: inventory, maker, cross-chain, exact Aave liquidation, funding, exact victim-first MEV and rebalancing retain hard execution/settlement truth while simulation remains advisory except where exact private-bundle state is itself the required pre-inclusion evidence');
