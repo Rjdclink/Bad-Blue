@@ -11,9 +11,15 @@ import { buildAtomicNotionalCandidates, selectHighestNetProfit } from './atomic-
 import { calculateProgressivePositionSize } from '../../risk/progressive-position-sizing.js';
 import { stageManager } from '../../governance/stage-management.js';
 import {
+  ETHEREUM_PROTOCOL_ANCHORS,
   defaultEthereumProtocolAnchorRoutes,
   quoteProtocolAnchorLeg,
 } from './protocol-anchor-adapter.js';
+import {
+  quoteFluidSwapInViaOfficialResolver,
+  quoteSkyPrimaryMarketLeg,
+} from './primary-market-anchor-adapter.js';
+import { defaultEthereumPrimaryMarketAnchorRoutes } from './primary-market-anchor-routes.js';
 
 const UNISWAP_V3_QUOTER_ABI = [
   'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
@@ -133,6 +139,8 @@ function normalizeProtocol(value: unknown): SupportedSwapProtocol {
   if (normalized === 'traderjoev1' || normalized === 'traderjoe_v1' || normalized === 'traderjoe-v1' || normalized === 'joev1' || normalized === 'joe-v1') return 'traderJoeV1';
   if (normalized === 'aaveghogsm' || normalized === 'aave_gho_gsm' || normalized === 'aave-gho-gsm') return 'aaveGhoGsm';
   if (normalized === 'fluiddext1' || normalized === 'fluid_dex_t1' || normalized === 'fluid-dex-t1') return 'fluidDexT1';
+  if (normalized === 'skylitepsm' || normalized === 'sky_lite_psm' || normalized === 'sky-lite-psm') return 'skyLitePsm';
+  if (normalized === 'skydaiusds' || normalized === 'sky_dai_usds' || normalized === 'sky-dai-usds') return 'skyDaiUsds';
   throw new Error(`Unsupported route protocol: ${String(value)}`);
 }
 
@@ -265,9 +273,10 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
 
 export function loadConfiguredZeroCapitalRoutes(raw: string = process.env.ZERO_CAPITAL_ROUTE_CONFIG || ''): ConfiguredZeroCapitalRoute[] {
   const includeProtocolAnchors = arguments.length === 0 && process.env.ZERO_CAPITAL_PROTOCOL_ANCHORS !== 'false';
-  const anchorRoutes = includeProtocolAnchors
-    ? defaultEthereumProtocolAnchorRoutes().map((route, index) => parseConfiguredRoute(route, index))
+  const anchorDefinitions = includeProtocolAnchors
+    ? [...defaultEthereumProtocolAnchorRoutes(), ...defaultEthereumPrimaryMarketAnchorRoutes()]
     : [];
+  const anchorRoutes = anchorDefinitions.map((route, index) => parseConfiguredRoute(route, index));
   if (!raw.trim()) return anchorRoutes;
 
   let parsed: unknown;
@@ -299,9 +308,45 @@ async function quoteLegAgainstProvider(
   leg: ConfiguredRouteLeg,
   amountIn: BigNumber,
 ): Promise<BigNumber> {
-  if (leg.protocol === 'aaveGhoGsm' || leg.protocol === 'fluidDexT1') {
-    if (chain !== 'ethereum') throw new Error(`${leg.protocol} protocol anchor is currently reviewed only for Ethereum`);
-    if (!leg.pool) throw new Error(`${leg.protocol} protocol anchor requires an exact module/pool address`);
+  if (leg.protocol === 'skyLitePsm' || leg.protocol === 'skyDaiUsds') {
+    if (chain !== 'ethereum') throw new Error(`${leg.protocol} primary-market anchor is currently reviewed only for Ethereum`);
+    if (!leg.pool) throw new Error(`${leg.protocol} primary-market anchor requires an exact module address`);
+    return quoteSkyPrimaryMarketLeg(rpcProvider, {
+      protocol: leg.protocol,
+      tokenIn: leg.tokenIn,
+      tokenOut: leg.tokenOut,
+      pool: leg.pool,
+    }, amountIn);
+  }
+
+  if (leg.protocol === 'fluidDexT1') {
+    if (chain !== 'ethereum') throw new Error('fluidDexT1 protocol anchor is currently reviewed only for Ethereum');
+    if (!leg.pool) throw new Error('fluidDexT1 protocol anchor requires an exact pool address');
+    const tokenIn = normalizeAddress(leg.tokenIn);
+    const tokenOut = normalizeAddress(leg.tokenOut);
+    const gho = normalizeAddress(ETHEREUM_PROTOCOL_ANCHORS.gho);
+    const usdc = normalizeAddress(ETHEREUM_PROTOCOL_ANCHORS.usdc);
+    const swap0to1 = tokenIn === gho && tokenOut === usdc;
+    const swap1to0 = tokenIn === usdc && tokenOut === gho;
+    if (!swap0to1 && !swap1to0) throw new Error('Fluid anchor resolver supports only the reviewed GHO/USDC pair');
+    try {
+      return await quoteFluidSwapInViaOfficialResolver(rpcProvider, leg.pool, swap0to1, amountIn);
+    } catch {
+      // Some RPCs normalize custom revert data differently. The official resolver
+      // is preferred, while the reviewed direct DEAD-recipient simulation remains
+      // an exact-state fallback rather than a synthetic quote.
+      return quoteProtocolAnchorLeg(rpcProvider, {
+        protocol: leg.protocol,
+        tokenIn: leg.tokenIn,
+        tokenOut: leg.tokenOut,
+        pool: leg.pool,
+      }, amountIn);
+    }
+  }
+
+  if (leg.protocol === 'aaveGhoGsm') {
+    if (chain !== 'ethereum') throw new Error('aaveGhoGsm protocol anchor is currently reviewed only for Ethereum');
+    if (!leg.pool) throw new Error('aaveGhoGsm protocol anchor requires an exact module/pool address');
     return quoteProtocolAnchorLeg(rpcProvider, {
       protocol: leg.protocol,
       tokenIn: leg.tokenIn,
@@ -416,7 +461,7 @@ async function quoteLeg(
 }
 
 function feeToDecimal(protocol: SupportedSwapProtocol, feeTier?: number, fee?: number): number {
-  if (protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1') return 0;
+  if (protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1' || protocol === 'skyLitePsm' || protocol === 'skyDaiUsds') return 0;
   if (fee !== undefined) return fee;
   if (protocol === 'uniswapV3') return (feeTier || 3000) / 1_000_000;
   return 0.003;
