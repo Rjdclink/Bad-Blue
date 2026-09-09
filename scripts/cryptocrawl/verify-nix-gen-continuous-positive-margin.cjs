@@ -17,7 +17,8 @@ const anchors = read('server/services/cryptocrawl/execution/adapters/protocol-an
 const runtimeDb = read('server/services/cryptocrawl/runtime/cryptocrawl-runtime-database.ts');
 
 must(frontier, /https:\/\/api\.uniswap\.org\/v2\/orders/, 'Permissionless UniswapX order reservoir must use the official public orders endpoint');
-must(frontier, /Math\.max\(1_000,[\s\S]*CRYPTOCRAWL_UNISWAPX_ORDER_POLL_MS/, 'UniswapX polling must stay bounded below the public 4 RPS ceiling');
+must(frontier, /CRYPTOCRAWL_UNISWAPX_ORDER_POLL_MS/, 'UniswapX polling cadence must remain explicitly configurable');
+must(frontier, /Math\.max\(1_000,\s*Math\.min\(10_000,\s*Math\.trunc\(parsed\)\)\)/, 'UniswapX polling must stay bounded below the public 4 RPS ceiling');
 must(frontier, /standingQuotePolicy: 'measured_execution_cost_plus_positive_target_margin'/, 'Standing quote policy must add a positive target margin to measured execution cost');
 must(frontier, /candidatePromotionPolicy: 'only_after_exact_current_order_resolution_plus_callback_execution_proof_plus_strict_positive_all_in_net'/, 'Intent candidates must fail closed until exact executable callback economics are proven');
 must(frontier, /canonicalCandidateRowsCreated: 0/, 'Public order discovery must not manufacture executable candidates');
