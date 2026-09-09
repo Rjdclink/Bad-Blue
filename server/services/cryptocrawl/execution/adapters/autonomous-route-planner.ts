@@ -55,6 +55,8 @@ function normalizeProtocol(protocol: string): SupportedSwapProtocol {
   if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushi-v3') return 'sushiswapV3';
   if (normalized === 'aaveghogsm' || normalized === 'aave_gho_gsm' || normalized === 'aave-gho-gsm') return 'aaveGhoGsm';
   if (normalized === 'fluiddext1' || normalized === 'fluid_dex_t1' || normalized === 'fluid-dex-t1') return 'fluidDexT1';
+  if (normalized === 'skylitepsm' || normalized === 'sky_lite_psm' || normalized === 'sky-lite-psm') return 'skyLitePsm';
+  if (normalized === 'skydaiusds' || normalized === 'sky_dai_usds' || normalized === 'sky-dai-usds') return 'skyDaiUsds';
   throw new Error(`Unsupported autonomous route protocol: ${protocol}`);
 }
 
@@ -184,7 +186,10 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     previousExpectedOut = expectedAmountOut;
 
     const protocol = normalizeProtocol(step.protocol);
-    const protocolAnchor = protocol === 'aaveGhoGsm' || protocol === 'fluidDexT1';
+    const protocolAnchor = protocol === 'aaveGhoGsm'
+      || protocol === 'fluidDexT1'
+      || protocol === 'skyLitePsm'
+      || protocol === 'skyDaiUsds';
     const pool = step.pool ? requireAddress(`route[${index}].pool`, step.pool) : undefined;
     return {
       protocol,
@@ -192,8 +197,8 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
       tokenIn,
       tokenOut,
       amountIn: requiredAmountIn.toString(),
-      // Anchor legs use the exact measured output. A changed protocol/pool state
-      // must fail closed instead of silently changing the next atomic leg size.
+      // Protocol-anchor legs use the exact measured output. A changed protocol or
+      // pool state must fail closed instead of silently changing the next atomic leg size.
       minAmountOut: protocolAnchor
         ? expectedAmountOut.toString()
         : applyHaircut(expectedAmountOut, minOutputBps),
