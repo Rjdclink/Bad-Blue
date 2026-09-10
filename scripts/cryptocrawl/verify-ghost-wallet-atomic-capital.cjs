@@ -8,6 +8,10 @@ const intermediary = read('contracts/cryptocrawl/CryptocrawlGhostWalletIntermedi
 const vault = read('contracts/cryptocrawl/CryptocrawlGhostWalletCapitalVault.sol');
 const fabric = read('server/services/cryptocrawl/ghost-wallet/capital-fabric.ts');
 const engine = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-engine.ts');
+const infrastructure = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-infrastructure-manager.ts');
+const infrastructurePolicy = read('server/services/cryptocrawl/governance/zero-capital-infrastructure-policy.ts');
+const compiler = read('scripts/cryptocrawl/compile-ghost-wallet-contracts.cjs');
+const preflight = read('scripts/cryptocrawl/verify-deployment-preflight.cjs');
 const intentBook = read('server/services/cryptocrawl/ghost-wallet/intent-book.ts');
 const sourceMeasurement = read('server/services/cryptocrawl/ghost-wallet/onchain-capital-sources.ts');
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
@@ -76,6 +80,32 @@ assert.match(sourceMeasurement, /debtOf\(address account\)/);
 assert.match(sourceMeasurement, /checkLiquidation\(intermediary, config\.violator, config\.collateral\)/);
 assert.match(sourceMeasurement, /synthetic_capacity:false/);
 
+// No Ghost-Wallet-specific Railway entries are required. The application compiles
+// both contracts in prebuild, deterministically derives/deploys public infrastructure,
+// verifies it on-chain, and publishes the resulting addresses inside the runtime.
+assert.match(engine, /ensureGhostWalletInfrastructure/);
+assert.match(engine, /manualRailwayConfigurationRequired:\s*false/);
+assert.match(engine, /return sharedExecutionAuthority/);
+assert.match(engine, /CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK'/);
+assert.match(engine, /ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK'/);
+assert.match(infrastructure, /0x4e59b44847b379578588920cA78FbF26c0B4956C/);
+assert.match(infrastructure, /CREATE2_DEPLOYER_CODE_HASH/);
+assert.match(infrastructure, /manualRailwayConfigurationRequired:\s*false/);
+assert.match(infrastructure, /personalGasSpent:\s*false/);
+assert.match(infrastructure, /arbitrageSystemOwnedGasSpent:\s*false/);
+assert.match(infrastructure, /funding\.mode === 'sponsored'/);
+assert.match(infrastructure, /funding\.paymentSource === 'provider_sponsored'/);
+assert.match(infrastructure, /sponsorOperatorMonetaryCostProvenZero === true/);
+assert.match(infrastructure, /process\.env\.GHOST_WALLET_INTERMEDIARIES_JSON = JSON\.stringify/);
+assert.match(infrastructure, /process\.env\.GHOST_WALLET_CAPITAL_VAULTS_JSON = JSON\.stringify/);
+assert.doesNotMatch(infrastructure, /executeSystemOwnedNativeTransaction/);
+assert.match(infrastructurePolicy, /'ghost_wallet_deployment'/);
+assert.match(infrastructurePolicy, /'ghost_wallet_permissions'/);
+assert.match(compiler, /CryptocrawlGhostWalletIntermediary\.sol/);
+assert.match(compiler, /CryptocrawlGhostWalletCapitalVault\.sol/);
+assert.match(compiler, /solc@0\.8\.24/);
+assert.match(preflight, /compile-ghost-wallet-contracts\.cjs/);
+
 // Deferred-protocol settlement remains reserved, never advertised as executable.
 assert.match(coverage, /protocolDeferredSettlementExecutionEnabled:\s*false/);
 assert.match(coverage, /if \(provenance === 'protocol_deferred_settlement'\) return false/);
@@ -126,6 +156,10 @@ console.log(JSON.stringify({
   exactTerminalBalanceNeutrality: true,
   fiveCapitalPrimitivesPresent: true,
   protocolSpecificLiabilityProbes: true,
+  noManualRailwayGhostWalletConfiguration: true,
+  deterministicCreate2Bootstrap: true,
+  providerSponsoredInfrastructureOnly: true,
+  ghostWalletContractsCompileInPrebuild: true,
   deferredSettlementFalseCapabilityRemoved: true,
   flashPriorityPreserved: true,
   alternativeCapitalExactSimulation: true,
