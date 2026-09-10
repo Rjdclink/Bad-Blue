@@ -5,6 +5,7 @@ const fs = require('node:fs');
 
 function read(path) { return fs.readFileSync(path, 'utf8'); }
 
+const dockerfile = read('Dockerfile');
 const runtime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 const schema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
 const build = read('scripts/cryptocrawl/build-server-overflow-authority.mjs');
@@ -26,6 +27,7 @@ const index = read('server/index.ts');
 assert.match(schema, /SCHEMA_VERSION = 27/);
 assert.match(schema, /057_cryptocrawler_ghost_wallet_runtime\.sql/);
 assert.match(schema, /26:\s*\['057_cryptocrawler_ghost_wallet_runtime\.sql'\]/);
+assert.match(dockerfile, /COPY --from=builder \/app\/server\/migrations\/057_cryptocrawler_ghost_wallet_runtime\.sql \.\/dist\/migrations\/057_cryptocrawler_ghost_wallet_runtime\.sql/);
 assert.match(runtime, /ensureCryptocrawlOverflowRuntimeSchema/);
 assert.match(runtime, /getCryptocrawlOverflowRuntimeSchemaSnapshot/);
 assert.match(runtime, /startOverflowSchemaRepair/);
