@@ -50,23 +50,32 @@ assert.match(providerEconomics, /result\.status === 'fulfilled' && result\.value
 assert.match(providerEconomics, /morpho_blue_core_flashFee_zero_by_interface/);
 
 // CanonicalZeroCapitalDiscovery is the only recurring ZERO_CAPITAL_ATOMIC scan
-// cadence. Healthy receiver-before-scan ordering is preserved. If receiver work
-// exceeds its watchdog, the recurring scanner continues observation-only without
-// provider admission; hung chain tasks are isolated and duplicate work suppressed.
+// cadence. Receiver preparation is single-flight and watchdog-bounded, but a slow
+// receiver chain cannot globally suppress fresh quote/provider measurement on
+// unrelated chains. Each chain's provider stage independently proves funding,
+// receiver capability and permissions before eligibility.
 assert.match(discovery, /class DiscoveryWatchdogTimeoutError extends Error/);
 assert.match(discovery, /function receiverFleetWatchdogMs\(\): number/);
 assert.match(discovery, /function chainScanWatchdogMs\(\): number/);
 assert.match(discovery, /function withWatchdog<T>/);
-assert.match(discovery, /await withWatchdog\(currentReceiverFleetTask\(target\), receiverFleetWatchdogMs\(\), 'zero-capital receiver fleet'\)/);
-assert.match(discovery, /const allowProviderAdmission = await receiverAdmissionAllowedForCycle\(target\)/);
-assert.match(discovery, /runChainScanWithWatchdog\(chain, provider, allowProviderAdmission\)/);
-assert.match(discovery, /if \(!allowProviderAdmission\) \{[\s\S]*providerRepricingSkipped: true[\s\S]*return;/);
+assert.match(discovery, /function currentReceiverFleetTask\(target: CanonicalZeroCapitalRuntime\): Promise<void>/);
+assert.match(discovery, /if \(receiverFleetTask\) return receiverFleetTask/);
+assert.match(discovery, /function refreshReceiverFleetForCycle\(target: CanonicalZeroCapitalRuntime\): void/);
+assert.match(discovery, /const task = currentReceiverFleetTask\(target\)/);
+assert.match(discovery, /void withWatchdog\(task, receiverFleetWatchdogMs\(\), 'zero-capital receiver fleet'\)\.then/);
+assert.match(discovery, /globalProviderAdmissionBlocked: false/);
+assert.match(discovery, /async function scanOneChain\([\s\S]*const funding = await strictFunding\(target, chain\)/);
+assert.match(discovery, /const resourceReady = funding\.mode !== 'unavailable'[\s\S]*funding\.strictZeroInitialCapitalEligible === true[\s\S]*funding\.operatorMonetaryInputRequired === false[\s\S]*receiverReady/);
+assert.match(discovery, /const selected = await repriceZeroCapitalProviderEconomics\(/);
+assert.match(discovery, /getGasFundingDecision: selectedChain => strictFunding\(target, selectedChain\)/);
+assert.match(discovery, /runChainScanWithWatchdog\(chain, provider\)/);
 assert.match(discovery, /const chainScanTasks = new Map<SupportedChain, Promise<void>>\(\)/);
 assert.match(discovery, /if \(existing\) \{[\s\S]*duplicate scan suppressed[\s\S]*return;/);
 assert.match(discovery, /await withWatchdog\(tracked, chainScanWatchdogMs\(\), `zero-capital \$\{chain\} chain scan`\)/);
 assert.match(discovery, /function schedule\(\): void/);
 assert.match(discovery, /cycleInFlight = cycle\(\)\.finally\(\(\) => \{ cycleInFlight = null; schedule\(\); \}\)/);
-assert.match(discovery, /degradedReceiverCycleMode: 'observation_only_no_provider_admission'/);
+assert.match(discovery, /degradedReceiverCycleMode: 'chain_local_admission_provider_repricing_continues'/);
+assert.match(discovery, /globalReceiverFailureBlocksProviderAdmission: false/);
 assert.match(discovery, /schedulerAuthority:\s*false/);
 assert.match(discovery, /executionAuthority:\s*false/);
 
@@ -87,4 +96,4 @@ assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /Canonical all-in net economics are not strictly positive/);
 
-console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring observation-only recovery, and positive-only canonical execution verified');
+console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, chain-local funding proof, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
