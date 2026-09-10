@@ -182,7 +182,7 @@ assert.match(providerReprice, /bootstrapFlashFee/);
 // prepared transaction with exact on-chain simulation before eligibility promotion.
 assert.match(alternativeReprice, /measureConfiguredGhostWalletSources\(/);
 assert.match(alternativeReprice, /await input\.provider\.call\(exactEnvelope\)/);
-assert.match(alternativeReprice, /await input\.provider\.estimateGas\(exactEnvelope\)/);
+assert.match(alternativeReprice, /input\.provider\.estimateGas\(exactEnvelope\)/);
 assert.match(alternativeReprice, /ghostWalletAlternativeZeroCapitalSelectionRegistry\.record\(registrySelection\)/);
 assert.match(alternativeReprice, /updateEligibleCandidate\(opportunity, best\)/);
 assert.match(alternativeReprice, /strict_positive_all_in_net_after_source_fee_and_execution_cost/);
