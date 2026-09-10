@@ -98,6 +98,7 @@ require('./verify-bps-zero-capital-event-handoff.cjs');
 
 fs.readFileSync = originalReadFileSync;
 require('./verify-ghost-wallet-atomic-capital.cjs');
+require('./verify-ghost-wallet-merge-gate.cjs');
 
 // Compile the two new contracts as part of prebuild. This is deliberately after
 // structural verification so a Solidity compiler failure blocks the real build,
@@ -108,4 +109,4 @@ execFileSync(
   { stdio: 'inherit', env: process.env },
 );
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, Ghost Wallet atomic-capital isolation, deterministic no-manual bootstrap, Solidity compilation, and single zero-capital route authority passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, Ghost Wallet atomic-capital isolation, deterministic no-manual bootstrap, merge gate, Solidity compilation, and single zero-capital route authority passed; continuing to downstream prebuild/build');
