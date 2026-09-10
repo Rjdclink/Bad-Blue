@@ -9,6 +9,7 @@ const builder = read('server/services/cryptocrawl/execution/adapters/flashloan-r
 const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 const receiver = read('contracts/cryptocrawl/CryptocrawlMorphoFlashLoanReceiver.sol');
 const compiler = read('scripts/cryptocrawl/compile-flashloan-receiver.ts');
+const deployer = read('scripts/cryptocrawl/deploy-flashloan-receiver.ts');
 
 assert.match(economics, /FlashLoanProviderKind = 'balancer_v2' \| 'aave_v3' \| 'morpho_blue'/);
 assert.match(economics, /export function resolveMorphoBlue/);
@@ -50,4 +51,11 @@ assert.doesNotMatch(receiver, /premium/);
 assert.match(compiler, /compileMorphoBlueFlashLoanReceiver/);
 assert.match(compiler, /CryptocrawlMorphoFlashLoanReceiver\.sol/);
 
-console.log('[verify-morpho-zero-fee-flash] measured zero-fee liquidity, verified receiver binding, strict zero-operator-cost proof, atomic principal repayment, canonical single-executor submission, and terminal receipt-profit invariants passed');
+assert.match(deployer, /compileMorphoBlueFlashLoanReceiver/);
+assert.match(deployer, /'morpho-blue'/);
+assert.match(deployer, /resolveMorphoBlue/);
+assert.match(deployer, /receiverKind === 'morpho-blue'/);
+assert.match(deployer, /infrastructureGetter = input\.receiverKind === 'aave-v3'[\s\S]*'morpho'/);
+assert.match(deployer, /ZERO_CAPITAL_MORPHO_RECEIVER_\$\{chainKey\}/);
+
+console.log('[verify-morpho-zero-fee-flash] measured zero-fee liquidity, deployable verified receiver binding, strict zero-operator-cost proof, atomic principal repayment, canonical single-executor submission, and terminal receipt-profit invariants passed');
