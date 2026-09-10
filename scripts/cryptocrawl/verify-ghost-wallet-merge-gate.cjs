@@ -31,7 +31,7 @@ assert.match(alternative, /provider\.estimateGas\(request\)/);
 
 // Ghost is an isolated, caller-funded credit-intermediation lane.
 assert.match(engine, /profitLadderAuthority: false/);
-assert.match(engine, /100_percent_realized_net_direct_to_canonical_wallet/);
+assert.match(engine, /90_percent_payout_10_percent_retained/);
 assert.match(engine, /alchemyDependency: false/);
 assert.match(engine, /serverTransactionSubmission: false/);
 assert.match(engine, /coreExecutionGasPayer: 'transaction_initiator'/);
@@ -81,6 +81,7 @@ assert.match(borrowerSurface, /ghost_execution:caller_funded_atomic_bridge/);
 assert.match(providerMesh, /alchemyAllowed: false/);
 assert.match(providerMesh, /independentPublicFallbacks: true/);
 assert.match(providerMesh, /parallelInitialProbe: true/);
+assert.match(providerMesh, /requestDrivenHealthRefresh: true/);
 assert.match(providerMesh, /routeLocalFailure: true/);
 assert.match(providerMesh, /Promise\.allSettled/);
 assert.match(providerMesh, /!\/alchemy\\\.com\/i/);
@@ -116,6 +117,8 @@ assert.match(chainEvents, /routeLocalFailure: true/);
 assert.doesNotMatch(chainEvents, /new ethers\.utils\.Interface/);
 assert.match(settlementIngest, /ExternalCreditBrokered/);
 assert.match(settlementIngest, /ghost-profit:/);
+assert.match(settlementIngest, /payoutFractionBps: 9_000/);
+assert.match(settlementIngest, /retainedFractionBps: 1_000/);
 
 // Payout cannot use Alchemy/provider-sponsored gas. 0x converts using gasless signed
 // trade economics; any Across origin gas spend is bounded by native value produced
@@ -132,7 +135,9 @@ assert.match(payout, /GHOST_WALLET_ACROSS_WOULD_SPEND_PREEXISTING_OPERATOR_NATIV
 assert.match(payout, /GHOST_WALLET_ACROSS_ETH_BALANCE_DELTA_NOT_VERIFIED/);
 assert.match(payout, /targetAsset: 'native_ETH'/);
 assert.match(payout, /targetNetwork: 'ethereum'/);
-assert.match(payout, /percentOfRealizedGhostNet: 100/);
+assert.match(payout, /percentOfRealizedGhostNet: 90/);
+assert.match(payout, /retainedCapitalPercent: 10/);
+assert.match(payout, /same_durable_job_retargets_only_after_origin_refund_is_proven/);
 assert.match(payout, /alchemyAllowed: false/);
 assert.match(payout, /providerSponsoredGasAllowed: false/);
 assert.match(payout, /operatorNativeGasAllowed: false/);
@@ -165,6 +170,8 @@ console.log(JSON.stringify({
   singleSettlementIngestionAuthority: true,
   payoutAsset: 'ETH',
   payoutNetwork: 'ethereum',
+  payoutPercent: 90,
+  retainedCapitalPercent: 10,
   payoutGasAuthority: 'gasless_or_realized_profit_only',
   arbitrageAuthorityCrossed: false,
 }, null, 2));
