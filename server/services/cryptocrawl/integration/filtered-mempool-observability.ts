@@ -1,24 +1,30 @@
 import logger from '../../../logger.js';
-import { filteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
+import { providerMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
 
 let timer: NodeJS.Timeout | null = null;
 
 export function emitFilteredMempoolHeartbeat(): void {
-  const stats = filteredAlchemyPendingStream.getStatistics();
-  logger.info('[CryptoRuntime] Filtered mempool evidence heartbeat', {
+  const stats = providerMeshPendingStream.getStatistics();
+  const totalPendingInputs = stats.fullTransactionPushes + stats.fallbackHashes;
+  logger.info('[CryptoRuntime] Provider-mesh mempool evidence heartbeat', {
     component: 'FilteredMempoolObservability',
     ...stats,
-    detailFetchEfficiency: stats.providerFilteredHashes > 0
-      ? stats.detailFetches / stats.providerFilteredHashes
+    retainedRelevantShare: totalPendingInputs > 0
+      ? stats.cachedTransactions / totalPendingInputs
       : null,
-    detailFetchBudgetPressure: stats.detailFetchesBlockedByBudget > 0,
+    fallbackDetailEfficiency: stats.fallbackHashes > 0
+      ? stats.fallbackDetailFetches / stats.fallbackHashes
+      : null,
+    detailFetchBudgetPressure: stats.fallbackDetailFetchesBlockedByBudget > 0,
+    alchemyDependency: false,
+    operatorBillingLiability: false,
     executionBlocked: false,
   });
 }
 
 export function ensureFilteredMempoolObservability(): void {
   if (timer || process.env.NO_INTERVALS === 'true') return;
-  const intervalMs = Math.max(15_000, Number(process.env.ALCHEMY_FILTERED_PENDING_HEARTBEAT_MS || 60_000));
+  const intervalMs = Math.max(15_000, Number(process.env.CRYPTOCRAWL_PENDING_HEARTBEAT_MS || 60_000));
   emitFilteredMempoolHeartbeat();
   timer = setInterval(emitFilteredMempoolHeartbeat, intervalMs);
   timer.unref?.();
