@@ -36,7 +36,7 @@ function recordResidualCandidate(
     topology: 'CEX_CEX',
     observedAt,
     expiresAt: observedAt + Math.max(1, maxQuoteAgeMs - Math.min(maxQuoteAgeMs, plan.quoteAgeMs)),
-    status: measuredDepth ? 'eligible' : 'deterministic_positive',
+    status: 'deterministic_positive',
     assets: [plan.symbol],
     venues: [plan.buyVenue, plan.sellVenue],
     chains: ['cex'],
@@ -82,19 +82,30 @@ function recordResidualCandidate(
     quoteAgeMs: plan.quoteAgeMs,
     executableCapability: true,
     executionCapabilityReason: measuredDepth
-      ? 'Fresh residual CEX verification has positive all-in economics and measured executable depth; advisory systems cannot veto canonical eligibility'
+      ? 'Fresh residual CEX verification has positive all-in economics and measured executable depth; explicit canonical eligible promotion follows this current evidence record'
       : 'Fresh residual CEX economics are positive but measured executable depth remains unavailable',
     missingInformation: measuredDepth ? [] : ['required:measured_executable_depth'],
     provenance: [
       'hyper_hybrid_residual_replan',
       'fresh_arbitrage_verifier',
       'authenticated_fee_evidence',
-      ...(measuredDepth ? ['fresh_depth_evidence', 'positive_all_in_net_execution_eligible'] : []),
+      ...(measuredDepth ? ['fresh_depth_evidence'] : []),
       'cryptara_advisory_execution_veto:false',
       'direct_execution_authority:false',
       'synthetic_evidence:false',
     ],
   });
+
+  if (measuredDepth) {
+    measuredCandidateRegistry.updateStatus(id, 'eligible', {
+      provenance: [
+        'positive_all_in_net_execution_eligible',
+        'canonical_eligible_queue_entry',
+      ],
+      executableCapability: true,
+      executionCapabilityReason: 'Fresh residual CEX verification has positive all-in economics and measured executable depth; canonical eligible queue promotion completed',
+    });
+  }
 }
 
 function launchResidualAdvisory(input: {
