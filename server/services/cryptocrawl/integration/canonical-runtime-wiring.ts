@@ -1,5 +1,5 @@
 import logger from '../../../logger.js';
-import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
+import { ensureProviderMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
 import { startCanonicalZeroCapitalDiscovery } from '../discovery/zero-capital-canonical-discovery.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ghostWalletUltraWorker } from '../ghost-wallet/ghost-wallet-ultra-worker.js';
@@ -8,7 +8,6 @@ import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-int
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
 import { ensureAdaptiveProfitOperationsWiring } from '../runtime/adaptive-profit-operations-wiring.js';
-import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard-rpc-first-wiring.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureHybridCexExecutionWiring } from '../runtime/hybrid-cex-execution-wiring.js';
 import {
@@ -84,10 +83,6 @@ function canonicalRuntimeStartupGraceMs(): number {
 function canonicalRuntimeOverflowRetryMs(): number {
   const configured = Number(process.env.CRYPTOCRAWL_RUNTIME_DATABASE_RETRY_MS || 5_000);
   return Number.isFinite(configured) ? Math.max(1_000, Math.min(30_000, Math.trunc(configured))) : 5_000;
-}
-
-function paidAlchemyPendingEvidenceExplicitlyEnabled(): boolean {
-  return process.env.ALCHEMY_FILTERED_PENDING_ENABLED?.trim().toLowerCase() === 'true';
 }
 
 function currentComponentState(name: string): RuntimeComponentState {
@@ -241,10 +236,10 @@ function installCanonicalRuntime(): void {
   install('dynamic_scale_pressure', () => ensureDynamicScalePressureWiring());
   install('zero_capital_shadow_priority', () => ensureZeroCapitalShadowPriorityWiring());
   install('zero_capital_atomic_stack', () => ensureZeroCapitalAtomicStackWiring());
-  install('alchemy_standard_rpc_first', () => ensureAlchemyStandardRpcFirstWiring());
   install('dynamic_rpc_provider', async () => {
     try {
       await ensureDynamicRpcProviderWiring();
+      ensureProviderMeshPendingStream();
     } finally {
       startCanonicalZeroCapitalRuntime();
     }
@@ -271,18 +266,7 @@ function installCanonicalRuntime(): void {
   install('stage_one_bootstrap_authority', () => ensureStageOneBootstrapAuthority());
   install('canonical_intelligence_repository_hydrate', () => canonicalIntelligenceRepository.hydrate());
   install('canonical_intelligence_outbox', () => ensureCanonicalIntelligenceOutbox());
-
-  if (paidAlchemyPendingEvidenceExplicitlyEnabled()) {
-    install('filtered_alchemy_pending_stream', () => ensureFilteredAlchemyPendingStream());
-  } else {
-    logger.info('[AlchemyCostContainment] Paid filtered pending stream withheld', {
-      component: 'CanonicalCryptoCrawlerRuntimeWiring',
-      explicitOptInRequired: true,
-      optInVariable: 'ALCHEMY_FILTERED_PENDING_ENABLED=true',
-      alchemyApiKeyPresenceDoesNotStartPaidStream: true,
-    });
-  }
-
+  install('provider_mesh_pending_stream', () => ensureProviderMeshPendingStream());
   install('filtered_mempool_observability', () => ensureFilteredMempoolObservability());
   install('zero_x_budget_observability', () => ensureZeroXBudgetObservability());
   install('across_bridge_observability', () => ensureAcrossBridgeObservability());
@@ -346,9 +330,9 @@ function installCanonicalRuntime(): void {
     dynamicScale: 'multi_axis_search_formation_profitability_pressure',
     monteCarloCalibration: 'terminal_normalized_settlement_only',
     intelligenceMemory: 'bounded_hot_plus_private_postgres_async_retry',
-    filteredMempoolEvidence: paidAlchemyPendingEvidenceExplicitlyEnabled()
-      ? 'alchemy_provider_filtered_hash_first_exact_chain_explicit_opt_in'
-      : 'withheld_by_default_cost_policy',
+    filteredMempoolEvidence: 'alchemy_free_provider_mesh_full_pending_exact_chain',
+    filteredMempoolTelemetry: 'full_pending_relevance_and_bounded_fallback_detail_pressure',
+    filteredMempoolExecutionAuthority: false,
     predictionMarketDiscovery: 'public_no_auth_binary_parity_observation_only',
     predictionMarketExecutionAuthority: false,
     acrossBridgeEvidence: 'current_token_catalog_fresh_quote_rotating_route_sampling',
@@ -370,8 +354,10 @@ function installCanonicalRuntime(): void {
     zeroCapitalExecutionAdmission: 'measured_positive_exact_provider_resource_evidence_then_canonical_scheduler',
     zeroCapitalWorkOrdering: 'expected_net_profit_per_scarcity_unit_with_expiry_urgency_scheduling_only',
     alchemyPaidPendingStreamDefault: false,
-    paidAlchemyRpcRole: 'fallback_only_after_two_cost_safe_provider_failures_when_available',
-    alchemyStandardTokenReads: 'public_rpc_first_then_enhanced_api_fallback',
+    paidAlchemyRpcRole: 'disabled_no_runtime_authority',
+    alchemyStandardTokenReads: 'disabled_no_runtime_authority',
+    alchemyGasSponsorshipAuthority: false,
+    freeProviderReplacement: 'publicnode_drpc_configured_rpc_mesh_plus_alchemy_free_ghost_mesh',
     localComputeRole: 'ComputationalBeam_Aries_Cryptara',
     runtimeHeartbeat: true,
     runtimeComponentIsolation: 'per_component_retry_without_global_runtime_shutdown',
