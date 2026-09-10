@@ -44,6 +44,22 @@ export interface ProfitLadderNotionalAuthoritySnapshot {
   stagePositionCapAuthoritative: false;
 }
 
+export interface ProfitLadderDiscoveryNotionalAuthoritySnapshot {
+  evaluatedAt: number;
+  stage: number;
+  tierId: number;
+  tierStage: number;
+  aligned: boolean;
+  maxQuoteNotionalUsd: number;
+  systemMaxNotionalUsd: number;
+  rungKey: string;
+  institutionalExtensionActive: boolean;
+  authority: 'profit_ladder_quote_only_capital_curve';
+  quoteOnly: true;
+  executionAuthority: false;
+  canBroadenExposure: false;
+}
+
 function institutionalRungForCurrentEvidence(): InstitutionalNotionalRung {
   const performance = profitLadder.getCurrentPerformance();
   if (!performance) return INSTITUTIONAL_NOTIONAL_RUNGS[0];
@@ -61,20 +77,7 @@ function institutionalRungForCurrentEvidence(): InstitutionalNotionalRung {
   return unlocked;
 }
 
-/**
- * Canonical notional ceiling for NEW exposure.
- *
- * StageManager is binary execution/safety authority only (stage, pause,
- * kill-switch, drawdown, MC requirement). Profit Ladder is the one capital-size
- * authority. The legacy StageManager maxPositionSizeUSD value is telemetry only
- * and may not impose a second smaller ceiling.
- *
- * Tiers 1-4 use their existing recommended-capital rung. Tier 5 / Stage 6 then
- * extends through persistent terminal-realized institutional rungs up to $100M.
- * A stage/tier mismatch fails closed so stale persisted state cannot broaden
- * exposure accidentally.
- */
-export function getProfitLadderNotionalAuthority(now = Date.now()): ProfitLadderNotionalAuthoritySnapshot {
+function currentRung() {
   const stage = stageManager.getStageConfig();
   const tier = profitLadder.getCurrentTier();
   const aligned = Number(tier.stage) === Number(stage.stage);
@@ -90,21 +93,75 @@ export function getProfitLadderNotionalAuthority(now = Date.now()): ProfitLadder
     institutionalExtensionActive = institutional.maxNotionalUsd > Number(tier.recommendedCapitalUSD);
   }
 
-  const maxNotionalUsd = aligned && stage.canExecuteTrades && Number.isFinite(configured) && configured > 0
+  const rungNotionalUsd = aligned && Number.isFinite(configured) && configured > 0
     ? Math.min(SYSTEM_MAX_NOTIONAL_USD, configured)
+    : 0;
+
+  return { stage, tier, aligned, rungKey, institutionalExtensionActive, rungNotionalUsd };
+}
+
+/**
+ * Quote-only notional ceiling used to discover the economically viable atomic
+ * size curve before StageManager has granted execution. This breaks the bootstrap
+ * circularity where a route had to be execution-ready before the system was
+ * allowed to measure the larger notionals that could make it profitable.
+ *
+ * This authority can only broaden measurement. It cannot create exposure,
+ * eligibility, funding proof, provider liquidity, receiver capability, or trade
+ * submission authority. Every measured size still has to pass the canonical
+ * execution gates after fresh all-in economics are known.
+ */
+export function getProfitLadderDiscoveryNotionalAuthority(
+  now = Date.now(),
+): ProfitLadderDiscoveryNotionalAuthoritySnapshot {
+  const rung = currentRung();
+  return {
+    evaluatedAt: now,
+    stage: Number(rung.stage.stage),
+    tierId: rung.tier.id,
+    tierStage: Number(rung.tier.stage),
+    aligned: rung.aligned,
+    maxQuoteNotionalUsd: rung.rungNotionalUsd,
+    systemMaxNotionalUsd: SYSTEM_MAX_NOTIONAL_USD,
+    rungKey: rung.rungKey,
+    institutionalExtensionActive: rung.institutionalExtensionActive,
+    authority: 'profit_ladder_quote_only_capital_curve',
+    quoteOnly: true,
+    executionAuthority: false,
+    canBroadenExposure: false,
+  };
+}
+
+/**
+ * Canonical notional ceiling for NEW exposure.
+ *
+ * StageManager is binary execution/safety authority only (stage, pause,
+ * kill-switch, drawdown, MC requirement). Profit Ladder is the one capital-size
+ * authority. The legacy StageManager maxPositionSizeUSD value is telemetry only
+ * and may not impose a second smaller ceiling.
+ *
+ * Tiers 1-4 use their existing recommended-capital rung. Tier 5 / Stage 6 then
+ * extends through persistent terminal-realized institutional rungs up to $100M.
+ * A stage/tier mismatch fails closed so stale persisted state cannot broaden
+ * exposure accidentally.
+ */
+export function getProfitLadderNotionalAuthority(now = Date.now()): ProfitLadderNotionalAuthoritySnapshot {
+  const rung = currentRung();
+  const maxNotionalUsd = rung.aligned && rung.stage.canExecuteTrades && rung.rungNotionalUsd > 0
+    ? rung.rungNotionalUsd
     : 0;
 
   return {
     evaluatedAt: now,
-    stage: Number(stage.stage),
-    tierId: tier.id,
-    tierStage: Number(tier.stage),
-    aligned,
+    stage: Number(rung.stage.stage),
+    tierId: rung.tier.id,
+    tierStage: Number(rung.tier.stage),
+    aligned: rung.aligned,
     maxNotionalUsd,
     systemMaxNotionalUsd: SYSTEM_MAX_NOTIONAL_USD,
-    rungKey,
-    institutionalExtensionActive,
-    legacyStageMaxPositionUsd: Math.max(0, Number(stage.maxPositionSizeUSD) || 0),
+    rungKey: rung.rungKey,
+    institutionalExtensionActive: rung.institutionalExtensionActive,
+    legacyStageMaxPositionUsd: Math.max(0, Number(rung.stage.maxPositionSizeUSD) || 0),
     authority: 'profit_ladder_capital_allowance',
     stagePositionCapAuthoritative: false,
   };
