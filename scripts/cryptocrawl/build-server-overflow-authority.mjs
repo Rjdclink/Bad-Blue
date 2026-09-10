@@ -43,6 +43,18 @@ function isUnder(child, parent) {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
+// The canonical runtime source owns its own admission semantics. Production build
+// verifies that explicit source contract instead of rewriting it, preventing source
+// and deployed behavior from silently diverging.
+const canonicalSource = await fs.readFile(canonicalRuntime, 'utf8');
+canonicalGateApplied = canonicalSource.includes('ensureCryptocrawlOverflowRuntimeSchema')
+  && canonicalSource.includes('getCryptocrawlOverflowRuntimeSchemaSnapshot')
+  && canonicalSource.includes("overflowBootstrap.state === 'ready' && overflowSchema.ready")
+  && canonicalSource.includes('startOverflowSchemaRepair()');
+if (!canonicalGateApplied) {
+  throw new Error('[OverflowAuthorityBuild] Canonical Overflow transport/schema recovery gate is not explicit in source');
+}
+
 const overflowAuthorityPlugin = {
   name: 'cryptocrawl-overflow-runtime-authority',
   setup(buildApi) {
@@ -68,26 +80,6 @@ const overflowAuthorityPlugin = {
         specifier: args.path,
       });
       return { path: overflowDb };
-    });
-
-    // Canonical runtime installation must require both transport readiness and the
-    // complete migration/schema proof produced by the Overflow authority module.
-    buildApi.onLoad({ filter: /canonical-runtime-wiring\.ts$/ }, async args => {
-      if (path.resolve(args.path) !== canonicalRuntime) return null;
-      let source = await fs.readFile(args.path, 'utf8');
-      const importNeedle = "import { getCryptaraHyperBridgeBootstrapSnapshot } from './cryptara-supabase-hyper-bridge-bootstrap.js';";
-      const importReplacement = `${importNeedle}\nimport { getCryptocrawlOverflowRuntimeSchemaSnapshot } from '../runtime/cryptocrawl-overflow-runtime-schema.js';`;
-      const gateNeedle = "if (overflowBootstrap.state === 'ready') {";
-      const gateReplacement = "if (overflowBootstrap.state === 'ready' && getCryptocrawlOverflowRuntimeSchemaSnapshot().ready) {";
-      if (source.split(importNeedle).length - 1 !== 1) {
-        throw new Error('[OverflowAuthorityBuild] Canonical schema snapshot import anchor is missing or duplicated');
-      }
-      if (source.split(gateNeedle).length - 1 !== 1) {
-        throw new Error('[OverflowAuthorityBuild] Canonical Overflow install gate is missing or duplicated');
-      }
-      source = source.replace(importNeedle, importReplacement).replace(gateNeedle, gateReplacement);
-      canonicalGateApplied = true;
-      return { contents: source, loader: 'ts', resolveDir: path.dirname(args.path) };
     });
 
     // The legacy cache/artifact adapter used to own a second pg.Pool, inspect
@@ -202,6 +194,8 @@ await fs.writeFile(proofPath, JSON.stringify({
   buildTimestamp,
   sourceAttestation: sourceSha ? 'railway_or_ci_git_metadata' : 'local_build_without_git_metadata',
   canonicalOverflowSchemaGateApplied: canonicalGateApplied,
+  canonicalOverflowSchemaGateSourceOwned: true,
+  canonicalOverflowSchemaBuildMutation: false,
   auxiliaryOverflowPoolUnified: auxiliaryPoolUnified,
   primaryConfigDependencyRemoved,
   overflowAdapterSemanticsCorrected,
@@ -214,4 +208,4 @@ await fs.writeFile(proofPath, JSON.stringify({
   outputCount: Object.keys(result.metafile?.outputs || {}).length,
 }, null, 2));
 
-console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} hot CryptoCrawler server/db import(s) to Overflow; explicit Primary archive imports=${primaryArchiveImports.length}; adapter pool unified; adapter semantics corrected; treasury worker bound to Overflow; Primary config dependency removed; canonical schema gate applied; sourceSha=${sourceSha || 'unavailable'}; buildTimestamp=${buildTimestamp}; proof=${path.relative(repoRoot, proofPath)}`);
+console.log(`[OverflowAuthorityBuild] redirected ${redirected.length} hot CryptoCrawler server/db import(s) to Overflow; explicit Primary archive imports=${primaryArchiveImports.length}; adapter pool unified; adapter semantics corrected; treasury worker bound to Overflow; Primary config dependency removed; canonical schema gate source-owned; sourceSha=${sourceSha || 'unavailable'}; buildTimestamp=${buildTimestamp}; proof=${path.relative(repoRoot, proofPath)}`);
