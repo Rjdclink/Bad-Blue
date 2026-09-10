@@ -663,7 +663,7 @@ httpServer = createServer(app);
         rawPort,
         resolvedPort: port,
         host: listenHost,
-        address: typeof address === 'string' ? null : address?.address ?? null,
+        address: typeof address === 'string' ? address : address?.address ?? null,
         boundPort: typeof address === 'string' ? null : address?.port ?? null,
       });
       resolve();
