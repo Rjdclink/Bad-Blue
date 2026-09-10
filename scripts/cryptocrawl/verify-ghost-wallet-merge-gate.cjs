@@ -9,6 +9,7 @@ const alternative = read('server/services/cryptocrawl/execution/zero-capital-alt
 const engine = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-engine.ts');
 const intermediary = read('contracts/cryptocrawl/CryptocrawlGhostWalletIntermediary.sol');
 const vault = read('contracts/cryptocrawl/CryptocrawlGhostWalletCapitalVault.sol');
+const infrastructure = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-infrastructure-manager.ts');
 
 assert.match(canonical, /executeFlashCanonicalZeroCapitalOpportunity/);
 assert.match(canonical, /executeAlternativePreparedWithinCanonicalExecutor/);
@@ -21,11 +22,24 @@ assert.match(alternative, /intermediaryEnding !== intermediaryStarting/);
 assert.match(engine, /profitLadderAuthority: false/);
 assert.match(engine, /100_percent_realized_net_direct_to_canonical_wallet/);
 assert.match(engine, /arbitrageSystemOwnedGasFallbackAllowed: false/);
-assert.match(intermediary, /borrower_repayment_shortfall/);
+assert.match(engine, /manualRailwayConfigurationRequired: false/);
+assert.match(intermediary, /borrower_repayment_not_exact/);
 assert.match(intermediary, /spread_reconciliation_failed/);
 assert.match(intermediary, /incremental_liability_not_repaid/);
 assert.match(vault, /atomic_credit_not_repaid/);
 assert.match(vault, /VIRTUAL_SHARES/);
 assert.match(vault, /VIRTUAL_ASSETS/);
+assert.match(infrastructure, /CREATE2_DEPLOYER_CODE_HASH/);
+assert.match(infrastructure, /sponsorOperatorMonetaryCostProvenZero === true/);
+assert.doesNotMatch(infrastructure, /executeSystemOwnedNativeTransaction/);
 
-console.log(JSON.stringify({ok:true, canonicalFlashPreserved:true, alternativeExecutorSubordinate:true, ghostWalletProfitLadderAuthority:false, atomicRepaymentFailClosed:true, payoutReconciled:true}, null, 2));
+console.log(JSON.stringify({
+  ok: true,
+  canonicalFlashPreserved: true,
+  alternativeExecutorSubordinate: true,
+  ghostWalletProfitLadderAuthority: false,
+  atomicRepaymentFailClosed: true,
+  payoutReconciled: true,
+  noManualRailwayGhostWalletConfiguration: true,
+  sponsoredInfrastructureOnly: true,
+}, null, 2));
