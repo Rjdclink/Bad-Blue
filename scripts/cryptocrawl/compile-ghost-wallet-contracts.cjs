@@ -15,6 +15,11 @@ const contracts = [
     contractName: 'CryptocrawlGhostWalletCapitalVault',
     outputPath: 'artifacts/cryptocrawl/CryptocrawlGhostWalletCapitalVault.json',
   },
+  {
+    sourceName: 'contracts/cryptocrawl/CryptocrawlGhostWalletErc3156Bridge.sol',
+    contractName: 'CryptocrawlGhostWalletErc3156Bridge',
+    outputPath: 'artifacts/cryptocrawl/CryptocrawlGhostWalletErc3156Bridge.json',
+  },
 ];
 
 function compiler() {
@@ -79,4 +84,4 @@ function compile(spec) {
 }
 
 for (const spec of contracts) compile(spec);
-console.log('[ghost-wallet-compile] both Ghost Wallet contracts compiled successfully');
+console.log(`[ghost-wallet-compile] ${contracts.length} Ghost Wallet contracts compiled successfully`);

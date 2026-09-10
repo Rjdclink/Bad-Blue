@@ -13,6 +13,10 @@ const GHOST_VAULT_ABI = [
   'function totalAssets() view returns (uint256)',
   'function previewAtomicFee(uint256 assets) view returns (uint256)',
 ];
+const ERC3156_LENDER_ABI = [
+  'function maxFlashLoan(address token) view returns (uint256)',
+  'function flashFee(address token,uint256 amount) view returns (uint256)',
+];
 
 export interface GhostWalletVenueCandidate {
   venueId: string;
@@ -119,9 +123,8 @@ export async function probeGhostWalletVenueCandidate(payload: Record<string, unk
     return { verified: false, reason: 'contract_code_unavailable', candidate };
   }
 
-  // ERC-3156 borrowers are permissionless callers of the broker. Code presence is
-  // discovery evidence only; they become verified borrowers exclusively after a
-  // successful BrokeredAtomicCreditSettled event proves callback + exact repayment.
+  // ERC-3156 borrowers become trusted observations only after an actual atomic
+  // repayment succeeds; bytecode alone never creates execution authority.
   if (candidate.adapter === 'erc3156_flash_borrower') {
     await upsertGhostWalletVenue({
       ...candidate,
@@ -130,6 +133,42 @@ export async function probeGhostWalletVenueCandidate(payload: Record<string, unk
       capabilities: { contractCode: true, executionAuthority: false, successfulAtomicRepaymentRequired: true },
     });
     return { verified: false, reason: 'awaiting_successful_atomic_repayment_evidence', candidate };
+  }
+
+  if (candidate.adapter === 'erc3156_flash_lender') {
+    if (!candidate.asset) throw new Error('GHOST_WALLET_ERC3156_LENDER_ASSET_REQUIRED');
+    const lender = new Contract(candidate.address, ERC3156_LENDER_ABI, provider);
+    const availableRaw = await lender.maxFlashLoan(candidate.asset);
+    const available = BigInt(String(availableRaw));
+    if (available <= 0n) {
+      await upsertGhostWalletVenue({
+        ...candidate,
+        verified: false,
+        enabled: true,
+        capabilities: { contractCode: true, erc3156SurfaceVerified: true, availablePrincipal: '0', executionAuthority: false },
+      });
+      return { verified: false, reason: 'erc3156_lender_no_live_capacity', candidate };
+    }
+    const probeAmount = available > 1n ? 1n : available;
+    const feeRaw = await lender.flashFee(candidate.asset, probeAmount.toString());
+    const fee = BigInt(String(feeRaw));
+    if (fee < 0n) throw new Error('GHOST_WALLET_ERC3156_LENDER_FEE_INVALID');
+    await upsertGhostWalletVenue({
+      ...candidate,
+      verified: true,
+      enabled: true,
+      capabilities: {
+        contractCode: true,
+        erc3156SurfaceVerified: true,
+        sameTransactionSettlement: true,
+        measuredLenderCapacityRequired: true,
+        availablePrincipal: available.toString(),
+        probeAmount: probeAmount.toString(),
+        probeFee: fee.toString(),
+      },
+      metadata: { ...(candidate.metadata || {}), availablePrincipal: available.toString(), lastProbeFee: fee.toString() },
+    });
+    return { verified: true, reason: 'erc3156_lender_capacity_and_fee_surface_verified', candidate };
   }
 
   if (candidate.adapter === 'ghost_wallet_capital_vault') {
