@@ -2,6 +2,7 @@ import { Contract, ethers, type Wallet, type providers } from 'ethers';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
+import { expectedExecutionGasPriceWei } from '../discovery/configured-zero-capital-gas-economics.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildSwapCallFromLeg } from '../execution/adapters/onchain-payload-builder.js';
@@ -42,6 +43,7 @@ interface AlternativeCandidate {
   expiresAt: number;
   gasUnits: bigint;
   gasCostInInputToken: bigint;
+  expectedGasPriceWei: bigint;
   allInCost: bigint;
   netProfit: bigint;
   netProfitBps: number;
@@ -183,6 +185,12 @@ async function simulateCandidate(input: {
   provenance: string[];
   build: (minimumProfit: bigint) => GhostWalletPreparedTransaction;
 }): Promise<AlternativeCandidate | null> {
+  const sponsoredZeroCost = input.funding.mode === 'sponsored'
+    && input.funding.sponsorOperatorMonetaryCostProvenZero === true;
+  if (!sponsoredZeroCost && ((input.opportunity.estimatedGasCostInInputToken || 0n) <= 0n || input.opportunity.gasEstimate <= 0n)) {
+    return null;
+  }
+
   const minimumUnit = minimumPositiveProfitBaseUnits();
   let prepared = input.build(minimumUnit);
   const envelope = { from: input.wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
@@ -194,26 +202,25 @@ async function simulateCandidate(input: {
     input.opportunity.gasEstimate,
     gasUnits,
   );
-  const operatorGasCost = input.funding.mode === 'sponsored'
-    && input.funding.sponsorOperatorMonetaryCostProvenZero === true
-    ? 0n
-    : measuredGasCost;
+  const operatorGasCost = sponsoredZeroCost ? 0n : measuredGasCost;
   const relayFee = input.opportunity.relayFeeInInputToken || 0n;
   const requiredOnchainResidual = operatorGasCost + relayFee + minimumUnit;
   prepared = input.build(requiredOnchainResidual);
   const exactEnvelope = { from: input.wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
   await input.provider.call(exactEnvelope);
-  const exactGas = await input.provider.estimateGas(exactEnvelope);
+  const [exactGas, feeData] = await Promise.all([
+    input.provider.estimateGas(exactEnvelope),
+    sponsoredZeroCost ? Promise.resolve(null) : input.provider.getFeeData(),
+  ]);
   const exactGasUnits = BigInt(exactGas.toString());
+  const expectedGasPrice = feeData ? expectedExecutionGasPriceWei(feeData) : 0n;
+  if (!sponsoredZeroCost && expectedGasPrice <= 0n) return null;
   const exactMeasuredGasCost = scaledGasCost(
     input.opportunity.estimatedGasCostInInputToken || 0n,
     input.opportunity.gasEstimate,
     exactGasUnits,
   );
-  const exactOperatorGasCost = input.funding.mode === 'sponsored'
-    && input.funding.sponsorOperatorMonetaryCostProvenZero === true
-    ? 0n
-    : exactMeasuredGasCost;
+  const exactOperatorGasCost = sponsoredZeroCost ? 0n : exactMeasuredGasCost;
   const grossProfit = grossProfitForFundingReprice(input.opportunity);
   const allInCost = input.sourceFee + exactOperatorGasCost + relayFee;
   const netProfit = grossProfit - allInCost;
@@ -227,6 +234,7 @@ async function simulateCandidate(input: {
     expiresAt: input.expiresAt,
     gasUnits: exactGasUnits,
     gasCostInInputToken: exactOperatorGasCost,
+    expectedGasPriceWei: expectedGasPrice,
     allInCost,
     netProfit,
     netProfitBps: bpsFromBaseUnits(netProfit, input.opportunity.flashLoanAmount),
@@ -235,9 +243,9 @@ async function simulateCandidate(input: {
       'alternative_capital_exact_eth_call_passed',
       'alternative_capital_exact_gas_estimate_measured',
       'alternative_capital_reprice_independent_of_prior_funding_net',
-      input.funding.mode === 'sponsored' && input.funding.sponsorOperatorMonetaryCostProvenZero === true
+      sponsoredZeroCost
         ? 'execution_gas_operator_cost:zero_proven_sponsored'
-        : 'execution_gas_cost:scaled_from_current_canonical_input_token_quote',
+        : 'execution_gas_cost:scaled_from_current_canonical_input_token_quote_with_current_fee_data_bound',
       'strict_positive_all_in_net_after_source_fee_and_execution_cost',
       'canonical_flash_provider_behavior_unchanged',
       'synthetic_evidence:false',
@@ -405,6 +413,7 @@ export async function repriceZeroCapitalAlternativeCapital(input: {
       expectedNetProfitBps: best.netProfitBps,
       estimatedGasUnits: best.gasUnits,
       estimatedGasCostInInputToken: best.gasCostInInputToken,
+      expectedGasPriceWei: best.expectedGasPriceWei,
       provenance: best.provenance,
     };
     ghostWalletAlternativeZeroCapitalSelectionRegistry.record(registrySelection);
