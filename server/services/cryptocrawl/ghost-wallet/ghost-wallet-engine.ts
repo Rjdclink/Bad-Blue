@@ -44,7 +44,7 @@ export interface GhostWalletEngineStatus {
   eventDriven: true;
   periodicWorkPolling: false;
   profitLadderAuthority: false;
-  profitRouting: '100_percent_realized_net_direct_to_canonical_wallet';
+  profitRouting: '90_percent_payout_10_percent_retained';
   configuredIntermediaryChains: string[];
   providerChains: string[];
   alchemyDependency: false;
@@ -119,10 +119,9 @@ export class GhostWalletEngine {
         'erc3156_flash_intermediation',
         'euler_debt_assumption_measurement',
         'aave_credit_delegation_measurement',
-        'signed_intent_capital',
-        'coincidence_of_wants',
         'permissionless_vault_capital',
       ],
+      inactiveSourceAvailablePrimitives: ['signed_intent_capital', 'coincidence_of_wants'],
       alchemyDependency: false,
       existingArbitrageSystemsAffected: false,
       manualRailwayConfigurationRequired: false,
@@ -130,7 +129,7 @@ export class GhostWalletEngine {
       operatorInitialCapitalRequired: false,
       serverTransactionSubmission: false,
       repaymentPolicy: 'same_transaction_or_revert',
-      profitRouting: '100_percent_realized_net_direct_to_canonical_wallet',
+      profitRouting: '90_percent_payout_10_percent_retained',
       profitLadderAuthority: false,
       arbitrageScheduleAuthority: false,
       periodicWorkPolling: false,
@@ -257,7 +256,7 @@ export class GhostWalletEngine {
       eventDriven: true,
       periodicWorkPolling: false,
       profitLadderAuthority: false,
-      profitRouting: '100_percent_realized_net_direct_to_canonical_wallet',
+      profitRouting: '90_percent_payout_10_percent_retained',
       configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain),
       providerChains: ghostWalletProviderMesh.getReadyChains(),
       alchemyDependency: false,
