@@ -16,15 +16,18 @@ interface IGhostWalletVaultBorrower {
     ) external;
 }
 
-/// @notice Permissionless single-asset capital reservoir for the Ghost Wallet lane.
-/// @dev ERC-4626-compatible accounting surface. Only the configured intermediary
-///      may draw capital, and every draw must return principal + fee before the
-///      same transaction completes or the entire transaction reverts.
+/// @notice Single-asset capital reservoir for the Ghost Wallet lane.
+/// @dev ERC-4626 compatible share/accounting surface plus an atomic-credit extension.
+///      Only the configured intermediary may draw capital, and every draw must return
+///      principal + fee before the same transaction completes or the transaction reverts.
 contract CryptocrawlGhostWalletCapitalVault {
     string public constant name = "CryptoCrawler Ghost Capital Share";
     string public constant symbol = "cgCAP";
 
     uint256 private constant BPS = 10_000;
+    uint8 private constant DECIMALS_OFFSET = 3;
+    uint256 private constant VIRTUAL_SHARES = 1_000;
+    uint256 private constant VIRTUAL_ASSETS = 1;
 
     address public immutable asset;
     address public immutable intermediary;
@@ -74,9 +77,14 @@ contract CryptocrawlGhostWalletCapitalVault {
         (bool ok, bytes memory data) = assetAddress.staticcall(abi.encodeWithSignature("decimals()"));
         if (ok && data.length >= 32) {
             uint256 value = abi.decode(data, (uint256));
-            if (value <= type(uint8).max) resolvedDecimals = uint8(value);
+            require(value <= type(uint8).max - DECIMALS_OFFSET, "asset_decimals_too_large");
+            resolvedDecimals = uint8(value);
         }
-        decimals = resolvedDecimals;
+        decimals = resolvedDecimals + DECIMALS_OFFSET;
+    }
+
+    function decimalsOffset() external pure returns (uint8) {
+        return DECIMALS_OFFSET;
     }
 
     function setMinimumAtomicFeeBps(uint16 feeBps) external onlyOwner notLending {
@@ -87,6 +95,11 @@ contract CryptocrawlGhostWalletCapitalVault {
 
     function totalAssets() public view returns (uint256) {
         return IERC20GhostVaultAsset(asset).balanceOf(address(this));
+    }
+
+    function previewAtomicFee(uint256 assets) public view returns (uint256) {
+        if (assets == 0) return 0;
+        return _mulDivUp(assets, minimumAtomicFeeBps, BPS);
     }
 
     function convertToShares(uint256 assets) public view returns (uint256) {
@@ -157,6 +170,7 @@ contract CryptocrawlGhostWalletCapitalVault {
         require(receiver != address(0) && ownerAddress != address(0), "account_required");
         require(assets > 0, "assets_required");
         shares = previewWithdraw(assets);
+        require(shares > 0, "zero_shares");
         _spendShareAllowance(ownerAddress, msg.sender, shares);
         _burn(ownerAddress, shares);
         _safeTransfer(asset, receiver, assets);
@@ -187,6 +201,7 @@ contract CryptocrawlGhostWalletCapitalVault {
     }
 
     function approve(address spender, uint256 amount) external returns (bool) {
+        require(spender != address(0), "approve_zero");
         allowance[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);
         return true;
@@ -204,14 +219,14 @@ contract CryptocrawlGhostWalletCapitalVault {
     }
 
     /// @notice Atomically makes vault assets available to the configured intermediary.
-    /// @dev There is no unsecured duration: the balance check executes after the
+    /// @dev There is no unsecured duration: the ending balance is checked after the
     ///      callback in the same transaction. Insufficient return reverts everything.
     function lendAtomic(uint256 assets, uint256 fee, bytes calldata data) external notLending {
         require(msg.sender == intermediary, "intermediary_only");
         require(assets > 0, "assets_required");
         uint256 startingAssets = totalAssets();
         require(assets <= startingAssets, "insufficient_vault_liquidity");
-        uint256 minimumFee = (assets * minimumAtomicFeeBps + BPS - 1) / BPS;
+        uint256 minimumFee = previewAtomicFee(assets);
         require(fee >= minimumFee, "fee_below_vault_minimum");
 
         lending = true;
@@ -228,7 +243,7 @@ contract CryptocrawlGhostWalletCapitalVault {
         uint256 assetsTotal,
         uint256 supply
     ) internal pure returns (uint256) {
-        return (assets * (supply + 1)) / (assetsTotal + 1);
+        return _mulDivDown(assets, supply + VIRTUAL_SHARES, assetsTotal + VIRTUAL_ASSETS);
     }
 
     function _convertToSharesUp(
@@ -236,9 +251,7 @@ contract CryptocrawlGhostWalletCapitalVault {
         uint256 assetsTotal,
         uint256 supply
     ) internal pure returns (uint256) {
-        uint256 numerator = assets * (supply + 1);
-        uint256 denominator = assetsTotal + 1;
-        return numerator == 0 ? 0 : (numerator + denominator - 1) / denominator;
+        return _mulDivUp(assets, supply + VIRTUAL_SHARES, assetsTotal + VIRTUAL_ASSETS);
     }
 
     function _convertToAssetsDown(
@@ -246,7 +259,7 @@ contract CryptocrawlGhostWalletCapitalVault {
         uint256 assetsTotal,
         uint256 supply
     ) internal pure returns (uint256) {
-        return (shares * (assetsTotal + 1)) / (supply + 1);
+        return _mulDivDown(shares, assetsTotal + VIRTUAL_ASSETS, supply + VIRTUAL_SHARES);
     }
 
     function _convertToAssetsUp(
@@ -254,9 +267,22 @@ contract CryptocrawlGhostWalletCapitalVault {
         uint256 assetsTotal,
         uint256 supply
     ) internal pure returns (uint256) {
-        uint256 numerator = shares * (assetsTotal + 1);
-        uint256 denominator = supply + 1;
-        return numerator == 0 ? 0 : (numerator + denominator - 1) / denominator;
+        return _mulDivUp(shares, assetsTotal + VIRTUAL_ASSETS, supply + VIRTUAL_SHARES);
+    }
+
+    function _mulDivDown(uint256 x, uint256 y, uint256 denominator) internal pure returns (uint256) {
+        require(denominator != 0, "division_by_zero");
+        if (x == 0 || y == 0) return 0;
+        require(x <= type(uint256).max / y, "mul_overflow");
+        return (x * y) / denominator;
+    }
+
+    function _mulDivUp(uint256 x, uint256 y, uint256 denominator) internal pure returns (uint256) {
+        require(denominator != 0, "division_by_zero");
+        if (x == 0 || y == 0) return 0;
+        require(x <= type(uint256).max / y, "mul_overflow");
+        uint256 product = x * y;
+        return (product + denominator - 1) / denominator;
     }
 
     function _mint(address to, uint256 amount) internal {
@@ -300,19 +326,13 @@ contract CryptocrawlGhostWalletCapitalVault {
         (bool success, bytes memory returndata) = token.call(
             abi.encodeWithSelector(IERC20GhostVaultAsset.transfer.selector, to, amount)
         );
-        require(
-            success && (returndata.length == 0 || abi.decode(returndata, (bool))),
-            "erc20_transfer_failed"
-        );
+        require(success && (returndata.length == 0 || abi.decode(returndata, (bool))), "erc20_transfer_failed");
     }
 
     function _safeTransferFrom(address token, address from, address to, uint256 amount) internal {
         (bool success, bytes memory returndata) = token.call(
             abi.encodeWithSelector(IERC20GhostVaultAsset.transferFrom.selector, from, to, amount)
         );
-        require(
-            success && (returndata.length == 0 || abi.decode(returndata, (bool))),
-            "erc20_transfer_from_failed"
-        );
+        require(success && (returndata.length == 0 || abi.decode(returndata, (bool))), "erc20_transfer_from_failed");
     }
 }
