@@ -7,6 +7,7 @@ import { measuredCandidateRegistry } from '../discovery/measured-candidate-regis
 import { buildFlashLoanExecutionPlanFromOpportunity } from '../execution/adapters/autonomous-route-planner.js';
 import { buildSwapCallFromLeg } from '../execution/adapters/onchain-payload-builder.js';
 import { minimumPositiveProfitBaseUnits } from '../governance/profit-admission-authority.js';
+import { discoverExistingGhostArbitrageInfrastructure } from '../ghost-wallet/existing-arbitrage-infrastructure.js';
 import {
   buildAtomicLiabilityCycleTransaction,
   buildVaultAtomicCreditTransaction,
@@ -17,6 +18,7 @@ import {
   buildGhostWalletRuntimeContext,
   loadGhostWalletSourceConfig,
   measureConfiguredGhostWalletSources,
+  type GhostWalletSourceConfig,
 } from '../ghost-wallet/onchain-capital-sources.js';
 import {
   ghostWalletAlternativeZeroCapitalSelectionRegistry,
@@ -283,6 +285,55 @@ function updateEligibleCandidate(opportunity: ZeroCapitalOpportunity, selection:
   });
 }
 
+async function resolveAlternativeSourceConfig(input: {
+  chain: SupportedChain;
+  provider: providers.JsonRpcProvider;
+  wallet: Wallet;
+  profitRecipient: string;
+  opportunities: readonly ZeroCapitalOpportunity[];
+}): Promise<GhostWalletSourceConfig> {
+  const configured = loadGhostWalletSourceConfig(alternativeEnvironment());
+  const configuredIntermediary = configured.intermediaries.find(entry => entry.chain === input.chain);
+  const configuredVaults = configured.capitalVaults.filter(entry => entry.chain === input.chain);
+  if (configuredIntermediary && configuredVaults.length > 0) return configured;
+
+  try {
+    const discovered = await discoverExistingGhostArbitrageInfrastructure({
+      chain: input.chain,
+      provider: input.provider,
+      owner: input.wallet.address,
+      profitRecipient: input.profitRecipient,
+      assets: input.opportunities.map(opportunity => opportunity.inputToken),
+    });
+    if (!discovered.intermediary) return configured;
+    if (configuredIntermediary
+      && configuredIntermediary.address.toLowerCase() !== discovered.intermediary.toLowerCase()) {
+      return configured;
+    }
+
+    const intermediaries = configuredIntermediary
+      ? configured.intermediaries
+      : [...configured.intermediaries, { chain: input.chain, address: discovered.intermediary }];
+    const vaultMap = new Map(configured.capitalVaults.map(row => [`${row.chain}:${row.vault.toLowerCase()}`, row]));
+    for (const row of discovered.vaults) {
+      vaultMap.set(`${row.chain}:${row.vault.toLowerCase()}`, {
+        chain: row.chain,
+        vault: row.vault,
+        label: row.label,
+      });
+    }
+    return {
+      ...configured,
+      intermediaries,
+      capitalVaults: [...vaultMap.values()],
+    };
+  } catch {
+    // Artifact/read/RPC discovery failure is local. Explicit configured sources and
+    // the canonical Balancer/Aave/Morpho provider mesh remain available unchanged.
+    return configured;
+  }
+}
+
 export async function repriceZeroCapitalAlternativeCapital(input: {
   chain: SupportedChain;
   provider: providers.JsonRpcProvider;
@@ -296,14 +347,20 @@ export async function repriceZeroCapitalAlternativeCapital(input: {
   const funding = await input.getGasFundingDecision(input.chain);
   if (!strictFundingReady(funding)) return [];
 
-  const config = loadGhostWalletSourceConfig(alternativeEnvironment());
+  const profitRecipient = resolveOperationalProfitRecipient();
+  const config = await resolveAlternativeSourceConfig({
+    chain: input.chain,
+    provider: input.provider,
+    wallet,
+    profitRecipient,
+    opportunities: input.opportunities,
+  });
   const intermediaryConfig = config.intermediaries.find(entry => entry.chain === input.chain);
   if (!intermediaryConfig) return [];
   const intermediary = intermediaryConfig.address;
   const code = await input.provider.getCode(intermediary);
   if (code === '0x') return [];
 
-  const profitRecipient = resolveOperationalProfitRecipient();
   const intermediaryContract = new Contract(intermediary, INTERMEDIARY_ABI, input.provider);
   const boundProfitRecipient = ethers.utils.getAddress(String(await intermediaryContract.profitRecipient()));
   if (boundProfitRecipient.toLowerCase() !== profitRecipient.toLowerCase()) return [];
