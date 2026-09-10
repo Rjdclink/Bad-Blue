@@ -100,7 +100,7 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       import('../integration/cryptara-two-speed-revalidation-wiring.js'),
       import('./adaptive-profit-operations-wiring.js'),
       import('./expanded-market-universe-wiring.js'),
-      import('./alchemy-filtered-mempool-wiring.js'),
+      import('../capital-free/provider-mesh-pending-stream.js'),
       import('./low-latency-execution-wiring.js'),
       import('./market-focus-wiring.js'),
       import('../integration/inventory-constrained-cex-execution-wiring.js'),
@@ -126,7 +126,7 @@ async function getLifecycle(): Promise<CryptoCrawlerCoreLifecycle> {
       twoSpeedPolicy.ensureCryptaraTwoSpeedRevalidationWiring();
       adaptiveProfitPolicy.ensureAdaptiveProfitOperationsWiring();
       universePolicy.ensureExpandedMarketUniverseWiring();
-      mempoolPolicy.ensureAlchemyFilteredMempoolWiring();
+      mempoolPolicy.ensureProviderMeshPendingStream();
       executionPolicy.ensureLowLatencyExecutionWiring();
       marketFocusPolicy.ensureMarketFocusWiring();
       inventoryPolicy.ensureInventoryConstrainedCexExecutionWiring();
@@ -202,7 +202,8 @@ export async function ensureCryptoCrawlerCoreRuntime(): Promise<void> {
     inventoryRateProtection: 'five_second_fresh_cache_plus_inflight_dedupe_plus_backoff_then_fresh_requote',
     staleInventoryExecutionAuthority: false,
     expandedMarketUniverse: true,
-    filteredMempoolPolicyInstalled: true,
+    providerMeshMempoolInstalled: true,
+    alchemyMempoolAuthority: false,
     lowLatencyExecutionCorrectnessPolicyInstalled: true,
     marketFocusPolicyInstalled: true,
     zeroCapitalRealizedProfitPolicyInstalledBeforeLifecycle: true,
