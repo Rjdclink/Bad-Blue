@@ -21,7 +21,8 @@ assert.doesNotMatch(prices, /const requestPromise = this\.enqueue/, 'CoinGecko p
 assert.match(prices, /export function mergeLivePriceEvidence/, 'parallel price evidence must normalize through one shared merge');
 assert.match(prices, /Math\.abs\(value - median\) \/ median <= 0\.2/, 'price consensus must discard material multi-provider outliers');
 assert.doesNotMatch(prices, /merged\[coinId\] = primary/, 'no single provider may override median consensus by fixed precedence');
-assert.match(prices, /if \(complete\) \{\s*this\.cache\.set/, 'partial evidence must not receive the full cache TTL');
+assert.match(prices, /const complete = dedupedIds\.every\(coinId => normalized\[coinId\] !== undefined\)/, 'price-cache completeness must be explicit');
+assert.match(prices, /if \(complete\) \{[\s\S]{0,300}const ttlMs = cacheClass === 'live' \? DEFAULT_LIVE_CACHE_TTL_MS : DEFAULT_CACHE_TTL_MS;[\s\S]{0,300}this\.cache\.set\(cacheKey, \{/, 'only complete evidence may be cached with the class-specific TTL');
 assert.match(runtimeObservability, /usableMarketUniverseProviders/, 'runtime readiness must consume the parallel market-universe provider mesh');
 assert.match(runtimeObservability, /directCexMarketEvidenceReady/, 'fresh direct CEX evidence must remain a CoinGecko-independent readiness path');
 assert.match(runtimeObservability, /coinGeckoRequiredForCoreCexDiscovery: false/, 'CoinGecko must never be a global core-CEX discovery requirement');
@@ -42,4 +43,4 @@ assert.doesNotMatch(generator, /minExpectedNetUsd/, 'Kalshi discovery must not i
 assert.doesNotMatch(lifecycle, /minimumExpectedNetUsd/, 'Kalshi execution must not reintroduce an arbitrary profit magnitude floor');
 assert.match(lifecycle, /currentExpectedNetProfitUsd > requiredNet/, 'fresh execution economics must remain strictly positive after route-specific costs');
 
-console.log('[market-evidence-kalshi-capability] PASS: alternate providers run concurrently, CoinGecko is missing-symbol fallback only, truthful core-data readiness and exact-positive Kalshi evidence preserve capability');
+console.log('[market-evidence-kalshi-capability] PASS: alternate providers run concurrently, CoinGecko is missing-symbol fallback only, complete-only cache semantics and exact-positive Kalshi evidence preserve capability');
