@@ -17,6 +17,7 @@ import {
 } from '../execution/adapters/sponsored-receiver-manager.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { repriceZeroCapitalProviderEconomics } from '../integration/zero-capital-flash-provider-wiring.js';
+import { repriceZeroCapitalAlternativeCapital } from '../integration/zero-capital-alternative-capital-wiring.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import { executeSystemOwnedNativeTransaction } from '../execution/system-owned-native-transaction.js';
@@ -348,19 +349,19 @@ function recordPreselectionCandidate(input: {
     executableCapability: false,
     executionCapabilityReason: positive
       ? input.resourceReady
-        ? 'Deterministic-positive exact quote awaits the sole canonical flash-provider/receiver repricing stage'
-        : `Deterministic-positive exact quote is resource-blocked before provider selection: ${input.resourceReason}`
-      : `Measured route is ${opportunity.netProfitBps} BPS net and remains observation-only for measured provider-cost optimization`,
+        ? 'Deterministic-positive exact quote awaits canonical measured capital-source repricing'
+        : `Deterministic-positive exact quote is resource-blocked before capital-source selection: ${input.resourceReason}`
+      : `Measured route is ${opportunity.netProfitBps} BPS net and remains observation-only for measured capital-cost optimization`,
     missingInformation: positive && !input.resourceReady ? ['required:zero_personal_cost_execution_resource'] : [],
     provenance: [
       input.source === 'dynamic' ? 'dynamic_zero_capital_route' : 'configured_zero_capital_route',
       'direct_contract_quotes',
       'measured_all_in_economics',
       'exact_route_evidence:zero_capital_route_evidence_registry',
-      'flash_premium_attribution:flashLoanFeeBps_only',
+      'capital_source_repricing_pending',
       'quoted_amount_out_embeds_current_route_economics',
       'min_output_tolerance_not_expected_slippage_cost',
-      'eligibility_authority:canonical_provider_repricing_stage_only',
+      'eligibility_authority:canonical_measured_capital_repricing_only',
       positive ? 'deterministic_positive_net' : 'near_break_even_observation_only',
       'synthetic_evidence:false',
     ],
@@ -417,10 +418,9 @@ async function scanOneChain(
   const exact = [...configured, ...dynamic].filter(opportunity => opportunity.expiresAt > Date.now());
   if (exact.length === 0) return;
 
-  // Provider repricing is always attempted for this chain. It remains fail-closed:
-  // the repricer independently requires this chain's measured flash liquidity,
-  // receiver capability/permissions and strict funding proof, or an exact builder
-  // cold-start bundle, before any candidate can become eligible.
+  // Preserve the existing flash mesh as first authority. Alternative capital sees
+  // only opportunities the existing mesh did not make executable, so a working
+  // provider path can never be displaced by this extension.
   const selected = await repriceZeroCapitalProviderEconomics({
     chain,
     provider,
@@ -442,7 +442,25 @@ async function scanOneChain(
       },
     },
   });
-  repriced += selected.length;
+  const flashSelectedIds = new Set(selected.map(opportunity => opportunity.id));
+  const remaining = exact.filter(opportunity => !flashSelectedIds.has(opportunity.id));
+  const alternatives = await repriceZeroCapitalAlternativeCapital({
+    chain,
+    provider,
+    opportunities: remaining,
+    executionWallets: target.executionWallets,
+    getGasFundingDecision: selectedChain => strictFunding(target, selectedChain),
+  }).catch(error => {
+    logger.debug('[ZeroCapitalDiscovery] Alternative atomic-capital fallback failed closed without disturbing flash-provider selection', {
+      component: 'CanonicalZeroCapitalDiscovery',
+      chain,
+      error: error instanceof Error ? error.message : String(error),
+      flashProviderSelectionsPreserved: selected.length,
+      executionAuthority: false,
+    });
+    return [] as ZeroCapitalOpportunity[];
+  });
+  repriced += selected.length + alternatives.length;
 }
 
 async function runChainScanWithWatchdog(
@@ -517,9 +535,11 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     routeAuthority: 'zero_capital_route_authority',
     executionAuthority: false,
     schedulerAuthority: false,
-    eligibilityAuthority: 'canonical_provider_repricing_stage_only',
+    eligibilityAuthority: 'canonical_flash_first_then_measured_alternative_capital_repricing',
     gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
     receiverSetupAuthority: 'canonical_discovery_resource_stage_with_system_owned_native_reservations',
+    alternativeCapitalAuthority: 'configured_onchain_intermediary_exact_simulation_only',
+    alternativeCapitalDoesNotDisplaceWorkingFlashSelection: true,
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
     chainScanWatchdogMs: chainScanWatchdogMs(),

@@ -3,15 +3,21 @@ import { GovernanceError } from './types.js';
 
 const RECEIVER_DEPLOYMENT_CHAINS = new Set(['ethereum', 'polygon', 'arbitrum', 'optimism']);
 
+export type ZeroCapitalInfrastructureOperation =
+  | 'receiver_deployment'
+  | 'receiver_permissions'
+  | 'ghost_wallet_deployment'
+  | 'ghost_wallet_permissions';
+
 /**
- * Receiver deployment and allow-list preparation are infrastructure bootstrap,
- * not opportunity execution. This policy deliberately grants no trading or
- * settlement authority; those actions remain behind normal StageManager and
+ * Receiver/Ghost Wallet deployment and allow-list preparation are infrastructure
+ * bootstrap, not opportunity execution. This policy deliberately grants no trading
+ * or settlement authority; those actions remain behind normal StageManager and
  * governance gates.
  */
 export function requireZeroCapitalInfrastructureDeploymentAllowed(input: {
   chain: string;
-  operation: 'receiver_deployment' | 'receiver_permissions';
+  operation: ZeroCapitalInfrastructureOperation;
 }): void {
   const state = stageManager.getState();
 
@@ -35,7 +41,7 @@ export function requireZeroCapitalInfrastructureDeploymentAllowed(input: {
     });
   }
   if (!RECEIVER_DEPLOYMENT_CHAINS.has(input.chain)) {
-    throw new GovernanceError('CONSTRAINT_VIOLATION', 'Chain is outside the reviewed zero-capital receiver deployment surface', {
+    throw new GovernanceError('CONSTRAINT_VIOLATION', 'Chain is outside the reviewed zero-capital infrastructure deployment surface', {
       chain: input.chain,
       operation: input.operation,
     });

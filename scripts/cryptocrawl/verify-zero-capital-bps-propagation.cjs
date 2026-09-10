@@ -11,8 +11,13 @@ const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canon
 const routePreselection = read('server/services/cryptocrawl/discovery/zero-capital-route-preselection.ts');
 const recoveryObservability = read('server/services/cryptocrawl/integration/zero-capital-recovery-observability.ts');
 const providerReprice = read('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts');
+const alternativeReprice = read('server/services/cryptocrawl/integration/zero-capital-alternative-capital-wiring.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
-const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
+const executorEntry = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
+const executorFlash = read('server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts');
+const executorAlternative = read('server/services/cryptocrawl/execution/zero-capital-alternative-prepared-executor.ts');
+const executor = `${executorEntry}\n${executorFlash}\n${executorAlternative}`;
+const alternativeRegistry = read('server/services/cryptocrawl/ghost-wallet/zero-capital-alternative-selection-registry.ts');
 const realizedPolicy = read('server/services/cryptocrawl/execution/zero-capital-realized-profit-policy.ts');
 const gasFunding = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
 const dynamicChainRegistry = read('server/services/cryptocrawl/core/dynamic-chain-registry.ts');
@@ -62,7 +67,10 @@ assert.match(discovery, /discoverDynamicZeroCapitalQuotes\(chain, provider, fund
 assert.match(discovery, /status: positive \? 'deterministic_positive' : 'enriched'/);
 assert.match(discovery, /executableCapability: false/);
 assert.match(discovery, /const selected = await repriceZeroCapitalProviderEconomics\(/);
-assert.match(discovery, /eligibilityAuthority: 'canonical_provider_repricing_stage_only'/);
+assert.match(discovery, /const alternatives = await repriceZeroCapitalAlternativeCapital\(/);
+assert.match(discovery, /const remaining = exact\.filter\(opportunity => !flashSelectedIds\.has\(opportunity\.id\)\)/);
+assert.match(discovery, /eligibilityAuthority: 'canonical_flash_first_then_measured_alternative_capital_repricing'/);
+assert.match(discovery, /alternativeCapitalDoesNotDisplaceWorkingFlashSelection: true/);
 assert.match(discovery, /executionAuthority: false/);
 assert.match(discovery, /synthetic_evidence:false/);
 
@@ -170,6 +178,18 @@ assert.doesNotMatch(providerReprice, /target\.executeFunded\s*=/);
 assert.match(providerReprice, /BPS_PRECISION_SCALE\s*=\s*1_000_000n/);
 assert.match(providerReprice, /bootstrapFlashFee/);
 
+// Alternative-capital repricing is flash-fallback only and must carry an executable
+// prepared transaction with exact on-chain simulation before eligibility promotion.
+assert.match(alternativeReprice, /measureConfiguredGhostWalletSources\(/);
+assert.match(alternativeReprice, /await input\.provider\.call\(exactEnvelope\)/);
+assert.match(alternativeReprice, /await input\.provider\.estimateGas\(exactEnvelope\)/);
+assert.match(alternativeReprice, /ghostWalletAlternativeZeroCapitalSelectionRegistry\.record\(registrySelection\)/);
+assert.match(alternativeReprice, /updateEligibleCandidate\(opportunity, best\)/);
+assert.match(alternativeReprice, /strict_positive_all_in_net_after_source_fee_and_execution_cost/);
+assert.match(alternativeReprice, /canonical_flash_provider_behavior_unchanged/);
+assert.match(alternativeRegistry, /expectedNetProfit <= 0n/);
+assert.match(alternativeRegistry, /expiresAt <= now/);
+
 assert.match(scheduler, /decision\.topology === 'ZERO_CAPITAL_ATOMIC'/);
 assert.match(scheduler, /candidate\.expiresAt > Date\.now\(\)/);
 assert.match(scheduler, /opportunity\.expiresAt > Date\.now\(\)/);
@@ -177,6 +197,23 @@ assert.match(scheduler, /opportunity\.expectedProfit > 0n/);
 assert.doesNotMatch(scheduler, /opportunity\.netProfitBps > 0/);
 assert.match(scheduler, /executeCanonicalZeroCapitalOpportunity\(/);
 
+// The entrypoint remains singular. Existing flash/builder execution wins if it
+// appears after alternative repricing; only then may the prepared alternative run.
+assert.match(executorEntry, /ghostWalletAlternativeZeroCapitalSelectionRegistry\.get\(opportunity\.id\)/);
+assert.match(executorEntry, /flashLoanProviderSelectionRegistry\.get\(opportunity\.id\)/);
+assert.match(executorEntry, /builderSponsoredZeroCapitalRegistry\.get\(opportunity\.id\)/);
+assert.match(executorEntry, /return executeFlashCanonicalZeroCapitalOpportunity\(opportunity\)/);
+assert.match(executorEntry, /executeAlternativePreparedWithinCanonicalExecutor\(/);
+assert.match(executorAlternative, /selection\.expectedNetProfit !== opportunity\.expectedProfit/);
+assert.match(executorAlternative, /await provider\.call\(request\)/);
+assert.match(executorAlternative, /await provider\.estimateGas\(request\)/);
+assert.match(executorAlternative, /estimatedGasUnits > selection\.estimatedGasUnits/);
+assert.match(executorAlternative, /source_specific|parseAlternativeProfit/);
+assert.match(executorAlternative, /intermediaryEnding !== intermediaryStarting/);
+assert.match(executorAlternative, /recipientDelta !== grossProfit/);
+
+// Existing flash execution invariants are preserved byte-for-byte in the internal
+// implementation and remain covered by the same verifier expectations.
 assert.match(executor, /Date\.now\(\) >= opportunity\.expiresAt/);
 assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
@@ -279,7 +316,9 @@ console.log(JSON.stringify({
   configuredRouteGasPricedBeforeBpsAdmission: true,
   configuredRouteZeroGasRequiresProvenZeroOperatorCost: true,
   livePriceMeshAlternateFirstCoinGeckoLastResort: true,
-  canonicalProviderRepricingOwnsEligibilityPromotion: true,
+  canonicalFlashRepricingRetainsPriority: true,
+  measuredAlternativeCapitalFallback: true,
+  alternativeCapitalExactSimulationRequired: true,
   canonicalParentSchedulerOwnsDispatch: true,
   canonicalZeroCapitalExecutorOwnsMoneyBoundary: true,
   runtimeParallelScheduler: false,
