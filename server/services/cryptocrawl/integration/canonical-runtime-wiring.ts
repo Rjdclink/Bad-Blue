@@ -3,6 +3,7 @@ import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filt
 import { startCanonicalZeroCapitalDiscovery } from '../discovery/zero-capital-canonical-discovery.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
 import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
+import { ensureGhostWalletEngineWiring } from '../ghost-wallet/ghost-wallet-engine.js';
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
 import { ensureDynamicScalePressureWiring } from '../scaling/dynamic-scale-pressure-wiring.js';
@@ -228,6 +229,7 @@ function installCanonicalRuntime(): void {
   const install = installRuntimeComponent;
 
   install('zero_capital_readiness_diagnostics', () => logZeroCapitalReadinessDiagnostics());
+  install('ghost_wallet_intermediation_observer', () => ensureGhostWalletEngineWiring());
   install('computational_reactor', () => ensureComputationalReactorWiring());
   install('learning_lifecycle', () => ensureLearningLifecycleWiring());
   install('monte_carlo_calibration', () => ensureMonteCarloCalibrationWiring());
@@ -293,6 +295,9 @@ function installCanonicalRuntime(): void {
     zeroCapitalSchedulerAuthority: 'CanonicalExecutionScheduler_only',
     zeroCapitalExecutionAuthority: 'CanonicalZeroCapitalExecutor_only',
     zeroCapitalRuntimeMethodMutation: false,
+    ghostWalletIntermediation: 'independent_atomic_same_transaction_repayment_direct_primary_wallet_surplus',
+    ghostWalletProfitLadderAuthority: false,
+    ghostWalletExchangeScheduleAuthority: false,
     fixedDiscoveryPriority: false,
     adaptiveAdmissionFormula: '(NetProfitUSD / ExecutionRisk) * ConfidenceLevel',
     historicalProofRequiredBeforeFirstExecution: false,
