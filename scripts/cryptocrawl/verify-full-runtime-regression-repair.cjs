@@ -16,46 +16,55 @@ const chainEvents = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-
 const ingest = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-settlement-ingest.ts');
 const payout = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-payout.ts');
 const route = read('server/routes/cryptoWiring.routes.ts');
-const rediscovery = read('server/services/cryptocrawl/ghost-wallet/existing-infrastructure-rediscovery.ts');
+const rediscovery = read('server/services/cryptocrawl/ghost-wallet/existing-arbitrage-infrastructure.ts');
 const index = read('server/index.ts');
 
 // Startup authority: explicit source behavior, bounded schema recovery, no hidden build mutation.
 assert.match(schema, /SCHEMA_VERSION = 27/);
 assert.match(schema, /057_cryptocrawler_ghost_wallet_runtime\.sql/);
-assert.match(schema, /currentVersion === 26/);
+assert.match(schema, /26:\s*\['057_cryptocrawler_ghost_wallet_runtime\.sql'\]/);
 assert.match(runtime, /ensureCryptocrawlOverflowRuntimeSchema/);
 assert.match(runtime, /getCryptocrawlOverflowRuntimeSchemaSnapshot/);
-assert.doesNotMatch(build, /getCryptocrawlOverflowRuntimeSchemaSnapshot\(\)\.ready/);
+assert.match(runtime, /startOverflowSchemaRepair/);
+assert.doesNotMatch(build, /gateReplacement|importReplacement|source\.replace\(importNeedle/);
 assert.match(index, /Required CryptoCrawler automatic runtime resume failed/);
 
 // Near-miss funding rescue: gross-positive routes may be repriced, execution still requires strict positive net.
 assert.match(alternative, /grossProfitForFundingReprice/);
 assert.match(alternative, /alternative_capital_reprice_independent_of_prior_funding_net/);
 assert.match(alternative, /if \(netProfit <= 0n\) return null/);
-assert.match(alternative, /rediscoverExistingGhostWalletInfrastructure/);
+assert.match(alternative, /discoverExistingGhostArbitrageInfrastructure/);
 assert.match(rediscovery, /getCode/);
-assert.doesNotMatch(rediscovery, /sendTransaction|deploy\(|setAllowed/);
+assert.match(rediscovery, /server_deployment_attempted:false/);
+assert.doesNotMatch(rediscovery, /sendTransaction|\.deploy\(|setAllowed/);
 
 // Gas truth: measured price is bound to selection and rechecked before native submission.
 assert.match(alternative, /expectedGasPriceWei/);
 assert.match(executor, /expectedGasPriceWei/);
 assert.match(executor, /getFeeData/);
 assert.match(executor, /preBroadcastCheck/);
+assert.match(executor, /providerBillingLiability/);
 
 // Aave capacity uses oracle conversion, while legacy reserve token discovery remains an alternative.
 assert.match(source, /BASE_CURRENCY_UNIT/);
 assert.match(source, /getAssetPrice/);
 assert.match(source, /getReserveTokensAddresses/);
-assert.match(source, /availableBorrowsBase/);
+assert.match(source, /borrowCapacityAssetUnits/);
+assert.match(source, /availablePrincipal = minBigInt\(minBigInt\(allowance, liquid\), borrowCapacityAssetUnits\)/);
 
 // Freshness/failover: refresh single-flight, provider health can be re-probed, settlement has bounded reconnect/backfill.
-assert.match(providerMesh, /health.*ttl|TTL/i);
-assert.match(chainEvents, /backfill/i);
-assert.match(chainEvents, /timeout/i);
+assert.match(providerMesh, /providerHealthTtlMs/);
+assert.match(providerMesh, /lastProbeAt/);
+assert.match(chainEvents, /backfillSettlementLogs/);
+assert.match(chainEvents, /timed out after/);
+assert.match(chainEvents, /reconnectScheduled: true/);
 
-// Payout truth: exact 90\/10 split and recipient-bound terminal proof, no fictitious fallback state.
-assert.match(ingest, /PAYOUT_PERCENT = 90/);
-assert.match(ingest, /RETAINED_PERCENT = 10/);
+// Payout truth: exact 90/10 split and recipient-bound terminal proof, no fictitious fallback state.
+assert.match(ingest, /PROFIT_SPLIT_DENOMINATOR = 10n/);
+assert.match(ingest, /RETAINED_SPLIT_NUMERATOR = 1n/);
+assert.match(ingest, /const payout = realized - retained/);
+assert.match(ingest, /payoutFractionBps: 9_000/);
+assert.match(ingest, /retainedFractionBps: 1_000/);
 assert.match(payout, /percentOfRealizedGhostNet: 90/);
 assert.match(payout, /retainedCapitalPercent: 10/);
 assert.match(payout, /submitProfitFundedEthereumFallback/);
@@ -66,6 +75,7 @@ assert.doesNotMatch(payout, /state:\s*'fallback_required'/);
 assert.match(route, /GHOST_WALLET_MAX_LENDER_CANDIDATES_PER_REQUEST/);
 assert.match(route, /GHOST_WALLET_MAX_BORROWER_DATA_BYTES/);
 assert.match(route, /GHOST_WALLET_QUOTE_REQUESTS_PER_MINUTE/);
-assert.match(route, /429/);
+assert.match(route, /RATE_LIMIT_EXCEEDED/);
+assert.match(route, /status\(rateLimited \? 429/);
 
 console.log('[verify-full-runtime-regression-repair] PASS');
