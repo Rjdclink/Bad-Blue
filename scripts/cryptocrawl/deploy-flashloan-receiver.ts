@@ -6,9 +6,13 @@ import {
   compileAaveV3FlashLoanReceiver,
   compileCompositeFlashLoanReceiver,
   compileFlashLoanReceiver,
+  compileMorphoBlueFlashLoanReceiver,
   compileSushiV3FlashReceiver,
 } from './compile-flashloan-receiver.js';
-import { resolveAaveV3Pool } from '../../server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.js';
+import {
+  resolveAaveV3Pool,
+  resolveMorphoBlue,
+} from '../../server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.js';
 import { EUROPA_NETWORK } from '../../server/services/cryptocrawl/execution/adapters/europa-network.js';
 import { EUROPA_SUSHI } from '../../server/services/cryptocrawl/execution/adapters/europa-sushi-registry.js';
 import {
@@ -18,7 +22,7 @@ import {
 } from '../../server/services/cryptocrawl/execution/adapters/skale-pow-adapter.js';
 
 type SupportedDeploymentChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'bsc' | 'avalanche' | 'europa';
-export type FlashLoanReceiverKind = 'balancer' | 'balancer-composite-v2' | 'aave-v3' | 'sushi-v3';
+export type FlashLoanReceiverKind = 'balancer' | 'balancer-composite-v2' | 'aave-v3' | 'morpho-blue' | 'sushi-v3';
 
 export interface DeployFlashLoanReceiverOptions {
   chain?: SupportedDeploymentChain;
@@ -77,8 +81,8 @@ function parseChain(value: string | undefined): SupportedDeploymentChain {
 
 function parseReceiverKind(value: string | undefined): FlashLoanReceiverKind {
   const normalized = String(value || 'balancer').trim().toLowerCase();
-  if (normalized === 'balancer' || normalized === 'balancer-composite-v2' || normalized === 'aave-v3' || normalized === 'sushi-v3') return normalized;
-  throw new Error('ZERO_CAPITAL_DEPLOY_RECEIVER must be balancer, balancer-composite-v2, aave-v3, or sushi-v3');
+  if (normalized === 'balancer' || normalized === 'balancer-composite-v2' || normalized === 'aave-v3' || normalized === 'morpho-blue' || normalized === 'sushi-v3') return normalized;
+  throw new Error('ZERO_CAPITAL_DEPLOY_RECEIVER must be balancer, balancer-composite-v2, aave-v3, morpho-blue, or sushi-v3');
 }
 
 function requireAddress(name: string, value: string): string {
@@ -101,6 +105,12 @@ function resolveDeploymentInfrastructure(chain: SupportedDeploymentChain, receiv
     if (!pool) throw new Error(`Aave V3 pool is not configured for ${chain}`);
     return pool;
   }
+  if (receiverKind === 'morpho-blue') {
+    if (chain === 'europa') throw new Error('morpho-blue receiver deployment is not supported on Europa');
+    const morpho = resolveMorphoBlue(chain as Exclude<SupportedDeploymentChain, 'europa'>);
+    if (!morpho) throw new Error(`Morpho Blue is not configured for ${chain}`);
+    return morpho;
+  }
   return requireAddress(
     'ZERO_CAPITAL_BALANCER_VAULT',
     process.env.ZERO_CAPITAL_BALANCER_VAULT?.trim() ||
@@ -112,6 +122,7 @@ async function compileForKind(receiverKind: FlashLoanReceiverKind) {
   if (receiverKind === 'sushi-v3') return compileSushiV3FlashReceiver();
   if (receiverKind === 'balancer-composite-v2') return compileCompositeFlashLoanReceiver();
   if (receiverKind === 'aave-v3') return compileAaveV3FlashLoanReceiver();
+  if (receiverKind === 'morpho-blue') return compileMorphoBlueFlashLoanReceiver();
   return compileFlashLoanReceiver();
 }
 
@@ -122,7 +133,13 @@ async function verifyDeployedReceiver(input: {
   infrastructure: string;
   receiverKind: FlashLoanReceiverKind;
 }): Promise<void> {
-  const infrastructureGetter = input.receiverKind === 'aave-v3' ? 'pool' : input.receiverKind === 'sushi-v3' ? null : 'vault';
+  const infrastructureGetter = input.receiverKind === 'aave-v3'
+    ? 'pool'
+    : input.receiverKind === 'morpho-blue'
+      ? 'morpho'
+      : input.receiverKind === 'sushi-v3'
+        ? null
+        : 'vault';
   const abi = ['function owner() view returns (address)'];
   if (infrastructureGetter) abi.push(`function ${infrastructureGetter}() view returns (address)`);
   const receiver = new Contract(input.address, abi, input.provider);
@@ -142,6 +159,7 @@ async function verifyDeployedReceiver(input: {
 function deploymentEnvironmentHint(record: FlashLoanReceiverDeploymentRecord): string {
   const chainKey = record.chain.toUpperCase();
   if (record.receiverKind === 'aave-v3') return `ZERO_CAPITAL_AAVE_V3_RECEIVER_${chainKey}=${record.address}`;
+  if (record.receiverKind === 'morpho-blue') return `ZERO_CAPITAL_MORPHO_RECEIVER_${chainKey}=${record.address}`;
   if (record.receiverKind === 'balancer-composite-v2') return `ZERO_CAPITAL_BALANCER_COMPOSITE_RECEIVER_${chainKey}=${record.address}`;
   if (record.receiverKind === 'sushi-v3') return `ZERO_CAPITAL_EUROPA_RECEIVER=${record.address}`;
   return `ZERO_CAPITAL_FLASHLOAN_RECEIVER_${chainKey}=${record.address}`;
