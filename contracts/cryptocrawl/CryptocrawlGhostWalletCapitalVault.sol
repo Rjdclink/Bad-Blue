@@ -282,7 +282,8 @@ contract CryptocrawlGhostWalletCapitalVault {
         if (x == 0 || y == 0) return 0;
         require(x <= type(uint256).max / y, "mul_overflow");
         uint256 product = x * y;
-        return (product + denominator - 1) / denominator;
+        uint256 quotient = product / denominator;
+        return product % denominator == 0 ? quotient : quotient + 1;
     }
 
     function _mint(address to, uint256 amount) internal {
