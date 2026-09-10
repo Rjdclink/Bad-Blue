@@ -5,6 +5,7 @@ import {
   enqueueGhostWalletWork,
   upsertGhostWalletVenue,
 } from './ghost-wallet-work-ledger.js';
+import { ghostWalletWorkDedupeBucket } from './ghost-wallet-work-dedupe.js';
 import { ghostWalletWorkSignal } from './ghost-wallet-work-signal.js';
 
 const GHOST_VAULT_ABI = [
@@ -86,7 +87,7 @@ export async function submitGhostWalletVenueCandidate(candidate: GhostWalletVenu
     capabilities: { discovered: true, executableAuthority: false },
   });
   await enqueueGhostWalletWork({
-    dedupeKey: `venue-probe:${normalized.venueId}:${Date.now()}`,
+    dedupeKey: `venue-probe:${normalized.venueId}:${ghostWalletWorkDedupeBucket()}`,
     kind: 'venue_probe',
     chain: normalized.chain,
     priority: 250,
