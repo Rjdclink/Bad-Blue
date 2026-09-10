@@ -17,15 +17,17 @@ export interface GhostWalletPreparedTransaction {
     | 'direct_atomic_credit'
     | 'atomic_liability_cycle'
     | 'matched_intent_pair'
-    | 'vault_atomic_credit';
+    | 'vault_atomic_credit'
+    | 'vault_brokered_flash_credit';
   profitLadderAuthority: false;
 }
 
 const INTERMEDIARY_ABI = [
   'function executeDirectAtomicCredit(address asset,address capitalSource,uint256 principal,uint256 sourceFee,uint256 minProfit,address profitRecipient,(address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps)',
-  'function executeAtomicLiabilityCycle(address liabilityToken,address liabilityAccount,address profitAsset,uint256 minProfit,address profitRecipient,(address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps)',
+  'function executeAtomicLiabilityCycle(address liabilityOracle,bytes liabilityQueryData,address profitAsset,uint256 minProfit,address profitRecipient,(address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps)',
   'function settleMatchedIntentPair((address owner,address sellToken,address buyToken,uint256 sellAmount,uint256 minBuyAmount,uint16 maxFeeBps,uint256 nonce,uint256 deadline) intentA,bytes signatureA,uint16 feeBpsA,(address owner,address sellToken,address buyToken,uint256 sellAmount,uint256 minBuyAmount,uint16 maxFeeBps,uint256 nonce,uint256 deadline) intentB,bytes signatureB,uint16 feeBpsB,address profitRecipient)',
   'function executeVaultAtomicCredit(address vault,uint256 principal,uint256 sourceFee,uint256 minProfit,address profitRecipient,(address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps)',
+  'function brokerVaultFlashLoan(address vault,address borrower,address token,uint256 amount,uint256 maxBorrowerFee,bytes data) returns (bool)',
 ];
 
 const iface = new ethers.utils.Interface(INTERMEDIARY_ABI);
@@ -82,20 +84,23 @@ export function buildDirectAtomicCreditTransaction(input: {
 
 export function buildAtomicLiabilityCycleTransaction(input: {
   intermediary: string;
-  liabilityToken: string;
-  liabilityAccount: string;
+  liabilityOracle: string;
+  liabilityQueryData: string;
   profitAsset: string;
   minProfit: bigint;
   profitRecipient: string;
   steps: GhostWalletStep[];
 }): GhostWalletPreparedTransaction {
+  if (!ethers.utils.isHexString(input.liabilityQueryData) || ethers.utils.hexDataLength(input.liabilityQueryData) < 4) {
+    throw new Error('Ghost Wallet liability query must be ABI-encoded call data');
+  }
   if (input.minProfit <= 0n) throw new Error('Ghost Wallet liability-cycle minProfit must be positive');
   if (input.steps.length === 0) throw new Error('Ghost Wallet liability cycle requires at least one step');
   return prepared(
     input.intermediary,
     iface.encodeFunctionData('executeAtomicLiabilityCycle', [
-      ethers.utils.getAddress(input.liabilityToken),
-      ethers.utils.getAddress(input.liabilityAccount),
+      ethers.utils.getAddress(input.liabilityOracle),
+      input.liabilityQueryData,
       ethers.utils.getAddress(input.profitAsset),
       input.minProfit.toString(),
       ethers.utils.getAddress(input.profitRecipient),
@@ -158,6 +163,33 @@ export function buildVaultAtomicCreditTransaction(input: {
       input.steps.map(stepTuple),
     ]),
     'vault_atomic_credit',
+  );
+}
+
+export function buildVaultBrokeredFlashCreditTransaction(input: {
+  intermediary: string;
+  vault: string;
+  borrower: string;
+  token: string;
+  amount: bigint;
+  maxBorrowerFee: bigint;
+  data?: string;
+}): GhostWalletPreparedTransaction {
+  if (input.amount <= 0n) throw new Error('Ghost Wallet brokered amount must be positive');
+  if (input.maxBorrowerFee <= 0n) throw new Error('Ghost Wallet borrower max fee must be positive');
+  const data = input.data || '0x';
+  if (!ethers.utils.isHexString(data)) throw new Error('Ghost Wallet brokered borrower data must be hex bytes');
+  return prepared(
+    input.intermediary,
+    iface.encodeFunctionData('brokerVaultFlashLoan', [
+      ethers.utils.getAddress(input.vault),
+      ethers.utils.getAddress(input.borrower),
+      ethers.utils.getAddress(input.token),
+      input.amount.toString(),
+      input.maxBorrowerFee.toString(),
+      data,
+    ]),
+    'vault_brokered_flash_credit',
   );
 }
 
