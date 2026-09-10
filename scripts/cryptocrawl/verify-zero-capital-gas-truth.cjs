@@ -11,8 +11,8 @@ const sponsorship = read('server/services/cryptocrawl/strategies/gas-sponsorship
 
 assert.match(
   gasFunding,
-  /ZERO_INITIAL_CAPITAL_STRICT_OPERATOR_ZERO_COST[\s\S]*!== 'false'/,
-  'strict zero-operator-cost gas policy must be enabled by default',
+  /function strictZeroOperatorCostRequired\(\): boolean \{\s*return true;\s*\}/,
+  'ZERO_CAPITAL_ATOMIC zero-operator-cost gas policy must be unconditional and not environment-weakenable',
 );
 assert.match(
   gasFunding,
@@ -22,12 +22,17 @@ assert.match(
 assert.match(
   gasFunding,
   /nativeSystemOwnedProven\s*===\s*true/,
-  'native gas must require durable system-ownership proof in strict mode',
+  'native gas must require durable system-ownership proof',
 );
 assert.match(
   gasFunding,
-  /configured hosted sponsorship does not prove zero operator monetary cost/,
-  'strict rejection must preserve the distinction between wallet gas abstraction and operator monetary cost',
+  /not admissible without proof of zero operator billing liability/,
+  'hosted sponsorship billed to the operator/application must fail the zero-cost boundary',
+);
+assert.match(
+  gasFunding,
+  /providerBillingLiability:\s*chain\.sponsoredBootstrap && sponsorReady && !sponsorCostProvenZero/,
+  'rejected hosted sponsorship must preserve its provider-billing liability truth',
 );
 assert.match(
   gasFunding,
@@ -62,4 +67,4 @@ assert.match(
   'bootstrap credit must fail closed without zero external input-capital evidence',
 );
 
-console.log('[zero-capital-gas-truth] PASS: strict cold-start gas and SELF_FUNDED credit require evidence-backed zero-operator-cost provenance');
+console.log('[zero-capital-gas-truth] PASS: ZERO_CAPITAL_ATOMIC rejects operator/application gas liabilities and requires evidence-backed system-owned native provenance');
