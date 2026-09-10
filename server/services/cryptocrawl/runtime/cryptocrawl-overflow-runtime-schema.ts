@@ -191,7 +191,7 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_renew_kalshi_event_system_cash(uuid,timestamp with time zone)',
   'public.cryptocrawler_reserve_polymarket_system_cash(text,text,numeric,timestamp with time zone,jsonb)',
   'public.cryptocrawler_release_polymarket_system_cash(uuid)',
-  'public.cryptocrawler_renew_polymarket_system_cash(uuid,timestamp with time zone,jsonb)',
+  'public.cryptocrawler_renew_polymarket_system_cash(uuid,timestamp with time zone)',
 ] as const;
 
 let schemaReady = false;
@@ -355,7 +355,8 @@ export function getCryptocrawlOverflowRuntimeSchemaSnapshot() {
     provisionMode: lastProvisionMode,
     durableFastPathHits,
     migrationRuns,
-    migrationCount: lastMigrationCount,
+    migrationCount: MIGRATIONS.length,
+    lastMigrationCount,
     requiredTables: [...REQUIRED_TABLES],
     requiredFunctions: [...REQUIRED_FUNCTIONS],
     duplicateTerminalSchedulerInstalled: false as const,
