@@ -11,13 +11,16 @@ const prediction = read('server/services/cryptocrawl/intelligence/kalshi-predict
 const generator = read('server/services/cryptocrawl/discovery/kalshi-event-opportunity-generator.ts');
 const lifecycle = read('server/services/cryptocrawl/execution/kalshi-event-lifecycle.ts');
 
-assert.match(prices, /const providerTasks = \[[\s\S]*coinGeckoTask,[\s\S]*fetchCoinMarketCapKeylessByCoinIds[\s\S]*fetchCoinCapByCoinIds[\s\S]*fetchCoinbaseByCoinIds/, 'live price providers must run concurrently');
-assert.match(prices, /enqueueCoinGeckoRequest/, 'CoinGecko must retain its own rate queue');
-assert.doesNotMatch(prices, /const requestPromise = this\.enqueue/, 'CoinGecko pacing must not serialize the provider mesh');
+assert.match(prices, /const alternateTasks = \[[\s\S]*fetchCoinMarketCapKeylessByCoinIds[\s\S]*fetchCoinCapByCoinIds[\s\S]*fetchCoinbaseByCoinIds[\s\S]*\];/, 'independent live price providers must start concurrently');
+assert.match(prices, /const tracked = alternateTasks\.map/, 'parallel provider tasks must be tracked independently');
 assert.match(prices, /Promise\.race\(\[firstUsable, allSettled\]\)/, 'one slow provider must not bottleneck usable parallel evidence');
+assert.match(prices, /const missing = coinIds\.filter/, 'the fallback path must identify only symbols missing from the alternate mesh');
+assert.match(prices, /fetchCoinGeckoByCoinIds\(missing, vsCurrency\)/, 'CoinGecko must be queried only as last-resort redundancy for missing live symbols');
+assert.match(prices, /enqueueCoinGeckoRequest/, 'CoinGecko must retain its own rate queue');
+assert.doesNotMatch(prices, /const requestPromise = this\.enqueue/, 'CoinGecko pacing must not serialize the alternate provider mesh');
 assert.match(prices, /export function mergeLivePriceEvidence/, 'parallel price evidence must normalize through one shared merge');
 assert.match(prices, /Math\.abs\(value - median\) \/ median <= 0\.2/, 'price consensus must discard material multi-provider outliers');
-assert.match(prices, /merged\[coinId\] = primary/, 'healthy pre-existing CoinGecko evidence must retain precedence when consistent');
+assert.doesNotMatch(prices, /merged\[coinId\] = primary/, 'no single provider may override median consensus by fixed precedence');
 assert.match(prices, /if \(complete\) \{\s*this\.cache\.set/, 'partial evidence must not receive the full cache TTL');
 assert.match(runtimeObservability, /usableMarketUniverseProviders/, 'runtime readiness must consume the parallel market-universe provider mesh');
 assert.match(runtimeObservability, /directCexMarketEvidenceReady/, 'fresh direct CEX evidence must remain a CoinGecko-independent readiness path');
@@ -39,4 +42,4 @@ assert.doesNotMatch(generator, /minExpectedNetUsd/, 'Kalshi discovery must not i
 assert.doesNotMatch(lifecycle, /minimumExpectedNetUsd/, 'Kalshi execution must not reintroduce an arbitrary profit magnitude floor');
 assert.match(lifecycle, /currentExpectedNetProfitUsd > requiredNet/, 'fresh execution economics must remain strictly positive after route-specific costs');
 
-console.log('[market-evidence-kalshi-capability] PASS: CoinGecko-independent parallel pricing, truthful core-data readiness, and rate-safe exact-positive Kalshi evidence preserve capability');
+console.log('[market-evidence-kalshi-capability] PASS: alternate providers run concurrently, CoinGecko is missing-symbol fallback only, truthful core-data readiness and exact-positive Kalshi evidence preserve capability');
