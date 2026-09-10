@@ -212,8 +212,8 @@ assert.match(executorAlternative, /source_specific|parseAlternativeProfit/);
 assert.match(executorAlternative, /intermediaryEnding !== intermediaryStarting/);
 assert.match(executorAlternative, /recipientDelta !== grossProfit/);
 
-// Existing flash execution invariants are preserved byte-for-byte in the internal
-// implementation and remain covered by the same verifier expectations.
+// Existing flash execution invariants remain strict: optimization may recover a
+// negative near-miss before scheduling, but execution itself never accepts one.
 assert.match(executor, /Date\.now\(\) >= opportunity\.expiresAt/);
 assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
@@ -228,14 +228,14 @@ assert.match(executor, /extractProfit\(receipt/);
 assert.match(executor, /terminalEconomics\(/);
 assert.match(executor, /synthetic_evidence:false/);
 
-// Zero INITIAL capital is distinct from zero lifetime provider cost. Paymaster
-// sponsorship may remove the native-balance prerequisite while its receipt cost
-// remains a real BPS expense. Strong zero-operator-cost mode is explicit opt-in.
-assert.match(gasFunding, /ZERO_INITIAL_CAPITAL_STRICT_OPERATOR_ZERO_COST[^\n]*=== 'true'/);
-assert.match(gasFunding, /strictZeroInitialCapitalEligible: true/);
-assert.match(gasFunding, /operatorMonetaryInputRequired: false/);
-assert.match(gasFunding, /providerBillingLiability: !sponsorCostProvenZero/);
-assert.match(gasFunding, /sponsorOperatorMonetaryCostProvenZero: sponsorCostProvenZero/);
+// ZERO_CAPITAL_ATOMIC is a hard zero-personal-cost boundary. Provider-fronted gas
+// is admissible only when independent evidence proves that it creates no operator
+// or application billing liability. This rule is not environment-optional.
+assert.match(gasFunding, /function strictZeroOperatorCostRequired\(\): boolean \{\s*return true;\s*\}/);
+assert.match(gasFunding, /sponsorOperatorMonetaryCostProvenZero === true/);
+assert.match(gasFunding, /providerBillingLiability: false/);
+assert.match(gasFunding, /not admissible without proof of zero operator billing liability/);
+assert.match(gasFunding, /providerBillingLiability: chain\.sponsoredBootstrap && sponsorReady && !sponsorCostProvenZero/);
 assert.match(realizedPolicy, /provider_sponsored_receipt_equivalent_gas_cost/);
 assert.match(realizedPolicy, /sponsorOperatorMonetaryCostProvenZero/);
 assert.match(executor, /nativeFeeWei = BigInt\(receipt\.gasUsed\.toString\(\)\) \* BigInt\(receipt\.effectiveGasPrice\.toString\(\)\)/);
