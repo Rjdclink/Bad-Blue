@@ -20,15 +20,26 @@ interface IERC20PermitGhostWallet {
     ) external;
 }
 
+interface IERC3156FlashBorrowerGhostWallet {
+    function onFlashLoan(
+        address initiator,
+        address token,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) external returns (bytes32);
+}
+
 interface IGhostWalletCapitalVault {
     function asset() external view returns (address);
+    function totalAssets() external view returns (uint256);
+    function previewAtomicFee(uint256 assets) external view returns (uint256);
     function lendAtomic(uint256 assets, uint256 fee, bytes calldata data) external;
 }
 
 /// @notice Atomic credit/intermediation settlement surface for CryptoCrawler.
-/// @dev This contract is deliberately independent from the arbitrage Profit Ladder.
-///      Every supported lane must finish with no incremental liability. Any failed
-///      repayment, minimum-output or minimum-profit condition reverts the whole tx.
+/// @dev Independent from the arbitrage Profit Ladder. Every credit or liability lane
+///      must settle in the same transaction. Any repayment/profit failure reverts.
 contract CryptocrawlGhostWalletIntermediary {
     struct Step {
         address target;
@@ -66,11 +77,19 @@ contract CryptocrawlGhostWalletIntermediary {
     );
     bytes32 private constant NAME_HASH = keccak256("CryptoCrawler Ghost Wallet");
     bytes32 private constant VERSION_HASH = keccak256("1");
+    bytes32 private constant ERC3156_CALLBACK_SUCCESS = keccak256("ERC3156FlashBorrower.onFlashLoan");
+    uint8 private constant VAULT_MODE_ROUTE = 1;
+    uint8 private constant VAULT_MODE_BROKER = 2;
 
     address public immutable owner;
+    address public immutable profitRecipient;
+    uint16 public minimumBrokerSpreadBps;
+
     mapping(address => bool) public operators;
     mapping(address => bool) public allowedTargets;
     mapping(address => bool) public allowedApprovalTokens;
+    mapping(address => bool) public allowedAssets;
+    mapping(address => bool) public allowedLiabilityOracles;
     mapping(address => bool) public allowedVaults;
     mapping(address => mapping(uint256 => bool)) public usedIntentNonces;
 
@@ -80,7 +99,10 @@ contract CryptocrawlGhostWalletIntermediary {
     event OperatorUpdated(address indexed operator, bool allowed);
     event TargetUpdated(address indexed target, bool allowed);
     event ApprovalTokenUpdated(address indexed token, bool allowed);
+    event AssetUpdated(address indexed asset, bool allowed);
+    event LiabilityOracleUpdated(address indexed oracle, bool allowed);
     event VaultUpdated(address indexed vault, bool allowed);
+    event MinimumBrokerSpreadUpdated(uint16 spreadBps);
     event AtomicCreditSettled(
         address indexed source,
         address indexed asset,
@@ -90,9 +112,11 @@ contract CryptocrawlGhostWalletIntermediary {
         address indexed profitRecipient
     );
     event AtomicLiabilityCycleSettled(
-        address indexed liabilityToken,
-        address indexed liabilityAccount,
+        address indexed liabilityOracle,
+        bytes32 indexed liabilityQueryHash,
         address indexed profitAsset,
+        uint256 startingLiability,
+        uint256 endingLiability,
         uint256 realizedProfit,
         address profitRecipient
     );
@@ -113,6 +137,16 @@ contract CryptocrawlGhostWalletIntermediary {
         uint256 realizedProfit,
         address indexed profitRecipient
     );
+    event BrokeredAtomicCreditSettled(
+        address indexed vault,
+        address indexed borrower,
+        address indexed asset,
+        uint256 principal,
+        uint256 sourceFee,
+        uint256 borrowerFee,
+        uint256 realizedSpread,
+        address profitRecipient
+    );
 
     modifier onlyOwner() {
         require(msg.sender == owner, "owner_only");
@@ -129,9 +163,12 @@ contract CryptocrawlGhostWalletIntermediary {
         _;
     }
 
-    constructor(address ownerAddress) {
+    constructor(address ownerAddress, address profitRecipientAddress) {
         require(ownerAddress != address(0), "owner_required");
+        require(profitRecipientAddress != address(0), "profit_recipient_required");
         owner = ownerAddress;
+        profitRecipient = profitRecipientAddress;
+        minimumBrokerSpreadBps = 1;
     }
 
     function setOperator(address operator, bool allowed) external onlyOwner {
@@ -152,48 +189,61 @@ contract CryptocrawlGhostWalletIntermediary {
         emit ApprovalTokenUpdated(token, allowed);
     }
 
+    function setAllowedAsset(address token, bool allowed) external onlyOwner onlyIdle {
+        require(token != address(0), "token_required");
+        allowedAssets[token] = allowed;
+        emit AssetUpdated(token, allowed);
+    }
+
+    function setAllowedLiabilityOracle(address oracle, bool allowed) external onlyOwner onlyIdle {
+        require(oracle != address(0), "oracle_required");
+        allowedLiabilityOracles[oracle] = allowed;
+        emit LiabilityOracleUpdated(oracle, allowed);
+    }
+
     function setAllowedVault(address vault, bool allowed) external onlyOwner onlyIdle {
         require(vault != address(0), "vault_required");
         allowedVaults[vault] = allowed;
         emit VaultUpdated(vault, allowed);
     }
 
-    /// @notice Direct atomic credit from a capital source that has approved this contract.
-    /// @dev Source principal + fee is repaid before the transaction can complete.
+    function setMinimumBrokerSpreadBps(uint16 spreadBps) external onlyOwner onlyIdle {
+        require(spreadBps > 0 && spreadBps <= 1_000, "invalid_spread_bps");
+        minimumBrokerSpreadBps = spreadBps;
+        emit MinimumBrokerSpreadUpdated(spreadBps);
+    }
+
     function executeDirectAtomicCredit(
         address asset,
         address capitalSource,
         uint256 principal,
         uint256 sourceFee,
         uint256 minProfit,
-        address profitRecipient,
+        address requestedProfitRecipient,
         Step[] calldata steps
     ) external onlyController onlyIdle {
-        _executeDirectAtomicCredit(
-            asset,
-            capitalSource,
-            principal,
-            sourceFee,
-            minProfit,
-            profitRecipient,
-            steps
-        );
+        _requireProfitRecipient(requestedProfitRecipient);
+        phase = Phase.Executing;
+        _executeDirectAtomicCreditActive(asset, capitalSource, principal, sourceFee, minProfit, steps);
     }
 
-    /// @notice Same direct-credit lane, with an EIP-2612 permit removing a prior approval tx.
+    /// @notice Direct same-transaction credit with EIP-2612 permit for the source.
+    /// @dev Phase is entered BEFORE permit, closing the external-call reentrancy window.
     function executeDirectAtomicCreditWithPermit(
         address asset,
         address capitalSource,
         uint256 principal,
         uint256 sourceFee,
         uint256 minProfit,
-        address profitRecipient,
+        address requestedProfitRecipient,
         uint256 permitDeadline,
         uint8 v,
         bytes32 r,
         bytes32 s,
         Step[] calldata steps
     ) external onlyController onlyIdle {
+        _requireProfitRecipient(requestedProfitRecipient);
+        phase = Phase.Executing;
         IERC20PermitGhostWallet(asset).permit(
             capitalSource,
             address(this),
@@ -203,64 +253,57 @@ contract CryptocrawlGhostWalletIntermediary {
             r,
             s
         );
-        _executeDirectAtomicCredit(
-            asset,
-            capitalSource,
-            principal,
-            sourceFee,
-            minProfit,
-            profitRecipient,
-            steps
-        );
+        _executeDirectAtomicCreditActive(asset, capitalSource, principal, sourceFee, minProfit, steps);
     }
 
-    /// @notice Generic debt-assumption/delegated-credit lane.
-    /// @dev The caller supplies protocol calls as whitelisted steps. The transaction
-    ///      cannot finish with more liability than existed before execution.
-    ///      This supports Aave credit delegation, Euler debt-transfer liquidation,
-    ///      and future protocols with an ERC20-like debt-accounting token.
+    /// @notice Source-agnostic same-transaction liability lane.
+    /// @dev liabilityQueryData must return one uint256 representing current liability.
+    ///      This supports Aave VariableDebtToken.balanceOf(account), Euler EVault.debtOf(account),
+    ///      and future protocol-specific debt views without pretending all debt is ERC-20 shaped.
     function executeAtomicLiabilityCycle(
-        address liabilityToken,
-        address liabilityAccount,
+        address liabilityOracle,
+        bytes calldata liabilityQueryData,
         address profitAsset,
         uint256 minProfit,
-        address profitRecipient,
+        address requestedProfitRecipient,
         Step[] calldata steps
     ) external onlyController onlyIdle {
-        require(liabilityToken != address(0), "liability_token_required");
-        require(liabilityAccount != address(0), "liability_account_required");
-        require(profitAsset != address(0), "profit_asset_required");
-        require(profitRecipient != address(0), "profit_recipient_required");
+        require(liabilityOracle != address(0), "liability_oracle_required");
+        require(liabilityQueryData.length >= 4, "liability_query_required");
+        require(allowedLiabilityOracles[liabilityOracle], "liability_oracle_not_allowed");
+        require(allowedAssets[profitAsset], "profit_asset_not_allowed");
+        require(minProfit > 0, "min_profit_required");
         require(steps.length > 0, "steps_required");
+        _requireProfitRecipient(requestedProfitRecipient);
 
         phase = Phase.Executing;
-        uint256 startingLiability = IERC20GhostWallet(liabilityToken).balanceOf(liabilityAccount);
+        uint256 startingLiability = _readLiability(liabilityOracle, liabilityQueryData);
         uint256 startingProfitBalance = IERC20GhostWallet(profitAsset).balanceOf(address(this));
 
         _runSteps(steps);
 
-        uint256 endingLiability = IERC20GhostWallet(liabilityToken).balanceOf(liabilityAccount);
+        uint256 endingLiability = _readLiability(liabilityOracle, liabilityQueryData);
         require(endingLiability <= startingLiability, "incremental_liability_not_repaid");
 
         uint256 endingProfitBalance = IERC20GhostWallet(profitAsset).balanceOf(address(this));
         require(endingProfitBalance >= startingProfitBalance + minProfit, "profit_below_threshold");
         uint256 realizedProfit = endingProfitBalance - startingProfitBalance;
-        if (realizedProfit > 0) _safeTransfer(profitAsset, profitRecipient, realizedProfit);
+        _safeTransfer(profitAsset, profitRecipient, realizedProfit);
 
         phase = Phase.Idle;
         emit AtomicLiabilityCycleSettled(
-            liabilityToken,
-            liabilityAccount,
+            liabilityOracle,
+            keccak256(liabilityQueryData),
             profitAsset,
+            startingLiability,
+            endingLiability,
             realizedProfit,
             profitRecipient
         );
     }
 
-    /// @notice Pulls two complementary signed intents and clears them internally.
-    /// @dev No exchange, API key, or off-chain account is required. Users receive at
-    ///      least their signed minimum; intermediary fees are explicit and individually
-    ///      capped by each signed intent. Replayed nonces fail.
+    /// @notice Pulls two complementary EIP-712 signed intents and clears them internally.
+    /// @dev Replay, self-match, zero-value and limit-price conditions all fail closed.
     function settleMatchedIntentPair(
         SignedIntent calldata intentA,
         bytes calldata signatureA,
@@ -268,14 +311,17 @@ contract CryptocrawlGhostWalletIntermediary {
         SignedIntent calldata intentB,
         bytes calldata signatureB,
         uint16 feeBpsB,
-        address profitRecipient
+        address requestedProfitRecipient
     ) external onlyController onlyIdle {
-        require(profitRecipient != address(0), "profit_recipient_required");
+        _requireProfitRecipient(requestedProfitRecipient);
         require(intentA.owner != address(0) && intentB.owner != address(0), "intent_owner_required");
+        require(intentA.owner != intentB.owner, "self_match_forbidden");
         require(intentA.sellToken == intentB.buyToken, "intent_pair_token0_mismatch");
         require(intentA.buyToken == intentB.sellToken, "intent_pair_token1_mismatch");
         require(intentA.sellToken != intentA.buyToken, "distinct_assets_required");
+        require(allowedAssets[intentA.sellToken] && allowedAssets[intentA.buyToken], "intent_asset_not_allowed");
         require(intentA.sellAmount > 0 && intentB.sellAmount > 0, "sell_amount_required");
+        require(intentA.minBuyAmount > 0 && intentB.minBuyAmount > 0, "min_buy_required");
         require(block.timestamp <= intentA.deadline && block.timestamp <= intentB.deadline, "intent_expired");
         require(feeBpsA <= intentA.maxFeeBps && feeBpsB <= intentB.maxFeeBps, "fee_exceeds_signed_cap");
         require(feeBpsA <= BPS && feeBpsB <= BPS, "invalid_fee_bps");
@@ -292,6 +338,7 @@ contract CryptocrawlGhostWalletIntermediary {
         uint256 userBuyB = grossBuyB - feeB;
         require(userBuyA >= intentA.minBuyAmount, "intent_a_min_buy_not_met");
         require(userBuyB >= intentB.minBuyAmount, "intent_b_min_buy_not_met");
+        require(feeA > 0 || feeB > 0, "zero_intermediation_fee");
 
         phase = Phase.Executing;
         usedIntentNonces[intentA.owner][intentA.nonce] = true;
@@ -299,7 +346,6 @@ contract CryptocrawlGhostWalletIntermediary {
 
         _safeTransferFrom(intentA.sellToken, intentA.owner, address(this), intentA.sellAmount);
         _safeTransferFrom(intentB.sellToken, intentB.owner, address(this), intentB.sellAmount);
-
         _safeTransfer(intentA.buyToken, intentA.owner, userBuyA);
         _safeTransfer(intentB.buyToken, intentB.owner, userBuyB);
         if (feeA > 0) _safeTransfer(intentA.buyToken, profitRecipient, feeA);
@@ -317,19 +363,19 @@ contract CryptocrawlGhostWalletIntermediary {
         );
     }
 
-    /// @notice Draws capital from a permissionless Ghost Wallet capital vault.
-    /// @dev The vault invokes onGhostWalletVaultCredit after transferring assets.
+    /// @notice Uses a configured vault as capital for an internal atomic route.
     function executeVaultAtomicCredit(
         address vault,
         uint256 principal,
         uint256 sourceFee,
         uint256 minProfit,
-        address profitRecipient,
+        address requestedProfitRecipient,
         Step[] calldata steps
     ) external onlyController onlyIdle {
+        _requireProfitRecipient(requestedProfitRecipient);
         require(allowedVaults[vault], "vault_not_allowed");
         require(principal > 0, "principal_required");
-        require(profitRecipient != address(0), "profit_recipient_required");
+        require(minProfit > 0, "min_profit_required");
         require(steps.length > 0, "steps_required");
 
         expectedVault = vault;
@@ -337,47 +383,126 @@ contract CryptocrawlGhostWalletIntermediary {
         IGhostWalletCapitalVault(vault).lendAtomic(
             principal,
             sourceFee,
-            abi.encode(minProfit, profitRecipient, steps)
+            abi.encode(VAULT_MODE_ROUTE, minProfit, steps)
         );
         require(phase == Phase.Idle, "vault_callback_incomplete");
         expectedVault = address(0);
     }
 
-    /// @notice Callback used only by a vault admitted by owner configuration.
+    /// @notice Public atomic credit-broker lane: vault capital is lent onward to an ERC-3156 borrower.
+    /// @dev Caller/borrower pays transaction gas. Vault receives its source fee; only the spread
+    ///      is routed to the immutable Ghost Wallet profit recipient. Nonpayment reverts everything.
+    function brokerVaultFlashLoan(
+        address vault,
+        IERC3156FlashBorrowerGhostWallet borrower,
+        address token,
+        uint256 amount,
+        uint256 maxBorrowerFee,
+        bytes calldata data
+    ) external onlyIdle returns (bool) {
+        require(allowedVaults[vault], "vault_not_allowed");
+        require(address(borrower) != address(0), "borrower_required");
+        require(allowedAssets[token], "asset_not_allowed");
+        require(IGhostWalletCapitalVault(vault).asset() == token, "vault_asset_mismatch");
+        require(amount > 0 && amount <= IGhostWalletCapitalVault(vault).totalAssets(), "insufficient_vault_liquidity");
+
+        uint256 sourceFee = IGhostWalletCapitalVault(vault).previewAtomicFee(amount);
+        uint256 spread = _mulDivUp(amount, minimumBrokerSpreadBps, BPS);
+        uint256 borrowerFee = sourceFee + spread;
+        require(borrowerFee <= maxBorrowerFee, "borrower_fee_exceeds_max");
+
+        expectedVault = vault;
+        phase = Phase.AwaitingVault;
+        IGhostWalletCapitalVault(vault).lendAtomic(
+            amount,
+            sourceFee,
+            abi.encode(VAULT_MODE_BROKER, msg.sender, address(borrower), borrowerFee, data)
+        );
+        require(phase == Phase.Idle, "vault_callback_incomplete");
+        expectedVault = address(0);
+        return true;
+    }
+
+    function quoteVaultBrokerFee(address vault, address token, uint256 amount) external view returns (uint256) {
+        require(allowedVaults[vault], "vault_not_allowed");
+        require(IGhostWalletCapitalVault(vault).asset() == token, "vault_asset_mismatch");
+        uint256 sourceFee = IGhostWalletCapitalVault(vault).previewAtomicFee(amount);
+        return sourceFee + _mulDivUp(amount, minimumBrokerSpreadBps, BPS);
+    }
+
+    /// @notice Callback used only by a configured Ghost Wallet capital vault.
     function onGhostWalletVaultCredit(
-        address asset,
+        address token,
         uint256 principal,
         uint256 sourceFee,
         bytes calldata data
     ) external {
         require(phase == Phase.AwaitingVault, "unexpected_vault_callback");
         require(msg.sender == expectedVault && allowedVaults[msg.sender], "vault_only");
-        require(IGhostWalletCapitalVault(msg.sender).asset() == asset, "vault_asset_mismatch");
+        require(IGhostWalletCapitalVault(msg.sender).asset() == token, "vault_asset_mismatch");
+        require(allowedAssets[token], "asset_not_allowed");
 
-        phase = Phase.Executing;
-        (uint256 minProfit, address profitRecipient, Step[] memory steps) = abi.decode(
-            data,
-            (uint256, address, Step[])
-        );
-        require(profitRecipient != address(0), "profit_recipient_required");
-        require(steps.length > 0, "steps_required");
-
-        uint256 balanceWithPrincipal = IERC20GhostWallet(asset).balanceOf(address(this));
+        uint256 balanceWithPrincipal = IERC20GhostWallet(token).balanceOf(address(this));
         require(balanceWithPrincipal >= principal, "principal_not_received");
         uint256 startingOwnBalance = balanceWithPrincipal - principal;
+        phase = Phase.Executing;
 
-        _runStepsMemory(steps);
+        uint8 mode = abi.decode(data, (uint8));
+        if (mode == VAULT_MODE_ROUTE) {
+            (, uint256 minProfit, Step[] memory steps) = abi.decode(data, (uint8, uint256, Step[]));
+            require(minProfit > 0 && steps.length > 0, "invalid_route_payload");
+            _runStepsMemory(steps);
 
-        uint256 endingBalance = IERC20GhostWallet(asset).balanceOf(address(this));
-        uint256 required = startingOwnBalance + principal + sourceFee + minProfit;
-        require(endingBalance >= required, "vault_repayment_or_profit_shortfall");
+            uint256 endingBalance = IERC20GhostWallet(token).balanceOf(address(this));
+            uint256 required = startingOwnBalance + principal + sourceFee + minProfit;
+            require(endingBalance >= required, "vault_repayment_or_profit_shortfall");
+            _safeTransfer(token, msg.sender, principal + sourceFee);
+            uint256 realizedProfit = IERC20GhostWallet(token).balanceOf(address(this)) - startingOwnBalance;
+            require(realizedProfit >= minProfit, "profit_below_threshold");
+            _safeTransfer(token, profitRecipient, realizedProfit);
+            phase = Phase.Idle;
+            emit VaultCreditSettled(msg.sender, token, principal, sourceFee, realizedProfit, profitRecipient);
+            return;
+        }
 
-        _safeTransfer(asset, msg.sender, principal + sourceFee);
-        uint256 realizedProfit = IERC20GhostWallet(asset).balanceOf(address(this)) - startingOwnBalance;
-        if (realizedProfit > 0) _safeTransfer(asset, profitRecipient, realizedProfit);
+        if (mode == VAULT_MODE_BROKER) {
+            (, address initiator, address borrowerAddress, uint256 borrowerFee, bytes memory borrowerData) =
+                abi.decode(data, (uint8, address, address, uint256, bytes));
+            require(borrowerAddress != address(0), "borrower_required");
+            require(borrowerFee > sourceFee, "nonpositive_broker_spread");
 
-        phase = Phase.Idle;
-        emit VaultCreditSettled(msg.sender, asset, principal, sourceFee, realizedProfit, profitRecipient);
+            _safeTransfer(token, borrowerAddress, principal);
+            bytes32 callbackResult = IERC3156FlashBorrowerGhostWallet(borrowerAddress).onFlashLoan(
+                initiator,
+                token,
+                principal,
+                borrowerFee,
+                borrowerData
+            );
+            require(callbackResult == ERC3156_CALLBACK_SUCCESS, "borrower_callback_failed");
+            _safeTransferFrom(token, borrowerAddress, address(this), principal + borrowerFee);
+
+            uint256 endingBalance = IERC20GhostWallet(token).balanceOf(address(this));
+            require(endingBalance >= startingOwnBalance + principal + borrowerFee, "borrower_repayment_shortfall");
+            _safeTransfer(token, msg.sender, principal + sourceFee);
+            uint256 realizedSpread = IERC20GhostWallet(token).balanceOf(address(this)) - startingOwnBalance;
+            require(realizedSpread == borrowerFee - sourceFee, "spread_reconciliation_failed");
+            _safeTransfer(token, profitRecipient, realizedSpread);
+            phase = Phase.Idle;
+            emit BrokeredAtomicCreditSettled(
+                msg.sender,
+                borrowerAddress,
+                token,
+                principal,
+                sourceFee,
+                borrowerFee,
+                realizedSpread,
+                profitRecipient
+            );
+            return;
+        }
+
+        revert("unsupported_vault_mode");
     }
 
     function domainSeparator() public view returns (bytes32) {
@@ -407,26 +532,25 @@ contract CryptocrawlGhostWalletIntermediary {
         require(success, "native_transfer_failed");
     }
 
-    function _executeDirectAtomicCredit(
+    function _executeDirectAtomicCreditActive(
         address asset,
         address capitalSource,
         uint256 principal,
         uint256 sourceFee,
         uint256 minProfit,
-        address profitRecipient,
         Step[] calldata steps
     ) internal {
-        require(asset != address(0), "asset_required");
-        require(capitalSource != address(0), "capital_source_required");
+        require(phase == Phase.Executing, "execution_phase_required");
+        require(allowedAssets[asset], "asset_not_allowed");
+        require(capitalSource != address(0) && capitalSource != address(this), "capital_source_invalid");
         require(principal > 0, "principal_required");
-        require(profitRecipient != address(0), "profit_recipient_required");
+        require(minProfit > 0, "min_profit_required");
         require(steps.length > 0, "steps_required");
 
-        phase = Phase.Executing;
         uint256 startingBalance = IERC20GhostWallet(asset).balanceOf(address(this));
         _safeTransferFrom(asset, capitalSource, address(this), principal);
         uint256 afterFunding = IERC20GhostWallet(asset).balanceOf(address(this));
-        require(afterFunding >= startingBalance + principal, "principal_not_received");
+        require(afterFunding == startingBalance + principal, "principal_not_received_exactly");
 
         _runSteps(steps);
 
@@ -436,17 +560,11 @@ contract CryptocrawlGhostWalletIntermediary {
 
         _safeTransfer(asset, capitalSource, principal + sourceFee);
         uint256 realizedProfit = IERC20GhostWallet(asset).balanceOf(address(this)) - startingBalance;
-        if (realizedProfit > 0) _safeTransfer(asset, profitRecipient, realizedProfit);
+        require(realizedProfit >= minProfit, "profit_below_threshold");
+        _safeTransfer(asset, profitRecipient, realizedProfit);
 
         phase = Phase.Idle;
-        emit AtomicCreditSettled(
-            capitalSource,
-            asset,
-            principal,
-            sourceFee,
-            realizedProfit,
-            profitRecipient
-        );
+        emit AtomicCreditSettled(capitalSource, asset, principal, sourceFee, realizedProfit, profitRecipient);
     }
 
     function _runSteps(Step[] calldata steps) internal {
@@ -479,6 +597,12 @@ contract CryptocrawlGhostWalletIntermediary {
         }
         (bool success, bytes memory returndata) = target.call{value: value}(callData);
         require(success, _extractRevert(returndata));
+    }
+
+    function _readLiability(address target, bytes calldata callData) internal view returns (uint256) {
+        (bool success, bytes memory returndata) = target.staticcall(callData);
+        require(success && returndata.length >= 32, "liability_probe_failed");
+        return abi.decode(returndata, (uint256));
     }
 
     function _intentDigest(SignedIntent calldata intent) internal view returns (bytes32) {
@@ -517,34 +641,37 @@ contract CryptocrawlGhostWalletIntermediary {
         require(signer != address(0), "signature_recovery_failed");
     }
 
+    function _requireProfitRecipient(address requested) internal view {
+        require(requested == profitRecipient, "profit_recipient_mismatch");
+    }
+
+    function _mulDivUp(uint256 x, uint256 y, uint256 denominator) internal pure returns (uint256) {
+        require(denominator != 0, "division_by_zero");
+        if (x == 0 || y == 0) return 0;
+        require(x <= type(uint256).max / y, "mul_overflow");
+        uint256 product = x * y;
+        return (product + denominator - 1) / denominator;
+    }
+
     function _safeTransfer(address token, address to, uint256 amount) internal {
         (bool success, bytes memory returndata) = token.call(
             abi.encodeWithSelector(IERC20GhostWallet.transfer.selector, to, amount)
         );
-        require(
-            success && (returndata.length == 0 || abi.decode(returndata, (bool))),
-            "erc20_transfer_failed"
-        );
+        require(success && (returndata.length == 0 || abi.decode(returndata, (bool))), "erc20_transfer_failed");
     }
 
     function _safeTransferFrom(address token, address from, address to, uint256 amount) internal {
         (bool success, bytes memory returndata) = token.call(
             abi.encodeWithSelector(IERC20GhostWallet.transferFrom.selector, from, to, amount)
         );
-        require(
-            success && (returndata.length == 0 || abi.decode(returndata, (bool))),
-            "erc20_transfer_from_failed"
-        );
+        require(success && (returndata.length == 0 || abi.decode(returndata, (bool))), "erc20_transfer_from_failed");
     }
 
     function _safeApprove(address token, address spender, uint256 amount) internal {
         (bool success, bytes memory returndata) = token.call(
             abi.encodeWithSelector(IERC20GhostWallet.approve.selector, spender, amount)
         );
-        require(
-            success && (returndata.length == 0 || abi.decode(returndata, (bool))),
-            "erc20_approve_failed"
-        );
+        require(success && (returndata.length == 0 || abi.decode(returndata, (bool))), "erc20_approve_failed");
     }
 
     function _extractRevert(bytes memory returndata) internal pure returns (string memory) {
