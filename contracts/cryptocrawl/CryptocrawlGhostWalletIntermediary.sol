@@ -30,6 +30,17 @@ interface IERC3156FlashBorrowerGhostWallet {
     ) external returns (bytes32);
 }
 
+interface IERC3156FlashLenderGhostWallet {
+    function maxFlashLoan(address token) external view returns (uint256);
+    function flashFee(address token, uint256 amount) external view returns (uint256);
+    function flashLoan(
+        IERC3156FlashBorrowerGhostWallet receiver,
+        address token,
+        uint256 amount,
+        bytes calldata data
+    ) external returns (bool);
+}
+
 interface IGhostWalletCapitalVault {
     function asset() external view returns (address);
     function totalAssets() external view returns (uint256);
@@ -61,10 +72,22 @@ contract CryptocrawlGhostWalletIntermediary {
         uint256 deadline;
     }
 
+    struct ExternalLoanContext {
+        address lender;
+        address borrower;
+        address token;
+        address downstreamInitiator;
+        uint256 principal;
+        uint256 sourceFee;
+        uint256 borrowerFee;
+        uint256 startingBalance;
+    }
+
     enum Phase {
         Idle,
         Executing,
-        AwaitingVault
+        AwaitingVault,
+        AwaitingExternalLender
     }
 
     uint256 private constant BPS = 10_000;
@@ -100,6 +123,7 @@ contract CryptocrawlGhostWalletIntermediary {
     address private expectedVault;
     address private expectedVaultAsset;
     uint256 private expectedVaultStartingBalance;
+    ExternalLoanContext private externalLoan;
 
     event OperatorUpdated(address indexed operator, bool allowed);
     event TargetUpdated(address indexed target, bool allowed);
@@ -153,6 +177,16 @@ contract CryptocrawlGhostWalletIntermediary {
         uint256 realizedSpread,
         address profitRecipient
     );
+    event ExternalBrokeredAtomicCreditSettled(
+        address indexed lender,
+        address indexed borrower,
+        address indexed asset,
+        uint256 principal,
+        uint256 sourceFee,
+        uint256 borrowerFee,
+        uint256 realizedSpread,
+        address profitRecipient
+    );
 
     modifier onlyOwner() {
         require(msg.sender == owner, "owner_only");
@@ -174,8 +208,7 @@ contract CryptocrawlGhostWalletIntermediary {
         require(profitRecipientAddress != address(0), "profit_recipient_required");
         owner = ownerAddress;
         profitRecipient = profitRecipientAddress;
-        // Zero means no BPS floor. The broker still requires a strictly positive
-        // spread and charges the smallest representable token unit by default.
+        // No hard BPS floor: any strictly positive representable spread is admissible.
         minimumBrokerSpreadBps = 0;
     }
 
@@ -230,7 +263,7 @@ contract CryptocrawlGhostWalletIntermediary {
         emit MinimumBrokerSpreadUpdated(spreadBps);
     }
 
-    /// @notice ERC-3156 lender discovery surface. Unsupported tokens return zero.
+    /// @notice ERC-3156 lender discovery surface backed by Ghost's permissionless vault.
     function maxFlashLoan(address token) external view returns (uint256) {
         address vault = brokerVaultForAsset[token];
         if (vault == address(0) || !allowedAssets[token] || !allowedVaults[vault]) return 0;
@@ -246,15 +279,13 @@ contract CryptocrawlGhostWalletIntermediary {
         }
     }
 
-    /// @notice ERC-3156 fee surface: lender cost plus Ghost's smallest positive spread.
     function flashFee(address token, uint256 amount) external view returns (uint256) {
         address vault = _requireBrokerVault(token);
         return _brokerFee(vault, amount);
     }
 
-    /// @notice ERC-3156-compatible borrower entrypoint over the Ghost atomic vault.
-    /// @dev Any caller may initiate as the standard permits; repayment is still pulled
-    ///      from receiver in the same transaction and any failure reverts everything.
+    /// @notice ERC-3156-compatible borrower entrypoint over Ghost's vault.
+    /// @dev The initiating caller pays transaction gas. Repayment is same-transaction or revert.
     function flashLoan(
         IERC3156FlashBorrowerGhostWallet receiver,
         address token,
@@ -267,6 +298,137 @@ contract CryptocrawlGhostWalletIntermediary {
         uint256 borrowerFee = _brokerFee(vault, amount);
         _brokerVaultAtomic(vault, msg.sender, receiver, token, amount, borrowerFee, data);
         return true;
+    }
+
+    /// @notice Quotes Ghost's fee over any live ERC-3156 upstream lender.
+    /// @dev No configured lender list or lender-count cap is used; actual lender liquidity is authoritative.
+    function quoteExternalBrokerFee(address lender, address token, uint256 amount) external view returns (uint256) {
+        require(lender != address(0) && lender.code.length > 0, "lender_required");
+        require(token != address(0) && token.code.length > 0, "token_required");
+        require(amount > 0, "amount_required");
+        require(IERC3156FlashLenderGhostWallet(lender).maxFlashLoan(token) >= amount, "insufficient_lender_liquidity");
+        uint256 sourceFee = IERC3156FlashLenderGhostWallet(lender).flashFee(token, amount);
+        return _brokerFeeFromSource(sourceFee, amount);
+    }
+
+    /// @notice Permissionless lender -> Ghost -> borrower atomic intermediation.
+    /// @dev The caller pays gas; Ghost never needs operator gas for this core business path.
+    ///      Any ERC-3156-compatible lender and borrower can participate without a hard-coded universe.
+    function brokerExternalFlashLoan(
+        address lender,
+        IERC3156FlashBorrowerGhostWallet borrower,
+        address token,
+        uint256 amount,
+        uint256 maxBorrowerFee,
+        bytes calldata data
+    ) external onlyIdle returns (bool) {
+        require(lender != address(0) && lender.code.length > 0, "lender_required");
+        require(address(borrower) != address(0) && address(borrower).code.length > 0, "borrower_required");
+        require(token != address(0) && token.code.length > 0, "token_required");
+        require(amount > 0, "amount_required");
+
+        IERC3156FlashLenderGhostWallet upstream = IERC3156FlashLenderGhostWallet(lender);
+        require(upstream.maxFlashLoan(token) >= amount, "insufficient_lender_liquidity");
+        uint256 sourceFee = upstream.flashFee(token, amount);
+        uint256 borrowerFee = _brokerFeeFromSource(sourceFee, amount);
+        require(borrowerFee <= maxBorrowerFee, "borrower_fee_exceeds_max");
+
+        uint256 startingBalance = IERC20GhostWallet(token).balanceOf(address(this));
+        externalLoan = ExternalLoanContext({
+            lender: lender,
+            borrower: address(borrower),
+            token: token,
+            downstreamInitiator: msg.sender,
+            principal: amount,
+            sourceFee: sourceFee,
+            borrowerFee: borrowerFee,
+            startingBalance: startingBalance
+        });
+        phase = Phase.AwaitingExternalLender;
+
+        bool accepted = upstream.flashLoan(
+            IERC3156FlashBorrowerGhostWallet(address(this)),
+            token,
+            amount,
+            abi.encode(msg.sender, address(borrower), borrowerFee, data)
+        );
+        require(accepted, "upstream_lender_rejected");
+        require(phase == Phase.Executing, "external_lender_callback_incomplete");
+        require(IERC20GhostWallet(token).balanceOf(address(this)) == startingBalance, "external_lender_repayment_not_exact");
+        _safeApprove(token, lender, 0);
+        delete externalLoan;
+        phase = Phase.Idle;
+        return true;
+    }
+
+    /// @notice ERC-3156 callback used only for an in-flight external upstream lender.
+    function onFlashLoan(
+        address initiator,
+        address token,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) external returns (bytes32) {
+        require(phase == Phase.AwaitingExternalLender, "unexpected_external_lender_callback");
+        ExternalLoanContext memory context = externalLoan;
+        require(msg.sender == context.lender, "unexpected_external_lender");
+        require(initiator == address(this), "unexpected_external_initiator");
+        require(token == context.token && amount == context.principal && fee == context.sourceFee, "external_lender_terms_mismatch");
+        require(
+            IERC20GhostWallet(token).balanceOf(address(this)) == context.startingBalance + amount,
+            "external_principal_not_received_exactly"
+        );
+
+        (address downstreamInitiator, address borrowerAddress, uint256 borrowerFee, bytes memory borrowerData) =
+            abi.decode(data, (address, address, uint256, bytes));
+        require(downstreamInitiator == context.downstreamInitiator, "external_downstream_initiator_mismatch");
+        require(borrowerAddress == context.borrower && borrowerFee == context.borrowerFee, "external_borrower_terms_mismatch");
+        require(borrowerFee > fee, "nonpositive_broker_spread");
+
+        phase = Phase.Executing;
+        uint256 borrowerStartingBalance = IERC20GhostWallet(token).balanceOf(borrowerAddress);
+        _safeTransfer(token, borrowerAddress, amount);
+        require(
+            IERC20GhostWallet(token).balanceOf(borrowerAddress) == borrowerStartingBalance + amount,
+            "borrower_principal_not_received_exactly"
+        );
+
+        bytes32 callbackResult = IERC3156FlashBorrowerGhostWallet(borrowerAddress).onFlashLoan(
+            downstreamInitiator,
+            token,
+            amount,
+            borrowerFee,
+            borrowerData
+        );
+        require(callbackResult == ERC3156_CALLBACK_SUCCESS, "borrower_callback_failed");
+
+        uint256 beforeRepayment = IERC20GhostWallet(token).balanceOf(address(this));
+        _safeTransferFrom(token, borrowerAddress, address(this), amount + borrowerFee);
+        require(
+            IERC20GhostWallet(token).balanceOf(address(this)) == beforeRepayment + amount + borrowerFee,
+            "borrower_repayment_not_exact"
+        );
+
+        uint256 realizedSpread = borrowerFee - fee;
+        _safeTransfer(token, profitRecipient, realizedSpread);
+        require(
+            IERC20GhostWallet(token).balanceOf(address(this)) == context.startingBalance + amount + fee,
+            "external_broker_repayment_residual_mismatch"
+        );
+        _safeApprove(token, msg.sender, 0);
+        _safeApprove(token, msg.sender, amount + fee);
+
+        emit ExternalBrokeredAtomicCreditSettled(
+            msg.sender,
+            borrowerAddress,
+            token,
+            amount,
+            fee,
+            borrowerFee,
+            realizedSpread,
+            profitRecipient
+        );
+        return ERC3156_CALLBACK_SUCCESS;
     }
 
     function executeDirectAtomicCredit(
@@ -283,8 +445,6 @@ contract CryptocrawlGhostWalletIntermediary {
         _executeDirectAtomicCreditActive(asset, capitalSource, principal, sourceFee, minProfit, steps);
     }
 
-    /// @notice Direct same-transaction credit with an EIP-2612 permit from the source.
-    /// @dev The execution lock is entered before the untrusted permit call.
     function executeDirectAtomicCreditWithPermit(
         address asset,
         address capitalSource,
@@ -312,10 +472,6 @@ contract CryptocrawlGhostWalletIntermediary {
         _executeDirectAtomicCreditActive(asset, capitalSource, principal, sourceFee, minProfit, steps);
     }
 
-    /// @notice Source-specific same-transaction liability lane.
-    /// @dev liabilityQueryData must return one uint256 current-liability value. This
-    ///      supports Aave variable-debt balanceOf and Euler EVault debtOf without
-    ///      pretending every protocol exposes the same debt representation.
     function executeAtomicLiabilityCycle(
         address liabilityOracle,
         bytes calldata liabilityQueryData,
@@ -345,10 +501,7 @@ contract CryptocrawlGhostWalletIntermediary {
 
         uint256 realizedProfit = endingProfitBalance - startingProfitBalance;
         _safeTransfer(profitAsset, profitRecipient, realizedProfit);
-        require(
-            IERC20GhostWallet(profitAsset).balanceOf(address(this)) == startingProfitBalance,
-            "profit_residual_mismatch"
-        );
+        require(IERC20GhostWallet(profitAsset).balanceOf(address(this)) == startingProfitBalance, "profit_residual_mismatch");
 
         phase = Phase.Idle;
         emit AtomicLiabilityCycleSettled(
@@ -362,9 +515,6 @@ contract CryptocrawlGhostWalletIntermediary {
         );
     }
 
-    /// @notice Clears two complementary EIP-712 signed intents without an exchange.
-    /// @dev Both signed minimums, nonce uniqueness, exact token funding, and complete
-    ///      terminal balance neutrality are enforced in the same transaction.
     function settleMatchedIntentPair(
         SignedIntent calldata intentA,
         bytes calldata signatureA,
@@ -412,15 +562,9 @@ contract CryptocrawlGhostWalletIntermediary {
         usedIntentNonces[intentB.owner][intentB.nonce] = true;
 
         _safeTransferFrom(tokenA, intentA.owner, address(this), intentA.sellAmount);
-        require(
-            IERC20GhostWallet(tokenA).balanceOf(address(this)) == startingA + intentA.sellAmount,
-            "intent_a_funding_not_exact"
-        );
+        require(IERC20GhostWallet(tokenA).balanceOf(address(this)) == startingA + intentA.sellAmount, "intent_a_funding_not_exact");
         _safeTransferFrom(tokenB, intentB.owner, address(this), intentB.sellAmount);
-        require(
-            IERC20GhostWallet(tokenB).balanceOf(address(this)) == startingB + intentB.sellAmount,
-            "intent_b_funding_not_exact"
-        );
+        require(IERC20GhostWallet(tokenB).balanceOf(address(this)) == startingB + intentB.sellAmount, "intent_b_funding_not_exact");
 
         _safeTransfer(tokenB, intentA.owner, userBuyA);
         _safeTransfer(tokenA, intentB.owner, userBuyB);
@@ -431,18 +575,9 @@ contract CryptocrawlGhostWalletIntermediary {
         require(IERC20GhostWallet(tokenB).balanceOf(address(this)) == startingB, "intent_token_b_residual");
 
         phase = Phase.Idle;
-        emit MatchedIntentPairSettled(
-            intentA.owner,
-            intentB.owner,
-            tokenA,
-            tokenB,
-            feeA,
-            feeB,
-            profitRecipient
-        );
+        emit MatchedIntentPairSettled(intentA.owner, intentB.owner, tokenA, tokenB, feeA, feeB, profitRecipient);
     }
 
-    /// @notice Uses an admitted vault as capital for an internal atomic route.
     function executeVaultAtomicCredit(
         address vault,
         uint256 principal,
@@ -457,19 +592,12 @@ contract CryptocrawlGhostWalletIntermediary {
         require(steps.length > 0, "steps_required");
 
         address token = _prepareVault(vault);
-        IGhostWalletCapitalVault(vault).lendAtomic(
-            principal,
-            sourceFee,
-            abi.encode(VAULT_MODE_ROUTE, minProfit, steps)
-        );
+        IGhostWalletCapitalVault(vault).lendAtomic(principal, sourceFee, abi.encode(VAULT_MODE_ROUTE, minProfit, steps));
         require(phase == Phase.Idle, "vault_callback_incomplete");
         require(IERC20GhostWallet(token).balanceOf(address(this)) == expectedVaultStartingBalance, "vault_terminal_balance_mismatch");
         _clearVaultExpectation();
     }
 
-    /// @notice Existing explicit-vault broker entrypoint retained for compatibility.
-    /// @dev This stricter path requires borrower self-initiation; ERC-3156 flashLoan
-    ///      above supports standard third-party initiators.
     function brokerVaultFlashLoan(
         address vault,
         IERC3156FlashBorrowerGhostWallet borrower,
@@ -496,7 +624,6 @@ contract CryptocrawlGhostWalletIntermediary {
         return _brokerFee(vault, amount);
     }
 
-    /// @notice Callback used only by the vault currently selected by this contract.
     function onGhostWalletVaultCredit(
         address token,
         uint256 principal,
@@ -593,13 +720,7 @@ contract CryptocrawlGhostWalletIntermediary {
 
     function domainSeparator() public view returns (bytes32) {
         return keccak256(
-            abi.encode(
-                EIP712_DOMAIN_TYPEHASH,
-                NAME_HASH,
-                VERSION_HASH,
-                block.chainid,
-                address(this)
-            )
+            abi.encode(EIP712_DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this))
         );
     }
 
@@ -651,7 +772,10 @@ contract CryptocrawlGhostWalletIntermediary {
 
     function _brokerFee(address vault, uint256 amount) internal view returns (uint256) {
         require(allowedVaults[vault], "vault_not_allowed");
-        uint256 sourceFee = IGhostWalletCapitalVault(vault).previewAtomicFee(amount);
+        return _brokerFeeFromSource(IGhostWalletCapitalVault(vault).previewAtomicFee(amount), amount);
+    }
+
+    function _brokerFeeFromSource(uint256 sourceFee, uint256 amount) internal view returns (uint256) {
         if (amount == 0) return sourceFee;
         uint256 configuredSpread = _mulDivUp(amount, minimumBrokerSpreadBps, BPS);
         uint256 spread = configuredSpread > 0 ? configuredSpread : 1;
@@ -675,10 +799,7 @@ contract CryptocrawlGhostWalletIntermediary {
 
         uint256 startingBalance = IERC20GhostWallet(asset).balanceOf(address(this));
         _safeTransferFrom(asset, capitalSource, address(this), principal);
-        require(
-            IERC20GhostWallet(asset).balanceOf(address(this)) == startingBalance + principal,
-            "principal_not_received_exactly"
-        );
+        require(IERC20GhostWallet(asset).balanceOf(address(this)) == startingBalance + principal, "principal_not_received_exactly");
 
         _runSteps(steps);
 
@@ -746,10 +867,6 @@ contract CryptocrawlGhostWalletIntermediary {
 
         (bool success, bytes memory returndata) = target.call{value: value}(callData);
         require(success, _extractRevert(returndata));
-
-        // Never leave standing target allowances after a successful step. If a token
-        // refuses revocation, fail the entire atomic transaction rather than carry
-        // an approval that could drain later Ghost Wallet balances.
         if (temporaryApproval) _safeApprove(approvalToken, target, 0);
     }
 
