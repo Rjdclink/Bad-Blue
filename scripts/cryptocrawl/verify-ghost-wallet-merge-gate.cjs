@@ -44,11 +44,20 @@ assert.match(intermediary, /minimumBrokerSpreadBps = 0/);
 assert.match(intermediary, /configuredSpread > 0 \? configuredSpread : 1/);
 assert.match(intermediary, /borrowerFee > sourceFee/);
 assert.doesNotMatch(intermediary, /minimumBrokerSpreadBps = 1;/);
+assert.match(intermediary, /function maxFlashLoan\(address token\)/);
+assert.match(intermediary, /function flashFee\(address token, uint256 amount\)/);
+assert.match(intermediary, /function flashLoan\(/);
+assert.match(intermediary, /brokerVaultForAsset/);
+assert.match(intermediary, /onFlashLoan\(/);
+assert.match(intermediary, /ERC3156_CALLBACK_SUCCESS/);
 assert.match(vault, /atomic_credit_not_repaid/);
 assert.match(vault, /VIRTUAL_SHARES/);
 assert.match(vault, /VIRTUAL_ASSETS/);
 assert.match(infrastructure, /CREATE2_DEPLOYER_CODE_HASH/);
 assert.match(infrastructure, /sponsorOperatorMonetaryCostProvenZero === true/);
+assert.match(infrastructure, /setBrokerVaultForAsset/);
+assert.match(infrastructure, /brokerVaultForAsset/);
+assert.match(infrastructure, /ERC-3156 broker vault binding did not verify terminally/);
 assert.doesNotMatch(infrastructure, /executeSystemOwnedNativeTransaction/);
 
 assert.match(runtimeWiring, /ghostWalletUltraWorker/);
@@ -112,6 +121,8 @@ console.log(JSON.stringify({
   brokerSpreadFloorBps: 0,
   brokerMinimumPositiveSpreadBaseUnits: 1,
   subOneBpsBusinessAdmissible: true,
+  erc3156BorrowerCompatibility: true,
+  erc3156CapacityAndFeeDiscovery: true,
   payoutReconciled: true,
   payoutAsset: 'ETH',
   payoutNetwork: 'ethereum',
