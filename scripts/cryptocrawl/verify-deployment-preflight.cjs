@@ -3,9 +3,9 @@
 // The canonical ZERO_CAPITAL_ATOMIC component now has a narrow router plus a preserved
 // byte-for-byte flash implementation. Legacy structural verifiers below were written
 // specifically against the flash implementation. Redirect only their read of the old
-// canonical filename to the preserved flash file; the new router/alternative lane is
-// independently checked by verify-ghost-wallet-atomic-capital.cjs and the downstream
-// zero-capital BPS verifier. No assertion is skipped or weakened.
+// canonical filename to the preserved flash file. The redirect is restored before the
+// Ghost Wallet verifier runs, so the new router is inspected directly. No assertion is
+// skipped or weakened.
 const fs = require('node:fs');
 const originalReadFileSync = fs.readFileSync;
 fs.readFileSync = function verificationLogicalSource(path, ...args) {
@@ -94,8 +94,8 @@ require('./verify-minimum-sufficient-execution-evidence.cjs');
 require('./verify-first-pass-route-measurability.cjs');
 require('./verify-canonical-refresh-capability-authority.cjs');
 require('./verify-bps-zero-capital-event-handoff.cjs');
-require('./verify-ghost-wallet-atomic-capital.cjs');
 
 fs.readFileSync = originalReadFileSync;
+require('./verify-ghost-wallet-atomic-capital.cjs');
 
 console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, Ghost Wallet atomic-capital isolation, and single zero-capital route authority passed; continuing to downstream prebuild/build');
