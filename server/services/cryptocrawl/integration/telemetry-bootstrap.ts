@@ -1,5 +1,5 @@
 import logger from '../../../logger.js';
-import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
+import { ensureProviderMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { SUPPORTED_CHAINS } from '../bridge/chain-config.js';
@@ -12,6 +12,7 @@ import {
   ensureCryptoCrawlerCoreRuntime,
   getCryptoCrawlerCoreRuntimeStatus,
 } from '../runtime/core-runtime.js';
+import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { admitAnkrFallback } from '../runtime/rpc-fallback-admission-policy.js';
 
 const TELEMETRY_CHAINS: SupportedChain[] = [
@@ -70,8 +71,10 @@ function logExecutionPosture(): void {
 }
 
 function adoptLegacyProviderAliases(): void {
+  // Paid Alchemy aliases are intentionally not adopted. A stale ALCHEMY_KEY must
+  // not silently recreate an operational Alchemy dependency after the canonical
+  // ALCHEMY_API_KEY has been retired from production.
   const aliases: Array<{ canonical: string; candidates: string[] }> = [
-    { canonical: 'ALCHEMY_API_KEY', candidates: ['ALCHEMY_KEY'] },
     { canonical: 'ZEROX_API_KEY', candidates: ['ZERO_X_API_KEY', 'ZEROX_KEY'] },
   ];
 
@@ -179,31 +182,22 @@ async function registerBestEffortAnkrFallbacks(): Promise<void> {
   });
 }
 
-async function startAlchemyTelemetry(): Promise<void> {
-  const apiKey = process.env.ALCHEMY_API_KEY?.trim();
-  if (!apiKey) {
-    logger.warn('[TelemetryBootstrap] ALCHEMY_API_KEY is not visible to this runtime; shared RPC telemetry remains available', {
-      component: 'TelemetryBootstrap',
-    });
-    return;
-  }
-
-  try {
-    await alchemyIntegration.start(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base']);
-    const readiness = await alchemyIntegration.readinessCheck({ strictLive: false });
-    logger.info('[TelemetryBootstrap] Alchemy telemetry initialized', {
-      component: 'TelemetryBootstrap',
-      ready: readiness.ready,
-      active: readiness.active,
-      degraded: readiness.degraded,
-      detail: readiness.detail,
-    });
-  } catch (error) {
-    logger.warn('[TelemetryBootstrap] Alchemy telemetry initialization degraded', {
-      component: 'TelemetryBootstrap',
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+async function startFreeProviderTelemetry(): Promise<void> {
+  await ensureDynamicRpcProviderWiring();
+  ensureProviderMeshPendingStream();
+  const healthyProviders = TELEMETRY_CHAINS.flatMap(chain =>
+    multiProviderRpcManager.getHealth(chain)
+      .filter(observation => observation.http.success)
+      .map(observation => `${chain}:${observation.provider}`),
+  );
+  logger.info('[TelemetryBootstrap] Free/configured provider telemetry initialized', {
+    component: 'TelemetryBootstrap',
+    healthyProviders,
+    alchemyOperationalAuthority: false,
+    alchemyPaidMempoolAuthority: false,
+    alchemyGasSponsorshipAuthority: false,
+    providerManagerAuthoritative: true,
+  });
 }
 
 async function probeReadOnlyZeroX(): Promise<void> {
@@ -275,7 +269,7 @@ export function ensureTelemetryBootstrap(): Promise<void> {
       await coreStart;
       await multiProviderRpcManager.initialize(TELEMETRY_CHAINS);
       await registerBestEffortAnkrFallbacks();
-      await startAlchemyTelemetry();
+      await startFreeProviderTelemetry();
       await probeReadOnlyZeroX();
       await probeMarketUniverseProviders();
 
@@ -288,6 +282,7 @@ export function ensureTelemetryBootstrap(): Promise<void> {
       logger.info('[TelemetryBootstrap] Optional blockchain telemetry ready', {
         component: 'TelemetryBootstrap',
         healthyProviders,
+        alchemyOperationalAuthority: false,
         core: getCryptoCrawlerCoreRuntimeStatus(),
         marketDataProviders: marketDataProviders.getProviderStatuses().map(status => ({
           provider: status.provider,
