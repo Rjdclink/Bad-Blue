@@ -63,8 +63,16 @@ function opportunityId(plan: VerifiedArbitragePlan): string {
   return `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`;
 }
 
+function usdToBps(valueUsd: number, notionalUsd: number): number | null {
+  if (!Number.isFinite(valueUsd) || !Number.isFinite(notionalUsd) || notionalUsd <= 0) return null;
+  return valueUsd / notionalUsd * 10_000;
+}
+
 function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observedAt: number, maxQuoteAgeMs: number): void {
   const measuredDepth = plan.liquidity.status === 'measured';
+  const grossProfitBps = usdToBps(plan.grossProfitUsd, plan.notionalUsd);
+  const netProfitBps = usdToBps(plan.netProfitUsd, plan.notionalUsd);
+  const allInCostBps = usdToBps(plan.costs.totalCostsUsd, plan.notionalUsd);
   measuredCandidateRegistry.record({
     opportunityId: opportunityId(plan),
     topology: 'CEX_CEX',
@@ -90,6 +98,13 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
       bridgeUsd: plan.costs.bridgeFeeUsd,
       expectedSlippageBps: plan.expectedSlippageBps ?? null,
       expectedPriceImpactBps: plan.expectedPriceImpactBps ?? null,
+      notionalUsd: plan.notionalUsd,
+      grossProfitBps,
+      gasCostBps: usdToBps(plan.costs.gasUsd, plan.notionalUsd),
+      allInCostBps,
+      breakEvenBps: allInCostBps,
+      netProfitBps,
+      bpsToBreakEven: netProfitBps === null ? null : Math.max(0, -netProfitBps),
     },
     quoteAgeMs: plan.quoteAgeMs,
     executableCapability: true,
@@ -102,6 +117,7 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
       'authenticated_fee_evidence',
       'depth_aware_notional_search',
       'deterministic_positive_net',
+      'canonical_bps:notional_and_signed_profit_preserved',
       ...(measuredDepth ? ['positive_all_in_net_execution_eligible'] : []),
     ],
   });
@@ -449,7 +465,7 @@ class MeasuredOpportunityGraph {
       24,
     ));
     const assessmentCandidates = positivePlans.slice(0, maxAssessments);
-    let eligibleCandidates = positivePlans.filter(plan => plan.liquidity.status === 'measured').length;
+    const eligibleCandidates = positivePlans.filter(plan => plan.liquidity.status === 'measured').length;
 
     this.launchAdvisoryAssessments({ assessmentCandidates, universe, errors });
 
