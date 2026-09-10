@@ -337,26 +337,6 @@ class GhostWalletUltraWorker {
       return;
     }
 
-    if (result.state === 'fallback_required') {
-      const fallback = await enqueueGhostWalletWork({
-        dedupeKey: `${work.dedupeKey}:fallback`,
-        kind: 'profit_conversion',
-        chain: result.payload.chain,
-        priority: work.priority + 1,
-        maxAttempts: work.maxAttempts,
-        payload: result.payload as unknown as Record<string, unknown>,
-        profitAsset: result.payload.asset,
-        profitAmountBaseUnits: result.payload.amountBaseUnits,
-      });
-      await markGhostWalletWorkSettled({
-        workId: work.workId,
-        owner: this.workerId,
-        result: { phase: 'primary_terminal_failure_fallback_scheduled', reason: result.reason, fallbackWorkId: fallback.workId },
-      });
-      ghostWalletWorkSignal.emitWake('local_work_enqueued');
-      return;
-    }
-
     if (result.followUp) {
       const followUp = await enqueueGhostWalletWork({
         dedupeKey: `${work.dedupeKey}:followup:${result.followUp.asset.toLowerCase()}:${result.followUp.amountBaseUnits}`,

@@ -64,6 +64,15 @@ const MIGRATIONS = [
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
+type MigrationPath = typeof MIGRATIONS[number];
+
+// Schema v26 was the last production marker before Ghost Wallet's durable runtime
+// was added. Advance that known state with only the missing delta; older/unknown
+// states retain the complete idempotent repair path.
+const INCREMENTAL_MIGRATIONS: Readonly<Record<number, readonly MigrationPath[]>> = {
+  26: ['057_cryptocrawler_ghost_wallet_runtime.sql'],
+};
+
 const REQUIRED_TABLES = [
   'public.zero_capital_execution_ledger',
   'public.zero_capital_capital_state',
@@ -191,10 +200,11 @@ let lastError: string | null = null;
 let verifiedAt = 0;
 let durableFastPathHits = 0;
 let migrationRuns = 0;
-let lastProvisionMode: 'none' | 'durable_fast_path' | 'migration_repair' = 'none';
+let lastMigrationCount = 0;
+let lastProvisionMode: 'none' | 'durable_fast_path' | 'incremental_repair' | 'migration_repair' = 'none';
 
 async function migrationRoot(): Promise<string> {
-  const candidates = [path.resolve(process.cwd(), 'dist/migrations'), path.resolve(process.cwd(), 'server/migrations')];
+  const candidates = [path.resolve(process.cwd(), 'dist', 'migrations'), path.resolve(process.cwd(), 'server', 'migrations')];
   for (const candidate of candidates) {
     try { await access(candidate); return candidate; } catch { /* try next layout */ }
   }
@@ -210,19 +220,39 @@ async function verifyRequiredObjects(client: any): Promise<void> {
   if (missingFunctions.length > 0) throw new Error(`Overflow CryptoCrawler runtime functions incomplete: ${missingFunctions.join(', ')}`);
 }
 
-async function durableSchemaIsReady(client: any): Promise<boolean> {
+type DurableSchemaState = {
+  exists: boolean;
+  version: number | null;
+  ready: boolean;
+};
+
+async function readDurableSchemaState(client: any): Promise<DurableSchemaState> {
   const meta = await client.query(`SELECT to_regclass('private.cryptocrawler_overflow_runtime_meta') IS NOT NULL AS meta_exists`);
-  if (meta.rows?.[0]?.meta_exists !== true) return false;
+  if (meta.rows?.[0]?.meta_exists !== true) return { exists: false, version: null, ready: false };
   const state = await client.query(`SELECT schema_version, schema_ready FROM private.cryptocrawler_overflow_runtime_meta WHERE system_key='cryptocrawler' LIMIT 1`);
   const row = state.rows?.[0];
-  return Number(row?.schema_version) === SCHEMA_VERSION && row?.schema_ready === true;
+  const version = Number(row?.schema_version);
+  return {
+    exists: true,
+    version: Number.isSafeInteger(version) && version >= 0 ? version : null,
+    ready: row?.schema_ready === true,
+  };
 }
 
-async function runMigrations(client: any): Promise<void> {
+function migrationPlan(state: DurableSchemaState): readonly MigrationPath[] {
+  if (state.exists && state.version !== null && state.version < SCHEMA_VERSION) {
+    const incremental = INCREMENTAL_MIGRATIONS[state.version];
+    if (incremental?.length) return incremental;
+  }
+  return MIGRATIONS;
+}
+
+async function runMigrations(client: any, migrations: readonly MigrationPath[]): Promise<void> {
   const root = await migrationRoot();
   migrationRuns += 1;
-  lastProvisionMode = 'migration_repair';
-  for (const relativePath of MIGRATIONS) {
+  lastMigrationCount = migrations.length;
+  lastProvisionMode = migrations === MIGRATIONS ? 'migration_repair' : 'incremental_repair';
+  for (const relativePath of migrations) {
     const sql = await readFile(path.join(root, relativePath), 'utf8');
     await client.query(sql);
   }
@@ -249,23 +279,37 @@ async function provision(): Promise<void> {
     if (!locked) throw new Error('Overflow CryptoCrawler schema authority is currently owned by another replica');
 
     let durableReady = false;
+    let durableState: DurableSchemaState = { exists: false, version: null, ready: false };
     try {
-      durableReady = await durableSchemaIsReady(client);
+      durableState = await readDurableSchemaState(client);
+      durableReady = durableState.version === SCHEMA_VERSION && durableState.ready;
       if (durableReady) {
         await verifyRequiredObjects(client);
         durableFastPathHits += 1;
+        lastMigrationCount = 0;
         lastProvisionMode = 'durable_fast_path';
       }
     } catch (error) {
-      logger.warn('[CryptoCrawlerOverflowSchema] Durable schema marker/object verification requires repair; migrations will run once', {
+      logger.warn('[CryptoCrawlerOverflowSchema] Durable schema marker/object verification requires repair', {
         component: 'CryptoCrawlerOverflowRuntimeSchema', schemaVersion: SCHEMA_VERSION,
+        observedSchemaVersion: durableState.version,
         error: error instanceof Error ? error.message : String(error), primaryFallbackUsed: false,
       });
       durableReady = false;
     }
 
     if (!durableReady) {
-      await runMigrations(client);
+      const plan = migrationPlan(durableState);
+      logger.info('[CryptoCrawlerOverflowSchema] Applying bounded schema repair plan', {
+        component: 'CryptoCrawlerOverflowRuntimeSchema',
+        observedSchemaVersion: durableState.version,
+        targetSchemaVersion: SCHEMA_VERSION,
+        migrationCount: plan.length,
+        migrations: [...plan],
+        fullReplay: plan === MIGRATIONS,
+        primaryFallbackUsed: false,
+      });
+      await runMigrations(client, plan);
       await verifyRequiredObjects(client);
       await markVerified(client);
     }
@@ -275,7 +319,7 @@ async function provision(): Promise<void> {
     verifiedAt = Date.now();
     logger.info('[CryptoCrawlerOverflowSchema] Complete runtime authority schema verified on Overflow', {
       component: 'CryptoCrawlerOverflowRuntimeSchema', schemaVersion: SCHEMA_VERSION, provisionMode: lastProvisionMode,
-      durableFastPathHits, migrationRuns, migrationCount: MIGRATIONS.length,
+      durableFastPathHits, migrationRuns, migrationCount: lastMigrationCount,
       requiredTableCount: REQUIRED_TABLES.length, requiredFunctionCount: REQUIRED_FUNCTIONS.length,
       duplicateTerminalSchedulerInstalled: false, primaryFallbackUsed: false,
     });
@@ -312,6 +356,7 @@ export function getCryptocrawlOverflowRuntimeSchemaSnapshot() {
     durableFastPathHits,
     migrationRuns,
     migrationCount: MIGRATIONS.length,
+    lastMigrationCount,
     requiredTables: [...REQUIRED_TABLES],
     requiredFunctions: [...REQUIRED_FUNCTIONS],
     duplicateTerminalSchedulerInstalled: false as const,

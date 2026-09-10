@@ -3,14 +3,27 @@ import type { GhostWalletCapitalQuote } from './capital-fabric.js';
 
 const ERC20_ABI = [
   'function balanceOf(address account) view returns (uint256)',
+  'function decimals() view returns (uint8)',
 ];
 const AAVE_DEBT_TOKEN_ABI = [
   'function borrowAllowance(address fromUser,address toUser) view returns (uint256)',
 ];
 const AAVE_POOL_ABI = [
+  'function ADDRESSES_PROVIDER() view returns (address)',
   'function getReserveAToken(address asset) view returns (address)',
   'function getReserveVariableDebtToken(address asset) view returns (address)',
   'function getUserAccountData(address user) view returns (uint256 totalCollateralBase,uint256 totalDebtBase,uint256 availableBorrowsBase,uint256 currentLiquidationThreshold,uint256 ltv,uint256 healthFactor)',
+];
+const AAVE_ADDRESSES_PROVIDER_ABI = [
+  'function getPoolDataProvider() view returns (address)',
+  'function getPriceOracle() view returns (address)',
+];
+const AAVE_DATA_PROVIDER_ABI = [
+  'function getReserveTokensAddresses(address asset) view returns (address aTokenAddress,address stableDebtTokenAddress,address variableDebtTokenAddress)',
+];
+const AAVE_ORACLE_ABI = [
+  'function getAssetPrice(address asset) view returns (uint256)',
+  'function BASE_CURRENCY_UNIT() view returns (uint256)',
 ];
 const GHOST_VAULT_ABI = [
   'function asset() view returns (address)',
@@ -101,6 +114,37 @@ function bigint(value: any): bigint {
   return BigInt(value.toString());
 }
 
+async function resolveAaveReserveTokens(input: {
+  pool: Contract;
+  addressesProvider: Contract;
+  asset: string;
+  provider: providers.JsonRpcProvider;
+}): Promise<{ aToken: string; debtToken: string; source: 'pool_fine_grained_getters' | 'pool_data_provider' }> {
+  try {
+    const [aTokenRaw, debtTokenRaw] = await Promise.all([
+      input.pool.getReserveAToken(input.asset),
+      input.pool.getReserveVariableDebtToken(input.asset),
+    ]);
+    const aToken = utils.getAddress(String(aTokenRaw));
+    const debtToken = utils.getAddress(String(debtTokenRaw));
+    if (aToken !== utils.getAddress('0x0000000000000000000000000000000000000000')
+      && debtToken !== utils.getAddress('0x0000000000000000000000000000000000000000')) {
+      return { aToken, debtToken, source: 'pool_fine_grained_getters' };
+    }
+  } catch {
+    // Older Aave V3 deployments may not expose the newer fine-grained getters.
+  }
+
+  const dataProviderAddress = utils.getAddress(String(await input.addressesProvider.getPoolDataProvider()));
+  const dataProvider = new Contract(dataProviderAddress, AAVE_DATA_PROVIDER_ABI, input.provider);
+  const tokens = await dataProvider.getReserveTokensAddresses(input.asset);
+  const aToken = utils.getAddress(String(tokens.aTokenAddress ?? tokens[0]));
+  const debtToken = utils.getAddress(String(tokens.variableDebtTokenAddress ?? tokens[2]));
+  if (aToken === utils.getAddress('0x0000000000000000000000000000000000000000')) throw new Error('Aave reserve aToken is unavailable');
+  if (debtToken === utils.getAddress('0x0000000000000000000000000000000000000000')) throw new Error('Aave reserve variable debt token is unavailable');
+  return { aToken, debtToken, source: 'pool_data_provider' };
+}
+
 export function loadGhostWalletSourceConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): GhostWalletSourceConfig {
@@ -165,27 +209,47 @@ async function measureAaveDelegation(input: {
 }): Promise<GhostWalletCapitalQuote | null> {
   const { config, provider, intermediary, observedAt } = input;
   const pool = new Contract(config.pool, AAVE_POOL_ABI, provider);
-  const [aTokenRaw, debtTokenRaw, accountData] = await Promise.all([
-    pool.getReserveAToken(config.asset),
-    pool.getReserveVariableDebtToken(config.asset),
+  const [addressesProviderRaw, accountData] = await Promise.all([
+    pool.ADDRESSES_PROVIDER(),
     pool.getUserAccountData(config.delegator),
   ]);
-  const aToken = utils.getAddress(String(aTokenRaw));
-  const debtToken = utils.getAddress(String(debtTokenRaw));
-  if (aToken === utils.getAddress('0x0000000000000000000000000000000000000000')) throw new Error('Aave reserve aToken is unavailable');
-  if (debtToken === utils.getAddress('0x0000000000000000000000000000000000000000')) throw new Error('Aave reserve variable debt token is unavailable');
+  const addressesProviderAddress = utils.getAddress(String(addressesProviderRaw));
+  const addressesProvider = new Contract(addressesProviderAddress, AAVE_ADDRESSES_PROVIDER_ABI, provider);
+  const reserveTokens = await resolveAaveReserveTokens({
+    pool,
+    addressesProvider,
+    asset: config.asset,
+    provider,
+  });
+  const { aToken, debtToken } = reserveTokens;
 
   const debt = new Contract(debtToken, AAVE_DEBT_TOKEN_ABI, provider);
   const asset = new Contract(config.asset, ERC20_ABI, provider);
-  const [allowanceRaw, liquidRaw] = await Promise.all([
+  const priceOracleAddress = utils.getAddress(String(await addressesProvider.getPriceOracle()));
+  const oracle = new Contract(priceOracleAddress, AAVE_ORACLE_ABI, provider);
+  const [allowanceRaw, liquidRaw, decimalsRaw, assetPriceRaw, baseCurrencyUnitRaw] = await Promise.all([
     debt.borrowAllowance(config.delegator, intermediary),
     asset.balanceOf(aToken),
+    asset.decimals(),
+    oracle.getAssetPrice(config.asset),
+    oracle.BASE_CURRENCY_UNIT(),
   ]);
   const allowance = bigint(allowanceRaw);
   const liquid = bigint(liquidRaw);
   const availableBorrowsBase = bigint(accountData.availableBorrowsBase ?? accountData[2]);
+  const assetPriceBase = bigint(assetPriceRaw);
+  const baseCurrencyUnit = bigint(baseCurrencyUnitRaw);
+  const assetDecimals = Number(decimalsRaw.toString());
   if (availableBorrowsBase <= 0n) return null;
-  const availablePrincipal = minBigInt(allowance, liquid);
+  if (assetPriceBase <= 0n || baseCurrencyUnit <= 0n) throw new Error('Aave price-oracle evidence is unavailable');
+  if (!Number.isSafeInteger(assetDecimals) || assetDecimals < 0 || assetDecimals > 255) throw new Error('Aave reserve asset decimals are invalid');
+
+  // Aave reports availableBorrowsBase and getAssetPrice(asset) in the same oracle
+  // base currency. Convert the account-level borrowing headroom into exact asset
+  // base units before comparing it with debt-token delegation and reserve liquidity.
+  const assetUnit = 10n ** BigInt(assetDecimals);
+  const borrowCapacityAssetUnits = (availableBorrowsBase * assetUnit) / assetPriceBase;
+  const availablePrincipal = minBigInt(minBigInt(allowance, liquid), borrowCapacityAssetUnits);
   if (availablePrincipal <= 0n) return null;
 
   const liabilityQueryData = new utils.Interface([
@@ -214,10 +278,12 @@ async function measureAaveDelegation(input: {
     exactSimulationRequired: true,
     reliabilityScore: 1,
     provenance: [
-      'aave_pool_reserve_addresses_measured_onchain',
+      'aave_pool_addresses_provider_measured_onchain',
+      `aave_reserve_token_resolution:${reserveTokens.source}`,
       'aave_variable_debt_borrow_allowance_measured_onchain',
       'aave_underlying_liquidity_measured_at_reserve_atoken',
-      'aave_delegator_available_borrow_base_positive',
+      'aave_delegator_available_borrow_base_converted_with_protocol_oracle',
+      'aave_available_principal_capped_by_account_headroom_delegation_and_liquidity',
       'delegated_debt_must_return_to_pretransaction_balance',
       'same_transaction_repayment_required',
       'exact_full_transaction_simulation_required_for_health_factor_caps_interest_and_repay',
@@ -227,10 +293,17 @@ async function measureAaveDelegation(input: {
     ],
     metadata: {
       pool: config.pool,
+      addressesProvider: addressesProviderAddress,
+      priceOracle: priceOracleAddress,
       delegator: config.delegator,
       debtToken,
       aToken,
+      reserveTokenResolution: reserveTokens.source,
+      assetDecimals,
+      assetPriceBase: assetPriceBase.toString(),
+      baseCurrencyUnit: baseCurrencyUnit.toString(),
       availableBorrowsBase: availableBorrowsBase.toString(),
+      borrowCapacityAssetUnits: borrowCapacityAssetUnits.toString(),
       liabilityOracle: debtToken,
       liabilityQueryData,
       sourceFeeModel: 'exact_simulation_debt_delta_and_repay',

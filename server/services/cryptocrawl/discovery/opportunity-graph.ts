@@ -63,8 +63,16 @@ function opportunityId(plan: VerifiedArbitragePlan): string {
   return `${plan.buyVenue}-${plan.sellVenue}-${plan.symbol}`;
 }
 
+function usdToBps(valueUsd: number, notionalUsd: number): number | null {
+  if (!Number.isFinite(valueUsd) || !Number.isFinite(notionalUsd) || notionalUsd <= 0) return null;
+  return valueUsd / notionalUsd * 10_000;
+}
+
 function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observedAt: number, maxQuoteAgeMs: number): void {
   const measuredDepth = plan.liquidity.status === 'measured';
+  const grossProfitBps = usdToBps(plan.grossProfitUsd, plan.notionalUsd);
+  const netProfitBps = usdToBps(plan.netProfitUsd, plan.notionalUsd);
+  const allInCostBps = usdToBps(plan.costs.totalCostsUsd, plan.notionalUsd);
   measuredCandidateRegistry.record({
     opportunityId: opportunityId(plan),
     topology: 'CEX_CEX',
@@ -90,6 +98,13 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
       bridgeUsd: plan.costs.bridgeFeeUsd,
       expectedSlippageBps: plan.expectedSlippageBps ?? null,
       expectedPriceImpactBps: plan.expectedPriceImpactBps ?? null,
+      notionalUsd: plan.notionalUsd,
+      grossProfitBps,
+      gasCostBps: usdToBps(plan.costs.gasUsd, plan.notionalUsd),
+      allInCostBps,
+      breakEvenBps: allInCostBps,
+      netProfitBps,
+      bpsToBreakEven: netProfitBps === null ? null : Math.max(0, -netProfitBps),
     },
     quoteAgeMs: plan.quoteAgeMs,
     executableCapability: true,
@@ -102,6 +117,7 @@ function registerDeterministicCexCandidate(plan: VerifiedArbitragePlan, observed
       'authenticated_fee_evidence',
       'depth_aware_notional_search',
       'deterministic_positive_net',
+      'canonical_bps:notional_and_signed_profit_preserved',
       ...(measuredDepth ? ['positive_all_in_net_execution_eligible'] : []),
     ],
   });
@@ -131,6 +147,8 @@ class MeasuredOpportunityGraph {
   private readonly pendingTargetedSymbols = new Set<string>();
   /** Symbols currently being refreshed are not allowed to enqueue themselves recursively. */
   private readonly activeTargetedSymbols = new Set<string>();
+  /** Advisory work must never lengthen the sole market-refresh lane or overlap itself per route. */
+  private readonly advisoryAssessmentInFlight = new Set<string>();
   private targetedRequestsCoalesced = 0;
   private latestCycle: MeasuredOpportunityGraphCycle | null = null;
   private running = false;
@@ -193,6 +211,7 @@ class MeasuredOpportunityGraph {
       candidateAuthority: 'measured_candidate_registry_positive_all_in_net',
       refreshAuthority: 'single_serialized_opportunity_graph_pipeline',
       targetedRequestPolicy: 'coalesced_exact_symbol_non_recursive',
+      advisoryAssessmentPolicy: 'detached_from_refresh_single_flight_per_opportunity',
       syntheticEvidenceAllowed: false,
       executionPausedDuringLowActivity: false,
     });
@@ -278,6 +297,103 @@ class MeasuredOpportunityGraph {
     };
   }
 
+  private launchAdvisoryAssessments(input: {
+    assessmentCandidates: readonly VerifiedArbitragePlan[];
+    universe: readonly MarketUniverseAsset[];
+    errors: string[];
+  }): void {
+    if (input.assessmentCandidates.length === 0) return;
+    void (async () => {
+      const cryptara = getCryptara();
+      if (!cryptara.getStatus().isRunning) {
+        try {
+          await cryptara.initialize();
+        } catch (error) {
+          logger.warn('[OpportunityGraph] Detached Cryptara advisory initialization degraded', {
+            component: 'MeasuredOpportunityGraph',
+            error: error instanceof Error ? error.message : String(error),
+            marketRefreshBlocked: false,
+            executionAuthority: false,
+          });
+          return;
+        }
+      }
+      if (!cryptara.getStatus().isRunning) return;
+
+      const providerStatuses = marketDataProviders.getProviderStatuses();
+      await runBounded(input.assessmentCandidates, Math.min(4, input.assessmentCandidates.length), async plan => {
+        const id = opportunityId(plan);
+        if (this.advisoryAssessmentInFlight.has(id)) return;
+        this.advisoryAssessmentInFlight.add(id);
+        const observedAt = Date.now();
+        try {
+          const technicalEvidence = await getBoundTechnicalEvidence({
+            opportunityId: id,
+            symbol: plan.symbol,
+            observedAt,
+            maxAgeMs: Math.max(30_000, Number(process.env.TRADINGVIEW_DATA_TTL_MS || 300_000)),
+          });
+          const assessment = await cryptara.assessOpportunity({
+            opportunityId: id,
+            observedAt,
+            chain: 'cex',
+            symbol: plan.symbol,
+            plan,
+            tradingView: technicalEvidence.analysis,
+            mempool: alchemyIntegration.getMempoolAnalysis(),
+            marketUniverse: input.universe,
+            dexObservation: null,
+            missingInformation: [
+              ...technicalEvidence.missingInformation,
+              ...providerStatuses
+                .filter(status => status.state === 'failed' || status.state === 'stale' || status.state === 'unavailable')
+                .map(status => `provider_${status.provider}_${status.state}`),
+            ],
+            provenance: [
+              'measured_opportunity_graph',
+              'formation_attention_scheduler',
+              'direct_exchange_quotes',
+              ...technicalEvidence.provenance,
+              ...[...new Set(input.universe.flatMap(asset => asset.sources || [asset.source]))],
+              ...providerStatuses.map(status => `provider:${status.provider}:${status.state}`),
+            ],
+          });
+          const current = measuredCandidateRegistry.get(id);
+          // Never attach an older detached assessment to a fresher replacement of
+          // the same route. Advisory evidence may lag; canonical economics may not.
+          if (current && current.observedAt <= observedAt) {
+            measuredCandidateRegistry.updateStatus(id, current.status, {
+              provenance: [
+                ...technicalEvidence.provenance,
+                `Cryptara:advisory_${assessment.recommendation}`,
+                'advisory_assessment_execution_veto:false',
+                'advisory_assessment_refresh_blocked:false',
+              ],
+            });
+          }
+        } catch (error) {
+          logger.debug('[OpportunityGraph] Detached Cryptara advisory assessment degraded', {
+            component: 'MeasuredOpportunityGraph',
+            opportunityId: id,
+            symbol: plan.symbol,
+            error: error instanceof Error ? error.message : String(error),
+            marketRefreshBlocked: false,
+            executionAuthority: false,
+          });
+        } finally {
+          this.advisoryAssessmentInFlight.delete(id);
+        }
+      });
+    })().catch(error => {
+      logger.warn('[OpportunityGraph] Detached advisory batch degraded', {
+        component: 'MeasuredOpportunityGraph',
+        error: error instanceof Error ? error.message : String(error),
+        marketRefreshBlocked: false,
+        executionAuthority: false,
+      });
+    });
+  }
+
   private async runCycle(options?: {
     symbols?: readonly string[];
     trigger?: MeasuredOpportunityGraphCycle['cycleTrigger'];
@@ -349,72 +465,9 @@ class MeasuredOpportunityGraph {
       24,
     ));
     const assessmentCandidates = positivePlans.slice(0, maxAssessments);
-    let eligibleCandidates = positivePlans.filter(plan => plan.liquidity.status === 'measured').length;
+    const eligibleCandidates = positivePlans.filter(plan => plan.liquidity.status === 'measured').length;
 
-    if (assessmentCandidates.length > 0) {
-      const cryptara = getCryptara();
-      if (!cryptara.getStatus().isRunning) {
-        try {
-          await cryptara.initialize();
-        } catch (error) {
-          errors.push(`cryptara_initialize:${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-
-      if (cryptara.getStatus().isRunning) {
-        const providerStatuses = marketDataProviders.getProviderStatuses();
-        await runBounded(assessmentCandidates, Math.min(4, assessmentCandidates.length), async plan => {
-          const observedAt = Date.now();
-          const id = opportunityId(plan);
-          const technicalEvidence = await getBoundTechnicalEvidence({
-            opportunityId: id,
-            symbol: plan.symbol,
-            observedAt,
-            maxAgeMs: Math.max(30_000, Number(process.env.TRADINGVIEW_DATA_TTL_MS || 300_000)),
-          });
-
-          try {
-            const assessment = await cryptara.assessOpportunity({
-              opportunityId: id,
-              observedAt,
-              chain: 'cex',
-              symbol: plan.symbol,
-              plan,
-              tradingView: technicalEvidence.analysis,
-              mempool: alchemyIntegration.getMempoolAnalysis(),
-              marketUniverse: universe,
-              dexObservation: null,
-              missingInformation: [
-                ...technicalEvidence.missingInformation,
-                ...providerStatuses
-                  .filter(status => status.state === 'failed' || status.state === 'stale' || status.state === 'unavailable')
-                  .map(status => `provider_${status.provider}_${status.state}`),
-              ],
-              provenance: [
-                'measured_opportunity_graph',
-                'formation_attention_scheduler',
-                'direct_exchange_quotes',
-                ...technicalEvidence.provenance,
-                ...[...new Set(universe.flatMap(asset => asset.sources || [asset.source]))],
-                ...providerStatuses.map(status => `provider:${status.provider}:${status.state}`),
-              ],
-            });
-            const current = measuredCandidateRegistry.get(id);
-            if (current) {
-              measuredCandidateRegistry.updateStatus(id, current.status, {
-                provenance: [
-                  ...technicalEvidence.provenance,
-                  `Cryptara:advisory_${assessment.recommendation}`,
-                  'advisory_assessment_execution_veto:false',
-                ],
-              });
-            }
-          } catch (error) {
-            errors.push(`assessment:${plan.symbol}:${error instanceof Error ? error.message : String(error)}`);
-          }
-        });
-      }
-    }
+    this.launchAdvisoryAssessments({ assessmentCandidates, universe, errors });
 
     const completedAt = Date.now();
     const cycle: MeasuredOpportunityGraphCycle = {
@@ -474,6 +527,9 @@ class MeasuredOpportunityGraph {
       attentionAuthority: formationSelection.authority,
       economicEvaluationMode: 'single_authoritative_batch',
       refreshAuthority: 'single_serialized_opportunity_graph_pipeline',
+      advisoryAssessmentRefreshBlocking: false,
+      advisoryAssessmentsScheduled: assessmentCandidates.length,
+      advisoryAssessmentsInFlight: this.advisoryAssessmentInFlight.size,
       targetedQueueDepth: this.pendingTargetedSymbols.size,
       activeTargetedSymbols: [...this.activeTargetedSymbols],
       targetedRequestsCoalesced: this.targetedRequestsCoalesced,

@@ -126,9 +126,11 @@ function baseUnitsToUsd(value: bigint | undefined, decimals: number): number {
   return Number.isFinite(converted) ? converted : 0;
 }
 
+const BPS_PRECISION_SCALE = 1_000_000n;
+
 function bpsFromBaseUnits(value: bigint | undefined, notional: bigint): number | null {
   if (value === undefined || notional <= 0n) return null;
-  return Number((value * 10_000n) / notional);
+  return Number((value * 10_000n * BPS_PRECISION_SCALE) / notional) / Number(BPS_PRECISION_SCALE);
 }
 
 function executionRoutes(target: CanonicalZeroCapitalRuntime): ConfiguredZeroCapitalRoute[] {

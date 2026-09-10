@@ -1,6 +1,7 @@
 import { BigNumber, Contract, ethers, type Wallet, type providers } from 'ethers';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { expectedExecutionGasPriceWei } from '../discovery/configured-zero-capital-gas-economics.js';
 import type { GhostWalletAlternativeZeroCapitalSelection } from '../ghost-wallet/zero-capital-alternative-selection-registry.js';
 import { executeSystemOwnedNativeTransaction } from './system-owned-native-transaction.js';
 
@@ -54,8 +55,13 @@ function validateFunding(funding: GasFundingDecision): string | null {
   if (funding.mode === 'native' && funding.paymentSource !== 'system_owned_native') {
     return 'Native gas is not proven system-owned';
   }
-  if (funding.mode === 'sponsored' && funding.paymentSource !== 'provider_sponsored') {
-    return 'Sponsored gas payment source is not canonical';
+  if (funding.mode === 'sponsored') {
+    if (funding.paymentSource !== 'provider_sponsored') {
+      return 'Sponsored gas payment source is not canonical';
+    }
+    if (funding.sponsorOperatorMonetaryCostProvenZero !== true || funding.providerBillingLiability === true) {
+      return 'Sponsored gas is not independently proven zero-operator-cost';
+    }
   }
   return null;
 }
@@ -189,6 +195,24 @@ export async function executeAlternativePreparedWithinCanonicalExecutor(input: {
     return { ok: false, reason: 'Alternative-capital gas requirement increased; reprice before execution', submitted: false };
   }
 
+  const nativeGasEconomicsStillValid = async (): Promise<void> => {
+    if (funding.mode !== 'native') return;
+    if (selection.estimatedGasCostInInputToken <= 0n || selection.expectedGasPriceWei <= 0n) {
+      throw new Error('Alternative-capital native gas economics are missing their measured gas-price binding');
+    }
+    const currentGasPriceWei = expectedExecutionGasPriceWei(await provider.getFeeData());
+    if (currentGasPriceWei <= 0n) {
+      throw new Error('Alternative-capital current gas price is unavailable; reprice before execution');
+    }
+    // The prepared transaction embeds a minimum-profit threshold derived from the
+    // selected gas cost. A higher gas price would make that threshold stale. Do
+    // not weaken it in place: reject locally and let the next discovery cycle
+    // rebuild the exact transaction from current economics.
+    if (currentGasPriceWei > selection.expectedGasPriceWei) {
+      throw new Error(`Alternative-capital gas price increased from ${selection.expectedGasPriceWei} to ${currentGasPriceWei}; reprice before execution`);
+    }
+  };
+
   let transactionHash = '';
   let receipt: providers.TransactionReceipt | null = null;
   let nativeFeeWei = 0n;
@@ -227,6 +251,7 @@ export async function executeAlternativePreparedWithinCanonicalExecutor(input: {
           gasLimit: BigNumber.from(estimatedGasUnits.toString()).mul(110).div(100),
         },
         confirmations: 1,
+        preBroadcastCheck: nativeGasEconomicsStillValid,
       });
       transactionHash = native.transactionHash;
       receipt = native.receipt;

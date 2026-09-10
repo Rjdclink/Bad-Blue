@@ -13,6 +13,9 @@ const EVENT_INTERFACE = new ethers.utils.Interface([
   'event ExternalCreditBrokered(address indexed lender,address indexed borrower,address indexed token,uint256 principal,uint256 upstreamFee,uint256 borrowerFee,uint256 realizedSpread,address profitRecipient,address initiator,uint8 upstreamKind)',
 ]);
 
+const PROFIT_SPLIT_DENOMINATOR = 10n;
+const RETAINED_SPLIT_NUMERATOR = 1n;
+
 function addr(value: unknown): string { return ethers.utils.getAddress(String(value)); }
 function amount(value: unknown): bigint { return BigInt(ethers.BigNumber.from(value as any).toString()); }
 function upstreamProtocol(kind: number): string {
@@ -21,6 +24,15 @@ function upstreamProtocol(kind: number): string {
   if (kind === 3) return 'morpho_blue';
   if (kind === 4) return 'balancer_v2';
   return 'unknown_atomic_lender';
+}
+
+function splitRealizedProfit(realized: bigint): { payout: bigint; retained: bigint } {
+  if (realized <= 0n) return { payout: 0n, retained: 0n };
+  // Keep every base unit accounted for. Integer remainder goes to the user's
+  // payout so rounding can never make the payout share less than 90%.
+  const retained = (realized * RETAINED_SPLIT_NUMERATOR) / PROFIT_SPLIT_DENOMINATOR;
+  const payout = realized - retained;
+  return { payout, retained };
 }
 
 async function enqueueProfit(input: {
@@ -33,6 +45,8 @@ async function enqueueProfit(input: {
   sourceKind: string;
 }): Promise<boolean> {
   if (input.amount <= 0n) return false;
+  const allocation = splitRealizedProfit(input.amount);
+  if (allocation.payout <= 0n) return false;
   await enqueueGhostWalletWork({
     dedupeKey: `ghost-profit:${input.transactionHash.toLowerCase()}:${input.logIndex}:${input.asset.toLowerCase()}:${input.amount}`,
     kind: 'profit_conversion',
@@ -40,13 +54,19 @@ async function enqueueProfit(input: {
     priority: 2_000,
     maxAttempts: 48,
     profitAsset: input.asset,
-    profitAmountBaseUnits: input.amount,
+    profitAmountBaseUnits: allocation.payout,
     payload: {
       sourceTransactionHash: input.transactionHash,
       sourceBlockNumber: input.blockNumber,
       chain: input.chain,
       asset: input.asset,
-      amountBaseUnits: input.amount.toString(),
+      amountBaseUnits: allocation.payout.toString(),
+      realizedProfitBaseUnits: input.amount.toString(),
+      payoutAmountBaseUnits: allocation.payout.toString(),
+      retainedAmountBaseUnits: allocation.retained.toString(),
+      payoutFractionBps: 9_000,
+      retainedFractionBps: 1_000,
+      integerRemainderPolicy: 'payout',
       destinationMode: 'primary',
       sourceKind: input.sourceKind,
     },
@@ -157,7 +177,11 @@ export async function ingestGhostWalletSettlementLog(chainValue: string, log: pr
   if (enqueued > 0) {
     await recordGhostWalletRuntimeState({
       chain, reconciledBlock: log.blockNumber, notification: true, workerActivity: true,
-      metadata: { lastSettlementTransactionHash: log.transactionHash, settlementEvent: parsed.name },
+      metadata: {
+        lastSettlementTransactionHash: log.transactionHash,
+        settlementEvent: parsed.name,
+        realizedProfitAllocation: '90_percent_payout_10_percent_retained_integer_remainder_to_payout',
+      },
     });
     ghostWalletWorkSignal.emitWake('local_work_enqueued');
   }

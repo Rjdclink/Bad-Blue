@@ -31,7 +31,7 @@ assert.match(intermediary, /address public immutable profitRecipient/);
 assert.match(runtimeWiring, /ghostWalletProfitLadderAuthority:\s*false/);
 assert.match(runtimeWiring, /ghostWalletArbitrageExecutionAuthority:\s*false/);
 assert.match(engine, /profitLadderAuthority:\s*false/);
-assert.match(engine, /100_percent_realized_net_direct_to_canonical_wallet/);
+assert.match(engine, /90_percent_payout_10_percent_retained/);
 assert.match(engine, /serverTransactionSubmission: false/);
 assert.doesNotMatch(engine, /zeroCapitalEngine|gasSponsor|CRYPTO_ARBITRAGE_LIVE_EXECUTION/);
 
@@ -43,12 +43,13 @@ assert.match(vault, /endingAssets >= startingAssets \+ fee/);
 assert.match(vault, /atomic_credit_not_repaid/);
 assert.match(intermediary, /if \(temporaryApproval\) _safeApprove\(approvalToken, target, 0\)/);
 
-// Signed-intent protections remain intact even though the server no longer broadcasts them.
+// Signed-intent protections remain source-available but are not advertised as an active production capital primitive.
 assert.match(intermediary, /self_match_forbidden/);
 assert.match(intermediary, /profit_recipient_cannot_self_match/);
 assert.match(intermediary, /usedIntentNonces/);
 assert.match(intentBook, /verifyTypedData/);
 assert.match(intentBook, /address\(left\.owner\) !== address\(right\.owner\)/);
+assert.match(engine, /inactiveSourceAvailablePrimitives: \['signed_intent_capital', 'coincidence_of_wants'\]/);
 
 // Existing measured capital fabric remains read-only evidence and does not fabricate cash.
 for (const primitive of [
@@ -66,6 +67,8 @@ assert.match(fabric, /resourceForm === 'liquid_principal'/);
 // Aave/Euler evidence stays grounded in live protocol state.
 assert.match(sourceMeasurement, /borrowAllowance\(config\.delegator, intermediary\)/);
 assert.match(sourceMeasurement, /getUserAccountData\(config\.delegator\)/);
+assert.match(sourceMeasurement, /getAssetPrice\(config\.asset\)/);
+assert.match(sourceMeasurement, /borrowCapacityAssetUnits/);
 assert.match(sourceMeasurement, /debtOf\(address account\)/);
 assert.match(sourceMeasurement, /synthetic_capacity:false/);
 
@@ -94,21 +97,25 @@ assert.match(borrowerSurface, /hardBorrowerUniverseLimit: null/);
 assert.match(borrowerSurface, /lowest_live_all_in_upstream_fee_for_same_asset_and_amount/);
 
 // Alchemy is not a Ghost dependency. Configured non-Alchemy RPCs and public fallbacks
-// are measured in parallel; a chain outage is local.
+// are measured in parallel; a chain outage is local and health can be re-evaluated.
 assert.match(providerMesh, /alchemyAllowed: false/);
 assert.match(providerMesh, /Promise\.allSettled/);
+assert.match(providerMesh, /requestDrivenHealthRefresh: true/);
 assert.match(providerMesh, /routeLocalFailure: true/);
 assert.doesNotMatch(providerMesh, /ALCHEMY_API_KEY|ALCHEMY_GAS_POLICY_ID/);
 
 // Profit conversion never spends provider-sponsored/operator native gas. The 0x
-// leg is gasless; any Across origin spend is bounded by native proceeds created
-// from the same realized Ghost profit.
+// leg is gasless; any Across/fallback spend is bounded by native proceeds created
+// from the same realized Ghost profit. Only 90% is routed to payout; 10% is retained.
 assert.match(payout, /zeroOperatorNativeGas: true/);
 assert.match(payout, /GHOST_WALLET_ACROSS_WOULD_SPEND_PREEXISTING_OPERATOR_NATIVE/);
 assert.match(payout, /quote\.maxSpend > input\.acquiredNative/);
 assert.match(payout, /originGasFunding: 'realized_ghost_profit_only'/);
 assert.match(payout, /GHOST_WALLET_ACROSS_ETH_BALANCE_DELTA_NOT_VERIFIED/);
-assert.match(payout, /percentOfRealizedGhostNet: 100/);
+assert.match(payout, /percentOfRealizedGhostNet: 90/);
+assert.match(payout, /retainedCapitalPercent: 10/);
+assert.match(payout, /submitProfitFundedEthereumFallback/);
+assert.doesNotMatch(payout, /state:\s*'fallback_required'/);
 assert.doesNotMatch(payout, /zeroCapitalEngine|gasSponsor|ALCHEMY_/);
 
 // Deferred settlement is never promoted into a false executable capability.
@@ -117,16 +124,18 @@ assert.match(coverage, /if \(provenance === 'protocol_deferred_settlement'\) ret
 const admittedBlock = coverage.match(/const ATOMIC_EXTERNAL_PRINCIPAL_SOURCES:[\s\S]*?\] as const;/)?.[0] || '';
 assert.doesNotMatch(admittedBlock, /protocol_deferred_settlement_capital/);
 
-// Existing arbitrage zero-capital execution remains unchanged.
+// Existing arbitrage zero-capital execution remains under the same canonical authority.
 assert.match(discovery, /repriceZeroCapitalProviderEconomics\(/);
 assert.match(discovery, /repriceZeroCapitalAlternativeCapital\(/);
 assert.match(alternativeReprice, /await input\.provider\.call\(exactEnvelope\)/);
-assert.match(alternativeReprice, /await input\.provider\.estimateGas\(exactEnvelope\)/);
+assert.match(alternativeReprice, /input\.provider\.estimateGas\(exactEnvelope\)/);
+assert.match(alternativeReprice, /if \(netProfit <= 0n\) return null/);
 assert.match(alternativeRegistry, /selection\.expectedNetProfit <= 0n/);
 assert.match(canonicalRouter, /return executeFlashCanonicalZeroCapitalOpportunity\(opportunity\)/);
 assert.match(canonicalRouter, /executeAlternativePreparedWithinCanonicalExecutor/);
 assert.match(alternativeExecutor, /await provider\.call\(request\)/);
 assert.match(alternativeExecutor, /await provider\.estimateGas\(request\)/);
+assert.match(alternativeExecutor, /preBroadcastCheck/);
 assert.match(flashExecutor, /Sole ZERO_CAPITAL_ATOMIC execution route|CanonicalExecutionScheduler/);
 
 // Vault arithmetic overflow protection is preserved.
@@ -155,6 +164,8 @@ console.log(JSON.stringify({
   alchemyDependency: false,
   routeLocalProviderFailure: true,
   profitFundedEthPayout: true,
+  payoutPercent: 90,
+  retainedCapitalPercent: 10,
   durableWorkerRecovery: true,
   arbitrageAuthorityCrossed: false,
 }, null, 2));

@@ -35,9 +35,16 @@ export interface ZeroCapitalProfitabilityRescueInput {
   fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
 }
 
+const BPS_PRECISION_SCALE = 1_000_000n;
+
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const value = Number(raw);
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+}
+
+function bpsFromBaseUnits(value: bigint, notional: bigint): number {
+  if (notional <= 0n) return Number.NaN;
+  return Number((value * 10_000n * BPS_PRECISION_SCALE) / notional) / Number(BPS_PRECISION_SCALE);
 }
 
 function pow10(decimals: number): bigint {
@@ -88,8 +95,8 @@ function adjustForProvider(quote: QuotedZeroCapitalRoute, evidence: FlashLoanPro
   if (fee === null) return null;
   const allInCost = fee + quote.estimatedGasCostInInputToken + quote.relayFeeInInputToken;
   const netProfit = quote.grossProfit - allInCost;
-  const allInCostBps = quote.amountIn > 0n ? Number((allInCost * 10_000n) / quote.amountIn) : Number.POSITIVE_INFINITY;
-  const netProfitBps = quote.amountIn > 0n ? Number((netProfit * 10_000n) / quote.amountIn) : Number.NEGATIVE_INFINITY;
+  const allInCostBps = quote.amountIn > 0n ? bpsFromBaseUnits(allInCost, quote.amountIn) : Number.POSITIVE_INFINITY;
+  const netProfitBps = quote.amountIn > 0n ? bpsFromBaseUnits(netProfit, quote.amountIn) : Number.NEGATIVE_INFINITY;
   return {
     ...quote,
     flashLoanFeeInInputToken: fee,
@@ -118,7 +125,7 @@ function candidateFactors(opportunity: ZeroCapitalOpportunity, context: ZeroCapi
     .filter(fraction => Number.isFinite(fraction) && fraction > 0 && fraction < 1) ?? [];
   const gap = Math.max(0, -opportunity.netProfitBps);
   const gasPressureBps = opportunity.flashLoanAmount > 0n
-    ? Number((opportunity.estimatedExecutionCostInInputToken * 10_000n) / opportunity.flashLoanAmount)
+    ? bpsFromBaseUnits(opportunity.estimatedExecutionCostInInputToken, opportunity.flashLoanAmount)
     : 0;
 
   let local: number[];

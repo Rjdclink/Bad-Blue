@@ -18,6 +18,8 @@ const rainbowSourceLedger = read('server/services/cryptocrawl/compensation/rainb
 const primaryArchiveWorker = read('server/services/cryptocrawl/integration/cryptara-primary-archive-worker.ts');
 const admissionWorker = read('server/services/cryptocrawl/integration/cryptara-supabase-admission-worker.ts');
 const canonicalRuntime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
+const overflowRuntimeSchema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts');
+const overflowBuild = read('scripts/cryptocrawl/build-server-overflow-authority.mjs');
 const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
 const adminApi = read('server/services/cryptocrawl/api/admin-api.ts');
 const dockerfile = read('Dockerfile');
@@ -109,14 +111,38 @@ assert.match(admissionWorker, /const permit = await governor\.acquire\(priority\
 assert.match(admissionWorker, /permit\.release\(failure, Date\.now\(\) - startedAt\)/);
 assert.match(admissionWorker, /if \(this !== pool\)[\s\S]{0,220}originalConnect\.call\(this/);
 
-// All production CryptoCrawler lifecycle entry points are fail-closed on the
-// complete Overflow schema and have no alternate Primary health/schema admission
-// path. Primary remains archive/wider-application state, never a hot runtime gate.
-assert.match(canonicalRuntime, /getCryptaraHyperBridgeBootstrapSnapshot/);
-assert.match(canonicalRuntime, /overflowBootstrap\.state === 'ready'[\s\S]{0,1000}directPrimaryProbe:\s*false[\s\S]{0,500}primaryFallback:\s*false[\s\S]{0,500}installCanonicalRuntime\(\)/);
-assert.match(canonicalRuntime, /Overflow authority not ready; runtime remains fail-closed without Primary fallback/);
-assert.match(canonicalRuntime, /scheduleCanonicalRuntimeInstall\(canonicalRuntimeOverflowRetryMs\(\), 'overflow_authority_not_ready'\)/);
+// Production CryptoCrawler admission is source-owned and requires both Overflow
+// transport and the complete runtime schema. A schema failure must retry the actual
+// single-flight provisioner rather than polling a permanently-false snapshot.
+assert.match(canonicalRuntime, /ensureCryptocrawlOverflowRuntimeSchema/);
+assert.match(canonicalRuntime, /getCryptocrawlOverflowRuntimeSchemaSnapshot/);
+assert.match(canonicalRuntime, /overflowBootstrap\.state === 'ready'\s*&&\s*overflowSchema\.ready/);
+assert.match(canonicalRuntime, /function startOverflowSchemaRepair\(\)/);
+assert.match(canonicalRuntime, /overflowSchemaRepairPromise\s*=\s*ensureCryptocrawlOverflowRuntimeSchema\(\)/);
+assert.match(canonicalRuntime, /startOverflowSchemaRepair\(\)/);
+assert.match(canonicalRuntime, /overflow_schema_not_ready/);
+assert.match(canonicalRuntime, /overflow_transport_not_ready/);
+assert.match(canonicalRuntime, /directPrimaryProbe:\s*false/);
+assert.match(canonicalRuntime, /primaryFallback:\s*false/);
+assert.match(canonicalRuntime, /installCanonicalRuntime\(\)/);
 assert.doesNotMatch(canonicalRuntime, /from\s+['"]\.\.\/\.\.\/\.\.\/db\.js['"]|requireCryptocrawlerAuthoritySchema|pool\.query\('SELECT 1'\)|overflow_unavailable_primary_fallback_probe_failed/);
+
+// The known v26 -> v27 production transition is exactly the Ghost Wallet durable
+// schema delta. Older/unknown states retain the full idempotent recovery path.
+assert.match(overflowRuntimeSchema, /const\s+INCREMENTAL_MIGRATIONS/);
+assert.match(overflowRuntimeSchema, /26:\s*\['057_cryptocrawler_ghost_wallet_runtime\.sql'\]/);
+assert.match(overflowRuntimeSchema, /function migrationPlan/);
+assert.match(overflowRuntimeSchema, /return MIGRATIONS/);
+assert.match(overflowRuntimeSchema, /verifyRequiredObjects\(client\)/);
+assert.match(overflowRuntimeSchema, /await markVerified\(client\)/);
+
+// Production build may verify the canonical source contract but must never rewrite
+// the runtime gate. This keeps reviewed source, verifier behavior and deployment
+// behavior identical.
+assert.match(overflowBuild, /canonicalOverflowSchemaGateSourceOwned:\s*true/);
+assert.match(overflowBuild, /canonicalOverflowSchemaBuildMutation:\s*false/);
+assert.doesNotMatch(overflowBuild, /gateReplacement|importReplacement|source\.replace\(importNeedle/);
+
 assert.match(coreRuntime, /import\s*\{\s*ensureCryptocrawlOverflowRuntimeSchema\s*\}\s*from\s*'\.\/cryptocrawl-overflow-runtime-schema\.js'/);
 assert.match(coreRuntime, /if \(process\.env\.NODE_ENV === 'production'\) \{\s*await ensureCryptocrawlOverflowRuntimeSchema\(\);\s*\}/);
 assert.doesNotMatch(coreRuntime, /requireCryptocrawlerAuthoritySchema/);
@@ -163,4 +189,4 @@ assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawle
 assert.match(hotPathMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_mc_calibration_v1/);
 assert.match(fundingMigration, /CREATE TABLE IF NOT EXISTS private\.cryptocrawler_funding_lifecycles/);
 
-console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for archive/wider-application paths, Primary cold archive work is LOW-ranked through the shared Cryptara COMP admission queue, canonical and explicit admin runtime admission are Overflow-only with no Primary probe/schema fallback, both production lifecycle entry points fail closed on the complete Overflow schema, and legacy admin withdrawal cannot claim or bypass governed payout authority');
+console.log('[migration-authority-runtime] PASS: Primary reconciliation remains bounded for archive/wider-application paths, Primary cold archive work is LOW-ranked through the shared Cryptara COMP admission queue, canonical and explicit admin runtime admission are Overflow-only with no Primary probe/schema fallback, production schema recovery retries the real provisioner with a bounded v26-to-v27 delta, build-time gate mutation is forbidden, and legacy admin withdrawal cannot claim or bypass governed payout authority');
