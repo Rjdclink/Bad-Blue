@@ -1,4 +1,4 @@
-// Blockchain API Services - Alchemy (Access) + Etherscan (Data)
+// Blockchain API Services - canonical multi-provider RPC access + Etherscan data
 // Implements hyper-optimized API layer with advanced rate limiting
 
 import { ethers } from 'ethers';
@@ -14,6 +14,7 @@ export type SupportedChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 
 
 export interface BlockchainProviderConfig {
   chain: SupportedChain;
+  /** @deprecated Retained only for source compatibility. No Alchemy credential is consumed. */
   alchemyApiKey?: string;
   etherscanApiKey?: string;
   region?: EdenRegion;
@@ -68,8 +69,8 @@ interface RpcCandidate {
   cooldownUntil: number;
   websocketState: RpcProviderState;
   websocketConsecutiveFailures: number;
-    websocketConsecutiveSuccesses: number;
-    websocketLastError?: string;
+  websocketConsecutiveSuccesses: number;
+  websocketLastError?: string;
   websocketCooldownUntil: number;
   websocketLastObservedAt: number;
   lastError?: string;
@@ -94,10 +95,6 @@ const PUBLIC_RPC_URLS: Partial<Record<SupportedChain, string>> = {
   bsc: 'https://bsc-dataseed.binance.org',
 };
 
-const ALCHEMY_SLUGS: Partial<Record<SupportedChain, string>> = {
-  ethereum: 'eth', polygon: 'polygon', arbitrum: 'arb', optimism: 'opt', base: 'base',
-};
-
 const INFURA_SLUGS: Partial<Record<SupportedChain, string>> = {
   ethereum: 'mainnet', polygon: 'polygon-mainnet', arbitrum: 'arbitrum-mainnet', optimism: 'optimism-mainnet',
 };
@@ -111,12 +108,9 @@ function configuredRpcCandidates(chain: SupportedChain): RpcCandidateDefinition[
     candidates.push({ provider, chain, priority, httpUrl: httpUrl.trim(), websocketUrl, capabilities: new Set(capabilities) });
   };
 
-  const alchemySlug = ALCHEMY_SLUGS[chain];
-  const alchemyKey = process.env.ALCHEMY_API_KEY?.trim();
-  if (alchemySlug && alchemyKey) {
-    add('Alchemy', `https://${alchemySlug}-mainnet.g.alchemy.com/v2/${alchemyKey}`, 10, `wss://${alchemySlug}-mainnet.g.alchemy.com/v2/${alchemyKey}`, ['json_rpc', 'network', 'blocks', 'transactions', 'receipts', 'gas', 'logs', 'contract_calls', 'subscriptions', 'pending_transactions']);
-  }
-
+  // Alchemy admission is intentionally absent. The canonical runtime installs
+  // independent free/configured alternatives through DynamicRpcProviderWiring,
+  // and a stale provider credential cannot silently re-enter this manager.
   const infuraSlug = INFURA_SLUGS[chain];
   const infuraKey = process.env.INFURA_API_KEY?.trim();
   if (infuraSlug && infuraKey) {
@@ -852,7 +846,9 @@ const ETHERSCAN_ENDPOINTS: Record<SupportedChain, string> = {
   polygon: 'https://api.polygonscan.com/api',
   arbitrum: 'https://api.arbiscan.io/api',
   optimism: 'https://api-optimistic.etherscan.io/api',
-  base: 'https://api.basescan.org/api'
+  base: 'https://api.basescan.org/api',
+  avalanche: 'https://api.snowtrace.io/api',
+  bsc: 'https://api.bscscan.com/api',
 };
 
 // ============================================================================
@@ -977,9 +973,14 @@ export class AdvancedRateLimiter {
 }
 
 // ============================================================================
-// ALCHEMY PROVIDER - Network Access Layer
+// PROVIDER-MESH ACCESS FACADE
 // ============================================================================
 
+/**
+ * @deprecated Historical class name retained for source compatibility. Every
+ * operation is delegated to multiProviderRpcManager; no Alchemy key, endpoint, or
+ * enhanced method is used.
+ */
 export class AlchemyProvider {
   private rateLimiter: AdvancedRateLimiter;
   private chain: SupportedChain;
@@ -994,8 +995,6 @@ export class AlchemyProvider {
 
   constructor(config: BlockchainProviderConfig) {
     this.chain = config.chain;
-    
-    // Alchemy free tier: 330 CU/s, ~25-30 requests/second
     this.rateLimiter = new AdvancedRateLimiter({
       maxRequestsPerSecond: 25,
       burstLimit: 100,
@@ -1004,27 +1003,21 @@ export class AlchemyProvider {
     });
   }
 
-  /**
-   * Initialize shared RPC access for this chain.
-   */
+  /** Initialize shared provider-mesh access for this chain. */
   async initialize(): Promise<void> {
     await multiProviderRpcManager.initialize([this.chain]);
   }
 
   getHealth(): RpcHealthObservation {
     const snapshots = multiProviderRpcManager.getHealth(this.chain);
-    const observation = snapshots.find(item => item.provider === 'Alchemy')?.http
-      || snapshots.find(item => item.http.success)?.http
-      || snapshots[0]?.http;
+    const observation = snapshots.find(item => item.http.success)?.http || snapshots[0]?.http;
     return observation || {
       provider: 'shared-rpc', chain: this.chain, transport: 'http', state: 'unavailable',
       success: false, latencyMs: null, observedAt: Date.now(), consecutiveFailures: 0, consecutiveSuccesses: 0,
     };
   }
 
-  /**
-   * Record latency for performance monitoring
-   */
+  /** Record latency for performance monitoring. */
   private recordLatency(latency: number): void {
     this.latencyHistory.push(latency);
     if (this.latencyHistory.length > this.MAX_LATENCY_SAMPLES) {
@@ -1032,24 +1025,18 @@ export class AlchemyProvider {
     }
   }
 
-  /**
-   * Get average latency
-   */
+  /** Get average latency. */
   getAverageLatency(): number {
     if (this.latencyHistory.length === 0) return 0;
     return this.latencyHistory.reduce((a, b) => a + b, 0) / this.latencyHistory.length;
   }
 
-  /**
-   * Get current block number
-   */
+  /** Get current block number. */
   async getBlockNumber(): Promise<number> {
     return this.execute('blocks', provider => provider.getBlockNumber());
   }
 
-  /**
-   * Get block by number
-   */
+  /** Get block by number. */
   async getBlock(blockNumber: number | 'latest' | 'pending'): Promise<BlockData | null> {
     const block = await this.execute('blocks', provider => provider.getBlock(blockNumber));
     if (!block) return null;
@@ -1062,9 +1049,7 @@ export class AlchemyProvider {
     };
   }
 
-  /**
-   * Get gas price data (EIP-1559 compatible)
-   */
+  /** Get gas price data (EIP-1559 compatible). */
   async getGasData(): Promise<GasData> {
     const feeData = await this.execute('gas', provider => provider.getFeeData());
     return {
@@ -1077,30 +1062,15 @@ export class AlchemyProvider {
   }
 
   /**
-   * Get pending transactions from mempool (Alchemy enhanced API)
+   * Historical enhanced pending-list API is intentionally retired. Canonical
+   * callers use providerMeshPendingStream / provider-mesh-mempool-analysis so a
+   * generic RPC incompatibility cannot poison ordinary provider health.
    */
-  async getPendingTransactions(options?: { fromAddress?: string; toAddress?: string }): Promise<TransactionData[]> {
-    const params: Record<string, string> = {};
-    if (options?.fromAddress) params.fromAddress = options.fromAddress;
-    if (options?.toAddress) params.toAddress = options.toAddress;
-    const result = await this.execute('pending_transactions', provider => provider.send('alchemy_pendingTransactions', [params]));
-    return (result || []).map((tx: any) => ({
-      hash: tx.hash,
-      from: tx.from,
-      to: tx.to,
-      value: tx.value || '0',
-      gasPrice: tx.gasPrice || '0',
-      gasLimit: tx.gas || '0',
-      nonce: parseInt(tx.nonce, 16),
-      data: tx.input,
-      blockNumber: null,
-      status: 'pending' as const
-    }));
+  async getPendingTransactions(_options?: { fromAddress?: string; toAddress?: string }): Promise<TransactionData[]> {
+    throw new Error('ENHANCED_PENDING_LIST_RETIRED_USE_PROVIDER_MESH_MEMPOOL_ANALYSIS');
   }
 
-  /**
-   * Subscribe to new blocks (WebSocket)
-   */
+  /** Subscribe to new blocks through the logical provider-mesh subscription. */
   onBlock(callback: (blockNumber: number) => void): void {
     this.blockSubscriptions.push(callback);
     if (!this.blockSubscription && !this.blockSubscriptionPromise) {
@@ -1108,16 +1078,14 @@ export class AlchemyProvider {
         if (typeof value === 'number') this.blockSubscriptions.forEach(listener => listener(value));
       }).then(subscription => { this.blockSubscription = subscription; }).catch(error => {
         logger.warn('Shared block subscription unavailable', {
-          component: 'AlchemyProvider', chain: this.chain,
+          component: 'RpcAccessProvider', chain: this.chain,
           error: error instanceof Error ? error.message : String(error),
         });
       }).finally(() => { this.blockSubscriptionPromise = null; });
     }
   }
 
-  /**
-   * Subscribe to pending transactions (WebSocket)
-   */
+  /** Subscribe to pending transaction hashes through the provider mesh. */
   onPendingTransaction(callback: (txHash: string) => void): void {
     this.pendingSubscriptions.push(callback);
     if (!this.pendingSubscription && !this.pendingSubscriptionPromise) {
@@ -1125,16 +1093,14 @@ export class AlchemyProvider {
         if (typeof value === 'string') this.pendingSubscriptions.forEach(listener => listener(value));
       }).then(subscription => { this.pendingSubscription = subscription; }).catch(error => {
         logger.warn('Shared pending subscription unavailable', {
-          component: 'AlchemyProvider', chain: this.chain,
+          component: 'RpcAccessProvider', chain: this.chain,
           error: error instanceof Error ? error.message : String(error),
         });
       }).finally(() => { this.pendingSubscriptionPromise = null; });
     }
   }
 
-  /**
-   * Send raw transaction
-   */
+  /** Send raw transaction. */
   async sendTransaction(signedTx: string): Promise<string> {
     getCryptocrawlGovernance().requireAllowed('SUBMIT_TX', { chain: this.chain });
     await this.rateLimiter.waitForSlot();
@@ -1144,9 +1110,7 @@ export class AlchemyProvider {
     return response.hash;
   }
 
-  /**
-   * Get transaction receipt
-   */
+  /** Get transaction receipt. */
   async getTransactionReceipt(txHash: string): Promise<ethers.providers.TransactionReceipt | null> {
     return this.execute('receipts', provider => provider.getTransactionReceipt(txHash));
   }
@@ -1165,9 +1129,7 @@ export class AlchemyProvider {
     }
   }
 
-  /**
-   * Check if error is a rate limit error
-   */
+  /** Check if error is a rate limit error. */
   private isRateLimitError(error: unknown): boolean {
     if (error instanceof Error) {
       const message = error.message.toLowerCase();
@@ -1179,16 +1141,12 @@ export class AlchemyProvider {
     return false;
   }
 
-  /**
-   * Get rate limiter stats
-   */
+  /** Get rate limiter stats. */
   getRateLimitStats() {
     return this.rateLimiter.getStats();
   }
 
-  /**
-   * Cleanup resources
-   */
+  /** Cleanup compatibility-local resources. */
   async destroy(): Promise<void> {
     await this.blockSubscription?.unsubscribe();
     await this.pendingSubscription?.unsubscribe();
@@ -1277,9 +1235,7 @@ export class EtherscanProvider {
     }
   }
 
-  /**
-   * Make API request to Etherscan
-   */
+  /** Make API request to Etherscan. */
   private async request<T>(params: Record<string, string>): Promise<T> {
     const cacheKey = this.getCacheKey(params);
     const cached = this.getCached<T>(cacheKey);
@@ -1329,9 +1285,7 @@ export class EtherscanProvider {
     return requestPromise as Promise<T>;
   }
 
-  /**
-   * Get account balance
-   */
+  /** Get account balance. */
   async getBalance(address: string): Promise<bigint> {
     const result = await this.request<string>({
       module: 'account',
@@ -1342,9 +1296,7 @@ export class EtherscanProvider {
     return BigInt(result);
   }
 
-  /**
-   * Get token transfers for address
-   */
+  /** Get token transfers for address. */
   async getTokenTransfers(address: string, options?: {
     contractAddress?: string;
     startBlock?: number;
@@ -1379,9 +1331,7 @@ export class EtherscanProvider {
     }));
   }
 
-  /**
-   * Get normal transactions for address
-   */
+  /** Get normal transactions for address. */
   async getTransactions(address: string, options?: {
     startBlock?: number;
     endBlock?: number;
@@ -1416,9 +1366,7 @@ export class EtherscanProvider {
     }));
   }
 
-  /**
-   * Get contract ABI (verified contracts only)
-   */
+  /** Get contract ABI (verified contracts only). */
   async getContractABI(contractAddress: string): Promise<any[] | null> {
     try {
       const result = await this.request<string>({
@@ -1432,9 +1380,7 @@ export class EtherscanProvider {
     }
   }
 
-  /**
-   * Get contract source code and verification status
-   */
+  /** Get contract source code and verification status. */
   async getContractVerification(contractAddress: string): Promise<ContractVerification> {
     try {
       const result = await this.request<any[]>({
@@ -1460,9 +1406,7 @@ export class EtherscanProvider {
     }
   }
 
-  /**
-   * Get gas oracle data
-   */
+  /** Get gas oracle data. */
   async getGasOracle(): Promise<{ SafeGasPrice: string; ProposeGasPrice: string; FastGasPrice: string }> {
     return await this.request({
       module: 'gastracker',
@@ -1470,9 +1414,7 @@ export class EtherscanProvider {
     });
   }
 
-  /**
-   * Get ERC20 token info
-   */
+  /** Get ERC20 token info. */
   async getTokenInfo(contractAddress: string): Promise<{
     name: string;
     symbol: string;
@@ -1500,9 +1442,7 @@ export class EtherscanProvider {
     }
   }
 
-  /**
-   * Check if error is rate limit error
-   */
+  /** Check if error is rate limit error. */
   private isRateLimitError(error: unknown): boolean {
     if (error instanceof Error) {
       const message = error.message.toLowerCase();
@@ -1513,9 +1453,7 @@ export class EtherscanProvider {
     return false;
   }
 
-  /**
-   * Get rate limiter stats
-   */
+  /** Get rate limiter stats. */
   getRateLimitStats() {
     return this.rateLimiter.getStats();
   }
@@ -1526,49 +1464,40 @@ export class EtherscanProvider {
 // ============================================================================
 
 export class BlockchainAPIService {
-  private alchemyProviders: Map<SupportedChain, AlchemyProvider> = new Map();
+  private rpcProviders: Map<SupportedChain, AlchemyProvider> = new Map();
   private etherscanProviders: Map<SupportedChain, EtherscanProvider> = new Map();
   private initialized: boolean = false;
 
-  /**
-   * Initialize providers for all chains
-   */
+  /** Initialize access/data facades for all requested chains. */
   async initialize(chains: SupportedChain[] = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base']): Promise<void> {
     if (this.initialized) return;
 
     logger.info('Initializing Blockchain API Service', {
       component: 'BlockchainAPIService',
-      chains
+      chains,
+      accessAuthority: 'multiProviderRpcManager',
+      alchemyOperationalAuthority: false,
     });
 
     await multiProviderRpcManager.initialize(chains);
 
     for (const chain of chains) {
-      // Keep the legacy accessor as a manager-backed compatibility facade.
-      if (process.env.ALCHEMY_API_KEY?.trim()) {
-        const alchemyProvider = new AlchemyProvider({
+      const rpcProvider = new AlchemyProvider({
+        chain,
+        region: (process.env.EDEN_REGION as EdenRegion) || 'us-east-1'
+      });
+      try {
+        await rpcProvider.initialize();
+        this.rpcProviders.set(chain, rpcProvider);
+      } catch (error) {
+        logger.warn('Shared RPC unavailable for compatibility access facade', {
+          component: 'BlockchainAPIService',
           chain,
-          alchemyApiKey: process.env.ALCHEMY_API_KEY,
-          region: (process.env.EDEN_REGION as EdenRegion) || 'us-east-1'
+          error: error instanceof Error ? error.message : String(error),
         });
-        try {
-          await alchemyProvider.initialize();
-          this.alchemyProviders.set(chain, alchemyProvider);
-        } catch (error) {
-          logger.warn('Shared RPC unavailable for Alchemy compatibility facade', {
-            component: 'BlockchainAPIService',
-            chain,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          await alchemyProvider.destroy();
-        }
-      } else {
-        logger.info('Alchemy is unconfigured; continuing without legacy compatibility facade', {
-          component: 'BlockchainAPIService', chain,
-        });
+        await rpcProvider.destroy();
       }
 
-      // Initialize Etherscan (data layer)
       const etherscanProvider = new EtherscanProvider({
         chain,
         etherscanApiKey: process.env.ETHERSCAN_API_KEY
@@ -1579,25 +1508,27 @@ export class BlockchainAPIService {
     this.initialized = true;
     logger.info('Blockchain API Service initialized', {
       component: 'BlockchainAPIService',
-      alchemyChains: Array.from(this.alchemyProviders.keys()),
-      etherscanChains: Array.from(this.etherscanProviders.keys())
+      rpcChains: Array.from(this.rpcProviders.keys()),
+      etherscanChains: Array.from(this.etherscanProviders.keys()),
+      alchemyOperationalAuthority: false,
     });
   }
 
-  /**
-   * Get Alchemy provider for chain (access operations)
-   */
-  getAlchemy(chain: SupportedChain): AlchemyProvider {
-    const provider = this.alchemyProviders.get(chain);
+  /** Get canonical provider-mesh access facade for a chain. */
+  getRpc(chain: SupportedChain): AlchemyProvider {
+    const provider = this.rpcProviders.get(chain);
     if (!provider) {
-      throw new Error(`Alchemy provider not initialized for chain: ${chain}`);
+      throw new Error(`RPC access provider not initialized for chain: ${chain}`);
     }
     return provider;
   }
 
-  /**
-   * Get Etherscan provider for chain (data operations)
-   */
+  /** @deprecated Historical alias; returns the same provider-mesh facade as getRpc. */
+  getAlchemy(chain: SupportedChain): AlchemyProvider {
+    return this.getRpc(chain);
+  }
+
+  /** Get Etherscan provider for chain (data operations). */
   getEtherscan(chain: SupportedChain): EtherscanProvider {
     const provider = this.etherscanProviders.get(chain);
     if (!provider) {
@@ -1606,14 +1537,12 @@ export class BlockchainAPIService {
     return provider;
   }
 
-  /**
-   * Get all provider stats
-   */
+  /** Get all provider stats. */
   getStats(): Record<string, any> {
     const stats: Record<string, any> = {};
 
-    Array.from(this.alchemyProviders.entries()).forEach(([chain, provider]) => {
-      stats[`alchemy_${chain}`] = {
+    Array.from(this.rpcProviders.entries()).forEach(([chain, provider]) => {
+      stats[`rpc_${chain}`] = {
         rateLimitStats: provider.getRateLimitStats(),
         avgLatency: provider.getAverageLatency(),
         health: provider.getHealth(),
@@ -1629,14 +1558,12 @@ export class BlockchainAPIService {
     return stats;
   }
 
-  /**
-   * Cleanup all resources
-   */
+  /** Cleanup all compatibility-local resources. */
   async destroy(): Promise<void> {
-    for (const provider of Array.from(this.alchemyProviders.values())) {
+    for (const provider of Array.from(this.rpcProviders.values())) {
       await provider.destroy();
     }
-    this.alchemyProviders.clear();
+    this.rpcProviders.clear();
     this.etherscanProviders.clear();
     this.initialized = false;
   }
