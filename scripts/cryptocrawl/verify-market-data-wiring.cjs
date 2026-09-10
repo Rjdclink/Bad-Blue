@@ -19,7 +19,10 @@ const providers = read('server/services/cryptocrawl/intelligence/market-data-pro
 const graph = read('server/services/cryptocrawl/discovery/opportunity-graph.ts');
 const faucet = read('server/services/cryptocrawl/faucet/autonomous-faucet.ts');
 const coingecko = read('server/services/cryptocrawl/bridge/coingecko-client.ts');
-const alchemy = read('server/services/cryptocrawl/capital-free/alchemy-integration.ts');
+const providerMesh = read('server/services/cryptocrawl/runtime/dynamic-rpc-provider-wiring.ts');
+const pending = read('server/services/cryptocrawl/capital-free/provider-mesh-pending-stream.ts');
+const pressure = read('server/services/cryptocrawl/capital-free/provider-mesh-mempool-analysis.ts');
+const compatibility = read('server/services/cryptocrawl/capital-free/alchemy-integration.ts');
 const environment = read('.env.example');
 
 assertContains(providers, 'process.env.COINCAP_API_KEY', 'CoinCap credential is environment-sourced');
@@ -46,12 +49,26 @@ assertContains(graph, 'syntheticEvidenceAllowed: false', 'canonical graph forbid
 assertNotContains(faucet, 'marketDataProviders.discoverUniverse()', 'retired faucet facade cannot own market discovery');
 assertContains(coingecko, "'x-cg-demo-api-key'", 'existing CoinGecko price client uses Demo authentication');
 
-assertContains(alchemy, "'alchemy_pendingTransactions'", 'Alchemy pending transaction subscription');
-assertContains(alchemy, 'eth_subscribe', 'Alchemy WebSocket subscription transport');
-assertContains(alchemy, 'pollPendingTransactions', 'Alchemy polling fallback');
+assertContains(providerMesh, "provider: 'dRPCPublicStreaming'", 'provider mesh registers a no-key streaming replacement');
+assertContains(providerMesh, 'alchemyOperationalAuthority: false', 'provider mesh denies Alchemy operational authority');
+assertContains(pending, "params: ['drpc_pendingTransactions']", 'pending transaction evidence uses the dRPC full-pending replacement');
+assertContains(pressure, "method: 'txpool_content'", 'mempool pressure is independently measured');
+assertContains(pressure, 'mempool_pressure:measured_not_inferred', 'mempool pressure is never inferred from a filtered subset');
+assertNotContains(compatibility, 'g.alchemy.com', 'legacy compatibility surface contains no Alchemy endpoint');
+assertNotContains(compatibility, 'alchemy_pendingTransactions', 'legacy compatibility surface contains no Alchemy enhanced request');
+assertNotContains(compatibility, 'process.env.ALCHEMY_API_KEY', 'legacy compatibility surface does not consume an Alchemy key');
 
-for (const key of ['COINGECKO_API_KEY=', 'COINSTATS_API_KEY=', 'ZEROX_API_KEY=']) {
+for (const key of [
+  'COINGECKO_API_KEY=',
+  'COINSTATS_API_KEY=',
+  'ZEROX_API_KEY=',
+  'CRYPTOCRAWL_COST_SAFE_PUBLIC_RPC_ENABLED=true',
+  'CRYPTOCRAWL_FREE_STREAMING_RPC_ENABLED=true',
+  'CRYPTOCRAWL_PROVIDER_MESH_MEMPOOL_ENABLED=true',
+]) {
   assertContains(environment, key, `${key} is documented in the environment template`);
 }
+assertNotContains(environment, 'ALCHEMY_API_KEY=', 'environment template must not reintroduce Alchemy');
+assertNotContains(environment, 'ALCHEMY_GAS_POLICY_ID=', 'environment template must not reintroduce Alchemy gas sponsorship');
 
-console.log('Canonical market-data wiring verification passed.');
+console.log('Canonical market-data / provider-mesh wiring verification passed.');
