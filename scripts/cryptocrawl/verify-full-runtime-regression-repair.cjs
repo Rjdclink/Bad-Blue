@@ -72,12 +72,20 @@ assert.match(source, /getReserveTokensAddresses/);
 assert.match(source, /borrowCapacityAssetUnits/);
 assert.match(source, /availablePrincipal = minBigInt\(minBigInt\(allowance, liquid\), borrowCapacityAssetUnits\)/);
 
-// Freshness/failover: refresh single-flight, provider health can be re-probed, settlement has bounded reconnect/backfill.
+// Freshness/failover: refresh single-flight, provider health can be re-probed, and Ghost settlement
+// keeps every monitored address while containing WebSocket/provider failure inside the route.
 assert.match(providerMesh, /providerHealthTtlMs/);
 assert.match(providerMesh, /lastProbeAt/);
 assert.match(chainEvents, /backfillSettlementLogs/);
-assert.match(chainEvents, /timed out after/);
-assert.match(chainEvents, /reconnectScheduled: true/);
+assert.match(chainEvents, /input\.addresses\.map\(address => input\.provider\.getLogs/);
+assert.doesNotMatch(chainEvents, /address:\s*input\.addresses/);
+assert.match(chainEvents, /from 'ws'/);
+assert.match(chainEvents, /eth_subscribe/);
+assert.doesNotMatch(chainEvents, /new providers\.WebSocketProvider/);
+assert.match(chainEvents, /rate limit\|too many requests\|throttl/);
+assert.match(chainEvents, /MAX_RECONNECT_DELAY_MS/);
+assert.match(chainEvents, /reconnectDelayMs/);
+assert.match(chainEvents, /routeLocalFailure: true/);
 
 // Payout truth: exact 90/10 split and recipient-bound terminal proof, no fictitious fallback state.
 assert.match(ingest, /PROFIT_SPLIT_DENOMINATOR = 10n/);
