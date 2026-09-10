@@ -10,6 +10,7 @@ const EVENT_INTERFACE = new ethers.utils.Interface([
   'event MatchedIntentPairSettled(address indexed ownerA,address indexed ownerB,address tokenA,address tokenB,uint256 feeA,uint256 feeB,address profitRecipient)',
   'event VaultCreditSettled(address indexed vault,address indexed asset,uint256 principal,uint256 sourceFee,uint256 realizedProfit,address indexed profitRecipient)',
   'event BrokeredAtomicCreditSettled(address indexed vault,address indexed borrower,address indexed asset,uint256 principal,uint256 sourceFee,uint256 borrowerFee,uint256 realizedSpread,address profitRecipient)',
+  'event ExternalBrokeredAtomicCreditSettled(address indexed lender,address indexed borrower,address indexed asset,uint256 principal,uint256 sourceFee,uint256 borrowerFee,uint256 realizedSpread,address profitRecipient)',
 ]);
 
 function addr(value: unknown): string { return ethers.utils.getAddress(String(value)); }
@@ -46,6 +47,27 @@ async function enqueueProfit(input: {
   return true;
 }
 
+async function recordVerifiedBorrower(input: {
+  chain: string;
+  borrower: string;
+  asset: string;
+  transactionHash: string;
+}): Promise<void> {
+  await upsertGhostWalletVenue({
+    venueId: `erc3156-borrower:${input.chain}:${input.borrower.toLowerCase()}`,
+    chain: input.chain,
+    protocol: 'erc3156',
+    role: 'borrower',
+    address: input.borrower,
+    asset: input.asset,
+    adapter: 'erc3156_flash_borrower',
+    discoveredFrom: 'successful_broker_settlement',
+    verified: true,
+    capabilities: { sameTransactionRepaymentObserved: true, atomicCallback: true },
+    metadata: { lastSuccessfulSettlementTx: input.transactionHash },
+  });
+}
+
 export async function ingestGhostWalletSettlementLog(chainValue: string, log: providers.Log): Promise<number> {
   const chain = chainValue.trim().toLowerCase();
   const primary = resolvePrimaryProfitPayoutAddress();
@@ -57,26 +79,36 @@ export async function ingestGhostWalletSettlementLog(chainValue: string, log: pr
 
   if (parsed.name === 'AtomicCreditSettled') {
     if (addr(args.profitRecipient).toLowerCase() !== primary.toLowerCase()) return 0;
-    if (await enqueueProfit({ chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
-      asset: addr(args.asset), amount: amount(args.realizedProfit), sourceKind: 'atomic_credit' })) enqueued += 1;
+    if (await enqueueProfit({
+      chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
+      asset: addr(args.asset), amount: amount(args.realizedProfit), sourceKind: 'atomic_credit',
+    })) enqueued += 1;
   } else if (parsed.name === 'AtomicLiabilityCycleSettled') {
     if (addr(args.profitRecipient).toLowerCase() !== primary.toLowerCase()) return 0;
-    if (await enqueueProfit({ chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
-      asset: addr(args.profitAsset), amount: amount(args.realizedProfit), sourceKind: 'atomic_liability_cycle' })) enqueued += 1;
+    if (await enqueueProfit({
+      chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
+      asset: addr(args.profitAsset), amount: amount(args.realizedProfit), sourceKind: 'atomic_liability_cycle',
+    })) enqueued += 1;
   } else if (parsed.name === 'MatchedIntentPairSettled') {
     if (addr(args.profitRecipient).toLowerCase() !== primary.toLowerCase()) return 0;
     const tokenA = addr(args.tokenA);
     const tokenB = addr(args.tokenB);
-    if (await enqueueProfit({ chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
-      asset: tokenB, amount: amount(args.feeA), sourceKind: 'matched_intent_fee_a' })) enqueued += 1;
-    if (await enqueueProfit({ chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
-      asset: tokenA, amount: amount(args.feeB), sourceKind: 'matched_intent_fee_b' })) enqueued += 1;
+    if (await enqueueProfit({
+      chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
+      asset: tokenB, amount: amount(args.feeA), sourceKind: 'matched_intent_fee_a',
+    })) enqueued += 1;
+    if (await enqueueProfit({
+      chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
+      asset: tokenA, amount: amount(args.feeB), sourceKind: 'matched_intent_fee_b',
+    })) enqueued += 1;
   } else if (parsed.name === 'VaultCreditSettled') {
     if (addr(args.profitRecipient).toLowerCase() !== primary.toLowerCase()) return 0;
     const asset = addr(args.asset);
     const vault = addr(args.vault);
-    if (await enqueueProfit({ chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
-      asset, amount: amount(args.realizedProfit), sourceKind: 'vault_atomic_credit' })) enqueued += 1;
+    if (await enqueueProfit({
+      chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
+      asset, amount: amount(args.realizedProfit), sourceKind: 'vault_atomic_credit',
+    })) enqueued += 1;
     await upsertGhostWalletVenue({
       venueId: `ghost-vault:${chain}:${vault.toLowerCase()}`, chain, protocol: 'ghost_wallet_erc4626', role: 'lender',
       address: vault, asset, adapter: 'ghost_wallet_capital_vault', discoveredFrom: 'verified_settlement_event', verified: true,
@@ -88,19 +120,46 @@ export async function ingestGhostWalletSettlementLog(chainValue: string, log: pr
     const borrower = addr(args.borrower);
     const vault = addr(args.vault);
     const asset = addr(args.asset);
-    if (await enqueueProfit({ chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
-      asset, amount: amount(args.realizedSpread), sourceKind: 'brokered_atomic_credit' })) enqueued += 1;
+    if (await enqueueProfit({
+      chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
+      asset, amount: amount(args.realizedSpread), sourceKind: 'brokered_atomic_credit',
+    })) enqueued += 1;
     await Promise.all([
-      upsertGhostWalletVenue({
-        venueId: `erc3156-borrower:${chain}:${borrower.toLowerCase()}`, chain, protocol: 'erc3156', role: 'borrower',
-        address: borrower, asset, adapter: 'erc3156_flash_borrower', discoveredFrom: 'successful_broker_settlement', verified: true,
-        capabilities: { sameTransactionRepaymentObserved: true, atomicCallback: true },
-        metadata: { lastSuccessfulSettlementTx: log.transactionHash },
-      }),
+      recordVerifiedBorrower({ chain, borrower, asset, transactionHash: log.transactionHash }),
       upsertGhostWalletVenue({
         venueId: `ghost-vault:${chain}:${vault.toLowerCase()}`, chain, protocol: 'ghost_wallet_erc4626', role: 'lender',
         address: vault, asset, adapter: 'ghost_wallet_capital_vault', discoveredFrom: 'successful_broker_settlement', verified: true,
         capabilities: { sameTransactionSettlement: true, repaymentFailureReverts: true },
+        metadata: { lastSuccessfulSettlementTx: log.transactionHash },
+      }),
+    ]);
+  } else if (parsed.name === 'ExternalBrokeredAtomicCreditSettled') {
+    if (addr(args.profitRecipient).toLowerCase() !== primary.toLowerCase()) return 0;
+    const lender = addr(args.lender);
+    const borrower = addr(args.borrower);
+    const asset = addr(args.asset);
+    if (await enqueueProfit({
+      chain, transactionHash: log.transactionHash, blockNumber: log.blockNumber, logIndex: log.logIndex,
+      asset, amount: amount(args.realizedSpread), sourceKind: 'external_erc3156_intermediation',
+    })) enqueued += 1;
+    await Promise.all([
+      recordVerifiedBorrower({ chain, borrower, asset, transactionHash: log.transactionHash }),
+      upsertGhostWalletVenue({
+        venueId: `erc3156-lender:${chain}:${lender.toLowerCase()}:${asset.toLowerCase()}`,
+        chain,
+        protocol: 'erc3156',
+        role: 'lender',
+        address: lender,
+        asset,
+        adapter: 'erc3156_flash_lender',
+        discoveredFrom: 'successful_external_broker_settlement',
+        verified: true,
+        capabilities: {
+          sameTransactionSettlementObserved: true,
+          repaymentFailureReverts: true,
+          sourceFeeObservedBaseUnits: amount(args.sourceFee).toString(),
+          borrowerFeeObservedBaseUnits: amount(args.borrowerFee).toString(),
+        },
         metadata: { lastSuccessfulSettlementTx: log.transactionHash },
       }),
     ]);
