@@ -37,9 +37,11 @@ const INTERMEDIARY_ADMIN_ABI = [
   'function allowedAssets(address) view returns (bool)',
   'function allowedApprovalTokens(address) view returns (bool)',
   'function allowedVaults(address) view returns (bool)',
+  'function brokerVaultForAsset(address) view returns (address)',
   'function setAllowedAsset(address token,bool allowed)',
   'function setAllowedApprovalToken(address token,bool allowed)',
   'function setAllowedVault(address vault,bool allowed)',
+  'function setBrokerVaultForAsset(address token,address vault)',
 ];
 const VAULT_IDENTITY_ABI = [
   'function asset() view returns (address)',
@@ -276,31 +278,40 @@ async function ensurePermissions(input: {
   const iface = new ethers.utils.Interface(INTERMEDIARY_ADMIN_ABI);
   const calls: Array<{ to: string; data: string; value?: BigNumber }> = [];
   for (const row of input.vaults) {
-    const [assetAllowed, approvalAllowed, vaultAllowed] = await Promise.all([
+    const [assetAllowed, approvalAllowed, vaultAllowed, brokerVaultRaw] = await Promise.all([
       contract.allowedAssets(row.asset),
       contract.allowedApprovalTokens(row.asset),
       contract.allowedVaults(row.vault),
+      contract.brokerVaultForAsset(row.asset),
     ]);
     if (!assetAllowed) calls.push({ to: input.intermediary, data: iface.encodeFunctionData('setAllowedAsset', [row.asset, true]) });
     if (!approvalAllowed) calls.push({ to: input.intermediary, data: iface.encodeFunctionData('setAllowedApprovalToken', [row.asset, true]) });
     if (!vaultAllowed) calls.push({ to: input.intermediary, data: iface.encodeFunctionData('setAllowedVault', [row.vault, true]) });
+    if (String(brokerVaultRaw).toLowerCase() !== row.vault.toLowerCase()) {
+      calls.push({ to: input.intermediary, data: iface.encodeFunctionData('setBrokerVaultForAsset', [row.asset, row.vault]) });
+    }
   }
-  if (calls.length === 0) return;
-  await sponsoredInfrastructureCall({
-    chain: input.chain,
-    chainId: input.chainId,
-    wallet: input.wallet,
-    runtime: input.runtime,
-    calls,
-    operation: 'ghost_wallet_permissions',
-  });
+  if (calls.length > 0) {
+    await sponsoredInfrastructureCall({
+      chain: input.chain,
+      chainId: input.chainId,
+      wallet: input.wallet,
+      runtime: input.runtime,
+      calls,
+      operation: 'ghost_wallet_permissions',
+    });
+  }
   for (const row of input.vaults) {
-    const [assetAllowed, approvalAllowed, vaultAllowed] = await Promise.all([
+    const [assetAllowed, approvalAllowed, vaultAllowed, brokerVaultRaw] = await Promise.all([
       contract.allowedAssets(row.asset),
       contract.allowedApprovalTokens(row.asset),
       contract.allowedVaults(row.vault),
+      contract.brokerVaultForAsset(row.asset),
     ]);
     if (!assetAllowed || !approvalAllowed || !vaultAllowed) throw new Error('Ghost Wallet permission bootstrap did not verify terminally');
+    if (String(brokerVaultRaw).toLowerCase() !== row.vault.toLowerCase()) {
+      throw new Error('Ghost Wallet ERC-3156 broker vault binding did not verify terminally');
+    }
   }
 }
 

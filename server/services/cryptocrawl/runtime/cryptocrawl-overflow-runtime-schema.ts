@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 26;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v26';
+const SCHEMA_VERSION = 27;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v27';
 
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
@@ -60,6 +60,7 @@ const MIGRATIONS = [
   '054_cryptocrawler_polymarket_redemption_recovery.sql',
   '055_cryptocrawler_coinbase_system_owned_capital.sql',
   '056_subagent_runtime_prerequisites.sql',
+  '057_cryptocrawler_ghost_wallet_runtime.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
@@ -130,6 +131,9 @@ const REQUIRED_TABLES = [
   'private.cryptara_state_snapshots',
   'private.cryptara_patterns',
   'private.cryptara_outbox',
+  'private.cryptocrawler_ghost_wallet_work',
+  'private.cryptocrawler_ghost_wallet_venues',
+  'private.cryptocrawler_ghost_wallet_runtime_state',
   'public.subagent_capabilities',
   'public.subagent_learning_patterns',
   'public.subagent_performance_metrics',
@@ -146,6 +150,7 @@ const REQUIRED_FUNCTIONS = [
   'private.cryptocrawler_claim_resource_slot(text,integer,integer,text,text,text,timestamp with time zone)',
   'private.cryptocrawler_seed_cex_system_owned_lot()',
   'private.cryptocrawler_seed_polymarket_system_owned_cash_lot()',
+  'private.cryptocrawler_ghost_wallet_notify_work()',
   'public.cryptocrawler_treasury_worker_claim(text,integer)',
   'public.cryptocrawler_treasury_worker_release(text)',
   'public.cryptocrawler_terminal_sweep_truth_guard()',
