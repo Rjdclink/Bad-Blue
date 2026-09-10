@@ -32,11 +32,18 @@ assert.match(engine, /profitLadderAuthority: false/);
 assert.match(engine, /100_percent_realized_net_direct_to_canonical_wallet/);
 assert.match(engine, /arbitrageSystemOwnedGasFallbackAllowed: false/);
 assert.match(engine, /manualRailwayConfigurationRequired: false/);
+assert.match(engine, /GHOST_WALLET_LIVE_EXECUTION/);
+assert.match(engine, /GHOST_WALLET_LIVE_CONFIRMATION/);
+assert.doesNotMatch(engine, /CRYPTO_ARBITRAGE_LIVE_EXECUTION/);
 assert.doesNotMatch(engine, /setInterval\(/);
 
 assert.match(intermediary, /borrower_repayment_not_exact/);
 assert.match(intermediary, /spread_reconciliation_failed/);
 assert.match(intermediary, /incremental_liability_not_repaid/);
+assert.match(intermediary, /minimumBrokerSpreadBps = 0/);
+assert.match(intermediary, /configuredSpread > 0 \? configuredSpread : 1/);
+assert.match(intermediary, /borrowerFee > sourceFee/);
+assert.doesNotMatch(intermediary, /minimumBrokerSpreadBps = 1;/);
 assert.match(vault, /atomic_credit_not_repaid/);
 assert.match(vault, /VIRTUAL_SHARES/);
 assert.match(vault, /VIRTUAL_ASSETS/);
@@ -100,7 +107,11 @@ console.log(JSON.stringify({
   canonicalFlashPreserved: true,
   alternativeExecutorSubordinate: true,
   ghostWalletProfitLadderAuthority: false,
+  ghostWalletDedicatedLiveAuthority: true,
   atomicRepaymentFailClosed: true,
+  brokerSpreadFloorBps: 0,
+  brokerMinimumPositiveSpreadBaseUnits: 1,
+  subOneBpsBusinessAdmissible: true,
   payoutReconciled: true,
   payoutAsset: 'ETH',
   payoutNetwork: 'ethereum',
