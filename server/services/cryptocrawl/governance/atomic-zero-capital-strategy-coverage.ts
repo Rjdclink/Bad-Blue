@@ -117,15 +117,15 @@ const COSTS = [
   'settlement',
 ] as const;
 
-// Only source classes with an implemented source-specific settlement path belong
-// here. protocol_deferred_settlement_capital remains a reserved type for a future
-// callback-specific executor and is deliberately not admitted by current policy.
-const ATOMIC_EXTERNAL_PRINCIPAL_SOURCES: readonly PrincipalSourceClass[] = [
+// Generic same-chain arbitrage may use only capital classes whose source-specific
+// executor is currently wired into the canonical ZERO_CAPITAL_ATOMIC money boundary.
+// Euler debt assumption remains liquidation-specific. Signed-intent/netting flow
+// remains a separate Ghost Wallet intermediation surface rather than fabricated cash.
+// Protocol-deferred settlement stays a reserved type until a callback-specific
+// executor is independently implemented and verified.
+const GENERIC_ATOMIC_EXTERNAL_PRINCIPAL_SOURCES: readonly PrincipalSourceClass[] = [
   'temporary_external_flash_liquidity',
   'temporary_external_delegated_credit',
-  'temporary_external_debt_assumption',
-  'counterparty_signed_intent_capital',
-  'counterparty_netting_capital',
   'permissionless_vault_atomic_capital',
 ] as const;
 
@@ -144,31 +144,31 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
   {
     topology: 'DEX_ATOMIC',
     executionFamily: 'same-chain DEX atomic arbitrage',
-    principalSources: ATOMIC_EXTERNAL_PRINCIPAL_SOURCES,
+    principalSources: GENERIC_ATOMIC_EXTERNAL_PRINCIPAL_SOURCES,
     gasSources: ['opportunity_backed_external_sponsorship', 'provider_sponsored_zero_operator_cost', 'proven_system_owned_native'],
     collateralSources: ['none'],
     coldStart: 'external_resources_possible',
     atomicity: 'same_transaction_atomic',
-    repaymentModel: 'exact external principal/debt/counterparty obligation is settled inside the same transaction before residual profit exists',
-    settlementModel: 'successful receipt plus source-specific repayment evidence plus receiver profit event plus terminal realized economics',
+    repaymentModel: 'measured flash/delegated/vault obligation is settled inside the same transaction before residual profit exists',
+    settlementModel: 'successful receipt plus source-specific repayment evidence plus terminal realized economics',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
     personalGasAllowed: false,
     personalCollateralAllowed: false,
     accountWideBalanceCreatesOwnership: false,
     discoveryContinuesWhenExecutionBlocked: true,
-    executionReadinessRule: 'fresh exact quote + source-specific capital proof + verified receiver + gas provenance + exact simulation + strictly positive all-in net',
-    researchBasis: ['Morpho/Aave/Balancer flash liquidity', 'Aave credit delegation', 'Euler position-transfer liquidation', 'EIP-712 signed intents and coincidence-of-wants clearing', 'permissionless atomic capital vaults'],
+    executionReadinessRule: 'fresh exact quote + source-specific executable capital proof + gas provenance + exact simulation + strictly positive all-in net',
+    researchBasis: ['Morpho/Aave/Balancer flash liquidity', 'Aave credit delegation', 'permissionless atomic capital vaults'],
   },
   {
     topology: 'ZERO_CAPITAL_ATOMIC',
     executionFamily: 'canonical zero-capital atomic route engine',
-    principalSources: ATOMIC_EXTERNAL_PRINCIPAL_SOURCES,
+    principalSources: GENERIC_ATOMIC_EXTERNAL_PRINCIPAL_SOURCES,
     gasSources: ['opportunity_backed_external_sponsorship', 'provider_sponsored_zero_operator_cost', 'proven_system_owned_native'],
     collateralSources: ['none'],
     coldStart: 'external_resources_possible',
     atomicity: 'same_transaction_atomic',
-    repaymentModel: 'selected measured external capital source is fully settled inside the same transaction; an unmet repayment/minimum-profit condition fails closed',
+    repaymentModel: 'selected measured flash/delegated/vault source is fully settled inside the same transaction; an unmet repayment/minimum-profit condition fails closed',
     settlementModel: 'receipt + source-specific repayment proof + realized BPS + source-appropriate profit-recipient evidence',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
@@ -177,7 +177,7 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
     accountWideBalanceCreatesOwnership: false,
     discoveryContinuesWhenExecutionBlocked: true,
     executionReadinessRule: 'route-local resource proof + gas provenance + exact source liquidity/fee/allowance proof + exact call/gas + positive residual profit',
-    researchBasis: ['Morpho/Aave/Balancer flash liquidity', 'Aave credit delegation', 'Euler debt-assumption liquidation', 'EIP-712 signed intents', 'coincidence-of-wants netting', 'permissionless atomic vault capital', 'ERC-4337/paymaster sponsorship', 'builder-sponsored bundles'],
+    researchBasis: ['Morpho/Aave/Balancer flash liquidity', 'Aave credit delegation', 'permissionless atomic vault capital', 'ERC-4337/paymaster sponsorship', 'builder-sponsored bundles'],
   },
   {
     topology: 'LIQUIDATION',
@@ -348,6 +348,8 @@ export function getAtomicZeroCapitalStrategyCoverageSnapshot() {
       strictPositiveNetRequired: true as const,
       predictionDirectionalRequiresCalibratedConservativeAuthority: true as const,
       alternativeAtomicCapitalRequiresSourceSpecificMeasuredProof: true as const,
+      genericDexDebtAssumptionEnabled: false as const,
+      genericDexCounterpartyFlowCapitalEnabled: false as const,
       protocolDeferredSettlementExecutionEnabled: false as const,
     },
     executionAuthority: false as const,
