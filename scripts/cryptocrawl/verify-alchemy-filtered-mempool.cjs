@@ -21,9 +21,13 @@ const observability = read('server/services/cryptocrawl/integration/filtered-mem
 const runtime = read('server/services/cryptocrawl/integration/canonical-runtime-wiring.ts');
 const coreRuntime = read('server/services/cryptocrawl/runtime/core-runtime.ts');
 const providerMesh = read('server/services/cryptocrawl/runtime/dynamic-rpc-provider-wiring.ts');
+const sharedRpc = read('server/services/cryptocrawl/api/blockchain-providers.ts');
+const sponsorship = read('server/services/cryptocrawl/strategies/gas-sponsorship.ts');
 const zeroCapital = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
 const telemetry = read('server/services/cryptocrawl/integration/telemetry-bootstrap.ts');
 const runtimeObservability = read('server/services/cryptocrawl/integration/runtime-observability.ts');
+const envExample = read('.env.example');
+const railwayEnvExample = read('.env.railway.example');
 
 requireText(stream, "export type ProviderMeshPendingNetwork = 'ethereum' | 'polygon'", 'replacement pending support preserves the exact bounded network scope');
 requireText(stream, "params: ['drpc_pendingTransactions']", 'free full-transaction pending subscription is used');
@@ -111,6 +115,29 @@ requireText(providerMesh, 'alchemyOperationalAuthority: false', 'provider mesh r
 requireText(providerMesh, 'alchemyPaidMempoolAuthority: false', 'provider mesh records no paid Alchemy mempool authority');
 requireText(providerMesh, 'alchemyGasSponsorshipAuthority: false', 'provider mesh records no Alchemy sponsorship authority');
 
+requireText(sharedRpc, 'Alchemy admission is intentionally absent', 'shared RPC manager explicitly excludes Alchemy candidate discovery');
+requireText(sharedRpc, "add('Infura'", 'shared RPC manager preserves Infura as a configured alternative');
+requireText(sharedRpc, "add('QuickNode'", 'shared RPC manager preserves QuickNode as a configured alternative');
+requireText(sharedRpc, "add('Ankr'", 'shared RPC manager preserves Ankr as a configured alternative');
+requireText(sharedRpc, "add('ConfiguredRPC'", 'shared RPC manager preserves configured RPC alternatives');
+requireText(sharedRpc, 'ENHANCED_PENDING_LIST_RETIRED_USE_PROVIDER_MESH_MEMPOOL_ANALYSIS', 'legacy enhanced pending-list call is explicitly retired');
+requireText(sharedRpc, 'getRpc(chain: SupportedChain)', 'legacy blockchain API exposes provider-neutral access');
+requireText(sharedRpc, 'return this.getRpc(chain)', 'historical getAlchemy alias resolves only to provider-neutral access');
+requireText(sharedRpc, 'alchemyOperationalAuthority: false', 'legacy blockchain API logs no Alchemy operational authority');
+forbidText(sharedRpc, 'ALCHEMY_SLUGS', 'shared RPC manager must not retain Alchemy candidate definitions');
+forbidText(sharedRpc, 'process.env.ALCHEMY_API_KEY', 'shared RPC manager must not read Alchemy credentials');
+forbidText(sharedRpc, 'g.alchemy.com', 'shared RPC manager must not contain Alchemy endpoints');
+forbidText(sharedRpc, 'alchemy_pendingTransactions', 'shared RPC manager must not invoke Alchemy enhanced pending APIs');
+
+requireText(sponsorship, "provider: 'retired-hosted-sponsorship'", 'legacy hosted sponsorship is retired');
+requireText(sponsorship, 'ready: false', 'retired hosted sponsorship cannot become ready');
+requireText(sponsorship, 'zeroOperatorCostProven: false', 'retired sponsorship cannot fabricate zero-cost proof');
+requireText(sponsorship, 'HOSTED_GAS_SPONSORSHIP_RETIRED_USE_PROVEN_CANONICAL_FUNDING_ROUTE', 'legacy sponsorship execution fails closed');
+forbidText(sponsorship, 'ALCHEMY_API_KEY', 'sponsorship boundary must not read Alchemy credentials');
+forbidText(sponsorship, 'ALCHEMY_GAS_POLICY_ID', 'sponsorship boundary must not read Alchemy policy identifiers');
+forbidText(sponsorship, 'api.g.alchemy.com', 'sponsorship boundary must not call Alchemy Wallet API');
+forbidText(sponsorship, 'wallet_prepareCalls', 'sponsorship boundary must not prepare provider-billed calls');
+
 requireText(zeroCapital, 'await ensureDynamicRpcProviderWiring()', 'zero-capital provider selection initializes replacement mesh first');
 requireText(zeroCapital, "providerAuthority: 'multiProviderRpcManager_free_and_configured_mesh'", 'zero-capital runtime records provider-mesh authority');
 requireText(zeroCapital, 'alchemyOperationalAuthority: false', 'zero-capital runtime records no Alchemy authority');
@@ -125,10 +152,18 @@ requireText(runtimeObservability, "authority: 'multiProviderRpcManager'", 'runti
 requireText(runtimeObservability, 'alchemyOperationalAuthority: false', 'runtime heartbeat records no Alchemy authority');
 forbidText(runtimeObservability, 'alchemyIntegration', 'runtime heartbeat must not probe Alchemy');
 
+for (const [source, label] of [[envExample, '.env.example'], [railwayEnvExample, '.env.railway.example']]) {
+  requireText(source, 'CRYPTOCRAWL_COST_SAFE_PUBLIC_RPC_ENABLED=true', `${label} enables the cost-safe public mesh`);
+  requireText(source, 'CRYPTOCRAWL_FREE_STREAMING_RPC_ENABLED=true', `${label} enables the free streaming replacement`);
+  requireText(source, 'CRYPTOCRAWL_PROVIDER_MESH_MEMPOOL_ENABLED=true', `${label} enables provider-mesh mempool evidence`);
+  forbidText(source, 'ALCHEMY_API_KEY=', `${label} must not reintroduce an Alchemy credential`);
+  forbidText(source, 'ALCHEMY_GAS_POLICY_ID=', `${label} must not reintroduce hosted gas sponsorship`);
+}
+
 if (failures.length > 0) {
   console.error('[alchemy-free-mempool-replacement] FAIL');
   for (const failure of failures) console.error(` - ${failure}`);
   process.exit(1);
 }
 
-console.log('[alchemy-free-mempool-replacement] PASS — free/configured provider mesh replaces Alchemy network, token, mempool and telemetry authority while measured pressure, exact-chain evidence, bounded fallback, and execution isolation remain intact');
+console.log('[alchemy-free-mempool-replacement] PASS — free/configured provider mesh replaces Alchemy network, token, mempool, telemetry and hosted sponsorship authority while measured pressure, exact-chain evidence, bounded fallback, and execution isolation remain intact');
