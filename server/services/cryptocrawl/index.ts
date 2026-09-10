@@ -15,6 +15,11 @@ export { ensureCryptaraAssessmentWiring } from './integration/cryptara-assessmen
 export { ensureCryptaraBeamWiring } from './integration/cryptara-beam-wiring.js';
 export { ensureAuthoritativeMonteCarloWiring } from './integration/authoritative-monte-carlo-wiring.js';
 
+// Independent on-chain credit intermediation. The runtime observer has no transaction
+// submission authority; successful borrower-initiated settlement occurs in the deployed
+// Ghost Wallet contract and routes realized surplus directly to the primary wallet.
+export { ghostWalletEngine, ensureGhostWalletEngineWiring } from './ghost-wallet/ghost-wallet-engine.js';
+
 // Market intelligence / canonical opportunity state
 export { getCryptara } from '../cryptara/index.js';
 export { canonicalOpportunityState } from './intelligence/canonical-opportunity-state.js';
@@ -35,6 +40,15 @@ export {
 export { canonicalExecutionScheduler } from './execution/canonical-execution-scheduler.js';
 export { executionResourceScheduler } from './execution/resource-scheduler.js';
 export * from './execution/settlement-types.js';
+
+// External-capital capability evidence and no-key/no-signup composition remain advisory
+// until an exact topology adapter proves fresh capacity, cost, atomicity and settlement.
+export {
+  listExternalCapitalCapabilities,
+  rankExternalCapitalCapabilities,
+  recordMeasuredExternalCapitalCapability,
+} from './optimization/external-capital-capability-registry.js';
+export { composeZeroCapitalFabricPlan, capitalFabricRoles } from './optimization/zero-capital-capital-fabric.js';
 
 // Canonical Monte Carlo uncertainty model and calibration
 export { runProfitabilityMonteCarlo } from './execution/adapters/monte-carlo-profitability.js';
