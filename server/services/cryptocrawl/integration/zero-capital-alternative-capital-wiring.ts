@@ -59,6 +59,11 @@ function scaledGasCost(originalCost: bigint, originalGasUnits: bigint, measuredG
   return (originalCost * measuredGasUnits + originalGasUnits - 1n) / originalGasUnits;
 }
 
+function grossProfitForFundingReprice(opportunity: ZeroCapitalOpportunity): bigint {
+  return opportunity.grossProfit
+    ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
+}
+
 function stringMetadata(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -89,7 +94,14 @@ function strictFundingReady(funding: GasFundingDecision): boolean {
 }
 
 function routeSteps(opportunity: ZeroCapitalOpportunity, intermediary: string, profitRecipient: string): GhostWalletStep[] {
-  const plan = buildFlashLoanExecutionPlanFromOpportunity(opportunity, {
+  const grossProfit = grossProfitForFundingReprice(opportunity);
+  if (grossProfit <= 0n) throw new Error('Alternative-capital route has no positive gross value to reprice');
+  // The shared planner's positive-profit check protects execution. During funding
+  // repricing, plan from the measured positive gross route value so an expensive
+  // incumbent funding source cannot prevent a cheaper Ghost source from being
+  // evaluated. Only simulateCandidate may promote a newly positive all-in result.
+  const planningOpportunity = { ...opportunity, expectedProfit: grossProfit };
+  const plan = buildFlashLoanExecutionPlanFromOpportunity(planningOpportunity, {
     receiver: intermediary,
     provider: 'balancer_v2',
     profitRecipient,
@@ -202,8 +214,7 @@ async function simulateCandidate(input: {
     && input.funding.sponsorOperatorMonetaryCostProvenZero === true
     ? 0n
     : exactMeasuredGasCost;
-  const grossProfit = input.opportunity.grossProfit
-    ?? (input.opportunity.expectedProfit + input.opportunity.estimatedExecutionCostInInputToken);
+  const grossProfit = grossProfitForFundingReprice(input.opportunity);
   const allInCost = input.sourceFee + exactOperatorGasCost + relayFee;
   const netProfit = grossProfit - allInCost;
   if (netProfit <= 0n) return null;
@@ -223,6 +234,7 @@ async function simulateCandidate(input: {
       ...input.provenance,
       'alternative_capital_exact_eth_call_passed',
       'alternative_capital_exact_gas_estimate_measured',
+      'alternative_capital_reprice_independent_of_prior_funding_net',
       input.funding.mode === 'sponsored' && input.funding.sponsorOperatorMonetaryCostProvenZero === true
         ? 'execution_gas_operator_cost:zero_proven_sponsored'
         : 'execution_gas_cost:scaled_from_current_canonical_input_token_quote',
@@ -289,7 +301,8 @@ export async function repriceZeroCapitalAlternativeCapital(input: {
 
   for (const opportunity of input.opportunities) {
     ghostWalletAlternativeZeroCapitalSelectionRegistry.remove(opportunity.id);
-    if (opportunity.chain !== input.chain || opportunity.expiresAt <= Date.now() || opportunity.expectedProfit <= 0n) continue;
+    const grossProfit = grossProfitForFundingReprice(opportunity);
+    if (opportunity.chain !== input.chain || opportunity.expiresAt <= Date.now() || grossProfit <= 0n) continue;
     const quotes = measurement.quotes
       .filter(quote => quote.chain === input.chain)
       .filter(quote => quote.asset.toLowerCase() === opportunity.inputToken.toLowerCase())
