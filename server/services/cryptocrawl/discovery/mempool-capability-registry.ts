@@ -1,5 +1,4 @@
-import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
-import { filteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
+import { providerMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
 
 export type MempoolCapability =
   | 'filtered_full_pending_transaction_feed'
@@ -22,49 +21,39 @@ export interface MempoolCapabilityRecord {
 }
 
 /**
- * Capability is intentionally conservative. The newer provider-filtered stream
- * carries exact per-transaction chain identity on Ethereum/Polygon, while the
- * legacy aggregate Alchemy integration does not. Neither feed by itself proves
- * post-victim state or deterministic backrun profit, so executable evidence stays
- * false until an exact topology compiler supplies those facts.
+ * Capability is intentionally conservative. The Alchemy-free provider mesh carries
+ * exact per-transaction chain identity on Ethereum/Polygon. Pending visibility by
+ * itself still does not prove post-victim state or deterministic backrun profit, so
+ * executable evidence remains false until the topology compiler proves those facts.
  */
 export function getMempoolCapabilities(): MempoolCapabilityRecord[] {
-  const legacy = alchemyIntegration.getStatistics();
-  const legacyActive = new Set(legacy.readiness.activeNetworks.map(String));
-  const legacyConfigured = legacy.readiness.configured;
-  const filtered = filteredAlchemyPendingStream.getStatistics();
-  const filteredActive = new Set(filtered.activeNetworks.map(String));
-  const filteredConfigured = new Set(filtered.configuredNetworks.map(String));
+  const pending = providerMeshPendingStream.getStatistics();
+  const activeNetworks = new Set(pending.activeNetworks.map(String));
+  const configuredNetworks = new Set(pending.configuredNetworks.map(String));
   const chains = ['ethereum', 'polygon', 'arbitrum', 'optimism', 'base'];
   const observedAt = Date.now();
 
   return chains.map(chain => {
-    const exactFilteredConfigured = filteredConfigured.has(chain);
-    const exactFilteredActive = filteredActive.has(chain);
-    const legacyIsActive = legacyConfigured && legacyActive.has(chain);
-    const active = exactFilteredActive || legacyIsActive;
-    const capability: MempoolCapability = exactFilteredConfigured
-      ? 'provider_specific_pending_feed'
-      : legacyIsActive
-        ? 'provider_specific_pending_feed'
-        : 'none';
-    const transactionChainBinding = exactFilteredConfigured && filtered.exactChainBinding;
+    const configured = configuredNetworks.has(chain);
+    const active = activeNetworks.has(chain);
+    const transactionChainBinding = configured && pending.exactChainBinding;
+    const capability: MempoolCapability = configured
+      ? pending.hashesOnly ? 'standard_pending_transactions' : 'provider_specific_pending_feed'
+      : 'none';
 
     return {
       chain,
-      provider: 'alchemy',
+      provider: configured ? 'provider_mesh' : 'none',
       capability,
       active,
       transactionChainBinding,
       decodedRouteState: false,
       executableBackrunEvidence: false,
       reason: transactionChainBinding
-        ? 'Provider-filtered pending observations carry exact chain identity; decoded route completeness is measured per transaction, but post-victim state and deterministic backrun economics are not yet executable evidence'
-        : active
-          ? 'Legacy measured pending feed is active, but its aggregate observations do not carry authoritative per-transaction chain binding or post-victim state'
-          : exactFilteredConfigured
-            ? 'Exact-chain filtered pending monitoring is configured but not currently active'
-            : 'No active measured pending feed for this chain',
+        ? 'Alchemy-free pending observations carry exact chain identity; decoded route completeness remains measured per transaction, while post-victim state and deterministic backrun economics still require compiler proof'
+        : configured
+          ? 'Alchemy-free pending monitoring is configured but not currently active on this chain'
+          : 'No active measured pending feed for this chain',
       observedAt,
     };
   });
