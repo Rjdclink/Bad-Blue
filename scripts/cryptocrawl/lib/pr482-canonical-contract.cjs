@@ -79,7 +79,7 @@ function verifyCexExecutionContract() {
   forbidPattern(partialAccounting, /recordCryptaraExecutionEvidence\s*\(|stageManager\.|profitLadder\./, 'partial child accounting entering rank/stage/ladder progression');
   requirePattern(residualReplan, /arbitrageVerifier\.evaluateOnce\s*\(/, 'residual notional receives fresh canonical economics verification');
   requirePattern(residualReplan, /cryptara\.assessOpportunity\s*\(/, 'fresh residual receives Cryptara/Monte Carlo reassessment');
-  requirePattern(residualReplan, /measuredCandidateRegistry\.updateStatus\s*\([\s\S]{0,160}'eligible'/, 'freshly approved residual re-enters through the canonical eligible queue');
+  requirePattern(residualReplan, /measuredCandidateRegistry\.record\s*\(\s*\{[\s\S]{0,800}status:\s*measuredDepth\s*\?\s*'eligible'\s*:\s*'deterministic_positive'/, 'freshly approved residual re-enters through the canonical eligible queue');
   forbidPattern(residualReplan, /\bexecuteHyperHybridCexPlan\s*\(|\bexecuteCexPlan\s*\(|\bsendTransaction\s*\(|\.submit\s*\(/, 'residual reassessment directly submitting execution');
 
   // Coinbase, Kraken and OKX are peer executable venues above venue adapters.
