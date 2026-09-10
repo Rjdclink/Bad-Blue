@@ -12,7 +12,7 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
-import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
+import { getProfitLadderDiscoveryNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import {
   buildBpsReductionSuperPlan,
   recordBpsRevalidationOutcome,
@@ -144,8 +144,8 @@ function candidateSizes(
   context: ZeroCapitalBpsRescueContext | null,
 ): number[] {
   const currentUsd = Math.max(0.01, usdFromBaseUnits(opportunity.flashLoanAmount, route.inputTokenDecimals));
-  const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd;
-  const ceiling = Math.max(currentUsd, ladderMaxNotionalUsd);
+  const discoveryAuthority = getProfitLadderDiscoveryNotionalAuthority();
+  const ceiling = Math.max(currentUsd, discoveryAuthority.maxQuoteNotionalUsd || currentUsd);
   const maxCandidates = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_SIZE_CANDIDATES, 7, 3, 12));
   return [...new Set(candidateFactors(opportunity, context)
     .slice(0, maxCandidates)
@@ -360,7 +360,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
     bpsPriorityAuthority: 'shared_bps_super_engine_effective_priority_score',
     bpsResidualNotionalAuthority: 'shared_bps_super_engine_residual_notional_fractions_plus_fixed_cost_dilution_probes',
-    liveNotionalCeilingAuthority: 'profit_ladder_only',
+    liveNotionalCeilingAuthority: 'profit_ladder_quote_only_capital_curve',
     inputTokenDecimalsAuthoritative: true,
     providerFreshnessRequired: true,
     providerLiquidityHeadroomRequired: true,
