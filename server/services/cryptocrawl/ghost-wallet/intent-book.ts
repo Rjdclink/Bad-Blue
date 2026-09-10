@@ -75,7 +75,7 @@ function oppositePair(left: GhostWalletSignedIntent, right: GhostWalletSignedInt
 }
 
 function maximumAffordableFeeBps(grossBuy: bigint, minimumBuy: bigint): number {
-  if (grossBuy <= 0n || grossBuy < minimumBuy) return -1;
+  if (grossBuy <= 0n || minimumBuy <= 0n || grossBuy < minimumBuy) return -1;
   const surplus = grossBuy - minimumBuy;
   return Number((surplus * 10_000n) / grossBuy);
 }
@@ -87,9 +87,10 @@ function feeAmount(grossBuy: bigint, feeBps: number): bigint {
 function normalizeIntent(input: GhostWalletSignedIntent): GhostWalletSignedIntent {
   if (!Number.isSafeInteger(input.chainId) || input.chainId <= 0) throw new Error('intent chainId must be a positive safe integer');
   if (!Number.isSafeInteger(input.deadline) || input.deadline <= 0) throw new Error('intent deadline must be a positive unix timestamp');
+  if (!Number.isSafeInteger(input.receivedAt) || input.receivedAt <= 0) throw new Error('intent receivedAt must be a positive unix millisecond timestamp');
   if (!Number.isFinite(input.maxFeeBps) || input.maxFeeBps < 0 || input.maxFeeBps > 10_000) throw new Error('intent maxFeeBps must be between 0 and 10000');
   if (input.sellAmount <= 0n) throw new Error('intent sellAmount must be positive');
-  if (input.minBuyAmount < 0n) throw new Error('intent minBuyAmount cannot be negative');
+  if (input.minBuyAmount <= 0n) throw new Error('intent minBuyAmount must be positive');
   if (input.nonce < 0n) throw new Error('intent nonce cannot be negative');
   if (!utils.isHexString(input.signature, 65)) throw new Error('intent signature must be a 65-byte hex signature');
   return {
@@ -175,7 +176,18 @@ export class GhostWalletIntentBook {
     const used = new Set<string>();
     const pairs: GhostWalletMatchedIntentPair[] = [];
 
-    const candidates: Array<{ left: GhostWalletSignedIntent; right: GhostWalletSignedIntent; score: bigint }> = [];
+    // Do not add raw fee token amounts across different assets. Candidate ordering is
+    // based only on dimensionless signed fee capacity plus urgency. Exact realized
+    // token amounts remain in the pair and are reconciled on-chain.
+    const candidates: Array<{
+      left: GhostWalletSignedIntent;
+      right: GhostWalletSignedIntent;
+      feeBpsA: number;
+      feeBpsB: number;
+      scoreBps: number;
+      expiresAt: number;
+    }> = [];
+
     for (let leftIndex = 0; leftIndex < open.length; leftIndex++) {
       for (let rightIndex = leftIndex + 1; rightIndex < open.length; rightIndex++) {
         const left = open[leftIndex];
@@ -188,30 +200,36 @@ export class GhostWalletIntentBook {
         const feeBpsB = Math.min(right.maxFeeBps, affordableB);
         const feeA = feeAmount(right.sellAmount, feeBpsA);
         const feeB = feeAmount(left.sellAmount, feeBpsB);
-        candidates.push({ left, right, score: feeA + feeB });
+        if (feeA <= 0n && feeB <= 0n) continue;
+        candidates.push({
+          left,
+          right,
+          feeBpsA,
+          feeBpsB,
+          scoreBps: feeBpsA + feeBpsB,
+          expiresAt: Math.min(left.deadline, right.deadline),
+        });
       }
     }
 
     candidates.sort((a, b) => {
-      if (a.score !== b.score) return a.score > b.score ? -1 : 1;
-      const expiryA = Math.min(a.left.deadline, a.right.deadline);
-      const expiryB = Math.min(b.left.deadline, b.right.deadline);
-      return expiryA - expiryB;
+      if (a.expiresAt !== b.expiresAt) return a.expiresAt - b.expiresAt;
+      if (a.scoreBps !== b.scoreBps) return b.scoreBps - a.scoreBps;
+      const leftKey = `${intentKey(a.left)}:${intentKey(a.right)}`;
+      const rightKey = `${intentKey(b.left)}:${intentKey(b.right)}`;
+      return leftKey.localeCompare(rightKey);
     });
 
     for (const candidate of candidates) {
       const leftKey = intentKey(candidate.left);
       const rightKey = intentKey(candidate.right);
       if (used.has(leftKey) || used.has(rightKey)) continue;
-      const affordableA = maximumAffordableFeeBps(candidate.right.sellAmount, candidate.left.minBuyAmount);
-      const affordableB = maximumAffordableFeeBps(candidate.left.sellAmount, candidate.right.minBuyAmount);
-      const feeBpsA = Math.min(candidate.left.maxFeeBps, affordableA);
-      const feeBpsB = Math.min(candidate.right.maxFeeBps, affordableB);
-      const feeAmountA = feeAmount(candidate.right.sellAmount, feeBpsA);
-      const feeAmountB = feeAmount(candidate.left.sellAmount, feeBpsB);
+      const feeAmountA = feeAmount(candidate.right.sellAmount, candidate.feeBpsA);
+      const feeAmountB = feeAmount(candidate.left.sellAmount, candidate.feeBpsB);
       const userBuyAmountA = candidate.right.sellAmount - feeAmountA;
       const userBuyAmountB = candidate.left.sellAmount - feeAmountB;
       if (userBuyAmountA < candidate.left.minBuyAmount || userBuyAmountB < candidate.right.minBuyAmount) continue;
+      if (feeAmountA <= 0n && feeAmountB <= 0n) continue;
 
       used.add(leftKey);
       used.add(rightKey);
@@ -222,13 +240,13 @@ export class GhostWalletIntentBook {
         intermediary: candidate.left.intermediary,
         intentA: { ...candidate.left },
         intentB: { ...candidate.right },
-        feeBpsA,
-        feeBpsB,
+        feeBpsA: candidate.feeBpsA,
+        feeBpsB: candidate.feeBpsB,
         feeAmountA,
         feeAmountB,
         userBuyAmountA,
         userBuyAmountB,
-        expiresAt: Math.min(candidate.left.deadline, candidate.right.deadline) * 1000,
+        expiresAt: candidate.expiresAt * 1000,
         apiKeyRequired: false,
         signupRequired: false,
         sameTransactionSettlement: true,
