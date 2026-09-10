@@ -238,7 +238,15 @@ export async function repriceZeroCapitalProviderEconomics(input: {
   const permissionCalls = new Map<string, any>();
   const permissionDeferred = new Set<string>();
 
-  for (const opportunity of input.opportunities) {
+  for (const sourceOpportunity of input.opportunities) {
+    // Provider repricing is a speculative comparison stage. Work on an isolated
+    // copy so a rejected provider, bootstrap attempt, or more expensive fee can
+    // never contaminate the pristine opportunity that downstream alternatives
+    // still need to evaluate against the same measured gross edge.
+    const opportunity: ZeroCapitalOpportunity = {
+      ...sourceOpportunity,
+      route: sourceOpportunity.route.map(leg => ({ ...leg })),
+    };
     flashLoanProviderSelectionRegistry.remove(opportunity.id);
     dualFlashLoanProviderSelectionRegistry.remove(opportunity.id);
 
@@ -262,6 +270,7 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           `dual_total_fee:${selectedDual.totalFee.toString()}`,
           ...(feeSavings !== null ? [`dual_fee_savings_vs_best_single:${feeSavings.toString()}`] : []),
           'same_asset_nested_atomicity_required',
+          'provider_reprice_input_immutable:true',
         ];
 
         const missing = await buildMissingReceiverPermissionCalls({
@@ -445,7 +454,7 @@ export async function repriceZeroCapitalProviderEconomics(input: {
               eligible: true,
               reason: 'Measured Balancer route has an exact Titan/Quasar atomic bundle that deploys and permissions the first receiver, executes the profitable flash route, and repays sponsorship from execution-created value; canonical scheduler remains sole submitter',
               receiverBindingProvenance: 'provider_receiver_binding:atomic_same_bundle_create2_bootstrap',
-              extraProvenance: bootstrapEvidence.provenance,
+              extraProvenance: [...bootstrapEvidence.provenance, 'provider_reprice_input_immutable:true'],
             });
             repriced.push(bootstrapOpportunity);
             continue;
@@ -459,7 +468,7 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           eligible: false,
           reason: 'No execution-ready Morpho, Aave, Balancer, combined Aave+Balancer, or exact atomic first-receiver builder path has complete measured fee, liquidity, and receiver evidence for this amount',
           missingInformation: ['measured_flash_loan_provider_liquidity_and_fee'],
-          extraProvenance: ['provider_mesh_checked:true', 'atomic_first_receiver_bootstrap_checked:true'],
+          extraProvenance: ['provider_mesh_checked:true', 'atomic_first_receiver_bootstrap_checked:true', 'provider_reprice_input_immutable:true'],
         });
         continue;
       }
@@ -473,12 +482,16 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           eligible: false,
           reason: 'Selected flash-loan provider is missing an exact measured fee rate',
           missingInformation: ['measured_flash_loan_provider_fee'],
+          extraProvenance: ['provider_reprice_input_immutable:true'],
         });
         continue;
       }
 
       const values = repriceOpportunity(opportunity, measuredFlashFee);
-      const providerProvenance = selectedSingle.provider === 'morpho_blue' ? ['morpho_zero_flash_fee_applied:true'] : [];
+      const providerProvenance = [
+        ...(selectedSingle.provider === 'morpho_blue' ? ['morpho_zero_flash_fee_applied:true'] : []),
+        'provider_reprice_input_immutable:true',
+      ];
       const missing = await buildMissingReceiverPermissionCalls({
         chain: chain as any,
         provider,
@@ -593,6 +606,7 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           ...(selectedSingle.provider === 'morpho_blue' ? ['morpho_blue_zero_flash_fee'] : []),
           'strict_positive_repriced_net',
           'synthetic_evidence:false',
+          'provider_reprice_input_immutable:true',
         ],
       });
       updateCandidate({
@@ -613,6 +627,7 @@ export async function repriceZeroCapitalProviderEconomics(input: {
         eligible: false,
         reason: `Flash-loan provider mesh evidence failed closed: ${error instanceof Error ? error.message : String(error)}`,
         missingInformation: ['measured_flash_loan_provider_liquidity_and_fee'],
+        extraProvenance: ['provider_reprice_input_immutable:true'],
       });
       logger.warn('[ZeroCapitalFlashProvider] Provider mesh evidence failed closed', {
         component: 'ZeroCapitalFlashProviderWiring',
@@ -663,6 +678,7 @@ export function ensureZeroCapitalFlashProviderWiring(): void {
     component: 'ZeroCapitalFlashProviderWiring',
     providerRepricingAuthority: 'explicit_zero_capital_discovery_pipeline_stage',
     nonPositiveProviderRepriceExecutable: false,
+    providerRepriceInputImmutable: true,
     scanChainMutation: false,
     cryptaraAdmissionMutation: false,
     executionAuthority: false,
