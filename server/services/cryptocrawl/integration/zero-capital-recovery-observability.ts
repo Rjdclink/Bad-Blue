@@ -24,7 +24,11 @@ export interface ZeroCapitalRecoverySnapshot {
   measuredRouteFamiliesHistorical: number;
   closestMeasuredRoute: {
     routeId: string;
+    grossProfitBps: number | null;
+    allInCostBps: number | null;
+    breakEvenBps: number | null;
     netProfitBps: number | null;
+    bpsToBreakEven: number | null;
     attempts: number;
     positiveQuotes: number;
     measuredNotionalUsd: number | null;
@@ -76,8 +80,8 @@ function percentile(values: number[], p: number): number | null {
 
 function routeEvidenceMaxAgeMs(): number {
   const routeTtl = Number(process.env.ZERO_CAPITAL_ROUTE_TTL_MS || 3000);
-  const safeRouteTtl = Number.isFinite(routeTtl) ? Math.max(1000, Math.min(15_000, Math.trunc(routeTtl))) : 3000;
-  const configured = Number(process.env.ZERO_CAPITAL_ROUTE_EVIDENCE_MAX_AGE_MS || safeRouteTtl);
+  const safeRouteTtl = Number.isFinite(routeTtl) ? Math.max(500, Math.min(15_000, Math.trunc(routeTtl))) : 3000;
+  const configured = Number(process.env.ZERO_CAPITAL_ACTIONABLE_ROUTE_EVIDENCE_MAX_AGE_MS || safeRouteTtl);
   const safeConfigured = Number.isFinite(configured) ? Math.max(250, Math.min(15_000, Math.trunc(configured))) : safeRouteTtl;
   // Current/actionable telemetry must never outlive the opportunity it describes.
   return Math.min(safeConfigured, safeRouteTtl);
@@ -144,15 +148,17 @@ function refresh(): void {
     ? null
     : Math.max(0, -closestCandidateGrossBps);
 
-  const maxRouteEvidenceAgeMs = routeEvidenceMaxAgeMs();
   const routeEvidence = getZeroCapitalRoutePreselectionEvidence();
-  // This route-preselection API intentionally nulls stale economics. Use it only
-  // for actionable ranking. Historical BPS comes from the candidate registry,
-  // whose retention is explicitly telemetry-only and cannot grant execution.
+  const maxRouteEvidenceAgeMs = routeEvidence[0]?.actionableEvidenceMaxAgeMs ?? routeEvidenceMaxAgeMs();
+  // Ranking history may live longer, but only the route-TTL-bounded economics are
+  // published as current. Negative measurements remain visible while fresh.
   const measuredRoutes = routeEvidence.filter(item =>
-    item.lastMeasuredAt !== null
-    && item.lastMeasuredAt <= now
-    && now - item.lastMeasuredAt <= maxRouteEvidenceAgeMs
+    item.actionableEvidenceFresh
+    && item.lastMeasuredAt !== null
+    && item.recentGrossProfitBps !== null
+    && Number.isFinite(item.recentGrossProfitBps)
+    && item.recentAllInCostBps !== null
+    && Number.isFinite(item.recentAllInCostBps)
     && item.recentNetProfitBps !== null
     && Number.isFinite(item.recentNetProfitBps),
   );
@@ -193,7 +199,11 @@ function refresh(): void {
     closestMeasuredRoute: closestRoute && closestRoute.lastMeasuredAt !== null
       ? {
           routeId: closestRoute.routeId,
+          grossProfitBps: closestRoute.recentGrossProfitBps,
+          allInCostBps: closestRoute.recentAllInCostBps,
+          breakEvenBps: closestRoute.recentBreakEvenBps,
           netProfitBps: closestRoute.recentNetProfitBps,
+          bpsToBreakEven: closestRoute.recentBpsToBreakEven,
           attempts: closestRoute.attempts,
           positiveQuotes: closestRoute.positiveQuotes,
           measuredNotionalUsd: closestRoute.recentMeasuredNotionalUsd,
@@ -226,6 +236,7 @@ function refresh(): void {
     ...latest,
     routeEvidenceMaxAgeMs: maxRouteEvidenceAgeMs,
     actionableEvidenceBoundedByRouteTtl: true,
+    completeBpsDecompositionPublished: true,
     historicalMeasurementVisibilityRetained: true,
     historicalMeasurementAuthority: 'retained_registry_telemetry_only_never_execution',
     candidateAuthority: 'unexpired_canonical_bps_only',
