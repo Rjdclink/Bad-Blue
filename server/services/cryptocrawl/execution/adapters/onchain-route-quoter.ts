@@ -10,6 +10,7 @@ import { EUROPA_SUSHI } from './europa-sushi-registry.js';
 import { buildAtomicNotionalCandidates, selectHighestNetProfit } from './atomic-size-optimizer.js';
 import { calculateProgressivePositionSize } from '../../risk/progressive-position-sizing.js';
 import { stageManager } from '../../governance/stage-management.js';
+import { getProfitLadderDiscoveryNotionalAuthority } from '../../governance/profit-ladder-notional-authority.js';
 import {
   ETHEREUM_PROTOCOL_ANCHORS,
   defaultEthereumProtocolAnchorRoutes,
@@ -151,9 +152,15 @@ function asSupportedChain(value: unknown): SupportedExecutionChain {
 }
 
 function maxQuoteLatencyMs(): number {
-  const configured = Number(process.env.ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS || 15000);
-  if (!Number.isFinite(configured)) return 15000;
-  return Math.max(250, Math.min(30000, Math.trunc(configured)));
+  const configured = Number(process.env.ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS || 1_000);
+  const configuredBound = Number.isFinite(configured)
+    ? Math.max(250, Math.min(30_000, Math.trunc(configured)))
+    : 1_000;
+  const routeTtl = Number(process.env.ZERO_CAPITAL_ROUTE_TTL_MS || 3_000);
+  if (!Number.isFinite(routeTtl) || routeTtl <= 500) return configuredBound;
+  // A quote that consumes the entire opportunity lifetime is observation, not
+  // execution evidence. Reserve at least 250 ms for provider/resource admission.
+  return Math.min(configuredBound, Math.max(250, Math.trunc(routeTtl) - 250));
 }
 
 function withQuoteTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -215,7 +222,7 @@ function parseConfiguredRoute(raw: unknown, index: number): ConfiguredZeroCapita
     if (normalizeAddress(tokenIn) === normalizeAddress(tokenOut)) throw new Error(`Route ${index} leg ${legIndex} cannot swap a token into itself`);
 
     const pool = leg.pool === undefined ? undefined : String(leg.pool).trim();
-    if (pool !== undefined && !isAddress(pool)) throw new Error(`Route ${index} leg ${legIndex} pool must be a valid EVM address`);
+    if (pool !== undefined && !isAddress(pool)) throw new Error(`Route ${index} leg ${legIndex} pool must be a valid address`);
 
     const feeTier = leg.feeTier === undefined ? undefined : Number(leg.feeTier);
     if (feeTier !== undefined && feeTier !== 100 && feeTier !== 500 && feeTier !== 3000 && feeTier !== 10000) {
@@ -580,15 +587,17 @@ function quoteLiquidityConfidence(quote: QuotedZeroCapitalRoute): number {
 
 function routeNotionalCandidates(route: ConfiguredZeroCapitalRoute): number[] {
   const seedUsd = Math.max(0.000001, usdFromBaseUnits(BigInt(route.amountIn), route.inputTokenDecimals));
-  const stage = stageManager.getStageConfig();
-  const stageCanExecute = stageManager.canExecuteTrades();
-  const discoveryCeiling = Math.max(seedUsd, Math.min(10_000, Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || 1_000)));
-  const maximum = stageCanExecute && stage.maxPositionSizeUSD > 0
-    ? stage.maxPositionSizeUSD
-    : seedUsd;
+  const discoveryAuthority = getProfitLadderDiscoveryNotionalAuthority();
+  const ladderCeiling = Math.max(seedUsd, discoveryAuthority.maxQuoteNotionalUsd || seedUsd);
+  const rawConfiguredCeiling = Number(process.env.ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD || ladderCeiling);
+  const configuredCeiling = Number.isFinite(rawConfiguredCeiling) && rawConfiguredCeiling > 0
+    ? Math.min(discoveryAuthority.systemMaxNotionalUsd, rawConfiguredCeiling)
+    : ladderCeiling;
+  const maximumNotionalUsd = Math.max(seedUsd, Math.min(ladderCeiling, configuredCeiling));
+
   return buildAtomicNotionalCandidates({
     seedNotionalUsd: seedUsd,
-    maximumNotionalUsd: Math.min(stageCanExecute ? maximum : seedUsd, discoveryCeiling),
+    maximumNotionalUsd,
     minimumNotionalUsd: 0.01,
     maxCandidates: Math.max(3, Math.min(12, Number(process.env.ZERO_CAPITAL_SIZE_CANDIDATES || 9))),
   });
