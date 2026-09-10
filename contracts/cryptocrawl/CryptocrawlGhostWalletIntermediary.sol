@@ -490,7 +490,9 @@ contract CryptocrawlGhostWalletIntermediary {
     function quoteVaultBrokerFee(address vault, address token, uint256 amount) external view returns (uint256) {
         require(allowedVaults[vault], "vault_not_allowed");
         require(allowedAssets[token], "asset_not_allowed");
+        require(amount > 0, "amount_required");
         require(IGhostWalletCapitalVault(vault).asset() == token, "vault_asset_mismatch");
+        require(amount <= IGhostWalletCapitalVault(vault).totalAssets(), "insufficient_vault_liquidity");
         return _brokerFee(vault, amount);
     }
 
@@ -745,6 +747,9 @@ contract CryptocrawlGhostWalletIntermediary {
         (bool success, bytes memory returndata) = target.call{value: value}(callData);
         require(success, _extractRevert(returndata));
 
+        // Never leave standing target allowances after a successful step. If a token
+        // refuses revocation, fail the entire atomic transaction rather than carry
+        // an approval that could drain later Ghost Wallet balances.
         if (temporaryApproval) _safeApprove(approvalToken, target, 0);
     }
 
