@@ -487,6 +487,8 @@ After the change, compare the same capability matrix. A repair is not complete i
 - Move through the requested defects continuously so the user does not have to repeatedly say "proceed."
 - If one verification avenue is unavailable or unproductive, use the next legitimate route instead of looping on it.
 - Do not let one secondary uncertainty stall all independent in-scope work.
+- Actively recognize when a step has stopped producing material new evidence or forward progress; do not continue repeating that step merely because it remains available.
+- When a bounded attempt yields no material new evidence, stop repeating it, make the best supported decision from the available evidence, state or preserve any unresolved uncertainty as appropriate, and advance to the next in-scope task.
 
 ## Evidence, confidence, humility, and integrity
 
