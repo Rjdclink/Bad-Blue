@@ -236,32 +236,43 @@ function currentReceiverFleetTask(target: CanonicalZeroCapitalRuntime): Promise<
   return receiverFleetTask;
 }
 
-async function receiverAdmissionAllowedForCycle(target: CanonicalZeroCapitalRuntime): Promise<boolean> {
+/**
+ * Receiver preparation is useful setup work, but it is not a global admission
+ * authority. One slow or unready chain must never suppress exact provider
+ * repricing on another chain. The canonical provider stage already verifies that
+ * exact chain's funding, receiver capability, permissions and builder cold-start
+ * path before it can mark a candidate eligible.
+ */
+function refreshReceiverFleetForCycle(target: CanonicalZeroCapitalRuntime): void {
   if (receiverFleetTimedOut && receiverFleetTask) {
-    lastObservationOnlyReason = 'receiver_fleet_watchdog_still_pending';
-    return false;
+    lastObservationOnlyReason = 'receiver_fleet_watchdog_still_pending_chain_local_scans_continue';
+    observationOnlyCycles++;
+    return;
   }
-  try {
-    await withWatchdog(currentReceiverFleetTask(target), receiverFleetWatchdogMs(), 'zero-capital receiver fleet');
-    lastObservationOnlyReason = null;
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof DiscoveryWatchdogTimeoutError) {
-      receiverFleetTimedOut = true;
-      receiverWatchdogExpirations++;
-    }
-    lastObservationOnlyReason = message;
-    logger.warn('[ZeroCapitalDiscovery] Receiver readiness did not complete inside its watchdog; recurring discovery continues observation-only', {
-      component: 'CanonicalZeroCapitalDiscovery',
-      error: message,
-      receiverWatchdogExpirations,
-      observationOnly: true,
-      eligibilityAuthority: false,
-      executionAuthority: false,
-    });
-    return false;
-  }
+
+  const task = currentReceiverFleetTask(target);
+  void withWatchdog(task, receiverFleetWatchdogMs(), 'zero-capital receiver fleet').then(
+    () => {
+      lastObservationOnlyReason = null;
+    },
+    error => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof DiscoveryWatchdogTimeoutError) {
+        receiverFleetTimedOut = true;
+        receiverWatchdogExpirations++;
+      }
+      lastObservationOnlyReason = message;
+      observationOnlyCycles++;
+      logger.warn('[ZeroCapitalDiscovery] Receiver fleet preparation exceeded its watchdog; chain-local discovery and provider repricing continue independently', {
+        component: 'CanonicalZeroCapitalDiscovery',
+        error: message,
+        receiverWatchdogExpirations,
+        globalProviderAdmissionBlocked: false,
+        chainLocalResourceProofRequired: true,
+        executionAuthority: false,
+      });
+    },
+  );
 }
 
 function canonicalEconomics(opportunity: ZeroCapitalOpportunity, quote?: QuotedZeroCapitalRoute) {
@@ -360,7 +371,6 @@ function recordPreselectionCandidate(input: {
 async function scanOneChain(
   chain: SupportedChain,
   provider: providers.JsonRpcProvider,
-  allowProviderAdmission: boolean,
 ): Promise<void> {
   if (chain === 'europa') return;
   const target = runtime();
@@ -406,17 +416,11 @@ async function scanOneChain(
 
   const exact = [...configured, ...dynamic].filter(opportunity => opportunity.expiresAt > Date.now());
   if (exact.length === 0) return;
-  if (!allowProviderAdmission) {
-    logger.debug('[ZeroCapitalDiscovery] Fresh route observations retained while provider admission is disabled for this degraded receiver cycle', {
-      component: 'CanonicalZeroCapitalDiscovery',
-      chain,
-      observations: exact.length,
-      observationOnly: true,
-      providerRepricingSkipped: true,
-      executionAuthority: false,
-    });
-    return;
-  }
+
+  // Provider repricing is always attempted for this chain. It remains fail-closed:
+  // the repricer independently requires this chain's measured flash liquidity,
+  // receiver capability/permissions and strict funding proof, or an exact builder
+  // cold-start bundle, before any candidate can become eligible.
   const selected = await repriceZeroCapitalProviderEconomics({
     chain,
     provider,
@@ -444,7 +448,6 @@ async function scanOneChain(
 async function runChainScanWithWatchdog(
   chain: SupportedChain,
   provider: providers.JsonRpcProvider,
-  allowProviderAdmission: boolean,
 ): Promise<void> {
   const existing = chainScanTasks.get(chain);
   if (existing) {
@@ -455,7 +458,7 @@ async function runChainScanWithWatchdog(
   }
 
   let tracked: Promise<void>;
-  tracked = scanOneChain(chain, provider, allowProviderAdmission).finally(() => {
+  tracked = scanOneChain(chain, provider).finally(() => {
     if (chainScanTasks.get(chain) === tracked) chainScanTasks.delete(chain);
   });
   chainScanTasks.set(chain, tracked);
@@ -479,10 +482,9 @@ async function runChainScanWithWatchdog(
 async function cycle(): Promise<void> {
   const target = runtime();
   try {
-    const allowProviderAdmission = await receiverAdmissionAllowedForCycle(target);
-    if (!allowProviderAdmission) observationOnlyCycles++;
+    refreshReceiverFleetForCycle(target);
     await Promise.allSettled([...target.providers.entries()].map(([chain, provider]) =>
-      runChainScanWithWatchdog(chain, provider, allowProviderAdmission),
+      runChainScanWithWatchdog(chain, provider),
     ));
     lastCycleAt = Date.now();
     lastError = null;
@@ -521,7 +523,8 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
     chainScanWatchdogMs: chainScanWatchdogMs(),
-    degradedReceiverCycleMode: 'observation_only_no_provider_admission',
+    degradedReceiverCycleMode: 'chain_local_admission_provider_repricing_continues',
+    globalReceiverFailureBlocksProviderAdmission: false,
     duplicateHungTaskSuppression: true,
     dynamicGraphlessDiscovery: true,
     runtimeMethodMutation: false,
@@ -550,5 +553,6 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     observationOnlyCycles,
     receiverFleetTaskPending: Boolean(receiverFleetTask),
     isolatedChainScansPending: chainScanTasks.size,
+    globalReceiverFailureBlocksProviderAdmission: false,
   };
 }
