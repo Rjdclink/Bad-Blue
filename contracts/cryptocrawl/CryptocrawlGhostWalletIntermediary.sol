@@ -784,7 +784,7 @@ contract CryptocrawlGhostWalletIntermediary {
         bytes32 r;
         bytes32 s;
         uint8 v;
-        assembly {
+        assembly ("memory-safe") {
             r := calldataload(signature.offset)
             s := calldataload(add(signature.offset, 32))
             v := byte(0, calldataload(add(signature.offset, 64)))
@@ -831,15 +831,12 @@ contract CryptocrawlGhostWalletIntermediary {
 
     function _extractRevert(bytes memory returndata) internal pure returns (string memory) {
         if (returndata.length < 68) return "step_call_failed";
-        bytes4 selector;
-        assembly {
-            selector := mload(add(returndata, 32))
+        if (bytes4(returndata) != ERROR_STRING_SELECTOR) return "step_call_failed";
+        bytes memory reasonData = new bytes(returndata.length - 4);
+        for (uint256 i = 4; i < returndata.length; i++) {
+            reasonData[i - 4] = returndata[i];
         }
-        if (selector != ERROR_STRING_SELECTOR) return "step_call_failed";
-        assembly {
-            returndata := add(returndata, 0x04)
-        }
-        return abi.decode(returndata, (string));
+        return abi.decode(reasonData, (string));
     }
 
     receive() external payable {}
