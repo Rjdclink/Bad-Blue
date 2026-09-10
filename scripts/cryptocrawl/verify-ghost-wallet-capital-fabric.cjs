@@ -31,7 +31,7 @@ for (const primitive of [
   'permissionless_vault_capital',
 ]) must(fabric, new RegExp(primitive), `capital fabric missing ${primitive}`);
 mustNot(fabric, /protocol_deferred_settlement_capital/, 'capital fabric must not advertise unimplemented deferred settlement');
-must(governance, /REJECT_PROTOCOL_DEFERRED_SETTLEMENT_EXECUTOR_UNIMPLEMENTED/, 'governance must fail closed on deferred settlement');
+must(governance, /if \(provenance === 'protocol_deferred_settlement'\) return false;/, 'governance must fail closed on deferred settlement');
 
 // Ghost Wallet is an independent intermediation lane. Its immutable terminal
 // payout is direct and never delegated to the arbitrage profit ladder.
@@ -48,6 +48,9 @@ must(intermediary, /vault_terminal_balance_mismatch/, 'vault route must restore 
 must(engine, /profitLadderAuthority: false/, 'Ghost Wallet cannot have profit-ladder authority');
 must(engine, /100_percent_realized_net_direct_to_canonical_wallet/, 'Ghost Wallet terminal profit must be direct-to-wallet');
 must(engine, /repaymentPolicy: 'same_transaction_or_revert'/, 'Ghost Wallet repayment policy must be atomic');
+must(engine, /arbitrageSystemOwnedGasFallbackAllowed: false/, 'Ghost Wallet must not consume arbitrage-owned native gas');
+must(engine, /matchedIntentExecutionGasAuthority: 'provider_sponsored_zero_operator_cost_only'/, 'automated intent settlement must require zero-cost sponsored gas');
+must(engine, /sponsorOperatorMonetaryCostProvenZero === true/, 'sponsored Ghost Wallet gas must prove zero operator monetary cost');
 
 // Vault capital has no unsecured duration and fails the whole transaction if
 // principal + fee is not restored before callback completion.
@@ -126,5 +129,6 @@ console.log(JSON.stringify({
   alternativeCapitalSubordinateToCanonicalExecutor: true,
   sourceSpecificTerminalRepaymentProof: true,
   noStandingStepApprovals: true,
+  arbitrageSystemOwnedGasFallbackAllowed: false,
   syntheticCapacityAllowed: false,
 }, null, 2));
