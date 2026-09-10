@@ -1,4 +1,4 @@
-import { ethers, providers } from 'ethers';
+import { providers } from 'ethers';
 import logger from '../../../logger.js';
 
 export type GhostWalletChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'base' | 'bsc' | 'avalanche';
@@ -112,7 +112,19 @@ class GhostWalletProviderMesh {
   private readonly inFlight = new Map<GhostWalletChain, Promise<void>>();
 
   async initialize(chains: GhostWalletChain[] = Object.keys(CHAIN_IDS) as GhostWalletChain[]): Promise<void> {
-    await Promise.all(chains.map(chain => this.ensureChain(chain)));
+    const settled = await Promise.allSettled(chains.map(chain => this.ensureChain(chain)));
+    settled.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        const chain = chains[index];
+        logger.warn('[GhostWalletProviderMesh] Chain unavailable; other Ghost routes remain live', {
+          component: 'GhostWalletProviderMesh',
+          chain,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          routeLocalFailure: true,
+          alchemyEligible: false,
+        });
+      }
+    });
   }
 
   async ensureChain(chain: GhostWalletChain): Promise<void> {
@@ -143,6 +155,8 @@ class GhostWalletProviderMesh {
       .map(result => result.value)
       .sort((a, b) => a.latencyMs - b.latencyMs);
     if (healthy.length === 0) {
+      this.healthy.delete(chain);
+      this.initialized.delete(chain);
       throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
     }
     this.healthy.set(chain, healthy);
@@ -198,5 +212,6 @@ export const GHOST_WALLET_PROVIDER_POLICY = {
   configuredRailwayRpcPreferred: true,
   independentPublicFallbacks: true,
   parallelInitialProbe: true,
+  routeLocalFailure: true,
   periodicHealthPolling: false,
 } as const;
