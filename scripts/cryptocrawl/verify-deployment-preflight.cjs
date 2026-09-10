@@ -103,8 +103,8 @@ require('./verify-ghost-wallet-atomic-capital.cjs');
 // structural verification so a Solidity compiler failure blocks the real build,
 // while generated artifacts are available to deterministic runtime bootstrap.
 execFileSync(
-  process.platform === 'win32' ? 'npx.cmd' : 'npx',
-  ['--no-install', 'tsx', 'scripts/cryptocrawl/compile-ghost-wallet-contracts.ts'],
+  process.execPath,
+  ['scripts/cryptocrawl/compile-ghost-wallet-contracts.cjs'],
   { stdio: 'inherit', env: process.env },
 );
 
