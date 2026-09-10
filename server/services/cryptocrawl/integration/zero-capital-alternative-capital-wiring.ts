@@ -89,10 +89,14 @@ function alternativeEnvironment(): NodeJS.ProcessEnv {
 }
 
 function strictFundingReady(funding: GasFundingDecision): boolean {
-  return funding.mode !== 'unavailable'
-    && funding.strictZeroInitialCapitalEligible === true
-    && funding.operatorMonetaryInputRequired === false
-    && (funding.paymentSource === 'provider_sponsored' || funding.paymentSource === 'system_owned_native');
+  if (funding.strictZeroInitialCapitalEligible !== true || funding.operatorMonetaryInputRequired !== false) return false;
+  if (funding.mode === 'native') return funding.paymentSource === 'system_owned_native';
+  if (funding.mode === 'sponsored') {
+    return funding.paymentSource === 'provider_sponsored'
+      && funding.sponsorOperatorMonetaryCostProvenZero === true
+      && funding.providerBillingLiability !== true;
+  }
+  return false;
 }
 
 function routeSteps(opportunity: ZeroCapitalOpportunity, intermediary: string, profitRecipient: string): GhostWalletStep[] {
@@ -186,10 +190,14 @@ async function simulateCandidate(input: {
   build: (minimumProfit: bigint) => GhostWalletPreparedTransaction;
 }): Promise<AlternativeCandidate | null> {
   const sponsoredZeroCost = input.funding.mode === 'sponsored'
-    && input.funding.sponsorOperatorMonetaryCostProvenZero === true;
-  if (!sponsoredZeroCost && ((input.opportunity.estimatedGasCostInInputToken || 0n) <= 0n || input.opportunity.gasEstimate <= 0n)) {
-    return null;
-  }
+    && input.funding.paymentSource === 'provider_sponsored'
+    && input.funding.sponsorOperatorMonetaryCostProvenZero === true
+    && input.funding.providerBillingLiability !== true;
+  // Native candidates may legitimately arrive with gasEstimate=0 before this exact
+  // prepared transaction is simulated. A current non-zero token-denominated gas
+  // cost is sufficient seed evidence; exact estimateGas below becomes the actual
+  // route-specific gas-unit measurement before promotion.
+  if (!sponsoredZeroCost && (input.opportunity.estimatedGasCostInInputToken || 0n) <= 0n) return null;
 
   const minimumUnit = minimumPositiveProfitBaseUnits();
   let prepared = input.build(minimumUnit);
