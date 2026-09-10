@@ -1,7 +1,10 @@
-import { BigNumber, Contract, providers, utils, type Wallet } from 'ethers';
+import { Contract, providers, utils, Wallet } from 'ethers';
 import logger from '../../../logger.js';
-import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
-import { resolvePrimaryProfitPayoutAddress } from '../core/wallet-identity.js';
+import {
+  normalizePrivateKey,
+  resolvePrimaryProfitPayoutAddress,
+  walletFromPrivateKey,
+} from '../core/wallet-identity.js';
 import {
   composeGhostWalletCapital,
   selectLiabilityCapacity,
@@ -9,7 +12,6 @@ import {
   type GhostWalletCapitalQuote,
 } from './capital-fabric.js';
 import { buildMatchedIntentPairTransaction } from './ghost-wallet-builder.js';
-import { ensureGhostWalletInfrastructure } from './ghost-wallet-infrastructure-manager.js';
 import {
   ghostWalletIntentBook,
   type GhostWalletMatchedIntentPair,
@@ -21,34 +23,11 @@ import {
   measureConfiguredGhostWalletSources,
   type GhostWalletSourceConfig,
 } from './onchain-capital-sources.js';
-import { serializeMatchedIntentPair } from './ghost-wallet-work-codec.js';
-import { enqueueGhostWalletWork } from './ghost-wallet-work-ledger.js';
-import { ghostWalletWorkSignal } from './ghost-wallet-work-signal.js';
+import { ghostWalletProviderMesh } from './ghost-wallet-provider-mesh.js';
 
-const ERC20_BALANCE_ABI = ['function balanceOf(address account) view returns (uint256)'];
-const INTERMEDIARY_IDENTITY_ABI = ['function profitRecipient() view returns (address)'];
 const MATCHED_INTENT_EVENT_INTERFACE = new utils.Interface([
   'event MatchedIntentPairSettled(address indexed ownerA,address indexed ownerB,address tokenA,address tokenB,uint256 feeA,uint256 feeB,address profitRecipient)',
 ]);
-
-type GhostWalletSponsoredRuntime = {
-  getGasFundingDecision: (chain: any) => Promise<{
-    mode: 'sponsored' | 'native' | 'unavailable';
-    paymentSource?: string;
-    strictZeroInitialCapitalEligible?: boolean;
-    operatorMonetaryInputRequired?: boolean;
-    sponsorOperatorMonetaryCostProvenZero?: boolean;
-    reason?: string;
-  }>;
-  gasSponsor: {
-    execute: (input: {
-      wallet: Wallet;
-      chainId: number;
-      calls: Array<{ to: string; data: string; value?: BigNumber }>;
-      timeoutMs: number;
-    }) => Promise<{ transactionHash: string }>;
-  };
-};
 
 export interface GhostWalletMatchedSettlement {
   pairId: string;
@@ -67,6 +46,9 @@ export interface GhostWalletEngineStatus {
   profitLadderAuthority: false;
   profitRouting: '100_percent_realized_net_direct_to_canonical_wallet';
   configuredIntermediaryChains: string[];
+  providerChains: string[];
+  alchemyDependency: false;
+  serverTransactionSubmission: false;
   measuredCapitalQuotes: number;
   openSignedIntents: number;
   matchedIntentPairs: number;
@@ -78,18 +60,10 @@ export interface GhostWalletEngineStatus {
   sourceErrors: Array<{ source: string; chain?: string; error: string }>;
 }
 
-function receiptConfirmations(): number {
-  const configured = Number(process.env.GHOST_WALLET_RECEIPT_CONFIRMATIONS || 1);
-  return Number.isFinite(configured)
-    ? Math.max(1, Math.min(12, Math.trunc(configured)))
-    : 1;
-}
-
 /**
- * Ghost Wallet is a separate business/execution lane. It never inherits the
- * arbitrage live switch. Production activation requires its own explicit switch
- * and confirmation, which can be set by deployment automation without manual UI
- * work. NO_EXECUTION remains a global emergency stop.
+ * This switch controls Ghost server automation only. The core borrower-funded
+ * on-chain bridge is permissionless and does not require a server transaction.
+ * NO_EXECUTION remains the global emergency stop for server-originated actions.
  */
 function liveExecutionEnabled(): boolean {
   return process.env.GHOST_WALLET_LIVE_EXECUTION?.trim().toLowerCase() === 'true'
@@ -119,74 +93,48 @@ export class GhostWalletEngine {
   };
   private quotes: GhostWalletCapitalQuote[] = [];
   private sourceErrors: Array<{ source: string; chain?: string; error: string }> = [];
-  private infrastructureErrors: Array<{ source: string; chain?: string; error: string }> = [];
   private lastRefreshAt: number | null = null;
   private lastExecutionAt: number | null = null;
   private executionsAttempted = 0;
   private executionsSettled = 0;
   private executionsFailed = 0;
-  private readonly inFlightPairs = new Set<string>();
 
   async start(): Promise<void> {
     if (this.running) return;
-    await zeroCapitalEngine.initialize();
-
-    const profitRecipient = resolvePrimaryProfitPayoutAddress();
-    if (liveExecutionEnabled() && profitRecipient) {
-      const bootstrap = await ensureGhostWalletInfrastructure({
-        runtime: zeroCapitalEngine as unknown as Parameters<typeof ensureGhostWalletInfrastructure>[0]['runtime'],
-        profitRecipient,
-      });
-      this.infrastructureErrors = bootstrap.errors.map(error => ({
-        source: 'ghost_wallet_auto_bootstrap',
-        chain: error.chain,
-        error: error.error,
-      }));
-      logger.info('[GhostWallet] Automatic infrastructure bootstrap completed', {
-        component: 'GhostWalletEngine',
-        configuredChains: bootstrap.records.map(record => record.chain),
-        verifiedIntermediaries: bootstrap.records.map(record => record.intermediary),
-        verifiedVaultCount: bootstrap.records.reduce((sum, record) => sum + record.vaults.length, 0),
-        manualRailwayConfigurationRequired: false,
-        personalGasSpent: false,
-        arbitrageSystemOwnedGasSpent: false,
-        providerSponsoredBootstrapOnly: true,
-        errors: bootstrap.errors,
-      });
-    } else {
-      this.infrastructureErrors = [];
-    }
-
+    await ghostWalletProviderMesh.initialize();
     this.config = loadGhostWalletSourceConfig();
     this.running = true;
     await this.refresh();
-    await this.enqueueReadyIntentPairWork();
 
     logger.info('[GhostWallet] Independent atomic intermediation lane started', {
       component: 'GhostWalletEngine',
       configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain),
+      providerChains: ghostWalletProviderMesh.getReadyChains(),
       capitalPrimitives: [
-        'euler_debt_assumption',
-        'aave_credit_delegation',
+        'permissionless_external_flash_intermediation',
+        'aave_v3_flash_intermediation',
+        'morpho_blue_flash_intermediation',
+        'balancer_v2_flash_intermediation',
+        'erc3156_flash_intermediation',
+        'euler_debt_assumption_measurement',
+        'aave_credit_delegation_measurement',
         'signed_intent_capital',
         'coincidence_of_wants',
         'permissionless_vault_capital',
       ],
-      existingArbitrageCapitalSourcesPreserved: true,
+      alchemyDependency: false,
+      existingArbitrageSystemsAffected: false,
       manualRailwayConfigurationRequired: false,
-      publicAddressConfigurationAuthority: 'deterministic_create2_runtime_bootstrap',
+      coreExecutionGasPayer: 'transaction_initiator',
+      operatorInitialCapitalRequired: false,
+      serverTransactionSubmission: false,
       repaymentPolicy: 'same_transaction_or_revert',
       profitRouting: '100_percent_realized_net_direct_to_canonical_wallet',
       profitLadderAuthority: false,
       arbitrageScheduleAuthority: false,
       periodicWorkPolling: false,
       eventDrivenWorker: true,
-      personalGasFallbackAllowed: false,
-      arbitrageSystemOwnedGasFallbackAllowed: false,
-      matchedIntentExecutionGasAuthority: 'provider_sponsored_zero_operator_cost_only',
-      infrastructureGasAuthority: 'provider_sponsored_zero_operator_cost_only',
-      publicVaultBrokerCallerPaysGas: true,
-      liveExecutionAuthority: 'ghost_wallet_dedicated_switch_only',
+      liveExecutionAuthority: 'ghost_wallet_dedicated_switch_only_for_server_automation',
       liveExecutionEnabled: liveExecutionEnabled(),
     });
   }
@@ -206,8 +154,9 @@ export class GhostWalletEngine {
   async refresh(): Promise<void> {
     this.config = loadGhostWalletSourceConfig();
     const providersByChain = new Map<string, providers.JsonRpcProvider>();
-    for (const [chain, provider] of zeroCapitalEngine.providers) {
-      providersByChain.set(normalizeChain(chain), provider);
+    for (const chain of ghostWalletProviderMesh.getReadyChains()) {
+      const provider = ghostWalletProviderMesh.getReadyProvider(chain);
+      if (provider) providersByChain.set(chain, provider);
     }
     const context = buildGhostWalletRuntimeContext({ providers: providersByChain, config: this.config });
     const measurement = await measureConfiguredGhostWalletSources({ context, config: this.config });
@@ -217,41 +166,20 @@ export class GhostWalletEngine {
   }
 
   registerSignedIntent(input: GhostWalletSignedIntent): GhostWalletSignedIntent {
-    const registered = ghostWalletIntentBook.register(input);
-    if (this.running) {
-      queueMicrotask(() => {
-        void this.enqueueReadyIntentPairWork().catch(error => {
-          logger.warn('[GhostWallet] Durable intent-pair enqueue deferred', {
-            component: 'GhostWalletEngine',
-            error: error instanceof Error ? error.message : String(error),
-            directExecutionFallbackUsed: false,
-          });
-        });
-      });
-    }
-    return registered;
+    return ghostWalletIntentBook.register(input);
   }
 
+  /**
+   * Signed pairs are intentionally not submitted by the server. Their signatures
+   * authorize settlement; any external submitter may pay gas once the intermediary
+   * exposes the permissionless settlement entrypoint.
+   */
   async enqueueReadyIntentPairWork(): Promise<number> {
-    if (!this.running) return 0;
-    const pairs = ghostWalletIntentBook.match();
-    if (pairs.length === 0) return 0;
-    await Promise.all(pairs.map(pair => enqueueGhostWalletWork({
-      dedupeKey: `matched-intent:${pair.pairId}`,
-      kind: 'matched_intent_settlement',
-      chain: pair.chain,
-      priority: 1_000,
-      notBefore: Date.now(),
-      maxAttempts: 24,
-      payload: { pair: serializeMatchedIntentPair(pair) as unknown as Record<string, unknown> },
-    })));
-    ghostWalletWorkSignal.emitWake('local_work_enqueued');
-    return pairs.length;
+    return 0;
   }
 
-  /** Compatibility name retained; execution is now delegated to durable Ultra Worker work. */
   async executeReadyIntentPairs(): Promise<void> {
-    await this.enqueueReadyIntentPairWork();
+    // Caller-funded only. No server submission or provider sponsorship fallback.
   }
 
   getMeasuredCapitalQuotes(): GhostWalletCapitalQuote[] {
@@ -282,16 +210,29 @@ export class GhostWalletEngine {
     return ghostWalletIntentBook.match();
   }
 
+  buildCallerFundedMatchedPair(pair: GhostWalletMatchedIntentPair): { to: string; data: string; value: string } {
+    const profitRecipient = resolvePrimaryProfitPayoutAddress();
+    if (!profitRecipient) throw new Error('GHOST_WALLET_PRIMARY_PAYOUT_UNAVAILABLE');
+    const intermediary = this.getConfiguredIntermediary(pair.chain);
+    if (!intermediary || !sameAddress(intermediary, pair.intermediary)) {
+      throw new Error('GHOST_WALLET_INTERMEDIARY_BINDING_UNAVAILABLE');
+    }
+    return buildMatchedIntentPairTransaction({ intermediary, pair, profitRecipient });
+  }
+
   getConfiguredIntermediary(chain: string): string | null {
     return this.config.intermediaries.find(entry => normalizeChain(entry.chain) === normalizeChain(chain))?.address || null;
   }
 
   getProvider(chain: string): providers.JsonRpcProvider | null {
-    return zeroCapitalEngine.providers.get(normalizeChain(chain) as any) || null;
+    return ghostWalletProviderMesh.getReadyProvider(normalizeChain(chain));
   }
 
   getExecutionWallet(chain: string): Wallet | null {
-    return zeroCapitalEngine.executionWallets.get(normalizeChain(chain) as any) || null;
+    const provider = this.getProvider(chain);
+    const key = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY) || null;
+    if (!provider || !key) return null;
+    return walletFromPrivateKey(key).connect(provider);
   }
 
   getStatus(): GhostWalletEngineStatus {
@@ -304,6 +245,9 @@ export class GhostWalletEngine {
       profitLadderAuthority: false,
       profitRouting: '100_percent_realized_net_direct_to_canonical_wallet',
       configuredIntermediaryChains: this.config.intermediaries.map(entry => entry.chain),
+      providerChains: ghostWalletProviderMesh.getReadyChains(),
+      alchemyDependency: false,
+      serverTransactionSubmission: false,
       measuredCapitalQuotes: this.quotes.length,
       openSignedIntents: ghostWalletIntentBook.getOpen().length,
       matchedIntentPairs: matches.length,
@@ -312,28 +256,15 @@ export class GhostWalletEngine {
       executionsFailed: this.executionsFailed,
       lastRefreshAt: this.lastRefreshAt,
       lastExecutionAt: this.lastExecutionAt,
-      sourceErrors: [...this.infrastructureErrors, ...this.sourceErrors].map(error => ({ ...error })),
+      sourceErrors: this.sourceErrors.map(error => ({ ...error })),
     };
   }
 
-  async executePersistedMatchedPair(
-    pair: GhostWalletMatchedIntentPair,
-    hooks: { onSubmitted?: (transactionHash: string) => Promise<void> } = {},
-  ): Promise<GhostWalletMatchedSettlement> {
-    if (!this.running || !liveExecutionEnabled()) throw new Error('GHOST_WALLET_EXECUTION_NOT_ENABLED');
-    if (this.inFlightPairs.has(pair.pairId)) throw new Error('GHOST_WALLET_PAIR_ALREADY_IN_FLIGHT');
-    this.inFlightPairs.add(pair.pairId);
-    try {
-      const result = await this.executeMatchedPair(pair, hooks);
-      this.executionsSettled += 1;
-      this.lastExecutionAt = Date.now();
-      return result;
-    } catch (error) {
-      this.executionsFailed += 1;
-      throw error;
-    } finally {
-      this.inFlightPairs.delete(pair.pairId);
-    }
+  /** Server submission is intentionally retired; external initiators pay gas. */
+  async executePersistedMatchedPair(): Promise<GhostWalletMatchedSettlement> {
+    this.executionsAttempted += 1;
+    this.executionsFailed += 1;
+    throw new Error('GHOST_WALLET_SERVER_SUBMISSION_DISABLED_CALLER_FUNDED_ONLY');
   }
 
   async reconcileSubmittedMatchedPair(
@@ -345,104 +276,10 @@ export class GhostWalletEngine {
     const receipt = await provider.getTransactionReceipt(transactionHash);
     if (!receipt) return null;
     if (receipt.status !== 1) throw new Error('GHOST_WALLET_SUBMITTED_TRANSACTION_REVERTED');
-    return this.verifyMatchedIntentReceipt(pair, receipt, resolvePrimaryProfitPayoutAddress() || '');
-  }
-
-  private async executeMatchedPair(
-    pair: GhostWalletMatchedIntentPair,
-    hooks: { onSubmitted?: (transactionHash: string) => Promise<void> },
-  ): Promise<GhostWalletMatchedSettlement> {
-    if (pair.expiresAt <= Date.now()) throw new Error('GHOST_WALLET_PAIR_EXPIRED');
-    const profitRecipient = resolvePrimaryProfitPayoutAddress();
-    if (!profitRecipient) throw new Error('GHOST_WALLET_PRIMARY_PAYOUT_UNAVAILABLE');
-
-    const intermediary = this.getConfiguredIntermediary(pair.chain);
-    if (!intermediary || !sameAddress(intermediary, pair.intermediary)) {
-      throw new Error('GHOST_WALLET_INTERMEDIARY_BINDING_UNAVAILABLE');
-    }
-    const provider = this.getProvider(pair.chain);
-    const wallet = this.getExecutionWallet(pair.chain);
-    if (!provider || !wallet) throw new Error(`GHOST_WALLET_RUNTIME_CHAIN_UNAVAILABLE:${pair.chain}`);
-
-    const runtime = zeroCapitalEngine as unknown as GhostWalletSponsoredRuntime;
-    const funding = await runtime.getGasFundingDecision(pair.chain as any);
-    const sponsoredFree = funding.mode === 'sponsored'
-      && funding.paymentSource === 'provider_sponsored'
-      && funding.strictZeroInitialCapitalEligible === true
-      && funding.operatorMonetaryInputRequired === false
-      && funding.sponsorOperatorMonetaryCostProvenZero === true;
-    if (!sponsoredFree) {
-      throw new Error(`GHOST_WALLET_SPONSORED_GAS_UNAVAILABLE:${funding.reason || funding.mode}`);
-    }
-
-    this.executionsAttempted += 1;
-    const intermediaryContract = new Contract(intermediary, INTERMEDIARY_IDENTITY_ABI, provider);
-    const boundProfitRecipient = utils.getAddress(String(await intermediaryContract.profitRecipient()));
-    if (!sameAddress(boundProfitRecipient, profitRecipient)) {
-      throw new Error('GHOST_WALLET_INTERMEDIARY_PAYOUT_BINDING_MISMATCH');
-    }
-
-    const feeAssetA = pair.intentA.buyToken;
-    const feeAssetB = pair.intentB.buyToken;
-    const tokenA = new Contract(feeAssetA, ERC20_BALANCE_ABI, provider);
-    const tokenB = new Contract(feeAssetB, ERC20_BALANCE_ABI, provider);
-    const [beforeA, beforeB] = await Promise.all([
-      tokenA.balanceOf(profitRecipient),
-      tokenB.balanceOf(profitRecipient),
-    ]);
-
-    const prepared = buildMatchedIntentPairTransaction({ intermediary, pair, profitRecipient });
-    const envelope = { from: wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
-    await provider.call(envelope);
-    const gas = await provider.estimateGas(envelope);
-    if (gas.lte(0)) throw new Error('GHOST_WALLET_MATCHED_INTENT_GAS_ESTIMATE_ZERO');
-
-    const network = await provider.getNetwork();
-    const sponsored = await runtime.gasSponsor.execute({
-      wallet,
-      chainId: network.chainId,
-      calls: [{ to: prepared.to, data: prepared.data, value: BigNumber.from(prepared.value) }],
-      timeoutMs: Math.max(10_000, Number(process.env.GHOST_WALLET_SPONSORED_TX_TIMEOUT_MS || 60_000)),
-    });
-    if (hooks.onSubmitted) await hooks.onSubmitted(sponsored.transactionHash);
-
-    let receipt = await provider.getTransactionReceipt(sponsored.transactionHash);
-    if (!receipt) {
-      receipt = await provider.waitForTransaction(
-        sponsored.transactionHash,
-        receiptConfirmations(),
-        Math.max(10_000, Number(process.env.GHOST_WALLET_RECEIPT_TIMEOUT_MS || 60_000)),
-      );
-    }
-    if (!receipt || receipt.status !== 1) throw new Error('GHOST_WALLET_MATCHED_INTENT_NOT_SETTLED');
-
-    const [afterA, afterB] = await Promise.all([
-      tokenA.balanceOf(profitRecipient),
-      tokenB.balanceOf(profitRecipient),
-    ]);
-    const realizedA = bigint(afterA) - bigint(beforeA);
-    const realizedB = bigint(afterB) - bigint(beforeB);
-    if (realizedA !== pair.feeAmountA || realizedB !== pair.feeAmountB) {
-      throw new Error(`GHOST_WALLET_PAYOUT_DELTA_MISMATCH:${realizedA}/${realizedB}:${pair.feeAmountA}/${pair.feeAmountB}`);
-    }
-
-    const verified = this.verifyMatchedIntentReceipt(pair, receipt, profitRecipient);
-    ghostWalletIntentBook.markSettled(pair);
-    logger.info('[GhostWallet] Atomic matched-intent settlement terminally verified', {
-      component: 'GhostWalletEngine',
-      pairId: pair.pairId,
-      chain: pair.chain,
-      txHash: receipt.transactionHash,
-      realizedProfitTokenA: realizedA.toString(),
-      realizedProfitTokenB: realizedB.toString(),
-      profitRecipient,
-      repaymentPolicy: 'same_transaction_or_revert',
-      profitRouting: '100_percent_direct_to_primary_before_isolated_eth_conversion',
-      profitLadderAuthority: false,
-      providerSponsoredOperatorCostProvenZero: true,
-      arbitrageExecutionAffected: false,
-    });
-    return verified;
+    const settlement = this.verifyMatchedIntentReceipt(pair, receipt, resolvePrimaryProfitPayoutAddress() || '');
+    this.executionsSettled += 1;
+    this.lastExecutionAt = Date.now();
+    return settlement;
   }
 
   private verifyMatchedIntentReceipt(
@@ -467,11 +304,11 @@ export class GhostWalletEngine {
         matched = true;
         break;
       } catch {
-        // Ignore unrelated intermediary logs; the exact settlement event is required below.
+        // unrelated log
       }
     }
     if (!matched) throw new Error('GHOST_WALLET_SETTLEMENT_EVENT_MISMATCH');
-
+    ghostWalletIntentBook.markSettled(pair);
     return {
       pairId: pair.pairId,
       chain: pair.chain,
