@@ -3,8 +3,7 @@ export type GhostWalletCapitalPrimitive =
   | 'aave_credit_delegation'
   | 'signed_intent_capital'
   | 'coincidence_of_wants'
-  | 'permissionless_vault_capital'
-  | 'protocol_deferred_settlement';
+  | 'permissionless_vault_capital';
 
 export type GhostWalletResourceForm =
   | 'liquid_principal'
@@ -16,7 +15,7 @@ export type GhostWalletExecutionSurface =
   | 'atomic_liability_cycle'
   | 'matched_intent_pair'
   | 'vault_atomic_credit'
-  | 'protocol_deferred_settlement';
+  | 'vault_brokered_flash_credit';
 
 export interface GhostWalletCapitalQuote {
   quoteId: string;
