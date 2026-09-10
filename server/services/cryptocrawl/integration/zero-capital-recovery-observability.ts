@@ -6,6 +6,7 @@ export interface ZeroCapitalRecoverySnapshot {
   observedAt: number;
   observedCandidates: number;
   candidatesWithNetBps: number;
+  historicalBpsCandidates: number;
   positiveCandidates: number;
   nonPositiveGrossEdgeCandidates: number;
   grossPositiveNetNegativeCandidates: number;
@@ -32,14 +33,16 @@ export interface ZeroCapitalRecoverySnapshot {
     sameRouteGapImprovementBps: number | null;
   } | null;
   latestMeasuredRoute: {
-    routeId: string;
+    opportunityId: string;
+    grossProfitBps: number | null;
+    allInCostBps: number | null;
     netProfitBps: number | null;
-    attempts: number;
-    positiveQuotes: number;
+    bpsToBreakEven: number | null;
     measuredNotionalUsd: number | null;
     measuredAt: number;
     measurementAgeMs: number;
     actionableNow: boolean;
+    status: MeasuredCandidate['status'];
   } | null;
   authority: 'telemetry_only';
   executionAuthority: false;
@@ -98,15 +101,17 @@ function notifyUpdate(): void {
 
 function refresh(): void {
   const now = Date.now();
-  // Recovery telemetry describes routes that could still be acted on now. Pull
-  // the complete default registry capacity before applying topology/freshness so
-  // high-volume CEX churn cannot crowd zero-capital candidates out of the view.
-  const candidates = measuredCandidateRegistry.getRecent(4096)
-    .filter(candidate =>
-      candidate.topology === 'ZERO_CAPITAL_ATOMIC'
-      && candidate.status !== 'expired'
-      && candidate.expiresAt > now,
-    );
+  // Keep a bounded ten-minute registry history visible even after an opportunity
+  // expires. Expiration removes execution authority, not the fact that a real
+  // gross spread/cost/net BPS measurement occurred.
+  const candidateHistory = measuredCandidateRegistry.getRecent(4096)
+    .filter(candidate => candidate.topology === 'ZERO_CAPITAL_ATOMIC');
+  const historicalBpsCandidates = candidateHistory
+    .filter(candidate => typeof candidate.canonicalBps.netBps === 'number' && Number.isFinite(candidate.canonicalBps.netBps));
+  const candidates = candidateHistory.filter(candidate =>
+    candidate.status !== 'expired'
+    && candidate.expiresAt > now,
+  );
   const bpsCandidates = candidates
     .filter(candidate => typeof candidate.canonicalBps.netBps === 'number' && Number.isFinite(candidate.canonicalBps.netBps));
   const withBps = bpsCandidates.map(candidate => Number(candidate.canonicalBps.netBps));
@@ -141,22 +146,22 @@ function refresh(): void {
 
   const maxRouteEvidenceAgeMs = routeEvidenceMaxAgeMs();
   const routeEvidence = getZeroCapitalRoutePreselectionEvidence();
-  const historicalMeasuredRoutes = routeEvidence.filter(item =>
+  // This route-preselection API intentionally nulls stale economics. Use it only
+  // for actionable ranking. Historical BPS comes from the candidate registry,
+  // whose retention is explicitly telemetry-only and cannot grant execution.
+  const measuredRoutes = routeEvidence.filter(item =>
     item.lastMeasuredAt !== null
     && item.lastMeasuredAt <= now
+    && now - item.lastMeasuredAt <= maxRouteEvidenceAgeMs
     && item.recentNetProfitBps !== null
     && Number.isFinite(item.recentNetProfitBps),
-  );
-  const measuredRoutes = historicalMeasuredRoutes.filter(item =>
-    item.lastMeasuredAt !== null
-    && now - item.lastMeasuredAt <= maxRouteEvidenceAgeMs,
   );
   const nearBreakEvenRoutes = measuredRoutes
     .filter(item => Number(item.recentNetProfitBps) <= 0)
     .sort((left, right) => Math.abs(Number(left.recentNetProfitBps)) - Math.abs(Number(right.recentNetProfitBps)));
   const closestRoute = nearBreakEvenRoutes[0] ?? null;
-  const latestMeasured = [...historicalMeasuredRoutes]
-    .sort((left, right) => Number(right.lastMeasuredAt || 0) - Number(left.lastMeasuredAt || 0))[0] ?? null;
+  const latestMeasuredCandidate = [...historicalBpsCandidates]
+    .sort((left, right) => right.canonicalBps.measuredAt - left.canonicalBps.measuredAt)[0] ?? null;
   const closestRouteGapBps = closestRoute ? Math.abs(Number(closestRoute.recentNetProfitBps)) : null;
   const candidateGapDeltaBps = closestCandidateGapBps !== null && previousClosestCandidateGapBps !== null
     ? previousClosestCandidateGapBps - closestCandidateGapBps
@@ -169,6 +174,7 @@ function refresh(): void {
     observedAt: now,
     observedCandidates: candidates.length,
     candidatesWithNetBps: withBps.length,
+    historicalBpsCandidates: historicalBpsCandidates.length,
     positiveCandidates: withBps.filter(value => value > 0).length,
     nonPositiveGrossEdgeCandidates: nonPositiveGrossEdgeCandidates.length,
     grossPositiveNetNegativeCandidates: costCompressibleCandidates.length,
@@ -183,7 +189,7 @@ function refresh(): void {
     medianCandidateBpsToBreakEven: percentile(negativeGaps, 0.5),
     p90CandidateBpsToBreakEven: percentile(negativeGaps, 0.9),
     measuredRouteFamilies: measuredRoutes.length,
-    measuredRouteFamiliesHistorical: historicalMeasuredRoutes.length,
+    measuredRouteFamiliesHistorical: historicalBpsCandidates.length,
     closestMeasuredRoute: closestRoute && closestRoute.lastMeasuredAt !== null
       ? {
           routeId: closestRoute.routeId,
@@ -196,16 +202,18 @@ function refresh(): void {
           sameRouteGapImprovementBps: sameRouteGapDeltaBps,
         }
       : null,
-    latestMeasuredRoute: latestMeasured && latestMeasured.lastMeasuredAt !== null
+    latestMeasuredRoute: latestMeasuredCandidate
       ? {
-          routeId: latestMeasured.routeId,
-          netProfitBps: latestMeasured.recentNetProfitBps,
-          attempts: latestMeasured.attempts,
-          positiveQuotes: latestMeasured.positiveQuotes,
-          measuredNotionalUsd: latestMeasured.recentMeasuredNotionalUsd,
-          measuredAt: latestMeasured.lastMeasuredAt,
-          measurementAgeMs: Math.max(0, now - latestMeasured.lastMeasuredAt),
-          actionableNow: now - latestMeasured.lastMeasuredAt <= maxRouteEvidenceAgeMs,
+          opportunityId: latestMeasuredCandidate.opportunityId,
+          grossProfitBps: finite(latestMeasuredCandidate.canonicalBps.grossBps),
+          allInCostBps: finite(latestMeasuredCandidate.canonicalBps.allInCostBps),
+          netProfitBps: finite(latestMeasuredCandidate.canonicalBps.netBps),
+          bpsToBreakEven: finite(latestMeasuredCandidate.canonicalBps.bpsToBreakEven),
+          measuredNotionalUsd: finite(latestMeasuredCandidate.canonicalBps.notionalUsd),
+          measuredAt: latestMeasuredCandidate.canonicalBps.measuredAt,
+          measurementAgeMs: Math.max(0, now - latestMeasuredCandidate.canonicalBps.measuredAt),
+          actionableNow: latestMeasuredCandidate.status !== 'expired' && latestMeasuredCandidate.expiresAt > now,
+          status: latestMeasuredCandidate.status,
         }
       : null,
     authority: 'telemetry_only',
@@ -219,6 +227,7 @@ function refresh(): void {
     routeEvidenceMaxAgeMs: maxRouteEvidenceAgeMs,
     actionableEvidenceBoundedByRouteTtl: true,
     historicalMeasurementVisibilityRetained: true,
+    historicalMeasurementAuthority: 'retained_registry_telemetry_only_never_execution',
     candidateAuthority: 'unexpired_canonical_bps_only',
     costCompressionAuthority: 'gross_positive_net_nonpositive_measured_candidates_only',
     nonPositiveGrossEdgeTreatment: 'route_pool_market_edge_search_not_fee_compression',
