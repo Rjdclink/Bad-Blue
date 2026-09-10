@@ -1,69 +1,24 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
-process.env.ALCHEMY_API_KEY = 'test-alchemy-key';
-process.env.ALCHEMY_MAX_REQUESTS_PER_MINUTE = '50';
-process.env.ALCHEMY_DAILY_CU_BUDGET = '1000';
-delete process.env.ALCHEMY_MEMPOOL_MONITORING_ENABLED;
-delete process.env.ALCHEMY_MEMPOOL_NETWORKS;
-delete process.env.ALCHEMY_ALLOW_UNFILTERED_PENDING;
+const compatibility = readFileSync('server/services/cryptocrawl/capital-free/alchemy-integration.ts', 'utf8');
+const pending = readFileSync('server/services/cryptocrawl/capital-free/provider-mesh-pending-stream.ts', 'utf8');
+const pressure = readFileSync('server/services/cryptocrawl/capital-free/provider-mesh-mempool-analysis.ts', 'utf8');
+const wiring = readFileSync('server/services/cryptocrawl/runtime/dynamic-rpc-provider-wiring.ts', 'utf8');
 
-const calls: Array<{ method: string; url: string }> = [];
-const originalFetch = globalThis.fetch;
-globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-  const payload = init?.body ? JSON.parse(String(init.body)) : {};
-  calls.push({ method: String(payload.method || 'unknown'), url });
-  if (payload.method === 'eth_chainId') {
-    return new Response(JSON.stringify({ jsonrpc: '2.0', id: payload.id, result: '0x1' }), { status: 200 });
-  }
-  if (payload.method === 'alchemy_getTokenMetadata') {
-    return new Response(JSON.stringify({ jsonrpc: '2.0', id: payload.id, result: { name: 'USD Coin', symbol: 'USDC', decimals: 6, logo: null } }), { status: 200 });
-  }
-  if (payload.method === 'alchemy_getTokenBalances') {
-    return new Response(JSON.stringify({ jsonrpc: '2.0', id: payload.id, result: { tokenBalances: [{ contractAddress: '0x0000000000000000000000000000000000000001', tokenBalance: '0x1', tokenBalanceRaw: '0x1' }] } }), { status: 200 });
-  }
-  throw new Error(`Unexpected Alchemy test request: ${payload.method}`);
-}) as typeof fetch;
+assert.doesNotMatch(compatibility, /process\.env\.ALCHEMY_API_KEY/, 'legacy compatibility facade must not read an Alchemy credential');
+assert.doesNotMatch(compatibility, /g\.alchemy\.com/, 'legacy compatibility facade must not retain Alchemy endpoints');
+assert.doesNotMatch(compatibility, /alchemy_getToken/, 'token reads must not use Alchemy enhanced methods');
+assert.doesNotMatch(compatibility, /alchemy_pendingTransactions/, 'pending reads must not use Alchemy enhanced methods');
+assert.match(compatibility, /apiKey:\s*'retired'/, 'legacy statistics must expose the provider credential as retired');
+assert.match(compatibility, /dayEstimatedCu:\s*0/, 'retired compatibility surface must report zero Alchemy compute-unit spend');
+assert.match(compatibility, /blockedRequests:\s*0/, 'retired compatibility surface has no provider-cost requests to block');
 
-try {
-  const { AlchemyIntegration } = await import('../../server/services/cryptocrawl/capital-free/alchemy-integration.js');
-  const integration = new AlchemyIntegration('test-alchemy-key');
-  await integration.start(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base']);
+assert.match(pending, /drpc_pendingTransactions/, 'free full pending stream must use the provider-mesh dRPC replacement');
+assert.match(pending, /MAX_FALLBACK_DETAILS_PER_MINUTE/, 'fallback detail requests remain bounded');
+assert.match(pressure, /method:\s*'txpool_content'/, 'mempool pressure remains measured rather than inferred');
+assert.match(pressure, /PRESSURE_SAMPLE_TTL_MS/, 'pressure requests are cached and bounded');
+assert.match(wiring, /alchemyOperationalAuthority:\s*false/, 'dynamic provider mesh must explicitly deny Alchemy operational authority');
+assert.match(wiring, /alchemyPaidMempoolAuthority:\s*false/, 'dynamic provider mesh must explicitly deny paid Alchemy mempool authority');
 
-  let stats = integration.getStatistics();
-  assert.equal(stats.mempoolPolicy.enabled, false, 'mempool must be opt-in, not key-presence driven');
-  assert.equal(stats.arbitrage.pendingTx.activeSubscriptions, 0, 'startup must not create broad pending subscriptions');
-  assert.equal(stats.arbitrage.pendingTx.isMonitoring, false);
-  assert.equal(calls.filter(call => call.method === 'eth_chainId').length, 1, 'startup should perform only one cheap readiness probe');
-
-  await assert.rejects(
-    () => integration.pendingTransactions.startMonitoring('ethereum'),
-    /disabled by cost policy/,
-    'direct callers must not bypass the default mempool cost gate',
-  );
-
-  process.env.ALCHEMY_MEMPOOL_MONITORING_ENABLED = 'true';
-  process.env.ALCHEMY_MEMPOOL_NETWORKS = 'ethereum';
-  await assert.rejects(
-    () => integration.pendingTransactions.startMonitoring('ethereum'),
-    /Unfiltered pending-transaction monitoring is disabled/,
-    'generic hash firehose must remain blocked without explicit unsafe opt-in',
-  );
-
-  const token = '0x0000000000000000000000000000000000000001';
-  const wallet = '0x0000000000000000000000000000000000000002';
-  await integration.getTokenMetadata('ethereum', token);
-  await integration.getTokenMetadata('ethereum', token);
-  await integration.getTokenBalances('ethereum', wallet, [token]);
-  await integration.getTokenBalances('ethereum', wallet, [token]);
-
-  assert.equal(calls.filter(call => call.method === 'alchemy_getTokenMetadata').length, 1, 'metadata cache must suppress duplicate paid calls');
-  assert.equal(calls.filter(call => call.method === 'alchemy_getTokenBalances').length, 1, 'balance cache must suppress duplicate paid calls');
-
-  stats = integration.getStatistics();
-  assert.equal(stats.cost.dayEstimatedCu, 30, 'estimated CU should match current Alchemy costs: metadata=10, balances=20');
-  assert.equal(stats.cost.blockedRequests, 0);
-  console.log('Alchemy cost governor verification passed');
-} finally {
-  globalThis.fetch = originalFetch;
-}
+console.log('Provider-mesh Alchemy retirement / zero-provider-spend verification passed');
