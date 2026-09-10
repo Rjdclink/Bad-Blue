@@ -154,7 +154,7 @@ class ProviderMeshTokenAPI {
           component: 'ProviderMeshTokenAPI',
           network,
           contractAddress,
-          provider: managed.config.provider,
+          provider: managed.provider,
           error: error instanceof Error ? error.message : String(error),
           routeLocalFailure: true,
         });
@@ -475,7 +475,7 @@ export class AlchemyIntegration {
       cost: retiredCostSnapshot(),
       mempoolPolicy: {
         enabled: stream.running,
-        networks: stream.configuredNetworks.filter((network): network is AlchemyNetwork => COMPATIBLE_NETWORKS.includes(network as AlchemyNetwork)),
+        networks: stream.configuredNetworks.map(network => network as AlchemyNetwork),
         unfilteredPendingAllowed: true,
       },
     };
