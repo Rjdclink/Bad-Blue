@@ -180,7 +180,7 @@ function genericProviderDefinitions(): ProviderDefinition[] {
       httpUrl,
       websocketUrl,
       priority: Number.isFinite(priorityRaw) ? Math.max(1, Math.min(90, Math.round(priorityRaw))) : 7,
-      pendingTransactions: websocketUrl && row.pendingTransactions === true,
+      pendingTransactions: Boolean(websocketUrl) && row.pendingTransactions === true,
     });
   }
   return output;
