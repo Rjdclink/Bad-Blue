@@ -583,49 +583,111 @@ async function reconcileAcrossBridge(input: {
       },
     };
   }
-  if (['refunded', 'deposit-failed'].includes(state)) {
-    if (mode === 'primary' && resolvePayoutFallbackAddress()) {
-      const originChain = normalizeChain(String(input.result.chain || ''));
-      const originProvider = await ghostWalletProviderMesh.getProvider(originChain);
-      if (!originProvider) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${originChain}`);
-      const wallet = signingWallet(originProvider);
-      const baseline = asBigInt(input.result.sourceNativeBaselineWei, 'GHOST_WALLET_ACROSS_SOURCE_BASELINE_INVALID');
-      const current = BigInt((await originProvider.getBalance(wallet.address)).toString());
-      const recovered = current > baseline ? current - baseline : 0n;
-      if (recovered > 0n) {
-        const fallback = await submitProfitFundedAcrossBridge({
-          chain: originChain,
-          acquiredNative: recovered,
-          sourceNativeBaseline: baseline,
-          provider: originProvider,
-          wallet,
-          mode: 'fallback',
-          zeroExReceiptHash: String(input.result.zeroExConversionReceipt || input.transactionHash),
-          onSubmitted: input.onSubmitted,
-        });
-        return {
-          ...fallback,
-          result: {
-            ...fallback.result,
-            fallbackFromPrimaryTransactionHash: input.transactionHash,
-            fallbackReason: `across_${state}`,
-            primaryPayoutTerminallyConfirmed: false,
-            recoveredNativeProfitWei: recovered.toString(),
-          },
-        };
-      }
-      if (state === 'deposit-failed') {
-        return {
-          state: 'submitted',
-          transactionHash: input.transactionHash,
-          result: { ...input.result, providerStatus: state, awaitingProvenRefundBeforeFallback: true },
-          retryAfterMs: 5_000,
-        };
-      }
+
+  const originChain = normalizeChain(String(input.result.chain || ''));
+  const originProvider = await ghostWalletProviderMesh.getProvider(originChain);
+  if (!originProvider) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${originChain}`);
+  const wallet = signingWallet(originProvider);
+  const baseline = asBigInt(input.result.sourceNativeBaselineWei, 'GHOST_WALLET_ACROSS_SOURCE_BASELINE_INVALID');
+  const originalProfit = positiveAmount(input.result.sourceNativeProfitWei, 'GHOST_WALLET_ACROSS_SOURCE_PROFIT_INVALID');
+  const current = BigInt((await originProvider.getBalance(wallet.address)).toString());
+  const balanceAboveBaseline = current > baseline ? current - baseline : 0n;
+  const recovered = balanceAboveBaseline > originalProfit ? originalProfit : balanceAboveBaseline;
+
+  const submitFallbackFromRecovered = async (reason: string, proof: string): Promise<GhostWalletPayoutSubmission> => {
+    if (mode !== 'primary' || !resolvePayoutFallbackAddress()) {
+      throw new Error(`GHOST_WALLET_ACROSS_TERMINAL_FAILURE:${state}`);
     }
-    throw new Error(`GHOST_WALLET_ACROSS_TERMINAL_FAILURE:${state}`);
+    if (recovered <= 0n) {
+      return {
+        state: 'submitted',
+        transactionHash: input.transactionHash,
+        result: {
+          ...input.result,
+          providerStatus: state,
+          awaitingRecoveredOriginBalance: true,
+          recoveryProof: proof,
+        },
+        retryAfterMs: 60_000,
+      };
+    }
+    const fallback = await submitProfitFundedAcrossBridge({
+      chain: originChain,
+      acquiredNative: recovered,
+      sourceNativeBaseline: baseline,
+      provider: originProvider,
+      wallet,
+      mode: 'fallback',
+      zeroExReceiptHash: String(input.result.zeroExConversionReceipt || input.transactionHash),
+      onSubmitted: input.onSubmitted,
+    });
+    return {
+      ...fallback,
+      result: {
+        ...fallback.result,
+        fallbackFromPrimaryTransactionHash: input.transactionHash,
+        fallbackReason: reason,
+        primaryPayoutTerminallyConfirmed: false,
+        recoveredNativeProfitWei: recovered.toString(),
+        recoveryProof: proof,
+      },
+    };
+  };
+
+  if (state === 'refunded') {
+    // Across defines `refunded` as the point at which the refund has executed
+    // on-chain and returned funds to refundAddress. Require both that provider
+    // state and a bounded origin-wallet balance delta before retargeting.
+    return submitFallbackFromRecovered(
+      'across_refunded',
+      'across_deposit_status_refunded_plus_origin_balance_delta',
+    );
   }
-  if (['expired', 'refund-failed', 'manual-refund-required'].includes(state)) {
+
+  if (state === 'deposit-failed') {
+    // A provider label alone is not proof that principal is back. Only a reverted
+    // origin receipt proves the deposit never transferred funds; otherwise keep
+    // the same durable job pending until the status/receipt converges.
+    const originReceipt = await originProvider.getTransactionReceipt(input.transactionHash).catch(() => null);
+    if (!originReceipt) {
+      return {
+        state: 'submitted',
+        transactionHash: input.transactionHash,
+        result: { ...input.result, providerStatus: state, awaitingOriginDepositReceipt: true },
+        retryAfterMs: 5_000,
+      };
+    }
+    if (originReceipt.status === 0) {
+      return submitFallbackFromRecovered(
+        'across_deposit_transaction_reverted',
+        'origin_deposit_receipt_status_zero_plus_origin_balance_delta',
+      );
+    }
+    return {
+      state: 'submitted',
+      transactionHash: input.transactionHash,
+      result: {
+        ...input.result,
+        providerStatus: state,
+        originDepositReceiptStatus: originReceipt.status,
+        awaitingAcrossStatusConvergence: true,
+      },
+      retryAfterMs: 60_000,
+    };
+  }
+
+  if (state === 'expired') {
+    // Across documents expiry as refund-in-progress, not terminal loss. Refund
+    // settlement can take hours; use the provider-recommended minute-scale poll.
+    return {
+      state: 'submitted',
+      transactionHash: input.transactionHash,
+      result: { ...input.result, providerStatus: state, awaitingAcrossRefund: true },
+      retryAfterMs: 60_000,
+    };
+  }
+
+  if (['refund-failed', 'manual-refund-required'].includes(state)) {
     throw new Error(`GHOST_WALLET_ACROSS_RECOVERY_PENDING:${state}`);
   }
   return {
