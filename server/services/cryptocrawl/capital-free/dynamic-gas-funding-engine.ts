@@ -11,9 +11,8 @@ export type GasFundingPaymentSource =
 export interface GasFundingProofContext {
   /**
    * True only when the provider/paymaster's monetary gas obligation is proven not
-   * to be charged to the operator/application. This is stronger than zero initial
-   * wallet capital: hosted sponsorship can remove the native-balance prerequisite
-   * while still creating a provider-billing liability that belongs in economics.
+   * to be charged to the operator/application. Hosted sponsorship that is billed
+   * later is not zero-operator-cost funding and cannot satisfy ZERO_CAPITAL_ATOMIC.
    */
   sponsorOperatorMonetaryCostProvenZero?: boolean;
   /** True only when durable capital provenance proves the native reserve is system-owned. */
@@ -27,37 +26,34 @@ export interface GasFundingDecision {
   reserveFloor: bigint;
   reason: string;
   paymentSource?: GasFundingPaymentSource;
-  /** True when this lane can execute without any pre-existing operator/wallet capital injection. */
+  /** True only when this lane can execute without operator/personal capital or fees. */
   strictZeroInitialCapitalEligible?: boolean;
-  /** True only when an operator must add money before this exact execution can run. */
+  /** True only when an operator must add money before or after this exact execution. */
   operatorMonetaryInputRequired?: boolean;
-  /** Hosted sponsorship may be billed later even though it requires no upfront native balance. */
+  /** Provider-fronted gas billed to the operator/application is a monetary liability. */
   providerBillingLiability?: boolean;
   /** Independent proof that the sponsor itself creates no operator monetary cost. */
   sponsorOperatorMonetaryCostProvenZero?: boolean;
 }
 
 /**
- * Zero INITIAL capital is the production objective. A stronger "zero operator
- * monetary cost ever" mode is available only when explicitly requested. Keeping
- * it opt-in prevents a provider-fronted paymaster bill from being confused with an
- * upfront native-token requirement while preserving a strict fail-closed option.
+ * ZERO_CAPITAL_ATOMIC is a hard zero-personal-cost boundary: no operator principal,
+ * gas, collateral, or provider bill may be introduced by the selected funding lane.
+ * This cannot be weakened by environment configuration. A provider-fronted bill is
+ * economically real even when it removes an upfront native-token requirement.
  */
 export function strictZeroOperatorCostRequired(): boolean {
-  return process.env.ZERO_INITIAL_CAPITAL_STRICT_OPERATOR_ZERO_COST?.trim().toLowerCase() === 'true';
+  return true;
 }
 
 /**
- * Select the funding lane for an exact zero-initial-capital attempt.
+ * Select the funding lane for an exact zero-personal-cost attempt.
  *
- * A real paymaster/Wallet-API sponsorship can satisfy zero initial capital because
- * the execution account needs no pre-existing native gas. It does NOT imply free
- * gas: unless independent proof establishes zero sponsor cost, the provider-fronted
- * gas remains a billing liability and must be charged by canonical economics.
- *
- * Native gas can satisfy zero initial capital only after durable provenance proves
- * that the reserve was generated/retained by the system itself. An unexplained
- * wallet balance never becomes bootstrap authority merely because it exists.
+ * Provider/paymaster sponsorship qualifies only when independent evidence proves
+ * the provider cost is not billed back to the operator/application. Native gas can
+ * qualify only after durable provenance proves that the reserve was generated or
+ * retained by the system itself; its realized gas still belongs in terminal system
+ * economics because spending system-owned value is an economic cost.
  */
 export function chooseGasFundingMode(
   chain: DynamicChainConfig,
@@ -68,26 +64,21 @@ export function chooseGasFundingMode(
   const defaultFloor = ethers.utils.parseEther(process.env.DYNAMIC_GAS_RESERVE_NATIVE || '0.002').toBigInt();
   const specific = process.env[`DYNAMIC_GAS_RESERVE_${chain.nativeAsset}`];
   const reserveFloor = specific ? ethers.utils.parseUnits(specific, 18).toBigInt() : defaultFloor;
-  const requireZeroOperatorCost = strictZeroOperatorCostRequired();
   const sponsorCostProvenZero = proof.sponsorOperatorMonetaryCostProvenZero === true;
 
-  if (chain.sponsoredBootstrap && sponsorReady) {
-    if (!requireZeroOperatorCost || sponsorCostProvenZero) {
-      return {
-        chain: chain.id,
-        mode: 'sponsored',
-        nativeBalance,
-        reserveFloor,
-        paymentSource: 'provider_sponsored',
-        strictZeroInitialCapitalEligible: true,
-        operatorMonetaryInputRequired: false,
-        providerBillingLiability: !sponsorCostProvenZero,
-        sponsorOperatorMonetaryCostProvenZero: sponsorCostProvenZero,
-        reason: sponsorCostProvenZero
-          ? 'Provider sponsorship proves zero upfront wallet capital and independently proves zero operator monetary gas cost'
-          : 'Provider sponsorship proves zero upfront wallet/native capital; provider-fronted gas remains a billing liability that canonical realized economics must charge',
-      };
-    }
+  if (chain.sponsoredBootstrap && sponsorReady && sponsorCostProvenZero) {
+    return {
+      chain: chain.id,
+      mode: 'sponsored',
+      nativeBalance,
+      reserveFloor,
+      paymentSource: 'provider_sponsored',
+      strictZeroInitialCapitalEligible: true,
+      operatorMonetaryInputRequired: false,
+      providerBillingLiability: false,
+      sponsorOperatorMonetaryCostProvenZero: true,
+      reason: 'Provider sponsorship independently proves zero operator monetary gas cost and creates no provider billing liability',
+    };
   }
 
   if (nativeBalance >= reserveFloor && proof.nativeSystemOwnedProven === true) {
@@ -101,14 +92,14 @@ export function chooseGasFundingMode(
       operatorMonetaryInputRequired: false,
       providerBillingLiability: false,
       sponsorOperatorMonetaryCostProvenZero: false,
-      reason: 'Native reserve is sufficient and durable provenance proves it is system-owned; actual receipt gas is terminally converted and subtracted from realized economics',
+      reason: 'Native reserve is sufficient and durable provenance proves it is system-owned; actual receipt gas is terminally converted and subtracted from realized system economics',
     };
   }
 
   const sponsorReason = chain.sponsoredBootstrap && sponsorReady
-    ? requireZeroOperatorCost
-      ? 'sponsorship removes upfront native funding but explicit zero-operator-cost mode requires independent proof that the provider bill is zero'
-      : 'configured sponsorship is not execution-ready at this boundary'
+    ? sponsorCostProvenZero
+      ? 'configured sponsorship did not satisfy the executable funding boundary'
+      : 'provider sponsorship removes upfront native funding but is not admissible without proof of zero operator billing liability'
     : 'no configured sponsored lane is ready';
   const nativeReason = nativeBalance >= reserveFloor
     ? 'native balance exists but SELF_FUNDED system ownership is not proven at this boundary'
@@ -122,9 +113,9 @@ export function chooseGasFundingMode(
     paymentSource: nativeBalance >= reserveFloor ? 'unproven_native_balance' : 'unavailable',
     strictZeroInitialCapitalEligible: false,
     operatorMonetaryInputRequired: true,
-    providerBillingLiability: false,
+    providerBillingLiability: chain.sponsoredBootstrap && sponsorReady && !sponsorCostProvenZero,
     sponsorOperatorMonetaryCostProvenZero: false,
-    reason: `Zero-initial-capital funding rejected: ${sponsorReason}; ${nativeReason}`,
+    reason: `Zero-personal-cost funding rejected: ${sponsorReason}; ${nativeReason}`,
   };
 }
 
