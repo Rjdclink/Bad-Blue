@@ -21,6 +21,14 @@ interface ChainListener {
   reconnectTimer: NodeJS.Timeout | null;
 }
 
+function timeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    timer.unref?.();
+    promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+  });
+}
+
 async function monitoredAddresses(chain: GhostWalletChain): Promise<string[]> {
   const addresses = new Set<string>();
   const intermediary = ghostWalletEngine.getConfiguredIntermediary(chain);
@@ -99,17 +107,22 @@ class GhostWalletChainEvents {
     this.listeners.clear();
   }
 
-  private closeListener(listener: ChainListener): void {
-    listener.stopping = true;
-    if (listener.reconnectTimer) clearTimeout(listener.reconnectTimer);
+  private disposeTransport(listener: ChainListener): void {
     try { listener.provider.removeAllListeners(); } catch { /* best effort */ }
     try { (listener.provider as any)._websocket?.terminate?.(); } catch { /* best effort */ }
     try { (listener.provider as any)._websocket?.close?.(); } catch { /* best effort */ }
   }
 
+  private closeListener(listener: ChainListener): void {
+    listener.stopping = true;
+    if (listener.reconnectTimer) clearTimeout(listener.reconnectTimer);
+    listener.reconnectTimer = null;
+    this.disposeTransport(listener);
+  }
+
   private async ensureChain(chain: GhostWalletChain): Promise<void> {
     if (this.stopping) return;
-    const httpProvider = ghostWalletProviderMesh.getReadyProvider(chain);
+    const httpProvider = await ghostWalletProviderMesh.getProvider(chain);
     if (!httpProvider) return;
     const addresses = await monitoredAddresses(chain);
     if (addresses.length === 0) return;
@@ -152,7 +165,11 @@ class GhostWalletChainEvents {
       reconnectTimer: null,
     };
     try {
-      const [network, httpNetwork] = await Promise.all([ws.getNetwork(), httpProvider.getNetwork()]);
+      const [network, httpNetwork] = await timeout(
+        Promise.all([ws.getNetwork(), httpProvider.getNetwork()]),
+        8_000,
+        `Ghost settlement websocket ${chain}`,
+      );
       if (network.chainId !== httpNetwork.chainId) throw new Error('GHOST_WALLET_WEBSOCKET_CHAIN_IDENTITY_MISMATCH');
       this.listeners.set(key, listener);
       const filter = { address: addresses, topics: [GHOST_WALLET_SETTLEMENT_EVENT_TOPICS] };
@@ -173,25 +190,51 @@ class GhostWalletChainEvents {
       socket?.once?.('error', reconnect);
       ws.on('error', reconnect);
     } catch (error) {
-      this.closeListener(listener);
+      // Keep this logical listener retryable. closeListener() marks a listener as
+      // terminally stopping and previously prevented an initial handshake failure
+      // from ever scheduling a reconnect.
+      this.disposeTransport(listener);
       logger.warn('[GhostWalletUltra] Non-Alchemy settlement push stream unavailable', {
         component: 'GhostWalletChainEvents',
         chain,
         endpoint: url,
         error: error instanceof Error ? error.message : String(error),
+        reconnectScheduled: true,
         routeLocalFailure: true,
       });
+      this.scheduleReconnect(listener);
     }
   }
 
   private scheduleReconnect(listener: ChainListener): void {
     if (listener.stopping || this.stopping || listener.reconnectTimer) return;
     listener.reconnectTimer = setTimeout(() => {
+      listener.reconnectTimer = null;
       this.listeners.delete(listener.key);
       this.closeListener(listener);
-      const http = ghostWalletProviderMesh.getReadyProvider(listener.chain);
-      if (!http || this.stopping) return;
-      void this.ensureStream(listener.chain, listener.url, listener.addresses, http);
+      void (async () => {
+        if (this.stopping) return;
+        const http = await ghostWalletProviderMesh.getProvider(listener.chain);
+        if (!http) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${listener.chain}`);
+        await this.ensureStream(listener.chain, listener.url, listener.addresses, http);
+        await backfillSettlementLogs({
+          chain: listener.chain,
+          addresses: listener.addresses,
+          provider: http,
+          listenerConnected: this.listeners.has(listener.key),
+        });
+      })().catch(error => {
+        if (this.stopping) return;
+        logger.warn('[GhostWalletUltra] Settlement stream reconnect/backfill attempt failed; retrying route locally', {
+          component: 'GhostWalletChainEvents',
+          chain: listener.chain,
+          endpoint: listener.url,
+          error: error instanceof Error ? error.message : String(error),
+          routeLocalFailure: true,
+        });
+        listener.stopping = false;
+        this.scheduleReconnect(listener);
+      });
     }, 2_000);
     listener.reconnectTimer.unref?.();
   }
@@ -202,6 +245,8 @@ export const ghostWalletChainEvents = new GhostWalletChainEvents();
 export const GHOST_WALLET_SETTLEMENT_STREAM_POLICY = {
   alchemyAllowed: false,
   parallelPushRedundancy: STREAM_REDUNDANCY,
+  initialHandshakeTimeoutMs: 8_000,
+  reconnectBackfill: true,
   periodicPolling: false,
   durableCursorBackfill: true,
   singleSettlementIngestionAuthority: true,
