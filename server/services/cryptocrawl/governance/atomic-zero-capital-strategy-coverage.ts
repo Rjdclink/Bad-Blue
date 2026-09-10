@@ -9,6 +9,12 @@ export type AtomicityGrade =
 
 export type PrincipalSourceClass =
   | 'temporary_external_flash_liquidity'
+  | 'temporary_external_delegated_credit'
+  | 'temporary_external_debt_assumption'
+  | 'counterparty_signed_intent_capital'
+  | 'counterparty_netting_capital'
+  | 'permissionless_vault_atomic_capital'
+  | 'protocol_deferred_settlement_capital'
   | 'proven_system_owned_inventory'
   | 'proven_system_owned_retained_capital'
   | 'none';
@@ -55,6 +61,12 @@ export interface AtomicZeroCapitalAdmissionEvidence {
   personalCollateralRequired: boolean;
   principalProvenance:
     | 'temporary_external'
+    | 'delegated_external'
+    | 'debt_assumption_external'
+    | 'counterparty_signed_intent'
+    | 'counterparty_netted'
+    | 'external_atomic_vault'
+    | 'protocol_deferred_settlement'
     | 'system_owned'
     | 'none'
     | 'unproven';
@@ -105,91 +117,114 @@ const COSTS = [
   'settlement',
 ] as const;
 
+const ATOMIC_EXTERNAL_PRINCIPAL_SOURCES: readonly PrincipalSourceClass[] = [
+  'temporary_external_flash_liquidity',
+  'temporary_external_delegated_credit',
+  'temporary_external_debt_assumption',
+  'counterparty_signed_intent_capital',
+  'counterparty_netting_capital',
+  'permissionless_vault_atomic_capital',
+  'protocol_deferred_settlement_capital',
+] as const;
+
 /**
  * Universal structural policy for every measured execution family.
  *
  * "Zero capital" means zero PERSONAL principal/gas/collateral from the operator.
- * It does not pretend asynchronous CEX, prediction-event, carry, or bridge
- * strategies can be funded by an EVM flash loan. Those lanes may execute only
- * from durable CryptoCrawler-owned retained capital/inventory; until then they
- * remain discovery/learning-only.
+ * External principal is admitted only when its exact source is measured, the
+ * execution path settles the corresponding liability inside the required atomic
+ * boundary, all-in economics remain strictly positive, and failure reverts or
+ * otherwise fails closed. Asynchronous CEX, prediction-event, carry, and bridge
+ * strategies still require durable system-owned capital unless a separately
+ * verified solver/counterparty settlement path is explicitly implemented.
  */
 export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalStrategyCoverage[] = [
   {
     topology: 'DEX_ATOMIC',
     executionFamily: 'same-chain DEX atomic arbitrage',
-    principalSources: ['temporary_external_flash_liquidity'],
+    principalSources: ATOMIC_EXTERNAL_PRINCIPAL_SOURCES,
     gasSources: ['opportunity_backed_external_sponsorship', 'provider_sponsored_zero_operator_cost', 'proven_system_owned_native'],
     collateralSources: ['none'],
     coldStart: 'external_resources_possible',
     atomicity: 'same_transaction_atomic',
-    repaymentModel: 'flash principal and provider fee repaid inside the same transaction before residual profit exists',
-    settlementModel: 'successful receipt plus receiver profit event plus terminal realized economics',
+    repaymentModel: 'exact external principal/debt/counterparty obligation is settled inside the same transaction before residual profit exists',
+    settlementModel: 'successful receipt plus source-specific repayment evidence plus receiver profit event plus terminal realized economics',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
     personalGasAllowed: false,
     personalCollateralAllowed: false,
     accountWideBalanceCreatesOwnership: false,
     discoveryContinuesWhenExecutionBlocked: true,
-    executionReadinessRule: 'fresh exact quote + verified receiver + external/system-owned gas provenance + exact simulation + strictly positive all-in net',
-    researchBasis: ['Morpho/Aave/Balancer flash liquidity', 'ERC-4337/paymaster sponsorship', 'private builder sponsorship where exact economics are proven'],
+    executionReadinessRule: 'fresh exact quote + source-specific capital proof + verified receiver + gas provenance + exact simulation + strictly positive all-in net',
+    researchBasis: ['Morpho/Aave/Balancer flash liquidity', 'Aave credit delegation', 'Euler position-transfer liquidation', 'EIP-712 signed intents and coincidence-of-wants clearing', 'permissionless atomic capital vaults', 'protocol-native deferred settlement when independently verified'],
   },
   {
     topology: 'ZERO_CAPITAL_ATOMIC',
     executionFamily: 'canonical zero-capital atomic route engine',
-    principalSources: ['temporary_external_flash_liquidity'],
+    principalSources: ATOMIC_EXTERNAL_PRINCIPAL_SOURCES,
     gasSources: ['opportunity_backed_external_sponsorship', 'provider_sponsored_zero_operator_cost', 'proven_system_owned_native'],
     collateralSources: ['none'],
     coldStart: 'external_resources_possible',
     atomicity: 'same_transaction_atomic',
-    repaymentModel: 'selected flash provider is repaid from the atomic route output in the same transaction',
-    settlementModel: 'receipt + provider-specific receiver profit event + realized BPS + treasury split evidence',
+    repaymentModel: 'selected measured external capital source is fully settled inside the same transaction; an unmet repayment/minimum-profit condition fails closed',
+    settlementModel: 'receipt + source-specific repayment proof + realized BPS + source-appropriate profit-recipient evidence',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
     personalGasAllowed: false,
     personalCollateralAllowed: false,
     accountWideBalanceCreatesOwnership: false,
     discoveryContinuesWhenExecutionBlocked: true,
-    executionReadinessRule: 'route-local resource proof + gas provenance + provider liquidity/fee proof + exact call/gas + positive residual profit',
-    researchBasis: ['Morpho flash loans', 'Aave/Balancer provider mesh', 'ERC-4337/paymaster sponsorship', 'builder-sponsored bundles'],
+    executionReadinessRule: 'route-local resource proof + gas provenance + exact source liquidity/fee/allowance proof + exact call/gas + positive residual profit',
+    researchBasis: ['Morpho/Aave/Balancer flash liquidity', 'Aave credit delegation', 'Euler debt-assumption liquidation', 'EIP-712 signed intents', 'coincidence-of-wants netting', 'permissionless atomic vault capital', 'ERC-4337/paymaster sponsorship', 'builder-sponsored bundles'],
   },
   {
     topology: 'LIQUIDATION',
-    executionFamily: 'flash-funded atomic liquidation',
-    principalSources: ['temporary_external_flash_liquidity'],
+    executionFamily: 'atomic liquidation with flash or position-transfer funding',
+    principalSources: [
+      'temporary_external_flash_liquidity',
+      'temporary_external_debt_assumption',
+      'temporary_external_delegated_credit',
+      'permissionless_vault_atomic_capital',
+    ],
     gasSources: ['opportunity_backed_external_sponsorship', 'provider_sponsored_zero_operator_cost', 'proven_system_owned_native'],
     collateralSources: ['none'],
     coldStart: 'external_resources_possible',
     atomicity: 'same_transaction_atomic',
-    repaymentModel: 'flash debt asset repaid after liquidation and collateral unwind in the same transaction',
-    settlementModel: 'exact simulated signed payload + successful receipt + realized liquidation economics',
+    repaymentModel: 'flash/vault/delegated principal is repaid or inherited liquidation debt returns to its pretransaction baseline before the transaction can settle',
+    settlementModel: 'exact simulated signed payload + source-specific liability proof + successful receipt + realized liquidation economics',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
     personalGasAllowed: false,
     personalCollateralAllowed: false,
     accountWideBalanceCreatesOwnership: false,
     discoveryContinuesWhenExecutionBlocked: true,
-    executionReadinessRule: 'borrower liquidatable + exact unwind + flash source + zero-personal gas proof + positive deterministic net + exact receipt',
-    researchBasis: ['Aave liquidation semantics', 'same-transaction flash liquidity', 'exact receiver simulation'],
+    executionReadinessRule: 'borrower liquidatable + exact collateral unwind + measured external source + zero-personal gas proof + positive deterministic net + exact receipt',
+    researchBasis: ['Aave liquidation semantics', 'Euler position-transfer liquidation semantics', 'same-transaction external capital', 'exact receiver simulation'],
   },
   {
     topology: 'MEMPOOL_BACKRUN',
     executionFamily: 'private ordered backrun bundle',
-    principalSources: ['temporary_external_flash_liquidity', 'proven_system_owned_retained_capital'],
+    principalSources: [
+      'temporary_external_flash_liquidity',
+      'temporary_external_delegated_credit',
+      'permissionless_vault_atomic_capital',
+      'protocol_deferred_settlement_capital',
+      'proven_system_owned_retained_capital',
+    ],
     gasSources: ['opportunity_backed_external_sponsorship', 'provider_sponsored_zero_operator_cost', 'proven_system_owned_native'],
     collateralSources: ['none'],
     coldStart: 'external_resources_possible',
     atomicity: 'private_bundle_ordered',
-    repaymentModel: 'flash-funded backrun repays inside its transaction; otherwise only system-owned capital may be committed',
-    settlementModel: 'private bundle simulation + victim-before-backrun receipt ordering + terminal realized net',
+    repaymentModel: 'external atomic principal settles inside the backrun transaction; otherwise only proven system-owned capital may be committed',
+    settlementModel: 'private bundle simulation + victim-before-backrun receipt ordering + source repayment proof + terminal realized net',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
     personalGasAllowed: false,
     personalCollateralAllowed: false,
     accountWideBalanceCreatesOwnership: false,
     discoveryContinuesWhenExecutionBlocked: true,
-    executionReadinessRule: 'backrun-only + private simulation + funding proof + gas/builder payment proof + positive all-in residual + receipt ordering proof',
-    researchBasis: ['private relay bundle simulation', 'builder-sponsored bundle designs', 'no frontrun/sandwich authority'],
+    executionReadinessRule: 'backrun-only + private simulation + exact funding proof + gas/builder payment proof + positive all-in residual + receipt ordering proof',
+    researchBasis: ['private relay bundle simulation', 'measured atomic external capital', 'builder-sponsored bundle designs', 'no frontrun/sandwich authority'],
   },
   {
     topology: 'CEX_CEX',
@@ -199,7 +234,7 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
     collateralSources: ['none'],
     coldStart: 'discovery_only_until_system_owned_capital_exists',
     atomicity: 'venue_coordinated_non_atomic',
-    repaymentModel: 'no flash repayment claim; both legs consume only durable system-owned inventory reservations',
+    repaymentModel: 'no false atomic-capital claim; both exchange legs consume only durable system-owned inventory reservations',
     settlementModel: 'authenticated order/fill settlement for both venues plus inventory reconciliation',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
@@ -218,7 +253,7 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
     collateralSources: ['none'],
     coldStart: 'discovery_only_until_system_owned_capital_exists',
     atomicity: 'venue_coordinated_non_atomic',
-    repaymentModel: 'no flash repayment claim; execution is limited to durable system-owned venue inventory',
+    repaymentModel: 'no false atomic-capital claim; execution is limited to durable system-owned venue inventory',
     settlementModel: 'post-only maker terminal fill followed by fresh bounded hedge/settlement when applicable',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
@@ -237,7 +272,7 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
     collateralSources: ['none'],
     coldStart: 'discovery_only_until_system_owned_capital_exists',
     atomicity: 'venue_coordinated_non_atomic',
-    repaymentModel: 'no false flash-loan claim; Kalshi and companion-venue orders reserve only proven system-owned cash/collateral and retain it until terminal settlement or neutralization',
+    repaymentModel: 'no false atomic-capital claim; Kalshi and companion-venue orders reserve only proven system-owned cash/collateral and retain it until terminal settlement or neutralization',
     settlementModel: 'durable order/fill recovery + event resolution/void/cancel semantics + redemption where applicable + exactly-once terminal realized PnL',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
@@ -256,7 +291,7 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
     collateralSources: ['none'],
     coldStart: 'discovery_only_until_system_owned_capital_exists',
     atomicity: 'asynchronous_cross_chain',
-    repaymentModel: 'no false atomic flash-loan claim; origin principal must be CryptoCrawler-owned unless a future solver explicitly fronts origin principal',
+    repaymentModel: 'no false atomic-capital claim; origin principal must be CryptoCrawler-owned unless a future solver explicitly fronts origin principal with independently proven async recovery',
     settlementModel: 'origin deposit receipt + provider status + destination fill/refund receipt + durable recovery path',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
@@ -275,7 +310,7 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
     collateralSources: ['proven_system_owned_margin_only'],
     coldStart: 'discovery_only_until_system_owned_capital_exists',
     atomicity: 'multi_period_non_atomic',
-    repaymentModel: 'no flash-loan claim; spot/perpetual legs remain open across funding intervals using only system-owned margin/inventory, while authenticated inverse-hedge borrowed assets remain liabilities and must be repaid before terminal profit ownership',
+    repaymentModel: 'no atomic-principal claim; spot/perpetual legs remain open across funding intervals using only system-owned margin/inventory, while authenticated inverse-hedge borrowed assets remain liabilities and must be repaid before terminal profit ownership',
     settlementModel: 'durable lifecycle + margin/liability health + both legs terminally closed + inverse borrow repaid to zero + realized funding/fees/PnL',
     canonicalCostComponents: COSTS,
     personalPrincipalAllowed: false,
@@ -311,9 +346,28 @@ export function getAtomicZeroCapitalStrategyCoverageSnapshot() {
       completeAllInCostsRequired: true as const,
       strictPositiveNetRequired: true as const,
       predictionDirectionalRequiresCalibratedConservativeAuthority: true as const,
+      alternativeAtomicCapitalRequiresSourceSpecificMeasuredProof: true as const,
     },
     executionAuthority: false as const,
   };
+}
+
+function principalSourceAllowed(
+  policy: AtomicZeroCapitalStrategyCoverage,
+  provenance: AtomicZeroCapitalAdmissionEvidence['principalProvenance'],
+): boolean {
+  if (provenance === 'temporary_external') return policy.principalSources.includes('temporary_external_flash_liquidity');
+  if (provenance === 'delegated_external') return policy.principalSources.includes('temporary_external_delegated_credit');
+  if (provenance === 'debt_assumption_external') return policy.principalSources.includes('temporary_external_debt_assumption');
+  if (provenance === 'counterparty_signed_intent') return policy.principalSources.includes('counterparty_signed_intent_capital');
+  if (provenance === 'counterparty_netted') return policy.principalSources.includes('counterparty_netting_capital');
+  if (provenance === 'external_atomic_vault') return policy.principalSources.includes('permissionless_vault_atomic_capital');
+  if (provenance === 'protocol_deferred_settlement') return policy.principalSources.includes('protocol_deferred_settlement_capital');
+  if (provenance === 'system_owned') {
+    return policy.principalSources.includes('proven_system_owned_inventory')
+      || policy.principalSources.includes('proven_system_owned_retained_capital');
+  }
+  return provenance === 'none' && policy.principalSources.includes('none');
 }
 
 export function evaluateAtomicZeroCapitalAdmission(
@@ -349,17 +403,7 @@ export function evaluateAtomicZeroCapitalAdmission(
   if (!evidence.executionPathReady) return reject('REJECT_EXECUTION_PATH_UNREADY');
   if (!evidence.settlementPathReady) return reject('REJECT_SETTLEMENT_PATH_UNREADY');
   if (evidence.atomicity !== policy.atomicity) return reject(`REJECT_ATOMICITY_MISMATCH:${policy.atomicity}`);
-
-  if (policy.principalSources.includes('temporary_external_flash_liquidity') && evidence.principalProvenance === 'temporary_external') {
-    // valid external principal path
-  } else if (
-    (policy.principalSources.includes('proven_system_owned_inventory') || policy.principalSources.includes('proven_system_owned_retained_capital'))
-    && evidence.principalProvenance === 'system_owned'
-  ) {
-    // valid system-owned path
-  } else if (policy.principalSources.includes('none') && evidence.principalProvenance === 'none') {
-    // valid principal-free path
-  } else {
+  if (!principalSourceAllowed(policy, evidence.principalProvenance)) {
     return reject('REJECT_PRINCIPAL_SOURCE_NOT_ALLOWED_FOR_STRATEGY');
   }
 
