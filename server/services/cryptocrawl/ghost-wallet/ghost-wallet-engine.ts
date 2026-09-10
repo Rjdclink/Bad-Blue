@@ -9,6 +9,7 @@ import {
   type GhostWalletCapitalQuote,
 } from './capital-fabric.js';
 import { buildMatchedIntentPairTransaction } from './ghost-wallet-builder.js';
+import { ensureGhostWalletInfrastructure } from './ghost-wallet-infrastructure-manager.js';
 import {
   ghostWalletIntentBook,
   type GhostWalletMatchedIntentPair,
@@ -74,9 +75,22 @@ function receiptConfirmations(): number {
     : 1;
 }
 
+/**
+ * No Ghost-Wallet-specific Railway switch is required. An explicit value remains
+ * an operator override, while the default inherits only the already-confirmed
+ * global zero-capital execution authority. This does not grant Profit Ladder or
+ * arbitrage scheduling authority to Ghost Wallet.
+ */
 function liveExecutionEnabled(): boolean {
-  return process.env.GHOST_WALLET_LIVE_EXECUTION?.trim().toLowerCase() === 'true'
+  const explicit = process.env.GHOST_WALLET_LIVE_EXECUTION?.trim().toLowerCase();
+  if (explicit === 'false') return false;
+  const sharedExecutionAuthority = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
+    && process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK'
+    && process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true'
+    && process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK'
     && process.env.NO_EXECUTION?.trim().toLowerCase() !== 'true';
+  if (explicit === 'true') return sharedExecutionAuthority;
+  return sharedExecutionAuthority;
 }
 
 function normalizeChain(value: string): string {
@@ -98,6 +112,7 @@ export class GhostWalletEngine {
   };
   private quotes: GhostWalletCapitalQuote[] = [];
   private sourceErrors: Array<{ source: string; chain?: string; error: string }> = [];
+  private infrastructureErrors: Array<{ source: string; chain?: string; error: string }> = [];
   private lastRefreshAt: number | null = null;
   private lastExecutionAt: number | null = null;
   private executionsAttempted = 0;
@@ -107,8 +122,37 @@ export class GhostWalletEngine {
 
   async start(): Promise<void> {
     if (this.running) return;
-    this.config = loadGhostWalletSourceConfig();
     await zeroCapitalEngine.initialize();
+
+    const profitRecipient = resolvePrimaryProfitPayoutAddress();
+    if (liveExecutionEnabled() && profitRecipient) {
+      const bootstrap = await ensureGhostWalletInfrastructure({
+        runtime: zeroCapitalEngine as unknown as Parameters<typeof ensureGhostWalletInfrastructure>[0]['runtime'],
+        profitRecipient,
+      });
+      this.infrastructureErrors = bootstrap.errors.map(error => ({
+        source: 'ghost_wallet_auto_bootstrap',
+        chain: error.chain,
+        error: error.error,
+      }));
+      logger.info('[GhostWallet] Automatic infrastructure bootstrap completed', {
+        component: 'GhostWalletEngine',
+        configuredChains: bootstrap.records.map(record => record.chain),
+        verifiedIntermediaries: bootstrap.records.map(record => record.intermediary),
+        verifiedVaultCount: bootstrap.records.reduce((sum, record) => sum + record.vaults.length, 0),
+        manualRailwayConfigurationRequired: false,
+        personalGasSpent: false,
+        arbitrageSystemOwnedGasSpent: false,
+        providerSponsoredBootstrapOnly: true,
+        errors: bootstrap.errors,
+      });
+    } else {
+      this.infrastructureErrors = [];
+    }
+
+    // Auto-bootstrap publishes verified public addresses into process.env in this
+    // process. Optional Railway overrides remain supported but are not required.
+    this.config = loadGhostWalletSourceConfig();
     this.running = true;
     await this.refresh();
     await this.executeReadyIntentPairs();
@@ -143,6 +187,8 @@ export class GhostWalletEngine {
       existingArbitrageCapitalSourcesPreserved: true,
       apiKeyRequired: false,
       signupRequired: false,
+      manualRailwayConfigurationRequired: false,
+      publicAddressConfigurationAuthority: 'deterministic_create2_runtime_bootstrap',
       repaymentPolicy: 'same_transaction_or_revert',
       profitRouting: '100_percent_realized_net_direct_to_canonical_wallet',
       profitLadderAuthority: false,
@@ -150,6 +196,7 @@ export class GhostWalletEngine {
       personalGasFallbackAllowed: false,
       arbitrageSystemOwnedGasFallbackAllowed: false,
       matchedIntentExecutionGasAuthority: 'provider_sponsored_zero_operator_cost_only',
+      infrastructureGasAuthority: 'provider_sponsored_zero_operator_cost_only',
       publicVaultBrokerCallerPaysGas: true,
       liveExecutionEnabled: liveExecutionEnabled(),
     });
@@ -224,7 +271,7 @@ export class GhostWalletEngine {
       executionsFailed: this.executionsFailed,
       lastRefreshAt: this.lastRefreshAt,
       lastExecutionAt: this.lastExecutionAt,
-      sourceErrors: this.sourceErrors.map(error => ({ ...error })),
+      sourceErrors: [...this.infrastructureErrors, ...this.sourceErrors].map(error => ({ ...error })),
     };
   }
 
