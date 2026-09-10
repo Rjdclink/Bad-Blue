@@ -106,8 +106,8 @@ if (!source.core.includes("import { runZeroCapitalProfitabilityRescueV2 } from '
 if (source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2') || source.zero.includes('target.scanChain =')) {
   throw new Error('[substantial-profitability-batch9] retired zero-capital rescue installer/scan mutation must not return');
 }
-if (!source.zero.includes('getProfitLadderNotionalAuthority().maxNotionalUsd') || source.zero.includes('ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD')) {
-  throw new Error('[substantial-profitability-batch9] Profit Ladder must remain the sole live zero-capital rescue notional ceiling');
+if (!source.zero.includes('getProfitLadderDiscoveryNotionalAuthority()') || source.zero.includes('ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD')) {
+  throw new Error('[substantial-profitability-batch9] Profit Ladder quote-only authority must remain the sole live zero-capital rescue discovery ceiling');
 }
 // The zero-capital engine is now runtime context only. Do not resurrect its retired
 // local execution gate merely to satisfy an implementation-detail test. The live
@@ -135,4 +135,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital BPS rescue is core-direct with Profit Ladder as sole live size ceiling, canonical execution retains live input-token USD valuation without reviving retired parallel authority, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital BPS rescue is core-direct with Profit Ladder quote-only discovery sizing, canonical execution retains live input-token USD valuation without reviving retired parallel authority, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
