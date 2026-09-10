@@ -154,6 +154,37 @@ async function processSettlementLog(chain: string, log: providers.Log): Promise<
   ghostWalletWorkSignal.emitWake('local_work_enqueued');
 }
 
+async function backfillSettlementLogs(input: {
+  chain: string;
+  intermediary: string;
+  provider: providers.JsonRpcProvider;
+  listenerConnected: boolean;
+}): Promise<void> {
+  const latest = await input.provider.getBlockNumber();
+  const cursor = await getGhostWalletReconciledBlock(input.chain);
+  const fromBlock = Math.max(0, cursor === null ? latest - 64 : cursor + 1);
+  if (fromBlock <= latest) {
+    const logs = await input.provider.getLogs({
+      address: input.intermediary,
+      topics: [ALL_EVENT_TOPICS],
+      fromBlock,
+      toBlock: latest,
+    });
+    for (const log of logs) await processSettlementLog(input.chain, log);
+  }
+  await recordGhostWalletRuntimeState({
+    chain: input.chain,
+    reconciledBlock: latest,
+    listenerConnected: input.listenerConnected,
+    workerActivity: true,
+    metadata: {
+      websocketPush: input.listenerConnected,
+      reconciliationAuthority: 'durable_cursor_plus_http_log_backfill',
+      periodicPolling: false,
+    },
+  });
+}
+
 class GhostWalletChainEvents {
   private readonly listeners = new Map<string, ChainListener>();
   private stopping = false;
@@ -185,7 +216,11 @@ class GhostWalletChainEvents {
     if (!httpProvider || !intermediary) return;
     const url = deriveWebSocketUrl(chain, httpProvider);
     if (!url) {
-      logger.warn('[GhostWalletUltra] Push settlement stream unavailable; startup/reconnect reconciliation remains enabled', {
+      // No push transport must not suppress recovery. Run a bounded HTTP cursor
+      // reconciliation once at startup/reconnect, then sleep. New server-originated
+      // settlements are also ingested from their receipts by the Ultra Worker.
+      await backfillSettlementLogs({ chain, intermediary, provider: httpProvider, listenerConnected: false });
+      logger.warn('[GhostWalletUltra] Push settlement stream unavailable; bounded HTTP reconciliation completed and worker remains event-driven', {
         component: 'GhostWalletChainEvents', chain, periodicPollingEnabled: false,
       });
       return;
@@ -204,14 +239,7 @@ class GhostWalletChainEvents {
 
       // Subscribe first, then recover the durable cursor gap. Dedupe keys make the
       // overlap harmless and close the subscribe/backfill race.
-      const latest = await httpProvider.getBlockNumber();
-      const cursor = await getGhostWalletReconciledBlock(chain);
-      const fromBlock = Math.max(0, cursor === null ? latest - 64 : cursor + 1);
-      if (fromBlock <= latest) {
-        const logs = await httpProvider.getLogs({ address: intermediary, topics: [ALL_EVENT_TOPICS], fromBlock, toBlock: latest });
-        for (const log of logs) await processSettlementLog(chain, log);
-      }
-      await recordGhostWalletRuntimeState({ chain, reconciledBlock: latest, listenerConnected: true, metadata: { websocketPush: true } });
+      await backfillSettlementLogs({ chain, intermediary, provider: httpProvider, listenerConnected: true });
 
       const socket = (ws as any)._websocket;
       const reconnect = () => this.scheduleReconnect(chain);
