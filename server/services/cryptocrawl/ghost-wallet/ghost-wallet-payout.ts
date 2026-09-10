@@ -6,6 +6,10 @@ import {
   walletFromPrivateKey,
 } from '../core/wallet-identity.js';
 import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
+import {
+  reconcileProfitFundedEthereumFallback,
+  submitProfitFundedEthereumFallback,
+} from './profit-funded-native-payout.js';
 
 const ETHEREUM_CHAIN_ID = 1;
 const ZERO_ADDRESS = ethers.constants.AddressZero;
@@ -87,13 +91,7 @@ export interface GhostWalletPayoutSettled {
   followUp?: GhostWalletProfitConversionPayload;
 }
 
-export interface GhostWalletPayoutFallbackRequired {
-  state: 'fallback_required';
-  reason: string;
-  payload: GhostWalletProfitConversionPayload;
-}
-
-export type GhostWalletPayoutResult = GhostWalletPayoutSubmission | GhostWalletPayoutSettled | GhostWalletPayoutFallbackRequired;
+export type GhostWalletPayoutResult = GhostWalletPayoutSubmission | GhostWalletPayoutSettled;
 
 function asBigInt(value: unknown, label = 'GHOST_WALLET_PAYOUT_AMOUNT_INVALID'): bigint {
   const raw = String(value ?? '').trim();
@@ -336,13 +334,34 @@ async function reconcileZeroExGasless(input: {
   const mode = input.result.destinationMode === 'fallback' ? 'fallback' : 'primary';
 
   if (chain === 'ethereum') {
+    if (mode === 'fallback') {
+      const payoutDestination = destination('fallback');
+      const fallback = await submitProfitFundedEthereumFallback({
+        provider,
+        wallet,
+        destination: payoutDestination,
+        acquiredProfitWei: acquiredNative,
+        sourceNativeBaselineWei: nativeBefore,
+        onSubmitted: input.onSubmitted,
+      });
+      return {
+        state: 'submitted',
+        transactionHash: fallback.transactionHash,
+        result: {
+          ...fallback.result,
+          zeroExTradeHash: input.tradeHash,
+          zeroExSettlementTransactionHash: receiptHash,
+        },
+        retryAfterMs: 1_000,
+      };
+    }
     return {
       state: 'settled',
       transactionHash: receiptHash,
       blockNumber: receipt.blockNumber ?? null,
       payoutTransactionHash: receiptHash,
-      payoutDestinationMode: mode,
-      destination: destination(mode),
+      payoutDestinationMode: 'primary',
+      destination: destination('primary'),
       ethAmountWei: acquiredNative,
       result: {
         ...input.result,
@@ -351,6 +370,7 @@ async function reconcileZeroExGasless(input: {
         settlementTransactionHash: receiptHash,
         acquiredNativeWei: acquiredNative.toString(),
         zeroOperatorNativeGas: true,
+        payoutTerminallyVerified: true,
       },
     };
   }
@@ -521,6 +541,7 @@ async function submitProfitFundedAcrossBridge(input: {
 async function reconcileAcrossBridge(input: {
   transactionHash: string;
   result: Record<string, unknown>;
+  onSubmitted?: (transactionHash: string, result: Record<string, unknown>) => Promise<void>;
 }): Promise<GhostWalletPayoutResult> {
   if (!validHash(input.transactionHash)) throw new Error('GHOST_WALLET_ACROSS_DEPOSIT_TX_INVALID');
   const mode = input.result.destinationMode === 'fallback' ? 'fallback' : 'primary';
@@ -563,6 +584,45 @@ async function reconcileAcrossBridge(input: {
     };
   }
   if (['refunded', 'deposit-failed'].includes(state)) {
+    if (mode === 'primary' && resolvePayoutFallbackAddress()) {
+      const originChain = normalizeChain(String(input.result.chain || ''));
+      const originProvider = await ghostWalletProviderMesh.getProvider(originChain);
+      if (!originProvider) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${originChain}`);
+      const wallet = signingWallet(originProvider);
+      const baseline = asBigInt(input.result.sourceNativeBaselineWei, 'GHOST_WALLET_ACROSS_SOURCE_BASELINE_INVALID');
+      const current = BigInt((await originProvider.getBalance(wallet.address)).toString());
+      const recovered = current > baseline ? current - baseline : 0n;
+      if (recovered > 0n) {
+        const fallback = await submitProfitFundedAcrossBridge({
+          chain: originChain,
+          acquiredNative: recovered,
+          sourceNativeBaseline: baseline,
+          provider: originProvider,
+          wallet,
+          mode: 'fallback',
+          zeroExReceiptHash: String(input.result.zeroExConversionReceipt || input.transactionHash),
+          onSubmitted: input.onSubmitted,
+        });
+        return {
+          ...fallback,
+          result: {
+            ...fallback.result,
+            fallbackFromPrimaryTransactionHash: input.transactionHash,
+            fallbackReason: `across_${state}`,
+            primaryPayoutTerminallyConfirmed: false,
+            recoveredNativeProfitWei: recovered.toString(),
+          },
+        };
+      }
+      if (state === 'deposit-failed') {
+        return {
+          state: 'submitted',
+          transactionHash: input.transactionHash,
+          result: { ...input.result, providerStatus: state, awaitingProvenRefundBeforeFallback: true },
+          retryAfterMs: 5_000,
+        };
+      }
+    }
     throw new Error(`GHOST_WALLET_ACROSS_TERMINAL_FAILURE:${state}`);
   }
   if (['expired', 'refund-failed', 'manual-refund-required'].includes(state)) {
@@ -599,7 +659,40 @@ export async function processGhostWalletProfitConversion(input: {
       });
     }
     if (phase === 'across_profit_funded_native_bridge_submitted') {
-      return reconcileAcrossBridge({ transactionHash: input.submittedTransactionHash, result: input.priorResult || {} });
+      return reconcileAcrossBridge({
+        transactionHash: input.submittedTransactionHash,
+        result: input.priorResult || {},
+        onSubmitted: input.onSubmitted,
+      });
+    }
+    if (phase === 'ethereum_profit_funded_fallback_submitted') {
+      const provider = await ghostWalletProviderMesh.getProvider('ethereum');
+      if (!provider) throw new Error('GHOST_WALLET_ETHEREUM_RPC_UNAVAILABLE');
+      const wallet = signingWallet(provider);
+      const reconciliation = await reconcileProfitFundedEthereumFallback({
+        provider,
+        wallet,
+        transactionHash: input.submittedTransactionHash,
+        result: input.priorResult || {},
+      });
+      if (reconciliation.pending) {
+        return {
+          state: 'submitted',
+          transactionHash: input.submittedTransactionHash,
+          result: input.priorResult || {},
+          retryAfterMs: 1_500,
+        };
+      }
+      return {
+        state: 'settled',
+        transactionHash: input.submittedTransactionHash,
+        blockNumber: reconciliation.blockNumber,
+        payoutTransactionHash: input.submittedTransactionHash,
+        payoutDestinationMode: 'fallback',
+        destination: reconciliation.destination,
+        ethAmountWei: reconciliation.deliveredWei,
+        result: reconciliation.result,
+      };
     }
     throw new Error('GHOST_WALLET_PAYOUT_SUBMITTED_STATE_UNKNOWN');
   }
@@ -621,15 +714,17 @@ export async function processGhostWalletProfitConversion(input: {
 export const GHOST_WALLET_PAYOUT_POLICY = {
   targetAsset: 'native_ETH',
   targetNetwork: 'ethereum',
-  percentOfRealizedGhostNet: 100,
+  percentOfRealizedGhostNet: 90,
   arbitrageTreasuryAuthority: false,
-  retainedCapitalSplit: false,
+  retainedCapitalSplit: true,
+  retainedCapitalPercent: 10,
   alchemyAllowed: false,
   providerSponsoredGasAllowed: false,
   operatorNativeGasAllowed: false,
-  sameChainConversion: '0x_gasless',
+  sameChainConversion: '0x_gasless_then_recipient_bound_profit_funded_fallback_if_requested',
   crossChainConversion: '0x_gasless_source_native_then_across_profit_funded',
   crossChainOriginGasSource: 'realized_ghost_profit_only',
   canonicalVariableFallbacks: true,
+  primaryAcrossRefundFallback: 'same_durable_job_retargets_only_after_origin_refund_is_proven',
   terminalProof: 'source_spend_plus_receipt_plus_destination_native_balance_delta',
 } as const;
