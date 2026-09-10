@@ -32,7 +32,11 @@ const authorityPath = 'server/services/cryptocrawl/execution/system-native-gas-s
 const txPath = 'server/services/cryptocrawl/execution/system-owned-native-transaction.ts';
 const proofWiringPath = 'server/services/cryptocrawl/runtime/system-owned-gas-funding-proof-wiring.ts';
 const canonicalDiscoveryPath = 'server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts';
-const canonicalExecutorPath = 'server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts';
+// The canonical ZERO_CAPITAL_ATOMIC entrypoint is now a narrow router. The native
+// gas submission boundary lives in the preserved flash implementation delegated to
+// by that router, so this verifier must inspect the implementation that actually
+// owns the native/sponsored submission logic rather than stale router text.
+const canonicalExecutorPath = 'server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts';
 const baseExecutionPath = 'server/services/cryptocrawl/runtime/system-owned-native-zero-capital-execution-wiring.ts';
 const providerExecutionPath = 'server/services/cryptocrawl/integration/provider-specific-zero-capital-execution-wiring.ts';
 const dualExecutionPath = 'server/services/cryptocrawl/integration/dual-provider-zero-capital-execution-wiring.ts';
