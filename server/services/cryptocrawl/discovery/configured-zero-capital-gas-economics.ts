@@ -34,7 +34,7 @@ function bounded(value: unknown, fallback: number, min: number, max: number): nu
   return Math.max(min, Math.min(max, normalized));
 }
 
-function expectedExecutionGasPriceWei(feeData: providers.FeeData): bigint {
+export function expectedExecutionGasPriceWei(feeData: providers.FeeData): bigint {
   if (feeData.gasPrice?.gt(0)) return BigInt(feeData.gasPrice.toString());
   if (feeData.lastBaseFeePerGas?.gt(0)) {
     const priority = feeData.maxPriorityFeePerGas?.gt(0)
