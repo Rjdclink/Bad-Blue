@@ -11,7 +11,7 @@ const FALLBACK_DESTINATION = resolvePayoutFallbackAddress() || '';
 const ETHEREUM_RPC_URL = (
   process.env.ETHEREUM_RPC_URL
   || process.env.ETHEREM_RPC_URL
-  || (process.env.ALCHEMY_API_KEY ? `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}` : '')
+  || 'https://ethereum-rpc.publicnode.com'
 ).trim();
 
 type DestinationMode = 'primary' | 'fallback';
@@ -291,6 +291,8 @@ class PayoutRecipientConfirmationObserver {
           amountEth: proof.amountEth,
           transactionHash: `${proof.transactionHash.slice(0, 10)}...`,
           ethereumFinalized: true,
+          rpcAuthority: 'configured_ethereum_rpc_else_cost_safe_publicnode',
+          alchemyOperationalAuthority: false,
           moneyMovingAuthority: false,
         });
       } catch (error) {
@@ -345,6 +347,8 @@ class PayoutRecipientConfirmationObserver {
           amountEth: proof.amountEth,
           transactionHash: `${proof.transactionHash.slice(0, 10)}...`,
           ethereumFinalized: true,
+          rpcAuthority: 'configured_ethereum_rpc_else_cost_safe_publicnode',
+          alchemyOperationalAuthority: false,
           moneyMovingAuthority: false,
         });
       } catch (error) {
