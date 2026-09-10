@@ -20,6 +20,7 @@ export interface GhostWalletAlternativeZeroCapitalSelection {
   expectedNetProfitBps: number;
   estimatedGasUnits: bigint;
   estimatedGasCostInInputToken: bigint;
+  expectedGasPriceWei: bigint;
   provenance: string[];
 }
 
@@ -31,6 +32,9 @@ class GhostWalletAlternativeZeroCapitalSelectionRegistry {
     if (selection.expiresAt <= Date.now()) throw new Error('alternative-capital selection is already expired');
     if (selection.principal <= 0n) throw new Error('alternative-capital principal must be positive');
     if (selection.expectedNetProfit <= 0n) throw new Error('alternative-capital net profit must be positive');
+    if (selection.estimatedGasCostInInputToken > 0n && selection.expectedGasPriceWei <= 0n) {
+      throw new Error('alternative-capital native gas-price evidence is required when gas cost is non-zero');
+    }
     this.selections.set(selection.opportunityId, {
       ...selection,
       prepared: { ...selection.prepared },
