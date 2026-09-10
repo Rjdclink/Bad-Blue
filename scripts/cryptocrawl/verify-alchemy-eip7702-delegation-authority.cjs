@@ -2,33 +2,28 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 
 const sponsorship = fs.readFileSync('server/services/cryptocrawl/strategies/gas-sponsorship.ts', 'utf8');
+const funding = fs.readFileSync('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts', 'utf8');
+const proof = fs.readFileSync('server/services/cryptocrawl/runtime/system-owned-gas-funding-proof-wiring.ts', 'utf8');
 
-// Alchemy Wallet APIs currently support both documented SemiModularAccount7702
-// deployments. Existing v1.0 delegations remain valid; v1.1 is the current
-// default for newly prepared EIP-7702 delegations.
-assert.match(sponsorship, /ALCHEMY_MODULAR_ACCOUNT_7702_ALLOWLIST/);
-assert.match(sponsorship, /0x69007702764179f14f51cdce752f4f775d74e139/);
-assert.match(sponsorship, /0x77021100bd87b7008e5e1989d0eb38555d0d0000/);
-assert.match(sponsorship, /ALCHEMY_MODULAR_ACCOUNT_7702_ALLOWLIST\.has\(delegationAddress\)/);
+assert.match(sponsorship, /ready:\s*false/, 'retired hosted sponsorship must never report ready');
+assert.match(sponsorship, /HOSTED_GAS_SPONSORSHIP_RETIRED_USE_PROVEN_CANONICAL_FUNDING_ROUTE/, 'legacy sponsorship execution must fail closed');
+assert.match(sponsorship, /operatorBillingLiability:\s*false/, 'retired lane itself creates no new billing liability');
+assert.match(sponsorship, /zeroOperatorCostProven:\s*false/, 'retirement must not masquerade as zero-cost sponsorship proof');
+assert.doesNotMatch(sponsorship, /ALCHEMY_API_KEY/, 'retired sponsorship must not read an Alchemy API key');
+assert.doesNotMatch(sponsorship, /ALCHEMY_GAS_POLICY_ID/, 'retired sponsorship must not read an Alchemy gas policy');
+assert.doesNotMatch(sponsorship, /api\.g\.alchemy\.com/, 'retired sponsorship must not call Alchemy Wallet API');
+assert.doesNotMatch(sponsorship, /wallet_prepareCalls/, 'retired sponsorship must not prepare provider-billed calls');
+assert.doesNotMatch(sponsorship, /wallet_sendPreparedCalls/, 'retired sponsorship must not submit provider-billed calls');
 
-// The compatibility expansion must remain an exact allowlist, not an arbitrary
-// prepared-call signer. Chain binding and 32-byte authorization-payload checks
-// remain mandatory before signing.
-assert.match(sponsorship, /Refusing unexpected EIP-7702 delegation target/);
-assert.match(sponsorship, /Number\(BigInt\(item\.chainId\)\) !== expectedChainId/);
-assert.match(sponsorship, /ethers\.utils\.isHexString\(raw, 32\)/);
-assert.match(sponsorship, /wallet_prepareCalls/);
-assert.match(sponsorship, /paymasterService: \{ policyId: this\.policyId \}/);
-assert.match(sponsorship, /wallet_sendPreparedCalls/);
-assert.match(sponsorship, /wallet_getCallsStatus/);
-assert.match(sponsorship, /receiptStatus !== 1/);
+assert.match(funding, /strictZeroOperatorCostRequired\(\): boolean \{\s*return true;/s, 'hard zero-operator-cost rule must remain non-configurable');
+assert.match(funding, /sponsorOperatorMonetaryCostProvenZero === true/, 'sponsorship can qualify only with independent zero-cost proof');
+assert.match(funding, /providerBillingLiability:\s*chain\.sponsoredBootstrap && sponsorReady && !sponsorCostProvenZero/, 'billed provider sponsorship must remain an explicit liability');
+assert.match(proof, /sponsorOperatorMonetaryCostProvenZero:\s*false/, 'canonical proof must not promote generic hosted sponsorship to zero-cost evidence');
 
 console.log(JSON.stringify({
-  alchemyEip7702DelegationAuthority: 'verified',
-  modularAccountV1Accepted: true,
-  modularAccountV11Accepted: true,
-  arbitraryDelegationRejected: true,
-  exactChainBindingPreserved: true,
-  authorizationDigestValidationPreserved: true,
-  sponsoredReceiptConfirmationPreserved: true,
+  hostedProviderSponsorshipAuthority: 'retired_fail_closed',
+  providerBilledGasAdmittedAsZeroCapital: false,
+  strictZeroOperatorCostPreserved: true,
+  systemOwnedNativeProofPreserved: true,
+  alternativeCanonicalFundingRoutesPreserved: true,
 }, null, 2));
