@@ -7,13 +7,21 @@ const ERC20_ABI = [
 const AAVE_DEBT_TOKEN_ABI = [
   'function borrowAllowance(address fromUser,address toUser) view returns (uint256)',
 ];
+const AAVE_POOL_ABI = [
+  'function getReserveAToken(address asset) view returns (address)',
+  'function getReserveVariableDebtToken(address asset) view returns (address)',
+  'function getUserAccountData(address user) view returns (uint256 totalCollateralBase,uint256 totalDebtBase,uint256 availableBorrowsBase,uint256 currentLiquidationThreshold,uint256 ltv,uint256 healthFactor)',
+];
 const GHOST_VAULT_ABI = [
   'function asset() view returns (address)',
   'function totalAssets() view returns (uint256)',
   'function minimumAtomicFeeBps() view returns (uint16)',
+  'function previewAtomicFee(uint256 assets) view returns (uint256)',
   'function intermediary() view returns (address)',
 ];
 const EULER_VAULT_ABI = [
+  'function asset() view returns (address)',
+  'function debtOf(address account) view returns (uint256)',
   'function checkLiquidation(address liquidator,address violator,address collateral) view returns (uint256 maxRepay,uint256 maxYield)',
 ];
 
@@ -25,17 +33,14 @@ export interface GhostWalletRuntimeContext {
 export interface AaveDelegationSourceConfig {
   chain: string;
   asset: string;
-  debtToken: string;
+  pool: string;
   delegator: string;
-  liquidityHolder: string;
   label?: string;
 }
 
 export interface EulerDebtAssumptionConfig {
   chain: string;
-  asset: string;
   vault: string;
-  debtToken: string;
   violator: string;
   collateral: string;
   label?: string;
@@ -124,16 +129,13 @@ export function loadGhostWalletSourceConfig(
     aaveDelegations: aaveRows.map((row, index) => ({
       chain: normalizeChain(stringValue(`aaveDelegations[${index}].chain`, row.chain)),
       asset: address(`aaveDelegations[${index}].asset`, row.asset),
-      debtToken: address(`aaveDelegations[${index}].debtToken`, row.debtToken),
+      pool: address(`aaveDelegations[${index}].pool`, row.pool),
       delegator: address(`aaveDelegations[${index}].delegator`, row.delegator),
-      liquidityHolder: address(`aaveDelegations[${index}].liquidityHolder`, row.liquidityHolder),
       ...(typeof row.label === 'string' && row.label.trim() ? { label: row.label.trim() } : {}),
     })),
     eulerDebtAssumptions: eulerRows.map((row, index) => ({
       chain: normalizeChain(stringValue(`eulerDebtAssumptions[${index}].chain`, row.chain)),
-      asset: address(`eulerDebtAssumptions[${index}].asset`, row.asset),
       vault: address(`eulerDebtAssumptions[${index}].vault`, row.vault),
-      debtToken: address(`eulerDebtAssumptions[${index}].debtToken`, row.debtToken),
       violator: address(`eulerDebtAssumptions[${index}].violator`, row.violator),
       collateral: address(`eulerDebtAssumptions[${index}].collateral`, row.collateral),
       ...(typeof row.label === 'string' && row.label.trim() ? { label: row.label.trim() } : {}),
@@ -162,30 +164,47 @@ async function measureAaveDelegation(input: {
   observedAt: number;
 }): Promise<GhostWalletCapitalQuote | null> {
   const { config, provider, intermediary, observedAt } = input;
-  const debt = new Contract(config.debtToken, AAVE_DEBT_TOKEN_ABI, provider);
+  const pool = new Contract(config.pool, AAVE_POOL_ABI, provider);
+  const [aTokenRaw, debtTokenRaw, accountData] = await Promise.all([
+    pool.getReserveAToken(config.asset),
+    pool.getReserveVariableDebtToken(config.asset),
+    pool.getUserAccountData(config.delegator),
+  ]);
+  const aToken = utils.getAddress(String(aTokenRaw));
+  const debtToken = utils.getAddress(String(debtTokenRaw));
+  if (aToken === utils.getAddress('0x0000000000000000000000000000000000000000')) throw new Error('Aave reserve aToken is unavailable');
+  if (debtToken === utils.getAddress('0x0000000000000000000000000000000000000000')) throw new Error('Aave reserve variable debt token is unavailable');
+
+  const debt = new Contract(debtToken, AAVE_DEBT_TOKEN_ABI, provider);
   const asset = new Contract(config.asset, ERC20_ABI, provider);
   const [allowanceRaw, liquidRaw] = await Promise.all([
     debt.borrowAllowance(config.delegator, intermediary),
-    asset.balanceOf(config.liquidityHolder),
+    asset.balanceOf(aToken),
   ]);
   const allowance = bigint(allowanceRaw);
   const liquid = bigint(liquidRaw);
+  const availableBorrowsBase = bigint(accountData.availableBorrowsBase ?? accountData[2]);
+  if (availableBorrowsBase <= 0n) return null;
   const availablePrincipal = minBigInt(allowance, liquid);
   if (availablePrincipal <= 0n) return null;
-  const expiresAt = observedAt + quoteTtlMs();
+
+  const liabilityQueryData = new utils.Interface([
+    'function balanceOf(address account) view returns (uint256)',
+  ]).encodeFunctionData('balanceOf', [config.delegator]);
+
   return {
-    quoteId: `aave-credit:${config.chain}:${config.debtToken.toLowerCase()}:${config.delegator.toLowerCase()}`,
+    quoteId: `aave-credit:${config.chain}:${config.pool.toLowerCase()}:${config.asset.toLowerCase()}:${config.delegator.toLowerCase()}`,
     primitive: 'aave_credit_delegation',
     resourceForm: 'liability_capacity',
     executionSurface: 'atomic_liability_cycle',
     chain: config.chain,
     asset: config.asset,
-    sourceAddress: config.debtToken,
+    sourceAddress: config.pool,
     availablePrincipal,
     variableFeeBps: 0,
     fixedFee: 0n,
     observedAt,
-    expiresAt,
+    expiresAt: observedAt + quoteTtlMs(),
     sameTransactionSettlement: true,
     repaymentFailureReverts: true,
     operatorMonetaryInputRequired: false,
@@ -195,18 +214,26 @@ async function measureAaveDelegation(input: {
     exactSimulationRequired: true,
     reliabilityScore: 1,
     provenance: [
+      'aave_pool_reserve_addresses_measured_onchain',
       'aave_variable_debt_borrow_allowance_measured_onchain',
-      'underlying_liquidity_holder_balance_measured_onchain',
+      'aave_underlying_liquidity_measured_at_reserve_atoken',
+      'aave_delegator_available_borrow_base_positive',
       'delegated_debt_must_return_to_pretransaction_balance',
       'same_transaction_repayment_required',
+      'exact_full_transaction_simulation_required_for_health_factor_caps_interest_and_repay',
       'api_key_required:false',
       'signup_required:false',
       'synthetic_capacity:false',
     ],
     metadata: {
+      pool: config.pool,
       delegator: config.delegator,
-      debtToken: config.debtToken,
-      liquidityHolder: config.liquidityHolder,
+      debtToken,
+      aToken,
+      availableBorrowsBase: availableBorrowsBase.toString(),
+      liabilityOracle: debtToken,
+      liabilityQueryData,
+      sourceFeeModel: 'exact_simulation_debt_delta_and_repay',
       ...(config.label ? { label: config.label } : {}),
     },
   };
@@ -220,17 +247,26 @@ async function measureEulerDebtAssumption(input: {
 }): Promise<GhostWalletCapitalQuote | null> {
   const { config, provider, intermediary, observedAt } = input;
   const vault = new Contract(config.vault, EULER_VAULT_ABI, provider);
-  const result = await vault.checkLiquidation(intermediary, config.violator, config.collateral);
+  const [assetRaw, result] = await Promise.all([
+    vault.asset(),
+    vault.checkLiquidation(intermediary, config.violator, config.collateral),
+  ]);
+  const asset = utils.getAddress(String(assetRaw));
   const maxRepay = bigint(result.maxRepay ?? result[0]);
   const maxYield = bigint(result.maxYield ?? result[1]);
   if (maxRepay <= 0n || maxYield <= 0n) return null;
+
+  const liabilityQueryData = new utils.Interface([
+    'function debtOf(address account) view returns (uint256)',
+  ]).encodeFunctionData('debtOf', [intermediary]);
+
   return {
     quoteId: `euler-debt:${config.chain}:${config.vault.toLowerCase()}:${config.violator.toLowerCase()}:${config.collateral.toLowerCase()}`,
     primitive: 'euler_debt_assumption',
     resourceForm: 'liability_capacity',
     executionSurface: 'atomic_liability_cycle',
     chain: config.chain,
-    asset: config.asset,
+    asset,
     sourceAddress: config.vault,
     availablePrincipal: maxRepay,
     variableFeeBps: 0,
@@ -246,20 +282,24 @@ async function measureEulerDebtAssumption(input: {
     exactSimulationRequired: true,
     reliabilityScore: 1,
     provenance: [
+      'euler_vault_asset_measured_onchain',
       'euler_checkLiquidation_measured_onchain',
       'euler_liquidator_assumes_debt_instead_of_prefunding_repayment_asset',
+      'euler_debtOf_liquidator_is_terminal_liability_probe',
       'incremental_debt_must_be_repaid_before_transaction_end',
-      'same_transaction_liability_neutrality_required',
+      'exact_collateral_unwind_and_account_health_simulation_required',
       'api_key_required:false',
       'signup_required:false',
       'synthetic_capacity:false',
     ],
     metadata: {
       vault: config.vault,
-      debtToken: config.debtToken,
       violator: config.violator,
       collateral: config.collateral,
       maxYield: maxYield.toString(),
+      liabilityOracle: config.vault,
+      liabilityQueryData,
+      sourceFeeModel: 'debt_assumption_plus_exact_unwind_costs',
       ...(config.label ? { label: config.label } : {}),
     },
   };
@@ -319,6 +359,7 @@ async function measureGhostCapitalVault(input: {
     ],
     metadata: {
       vault: config.vault,
+      sourceFeeModel: 'minimumAtomicFeeBps_onchain',
       ...(config.label ? { label: config.label } : {}),
     },
   };
