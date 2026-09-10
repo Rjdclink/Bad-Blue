@@ -11,6 +11,7 @@ const scheduler = read('server/services/cryptocrawl/execution/canonical-executio
 const resources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
 const providerEconomics = read('server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.ts');
 const providerWiring = read('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts');
+const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const measured = read('server/services/cryptocrawl/discovery/measured-candidate-registry.ts');
 const stack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 const multileg = read('server/services/cryptocrawl/optimization/unified-multileg-arbitrage-engine.ts');
@@ -23,6 +24,17 @@ assert.match(coldstart, /30_000, 1_000, 120_000/, 'cold-start evidence lifetime 
 assert.match(bootstrap, /30_000, 1_000, 120_000/, 'receiver-bootstrap evidence lifetime must tolerate normal pipeline latency');
 assert.match(providerEconomics, /\['morpho_blue', 'aave_v3', 'balancer_v2'\]/, 'default provider choice must preserve the full measured provider mesh');
 assert.match(providerWiring, /const builderOpportunity: ZeroCapitalOpportunity = \{/, 'builder economics must advance via an immutable opportunity snapshot');
+assert.match(
+  providerWiring,
+  /for \(const sourceOpportunity of input\.opportunities\)[\s\S]{0,500}const opportunity: ZeroCapitalOpportunity = \{[\s\S]{0,220}\.\.\.sourceOpportunity,[\s\S]{0,220}route: sourceOpportunity\.route\.map\(leg => \(\{ \.\.\.leg \}\)\)/,
+  'provider repricing must operate on a deep-enough route/economics working copy rather than the canonical opportunity object',
+);
+assert.match(providerWiring, /provider_reprice_input_immutable:true/, 'provider repricing must publish its immutable-input provenance');
+assert.match(
+  discovery,
+  /const selected = await repriceZeroCapitalProviderEconomics\([\s\S]{0,1800}const remaining = exact\.filter\(opportunity => !flashSelectedIds\.has\(opportunity\.id\)\)[\s\S]{0,600}repriceZeroCapitalAlternativeCapital\([\s\S]{0,300}opportunities: remaining/,
+  'alternative-capital repricing must derive its fallback set from pristine canonical exact opportunities after provider comparison',
+);
 assert.match(executor, /receiver_appeared:fell_through_to_verified_standard_path/, 'an already-deployed receiver must fall through to its verified normal path');
 assert.match(executor, /economicReconciliationStatus: 'exception'/, 'confirmed execution must remain distinct from reconciliation exceptions');
 
@@ -32,4 +44,4 @@ for (const [name, source] of [['executor', executor], ['scheduler', scheduler], 
 assert.match(measured, /deterministicNetProfitUsd > 0/, 'minimum sufficient evidence must use canonical net profit truth');
 assert.doesNotMatch(multileg, /netProfitBps !== null && netProfitBps <= 0/, 'multi-leg composition must not reject positive profit due rounded BPS');
 
-console.log('[zero-capital-capability-monotonicity] PASS: ten regression repairs preserve exact-positive admission, immutable preparation, evidence continuity, provider diversity, normal receiver fallthrough, latency tolerance, and on-chain execution truth');
+console.log('[zero-capital-capability-monotonicity] PASS: regression repairs preserve exact-positive admission, immutable preparation/provider comparison, pristine alternative fallback economics, evidence continuity, provider diversity, normal receiver fallthrough, latency tolerance, and on-chain execution truth');
