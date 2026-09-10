@@ -16,7 +16,7 @@ const FALLBACK_DESTINATION = resolvePayoutFallbackAddress() || '';
 const ETHEREUM_RPC_URL = (
   process.env.ETHEREUM_RPC_URL
   || process.env.ETHEREM_RPC_URL
-  || (process.env.ALCHEMY_API_KEY ? `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}` : '')
+  || 'https://ethereum-rpc.publicnode.com'
 ).trim();
 
 type TreasuryState = 'RUNNING' | 'TERMINATE_AND_SWEEP' | 'SWEEPING' | 'SWEPT' | 'MANUAL_REVIEW';
@@ -185,7 +185,7 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
   }
   if (!ETHEREUM_RPC_URL) {
     logger.warn('[Treasury] Ethereum payout confirmation RPC is not configured; payout confirmation fails closed', {
-      component: 'TerminalTreasuryLifecycle', acceptedSources: ['ETHEREUM_RPC_URL', 'ETHEREM_RPC_URL', 'ALCHEMY_API_KEY'],
+      component: 'TerminalTreasuryLifecycle', acceptedSources: ['ETHEREUM_RPC_URL', 'ETHEREM_RPC_URL', 'cost_safe_publicnode_default'],
     });
   }
   if (!signalInstalled && RAILWAY_DEPLOYMENT_ID) {
@@ -207,6 +207,8 @@ export async function ensureTerminalTreasuryLifecycle(): Promise<void> {
     fallbackResolutionPolicy: 'CRYPTO_PAYOUT_WALLET_ADDRESS_then_CRYPTO_PROFIT_WALLET_ADDRESS_if_distinct',
     recipientConfirmationRpcConfigured: Boolean(ETHEREUM_RPC_URL),
     recipientConfirmationPolicy: 'okx_recipient_and_amount_plus_finalized_ethereum_transaction',
+    recipientConfirmationRpcAuthority: 'configured_ethereum_rpc_else_cost_safe_publicnode',
+    alchemyOperationalAuthority: false,
     workerSecretSynchronizationRetryable: true,
     workerSecretsSynchronized,
     terminalGraceSeconds: TERMINAL_GRACE_SECONDS,
