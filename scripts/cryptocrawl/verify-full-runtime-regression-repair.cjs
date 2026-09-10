@@ -10,6 +10,9 @@ const schema = read('server/services/cryptocrawl/runtime/cryptocrawl-overflow-ru
 const build = read('scripts/cryptocrawl/build-server-overflow-authority.mjs');
 const alternative = read('server/services/cryptocrawl/integration/zero-capital-alternative-capital-wiring.ts');
 const executor = read('server/services/cryptocrawl/execution/zero-capital-alternative-prepared-executor.ts');
+const zeroDiscovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
+const zeroRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts');
+const positiveCapture = read('server/services/cryptocrawl/runtime/positive-profit-capture-wiring.ts');
 const source = read('server/services/cryptocrawl/ghost-wallet/onchain-capital-sources.ts');
 const providerMesh = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.ts');
 const chainEvents = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-chain-events.ts');
@@ -37,6 +40,21 @@ assert.match(alternative, /discoverExistingGhostArbitrageInfrastructure/);
 assert.match(rediscovery, /getCode/);
 assert.match(rediscovery, /server_deployment_attempted:false/);
 assert.doesNotMatch(rediscovery, /sendTransaction|\.deploy\(|setAllowed/);
+
+// BPS truth: no integer-BigInt truncation may erase positive sub-1-BPS economics.
+assert.match(zeroDiscovery, /BPS_PRECISION_SCALE = 1_000_000n/);
+assert.match(zeroDiscovery, /value \* 10_000n \* BPS_PRECISION_SCALE/);
+assert.doesNotMatch(zeroDiscovery, /return Number\(\(value \* 10_000n\) \/ notional\)/);
+assert.match(zeroRescue, /BPS_PRECISION_SCALE = 1_000_000n/);
+assert.match(zeroRescue, /bpsFromBaseUnits\(allInCost, quote\.amountIn\)/);
+assert.match(zeroRescue, /bpsFromBaseUnits\(netProfit, quote\.amountIn\)/);
+assert.match(zeroRescue, /bpsFromBaseUnits\(opportunity\.estimatedExecutionCostInInputToken, opportunity\.flashLoanAmount\)/);
+assert.doesNotMatch(zeroRescue, /Number\(\(netProfit \* 10_000n\) \/ quote\.amountIn\)/);
+
+// Maker telemetry must describe the actual no-BPS-floor execution rule.
+assert.match(positiveCapture, /volatileMinGrossSpreadBps: null/);
+assert.match(positiveCapture, /arbitraryMakerBpsExecutionFloor: false/);
+assert.doesNotMatch(positiveCapture, /CRYPTO_ARBITRAGE_VOLATILE_MAKER_MIN_GROSS_SPREAD_BPS/);
 
 // Gas truth: measured price is bound to selection and rechecked before native submission.
 assert.match(alternative, /expectedGasPriceWei/);
@@ -69,6 +87,13 @@ assert.match(payout, /percentOfRealizedGhostNet: 90/);
 assert.match(payout, /retainedCapitalPercent: 10/);
 assert.match(payout, /submitProfitFundedEthereumFallback/);
 assert.match(payout, /same_durable_job_retargets_only_after_origin_refund_is_proven/);
+assert.match(payout, /state === 'refunded'/);
+assert.match(payout, /across_deposit_status_refunded_plus_origin_balance_delta/);
+assert.match(payout, /originReceipt\.status === 0/);
+assert.match(payout, /awaitingAcrossRefund: true/);
+assert.match(payout, /retryAfterMs: 60_000/);
+assert.match(payout, /balanceAboveBaseline > originalProfit \? originalProfit : balanceAboveBaseline/);
+assert.doesNotMatch(payout, /\['refunded', 'deposit-failed'\]\.includes\(state\)/);
 assert.doesNotMatch(payout, /state:\s*'fallback_required'/);
 
 // Borrower surface is bounded per request without imposing a global lender-universe cap.
