@@ -1,5 +1,4 @@
 import logger from '../../../logger.js';
-import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { multiProviderRpcManager, type SupportedChain } from '../api/blockchain-providers.js';
 import { getVenueCapabilities } from '../discovery/venue-capability-registry.js';
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
@@ -158,15 +157,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const intelligenceOutbox = supabasePath.path === 'comp'
       ? canonicalIntelligenceOutbox.getMetrics()
       : await canonicalIntelligenceOutbox.refreshMetrics();
-    const [alchemy, beam] = await Promise.all([
-      alchemyIntegration.readinessCheck({ strictLive: false }).catch(error => ({
-        ready: false,
-        active: false,
-        degraded: true,
-        detail: error instanceof Error ? error.message : String(error),
-      })),
-      Promise.resolve(workloadRouter.getSystemStatus()),
-    ]);
+    const beam = workloadRouter.getSystemStatus();
     const recentMinute = canonicalOpportunityState.getMetrics(60_000);
     const recentHour = canonicalOpportunityState.getMetrics(60 * 60_000);
     const recentSnapshots = canonicalOpportunityState.getRecent(512);
@@ -350,7 +341,16 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
         settlement: latest.realized,
       } : null,
       providers: {
-        alchemy,
+        providerMesh: {
+          authority: 'multiProviderRpcManager',
+          criticalRpcReady,
+          healthyProviderCount: rpcSnapshot.reduce(
+            (sum, chain) => sum + chain.providers.filter(provider => provider.http === 'healthy').length,
+            0,
+          ),
+          alchemyOperationalAuthority: false,
+          paidProviderRequired: false,
+        },
         rpc: rpcSnapshot,
         mempoolCapabilities,
         marketDataAuthority: {
@@ -450,7 +450,8 @@ export function ensureCryptoRuntimeObservability(): void {
       'TRADING_READY',
     ],
     executionReadySemantics: 'strict_topology_specific_canonical_cex_trade_ready',
-    providerHeartbeat: ['Alchemy', 'Ankr/shared-RPC', 'market-data'],
+    providerHeartbeat: ['free/configured-provider-mesh', 'mempool-capability', 'market-data'],
+    alchemyOperationalAuthority: false,
     measuredOpportunityGraphTelemetry: true,
     cexEconomicBarrierTelemetry: true,
     multiTopologyCandidateTelemetry: true,
