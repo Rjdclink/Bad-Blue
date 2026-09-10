@@ -11,6 +11,10 @@ import { ensureAdaptiveProfitOperationsWiring } from '../runtime/adaptive-profit
 import { ensureAlchemyStandardRpcFirstWiring } from '../runtime/alchemy-standard-rpc-first-wiring.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { ensureHybridCexExecutionWiring } from '../runtime/hybrid-cex-execution-wiring.js';
+import {
+  ensureCryptocrawlOverflowRuntimeSchema,
+  getCryptocrawlOverflowRuntimeSchemaSnapshot,
+} from '../runtime/cryptocrawl-overflow-runtime-schema.js';
 import { ensureStablecoinMakerExecutionWiring } from '../runtime/stablecoin-maker-execution-wiring.js';
 import { ensureStageProofMetricsWiring } from '../runtime/stage-proof-metrics-wiring.js';
 import { ensureAcrossBridgeObservability } from './across-bridge-observability.js';
@@ -43,6 +47,7 @@ import { ensureZeroXBudgetObservability } from './zerox-budget-observability.js'
 
 let installed = false;
 let installRetryTimer: NodeJS.Timeout | null = null;
+let overflowSchemaRepairPromise: Promise<void> | null = null;
 let zeroCapitalStartPromise: Promise<void> | null = null;
 let zeroCapitalRetryTimer: NodeJS.Timeout | null = null;
 let zeroCapitalStartAttempts = 0;
@@ -372,7 +377,7 @@ function installCanonicalRuntime(): void {
     runtimeComponentIsolation: 'per_component_retry_without_global_runtime_shutdown',
     runtimeComponentIsolationGlobalShutdownAuthority: false,
     runtimeComponentIsolationHardSafetyScope: 'failed_component_or_candidate_only',
-    startupAdmission: 'production_grace_then_overflow_authority_only_no_primary_probe_or_fallback',
+    startupAdmission: 'production_grace_then_overflow_transport_and_schema_authority_no_primary_probe_or_fallback',
     startupGraceMs: canonicalRuntimeStartupGraceMs(),
   });
 }
@@ -393,6 +398,34 @@ function scheduleCanonicalRuntimeInstall(delayMs: number, reason: string): void 
   });
 }
 
+function startOverflowSchemaRepair(): void {
+  if (overflowSchemaRepairPromise) return;
+  overflowSchemaRepairPromise = ensureCryptocrawlOverflowRuntimeSchema()
+    .then(() => {
+      process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'true';
+      logger.info('[CryptoRuntimeStartup] Overflow schema authority recovered; canonical runtime installation will resume', {
+        component: 'CanonicalCryptoCrawlerRuntimeWiring',
+        schema: getCryptocrawlOverflowRuntimeSchemaSnapshot(),
+        primaryFallback: false,
+      });
+      ensureCanonicalCryptoCrawlerRuntimeWiring();
+    })
+    .catch(error => {
+      process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'false';
+      logger.warn('[CryptoRuntimeStartup] Overflow transport is ready but schema authority repair failed; retry remains bounded', {
+        component: 'CanonicalCryptoCrawlerRuntimeWiring',
+        error: error instanceof Error ? error.message : String(error),
+        schema: getCryptocrawlOverflowRuntimeSchemaSnapshot(),
+        retryInMs: canonicalRuntimeOverflowRetryMs(),
+        primaryFallback: false,
+      });
+      scheduleCanonicalRuntimeInstall(canonicalRuntimeOverflowRetryMs(), 'overflow_schema_not_ready');
+    })
+    .finally(() => {
+      overflowSchemaRepairPromise = null;
+    });
+}
+
 export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
   if (installed) return;
 
@@ -404,10 +437,15 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
     }
 
     const overflowBootstrap = getCryptaraHyperBridgeBootstrapSnapshot();
-    if (overflowBootstrap.state === 'ready') {
+    const overflowSchema = getCryptocrawlOverflowRuntimeSchemaSnapshot();
+    if (overflowBootstrap.state === 'ready' && overflowSchema.ready) {
+      process.env.CRYPTOCRAWL_OVERFLOW_RUNTIME_SCHEMA_READY = 'true';
       logger.info('[CryptoRuntimeStartup] Overflow authority ready; installing canonical runtime with all Primary admission/recovery paths disabled', {
         component: 'CanonicalCryptoCrawlerRuntimeWiring',
         dataPlane: 'overflow_authority',
+        overflowTransportReady: true,
+        overflowSchemaReady: true,
+        overflowSchemaVersion: overflowSchema.schemaVersion,
         primaryRuntimePrerequisite: false,
         directPrimaryProbe: false,
         primaryFallback: false,
@@ -418,17 +456,39 @@ export function ensureCanonicalCryptoCrawlerRuntimeWiring(): void {
       return;
     }
 
-    logger.warn('[CryptoRuntimeStartup] Overflow authority not ready; runtime remains fail-closed without Primary fallback', {
+    if (overflowBootstrap.state === 'ready') {
+      startOverflowSchemaRepair();
+      logger.warn('[CryptoRuntimeStartup] Overflow transport ready but schema authority not ready; runtime remains fail-closed while bounded repair runs', {
+        component: 'CanonicalCryptoCrawlerRuntimeWiring',
+        overflowState: overflowBootstrap.state,
+        overflowReason: overflowBootstrap.reason,
+        overflowSchemaReady: overflowSchema.ready,
+        overflowSchemaVersion: overflowSchema.schemaVersion,
+        overflowSchemaInFlight: overflowSchema.inFlight,
+        overflowSchemaLastError: overflowSchema.lastError,
+        primaryRuntimePrerequisite: false,
+        directPrimaryProbe: false,
+        primaryFallback: false,
+        exchangeRequestsDuringDeferral: false,
+        executionAuthorityGranted: false,
+      });
+      scheduleCanonicalRuntimeInstall(canonicalRuntimeOverflowRetryMs(), 'overflow_schema_not_ready');
+      return;
+    }
+
+    logger.warn('[CryptoRuntimeStartup] Overflow transport not ready; runtime remains fail-closed without Primary fallback', {
       component: 'CanonicalCryptoCrawlerRuntimeWiring',
       overflowState: overflowBootstrap.state,
       overflowReason: overflowBootstrap.reason,
+      overflowSchemaReady: overflowSchema.ready,
+      overflowSchemaVersion: overflowSchema.schemaVersion,
       primaryRuntimePrerequisite: false,
       directPrimaryProbe: false,
       primaryFallback: false,
       exchangeRequestsDuringDeferral: false,
       executionAuthorityGranted: false,
     });
-    scheduleCanonicalRuntimeInstall(canonicalRuntimeOverflowRetryMs(), 'overflow_authority_not_ready');
+    scheduleCanonicalRuntimeInstall(canonicalRuntimeOverflowRetryMs(), 'overflow_transport_not_ready');
     return;
   }
 
