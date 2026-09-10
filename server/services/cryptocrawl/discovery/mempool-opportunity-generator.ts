@@ -1,4 +1,7 @@
-import { providerMeshPendingStream } from '../capital-free/provider-mesh-pending-stream.js';
+import {
+  ensureProviderMeshPendingStream,
+  providerMeshPendingStream,
+} from '../capital-free/provider-mesh-pending-stream.js';
 import { decodePendingSwapRoute } from '../capital-free/pending-swap-route-decoder.js';
 import {
   compileExactPostVictimBackrun,
@@ -14,6 +17,7 @@ function backrunNotionalUsd(netProfitUsd: number, netProfitBps: number): number 
 }
 
 export async function discoverMeasuredMempoolCandidates(): Promise<MeasuredCandidate[]> {
+  ensureProviderMeshPendingStream();
   const pending = providerMeshPendingStream.getRecentObservations();
   const capabilities = getMempoolCapabilities().filter(capability => capability.active);
   const ttlMs = Math.max(1_000, Number(process.env.CRYPTOCRAWL_MEMPOOL_CANDIDATE_TTL_MS || 15_000));
