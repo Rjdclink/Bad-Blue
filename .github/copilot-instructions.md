@@ -420,3 +420,106 @@ At completion report:
 - anything in Cryptara's intended architecture that still cannot be genuinely utilized and the exact reason why
 
 That gives the agent permission to make Cryptara substantially more capable without giving it permission to bulldoze the working production system to achieve it.
+
+# Standing Change-Control and Non-Regression Directives
+
+These directives apply whenever work is requested under "recall directives" or equivalent language. They constrain how changes are investigated, implemented, validated, merged, and deployed.
+
+## Dependency map before any change
+
+Before changing anything, map the component's:
+
+- inputs
+- outputs
+- dependencies
+- callers
+- downstream consumers
+- shared state
+- authoritative owners/authorities
+- fallbacks and failover paths
+- timing, freshness, cache, timeout, and TTL assumptions
+- supported alternate paths and route/provider/topology alternatives
+
+Do not assume a locally simple change is globally isolated. Determine the actual interconnections first so a narrow repair does not silently break another capability.
+
+## Strict scope control
+
+- Fix only the specific verified defects the user instructed you to fix.
+- Touch only files and behavior required by the verified dependency map and the requested repair.
+- Do not opportunistically refactor, simplify, modernize, optimize, clean up, rename, reorganize, tighten, broaden, or "improve" unrelated working code.
+- Do not alter an adjacent subsystem merely because a different design appears preferable.
+- If a discovered issue is outside the requested scope, report it separately; do not silently include it in the change.
+- Make the smallest repair that corrects the verified root cause while preserving every supported behavior not explicitly targeted.
+
+## Mandatory non-regression preservation
+
+- No regression is acceptable as the price of fixing another defect.
+- Preserve all supported chains, venues, strategies, providers, funding sources, receivers, builders, assets, repayment paths, execution modes, settlement paths, payout paths, and failover alternatives unless the user explicitly instructs otherwise.
+- A provider, chain, venue, builder, funding mechanism, receiver, or route-specific failure must remain local whenever another compatible path exists.
+- Do not convert an alternative into a global prerequisite.
+- Do not introduce a new mandatory dependency unless it is genuinely required by the supported route itself.
+- Verify the affected dependency map after the change, not merely the edited function.
+
+## Canonical authority and profitability invariants
+
+- Preserve one canonical economics authority, one canonical execution authority, and one canonical settlement/provenance authority.
+- Canonical execution eligibility is based on deterministic, fresh, complete all-in economics with strictly positive net profit after every applicable cost.
+- Do not use hard-coded BPS thresholds as a substitute for exact positive all-in net economics.
+- Positive sub-one-BPS opportunities remain eligible when exact all-in net economics are strictly positive and every other execution requirement is satisfied.
+- Advisory intelligence, Monte Carlo, learning, ranking, TradingView, optimization, or other decision-support systems may inform search/ranking/risk but must not veto a deterministic, otherwise-authorized profitable trade unless an authoritative safety/risk rule independently prohibits it.
+- Discovery is separate from execution readiness. A discovery-path limitation must not suppress broader market discovery.
+- Execution truth is separate from settlement, reconciliation, bookkeeping, telemetry, and payout truth. Preserve successful on-chain execution truth even if later reconciliation or telemetry fails.
+
+## Capability-baseline requirement
+
+Before a behavioral code change, establish the relevant pre-change capability baseline, including applicable:
+
+`chains -> venues -> strategies -> providers -> funding -> receiver -> gas sponsorship/payment -> assets -> execution -> settlement -> payout -> failover`
+
+After the change, compare the same capability matrix. A repair is not complete if an unrelated supported capability disappeared, became mandatory when it was optional, or silently narrowed.
+
+## Bounded verification; no stalling or loops
+
+- Verification must be sufficient to establish the root cause and protect the affected dependency map, but it must be bounded.
+- Do not repeatedly search the same sources, re-check the same fact without new evidence, restart the same analysis, or remain indefinitely on one defect.
+- Do not confuse thoroughness with repetition or perfectionism.
+- Once evidence is sufficient to support the smallest safe repair, proceed.
+- Move through the requested defects continuously so the user does not have to repeatedly say "proceed."
+- If one verification avenue is unavailable or unproductive, use the next legitimate route instead of looping on it.
+- Do not let one secondary uncertainty stall all independent in-scope work.
+
+## Evidence, confidence, humility, and integrity
+
+- Separate observed fact, code-proven root cause, test result, inference, and uncertainty explicitly in your own reasoning and reporting.
+- Do not claim a root cause is proven until the code/data path supports it.
+- Do not claim a defect is fixed until the relevant change exists and has been validated to the extent legitimately available.
+- Do not claim tests passed if they were not run or did not complete.
+- Do not claim work was merged, pushed, deployed, or production-verified before that action actually occurred.
+- Never prepare to merge or deploy nonexistent or incomplete code changes.
+- Work without overconfidence. Treat plausible explanations as hypotheses until verified.
+- Admit unresolved uncertainty rather than fabricating certainty.
+- Maintain complete integrity about what changed, what was checked, what remains unknown, and what still needs proof.
+
+## Research directive when explicitly invoked
+
+When the user explicitly requires the recursively broadening internet scan, use it in parallel with the in-scope investigation and implementation rather than as a detached research phase. Broaden subject-adaptively across authoritative documentation, source repositories/issues, technically relevant community evidence, academic/research sources, and other materially relevant public sources. Search for exact and analogous failure modes and validated resolution patterns. Do not get trapped repeatedly searching the same small source set. External research informs diagnosis and repair; the repository's actual code remains the authority for whether a proposed root cause applies here.
+
+## Operational constraints
+
+- Do not use GitHub Actions for this work.
+- Do not use Railway Preview deployments.
+- Do not redeploy merely to perform a check that can be completed without deployment.
+- Deploy only to Railway production when deployment is explicitly required and the requested fixes and pre-deployment validation are complete.
+- Do not alter unrelated production configuration during a scoped repair.
+
+## Completion standard
+
+A scoped repair is complete only when:
+
+1. the verified root cause has been corrected with the smallest necessary change;
+2. the affected inputs, outputs, callers, consumers, shared state, authorities, fallbacks, timing/TTL behavior, and alternate paths remain coherent;
+3. the relevant capability matrix shows no unintended loss or narrowing;
+4. canonical economics/execution/settlement authority remains intact;
+5. available regression validation passes or any unavailable validation is reported accurately;
+6. no unrelated code or behavior was intentionally changed; and
+7. any requested merge/deployment occurs only after the preceding conditions are satisfied.
