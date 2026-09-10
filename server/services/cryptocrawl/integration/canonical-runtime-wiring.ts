@@ -2,7 +2,7 @@ import logger from '../../../logger.js';
 import { ensureFilteredAlchemyPendingStream } from '../capital-free/alchemy-filtered-pending-stream.js';
 import { startCanonicalZeroCapitalDiscovery } from '../discovery/zero-capital-canonical-discovery.js';
 import { multiTopologyDiscoveryController } from '../discovery/multi-topology-discovery-controller.js';
-import { ghostWalletEngine } from '../ghost-wallet/ghost-wallet-engine.js';
+import { ghostWalletUltraWorker } from '../ghost-wallet/ghost-wallet-ultra-worker.js';
 import { ensureStageOneBootstrapAuthority } from '../governance/stage-one-bootstrap-authority.js';
 import { ensureCanonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
 import { canonicalIntelligenceRepository } from '../intelligence/canonical-intelligence-repository.js';
@@ -244,7 +244,7 @@ function installCanonicalRuntime(): void {
       startCanonicalZeroCapitalRuntime();
     }
   });
-  install('ghost_wallet_engine', () => ghostWalletEngine.start());
+  install('ghost_wallet_ultra_worker', () => ghostWalletUltraWorker.start());
 
   install('order_book_evolution', () => ensureOrderBookEvolutionWiring());
   install('cex_four_mode_observability', () => ensureCexFourModeObservabilityWiring());
@@ -295,7 +295,7 @@ function installCanonicalRuntime(): void {
     zeroCapitalSchedulerAuthority: 'CanonicalExecutionScheduler_only',
     zeroCapitalExecutionAuthority: 'CanonicalZeroCapitalExecutor_only',
     zeroCapitalRuntimeMethodMutation: false,
-    ghostWalletRuntime: 'isolated_atomic_credit_intermediation_lane',
+    ghostWalletRuntime: 'isolated_event_driven_atomic_credit_ultra_worker',
     ghostWalletProfitLadderAuthority: false,
     ghostWalletArbitrageExecutionAuthority: false,
     fixedDiscoveryPriority: false,
