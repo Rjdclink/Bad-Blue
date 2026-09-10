@@ -52,13 +52,32 @@ function stripEip712Domain(types: Record<string, Array<{ name: string; type: str
   return rest;
 }
 
+function boundedCooldownMs(raw: unknown): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 300_000;
+  return Math.max(30_000, Math.min(3_600_000, Math.trunc(parsed)));
+}
+
+function isDeterministicPolicyFailure(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes('policy not found')
+    || normalized.includes('policy is not active')
+    || normalized.includes('policy inactive')
+    || normalized.includes('invalid policy')
+    || (normalized.includes('policy') && normalized.includes('application'));
+}
+
 export class AlchemyGasSponsorshipManager {
   private readonly apiKey: string;
   private readonly policyId: string;
+  private readonly policyFailureCooldownMs: number;
+  private unavailableUntil = 0;
+  private lastLiveConfigurationFailure: string | null = null;
 
   constructor(environment: NodeJS.ProcessEnv = process.env) {
     this.apiKey = String(environment.ALCHEMY_API_KEY || '').trim();
     this.policyId = String(environment.ALCHEMY_GAS_POLICY_ID || '').trim();
+    this.policyFailureCooldownMs = boundedCooldownMs(environment.ALCHEMY_GAS_POLICY_FAILURE_COOLDOWN_MS);
   }
 
   isEnabled(): boolean {
@@ -72,7 +91,24 @@ export class AlchemyGasSponsorshipManager {
     if (!this.policyId) {
       return { ready: false, provider: 'alchemy-gas-manager', reason: 'ALCHEMY_GAS_POLICY_ID is not configured' };
     }
+    if (this.unavailableUntil > Date.now()) {
+      return {
+        ready: false,
+        provider: 'alchemy-gas-manager',
+        reason: `Alchemy sponsorship rejected the configured policy in a live wallet_prepareCalls request; retry after ${new Date(this.unavailableUntil).toISOString()}${this.lastLiveConfigurationFailure ? ` (${this.lastLiveConfigurationFailure})` : ''}`,
+      };
+    }
     return { ready: true, provider: 'alchemy-gas-manager' };
+  }
+
+  private markLivePolicyFailure(message: string): void {
+    this.lastLiveConfigurationFailure = message.slice(0, 240);
+    this.unavailableUntil = Date.now() + this.policyFailureCooldownMs;
+  }
+
+  private clearLivePolicyFailure(): void {
+    this.lastLiveConfigurationFailure = null;
+    this.unavailableUntil = 0;
   }
 
   private async rpc<T>(method: string, params: unknown[], timeoutMs = 15_000): Promise<T> {
@@ -91,7 +127,16 @@ export class AlchemyGasSponsorshipManager {
       if (!response.ok) throw new Error(`Alchemy Wallet API HTTP ${response.status}`);
       const envelope = await response.json() as JsonRpcEnvelope<T>;
       if (envelope.error) {
-        throw new Error(`Alchemy Wallet API ${method} failed: ${envelope.error.message || envelope.error.code || 'unknown error'}`);
+        const message = `Alchemy Wallet API ${method} failed: ${envelope.error.message || envelope.error.code || 'unknown error'}`;
+        // Presence of a policy ID is not proof that the policy exists, is active,
+        // or belongs to the application behind this API key. Production showed a
+        // stale/mismatched ID repeatedly reporting sponsor-ready and then failing
+        // wallet_prepareCalls. Quarantine only deterministic policy/configuration
+        // failures; transient transport/provider failures retain normal retry.
+        if (method === 'wallet_prepareCalls' && isDeterministicPolicyFailure(message)) {
+          this.markLivePolicyFailure(message);
+        }
+        throw new Error(message);
       }
       if (envelope.result === undefined) throw new Error(`Alchemy Wallet API ${method} returned no result`);
       return envelope.result;
@@ -181,6 +226,10 @@ export class AlchemyGasSponsorshipManager {
         paymasterService: { policyId: this.policyId },
       },
     }]);
+    // A successful live prepare is the strongest local evidence available that
+    // the configured API key/policy pair is accepted for this request. Clear any
+    // expired quarantine only after that live proof, never merely on elapsed time.
+    this.clearLivePolicyFailure();
 
     const signed = await this.signPreparedCalls(input.wallet, prepared, input.chainId);
     const sendResult = await this.rpc<any>('wallet_sendPreparedCalls', [signed]);

@@ -6,6 +6,7 @@ export interface ZeroCapitalRecoverySnapshot {
   observedAt: number;
   observedCandidates: number;
   candidatesWithNetBps: number;
+  historicalBpsCandidates: number;
   positiveCandidates: number;
   nonPositiveGrossEdgeCandidates: number;
   grossPositiveNetNegativeCandidates: number;
@@ -20,15 +21,32 @@ export interface ZeroCapitalRecoverySnapshot {
   medianCandidateBpsToBreakEven: number | null;
   p90CandidateBpsToBreakEven: number | null;
   measuredRouteFamilies: number;
+  measuredRouteFamiliesHistorical: number;
   closestMeasuredRoute: {
     routeId: string;
+    grossProfitBps: number | null;
+    allInCostBps: number | null;
+    breakEvenBps: number | null;
     netProfitBps: number | null;
+    bpsToBreakEven: number | null;
     attempts: number;
     positiveQuotes: number;
     measuredNotionalUsd: number | null;
     measuredAt: number;
     measurementAgeMs: number;
     sameRouteGapImprovementBps: number | null;
+  } | null;
+  latestMeasuredRoute: {
+    opportunityId: string;
+    grossProfitBps: number | null;
+    allInCostBps: number | null;
+    netProfitBps: number | null;
+    bpsToBreakEven: number | null;
+    measuredNotionalUsd: number | null;
+    measuredAt: number;
+    measurementAgeMs: number;
+    actionableNow: boolean;
+    status: MeasuredCandidate['status'];
   } | null;
   authority: 'telemetry_only';
   executionAuthority: false;
@@ -61,14 +79,19 @@ function percentile(values: number[], p: number): number | null {
 }
 
 function routeEvidenceMaxAgeMs(): number {
-  const parsed = Number(process.env.ZERO_CAPITAL_ROUTE_EVIDENCE_MAX_AGE_MS || 60_000);
-  return Number.isFinite(parsed) ? Math.max(5_000, Math.min(300_000, parsed)) : 60_000;
+  const routeTtl = Number(process.env.ZERO_CAPITAL_ROUTE_TTL_MS || 3000);
+  const safeRouteTtl = Number.isFinite(routeTtl) ? Math.max(500, Math.min(15_000, Math.trunc(routeTtl))) : 3000;
+  const configured = Number(process.env.ZERO_CAPITAL_ACTIONABLE_ROUTE_EVIDENCE_MAX_AGE_MS || safeRouteTtl);
+  const safeConfigured = Number.isFinite(configured) ? Math.max(250, Math.min(15_000, Math.trunc(configured))) : safeRouteTtl;
+  // Current/actionable telemetry must never outlive the opportunity it describes.
+  return Math.min(safeConfigured, safeRouteTtl);
 }
 
 function cloneSnapshot(snapshot: ZeroCapitalRecoverySnapshot): ZeroCapitalRecoverySnapshot {
   return {
     ...snapshot,
     closestMeasuredRoute: snapshot.closestMeasuredRoute ? { ...snapshot.closestMeasuredRoute } : null,
+    latestMeasuredRoute: snapshot.latestMeasuredRoute ? { ...snapshot.latestMeasuredRoute } : null,
   };
 }
 
@@ -82,15 +105,17 @@ function notifyUpdate(): void {
 
 function refresh(): void {
   const now = Date.now();
-  // Recovery telemetry describes routes that could still be acted on now. Pull
-  // the complete default registry capacity before applying topology/freshness so
-  // high-volume CEX churn cannot crowd zero-capital candidates out of the view.
-  const candidates = measuredCandidateRegistry.getRecent(4096)
-    .filter(candidate =>
-      candidate.topology === 'ZERO_CAPITAL_ATOMIC'
-      && candidate.status !== 'expired'
-      && candidate.expiresAt > now,
-    );
+  // Keep a bounded ten-minute registry history visible even after an opportunity
+  // expires. Expiration removes execution authority, not the fact that a real
+  // gross spread/cost/net BPS measurement occurred.
+  const candidateHistory = measuredCandidateRegistry.getRecent(4096)
+    .filter(candidate => candidate.topology === 'ZERO_CAPITAL_ATOMIC');
+  const historicalBpsCandidates = candidateHistory
+    .filter(candidate => typeof candidate.canonicalBps.netBps === 'number' && Number.isFinite(candidate.canonicalBps.netBps));
+  const candidates = candidateHistory.filter(candidate =>
+    candidate.status !== 'expired'
+    && candidate.expiresAt > now,
+  );
   const bpsCandidates = candidates
     .filter(candidate => typeof candidate.canonicalBps.netBps === 'number' && Number.isFinite(candidate.canonicalBps.netBps));
   const withBps = bpsCandidates.map(candidate => Number(candidate.canonicalBps.netBps));
@@ -123,12 +148,17 @@ function refresh(): void {
     ? null
     : Math.max(0, -closestCandidateGrossBps);
 
-  const maxRouteEvidenceAgeMs = routeEvidenceMaxAgeMs();
   const routeEvidence = getZeroCapitalRoutePreselectionEvidence();
+  const maxRouteEvidenceAgeMs = routeEvidence[0]?.actionableEvidenceMaxAgeMs ?? routeEvidenceMaxAgeMs();
+  // Ranking history may live longer, but only the route-TTL-bounded economics are
+  // published as current. Negative measurements remain visible while fresh.
   const measuredRoutes = routeEvidence.filter(item =>
-    item.lastMeasuredAt !== null
-    && item.lastMeasuredAt <= now
-    && now - item.lastMeasuredAt <= maxRouteEvidenceAgeMs
+    item.actionableEvidenceFresh
+    && item.lastMeasuredAt !== null
+    && item.recentGrossProfitBps !== null
+    && Number.isFinite(item.recentGrossProfitBps)
+    && item.recentAllInCostBps !== null
+    && Number.isFinite(item.recentAllInCostBps)
     && item.recentNetProfitBps !== null
     && Number.isFinite(item.recentNetProfitBps),
   );
@@ -136,6 +166,8 @@ function refresh(): void {
     .filter(item => Number(item.recentNetProfitBps) <= 0)
     .sort((left, right) => Math.abs(Number(left.recentNetProfitBps)) - Math.abs(Number(right.recentNetProfitBps)));
   const closestRoute = nearBreakEvenRoutes[0] ?? null;
+  const latestMeasuredCandidate = [...historicalBpsCandidates]
+    .sort((left, right) => right.canonicalBps.measuredAt - left.canonicalBps.measuredAt)[0] ?? null;
   const closestRouteGapBps = closestRoute ? Math.abs(Number(closestRoute.recentNetProfitBps)) : null;
   const candidateGapDeltaBps = closestCandidateGapBps !== null && previousClosestCandidateGapBps !== null
     ? previousClosestCandidateGapBps - closestCandidateGapBps
@@ -148,6 +180,7 @@ function refresh(): void {
     observedAt: now,
     observedCandidates: candidates.length,
     candidatesWithNetBps: withBps.length,
+    historicalBpsCandidates: historicalBpsCandidates.length,
     positiveCandidates: withBps.filter(value => value > 0).length,
     nonPositiveGrossEdgeCandidates: nonPositiveGrossEdgeCandidates.length,
     grossPositiveNetNegativeCandidates: costCompressibleCandidates.length,
@@ -162,16 +195,35 @@ function refresh(): void {
     medianCandidateBpsToBreakEven: percentile(negativeGaps, 0.5),
     p90CandidateBpsToBreakEven: percentile(negativeGaps, 0.9),
     measuredRouteFamilies: measuredRoutes.length,
+    measuredRouteFamiliesHistorical: historicalBpsCandidates.length,
     closestMeasuredRoute: closestRoute && closestRoute.lastMeasuredAt !== null
       ? {
           routeId: closestRoute.routeId,
+          grossProfitBps: closestRoute.recentGrossProfitBps,
+          allInCostBps: closestRoute.recentAllInCostBps,
+          breakEvenBps: closestRoute.recentBreakEvenBps,
           netProfitBps: closestRoute.recentNetProfitBps,
+          bpsToBreakEven: closestRoute.recentBpsToBreakEven,
           attempts: closestRoute.attempts,
           positiveQuotes: closestRoute.positiveQuotes,
           measuredNotionalUsd: closestRoute.recentMeasuredNotionalUsd,
           measuredAt: closestRoute.lastMeasuredAt,
           measurementAgeMs: Math.max(0, now - closestRoute.lastMeasuredAt),
           sameRouteGapImprovementBps: sameRouteGapDeltaBps,
+        }
+      : null,
+    latestMeasuredRoute: latestMeasuredCandidate
+      ? {
+          opportunityId: latestMeasuredCandidate.opportunityId,
+          grossProfitBps: finite(latestMeasuredCandidate.canonicalBps.grossBps),
+          allInCostBps: finite(latestMeasuredCandidate.canonicalBps.allInCostBps),
+          netProfitBps: finite(latestMeasuredCandidate.canonicalBps.netBps),
+          bpsToBreakEven: finite(latestMeasuredCandidate.canonicalBps.bpsToBreakEven),
+          measuredNotionalUsd: finite(latestMeasuredCandidate.canonicalBps.notionalUsd),
+          measuredAt: latestMeasuredCandidate.canonicalBps.measuredAt,
+          measurementAgeMs: Math.max(0, now - latestMeasuredCandidate.canonicalBps.measuredAt),
+          actionableNow: latestMeasuredCandidate.status !== 'expired' && latestMeasuredCandidate.expiresAt > now,
+          status: latestMeasuredCandidate.status,
         }
       : null,
     authority: 'telemetry_only',
@@ -183,11 +235,15 @@ function refresh(): void {
     component: 'ZeroCapitalRecoveryObservability',
     ...latest,
     routeEvidenceMaxAgeMs: maxRouteEvidenceAgeMs,
+    actionableEvidenceBoundedByRouteTtl: true,
+    completeBpsDecompositionPublished: true,
+    historicalMeasurementVisibilityRetained: true,
+    historicalMeasurementAuthority: 'retained_registry_telemetry_only_never_execution',
     candidateAuthority: 'unexpired_canonical_bps_only',
     costCompressionAuthority: 'gross_positive_net_nonpositive_measured_candidates_only',
     nonPositiveGrossEdgeTreatment: 'route_pool_market_edge_search_not_fee_compression',
     staleCandidateEconomicAuthority: false,
-    staleRouteEvidencePublished: false,
+    staleRouteEvidencePublishedAsActionable: false,
     trendAuthority: 'measured_observation_delta_only',
   });
 
@@ -224,7 +280,7 @@ export function ensureZeroCapitalRecoveryObservability(): void {
   refresh();
   unsubscribeCandidateUpdate = measuredCandidateRegistry.onUpdate(scheduleCandidateRefresh);
   if (process.env.NO_INTERVALS !== 'true') {
-    const intervalMs = Math.max(5_000, Math.min(120_000, Number(process.env.ZERO_CAPITAL_RECOVERY_OBSERVABILITY_INTERVAL_MS || 15_000)));
+    const intervalMs = Math.max(1_000, Math.min(120_000, Number(process.env.ZERO_CAPITAL_RECOVERY_OBSERVABILITY_INTERVAL_MS || 3_000)));
     timer = setInterval(refresh, intervalMs);
     timer.unref?.();
   }

@@ -11,8 +11,10 @@ export type CryptoCrawlerCexVenue =
   | 'bitfinex'
   | 'cryptocom';
 
+export type CryptoCrawlerTradingVenue = CryptoCrawlerCexVenue | 'kalshi';
+
 export interface VenueCapability {
-  venue: CryptoCrawlerCexVenue;
+  venue: CryptoCrawlerTradingVenue;
   enabled: boolean;
   publicDiscovery: boolean;
   executableQuotes: boolean;
@@ -26,10 +28,14 @@ export interface VenueCapability {
 /**
  * Capability means the codebase has an end-to-end implementation, not that a
  * particular runtime account is ready. Runtime permission, authenticated fee,
- * exact-product market data, inventory, governance and settlement evidence still
- * fail closed independently for every plan.
+ * exact-product market data, inventory/capital, governance and settlement
+ * evidence still fail closed independently for every plan.
+ *
+ * Kalshi is a first-class trading venue in this registry, but it is not falsely
+ * modeled as a spot CEX. Its PREDICTION_EVENT and FUNDING_ARBITRAGE lifecycles
+ * retain their topology-specific cash/margin and settlement authorities.
  */
-const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = Object.freeze({
+const CAPABILITIES: Readonly<Record<CryptoCrawlerTradingVenue, VenueCapability>> = Object.freeze({
   coinbase: Object.freeze({
     venue: 'coinbase',
     enabled: true,
@@ -62,6 +68,17 @@ const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = O
     liveExecution: true,
     settlementVerification: true,
     reason: 'current production CEX quote, fee, execution, and settlement path',
+  }),
+  kalshi: Object.freeze({
+    venue: 'kalshi',
+    enabled: true,
+    publicDiscovery: true,
+    executableQuotes: true,
+    measuredOrderBook: true,
+    authenticatedFeeEvidence: true,
+    liveExecution: true,
+    settlementVerification: true,
+    reason: 'canonical Kalshi event and perps discovery, exact depth/fee evidence, live order lifecycle, resource reservation, recovery, and settlement paths; runtime credentials, product permissions, and topology-specific system-owned cash/margin remain fail-closed',
   }),
   binance: Object.freeze({
     venue: 'binance', enabled: true, publicDiscovery: true, executableQuotes: false,
@@ -105,7 +122,7 @@ const CAPABILITIES: Readonly<Record<CryptoCrawlerCexVenue, VenueCapability>> = O
   }),
 });
 
-export function getVenueCapability(venue: CryptoCrawlerCexVenue): Readonly<VenueCapability> {
+export function getVenueCapability(venue: CryptoCrawlerTradingVenue): Readonly<VenueCapability> {
   return CAPABILITIES[venue];
 }
 
@@ -113,6 +130,11 @@ export function getVenueCapabilities(): ReadonlyArray<Readonly<VenueCapability>>
   return Object.values(CAPABILITIES).map(capability => ({ ...capability }));
 }
 
+/**
+ * Same-instrument CEX quote assembly remains intentionally restricted to the
+ * three CEX adapters. Kalshi participates through its event/funding topology and
+ * is never coerced into spot-CEX semantics merely to satisfy a venue count.
+ */
 export function getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'> {
   return (['coinbase', 'kraken', 'okx'] as const).filter(venue => {
     const capability = CAPABILITIES[venue];
@@ -125,7 +147,7 @@ export function getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 
   });
 }
 
-export function isVenueLiveExecutable(venue: CryptoCrawlerCexVenue): boolean {
+export function isVenueLiveExecutable(venue: CryptoCrawlerTradingVenue): boolean {
   const capability = CAPABILITIES[venue];
   return capability.enabled && capability.liveExecution && capability.settlementVerification;
 }

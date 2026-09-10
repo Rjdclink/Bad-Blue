@@ -33,8 +33,11 @@ assert.match(primary, /daiToUsds/);
 assert.match(primary, /usdsToDai/);
 assert.match(primary, /live identity does not match the reviewed DAI\/USDS converter/);
 
-// Fluid's official resolver must be preferred, with exact direct simulation retained as fallback.
-assert.match(primary, /0xF38082d58bF0f1e07C04684FF718d69a70f21e62/);
+// Fluid's official current mainnet DexReservesResolver must be preferred, with
+// exact direct simulation retained only as a fallback. The address below is the
+// deployment identity published in Fluid's mainnet DexReservesResolver artifact.
+assert.match(primary, /0x05Bd8269A20C472b148246De20E6852091BF16Ff/);
+assert.doesNotMatch(primary, /0xF38082d58bF0f1e07C04684FF718d69a70f21e62/);
 assert.match(primary, /estimateSwapIn/);
 assert.match(quoter, /quoteFluidSwapInViaOfficialResolver/);
 assert.match(quoter, /quoteProtocolAnchorLeg/);
@@ -75,6 +78,7 @@ console.log(JSON.stringify({
   skyLitePsmLiveEconomics: true,
   skyDaiUsdsIdentityProof: true,
   fluidOfficialResolverPreferred: true,
+  fluidOfficialMainnetDeploymentVerified: true,
   directFluidExactFallbackPreserved: true,
   protocolAnchorPermissioning: true,
   syntheticProfitAllowed: false,

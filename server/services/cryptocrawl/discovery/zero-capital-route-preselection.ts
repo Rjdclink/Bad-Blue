@@ -33,12 +33,18 @@ export interface ZeroCapitalRoutePreselectionEvidence {
   lastAttemptAt: number | null;
   lastMeasuredAt: number | null;
   lastPositiveAt: number | null;
+  recentGrossProfitBps: number | null;
+  recentAllInCostBps: number | null;
+  recentBreakEvenBps: number | null;
+  recentBpsToBreakEven: number | null;
   recentNetProfitBps: number | null;
   recentMeasuredNotionalUsd: number | null;
   recentPositiveNotionalUsd: number | null;
   estimatedDeterministicPositiveProbability: number | null;
   rankingNetProfitBps: number | null;
   providerRepriceFeedback: ZeroCapitalProviderRepriceFeedback | null;
+  actionableEvidenceFresh: boolean;
+  actionableEvidenceMaxAgeMs: number;
 }
 
 export interface ZeroCapitalRoutePreScore {
@@ -91,6 +97,10 @@ interface MutableRouteEvidence {
   lastAttemptAt: number | null;
   lastMeasuredAt: number | null;
   lastPositiveAt: number | null;
+  recentGrossProfitBps: number | null;
+  recentAllInCostBps: number | null;
+  recentBreakEvenBps: number | null;
+  recentBpsToBreakEven: number | null;
   recentNetProfitBps: number | null;
   recentMeasuredNotionalUsd: number | null;
   recentPositiveNotionalUsd: number | null;
@@ -116,8 +126,21 @@ function finite(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** Ranking history may outlive an executable quote; it is advisory only. */
 function routeEvidenceMaxAgeMs(): number {
   return boundedInteger(process.env.ZERO_CAPITAL_ROUTE_EVIDENCE_MAX_AGE_MS, 60_000, 5_000, 300_000);
+}
+
+/** Actionable/display economics may never outlive the route opportunity TTL. */
+function actionableRouteEvidenceMaxAgeMs(): number {
+  const routeTtlMs = boundedInteger(process.env.ZERO_CAPITAL_ROUTE_TTL_MS, 3_000, 500, 60_000);
+  const configured = boundedInteger(
+    process.env.ZERO_CAPITAL_ACTIONABLE_ROUTE_EVIDENCE_MAX_AGE_MS,
+    routeTtlMs,
+    250,
+    60_000,
+  );
+  return Math.min(routeTtlMs, configured);
 }
 
 function providerFeedbackMaxAgeMs(): number {
@@ -128,6 +151,20 @@ function hasFreshMeasuredEvidence(item: MutableRouteEvidence, now = Date.now()):
   return item.lastMeasuredAt !== null
     && item.lastMeasuredAt <= now
     && now - item.lastMeasuredAt <= routeEvidenceMaxAgeMs()
+    && item.recentNetProfitBps !== null
+    && Number.isFinite(item.recentNetProfitBps)
+    && item.recentMeasuredNotionalUsd !== null
+    && Number.isFinite(item.recentMeasuredNotionalUsd);
+}
+
+function hasActionableMeasuredEvidence(item: MutableRouteEvidence, now = Date.now()): boolean {
+  return item.lastMeasuredAt !== null
+    && item.lastMeasuredAt <= now
+    && now - item.lastMeasuredAt <= actionableRouteEvidenceMaxAgeMs()
+    && item.recentGrossProfitBps !== null
+    && Number.isFinite(item.recentGrossProfitBps)
+    && item.recentAllInCostBps !== null
+    && Number.isFinite(item.recentAllInCostBps)
     && item.recentNetProfitBps !== null
     && Number.isFinite(item.recentNetProfitBps)
     && item.recentMeasuredNotionalUsd !== null
@@ -542,6 +579,10 @@ export function recordZeroCapitalRouteQuoteCycle(
       lastAttemptAt: null,
       lastMeasuredAt: null,
       lastPositiveAt: null,
+      recentGrossProfitBps: null,
+      recentAllInCostBps: null,
+      recentBreakEvenBps: null,
+      recentBpsToBreakEven: null,
       recentNetProfitBps: null,
       recentMeasuredNotionalUsd: null,
       recentPositiveNotionalUsd: null,
@@ -555,15 +596,19 @@ export function recordZeroCapitalRouteQuoteCycle(
 
     if (quote && Number.isFinite(quote.netProfitBps)) {
       current.lastMeasuredAt = observedAt;
+      current.recentGrossProfitBps = Number.isFinite(quote.grossProfitBps) ? quote.grossProfitBps : null;
+      current.recentAllInCostBps = Number.isFinite(quote.allInCostBps) ? quote.allInCostBps : null;
+      current.recentBreakEvenBps = Number.isFinite(quote.breakEvenBps) ? quote.breakEvenBps : null;
+      current.recentBpsToBreakEven = Number.isFinite(quote.bpsToBreakEven) ? quote.bpsToBreakEven : null;
       current.recentNetProfitBps = quote.netProfitBps;
       const notional = Number(quote.amountIn) / Math.pow(10, quote.inputTokenDecimals);
       if (Number.isFinite(notional) && notional > 0) observationNotionalUsd = notional;
       current.recentMeasuredNotionalUsd = observationNotionalUsd;
     }
     // A transient quote miss is an attempt outcome, not evidence that the last
-    // measured economics never existed. Preserve the prior measurement until its
-    // normal freshness TTL expires so one failed reacquisition cannot poison the
-    // next recovery/exploitation selection.
+    // measured economics never existed. Preserve it for advisory ranking history;
+    // public/actionable economics are independently nulled at the much shorter
+    // route-TTL boundary below.
 
     if (deterministicPositive && quote) {
       current.positiveQuotes += 1;
@@ -584,16 +629,24 @@ export function recordZeroCapitalRouteQuoteCycle(
 
 export function getZeroCapitalRoutePreselectionEvidence(): ZeroCapitalRoutePreselectionEvidence[] {
   const now = Date.now();
+  const actionableMaxAgeMs = actionableRouteEvidenceMaxAgeMs();
   return [...evidence.values()].map(item => {
-    const fresh = hasFreshMeasuredEvidence(item, now);
-    const feedback = fresh ? freshProviderFeedback(item, now) : null;
+    const rankingFresh = hasFreshMeasuredEvidence(item, now);
+    const actionableFresh = hasActionableMeasuredEvidence(item, now);
+    const feedback = actionableFresh ? freshProviderFeedback(item, now) : null;
     return {
       ...item,
-      recentNetProfitBps: fresh ? item.recentNetProfitBps : null,
-      recentMeasuredNotionalUsd: fresh ? item.recentMeasuredNotionalUsd : null,
+      recentGrossProfitBps: actionableFresh ? item.recentGrossProfitBps : null,
+      recentAllInCostBps: actionableFresh ? item.recentAllInCostBps : null,
+      recentBreakEvenBps: actionableFresh ? item.recentBreakEvenBps : null,
+      recentBpsToBreakEven: actionableFresh ? item.recentBpsToBreakEven : null,
+      recentNetProfitBps: actionableFresh ? item.recentNetProfitBps : null,
+      recentMeasuredNotionalUsd: actionableFresh ? item.recentMeasuredNotionalUsd : null,
       estimatedDeterministicPositiveProbability: positiveProbability(item),
-      rankingNetProfitBps: fresh ? (feedback?.repricedNetProfitBps ?? item.recentNetProfitBps) : null,
+      rankingNetProfitBps: rankingFresh ? rankingNetProfitBps(item, now) : null,
       providerRepriceFeedback: feedback ? { ...feedback } : null,
+      actionableEvidenceFresh: actionableFresh,
+      actionableEvidenceMaxAgeMs: actionableMaxAgeMs,
     };
   });
 }

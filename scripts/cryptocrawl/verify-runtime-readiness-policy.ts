@@ -21,6 +21,8 @@ const base = {
   eligibleCandidates: 0,
   eligibleCexCandidates: 0,
   eligibleZeroCapitalCandidates: 0,
+  eligibleKalshiCandidates: 0,
+  kalshiExecutionConfigured: false,
   stageCanExecute: false,
   currentStage: 1,
   initialGasReady: false,
@@ -39,8 +41,6 @@ assert.equal(readiness.DISCOVERY_READY.ready, true);
 assert.match(readiness.DISCOVERY_READY.detail, /discoveryEvidence=10/);
 
 // Discovery evidence is independent from the later canonical candidate funnel.
-// Canonical observations cannot substitute for raw measured discovery, and a
-// lack of profitable canonical candidates cannot make active discovery red.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   discoveryEvidenceCount: 0,
@@ -51,8 +51,8 @@ assert.equal(readiness.DISCOVERY_READY.ready, false);
 readiness = computeCryptoRuntimeReadiness(base);
 assert.equal(readiness.DISCOVERY_READY.ready, true);
 
-// Canonical CEX trading can become ready only when an eligible CEX candidate,
-// reconciled CEX inventory, executable governance and live capability all agree.
+// Canonical CEX trading becomes ready only when an eligible CEX candidate,
+// reconciled CEX inventory, executable governance and live CEX capability agree.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   reconciledInventoryAssets: 4,
@@ -70,8 +70,7 @@ assert.equal(readiness.GOVERNANCE_READY.ready, true);
 assert.equal(readiness.EXECUTION_READY.ready, true);
 assert.equal(readiness.TRADING_READY.ready, true);
 
-// A detected source/deployment SHA mismatch is a hard execution-readiness
-// failure even when every market/governance/resource input would otherwise pass.
+// A detected source/deployment SHA mismatch is a hard execution-readiness failure.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   runtimeIdentitySafe: false,
@@ -90,7 +89,7 @@ assert.equal(readiness.EXECUTION_READY.ready, false);
 assert.equal(readiness.TRADING_READY.ready, false);
 assert.match(readiness.EXECUTION_CAPABILITY_READY.detail, /runtimeIdentitySafe=false/);
 
-// Balance rows on only one venue are not cross-venue inventory readiness.
+// Balance rows on only one CEX are not CEX inventory readiness.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   reconciledInventoryAssets: 5,
@@ -100,9 +99,7 @@ readiness = computeCryptoRuntimeReadiness({
 assert.equal(readiness.INVENTORY_READY.ready, false);
 assert.match(readiness.INVENTORY_READY.detail, /spendableCexInventoryVenues=1/);
 
-// StageManager/global initial-gas readiness is deliberately broader than strict
-// zero-capital funding. It must never be promoted into a zero-personal-cost
-// resource claim unless route-local funding proof is independently supplied.
+// Global initial-gas readiness cannot be promoted into strict zero-capital funding.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   initialGasReady: true,
@@ -113,9 +110,8 @@ assert.equal(readiness.INVENTORY_READY.ready, false);
 assert.match(readiness.INVENTORY_READY.detail, /zeroCapitalFundingReady=false/);
 assert.match(readiness.INVENTORY_READY.detail, /zeroCapitalResourceReady=false/);
 
-// When strict route-local zero-capital funding is actually proven, observability
-// may report that separate resource as ready, but it still cannot substitute for
-// missing centralized-exchange inventory.
+// A fully proven zero-initial-capital atomic route is a first-class resource and
+// trading path. It must not be blocked merely because redundant CEX balances are zero.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
   initialGasReady: true,
@@ -125,44 +121,45 @@ readiness = computeCryptoRuntimeReadiness({
   stageCanExecute: true,
   currentStage: 2,
 });
-assert.equal(readiness.INVENTORY_READY.ready, false);
-assert.equal(readiness.CANDIDATE_READY.ready, false);
-assert.equal(readiness.TRADING_READY.ready, false);
-assert.match(readiness.INVENTORY_READY.detail, /zeroCapitalFundingReady=true/);
-assert.match(readiness.INVENTORY_READY.detail, /zeroCapitalResourceReady=true/);
+assert.equal(readiness.INVENTORY_READY.ready, true);
+assert.equal(readiness.CANDIDATE_READY.ready, true);
+assert.equal(readiness.TRADING_READY.ready, true);
+assert.match(readiness.INVENTORY_READY.detail, /CEX inventory is redundancy for the zero-capital topology/);
+assert.match(readiness.TRADING_READY.detail, /zeroCapitalResourceReady=true/);
 
-// Zero-capital gas readiness is a separate topology and must never make a CEX
-// candidate appear resource-ready when reconciled CEX inventory is absent.
+// Zero-capital resources never mint CEX inventory. A CEX-only candidate still
+// cannot execute without its own exact CEX resource reservation.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
-  eligibleCandidates: 2,
+  eligibleCandidates: 1,
   eligibleCexCandidates: 1,
-  eligibleZeroCapitalCandidates: 1,
+  eligibleZeroCapitalCandidates: 0,
   stageCanExecute: true,
   currentStage: 2,
   initialGasReady: true,
   zeroCapitalFundingReady: true,
   zeroCapitalExecutionEnabled: true,
 });
-assert.equal(readiness.INVENTORY_READY.ready, false);
+assert.equal(readiness.INVENTORY_READY.ready, true);
 assert.equal(readiness.CANDIDATE_READY.ready, true);
 assert.equal(readiness.TRADING_READY.ready, false);
-assert.match(readiness.TRADING_READY.detail, /Zero-capital resources never substitute for CEX inventory/);
 
-// A zero-capital candidate by itself is not a candidate for the canonical CEX
-// scheduler and therefore cannot make CEX TRADING_READY true.
+// Kalshi is visible as a first-class execution capability/candidate topology,
+// without fabricating its topology-specific system-owned cash or margin readiness.
 readiness = computeCryptoRuntimeReadiness({
   ...base,
+  centralizedExecutionConfigured: false,
+  zeroCapitalExecutionEnabled: false,
+  kalshiExecutionConfigured: true,
   eligibleCandidates: 1,
-  eligibleCexCandidates: 0,
-  eligibleZeroCapitalCandidates: 1,
+  eligibleKalshiCandidates: 1,
   stageCanExecute: true,
   currentStage: 2,
-  initialGasReady: true,
-  zeroCapitalFundingReady: true,
 });
-assert.equal(readiness.CANDIDATE_READY.ready, false);
+assert.equal(readiness.EXECUTION_CAPABILITY_READY.ready, true);
+assert.equal(readiness.CANDIDATE_READY.ready, true);
 assert.equal(readiness.TRADING_READY.ready, false);
+assert.match(readiness.EXECUTION_CAPABILITY_READY.detail, /kalshiCapability=true/);
 
 // Blockchain RPC degradation is topology-local. Core CEX data readiness remains
 // truthful when centralized market data is ready, while zero-capital resource
@@ -198,5 +195,14 @@ const observability = readFileSync(
 assert.match(observability, /graphCycleDurationMs \+ Math\.max\(1_000, graph\.capacity\.recommendedIntervalMs\) \+ 15_000/);
 assert.match(observability, /discoveryEvidenceCount = Math\.max/);
 assert.doesNotMatch(observability, /observedOpportunities: recentMinute\.observedOpportunities/);
+
+const venues = readFileSync(
+  'server/services/cryptocrawl/discovery/venue-capability-registry.ts',
+  'utf8',
+);
+assert.match(venues, /CryptoCrawlerTradingVenue = CryptoCrawlerCexVenue \| 'kalshi'/);
+assert.match(venues, /kalshi: Object\.freeze\(\{/);
+assert.match(venues, /PREDICTION_EVENT and FUNDING_ARBITRAGE/);
+assert.match(venues, /getActiveExecutableQuoteVenues\(\): Array<'coinbase' \| 'kraken' \| 'okx'>/);
 
 console.log('CryptoCrawler runtime readiness policy verification passed');

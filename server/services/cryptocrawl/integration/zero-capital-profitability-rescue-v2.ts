@@ -12,7 +12,7 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
-import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
+import { getProfitLadderDiscoveryNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import {
   buildBpsReductionSuperPlan,
   recordBpsRevalidationOutcome,
@@ -144,8 +144,8 @@ function candidateSizes(
   context: ZeroCapitalBpsRescueContext | null,
 ): number[] {
   const currentUsd = Math.max(0.01, usdFromBaseUnits(opportunity.flashLoanAmount, route.inputTokenDecimals));
-  const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd;
-  const ceiling = Math.max(currentUsd, ladderMaxNotionalUsd);
+  const discoveryAuthority = getProfitLadderDiscoveryNotionalAuthority();
+  const ceiling = Math.max(currentUsd, discoveryAuthority.maxQuoteNotionalUsd || currentUsd);
   const maxCandidates = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_SIZE_CANDIDATES, 7, 3, 12));
   return [...new Set(candidateFactors(opportunity, context)
     .slice(0, maxCandidates)
@@ -177,7 +177,9 @@ function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZe
 function rescuePriority(opportunity: ZeroCapitalOpportunity, context: ZeroCapitalBpsRescueContext | null, now = Date.now()): number {
   if (opportunity.expectedProfit > 0n || opportunity.expiresAt <= now) return Number.NEGATIVE_INFINITY;
   const ageMs = Math.max(0, now - opportunity.timestamp);
-  const agePenalty = Math.exp(-ageMs / bounded(process.env.ZERO_CAPITAL_RESCUE_HALF_LIFE_MS, 15_000, 1_000, 120_000));
+  const routeLifetimeMs = Math.max(250, opportunity.expiresAt - opportunity.timestamp);
+  const configuredHalfLife = bounded(process.env.ZERO_CAPITAL_RESCUE_HALF_LIFE_MS, routeLifetimeMs / 2, 250, 120_000);
+  const agePenalty = Math.exp(-ageMs / Math.min(configuredHalfLife, routeLifetimeMs));
   const gap = Math.max(0.01, Math.abs(opportunity.netProfitBps));
   const confidence = Math.max(0.05, Math.min(1, opportunity.confidence));
   const basePriority = (1 / gap) * confidence * agePenalty;
@@ -229,18 +231,23 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
 
   const maxQuoteLatencyMs = bounded(process.env.ZERO_CAPITAL_RESCUE_MAX_QUOTE_LATENCY_MS, 2_500, 250, 10_000);
   const totalQuoteBudget = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET, 42, 6, 96));
+  const minimumRemainingLifetimeMs = bounded(process.env.ZERO_CAPITAL_RESCUE_MIN_REMAINING_LIFETIME_MS, 500, 100, 5_000);
   let remainingQuoteBudget = totalQuoteBudget;
   let improved = 0;
   let positivesRecovered = 0;
   let staleProviderEvidenceRejected = 0;
   let insufficientLiquidityRejected = 0;
+  let expiredBeforeRequote = 0;
+  let expiredBeforeRefinement = 0;
   let bpsSuperEngineCandidates = 0;
   let bpsSuperEnginePositiveRecoveries = 0;
   const bpsDrivers = new Map<string, number>();
   const output: ZeroCapitalOpportunity[] = [];
 
   for (const opportunity of opportunities) {
-    if (!rescueIds.has(opportunity.id) || remainingQuoteBudget <= 0 || opportunity.expiresAt <= Date.now()) {
+    const remainingLifetimeMs = opportunity.expiresAt - Date.now();
+    if (!rescueIds.has(opportunity.id) || remainingQuoteBudget <= 0 || remainingLifetimeMs <= minimumRemainingLifetimeMs) {
+      if (rescueIds.has(opportunity.id) && remainingLifetimeMs <= minimumRemainingLifetimeMs) expiredBeforeRequote += 1;
       output.push(opportunity);
       continue;
     }
@@ -260,7 +267,8 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
       const providerEvidence = (await measureFlashLoanProviders({ chain: chain as any, provider, asset: opportunity.inputToken }))
         .filter(item => providerFresh(item));
       staleProviderEvidenceRejected += Math.max(0, 2 - providerEvidence.length);
-      if (providerEvidence.length === 0) {
+      if (providerEvidence.length === 0 || opportunity.expiresAt - Date.now() <= minimumRemainingLifetimeMs) {
+        if (opportunity.expiresAt - Date.now() <= minimumRemainingLifetimeMs) expiredBeforeRequote += 1;
         output.push(opportunity);
         if (bpsContext) recordBpsRevalidationOutcome(bpsContext.plan, { deterministicPositive: 0, eligibleCandidates: 0 });
         continue;
@@ -299,7 +307,21 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
         output.push(opportunity);
         continue;
       }
+      // Never turn a late rescue result into an invalid or apparently fresh
+      // candidate. The original measurement remains useful telemetry, but once
+      // its execution window has elapsed the rescue must not inherit that stale
+      // deadline under a newer observedAt timestamp.
+      if (opportunity.expiresAt <= Date.now()) {
+        expiredBeforeRefinement += 1;
+        output.push(opportunity);
+        continue;
+      }
       const refined = fromQuotedRoute(best, blockTimestamp(opportunity));
+      if (refined.timestamp >= opportunity.expiresAt) {
+        expiredBeforeRefinement += 1;
+        output.push(opportunity);
+        continue;
+      }
       refined.expiresAt = Math.min(refined.expiresAt, opportunity.expiresAt);
       output.push(refined);
       improved += 1;
@@ -326,16 +348,19 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     rescueRoutes: rescueIds.size,
     totalQuoteBudget,
     remainingQuoteBudget,
+    minimumRemainingLifetimeMs,
     improved,
     positivesRecovered,
     staleProviderEvidenceRejected,
     insufficientLiquidityRejected,
+    expiredBeforeRequote,
+    expiredBeforeRefinement,
     bpsSuperEngineCandidates,
     bpsSuperEnginePositiveRecoveries,
     bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
     bpsPriorityAuthority: 'shared_bps_super_engine_effective_priority_score',
     bpsResidualNotionalAuthority: 'shared_bps_super_engine_residual_notional_fractions_plus_fixed_cost_dilution_probes',
-    liveNotionalCeilingAuthority: 'profit_ladder_only',
+    liveNotionalCeilingAuthority: 'profit_ladder_quote_only_capital_curve',
     inputTokenDecimalsAuthoritative: true,
     providerFreshnessRequired: true,
     providerLiquidityHeadroomRequired: true,
@@ -345,6 +370,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     strictImprovementRequired: true,
     existingPositiveNeverReplacedByNegative: true,
     freshExactRequoteRequired: true,
+    staleRescueCannotCreateInvalidExpiration: true,
     registryMethodMutation: false,
     independentEnableSwitch: false,
     syntheticEconomics: false,
