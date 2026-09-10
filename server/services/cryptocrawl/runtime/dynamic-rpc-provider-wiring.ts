@@ -16,6 +16,7 @@ interface ProviderDefinition {
   httpUrl: string;
   websocketUrl?: string;
   priority: number;
+  pendingTransactions?: boolean;
 }
 
 let installed = false;
@@ -42,20 +43,9 @@ function validWebSocketUrl(value: unknown): string | undefined {
 }
 
 /**
- * No-key RPC mesh for ordinary chain reads. Two independent public transports are
- * admitted where practical so a single free endpoint outage does not immediately
- * spill ordinary reads into paid Alchemy. Alchemy remains available to the
- * provider manager as a fallback and is still untouched for gas sponsorship.
- *
- * Arbitrum deliberately prefers the canonical public endpoint. Production proved
- * publicnode accepts basic health probes but rejects recent eth_getLogs without a
- * personal token, which made a provider registered with the `logs` capability a
- * false primary authority for graph discovery. The same two no-key endpoints are
- * retained; only their Arbitrum order is corrected.
- *
- * Ethereum deliberately uses dRPC as its second no-key transport. Cloudflare's
- * legacy public cloudflare-eth.com gateway is deprecated and is no longer admitted
- * into the runtime provider mesh.
+ * No-key RPC mesh for ordinary chain reads. These transports create no operator
+ * billing liability and remain route-local: one public endpoint failing cannot
+ * disable another chain or force a paid provider into authority.
  */
 function costSafePublicDefinitions(): ProviderDefinition[] {
   if (process.env.CRYPTOCRAWL_COST_SAFE_PUBLIC_RPC_ENABLED?.trim().toLowerCase() === 'false') return [];
@@ -99,6 +89,37 @@ function costSafePublicDefinitions(): ProviderDefinition[] {
   return definitions;
 }
 
+/**
+ * Public dRPC endpoints are a separate free streaming lane. Current dRPC
+ * documentation exposes both HTTPS and WSS endpoints and standard
+ * newPendingTransactions subscriptions on these networks. They are registered
+ * independently rather than borrowing a WebSocket from a different HTTP provider,
+ * which keeps provider provenance and failure accounting truthful.
+ */
+function freeStreamingDefinitions(): ProviderDefinition[] {
+  if (process.env.CRYPTOCRAWL_FREE_STREAMING_RPC_ENABLED?.trim().toLowerCase() === 'false') return [];
+  const slugs: Partial<Record<SupportedChain, string>> = {
+    ethereum: 'eth',
+    polygon: 'polygon',
+    arbitrum: 'arbitrum',
+    optimism: 'optimism',
+    base: 'base',
+    bsc: 'bsc',
+  };
+  return Object.entries(slugs).flatMap(([rawChain, slug]) => {
+    const chain = rawChain as SupportedChain;
+    if (!slug) return [];
+    return [{
+      provider: 'dRPCPublicStreaming',
+      chain,
+      httpUrl: `https://${slug}.drpc.org/`,
+      websocketUrl: `wss://${slug}.drpc.org`,
+      priority: 105,
+      pendingTransactions: true,
+    } satisfies ProviderDefinition];
+  });
+}
+
 function namedProviderDefinitions(): ProviderDefinition[] {
   const definitions: ProviderDefinition[] = [];
   const providers = [
@@ -113,12 +134,16 @@ function namedProviderDefinitions(): ProviderDefinition[] {
     for (const candidate of providers) {
       const httpUrl = validHttpUrl(process.env[`${prefix}_${candidate.token}_RPC_URL`]);
       if (!httpUrl) continue;
+      const websocketUrl = validWebSocketUrl(process.env[`${prefix}_${candidate.token}_WS_URL`]);
       definitions.push({
         provider: candidate.provider,
         chain,
         httpUrl,
-        websocketUrl: validWebSocketUrl(process.env[`${prefix}_${candidate.token}_WS_URL`]),
+        websocketUrl,
         priority: candidate.priority,
+        pendingTransactions: websocketUrl
+          ? process.env[`${prefix}_${candidate.token}_PENDING_TRANSACTIONS`]?.trim().toLowerCase() === 'true'
+          : false,
       });
     }
   }
@@ -148,12 +173,14 @@ function genericProviderDefinitions(): ProviderDefinition[] {
     const httpUrl = validHttpUrl(row.httpUrl);
     if (!chain || !CHAINS.includes(chain) || !provider || !httpUrl) continue;
     const priorityRaw = Number(row.priority);
+    const websocketUrl = validWebSocketUrl(row.websocketUrl);
     output.push({
       provider,
       chain,
       httpUrl,
-      websocketUrl: validWebSocketUrl(row.websocketUrl),
+      websocketUrl,
       priority: Number.isFinite(priorityRaw) ? Math.max(1, Math.min(90, Math.round(priorityRaw))) : 7,
+      pendingTransactions: websocketUrl && row.pendingTransactions === true,
     });
   }
   return output;
@@ -161,6 +188,7 @@ function genericProviderDefinitions(): ProviderDefinition[] {
 
 async function registerConfiguredMesh(): Promise<void> {
   const definitions = [
+    ...freeStreamingDefinitions(),
     ...costSafePublicDefinitions(),
     ...namedProviderDefinitions(),
     ...genericProviderDefinitions(),
@@ -178,27 +206,37 @@ async function registerConfiguredMesh(): Promise<void> {
       capabilities: [
         ...DEFAULT_CAPABILITIES,
         ...(definition.websocketUrl ? ['subscriptions' as RpcCapability] : []),
+        ...(definition.websocketUrl && definition.pendingTransactions ? ['pending_transactions' as RpcCapability] : []),
       ],
     });
-    return { provider: definition.provider, chain: definition.chain, priority: definition.priority };
+    return {
+      provider: definition.provider,
+      chain: definition.chain,
+      priority: definition.priority,
+      pendingTransactions: definition.pendingTransactions === true,
+    };
   }));
 
   const admitted = outcomes.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
   const failed = outcomes.filter(result => result.status === 'rejected').length;
-  const publicAdmitted = admitted.filter(result => result.provider.startsWith('CostSafePublicRPC')).length;
-  logger.info('[DynamicRpcProviderWiring] Configured provider mesh admission completed', {
+  const publicAdmitted = admitted.filter(result =>
+    result.provider.startsWith('CostSafePublicRPC') || result.provider === 'dRPCPublicStreaming',
+  ).length;
+  logger.info('[DynamicRpcProviderWiring] Free/configured provider mesh admission completed', {
     component: 'DynamicRpcProviderWiring',
     configuredCandidates: unique.size,
     admitted,
     failed,
     publicAdmitted,
+    freePendingTransactionLanes: admitted.filter(result => result.pendingTransactions).length,
     endpointUrlsLogged: false,
     providerManagerAuthoritative: true,
     costSafePublicRpcPreferred: true,
     independentNoKeyPublicFailover: true,
     deprecatedCloudflarePublicGatewayAdmitted: false,
-    paidAlchemyRpcRole: 'last_resort_fallback_after_two_no_key_public_transports_when_available',
-    alchemyGasSponsorshipUntouched: true,
+    alchemyOperationalAuthority: false,
+    alchemyPaidMempoolAuthority: false,
+    alchemyGasSponsorshipAuthority: false,
     localComputeRole: 'ComputationalBeam_Aries_Cryptara_analysis_after_bounded_market_evidence',
   });
 }
