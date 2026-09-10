@@ -80,14 +80,19 @@ assert.match(sourceMeasurement, /debtOf\(address account\)/);
 assert.match(sourceMeasurement, /checkLiquidation\(intermediary, config\.violator, config\.collateral\)/);
 assert.match(sourceMeasurement, /synthetic_capacity:false/);
 
-// No Ghost-Wallet-specific Railway entries are required. The application compiles
-// both contracts in prebuild, deterministically derives/deploys public infrastructure,
-// verifies it on-chain, and publishes the resulting addresses inside the runtime.
+// Public infrastructure requires no manual Railway entries. Ghost Wallet live
+// authority is deliberately separate from arbitrage and is activated by deployment
+// automation through its own explicit switch + confirmation.
 assert.match(engine, /ensureGhostWalletInfrastructure/);
 assert.match(engine, /manualRailwayConfigurationRequired:\s*false/);
-assert.match(engine, /return sharedExecutionAuthority/);
-assert.match(engine, /CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK'/);
-assert.match(engine, /ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK'/);
+assert.match(engine, /GHOST_WALLET_LIVE_EXECUTION/);
+assert.match(engine, /GHOST_WALLET_LIVE_CONFIRMATION/);
+assert.match(engine, /I_ACCEPT_GHOST_WALLET_ATOMIC_CREDIT_RISK/);
+assert.match(engine, /ghost_wallet_dedicated_switch_only/);
+assert.doesNotMatch(engine, /CRYPTO_ARBITRAGE_LIVE_EXECUTION/);
+assert.doesNotMatch(engine, /CRYPTO_ARBITRAGE_LIVE_CONFIRMATION/);
+assert.doesNotMatch(engine, /ZERO_CAPITAL_ENABLE_EXECUTION/);
+assert.doesNotMatch(engine, /ZERO_CAPITAL_EXECUTION_CONFIRMATION/);
 assert.match(infrastructure, /0x4e59b44847b379578588920cA78FbF26c0B4956C/);
 assert.match(infrastructure, /CREATE2_DEPLOYER_CODE_HASH/);
 assert.match(infrastructure, /manualRailwayConfigurationRequired:\s*false/);
@@ -157,6 +162,8 @@ console.log(JSON.stringify({
   fiveCapitalPrimitivesPresent: true,
   protocolSpecificLiabilityProbes: true,
   noManualRailwayGhostWalletConfiguration: true,
+  dedicatedGhostWalletLiveAuthority: true,
+  arbitrageLiveAuthorityInherited: false,
   deterministicCreate2Bootstrap: true,
   providerSponsoredInfrastructureOnly: true,
   ghostWalletContractsCompileInPrebuild: true,
