@@ -117,6 +117,9 @@ const COSTS = [
   'settlement',
 ] as const;
 
+// Only source classes with an implemented source-specific settlement path belong
+// here. protocol_deferred_settlement_capital remains a reserved type for a future
+// callback-specific executor and is deliberately not admitted by current policy.
 const ATOMIC_EXTERNAL_PRINCIPAL_SOURCES: readonly PrincipalSourceClass[] = [
   'temporary_external_flash_liquidity',
   'temporary_external_delegated_credit',
@@ -124,7 +127,6 @@ const ATOMIC_EXTERNAL_PRINCIPAL_SOURCES: readonly PrincipalSourceClass[] = [
   'counterparty_signed_intent_capital',
   'counterparty_netting_capital',
   'permissionless_vault_atomic_capital',
-  'protocol_deferred_settlement_capital',
 ] as const;
 
 /**
@@ -156,7 +158,7 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
     accountWideBalanceCreatesOwnership: false,
     discoveryContinuesWhenExecutionBlocked: true,
     executionReadinessRule: 'fresh exact quote + source-specific capital proof + verified receiver + gas provenance + exact simulation + strictly positive all-in net',
-    researchBasis: ['Morpho/Aave/Balancer flash liquidity', 'Aave credit delegation', 'Euler position-transfer liquidation', 'EIP-712 signed intents and coincidence-of-wants clearing', 'permissionless atomic capital vaults', 'protocol-native deferred settlement when independently verified'],
+    researchBasis: ['Morpho/Aave/Balancer flash liquidity', 'Aave credit delegation', 'Euler position-transfer liquidation', 'EIP-712 signed intents and coincidence-of-wants clearing', 'permissionless atomic capital vaults'],
   },
   {
     topology: 'ZERO_CAPITAL_ATOMIC',
@@ -208,7 +210,6 @@ export const ATOMIC_ZERO_CAPITAL_STRATEGY_COVERAGE: readonly AtomicZeroCapitalSt
       'temporary_external_flash_liquidity',
       'temporary_external_delegated_credit',
       'permissionless_vault_atomic_capital',
-      'protocol_deferred_settlement_capital',
       'proven_system_owned_retained_capital',
     ],
     gasSources: ['opportunity_backed_external_sponsorship', 'provider_sponsored_zero_operator_cost', 'proven_system_owned_native'],
@@ -347,6 +348,7 @@ export function getAtomicZeroCapitalStrategyCoverageSnapshot() {
       strictPositiveNetRequired: true as const,
       predictionDirectionalRequiresCalibratedConservativeAuthority: true as const,
       alternativeAtomicCapitalRequiresSourceSpecificMeasuredProof: true as const,
+      protocolDeferredSettlementExecutionEnabled: false as const,
     },
     executionAuthority: false as const,
   };
@@ -362,7 +364,7 @@ function principalSourceAllowed(
   if (provenance === 'counterparty_signed_intent') return policy.principalSources.includes('counterparty_signed_intent_capital');
   if (provenance === 'counterparty_netted') return policy.principalSources.includes('counterparty_netting_capital');
   if (provenance === 'external_atomic_vault') return policy.principalSources.includes('permissionless_vault_atomic_capital');
-  if (provenance === 'protocol_deferred_settlement') return policy.principalSources.includes('protocol_deferred_settlement_capital');
+  if (provenance === 'protocol_deferred_settlement') return false;
   if (provenance === 'system_owned') {
     return policy.principalSources.includes('proven_system_owned_inventory')
       || policy.principalSources.includes('proven_system_owned_retained_capital');
