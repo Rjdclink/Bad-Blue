@@ -1,58 +1,62 @@
-import { BigNumber, Contract, ethers, providers, type Wallet } from 'ethers';
-import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
+import { BigNumber, Contract, ethers, providers, Wallet } from 'ethers';
 import {
+  normalizePrivateKey,
   resolvePayoutFallbackAddress,
   resolvePrimaryProfitPayoutAddress,
+  walletFromPrivateKey,
 } from '../core/wallet-identity.js';
+import { ghostWalletProviderMesh, type GhostWalletChain } from './ghost-wallet-provider-mesh.js';
 
 const ETHEREUM_CHAIN_ID = 1;
 const ZERO_ADDRESS = ethers.constants.AddressZero;
-const WETH_MAINNET = ethers.utils.getAddress('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2');
-const UNISWAP_V3_ROUTER = ethers.utils.getAddress('0xE592427A0AEce92De3Edee1F18E0157C05861564');
-const UNISWAP_V3_QUOTER = ethers.utils.getAddress('0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6');
-const SUSHISWAP_V2_ROUTER = ethers.utils.getAddress('0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F');
-const ERC20_ABI = [
-  'function balanceOf(address account) view returns (uint256)',
-  'function approve(address spender,uint256 amount) returns (bool)',
-  'event Transfer(address indexed from,address indexed to,uint256 value)',
-];
-const WETH_ABI = [
-  ...ERC20_ABI,
-  'function withdraw(uint256 wad)',
-  'event Withdrawal(address indexed src,uint256 wad)',
-];
-const UNI_QUOTER_ABI = [
-  'function quoteExactInputSingle(address tokenIn,address tokenOut,uint24 fee,uint256 amountIn,uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
-];
-const UNI_ROUTER_ABI = [
-  'function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 deadline,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns (uint256 amountOut)',
-];
-const SUSHI_ROUTER_ABI = [
-  'function getAmountsOut(uint256 amountIn,address[] path) view returns (uint256[] amounts)',
-  'function swapExactTokensForTokens(uint256 amountIn,uint256 amountOutMin,address[] path,address to,uint256 deadline) returns (uint256[] amounts)',
-];
+const ZEROEX_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+const ERC20_ABI = ['function balanceOf(address account) view returns (uint256)'];
 
-const TRANSFER_TOPIC = ethers.utils.id('Transfer(address,address,uint256)');
-const WITHDRAWAL_TOPIC = ethers.utils.id('Withdrawal(address,uint256)');
-
-type SponsoredRuntime = {
-  getGasFundingDecision: (chain: any) => Promise<{
-    mode: 'sponsored' | 'native' | 'unavailable';
-    paymentSource?: string;
-    strictZeroInitialCapitalEligible?: boolean;
-    operatorMonetaryInputRequired?: boolean;
-    sponsorOperatorMonetaryCostProvenZero?: boolean;
-    reason?: string;
-  }>;
-  gasSponsor: {
-    execute: (input: {
-      wallet: Wallet;
-      chainId: number;
-      calls: Array<{ to: string; data: string; value?: BigNumber }>;
-      timeoutMs: number;
-    }) => Promise<{ transactionHash: string }>;
-  };
+const CHAIN_IDS: Record<GhostWalletChain, number> = {
+  ethereum: 1,
+  polygon: 137,
+  arbitrum: 42161,
+  optimism: 10,
+  base: 8453,
+  bsc: 56,
+  avalanche: 43114,
 };
+
+interface ZeroExTypedData {
+  types: Record<string, Array<{ name: string; type: string }>>;
+  domain: Record<string, unknown>;
+  message: Record<string, unknown>;
+  primaryType: string;
+}
+
+interface ZeroExGaslessObject {
+  type: string;
+  eip712: ZeroExTypedData;
+}
+
+interface ZeroExGaslessQuote {
+  liquidityAvailable?: boolean;
+  buyAmount?: string;
+  minBuyAmount?: string;
+  sellAmount?: string;
+  issues?: { allowance?: { actual?: string; spender?: string } | null };
+  approval?: ZeroExGaslessObject | null;
+  trade?: ZeroExGaslessObject | null;
+  fees?: {
+    gasFee?: { amount?: string; token?: string; type?: string } | null;
+    zeroExFee?: { amount?: string; token?: string; type?: string } | null;
+  };
+}
+
+interface AcrossCall {
+  to: string;
+  data: string;
+  value: BigNumber;
+  gasLimit: BigNumber;
+  gasPrice: BigNumber | null;
+  maxFeePerGas: BigNumber | null;
+  maxPriorityFeePerGas: BigNumber | null;
+}
 
 export interface GhostWalletProfitConversionPayload {
   sourceTransactionHash: string;
@@ -91,417 +95,485 @@ export interface GhostWalletPayoutFallbackRequired {
 
 export type GhostWalletPayoutResult = GhostWalletPayoutSubmission | GhostWalletPayoutSettled | GhostWalletPayoutFallbackRequired;
 
-function asBigInt(value: unknown): bigint {
+function asBigInt(value: unknown, label = 'GHOST_WALLET_PAYOUT_AMOUNT_INVALID'): bigint {
   const raw = String(value ?? '').trim();
-  if (!/^\d+$/.test(raw)) throw new Error('GHOST_WALLET_PAYOUT_AMOUNT_INVALID');
-  const amount = BigInt(raw);
+  if (!/^\d+$/.test(raw)) throw new Error(label);
+  return BigInt(raw);
+}
+
+function positiveAmount(value: unknown, label = 'GHOST_WALLET_PAYOUT_AMOUNT_INVALID'): bigint {
+  const amount = asBigInt(value, label);
   if (amount <= 0n) throw new Error('GHOST_WALLET_PAYOUT_AMOUNT_MUST_BE_POSITIVE');
   return amount;
 }
 
-function normalizeChain(value: string): string {
-  return value.trim().toLowerCase();
+function normalizeChain(value: string): GhostWalletChain {
+  const chain = value.trim().toLowerCase() as GhostWalletChain;
+  if (!(chain in CHAIN_IDS)) throw new Error(`GHOST_WALLET_PAYOUT_CHAIN_UNSUPPORTED:${value}`);
+  return chain;
 }
 
-function validTxHash(value: string): boolean {
-  return /^0x[a-fA-F0-9]{64}$/.test(value);
+function validHash(value: unknown): value is string {
+  return typeof value === 'string' && /^0x[a-fA-F0-9]{64}$/.test(value);
 }
 
-function payoutDestination(mode: 'primary' | 'fallback'): string {
+function destination(mode: 'primary' | 'fallback'): string {
   const primary = resolvePrimaryProfitPayoutAddress();
   if (!primary) throw new Error('GHOST_WALLET_PRIMARY_PAYOUT_UNAVAILABLE');
-  if (mode === 'primary') return primary;
+  if (mode === 'primary') return ethers.utils.getAddress(primary);
   const fallback = resolvePayoutFallbackAddress();
   if (!fallback) throw new Error('GHOST_WALLET_FALLBACK_PAYOUT_UNAVAILABLE');
-  return fallback;
+  return ethers.utils.getAddress(fallback);
 }
 
-async function sponsoredRuntime(chain: string): Promise<{
-  runtime: SponsoredRuntime;
-  provider: providers.JsonRpcProvider;
-  wallet: Wallet;
-  chainId: number;
-}> {
-  const normalized = normalizeChain(chain);
-  const provider = zeroCapitalEngine.providers.get(normalized as any);
-  const wallet = zeroCapitalEngine.executionWallets.get(normalized as any);
-  if (!provider || !wallet) throw new Error(`GHOST_WALLET_PAYOUT_RUNTIME_UNAVAILABLE:${normalized}`);
-  const runtime = zeroCapitalEngine as unknown as SponsoredRuntime;
-  const funding = await runtime.getGasFundingDecision(normalized as any);
-  const sponsoredFree = funding.mode === 'sponsored'
-    && funding.paymentSource === 'provider_sponsored'
-    && funding.strictZeroInitialCapitalEligible === true
-    && funding.operatorMonetaryInputRequired === false
-    && funding.sponsorOperatorMonetaryCostProvenZero === true;
-  if (!sponsoredFree) throw new Error(`GHOST_WALLET_PAYOUT_SPONSOR_UNAVAILABLE:${funding.reason || funding.mode}`);
-  const network = await provider.getNetwork();
-  return { runtime, provider, wallet, chainId: network.chainId };
-}
-
-function slippageBps(expectedOut: bigint): bigint {
-  // Exact quotes are refreshed on every attempt. A small execution tolerance is
-  // not treated as cost; if the route moves beyond it the transaction fails and
-  // the durable job requotes rather than accepting an unmeasured payout loss.
-  if (expectedOut <= 0n) return 0n;
-  const tolerance = 20n;
-  return (expectedOut * (10_000n - tolerance)) / 10_000n;
-}
-
-function sumTransferTo(receipt: providers.TransactionReceipt, token: string, recipient: string): bigint {
-  let total = 0n;
-  const recipientTopic = ethers.utils.hexZeroPad(recipient, 32).toLowerCase();
-  for (const log of receipt.logs) {
-    if (log.address.toLowerCase() !== token.toLowerCase()) continue;
-    if (log.topics[0]?.toLowerCase() !== TRANSFER_TOPIC.toLowerCase()) continue;
-    if (log.topics[2]?.toLowerCase() !== recipientTopic) continue;
-    try { total += BigInt(ethers.BigNumber.from(log.data).toString()); } catch { /* ignore malformed */ }
+function signingWallet(provider: providers.JsonRpcProvider): Wallet {
+  const key = normalizePrivateKey(process.env.WALLET_PRIVATE_KEY || process.env.PRIVATE_KEY) || null;
+  if (!key) throw new Error('GHOST_WALLET_SIGNING_KEY_UNAVAILABLE');
+  const wallet = walletFromPrivateKey(key).connect(provider);
+  const primary = destination('primary');
+  if (wallet.address.toLowerCase() !== primary.toLowerCase()) {
+    throw new Error('GHOST_WALLET_SIGNER_PRIMARY_PAYOUT_MISMATCH');
   }
-  return total;
+  return wallet;
 }
 
-function sumWethWithdrawal(receipt: providers.TransactionReceipt, source: string): bigint {
-  let total = 0n;
-  const sourceTopic = ethers.utils.hexZeroPad(source, 32).toLowerCase();
-  for (const log of receipt.logs) {
-    if (log.address.toLowerCase() !== WETH_MAINNET.toLowerCase()) continue;
-    if (log.topics[0]?.toLowerCase() !== WITHDRAWAL_TOPIC.toLowerCase()) continue;
-    if (log.topics[1]?.toLowerCase() !== sourceTopic) continue;
-    try { total += BigInt(ethers.BigNumber.from(log.data).toString()); } catch { /* ignore malformed */ }
-  }
-  return total;
-}
-
-async function executeSponsoredCalls(input: {
-  chain: string;
-  calls: Array<{ to: string; data: string; value?: BigNumber }>;
-  onSubmitted?: (transactionHash: string, result: Record<string, unknown>) => Promise<void>;
-  result: Record<string, unknown>;
-}): Promise<{ transactionHash: string; receipt: providers.TransactionReceipt }> {
-  const { runtime, provider, wallet, chainId } = await sponsoredRuntime(input.chain);
-  const sent = await runtime.gasSponsor.execute({
-    wallet,
-    chainId,
-    calls: input.calls,
-    timeoutMs: Math.max(10_000, Number(process.env.GHOST_WALLET_SPONSORED_TX_TIMEOUT_MS || 60_000)),
-  });
-  if (input.onSubmitted) await input.onSubmitted(sent.transactionHash, input.result);
-  let receipt = await provider.getTransactionReceipt(sent.transactionHash);
-  if (!receipt) receipt = await provider.waitForTransaction(sent.transactionHash, 1, 60_000);
-  if (!receipt || receipt.status !== 1) throw new Error('GHOST_WALLET_PAYOUT_TRANSACTION_FAILED');
-  return { transactionHash: sent.transactionHash, receipt };
-}
-
-async function bestEthereumWethQuote(provider: providers.JsonRpcProvider, asset: string, amount: bigint): Promise<{
-  protocol: 'uniswap_v3' | 'sushiswap_v2';
-  expectedOut: bigint;
-  approvalTarget: string;
-  swapData: string;
-}> {
-  const candidates: Array<{ protocol: 'uniswap_v3' | 'sushiswap_v2'; expectedOut: bigint; approvalTarget: string; swapData: string }> = [];
-  const quoter = new Contract(UNISWAP_V3_QUOTER, UNI_QUOTER_ABI, provider);
-  const uni = new ethers.utils.Interface(UNI_ROUTER_ABI);
-  const deadline = Math.floor(Date.now() / 1000) + 120;
-
-  await Promise.all([100, 500, 3000, 10000].map(async fee => {
-    try {
-      const quoted = await quoter.callStatic.quoteExactInputSingle(asset, WETH_MAINNET, fee, amount.toString(), 0);
-      const expectedOut = BigInt(quoted.toString());
-      if (expectedOut <= 0n) return;
-      candidates.push({
-        protocol: 'uniswap_v3',
-        expectedOut,
-        approvalTarget: UNISWAP_V3_ROUTER,
-        swapData: uni.encodeFunctionData('exactInputSingle', [{
-          tokenIn: asset,
-          tokenOut: WETH_MAINNET,
-          fee,
-          recipient: resolvePrimaryProfitPayoutAddress(),
-          deadline,
-          amountIn: amount.toString(),
-          amountOutMinimum: slippageBps(expectedOut).toString(),
-          sqrtPriceLimitX96: 0,
-        }]),
-      });
-    } catch { /* another live route may qualify */ }
-  }));
-
-  try {
-    const sushi = new Contract(SUSHISWAP_V2_ROUTER, SUSHI_ROUTER_ABI, provider);
-    const amounts = await sushi.getAmountsOut(amount.toString(), [asset, WETH_MAINNET]);
-    const expectedOut = BigInt(amounts[amounts.length - 1].toString());
-    if (expectedOut > 0n) {
-      const iface = new ethers.utils.Interface(SUSHI_ROUTER_ABI);
-      candidates.push({
-        protocol: 'sushiswap_v2',
-        expectedOut,
-        approvalTarget: SUSHISWAP_V2_ROUTER,
-        swapData: iface.encodeFunctionData('swapExactTokensForTokens', [
-          amount.toString(),
-          slippageBps(expectedOut).toString(),
-          [asset, WETH_MAINNET],
-          resolvePrimaryProfitPayoutAddress(),
-          deadline,
-        ]),
-      });
-    }
-  } catch { /* no direct Sushi route */ }
-
-  candidates.sort((a, b) => a.expectedOut === b.expectedOut ? 0 : a.expectedOut > b.expectedOut ? -1 : 1);
-  const best = candidates[0];
-  if (!best) throw new Error('GHOST_WALLET_ETHEREUM_CONVERSION_ROUTE_UNAVAILABLE');
-  return best;
-}
-
-async function convertEthereumTokenToWeth(
-  payload: GhostWalletProfitConversionPayload,
-  onSubmitted?: (transactionHash: string, result: Record<string, unknown>) => Promise<void>,
-): Promise<GhostWalletPayoutSettled> {
-  const amount = asBigInt(payload.amountBaseUnits);
-  const primary = payoutDestination('primary');
-  const { provider, wallet } = await sponsoredRuntime('ethereum');
-  const asset = ethers.utils.getAddress(payload.asset);
-  if (asset.toLowerCase() === WETH_MAINNET.toLowerCase()) {
-    return {
-      state: 'settled', transactionHash: payload.sourceTransactionHash,
-      blockNumber: payload.sourceBlockNumber ?? null,
-      payoutTransactionHash: payload.sourceTransactionHash,
-      payoutDestinationMode: payload.destinationMode || 'primary',
-      destination: payoutDestination(payload.destinationMode || 'primary'),
-      ethAmountWei: amount,
-      result: { phase: 'weth_ready', sourceAssetAlreadyWeth: true },
-      followUp: payload,
-    };
-  }
-
-  const token = new Contract(asset, ERC20_ABI, provider);
-  const balance = BigInt((await token.balanceOf(wallet.address)).toString());
-  if (balance < amount) throw new Error('GHOST_WALLET_PROFIT_TOKEN_BALANCE_BELOW_DURABLE_SETTLEMENT_AMOUNT');
-  const quote = await bestEthereumWethQuote(provider, asset, amount);
-  const approve = new ethers.utils.Interface(ERC20_ABI).encodeFunctionData('approve', [quote.approvalTarget, amount.toString()]);
-  const { transactionHash, receipt } = await executeSponsoredCalls({
-    chain: 'ethereum',
-    calls: [
-      { to: asset, data: approve, value: BigNumber.from(0) },
-      { to: quote.approvalTarget, data: quote.swapData, value: BigNumber.from(0) },
-      { to: asset, data: new ethers.utils.Interface(ERC20_ABI).encodeFunctionData('approve', [quote.approvalTarget, 0]), value: BigNumber.from(0) },
-    ],
-    result: { phase: 'token_to_weth', protocol: quote.protocol, expectedWethWei: quote.expectedOut.toString() },
-    onSubmitted,
-  });
-  const acquired = sumTransferTo(receipt, WETH_MAINNET, primary);
-  if (acquired < slippageBps(quote.expectedOut) || acquired <= 0n) {
-    throw new Error('GHOST_WALLET_WETH_ACQUISITION_NOT_TERMINALLY_VERIFIED');
-  }
-  return {
-    state: 'settled',
-    transactionHash,
-    blockNumber: receipt.blockNumber ?? null,
-    payoutTransactionHash: transactionHash,
-    payoutDestinationMode: payload.destinationMode || 'primary',
-    destination: payoutDestination(payload.destinationMode || 'primary'),
-    ethAmountWei: acquired,
-    result: { phase: 'weth_ready', protocol: quote.protocol, acquiredWethWei: acquired.toString() },
-    followUp: {
-      sourceTransactionHash: transactionHash,
-      sourceBlockNumber: receipt.blockNumber ?? null,
-      chain: 'ethereum',
-      asset: WETH_MAINNET,
-      amountBaseUnits: acquired.toString(),
-      destinationMode: payload.destinationMode || 'primary',
-      sourceKind: 'ghost_wallet_weth_unwrap',
-    },
-  };
-}
-
-async function unwrapWethToEth(
-  payload: GhostWalletProfitConversionPayload,
-  onSubmitted?: (transactionHash: string, result: Record<string, unknown>) => Promise<void>,
-): Promise<GhostWalletPayoutSettled> {
-  const amount = asBigInt(payload.amountBaseUnits);
-  const mode = payload.destinationMode || 'primary';
-  const destination = payoutDestination(mode);
-  const { provider, wallet } = await sponsoredRuntime('ethereum');
-  const weth = new Contract(WETH_MAINNET, WETH_ABI, provider);
-  const balance = BigInt((await weth.balanceOf(wallet.address)).toString());
-  if (balance < amount) throw new Error('GHOST_WALLET_WETH_BALANCE_BELOW_DURABLE_PAYOUT_AMOUNT');
-  const iface = new ethers.utils.Interface(WETH_ABI);
-  const beforeDestination = await provider.getBalance(destination);
-  const calls: Array<{ to: string; data: string; value?: BigNumber }> = [
-    { to: WETH_MAINNET, data: iface.encodeFunctionData('withdraw', [amount.toString()]), value: BigNumber.from(0) },
-  ];
-  if (mode === 'fallback') calls.push({ to: destination, data: '0x', value: BigNumber.from(amount.toString()) });
-  const { transactionHash, receipt } = await executeSponsoredCalls({
-    chain: 'ethereum', calls,
-    result: { phase: 'weth_to_native_eth', destinationMode: mode, amountWei: amount.toString() }, onSubmitted,
-  });
-  const unwrapped = sumWethWithdrawal(receipt, wallet.address);
-  if (unwrapped !== amount) throw new Error('GHOST_WALLET_WETH_WITHDRAWAL_EVENT_MISMATCH');
-  const afterDestination = await provider.getBalance(destination);
-  if (BigInt(afterDestination.toString()) < BigInt(beforeDestination.toString()) + amount) {
-    throw new Error('GHOST_WALLET_NATIVE_ETH_DESTINATION_BALANCE_NOT_VERIFIED');
-  }
-  return {
-    state: 'settled', transactionHash, blockNumber: receipt.blockNumber ?? null,
-    payoutTransactionHash: transactionHash, payoutDestinationMode: mode,
-    destination, ethAmountWei: amount,
-    result: { phase: 'native_eth_delivered', destinationMode: mode, amountWei: amount.toString() },
-  };
+function zeroExApiKey(): string {
+  const key = process.env.GHOST_WALLET_ZEROX_API_KEY?.trim()
+    || process.env.ZERO_CAPITAL_ZEROX_API_KEY?.trim()
+    || process.env.ZERO_EX_API_KEY?.trim()
+    || process.env.ZEROX_API_KEY?.trim()
+    || '';
+  if (!key) throw new Error('GHOST_WALLET_ZEROX_EXISTING_CREDENTIALS_UNAVAILABLE');
+  return key;
 }
 
 function acrossCredentials(): { apiKey: string; integratorId: string } {
-  const apiKey = process.env.ACROSS_API_KEY?.trim();
-  const integratorId = process.env.ACROSS_INTEGRATOR_ID?.trim();
-  if (!apiKey || !integratorId || !/^0x[a-fA-F0-9]{4}$/.test(integratorId)) {
+  const apiKey = process.env.GHOST_WALLET_ACROSS_API_KEY?.trim() || process.env.ACROSS_API_KEY?.trim() || '';
+  const integratorId = process.env.GHOST_WALLET_ACROSS_INTEGRATOR_ID?.trim() || process.env.ACROSS_INTEGRATOR_ID?.trim() || '';
+  if (!apiKey || !/^0x[a-fA-F0-9]{4}$/.test(integratorId)) {
     throw new Error('GHOST_WALLET_ACROSS_EXISTING_CREDENTIALS_UNAVAILABLE');
   }
   return { apiKey, integratorId };
 }
 
-function parseAcrossCall(value: any, expectedChainId: number): { to: string; data: string; value: BigNumber } | null {
-  if (!value || Number(value.chainId ?? expectedChainId) !== expectedChainId) return null;
-  if (!ethers.utils.isAddress(String(value.to || '')) || !ethers.utils.isHexString(String(value.data || '0x'))) return null;
-  try {
-    return {
-      to: ethers.utils.getAddress(String(value.to)),
-      data: String(value.data || '0x'),
-      value: BigNumber.from(String(value.value || '0')),
-    };
-  } catch { return null; }
+function stripEip712Domain(types: ZeroExTypedData['types']): ZeroExTypedData['types'] {
+  const { EIP712Domain: _ignored, ...rest } = types;
+  return rest;
 }
 
-async function submitAcrossNativeEthPayout(
-  payload: GhostWalletProfitConversionPayload,
-  onSubmitted?: (transactionHash: string, result: Record<string, unknown>) => Promise<void>,
-): Promise<GhostWalletPayoutSubmission> {
-  const amount = asBigInt(payload.amountBaseUnits);
-  const mode = payload.destinationMode || 'primary';
-  const destination = payoutDestination(mode);
-  const { provider, wallet, chainId, runtime } = await sponsoredRuntime(payload.chain);
-  if (chainId === ETHEREUM_CHAIN_ID) throw new Error('GHOST_WALLET_ACROSS_NOT_USED_FOR_SAME_CHAIN_ETHEREUM');
-  const asset = ethers.utils.getAddress(payload.asset);
+async function fetchJson(url: string, init: RequestInit, headers: Record<string, string>): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  timer.unref?.();
+  try {
+    const response = await fetch(url, { ...init, headers: { ...headers, ...(init.headers || {}) }, signal: controller.signal });
+    const text = await response.text();
+    let parsed: any = {};
+    try { parsed = text ? JSON.parse(text) : {}; } catch { throw new Error(`GHOST_WALLET_NON_JSON_RESPONSE:${response.status}`); }
+    if (!response.ok) throw new Error(`GHOST_WALLET_HTTP_${response.status}:${String(parsed?.message || parsed?.reason || '').slice(0, 400)}`);
+    return parsed;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function zeroExJson(path: string, init: RequestInit): Promise<any> {
+  return fetchJson(`https://api.0x.org${path}`, init, {
+    accept: 'application/json',
+    'Content-Type': 'application/json',
+    '0x-api-key': zeroExApiKey(),
+    '0x-version': 'v2',
+  });
+}
+
+async function acrossJson(path: string, init: RequestInit): Promise<any> {
+  const { apiKey } = acrossCredentials();
+  return fetchJson(`https://app.across.to/api${path}`, init, {
+    accept: 'application/json',
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+  });
+}
+
+function extractTransactionHashes(value: unknown, key = ''): string[] {
+  if (typeof value === 'string') {
+    return /^(hash|transactionHash|txHash|transaction_hash|tx_hash)$/i.test(key) && validHash(value) ? [value] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap(item => extractTransactionHashes(item));
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value as Record<string, unknown>)
+    .flatMap(([childKey, child]) => extractTransactionHashes(child, childKey));
+}
+
+async function signZeroExObject(wallet: Wallet, object: ZeroExGaslessObject): Promise<Record<string, unknown>> {
+  if (!object.eip712?.primaryType || !object.eip712.domain || !object.eip712.message || !object.eip712.types) {
+    throw new Error('GHOST_WALLET_ZEROX_EIP712_INCOMPLETE');
+  }
+  const signatureHex = await wallet._signTypedData(
+    object.eip712.domain,
+    stripEip712Domain(object.eip712.types),
+    object.eip712.message,
+  );
+  const split = ethers.utils.splitSignature(signatureHex);
+  return {
+    type: object.type,
+    eip712: object.eip712,
+    signature: {
+      r: split.r,
+      s: split.s,
+      v: split.v,
+      recoveryParam: split.recoveryParam,
+      signatureType: 2,
+    },
+  };
+}
+
+async function submitZeroExGasless(input: {
+  chain: GhostWalletChain;
+  asset: string;
+  amount: bigint;
+  provider: providers.JsonRpcProvider;
+  wallet: Wallet;
+  mode: 'primary' | 'fallback';
+  onSubmitted?: (transactionHash: string, result: Record<string, unknown>) => Promise<void>;
+}): Promise<GhostWalletPayoutSubmission> {
+  const chainId = CHAIN_IDS[input.chain];
+  const token = new Contract(input.asset, ERC20_ABI, input.provider);
+  const [tokenBeforeRaw, nativeBeforeRaw] = await Promise.all([
+    token.balanceOf(input.wallet.address),
+    input.provider.getBalance(input.wallet.address),
+  ]);
+  const tokenBefore = BigInt(tokenBeforeRaw.toString());
+  if (tokenBefore < input.amount) throw new Error('GHOST_WALLET_PROFIT_TOKEN_BALANCE_BELOW_SETTLEMENT_AMOUNT');
+
+  const params = new URLSearchParams({
+    chainId: String(chainId),
+    sellToken: input.asset,
+    buyToken: ZEROEX_NATIVE_TOKEN,
+    sellAmount: input.amount.toString(),
+    taker: input.wallet.address,
+  });
+  const quote = await zeroExJson(`/gasless/quote?${params.toString()}`, { method: 'GET' }) as ZeroExGaslessQuote;
+  if (!quote.liquidityAvailable || !quote.trade) throw new Error('GHOST_WALLET_ZEROX_GASLESS_LIQUIDITY_UNAVAILABLE');
+  const expectedOut = positiveAmount(quote.buyAmount, 'GHOST_WALLET_ZEROX_EXPECTED_NATIVE_INVALID');
+  const minimumOut = quote.minBuyAmount ? positiveAmount(quote.minBuyAmount) : expectedOut;
+  if (quote.issues?.allowance != null && !quote.approval) {
+    throw new Error('GHOST_WALLET_ZEROX_GASLESS_APPROVAL_UNAVAILABLE');
+  }
+  const trade = await signZeroExObject(input.wallet, quote.trade);
+  const approval = quote.approval ? await signZeroExObject(input.wallet, quote.approval) : undefined;
+  const submitted = await zeroExJson('/gasless/submit', {
+    method: 'POST',
+    body: JSON.stringify({ trade, chainId, ...(approval ? { approval } : {}) }),
+  });
+  const tradeHash = String(submitted?.tradeHash || '');
+  if (!validHash(tradeHash)) throw new Error('GHOST_WALLET_ZEROX_TRADE_HASH_INVALID');
+  const result: Record<string, unknown> = {
+    phase: 'zeroex_gasless_submitted',
+    chain: input.chain,
+    chainId,
+    asset: input.asset,
+    amountBaseUnits: input.amount.toString(),
+    tokenBalanceBefore: tokenBefore.toString(),
+    nativeBalanceBeforeWei: nativeBeforeRaw.toString(),
+    expectedNativeWei: expectedOut.toString(),
+    minimumNativeWei: minimumOut.toString(),
+    destinationMode: input.mode,
+    zeroOperatorNativeGas: true,
+    gasPaymentAuthority: '0x_gasless_from_trade_economics',
+    alchemyDependency: false,
+  };
+  if (input.onSubmitted) await input.onSubmitted(tradeHash, result);
+  return { state: 'submitted', transactionHash: tradeHash, result, retryAfterMs: 1_000 };
+}
+
+async function reconcileZeroExGasless(input: {
+  tradeHash: string;
+  result: Record<string, unknown>;
+  onSubmitted?: (transactionHash: string, result: Record<string, unknown>) => Promise<void>;
+}): Promise<GhostWalletPayoutResult> {
+  const chain = normalizeChain(String(input.result.chain || ''));
+  const chainId = CHAIN_IDS[chain];
+  const provider = await ghostWalletProviderMesh.getProvider(chain);
+  if (!provider) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
+  const wallet = signingWallet(provider);
+  const status = await zeroExJson(`/gasless/status/${input.tradeHash}?chainId=${chainId}`, { method: 'GET' });
+  const statusName = String(status?.status || '').toLowerCase();
+  if (['failed', 'reverted', 'cancelled', 'canceled', 'expired'].includes(statusName)) {
+    throw new Error(`GHOST_WALLET_ZEROX_TERMINAL_FAILURE:${statusName}`);
+  }
+
+  let receipt: providers.TransactionReceipt | null = null;
+  let receiptHash: string | null = null;
+  for (const hash of Array.from(new Set(extractTransactionHashes(status)))) {
+    const candidate = await provider.getTransactionReceipt(hash).catch(() => null);
+    if (candidate?.status === 0) throw new Error('GHOST_WALLET_ZEROX_TRANSACTION_REVERTED');
+    if (candidate?.status === 1) { receipt = candidate; receiptHash = hash; break; }
+  }
+  if (!receipt || !receiptHash) {
+    return { state: 'submitted', transactionHash: input.tradeHash, result: { ...input.result, zeroExStatus: statusName }, retryAfterMs: 1_500 };
+  }
+
+  const asset = ethers.utils.getAddress(String(input.result.asset));
   const token = new Contract(asset, ERC20_ABI, provider);
-  const balance = BigInt((await token.balanceOf(wallet.address)).toString());
-  if (balance < amount) throw new Error('GHOST_WALLET_PROFIT_TOKEN_BALANCE_BELOW_DURABLE_SETTLEMENT_AMOUNT');
-  const { apiKey, integratorId } = acrossCredentials();
+  const [tokenAfterRaw, nativeAfterRaw] = await Promise.all([
+    token.balanceOf(wallet.address),
+    provider.getBalance(wallet.address),
+  ]);
+  const tokenBefore = asBigInt(input.result.tokenBalanceBefore);
+  const nativeBefore = asBigInt(input.result.nativeBalanceBeforeWei);
+  const tokenAfter = BigInt(tokenAfterRaw.toString());
+  const nativeAfter = BigInt(nativeAfterRaw.toString());
+  const soldAmount = asBigInt(input.result.amountBaseUnits);
+  const minimumNative = positiveAmount(input.result.minimumNativeWei);
+  if (tokenAfter > tokenBefore || tokenBefore - tokenAfter < soldAmount) {
+    throw new Error('GHOST_WALLET_ZEROX_SOURCE_PROFIT_SPEND_NOT_VERIFIED');
+  }
+  if (nativeAfter <= nativeBefore || nativeAfter - nativeBefore < minimumNative) {
+    throw new Error('GHOST_WALLET_ZEROX_NATIVE_DELIVERY_NOT_VERIFIED');
+  }
+  const acquiredNative = nativeAfter - nativeBefore;
+  const mode = input.result.destinationMode === 'fallback' ? 'fallback' : 'primary';
+
+  if (chain === 'ethereum') {
+    return {
+      state: 'settled',
+      transactionHash: receiptHash,
+      blockNumber: receipt.blockNumber ?? null,
+      payoutTransactionHash: receiptHash,
+      payoutDestinationMode: mode,
+      destination: destination(mode),
+      ethAmountWei: acquiredNative,
+      result: {
+        ...input.result,
+        phase: 'native_eth_delivered',
+        zeroExTradeHash: input.tradeHash,
+        settlementTransactionHash: receiptHash,
+        acquiredNativeWei: acquiredNative.toString(),
+        zeroOperatorNativeGas: true,
+      },
+    };
+  }
+
+  return submitProfitFundedAcrossBridge({
+    chain,
+    acquiredNative,
+    sourceNativeBaseline: nativeBefore,
+    provider,
+    wallet,
+    mode,
+    zeroExReceiptHash: receiptHash,
+    onSubmitted: input.onSubmitted,
+  });
+}
+
+function parseAcrossCall(value: any, expectedChainId: number): AcrossCall {
+  if (!value || Number(value.chainId) !== expectedChainId) throw new Error('GHOST_WALLET_ACROSS_CHAIN_MISMATCH');
+  const to = String(value.to || '');
+  const data = String(value.data || '0x');
+  if (!ethers.utils.isAddress(to) || !ethers.utils.isHexString(data)) throw new Error('GHOST_WALLET_ACROSS_CALL_INVALID');
+  const gasLimit = BigNumber.from(String(value.gas || value.gasLimit || '0'));
+  if (gasLimit.lte(0)) throw new Error('GHOST_WALLET_ACROSS_GAS_LIMIT_INVALID');
+  const maxFeePerGas = value.maxFeePerGas ? BigNumber.from(String(value.maxFeePerGas)) : null;
+  const maxPriorityFeePerGas = value.maxPriorityFeePerGas ? BigNumber.from(String(value.maxPriorityFeePerGas)) : null;
+  const gasPrice = value.gasPrice ? BigNumber.from(String(value.gasPrice)) : null;
+  if (!maxFeePerGas && !gasPrice) throw new Error('GHOST_WALLET_ACROSS_GAS_PRICE_INVALID');
+  return {
+    to: ethers.utils.getAddress(to),
+    data,
+    value: BigNumber.from(String(value.value || '0')),
+    gasLimit,
+    gasPrice,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+  };
+}
+
+function acrossMaximumOriginSpend(call: AcrossCall): bigint {
+  const gasPrice = call.maxFeePerGas || call.gasPrice;
+  if (!gasPrice) throw new Error('GHOST_WALLET_ACROSS_GAS_PRICE_INVALID');
+  return BigInt(call.value.toString()) + BigInt(call.gasLimit.mul(gasPrice).toString());
+}
+
+async function getAcrossNativeQuote(input: {
+  chain: GhostWalletChain;
+  wallet: string;
+  recipient: string;
+  amount: bigint;
+}): Promise<{ raw: any; call: AcrossCall; expected: bigint; minimum: bigint }> {
+  const { integratorId } = acrossCredentials();
   const params = new URLSearchParams({
     tradeType: 'exactInput',
-    amount: amount.toString(),
-    inputToken: asset,
+    amount: input.amount.toString(),
+    inputToken: ZERO_ADDRESS,
     outputToken: ZERO_ADDRESS,
-    originChainId: String(chainId),
+    originChainId: String(CHAIN_IDS[input.chain]),
     destinationChainId: String(ETHEREUM_CHAIN_ID),
-    depositor: wallet.address,
-    recipient: destination,
-    refundAddress: wallet.address,
+    depositor: input.wallet,
+    recipient: input.recipient,
+    refundAddress: input.wallet,
+    refundOnOrigin: 'true',
     integratorId,
   });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-  let quote: any;
-  try {
-    const response = await fetch(`https://app.across.to/api/swap/approval?${params.toString()}`, {
-      headers: { accept: 'application/json', Authorization: `Bearer ${apiKey}` }, signal: controller.signal,
-    });
-    const text = await response.text();
-    quote = text ? JSON.parse(text) : {};
-    if (!response.ok) throw new Error(`GHOST_WALLET_ACROSS_QUOTE_FAILED:${response.status}:${String(quote?.message || '')}`);
-  } finally {
-    clearTimeout(timeout);
+  const raw = await acrossJson(`/swap/approval?${params.toString()}`, { method: 'GET' });
+  const approvals = Array.isArray(raw?.approvalTxns) ? raw.approvalTxns : [];
+  if (approvals.length !== 0) throw new Error('GHOST_WALLET_ACROSS_NATIVE_ROUTE_UNEXPECTED_APPROVAL');
+  if (raw?.swapTx?.simulationSuccess !== true) throw new Error('GHOST_WALLET_ACROSS_SWAP_NOT_SIMULATION_VERIFIED');
+  const call = parseAcrossCall(raw.swapTx, CHAIN_IDS[input.chain]);
+  const expected = positiveAmount(raw?.expectedOutputAmount, 'GHOST_WALLET_ACROSS_EXPECTED_ETH_INVALID');
+  const minimum = raw?.minOutputAmount ? positiveAmount(raw.minOutputAmount) : expected;
+  return { raw, call, expected, minimum };
+}
+
+async function affordableAcrossQuote(input: {
+  chain: GhostWalletChain;
+  wallet: string;
+  recipient: string;
+  acquiredNative: bigint;
+}): Promise<{ raw: any; call: AcrossCall; expected: bigint; minimum: bigint; maxSpend: bigint }> {
+  let bridgeAmount = input.acquiredNative;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (bridgeAmount <= 0n) break;
+    const quote = await getAcrossNativeQuote({ ...input, amount: bridgeAmount });
+    const maxSpend = acrossMaximumOriginSpend(quote.call);
+    if (maxSpend <= input.acquiredNative) return { ...quote, maxSpend };
+    const gasOnly = maxSpend - BigInt(quote.call.value.toString());
+    if (gasOnly >= input.acquiredNative) break;
+    const next = input.acquiredNative - gasOnly;
+    if (next >= bridgeAmount) break;
+    bridgeAmount = next;
   }
-  const expiry = Number(quote?.quoteExpiryTimestamp || 0) * 1_000;
-  if (expiry > 0 && expiry <= Date.now()) throw new Error('GHOST_WALLET_ACROSS_QUOTE_EXPIRED');
-  const swap = parseAcrossCall(quote?.swapTx, chainId);
-  if (!swap || quote?.swapTx?.simulationSuccess !== true) throw new Error('GHOST_WALLET_ACROSS_SWAP_NOT_SIMULATION_VERIFIED');
-  const approvals = (Array.isArray(quote?.approvalTxns) ? quote.approvalTxns : [])
-    .map((row: any) => parseAcrossCall(row, chainId))
-    .filter((row: any): row is { to: string; data: string; value: BigNumber } => Boolean(row));
-  if (approvals.length !== (Array.isArray(quote?.approvalTxns) ? quote.approvalTxns.length : 0)) {
-    throw new Error('GHOST_WALLET_ACROSS_APPROVAL_PAYLOAD_INVALID');
-  }
-  const expectedOutputAmount = String(quote?.expectedOutputAmount || quote?.minOutputAmount || '0');
-  if (!/^\d+$/.test(expectedOutputAmount) || BigInt(expectedOutputAmount) <= 0n) {
-    throw new Error('GHOST_WALLET_ACROSS_EXPECTED_ETH_INVALID');
-  }
-  const sent = await runtime.gasSponsor.execute({
-    wallet,
-    chainId,
-    calls: [...approvals, swap],
-    timeoutMs: Math.max(10_000, Number(process.env.GHOST_WALLET_SPONSORED_TX_TIMEOUT_MS || 60_000)),
+  throw new Error('GHOST_WALLET_PROFIT_TOO_SMALL_FOR_SELF_FUNDED_ETH_BRIDGE');
+}
+
+async function submitProfitFundedAcrossBridge(input: {
+  chain: GhostWalletChain;
+  acquiredNative: bigint;
+  sourceNativeBaseline: bigint;
+  provider: providers.JsonRpcProvider;
+  wallet: Wallet;
+  mode: 'primary' | 'fallback';
+  zeroExReceiptHash: string;
+  onSubmitted?: (transactionHash: string, result: Record<string, unknown>) => Promise<void>;
+}): Promise<GhostWalletPayoutSubmission> {
+  const payoutDestination = destination(input.mode);
+  const ethereumProvider = await ghostWalletProviderMesh.getProvider('ethereum');
+  if (!ethereumProvider) throw new Error('GHOST_WALLET_ETHEREUM_RPC_UNAVAILABLE');
+  const destinationBalanceBefore = await ethereumProvider.getBalance(payoutDestination);
+  const quote = await affordableAcrossQuote({
+    chain: input.chain,
+    wallet: input.wallet.address,
+    recipient: payoutDestination,
+    acquiredNative: input.acquiredNative,
   });
-  const result = {
-    phase: 'across_native_eth_submitted',
-    originChainId: chainId,
-    destinationChainId: ETHEREUM_CHAIN_ID,
-    destination,
-    destinationMode: mode,
-    expectedEthWei: expectedOutputAmount,
-    expectedFillTimeSec: Number(quote?.expectedFillTime || 0),
-    quoteId: typeof quote?.id === 'string' ? quote.id : null,
+  const currentNative = BigInt((await input.provider.getBalance(input.wallet.address)).toString());
+  if (currentNative < input.sourceNativeBaseline + input.acquiredNative) {
+    throw new Error('GHOST_WALLET_SOURCE_NATIVE_PROFIT_NO_LONGER_AVAILABLE');
+  }
+  if (quote.maxSpend > input.acquiredNative) {
+    throw new Error('GHOST_WALLET_ACROSS_WOULD_SPEND_PREEXISTING_OPERATOR_NATIVE');
+  }
+
+  const txRequest: providers.TransactionRequest = {
+    to: quote.call.to,
+    data: quote.call.data,
+    value: quote.call.value,
+    gasLimit: quote.call.gasLimit,
   };
-  if (onSubmitted) await onSubmitted(sent.transactionHash, result);
+  if (quote.call.maxFeePerGas) {
+    txRequest.maxFeePerGas = quote.call.maxFeePerGas;
+    if (quote.call.maxPriorityFeePerGas) txRequest.maxPriorityFeePerGas = quote.call.maxPriorityFeePerGas;
+    txRequest.type = 2;
+  } else if (quote.call.gasPrice) {
+    txRequest.gasPrice = quote.call.gasPrice;
+  }
+  const sent = await input.wallet.sendTransaction(txRequest);
+  const result: Record<string, unknown> = {
+    phase: 'across_profit_funded_native_bridge_submitted',
+    chain: input.chain,
+    originChainId: CHAIN_IDS[input.chain],
+    destinationChainId: ETHEREUM_CHAIN_ID,
+    destination: payoutDestination,
+    destinationMode: input.mode,
+    sourceNativeProfitWei: input.acquiredNative.toString(),
+    sourceNativeBaselineWei: input.sourceNativeBaseline.toString(),
+    maximumOriginSpendWei: quote.maxSpend.toString(),
+    bridgeValueWei: quote.call.value.toString(),
+    expectedEthWei: quote.expected.toString(),
+    minimumEthWei: quote.minimum.toString(),
+    destinationBalanceBeforeWei: destinationBalanceBefore.toString(),
+    zeroExConversionReceipt: input.zeroExReceiptHash,
+    quoteId: typeof quote.raw?.id === 'string' ? quote.raw.id : null,
+    expectedFillTimeSec: Number(quote.raw?.expectedFillTime || 0),
+    operatorMonetaryInputRequired: false,
+    originGasFunding: 'realized_ghost_profit_only',
+    alchemyDependency: false,
+  };
+  if (input.onSubmitted) await input.onSubmitted(sent.hash, result);
   return {
-    state: 'submitted', transactionHash: sent.transactionHash, result,
-    retryAfterMs: Math.max(1_000, Math.min(15_000, Number(quote?.expectedFillTime || 2) * 1_000)),
+    state: 'submitted',
+    transactionHash: sent.hash,
+    result,
+    retryAfterMs: Math.max(1_000, Math.min(15_000, Number(quote.raw?.expectedFillTime || 2) * 1_000)),
   };
 }
 
-async function reconcileAcrossNativeEthPayout(
-  payload: GhostWalletProfitConversionPayload,
-  transactionHash: string,
-  priorResult: Record<string, unknown>,
-): Promise<GhostWalletPayoutResult> {
-  if (!validTxHash(transactionHash)) throw new Error('GHOST_WALLET_ACROSS_DEPOSIT_TX_INVALID');
-  const mode = payload.destinationMode || 'primary';
-  const destination = payoutDestination(mode);
-  const { apiKey, integratorId } = acrossCredentials();
-  const params = new URLSearchParams({ depositTxnRef: transactionHash, integratorId });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-  let status: any;
-  try {
-    const response = await fetch(`https://app.across.to/api/deposit/status?${params.toString()}`, {
-      headers: { accept: 'application/json', Authorization: `Bearer ${apiKey}` }, signal: controller.signal,
-    });
-    const text = await response.text();
-    status = text ? JSON.parse(text) : {};
-    if (!response.ok) throw new Error(`GHOST_WALLET_ACROSS_STATUS_FAILED:${response.status}`);
-  } finally {
-    clearTimeout(timeout);
-  }
-  const providerStatus = String(status?.status || '').toLowerCase();
-  if (providerStatus === 'filled') {
+async function reconcileAcrossBridge(input: {
+  transactionHash: string;
+  result: Record<string, unknown>;
+}): Promise<GhostWalletPayoutResult> {
+  if (!validHash(input.transactionHash)) throw new Error('GHOST_WALLET_ACROSS_DEPOSIT_TX_INVALID');
+  const mode = input.result.destinationMode === 'fallback' ? 'fallback' : 'primary';
+  const payoutDestination = destination(mode);
+  const { integratorId } = acrossCredentials();
+  const params = new URLSearchParams({ depositTxnRef: input.transactionHash, integratorId });
+  const status = await acrossJson(`/deposit/status?${params.toString()}`, { method: 'GET' });
+  const state = String(status?.status || '').toLowerCase();
+  if (state === 'filled') {
     if (Number(status?.destinationChainId) !== ETHEREUM_CHAIN_ID) throw new Error('GHOST_WALLET_ACROSS_DESTINATION_CHAIN_MISMATCH');
-    const fillTx = String(status?.fillTxnRef || status?.fillTx || '');
-    const ethereumProvider = zeroCapitalEngine.providers.get('ethereum' as any);
-    if (!ethereumProvider || !validTxHash(fillTx)) throw new Error('GHOST_WALLET_ACROSS_FILL_RECEIPT_UNAVAILABLE');
-    const receipt = await ethereumProvider.getTransactionReceipt(fillTx);
+    const fillHash = String(status?.fillTxnRef || status?.fillTx || '');
+    if (!validHash(fillHash)) throw new Error('GHOST_WALLET_ACROSS_FILL_RECEIPT_UNAVAILABLE');
+    const provider = await ghostWalletProviderMesh.getProvider('ethereum');
+    if (!provider) throw new Error('GHOST_WALLET_ETHEREUM_RPC_UNAVAILABLE');
+    const receipt = await provider.getTransactionReceipt(fillHash);
     if (!receipt || receipt.status !== 1) throw new Error('GHOST_WALLET_ACROSS_FILL_NOT_TERMINALLY_VERIFIED');
     if (status?.actionsSucceeded === false) throw new Error('GHOST_WALLET_ACROSS_DESTINATION_ACTION_FAILED');
-    const expected = asBigInt(priorResult.expectedEthWei);
+    const before = asBigInt(input.result.destinationBalanceBeforeWei);
+    const minimum = positiveAmount(input.result.minimumEthWei);
+    const after = BigInt((await provider.getBalance(payoutDestination)).toString());
+    if (after < before + minimum) throw new Error('GHOST_WALLET_ACROSS_ETH_BALANCE_DELTA_NOT_VERIFIED');
+    const delivered = after - before;
     return {
-      state: 'settled', transactionHash, blockNumber: receipt.blockNumber ?? null,
-      payoutTransactionHash: fillTx, payoutDestinationMode: mode, destination,
-      ethAmountWei: expected,
-      result: { ...priorResult, phase: 'native_eth_delivered', providerStatus, fillTransactionHash: fillTx },
+      state: 'settled',
+      transactionHash: input.transactionHash,
+      blockNumber: receipt.blockNumber ?? null,
+      payoutTransactionHash: fillHash,
+      payoutDestinationMode: mode,
+      destination: payoutDestination,
+      ethAmountWei: delivered,
+      result: {
+        ...input.result,
+        phase: 'native_eth_delivered',
+        providerStatus: state,
+        fillTransactionHash: fillHash,
+        deliveredEthWei: delivered.toString(),
+        payoutTerminallyVerified: true,
+        operatorMonetaryInputRequired: false,
+      },
     };
   }
-  if (providerStatus === 'refunded' || providerStatus === 'deposit-failed') {
-    if (mode === 'primary') {
-      const fallback = resolvePayoutFallbackAddress();
-      if (fallback) {
-        return {
-          state: 'fallback_required',
-          reason: `primary_across_delivery_${providerStatus}`,
-          payload: { ...payload, destinationMode: 'fallback' },
-        };
-      }
-    }
-    throw new Error(`GHOST_WALLET_ACROSS_PAYOUT_TERMINAL_FAILURE:${providerStatus}`);
+  if (['refunded', 'deposit-failed'].includes(state)) {
+    throw new Error(`GHOST_WALLET_ACROSS_TERMINAL_FAILURE:${state}`);
   }
-  if (['expired','auto-refund-pending','refund-failed','manual-refund-required'].includes(providerStatus)) {
-    throw new Error(`GHOST_WALLET_ACROSS_RECOVERY_PENDING:${providerStatus}`);
+  if (['expired', 'refund-failed', 'manual-refund-required'].includes(state)) {
+    throw new Error(`GHOST_WALLET_ACROSS_RECOVERY_PENDING:${state}`);
   }
-  return { state: 'submitted', transactionHash, result: { ...priorResult, providerStatus }, retryAfterMs: 5_000 };
+  return {
+    state: 'submitted',
+    transactionHash: input.transactionHash,
+    result: { ...input.result, providerStatus: state },
+    retryAfterMs: 5_000,
+  };
 }
 
 export async function processGhostWalletProfitConversion(input: {
@@ -513,63 +585,51 @@ export async function processGhostWalletProfitConversion(input: {
   const payload = input.payload;
   const chain = normalizeChain(payload.chain);
   const asset = ethers.utils.getAddress(payload.asset);
-  const amount = asBigInt(payload.amountBaseUnits);
-  const mode = payload.destinationMode || 'primary';
-  payoutDestination(mode);
-
-  if (chain === 'ethereum') {
-    if (asset.toLowerCase() === WETH_MAINNET.toLowerCase()) {
-      if (input.submittedTransactionHash) {
-        const provider = zeroCapitalEngine.providers.get('ethereum' as any);
-        const wallet = zeroCapitalEngine.executionWallets.get('ethereum' as any);
-        if (!provider || !wallet) throw new Error('GHOST_WALLET_ETHEREUM_RUNTIME_UNAVAILABLE');
-        const receipt = await provider.getTransactionReceipt(input.submittedTransactionHash);
-        if (!receipt) return { state: 'submitted', transactionHash: input.submittedTransactionHash, result: input.priorResult || {}, retryAfterMs: 1_000 };
-        if (receipt.status !== 1 || sumWethWithdrawal(receipt, wallet.address) !== amount) throw new Error('GHOST_WALLET_WETH_UNWRAP_RECONCILIATION_FAILED');
-        return {
-          state: 'settled', transactionHash: input.submittedTransactionHash,
-          blockNumber: receipt.blockNumber ?? null, payoutTransactionHash: input.submittedTransactionHash,
-          payoutDestinationMode: mode, destination: payoutDestination(mode), ethAmountWei: amount,
-          result: { ...(input.priorResult || {}), phase: 'native_eth_delivered_reconciled' },
-        };
-      }
-      return unwrapWethToEth(payload, input.onSubmitted);
-    }
-    if (input.submittedTransactionHash) {
-      const provider = zeroCapitalEngine.providers.get('ethereum' as any);
-      if (!provider) throw new Error('GHOST_WALLET_ETHEREUM_RUNTIME_UNAVAILABLE');
-      const receipt = await provider.getTransactionReceipt(input.submittedTransactionHash);
-      if (!receipt) return { state: 'submitted', transactionHash: input.submittedTransactionHash, result: input.priorResult || {}, retryAfterMs: 1_000 };
-      if (receipt.status !== 1) throw new Error('GHOST_WALLET_ETHEREUM_TOKEN_CONVERSION_REVERTED');
-      const acquired = sumTransferTo(receipt, WETH_MAINNET, resolvePrimaryProfitPayoutAddress() || ZERO_ADDRESS);
-      if (acquired <= 0n) throw new Error('GHOST_WALLET_WETH_ACQUISITION_RECONCILIATION_FAILED');
-      return {
-        state: 'settled', transactionHash: input.submittedTransactionHash,
-        blockNumber: receipt.blockNumber ?? null, payoutTransactionHash: input.submittedTransactionHash,
-        payoutDestinationMode: mode, destination: payoutDestination(mode), ethAmountWei: acquired,
-        result: { ...(input.priorResult || {}), phase: 'weth_ready_reconciled', acquiredWethWei: acquired.toString() },
-        followUp: {
-          sourceTransactionHash: input.submittedTransactionHash,
-          sourceBlockNumber: receipt.blockNumber ?? null,
-          chain: 'ethereum', asset: WETH_MAINNET, amountBaseUnits: acquired.toString(),
-          destinationMode: mode, sourceKind: 'ghost_wallet_weth_unwrap',
-        },
-      };
-    }
-    return convertEthereumTokenToWeth(payload, input.onSubmitted);
-  }
+  const amount = positiveAmount(payload.amountBaseUnits);
+  const mode = payload.destinationMode === 'fallback' ? 'fallback' : 'primary';
+  destination(mode);
 
   if (input.submittedTransactionHash) {
-    return reconcileAcrossNativeEthPayout(payload, input.submittedTransactionHash, input.priorResult || {});
+    const phase = String(input.priorResult?.phase || '');
+    if (phase === 'zeroex_gasless_submitted') {
+      return reconcileZeroExGasless({
+        tradeHash: input.submittedTransactionHash,
+        result: input.priorResult || {},
+        onSubmitted: input.onSubmitted,
+      });
+    }
+    if (phase === 'across_profit_funded_native_bridge_submitted') {
+      return reconcileAcrossBridge({ transactionHash: input.submittedTransactionHash, result: input.priorResult || {} });
+    }
+    throw new Error('GHOST_WALLET_PAYOUT_SUBMITTED_STATE_UNKNOWN');
   }
-  return submitAcrossNativeEthPayout(payload, input.onSubmitted);
+
+  const provider = await ghostWalletProviderMesh.getProvider(chain);
+  if (!provider) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
+  const wallet = signingWallet(provider);
+  return submitZeroExGasless({
+    chain,
+    asset,
+    amount,
+    provider,
+    wallet,
+    mode,
+    onSubmitted: input.onSubmitted,
+  });
 }
 
-export const GHOST_WALLET_ETH_PAYOUT_IDENTITY = {
-  asset: 'ETH' as const,
-  network: 'ethereum' as const,
-  primary: 'WALLET_PRIVATE_KEY-derived public Ethereum address' as const,
-  fallback: 'resolvePayoutFallbackAddress after confirmed primary delivery failure only' as const,
-  arbitrageTreasuryAuthority: false as const,
-  arbitrageProfitSplitAuthority: false as const,
-};
+export const GHOST_WALLET_PAYOUT_POLICY = {
+  targetAsset: 'native_ETH',
+  targetNetwork: 'ethereum',
+  percentOfRealizedGhostNet: 100,
+  arbitrageTreasuryAuthority: false,
+  retainedCapitalSplit: false,
+  alchemyAllowed: false,
+  providerSponsoredGasAllowed: false,
+  operatorNativeGasAllowed: false,
+  sameChainConversion: '0x_gasless',
+  crossChainConversion: '0x_gasless_source_native_then_across_profit_funded',
+  crossChainOriginGasSource: 'realized_ghost_profit_only',
+  canonicalVariableFallbacks: true,
+  terminalProof: 'source_spend_plus_receipt_plus_destination_native_balance_delta',
+} as const;
