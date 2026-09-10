@@ -34,20 +34,27 @@ const legacyQuarantine = read('server/services/cryptocrawl/integration/legacy-in
 const parallelLanes = read('server/services/cryptocrawl/intelligence/parallel-lanes.ts');
 const envExample = read('.env.railway.example');
 
-requireText(telemetry, "alchemyIntegration.start(['ethereum', 'polygon', 'arbitrum', 'optimism', 'base'])", 'Alchemy enhanced telemetry starts on supported networks');
-requireText(telemetry, "ethereum: 'https://rpc.ankr.com/eth'", 'keyless Ankr Ethereum fallback is registered');
-requireText(telemetry, "polygon: 'https://rpc.ankr.com/polygon'", 'keyless Ankr Polygon fallback is registered');
+requireText(telemetry, 'startFreeProviderTelemetry()', 'free/configured provider telemetry replaces Alchemy bootstrap');
+requireText(telemetry, 'ensureDynamicRpcProviderWiring()', 'dynamic provider mesh is initialized for telemetry');
+requireText(telemetry, 'ensureProviderMeshPendingStream()', 'Alchemy-free pending stream is initialized for telemetry');
+requireText(telemetry, "ethereum: 'https://rpc.ankr.com/eth'", 'Ankr Ethereum fallback remains available when admitted');
+requireText(telemetry, "polygon: 'https://rpc.ankr.com/polygon'", 'Ankr Polygon fallback remains available when admitted');
 requireText(telemetry, 'multiProviderRpcManager.initialize(TELEMETRY_CHAINS)', 'shared RPC manager initializes before optional providers');
-requireText(telemetry, 'Ankr fallback probe completed', 'Ankr health outcome is visible without exposing secrets');
+requireText(telemetry, 'Ankr fallback admission completed', 'Ankr health outcome is visible without exposing secrets');
 requireText(telemetry, 'probeReadOnlyZeroX()', '0x authentication and price path is actively health-probed');
 requireText(telemetry, 'CoinStats credential resolution', 'CoinStats credential-name resolution is observable without logging the key');
-requireText(telemetry, 'COIN_STATS_API_KEY', 'CoinStats legacy environment alias is normalized');
+requireText(telemetry, 'resolveCoinStatsEnvironment()', 'CoinStats alias resolution remains centralized');
 requireText(telemetry, 'Production execution posture', 'non-secret production execution posture is visible for deployment verification');
 requireText(telemetry, "process.env.NO_EXECUTION === 'true'", 'runtime reports the emergency NO_EXECUTION guard without mutating it');
+requireText(telemetry, 'alchemyOperationalAuthority: false', 'telemetry explicitly records no Alchemy operational authority');
+forbidText(telemetry, 'alchemyIntegration', 'telemetry bootstrap must not initialize or query Alchemy');
+forbidText(telemetry, "canonical: 'ALCHEMY_API_KEY'", 'legacy Alchemy aliases must not silently reactivate a paid dependency');
 
 requireText(runtimeObservability, '[CryptoRuntime] Authoritative runtime heartbeat', 'provider and decision diagnostics remain visible after startup');
-requireText(runtimeObservability, 'alchemyIntegration.readinessCheck', 'runtime heartbeat includes live Alchemy readiness');
-requireText(runtimeObservability, 'multiProviderRpcManager.getHealth(chain)', 'runtime heartbeat includes shared RPC/Ankr provider state');
+requireText(runtimeObservability, "authority: 'multiProviderRpcManager'", 'runtime heartbeat includes canonical provider-mesh authority');
+requireText(runtimeObservability, 'multiProviderRpcManager.getHealth(chain)', 'runtime heartbeat includes shared provider state');
+requireText(runtimeObservability, 'alchemyOperationalAuthority: false', 'runtime heartbeat records no Alchemy operational authority');
+forbidText(runtimeObservability, 'alchemyIntegration', 'runtime heartbeat must not probe Alchemy');
 requireText(runtimeObservability, 'canonicalOpportunityState.getMetrics(60_000)', 'runtime heartbeat reports current opportunity throughput');
 requireText(runtimeObservability, 'workloadRouter.getSystemStatus()', 'runtime heartbeat reports Beam/QuantiComp workload state');
 
