@@ -172,7 +172,9 @@ contract CryptocrawlGhostWalletIntermediary {
         require(profitRecipientAddress != address(0), "profit_recipient_required");
         owner = ownerAddress;
         profitRecipient = profitRecipientAddress;
-        minimumBrokerSpreadBps = 1;
+        // Zero means no BPS floor. The broker still requires a strictly positive
+        // spread and charges the smallest representable token unit by default.
+        minimumBrokerSpreadBps = 0;
     }
 
     function setOperator(address operator, bool allowed) external onlyOwner onlyIdle {
@@ -212,7 +214,7 @@ contract CryptocrawlGhostWalletIntermediary {
     }
 
     function setMinimumBrokerSpreadBps(uint16 spreadBps) external onlyOwner onlyIdle {
-        require(spreadBps > 0 && spreadBps <= 1_000, "invalid_spread_bps");
+        require(spreadBps <= 1_000, "invalid_spread_bps");
         minimumBrokerSpreadBps = spreadBps;
         emit MinimumBrokerSpreadUpdated(spreadBps);
     }
@@ -437,7 +439,8 @@ contract CryptocrawlGhostWalletIntermediary {
         require(amount <= IGhostWalletCapitalVault(vault).totalAssets(), "insufficient_vault_liquidity");
 
         uint256 sourceFee = IGhostWalletCapitalVault(vault).previewAtomicFee(amount);
-        uint256 spread = _mulDivUp(amount, minimumBrokerSpreadBps, BPS);
+        uint256 configuredSpread = _mulDivUp(amount, minimumBrokerSpreadBps, BPS);
+        uint256 spread = configuredSpread > 0 ? configuredSpread : 1;
         uint256 borrowerFee = sourceFee + spread;
         require(borrowerFee <= maxBorrowerFee, "borrower_fee_exceeds_max");
 
@@ -459,7 +462,9 @@ contract CryptocrawlGhostWalletIntermediary {
         require(IGhostWalletCapitalVault(vault).asset() == token, "vault_asset_mismatch");
         require(amount <= IGhostWalletCapitalVault(vault).totalAssets(), "insufficient_vault_liquidity");
         uint256 sourceFee = IGhostWalletCapitalVault(vault).previewAtomicFee(amount);
-        return sourceFee + _mulDivUp(amount, minimumBrokerSpreadBps, BPS);
+        uint256 configuredSpread = _mulDivUp(amount, minimumBrokerSpreadBps, BPS);
+        uint256 spread = configuredSpread > 0 ? configuredSpread : 1;
+        return sourceFee + spread;
     }
 
     /// @notice Callback used only by the vault currently selected by this contract.
