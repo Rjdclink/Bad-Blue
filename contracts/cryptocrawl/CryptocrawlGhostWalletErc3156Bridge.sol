@@ -44,15 +44,36 @@ interface IMorphoGhostBridge {
     function flashLoan(address token, uint256 assets, bytes calldata data) external;
 }
 
+interface IBalancerV2FlashLoanRecipientGhostBridge {
+    function receiveFlashLoan(
+        address[] calldata tokens,
+        uint256[] calldata amounts,
+        uint256[] calldata feeAmounts,
+        bytes calldata userData
+    ) external;
+}
+
+interface IBalancerV2VaultGhostBridge {
+    function flashLoan(
+        IBalancerV2FlashLoanRecipientGhostBridge recipient,
+        address[] calldata tokens,
+        uint256[] calldata amounts,
+        bytes calldata userData
+    ) external;
+}
+
 /// @notice Permissionless, zero-operator-capital atomic credit intermediary.
 /// @dev The transaction initiator supplies transaction gas. Ghost never fronts
 ///      principal, native gas, collateral, or a paymaster balance. Upstream capital
-///      is sourced atomically from any compatible ERC-3156 lender, Aave V3 pool, or
-///      Morpho singleton. The downstream borrower must repay principal + borrowerFee
-///      in the same transaction; upstream repayment then occurs before completion.
-///      Only a strictly positive fee spread is sent to profitRecipient. Any mismatch
-///      reverts the complete transaction.
-contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge {
+///      is sourced atomically from any compatible ERC-3156 lender, Aave V3 pool,
+///      Morpho singleton, or Balancer V2 vault. The downstream borrower must repay
+///      principal + borrowerFee in the same transaction; upstream repayment then
+///      occurs before completion. Only a strictly positive spread is sent to
+///      profitRecipient. Any mismatch reverts the complete transaction.
+contract CryptocrawlGhostWalletErc3156Bridge is
+    IERC3156FlashBorrowerGhostBridge,
+    IBalancerV2FlashLoanRecipientGhostBridge
+{
     uint256 private constant BPS = 10_000;
     bytes32 private constant ERC3156_CALLBACK_SUCCESS = keccak256("ERC3156FlashBorrower.onFlashLoan");
 
@@ -60,7 +81,8 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
         None,
         ERC3156,
         AaveV3,
-        Morpho
+        Morpho,
+        BalancerV2
     }
 
     address public immutable owner;
@@ -169,20 +191,10 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
         uint256 upstreamFee = upstream.flashFee(token, amount);
         uint256 borrowerFee = upstreamFee + _positiveSpread(amount);
         require(borrowerFee <= maxBorrowerFee, "borrower_fee_exceeds_max");
-
-        _begin(
-            UpstreamKind.ERC3156,
-            lender,
-            address(borrower),
-            token,
-            amount,
-            upstreamFee,
-            borrowerFee,
-            maxBorrowerFee
-        );
+        _begin(UpstreamKind.ERC3156, lender, address(borrower), token, amount, upstreamFee, borrowerFee, maxBorrowerFee);
         bool accepted = upstream.flashLoan(this, token, amount, abi.encode(borrowerData));
         require(accepted, "upstream_flash_loan_rejected");
-        _finishUpstream();
+        _finishPullUpstream();
         return true;
     }
 
@@ -198,18 +210,9 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
     ) external onlyIdle returns (bool) {
         _requireContracts(pool, address(borrower), token);
         require(amount > 0, "amount_required");
-        _begin(
-            UpstreamKind.AaveV3,
-            pool,
-            address(borrower),
-            token,
-            amount,
-            0,
-            0,
-            maxBorrowerFee
-        );
+        _begin(UpstreamKind.AaveV3, pool, address(borrower), token, amount, 0, 0, maxBorrowerFee);
         IAaveV3PoolGhostBridge(pool).flashLoanSimple(address(this), token, amount, abi.encode(borrowerData), 0);
-        _finishUpstream();
+        _finishPullUpstream();
         return true;
     }
 
@@ -227,18 +230,33 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
         require(amount > 0, "amount_required");
         uint256 borrowerFee = _positiveSpread(amount);
         require(borrowerFee <= maxBorrowerFee, "borrower_fee_exceeds_max");
-        _begin(
-            UpstreamKind.Morpho,
-            morpho,
-            address(borrower),
-            token,
-            amount,
-            0,
-            borrowerFee,
-            maxBorrowerFee
-        );
+        _begin(UpstreamKind.Morpho, morpho, address(borrower), token, amount, 0, borrowerFee, maxBorrowerFee);
         IMorphoGhostBridge(morpho).flashLoan(token, amount, abi.encode(token, borrowerData));
-        _finishUpstream();
+        _finishPullUpstream();
+        return true;
+    }
+
+    /// @notice Borrow from any Balancer V2-compatible vault and immediately lend
+    ///         the single borrowed asset to a downstream ERC-3156 borrower.
+    function brokerBalancerV2FlashLoan(
+        address vault,
+        IERC3156FlashBorrowerGhostBridge borrower,
+        address token,
+        uint256 amount,
+        uint256 maxBorrowerFee,
+        bytes calldata borrowerData
+    ) external onlyIdle returns (bool) {
+        _requireContracts(vault, address(borrower), token);
+        require(amount > 0, "amount_required");
+        _begin(UpstreamKind.BalancerV2, vault, address(borrower), token, amount, 0, 0, maxBorrowerFee);
+        address[] memory tokens = new address[](1);
+        tokens[0] = token;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = amount;
+        IBalancerV2VaultGhostBridge(vault).flashLoan(this, tokens, amounts, abi.encode(borrowerData));
+        require(callbackCompleted, "upstream_callback_missing");
+        require(IERC20GhostBridge(expectedToken).balanceOf(address(this)) == expectedStartingBalance, "upstream_repayment_not_exact");
+        _clearExpectation();
         return true;
     }
 
@@ -253,7 +271,7 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
         _validateCallback(UpstreamKind.ERC3156, token, amount);
         require(initiator == address(this), "unexpected_upstream_initiator");
         require(fee == expectedUpstreamFee, "unexpected_upstream_fee");
-        _serviceBorrowerAndPrepareUpstream(fee, abi.decode(data, (bytes)));
+        _serviceBorrowerAndPreparePullRepayment(fee, abi.decode(data, (bytes)));
         return ERC3156_CALLBACK_SUCCESS;
     }
 
@@ -270,7 +288,7 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
         expectedUpstreamFee = premium;
         expectedBorrowerFee = premium + _positiveSpread(amount);
         require(expectedBorrowerFee <= expectedMaxBorrowerFee, "borrower_fee_exceeds_max");
-        _serviceBorrowerAndPrepareUpstream(premium, abi.decode(params, (bytes)));
+        _serviceBorrowerAndPreparePullRepayment(premium, abi.decode(params, (bytes)));
         return true;
     }
 
@@ -278,7 +296,28 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
     function onMorphoFlashLoan(uint256 assets, bytes calldata data) external {
         (address token, bytes memory borrowerData) = abi.decode(data, (address, bytes));
         _validateCallback(UpstreamKind.Morpho, token, assets);
-        _serviceBorrowerAndPrepareUpstream(0, borrowerData);
+        _serviceBorrowerAndPreparePullRepayment(0, borrowerData);
+    }
+
+    /// @inheritdoc IBalancerV2FlashLoanRecipientGhostBridge
+    function receiveFlashLoan(
+        address[] calldata tokens,
+        uint256[] calldata amounts,
+        uint256[] calldata feeAmounts,
+        bytes calldata userData
+    ) external {
+        require(tokens.length == 1 && amounts.length == 1 && feeAmounts.length == 1, "single_asset_required");
+        _validateCallback(UpstreamKind.BalancerV2, tokens[0], amounts[0]);
+        uint256 upstreamFee = feeAmounts[0];
+        expectedUpstreamFee = upstreamFee;
+        expectedBorrowerFee = upstreamFee + _positiveSpread(expectedAmount);
+        require(expectedBorrowerFee <= expectedMaxBorrowerFee, "borrower_fee_exceeds_max");
+        _serviceBorrower(upstreamFee, abi.decode(userData, (bytes)));
+        _safeTransfer(expectedToken, expectedLender, expectedAmount + upstreamFee);
+        uint256 spread = expectedBorrowerFee - upstreamFee;
+        _safeTransfer(expectedToken, profitRecipient, spread);
+        require(IERC20GhostBridge(expectedToken).balanceOf(address(this)) == expectedStartingBalance, "upstream_repayment_not_exact");
+        _emitSettlement(upstreamFee, spread);
     }
 
     function _begin(
@@ -313,23 +352,15 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
         require(msg.sender == expectedLender, "unexpected_lender");
         require(token == expectedToken, "unexpected_token");
         require(amount == expectedAmount, "unexpected_amount");
-        require(
-            IERC20GhostBridge(token).balanceOf(address(this)) == expectedStartingBalance + amount,
-            "upstream_principal_not_received_exactly"
-        );
+        require(IERC20GhostBridge(token).balanceOf(address(this)) == expectedStartingBalance + amount, "upstream_principal_not_received_exactly");
     }
 
-    function _serviceBorrowerAndPrepareUpstream(uint256 upstreamFee, bytes memory borrowerData) internal {
+    function _serviceBorrower(uint256 upstreamFee, bytes memory borrowerData) internal {
         require(expectedBorrowerFee > upstreamFee, "nonpositive_broker_spread");
         callbackCompleted = true;
-
         uint256 borrowerStartingBalance = IERC20GhostBridge(expectedToken).balanceOf(expectedBorrower);
         _safeTransfer(expectedToken, expectedBorrower, expectedAmount);
-        require(
-            IERC20GhostBridge(expectedToken).balanceOf(expectedBorrower) == borrowerStartingBalance + expectedAmount,
-            "borrower_principal_not_received_exactly"
-        );
-
+        require(IERC20GhostBridge(expectedToken).balanceOf(expectedBorrower) == borrowerStartingBalance + expectedAmount, "borrower_principal_not_received_exactly");
         bytes32 downstreamResult = IERC3156FlashBorrowerGhostBridge(expectedBorrower).onFlashLoan(
             expectedInitiator,
             expectedToken,
@@ -338,29 +369,22 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
             borrowerData
         );
         require(downstreamResult == ERC3156_CALLBACK_SUCCESS, "borrower_callback_failed");
-
         uint256 beforeRepayment = IERC20GhostBridge(expectedToken).balanceOf(address(this));
-        _safeTransferFrom(
-            expectedToken,
-            expectedBorrower,
-            address(this),
-            expectedAmount + expectedBorrowerFee
-        );
-        require(
-            IERC20GhostBridge(expectedToken).balanceOf(address(this)) == beforeRepayment + expectedAmount + expectedBorrowerFee,
-            "borrower_repayment_not_exact"
-        );
+        _safeTransferFrom(expectedToken, expectedBorrower, address(this), expectedAmount + expectedBorrowerFee);
+        require(IERC20GhostBridge(expectedToken).balanceOf(address(this)) == beforeRepayment + expectedAmount + expectedBorrowerFee, "borrower_repayment_not_exact");
+    }
 
+    function _serviceBorrowerAndPreparePullRepayment(uint256 upstreamFee, bytes memory borrowerData) internal {
+        _serviceBorrower(upstreamFee, borrowerData);
         uint256 spread = expectedBorrowerFee - upstreamFee;
         _safeTransfer(expectedToken, profitRecipient, spread);
-        require(
-            IERC20GhostBridge(expectedToken).balanceOf(address(this)) == expectedStartingBalance + expectedAmount + upstreamFee,
-            "pre_upstream_repayment_reconciliation_failed"
-        );
-
+        require(IERC20GhostBridge(expectedToken).balanceOf(address(this)) == expectedStartingBalance + expectedAmount + upstreamFee, "pre_upstream_repayment_reconciliation_failed");
         _safeApprove(expectedToken, expectedLender, 0);
         _safeApprove(expectedToken, expectedLender, expectedAmount + upstreamFee);
+        _emitSettlement(upstreamFee, spread);
+    }
 
+    function _emitSettlement(uint256 upstreamFee, uint256 spread) internal {
         emit ExternalCreditBrokered(
             expectedLender,
             expectedBorrower,
@@ -375,12 +399,9 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
         );
     }
 
-    function _finishUpstream() internal {
+    function _finishPullUpstream() internal {
         require(callbackCompleted, "upstream_callback_missing");
-        require(
-            IERC20GhostBridge(expectedToken).balanceOf(address(this)) == expectedStartingBalance,
-            "upstream_repayment_not_exact"
-        );
+        require(IERC20GhostBridge(expectedToken).balanceOf(address(this)) == expectedStartingBalance, "upstream_repayment_not_exact");
         _safeApprove(expectedToken, expectedLender, 0);
         _clearExpectation();
     }
@@ -428,23 +449,17 @@ contract CryptocrawlGhostWalletErc3156Bridge is IERC3156FlashBorrowerGhostBridge
     }
 
     function _safeTransfer(address token, address to, uint256 amount) internal {
-        (bool success, bytes memory returndata) = token.call(
-            abi.encodeWithSelector(IERC20GhostBridge.transfer.selector, to, amount)
-        );
+        (bool success, bytes memory returndata) = token.call(abi.encodeWithSelector(IERC20GhostBridge.transfer.selector, to, amount));
         require(success && (returndata.length == 0 || abi.decode(returndata, (bool))), "erc20_transfer_failed");
     }
 
     function _safeTransferFrom(address token, address from, address to, uint256 amount) internal {
-        (bool success, bytes memory returndata) = token.call(
-            abi.encodeWithSelector(IERC20GhostBridge.transferFrom.selector, from, to, amount)
-        );
+        (bool success, bytes memory returndata) = token.call(abi.encodeWithSelector(IERC20GhostBridge.transferFrom.selector, from, to, amount));
         require(success && (returndata.length == 0 || abi.decode(returndata, (bool))), "erc20_transfer_from_failed");
     }
 
     function _safeApprove(address token, address spender, uint256 amount) internal {
-        (bool success, bytes memory returndata) = token.call(
-            abi.encodeWithSelector(IERC20GhostBridge.approve.selector, spender, amount)
-        );
+        (bool success, bytes memory returndata) = token.call(abi.encodeWithSelector(IERC20GhostBridge.approve.selector, spender, amount));
         require(success && (returndata.length == 0 || abi.decode(returndata, (bool))), "erc20_approve_failed");
     }
 }
