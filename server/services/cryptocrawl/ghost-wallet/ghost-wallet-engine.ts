@@ -86,16 +86,14 @@ function receiptConfirmations(): number {
 }
 
 /**
- * No Ghost-Wallet-specific Railway switch is required. An explicit false remains
- * an operator kill switch; otherwise Ghost Wallet inherits only the already-
- * confirmed global zero-capital execution authority.
+ * Ghost Wallet is a separate business/execution lane. It never inherits the
+ * arbitrage live switch. Production activation requires its own explicit switch
+ * and confirmation, which can be set by deployment automation without manual UI
+ * work. NO_EXECUTION remains a global emergency stop.
  */
 function liveExecutionEnabled(): boolean {
-  if (process.env.GHOST_WALLET_LIVE_EXECUTION?.trim().toLowerCase() === 'false') return false;
-  return process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true'
-    && process.env.CRYPTO_ARBITRAGE_LIVE_CONFIRMATION === 'I_ACCEPT_LIVE_ORDER_RISK'
-    && process.env.ZERO_CAPITAL_ENABLE_EXECUTION === 'true'
-    && process.env.ZERO_CAPITAL_EXECUTION_CONFIRMATION === 'I_ACCEPT_ZERO_CAPITAL_EXECUTION_RISK'
+  return process.env.GHOST_WALLET_LIVE_EXECUTION?.trim().toLowerCase() === 'true'
+    && process.env.GHOST_WALLET_LIVE_CONFIRMATION === 'I_ACCEPT_GHOST_WALLET_ATOMIC_CREDIT_RISK'
     && process.env.NO_EXECUTION?.trim().toLowerCase() !== 'true';
 }
 
@@ -188,6 +186,7 @@ export class GhostWalletEngine {
       matchedIntentExecutionGasAuthority: 'provider_sponsored_zero_operator_cost_only',
       infrastructureGasAuthority: 'provider_sponsored_zero_operator_cost_only',
       publicVaultBrokerCallerPaysGas: true,
+      liveExecutionAuthority: 'ghost_wallet_dedicated_switch_only',
       liveExecutionEnabled: liveExecutionEnabled(),
     });
   }
