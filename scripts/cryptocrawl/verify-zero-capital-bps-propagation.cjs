@@ -8,6 +8,8 @@ const registry = read('server/services/cryptocrawl/discovery/measured-candidate-
 const compatibilityResource = read('server/services/cryptocrawl/integration/zero-capital-resource-wiring.ts');
 const routeAuthority = read('server/services/cryptocrawl/discovery/zero-capital-route-authority.ts');
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
+const routePreselection = read('server/services/cryptocrawl/discovery/zero-capital-route-preselection.ts');
+const recoveryObservability = read('server/services/cryptocrawl/integration/zero-capital-recovery-observability.ts');
 const providerReprice = read('server/services/cryptocrawl/integration/zero-capital-flash-provider-wiring.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
@@ -24,6 +26,7 @@ const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-c
 const configuredGasEconomics = read('server/services/cryptocrawl/discovery/configured-zero-capital-gas-economics.ts');
 const priceMesh = read('server/services/cryptocrawl/bridge/coingecko-client.ts');
 const routeQuoter = read('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts');
+const profitLadderNotional = read('server/services/cryptocrawl/governance/profit-ladder-notional-authority.ts');
 const payloadBuilder = read('server/services/cryptocrawl/execution/adapters/onchain-payload-builder.ts');
 const routePlanner = read('server/services/cryptocrawl/execution/adapters/autonomous-route-planner.ts');
 const receiverCapability = read('server/services/cryptocrawl/execution/adapters/flash-loan-receiver-capability.ts');
@@ -62,6 +65,13 @@ assert.match(discovery, /const selected = await repriceZeroCapitalProviderEconom
 assert.match(discovery, /eligibilityAuthority: 'canonical_provider_repricing_stage_only'/);
 assert.match(discovery, /executionAuthority: false/);
 assert.match(discovery, /synthetic_evidence:false/);
+
+// Receiver preparation is route-local setup, never a global admission lock.
+assert.match(discovery, /refreshReceiverFleetForCycle\(target\)/);
+assert.match(discovery, /globalReceiverFailureBlocksProviderAdmission: false/);
+assert.match(discovery, /chainLocalResourceProofRequired: true/);
+assert.doesNotMatch(discovery, /allowProviderAdmission/);
+assert.doesNotMatch(discovery, /providerRepricingSkipped: true/);
 
 assert.match(compatibilityResource, /discoveryAuthority: 'CanonicalZeroCapitalDiscovery'/);
 assert.match(compatibilityResource, /resourceAuthority: 'getProvenZeroCapitalGasFundingDecision'/);
@@ -106,6 +116,35 @@ assert.match(configuredGasEconomics, /funding\.mode === 'native' && funding\.pay
 assert.match(configuredGasEconomics, /estimatedGasCostInInputToken: gasUsdToTokenBaseUnits/);
 assert.match(configuredGasEconomics, /ZERO_CAPITAL_CONFIGURED_EXECUTION_GAS_UNITS/);
 assert.match(configuredGasEconomics, /ZERO_CAPITAL_CONFIGURED_GAS_SAFETY_MULTIPLIER/);
+
+// Profit Ladder may broaden quote-only measurement before execution readiness,
+// but it still cannot grant exposure or bypass StageManager.
+assert.match(profitLadderNotional, /getProfitLadderDiscoveryNotionalAuthority/);
+assert.match(profitLadderNotional, /authority: 'profit_ladder_quote_only_capital_curve'/);
+assert.match(profitLadderNotional, /quoteOnly: true/);
+assert.match(profitLadderNotional, /executionAuthority: false/);
+assert.match(profitLadderNotional, /canBroadenExposure: false/);
+assert.match(profitLadderNotional, /const maxNotionalUsd = rung\.aligned && rung\.stage\.canExecuteTrades/);
+assert.match(routeQuoter, /getProfitLadderDiscoveryNotionalAuthority/);
+assert.match(routeQuoter, /maximumNotionalUsd/);
+assert.doesNotMatch(routeQuoter, /stageCanExecute \? maximum : seedUsd/);
+assert.match(rescue, /getProfitLadderDiscoveryNotionalAuthority/);
+assert.doesNotMatch(rescue, /getProfitLadderNotionalAuthority/);
+
+// Quote evidence must be fresher than the opportunity it describes. Historical
+// ranking can persist longer, but cannot masquerade as current executable BPS.
+for (const field of ['recentGrossProfitBps', 'recentAllInCostBps', 'recentBreakEvenBps', 'recentBpsToBreakEven', 'recentNetProfitBps']) {
+  assert.ok(routePreselection.includes(field), `route preselection must preserve ${field}`);
+}
+assert.match(routePreselection, /ZERO_CAPITAL_ACTIONABLE_ROUTE_EVIDENCE_MAX_AGE_MS/);
+assert.match(routePreselection, /Math\.min\(routeTtlMs, configured\)/);
+assert.match(routePreselection, /actionableEvidenceFresh: actionableFresh/);
+assert.match(recoveryObservability, /completeBpsDecompositionPublished: true/);
+assert.match(recoveryObservability, /grossProfitBps: closestRoute\.recentGrossProfitBps/);
+assert.match(recoveryObservability, /allInCostBps: closestRoute\.recentAllInCostBps/);
+assert.match(recoveryObservability, /staleRouteEvidencePublishedAsActionable: false/);
+assert.match(routeQuoter, /ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS \|\| 1_000/);
+assert.match(routeQuoter, /ZERO_CAPITAL_ROUTE_TTL_MS \|\| 3_000/);
 
 // Live USD conversion is alternate-first. CoinGecko is last-resort redundancy for symbols
 // the parallel CMC/CoinCap/Coinbase mesh did not cover; no first-provider price is authoritative.
@@ -232,6 +271,11 @@ console.log(JSON.stringify({
   zeroCapitalBpsPropagation: 'verified_on_single_canonical_pipeline',
   canonicalRouteAuthority: true,
   canonicalDiscoveryOwnsFreshMeasurement: true,
+  quoteOnlyProfitLadderNotionalDiscovery: true,
+  executionNotionalAuthorityStillFailClosed: true,
+  globalReceiverFailureCannotBlockHealthyChainAdmission: true,
+  completeFreshBpsDecompositionVisible: true,
+  actionableBpsBoundedByRouteTtl: true,
   configuredRouteGasPricedBeforeBpsAdmission: true,
   configuredRouteZeroGasRequiresProvenZeroOperatorCost: true,
   livePriceMeshAlternateFirstCoinGeckoLastResort: true,
