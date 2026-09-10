@@ -20,6 +20,8 @@ const MORPHO_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlMorphoFlashLoanRece
 const MORPHO_CONTRACT_NAME = 'CryptocrawlMorphoFlashLoanReceiver';
 const DUAL_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlAaveBalancerDualFlashLoanReceiver.sol';
 const DUAL_CONTRACT_NAME = 'CryptocrawlAaveBalancerDualFlashLoanReceiver';
+const GHOST_WALLET_SOURCE_NAME = 'contracts/cryptocrawl/CryptocrawlGhostWalletIntermediary.sol';
+const GHOST_WALLET_CONTRACT_NAME = 'CryptocrawlGhostWalletIntermediary';
 
 function runProcess(command: string, args: string[], input: string): Promise<string> {
   return new Promise((resolvePromise, reject) => {
@@ -132,6 +134,10 @@ export async function compileSushiV3FlashReceiver(): Promise<ReceiverArtifact> {
   );
 }
 
+export async function compileGhostWalletIntermediary(): Promise<ReceiverArtifact> {
+  return compileReceiverContract(GHOST_WALLET_SOURCE_NAME, GHOST_WALLET_CONTRACT_NAME);
+}
+
 async function writeArtifact(artifact: ReceiverArtifact, outputPath: string): Promise<string> {
   const destination = resolve(process.cwd(), outputPath);
   await mkdir(dirname(destination), { recursive: true });
@@ -181,6 +187,13 @@ export async function writeSushiV3FlashReceiverArtifact(outputPath?: string): Pr
   );
 }
 
+export async function writeGhostWalletIntermediaryArtifact(outputPath?: string): Promise<string> {
+  return writeArtifact(
+    await compileGhostWalletIntermediary(),
+    outputPath || 'artifacts/cryptocrawl/CryptocrawlGhostWalletIntermediary.json',
+  );
+}
+
 const isDirectInvocation = /(?:^|\/)compile-flashloan-receiver\.(?:ts|js)$/.test(process.argv[1] || '');
 if (isDirectInvocation) {
   Promise.all([
@@ -189,13 +202,15 @@ if (isDirectInvocation) {
     writeAaveV3FlashLoanReceiverArtifact(),
     writeMorphoBlueFlashLoanReceiverArtifact(),
     writeAaveBalancerDualFlashLoanReceiverArtifact(),
+    writeGhostWalletIntermediaryArtifact(),
   ])
-    .then(([balancerPath, compositePath, aavePath, morphoPath, dualPath]) => {
+    .then(([balancerPath, compositePath, aavePath, morphoPath, dualPath, ghostWalletPath]) => {
       console.log(`Compiled ${CONTRACT_NAME} artifact: ${balancerPath}`);
       console.log(`Compiled ${COMPOSITE_CONTRACT_NAME} artifact: ${compositePath}`);
       console.log(`Compiled ${AAVE_CONTRACT_NAME} artifact: ${aavePath}`);
       console.log(`Compiled ${MORPHO_CONTRACT_NAME} artifact: ${morphoPath}`);
       console.log(`Compiled ${DUAL_CONTRACT_NAME} artifact: ${dualPath}`);
+      console.log(`Compiled ${GHOST_WALLET_CONTRACT_NAME} artifact: ${ghostWalletPath}`);
     })
     .catch(error => {
       console.error('[compile-flashloan-receiver] failed:', error instanceof Error ? error.message : String(error));
