@@ -12,7 +12,6 @@
 
 import { ethers, Wallet, providers } from 'ethers';
 import logger from '../../../logger.js';
-import { alchemyIntegration } from '../capital-free/alchemy-integration.js';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../api/blockchain-providers.js';
 import {
   loadConfiguredZeroCapitalRoutes,
@@ -32,6 +31,7 @@ import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 import { getProfitEstimates, type ProfitEstimate } from '../intelligence/profit-estimator.js';
 import { enrichConfiguredZeroCapitalGasEconomics } from '../discovery/configured-zero-capital-gas-economics.js';
 import { runZeroCapitalProfitabilityRescueV2 } from '../integration/zero-capital-profitability-rescue-v2.js';
+import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import { assertConfiguredWalletAddress, normalizePrivateKey, resolveConfiguredWalletAddress, walletFromPrivateKey } from './wallet-identity.js';
 import { loadDynamicChainRegistry, type DynamicChainConfig } from './dynamic-chain-registry.js';
@@ -256,6 +256,10 @@ export class AutonomousZeroCapitalEngine {
       this.dynamicChainConfigs.set(chain, dynamicEvmOverrides.get(chain) || fallback);
     }
 
+    // Register the existing free/configured provider mesh before zero-capital
+    // selects any live chain provider. Alchemy is not a bootstrap, failover, or
+    // paid telemetry dependency for this engine.
+    await ensureDynamicRpcProviderWiring();
     await multiProviderRpcManager.initialize(chains as RpcSupportedChain[]);
     for (const chain of chains) {
       try {
@@ -295,10 +299,6 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
-    const alchemyNetworks = (['ethereum', 'polygon', 'arbitrum', 'optimism'] as const)
-      .filter(chain => this.providers.has(chain));
-    if (alchemyNetworks.length > 0) await alchemyIntegration.start([...alchemyNetworks]);
-
     await this.refreshWalletResources();
     this.state.receiverRegistry = this.receiverManager.getRecords();
     this.state.isRunning = true;
@@ -308,6 +308,8 @@ export class AutonomousZeroCapitalEngine {
       component: 'ZeroCapitalEngine',
       connectedChains: Array.from(this.providers.keys()),
       explicitConfiguredRoutes: this.configuredRoutes.length,
+      providerAuthority: 'multiProviderRpcManager_free_and_configured_mesh',
+      alchemyOperationalAuthority: false,
       routeAuthority: 'zero_capital_route_authority',
       discoveryAuthority: 'CanonicalZeroCapitalDiscovery',
       gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
@@ -567,6 +569,8 @@ export class AutonomousZeroCapitalEngine {
       gasFundingDecisions: state.gasFundingDecisions,
       activeExecutions: state.activeExecutions,
       maxConcurrentExecutions: state.maxConcurrentExecutions,
+      providerAuthority: 'multiProviderRpcManager_free_and_configured_mesh',
+      alchemyOperationalAuthority: false,
       routeAuthority: 'zero_capital_route_authority',
       discoveryAuthority: 'CanonicalZeroCapitalDiscovery',
       gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
