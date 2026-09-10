@@ -174,25 +174,33 @@ class GhostWalletUltraWorker {
     await ensureCryptocrawlOverflowRuntimeSchema();
     await ghostWalletEngine.start();
     this.running = true;
-    this.unsubscribeLocalWake = ghostWalletWorkSignal.onWake(reason => this.requestDrain(reason));
-    await this.connectListener();
-    await ghostWalletChainEvents.start();
-    await syncMeasuredGhostWalletVenues(ghostWalletEngine.getMeasuredCapitalQuotes());
-    this.requestDrain('startup_backlog');
+    try {
+      this.unsubscribeLocalWake = ghostWalletWorkSignal.onWake(reason => this.requestDrain(reason));
+      await this.connectListener();
+      await ghostWalletChainEvents.start();
+      await syncMeasuredGhostWalletVenues(ghostWalletEngine.getMeasuredCapitalQuotes());
+      this.requestDrain('startup_backlog');
 
-    logger.info('[GhostWalletUltra] Dedicated event-driven Ultra Worker started', {
-      component: 'GhostWalletUltraWorker',
-      workerId: this.workerId,
-      periodicWorkPolling: false,
-      wakeSources: ['postgres_notify', 'local_enqueue', 'chain_settlement_websocket', 'startup_backlog', 'per_job_retry'],
-      persistenceAuthority: 'overflow_private_cryptocrawler_ghost_wallet_work',
-      parallelCapacity: parallelCapacity(),
-      concurrencyPolicy: 'independent_lanes_parallel_same_signer_chain_serialized',
-      profitLadderAuthority: false,
-      arbitrageExecutionAuthority: false,
-      arbitrageTreasuryAuthority: false,
-      questionAskingLoop: false,
-    });
+      logger.info('[GhostWalletUltra] Dedicated event-driven Ultra Worker started', {
+        component: 'GhostWalletUltraWorker',
+        workerId: this.workerId,
+        periodicWorkPolling: false,
+        wakeSources: ['postgres_notify', 'local_enqueue', 'chain_settlement_websocket', 'startup_backlog', 'per_job_retry'],
+        persistenceAuthority: 'overflow_private_cryptocrawler_ghost_wallet_work',
+        parallelCapacity: parallelCapacity(),
+        concurrencyPolicy: 'independent_lanes_parallel_same_signer_chain_serialized',
+        profitLadderAuthority: false,
+        arbitrageExecutionAuthority: false,
+        arbitrageTreasuryAuthority: false,
+        questionAskingLoop: false,
+      });
+    } catch (error) {
+      // Startup is transactional: a partial listener/stream start must never leave
+      // `running=true`, because the canonical runtime retries degraded components.
+      // Tear down every partial resource so the next retry performs a real start.
+      await this.stop().catch(() => undefined);
+      throw error;
+    }
   }
 
   async stop(): Promise<void> {
