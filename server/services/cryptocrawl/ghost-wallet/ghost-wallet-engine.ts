@@ -1,7 +1,8 @@
-import { Contract, providers } from 'ethers';
+import { Contract, providers, utils, type Wallet } from 'ethers';
 import logger from '../../../logger.js';
 import { zeroCapitalEngine } from '../core/zero-capital-engine.js';
 import { resolvePrimaryProfitPayoutAddress } from '../core/wallet-identity.js';
+import { executeSystemOwnedNativeTransaction } from '../execution/system-owned-native-transaction.js';
 import {
   composeGhostWalletCapital,
   selectLiabilityCapacity,
@@ -22,6 +23,7 @@ import {
 } from './onchain-capital-sources.js';
 
 const ERC20_BALANCE_ABI = ['function balanceOf(address account) view returns (uint256)'];
+const INTERMEDIARY_IDENTITY_ABI = ['function profitRecipient() view returns (address)'];
 
 export interface GhostWalletEngineStatus {
   running: boolean;
@@ -127,6 +129,8 @@ export class GhostWalletEngine {
       profitRouting: '100_percent_realized_net_direct_to_canonical_wallet',
       profitLadderAuthority: false,
       arbitrageScheduleAuthority: false,
+      personalGasFallbackAllowed: false,
+      publicVaultBrokerCallerPaysGas: true,
       liveExecutionEnabled: liveExecutionEnabled(),
     });
   }
@@ -237,12 +241,27 @@ export class GhostWalletEngine {
     pair: GhostWalletMatchedIntentPair;
     intermediary: string;
     provider: providers.JsonRpcProvider;
-    wallet: any;
+    wallet: Wallet;
     profitRecipient: string;
   }): Promise<void> {
     const { pair, intermediary, provider, wallet, profitRecipient } = input;
     if (pair.expiresAt <= Date.now()) return;
     this.executionsAttempted += 1;
+
+    const intermediaryContract = new Contract(intermediary, INTERMEDIARY_IDENTITY_ABI, provider);
+    const boundProfitRecipient = utils.getAddress(String(await intermediaryContract.profitRecipient()));
+    if (boundProfitRecipient.toLowerCase() !== profitRecipient.toLowerCase()) {
+      this.executionsFailed += 1;
+      logger.error('[GhostWallet] Intermediary payout binding disagrees with canonical wallet; execution withheld', {
+        component: 'GhostWalletEngine',
+        chain: pair.chain,
+        intermediary,
+        configuredPayout: boundProfitRecipient,
+        canonicalPayout: profitRecipient,
+        executionAuthorityGranted: false,
+      });
+      return;
+    }
 
     const tokenA = new Contract(pair.intentA.buyToken, ERC20_BALANCE_ABI, provider);
     const tokenB = new Contract(pair.intentB.buyToken, ERC20_BALANCE_ABI, provider);
@@ -255,17 +274,21 @@ export class GhostWalletEngine {
     try {
       await provider.call({ from: wallet.address, to: prepared.to, data: prepared.data, value: prepared.value });
       const gas = await provider.estimateGas({ from: wallet.address, to: prepared.to, data: prepared.data, value: prepared.value });
-      const feeData = await provider.getFeeData();
-      const tx = await wallet.sendTransaction({
-        to: prepared.to,
-        data: prepared.data,
-        value: prepared.value,
-        gasLimit: gas.mul(120).div(100),
-        ...(feeData.maxFeePerGas && feeData.maxPriorityFeePerGas
-          ? { maxFeePerGas: feeData.maxFeePerGas, maxPriorityFeePerGas: feeData.maxPriorityFeePerGas }
-          : feeData.gasPrice ? { gasPrice: feeData.gasPrice } : {}),
+      const executed = await executeSystemOwnedNativeTransaction({
+        chain: pair.chain,
+        wallet,
+        provider,
+        idempotencyKey: `ghost-wallet:intent:${pair.pairId}`,
+        purpose: 'ghost_wallet_matched_intent_settlement',
+        transaction: {
+          to: prepared.to,
+          data: prepared.data,
+          value: prepared.value,
+          gasLimit: gas.mul(120).div(100),
+        },
+        confirmations: receiptConfirmations(),
       });
-      const receipt = await tx.wait(receiptConfirmations());
+      const receipt = executed.receipt;
       if (!receipt || receipt.status !== 1) throw new Error('Ghost Wallet matched-intent transaction did not settle successfully');
 
       const [afterA, afterB] = await Promise.all([
@@ -292,6 +315,8 @@ export class GhostWalletEngine {
         repaymentPolicy: 'same_transaction_or_revert',
         profitRouting: '100_percent_direct_to_wallet',
         profitLadderAuthority: false,
+        personalGasFallbackAllowed: false,
+        systemOwnedNativeGasSpentWei: executed.actualSpentWei.toString(),
         arbitrageExecutionAffected: false,
       });
     } catch (error) {
@@ -303,6 +328,7 @@ export class GhostWalletEngine {
         error: error instanceof Error ? error.message : String(error),
         intentStateConsumed: false,
         arbitrageExecutionAffected: false,
+        personalGasFallbackAllowed: false,
         profitLadderAuthority: false,
       });
     }
