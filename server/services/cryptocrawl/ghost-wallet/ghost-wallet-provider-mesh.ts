@@ -106,9 +106,17 @@ function timeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> 
   });
 }
 
+function providerHealthTtlMs(): number {
+  const configured = Number(process.env.GHOST_WALLET_PROVIDER_HEALTH_TTL_MS || 15_000);
+  return Number.isFinite(configured)
+    ? Math.max(2_000, Math.min(120_000, Math.trunc(configured)))
+    : 15_000;
+}
+
 class GhostWalletProviderMesh {
   private readonly healthy = new Map<GhostWalletChain, Candidate[]>();
   private readonly initialized = new Set<GhostWalletChain>();
+  private readonly lastProbeAt = new Map<GhostWalletChain, number>();
   private readonly inFlight = new Map<GhostWalletChain, Promise<void>>();
 
   async initialize(chains: GhostWalletChain[] = Object.keys(CHAIN_IDS) as GhostWalletChain[]): Promise<void> {
@@ -128,7 +136,8 @@ class GhostWalletProviderMesh {
   }
 
   async ensureChain(chain: GhostWalletChain): Promise<void> {
-    if (this.initialized.has(chain)) return;
+    const lastProbe = this.lastProbeAt.get(chain) || 0;
+    if (this.initialized.has(chain) && Date.now() - lastProbe < providerHealthTtlMs()) return;
     const existing = this.inFlight.get(chain);
     if (existing) return existing;
     const work = this.probeChain(chain).finally(() => this.inFlight.delete(chain));
@@ -157,16 +166,20 @@ class GhostWalletProviderMesh {
     if (healthy.length === 0) {
       this.healthy.delete(chain);
       this.initialized.delete(chain);
+      this.lastProbeAt.delete(chain);
       throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
     }
     this.healthy.set(chain, healthy);
     this.initialized.add(chain);
+    this.lastProbeAt.set(chain, Date.now());
     logger.info('[GhostWalletProviderMesh] Alchemy-free RPC redundancy ready', {
       component: 'GhostWalletProviderMesh',
       chain,
       selected: healthy[0].label,
       healthyProviders: healthy.map(row => ({ label: row.label, latencyMs: row.latencyMs })),
       alchemyEligible: false,
+      requestDrivenHealthRefresh: true,
+      healthTtlMs: providerHealthTtlMs(),
       periodicHealthPolling: false,
     });
   }
@@ -199,6 +212,8 @@ class GhostWalletProviderMesh {
       chain,
       selected: rows[0]?.label || null,
       redundancy: rows.length,
+      lastProbeAt: this.lastProbeAt.get(chain) || null,
+      healthTtlMs: providerHealthTtlMs(),
       alchemy: false,
       websocketCandidates: ghostWalletWebSocketUrls(chain).length,
     }));
@@ -212,6 +227,7 @@ export const GHOST_WALLET_PROVIDER_POLICY = {
   configuredRailwayRpcPreferred: true,
   independentPublicFallbacks: true,
   parallelInitialProbe: true,
+  requestDrivenHealthRefresh: true,
   routeLocalFailure: true,
   periodicHealthPolling: false,
 } as const;
