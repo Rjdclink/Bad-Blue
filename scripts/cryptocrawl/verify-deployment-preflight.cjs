@@ -21,6 +21,7 @@ require('./verify-bps-private-refund-wave4.cjs');
 require('./verify-bps-provider-feedback-wave5.cjs');
 require('./verify-effective-gas-economics.cjs');
 require('./verify-atomic-zero-capital-strategy-coverage.cjs');
+require('./verify-ghost-wallet-capital-fabric.cjs');
 require('./verify-kalshi-bps-integration.cjs');
 require('./verify-kalshi-coinbase-funding-integration.cjs');
 require('./verify-kalshi-negative-funding-inverse.cjs');
@@ -75,4 +76,4 @@ require('./verify-first-pass-route-measurability.cjs');
 require('./verify-canonical-refresh-capability-authority.cjs');
 require('./verify-bps-zero-capital-event-handoff.cjs');
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, and single zero-capital route authority passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, Ghost Wallet atomic repayment/direct payout isolation, five-source capital fabric, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, and single zero-capital route authority passed; continuing to downstream prebuild/build');
