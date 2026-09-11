@@ -1,4 +1,5 @@
 import { Contract, BigNumber, ethers, providers } from 'ethers';
+import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../../api/blockchain-providers.js';
 import type { SupportedExecutionChain } from './onchain-payload-builder.js';
 import { resolveSponsoredReceiverVault } from './sponsored-receiver-manager.js';
 
@@ -346,23 +347,107 @@ function withProviderMeasurementTimeout<T>(promise: Promise<T>, timeoutMs: numbe
   });
 }
 
+function providerUrl(provider: providers.Provider): string | null {
+  const url = (provider as providers.JsonRpcProvider & { connection?: { url?: string } }).connection?.url;
+  return typeof url === 'string' && url.trim() ? url.trim() : null;
+}
+
+function isCanonicalManagedProvider(chain: SupportedExecutionChain, provider: providers.Provider): boolean {
+  if (chain === 'europa') return false;
+  const url = providerUrl(provider);
+  if (!url) return false;
+  return multiProviderRpcManager.getHealth(chain as RpcSupportedChain).some(row => row.httpUrl === url);
+}
+
+async function measureWithRouteLocalFailover(
+  input: { chain: SupportedExecutionChain; provider: providers.Provider; asset: string },
+  kind: FlashLoanProviderKind,
+  measure: (provider: providers.Provider) => Promise<FlashLoanProviderEconomics | null>,
+  timeoutMs: number,
+): Promise<FlashLoanProviderEconomics | null> {
+  try {
+    return await withProviderMeasurementTimeout(measure(input.provider), timeoutMs, kind);
+  } catch (primaryError) {
+    if (!isCanonicalManagedProvider(input.chain, input.provider)) throw primaryError;
+    try {
+      const { result } = await multiProviderRpcManager.execute(
+        input.chain as RpcSupportedChain,
+        'contract_calls',
+        rpc => withProviderMeasurementTimeout(measure(rpc), timeoutMs, kind),
+      );
+      return result;
+    } catch (failoverError) {
+      const primary = primaryError instanceof Error ? primaryError.message : String(primaryError);
+      const failover = failoverError instanceof Error ? failoverError.message : String(failoverError);
+      throw new Error(`${kind} flash-loan evidence failed on the current RPC and canonical route-local failover: primary=${primary}; failover=${failover}`);
+    }
+  }
+}
+
 export async function measureFlashLoanProviders(input: {
   chain: SupportedExecutionChain;
   provider: providers.Provider;
   asset: string;
 }): Promise<FlashLoanProviderEconomics[]> {
   const timeoutMs = providerMeasurementTimeoutMs();
-  // Each provider is independently bounded. A silent RPC on one protocol must not
-  // prevent measured evidence from healthy providers from reaching canonical
-  // repricing. Timed-out evidence is omitted, never guessed or synthesized.
-  const settled = await Promise.allSettled([
-    withProviderMeasurementTimeout(measureBalancerFlashLoanEconomics(input), timeoutMs, 'balancer_v2'),
-    withProviderMeasurementTimeout(measureAaveV3FlashLoanEconomics(input), timeoutMs, 'aave_v3'),
-    withProviderMeasurementTimeout(measureMorphoBlueFlashLoanEconomics(input), timeoutMs, 'morpho_blue'),
-  ]);
-  return settled.flatMap(result =>
+  const attempts: Array<{ kind: FlashLoanProviderKind; promise: Promise<FlashLoanProviderEconomics | null> }> = [];
+
+  if (resolveSponsoredReceiverVault(input.chain)) {
+    attempts.push({
+      kind: 'balancer_v2',
+      promise: measureWithRouteLocalFailover(
+        input,
+        'balancer_v2',
+        provider => measureBalancerFlashLoanEconomics({ ...input, provider }),
+        timeoutMs,
+      ),
+    });
+  }
+  if (resolveAaveV3Pool(input.chain)) {
+    attempts.push({
+      kind: 'aave_v3',
+      promise: measureWithRouteLocalFailover(
+        input,
+        'aave_v3',
+        provider => measureAaveV3FlashLoanEconomics({ ...input, provider }),
+        timeoutMs,
+      ),
+    });
+  }
+  if (resolveMorphoBlue(input.chain)) {
+    attempts.push({
+      kind: 'morpho_blue',
+      promise: measureWithRouteLocalFailover(
+        input,
+        'morpho_blue',
+        provider => measureMorphoBlueFlashLoanEconomics({ ...input, provider }),
+        timeoutMs,
+      ),
+    });
+  }
+
+  if (attempts.length === 0) return [];
+
+  // Unsupported providers are omitted before work begins. A configured protocol
+  // may truthfully return incomplete/zero-liquidity evidence, which must remain a
+  // fulfilled measurement. Only transport/contract-call failures reject. If every
+  // applicable protocol rejects, propagate failure so callers do not cache an empty
+  // batch as if it were valid market evidence.
+  const settled = await Promise.allSettled(attempts.map(attempt => attempt.promise));
+  const evidence = settled.flatMap(result =>
     result.status === 'fulfilled' && result.value ? [result.value] : [],
   );
+  if (evidence.length === 0 && settled.every(result => result.status === 'rejected')) {
+    const failures = settled.map((result, index) => {
+      const kind = attempts[index].kind;
+      const reason = result.status === 'rejected'
+        ? result.reason instanceof Error ? result.reason.message : String(result.reason)
+        : 'no evidence';
+      return `${kind}:${reason}`;
+    });
+    throw new Error(`All applicable flash-loan provider measurements failed for ${input.chain}: ${failures.join(' | ')}`);
+  }
+  return evidence;
 }
 
 export function selectMeasuredFlashLoanProvider(
