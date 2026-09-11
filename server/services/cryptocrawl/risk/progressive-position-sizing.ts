@@ -50,11 +50,17 @@ export interface PositionSizingContext {
 }
 
 /**
- * Position sizing has one execution authority: the current Profit Ladder rung.
- * This helper may report hard readiness failures, but it may not create a second
- * confidence/history/liquidity/volatility/strategy cap beneath that rung.
- * Those measured signals remain inputs to discovery, BPS economics, ranking and
- * Monte Carlo; they cannot independently strand a deterministic-positive route.
+ * Position sizing preserves two distinct capital authorities:
+ *
+ * - self-funded exposure is bounded by the current Profit Ladder capital rung;
+ * - same-transaction zero-capital principal is temporary external liquidity and
+ *   is NOT operator capital, retained market capital, or realized profit.
+ *
+ * The Profit Ladder therefore cannot cap the flash/atomic principal required to
+ * produce a permitted amount of realized profit. Zero-capital notional remains
+ * bounded by route/provider liquidity and exact all-in economics upstream, while
+ * this gate continues to enforce execution stage, provider health, circuit
+ * breakers, drawdown, and strictly positive all-in net profit.
  */
 export function calculateProgressivePositionSize(
   request: PositionSizingRequest,
@@ -62,35 +68,50 @@ export function calculateProgressivePositionSize(
 ): PositionSizingDecision {
   const { stage, state } = context;
   const ladderMaxNotionalUsd = getProfitLadderNotionalAuthority().maxNotionalUsd;
+  const zeroCapital = request.zeroCapitalAvailable === true;
+  const reportedCapacityUsd = zeroCapital
+    ? Math.max(0, request.requestedNotionalUsd)
+    : Math.max(0, ladderMaxNotionalUsd);
 
   if (!Number.isFinite(request.requestedNotionalUsd) || request.requestedNotionalUsd <= 0) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: Math.max(0, ladderMaxNotionalUsd), reasons: ['Requested notional must be positive'] };
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: reportedCapacityUsd, reasons: ['Requested notional must be positive'] };
   }
   if (!stage.canExecuteTrades) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: Math.max(0, ladderMaxNotionalUsd), reasons: [`${stage.stageName} does not permit execution`] };
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: reportedCapacityUsd, reasons: [`${stage.stageName} does not permit execution`] };
   }
   if (!request.providerHealthy) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: Math.max(0, ladderMaxNotionalUsd), reasons: ['Required chain/provider health is not verified'] };
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: reportedCapacityUsd, reasons: ['Required chain/provider health is not verified'] };
   }
   if (context.circuitBreakersTripped) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: Math.max(0, ladderMaxNotionalUsd), reasons: ['A canonical risk circuit breaker is tripped'] };
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: reportedCapacityUsd, reasons: ['A canonical risk circuit breaker is tripped'] };
   }
   if (state.currentDrawdownPercent > stage.maxDrawdownPercent) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: Math.max(0, ladderMaxNotionalUsd), reasons: ['Current drawdown exceeds the canonical stage safety cap'] };
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: reportedCapacityUsd, reasons: ['Current drawdown exceeds the canonical stage safety cap'] };
   }
   if (!isStrictlyPositiveAllInNetProfit(request.expectedNetProfitUsd) || !Number.isFinite(request.expectedCostUsd) || request.expectedCostUsd < 0) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: Math.max(0, ladderMaxNotionalUsd), reasons: ['Expected all-in net profitability is not positive with measured non-negative costs'] };
-  }
-  if (!(ladderMaxNotionalUsd > 0)) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['Profit Ladder does not currently authorize positive execution notional'] };
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: reportedCapacityUsd, reasons: ['Expected all-in net profitability is not positive with measured non-negative costs'] };
   }
 
-  const capitalCapacityUsd = request.zeroCapitalAvailable
-    ? ladderMaxNotionalUsd
-    : Math.max(0, request.availableCapitalUsd);
+  if (zeroCapital) {
+    return {
+      approved: true,
+      proposedNotionalUsd: request.requestedNotionalUsd,
+      maxPermittedNotionalUsd: request.requestedNotionalUsd,
+      reasons: [
+        'Temporary atomic principal is not capped by the Profit Ladder capital rung',
+        'Provider liquidity, route capacity, repayment, all-in economics, and canonical safety gates remain authoritative',
+      ],
+    };
+  }
+
+  if (!(ladderMaxNotionalUsd > 0)) {
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['Profit Ladder does not currently authorize positive self-funded execution notional'] };
+  }
+
+  const capitalCapacityUsd = Math.max(0, request.availableCapitalUsd);
   const maxPermittedNotionalUsd = Math.min(ladderMaxNotionalUsd, capitalCapacityUsd);
   if (!(maxPermittedNotionalUsd > 0)) {
-    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['No verified deployable capital or implemented zero-capital capacity is available'] };
+    return { approved: false, proposedNotionalUsd: 0, maxPermittedNotionalUsd: 0, reasons: ['No verified deployable self-funded capital is available'] };
   }
 
   const proposedNotionalUsd = Math.min(request.requestedNotionalUsd, maxPermittedNotionalUsd);
@@ -99,7 +120,7 @@ export function calculateProgressivePositionSize(
       approved: false,
       proposedNotionalUsd,
       maxPermittedNotionalUsd,
-      reasons: ['Requested route exceeds the single canonical Profit Ladder/capital ceiling and must be quoted at the permitted notional'],
+      reasons: ['Requested self-funded route exceeds the canonical Profit Ladder/capital ceiling and must be quoted at the permitted notional'],
     };
   }
 
@@ -108,7 +129,7 @@ export function calculateProgressivePositionSize(
     proposedNotionalUsd: request.requestedNotionalUsd,
     maxPermittedNotionalUsd,
     reasons: [
-      'Requested exposure is within the single canonical Profit Ladder/capital ceiling',
+      'Requested self-funded exposure is within the canonical Profit Ladder/capital ceiling',
       'Confidence, ranking, liquidity, volatility and strategy preferences are advisory and do not own execution permission',
     ],
   };
