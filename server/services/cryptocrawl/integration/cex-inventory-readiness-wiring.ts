@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import { getActiveExecutableQuoteVenues } from '../discovery/venue-capability-registry.js';
 import { cexInventoryLedger, type InventoryVenue } from '../execution/cex-inventory-ledger.js';
 import { createProductionCexSettlementAdapters, type CexSettlementAdapter, type ExecutableCexVenue } from '../execution/cex-settlement.js';
+import { reconcileSelfFundedCexBootstraps } from '../execution/self-funded-cex-bootstrap.js';
 import { stageManager } from '../governance/stage-management.js';
 import { buildExecutionReadinessProfitabilityPlan } from '../optimization/execution-readiness-profitability-policy.js';
 
@@ -116,6 +117,20 @@ async function refreshOnce(): Promise<void> {
     }
   }));
 
+  // Bootstrap deposits settle on exchange time, not quote time. Reconcile them in
+  // this existing background inventory lane so fresh opportunities never wait on
+  // deposit confirmation, while completed placements become visible on the next
+  // authenticated balance cycle. A bootstrap reconciliation failure is local and
+  // cannot suppress ordinary venue balance hydration.
+  await reconcileSelfFundedCexBootstraps().catch(error => {
+    logger.warn('[CexInventoryReadiness] SELF_FUNDED CEX bootstrap reconciliation degraded locally', {
+      component: 'CexInventoryReadinessWiring',
+      error: error instanceof Error ? error.message : String(error),
+      freshQuotePathBlocked: false,
+      ordinaryInventoryHydrationChanged: false,
+    });
+  });
+
   const metrics = currentMetrics();
   const next = nextRefreshIntervalMs();
   latest = {
@@ -154,6 +169,7 @@ async function refreshOnce(): Promise<void> {
     inventoryFreshnessShare: latest.inventoryFreshnessShare,
     nextRefreshMs: latest.nextRefreshMs,
     proactiveHydration: true,
+    selfFundedBootstrapReconciliation: 'background_same_inventory_lane',
     zeroInventoryBypass: false,
     executionAuthority: false,
     syntheticBalancesAllowed: false,
