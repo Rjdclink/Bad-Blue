@@ -178,12 +178,12 @@ AS $$
 DECLARE
   bridge_row public.cryptocrawler_cex_bootstrap_bridges%ROWTYPE;
   reservation_row public.cryptocrawler_onchain_inventory_reservations%ROWTYPE;
+  gas_spend record;
+  gas_spend_id_text text;
   lot_row record;
   remaining numeric(78,0);
   take_amount numeric(78,0);
   consumed jsonb := '[]'::jsonb;
-  system_gas_authority boolean;
-  system_gas_settled boolean;
 BEGIN
   IF NEW.destination_kind <> 'cex' OR NEW.status <> 'PLACED' OR OLD.status = 'PLACED' THEN
     RETURN NEW;
@@ -200,13 +200,29 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  system_gas_authority := COALESCE((NEW.placement_evidence->>'systemNativeGasAuthority')::boolean, false);
-  system_gas_settled := COALESCE((NEW.placement_evidence->>'systemNativeGasSettled')::boolean, false);
-  IF system_gas_authority IS DISTINCT FROM true OR system_gas_settled IS DISTINCT FROM true THEN
-    RAISE EXCEPTION 'CEX bootstrap allocation % cannot become owned without settled provenance-backed native gas', NEW.allocation_id;
-  END IF;
   IF COALESCE((NEW.placement_evidence->>'rawWalletNativeBalanceAuthority')::boolean, false)=true THEN
     RAISE EXCEPTION 'CEX bootstrap allocation % attempted to use raw wallet native balance as spend authority', NEW.allocation_id;
+  END IF;
+  gas_spend_id_text := NULLIF(trim(COALESCE(NEW.placement_evidence->>'systemNativeGasSpendId','')), '');
+  IF gas_spend_id_text IS NULL OR gas_spend_id_text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' THEN
+    RAISE EXCEPTION 'CEX bootstrap allocation % has no valid provenance-backed gas spend identity', NEW.allocation_id;
+  END IF;
+
+  SELECT status, scope, chain, wallet, transaction_hash, actual_spent_wei
+  INTO gas_spend
+  FROM public.cryptocrawler_system_native_gas_spends
+  WHERE spend_id=gas_spend_id_text::uuid
+  FOR UPDATE;
+  IF NOT FOUND
+     OR gas_spend.status <> 'SETTLED'
+     OR lower(COALESCE(gas_spend.transaction_hash,'')) <> lower(COALESCE(NEW.placement_reference,''))
+     OR lower(COALESCE(gas_spend.chain,'')) <> lower(COALESCE(NEW.source_chain,''))
+     OR lower(COALESCE(gas_spend.wallet,'')) <> lower(COALESCE(NEW.source_recipient,''))
+     OR COALESCE(gas_spend.actual_spent_wei, -1) < 0 THEN
+    RAISE EXCEPTION 'CEX bootstrap allocation % lacks terminal canonical native-gas settlement', NEW.allocation_id;
+  END IF;
+  IF NULLIF(trim(COALESCE(NEW.placement_evidence->>'systemNativeGasScope','')), '') IS DISTINCT FROM gas_spend.scope THEN
+    RAISE EXCEPTION 'CEX bootstrap allocation % gas scope does not match canonical spend ledger', NEW.allocation_id;
   END IF;
 
   SELECT * INTO reservation_row
