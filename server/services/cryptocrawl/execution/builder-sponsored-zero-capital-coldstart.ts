@@ -1,6 +1,6 @@
 import { BigNumber, Wallet, ethers, providers } from 'ethers';
 import logger from '../../../logger.js';
-import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { isStrictlyPositiveProfitBaseUnits, minimumPositiveProfitBaseUnits } from '../governance/profit-admission-authority.js';
 import { buildFlashLoanExecutionPlanFromOpportunity } from './adapters/autonomous-route-planner.js';
@@ -177,7 +177,7 @@ function gasUpperBoundWei(maxFeePerGas: BigNumber, dual: boolean): bigint {
 }
 
 async function liveStableUsd(symbol: 'USDC' | 'USDT'): Promise<number> {
-  const prices = await coinGeckoPriceClient.getLiveSymbolPrices([symbol]);
+  const prices = await livePriceMesh.getLiveSymbolPrices([symbol]);
   const value = prices.get(symbol);
   if (!Number.isFinite(value) || Number(value) <= 0) throw new Error(`${symbol}/USD live price unavailable for builder residual economics`);
   return Number(value);
