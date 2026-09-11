@@ -55,16 +55,9 @@ function balanceCacheMs(): number {
 }
 
 function inventoryRetryDelaysMs(): number[] {
-  const configured = (process.env.CRYPTOCRAWL_CEX_INVENTORY_RETRY_DELAYS_MS || '5000,10000,20000')
-    .split(',')
-    .map(value => Number(value.trim()))
-    .filter(value => Number.isFinite(value) && value >= 0)
-    .slice(0, 3);
-  return configured.length > 0 ? configured : [5_000, 10_000, 20_000];
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  // Fresh profitable quotes must never wait through retry/backoff sleeps. Any
+  // retry policy belongs in background inventory/readiness reconciliation.
+  return [];
 }
 
 async function getFreshAuthenticatedBalances(
@@ -78,20 +71,13 @@ async function getFreshAuthenticatedBalances(
   if (existing) return { ...(await existing) };
 
   const work = (async () => {
-    const delays = inventoryRetryDelaysMs();
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= delays.length; attempt++) {
-      try {
-        const balances = await adapter.getBalances();
-        balanceCache.set(venue, { expiresAt: Date.now() + balanceCacheMs(), balances: { ...balances } });
-        return balances;
-      } catch (error) {
-        lastError = error;
-        if (attempt >= delays.length) break;
-        await sleep(delays[attempt]);
-      }
+    try {
+      const balances = await adapter.getBalances();
+      balanceCache.set(venue, { expiresAt: Date.now() + balanceCacheMs(), balances: { ...balances } });
+      return balances;
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(String(error || 'authenticated balance query failed'));
     }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError || 'authenticated balance query failed'));
   })().finally(() => balanceInFlight.delete(venue));
 
   balanceInFlight.set(venue, work);
@@ -211,9 +197,8 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
     return { kind: 'reject', reason: 'REJECT_BALANCE_INSUFFICIENT: no positive two-sided authenticated inventory capacity' };
   }
 
-  // Balance I/O and rate-limit backoff can outlive the quote that entered this
-  // wrapper. Always re-quote after reconciliation, even when the original plan
-  // was fully fundable, so a slow inventory check can never authorize stale edge.
+  // Balance I/O can outlive the quote that entered this wrapper. Always
+  // re-quote after reconciliation so inventory checks never authorize stale edge.
   const maxQuoteAgeMs = Math.max(250, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
   const freshBound = capacity.fullPlanFundable
     ? Math.min(plan.requestedNotionalUsd || plan.notionalUsd, capacity.maxFundableNotionalUsd)
