@@ -7,6 +7,7 @@ import {
 import logger from '../../../logger.js';
 import { monteCarloCalibrationStore } from '../validation/monte-carlo-calibration-store.js';
 import { cexInventoryLedger, type InventoryRequirement, type InventoryVenue } from './cex-inventory-ledger.js';
+import { getExactCoinbaseOrderAssetDeltas } from './coinbase-system-capital-settlement-evidence.js';
 import { getExactSystemCapitalOrderAssetDeltas } from './cex-system-capital-settlement-evidence.js';
 import { applyExactCexSystemOwnedSettlement } from './cex-system-owned-lot-ledger.js';
 import { parallelMonteCarloPool } from './adapters/parallel-monte-carlo-pool.js';
@@ -260,10 +261,9 @@ async function applyTerminalSystemOwnedSettlements(
   };
 
   for (const order of terminalFilledOrders) {
-    if (order.venue === 'coinbase') {
-      throw new Error(`SYSTEM_CAPITAL_PROVENANCE_DEFICIT:coinbase:${order.symbol}:Coinbase operator balance cannot acquire system-owned execution authority`);
-    }
-    const evidence = await getExactSystemCapitalOrderAssetDeltas(order);
+    const evidence = order.venue === 'coinbase'
+      ? await getExactCoinbaseOrderAssetDeltas(order)
+      : await getExactSystemCapitalOrderAssetDeltas(order);
     await applyExactCexSystemOwnedSettlement({
       evidence,
       opportunityId: opportunityIdentity(plan),
