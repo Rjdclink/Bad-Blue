@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { BigNumber, Wallet, ethers, providers } from 'ethers';
 import logger from '../../../logger.js';
-import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { isStrictlyPositiveProfitBaseUnits, minimumPositiveProfitBaseUnits } from '../governance/profit-admission-authority.js';
 import { requireZeroCapitalInfrastructureDeploymentAllowed } from '../governance/zero-capital-infrastructure-policy.js';
@@ -131,7 +131,7 @@ async function currentFeeCeiling(provider: providers.JsonRpcProvider): Promise<{
 }
 
 async function liveStableUsd(symbol: 'USDC' | 'USDT'): Promise<number> {
-  const prices = await coinGeckoPriceClient.getLiveSymbolPrices([symbol]);
+  const prices = await livePriceMesh.getLiveSymbolPrices([symbol]);
   const value = prices.get(symbol);
   if (!Number.isFinite(value) || Number(value) <= 0) throw new Error(`${symbol}/USD live price unavailable for receiver-bootstrap economics`);
   return Number(value);
@@ -160,10 +160,10 @@ function permissionCallsForPlan(receiver: string, plan: ReturnType<typeof buildF
 }
 
 /**
- * First-receiver private bundle for Ethereum. EOA sender gas must already be
- * system-owned; it is not builder-sponsored at protocol level. Execution-created
- * value therefore funds both the explicit builder payment and a bounded native-gas
- * replenishment, making the observed stablecoin residual conservative all-in BPS.
+ * First-receiver private bundle for Ethereum. Titan/Quasar prepend the ETH needed
+ * for the nonce-contiguous EOA bundle; execution-created value then reimburses the
+ * sponsorship ceiling plus a positive builder residual. No pre-existing operator
+ * or system-owned native balance is a prerequisite for this atomic bootstrap.
  */
 export async function prepareBuilderSponsoredReceiverBootstrap(input: {
   opportunity: ZeroCapitalOpportunity;
@@ -209,7 +209,10 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
   const minimumBuilderResidualWei = BigInt(process.env.ZERO_CAPITAL_BUILDER_MIN_RESIDUAL_WEI || '10000000000000');
   if (minimumBuilderResidualWei <= 0n) throw new Error('ZERO_CAPITAL_BUILDER_MIN_RESIDUAL_WEI must be positive');
   const builderPaymentWei = requiredSponsorshipWei + minimumBuilderResidualWei;
-  const conversionOutputWei = builderPaymentWei + requiredSponsorshipWei;
+  // Reimburse the exact bounded sponsorship plus residual. Do not force this first
+  // profitable trade to buy a second sponsorship-sized ETH reserve; retained-profit
+  // policy may seed system-owned gas after settlement without distorting admission.
+  const conversionOutputWei = builderPaymentWei;
 
   const conversionSlippageBps = boundedInteger(process.env.ZERO_CAPITAL_BUILDER_CONVERSION_MAX_SLIPPAGE_BPS, 50, 1, 500);
   const repaymentRoute = await selectBuilderRepaymentRoute({
@@ -373,6 +376,9 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     candidates,
     provenance: [
       'builder_private_bundle:opportunity_specific',
+      'builder_native_prefund:titan_or_quasar_sponsored_bundle',
+      'operator_native_gas_input_required:false',
+      'builder_sponsorship_repaid_from_execution_created_value:true',
       'receiver_bootstrap:create2_deployment_in_same_atomic_bundle',
       'receiver_bootstrap:exact_route_permissions_in_same_atomic_bundle',
       'receiver_bootstrap:predicted_address_matches_reviewed_artifact',
@@ -382,9 +388,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
       'builder_payment_transport:titan_or_quasar',
       ...repaymentRoute.provenance,
       'builder_all_in_cost_attribution:deployment_permissions_execution_repayment_upper_bound',
-      'sender_native_gas_replenishment:execution_created_value',
-      'sender_native_gas_ceiling:included_in_stablecoin_residual',
-      'system_owned_native_gas_required:true',
+      'forced_future_native_reserve_seeding:false',
       'strict_positive_all_in_residual',
       'sub_bps_precision_preserved:true',
       'canonical_execution_authority_unchanged',
@@ -392,7 +396,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     ],
   };
   builderSponsoredZeroCapitalRegistry.record(evidence);
-  logger.info('[ZeroCapitalReceiverBootstrap] Exact builder private-bundle first-receiver candidate prepared', {
+  logger.info('[ZeroCapitalReceiverBootstrap] Exact builder-sponsored zero-native-capital first-receiver candidate prepared', {
     component: 'BuilderSponsoredReceiverBootstrap',
     opportunityId: opportunity.id,
     receiver: identity.receiver,
@@ -407,8 +411,10 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     builderPaymentWei: builderPaymentWei.toString(),
     conversionOutputWei: conversionOutputWei.toString(),
     operatorNativeGasInputRequired: false,
-    systemOwnedNativeGasRequired: true,
-    senderGasReplenishmentIncludedInResidual: true,
+    systemOwnedNativeGasRequired: false,
+    builderNativePrefundRequired: true,
+    builderSponsorshipRepaidFromExecutionCreatedValue: true,
+    senderGasReplenishmentIncludedInResidual: false,
     executionAuthority: false,
   });
   return evidence;
