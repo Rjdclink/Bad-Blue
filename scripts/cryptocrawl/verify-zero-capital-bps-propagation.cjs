@@ -190,7 +190,11 @@ assert.match(providerReprice, /executionAuthority: false/);
 assert.doesNotMatch(providerReprice, /target\.scanChain\s*=/);
 assert.doesNotMatch(providerReprice, /target\.executeFunded\s*=/);
 assert.match(providerReprice, /BPS_PRECISION_SCALE\s*=\s*1_000_000n/);
-assert.match(providerReprice, /bootstrapFlashFee/);
+assert.match(providerReprice, /const bootstrapCandidates = evidence/);
+assert.match(providerReprice, /calculateMeasuredFlashLoanFee\(item, opportunity\.flashLoanAmount\)/);
+assert.match(providerReprice, /flashLoanFeeInInputToken: bootstrapCandidate\.fee/);
+assert.match(providerReprice, /const measuredFlashFee = calculateMeasuredFlashLoanFee\(selectedSingle, opportunity\.flashLoanAmount\)/);
+assert.match(providerReprice, /const values = repriceOpportunity\(opportunity, measuredFlashFee\)/);
 
 assert.match(alternativeReprice, /measureConfiguredGhostWalletSources\(/);
 assert.match(alternativeReprice, /await input\.provider\.call\(exactEnvelope\)/);
