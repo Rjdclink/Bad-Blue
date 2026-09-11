@@ -350,18 +350,37 @@ export class AutonomousZeroCapitalEngine {
     return getProvenZeroCapitalGasFundingDecision(this, chain);
   }
 
+  private adoptLiveProvider(chain: ActiveExecutionChain, provider: providers.JsonRpcProvider): void {
+    if (this.providers.get(chain) === provider) return;
+    this.providers.set(chain, provider);
+    const wallet = this.executionWallets.get(chain);
+    if (wallet) this.executionWallets.set(chain, wallet.connect(provider));
+  }
+
   /** Explicit-route measurement helper used only by CanonicalZeroCapitalDiscovery. */
   async scanChain(
     chain: SupportedChain,
-    provider: providers.JsonRpcProvider,
+    _provider: providers.JsonRpcProvider,
   ): Promise<ZeroCapitalOpportunity[]> {
     if (chain === 'europa') return [];
     const explicitRoutes = this.configuredRoutes.filter(route => route.chain === chain);
     if (explicitRoutes.length === 0) return [];
+    const rpcChain = chain as RpcSupportedChain;
+    const activeChain = chain as ActiveExecutionChain;
     const funding = await this.getGasFundingDecision(chain);
-    const gasEconomics = await enrichConfiguredZeroCapitalGasEconomics(chain, provider, explicitRoutes, funding);
-    const block = await provider.getBlock('latest');
-    const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, provider, gasEconomics.routes);
+
+    const gasEconomics = (await multiProviderRpcManager.execute(rpcChain, 'gas', async provider => {
+      this.adoptLiveProvider(activeChain, provider);
+      return enrichConfiguredZeroCapitalGasEconomics(chain, provider, explicitRoutes, funding);
+    })).result;
+    const block = (await multiProviderRpcManager.execute(rpcChain, 'blocks', async provider => {
+      this.adoptLiveProvider(activeChain, provider);
+      return provider.getBlock('latest');
+    })).result;
+    const quotes = (await multiProviderRpcManager.execute(rpcChain, 'contract_calls', async provider => {
+      this.adoptLiveProvider(activeChain, provider);
+      return quoteConfiguredZeroCapitalRoutesForChain(chain, provider, gasEconomics.routes);
+    })).result;
     const accepted = quotes.map(quote => this.fromQuotedRoute(quote, block.timestamp));
     logger.debug('[ZeroCapitalEngine] Configured-route gas economics measured before BPS admission', {
       component: 'ZeroCapitalEngine',
@@ -371,13 +390,16 @@ export class AutonomousZeroCapitalEngine {
       estimatedGasUnits: gasEconomics.estimatedGasUnits,
       zeroSeedPromotedToExecutableEconomics: false,
     });
-    return runZeroCapitalProfitabilityRescueV2({
-      chain,
-      provider,
-      opportunities: accepted,
-      configuredRoutes: gasEconomics.routes,
-      fromQuotedRoute: (quote, blockTimestamp) => this.fromQuotedRoute(quote, blockTimestamp),
-    });
+    return (await multiProviderRpcManager.execute(rpcChain, 'contract_calls', async provider => {
+      this.adoptLiveProvider(activeChain, provider);
+      return runZeroCapitalProfitabilityRescueV2({
+        chain,
+        provider,
+        opportunities: accepted,
+        configuredRoutes: gasEconomics.routes,
+        fromQuotedRoute: (quote, blockTimestamp) => this.fromQuotedRoute(quote, blockTimestamp),
+      });
+    })).result;
   }
 
   fromQuotedRoute(quote: QuotedZeroCapitalRoute, blockTimestamp: number): ZeroCapitalOpportunity {
@@ -465,7 +487,7 @@ export class AutonomousZeroCapitalEngine {
 
   private async refreshWalletResources(): Promise<WalletResourceSnapshot[]> {
     const configured = resolveConfiguredWalletAddress();
-    const snapshots = await Promise.all(Array.from(this.providers.entries()).map(async ([chain, provider]) => {
+    const snapshots = await Promise.all(Array.from(this.providers.entries()).map(async ([chain, existingProvider]) => {
       const wallet = this.executionWallets.get(chain);
       const address = wallet?.address || configured.address;
       const observedAt = Date.now();
@@ -480,7 +502,22 @@ export class AutonomousZeroCapitalEngine {
         };
       }
       try {
-        const balance = await provider.getBalance(address);
+        if (chain === 'europa') {
+          const balance = await existingProvider.getBalance(address);
+          return {
+            chain,
+            walletAddress: address,
+            walletAddressSource: wallet ? 'execution_wallet' as const : configured.source || undefined,
+            nativeBalance: balance.toString(),
+            assetBalances: {},
+            observedAt,
+            status: 'available' as const,
+          };
+        }
+        const balance = (await multiProviderRpcManager.execute(chain as RpcSupportedChain, 'json_rpc', async provider => {
+          this.adoptLiveProvider(chain as ActiveExecutionChain, provider);
+          return provider.getBalance(address);
+        })).result;
         return {
           chain,
           walletAddress: address,
