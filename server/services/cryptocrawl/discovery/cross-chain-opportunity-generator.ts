@@ -22,7 +22,9 @@ interface CrossChainRoute {
 }
 
 function rpcHealthy(chain: ChainId): boolean {
-  return multiProviderRpcManager.getHealth(chain).some(observation => observation.http.success);
+  return multiProviderRpcManager.getHealth(chain).some(observation =>
+    observation.http.state === 'healthy' || observation.http.state === 'degraded',
+  );
 }
 
 function boundedInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
@@ -235,7 +237,7 @@ function recordRoute(
               : readiness.reason,
     missingInformation: [...new Set(missingInformation)],
     provenance: [
-      `rpc:${route.from}:healthy`, `rpc:${route.to}:healthy`,
+      `rpc:${route.from}:operational`, `rpc:${route.to}:operational`,
       ...(hasFreshQuote ? bridgeQuoteProvenance(quote) : ['across_quote:active_reacquisition_attempted_current_cycle']),
       `across_production_configured:${readiness.configured}`,
       `cross_chain_signer_configured:${hasSigner}`,
