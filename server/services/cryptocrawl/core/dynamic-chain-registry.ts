@@ -33,7 +33,7 @@ const DEFINITIONS: ReadonlyArray<Omit<DynamicChainConfig, 'rpcUrl'>> = [
   { id: 'bsc', family: 'evm', nativeAsset: 'BNB', sponsoredBootstrap: false, executionMode: 'native_only' },
   { id: 'avalanche', family: 'evm', nativeAsset: 'AVAX', sponsoredBootstrap: false, executionMode: 'native_only' },
   { id: 'solana', family: 'solana', nativeAsset: 'SOL', sponsoredBootstrap: false, executionMode: 'native_only' },
-  { id: 'tron', family: 'solana', nativeAsset: 'TRX', sponsoredBootstrap: false, executionMode: 'native_only' },
+  { id: 'tron', family: 'tron', nativeAsset: 'TRX', sponsoredBootstrap: false, executionMode: 'native_only' },
 ];
 
 const ENV: Record<DynamicChainId, string[]> = {
