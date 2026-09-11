@@ -128,6 +128,98 @@ async function monitoredAddresses(chain: GhostWalletChain): Promise<string[]> {
   return [...addresses];
 }
 
+function providerIdentity(provider: providers.JsonRpcProvider): string {
+  const connection = (provider as any).connection;
+  return String(connection?.url || connection?.connection?.url || 'unknown');
+}
+
+function isLogRangeLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /block range|range limit|query returned more than|too many results|response size exceeded|log response size exceeded/i.test(message);
+}
+
+async function logProviders(chain: GhostWalletChain, preferred: providers.JsonRpcProvider): Promise<providers.JsonRpcProvider[]> {
+  const available = await ghostWalletProviderMesh.getProviders(chain);
+  const unique = new Map<string, providers.JsonRpcProvider>();
+  for (const provider of [preferred, ...available]) unique.set(providerIdentity(provider), provider);
+  return [...unique.values()];
+}
+
+async function latestBlockWithFailover(chain: GhostWalletChain, preferred: providers.JsonRpcProvider): Promise<number> {
+  let lastError: unknown;
+  for (const provider of await logProviders(chain, preferred)) {
+    try {
+      return await timeout(provider.getBlockNumber(), 8_000, `Ghost settlement latest block ${chain}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
+}
+
+async function querySettlementLogsWithFailover(input: {
+  chain: GhostWalletChain;
+  preferred: providers.JsonRpcProvider;
+  address: string;
+  fromBlock: number;
+  toBlock: number;
+}): Promise<providers.Log[]> {
+  let lastError: unknown;
+  let sawRangeLimit = false;
+  for (const provider of await logProviders(input.chain, input.preferred)) {
+    try {
+      return await timeout(provider.getLogs({
+        address: input.address,
+        topics: [GHOST_WALLET_SETTLEMENT_EVENT_TOPICS],
+        fromBlock: input.fromBlock,
+        toBlock: input.toBlock,
+      }), 10_000, `Ghost settlement getLogs ${input.chain}`);
+    } catch (error) {
+      lastError = error;
+      if (isLogRangeLimitError(error)) sawRangeLimit = true;
+    }
+  }
+  const failure = new Error(`Ghost settlement getLogs failed across all providers for ${input.chain}: ${lastError instanceof Error ? lastError.message : String(lastError || 'unknown error')}`) as Error & { rangeLimited?: boolean };
+  failure.rangeLimited = sawRangeLimit;
+  throw failure;
+}
+
+async function collectSettlementLogs(input: {
+  chain: GhostWalletChain;
+  preferred: providers.JsonRpcProvider;
+  addresses: string[];
+  fromBlock: number;
+  toBlock: number;
+}): Promise<providers.Log[]> {
+  const pending: Array<[number, number]> = [[input.fromBlock, input.toBlock]];
+  const uniqueLogs = new Map<string, providers.Log>();
+
+  while (pending.length > 0) {
+    const [fromBlock, toBlock] = pending.shift()!;
+    try {
+      const logGroups = await Promise.all(input.addresses.map(address => querySettlementLogsWithFailover({
+        chain: input.chain,
+        preferred: input.preferred,
+        address,
+        fromBlock,
+        toBlock,
+      })));
+      for (const log of logGroups.flat()) uniqueLogs.set(`${log.transactionHash}:${log.logIndex}`, log);
+    } catch (error) {
+      const rangeLimited = Boolean((error as { rangeLimited?: boolean } | null)?.rangeLimited);
+      if (!rangeLimited || fromBlock >= toBlock) throw error;
+      const midpoint = Math.floor((fromBlock + toBlock) / 2);
+      pending.unshift([fromBlock, midpoint], [midpoint + 1, toBlock]);
+    }
+  }
+
+  return [...uniqueLogs.values()].sort((a, b) =>
+    a.blockNumber - b.blockNumber
+    || a.transactionIndex - b.transactionIndex
+    || a.logIndex - b.logIndex,
+  );
+}
+
 async function backfillSettlementLogs(input: {
   chain: GhostWalletChain;
   addresses: string[];
@@ -135,27 +227,17 @@ async function backfillSettlementLogs(input: {
   listenerConnected: boolean;
 }): Promise<void> {
   if (input.addresses.length === 0) return;
-  const latest = await input.provider.getBlockNumber();
+  const latest = await latestBlockWithFailover(input.chain, input.provider);
   const cursor = await getGhostWalletReconciledBlock(input.chain);
   const fromBlock = Math.max(0, cursor === null ? latest - 64 : cursor + 1);
   if (fromBlock <= latest) {
-    // ethers v5 normalizes Filter.address as one address/ENS name. Query each
-    // monitored contract independently, then merge before advancing the chain cursor.
-    const logGroups = await Promise.all(input.addresses.map(address => input.provider.getLogs({
-      address,
-      topics: [GHOST_WALLET_SETTLEMENT_EVENT_TOPICS],
+    const logs = await collectSettlementLogs({
+      chain: input.chain,
+      preferred: input.provider,
+      addresses: input.addresses,
       fromBlock,
       toBlock: latest,
-    })));
-    const uniqueLogs = new Map<string, providers.Log>();
-    for (const log of logGroups.flat()) {
-      uniqueLogs.set(`${log.transactionHash}:${log.logIndex}`, log);
-    }
-    const logs = [...uniqueLogs.values()].sort((a, b) =>
-      a.blockNumber - b.blockNumber
-      || a.transactionIndex - b.transactionIndex
-      || a.logIndex - b.logIndex,
-    );
+    });
     for (const log of logs) await ingestGhostWalletSettlementLog(input.chain, log);
   }
   await recordGhostWalletRuntimeState({
@@ -166,6 +248,8 @@ async function backfillSettlementLogs(input: {
     metadata: {
       websocketPush: input.listenerConnected,
       reconciliationAuthority: 'durable_cursor_plus_http_log_backfill',
+      logBackfillProviderFailover: true,
+      logBackfillAdaptiveRangeSplit: true,
       periodicPolling: false,
       alchemyDependency: false,
       monitoredAddresses: input.addresses,
