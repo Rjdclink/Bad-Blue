@@ -63,7 +63,8 @@ assert.match(adapter, /usdcToUsdt, wrapUsdt, gsmStataUsdtToGho, fluidGhoToUsdc/)
 assert.match(quoter, /defaultEthereumProtocolAnchorRoutes/);
 assert.match(quoter, /quoteProtocolAnchorLeg/);
 assert.match(quoter, /executablePositive:\s*netProfit\s*>\s*0n/);
-assert.match(quoter, /selectionPool = admissible\.length > 0 \? admissible : observed/);
+assert.match(quoter, /const positive = observed\.filter\(quote => quote\.netProfit > 0n\)/);
+assert.match(quoter, /selectionPool = positive\.length > 0 \? positive : observed/);
 assert.match(quoter, /arguments\.length === 0/);
 assert.match(quoter, /ZERO_CAPITAL_PROTOCOL_ANCHORS/);
 assert.match(quoter, /\.\.\.\(leg\.pool \? \{ pool: leg\.pool \} : \{\}\)/);
