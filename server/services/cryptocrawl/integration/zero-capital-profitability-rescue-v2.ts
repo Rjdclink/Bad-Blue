@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import {
@@ -59,17 +60,33 @@ function pow10(decimals: number): bigint {
   return 10n ** BigInt(Math.max(0, Math.min(36, Math.trunc(decimals))));
 }
 
-function baseUnitsFromUsd(usd: number, decimals: number): string {
+function baseUnitsFromUsd(usd: number, decimals: number, inputTokenUsdPrice: number): string {
   const scale = Number(pow10(decimals));
   if (!Number.isFinite(scale) || scale <= 0) throw new Error(`Unsupported input token decimals: ${decimals}`);
-  return BigInt(Math.max(1, Math.round(usd * scale))).toString();
+  if (!(Number.isFinite(inputTokenUsdPrice) && inputTokenUsdPrice > 0)) throw new Error('Input-token USD price is unavailable');
+  const tokenAmount = usd / inputTokenUsdPrice;
+  if (!(Number.isFinite(tokenAmount) && tokenAmount > 0)) throw new Error('USD notional cannot be converted to a positive token amount');
+  return BigInt(Math.max(1, Math.round(tokenAmount * scale))).toString();
 }
 
-function usdFromBaseUnits(value: bigint, decimals: number): number {
+function usdFromBaseUnits(value: bigint, decimals: number, inputTokenUsdPrice: number): number {
   const scale = Number(pow10(decimals));
-  if (!Number.isFinite(scale) || scale <= 0) return 0;
-  const usd = Number(value) / scale;
+  if (!Number.isFinite(scale) || scale <= 0 || !(Number.isFinite(inputTokenUsdPrice) && inputTokenUsdPrice > 0)) return 0;
+  const tokenAmount = Number(value) / scale;
+  const usd = tokenAmount * inputTokenUsdPrice;
   return Number.isFinite(usd) ? usd : 0;
+}
+
+async function resolveInputTokenUsdPrice(opportunity: ZeroCapitalOpportunity): Promise<number | null> {
+  const quoted = Number(opportunity.inputAssetUsdPrice);
+  if (Number.isFinite(quoted) && quoted > 0) return quoted;
+  try {
+    const prices = await livePriceMesh.getLiveSymbolPrices([opportunity.inputAssetSymbol]);
+    const measured = Number(prices.get(opportunity.inputAssetSymbol));
+    return Number.isFinite(measured) && measured > 0 ? measured : null;
+  } catch {
+    return null;
+  }
 }
 
 function grossProfit(opportunity: ZeroCapitalOpportunity): bigint {
@@ -198,11 +215,12 @@ function candidateSizes(
   route: ConfiguredZeroCapitalRoute,
   context: ZeroCapitalBpsRescueContext | null,
   providerEvidence: readonly FlashLoanProviderEconomics[],
+  inputTokenUsdPrice: number,
 ): number[] {
-  const currentUsd = Math.max(0.01, usdFromBaseUnits(opportunity.flashLoanAmount, route.inputTokenDecimals));
+  const currentUsd = Math.max(0.01, usdFromBaseUnits(opportunity.flashLoanAmount, route.inputTokenDecimals, inputTokenUsdPrice));
   const liveBorrowCeilingUsd = providerEvidence.reduce((maximum, evidence) => {
     const safeAmount = providerSafeBorrowAmount(evidence);
-    return Math.max(maximum, usdFromBaseUnits(safeAmount, route.inputTokenDecimals));
+    return Math.max(maximum, usdFromBaseUnits(safeAmount, route.inputTokenDecimals, inputTokenUsdPrice));
   }, 0);
   if (!(liveBorrowCeilingUsd > 0)) return [];
 
@@ -236,11 +254,12 @@ function candidateSizes(
 function quoteFitsDailyProfitBudget(
   candidate: QuotedZeroCapitalRoute,
   inputTokenDecimals: number,
+  inputTokenUsdPrice: number,
   budget: ProfitLadderDailyProfitBudget | null,
 ): boolean {
   if (!budget || budget.remainingProfitUsd === null) return true;
-  if (!budget.stageAligned || budget.exhausted) return false;
-  const expectedNetProfitUsd = usdFromBaseUnits(candidate.netProfit, inputTokenDecimals);
+  if (budget.exhausted) return false;
+  const expectedNetProfitUsd = usdFromBaseUnits(candidate.netProfit, inputTokenDecimals, inputTokenUsdPrice);
   return expectedNetProfitUsd > 0 && expectedNetProfitUsd <= budget.remainingProfitUsd + 0.01;
 }
 
@@ -351,6 +370,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   let insufficientLiquidityRejected = 0;
   let expiredBeforeRequote = 0;
   let invalidFreshRefinement = 0;
+  let unpricedInputTokenRejected = 0;
   let bpsSuperEngineCandidates = 0;
   let bpsSuperEnginePositiveRecoveries = 0;
   const outsideAtomicSurplusWindow = opportunities.filter(item =>
@@ -380,9 +400,17 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     }
 
     try {
-      const providerEvidence = (await measureFlashLoanProviders({ chain: chain as any, provider, asset: opportunity.inputToken }))
-        .filter(item => providerFresh(item));
-      staleProviderEvidenceRejected += Math.max(0, 3 - providerEvidence.length);
+      const inputTokenUsdPrice = await resolveInputTokenUsdPrice(opportunity);
+      if (inputTokenUsdPrice === null) {
+        unpricedInputTokenRejected += 1;
+        output.push(opportunity);
+        if (bpsContext) recordBpsRevalidationOutcome(bpsContext.plan, { deterministicPositive: 0, eligibleCandidates: 0 });
+        continue;
+      }
+
+      const providerMeasurements = await measureFlashLoanProviders({ chain: chain as any, provider, asset: opportunity.inputToken });
+      const providerEvidence = providerMeasurements.filter(item => providerFresh(item));
+      staleProviderEvidenceRejected += Math.max(0, providerMeasurements.length - providerEvidence.length);
       if (providerEvidence.length === 0 || opportunity.expiresAt - Date.now() <= minimumRemainingLifetimeMs) {
         if (opportunity.expiresAt - Date.now() <= minimumRemainingLifetimeMs) expiredBeforeRequote += 1;
         output.push(opportunity);
@@ -391,10 +419,13 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
       }
 
       let best: QuotedZeroCapitalRoute | null = null;
-      const sizes = candidateSizes(opportunity, route, bpsContext, providerEvidence).slice(0, remainingQuoteBudget);
+      const sizes = candidateSizes(opportunity, route, bpsContext, providerEvidence, inputTokenUsdPrice).slice(0, remainingQuoteBudget);
       remainingQuoteBudget -= sizes.length;
       const settled = await Promise.allSettled(sizes.map(sizeUsd =>
-        quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(sizeUsd, route.inputTokenDecimals) }, provider),
+        quoteConfiguredZeroCapitalRoute({
+          ...route,
+          amountIn: baseUnitsFromUsd(sizeUsd, route.inputTokenDecimals, inputTokenUsdPrice),
+        }, provider),
       ));
 
       for (const result of settled) {
@@ -408,7 +439,10 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
           providerUsable = true;
           const adjusted = adjustForProvider(result.value, evidence);
           if (!adjusted) continue;
-          if (clearsAtomicSurplusTarget(adjusted) && !quoteFitsDailyProfitBudget(adjusted, route.inputTokenDecimals, dailyProfitBudget)) {
+          if (
+            clearsAtomicSurplusTarget(adjusted)
+            && !quoteFitsDailyProfitBudget(adjusted, route.inputTokenDecimals, inputTokenUsdPrice, dailyProfitBudget)
+          ) {
             budgetRejectedTargetQuotes += 1;
             continue;
           }
@@ -473,11 +507,13 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     profitLadderDailyCapUsd: dailyProfitBudget?.dailyProfitCapUsd ?? null,
     profitLadderRealizedProfitUsd: dailyProfitBudget?.realizedProfitUsd ?? null,
     profitLadderRemainingProfitUsd: dailyProfitBudget?.remainingProfitUsd ?? null,
+    profitLadderStageAlignedTelemetry: dailyProfitBudget?.stageAligned ?? null,
     profitLadderBorrowingNotionalAuthority: false,
     staleProviderEvidenceRejected,
     insufficientLiquidityRejected,
     expiredBeforeRequote,
     invalidFreshRefinement,
+    unpricedInputTokenRejected,
     bpsSuperEngineCandidates,
     bpsSuperEnginePositiveRecoveries,
     bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
@@ -485,6 +521,8 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     bpsResidualNotionalAuthority: 'shared_bps_super_engine_residual_notional_fractions_plus_live_provider_liquidity_curve',
     liveNotionalCeilingAuthority: 'fresh_flash_provider_liquidity_with_headroom',
     inputTokenDecimalsAuthoritative: true,
+    inputTokenUsdPriceBoundForUsdSizing: true,
+    profitLadderStageAlignmentAuthority: false,
     providerFreshnessRequired: true,
     providerLiquidityHeadroomRequired: true,
     providerUtilizationBounded: true,
