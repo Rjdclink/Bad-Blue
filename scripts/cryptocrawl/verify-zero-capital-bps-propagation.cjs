@@ -111,8 +111,18 @@ assert.match(engine, /monteCarloExecutionAuthority:\s*false/);
 assert.match(gasAuthority, /getProvenZeroCapitalGasFundingDecision/);
 assert.match(engine, /return getProvenZeroCapitalGasFundingDecision\(this, chain\)/);
 
-assert.match(engine, /enrichConfiguredZeroCapitalGasEconomics/);
-assert.match(engine, /const funding = await this\.getGasFundingDecision\(chain\);[\s\S]{0,300}enrichConfiguredZeroCapitalGasEconomics\(chain, provider, explicitRoutes, funding\)[\s\S]{0,300}quoteConfiguredZeroCapitalRoutesForChain\(chain, provider, gasEconomics\.routes\)/);
+// Canonical discovery owns lifecycle/admission. The runtime context retains only
+// the explicit-route measurement helper, and each RPC capability can fail over
+// independently rather than binding gas, block, quote, and rescue work to one provider.
+assert.match(engine, /Explicit-route measurement helper used only by CanonicalZeroCapitalDiscovery/);
+assert.match(engine, /const gasProvider = \(await multiProviderRpcManager\.execute\(rpcChain, 'gas'/);
+assert.match(engine, /const funding = await this\.getGasFundingDecision\(chain\);/);
+assert.match(engine, /enrichConfiguredZeroCapitalGasEconomics\(chain, gasProvider, explicitRoutes, funding\)/);
+assert.match(engine, /multiProviderRpcManager\.execute\(rpcChain, 'blocks'/);
+assert.match(engine, /const quoteProvider = \(await multiProviderRpcManager\.execute\(rpcChain, 'contract_calls'/);
+assert.match(engine, /quoteConfiguredZeroCapitalRoutesForChain\(chain, quoteProvider, gasEconomics\.routes\)/);
+assert.match(engine, /const rescueProvider = \(await multiProviderRpcManager\.execute\(rpcChain, 'contract_calls'/);
+assert.match(engine, /provider: rescueProvider/);
 assert.match(engine, /configuredRoutes: gasEconomics\.routes/);
 assert.match(engine, /zeroSeedPromotedToExecutableEconomics: false/);
 assert.match(configuredGasEconomics, /provider\.getFeeData\(\)/);
