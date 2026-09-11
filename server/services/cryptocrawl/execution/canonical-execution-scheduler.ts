@@ -59,6 +59,8 @@ export interface CanonicalExecutionSchedulerStats {
 type Candidate = CanonicalOpportunitySnapshot & { plan: NonNullable<CanonicalOpportunitySnapshot['plan']> };
 type BpsEdgeHalfLifeState = { symbol: string; emaLifetimeMs: number; completedSamples: number };
 
+type LifecycleMaintenanceResult = { ok: true; error: null } | { ok: false; error: string };
+
 function boundedInt(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
@@ -183,6 +185,7 @@ class CanonicalExecutionScheduler {
   private timer: NodeJS.Timeout | null = null;
   private started = false;
   private dispatchInFlight: Promise<void> | null = null;
+  private lifecycleMaintenanceInFlight: Promise<LifecycleMaintenanceResult> | null = null;
   private eligibleUnsubscribe: (() => void) | null = null;
   private immediateWakeScheduled = false;
   private immediateWakeRequested = false;
@@ -215,7 +218,9 @@ class CanonicalExecutionScheduler {
       operatorStrategyAuthority: 'when_and_how_many_parent_trades_only', operatorStrategyCycle: '20_randomized_trade_days_per_30_days', operatorStrategyDailyTradeRange: '1_to_3_submitted_parent_trades',
       operatorStrategyProfitStop: 'daily_random_300_to_3500_minus_50_cushion_realized_profit_only', operatorStrategyParentSerialization: true, operatorStrategyProfitabilityAuthority: false,
       cadenceObjective: 'event_driven_eligibility_wake_with_low_latency_poll_fallback', eligibleWakeAuthority: 'measured_candidate_registry', terminalCalibrationAuthority: 'scheduling_only_confirmed_settlement_evidence',
-      measuredTopologyExecutionAdapter: true, fundingCrossChainExecutionAdapter: true, fundingLifecycleMaintenanceBeforeNewEntryGates: true, kalshiEventLifecycleMaintenanceBeforeNewEntryGates: true,
+      measuredTopologyExecutionAdapter: true, fundingCrossChainExecutionAdapter: true,
+      fundingLifecycleMaintenanceLaneLocal: true, kalshiEventLifecycleMaintenanceLaneLocal: true,
+      freshCexQuoteCriticalMaintenanceAwait: false, freshCexFastLane: true,
       kalshiEventCanonicalDispatch: true, kalshiEventExecutionAuthority: 'terminal_calibration_plus_exact_economics_plus_system_owned_cash',
       discoveryExecutionAuthority: false, legacyBusinessCapsAuthoritative: false, distributedResourceLeases: true, runtimeInvariantQuarantine: true, runtimeIdentityMismatchFailClosed: true, exactOpportunityIdentityRequired: true, latencyHarness: 'telemetry_only',
     });
@@ -421,6 +426,28 @@ class CanonicalExecutionScheduler {
     }
   }
 
+  private maintainLifecycleLanes(): Promise<LifecycleMaintenanceResult> {
+    if (this.lifecycleMaintenanceInFlight) return this.lifecycleMaintenanceInFlight;
+    let task: Promise<LifecycleMaintenanceResult>;
+    task = Promise.all([
+      maintainKalshiEventLifecycles(4),
+      fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4),
+    ]).then(() => ({ ok: true as const, error: null })).catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('[ExecutionScheduler] Funding/cross-chain/Kalshi lifecycle maintenance failed closed for lifecycle-dependent new exposure', {
+        component: 'CanonicalExecutionScheduler',
+        error: message,
+        lifecycleDependentNewExposureGranted: false,
+        unrelatedFreshCexAdmissionBlocked: false,
+      });
+      return { ok: false as const, error: message };
+    }).finally(() => {
+      if (this.lifecycleMaintenanceInFlight === task) this.lifecycleMaintenanceInFlight = null;
+    });
+    this.lifecycleMaintenanceInFlight = task;
+    return task;
+  }
+
   private async loadOperatorState(): Promise<OperatorTradingStrategyState | null> {
     try {
       const state = await operatorTradingStrategy.getState();
@@ -440,19 +467,7 @@ class CanonicalExecutionScheduler {
   }
 
   private async runDispatch(): Promise<void> {
-    try {
-      await maintainKalshiEventLifecycles(4);
-      await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);
-    } catch (error) {
-      this.setIdle('lifecycle_maintenance_failed');
-      logger.error('[ExecutionScheduler] Existing funding/cross-chain/Kalshi event lifecycle maintenance failed closed', {
-        component: 'CanonicalExecutionScheduler',
-        error: error instanceof Error ? error.message : String(error),
-        newExposureGranted: false,
-        cycleTerminatedBeforeNewExposure: true,
-      });
-      return;
-    }
+    const lifecycleMaintenance = this.maintainLifecycleLanes();
 
     if (!isLiveExecutionPosture()) { this.setIdle('live_execution_posture_disabled'); return; }
     const runtimeAttestation = getCryptoCrawlerRuntimeAttestation();
@@ -465,24 +480,41 @@ class CanonicalExecutionScheduler {
     if (!governanceAllowed) { this.setIdle('governance_stage_blocked'); return; }
     const operatorState = await this.loadOperatorState();
     if (!operatorState || !operatorState.executionAllowed) return;
-    const measured = await this.dispatchMeasuredTopologies();
-    if (measured.submitted) return;
-    let refreshedOperatorState = await this.loadOperatorState();
-    if (!refreshedOperatorState || !refreshedOperatorState.executionAllowed) return;
 
-    const eventDispatch = await dispatchBestKalshiEventCandidate();
-    if (eventDispatch.attempted && eventDispatch.submitted && eventDispatch.result) {
-      this.attempts++;
-      this.lastDispatchAt = Date.now();
-      this.lastIdleReason = null;
-      if (eventDispatch.result.settlementConfirmed) {
-        if (eventDispatch.result.success) this.settled++;
-        else this.failed++;
-      } else this.pending++;
-      return;
+    // Fresh positive CEX evidence has a sub-second/seconds shelf life. Existing
+    // funding and Kalshi lifecycle maintenance still starts every scheduler cycle,
+    // but an unrelated slow lifecycle call is no longer awaited before the fresh
+    // CEX lane. When no fresh CEX exists, the same maintenance remains a hard gate
+    // before lifecycle-dependent measured/Kalshi new exposure.
+    const freshCexFastLaneAvailable = currentCandidates().length > 0;
+    let measured: { dispatched: boolean; submitted: boolean } = { dispatched: false, submitted: false };
+    let refreshedOperatorState = operatorState;
+
+    if (!freshCexFastLaneAvailable) {
+      const maintenance = await lifecycleMaintenance;
+      if (!maintenance.ok) {
+        this.setIdle('lifecycle_maintenance_failed');
+        return;
+      }
+      measured = await this.dispatchMeasuredTopologies();
+      if (measured.submitted) return;
+      refreshedOperatorState = await this.loadOperatorState();
+      if (!refreshedOperatorState || !refreshedOperatorState.executionAllowed) return;
+
+      const eventDispatch = await dispatchBestKalshiEventCandidate();
+      if (eventDispatch.attempted && eventDispatch.submitted && eventDispatch.result) {
+        this.attempts++;
+        this.lastDispatchAt = Date.now();
+        this.lastIdleReason = null;
+        if (eventDispatch.result.settlementConfirmed) {
+          if (eventDispatch.result.success) this.settled++;
+          else this.failed++;
+        } else this.pending++;
+        return;
+      }
+      refreshedOperatorState = await this.loadOperatorState();
+      if (!refreshedOperatorState || !refreshedOperatorState.executionAllowed) return;
     }
-    refreshedOperatorState = await this.loadOperatorState();
-    if (!refreshedOperatorState || !refreshedOperatorState.executionAllowed) return;
 
     const retryWindowMs = Math.max(250, Number(process.env.CRYPTOCRAWL_EXECUTION_RETRY_WINDOW_MS || 1_000));
     const now = Date.now();
