@@ -8,6 +8,7 @@ const files = {
   zero: 'server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts',
   core: 'server/services/cryptocrawl/core/zero-capital-engine.ts',
   executor: 'server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts',
+  flashExecutor: 'server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts',
   maker: 'server/services/cryptocrawl/runtime/stablecoin-maker-execution-wiring.ts',
   transform: 'server/services/cryptocrawl/optimization/economic-transformation-engine.ts',
   transformWiring: 'server/services/cryptocrawl/integration/economic-transformation-wiring.ts',
@@ -47,7 +48,7 @@ const behaviors = [
   ['cex', 'observeFailClosed().finally(scheduleNext)', 'recursive adaptive rescheduling after completion or failure'],
   ['cex', 'smallest_risk_adjusted_then_exact_bps_to_break_even_first', 'risk-adjusted near-miss ordering'],
 
-  ['zero', 'baseUnitsFromUsd(usd: number, decimals: number)', 'token-decimal-correct sizing'],
+  ['zero', 'baseUnitsFromUsd(usd: number, decimals: number, inputTokenUsdPrice: number)', 'token-price-and-decimal-correct sizing'],
   ['zero', 'opportunity.expiresAt > now', 'fresh-only zero-capital rescue selection'],
   ['zero', 'refined.expiresAt = Math.min', 'refined opportunity expiry cannot extend'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS', 'provider evidence freshness bound'],
@@ -111,20 +112,24 @@ if (!source.core.includes("import { runZeroCapitalProfitabilityRescueV2 } from '
 if (source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2') || source.zero.includes('target.scanChain =')) {
   throw new Error('[substantial-profitability-batch9] retired zero-capital rescue installer/scan mutation must not return');
 }
-if (!source.zero.includes('getProfitLadderDiscoveryNotionalAuthority()') || source.zero.includes('ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD')) {
-  throw new Error('[substantial-profitability-batch9] Profit Ladder quote-only authority must remain the sole live zero-capital rescue discovery ceiling');
+if (source.zero.includes('getProfitLadderDiscoveryNotionalAuthority') ||
+    source.zero.includes('getProfitLadderNotionalAuthority') ||
+    !source.zero.includes('function providerSafeBorrowAmount')) {
+  throw new Error('[substantial-profitability-batch9] zero-capital rescue borrowing must remain independent of Profit Ladder notional and bounded by fresh provider capacity');
 }
-// The zero-capital engine is now runtime context only. Do not resurrect its retired
-// local execution gate merely to satisfy an implementation-detail test. The live
-// USD valuation invariant now belongs to the sole canonical executor's terminal
-// economics, while pre-dispatch profitability remains denominated in exact token
-// base units/BPS. This preserves live valuation without restoring parallel authority.
+// The zero-capital engine is runtime context only. The sole canonical executor owns
+// terminal USD valuation through the provider-mesh price surface, while the flash
+// executor fails closed if live input-token USD valuation is unavailable.
 if (!source.core.includes('tokenUnitEqualsUsdAssumption: false') ||
-    !source.executor.includes("import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';") ||
-    !source.executor.includes('coinGeckoPriceClient.getLiveSymbolPrices([...new Set(symbols)])') ||
+    !source.executor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';") ||
+    !source.executor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])') ||
     !source.executor.includes('inputTokenUsdPrice: prices.get(input.opportunity.inputAssetSymbol) ?? null') ||
-    !source.executor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']")) {
+    !source.flashExecutor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']")) {
   throw new Error('[substantial-profitability-batch9] canonical zero-capital execution must retain live input-token USD valuation without restoring retired parallel execution authority');
+}
+if (!source.executor.includes('getProfitLadderDailyProfitBudget') ||
+    !source.executor.includes('expectedProfitFitsDailyBudget')) {
+  throw new Error('[substantial-profitability-batch9] Profit Ladder must constrain daily realized profit rather than flash-borrow notional');
 }
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
   throw new Error('[substantial-profitability-batch9] active CEX quote topology must remain restricted to fully implemented Coinbase/Kraken/OKX paths');
@@ -140,4 +145,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital BPS rescue is core-direct with Profit Ladder quote-only discovery sizing, canonical execution retains live input-token USD valuation without reviving retired parallel authority, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue is core-direct, price-aware and provider-capacity-bounded; Profit Ladder limits daily realized profit rather than flash principal; canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');

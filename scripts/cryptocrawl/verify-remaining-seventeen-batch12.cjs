@@ -17,8 +17,10 @@ const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-c
 const atomicSize = read('server/services/cryptocrawl/execution/adapters/atomic-size-optimizer.ts');
 const zeroCapitalCore = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
 const canonicalZeroCapitalExecutor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
+const flashZeroCapitalExecutor = read('server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts');
 const zeroCapitalRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts');
 const ladderNotional = read('server/services/cryptocrawl/governance/profit-ladder-notional-authority.ts');
+const dailyProfitBudget = read('server/services/cryptocrawl/governance/profit-ladder-daily-profit-budget.ts');
 const hyperHybrid = read('server/services/cryptocrawl/execution/hyper-hybrid-cex-execution.ts');
 const partialProfitAccounting = read('server/services/cryptocrawl/compensation/hyper-hybrid-partial-profit-accounting.ts');
 const retainedProfit = read('server/services/cryptocrawl/compensation/retained-profit-ledger.ts');
@@ -53,12 +55,13 @@ assert(atomicSize.includes('profit > 0n') && atomicSize.includes('bestPositive')
 assert(atomicSize.includes('bpsToBreakEven') && atomicSize.includes('bestNearMiss'), 'all-negative atomic size fallback must preserve the closest measured BPS near miss only');
 assert(zeroCapitalCore.includes('runZeroCapitalProfitabilityRescueV2({'), 'canonical zero-capital scan must invoke BPS rescue directly');
 assert(zeroCapitalCore.includes('tokenUnitEqualsUsdAssumption: false'), 'zero-capital runtime context must explicitly reject token-unit-equals-USD authority');
-assert(canonicalZeroCapitalExecutor.includes("import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';"), 'canonical zero-capital executor must own live token-price lookup');
-assert(canonicalZeroCapitalExecutor.includes('coinGeckoPriceClient.getLiveSymbolPrices([...new Set(symbols)])'), 'canonical zero-capital terminal economics must request live token prices');
+assert(canonicalZeroCapitalExecutor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';"), 'canonical zero-capital executor must use the provider-mesh live price surface');
+assert(canonicalZeroCapitalExecutor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])'), 'canonical zero-capital terminal economics must request live token prices through the mesh');
 assert(canonicalZeroCapitalExecutor.includes('inputTokenUsdPrice: prices.get(input.opportunity.inputAssetSymbol) ?? null'), 'canonical zero-capital realized USD economics must consume live input-token price');
-assert(canonicalZeroCapitalExecutor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']"), 'builder-funded zero-capital execution must fail closed when live token USD valuation is unavailable');
-assert(zeroCapitalRescue.includes('getProfitLadderDiscoveryNotionalAuthority()'), 'canonical rescue must consume Profit Ladder quote-only notional authority');
-assert(!zeroCapitalRescue.includes('ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD'), 'zero-capital rescue must not retain an independent notional ceiling');
+assert(flashZeroCapitalExecutor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']"), 'builder-funded zero-capital execution must fail closed when live token USD valuation is unavailable');
+assert(!zeroCapitalRescue.includes('getProfitLadderDiscoveryNotionalAuthority'), 'canonical rescue must not use Profit Ladder as flash-borrow notional authority');
+assert(!zeroCapitalRescue.includes('getProfitLadderNotionalAuthority'), 'canonical rescue must not use self-funded Profit Ladder exposure rungs for flash principal');
+assert(zeroCapitalRescue.includes('function providerSafeBorrowAmount'), 'canonical rescue must size flash principal from fresh provider-safe capacity');
 assert(zeroCapitalRescue.includes('measureFlashLoanProviders({'), 'canonical rescue must use measured provider evidence');
 assert(zeroCapitalRescue.includes('calculateMeasuredFlashLoanFee'), 'canonical rescue must use exact measured provider fees');
 assert(zeroCapitalRescue.includes('quoteConfiguredZeroCapitalRoute'), 'canonical rescue must independently requote candidate sizes');
@@ -66,14 +69,20 @@ assert(zeroCapitalRescue.includes('strictImprovement'), 'canonical rescue must r
 assert(!runtime.includes('ensureZeroCapitalSizeRefinementWiring'), 'retired duplicate size-refinement installer must stay absent');
 assert(!runtime.includes('ensureZeroCapitalJointProviderSizeWiring'), 'retired duplicate joint provider-size installer must stay absent');
 
-assert(ladderNotional.includes('SYSTEM_MAX_NOTIONAL_USD = 100_000_000'), 'system profit-ladder notional path must support a $100M terminal-evidence rung');
-assert(ladderNotional.includes("key: 'institutional_100m'"), 'institutional ladder must contain the explicit $100M rung');
-assert(ladderNotional.includes("authority: 'profit_ladder_capital_allowance'"), 'profit ladder must identify itself as the single exposure-size authority');
+assert(ladderNotional.includes('SYSTEM_MAX_NOTIONAL_USD = 100_000_000'), 'self-funded exposure authority must retain the bounded $100M system ceiling');
+assert(ladderNotional.includes("key: 'institutional_100m'"), 'self-funded institutional ladder must retain the explicit $100M rung');
+assert(ladderNotional.includes("authority: 'profit_ladder_capital_allowance'"), 'Profit Ladder notional authority must remain scoped to self-funded exposure');
 assert(ladderNotional.includes('stagePositionCapAuthoritative: false'), 'legacy stage position cap must remain non-authoritative');
-assert(ladderNotional.includes("authority: 'profit_ladder_quote_only_capital_curve'"), 'Profit Ladder must expose a quote-only discovery notional curve');
-assert(ladderNotional.includes('quoteOnly: true'), 'quote-only discovery authority must identify itself explicitly');
-assert(ladderNotional.includes('executionAuthority: false'), 'quote-only discovery authority must never own execution');
-assert(ladderNotional.includes('canBroadenExposure: false'), 'quote-only discovery authority must never broaden exposure');
+assert(ladderNotional.includes('getZeroCapitalDiscoveryNotionalAuthority'), 'zero-capital discovery must expose a Profit-Ladder-independent bounded quote curve');
+assert(ladderNotional.includes("authority: 'zero_capital_quote_only_system_curve'"), 'zero-capital quote curve must identify its independent authority');
+assert(ladderNotional.includes('quoteOnly: true'), 'zero-capital discovery authority must identify itself as quote-only');
+assert(ladderNotional.includes('executionAuthority: false'), 'zero-capital discovery authority must never own execution');
+assert(ladderNotional.includes('canBroadenExposure: false'), 'zero-capital discovery authority must never broaden self-funded exposure');
+assert(ladderNotional.includes('profitLadderNotionalAuthority: false'), 'zero-capital discovery authority must explicitly reject Profit Ladder notional authority');
+assert(dailyProfitBudget.includes("authority: 'profit_ladder_daily_realized_profit_only'"), 'Profit Ladder must identify daily realized profit as its zero-capital authority');
+assert(dailyProfitBudget.includes('borrowingNotionalAuthority: false'), 'Profit Ladder daily budget must explicitly own no borrowing-notional authority');
+assert(dailyProfitBudget.includes('expectedProfitFitsDailyBudget'), 'zero-capital execution must retain a remaining-daily-profit allowance check');
+assert(canonicalZeroCapitalExecutor.includes('getProfitLadderDailyProfitBudget') && canonicalZeroCapitalExecutor.includes('expectedProfitFitsDailyBudget'), 'canonical zero-capital executor must apply Profit Ladder only at the daily-profit boundary');
 
 assert(hyperHybrid.includes('const admittedChildren = plannedChildren.slice(0, concurrency);'), 'split executor must admit one bounded parallel child batch');
 assert(hyperHybrid.includes('await Promise.all(admittedChildren.map'), 'admitted split children must execute concurrently');
@@ -106,4 +115,4 @@ assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVe
 assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring())"), 'candidate expiry guard must be isolated and installed');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, single Profit Ladder exposure authority plus quote-only discovery sizing, canonical direct BPS rescue with measured provider fees/liquidity and canonical-executor live token USD pricing, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, self-funded notional rungs isolated from provider-capacity-bounded zero-capital borrowing, Profit Ladder daily-realized-profit-only authority, canonical direct BPS rescue with measured provider fees/liquidity and live-price-mesh token valuation, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
