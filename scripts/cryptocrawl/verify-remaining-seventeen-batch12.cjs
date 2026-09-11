@@ -4,6 +4,15 @@ const assert = require('assert');
 
 const root = path.resolve(__dirname, '..', '..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
+const readPhysical = relative => {
+  const absolute = path.join(root, relative);
+  const fd = fs.openSync(absolute, 'r');
+  try {
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+};
 
 const capability = read('server/services/cryptocrawl/discovery/venue-capability-registry.ts');
 const inventoryResize = read('server/services/cryptocrawl/integration/inventory-constrained-cex-execution-wiring.ts');
@@ -16,7 +25,10 @@ const memory = read('server/services/cryptocrawl/intelligence/canonical-intellig
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
 const atomicSize = read('server/services/cryptocrawl/execution/adapters/atomic-size-optimizer.ts');
 const zeroCapitalCore = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
-const canonicalZeroCapitalExecutor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
+// verify-deployment-preflight redirects path-based reads of this filename to the
+// preserved flash implementation for legacy verifiers. This verifier needs the
+// physical canonical router, so read it by descriptor to bypass that compatibility shim.
+const canonicalZeroCapitalExecutor = readPhysical('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 const flashZeroCapitalExecutor = read('server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts');
 const zeroCapitalRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts');
 const ladderNotional = read('server/services/cryptocrawl/governance/profit-ladder-notional-authority.ts');

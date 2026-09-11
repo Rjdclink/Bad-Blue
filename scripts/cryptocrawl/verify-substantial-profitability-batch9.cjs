@@ -17,11 +17,24 @@ const files = {
   canonical: 'server/services/cryptocrawl/integration/canonical-runtime-wiring.ts',
 };
 
+// Deployment preflight intentionally redirects path-based reads of the canonical
+// zero-capital executor to the preserved flash implementation for legacy verifiers.
+// New router-aware checks must inspect the physical canonical file, so read it by
+// file descriptor; the preflight compatibility redirect only rewrites path strings.
+function readPhysical(absolute) {
+  const fd = fs.openSync(absolute, 'r');
+  try {
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 const source = {};
 for (const [key, relative] of Object.entries(files)) {
   const absolute = path.join(root, relative);
   if (!fs.existsSync(absolute)) throw new Error(`[substantial-profitability-batch9] missing ${relative}`);
-  source[key] = fs.readFileSync(absolute, 'utf8');
+  source[key] = key === 'executor' ? readPhysical(absolute) : fs.readFileSync(absolute, 'utf8');
 }
 
 // These are behavior-level invariants, not telemetry field counts. Every entry
@@ -118,9 +131,6 @@ if (source.zero.includes('getProfitLadderDiscoveryNotionalAuthority') ||
     !source.zero.includes('function providerSafeBorrowAmount')) {
   throw new Error('[substantial-profitability-batch9] zero-capital rescue borrowing must remain independent of Profit Ladder notional and bounded by fresh provider capacity');
 }
-// The zero-capital engine is runtime context only. The sole canonical executor owns
-// terminal USD valuation through the provider-mesh price surface, while the flash
-// executor fails closed if live input-token USD valuation is unavailable.
 if (!source.core.includes('tokenUnitEqualsUsdAssumption: false') ||
     !source.executor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';") ||
     !source.executor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])') ||
@@ -131,7 +141,9 @@ if (!source.core.includes('tokenUnitEqualsUsdAssumption: false') ||
 if (!source.dailyBudget.includes("authority: 'profit_ladder_daily_realized_profit_only'") ||
     !source.dailyBudget.includes('borrowingNotionalAuthority: false') ||
     !source.dailyBudget.includes('expectedProfitFitsDailyBudget') ||
-    !source.zero.includes('getProfitLadderDailyProfitBudget')) {
+    !source.zero.includes('getProfitLadderDailyProfitBudget') ||
+    !source.executor.includes('dailyProfitBudgetFailure(opportunity)') ||
+    !source.executor.includes('expectedProfitFitsDailyBudget')) {
   throw new Error('[substantial-profitability-batch9] Profit Ladder must constrain daily realized profit while zero-capital borrowing remains independent');
 }
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
