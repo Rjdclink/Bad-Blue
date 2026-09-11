@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS public.cryptocrawler_cex_bootstrap_demands (
 
 CREATE TABLE IF NOT EXISTS public.cryptocrawler_cex_bootstrap_bridges (
   bridge_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  demand_id uuid NOT NULL UNIQUE REFERENCES public.cryptocrawler_cex_bootstrap_demands(demand_id) ON DELETE RESTRICT,
+  demand_id uuid NOT NULL REFERENCES public.cryptocrawler_cex_bootstrap_demands(demand_id) ON DELETE RESTRICT,
   allocation_id text NOT NULL UNIQUE REFERENCES public.cryptocrawler_system_capital_allocations(allocation_id) ON DELETE RESTRICT,
   onchain_reservation_id uuid NOT NULL UNIQUE REFERENCES public.cryptocrawler_onchain_inventory_reservations(reservation_id) ON DELETE RESTRICT,
   source_chain text NOT NULL,
@@ -48,6 +48,8 @@ CREATE INDEX IF NOT EXISTS idx_cex_bootstrap_demands_pending
 CREATE INDEX IF NOT EXISTS idx_cex_bootstrap_bridges_pending
   ON public.cryptocrawler_cex_bootstrap_bridges(status, updated_at)
   WHERE status IN ('RESERVED','PLACEMENT_PENDING','MANUAL_REVIEW');
+CREATE INDEX IF NOT EXISTS idx_cex_bootstrap_bridges_demand
+  ON public.cryptocrawler_cex_bootstrap_bridges(demand_id, created_at DESC);
 
 ALTER TABLE public.cryptocrawler_cex_bootstrap_demands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cryptocrawler_cex_bootstrap_bridges ENABLE ROW LEVEL SECURITY;
@@ -71,6 +73,8 @@ DECLARE
   remaining numeric(78,0);
   take_amount numeric(78,0);
   consumed jsonb := '[]'::jsonb;
+  system_gas_authority boolean;
+  system_gas_settled boolean;
 BEGIN
   IF NEW.destination_kind <> 'cex' OR NEW.status <> 'PLACED' OR OLD.status = 'PLACED' THEN
     RETURN NEW;
@@ -85,6 +89,15 @@ BEGIN
   END IF;
   IF bridge_row.status='APPLIED' THEN
     RETURN NEW;
+  END IF;
+
+  system_gas_authority := COALESCE((NEW.placement_evidence->>'systemNativeGasAuthority')::boolean, false);
+  system_gas_settled := COALESCE((NEW.placement_evidence->>'systemNativeGasSettled')::boolean, false);
+  IF system_gas_authority IS DISTINCT FROM true OR system_gas_settled IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'CEX bootstrap allocation % cannot become owned without settled provenance-backed native gas', NEW.allocation_id;
+  END IF;
+  IF COALESCE((NEW.placement_evidence->>'rawWalletNativeBalanceAuthority')::boolean, false)=true THEN
+    RAISE EXCEPTION 'CEX bootstrap allocation % attempted to use raw wallet native balance as spend authority', NEW.allocation_id;
   END IF;
 
   SELECT * INTO reservation_row
@@ -164,4 +177,4 @@ EXECUTE FUNCTION private.cryptocrawler_apply_cex_bootstrap_source();
 COMMENT ON TABLE public.cryptocrawler_cex_bootstrap_demands IS
   'Durable, quote-independent inventory demand created after canonical positive economics and governance/notional admission. A demand is not executable inventory.';
 COMMENT ON TABLE public.cryptocrawler_cex_bootstrap_bridges IS
-  'Exactly-once ownership bridge from a reserved SELF_FUNDED on-chain lot to a terminally spendable CEX allocation. The source lot remains reserved until destination placement is proven.';
+  'Exactly-once ownership bridge from a reserved SELF_FUNDED on-chain lot to a terminally spendable CEX allocation. Source ownership remains reserved until destination placement and system-owned gas settlement are proven.';
