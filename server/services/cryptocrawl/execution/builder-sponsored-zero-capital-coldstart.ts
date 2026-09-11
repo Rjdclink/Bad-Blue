@@ -16,7 +16,7 @@ import { buildFlashLoanReceiverPayloadFromPlan } from './adapters/flashloan-rece
 import type { FlashLoanProviderSelection } from './adapters/flash-loan-provider-selection-registry.js';
 import type { FlashLoanProviderEconomics } from './adapters/flash-loan-provider-economics.js';
 
-const ETHEREUM_USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+const ETHEREUM_USDC = '0xA0b86991c6218B36c1d19D4a2e9Eb0cE3606eB48';
 const ETHEREUM_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
 
 const ERC20_INTERFACE = new ethers.utils.Interface([
@@ -184,11 +184,11 @@ async function liveStableUsd(symbol: 'USDC' | 'USDT'): Promise<number> {
 }
 
 /**
- * Prepare an opportunity-specific Ethereum private-builder path. Standard EOA
- * bundles do not remove the sender's base-fee obligation, so this path is not a
- * zero-native-capital authority. The conversion therefore creates enough ETH both
- * to pay the builder and to replenish the bounded sender gas expenditure. The
- * stablecoin residual consequently carries both costs before terminal BPS learning.
+ * Prepare an opportunity-specific Ethereum private-builder cold start. Titan and
+ * Quasar sponsored-bundle semantics allow the builder to prepend the ETH needed
+ * for the signed EOA transactions, while the terminal payment reimburses that
+ * sponsorship plus a positive builder residual from execution-created value.
+ * No pre-existing operator or system-owned native balance is required.
  */
 export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
   opportunity: ZeroCapitalOpportunity;
@@ -216,7 +216,12 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
   );
   if (minimumBuilderResidualWei <= 0n) throw new Error('ZERO_CAPITAL_BUILDER_MIN_RESIDUAL_WEI must be positive');
   const builderPaymentWei = requiredSponsorshipWei + minimumBuilderResidualWei;
-  const conversionOutputWei = builderPaymentWei + requiredSponsorshipWei;
+  // The builder's prefund pays transaction gas. The terminal payment already
+  // reimburses the full sponsorship ceiling, so forcing a second sponsorship-sized
+  // ETH reserve would double-charge the current trade and can suppress a valid
+  // positive cold start. Future native reserve creation belongs to retained-profit
+  // policy after settlement, not first-trade admission.
+  const conversionOutputWei = builderPaymentWei;
 
   const conversionSlippageBps = boundedInteger(process.env.ZERO_CAPITAL_BUILDER_CONVERSION_MAX_SLIPPAGE_BPS, 50, 1, 500);
   const repaymentRoute = await selectBuilderRepaymentRoute({
@@ -369,22 +374,23 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
     candidates,
     provenance: [
       'builder_private_bundle:opportunity_specific',
+      'builder_native_prefund:titan_or_quasar_sponsored_bundle',
+      'operator_native_gas_input_required:false',
+      'builder_sponsorship_repaid_from_execution_created_value:true',
       'builder_payment_source:execution_created_value',
       'builder_payment_transport:titan_or_quasar',
       ...repaymentRoute.provenance,
       'builder_all_in_cost_attribution:stablecoin_input_max',
-      'sender_native_gas_replenishment:execution_created_value',
-      'sender_native_gas_ceiling:included_in_stablecoin_residual',
+      'forced_future_native_reserve_seeding:false',
       'gas_fee_ceiling:eip1559_base_fee_x2_plus_priority',
       'generic_gas_authority_not_overridden',
-      'system_owned_native_gas_required:true',
       'strict_positive_all_in_residual',
       'sub_bps_precision_preserved:true',
       'synthetic_evidence:false',
     ],
   };
   builderSponsoredZeroCapitalRegistry.record(evidence);
-  logger.info('[ZeroCapitalBuilderColdStart] Exact builder private-bundle candidate prepared', {
+  logger.info('[ZeroCapitalBuilderColdStart] Exact builder-sponsored zero-native-capital candidate prepared', {
     component: 'BuilderSponsoredZeroCapitalColdStart',
     opportunityId: opportunity.id,
     builders: candidates.map(candidate => candidate.builder),
@@ -398,8 +404,10 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
     builderPaymentWei: builderPaymentWei.toString(),
     conversionOutputWei: conversionOutputWei.toString(),
     operatorNativeGasInputRequired: false,
-    systemOwnedNativeGasRequired: true,
-    senderGasReplenishmentIncludedInResidual: true,
+    systemOwnedNativeGasRequired: false,
+    builderNativePrefundRequired: true,
+    builderSponsorshipRepaidFromExecutionCreatedValue: true,
+    senderGasReplenishmentIncludedInResidual: false,
     chainWideFundingAuthorityChanged: false,
     executionAuthority: false,
   });
