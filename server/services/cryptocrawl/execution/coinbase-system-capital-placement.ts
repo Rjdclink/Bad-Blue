@@ -13,6 +13,14 @@ import { compareExactDecimals } from './exact-decimal.js';
 import { withEvmSignerLane } from './evm-signer-lane.js';
 import { createProductionCexSettlementAdapters } from './cex-settlement.js';
 import { confirmSystemCapitalPlacement } from './system-capital-allocation-ledger.js';
+import {
+  bindSystemNativeGasSpendSubmission,
+  getSystemNativeGasAuthority,
+  quarantineSubmittedSystemNativeGasSpend,
+  releaseUnsubmittedSystemNativeGasSpend,
+  reserveSystemNativeGasSpend,
+  settleSystemNativeGasSpend,
+} from './system-native-gas-spend-authority.js';
 
 const ERC20_TRANSFER_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
@@ -180,6 +188,9 @@ async function persistPrepared(input: {
   chainId: number;
   nonce: number;
   gasLimit: string;
+  maximumGasWei: string;
+  systemNativeGasSpendId: string;
+  systemNativeGasScope: string;
 }): Promise<void> {
   const evidence = {
     venue: 'coinbase',
@@ -196,6 +207,12 @@ async function persistPrepared(input: {
     chainId: input.chainId,
     nonce: input.nonce,
     gasLimit: input.gasLimit,
+    maximumNativeGasWei: input.maximumGasWei,
+    systemNativeGasSpendId: input.systemNativeGasSpendId,
+    systemNativeGasScope: input.systemNativeGasScope,
+    systemNativeGasAuthority: true,
+    systemNativeGasSettled: false,
+    rawWalletNativeBalanceAuthority: false,
     preparedBeforeBroadcast: true,
     signerLaneHeldThroughBroadcast: true,
     accountBalanceCreatesOwnership: false,
@@ -214,6 +231,46 @@ async function persistPrepared(input: {
   const current = await loadAllocation(input.row.allocation_id);
   if (current.status === 'PLACEMENT_PENDING' && String(current.placement_reference || '').toLowerCase() === input.transactionHash) return;
   throw new Error('Coinbase system-capital placement could not durably bind the prepared transaction');
+}
+
+async function mergePlacementEvidence(allocationId: string, evidence: Record<string, unknown>): Promise<void> {
+  const result = await pool.query(
+    `UPDATE ${TABLE}
+     SET placement_evidence=COALESCE(placement_evidence, '{}'::jsonb) || $2::jsonb,
+         updated_at=now()
+     WHERE allocation_id=$1 AND status='PLACEMENT_PENDING'
+     RETURNING allocation_id`,
+    [allocationId, JSON.stringify(evidence)],
+  );
+  if (result.rowCount !== 1) throw new Error(`Pending Coinbase system-capital placement ${allocationId} is no longer mutable`);
+}
+
+async function settlePlacementNativeGas(row: AllocationRow, transactionHash: string, receipt: ethers.providers.TransactionReceipt): Promise<void> {
+  const spendId = String(row.placement_evidence?.systemNativeGasSpendId || '').trim();
+  if (!spendId) return;
+  const effectiveGasPrice = receipt.effectiveGasPrice;
+  if (!effectiveGasPrice) throw new Error(`Coinbase placement ${transactionHash} has no receipt gas price for provenance settlement`);
+  const actualSpentWei = receipt.gasUsed.mul(effectiveGasPrice).toString();
+  await settleSystemNativeGasSpend({
+    spendId,
+    transactionHash,
+    actualSpentWei,
+    evidence: {
+      allocationId: row.allocation_id,
+      chain: row.source_chain,
+      blockNumber: receipt.blockNumber,
+      receiptStatus: receipt.status,
+      gasUsed: receipt.gasUsed.toString(),
+      effectiveGasPriceWei: effectiveGasPrice.toString(),
+      purpose: 'coinbase_system_capital_placement',
+      rawWalletBalanceAuthority: false,
+    },
+  });
+  await mergePlacementEvidence(row.allocation_id, {
+    systemNativeGasAuthority: true,
+    systemNativeGasSettled: true,
+    actualNativeGasSpentWei: actualSpentWei,
+  });
 }
 
 async function broadcastPrepared(input: {
@@ -258,32 +315,66 @@ async function broadcastPrepared(input: {
       const gasLimit = await provider.estimateGas({ ...populated, from: wallet.address });
       const feeData = await provider.getFeeData();
       const transaction: ethers.providers.TransactionRequest = { ...populated, chainId: network.chainId, nonce, gasLimit };
+      let maximumGasPrice: BigNumber;
       if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
         transaction.type = 2;
         transaction.maxFeePerGas = feeData.maxFeePerGas;
         transaction.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+        maximumGasPrice = feeData.maxFeePerGas;
       } else if (feeData.gasPrice) {
         transaction.gasPrice = feeData.gasPrice;
+        maximumGasPrice = feeData.gasPrice;
       } else {
         throw new Error('Coinbase placement source RPC returned no usable fee data');
       }
       const signed = await wallet.signTransaction(transaction);
       const transactionHash = ethers.utils.keccak256(signed).toLowerCase();
-      await persistPrepared({
-        row: input.row,
-        validated: input.validated,
-        destination: input.destination,
-        transactionHash,
-        chainId: network.chainId,
-        nonce,
-        gasLimit: gasLimit.toString(),
+      const maximumGasWei = gasLimit.mul(maximumGasPrice).toString();
+      const gasAuthority = await getSystemNativeGasAuthority({
+        chain: input.validated.chain,
+        wallet: wallet.address,
+        minimumWei: maximumGasWei,
       });
+      if (!gasAuthority) throw new Error('Coinbase bootstrap placement rejected: no SELF_FUNDED provenance-backed native gas covers the signed transfer ceiling');
+      const gasReservation = await reserveSystemNativeGasSpend({
+        idempotencyKey: `coinbase-placement:${input.row.allocation_id}:${transactionHash}`,
+        scope: gasAuthority.scope,
+        chain: input.validated.chain,
+        wallet: wallet.address,
+        purpose: `coinbase_system_capital_placement:${input.row.allocation_id}`,
+        maximumWei: maximumGasWei,
+      });
+      if (!gasReservation) throw new Error('Coinbase bootstrap placement rejected: system-owned native gas reservation lost the capacity race');
+      try {
+        await bindSystemNativeGasSpendSubmission(gasReservation.spendId, transactionHash);
+      } catch (error) {
+        await releaseUnsubmittedSystemNativeGasSpend(gasReservation.spendId).catch(() => undefined);
+        throw error;
+      }
+      try {
+        await persistPrepared({
+          row: input.row,
+          validated: input.validated,
+          destination: input.destination,
+          transactionHash,
+          chainId: network.chainId,
+          nonce,
+          gasLimit: gasLimit.toString(),
+          maximumGasWei,
+          systemNativeGasSpendId: gasReservation.spendId,
+          systemNativeGasScope: gasAuthority.scope,
+        });
+      } catch (error) {
+        await quarantineSubmittedSystemNativeGasSpend(gasReservation.spendId, error).catch(() => undefined);
+        throw error;
+      }
       try {
         const submitted = await provider.sendTransaction(signed);
         if (submitted.hash.toLowerCase() !== transactionHash) throw new Error('Coinbase placement RPC returned a different transaction hash');
       } catch (error) {
-        const receipt = await provider.getTransactionReceipt(transactionHash).catch(() => null);
-        if (!receipt) {
+        const observed = await provider.getTransaction(transactionHash).catch(() => null);
+        if (!observed) {
+          await quarantineSubmittedSystemNativeGasSpend(gasReservation.spendId, error).catch(() => undefined);
           logger.error('[CoinbasePlacement] Broadcast outcome unresolved; capital remains reserved', {
             component: 'CoinbaseSystemCapitalPlacement',
             allocationId: input.row.allocation_id,
@@ -291,6 +382,7 @@ async function broadcastPrepared(input: {
             error: error instanceof Error ? error.message : String(error),
             duplicateSubmissionAllowed: false,
             sourceCapitalReleased: false,
+            systemNativeGasReleased: false,
           });
         }
       }
@@ -362,6 +454,7 @@ export async function reconcileCoinbaseSystemCapitalPlacement(rowOrId: Allocatio
   if (!receipt) {
     return { allocationId: row.allocation_id, venue: 'coinbase', status: 'PLACEMENT_PENDING', transactionHash: txHash, reason: 'On-chain transfer receipt remains pending' };
   }
+  await settlePlacementNativeGas(row, txHash, receipt);
   if (receipt.status !== 1) throw new Error(`Coinbase system-capital source transfer ${txHash} failed onchain`);
 
   const deposit = await findCompletedAddressDeposit(row, evidence);
@@ -387,6 +480,8 @@ export async function reconcileCoinbaseSystemCapitalPlacement(rowOrId: Allocatio
       blockNumber: receipt.blockNumber,
       settlementConfirmed: true,
       tradingAccountSpendableAuthority: true,
+      systemNativeGasAuthority: Boolean(evidence.systemNativeGasSpendId),
+      rawWalletNativeBalanceAuthority: false,
       accountBalanceCreatesOwnership: false,
       ownershipCreatedOnlyByAllocationSpecificDeposit: true,
     },
