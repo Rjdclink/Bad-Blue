@@ -8,7 +8,7 @@ const required = [
   "multiProviderRpcManager.execute(input.chain, 'logs'",
   'isAdaptiveLogRangeFailure(error)',
   'pending.unshift([fromBlock, midpoint], [midpoint + 1, toBlock])',
-  "multiProviderRpcManager.getProvider(chain, 'contract_calls')",
+  "multiProviderRpcManager.execute(input.chain, 'contract_calls'",
   "multiProviderRpcManager.execute(chain, 'blocks'",
   'collectBorrowEvents({ chain, pool, fromBlock, toBlock: latestBlock })',
 ];
@@ -21,6 +21,10 @@ for (const fragment of required) {
 
 if (source.includes('collectBorrowEvents({ chain, contract,')) {
   throw new Error('Liquidation event collection must not remain pinned to one preselected RPC provider');
+}
+
+if (source.includes('contract: Contract;')) {
+  throw new Error('Liquidation borrower health must not remain pinned to one preselected RPC provider');
 }
 
 if (!source.includes('windowSize <= minimumWindow')) {
