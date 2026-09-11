@@ -49,8 +49,10 @@ class ZeroCapitalCompositeEvidenceRegistry {
 
   record(input: ZeroCapitalCompositeEvidence): void {
     if (input.opportunityIds.length < 2 || input.measuredCompositionGain <= 0n || input.combinedExpectedProfit <= input.individualExpectedProfitSum) return;
-    if (input.sharedPrincipal <= 0n || input.combinedAllInCost < 0n || input.combinedGrossProfit <= input.combinedExpectedProfit) return;
+    if (input.sharedPrincipal <= 0n || input.combinedAllInCost < 0n || input.combinedGrossProfit < input.combinedExpectedProfit) return;
     if (input.targetNetProfitBaseUnits <= 0n || input.requiredOnchainResidual < input.targetNetProfitBaseUnits) return;
+    if (!Number.isFinite(input.targetNetProfitBps) || input.targetNetProfitBps <= 0) return;
+    if (input.combinedExpectedProfit < input.targetNetProfitBaseUnits) return;
     this.entries.set(key(input.opportunityIds), clone(input));
     this.prune();
   }
@@ -65,7 +67,7 @@ class ZeroCapitalCompositeEvidenceRegistry {
     const now = Date.now();
     return [...this.entries.values()]
       .filter(value => value.expiresAt > now)
-      .sort((left, right) => right.sharedPrincipalStackedBps - left.sharedPrincipalStackedBps || right.simulatedAt - left.simulatedAt)
+      .sort((left, right) => right.combinedExpectedProfit > left.combinedExpectedProfit ? 1 : right.combinedExpectedProfit < left.combinedExpectedProfit ? -1 : right.simulatedAt - left.simulatedAt)
       .slice(0, Math.max(1, Math.min(256, limit)))
       .map(clone);
   }
