@@ -35,6 +35,156 @@ export type RpcCapability =
   | 'subscriptions'
   | 'pending_transactions';
 
+export type RpcOperationFailureClass = 'provider_transport' | 'provider_capability' | 'application';
+
+function rpcErrorCode(error: unknown): string {
+  if (!error || typeof error !== 'object') return '';
+  const record = error as Record<string, any>;
+  return String(record.code ?? record.error?.code ?? record.cause?.code ?? '').trim().toUpperCase();
+}
+
+function rpcErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as Record<string, any>;
+  const parsed = Number(record.status ?? record.statusCode ?? record.response?.status ?? record.error?.status);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function rpcErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message.toLowerCase();
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, any>;
+    return String(record.message ?? record.reason ?? record.error?.message ?? record.body ?? error).toLowerCase();
+  }
+  return String(error ?? '').toLowerCase();
+}
+
+/**
+ * Provider health is transport health, not route economics or EVM application
+ * behavior. A deterministic revert, exhausted venue, unsupported exact request,
+ * or quote-specific failure must never make an otherwise healthy RPC disappear
+ * from unrelated chains/routes/capabilities.
+ */
+export function classifyRpcOperationError(
+  error: unknown,
+  capability: RpcCapability,
+): RpcOperationFailureClass {
+  const code = rpcErrorCode(error);
+  const status = rpcErrorStatus(error);
+  const message = rpcErrorMessage(error);
+
+  const applicationCodes = new Set([
+    'CALL_EXCEPTION',
+    'UNPREDICTABLE_GAS_LIMIT',
+    'INSUFFICIENT_FUNDS',
+    'NONCE_EXPIRED',
+    'REPLACEMENT_UNDERPRICED',
+    'TRANSACTION_REPLACED',
+    'ACTION_REJECTED',
+    'INVALID_ARGUMENT',
+    'MISSING_ARGUMENT',
+    'UNEXPECTED_ARGUMENT',
+    'NUMERIC_FAULT',
+  ]);
+  if (applicationCodes.has(code)) return 'application';
+
+  const applicationFragments = [
+    'execution reverted',
+    'call exception',
+    'invalid opcode',
+    'insufficient liquidity',
+    'insufficient buy-side',
+    'insufficient sell-side',
+    'insufficient capacity',
+    'capacity exhausted',
+    'fluid simulation unexpectedly returned',
+    'transfer amount exceeds balance',
+    'allowance',
+    'nonce too low',
+    'replacement transaction underpriced',
+    'already known',
+    'intrinsic gas too low',
+  ];
+  if (applicationFragments.some(fragment => message.includes(fragment))) return 'application';
+
+  if (capability === 'logs') {
+    const logCapabilityFragments = [
+      'eth_getlogs is disabled',
+      'eth_getlogs disabled',
+      'block range',
+      'range limit',
+      'query returned more than',
+      'too many results',
+      'response size exceeded',
+      'log response size exceeded',
+    ];
+    if (logCapabilityFragments.some(fragment => message.includes(fragment))) return 'provider_capability';
+  }
+
+  const capabilityFragments = [
+    'method not found',
+    'method is disabled',
+    'unsupported method',
+    'method not supported',
+    'does not support this method',
+  ];
+  if (capabilityFragments.some(fragment => message.includes(fragment)) || code === '-32601') {
+    return 'provider_capability';
+  }
+
+  const transportCodes = new Set([
+    'NETWORK_ERROR',
+    'SERVER_ERROR',
+    'TIMEOUT',
+    'ETIMEDOUT',
+    'ENETUNREACH',
+    'EHOSTUNREACH',
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ECONNABORTED',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_SOCKET',
+  ]);
+  if (transportCodes.has(code)) return 'provider_transport';
+  if (status === 429 || (status !== null && status >= 500)) return 'provider_transport';
+
+  const transportFragments = [
+    'timed out',
+    'timeout',
+    'network error',
+    'failed to fetch',
+    'socket hang up',
+    'connection reset',
+    'connection refused',
+    'connection aborted',
+    'network is unreachable',
+    'host is unreachable',
+    'temporary failure in name resolution',
+    'getaddrinfo',
+    'too many requests',
+    'rate limit',
+    '429',
+    'bad gateway',
+    'service unavailable',
+    'gateway timeout',
+    'missing response',
+    'invalid json response',
+    'could not detect network',
+  ];
+  if (transportFragments.some(fragment => message.includes(fragment))) return 'provider_transport';
+
+  // Contract and transaction operations routinely surface route-/state-specific
+  // JSON-RPC errors whose provider transport is healthy. Unknown failures there
+  // therefore remain local instead of poisoning the provider mesh. For pure
+  // transport/data capabilities, an unknown error is conservatively failoverable.
+  return capability === 'contract_calls' || capability === 'transactions'
+    ? 'application'
+    : 'provider_transport';
+}
+
 export interface RpcProvenance {
   provider: string;
   chain: SupportedChain;
@@ -393,8 +543,9 @@ export class MultiProviderRpcManager {
     candidate.consecutiveSuccesses = 0;
     candidate.lastError = error instanceof Error ? error.message : String(error);
     candidate.lastObservedAt = Date.now();
-    candidate.state = candidate.consecutiveFailures >= this.failureThreshold ? 'cooldown' : 'degraded';
-    candidate.cooldownUntil = Date.now() + this.cooldownMs;
+    const coolingDown = candidate.consecutiveFailures >= this.failureThreshold;
+    candidate.state = coolingDown ? 'cooldown' : 'degraded';
+    candidate.cooldownUntil = coolingDown ? Date.now() + this.cooldownMs : 0;
   }
 
   private recordSuccess(candidate: RpcCandidate, latencyMs: number): void {
@@ -411,7 +562,7 @@ export class MultiProviderRpcManager {
     const now = Date.now();
     return (this.candidates.get(chain) || [])
       .filter(candidate => candidate.capabilities.has(capability) && !excluded.has(candidate.provider))
-      .filter(candidate => candidate.state === 'healthy' && candidate.cooldownUntil <= now)
+      .filter(candidate => (candidate.state === 'healthy' || candidate.state === 'degraded') && candidate.cooldownUntil <= now)
       .sort((left, right) => {
         if (left.priority !== right.priority) return right.priority - left.priority;
         return (left.latencyMs ?? Number.MAX_SAFE_INTEGER) - (right.latencyMs ?? Number.MAX_SAFE_INTEGER);
@@ -478,6 +629,20 @@ export class MultiProviderRpcManager {
         return { result, provenance: this.toManagedProvider(candidate, 'http').provenance };
       } catch (error) {
         lastError = error;
+        const failureClass = classifyRpcOperationError(error, capability);
+        if (failureClass === 'application') {
+          // The RPC answered. Preserve its health and keep deterministic route /
+          // venue / contract failure local to the caller instead of trying to
+          // manufacture a different economic result from another provider.
+          this.recordSuccess(candidate, Date.now() - startedAt);
+          throw error;
+        }
+        if (failureClass === 'provider_capability') {
+          // Method/range support is local to this provider+request. It may still
+          // be perfectly healthy for blocks, gas, receipts and smaller requests.
+          this.recordSuccess(candidate, Date.now() - startedAt);
+          continue;
+        }
         this.recordFailure(candidate, error);
       }
     }
@@ -948,7 +1113,7 @@ export class AdvancedRateLimiter {
   }
 
   /**
-   * Wait until request can proceed
+   * Wait until request can proceed using sliding window algorithm
    */
   async waitForSlot(): Promise<void> {
     while (!(await this.canProceed())) {
