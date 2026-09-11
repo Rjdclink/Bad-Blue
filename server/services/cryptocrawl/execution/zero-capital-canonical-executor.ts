@@ -114,9 +114,26 @@ function expectedNetProfitUsd(opportunity: ZeroCapitalOpportunity): number {
   const tokenAmount = Number(ethers.utils.formatUnits(opportunity.expectedProfit.toString(), opportunity.inputTokenDecimals));
   if (!Number.isFinite(tokenAmount) || tokenAmount <= 0) return 0;
   const quotedPrice = Number(opportunity.inputAssetUsdPrice);
-  const usdPrice = Number.isFinite(quotedPrice) && quotedPrice > 0 ? quotedPrice : 1;
-  const usd = tokenAmount * usdPrice;
+  if (!(Number.isFinite(quotedPrice) && quotedPrice > 0)) return 0;
+  const usd = tokenAmount * quotedPrice;
   return Number.isFinite(usd) && usd > 0 ? usd : 0;
+}
+
+async function resolveExpectedNetProfitUsdForBudget(opportunity: ZeroCapitalOpportunity): Promise<number | null> {
+  const quoted = expectedNetProfitUsd(opportunity);
+  if (quoted > 0) return quoted;
+  let prices = new Map<string, number>();
+  try {
+    prices = await livePriceMesh.getLiveSymbolPrices([opportunity.inputAssetSymbol]);
+  } catch {
+    return null;
+  }
+  const usdPrice = Number(prices.get(opportunity.inputAssetSymbol));
+  if (!(Number.isFinite(usdPrice) && usdPrice > 0)) return null;
+  const tokenAmount = Number(ethers.utils.formatUnits(opportunity.expectedProfit.toString(), opportunity.inputTokenDecimals));
+  if (!(Number.isFinite(tokenAmount) && tokenAmount > 0)) return null;
+  const usd = tokenAmount * usdPrice;
+  return Number.isFinite(usd) && usd > 0 ? usd : null;
 }
 
 async function dailyProfitBudgetFailure(opportunity: ZeroCapitalOpportunity): Promise<string | null> {
@@ -126,15 +143,16 @@ async function dailyProfitBudgetFailure(opportunity: ZeroCapitalOpportunity): Pr
   } catch (error) {
     return `Profit Ladder daily realized-profit budget is unavailable: ${error instanceof Error ? error.message : String(error)}`;
   }
-  const expectedUsd = expectedNetProfitUsd(opportunity);
-  if (!budget.stageAligned) {
-    return `Profit Ladder tier ${budget.tierId} is not aligned with execution stage ${budget.stage}`;
-  }
   if (budget.exhausted) {
     return `Profit Ladder daily realized-profit cap is exhausted at $${budget.realizedProfitUsd.toFixed(2)}`;
   }
+  if (budget.remainingProfitUsd === null) return null;
+  const expectedUsd = await resolveExpectedNetProfitUsdForBudget(opportunity);
+  if (expectedUsd === null) {
+    return 'Profit Ladder daily profit budget cannot be verified because the input-token USD price is unavailable';
+  }
   if (!expectedProfitFitsDailyBudget(expectedUsd, budget)) {
-    return `Expected net profit $${expectedUsd.toFixed(2)} exceeds remaining Profit Ladder daily capacity $${Number(budget.remainingProfitUsd || 0).toFixed(2)}`;
+    return `Expected net profit $${expectedUsd.toFixed(2)} exceeds remaining Profit Ladder daily capacity $${budget.remainingProfitUsd.toFixed(2)}`;
   }
   return null;
 }
