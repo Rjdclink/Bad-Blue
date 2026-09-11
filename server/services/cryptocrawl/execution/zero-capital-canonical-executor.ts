@@ -7,6 +7,10 @@ import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } f
 import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
 import { recordCryptaraExecutionEvidence } from '../governance/automatic-stage-progression.js';
 import { getCryptocrawlGovernance } from '../governance/index.js';
+import {
+  expectedProfitFitsDailyBudget,
+  getProfitLadderDailyProfitBudget,
+} from '../governance/profit-ladder-daily-profit-budget.js';
 import { ghostWalletAlternativeZeroCapitalSelectionRegistry } from '../ghost-wallet/zero-capital-alternative-selection-registry.js';
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import {
@@ -15,12 +19,17 @@ import {
   releaseFailedSponsoredBootstrap,
   type SponsoredSystemCapitalAttempt,
 } from '../runtime/system-capital-provenance.js';
-import { builderSponsoredZeroCapitalRegistry } from './builder-sponsored-zero-capital-coldstart.js';
 import { flashLoanProviderSelectionRegistry } from './adapters/flash-loan-provider-selection-registry.js';
+import { builderSponsoredZeroCapitalRegistry } from './builder-sponsored-zero-capital-coldstart.js';
 import {
   executeAlternativePreparedWithinCanonicalExecutor,
   type AlternativePreparedExecutionFacts,
 } from './zero-capital-alternative-prepared-executor.js';
+import {
+  executeCompositePreparedWithinCanonicalExecutor,
+  type CompositePreparedExecutionFacts,
+} from './zero-capital-composite-prepared-executor.js';
+import { zeroCapitalCompositeSelectionRegistry } from './zero-capital-composite-selection-registry.js';
 import {
   executeCanonicalZeroCapitalOpportunity as executeFlashCanonicalZeroCapitalOpportunity,
   type CanonicalZeroCapitalExecutionResult,
@@ -31,6 +40,7 @@ import type { NormalizedRealizedExecution } from './settlement-types.js';
 export type { CanonicalZeroCapitalExecutionResult } from './zero-capital-flash-canonical-executor.js';
 
 const TREASURY_FRACTION_SCALE = 100_000_000n;
+const COMPOSITE_ID_PREFIX = 'atomic-stack:';
 const NATIVE_SYMBOL: Partial<Record<SupportedChain, 'ETH' | 'POL' | 'BNB' | 'AVAX'>> = {
   ethereum: 'ETH',
   polygon: 'POL',
@@ -51,6 +61,17 @@ type CanonicalRuntimeContext = {
       timeoutMs: number;
     }) => Promise<{ transactionHash: string }>;
   };
+};
+
+type PreparedTerminalFacts = {
+  transactionHash: string;
+  receipt: providers.TransactionReceipt;
+  grossProfit: bigint;
+  recipientStarting: bigint;
+  recipientEnding: bigint;
+  nativeFeeWei: bigint;
+  sponsoredExecution: boolean;
+  sponsorOperatorMonetaryCostProvenZero: boolean;
 };
 
 function runtime(): CanonicalRuntimeContext {
@@ -89,6 +110,35 @@ function splitGrossBaseUnits(grossProfitBaseUnits: bigint, retainedFraction: num
   };
 }
 
+function expectedNetProfitUsd(opportunity: ZeroCapitalOpportunity): number {
+  const tokenAmount = Number(ethers.utils.formatUnits(opportunity.expectedProfit.toString(), opportunity.inputTokenDecimals));
+  if (!Number.isFinite(tokenAmount) || tokenAmount <= 0) return 0;
+  const quotedPrice = Number(opportunity.inputAssetUsdPrice);
+  const usdPrice = Number.isFinite(quotedPrice) && quotedPrice > 0 ? quotedPrice : 1;
+  const usd = tokenAmount * usdPrice;
+  return Number.isFinite(usd) && usd > 0 ? usd : 0;
+}
+
+async function dailyProfitBudgetFailure(opportunity: ZeroCapitalOpportunity): Promise<string | null> {
+  let budget;
+  try {
+    budget = await getProfitLadderDailyProfitBudget();
+  } catch (error) {
+    return `Profit Ladder daily realized-profit budget is unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const expectedUsd = expectedNetProfitUsd(opportunity);
+  if (!budget.stageAligned) {
+    return `Profit Ladder tier ${budget.tierId} is not aligned with execution stage ${budget.stage}`;
+  }
+  if (budget.exhausted) {
+    return `Profit Ladder daily realized-profit cap is exhausted at $${budget.realizedProfitUsd.toFixed(2)}`;
+  }
+  if (!expectedProfitFitsDailyBudget(expectedUsd, budget)) {
+    return `Expected net profit $${expectedUsd.toFixed(2)} exceeds remaining Profit Ladder daily capacity $${Number(budget.remainingProfitUsd || 0).toFixed(2)}`;
+  }
+  return null;
+}
+
 async function terminalEconomics(input: {
   opportunity: ZeroCapitalOpportunity;
   grossProfit: bigint;
@@ -119,26 +169,26 @@ async function terminalEconomics(input: {
   });
 }
 
-function normalizedAlternativeSettlement(input: {
+function normalizedPreparedSettlement(input: {
   opportunity: ZeroCapitalOpportunity;
-  facts: AlternativePreparedExecutionFacts;
+  facts: PreparedTerminalFacts;
   economics: ZeroCapitalRealizedProfitDecision;
   startedAt: number;
+  venueOrRoute: string;
+  provenance: string[];
 }): NormalizedRealizedExecution {
-  const { opportunity, facts, economics } = input;
-  const predictedPrice = Number(opportunity.inputAssetUsdPrice || 0);
+  const predictedPrice = Number(input.opportunity.inputAssetUsdPrice || 0);
   const predictedProfitUsd = predictedPrice > 0
-    ? Number(ethers.utils.formatUnits(opportunity.expectedProfit.toString(), opportunity.inputTokenDecimals)) * predictedPrice
-    : 0;
-
+    ? Number(ethers.utils.formatUnits(input.opportunity.expectedProfit.toString(), input.opportunity.inputTokenDecimals)) * predictedPrice
+    : expectedNetProfitUsd(input.opportunity);
   return {
     status: 'filled',
     terminal: true,
     settlementConfirmed: true,
     submittedAt: input.startedAt,
     settledAt: Date.now(),
-    venueOrRoute: `${facts.selection.source}:${opportunity.route.map(step => step.protocol).join('->')}`,
-    chain: opportunity.chain,
+    venueOrRoute: input.venueOrRoute,
+    chain: input.opportunity.chain,
     predicted: {
       profitUsd: predictedProfitUsd,
       feeUsd: null,
@@ -148,32 +198,15 @@ function normalizedAlternativeSettlement(input: {
       acquisitionCostUsd: null,
       proceedsUsd: null,
       exchangeFeeUsd: null,
-      gasUsd: economics.gasUsd,
-      gasUsed: facts.receipt.gasUsed?.toString() || null,
-      effectiveGasPriceWei: facts.receipt.effectiveGasPrice?.toString() || null,
+      gasUsd: input.economics.gasUsd,
+      gasUsed: input.facts.receipt.gasUsed?.toString() || null,
+      effectiveGasPriceWei: input.facts.receipt.effectiveGasPrice?.toString() || null,
       slippageBps: null,
-      netProfitUsd: economics.netProfitUsd,
+      netProfitUsd: input.economics.netProfitUsd,
     },
-    provenance: [
-      'canonical_zero_capital_single_executor',
-      'canonical_alternative_capital_selection_registry',
-      `alternative_capital_source:${facts.selection.source}`,
-      ...facts.selection.provenance,
-      'exact_pre_broadcast_eth_call_passed',
-      'exact_pre_broadcast_gas_estimate_passed',
-      'source_specific_atomic_repayment_event_verified',
-      'intermediary_terminal_balance_neutral',
-      'operational_profit_recipient_delta:matches_intermediary_event',
-      facts.sponsoredExecution
-        ? facts.sponsorOperatorMonetaryCostProvenZero
-          ? 'sponsored_gas:operator_cost_proven_zero'
-          : 'sponsored_gas:provider_fronted_receipt_cost_measured'
-        : 'system_owned_native_receipt_gas:measured',
-      economics.economicsComplete ? 'realized_all_in_net_profit' : 'realized_all_in_economics_incomplete',
-      'synthetic_evidence:false',
-    ],
-    transactionHash: facts.transactionHash,
-    blockNumber: facts.receipt.blockNumber,
+    provenance: [...input.provenance, 'synthetic_evidence:false'],
+    transactionHash: input.facts.transactionHash,
+    blockNumber: input.facts.receipt.blockNumber,
     receiptStatus: 1,
   };
 }
@@ -213,7 +246,7 @@ async function persistTerminalLearning(
   const feedback = executionFeedback(opportunity, result);
   if (!feedback) return null;
   await recordCryptaraExecutionEvidence(feedback).catch(error => {
-    logger.warn('[ZeroCapitalExecutor] Alternative-capital terminal learning persistence degraded', {
+    logger.warn('[ZeroCapitalExecutor] Terminal learning persistence degraded', {
       component: 'CanonicalZeroCapitalExecutor',
       opportunityId: opportunity.id,
       error: error instanceof Error ? error.message : String(error),
@@ -222,12 +255,13 @@ async function persistTerminalLearning(
   return feedback;
 }
 
-function confirmedAlternativeReconciliationException(input: {
+function confirmedPreparedReconciliationException(input: {
   opportunity: ZeroCapitalOpportunity;
   reason: string;
   startedAt: number;
   transactionHash: string;
   receipt: providers.TransactionReceipt;
+  mode: 'alternative_capital' | 'composite_atomic';
 }): CanonicalZeroCapitalExecutionResult {
   const normalized: NormalizedRealizedExecution = {
     status: 'filled',
@@ -235,13 +269,9 @@ function confirmedAlternativeReconciliationException(input: {
     settlementConfirmed: true,
     submittedAt: input.startedAt,
     settledAt: Date.now(),
-    venueOrRoute: `alternative_capital_reconciliation_exception:${input.opportunity.route.map(step => step.protocol).join('->')}`,
+    venueOrRoute: `${input.mode}_reconciliation_exception`,
     chain: input.opportunity.chain,
-    predicted: {
-      profitUsd: 0,
-      feeUsd: null,
-      slippageBps: 0,
-    },
+    predicted: { profitUsd: expectedNetProfitUsd(input.opportunity), feeUsd: null, slippageBps: 0 },
     realized: {
       acquisitionCostUsd: null,
       proceedsUsd: null,
@@ -254,7 +284,7 @@ function confirmedAlternativeReconciliationException(input: {
     },
     provenance: [
       'canonical_zero_capital_single_executor',
-      'alternative_capital_transaction_confirmed',
+      `${input.mode}_transaction_confirmed`,
       'terminal_economic_reconciliation_exception',
       'settlement_truth_preserved',
       'synthetic_evidence:false',
@@ -263,7 +293,6 @@ function confirmedAlternativeReconciliationException(input: {
     blockNumber: input.receipt.blockNumber,
     receiptStatus: 1,
   };
-
   return {
     opportunityId: input.opportunity.id,
     submitted: true,
@@ -285,6 +314,128 @@ function confirmedAlternativeReconciliationException(input: {
   };
 }
 
+async function prepareSystemCapitalAttempt(
+  opportunity: ZeroCapitalOpportunity,
+  profitRecipient: string,
+  funding: Awaited<ReturnType<typeof getProvenZeroCapitalGasFundingDecision>>,
+): Promise<SponsoredSystemCapitalAttempt | null> {
+  if (funding.mode !== 'sponsored' || funding.sponsorOperatorMonetaryCostProvenZero !== true) return null;
+  try {
+    return await prepareSponsoredSystemCapital({
+      chain: opportunity.chain,
+      inputToken: opportunity.inputToken,
+      profitRecipient,
+      opportunityId: opportunity.id,
+    });
+  } catch (error) {
+    logger.warn('[ZeroCapitalExecutor] Sponsored bookkeeping preparation degraded without changing execution truth', {
+      component: 'CanonicalZeroCapitalExecutor',
+      opportunityId: opportunity.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+async function persistPreparedProfit(input: {
+  opportunity: ZeroCapitalOpportunity;
+  result: CanonicalZeroCapitalExecutionResult;
+  facts: PreparedTerminalFacts;
+  systemCapitalAttempt: SponsoredSystemCapitalAttempt | null;
+  profitRecipient: string;
+  zeroExternalInputCapitalVerified: boolean;
+}): Promise<void> {
+  const feedback = await persistTerminalLearning(input.opportunity, input.result);
+  if (!(input.result.success === true && feedback)) {
+    await releaseFailedSponsoredBootstrap(input.systemCapitalAttempt).catch(() => undefined);
+    return;
+  }
+  try {
+    const allocation = await retainedProfitLedger.recordTerminalSettlement(feedback);
+    input.result.treasuryRecorded = allocation !== null;
+    if (
+      allocation
+      && input.facts.sponsoredExecution
+      && input.facts.sponsorOperatorMonetaryCostProvenZero
+      && input.systemCapitalAttempt
+    ) {
+      const split = splitGrossBaseUnits(input.facts.grossProfit, allocation.retainedFraction);
+      if (split.retainedProfitBaseUnits > 0n) {
+        await persistVerifiedSponsoredProfit(input.systemCapitalAttempt, {
+          transactionHash: input.facts.transactionHash,
+          chain: input.opportunity.chain,
+          asset: input.opportunity.inputAssetSymbol,
+          grossProfitBaseUnits: input.facts.grossProfit,
+          retainedProfitBaseUnits: split.retainedProfitBaseUnits,
+          payoutReservedBaseUnits: split.payoutReservedBaseUnits,
+          sourceRecipient: input.profitRecipient,
+          sourceRecipientBalanceBeforeBaseUnits: input.facts.recipientStarting,
+          sourceRecipientBalanceAfterBaseUnits: input.facts.recipientEnding,
+          zeroOperatorMonetaryGasVerified: true,
+          zeroExternalNativeCapitalVerified: true,
+          zeroExternalInputCapitalVerified: input.zeroExternalInputCapitalVerified,
+        });
+      }
+    }
+  } catch (error) {
+    logger.error('[ZeroCapitalExecutor] Confirmed profit preserved but treasury/system-capital persistence requires reconciliation', {
+      component: 'CanonicalZeroCapitalExecutor',
+      opportunityId: input.opportunity.id,
+      transactionHash: input.facts.transactionHash,
+      error: error instanceof Error ? error.message : String(error),
+      settlementTruthPreserved: true,
+    });
+  }
+}
+
+function preparedResult(input: {
+  opportunity: ZeroCapitalOpportunity;
+  facts: PreparedTerminalFacts;
+  economics: ZeroCapitalRealizedProfitDecision;
+  normalized: NormalizedRealizedExecution;
+  startedAt: number;
+  targetNetProfitBaseUnits?: bigint;
+  mode: 'alternative_capital' | 'composite_atomic';
+}): CanonicalZeroCapitalExecutionResult {
+  const targetSatisfied = input.targetNetProfitBaseUnits === undefined
+    || (input.economics.netProfitBaseUnits !== null && input.economics.netProfitBaseUnits >= input.targetNetProfitBaseUnits);
+  const positive = input.economics.economicsComplete && input.economics.positiveAfterAllInCost && targetSatisfied;
+  return {
+    opportunityId: input.opportunity.id,
+    submitted: true,
+    settlementConfirmed: true,
+    executionConfirmed: true,
+    economicReconciliationStatus: input.economics.economicsComplete ? 'confirmed' : 'pending',
+    status: 'filled',
+    success: positive,
+    txHash: input.facts.transactionHash,
+    transactionHash: input.facts.transactionHash,
+    grossProfit: input.facts.grossProfit,
+    profit: input.economics.netProfitBaseUnits ?? undefined,
+    profitVerified: positive,
+    economicsVerified: input.economics.economicsComplete,
+    gasUsed: BigInt(input.facts.receipt.gasUsed.toString()),
+    effectiveGasPriceWei: input.facts.receipt.effectiveGasPrice
+      ? BigInt(input.facts.receipt.effectiveGasPrice.toString())
+      : 0n,
+    receiptStatus: 1,
+    nativeFeeWei: input.facts.nativeFeeWei,
+    zeroMonetaryGasVerified: input.facts.sponsoredExecution && input.facts.sponsorOperatorMonetaryCostProvenZero,
+    realizedFeeUsd: input.economics.gasUsd ?? undefined,
+    latencyMs: Date.now() - input.startedAt,
+    blockNumber: input.facts.receipt.blockNumber,
+    normalized: input.normalized,
+    capitalProvenanceVerified: true,
+    error: input.economics.economicsComplete
+      ? positive
+        ? undefined
+        : input.mode === 'composite_atomic' && !targetSatisfied
+          ? 'Composite terminal settlement did not preserve the required +10 BPS-or-configured target after realized costs'
+          : `${input.mode} terminal settlement realized non-positive all-in net profit`
+      : `${input.mode} terminal economics are incomplete: ${input.economics.missingInformation.join(', ')}`,
+  };
+}
+
 async function executeCanonicalAlternative(
   opportunity: ZeroCapitalOpportunity,
   target: CanonicalRuntimeContext,
@@ -294,47 +445,23 @@ async function executeCanonicalAlternative(
 ): Promise<CanonicalZeroCapitalExecutionResult> {
   const selection = ghostWalletAlternativeZeroCapitalSelectionRegistry.get(opportunity.id);
   if (!selection) return failed(opportunity, 'Alternative-capital selection disappeared before execution');
-
   const profitRecipient = resolveOperationalProfitRecipient();
   const funding = await getProvenZeroCapitalGasFundingDecision(target as any, opportunity.chain);
-  let systemCapitalAttempt: SponsoredSystemCapitalAttempt | null = null;
-  if (funding.mode === 'sponsored' && funding.sponsorOperatorMonetaryCostProvenZero === true) {
-    try {
-      systemCapitalAttempt = await prepareSponsoredSystemCapital({
-        chain: opportunity.chain,
-        inputToken: opportunity.inputToken,
-        profitRecipient,
-        opportunityId: opportunity.id,
-      });
-    } catch (error) {
-      logger.warn('[ZeroCapitalExecutor] Alternative-capital sponsored bookkeeping preparation degraded without changing execution truth', {
-        component: 'CanonicalZeroCapitalExecutor',
-        opportunityId: opportunity.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
+  const systemCapitalAttempt = await prepareSystemCapitalAttempt(opportunity, profitRecipient, funding);
   getCryptocrawlGovernance().recordExecutionAttempt();
   const outcome = await executeAlternativePreparedWithinCanonicalExecutor({
-    opportunity,
-    selection,
-    provider,
-    wallet,
-    profitRecipient,
-    funding,
-    runtime: target,
+    opportunity, selection, provider, wallet, profitRecipient, funding, runtime: target,
   });
-
   if (!outcome.ok) {
     if (outcome.receipt?.status === 1 && outcome.transactionHash) {
       ghostWalletAlternativeZeroCapitalSelectionRegistry.remove(opportunity.id);
-      return confirmedAlternativeReconciliationException({
+      return confirmedPreparedReconciliationException({
         opportunity,
         reason: outcome.reason,
         startedAt,
         transactionHash: outcome.transactionHash,
         receipt: outcome.receipt,
+        mode: 'alternative_capital',
       });
     }
     await releaseFailedSponsoredBootstrap(systemCapitalAttempt).catch(() => undefined);
@@ -350,7 +477,7 @@ async function executeCanonicalAlternative(
     });
   }
 
-  const facts = outcome.facts;
+  const facts: AlternativePreparedExecutionFacts = outcome.facts;
   ghostWalletAlternativeZeroCapitalSelectionRegistry.remove(opportunity.id);
   const economics = await terminalEconomics({
     opportunity,
@@ -359,84 +486,37 @@ async function executeCanonicalAlternative(
     sponsoredExecution: facts.sponsoredExecution,
     sponsorOperatorMonetaryCostProvenZero: facts.sponsorOperatorMonetaryCostProvenZero,
   });
-  const normalized = normalizedAlternativeSettlement({ opportunity, facts, economics, startedAt });
-  const positive = economics.economicsComplete && economics.positiveAfterAllInCost;
-
-  const result: CanonicalZeroCapitalExecutionResult = {
-    opportunityId: opportunity.id,
-    submitted: true,
-    settlementConfirmed: true,
-    executionConfirmed: true,
-    economicReconciliationStatus: economics.economicsComplete ? 'confirmed' : 'pending',
-    status: 'filled',
-    success: positive,
-    txHash: facts.transactionHash,
-    transactionHash: facts.transactionHash,
-    grossProfit: facts.grossProfit,
-    profit: economics.netProfitBaseUnits ?? undefined,
-    profitVerified: positive,
-    economicsVerified: economics.economicsComplete,
-    gasUsed: BigInt(facts.receipt.gasUsed.toString()),
-    effectiveGasPriceWei: facts.receipt.effectiveGasPrice
-      ? BigInt(facts.receipt.effectiveGasPrice.toString())
-      : 0n,
-    receiptStatus: 1,
-    nativeFeeWei: facts.nativeFeeWei,
-    zeroMonetaryGasVerified:
-      facts.sponsoredExecution && facts.sponsorOperatorMonetaryCostProvenZero,
-    realizedFeeUsd: economics.gasUsd ?? undefined,
-    latencyMs: Date.now() - startedAt,
-    blockNumber: facts.receipt.blockNumber,
-    normalized,
-    capitalProvenanceVerified: true,
-    error: economics.economicsComplete
-      ? positive ? undefined : 'Alternative-capital terminal settlement realized non-positive all-in net profit'
-      : `Alternative-capital terminal economics are incomplete: ${economics.missingInformation.join(', ')}`,
-  };
-
-  const feedback = await persistTerminalLearning(opportunity, result);
-  if (positive && feedback) {
-    try {
-      const allocation = await retainedProfitLedger.recordTerminalSettlement(feedback);
-      result.treasuryRecorded = allocation !== null;
-      if (
-        allocation
-        && facts.sponsoredExecution
-        && facts.sponsorOperatorMonetaryCostProvenZero
-        && systemCapitalAttempt
-      ) {
-        const split = splitGrossBaseUnits(facts.grossProfit, allocation.retainedFraction);
-        if (split.retainedProfitBaseUnits > 0n) {
-          await persistVerifiedSponsoredProfit(systemCapitalAttempt, {
-            transactionHash: facts.transactionHash,
-            chain: opportunity.chain,
-            asset: opportunity.inputAssetSymbol,
-            grossProfitBaseUnits: facts.grossProfit,
-            retainedProfitBaseUnits: split.retainedProfitBaseUnits,
-            payoutReservedBaseUnits: split.payoutReservedBaseUnits,
-            sourceRecipient: profitRecipient,
-            sourceRecipientBalanceBeforeBaseUnits: facts.recipientStarting,
-            sourceRecipientBalanceAfterBaseUnits: facts.recipientEnding,
-            zeroOperatorMonetaryGasVerified: true,
-            zeroExternalNativeCapitalVerified: true,
-            zeroExternalInputCapitalVerified:
-              facts.intermediaryStarting === facts.intermediaryEnding,
-          });
-        }
-      }
-    } catch (error) {
-      logger.error('[ZeroCapitalExecutor] Alternative-capital profit preserved but treasury/system-capital persistence requires reconciliation', {
-        component: 'CanonicalZeroCapitalExecutor',
-        opportunityId: opportunity.id,
-        transactionHash: facts.transactionHash,
-        error: error instanceof Error ? error.message : String(error),
-        settlementTruthPreserved: true,
-      });
-    }
-  } else {
-    await releaseFailedSponsoredBootstrap(systemCapitalAttempt).catch(() => undefined);
-  }
-
+  const normalized = normalizedPreparedSettlement({
+    opportunity,
+    facts,
+    economics,
+    startedAt,
+    venueOrRoute: `${facts.selection.source}:${opportunity.route.map(step => step.protocol).join('->')}`,
+    provenance: [
+      'canonical_zero_capital_single_executor',
+      'canonical_alternative_capital_selection_registry',
+      `alternative_capital_source:${facts.selection.source}`,
+      ...facts.selection.provenance,
+      'exact_pre_broadcast_eth_call_passed',
+      'exact_pre_broadcast_gas_estimate_passed',
+      'source_specific_atomic_repayment_event_verified',
+      'intermediary_terminal_balance_neutral',
+      'operational_profit_recipient_delta:matches_intermediary_event',
+      facts.sponsoredExecution && facts.sponsorOperatorMonetaryCostProvenZero
+        ? 'sponsored_gas:operator_cost_proven_zero'
+        : 'system_owned_or_measured_sponsored_gas_cost',
+      economics.economicsComplete ? 'realized_all_in_net_profit' : 'realized_all_in_economics_incomplete',
+    ],
+  });
+  const result = preparedResult({ opportunity, facts, economics, normalized, startedAt, mode: 'alternative_capital' });
+  await persistPreparedProfit({
+    opportunity,
+    result,
+    facts,
+    systemCapitalAttempt,
+    profitRecipient,
+    zeroExternalInputCapitalVerified: facts.intermediaryStarting === facts.intermediaryEnding,
+  });
   logger.info('[ZeroCapitalExecutor] Canonical alternative-capital terminal result', {
     component: 'CanonicalZeroCapitalExecutor',
     opportunityId: opportunity.id,
@@ -445,48 +525,156 @@ async function executeCanonicalAlternative(
     sourceAddress: facts.selection.sourceAddress,
     transactionHash: facts.transactionHash,
     settlementConfirmed: true,
-    grossProfitBaseUnits: facts.grossProfit.toString(),
     realizedNetProfitUsd: economics.netProfitUsd,
-    realizedGasUsd: economics.gasUsd,
-    positiveAfterAllInCost: positive,
-    sourceSpecificAtomicRepaymentVerified: true,
-    intermediaryTerminalBalanceNeutral: facts.intermediaryStarting === facts.intermediaryEnding,
-    sponsoredExecution: facts.sponsoredExecution,
-    zeroOperatorMonetaryGasVerified: facts.sponsorOperatorMonetaryCostProvenZero,
+    positiveAfterAllInCost: result.success,
     treasuryRecorded: result.treasuryRecorded === true,
     singleSchedulerAuthority: true,
-    runtimeMethodMutation: false,
+  });
+  return result;
+}
+
+async function executeCanonicalComposite(
+  opportunity: ZeroCapitalOpportunity,
+  target: CanonicalRuntimeContext,
+  provider: providers.JsonRpcProvider,
+  wallet: Wallet,
+  startedAt: number,
+): Promise<CanonicalZeroCapitalExecutionResult> {
+  const selection = zeroCapitalCompositeSelectionRegistry.get(opportunity.id);
+  if (!selection) return failed(opportunity, 'Target-bound composite selection disappeared before execution');
+  const profitRecipient = resolveOperationalProfitRecipient();
+  const funding = await getProvenZeroCapitalGasFundingDecision(target as any, opportunity.chain);
+  const systemCapitalAttempt = await prepareSystemCapitalAttempt(opportunity, profitRecipient, funding);
+  getCryptocrawlGovernance().recordExecutionAttempt();
+  const outcome = await executeCompositePreparedWithinCanonicalExecutor({
+    opportunity, selection, provider, wallet, profitRecipient, funding, runtime: target,
+  });
+  if (!outcome.ok) {
+    if (outcome.receipt?.status === 1 && outcome.transactionHash) {
+      zeroCapitalCompositeSelectionRegistry.remove(opportunity.id);
+      return confirmedPreparedReconciliationException({
+        opportunity,
+        reason: outcome.reason,
+        startedAt,
+        transactionHash: outcome.transactionHash,
+        receipt: outcome.receipt,
+        mode: 'composite_atomic',
+      });
+    }
+    await releaseFailedSponsoredBootstrap(systemCapitalAttempt).catch(() => undefined);
+    if (outcome.submitted) zeroCapitalCompositeSelectionRegistry.remove(opportunity.id);
+    return failed(opportunity, outcome.reason, {
+      submitted: outcome.submitted,
+      transactionHash: outcome.transactionHash,
+      txHash: outcome.transactionHash,
+      receiptStatus: outcome.receipt?.status as 0 | 1 | undefined,
+      blockNumber: outcome.receipt?.blockNumber,
+      latencyMs: Date.now() - startedAt,
+      status: outcome.submitted ? 'settlement_unknown' : 'failed',
+    });
+  }
+
+  const facts: CompositePreparedExecutionFacts = outcome.facts;
+  zeroCapitalCompositeSelectionRegistry.remove(opportunity.id);
+  const economics = await terminalEconomics({
+    opportunity,
+    grossProfit: facts.grossProfit,
+    nativeFeeWei: facts.nativeFeeWei,
+    sponsoredExecution: facts.sponsoredExecution,
+    sponsorOperatorMonetaryCostProvenZero: facts.sponsorOperatorMonetaryCostProvenZero,
+  });
+  const normalized = normalizedPreparedSettlement({
+    opportunity,
+    facts,
+    economics,
+    startedAt,
+    venueOrRoute: `balancer_composite_v2:${selection.memberOpportunityIds.join('+')}`,
+    provenance: [
+      'canonical_zero_capital_single_executor',
+      'canonical_zero_capital_composite_selection_registry',
+      ...selection.provenance,
+      'exact_pre_broadcast_eth_call_passed',
+      'exact_pre_broadcast_gas_estimate_passed',
+      'principal_plus_flash_fee_atomic_repayment_verified',
+      'composite_receiver_terminal_balance_neutral',
+      'operational_profit_recipient_delta:matches_composite_event',
+      `required_target_net_bps:${selection.targetNetProfitBps}`,
+      facts.sponsoredExecution && facts.sponsorOperatorMonetaryCostProvenZero
+        ? 'sponsored_gas:operator_cost_proven_zero'
+        : 'system_owned_or_measured_sponsored_gas_cost',
+      economics.economicsComplete ? 'realized_all_in_net_profit' : 'realized_all_in_economics_incomplete',
+    ],
+  });
+  const result = preparedResult({
+    opportunity,
+    facts,
+    economics,
+    normalized,
+    startedAt,
+    targetNetProfitBaseUnits: selection.targetNetProfitBaseUnits,
+    mode: 'composite_atomic',
+  });
+  await persistPreparedProfit({
+    opportunity,
+    result,
+    facts,
+    systemCapitalAttempt,
+    profitRecipient,
+    zeroExternalInputCapitalVerified: facts.receiverStarting === facts.receiverEnding,
+  });
+  logger.info('[ZeroCapitalExecutor] Canonical target-bound composite terminal result', {
+    component: 'CanonicalZeroCapitalExecutor',
+    opportunityId: opportunity.id,
+    memberOpportunityIds: selection.memberOpportunityIds,
+    chain: opportunity.chain,
+    sharedPrincipal: selection.principal.toString(),
+    targetNetProfitBps: selection.targetNetProfitBps,
+    transactionHash: facts.transactionHash,
+    settlementConfirmed: true,
+    realizedNetProfitUsd: economics.netProfitUsd,
+    targetSatisfied: result.success,
+    principalRepaymentVerified: true,
+    treasuryRecorded: result.treasuryRecorded === true,
+    borrowingNotionalAuthority: false,
+    singleSchedulerAuthority: true,
   });
   return result;
 }
 
 /**
- * Sole ZERO_CAPITAL_ATOMIC entrypoint. Existing flash/builder selections retain
- * priority and execute through the preserved proven implementation. Alternative
- * capital is used only when discovery produced a fresh source-specific selection
- * and no canonical flash/builder selection exists for the same opportunity.
+ * Sole ZERO_CAPITAL_ATOMIC entrypoint. Profit Ladder is consulted only for the
+ * remaining DAILY PROFIT budget. It never limits borrowed principal/notional.
+ * `atomic-stack:` opportunities are fail-closed to their exact prepared composite
+ * selection and can never fall through into a member/single-route executor.
  */
 export async function executeCanonicalZeroCapitalOpportunity(
   opportunity: ZeroCapitalOpportunity,
 ): Promise<CanonicalZeroCapitalExecutionResult> {
-  const alternative = ghostWalletAlternativeZeroCapitalSelectionRegistry.get(opportunity.id);
-  if (!alternative) return executeFlashCanonicalZeroCapitalOpportunity(opportunity);
-
-  // Preserve existing flash/builder execution semantics if a concurrent refresh
-  // established either source after alternative repricing. Alternative capital is
-  // strictly fallback and can never displace a working existing lane.
-  if (
-    flashLoanProviderSelectionRegistry.get(opportunity.id)
-    || builderSponsoredZeroCapitalRegistry.get(opportunity.id)
-  ) {
-    ghostWalletAlternativeZeroCapitalSelectionRegistry.remove(opportunity.id);
-    return executeFlashCanonicalZeroCapitalOpportunity(opportunity);
-  }
-
   const startedAt = Date.now();
   if (opportunity.chain === 'europa') return failed(opportunity, 'Europa execution is retired');
   if (Date.now() >= opportunity.expiresAt) return failed(opportunity, 'Exact zero-capital opportunity expired before canonical execution');
   if (opportunity.expectedProfit <= 0n) return failed(opportunity, 'Canonical all-in net economics are not strictly positive');
+
+  const budgetFailure = await dailyProfitBudgetFailure(opportunity);
+  if (budgetFailure) return failed(opportunity, budgetFailure);
+
+  const composite = zeroCapitalCompositeSelectionRegistry.get(opportunity.id);
+  const compositeParent = opportunity.id.startsWith(COMPOSITE_ID_PREFIX);
+  if (compositeParent && !composite) {
+    return failed(opportunity, 'Composite parent has no fresh exact prepared selection; single-route fallback is prohibited');
+  }
+
+  if (!composite) {
+    const alternative = ghostWalletAlternativeZeroCapitalSelectionRegistry.get(opportunity.id);
+    if (!alternative) return executeFlashCanonicalZeroCapitalOpportunity(opportunity);
+    if (
+      flashLoanProviderSelectionRegistry.get(opportunity.id)
+      || builderSponsoredZeroCapitalRegistry.get(opportunity.id)
+    ) {
+      ghostWalletAlternativeZeroCapitalSelectionRegistry.remove(opportunity.id);
+      return executeFlashCanonicalZeroCapitalOpportunity(opportunity);
+    }
+  }
 
   const target = runtime();
   const provider = target.providers.get(opportunity.chain);
@@ -498,5 +686,6 @@ export async function executeCanonicalZeroCapitalOpportunity(
   governance.requireAllowed('EXECUTE_OPPORTUNITY', { chain: opportunity.chain, pair });
   governance.requireAllowed('SUBMIT_TX', { chain: opportunity.chain, pair });
 
+  if (composite) return executeCanonicalComposite(opportunity, target, provider, wallet, startedAt);
   return executeCanonicalAlternative(opportunity, target, provider, wallet, startedAt);
 }
