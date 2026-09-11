@@ -284,7 +284,13 @@ function configuredRpcCandidates(chain: SupportedChain): RpcCandidateDefinition[
   const configuredWsUrl = (process.env[`${chain.toUpperCase()}_WS_URL`] || (chain === 'ethereum' ? process.env.PRIVATE_WS_URL : undefined))?.trim();
   add('ConfiguredRPC', configuredUrl, 6, configuredWsUrl, ['json_rpc', 'network', 'blocks', 'transactions', 'receipts', 'gas', 'logs', 'contract_calls', ...(configuredWsUrl ? ['subscriptions' as RpcCapability] : [])]);
 
-  if (!configuredUrl && PUBLIC_RPC_URLS[chain]) add(chain === 'bsc' ? 'Binance' : 'PublicRPC', PUBLIC_RPC_URLS[chain], 1);
+  if (!configuredUrl && PUBLIC_RPC_URLS[chain]) {
+    if (chain === 'bsc') {
+      add('Binance', PUBLIC_RPC_URLS[chain], 1, undefined, ['json_rpc', 'network', 'blocks', 'transactions', 'receipts', 'gas', 'contract_calls']);
+    } else {
+      add('PublicRPC', PUBLIC_RPC_URLS[chain], 1);
+    }
+  }
   return candidates;
 }
 
@@ -850,9 +856,23 @@ export class MultiProviderRpcManager {
     if (this.shuttingDown || !candidate.websocketUrl || ['healthy', 'shutting_down'].includes(candidate.websocketState)) return;
     candidate.websocketState = 'connecting';
     let provider: ethers.providers.WebSocketProvider | null = null;
+    let socketCleanup: (() => void) | null = null;
     try {
       provider = this.websocketProviderFactory(candidate.websocketUrl);
-      await this.withTimeout(provider.ready, this.operationTimeoutMs, 'WebSocket recovery probe timed out');
+      const socket = (provider as any)._websocket as WebSocketTransportLike | undefined;
+      let rejectTransport: ((reason?: any) => void) | null = null;
+      const transportFailure = new Promise<never>((_, reject) => { rejectTransport = reject; });
+      if (socket && typeof socket.on === 'function') {
+        socketCleanup = attachWebSocketTransportGuards(socket, {
+          onFailure: error => rejectTransport?.(error instanceof Error ? error : new Error(String(error ?? 'WebSocket transport error'))),
+          onClose: () => rejectTransport?.(new Error('WebSocket closed during recovery probe')),
+        });
+      }
+      await this.withTimeout(
+        socketCleanup ? Promise.race([provider.ready, transportFailure]) : provider.ready,
+        this.operationTimeoutMs,
+        'WebSocket recovery probe timed out',
+      );
       candidate.websocketState = 'healthy';
       candidate.websocketConsecutiveFailures = 0;
       candidate.websocketConsecutiveSuccesses += 1;
@@ -867,6 +887,7 @@ export class MultiProviderRpcManager {
       candidate.websocketLastError = error instanceof Error ? error.message : String(error);
       this.scheduleWebSocketRecovery(candidate);
     } finally {
+      socketCleanup?.();
       this.destroyWebSocketProvider(provider);
     }
   }
@@ -1107,7 +1128,7 @@ export class AdvancedRateLimiter {
     logger.warn('Rate limiter recorded error', {
       component: 'AdvancedRateLimiter',
       isRateLimit,
-      errorCount: this.errorCount,
+      errorCount,
       adaptiveMultiplier: this.adaptiveMultiplier
     });
   }
