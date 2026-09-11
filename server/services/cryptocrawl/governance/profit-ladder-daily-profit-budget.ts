@@ -23,8 +23,9 @@ export interface ProfitLadderDailyProfitBudget {
  *
  * Profit Ladder controls how much realized profit the system may retain in a day.
  * It never controls flash-loan principal, quote notional, provider liquidity, or
- * route size. Tier 0 is a foundation/proof tier whose zero profit fields are
- * descriptive; StageManager remains its execution posture authority.
+ * route size. Tier/stage alignment is telemetry only here: StageManager remains
+ * the independent execution-posture authority and this budget cannot veto a trade
+ * for anything except the remaining daily profit allowance.
  */
 export async function getProfitLadderDailyProfitBudget(
   now = Date.now(),
@@ -67,7 +68,6 @@ export function expectedProfitFitsDailyBudget(
   toleranceUsd = 0.01,
 ): boolean {
   if (!(Number.isFinite(expectedNetProfitUsd) && expectedNetProfitUsd > 0)) return false;
-  if (!budget.stageAligned) return false;
   if (budget.remainingProfitUsd === null) return true;
   const tolerance = Number.isFinite(toleranceUsd) ? Math.max(0, toleranceUsd) : 0.01;
   return expectedNetProfitUsd <= budget.remainingProfitUsd + tolerance;
