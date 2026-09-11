@@ -8,8 +8,6 @@ import type {
 } from './onchain-payload-builder.js';
 import { EUROPA_SUSHI } from './europa-sushi-registry.js';
 import { buildAtomicNotionalCandidates, selectHighestNetProfit } from './atomic-size-optimizer.js';
-import { calculateProgressivePositionSize } from '../../risk/progressive-position-sizing.js';
-import { stageManager } from '../../governance/stage-management.js';
 import { getProfitLadderDiscoveryNotionalAuthority } from '../../governance/profit-ladder-notional-authority.js';
 import {
   ETHEREUM_PROTOCOL_ANCHORS,
@@ -576,15 +574,6 @@ function usdFromBaseUnits(value: bigint, decimals: number): number {
   return Number.isFinite(usd) ? usd : 0;
 }
 
-function quoteExpectedSlippageBps(route: ConfiguredZeroCapitalRoute): number {
-  const minOutputBps = Math.max(9_000, Math.min(10_000, Number(process.env.ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS || 9_990)));
-  return Math.max(0, route.legs.length * (10_000 - minOutputBps));
-}
-
-function quoteLiquidityConfidence(quote: QuotedZeroCapitalRoute): number {
-  return Math.min(0.99, 0.55 + Math.min(0.44, Math.max(0, quote.netProfitBps) / 1_000));
-}
-
 function routeNotionalCandidates(route: ConfiguredZeroCapitalRoute): number[] {
   const seedUsd = Math.max(0.000001, usdFromBaseUnits(BigInt(route.amountIn), route.inputTokenDecimals));
   const discoveryAuthority = getProfitLadderDiscoveryNotionalAuthority();
@@ -603,28 +592,6 @@ function routeNotionalCandidates(route: ConfiguredZeroCapitalRoute): number[] {
   });
 }
 
-function executionSizeApproved(route: ConfiguredZeroCapitalRoute, quote: QuotedZeroCapitalRoute): boolean {
-  if (!stageManager.canExecuteTrades()) return true;
-  if (quote.netProfit <= 0n) return false;
-  const expectedCostUsd = usdFromBaseUnits(
-    quote.estimatedGasCostInInputToken + quote.flashLoanFeeInInputToken + quote.relayFeeInInputToken,
-    route.inputTokenDecimals,
-  );
-  const expectedSlippageBps = quoteExpectedSlippageBps(route);
-  const decision = calculateProgressivePositionSize({
-    requestedNotionalUsd: usdFromBaseUnits(quote.amountIn, route.inputTokenDecimals),
-    availableCapitalUsd: 0,
-    expectedNetProfitUsd: usdFromBaseUnits(quote.netProfit, route.inputTokenDecimals),
-    expectedCostUsd,
-    expectedSlippageBps,
-    liquidityScore: quoteLiquidityConfidence(quote),
-    volatilityScore: Math.min(1, expectedSlippageBps / 100),
-    providerHealthy: true,
-    zeroCapitalAvailable: true,
-  });
-  return decision.approved;
-}
-
 async function quoteBestRouteSize(
   route: ConfiguredZeroCapitalRoute,
   provider: providers.Provider,
@@ -640,14 +607,13 @@ async function quoteBestRouteSize(
   if (observed.length === 0) return null;
 
   const positive = observed.filter(quote => quote.netProfit > 0n);
-  const admissible = stageManager.canExecuteTrades()
-    ? positive.filter(quote => executionSizeApproved(route, quote))
-    : positive;
 
-  // Preserve executable preference when one exists. Otherwise return the best
-  // measured numeric route regardless of distance below break-even. Downstream
-  // execution remains strict net-positive and cannot execute the fallback quote.
-  const selectionPool = admissible.length > 0 ? admissible : observed;
+  // Exact deterministic all-in economics is the sole profitability authority at
+  // quote-size selection. Heuristic slippage/liquidity/volatility scoring may rank
+  // or advise elsewhere, but it cannot erase a fresh strictly-positive quote.
+  // Provider/resource admission and the canonical pre-broadcast barrier still
+  // independently prove executable capability before any transaction is sent.
+  const selectionPool = positive.length > 0 ? positive : observed;
   return selectHighestNetProfit(selectionPool, quote => quote.netProfit);
 }
 
@@ -655,8 +621,8 @@ async function quoteBestRouteSize(
  * Each configured atomic route is independently quoted across a bounded notional
  * curve and selected by the largest measured all-in net profit. Profit is never
  * extrapolated linearly from a smaller quote. Every route with executable quote
- * amounts remains measurable; only positive sizes that pass canonical sizing can
- * execute.
+ * amounts remains measurable; any strictly-positive exact quote remains visible
+ * for canonical provider/resource admission and pre-broadcast validation.
  */
 export async function quoteConfiguredZeroCapitalRoutesForChain(
   chain: SupportedExecutionChain,
