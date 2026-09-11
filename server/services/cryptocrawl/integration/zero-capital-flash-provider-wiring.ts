@@ -252,6 +252,11 @@ export async function repriceZeroCapitalProviderEconomics(input: {
 
     try {
       const evidence = await providerEvidence(chain, provider, opportunity.inputToken);
+      // Measure economics independently from receiver readiness. Receiver
+      // capability is resolved only after the provider economics are known, so a
+      // missing receiver cannot erase otherwise fresh fee/liquidity evidence.
+      const measuredSingle = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount);
+      const measuredDual = selectMeasuredDualFlashLoanAllocation(evidence, opportunity.flashLoanAmount);
       const allowedProviders = [...capabilities.single.keys()];
       const selectedSingle = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount, allowedProviders);
       const selectedCapability = selectedSingle ? capabilities.single.get(selectedSingle.provider) ?? null : null;
@@ -461,12 +466,62 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           }
         }
 
+        // A missing receiver is not missing provider economics. Preserve fresh
+        // measured fee/liquidity truth and report the exact route-local receiver
+        // capability that is absent instead of sending discovery back to reacquire
+        // evidence it already has.
+        if (measuredSingle) {
+          const measuredOnlyFlashFee = calculateMeasuredFlashLoanFee(measuredSingle, opportunity.flashLoanAmount);
+          if (measuredOnlyFlashFee !== null) {
+            const measuredOnlyValues = repriceOpportunity(opportunity, measuredOnlyFlashFee);
+            recordReprice(opportunity, chain, measuredOnlyValues);
+            zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+            updateCandidate({
+              opportunity,
+              selected: measuredSingle,
+              eligible: false,
+              reason: `Measured ${measuredSingle.provider} fee/liquidity are complete for this exact amount, but its verified receiver capability is not currently available`,
+              missingInformation: [`required:verified_${measuredSingle.provider}_receiver_capability`],
+              receiverBindingProvenance: 'provider_receiver_binding:receiver_capability_missing',
+              extraProvenance: [
+                'provider_economics_preserved_without_receiver:true',
+                'receiver_failure_is_route_local:true',
+                'provider_reprice_input_immutable:true',
+              ],
+            });
+            continue;
+          }
+        }
+
+        if (measuredDual) {
+          const measuredDualValues = repriceOpportunity(opportunity, measuredDual.totalFee);
+          recordReprice(opportunity, chain, measuredDualValues);
+          zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+          updateCandidate({
+            opportunity,
+            selected: measuredDual.balancer,
+            eligible: false,
+            reason: 'Measured Aave+Balancer combined fee/liquidity are complete for this exact amount, but the verified dual receiver capability is not currently available',
+            missingInformation: ['required:verified_aave_balancer_dual_receiver_capability'],
+            receiverBindingProvenance: 'provider_receiver_binding:dual_receiver_capability_missing',
+            extraProvenance: [
+              `dual_balancer_amount:${measuredDual.balancerAmount.toString()}`,
+              `dual_aave_amount:${measuredDual.aaveAmount.toString()}`,
+              `dual_total_fee:${measuredDual.totalFee.toString()}`,
+              'provider_economics_preserved_without_receiver:true',
+              'receiver_failure_is_route_local:true',
+              'provider_reprice_input_immutable:true',
+            ],
+          });
+          continue;
+        }
+
         zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
         updateCandidate({
           opportunity,
           selected: null,
           eligible: false,
-          reason: 'No execution-ready Morpho, Aave, Balancer, combined Aave+Balancer, or exact atomic first-receiver builder path has complete measured fee, liquidity, and receiver evidence for this amount',
+          reason: 'No Morpho, Aave, Balancer, combined Aave+Balancer, or exact atomic first-receiver builder path has complete measured fee/liquidity for this amount',
           missingInformation: ['measured_flash_loan_provider_liquidity_and_fee'],
           extraProvenance: ['provider_mesh_checked:true', 'atomic_first_receiver_bootstrap_checked:true', 'provider_reprice_input_immutable:true'],
         });
