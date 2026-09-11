@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 
 const source = fs.readFileSync('server/services/cryptocrawl/integration/cryptara-two-speed-revalidation-wiring.ts', 'utf8');
+const registry = fs.readFileSync('server/services/cryptocrawl/discovery/measured-candidate-registry.ts', 'utf8');
+const expiryGuard = fs.readFileSync('server/services/cryptocrawl/integration/measured-candidate-expiry-guard-wiring.ts', 'utf8');
 
 // Fresh candidate events still use the canonical exact-symbol graph and no
 // independent execution/economics authority is introduced.
@@ -13,12 +15,20 @@ assert.match(source, /executionAuthority: false/);
 assert.match(source, /independentBpsThreshold: false/);
 
 // Expired integrated CEX observations may request bounded reacquisition, but
-// cannot themselves be promoted or executed.
+// cannot themselves be promoted or executed. The normal execution-facing
+// getRecent() path remains freshness-filtered; only the explicit diagnostic view
+// exposes expired snapshots to the reacquisition worker.
+assert.match(registry, /getRecentIncludingExpired\(limit = 256\)/);
+assert.match(registry, /status: 'expired' as const/);
+assert.match(source, /measuredCandidateRegistry\.getRecentIncludingExpired\(512\)/);
+assert.doesNotMatch(source, /for \(const candidate of measuredCandidateRegistry\.getRecent\(512\)\)/);
+assert.match(expiryGuard, /\.filter\(candidate => isFreshCandidate\(candidate, now\)\)/);
 assert.match(source, /shouldFastRevalidate\(candidate, true\)/);
 assert.match(source, /candidate\.status === 'expired' \|\| candidate\.expiresAt <= now/);
 assert.match(source, /now - candidate\.expiresAt > windowMs/);
 assert.match(source, /queueCandidateRevalidation\(candidate, staleRecoveryCooldownMs\(\), true\)/);
 assert.match(source, /staleEvidenceExecutionAllowed: false/);
+assert.match(source, /staleCandidateView: 'diagnostic_reacquisition_only'/);
 assert.match(source, /publicOnlyVenuePairRevalidationAllowed: false/);
 
 // Reacquisition remains bounded and lifecycle-owned.
@@ -28,4 +38,4 @@ assert.match(source, /function staleRecoveryWindowMs\(\)/);
 assert.match(source, /if \(!installed \|\| staleSweepTimer \|\| process\.env\.NO_INTERVALS === 'true'\) return/);
 assert.match(source, /if \(staleSweepTimer\) clearTimeout\(staleSweepTimer\)/);
 
-console.log('[stale-evidence-reacquisition] PASS: stale integrated CEX evidence triggers bounded canonical reacquisition and never gains execution authority');
+console.log('[stale-evidence-reacquisition] PASS: expired integrated CEX evidence is visible only to bounded canonical reacquisition and never gains execution authority');
