@@ -62,6 +62,7 @@ require('./verify-competition-evidence-wiring.cjs');
 require('./verify-300-profitability-live-execution-controls.cjs');
 require('./verify-aave-balancer-provider-mesh.cjs');
 require('./verify-provider-failure-locality.cjs');
+require('./verify-liquidation-log-range-failover.cjs');
 require('./verify-deterministic-positive-quote-admission.cjs');
 require('./verify-morpho-zero-fee-flash.cjs');
 require('./verify-cex-websocket-rpi-modernization.cjs');
