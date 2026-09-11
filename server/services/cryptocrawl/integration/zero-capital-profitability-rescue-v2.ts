@@ -64,6 +64,22 @@ function usdFromBaseUnits(value: bigint, decimals: number): number {
   return Number.isFinite(usd) ? usd : 0;
 }
 
+function grossProfit(opportunity: ZeroCapitalOpportunity): bigint {
+  return opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
+}
+
+/**
+ * Cost/BPS compression can only create a legitimate surplus when a positive
+ * market spread exists before controllable costs. A zero/negative gross spread
+ * requires a different route/size/market discovery, not accounting compression.
+ */
+function recoverableByCostCompression(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
+  return opportunity.expectedProfit <= 0n
+    && opportunity.expiresAt > now
+    && opportunity.flashLoanAmount > 0n
+    && grossProfit(opportunity) > 0n;
+}
+
 function routeForOpportunity(routes: readonly ConfiguredZeroCapitalRoute[], opportunity: ZeroCapitalOpportunity): ConfiguredZeroCapitalRoute | null {
   return routes
     .filter(route => route.chain === opportunity.chain)
@@ -182,14 +198,16 @@ function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZe
 }
 
 function rescuePriority(opportunity: ZeroCapitalOpportunity, context: ZeroCapitalBpsRescueContext | null, now = Date.now()): number {
-  if (opportunity.expectedProfit > 0n || opportunity.expiresAt <= now) return Number.NEGATIVE_INFINITY;
+  if (!recoverableByCostCompression(opportunity, now)) return Number.NEGATIVE_INFINITY;
   const ageMs = Math.max(0, now - opportunity.timestamp);
   const routeLifetimeMs = Math.max(250, opportunity.expiresAt - opportunity.timestamp);
   const configuredHalfLife = bounded(process.env.ZERO_CAPITAL_RESCUE_HALF_LIFE_MS, routeLifetimeMs / 2, 250, 120_000);
   const agePenalty = Math.exp(-ageMs / Math.min(configuredHalfLife, routeLifetimeMs));
   const gap = Math.max(0.01, Math.abs(opportunity.netProfitBps));
   const confidence = Math.max(0.05, Math.min(1, opportunity.confidence));
-  const basePriority = (1 / gap) * confidence * agePenalty;
+  const grossSpreadBps = Math.max(0.000001, bpsFromBaseUnits(grossProfit(opportunity), opportunity.flashLoanAmount));
+  const recoverability = grossSpreadBps / Math.max(grossSpreadBps, gap);
+  const basePriority = (1 / gap) * confidence * agePenalty * Math.max(0.05, recoverability);
   const superPriority = context?.plan.effectivePriorityScore;
   return superPriority !== undefined && Number.isFinite(superPriority) && superPriority > 0
     ? basePriority * superPriority
@@ -204,7 +222,7 @@ function selectRescueIds(opportunities: readonly ZeroCapitalOpportunity[], route
     return contexts.get(item.id) ?? null;
   };
   const ranked = opportunities
-    .filter(item => item.expectedProfit <= 0n && item.expiresAt > Date.now())
+    .filter(item => recoverableByCostCompression(item))
     .sort((a, b) => rescuePriority(b, contextFor(b)) - rescuePriority(a, contextFor(a)));
   const selected: string[] = [];
   const families = new Set<string>();
@@ -248,6 +266,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   let expiredBeforeRefinement = 0;
   let bpsSuperEngineCandidates = 0;
   let bpsSuperEnginePositiveRecoveries = 0;
+  const negativeGrossSkipped = opportunities.filter(item => item.expectedProfit <= 0n && grossProfit(item) <= 0n).length;
   const bpsDrivers = new Map<string, number>();
   const output: ZeroCapitalOpportunity[] = [];
 
@@ -314,10 +333,6 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
         output.push(opportunity);
         continue;
       }
-      // Never turn a late rescue result into an invalid or apparently fresh
-      // candidate. The original measurement remains useful telemetry, but once
-      // its execution window has elapsed the rescue must not inherit that stale
-      // deadline under a newer observedAt timestamp.
       if (opportunity.expiresAt <= Date.now()) {
         expiredBeforeRefinement += 1;
         output.push(opportunity);
@@ -358,6 +373,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     minimumRemainingLifetimeMs,
     improved,
     positivesRecovered,
+    negativeGrossSkipped,
     staleProviderEvidenceRejected,
     insufficientLiquidityRejected,
     expiredBeforeRequote,
@@ -373,6 +389,9 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     providerLiquidityHeadroomRequired: true,
     providerUtilizationBounded: true,
     adaptiveGapAwareSizing: true,
+    grossPositiveRequiredForCostCompressionRescue: true,
+    nonpositiveGrossRequiresAlternateRouteDiscovery: true,
+    finalResidualCostMustBeBelowGrossSpread: true,
     routeFamilyDiversity: true,
     strictImprovementRequired: true,
     existingPositiveNeverReplacedByNegative: true,
