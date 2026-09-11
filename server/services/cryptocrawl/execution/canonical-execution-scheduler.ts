@@ -19,6 +19,7 @@ import {
 } from './funding-crosschain-execution-adapter.js';
 import { dispatchBestKalshiEventCandidate } from './kalshi-event-canonical-dispatch.js';
 import { maintainKalshiEventLifecycles } from './kalshi-event-canonical-maintenance.js';
+import { dispatchKalshiAfterCexMiss } from './kalshi-post-cex-fallback.js';
 import { executionResourceScheduler, type ExecutionResourceLease } from './resource-scheduler.js';
 import { routeRecentMeasuredOpportunities } from './unified-execution-router.js';
 import { executeCanonicalZeroCapitalOpportunity } from './zero-capital-canonical-executor.js';
@@ -489,6 +490,18 @@ class CanonicalExecutionScheduler {
     const freshCexFastLaneAvailable = currentCandidates().length > 0;
     let measured: { dispatched: boolean; submitted: boolean } = { dispatched: false, submitted: false };
     let refreshedOperatorState = operatorState;
+    const dispatchKalshiFallback = async (): Promise<boolean> => {
+      const outcome = await dispatchKalshiAfterCexMiss({ lifecycleMaintenance });
+      if (!outcome.submitted) return false;
+      this.attempts++;
+      this.lastDispatchAt = Date.now();
+      this.lastIdleReason = null;
+      if (outcome.settlementConfirmed) {
+        if (outcome.success) this.settled++;
+        else this.failed++;
+      } else this.pending++;
+      return true;
+    };
 
     if (!freshCexFastLaneAvailable) {
       const maintenance = await lifecycleMaintenance;
@@ -520,11 +533,19 @@ class CanonicalExecutionScheduler {
     const now = Date.now();
     const eligibleCandidates = currentCandidates();
     this.lastEligibleCandidateCount = eligibleCandidates.length;
-    if (eligibleCandidates.length === 0) { if (!measured.dispatched) this.setIdle('no_eligible_candidates'); return; }
+    if (eligibleCandidates.length === 0) {
+      if (freshCexFastLaneAvailable && await dispatchKalshiFallback()) return;
+      if (!measured.dispatched) this.setIdle('no_eligible_candidates');
+      return;
+    }
     const candidates = eligibleCandidates.filter(candidate => !this.activeOpportunityIds.has(candidate.opportunityId) && now - (this.lastAttemptAt.get(candidate.opportunityId) || 0) >= retryWindowMs)
       .slice(0, Math.min(dispatchBatchLimit(), Math.max(1, refreshedOperatorState.remainingTrades)));
     this.lastDispatchCandidateCount = candidates.length;
-    if (candidates.length === 0) { if (!measured.dispatched) this.setIdle('candidate_retry_window', eligibleCandidates.length, 0, 0); return; }
+    if (candidates.length === 0) {
+      if (freshCexFastLaneAvailable && await dispatchKalshiFallback()) return;
+      if (!measured.dispatched) this.setIdle('candidate_retry_window', eligibleCandidates.length, 0, 0);
+      return;
+    }
 
     this.lastResourceQualifiedCount = 0;
     for (const candidate of candidates) {
@@ -568,6 +589,7 @@ class CanonicalExecutionScheduler {
         await lease.release({ retainOpportunityUntilExpiry });
       }
     }
+    if (freshCexFastLaneAvailable && await dispatchKalshiFallback()) return;
     if (this.lastResourceQualifiedCount === 0 && !measured.dispatched) this.setIdle('no_resource_qualified_candidates', eligibleCandidates.length, candidates.length, 0);
   }
 }
