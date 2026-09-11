@@ -153,7 +153,7 @@ const runtimeObservability = requireAll('server/services/cryptocrawl/integration
   'function summarizeMultiTopologyCycle(',
   'blockedReasonCounts',
   'highestScoring: cycle.routedOpportunities.slice(0, 12)',
-  'multiTopology: summarizeMultiTopologyCycle(multiTopology)',
+  'cycle: summarizeMultiTopologyCycle(multiTopology)',
   'fullCandidateDecisionsLogged: false',
   'boundedMultiTopologyHeartbeat: true',
 ]);
