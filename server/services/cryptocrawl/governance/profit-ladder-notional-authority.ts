@@ -13,11 +13,10 @@ export interface InstitutionalNotionalRung {
 }
 
 /**
- * Stage 6 is the final autonomy stage, not the final capital rung. Once Tier 5 is
- * reached, the profit ladder may continue increasing notional from terminal,
- * realized evidence without inventing another execution authority. Actual market
- * depth, authenticated inventory/funding, product limits and slippage can always
- * reduce a specific trade below the unlocked rung.
+ * These rungs are retained for genuinely self-funded exposure only. They do not
+ * cap same-transaction flash principal. Atomic zero-capital sizing is governed by
+ * live provider liquidity, route capacity, repayment feasibility and exact all-in
+ * economics; Profit Ladder governs daily realized profit, not borrowed notional.
  */
 export const INSTITUTIONAL_NOTIONAL_RUNGS: readonly InstitutionalNotionalRung[] = [
   { key: 'tier5_base', maxNotionalUsd: 800_000, minDaysAtTarget: 0, minTerminalSamples: 0, minSuccessRate: 0, minSharpeRatio: 0 },
@@ -53,11 +52,12 @@ export interface ProfitLadderDiscoveryNotionalAuthoritySnapshot {
   maxQuoteNotionalUsd: number;
   systemMaxNotionalUsd: number;
   rungKey: string;
-  institutionalExtensionActive: boolean;
-  authority: 'profit_ladder_quote_only_capital_curve';
+  institutionalExtensionActive: false;
+  authority: 'zero_capital_quote_only_system_curve';
   quoteOnly: true;
   executionAuthority: false;
   canBroadenExposure: false;
+  profitLadderNotionalAuthority: false;
 }
 
 function institutionalRungForCurrentEvidence(): InstitutionalNotionalRung {
@@ -101,49 +101,45 @@ function currentRung() {
 }
 
 /**
- * Quote-only notional ceiling used to discover the economically viable atomic
- * size curve before StageManager has granted execution. This breaks the bootstrap
- * circularity where a route had to be execution-ready before the system was
- * allowed to measure the larger notionals that could make it profitable.
- *
- * This authority can only broaden measurement. It cannot create exposure,
- * eligibility, funding proof, provider liquidity, receiver capability, or trade
- * submission authority. Every measured size still has to pass the canonical
- * execution gates after fresh all-in economics are known.
+ * Zero-capital quote-only measurement ceiling. This is deliberately independent
+ * of Profit Ladder capital rungs. The bounded system curve prevents unbounded RPC
+ * fan-out during broad discovery; the later atomic rescue may size beyond this
+ * quote curve up to fresh provider-liquidity/headroom limits because temporary
+ * flash principal is not operator exposure.
  */
-export function getProfitLadderDiscoveryNotionalAuthority(
+export function getZeroCapitalDiscoveryNotionalAuthority(
   now = Date.now(),
 ): ProfitLadderDiscoveryNotionalAuthoritySnapshot {
-  const rung = currentRung();
+  const stage = stageManager.getStageConfig();
+  const tier = profitLadder.getCurrentTier();
   return {
     evaluatedAt: now,
-    stage: Number(rung.stage.stage),
-    tierId: rung.tier.id,
-    tierStage: Number(rung.tier.stage),
-    aligned: rung.aligned,
-    maxQuoteNotionalUsd: rung.rungNotionalUsd,
+    stage: Number(stage.stage),
+    tierId: tier.id,
+    tierStage: Number(tier.stage),
+    aligned: Number(tier.stage) === Number(stage.stage),
+    maxQuoteNotionalUsd: SYSTEM_MAX_NOTIONAL_USD,
     systemMaxNotionalUsd: SYSTEM_MAX_NOTIONAL_USD,
-    rungKey: rung.rungKey,
-    institutionalExtensionActive: rung.institutionalExtensionActive,
-    authority: 'profit_ladder_quote_only_capital_curve',
+    rungKey: 'zero_capital_system_quote_curve',
+    institutionalExtensionActive: false,
+    authority: 'zero_capital_quote_only_system_curve',
     quoteOnly: true,
     executionAuthority: false,
     canBroadenExposure: false,
+    profitLadderNotionalAuthority: false,
   };
 }
 
+/** @deprecated Compatibility alias. Profit Ladder no longer supplies zero-capital quote notional. */
+export function getProfitLadderDiscoveryNotionalAuthority(
+  now = Date.now(),
+): ProfitLadderDiscoveryNotionalAuthoritySnapshot {
+  return getZeroCapitalDiscoveryNotionalAuthority(now);
+}
+
 /**
- * Canonical notional ceiling for NEW exposure.
- *
- * StageManager is binary execution/safety authority only (stage, pause,
- * kill-switch, drawdown, MC requirement). Profit Ladder is the one capital-size
- * authority. The legacy StageManager maxPositionSizeUSD value is telemetry only
- * and may not impose a second smaller ceiling.
- *
- * Tiers 1-4 use their existing recommended-capital rung. Tier 5 / Stage 6 then
- * extends through persistent terminal-realized institutional rungs up to $100M.
- * A stage/tier mismatch fails closed so stale persisted state cannot broaden
- * exposure accidentally.
+ * Self-funded NEW exposure ceiling only. This authority is intentionally not
+ * consulted by same-transaction zero-capital principal sizing.
  */
 export function getProfitLadderNotionalAuthority(now = Date.now()): ProfitLadderNotionalAuthoritySnapshot {
   const rung = currentRung();
