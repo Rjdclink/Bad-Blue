@@ -6,7 +6,10 @@ import { instantLearningEngine } from '../learning/instant-learning-engine.js';
 import type { ExecutionOutcomeObservation } from '../learning/execution-outcome.js';
 import { recordSettlementProfitCalibration } from '../learning/settlement-profit-calibrator.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
-import { hydratePrimaryLearningState, persistPrimaryLearningState } from './primary-learning-persistence.js';
+import {
+  hydrateOverflowLearningState,
+  persistOverflowLearningState,
+} from './overflow-learning-persistence.js';
 
 const installed = new WeakSet<object>();
 
@@ -40,7 +43,7 @@ export function ensureLearningLifecycleWiring(): void {
       });
       return;
     }
-    await hydratePrimaryLearningState();
+    await hydrateOverflowLearningState();
     await deepInitialize();
   };
 
@@ -53,7 +56,7 @@ export function ensureLearningLifecycleWiring(): void {
       });
       return;
     }
-    await hydratePrimaryLearningState();
+    await hydrateOverflowLearningState();
     await instantInitialize();
   };
 
@@ -65,7 +68,7 @@ export function ensureLearningLifecycleWiring(): void {
     adaptiveTopologyOptimizer.recordTerminalOutcome(outcome);
     recordSettlementProfitCalibration(outcome);
     if (getCryptocrawlGovernance().isLongTermMemoryAllowed()) {
-      await persistPrimaryLearningState();
+      await persistOverflowLearningState();
     }
     return result;
   };
@@ -73,8 +76,10 @@ export function ensureLearningLifecycleWiring(): void {
   logger.info('Stage-aware learning lifecycle wiring installed', {
     component: 'LearningLifecycleWiring',
     stagesOneToThree: 'bounded_runtime_feedback_only',
-    stageFourPlus: 'primary_postgresql_hydration_plus_legacy_optional_store',
-    measuredOutcomePersistence: 'primary_postgresql',
+    stageFourPlus: 'overflow_runtime_database_hydration_plus_legacy_optional_store',
+    measuredOutcomePersistence: 'overflow_runtime_database',
+    directPrimaryIoAuthority: false,
+    primaryFallbackAuthority: false,
     legacySupabaseMirrorEnvironmentNormalizedBeforeStoreImport: true,
     adaptiveTopologyFeedback: 'terminal_realized_bps_only',
     settlementProfitCalibration: 'terminal_confirmed_expected_vs_realized_only',

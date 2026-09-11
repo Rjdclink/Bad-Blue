@@ -1,7 +1,6 @@
 {
   "polygon": {
-    "rpcTemplate": "https://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
-    "wsTemplate": "wss://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
+    "rpc": "https://polygon-bor-rpc.publicnode.com",
     "chainId": 137,
     "nativeToken": "MATIC",
     "explorer": "https://polygonscan.com",
@@ -13,12 +12,12 @@
     }
   },
   "polygon-amoy": {
-    "rpcTemplate": "https://polygon-amoy.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
+    "rpc": "https://rpc-amoy.polygon.technology/",
     "publicRpc": "https://rpc-amoy.polygon.technology/",
     "chainId": 80002,
     "nativeToken": "MATIC",
     "explorer": "https://www.oklink.com/amoy",
-    "faucet": "https://www.alchemy.com/faucets/polygon-amoy",
+    "faucet": "https://faucet.polygon.technology/",
     "gasMultiplier": 1.1,
     "blockTime": 2000,
     "isTestnet": true,
@@ -28,9 +27,7 @@
     }
   },
   "bsc": {
-    "rpcTemplate": "https://bnb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
-    "wsTemplate": "wss://bnb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
-    "rpc": "https://bsc-dataseed1.binance.org",
+    "rpc": "https://bsc-rpc.publicnode.com",
     "chainId": 56,
     "nativeToken": "BNB",
     "explorer": "https://bscscan.com",
@@ -42,9 +39,7 @@
     }
   },
   "avalanche": {
-    "rpcTemplate": "https://avax-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
-    "wsTemplate": "wss://avax-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
-    "rpc": "https://api.avax.network/ext/bc/C/rpc",
+    "rpc": "https://avalanche-c-chain-rpc.publicnode.com",
     "chainId": 43114,
     "nativeToken": "AVAX",
     "explorer": "https://snowtrace.io",
@@ -56,9 +51,7 @@
     }
   },
   "arbitrum": {
-    "rpcTemplate": "https://arb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
-    "wsTemplate": "wss://arb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
-    "rpc": "https://arb1.arbitrum.io/rpc",
+    "rpc": "https://arbitrum-one-rpc.publicnode.com",
     "chainId": 42161,
     "nativeToken": "ETH",
     "explorer": "https://arbiscan.io",
@@ -70,12 +63,12 @@
     }
   },
   "arbitrum-sepolia": {
-    "rpcTemplate": "https://arb-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}",
+    "rpc": "https://sepolia-rollup.arbitrum.io/rpc",
     "publicRpc": "https://sepolia-rollup.arbitrum.io/rpc",
     "chainId": 421614,
     "nativeToken": "ETH",
     "explorer": "https://sepolia.arbiscan.io/",
-    "faucet": "https://www.alchemy.com/faucets/arbitrum-sepolia",
+    "faucet": "https://faucet.quicknode.com/arbitrum/sepolia",
     "gasMultiplier": 1.05,
     "blockTime": 250,
     "isTestnet": true,
@@ -85,7 +78,7 @@
     }
   },
   "optimism": {
-    "rpc": "https://mainnet.optimism.io",
+    "rpc": "https://optimism-rpc.publicnode.com",
     "chainId": 10,
     "nativeToken": "ETH",
     "explorer": "https://optimistic.etherscan.io",

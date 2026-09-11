@@ -10,20 +10,20 @@ const assertNotContains = (source, pattern, description) => {
   if (source.includes(pattern)) throw new Error(`Unsafe invariant: ${description}`);
 };
 
-const filtered = read('server/services/cryptocrawl/capital-free/alchemy-filtered-mempool.ts');
+const stream = read('server/services/cryptocrawl/capital-free/provider-mesh-pending-stream.ts');
+const analysis = read('server/services/cryptocrawl/capital-free/provider-mesh-mempool-analysis.ts');
 const wiring = read('server/services/cryptocrawl/runtime/alchemy-filtered-mempool-wiring.ts');
-const legacy = read('server/services/cryptocrawl/capital-free/alchemy-integration.ts');
+const compatibility = read('server/services/cryptocrawl/capital-free/alchemy-integration.ts');
 
-assertContains(filtered, "process.env.ALCHEMY_FILTERED_MEMPOOL_ENABLED", 'filtered mempool has an independent enable/disable control');
-assertContains(filtered, "|| 'ethereum'", 'filtered mempool has a conservative Ethereum default when no network list is supplied');
-assertContains(filtered, "'alchemy_pendingTransactions'", 'filtered mempool uses Alchemy pending-transaction subscriptions');
-assertContains(filtered, 'toAddress,', 'filtered stream applies server-side router address filters');
-assertContains(filtered, 'hashesOnly: false', 'filtered stream receives full transactions without per-hash detail RPC');
-assertContains(wiring, "process.env.ALCHEMY_FILTERED_MEMPOOL_ENABLED", 'runtime wiring uses the independent filtered-mempool control');
-assertContains(wiring, '!!process.env.ALCHEMY_API_KEY?.trim()', 'runtime wiring requires an Alchemy credential');
-assertContains(wiring, 'enabledByDefaultWhenConfigured: true', 'runtime observability reports filtered default posture');
-assertContains(legacy, "process.env.ALCHEMY_MEMPOOL_MONITORING_ENABLED === 'true'", 'legacy broad mempool remains opt-in');
-assertContains(legacy, "process.env.ALCHEMY_ALLOW_UNFILTERED_PENDING === 'true'", 'legacy unfiltered stream retains its explicit emergency gate');
-assertNotContains(wiring, 'ALCHEMY_ALLOW_UNFILTERED_PENDING =', 'filtered wiring never enables the broad pending stream');
+assertContains(stream, "params: ['drpc_pendingTransactions']", 'free provider mesh receives full pending transactions');
+assertContains(stream, 'applicationSideRouterFilter: true', 'route relevance is applied locally without paid provider filtering');
+assertContains(stream, 'operatorBillingLiability: false', 'pending evidence transport creates no operator billing liability');
+assertContains(analysis, "method: 'txpool_content'", 'mempool pressure uses measured provider-neutral txpool evidence');
+assertContains(wiring, 'provider-mesh', 'legacy installer is an inert provider-mesh compatibility shim');
+assertContains(compatibility, 'No request in this module is sent to Alchemy', 'legacy facade is transport-retired');
+assertNotContains(stream, 'ALCHEMY_API_KEY', 'replacement stream cannot read Alchemy credentials');
+assertNotContains(stream, 'alchemy_pendingTransactions', 'replacement stream cannot invoke Alchemy enhanced pending APIs');
+assertNotContains(compatibility, 'g.alchemy.com', 'compatibility facade cannot contain Alchemy endpoints');
+assertNotContains(compatibility, 'process.env.ALCHEMY_API_KEY', 'compatibility facade cannot reactivate Alchemy from configuration');
 
-console.log('Filtered Alchemy mempool wiring verification passed.');
+console.log('Alchemy-free provider-mesh pending wiring verification passed.');
