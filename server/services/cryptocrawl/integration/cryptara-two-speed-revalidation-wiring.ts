@@ -163,7 +163,10 @@ function sweepStaleCandidates(): void {
   if (!installed) return;
   const now = Date.now();
   const windowMs = staleRecoveryWindowMs();
-  for (const candidate of measuredCandidateRegistry.getRecent(512)) {
+  // getRecent() is intentionally freshness-filtered by the expiry guard. This
+  // diagnostic-only view is the sole path allowed to observe expired snapshots,
+  // strictly as reacquisition hints; it cannot grant execution capability.
+  for (const candidate of measuredCandidateRegistry.getRecentIncludingExpired(512)) {
     const expired = candidate.status === 'expired' || candidate.expiresAt <= now;
     if (!expired || now - candidate.expiresAt > windowMs) continue;
     if (!shouldFastRevalidate(candidate, true)) continue;
@@ -195,6 +198,7 @@ export function ensureCryptaraTwoSpeedRevalidationWiring(): void {
     requestProducer: 'candidate_event_plus_bounded_stale_integrated_exact_symbol',
     publicOnlyVenuePairRevalidationAllowed: false,
     staleEvidenceExecutionAllowed: false,
+    staleCandidateView: 'diagnostic_reacquisition_only',
     batchDelayMs: flushDelayMs(),
     symbolCooldownMs: symbolCooldownMs(),
     staleSweepIntervalMs: staleSweepIntervalMs(),
