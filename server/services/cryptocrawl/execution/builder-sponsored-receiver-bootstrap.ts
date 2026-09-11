@@ -14,7 +14,10 @@ import {
 import { buildBuilderRepaymentSwapData, selectBuilderRepaymentRoute } from './adapters/builder-repayment-route.js';
 import {
   calculateMeasuredFlashLoanFee,
+  resolveAaveV3Pool,
+  resolveMorphoBlue,
   type FlashLoanProviderEconomics,
+  type FlashLoanProviderKind,
 } from './adapters/flash-loan-provider-economics.js';
 import { buildFlashLoanReceiverPayloadFromPlan } from './adapters/flashloan-receiver-builder.js';
 import { buildSwapCallFromLeg } from './adapters/onchain-payload-builder.js';
@@ -26,7 +29,6 @@ import {
 
 const CREATE2_DEPLOYER = '0x4e59b44847b379578588920cA78FbF26c0B4956C';
 const CREATE2_DEPLOYER_CODE_HASH = '0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989';
-const RECEIVER_SALT = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('bad-blue:cryptocrawl-balancer-receiver:v1'));
 const ETHEREUM_USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 const ETHEREUM_USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
 
@@ -52,6 +54,34 @@ interface ReceiverArtifact {
   bytecode: string;
 }
 
+interface ReceiverDescriptor {
+  artifactPath: string;
+  contractName: string;
+  salt: string;
+  infrastructure: () => string | null;
+}
+
+const RECEIVER_DESCRIPTORS: Record<FlashLoanProviderKind, ReceiverDescriptor> = {
+  balancer_v2: {
+    artifactPath: 'artifacts/cryptocrawl/CryptocrawlBalancerFlashLoanReceiver.json',
+    contractName: 'CryptocrawlBalancerFlashLoanReceiver',
+    salt: ethers.utils.keccak256(ethers.utils.toUtf8Bytes('bad-blue:cryptocrawl-balancer-receiver:v1')),
+    infrastructure: () => resolveSponsoredReceiverVault('ethereum'),
+  },
+  aave_v3: {
+    artifactPath: 'artifacts/cryptocrawl/CryptocrawlAaveV3FlashLoanReceiver.json',
+    contractName: 'CryptocrawlAaveV3FlashLoanReceiver',
+    salt: ethers.utils.keccak256(ethers.utils.toUtf8Bytes('bad-blue:cryptocrawl-aave-v3-receiver:v1')),
+    infrastructure: () => resolveAaveV3Pool('ethereum'),
+  },
+  morpho_blue: {
+    artifactPath: 'artifacts/cryptocrawl/CryptocrawlMorphoFlashLoanReceiver.json',
+    contractName: 'CryptocrawlMorphoFlashLoanReceiver',
+    salt: ethers.utils.keccak256(ethers.utils.toUtf8Bytes('bad-blue:cryptocrawl-morpho-receiver:v1')),
+    infrastructure: () => resolveMorphoBlue('ethereum'),
+  },
+};
+
 function boundedInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
   const value = Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
@@ -76,29 +106,36 @@ function maxBigNumber(left: BigNumber | null | undefined, right: BigNumber): Big
   return left.gte(right) ? left : right;
 }
 
-async function loadReceiverArtifact(): Promise<ReceiverArtifact> {
-  const path = resolve(process.cwd(), 'artifacts/cryptocrawl/CryptocrawlBalancerFlashLoanReceiver.json');
+async function loadReceiverArtifact(providerKind: FlashLoanProviderKind): Promise<ReceiverArtifact> {
+  const descriptor = RECEIVER_DESCRIPTORS[providerKind];
+  const path = resolve(process.cwd(), descriptor.artifactPath);
   const raw = await readFile(path, 'utf8');
   const artifact = JSON.parse(raw) as Partial<ReceiverArtifact>;
-  if (artifact.contractName !== 'CryptocrawlBalancerFlashLoanReceiver') {
-    throw new Error('Unexpected flash-loan receiver artifact');
+  if (artifact.contractName !== descriptor.contractName) {
+    throw new Error(`Unexpected ${providerKind} flash-loan receiver artifact`);
   }
-  if (!Array.isArray(artifact.abi) || typeof artifact.bytecode !== 'string' || !ethers.utils.isHexString(artifact.bytecode)) {
-    throw new Error('Flash-loan receiver artifact is incomplete');
+  if (!Array.isArray(artifact.abi) || typeof artifact.bytecode !== 'string' || !ethers.utils.isHexString(artifact.bytecode) || artifact.bytecode === '0x') {
+    throw new Error(`${providerKind} flash-loan receiver artifact is incomplete`);
   }
   return artifact as ReceiverArtifact;
 }
 
-async function receiverIdentity(provider: providers.JsonRpcProvider, ownerRaw: string) {
+async function receiverIdentity(
+  provider: providers.JsonRpcProvider,
+  ownerRaw: string,
+  providerKind: FlashLoanProviderKind,
+) {
   const network = await provider.getNetwork();
   if (network.chainId !== 1) throw new Error(`Builder receiver bootstrap requires Ethereum mainnet, got chainId=${network.chainId}`);
   const owner = ethers.utils.getAddress(ownerRaw);
-  const vault = resolveSponsoredReceiverVault('ethereum');
-  if (!vault) throw new Error('Ethereum Balancer vault is unavailable for receiver bootstrap');
-  const artifact = await loadReceiverArtifact();
-  const constructorArgs = ethers.utils.defaultAbiCoder.encode(['address', 'address'], [vault, owner]);
+  const descriptor = RECEIVER_DESCRIPTORS[providerKind];
+  const infrastructureRaw = descriptor.infrastructure();
+  if (!infrastructureRaw) throw new Error(`Ethereum ${providerKind} infrastructure is unavailable for receiver bootstrap`);
+  const infrastructure = ethers.utils.getAddress(infrastructureRaw);
+  const artifact = await loadReceiverArtifact(providerKind);
+  const constructorArgs = ethers.utils.defaultAbiCoder.encode(['address', 'address'], [infrastructure, owner]);
   const initCode = ethers.utils.hexConcat([artifact.bytecode, constructorArgs]);
-  const receiver = ethers.utils.getCreate2Address(CREATE2_DEPLOYER, RECEIVER_SALT, ethers.utils.keccak256(initCode));
+  const receiver = ethers.utils.getCreate2Address(CREATE2_DEPLOYER, descriptor.salt, ethers.utils.keccak256(initCode));
   const factoryCode = await provider.getCode(CREATE2_DEPLOYER);
   if (factoryCode === '0x') throw new Error('Verified Foundry CREATE2 deployer is missing on Ethereum');
   if (ethers.utils.keccak256(factoryCode).toLowerCase() !== CREATE2_DEPLOYER_CODE_HASH.toLowerCase()) {
@@ -106,9 +143,9 @@ async function receiverIdentity(provider: providers.JsonRpcProvider, ownerRaw: s
   }
   const currentReceiverCode = await provider.getCode(receiver);
   if (currentReceiverCode !== '0x') return null;
-  const deploymentData = ethers.utils.hexConcat([RECEIVER_SALT, initCode]);
+  const deploymentData = ethers.utils.hexConcat([descriptor.salt, initCode]);
   await provider.call({ from: owner, to: CREATE2_DEPLOYER, data: deploymentData, value: 0 });
-  return { owner, vault, receiver, deploymentData };
+  return { owner, infrastructure, receiver, deploymentData };
 }
 
 async function currentFeeCeiling(provider: providers.JsonRpcProvider): Promise<{
@@ -160,27 +197,27 @@ function permissionCallsForPlan(receiver: string, plan: ReturnType<typeof buildF
 }
 
 /**
- * First-receiver private bundle for Ethereum. Titan/Quasar prepend the ETH needed
- * for the nonce-contiguous EOA bundle; execution-created value then reimburses the
- * sponsorship ceiling plus a positive builder residual. No pre-existing operator
- * or system-owned native balance is a prerequisite for this atomic bootstrap.
+ * Provider-aware first-receiver private bundle for Ethereum. Titan/Quasar prepend
+ * the ETH needed for the nonce-contiguous EOA bundle; execution-created value
+ * reimburses the sponsorship ceiling plus a positive builder residual. Balancer,
+ * Aave V3, and Morpho remain alternatives: failure of one provider is local.
  */
-export async function prepareBuilderSponsoredReceiverBootstrap(input: {
+export async function prepareBuilderSponsoredProviderReceiverBootstrap(input: {
   opportunity: ZeroCapitalOpportunity;
-  balancerEvidence: FlashLoanProviderEconomics;
+  providerEvidence: FlashLoanProviderEconomics;
   provider: providers.JsonRpcProvider;
   wallet: Wallet;
 }): Promise<BuilderSponsoredZeroCapitalEvidence | null> {
-  const { opportunity, balancerEvidence, provider, wallet } = input;
+  const { opportunity, providerEvidence, provider, wallet } = input;
   if (opportunity.chain !== 'ethereum' || Date.now() >= opportunity.expiresAt) return null;
   if (!sameAddress(opportunity.inputToken, stableAddress(opportunity.inputAssetSymbol)) || opportunity.inputTokenDecimals !== 6) return null;
-  if (balancerEvidence.provider !== 'balancer_v2' || !balancerEvidence.executableEvidenceComplete) return null;
-  if (balancerEvidence.availableLiquidity === null || balancerEvidence.availableLiquidity < opportunity.flashLoanAmount) return null;
-  const measuredFlashFee = calculateMeasuredFlashLoanFee(balancerEvidence, opportunity.flashLoanAmount);
+  if (!providerEvidence.executableEvidenceComplete) return null;
+  if (providerEvidence.availableLiquidity === null || providerEvidence.availableLiquidity < opportunity.flashLoanAmount) return null;
+  const measuredFlashFee = calculateMeasuredFlashLoanFee(providerEvidence, opportunity.flashLoanAmount);
   if (measuredFlashFee === null) return null;
 
   requireZeroCapitalInfrastructureDeploymentAllowed({ chain: 'ethereum', operation: 'receiver_deployment' });
-  const identity = await receiverIdentity(provider, wallet.address);
+  const identity = await receiverIdentity(provider, wallet.address, providerEvidence.provider);
   if (!identity) return null;
 
   const grossProfit = opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
@@ -190,7 +227,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
 
   const seedPlan = buildFlashLoanExecutionPlanFromOpportunity({ ...opportunity, expectedProfit: preBuilderProfit }, {
     receiver: identity.receiver,
-    provider: 'balancer_v2',
+    provider: providerEvidence.provider,
     profitRecipient: wallet.address,
     minProfitBaseUnits: minimumPositiveProfitBaseUnits(),
     nowMs: Date.now(),
@@ -209,9 +246,6 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
   const minimumBuilderResidualWei = BigInt(process.env.ZERO_CAPITAL_BUILDER_MIN_RESIDUAL_WEI || '10000000000000');
   if (minimumBuilderResidualWei <= 0n) throw new Error('ZERO_CAPITAL_BUILDER_MIN_RESIDUAL_WEI must be positive');
   const builderPaymentWei = requiredSponsorshipWei + minimumBuilderResidualWei;
-  // Reimburse the exact bounded sponsorship plus residual. Do not force this first
-  // profitable trade to buy a second sponsorship-sized ETH reserve; retained-profit
-  // policy may seed system-owned gas after settlement without distorting admission.
   const conversionOutputWei = builderPaymentWei;
 
   const conversionSlippageBps = boundedInteger(process.env.ZERO_CAPITAL_BUILDER_CONVERSION_MAX_SLIPPAGE_BPS, 50, 1, 500);
@@ -236,7 +270,7 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
 
   const plan = buildFlashLoanExecutionPlanFromOpportunity({ ...opportunity, expectedProfit: preBuilderProfit }, {
     receiver: identity.receiver,
-    provider: 'balancer_v2',
+    provider: providerEvidence.provider,
     profitRecipient: wallet.address,
     minProfitBaseUnits: minimumReceiverProfit,
     nowMs: Date.now(),
@@ -352,19 +386,22 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     inputToken: opportunity.inputToken,
     inputAssetSymbol: opportunity.inputAssetSymbol,
     receiver: identity.receiver,
-    providerLabel: 'balancer_v2',
+    providerLabel: providerEvidence.provider,
     executionTransactionIndex,
     receiverBootstrap: {
       owner: identity.owner,
-      vault: identity.vault,
+      // Legacy field name retained for serialized-evidence compatibility. For
+      // Aave/Morpho this contains the provider infrastructure address rather than
+      // a Balancer vault; providerLabel and provenance identify the binding.
+      vault: identity.infrastructure,
       factory: CREATE2_DEPLOYER,
       deploymentTransactionIndex: 0,
       permissionTransactionCount: permissionCalls.length,
     },
     bootstrapProviderEconomics: {
-      ...balancerEvidence,
-      missingEvidence: [...balancerEvidence.missingEvidence],
-      provenance: [...balancerEvidence.provenance],
+      ...providerEvidence,
+      missingEvidence: [...providerEvidence.missingEvidence],
+      provenance: [...providerEvidence.provenance],
     },
     builderGasCostInInputToken,
     guaranteedNetProfitInInputToken,
@@ -383,7 +420,8 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
       'receiver_bootstrap:exact_route_permissions_in_same_atomic_bundle',
       'receiver_bootstrap:predicted_address_matches_reviewed_artifact',
       'receiver_bootstrap:create2_factory_code_hash_verified',
-      'flash_provider:balancer_v2_measured_fee_liquidity',
+      `receiver_bootstrap:provider_${providerEvidence.provider}`,
+      `flash_provider:${providerEvidence.provider}_measured_fee_liquidity`,
       'builder_payment_source:execution_created_value',
       'builder_payment_transport:titan_or_quasar',
       ...repaymentRoute.provenance,
@@ -392,14 +430,17 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
       'strict_positive_all_in_residual',
       'sub_bps_precision_preserved:true',
       'canonical_execution_authority_unchanged',
+      'provider_failure_is_route_local:true',
       'synthetic_evidence:false',
     ],
   };
   builderSponsoredZeroCapitalRegistry.record(evidence);
-  logger.info('[ZeroCapitalReceiverBootstrap] Exact builder-sponsored zero-native-capital first-receiver candidate prepared', {
+  logger.info('[ZeroCapitalReceiverBootstrap] Exact provider-aware builder-sponsored zero-native-capital first-receiver candidate prepared', {
     component: 'BuilderSponsoredReceiverBootstrap',
     opportunityId: opportunity.id,
+    flashProvider: providerEvidence.provider,
     receiver: identity.receiver,
+    providerInfrastructure: identity.infrastructure,
     permissionTransactions: permissionCalls.length,
     executionTransactionIndex,
     builders: candidates.map(candidate => candidate.builder),
@@ -418,4 +459,20 @@ export async function prepareBuilderSponsoredReceiverBootstrap(input: {
     executionAuthority: false,
   });
   return evidence;
+}
+
+/** Backward-compatible Balancer entrypoint retained for existing callers/tests. */
+export async function prepareBuilderSponsoredReceiverBootstrap(input: {
+  opportunity: ZeroCapitalOpportunity;
+  balancerEvidence: FlashLoanProviderEconomics;
+  provider: providers.JsonRpcProvider;
+  wallet: Wallet;
+}): Promise<BuilderSponsoredZeroCapitalEvidence | null> {
+  if (input.balancerEvidence.provider !== 'balancer_v2') return null;
+  return prepareBuilderSponsoredProviderReceiverBootstrap({
+    opportunity: input.opportunity,
+    providerEvidence: input.balancerEvidence,
+    provider: input.provider,
+    wallet: input.wallet,
+  });
 }
