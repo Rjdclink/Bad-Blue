@@ -203,14 +203,6 @@ function explicitlyRequiredMissingInformation(item: string): boolean {
   return normalized.startsWith('required:') || normalized.startsWith('critical:');
 }
 
-/**
- * Execution is governed by the minimum evidence that actually proves this exact
- * candidate can execute: current eligibility, authoritative execution capability,
- * fresh evidence, executable depth (or a topology where depth is not applicable),
- * a measured notional, and a positive canonical all-in net result. Once those
- * facts are present, additional missing telemetry/provider/learning fields remain
- * observable but cannot veto the trade merely because they are listed.
- */
 export function hasMinimumSufficientExecutionEvidence(candidate: MeasuredCandidate, now = Date.now()): boolean {
   const notionalUsd = finite(candidate.canonicalBps.notionalUsd);
   const netBps = finite(candidate.canonicalBps.netBps);
@@ -226,14 +218,6 @@ export function hasMinimumSufficientExecutionEvidence(candidate: MeasuredCandida
     && deterministicNetProfitUsd > 0;
 }
 
-/**
- * `missingInformation` remains complete in the internal registry for diagnostics
- * and evidence-acquisition metrics. Consumers that can grant/prepare execution see
- * only genuinely blocking gaps. Optional/redundant/advisory fields never block;
- * after minimum-sufficient execution proof exists, only explicitly required or
- * critical gaps remain blockers. This prevents irrelevant completeness scoring
- * from becoming a shadow execution authority.
- */
 export function executionBlockingMissingInformation(candidate: MeasuredCandidate, now = Date.now()): string[] {
   const all = [...new Set(candidate.missingInformation.map(item => item.trim()).filter(Boolean))];
   const nonOptional = all.filter(item => !explicitlyNonBlockingMissingInformation(item));
@@ -350,9 +334,6 @@ class MeasuredCandidateRegistry {
       canonicalBps: buildCanonicalBps(economics, updatedAt),
       missingInformation: [...new Set(input.missingInformation.map(item => item.trim()).filter(Boolean))],
       provenance: [...new Set([...input.provenance, 'canonical_bps:measured_candidate_registry'])],
-      // Every record is a new authoritative evidence snapshot. Eligibility never
-      // survives a re-record unless the producer explicitly supplies `eligible`
-      // from current evidence; this prevents stale provider/resource authority.
       status: input.status,
     };
     this.candidates.set(next.opportunityId, next);
@@ -369,8 +350,6 @@ class MeasuredCandidateRegistry {
   ): MeasuredCandidate | null {
     const previous = this.candidates.get(opportunityId);
     if (!previous) return null;
-    // Internal mutations must retain the complete diagnostic missing-information
-    // set. Filtering applies only at the execution-consumer boundary.
     const next = clone(previous, true);
     next.status = status;
     next.updatedAt = Date.now();
@@ -400,6 +379,23 @@ class MeasuredCandidateRegistry {
   get(opportunityId: string): MeasuredCandidate | null {
     const candidate = this.candidates.get(opportunityId);
     return candidate ? clone(candidate) : null;
+  }
+
+  /**
+   * Diagnostic/reacquisition-only view. Expired entries stay non-executable and
+   * are surfaced with `expired` status so bounded refresh workers can replace
+   * stale evidence with a new authoritative snapshot. Execution consumers must
+   * continue using get/getRecent and the expiry guard.
+   */
+  getRecentIncludingExpired(limit = 256): MeasuredCandidate[] {
+    const now = Date.now();
+    return [...this.candidates.values()]
+      .map(candidate => candidate.expiresAt < now && !['blocked', 'expired'].includes(candidate.status)
+        ? { ...candidate, status: 'expired' as const }
+        : candidate)
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, Math.max(1, Math.min(limit, 4096)))
+      .map(candidate => clone(candidate, true));
   }
 
   getRecent(limit = 256): MeasuredCandidate[] {
