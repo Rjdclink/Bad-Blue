@@ -263,7 +263,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   let staleProviderEvidenceRejected = 0;
   let insufficientLiquidityRejected = 0;
   let expiredBeforeRequote = 0;
-  let expiredBeforeRefinement = 0;
+  let invalidFreshRefinement = 0;
   let bpsSuperEngineCandidates = 0;
   let bpsSuperEnginePositiveRecoveries = 0;
   const negativeGrossSkipped = opportunities.filter(item => item.expectedProfit <= 0n && grossProfit(item) <= 0n).length;
@@ -292,7 +292,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     try {
       const providerEvidence = (await measureFlashLoanProviders({ chain: chain as any, provider, asset: opportunity.inputToken }))
         .filter(item => providerFresh(item));
-      staleProviderEvidenceRejected += Math.max(0, 2 - providerEvidence.length);
+      staleProviderEvidenceRejected += Math.max(0, 3 - providerEvidence.length);
       if (providerEvidence.length === 0 || opportunity.expiresAt - Date.now() <= minimumRemainingLifetimeMs) {
         if (opportunity.expiresAt - Date.now() <= minimumRemainingLifetimeMs) expiredBeforeRequote += 1;
         output.push(opportunity);
@@ -333,18 +333,18 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
         output.push(opportunity);
         continue;
       }
-      if (opportunity.expiresAt <= Date.now()) {
-        expiredBeforeRefinement += 1;
-        output.push(opportunity);
-        continue;
-      }
+
+      // The old candidate is only the seed that selected this route for rescue.
+      // A successful requote is fresh executable market evidence and receives a
+      // new TTL from fromQuotedRoute; never cap that fresh evidence to the seed's
+      // expired timestamp or discard it merely because the seed expired while
+      // the new quote was being measured.
       const refined = fromQuotedRoute(best, blockTimestamp(opportunity));
-      if (refined.timestamp >= opportunity.expiresAt) {
-        expiredBeforeRefinement += 1;
+      if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
+        invalidFreshRefinement += 1;
         output.push(opportunity);
         continue;
       }
-      refined.expiresAt = Math.min(refined.expiresAt, opportunity.expiresAt);
       output.push(refined);
       improved += 1;
       if (best.netProfit > 0n) {
@@ -377,7 +377,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     staleProviderEvidenceRejected,
     insufficientLiquidityRejected,
     expiredBeforeRequote,
-    expiredBeforeRefinement,
+    invalidFreshRefinement,
     bpsSuperEngineCandidates,
     bpsSuperEnginePositiveRecoveries,
     bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
@@ -396,7 +396,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     strictImprovementRequired: true,
     existingPositiveNeverReplacedByNegative: true,
     freshExactRequoteRequired: true,
-    staleRescueCannotCreateInvalidExpiration: true,
+    freshRequoteSupersedesExpiredSeed: true,
     registryMethodMutation: false,
     independentEnableSwitch: false,
     syntheticEconomics: false,
