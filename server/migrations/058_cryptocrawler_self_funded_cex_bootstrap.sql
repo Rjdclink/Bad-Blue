@@ -4,6 +4,12 @@
 -- on-chain reservation remains the source-ownership lock until the destination
 -- exchange proves terminal spendability.
 
+-- reservation_id is generated as a UUID and is used by runtime code as a global
+-- reservation identity. Migration 042 made the primary key composite, so expose
+-- the intended single-column uniqueness before using reservation_id as an FK.
+CREATE UNIQUE INDEX IF NOT EXISTS cryptocrawler_onchain_inventory_reservation_id_uidx
+  ON public.cryptocrawler_onchain_inventory_reservations(reservation_id);
+
 CREATE TABLE IF NOT EXISTS public.cryptocrawler_cex_bootstrap_demands (
   demand_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   idempotency_key text NOT NULL UNIQUE,
@@ -50,6 +56,9 @@ CREATE INDEX IF NOT EXISTS idx_cex_bootstrap_bridges_pending
   WHERE status IN ('RESERVED','PLACEMENT_PENDING','MANUAL_REVIEW');
 CREATE INDEX IF NOT EXISTS idx_cex_bootstrap_bridges_demand
   ON public.cryptocrawler_cex_bootstrap_bridges(demand_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cex_bootstrap_one_active_bridge_per_demand
+  ON public.cryptocrawler_cex_bootstrap_bridges(demand_id)
+  WHERE status IN ('RESERVED','PLACEMENT_PENDING','MANUAL_REVIEW');
 
 ALTER TABLE public.cryptocrawler_cex_bootstrap_demands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cryptocrawler_cex_bootstrap_bridges ENABLE ROW LEVEL SECURITY;
@@ -58,8 +67,108 @@ REVOKE ALL ON TABLE public.cryptocrawler_cex_bootstrap_bridges FROM PUBLIC, anon
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_cex_bootstrap_demands TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.cryptocrawler_cex_bootstrap_bridges TO service_role;
 
+-- Re-entry while a placement is still active may acquire a fresh aggregate
+-- reservation before the durable bridge is observed. Collapse that replay at
+-- the database boundary and release only the redundant reservation. A different
+-- active allocation for the same demand is a contradiction and fails closed.
+CREATE OR REPLACE FUNCTION private.cryptocrawler_dedupe_cex_bootstrap_bridge()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  existing_bridge public.cryptocrawler_cex_bootstrap_bridges%ROWTYPE;
+BEGIN
+  SELECT * INTO existing_bridge
+  FROM public.cryptocrawler_cex_bootstrap_bridges
+  WHERE demand_id=NEW.demand_id
+    AND status IN ('RESERVED','PLACEMENT_PENDING','MANUAL_REVIEW')
+  ORDER BY created_at ASC
+  LIMIT 1
+  FOR UPDATE;
+
+  IF FOUND THEN
+    IF existing_bridge.allocation_id <> NEW.allocation_id THEN
+      RAISE EXCEPTION 'Active CEX bootstrap demand % is already bound to allocation %', NEW.demand_id, existing_bridge.allocation_id;
+    END IF;
+    IF existing_bridge.onchain_reservation_id <> NEW.onchain_reservation_id THEN
+      DELETE FROM public.cryptocrawler_onchain_inventory_reservations
+      WHERE reservation_id=NEW.onchain_reservation_id;
+    END IF;
+    RETURN NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS cryptocrawler_dedupe_cex_bootstrap_bridge_trigger
+  ON public.cryptocrawler_cex_bootstrap_bridges;
+CREATE TRIGGER cryptocrawler_dedupe_cex_bootstrap_bridge_trigger
+BEFORE INSERT ON public.cryptocrawler_cex_bootstrap_bridges
+FOR EACH ROW
+EXECUTE FUNCTION private.cryptocrawler_dedupe_cex_bootstrap_bridge();
+
+-- A pre-broadcast release must permit a later clean retry. Preserve the released
+-- allocation as audit history while freeing its request idempotency key;
+-- allocation_id remains the immutable durable identity.
+CREATE OR REPLACE FUNCTION private.cryptocrawler_prepare_cex_bootstrap_release()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF OLD.strategy='verified_cex_arbitrage_bootstrap'
+     AND OLD.status='RESERVED' AND NEW.status='RELEASED' THEN
+    NEW.terminal_evidence := COALESCE(NEW.terminal_evidence, '{}'::jsonb)
+      || jsonb_build_object('releasedBootstrapIdempotencyKey', OLD.idempotency_key);
+    NEW.idempotency_key := OLD.idempotency_key || ':released:' || OLD.allocation_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS cryptocrawler_prepare_cex_bootstrap_release_trigger
+  ON public.cryptocrawler_system_capital_allocations;
+CREATE TRIGGER cryptocrawler_prepare_cex_bootstrap_release_trigger
+BEFORE UPDATE OF status ON public.cryptocrawler_system_capital_allocations
+FOR EACH ROW
+EXECUTE FUNCTION private.cryptocrawler_prepare_cex_bootstrap_release();
+
+CREATE OR REPLACE FUNCTION private.cryptocrawler_finalize_cex_bootstrap_release()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  released_reservation uuid;
+BEGIN
+  IF OLD.strategy='verified_cex_arbitrage_bootstrap'
+     AND OLD.status='RESERVED' AND NEW.status='RELEASED' THEN
+    SELECT onchain_reservation_id INTO released_reservation
+    FROM public.cryptocrawler_cex_bootstrap_bridges
+    WHERE allocation_id=NEW.allocation_id
+    FOR UPDATE;
+
+    UPDATE public.cryptocrawler_cex_bootstrap_bridges
+    SET status='RELEASED', updated_at=now()
+    WHERE allocation_id=NEW.allocation_id
+      AND status='RESERVED';
+
+    IF released_reservation IS NOT NULL THEN
+      DELETE FROM public.cryptocrawler_onchain_inventory_reservations
+      WHERE reservation_id=released_reservation;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS cryptocrawler_finalize_cex_bootstrap_release_trigger
+  ON public.cryptocrawler_system_capital_allocations;
+CREATE TRIGGER cryptocrawler_finalize_cex_bootstrap_release_trigger
+AFTER UPDATE OF status ON public.cryptocrawler_system_capital_allocations
+FOR EACH ROW
+EXECUTE FUNCTION private.cryptocrawler_finalize_cex_bootstrap_release();
+
 -- Consumes the reserved on-chain source only when the allocation has already
--- reached PLACED. The migration-055 CEX ownership trigger runs in the same UPDATE
+-- reached PLACED. Migration 055's CEX ownership trigger runs in the same UPDATE
 -- transaction, so source consumption and destination lot creation succeed or roll
 -- back together. Generic wallet balance is never ownership authority.
 CREATE OR REPLACE FUNCTION private.cryptocrawler_apply_cex_bootstrap_source()
@@ -103,9 +212,10 @@ BEGIN
   SELECT * INTO reservation_row
   FROM public.cryptocrawler_onchain_inventory_reservations
   WHERE reservation_id=bridge_row.onchain_reservation_id
+    AND expires_at > now()
   FOR UPDATE;
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'CEX bootstrap source reservation % is missing', bridge_row.onchain_reservation_id;
+    RAISE EXCEPTION 'CEX bootstrap source reservation % is missing or expired', bridge_row.onchain_reservation_id;
   END IF;
 
   IF lower(reservation_row.chain) <> lower(bridge_row.source_chain)
@@ -177,4 +287,4 @@ EXECUTE FUNCTION private.cryptocrawler_apply_cex_bootstrap_source();
 COMMENT ON TABLE public.cryptocrawler_cex_bootstrap_demands IS
   'Durable, quote-independent inventory demand created after canonical positive economics and governance/notional admission. A demand is not executable inventory.';
 COMMENT ON TABLE public.cryptocrawler_cex_bootstrap_bridges IS
-  'Exactly-once ownership bridge from a reserved SELF_FUNDED on-chain lot to a terminally spendable CEX allocation. Source ownership remains reserved until destination placement and system-owned gas settlement are proven.';
+  'Exactly-once ownership bridge from a reserved SELF_FUNDED on-chain lot to a terminally spendable CEX allocation. Released attempts remain auditable while only one active bridge may exist per demand.';
