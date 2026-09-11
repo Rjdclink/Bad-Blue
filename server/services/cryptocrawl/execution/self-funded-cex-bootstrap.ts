@@ -6,6 +6,7 @@ import { assertCryptocrawlRuntimeDatabaseAvailable, pool } from '../runtime/cryp
 import { cexInventoryLedger, type InventoryVenue } from './cex-inventory-ledger.js';
 import { placeReservedCexSystemCapital, reconcilePendingCexSystemCapitalPlacements } from './cex-system-capital-placement.js';
 import { placeReservedCoinbaseSystemCapital, reconcilePendingCoinbaseSystemCapitalPlacements } from './coinbase-system-capital-placement.js';
+import { placeReservedKrakenSystemCapital, reconcilePendingKrakenSystemCapitalPlacements } from './kraken-system-capital-placement.js';
 import { reserveOnchainSystemCapital } from './onchain-system-capital-ledger.js';
 import {
   releaseUnplacedSystemCapital,
@@ -225,6 +226,7 @@ async function bridgeExists(allocationId: string): Promise<boolean> {
 
 async function dispatchPlacement(venue: CexBootstrapVenue, allocationId: string) {
   if (venue === 'coinbase') return placeReservedCoinbaseSystemCapital(allocationId);
+  if (venue === 'kraken') return placeReservedKrakenSystemCapital(allocationId);
   return placeReservedCexSystemCapital(allocationId);
 }
 
@@ -234,18 +236,14 @@ async function reserveAndDispatchDirect(input: {
   notionalAuthority: ProfitLadderNotionalAuthoritySnapshot;
 }): Promise<{ status: string; detail: string }> {
   const requirement = input.demand.requirement;
-  if (requirement.venue === 'kraken') {
-    await updateDemand(input.demand.demandId, 'PENDING', 'Kraken placement remains route-local fail-closed; trying other compatible venue paths must remain possible');
-    return { status: 'PENDING', detail: 'Kraken direct placement unavailable locally; no global bootstrap failure' };
-  }
   if (!['USDC', 'USDT'].includes(requirement.asset.toUpperCase())) {
     await updateDemand(input.demand.demandId, 'TRANSFORM_REQUIRED', `Direct retained-capital placement cannot manufacture ${requirement.asset}; a terminal CEX conversion/rebalance is required`);
     return { status: 'TRANSFORM_REQUIRED', detail: `${requirement.asset} requires a real terminal conversion/rebalance before it is spendable inventory` };
   }
 
-  // Placement adapters currently admit only stablecoin source assets. Candidate
-  // source lots are examined one at a time so an incompatible chain/token route
-  // is local and the next compatible retained-profit lot remains eligible.
+  // Direct placement adapters admit stablecoin source assets. Candidate source
+  // lots are examined one at a time so an incompatible chain/token route is
+  // local and the next compatible retained-profit lot remains eligible.
   const provisional = await directSourceCandidates(requirement.asset, 1n);
   if (provisional.length === 0) {
     await updateDemand(input.demand.demandId, 'PENDING', `No matching SELF_FUNDED ${requirement.asset} on-chain lot is currently available`);
@@ -430,6 +428,7 @@ export async function reconcileSelfFundedCexBootstraps(limit = 25): Promise<void
   const bounded = Math.max(1, Math.min(100, Math.trunc(limit)));
   await Promise.allSettled([
     reconcilePendingCoinbaseSystemCapitalPlacements(bounded),
+    reconcilePendingKrakenSystemCapitalPlacements(bounded),
     reconcilePendingCexSystemCapitalPlacements(bounded),
   ]);
   await pool.query(
