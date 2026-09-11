@@ -184,10 +184,14 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
     const coreMarketDataReady = usableMarketUniverseProviders.length > 0 || directCexMarketEvidenceReady;
     const coinStatsEnvironment = resolveCoinStatsEnvironment();
     const rpcSnapshot = blockchainProviderSnapshot();
-    const criticalRpcReady = rpcSnapshot.some(chain => chain.providers.some(provider => provider.http === 'healthy'));
+    // A degraded provider is intentionally still operational in the canonical RPC
+    // manager until its route-local failure threshold/cooldown is reached. Readiness
+    // must not globally erase that usable path merely because it is not pristine.
+    const criticalRpcReady = rpcSnapshot.some(chain => chain.providers.some(provider =>
+      provider.http === 'healthy' || provider.http === 'degraded'));
     const configuredGraphFreshMs = Math.max(15_000, Number(process.env.CRYPTOCRAWL_OPPORTUNITY_GRAPH_FRESH_MS || 30_000));
     const graphCycleDurationMs = graph ? Math.max(0, graph.completedAt - graph.startedAt) : 0;
-    // A completed cycle remains fresh through one measured cycle duration plus
+    // A completed CEX cycle remains fresh through one measured cycle duration plus
     // its adaptive rescan delay and a heartbeat scheduling margin. A fixed 30s
     // window incorrectly marked healthy 37-114s scans stale while they ran.
     const measuredGraphFreshMs = graph
@@ -195,6 +199,25 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       : 0;
     const graphFreshMs = Math.max(configuredGraphFreshMs, Math.min(300_000, measuredGraphFreshMs));
     const graphReady = !!graph && graph.completedAt >= Date.now() - graphFreshMs && graph.evaluatedSymbols > 0;
+
+    // The multi-topology controller is an independent discovery family. Its most
+    // recent completed cycle may establish discovery liveness while a slow/stale CEX
+    // graph is unavailable. Evidence remains separately mandatory below, so this
+    // freshness signal cannot manufacture candidates or economics.
+    const multiTopologyCycleDurationMs = multiTopology
+      ? Math.max(0, multiTopology.completedAt - multiTopology.startedAt)
+      : 0;
+    const configuredMultiTopologyIntervalMs = Math.max(
+      5_000,
+      Number(process.env.CRYPTOCRAWL_MULTI_TOPOLOGY_SCAN_INTERVAL_MS || 15_000),
+    );
+    const multiTopologyFreshMs = Math.max(
+      15_000,
+      Math.min(300_000, multiTopologyCycleDurationMs + configuredMultiTopologyIntervalMs + 15_000),
+    );
+    const multiTopologyReady = !!multiTopology
+      && multiTopology.completedAt >= Date.now() - multiTopologyFreshMs;
+
     const discoveryEvidenceCount = Math.max(
       candidateMetrics.observed,
       graph?.observedCandidatesRegistered ?? 0,
@@ -231,6 +254,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       coreMarketDataReady,
       criticalRpcReady,
       graphReady,
+      multiTopologyReady,
       discoveryEvidenceCount,
       canonicalObservedOpportunities: recentMinute.observedOpportunities,
       schedulerRunning: scheduler.running,
@@ -250,7 +274,7 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       zeroCapitalExecutionEnabled,
     });
 
-    readiness.DISCOVERY_READY.detail += `; freshnessThresholdMs=${graphFreshMs}; lastCycleDurationMs=${graphCycleDurationMs}; selectedSymbols=${graph?.selectedSymbols ?? 0}; multiTopologyObserved=${candidateMetrics.observed}`;
+    readiness.DISCOVERY_READY.detail += `; cexFreshnessThresholdMs=${graphFreshMs}; cexLastCycleDurationMs=${graphCycleDurationMs}; multiTopologyFreshnessThresholdMs=${multiTopologyFreshMs}; multiTopologyLastCycleDurationMs=${multiTopologyCycleDurationMs}; selectedSymbols=${graph?.selectedSymbols ?? 0}; multiTopologyObserved=${candidateMetrics.observed}`;
 
     logger.info('[CryptoRuntime] Authoritative runtime heartbeat', {
       component: 'CryptoRuntimeObservability',
@@ -292,7 +316,12 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
           economicBarrier,
           errors: graph.errors,
         } : null,
-        multiTopology: summarizeMultiTopologyCycle(multiTopology),
+        multiTopology: {
+          cycle: summarizeMultiTopologyCycle(multiTopology),
+          fresh: multiTopologyReady,
+          cycleDurationMs: multiTopologyCycleDurationMs,
+          freshnessThresholdMs: multiTopologyFreshMs,
+        },
         candidateRegistry: candidateMetrics,
       },
       opportunities: {
@@ -348,6 +377,11 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
             (sum, chain) => sum + chain.providers.filter(provider => provider.http === 'healthy').length,
             0,
           ),
+          operationalProviderCount: rpcSnapshot.reduce(
+            (sum, chain) => sum + chain.providers.filter(provider => provider.http === 'healthy' || provider.http === 'degraded').length,
+            0,
+          ),
+          degradedProvidersRemainRouteLocallyUsable: true,
           alchemyOperationalAuthority: false,
           paidProviderRequired: false,
         },
@@ -456,6 +490,8 @@ export function ensureCryptoRuntimeObservability(): void {
     cexEconomicBarrierTelemetry: true,
     multiTopologyCandidateTelemetry: true,
     boundedMultiTopologyHeartbeat: true,
+    topologyLocalDiscoveryReadiness: true,
+    degradedRpcOperationalReadiness: true,
     inventoryTelemetry: true,
     monteCarloCalibrationTelemetry: true,
     orderBookEvolutionTelemetry: true,
