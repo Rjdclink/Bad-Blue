@@ -259,7 +259,10 @@ assert.match(realizedPolicy, /sponsorOperatorMonetaryCostProvenZero/);
 assert.match(executor, /nativeFeeWei = BigInt\(receipt\.gasUsed\.toString\(\)\) \* BigInt\(receipt\.effectiveGasPrice\.toString\(\)\)/);
 assert.match(executor, /providerBillingLiability: funding\.providerBillingLiability === true/);
 assert.doesNotMatch(executor, /zeroMonetaryGasVerified:\s*sponsoredExecution\s*[,}]/);
-assert.match(executor, /Legacy EOA builder cold-start is not zero-native-capital authority/);
+assert.match(executorFlash, /operatorNativeGasInputRequired: false/);
+assert.match(executorFlash, /builderNativePrefundVerified: true/);
+assert.match(executorFlash, /builderSponsorshipRepaidFromExecutionCreatedValue: true/);
+assert.match(executorFlash, /zeroMonetaryGasVerified: false/);
 assert.match(sponsoredReceiverManager, /await this\.sponsor\.execute\(/);
 assert.match(sponsoredReceiverManager, /ZERO_CAPITAL_SPONSORED_RECEIVER_DEPLOY_TIMEOUT_MS/);
 assert.doesNotMatch(dynamicChainRegistry, /sponsoredBootstrap: true/);
@@ -373,7 +376,7 @@ console.log(JSON.stringify({
   positiveExecutionFloorPreservedOutsideAtomicSurplusLane: true,
   zeroInitialCapitalPaymasterTruthBound: true,
   providerSponsoredGasChargedInRealizedEconomics: true,
-  legacyEoaBuilderNotGasSponsor: true,
+  builderBundleZeroOperatorNativePrefundBound: true,
   uniswapV3OneBpsFeeTierEndToEnd: true,
   routeLocalPancakeAndTraderJoeExecutionAdapters: true,
   builderRepaymentRouteMesh: true,
