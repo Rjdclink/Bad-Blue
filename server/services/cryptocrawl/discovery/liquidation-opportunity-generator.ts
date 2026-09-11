@@ -306,12 +306,14 @@ function preparedCandidate(current: MeasuredCandidate, prepared: AaveLiquidation
 async function inspectBorrower(input: {
   chain: RpcSupportedChain;
   pool: string;
-  contract: Contract;
   borrower: string;
   ttlMs: number;
 }): Promise<LiquidatableObservation | null> {
   const observedAt = Date.now();
-  const account = await input.contract.getUserAccountData(input.borrower) as [BigNumber, BigNumber, BigNumber, BigNumber, BigNumber, BigNumber];
+  const { result: account } = await multiProviderRpcManager.execute(input.chain, 'contract_calls', async provider => {
+    const contract = new Contract(input.pool, AAVE_POOL_ABI, provider);
+    return contract.getUserAccountData(input.borrower) as Promise<[BigNumber, BigNumber, BigNumber, BigNumber, BigNumber, BigNumber]>;
+  });
   const totalCollateralBase = BigNumber.from(account[0]);
   const totalDebtBase = BigNumber.from(account[1]);
   const healthFactorRaw = BigNumber.from(account[5]);
@@ -333,8 +335,6 @@ async function inspectBorrower(input: {
 async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<MeasuredCandidate[]> {
   const pool = resolveAaveV3Pool(chain as SupportedExecutionChain);
   if (!pool) return [];
-  const managed = await multiProviderRpcManager.getProvider(chain, 'contract_calls');
-  const contract = new Contract(pool, AAVE_POOL_ABI, managed.http);
   const { result: latestBlock } = await multiProviderRpcManager.execute(chain, 'blocks', provider => provider.getBlockNumber());
   const targetBorrowers = boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_BORROWER_TARGET, 128, 8, 2048);
   const universe = borrowerUniverse.get(chain) || new Map<string, number>();
@@ -389,7 +389,6 @@ async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<Meas
   const settled = await Promise.allSettled(borrowers.map(borrower => inspectBorrower({
     chain,
     pool,
-    contract,
     borrower,
     ttlMs,
   })));
