@@ -12,6 +12,7 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import { getProfitLadderDailyProfitBudget, type ProfitLadderDailyProfitBudget } from '../governance/profit-ladder-daily-profit-budget.js';
 import {
   buildBpsReductionSuperPlan,
   recordBpsRevalidationOutcome,
@@ -232,7 +233,21 @@ function candidateSizes(
   return [...selected].sort((a, b) => a - b).slice(0, maxCandidates - 1).concat(candidates[candidates.length - 1]).filter((value, index, values) => index === 0 || value !== values[index - 1]);
 }
 
-function quoteBetter(current: QuotedZeroCapitalRoute | null, candidate: QuotedZeroCapitalRoute): QuotedZeroCapitalRoute {
+function quoteFitsDailyProfitBudget(
+  candidate: QuotedZeroCapitalRoute,
+  inputTokenDecimals: number,
+  budget: ProfitLadderDailyProfitBudget | null,
+): boolean {
+  if (!budget || budget.remainingProfitUsd === null) return true;
+  if (!budget.stageAligned || budget.exhausted) return false;
+  const expectedNetProfitUsd = usdFromBaseUnits(candidate.netProfit, inputTokenDecimals);
+  return expectedNetProfitUsd > 0 && expectedNetProfitUsd <= budget.remainingProfitUsd + 0.01;
+}
+
+function quoteBetter(
+  current: QuotedZeroCapitalRoute | null,
+  candidate: QuotedZeroCapitalRoute,
+): QuotedZeroCapitalRoute {
   if (!current) return candidate;
   const target = atomicSurplusTargetBps();
   const candidateClearsTarget = candidate.netProfit > 0n && candidate.netProfitBps >= target;
@@ -312,6 +327,18 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   const rescueIds = selectRescueIds(opportunities, configuredRoutes);
   if (rescueIds.size === 0) return [...opportunities];
 
+  let dailyProfitBudget: ProfitLadderDailyProfitBudget | null = null;
+  try {
+    dailyProfitBudget = await getProfitLadderDailyProfitBudget();
+  } catch (error) {
+    logger.debug('[ZeroCapitalProfitabilityRescueV2] Daily profit budget unavailable for quote ranking; measurement continues without granting execution authority', {
+      component: 'ZeroCapitalProfitabilityRescueV2',
+      chain,
+      error: error instanceof Error ? error.message : String(error),
+      executionAuthority: false,
+    });
+  }
+
   const maxQuoteLatencyMs = bounded(process.env.ZERO_CAPITAL_RESCUE_MAX_QUOTE_LATENCY_MS, 2_500, 250, 10_000);
   const totalQuoteBudget = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET, 42, 6, 96));
   const minimumRemainingLifetimeMs = bounded(process.env.ZERO_CAPITAL_RESCUE_MIN_REMAINING_LIFETIME_MS, 500, 100, 5_000);
@@ -319,6 +346,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   let improved = 0;
   let positivesRecovered = 0;
   let targetSurplusRecovered = 0;
+  let budgetRejectedTargetQuotes = 0;
   let staleProviderEvidenceRejected = 0;
   let insufficientLiquidityRejected = 0;
   let expiredBeforeRequote = 0;
@@ -379,7 +407,12 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
           }
           providerUsable = true;
           const adjusted = adjustForProvider(result.value, evidence);
-          if (adjusted) best = quoteBetter(best, adjusted);
+          if (!adjusted) continue;
+          if (clearsAtomicSurplusTarget(adjusted) && !quoteFitsDailyProfitBudget(adjusted, route.inputTokenDecimals, dailyProfitBudget)) {
+            budgetRejectedTargetQuotes += 1;
+            continue;
+          }
+          best = quoteBetter(best, adjusted);
         }
         if (!providerUsable) continue;
       }
@@ -396,11 +429,6 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
         continue;
       }
 
-      // The old candidate is only the seed that selected this route for rescue.
-      // A successful requote is fresh executable market evidence and receives a
-      // new TTL from fromQuotedRoute; never cap that fresh evidence to the seed's
-      // expired timestamp or discard it merely because the seed expired while
-      // the new quote was being measured.
       const refined = fromQuotedRoute(best, blockTimestamp(opportunity));
       if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
         invalidFreshRefinement += 1;
@@ -440,6 +468,12 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     atomicSurplusEntryFloorBps: atomicSurplusEntryFloorBps(),
     atomicSurplusTargetBps: atomicSurplusTargetBps(),
     outsideAtomicSurplusWindow,
+    budgetRejectedTargetQuotes,
+    profitLadderTierId: dailyProfitBudget?.tierId ?? null,
+    profitLadderDailyCapUsd: dailyProfitBudget?.dailyProfitCapUsd ?? null,
+    profitLadderRealizedProfitUsd: dailyProfitBudget?.realizedProfitUsd ?? null,
+    profitLadderRemainingProfitUsd: dailyProfitBudget?.remainingProfitUsd ?? null,
+    profitLadderBorrowingNotionalAuthority: false,
     staleProviderEvidenceRejected,
     insufficientLiquidityRejected,
     expiredBeforeRequote,
@@ -455,6 +489,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     providerLiquidityHeadroomRequired: true,
     providerUtilizationBounded: true,
     adaptiveGapAwareSizing: true,
+    netDollarOptimizationAboveTarget: true,
     grossPositiveRequiredForAtomicSurplusRescue: false,
     atomicBorrowingIndependentOfProfitLadderNotional: true,
     exactTargetSurplusRequiredBeforePromotion: true,
