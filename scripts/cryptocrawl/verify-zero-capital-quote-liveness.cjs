@@ -29,7 +29,9 @@ assert.match(quoter, /rpcProvider => quoteLegAgainstProvider\(rpcProvider, chain
 assert.doesNotMatch(quoter, /if \(netProfitBps < discoveryFloorBps\) return null/);
 assert.match(quoter, /bpsToBreakEven: netProfitBps >= 0 \? 0 : Math\.abs\(netProfitBps\)/);
 assert.match(quoter, /executablePositive: netProfit > 0n/);
-assert.match(quoter, /const selectionPool = admissible\.length > 0 \? admissible : observed/);
+assert.match(quoter, /const positive = observed\.filter\(quote => quote\.netProfit > 0n\)/);
+assert.match(quoter, /const selectionPool = positive\.length > 0 \? positive : observed/);
+assert.doesNotMatch(quoter, /const selectionPool = admissible\.length > 0 \? admissible : observed/);
 
 // Preliminary dynamic discovery must not invent a flash-loan BPS cost. The exact
 // provider stage remains the sole fee/liquidity authority before eligibility.
