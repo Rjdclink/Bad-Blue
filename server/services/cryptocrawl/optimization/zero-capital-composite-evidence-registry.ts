@@ -10,12 +10,20 @@ export interface ZeroCapitalCompositeEvidence {
   individualExpectedProfitSum: bigint;
   measuredCompositionGain: bigint;
   combinedExpectedProfit: bigint;
+  combinedGrossProfit: bigint;
+  combinedAllInCost: bigint;
+  flashLoanFeeInInputToken: bigint;
+  gasCostInInputToken: bigint;
+  relayFeeInInputToken: bigint;
+  targetNetProfitBps: number;
+  targetNetProfitBaseUnits: bigint;
+  requiredOnchainResidual: bigint;
   compositionGainUsd: number;
   minProfitSum: bigint;
   sharedPrincipalStackedBps: number;
   stepCount: number;
   estimatedGas: bigint;
-  /** Advisory eth_call validation outcome; never an execution-admission field. */
+  /** Exact eth_call outcome for the target-bound composite payload. */
   simulated: boolean;
   simulationAdvisoryError?: string;
   simulatedAt: number;
@@ -41,6 +49,8 @@ class ZeroCapitalCompositeEvidenceRegistry {
 
   record(input: ZeroCapitalCompositeEvidence): void {
     if (input.opportunityIds.length < 2 || input.measuredCompositionGain <= 0n || input.combinedExpectedProfit <= input.individualExpectedProfitSum) return;
+    if (input.sharedPrincipal <= 0n || input.combinedAllInCost < 0n || input.combinedGrossProfit <= input.combinedExpectedProfit) return;
+    if (input.targetNetProfitBaseUnits <= 0n || input.requiredOnchainResidual < input.targetNetProfitBaseUnits) return;
     this.entries.set(key(input.opportunityIds), clone(input));
     this.prune();
   }
