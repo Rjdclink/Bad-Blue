@@ -244,7 +244,13 @@ assert.doesNotMatch(executor, /zeroMonetaryGasVerified:\s*sponsoredExecution\s*[
 assert.match(executor, /Legacy EOA builder cold-start is not zero-native-capital authority/);
 assert.match(sponsoredReceiverManager, /await this\.sponsor\.execute\(/);
 assert.match(sponsoredReceiverManager, /ZERO_CAPITAL_SPONSORED_RECEIVER_DEPLOY_TIMEOUT_MS/);
-assert.match(dynamicChainRegistry, /id: 'bsc'[\s\S]{0,100}sponsoredBootstrap: true/);
+// Chain configuration may advertise route capability, but must never grant hosted
+// sponsorship by assumption. A future sponsored path can only become admissible
+// through the canonical proof above with explicit zero-billing-liability evidence.
+assert.doesNotMatch(dynamicChainRegistry, /sponsoredBootstrap: true/);
+assert.match(dynamicChainRegistry, /\{ id: 'bsc', family: 'evm', nativeAsset: 'BNB', sponsoredBootstrap: false, executionMode: 'native_only' \}/);
+assert.match(dynamicChainRegistry, /hostedSponsorshipAssumedByChainConfig: false/);
+assert.match(dynamicChainRegistry, /receiverCapabilityImpliedGasSponsorship: false/);
 
 assert.match(rescue, /buildBpsReductionSuperPlan/);
 assert.match(rescue, /buildResearchBpsExecutionPlan/);
