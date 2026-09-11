@@ -1,7 +1,7 @@
 import { BigNumber, Contract, ethers, type Wallet, type providers } from 'ethers';
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
-import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import { retainedProfitLedger } from '../compensation/retained-profit-ledger.js';
 import { zeroCapitalEngine, type ExecutionResult, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { DynamicChainConfig } from '../core/dynamic-chain-registry.js';
@@ -147,7 +147,7 @@ async function terminalEconomics(input: {
   const nativeSymbol = sponsorCostProvenZero ? null : NATIVE_SYMBOL[input.opportunity.chain] || null;
   if (nativeSymbol) symbols.push(nativeSymbol as any);
   let prices = new Map<string, number>();
-  try { prices = await coinGeckoPriceClient.getLiveSymbolPrices([...new Set(symbols)]); } catch { /* fail closed below */ }
+  try { prices = await livePriceMesh.getLiveSymbolPrices([...new Set(symbols)]); } catch { /* fail closed below */ }
   return evaluateZeroCapitalRealizedProfit({
     grossProfitBaseUnits: input.grossProfit,
     inputTokenDecimals: input.opportunity.inputTokenDecimals,
@@ -165,7 +165,7 @@ async function builderTerminalEconomics(input: {
   residualProfit: bigint;
 }): Promise<ZeroCapitalRealizedProfitDecision> {
   let prices = new Map<string, number>();
-  try { prices = await coinGeckoPriceClient.getLiveSymbolPrices([input.opportunity.inputAssetSymbol]); } catch { /* fail closed below */ }
+  try { prices = await livePriceMesh.getLiveSymbolPrices([input.opportunity.inputAssetSymbol]); } catch { /* fail closed below */ }
   const price = prices.get(input.opportunity.inputAssetSymbol);
   if (!Number.isFinite(price) || Number(price) <= 0) {
     return {
