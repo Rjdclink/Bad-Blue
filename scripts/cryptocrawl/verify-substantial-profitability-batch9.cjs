@@ -50,12 +50,12 @@ const behaviors = [
 
   ['zero', 'baseUnitsFromUsd(usd: number, decimals: number, inputTokenUsdPrice: number)', 'token-price-and-decimal-correct sizing'],
   ['zero', 'opportunity.expiresAt > now', 'fresh-only zero-capital rescue selection'],
-  ['zero', 'refined.expiresAt = Math.min', 'refined opportunity expiry cannot extend'],
+  ['zero', 'refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()', 'fresh requote expiry validation'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS', 'provider evidence freshness bound'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_MAX_UTILIZATION', 'provider utilization ceiling'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_MIN_HEADROOM_RATIO', 'provider liquidity headroom floor'],
   ['zero', 'calculateMeasuredFlashLoanFee', 'exact measured provider fee recomputation'],
-  ['zero', 'else if (gap <= 5)', 'near-gap dense sizing curve'],
+  ['zero', 'else if (gap <= 15)', 'near-target dense sizing curve'],
   ['zero', 'gasPressureBps >= 25', 'gas-pressure sizing curve'],
   ['zero', 'sharedResidualFractions', 'shared BPS Super Engine nonlinear sizing input'],
   ['zero', 'buildBpsReductionSuperPlan', 'shared BPS Super Engine operational zero-capital plan'],
@@ -65,8 +65,8 @@ const behaviors = [
   ['zero', 'const confidence =', 'confidence-weighted rescue priority'],
   ['zero', 'ZERO_CAPITAL_RESCUE_MAX_QUOTE_LATENCY_MS', 'quote-latency rejection bound'],
   ['zero', 'for (const evidence of providerEvidence)', 'multi-provider evaluation per quote'],
-  ['zero', 'candidate.netProfit > 0n && current.netProfit > 0n', 'positive candidates rank by absolute net'],
-  ['zero', 'candidate.netProfitBps > current.netProfitBps', 'negative candidates rank by closest BPS'],
+  ['zero', 'candidateClearsTarget && currentClearsTarget', 'target-clearing candidates rank by absolute net'],
+  ['zero', 'candidate.netProfitBps > current.netProfitBps', 'sub-target candidates rank by closest BPS'],
   ['zero', 'strictImprovement(original', 'strict replacement improvement'],
   ['zero', 'existingPositiveNeverReplacedByNegative: true', 'positive candidates cannot regress to negative'],
   ['zero', 'inputTokenDecimalsAuthoritative: true', 'denomination authority attestation'],
@@ -95,10 +95,10 @@ for (const [fileKey, pattern, name] of behaviors) {
   }
 }
 
-if (!source.zero.includes('function recoverableByCostCompression') ||
+if (!source.zero.includes('function recoverableByAtomicSurplus') ||
     !source.zero.includes('opportunity.expiresAt > now') ||
-    !source.zero.includes('opportunity.expiresAt <= Date.now()')) {
-  throw new Error('[substantial-profitability-batch9] zero-capital rescue must exclude expired candidates both before selection and immediately before refinement');
+    !source.zero.includes('refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()')) {
+  throw new Error('[substantial-profitability-batch9] zero-capital rescue must admit only fresh near-misses and require independently fresh refined evidence');
 }
 if (!source.cex.includes('function scheduleNext') ||
     !source.cex.includes('setTimeout(() =>') ||
@@ -145,4 +145,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue is core-direct, price-aware and provider-capacity-bounded; Profit Ladder limits daily realized profit rather than flash principal; canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue is core-direct, price-aware and provider-capacity-bounded; fresh requotes supersede stale seeds without extending stale evidence; Profit Ladder limits daily realized profit rather than flash principal; canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
