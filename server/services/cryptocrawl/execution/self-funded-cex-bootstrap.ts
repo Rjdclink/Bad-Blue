@@ -7,6 +7,10 @@ import { cexInventoryLedger, type InventoryVenue } from './cex-inventory-ledger.
 import { placeReservedCexSystemCapital, reconcilePendingCexSystemCapitalPlacements } from './cex-system-capital-placement.js';
 import { placeReservedCoinbaseSystemCapital, reconcilePendingCoinbaseSystemCapitalPlacements } from './coinbase-system-capital-placement.js';
 import { placeReservedKrakenSystemCapital, reconcilePendingKrakenSystemCapitalPlacements } from './kraken-system-capital-placement.js';
+import {
+  ensureSystemOwnedBaseInventory,
+  reconcilePendingSystemOwnedInventoryTransforms,
+} from './cex-system-owned-inventory-transform.js';
 import { reserveOnchainSystemCapital } from './onchain-system-capital-ledger.js';
 import {
   releaseUnplacedSystemCapital,
@@ -233,12 +237,77 @@ async function dispatchPlacement(venue: CexBootstrapVenue, allocationId: string)
 async function reserveAndDispatchDirect(input: {
   demand: BootstrapDemand;
   opportunityId: string;
+  plan: VerifiedArbitragePlan;
   notionalAuthority: ProfitLadderNotionalAuthoritySnapshot;
 }): Promise<{ status: string; detail: string }> {
   const requirement = input.demand.requirement;
   if (!['USDC', 'USDT'].includes(requirement.asset.toUpperCase())) {
-    await updateDemand(input.demand.demandId, 'TRANSFORM_REQUIRED', `Direct retained-capital placement cannot manufacture ${requirement.asset}; a terminal CEX conversion/rebalance is required`);
-    return { status: 'TRANSFORM_REQUIRED', detail: `${requirement.asset} requires a real terminal conversion/rebalance before it is spendable inventory` };
+    const transformed = await ensureSystemOwnedBaseInventory({
+      demandId: input.demand.demandId,
+      opportunityId: input.opportunityId,
+      plan: input.plan,
+      venue: requirement.venue,
+      baseAsset: requirement.asset.toUpperCase(),
+      requiredBaseQty: requirement.amountDecimal,
+      notionalAuthority: input.notionalAuthority,
+    });
+    if (transformed.status !== 'SEED_REQUIRED' || !transformed.seedAsset || !(transformed.seedAmountDecimal && transformed.seedAmountDecimal > 0)) {
+      if (transformed.status !== 'READY') {
+        await updateDemand(
+          input.demand.demandId,
+          transformed.status === 'MANUAL_REVIEW' ? 'MANUAL_REVIEW' : 'PENDING',
+          transformed.detail,
+        );
+      }
+      return { status: transformed.status, detail: transformed.detail };
+    }
+
+    const seedOpportunityId = `${input.opportunityId}:transform-seed:${requirement.venue}:${requirement.asset}:${transformed.seedAsset}`;
+    const seedRequirement: BootstrapRequirement = {
+      role: 'BUY_QUOTE',
+      venue: requirement.venue,
+      asset: transformed.seedAsset,
+      amountDecimal: transformed.seedAmountDecimal,
+    };
+    const seedDemand = await upsertDemand(seedOpportunityId, `${requirement.asset}${transformed.seedAsset}`, seedRequirement);
+    const seedOutcome = seedDemand.status === 'READY'
+      ? { status: 'READY', detail: `System-owned ${transformed.seedAsset} transform seed is already terminally spendable` }
+      : await reserveAndDispatchDirect({
+          demand: seedDemand,
+          opportunityId: seedOpportunityId,
+          plan: input.plan,
+          notionalAuthority: input.notionalAuthority,
+        });
+
+    if (seedOutcome.status === 'READY') {
+      const retry = await ensureSystemOwnedBaseInventory({
+        demandId: input.demand.demandId,
+        opportunityId: input.opportunityId,
+        plan: input.plan,
+        venue: requirement.venue,
+        baseAsset: requirement.asset.toUpperCase(),
+        requiredBaseQty: requirement.amountDecimal,
+        notionalAuthority: input.notionalAuthority,
+      });
+      if (retry.status !== 'READY') {
+        await updateDemand(
+          input.demand.demandId,
+          retry.status === 'MANUAL_REVIEW' ? 'MANUAL_REVIEW' : 'PENDING',
+          retry.detail,
+        );
+      }
+      return { status: retry.status, detail: retry.detail };
+    }
+
+    await updateDemand(
+      input.demand.demandId,
+      seedOutcome.status === 'MANUAL_REVIEW' ? 'MANUAL_REVIEW' : 'PENDING',
+      `Base acquisition awaits ${transformed.seedAsset} seed: ${seedOutcome.detail}`,
+    );
+    return {
+      status: seedOutcome.status === 'MANUAL_REVIEW' ? 'MANUAL_REVIEW' : 'PENDING',
+      detail: `Base acquisition awaits terminal system-owned ${transformed.seedAsset} placement on ${requirement.venue}: ${seedOutcome.detail}`,
+    };
   }
 
   // Direct placement adapters admit stablecoin source assets. Candidate source
@@ -393,7 +462,12 @@ export async function requestSelfFundedCexBootstrap(input: {
       });
       continue;
     }
-    const outcome = await reserveAndDispatchDirect({ demand, opportunityId, notionalAuthority: input.notionalAuthority });
+    const outcome = await reserveAndDispatchDirect({
+      demand,
+      opportunityId,
+      plan: input.plan,
+      notionalAuthority: input.notionalAuthority,
+    });
     summaries.push({
       role: requirement.role,
       venue: requirement.venue,
@@ -421,7 +495,8 @@ export async function requestSelfFundedCexBootstrap(input: {
 
 /**
  * Background-only reconciliation. Never call this from a fresh quote-critical
- * path: exchange deposit settlement can outlive the quote by minutes or hours.
+ * path: exchange deposit settlement and inventory transformation can outlive the
+ * original arbitrage quote by minutes or hours.
  */
 export async function reconcileSelfFundedCexBootstraps(limit = 25): Promise<void> {
   assertCryptocrawlRuntimeDatabaseAvailable();
@@ -430,6 +505,7 @@ export async function reconcileSelfFundedCexBootstraps(limit = 25): Promise<void
     reconcilePendingCoinbaseSystemCapitalPlacements(bounded),
     reconcilePendingKrakenSystemCapitalPlacements(bounded),
     reconcilePendingCexSystemCapitalPlacements(bounded),
+    reconcilePendingSystemOwnedInventoryTransforms(bounded),
   ]);
   await pool.query(
     `UPDATE public.cryptocrawler_cex_bootstrap_demands d
