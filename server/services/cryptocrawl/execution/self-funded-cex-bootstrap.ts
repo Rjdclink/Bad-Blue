@@ -155,14 +155,17 @@ async function directSourceCandidates(asset: string, requiredBaseUnits: bigint):
             l.origin_reference
      FROM public.cryptocrawler_onchain_system_owned_lots l
      JOIN public.zero_capital_capital_state s
-       ON lower(COALESCE(s.origin_transaction_hash,''))=lower(l.origin_reference)
-      AND lower(COALESCE(s.chain,''))=lower(l.chain)
+       ON lower(COALESCE(s.chain,''))=lower(l.chain)
       AND upper(COALESCE(s.asset,''))=upper(l.asset)
+      AND lower(COALESCE(s.source_recipient,''))=lower(COALESCE(l.settlement_evidence->>'recipient',''))
+      AND s.scope IN (
+        'zero-capital:' || lower(l.chain) || ':' || lower(l.token_address) || ':' || lower(COALESCE(s.source_recipient,'')),
+        'system-capital:' || lower(l.chain) || ':' || lower(l.token_address) || ':' || lower(COALESCE(s.source_recipient,''))
+      )
      WHERE l.status='ACTIVE' AND l.remaining_base_units > 0
        AND s.lifecycle='SELF_FUNDED'
        AND s.internally_generated_balance::numeric >= $2::numeric
        AND upper(l.asset)=upper($1)
-       AND lower(COALESCE(s.source_recipient,''))=lower(COALESCE(l.settlement_evidence->>'recipient',''))
        AND l.remaining_base_units >= $2::numeric
      ORDER BY l.created_at ASC, l.lot_id ASC`,
     [asset.toUpperCase(), requiredBaseUnits.toString()],
