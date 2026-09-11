@@ -8,6 +8,7 @@ const files = {
   zero: 'server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts',
   core: 'server/services/cryptocrawl/core/zero-capital-engine.ts',
   executor: 'server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts',
+  flashExecutor: 'server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts',
   maker: 'server/services/cryptocrawl/runtime/stablecoin-maker-execution-wiring.ts',
   transform: 'server/services/cryptocrawl/optimization/economic-transformation-engine.ts',
   transformWiring: 'server/services/cryptocrawl/integration/economic-transformation-wiring.ts',
@@ -114,17 +115,19 @@ if (source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2') || sourc
 if (!source.zero.includes('getProfitLadderDiscoveryNotionalAuthority()') || source.zero.includes('ZERO_CAPITAL_MAX_DISCOVERY_NOTIONAL_USD')) {
   throw new Error('[substantial-profitability-batch9] Profit Ladder quote-only authority must remain the sole live zero-capital rescue discovery ceiling');
 }
-// The zero-capital engine is now runtime context only. Do not resurrect its retired
-// local execution gate merely to satisfy an implementation-detail test. The live
-// USD valuation invariant now belongs to the sole canonical executor's terminal
-// economics, while pre-dispatch profitability remains denominated in exact token
-// base units/BPS. This preserves live valuation without restoring parallel authority.
+// The zero-capital engine is runtime context only. Terminal USD valuation belongs
+// to the canonical execution family and must use the provider-neutral live-price
+// mesh so one upstream data provider cannot become a terminal reconciliation choke.
 if (!source.core.includes('tokenUnitEqualsUsdAssumption: false') ||
-    !source.executor.includes("import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';") ||
-    !source.executor.includes('coinGeckoPriceClient.getLiveSymbolPrices([...new Set(symbols)])') ||
+    !source.executor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';") ||
+    !source.executor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])') ||
     !source.executor.includes('inputTokenUsdPrice: prices.get(input.opportunity.inputAssetSymbol) ?? null') ||
-    !source.executor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']")) {
-  throw new Error('[substantial-profitability-batch9] canonical zero-capital execution must retain live input-token USD valuation without restoring retired parallel execution authority');
+    source.executor.includes('coinGeckoPriceClient') ||
+    !source.flashExecutor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';") ||
+    !source.flashExecutor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])') ||
+    source.flashExecutor.includes('coinGeckoPriceClient') ||
+    !source.flashExecutor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']")) {
+  throw new Error('[substantial-profitability-batch9] canonical zero-capital execution must retain provider-neutral live USD valuation and fail closed without restoring a direct CoinGecko dependency or parallel execution authority');
 }
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
   throw new Error('[substantial-profitability-batch9] active CEX quote topology must remain restricted to fully implemented Coinbase/Kraken/OKX paths');
@@ -140,4 +143,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital BPS rescue is core-direct with Profit Ladder quote-only discovery sizing, canonical execution retains live input-token USD valuation without reviving retired parallel authority, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital BPS rescue is core-direct with Profit Ladder quote-only discovery sizing, canonical execution retains provider-neutral live USD valuation without reviving retired parallel authority, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
