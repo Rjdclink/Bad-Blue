@@ -9,6 +9,7 @@ const files = {
   core: 'server/services/cryptocrawl/core/zero-capital-engine.ts',
   executor: 'server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts',
   flashExecutor: 'server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts',
+  dailyBudget: 'server/services/cryptocrawl/governance/profit-ladder-daily-profit-budget.ts',
   maker: 'server/services/cryptocrawl/runtime/stablecoin-maker-execution-wiring.ts',
   transform: 'server/services/cryptocrawl/optimization/economic-transformation-engine.ts',
   transformWiring: 'server/services/cryptocrawl/integration/economic-transformation-wiring.ts',
@@ -127,9 +128,11 @@ if (!source.core.includes('tokenUnitEqualsUsdAssumption: false') ||
     !source.flashExecutor.includes("missingInformation: ['live_input_token_usd_price_for_builder_realized_profit']")) {
   throw new Error('[substantial-profitability-batch9] canonical zero-capital execution must retain live input-token USD valuation without restoring retired parallel execution authority');
 }
-if (!source.executor.includes('getProfitLadderDailyProfitBudget') ||
-    !source.executor.includes('expectedProfitFitsDailyBudget')) {
-  throw new Error('[substantial-profitability-batch9] Profit Ladder must constrain daily realized profit rather than flash-borrow notional');
+if (!source.dailyBudget.includes("authority: 'profit_ladder_daily_realized_profit_only'") ||
+    !source.dailyBudget.includes('borrowingNotionalAuthority: false') ||
+    !source.dailyBudget.includes('expectedProfitFitsDailyBudget') ||
+    !source.zero.includes('getProfitLadderDailyProfitBudget')) {
+  throw new Error('[substantial-profitability-batch9] Profit Ladder must constrain daily realized profit while zero-capital borrowing remains independent');
 }
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
   throw new Error('[substantial-profitability-batch9] active CEX quote topology must remain restricted to fully implemented Coinbase/Kraken/OKX paths');
