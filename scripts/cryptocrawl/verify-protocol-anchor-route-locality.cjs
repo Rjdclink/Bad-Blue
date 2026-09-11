@@ -8,10 +8,13 @@ const anchor = fs.readFileSync('server/services/cryptocrawl/execution/adapters/p
 const primary = fs.readFileSync('server/services/cryptocrawl/execution/adapters/primary-market-anchor-adapter.ts', 'utf8');
 
 // Fluid prefers the reviewed official resolver but retains exact live-state direct
-// simulation as a fallback; neither path may invent a synthetic quote.
+// simulation as a fallback; neither path may invent a synthetic quote. A normal
+// ABI return and Fluid's custom-error simulation encoding are both valid exact
+// eth_call evidence and must be decoded before failing closed.
 assert.match(quoter, /quoteFluidSwapInViaOfficialResolver/);
 assert.match(quoter, /return quoteProtocolAnchorLeg\(rpcProvider/);
-assert.match(anchor, /Fluid simulation unexpectedly returned without FluidDexSwapResult/);
+assert.match(anchor, /decodeFluidSuccessfulSwapResult\(iface, returned\)/);
+assert.match(anchor, /decodeFluidSwapResult\(returned\)/);
 assert.match(anchor, /decodeFluidSwapResult\(extractRevertData\(error\)\)/);
 assert.match(primary, /Fluid official resolver returned no quote data/);
 
@@ -30,4 +33,4 @@ assert.match(quoter, /Promise\.allSettled\(candidates\.map/);
 assert.match(quoter, /result\.status === 'fulfilled' && result\.value/);
 assert.doesNotMatch(anchor, /global.*(block|veto|disable)/i);
 
-console.log('[protocol-anchor-route-locality] PASS: Fluid fallback is exact, GSM capacity is live/route-local, and failed anchor routes cannot veto compatible alternatives');
+console.log('[protocol-anchor-route-locality] PASS: Fluid exact returns/reverts decode locally, GSM capacity is live/route-local, and failed anchor routes cannot veto compatible alternatives');
