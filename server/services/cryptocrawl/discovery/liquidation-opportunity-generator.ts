@@ -1,6 +1,7 @@
 import { Contract, BigNumber, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import {
+  classifyRpcOperationError,
   multiProviderRpcManager,
   type SupportedChain as RpcSupportedChain,
 } from '../api/blockchain-providers.js';
@@ -87,19 +88,61 @@ function selectBorrowersForHealthCheck(chain: RpcSupportedChain, maxChecks: numb
     .map(([address]) => address);
 }
 
+function isAdaptiveLogRangeFailure(error: unknown): boolean {
+  if (classifyRpcOperationError(error, 'logs') !== 'provider_capability') return false;
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error ?? '').toLowerCase();
+  return [
+    'block range',
+    'range limit',
+    'query returned more than',
+    'too many results',
+    'response size exceeded',
+    'log response size exceeded',
+  ].some(fragment => message.includes(fragment));
+}
+
+async function queryBorrowEvents(input: {
+  chain: RpcSupportedChain;
+  pool: string;
+  fromBlock: number;
+  toBlock: number;
+}): Promise<ethers.Event[]> {
+  const { result } = await multiProviderRpcManager.execute(input.chain, 'logs', async provider => {
+    const contract = new Contract(input.pool, AAVE_POOL_ABI, provider);
+    return contract.queryFilter(contract.filters.Borrow(), input.fromBlock, input.toBlock);
+  });
+  return result;
+}
+
 async function collectBorrowEvents(input: {
   chain: RpcSupportedChain;
-  contract: Contract;
+  pool: string;
   fromBlock: number;
   toBlock: number;
 }): Promise<number> {
   if (input.toBlock < input.fromBlock) return 0;
-  const events = await input.contract.queryFilter(input.contract.filters.Borrow(), input.fromBlock, input.toBlock);
-  for (const event of events) {
-    const borrower = String(event.args?.onBehalfOf || event.args?.user || '');
-    rememberBorrower(input.chain, borrower, event.blockNumber);
+  const minimumWindow = boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_LOG_MIN_WINDOW_BLOCKS, 1, 1, 1_000);
+  const pending: Array<[number, number]> = [[input.fromBlock, input.toBlock]];
+  let collected = 0;
+
+  while (pending.length > 0) {
+    const [fromBlock, toBlock] = pending.shift()!;
+    try {
+      const events = await queryBorrowEvents({ chain: input.chain, pool: input.pool, fromBlock, toBlock });
+      for (const event of events) {
+        const borrower = String(event.args?.onBehalfOf || event.args?.user || '');
+        rememberBorrower(input.chain, borrower, event.blockNumber);
+      }
+      collected += events.length;
+    } catch (error) {
+      const windowSize = toBlock - fromBlock + 1;
+      if (!isAdaptiveLogRangeFailure(error) || windowSize <= minimumWindow) throw error;
+      const midpoint = Math.floor((fromBlock + toBlock) / 2);
+      pending.unshift([fromBlock, midpoint], [midpoint + 1, toBlock]);
+    }
   }
-  return events.length;
+
+  return collected;
 }
 
 function healthFactorNumber(raw: BigNumber): number {
@@ -290,9 +333,9 @@ async function inspectBorrower(input: {
 async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<MeasuredCandidate[]> {
   const pool = resolveAaveV3Pool(chain as SupportedExecutionChain);
   if (!pool) return [];
-  const managed = await multiProviderRpcManager.getProvider(chain, 'logs');
+  const managed = await multiProviderRpcManager.getProvider(chain, 'contract_calls');
   const contract = new Contract(pool, AAVE_POOL_ABI, managed.http);
-  const latestBlock = await managed.http.getBlockNumber();
+  const { result: latestBlock } = await multiProviderRpcManager.execute(chain, 'blocks', provider => provider.getBlockNumber());
   const targetBorrowers = boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_BORROWER_TARGET, 128, 8, 2048);
   const universe = borrowerUniverse.get(chain) || new Map<string, number>();
   const baseLookback = boundedInteger(process.env.CRYPTOCRAWL_LIQUIDATION_LOOKBACK_BLOCKS, 5_000, 100, 100_000);
@@ -301,7 +344,7 @@ async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<Meas
   const lookback = Math.min(maxLookback, baseLookback * coverageMultiplier);
   const fromBlock = Math.max(0, latestBlock - lookback);
 
-  await collectBorrowEvents({ chain, contract, fromBlock, toBlock: latestBlock });
+  await collectBorrowEvents({ chain, pool, fromBlock, toBlock: latestBlock });
 
   // Health factor can cross below one because collateral/oracle values change long
   // after the latest Borrow event. Walk older Borrow history in bounded windows so
@@ -325,7 +368,7 @@ async function discoverChainLiquidations(chain: RpcSupportedChain): Promise<Meas
     const backfillTo = priorCursor - 1;
     const backfillFrom = Math.max(oldestAllowedBlock, backfillTo - backfillWindow + 1);
     try {
-      await collectBorrowEvents({ chain, contract, fromBlock: backfillFrom, toBlock: backfillTo });
+      await collectBorrowEvents({ chain, pool, fromBlock: backfillFrom, toBlock: backfillTo });
       borrowerBackfillCursor.set(chain, backfillFrom);
     } catch (error) {
       logger.debug('[LiquidationDiscovery] Historical borrower backfill deferred', {
