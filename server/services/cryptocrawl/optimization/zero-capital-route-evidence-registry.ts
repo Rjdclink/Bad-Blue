@@ -127,6 +127,33 @@ class ZeroCapitalRouteEvidenceRegistry {
     return this.getCompatible(input).map(toOpportunity);
   }
 
+  /**
+   * Measurement-only view for the atomic-surplus composer. Unlike getCompatible,
+   * this deliberately retains fresh near-misses so measured shared-principal and
+   * route composition can determine whether the aggregate transaction clears the
+   * requested net target. This grants no eligibility or execution authority.
+   */
+  getCompatibleForAtomicSurplus(input: {
+    chain: SupportedChain;
+    inputToken: string;
+    minNetBps: number;
+    now?: number;
+  }): ZeroCapitalOpportunity[] {
+    const now = input.now ?? Date.now();
+    const minNetBps = Number.isFinite(input.minNetBps) ? input.minNetBps : -10;
+    return [...this.entries.values()]
+      .filter(value =>
+        value.expiresAt > now
+        && value.chain === input.chain
+        && value.inputToken.toLowerCase() === input.inputToken.toLowerCase()
+        && value.flashLoanAmount > 0n
+        && Number.isFinite(value.netProfitBps)
+        && value.netProfitBps >= minNetBps,
+      )
+      .sort((left, right) => right.netProfitBps - left.netProfitBps || (right.expectedProfit > left.expectedProfit ? 1 : -1))
+      .map(toOpportunity);
+  }
+
   private prune(): void {
     const now = Date.now();
     for (const [id, value] of this.entries) if (value.expiresAt <= now) this.entries.delete(id);
