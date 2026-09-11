@@ -53,6 +53,7 @@ interface StreamState {
   subscriptionId: string | null;
   reconnectTimer: NodeJS.Timeout | null;
   fallbackSubscription: LogicalSubscription | null;
+  fallbackConnecting: boolean;
   closedByOperator: boolean;
 }
 
@@ -83,6 +84,7 @@ const CACHE_TTL_MS = Math.max(5_000, Number(process.env.CRYPTOCRAWL_PENDING_CACH
 const MAX_CACHE = Math.max(100, Math.min(10_000, Number(process.env.CRYPTOCRAWL_PENDING_MAX_CACHE || 2_000)));
 const MAX_FALLBACK_DETAILS_PER_MINUTE = Math.max(1, Math.min(5_000, Number(process.env.CRYPTOCRAWL_PENDING_MAX_DETAILS_PER_MINUTE || 120)));
 const RECONNECT_MS = Math.max(1_000, Number(process.env.CRYPTOCRAWL_PENDING_RECONNECT_MS || 5_000));
+const FULL_PENDING_HANDSHAKE_TIMEOUT_MS = Math.max(2_000, Number(process.env.CRYPTOCRAWL_PENDING_HANDSHAKE_TIMEOUT_MS || 8_000));
 
 function configuredNetworks(): ProviderMeshPendingNetwork[] {
   const raw = process.env.CRYPTOCRAWL_MEMPOOL_NETWORKS?.trim();
@@ -152,12 +154,19 @@ class ProviderMeshPendingStream {
     const networks = configuredNetworks();
     if (networks.length === 0) return;
     this.running = true;
-    for (const network of networks) this.connectFreeFullPending(network);
+    for (const network of networks) {
+      this.connectFreeFullPending(network);
+      // Keep the canonical multi-provider pending subscription hot from startup.
+      // The dRPC full-transaction stream is an accelerator only; it must never be
+      // a prerequisite for mempool/backrun discovery on Polygon or Ethereum.
+      void this.ensureStandardFallback(network);
+    }
     logger.info('[ProviderMeshPending] Alchemy-free pending monitoring enabled', {
       component: 'ProviderMeshPendingStream',
       networks,
-      primaryTransport: 'dRPC_public_full_pending_websocket',
-      fallbackTransport: 'canonical_rpc_manager_standard_pending_hashes',
+      primaryTransport: 'canonical_rpc_manager_standard_pending_hashes',
+      acceleratorTransport: 'drpc_public_full_pending_websocket',
+      fallbackContinuouslyAvailable: true,
       providerSideAddressFilter: false,
       applicationSideRouterFilter: true,
       exactChainBinding: true,
@@ -176,6 +185,7 @@ class ProviderMeshPendingStream {
       state.reconnectTimer = null;
       if (state.fallbackSubscription) cleanups.push(state.fallbackSubscription.unsubscribe().catch(() => undefined));
       state.fallbackSubscription = null;
+      state.fallbackConnecting = false;
       try { state.socket?.close(); } catch { /* already closed */ }
       state.socket = null;
       state.subscriptionId = null;
@@ -201,7 +211,9 @@ class ProviderMeshPendingStream {
       running: this.running,
       configuredNetworks: configuredNetworks(),
       activeNetworks: [...this.states.values()]
-        .filter(state => (state.socket?.readyState === WebSocket.OPEN && !!state.subscriptionId) || state.fallbackSubscription?.state === 'healthy')
+        .filter(state => (state.socket?.readyState === WebSocket.OPEN && !!state.subscriptionId)
+          || state.fallbackSubscription?.state === 'healthy'
+          || state.fallbackSubscription?.state === 'degraded')
         .map(state => state.network),
       fullTransactionPushes: this.fullTransactionPushes,
       fallbackHashes: this.fallbackHashes,
@@ -229,6 +241,7 @@ class ProviderMeshPendingStream {
       subscriptionId: null,
       reconnectTimer: null,
       fallbackSubscription: null,
+      fallbackConnecting: false,
       closedByOperator: false,
     };
     state.closedByOperator = false;
@@ -238,6 +251,24 @@ class ProviderMeshPendingStream {
     const socket = new WebSocket(FREE_FULL_PENDING_ENDPOINTS[network]);
     state.socket = socket;
     const requestId = Date.now();
+    let handshakeSettled = false;
+    const handshakeTimer = setTimeout(() => {
+      if (handshakeSettled || state.socket !== socket || state.subscriptionId) return;
+      this.errors += 1;
+      logger.warn('[ProviderMeshPending] Full-pending accelerator handshake timed out; provider-mesh stream remains authoritative', {
+        component: 'ProviderMeshPendingStream',
+        network,
+        timeoutMs: FULL_PENDING_HANDSHAKE_TIMEOUT_MS,
+        routeLocalFailure: true,
+      });
+      try { socket.terminate(); } catch { /* route-local best effort */ }
+    }, FULL_PENDING_HANDSHAKE_TIMEOUT_MS);
+    handshakeTimer.unref?.();
+    const settleHandshake = () => {
+      if (handshakeSettled) return;
+      handshakeSettled = true;
+      clearTimeout(handshakeTimer);
+    };
 
     socket.on('open', () => {
       socket.send(JSON.stringify({
@@ -257,10 +288,9 @@ class ProviderMeshPendingStream {
         return;
       }
       if (message?.id === requestId) {
+        settleHandshake();
         if (typeof message.result === 'string') {
           state.subscriptionId = message.result;
-          void state.fallbackSubscription?.unsubscribe().catch(() => undefined);
-          state.fallbackSubscription = null;
         } else {
           this.errors += 1;
           void this.ensureStandardFallback(network);
@@ -279,6 +309,7 @@ class ProviderMeshPendingStream {
     });
 
     socket.on('error', error => {
+      settleHandshake();
       this.errors += 1;
       logger.warn('[ProviderMeshPending] Free full-pending WebSocket degraded; standard provider-mesh fallback remains local', {
         component: 'ProviderMeshPendingStream',
@@ -291,7 +322,8 @@ class ProviderMeshPendingStream {
     });
 
     socket.on('close', () => {
-      state.socket = null;
+      settleHandshake();
+      if (state.socket === socket) state.socket = null;
       state.subscriptionId = null;
       if (!this.running || state.closedByOperator || process.env.NO_INTERVALS === 'true') return;
       void this.ensureStandardFallback(network);
@@ -308,15 +340,20 @@ class ProviderMeshPendingStream {
   private async ensureStandardFallback(network: ProviderMeshPendingNetwork): Promise<void> {
     if (!this.running) return;
     const state = this.states.get(network);
-    if (!state || state.fallbackSubscription) return;
+    if (!state || state.fallbackSubscription || state.fallbackConnecting) return;
+    state.fallbackConnecting = true;
     try {
       await multiProviderRpcManager.initialize([network as SupportedChain]);
+      if (!this.running || state.closedByOperator || state.fallbackSubscription) return;
       state.fallbackSubscription = await multiProviderRpcManager.subscribe(
         network as SupportedChain,
         'pending_transactions',
         hash => {
           if (!validHash(hash)) return;
           this.fallbackHashes += 1;
+          // Keep the provider-mesh subscription hot, but avoid duplicate detail
+          // requests while the full-transaction accelerator is actively proven.
+          if (state.socket?.readyState === WebSocket.OPEN && !!state.subscriptionId) return;
           void this.fetchFallbackTransaction(network, hash);
         },
       );
@@ -329,6 +366,8 @@ class ProviderMeshPendingStream {
         routeLocalFailure: true,
         alchemyFallback: false,
       });
+    } finally {
+      state.fallbackConnecting = false;
     }
   }
 
