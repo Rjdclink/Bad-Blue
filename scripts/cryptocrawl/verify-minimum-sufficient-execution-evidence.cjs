@@ -28,17 +28,31 @@ has(router, 'const admitted = economicsAdmitted && pathAvailable && candidate.ex
 has(router, 'advisory:missing_information:', 'non-required missing information must remain advisory');
 has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler must retain defense-in-depth over registry-filtered required gaps');
 
-// Advisory optimizers may consume already-qualified candidates but cannot invent
-// new execution evidence requirements or simulation vetoes.
-has(stack, "candidate.status !== 'eligible'", 'atomic stack advisory must consume current eligible candidates');
-has(stack, 'candidate.executableCapability !== true', 'atomic stack advisory must require authoritative executable capability');
-has(stack, 'candidate.expiresAt <= Date.now()', 'atomic stack advisory must require fresh evidence');
+// The zero-capital atomic stack is an advisory transformation lane. It may consume
+// fresh measured near-misses before they are eligible, because its job is to create
+// real shared-principal surplus. It must reject blocked/expired/unmeasurable inputs,
+// then promote a new candidate to eligible/executable only after exact measured
+// composite economics clear the configured target and the daily-profit budget.
+has(stack, "candidate.status === 'blocked'", 'atomic stack advisory must reject blocked candidates');
+has(stack, "candidate.status === 'expired'", 'atomic stack advisory must reject expired candidates');
+has(stack, "candidate.expiresAt <= Date.now()", 'atomic stack advisory must require fresh evidence');
+has(stack, "candidate.depth.status === 'unavailable'", 'atomic stack advisory must require measurable route depth');
+has(stack, 'netBps >= atomicSurplusEntryFloorBps()', 'atomic stack advisory must use the near-miss atomic-surplus entry window');
+has(stack, 'combinedExpectedProfit < targetNetProfitBaseUnits || combinedExpectedProfit <= 0n', 'atomic stack must require strictly positive target-clearing all-in economics');
+has(stack, 'stackedBps + 1e-9 < targetNetProfitBps', 'atomic stack must require the measured target BPS after composition');
+has(stack, 'expectedProfitFitsDailyBudget(expectedNetProfitUsd, budget)', 'Profit Ladder must constrain expected daily profit, not borrowed principal');
+has(stack, "status: 'eligible'", 'only the newly measured target-clearing composite may be promoted eligible');
+has(stack, 'executableCapability: true', 'target-clearing composite must receive explicit executable capability');
+has(stack, 'missingInformation: []', 'promoted composite must carry complete execution evidence');
 has(stack, 'executionAuthority: false', 'atomic stack must remain advisory-only');
 
+// General multileg optimization remains downstream of ordinary execution admission:
+// it cannot relax freshness, eligibility, capability, depth, path or positive-net
+// requirements and still requires independent final admission.
 has(multileg, "candidate.expiresAt <= now || candidate.status !== 'eligible' || !candidate.executableCapability", 'multileg selection must require fresh eligible executable candidates');
 has(multileg, "candidate.depth.status === 'unavailable'", 'multileg selection must require executable depth');
 has(multileg, 'netProfitUsd <= 0', 'multileg selection must require positive deterministic all-in economics');
 has(multileg, 'if (!pathDecision?.executableNow) return null;', 'multileg selection must require an executable path');
 has(multileg, 'requiresIndependentFinalAdmission: true', 'multileg optimization cannot bypass final execution admission');
 
-console.log('[required-execution-evidence] PASS: execution is guarded by the evidence actually required for profitable live submission; optional/advisory completeness and simulations cannot become shadow vetoes');
+console.log('[required-execution-evidence] PASS: execution remains guarded by minimum sufficient live evidence; zero-capital atomic surplus may transform fresh near-misses but only promotes an exact measured target-clearing composite, while optional/advisory completeness and simulations cannot become shadow vetoes');
