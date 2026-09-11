@@ -367,20 +367,29 @@ export class AutonomousZeroCapitalEngine {
     if (explicitRoutes.length === 0) return [];
     const rpcChain = chain as RpcSupportedChain;
     const activeChain = chain as ActiveExecutionChain;
-    const funding = await this.getGasFundingDecision(chain);
 
-    const gasEconomics = (await multiProviderRpcManager.execute(rpcChain, 'gas', async provider => {
+    // Keep the RPC manager's bounded timeout around one cheap health-capability
+    // probe only. Multi-step gas enrichment, route quoting, and profitability
+    // rescue own their own bounded work and must not be killed by a 12s wrapper.
+    const gasProvider = (await multiProviderRpcManager.execute(rpcChain, 'gas', async provider => {
+      await provider.getFeeData();
       this.adoptLiveProvider(activeChain, provider);
-      return enrichConfiguredZeroCapitalGasEconomics(chain, provider, explicitRoutes, funding);
+      return provider;
     })).result;
+    const funding = await this.getGasFundingDecision(chain);
+    const gasEconomics = await enrichConfiguredZeroCapitalGasEconomics(chain, gasProvider, explicitRoutes, funding);
+
     const block = (await multiProviderRpcManager.execute(rpcChain, 'blocks', async provider => {
       this.adoptLiveProvider(activeChain, provider);
       return provider.getBlock('latest');
     })).result;
-    const quotes = (await multiProviderRpcManager.execute(rpcChain, 'contract_calls', async provider => {
+
+    const quoteProvider = (await multiProviderRpcManager.execute(rpcChain, 'contract_calls', async provider => {
+      await provider.getBlockNumber();
       this.adoptLiveProvider(activeChain, provider);
-      return quoteConfiguredZeroCapitalRoutesForChain(chain, provider, gasEconomics.routes);
+      return provider;
     })).result;
+    const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, quoteProvider, gasEconomics.routes);
     const accepted = quotes.map(quote => this.fromQuotedRoute(quote, block.timestamp));
     logger.debug('[ZeroCapitalEngine] Configured-route gas economics measured before BPS admission', {
       component: 'ZeroCapitalEngine',
@@ -390,16 +399,19 @@ export class AutonomousZeroCapitalEngine {
       estimatedGasUnits: gasEconomics.estimatedGasUnits,
       zeroSeedPromotedToExecutableEconomics: false,
     });
-    return (await multiProviderRpcManager.execute(rpcChain, 'contract_calls', async provider => {
+
+    const rescueProvider = (await multiProviderRpcManager.execute(rpcChain, 'contract_calls', async provider => {
+      await provider.getBlockNumber();
       this.adoptLiveProvider(activeChain, provider);
-      return runZeroCapitalProfitabilityRescueV2({
-        chain,
-        provider,
-        opportunities: accepted,
-        configuredRoutes: gasEconomics.routes,
-        fromQuotedRoute: (quote, blockTimestamp) => this.fromQuotedRoute(quote, blockTimestamp),
-      });
+      return provider;
     })).result;
+    return runZeroCapitalProfitabilityRescueV2({
+      chain,
+      provider: rescueProvider,
+      opportunities: accepted,
+      configuredRoutes: gasEconomics.routes,
+      fromQuotedRoute: (quote, blockTimestamp) => this.fromQuotedRoute(quote, blockTimestamp),
+    });
   }
 
   fromQuotedRoute(quote: QuotedZeroCapitalRoute, blockTimestamp: number): ZeroCapitalOpportunity {
