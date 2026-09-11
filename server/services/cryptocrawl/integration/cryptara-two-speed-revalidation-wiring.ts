@@ -8,9 +8,11 @@ import {
 let installed = false;
 let unsubscribe: (() => void) | null = null;
 let flushTimer: NodeJS.Timeout | null = null;
+let staleSweepTimer: NodeJS.Timeout | null = null;
 let flushInFlight = false;
 const pendingSymbols = new Set<string>();
 const lastTriggeredAt = new Map<string, number>();
+const lastStaleTriggeredAt = new Map<string, number>();
 const INTEGRATED_EXECUTABLE_CEX_VENUES = new Set(['coinbase', 'kraken', 'okx']);
 
 function boundedInt(raw: unknown, fallback: number, min: number, max: number): number {
@@ -24,6 +26,18 @@ function flushDelayMs(): number {
 
 function symbolCooldownMs(): number {
   return boundedInt(process.env.CRYPTOCRAWL_FAST_REVALIDATION_SYMBOL_COOLDOWN_MS, 250, 50, 2_000);
+}
+
+function staleSweepIntervalMs(): number {
+  return boundedInt(process.env.CRYPTOCRAWL_STALE_REVALIDATION_SWEEP_MS, 750, 250, 5_000);
+}
+
+function staleRecoveryCooldownMs(): number {
+  return boundedInt(process.env.CRYPTOCRAWL_STALE_REVALIDATION_COOLDOWN_MS, 2_500, 500, 30_000);
+}
+
+function staleRecoveryWindowMs(): number {
+  return boundedInt(process.env.CRYPTOCRAWL_STALE_REVALIDATION_WINDOW_MS, 30_000, 5_000, 120_000);
 }
 
 function finite(value: unknown): number | null {
@@ -59,10 +73,11 @@ function hasCrossVenueExecutableObservation(candidate: MeasuredCandidate): boole
   return integratedObservedVenues.size >= 2;
 }
 
-function shouldFastRevalidate(candidate: MeasuredCandidate): boolean {
+function shouldFastRevalidate(candidate: MeasuredCandidate, allowExpired = false): boolean {
   if (candidate.topology !== 'CEX_CEX') return false;
-  if (candidate.status === 'blocked' || candidate.status === 'expired') return false;
-  if (candidate.expiresAt <= Date.now()) return false;
+  if (candidate.status === 'blocked') return false;
+  const expired = candidate.status === 'expired' || candidate.expiresAt <= Date.now();
+  if (expired && !allowExpired) return false;
   if (!hasCrossVenueExecutableObservation(candidate)) return false;
 
   const netBps = finite(candidate.canonicalBps.netBps);
@@ -107,8 +122,9 @@ async function flushPending(): Promise<void> {
       deterministicPositive: cycle.deterministicPositive,
       eligibleCandidates: cycle.eligibleCandidates,
       refreshAuthority: 'single_serialized_measured_opportunity_graph',
-      requestProducer: 'candidate_event_integrated_exact_symbol',
+      requestProducer: 'candidate_event_or_stale_integrated_exact_symbol',
       economicAuthority: 'arbitrage_verifier_only',
+      staleEvidenceExecutionAllowed: false,
       executionAuthority: false,
       stageAuthority: false,
       independentBpsThreshold: false,
@@ -126,29 +142,64 @@ async function flushPending(): Promise<void> {
   }
 }
 
-function onCandidateUpdate(candidate: MeasuredCandidate): void {
-  if (!shouldFastRevalidate(candidate)) return;
+function queueCandidateRevalidation(candidate: MeasuredCandidate, cooldownMs: number, stale = false): void {
   const symbol = candidateSymbol(candidate);
   if (!symbol) return;
   const now = Date.now();
-  const previous = lastTriggeredAt.get(symbol) || 0;
-  if (now - previous < symbolCooldownMs()) return;
-  lastTriggeredAt.set(symbol, now);
+  const registry = stale ? lastStaleTriggeredAt : lastTriggeredAt;
+  const previous = registry.get(symbol) || 0;
+  if (now - previous < cooldownMs) return;
+  registry.set(symbol, now);
   pendingSymbols.add(symbol);
   scheduleFlush();
+}
+
+function onCandidateUpdate(candidate: MeasuredCandidate): void {
+  if (!shouldFastRevalidate(candidate)) return;
+  queueCandidateRevalidation(candidate, symbolCooldownMs());
+}
+
+function sweepStaleCandidates(): void {
+  if (!installed) return;
+  const now = Date.now();
+  const windowMs = staleRecoveryWindowMs();
+  for (const candidate of measuredCandidateRegistry.getRecent(512)) {
+    const expired = candidate.status === 'expired' || candidate.expiresAt <= now;
+    if (!expired || now - candidate.expiresAt > windowMs) continue;
+    if (!shouldFastRevalidate(candidate, true)) continue;
+    // Expired evidence is only a reacquisition hint. It is never promoted or
+    // executed; the sole measured opportunity graph must replace it with fresh
+    // direct exchange quotes and canonical economics first.
+    queueCandidateRevalidation(candidate, staleRecoveryCooldownMs(), true);
+  }
+  scheduleStaleSweep();
+}
+
+function scheduleStaleSweep(): void {
+  if (!installed || staleSweepTimer || process.env.NO_INTERVALS === 'true') return;
+  staleSweepTimer = setTimeout(() => {
+    staleSweepTimer = null;
+    sweepStaleCandidates();
+  }, staleSweepIntervalMs());
+  staleSweepTimer.unref?.();
 }
 
 export function ensureCryptaraTwoSpeedRevalidationWiring(): void {
   if (installed) return;
   installed = true;
   unsubscribe = measuredCandidateRegistry.onUpdate(onCandidateUpdate);
+  scheduleStaleSweep();
   logger.info('[CryptaraTwoSpeed] Integrated-edge revalidation requester installed', {
     component: 'CryptaraTwoSpeedRevalidationWiring',
     refreshAuthority: 'single_serialized_measured_opportunity_graph',
-    requestProducer: 'candidate_event_integrated_exact_symbol',
+    requestProducer: 'candidate_event_plus_bounded_stale_integrated_exact_symbol',
     publicOnlyVenuePairRevalidationAllowed: false,
+    staleEvidenceExecutionAllowed: false,
     batchDelayMs: flushDelayMs(),
     symbolCooldownMs: symbolCooldownMs(),
+    staleSweepIntervalMs: staleSweepIntervalMs(),
+    staleRecoveryCooldownMs: staleRecoveryCooldownMs(),
+    staleRecoveryWindowMs: staleRecoveryWindowMs(),
     maxSymbolsPerFastBatch: 16,
     nearBreakEvenThresholdAuthority: 'candidate_existing_discovery_floor_only',
     canonicalEconomicRequoteRequired: true,
@@ -162,7 +213,10 @@ export function stopCryptaraTwoSpeedRevalidationWiring(): void {
   unsubscribe = null;
   installed = false;
   if (flushTimer) clearTimeout(flushTimer);
+  if (staleSweepTimer) clearTimeout(staleSweepTimer);
   flushTimer = null;
+  staleSweepTimer = null;
   pendingSymbols.clear();
   lastTriggeredAt.clear();
+  lastStaleTriggeredAt.clear();
 }
