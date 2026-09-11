@@ -23,7 +23,7 @@ import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-
 import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
 import type { ReceiverFundingMode } from '../execution/adapters/sponsored-receiver-manager.js';
 import { prepareBuilderSponsoredZeroCapitalColdStart } from '../execution/builder-sponsored-zero-capital-coldstart.js';
-import { prepareBuilderSponsoredReceiverBootstrap } from '../execution/builder-sponsored-receiver-bootstrap.js';
+import { prepareBuilderSponsoredProviderReceiverBootstrap } from '../execution/builder-sponsored-receiver-bootstrap.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { recordProfitEstimate } from '../intelligence/profit-estimator.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
@@ -241,10 +241,6 @@ export async function repriceZeroCapitalProviderEconomics(input: {
   const permissionDeferred = new Set<string>();
 
   for (const sourceOpportunity of input.opportunities) {
-    // Provider repricing is a speculative comparison stage. Work on an isolated
-    // copy so a rejected provider, bootstrap attempt, or more expensive fee can
-    // never contaminate the pristine opportunity that downstream alternatives
-    // still need to evaluate against the same measured gross edge.
     const opportunity: ZeroCapitalOpportunity = {
       ...sourceOpportunity,
       route: sourceOpportunity.route.map(leg => ({ ...leg })),
@@ -254,17 +250,9 @@ export async function repriceZeroCapitalProviderEconomics(input: {
 
     try {
       const evidence = await providerEvidence(chain, provider, opportunity.inputToken);
-      // Measure economics independently from receiver readiness. Receiver
-      // capability is resolved only after the provider economics are known, so a
-      // missing receiver cannot erase otherwise fresh fee/liquidity evidence.
       const measuredSingle = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount);
       const measuredDual = selectMeasuredDualFlashLoanAllocation(evidence, opportunity.flashLoanAmount);
 
-      // Cold-start only the economically preferred missing provider and only when
-      // strict zero-operator-cost gas is already proven. A newly deployed receiver
-      // invalidates the quote that triggered setup, so that provider is excluded
-      // from admission for the rest of this pass; already-ready alternatives may
-      // still execute from their own fresh evidence.
       if (
         measuredSingle
         && wallet
@@ -468,36 +456,45 @@ export async function repriceZeroCapitalProviderEconomics(input: {
       }
 
       if (!selectedSingle || !selectedCapability) {
-        const balancerEvidence = evidence.find(item =>
-          item.provider === 'balancer_v2'
-          && item.executableEvidenceComplete
-          && item.availableLiquidity !== null
-          && item.availableLiquidity >= opportunity.flashLoanAmount,
-        ) || null;
-        const bootstrapFlashFee = balancerEvidence
-          ? calculateMeasuredFlashLoanFee(balancerEvidence, opportunity.flashLoanAmount)
-          : null;
-        if (chain === 'ethereum' && wallet && !balancerReceiver && balancerEvidence && bootstrapFlashFee !== null) {
-          const bootstrapEvidence = await prepareBuilderSponsoredReceiverBootstrap({
-            opportunity,
-            balancerEvidence,
-            provider,
-            wallet,
-          }).catch(error => {
-            logger.debug('[ZeroCapitalFlashProvider] Atomic first-receiver bootstrap not admissible for this exact opportunity', {
-              component: 'ZeroCapitalFlashProviderWiring',
-              opportunityId: opportunity.id,
-              error: error instanceof Error ? error.message : String(error),
-              executionAuthority: false,
+        // If no non-atomic setup transaction has invalidated the current evidence,
+        // try every measured Ethereum provider as an atomic same-bundle first-
+        // receiver bootstrap. Cheapest exact flash fee is attempted first; failure
+        // of one provider remains local and the next provider is still evaluated.
+        if (chain === 'ethereum' && wallet && bootstrappedProviders.size === 0) {
+          const bootstrapCandidates = evidence
+            .filter(item => item.executableEvidenceComplete
+              && item.availableLiquidity !== null
+              && item.availableLiquidity >= opportunity.flashLoanAmount)
+            .map(item => ({ item, fee: calculateMeasuredFlashLoanFee(item, opportunity.flashLoanAmount) }))
+            .filter((candidate): candidate is { item: FlashLoanProviderEconomics; fee: bigint } => candidate.fee !== null)
+            .sort((left, right) => left.fee < right.fee ? -1 : left.fee > right.fee ? 1 : 0);
+
+          let atomicBootstrapAdmitted = false;
+          for (const bootstrapCandidate of bootstrapCandidates) {
+            if (capabilities.single.has(bootstrapCandidate.item.provider)) continue;
+            const bootstrapEvidence = await prepareBuilderSponsoredProviderReceiverBootstrap({
+              opportunity,
+              providerEvidence: bootstrapCandidate.item,
+              provider,
+              wallet,
+            }).catch(error => {
+              logger.debug('[ZeroCapitalFlashProvider] Atomic provider first-receiver bootstrap not admissible for this exact opportunity', {
+                component: 'ZeroCapitalFlashProviderWiring',
+                opportunityId: opportunity.id,
+                flashProvider: bootstrapCandidate.item.provider,
+                error: error instanceof Error ? error.message : String(error),
+                otherProviderAdmissionBlocked: false,
+                executionAuthority: false,
+              });
+              return null;
             });
-            return null;
-          });
-          if (bootstrapEvidence && bootstrapEvidence.guaranteedNetProfitInInputToken > 0n) {
+            if (!bootstrapEvidence || bootstrapEvidence.guaranteedNetProfitInInputToken <= 0n) continue;
+
             const bootstrapOpportunity: ZeroCapitalOpportunity = {
               ...opportunity,
-              flashLoanFeeInInputToken: bootstrapFlashFee,
+              flashLoanFeeInInputToken: bootstrapCandidate.fee,
               estimatedGasCostInInputToken: bootstrapEvidence.builderGasCostInInputToken,
-              estimatedExecutionCostInInputToken: bootstrapFlashFee + (opportunity.relayFeeInInputToken || 0n) + bootstrapEvidence.builderGasCostInInputToken,
+              estimatedExecutionCostInInputToken: bootstrapCandidate.fee + (opportunity.relayFeeInInputToken || 0n) + bootstrapEvidence.builderGasCostInInputToken,
               expectedProfit: bootstrapEvidence.guaranteedNetProfitInInputToken,
               netProfitBps: bootstrapEvidence.admittedNetProfitBps,
             };
@@ -506,20 +503,23 @@ export async function repriceZeroCapitalProviderEconomics(input: {
             zeroCapitalRouteEvidenceRegistry.record(bootstrapOpportunity);
             updateCandidate({
               opportunity: bootstrapOpportunity,
-              selected: balancerEvidence,
+              selected: bootstrapCandidate.item,
               eligible: true,
-              reason: 'Measured Balancer route has an exact Titan/Quasar atomic bundle that deploys and permissions the first receiver, executes the profitable flash route, and repays sponsorship from execution-created value; canonical scheduler remains sole submitter',
+              reason: `Measured ${bootstrapCandidate.item.provider} route has an exact Titan/Quasar atomic bundle that deploys and permissions its first receiver, executes the profitable flash route, and repays sponsorship from execution-created value; canonical scheduler remains sole submitter`,
               receiverBindingProvenance: 'provider_receiver_binding:atomic_same_bundle_create2_bootstrap',
-              extraProvenance: [...bootstrapEvidence.provenance, 'provider_reprice_input_immutable:true'],
+              extraProvenance: [
+                ...bootstrapEvidence.provenance,
+                'provider_bootstrap_alternatives_exhausted_in_fee_order:true',
+                'provider_reprice_input_immutable:true',
+              ],
             });
             repriced.push(bootstrapOpportunity);
-            continue;
+            atomicBootstrapAdmitted = true;
+            break;
           }
+          if (atomicBootstrapAdmitted) continue;
         }
 
-        // A provider-specific receiver deployed in this pass invalidates the quote
-        // that triggered its setup. Preserve measured economics, but never execute
-        // that stale quote. A ready alternative was already exhausted above.
         if (measuredSingle && bootstrappedProviders.has(measuredSingle.provider)) {
           const refreshFlashFee = calculateMeasuredFlashLoanFee(measuredSingle, opportunity.flashLoanAmount);
           if (refreshFlashFee !== null) {
@@ -544,10 +544,6 @@ export async function repriceZeroCapitalProviderEconomics(input: {
           }
         }
 
-        // A missing receiver is not missing provider economics. Preserve fresh
-        // measured fee/liquidity truth and report the exact route-local receiver
-        // capability that is absent instead of sending discovery back to reacquire
-        // evidence it already has.
         if (measuredSingle) {
           const measuredOnlyFlashFee = calculateMeasuredFlashLoanFee(measuredSingle, opportunity.flashLoanAmount);
           if (measuredOnlyFlashFee !== null) {
