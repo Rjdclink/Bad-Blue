@@ -8,6 +8,14 @@ import { okxPrivateRequest } from '../intelligence/cex-private-authority.js';
 import { pool } from '../runtime/cryptocrawl-runtime-database.js';
 import { withEvmSignerLane } from './evm-signer-lane.js';
 import { confirmSystemCapitalPlacement } from './system-capital-allocation-ledger.js';
+import {
+  bindSystemNativeGasSpendSubmission,
+  getSystemNativeGasAuthority,
+  quarantineSubmittedSystemNativeGasSpend,
+  releaseUnsubmittedSystemNativeGasSpend,
+  reserveSystemNativeGasSpend,
+  settleSystemNativeGasSpend,
+} from './system-native-gas-spend-authority.js';
 
 const ERC20_TRANSFER_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
@@ -212,6 +220,34 @@ async function mergePlacementEvidence(allocationId: string, evidence: Record<str
   if (result.rowCount !== 1) throw new Error(`Pending system-capital placement ${allocationId} is no longer mutable`);
 }
 
+async function settlePlacementNativeGas(row: AllocationRow, transactionHash: string, receipt: ethers.providers.TransactionReceipt): Promise<void> {
+  const spendId = String(row.placement_evidence?.systemNativeGasSpendId || '').trim();
+  if (!spendId) return;
+  const effectiveGasPrice = receipt.effectiveGasPrice;
+  if (!effectiveGasPrice) throw new Error(`System-capital placement ${transactionHash} has no receipt gas price for provenance settlement`);
+  const actualSpentWei = receipt.gasUsed.mul(effectiveGasPrice).toString();
+  await settleSystemNativeGasSpend({
+    spendId,
+    transactionHash,
+    actualSpentWei,
+    evidence: {
+      allocationId: row.allocation_id,
+      chain: row.source_chain,
+      blockNumber: receipt.blockNumber,
+      receiptStatus: receipt.status,
+      gasUsed: receipt.gasUsed.toString(),
+      effectiveGasPriceWei: effectiveGasPrice.toString(),
+      purpose: 'cex_system_capital_placement',
+      rawWalletBalanceAuthority: false,
+    },
+  });
+  await mergePlacementEvidence(row.allocation_id, {
+    systemNativeGasAuthority: true,
+    systemNativeGasSettled: true,
+    actualNativeGasSpentWei: actualSpentWei,
+  });
+}
+
 async function preparePersistAndBroadcastOkxTransfer(input: {
   row: AllocationRow;
   chain: RpcSupportedChain;
@@ -270,40 +306,82 @@ async function preparePersistAndBroadcastOkxTransfer(input: {
         nonce,
         gasLimit,
       };
+      let maximumGasPrice: BigNumber;
       if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
         transaction.type = 2;
         transaction.maxFeePerGas = feeData.maxFeePerGas;
         transaction.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+        maximumGasPrice = feeData.maxFeePerGas;
       } else if (feeData.gasPrice) {
         transaction.gasPrice = feeData.gasPrice;
+        maximumGasPrice = feeData.gasPrice;
       } else {
         throw new Error('Source RPC returned no usable EVM fee data');
       }
 
       const signedTransaction = await wallet.signTransaction(transaction);
       const transactionHash = ethers.utils.keccak256(signedTransaction).toLowerCase();
-      await persistPreparedPlacement({
-        allocationId: input.row.allocation_id,
-        tokenAddress: input.tokenAddress,
-        transactionHash,
-        evidence: {
-          venue: 'okx',
-          depositAddress: input.depositAddress,
-          authenticatedExchangeChain: input.authenticatedExchangeChain,
-          authenticatedDepositAccount: input.authenticatedDepositAccount,
-          authenticatedSourceTokenContract: input.tokenAddress,
-          sourceAsset: input.row.source_asset.toUpperCase(),
-          sourceAssetDecimals: input.row.source_asset_decimals,
-          sourceAmountBaseUnits: input.sourceAmount.toString(),
-          expectedTransactionHash: transactionHash,
-          chainId: network.chainId,
-          nonce,
-          gasLimit: gasLimit.toString(),
-          signedTransactionPersisted: false,
-          preparedBeforeBroadcast: true,
-          signerLaneHeldThroughBroadcast: true,
-        },
+      const maximumGasWei = gasLimit.mul(maximumGasPrice).toString();
+      const gasAuthority = await getSystemNativeGasAuthority({
+        chain: input.chain,
+        wallet: wallet.address,
+        minimumWei: maximumGasWei,
       });
+      if (!gasAuthority) {
+        throw new Error('CEX bootstrap placement rejected: no SELF_FUNDED provenance-backed native gas covers the signed transfer ceiling');
+      }
+      const gasReservation = await reserveSystemNativeGasSpend({
+        idempotencyKey: `cex-placement:${input.row.allocation_id}:${transactionHash}`,
+        scope: gasAuthority.scope,
+        chain: input.chain,
+        wallet: wallet.address,
+        purpose: `cex_system_capital_placement:${input.row.allocation_id}`,
+        maximumWei: maximumGasWei,
+      });
+      if (!gasReservation) {
+        throw new Error('CEX bootstrap placement rejected: system-owned native gas reservation lost the capacity race');
+      }
+
+      try {
+        await bindSystemNativeGasSpendSubmission(gasReservation.spendId, transactionHash);
+      } catch (error) {
+        await releaseUnsubmittedSystemNativeGasSpend(gasReservation.spendId).catch(() => undefined);
+        throw error;
+      }
+
+      try {
+        await persistPreparedPlacement({
+          allocationId: input.row.allocation_id,
+          tokenAddress: input.tokenAddress,
+          transactionHash,
+          evidence: {
+            venue: 'okx',
+            depositAddress: input.depositAddress,
+            authenticatedExchangeChain: input.authenticatedExchangeChain,
+            authenticatedDepositAccount: input.authenticatedDepositAccount,
+            authenticatedSourceTokenContract: input.tokenAddress,
+            sourceAsset: input.row.source_asset.toUpperCase(),
+            sourceAssetDecimals: input.row.source_asset_decimals,
+            sourceAmountBaseUnits: input.sourceAmount.toString(),
+            expectedTransactionHash: transactionHash,
+            chainId: network.chainId,
+            nonce,
+            gasLimit: gasLimit.toString(),
+            maximumNativeGasWei: maximumGasWei,
+            systemNativeGasSpendId: gasReservation.spendId,
+            systemNativeGasScope: gasAuthority.scope,
+            systemNativeGasAuthority: true,
+            systemNativeGasSettled: false,
+            rawWalletNativeBalanceAuthority: false,
+            signedTransactionPersisted: false,
+            preparedBeforeBroadcast: true,
+            signerLaneHeldThroughBroadcast: true,
+          },
+        });
+      } catch (error) {
+        await quarantineSubmittedSystemNativeGasSpend(gasReservation.spendId, error).catch(() => undefined);
+        throw error;
+      }
 
       try {
         const submitted = await provider.sendTransaction(signedTransaction);
@@ -311,8 +389,9 @@ async function preparePersistAndBroadcastOkxTransfer(input: {
           throw new Error(`Provider returned a transaction hash different from the locally signed placement hash: expected=${transactionHash} observed=${submitted.hash}`);
         }
       } catch (error) {
-        const receipt = await provider.getTransactionReceipt(transactionHash).catch(() => null);
-        if (!receipt) {
+        const observed = await provider.getTransaction(transactionHash).catch(() => null);
+        if (!observed) {
+          await quarantineSubmittedSystemNativeGasSpend(gasReservation.spendId, error).catch(() => undefined);
           logger.error('[SystemCapitalPlacement] Broadcast outcome unresolved; allocation remains PLACEMENT_PENDING', {
             component: 'SystemCapitalPlacement',
             allocationId: input.row.allocation_id,
@@ -321,6 +400,7 @@ async function preparePersistAndBroadcastOkxTransfer(input: {
             error: error instanceof Error ? error.message : String(error),
             duplicateSubmissionAllowed: false,
             sourceCapitalReleased: false,
+            systemNativeGasReleased: false,
           });
         }
       }
@@ -526,6 +606,7 @@ async function reconcileOkxPlacement(row: AllocationRow): Promise<CexSystemCapit
       reason: 'Prepared/submitted transaction is not yet receipt-confirmed; source capital remains reserved and cannot be duplicated',
     };
   }
+  await settlePlacementNativeGas(row, txHash, receipt);
   if (receipt.status !== 1) {
     throw new Error(`System-capital transfer ${txHash} reached a failed on-chain receipt; allocation remains non-spendable pending explicit recovery`);
   }
@@ -571,6 +652,8 @@ async function reconcileOkxPlacement(row: AllocationRow): Promise<CexSystemCapit
       blockNumber: receipt.blockNumber,
       settlementConfirmed: true,
       tradingAccountSpendableAuthority: true,
+      systemNativeGasAuthority: Boolean(evidence.systemNativeGasSpendId),
+      rawWalletNativeBalanceAuthority: false,
     },
     deliveredAmountBaseUnits: deposit.deliveredBaseUnits,
   });
