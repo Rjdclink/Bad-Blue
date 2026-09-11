@@ -101,13 +101,35 @@ require('./verify-ghost-wallet-atomic-capital.cjs');
 require('./verify-ghost-wallet-merge-gate.cjs');
 require('./verify-full-runtime-regression-repair.cjs');
 
-// Compile the two new contracts as part of prebuild. This is deliberately after
-// structural verification so a Solidity compiler failure blocks the real build,
-// while generated artifacts are available to deterministic runtime bootstrap.
+// Compile runtime-deployable contracts during the real production prebuild. The
+// flash receiver compiler writes Balancer, composite, Aave V3, Morpho Blue, and
+// Aave+Balancer artifacts into artifacts/cryptocrawl before Docker copies that
+// directory into the production image. Missing provider artifacts therefore fail
+// the build instead of silently removing an otherwise supported route.
+const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+execFileSync(
+  npx,
+  ['--no-install', 'tsx', 'scripts/cryptocrawl/compile-flashloan-receiver.ts'],
+  { stdio: 'inherit', env: process.env },
+);
+
+for (const [artifactPath, expectedContract] of [
+  ['artifacts/cryptocrawl/CryptocrawlAaveV3FlashLoanReceiver.json', 'CryptocrawlAaveV3FlashLoanReceiver'],
+  ['artifacts/cryptocrawl/CryptocrawlMorphoFlashLoanReceiver.json', 'CryptocrawlMorphoFlashLoanReceiver'],
+]) {
+  const artifact = JSON.parse(originalReadFileSync(artifactPath, 'utf8'));
+  if (artifact.contractName !== expectedContract || typeof artifact.bytecode !== 'string' || !artifact.bytecode.startsWith('0x') || artifact.bytecode.length <= 2) {
+    throw new Error(`Required zero-capital receiver artifact is incomplete: ${artifactPath}`);
+  }
+}
+
+// Ghost Wallet contracts use their existing compiler path. Keeping the two
+// compilation steps independent means a failure is local and the build fails
+// closed without changing any runtime execution authority.
 execFileSync(
   process.execPath,
   ['scripts/cryptocrawl/compile-ghost-wallet-contracts.cjs'],
   { stdio: 'inherit', env: process.env },
 );
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, Ghost Wallet atomic-capital isolation, deterministic no-manual bootstrap, merge gate, full runtime regression repair gate, Solidity compilation, and single zero-capital route authority passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded multi-topology discovery liveness, final evidence/route resolution, payout invariants, Ghost Wallet atomic-capital isolation, deterministic no-manual bootstrap, merge gate, full runtime regression repair gate, flash-receiver and Ghost Wallet Solidity compilation, and single zero-capital route authority passed; continuing to downstream prebuild/build');
