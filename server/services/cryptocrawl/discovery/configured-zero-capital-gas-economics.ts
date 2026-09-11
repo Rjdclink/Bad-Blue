@@ -1,5 +1,5 @@
 import type { providers } from 'ethers';
-import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import type {
   ConfiguredZeroCapitalRoute,
@@ -84,8 +84,8 @@ function authorityFor(funding: GasFundingDecision): GasCostAuthority {
  *
  * The configured route definitions intentionally carry a zero seed because they
  * are static topology, not live economics. This boundary replaces that seed with
- * current gas-price and multi-provider market-price evidence. Only independently
- * proven zero-operator-cost sponsorship is allowed to retain zero gas economics.
+ * current gas-price and provider-neutral live market-price evidence. Only
+ * independently proven zero-operator-cost sponsorship may retain zero gas economics.
  */
 export async function enrichConfiguredZeroCapitalGasEconomics(
   chain: SupportedExecutionChain,
@@ -111,6 +111,10 @@ export async function enrichConfiguredZeroCapitalGasEconomics(
     };
   }
 
+  // This is a pre-receiver observation estimate only. Exact source-specific gas
+  // economics replace it before executable admission (native simulation/estimate
+  // or builder-sponsored repayment economics). Keeping this conservative estimate
+  // must never become execution authority.
   const estimatedGasUnits = Math.floor(bounded(
     process.env.ZERO_CAPITAL_CONFIGURED_EXECUTION_GAS_UNITS,
     1_400_000,
@@ -127,7 +131,7 @@ export async function enrichConfiguredZeroCapitalGasEconomics(
   const inputSymbols = [...new Set(routes.map(route => route.inputAssetSymbol))];
   const [feeData, prices] = await Promise.all([
     provider.getFeeData(),
-    coinGeckoPriceClient.getLiveSymbolPrices([nativeSymbol, ...inputSymbols]),
+    livePriceMesh.getLiveSymbolPrices([nativeSymbol, ...inputSymbols]),
   ]);
   const gasPriceWei = expectedExecutionGasPriceWei(feeData);
   const nativeUsd = prices.get(nativeSymbol);
