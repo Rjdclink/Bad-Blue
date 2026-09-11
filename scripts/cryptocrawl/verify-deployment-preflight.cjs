@@ -65,6 +65,7 @@ require('./verify-provider-failure-locality.cjs');
 require('./verify-liquidation-log-range-failover.cjs');
 require('./verify-deterministic-positive-quote-admission.cjs');
 require('./verify-protocol-anchor-route-locality.cjs');
+require('./verify-fluid-simulation-return-decoding.cjs');
 require('./verify-provider-specific-receiver-coldstart.cjs');
 require('./verify-morpho-zero-fee-flash.cjs');
 require('./verify-cex-websocket-rpi-modernization.cjs');
@@ -138,4 +139,4 @@ execFileSync(
   { stdio: 'inherit', env: process.env },
 );
 
-console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded stale-evidence canonical reacquisition, bounded multi-topology discovery liveness, route-local protocol-anchor failure isolation, final evidence/route resolution, payout invariants, Ghost Wallet atomic-capital isolation, deterministic no-manual bootstrap, merge gate, full runtime regression repair gate, flash-receiver and Ghost Wallet Solidity compilation, and single zero-capital route authority passed; continuing to downstream prebuild/build');
+console.log('[deployment-preflight] structural BPS truth plus complete Overflow runtime authority, checked-out database disconnect resilience, Kalshi bidirectional funding/prediction/maker/cross-venue/zero-personal-capital completion, safety, measured-profitability, provider, treasury, execution-family, production-pressure/evidence recovery, minimum-sufficient execution evidence, first-pass route measurability, canonical refresh/capability authority, event-driven zero-capital BPS evidence handoff, bounded stale-evidence canonical reacquisition, bounded multi-topology discovery liveness, route-local protocol-anchor failure isolation, Fluid successful-return and custom-revert quote decoding, final evidence/route resolution, payout invariants, Ghost Wallet atomic-capital isolation, deterministic no-manual bootstrap, merge gate, full runtime regression repair gate, flash-receiver and Ghost Wallet Solidity compilation, and single zero-capital route authority passed; continuing to downstream prebuild/build');
