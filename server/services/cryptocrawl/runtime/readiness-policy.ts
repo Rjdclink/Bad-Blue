@@ -5,6 +5,8 @@ export interface CryptoRuntimeReadinessInput {
   coreMarketDataReady: boolean;
   criticalRpcReady: boolean;
   graphReady: boolean;
+  /** Freshness of the independent multi-topology discovery controller. */
+  multiTopologyReady?: boolean;
   discoveryEvidenceCount: number;
   canonicalObservedOpportunities: number;
   schedulerRunning: boolean;
@@ -94,6 +96,8 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
   const kalshiCandidateReady = eligibleKalshiCandidates > 0;
   const candidateReady = cexCandidateReady || zeroCapitalCandidateReady || kalshiCandidateReady;
   const governanceReady = input.stageCanExecute;
+  const multiTopologyReady = input.multiTopologyReady === true;
+  const discoverySearchReady = input.graphReady || multiTopologyReady;
 
   const cexTradingReady = cexExecutionCapabilityReady && governanceReady && cexCandidateReady && inventoryReady;
   const zeroCapitalTradingReady = zeroCapitalExecutionCapabilityReady
@@ -126,12 +130,12 @@ export function computeCryptoRuntimeReadiness(input: CryptoRuntimeReadinessInput
       detail: `coreCexMarketData=${input.coreMarketDataReady}; blockchainRpc=${input.criticalRpcReady} (RPC is topology-local and not required for core CEX discovery)`,
     },
     DISCOVERY_READY: {
-      // Discovery answers whether measured search is running and producing
-      // evidence. Candidate profitability is intentionally owned by
-      // CANDIDATE_READY and must not make discovery itself appear broken.
-      ready: input.graphReady && input.discoveryEvidenceCount > 0,
+      // Discovery answers whether at least one measured search family is fresh and
+      // producing evidence. One stale topology must not make independent discovery
+      // families appear globally unavailable.
+      ready: discoverySearchReady && input.discoveryEvidenceCount > 0,
       scope: 'discovery',
-      detail: `graphFresh=${input.graphReady}; discoveryEvidence=${input.discoveryEvidenceCount}; canonicalObserved=${input.canonicalObservedOpportunities}`,
+      detail: `cexGraphFresh=${input.graphReady}; multiTopologyFresh=${multiTopologyReady}; discoveryEvidence=${input.discoveryEvidenceCount}; canonicalObserved=${input.canonicalObservedOpportunities}`,
     },
     EXECUTION_CAPABILITY_READY: {
       ready: executionCapabilityReady,
