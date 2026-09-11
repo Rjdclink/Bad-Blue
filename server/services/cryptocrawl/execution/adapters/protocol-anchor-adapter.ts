@@ -113,14 +113,11 @@ export function resolveProtocolAnchorPool(
     return A.fluidGhoUsdc;
   }
 
-  // Current Gsm4626 modules exchange GHO <-> StataToken shares.
   if ((sameAddress(tokenIn, A.gho) && sameAddress(tokenOut, A.stataUsdc))
     || (sameAddress(tokenOut, A.gho) && sameAddress(tokenIn, A.stataUsdc))) return A.gsmUsdc;
   if ((sameAddress(tokenIn, A.gho) && sameAddress(tokenOut, A.stataUsdt))
     || (sameAddress(tokenOut, A.gho) && sameAddress(tokenIn, A.stataUsdt))) return A.gsmUsdt;
 
-  // The same protocol family also owns the required raw stable <-> StataToken
-  // wrapper legs so the existing canonical route/executor authority is reused.
   if ((sameAddress(tokenIn, A.usdc) && sameAddress(tokenOut, A.stataUsdc))
     || (sameAddress(tokenOut, A.usdc) && sameAddress(tokenIn, A.stataUsdc))) return A.stataUsdc;
   if ((sameAddress(tokenIn, A.usdt) && sameAddress(tokenOut, A.stataUsdt))
@@ -193,6 +190,17 @@ function decodeFluidSwapResult(raw: string | null): BigNumber | null {
   const [amountOut] = ethers.utils.defaultAbiCoder.decode(['uint256'], `0x${raw.slice(10)}`);
   const result = BigNumber.from(amountOut);
   return result.gt(0) ? result : null;
+}
+
+function decodeFluidSuccessfulSwapResult(iface: ethers.utils.Interface, raw: string | null): BigNumber | null {
+  if (!raw || raw === '0x') return null;
+  try {
+    const [amountOutRaw] = iface.decodeFunctionResult('swapIn', raw);
+    const amountOut = BigNumber.from(amountOutRaw);
+    return amountOut.gt(0) ? amountOut : null;
+  } catch {
+    return null;
+  }
 }
 
 function assertGsmIdentityAndState(input: {
@@ -308,9 +316,6 @@ async function quoteStata(provider: providers.Provider, leg: ProtocolAnchorLeg, 
   if (!sameAddress(asset, raw)) throw new Error('Aave StataToken live asset identity does not match reviewed raw stablecoin');
   const assets = BigNumber.from(assetsRaw);
   if (assets.lte(0)) throw new Error('Aave StataToken redeem preview returned no assets');
-  // Exact withdrawal liquidity is rechecked by the canonical pre-broadcast full
-  // receiver simulation because maxRedeem(owner) is balance-dependent before the
-  // preceding GSM leg has minted the shares into the receiver.
   return assets;
 }
 
@@ -320,9 +325,11 @@ async function quoteFluid(provider: providers.Provider, leg: ProtocolAnchorLeg, 
   const data = iface.encodeFunctionData('swapIn', [swap0to1, amountIn, 0, DEAD]);
   try {
     const returned = await provider.call({ to: leg.pool, data });
-    const result = decodeFluidSwapResult(returned);
-    if (result) return result;
-    throw new Error('Fluid simulation unexpectedly returned without FluidDexSwapResult');
+    const successfulResult = decodeFluidSuccessfulSwapResult(iface, returned);
+    if (successfulResult) return successfulResult;
+    const customResult = decodeFluidSwapResult(returned);
+    if (customResult) return customResult;
+    throw new Error('Fluid simulation returned neither a standard swapIn result nor FluidDexSwapResult');
   } catch (error) {
     const result = decodeFluidSwapResult(extractRevertData(error));
     if (result) return result;
