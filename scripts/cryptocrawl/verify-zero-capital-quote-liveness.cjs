@@ -37,17 +37,27 @@ assert.doesNotMatch(dynamic, /ZERO_CAPITAL_DYNAMIC_FLASH_LOAN_FEE_BPS/);
 assert.doesNotMatch(dynamic, /flashLoanFeeBps:\s*bounded\(/);
 assert.match(dynamic, /Preliminary discovery intentionally leaves flash-loan cost unpriced/);
 
-// Provider evidence is independently bounded. One silent RPC/provider cannot pin
-// the complete provider mesh, and a timeout is omitted rather than synthesized.
+// Provider evidence is independently bounded. Each applicable protocol gets its
+// own timeout and route-local canonical RPC failover. Cross-protocol aggregation
+// uses allSettled so one rejected protocol cannot erase fulfilled evidence from
+// another; only an all-rejected applicable set propagates failure.
 assert.match(providerEconomics, /function providerMeasurementTimeoutMs\(\): number/);
 assert.match(providerEconomics, /ZERO_CAPITAL_FLASH_PROVIDER_MEASUREMENT_TIMEOUT_MS/);
 assert.match(providerEconomics, /function withProviderMeasurementTimeout<T>/);
-assert.match(providerEconomics, /Promise\.allSettled\(\[/);
-assert.match(providerEconomics, /withProviderMeasurementTimeout\(measureBalancerFlashLoanEconomics\(input\), timeoutMs, 'balancer_v2'\)/);
-assert.match(providerEconomics, /withProviderMeasurementTimeout\(measureAaveV3FlashLoanEconomics\(input\), timeoutMs, 'aave_v3'\)/);
-assert.match(providerEconomics, /withProviderMeasurementTimeout\(measureMorphoBlueFlashLoanEconomics\(input\), timeoutMs, 'morpho_blue'\)/);
+assert.match(providerEconomics, /function isCanonicalManagedProvider\(chain: SupportedExecutionChain, provider: providers\.Provider\): boolean/);
+assert.match(providerEconomics, /function measureWithRouteLocalFailover\(/);
+assert.match(providerEconomics, /withProviderMeasurementTimeout\(measure\(input\.provider\), timeoutMs, kind\)/);
+assert.match(providerEconomics, /multiProviderRpcManager\.execute\([\s\S]*'contract_calls'[\s\S]*rpc => withProviderMeasurementTimeout\(measure\(rpc\), timeoutMs, kind\)/);
+assert.match(providerEconomics, /flash-loan evidence failed on the current RPC and canonical route-local failover/);
+assert.match(providerEconomics, /kind: 'balancer_v2'[\s\S]*promise: measureWithRouteLocalFailover\([\s\S]*'balancer_v2'[\s\S]*measureBalancerFlashLoanEconomics/);
+assert.match(providerEconomics, /kind: 'aave_v3'[\s\S]*promise: measureWithRouteLocalFailover\([\s\S]*'aave_v3'[\s\S]*measureAaveV3FlashLoanEconomics/);
+assert.match(providerEconomics, /kind: 'morpho_blue'[\s\S]*promise: measureWithRouteLocalFailover\([\s\S]*'morpho_blue'[\s\S]*measureMorphoBlueFlashLoanEconomics/);
+assert.match(providerEconomics, /Promise\.allSettled\(attempts\.map\(attempt => attempt\.promise\)\)/);
 assert.match(providerEconomics, /result\.status === 'fulfilled' && result\.value/);
+assert.match(providerEconomics, /settled\.every\(result => result\.status === 'rejected'\)/);
+assert.match(providerEconomics, /All applicable flash-loan provider measurements failed/);
 assert.match(providerEconomics, /morpho_blue_core_flashFee_zero_by_interface/);
+assert.match(providerEconomics, /synthetic_evidence:false/);
 
 // CanonicalZeroCapitalDiscovery is the only recurring ZERO_CAPITAL_ATOMIC scan
 // cadence. Receiver preparation is single-flight and watchdog-bounded, but a slow
@@ -96,4 +106,4 @@ assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /Canonical all-in net economics are not strictly positive/);
 
-console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, chain-local funding proof, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
+console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
