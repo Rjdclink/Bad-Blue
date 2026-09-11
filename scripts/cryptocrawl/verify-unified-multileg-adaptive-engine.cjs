@@ -15,6 +15,7 @@ const source = {
   riskGovernor: read('server/services/cryptocrawl/governance/risk-governor.ts'),
   stack: read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts'),
   compositeRegistry: read('server/services/cryptocrawl/optimization/zero-capital-composite-evidence-registry.ts'),
+  compositeSelection: read('server/services/cryptocrawl/execution/zero-capital-composite-selection-registry.ts'),
 };
 
 const failures = [];
@@ -25,9 +26,9 @@ const forbid = (key, pattern, label) => {
   if (pattern.test(source[key])) failures.push(`forbidden ${label}: ${pattern}`);
 };
 
-// The composite engine is advisory assembly only. Every selected leg must already
-// have current canonical execution capability and strictly positive deterministic
-// economics; ranking/learning thresholds cannot recreate an execution floor.
+// The generic composite assembler remains advisory and operates on already-positive
+// executable legs. The dedicated zero-capital atomic-surplus composer is the only
+// place where fresh near-misses may be transformed before canonical admission.
 requireText('assembler', 'executionAuthority: false', 'advisory-only composite authority');
 requireText('assembler', 'requiresIndependentFinalAdmission: true', 'independent final admission');
 requireText('assembler', "candidate.status !== 'eligible' || !candidate.executableCapability", 'eligible executable leg requirement');
@@ -40,9 +41,6 @@ requireText('assembler', 'arithmeticLegBpsSum', 'arithmetic BPS telemetry');
 forbid('assembler', /candidate\.missingInformation\.length\s*>\s*0/, 'generic missing-information execution veto');
 forbid('assembler', /netProfitBps\s*<\s*minIncrementalBps/, 'adaptive minimum-BPS execution veto');
 
-// Unified router owns path admission. Adaptive profitability/confidence scores and
-// generic missing-information lists are evidence/ranking signals, while current
-// path capability, freshness, depth and verified positive economics remain hard.
 requireText('router', 'export interface AdvisoryEvidenceScores', 'advisory evidence surface');
 requireText('router', 'advisoryOnly: true', 'advisory evidence marker');
 requireText('router', 'const deterministicPositive = Number.isFinite(deterministicNet) && deterministicNet > 0;', 'strict deterministic-positive authority');
@@ -54,7 +52,6 @@ requireText('router', 'hardVetoReasons.length === 0', 'hard-veto-free admission 
 requireText('compatibility', 'routeMeasuredOpportunity(candidate)', 'compatibility selector delegates to unified router');
 requireText('compatibility', 'scoring_authority=UnifiedExecutionRouter:ProfitabilityScore', 'single scoring authority');
 
-// Learning can tune search/ranking, never the current hard-fact execution result.
 requireText('optimizer', 'profitabilityScoreThreshold: 0', 'history-free cold-start score threshold');
 requireText('optimizer', 'confidenceThreshold: 0', 'history-free cold-start confidence threshold');
 requireText('optimizer', "outcome.settlement?.terminal !== true", 'terminal-only optimizer learning');
@@ -63,16 +60,27 @@ requireText('riskGovernor', 'Monte Carlo is advisory', 'Monte Carlo advisory aut
 requireText('riskGovernor', 'monteCarloCheck: true', 'Monte Carlo cannot fail canonical risk approval');
 requireText('riskGovernor', 'duplicateRiskScoreVetoAuthority: false', 'aggregate risk score cannot regain veto authority');
 
-// Composite eth_call remains useful telemetry. Exact gas, bounded block capacity,
-// measured composition gain and positive individual legs remain the hard facts.
+// Atomic-surplus composition may inspect fresh near-misses down to the configured
+// -10 BPS entry floor, but promotion requires measured Balancer fee/liquidity,
+// exact target-bound eth_call + gas estimate, positive composition gain, +10 BPS
+// (or configured target) final all-in net, and a prepared canonical selection.
+requireText('stack', 'getCompatibleForAtomicSurplus', 'near-miss measurement view');
+requireText('stack', 'ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS', 'atomic surplus entry floor');
+requireText('stack', 'ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS', 'atomic surplus target floor');
+requireText('stack', 'measureBalancerFlashLoanEconomics', 'measured composite provider economics');
+requireText('stack', 'calculateMeasuredFlashLoanFee', 'measured shared-principal flash fee');
+requireText('stack', 'input.provider.call', 'exact target-bound composite call');
 requireText('stack', 'input.provider.estimateGas', 'exact composite gas measurement');
-requireText('stack', 'simulationVetoAuthority: false', 'composite simulation advisory marker');
 requireText('stack', 'measuredCompositionGain <= 0n', 'composition gain must be measured positive');
+requireText('stack', 'combinedExpectedProfit < targetNetProfitBaseUnits', 'target net floor must be cleared');
 requireText('stack', 'estimatedGas > allowedGas', 'bounded block-gas feasibility');
-requireText('compositeRegistry', 'simulationAdvisoryError', 'simulation telemetry is retained');
+requireText('stack', 'zeroCapitalCompositeSelectionRegistry.record(selection)', 'prepared selection registration');
+requireText('stack', 'netDollarOptimizationAboveTarget: true', 'net-dollar optimization above target');
+requireText('stack', 'borrowingNotionalAuthority: false', 'Profit Ladder cannot cap atomic principal');
+requireText('compositeRegistry', 'targetNetProfitBaseUnits', 'target binding retained in evidence');
+requireText('compositeRegistry', 'combinedExpectedProfit < input.targetNetProfitBaseUnits', 'evidence rejects sub-target composite');
+requireText('compositeSelection', 'expectedNetProfit < selection.targetNetProfitBaseUnits', 'prepared selection rejects sub-target economics');
 
-// Missing hard evidence must trigger active acquisition rather than permanent
-// rejection, while the hot execution path stays under the unified authority.
 requireText('admission', 'missing_hard_execution_evidence', 'active evidence reacquisition trigger');
 requireText('admission', 'hotPathExecutionAuthority: false', 'evidence scanner cannot execute independently');
 
@@ -82,4 +90,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[unified-multileg-adaptive-engine] PASS: current hard-fact profitability/capability/freshness/depth authority preserved; adaptive scores, missing-information ranking and simulations remain advisory.');
+console.log('[unified-multileg-adaptive-engine] PASS: ordinary composite admission remains deterministic-positive; zero-capital near-misses may be transformed only by exact target-bound shared-principal evidence before canonical execution.');
