@@ -67,9 +67,12 @@ function bpsFromSharedPrincipal(profit: bigint, principal: bigint): number {
   return Number((profit * 10_000n * BPS_SCALE) / principal) / Number(BPS_SCALE);
 }
 
-function baseUnitsToUsd(value: bigint, decimals: number): number {
-  const divisor = 10 ** Math.max(0, Math.min(18, decimals));
-  const result = Number(value) / divisor;
+function baseUnitsToUsd(value: bigint, decimals: number, usdPrice: number): number {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) return 0;
+  if (!(Number.isFinite(usdPrice) && usdPrice > 0)) return 0;
+  const divisor = 10 ** decimals;
+  const tokenAmount = Number(value) / divisor;
+  const result = tokenAmount * usdPrice;
   return Number.isFinite(result) ? result : 0;
 }
 
@@ -181,6 +184,10 @@ async function measureTargetStack(input: {
     .filter((candidate): candidate is MeasuredCandidate => candidate !== null);
   if (memberCandidates.length !== input.opportunities.length) return null;
 
+  const first = input.opportunities[0];
+  const inputTokenUsdPrice = Number(first.inputAssetUsdPrice);
+  if (!(Number.isFinite(inputTokenUsdPrice) && inputTokenUsdPrice > 0)) return null;
+
   const profitRecipient = process.env.CRYPTO_PROFIT_WALLET_ADDRESS || process.env.BRIDGE_WALLET_ADDRESS || input.wallet.address;
   const individualPlans = input.opportunities.map(opportunity => {
     const routeGrossProfit = grossProfit(opportunity);
@@ -224,7 +231,6 @@ async function measureTargetStack(input: {
   const combinedGrossProfit = input.opportunities.reduce((sum, opportunity) => sum + grossProfit(opportunity), 0n);
   const individualExpectedProfitSum = input.opportunities.reduce((sum, opportunity) => sum + opportunity.expectedProfit, 0n);
   const relayFee = input.opportunities.reduce((sum, opportunity) => sum + (opportunity.relayFeeInInputToken || 0n), 0n);
-  const individualGasUnits = input.opportunities.reduce((sum, opportunity) => sum + opportunity.gasEstimate, 0n);
   const targetNetProfitBps = atomicSurplusTargetBps();
   const targetNetProfitBaseUnits = targetProfitBaseUnits(sharedPrincipal, targetNetProfitBps);
   if (targetNetProfitBaseUnits <= 0n) return null;
@@ -315,8 +321,8 @@ async function measureTargetStack(input: {
   const stackedBps = bpsFromSharedPrincipal(combinedExpectedProfit, sharedPrincipal);
   if (stackedBps + 1e-9 < targetNetProfitBps) return null;
 
-  const decimals = input.opportunities[0].inputTokenDecimals;
-  const compositionGainUsd = baseUnitsToUsd(measuredCompositionGain, decimals);
+  const decimals = first.inputTokenDecimals;
+  const compositionGainUsd = baseUnitsToUsd(measuredCompositionGain, decimals, inputTokenUsdPrice);
   const opportunityIds = input.opportunities.map(opportunity => opportunity.id);
   const evidenceId = groupId(input.chain, loanToken, opportunityIds);
   const measuredAt = Date.now();
@@ -338,6 +344,7 @@ async function measureTargetStack(input: {
     `atomic_surplus_target_floor_bps:${targetNetProfitBps}`,
     `measured_duplicate_flash_fee_savings:${measuredFlashFeeSavings.toString()}`,
     `measured_combined_gas_savings:${measuredGasSavings.toString()}`,
+    `input_token_usd_price:${inputTokenUsdPrice}`,
     'combined_all_in_net_clears_target',
     'principal_repayment_enforced_by_composite_receiver',
     'synthetic_evidence:false',
@@ -396,7 +403,6 @@ async function measureTargetStack(input: {
   };
 
   const flatRoute = input.opportunities.flatMap(opportunity => opportunity.route.map(step => ({ ...step })));
-  const first = input.opportunities[0];
   const opportunity: ZeroCapitalOpportunity = {
     id: evidenceId,
     type: first.type,
@@ -405,7 +411,7 @@ async function measureTargetStack(input: {
     outputToken: loanToken,
     inputAssetSymbol: first.inputAssetSymbol,
     inputTokenDecimals: decimals,
-    ...(first.inputAssetUsdPrice !== undefined ? { inputAssetUsdPrice: first.inputAssetUsdPrice } : {}),
+    inputAssetUsdPrice: inputTokenUsdPrice,
     flashLoanAmount: sharedPrincipal,
     expectedProfit: combinedExpectedProfit,
     grossProfit: combinedGrossProfit,
@@ -433,10 +439,12 @@ function promoteMeasuredStack(measured: MeasuredTargetStack): void {
   zeroCapitalRouteEvidenceRegistry.record(opportunity);
 
   const decimals = opportunity.inputTokenDecimals;
-  const notionalUsd = baseUnitsToUsd(opportunity.flashLoanAmount, decimals);
-  const grossProfitUsd = baseUnitsToUsd(evidence.combinedGrossProfit, decimals);
-  const netProfitUsd = baseUnitsToUsd(evidence.combinedExpectedProfit, decimals);
-  const gasUsd = baseUnitsToUsd(evidence.gasCostInInputToken, decimals);
+  const inputTokenUsdPrice = Number(opportunity.inputAssetUsdPrice);
+  if (!(Number.isFinite(inputTokenUsdPrice) && inputTokenUsdPrice > 0)) return;
+  const notionalUsd = baseUnitsToUsd(opportunity.flashLoanAmount, decimals, inputTokenUsdPrice);
+  const grossProfitUsd = baseUnitsToUsd(evidence.combinedGrossProfit, decimals, inputTokenUsdPrice);
+  const netProfitUsd = baseUnitsToUsd(evidence.combinedExpectedProfit, decimals, inputTokenUsdPrice);
+  const gasUsd = baseUnitsToUsd(evidence.gasCostInInputToken, decimals, inputTokenUsdPrice);
   const flashLoanFeeBps = bpsFromSharedPrincipal(evidence.flashLoanFeeInInputToken, evidence.sharedPrincipal);
   const gasCostBps = bpsFromSharedPrincipal(evidence.gasCostInInputToken, evidence.sharedPrincipal);
   const relayCostBps = bpsFromSharedPrincipal(evidence.relayFeeInInputToken, evidence.sharedPrincipal);
@@ -552,7 +560,7 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
       if (stack.length < 2) return;
 
       const budget = await getProfitLadderDailyProfitBudget().catch(() => null);
-      if (!budget || !budget.stageAligned || budget.exhausted) return;
+      if (!budget || budget.exhausted) return;
       const variants = stackVariants(stack);
       const measured: MeasuredTargetStack[] = [];
       for (const variant of variants) {
@@ -566,7 +574,12 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
         }).catch(() => null);
         if (!result) continue;
         zeroCapitalCompositeEvidenceRegistry.record(result.evidence);
-        const expectedNetProfitUsd = baseUnitsToUsd(result.evidence.combinedExpectedProfit, result.evidence.inputTokenDecimals);
+        const inputTokenUsdPrice = Number(result.opportunity.inputAssetUsdPrice);
+        const expectedNetProfitUsd = baseUnitsToUsd(
+          result.evidence.combinedExpectedProfit,
+          result.evidence.inputTokenDecimals,
+          inputTokenUsdPrice,
+        );
         if (!expectedProfitFitsDailyBudget(expectedNetProfitUsd, budget)) continue;
         measured.push(result);
       }
@@ -580,6 +593,7 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
       const best = measured[0];
       promoteMeasuredStack(best);
 
+      const bestInputTokenUsdPrice = Number(best.opportunity.inputAssetUsdPrice);
       logger.info('[ZeroCapitalStack] Target-bound shared-principal atomic surplus promoted', {
         component: 'ZeroCapitalAtomicStackWiring',
         receiverKind: 'balancer_composite_v2',
@@ -588,7 +602,11 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
         memberOpportunityIds: best.evidence.opportunityIds,
         sharedPrincipal: best.evidence.sharedPrincipal.toString(),
         combinedExpectedProfit: best.evidence.combinedExpectedProfit.toString(),
-        combinedExpectedProfitUsd: baseUnitsToUsd(best.evidence.combinedExpectedProfit, best.evidence.inputTokenDecimals),
+        combinedExpectedProfitUsd: baseUnitsToUsd(
+          best.evidence.combinedExpectedProfit,
+          best.evidence.inputTokenDecimals,
+          bestInputTokenUsdPrice,
+        ),
         targetNetProfitBps: best.evidence.targetNetProfitBps,
         achievedNetProfitBps: best.evidence.sharedPrincipalStackedBps,
         measuredCompositionGain: best.evidence.measuredCompositionGain.toString(),
@@ -596,6 +614,7 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
         dailyProfitCapUsd: budget.dailyProfitCapUsd,
         dailyRealizedProfitUsd: budget.realizedProfitUsd,
         dailyRemainingProfitUsd: budget.remainingProfitUsd,
+        profitLadderStageAlignedTelemetry: budget.stageAligned,
         borrowingNotionalAuthority: false,
         netDollarOptimizationAboveTarget: true,
         exactTargetSimulationPassed: true,
@@ -639,8 +658,10 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     measuredBalancerFlashFeeRequired: true,
     measuredCompositionBenefitRequired: true,
     dailyProfitBudgetAuthority: 'profit_ladder_daily_realized_profit_only',
+    profitLadderStageAlignmentAuthority: false,
     borrowingNotionalAuthority: false,
     netDollarOptimizationAboveTarget: true,
+    tokenPriceBoundUsdAccounting: true,
     syntheticEconomics: false,
     scanMethodMutation: false,
     executionMethodMutation: false,
