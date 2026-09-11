@@ -17,6 +17,7 @@ import {
   verifyFlashLoanReceiverCapability,
   type VerifiedFlashLoanReceiverCapability,
 } from '../execution/adapters/flash-loan-receiver-capability.js';
+import { ensureProviderSpecificReceiverCapability } from '../execution/adapters/provider-specific-receiver-bootstrap.js';
 import { verifyDualFlashLoanReceiverCapability } from '../execution/adapters/dual-flashloan-receiver-capability.js';
 import { flashLoanProviderSelectionRegistry } from '../execution/adapters/flash-loan-provider-selection-registry.js';
 import { dualFlashLoanProviderSelectionRegistry } from '../execution/adapters/dual-flash-loan-provider-selection-registry.js';
@@ -231,9 +232,10 @@ export async function repriceZeroCapitalProviderEconomics(input: {
 
   const wallet = context.executionWallets.get(chain);
   const balancerReceiver = context.receiverManager.getReceiver(chain);
-  const capabilities = await verifiedCapabilities({ chain, provider, wallet, balancerReceiver });
   const funding = await context.getGasFundingDecision(chain);
   const resourceReady = strictFundingReady(funding);
+  const capabilities = await verifiedCapabilities({ chain, provider, wallet, balancerReceiver });
+  const bootstrappedProviders = new Set<FlashLoanProviderKind>();
   const repriced: ZeroCapitalOpportunity[] = [];
   const permissionCalls = new Map<string, any>();
   const permissionDeferred = new Set<string>();
@@ -257,7 +259,56 @@ export async function repriceZeroCapitalProviderEconomics(input: {
       // missing receiver cannot erase otherwise fresh fee/liquidity evidence.
       const measuredSingle = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount);
       const measuredDual = selectMeasuredDualFlashLoanAllocation(evidence, opportunity.flashLoanAmount);
-      const allowedProviders = [...capabilities.single.keys()];
+
+      // Cold-start only the economically preferred missing provider and only when
+      // strict zero-operator-cost gas is already proven. A newly deployed receiver
+      // invalidates the quote that triggered setup, so that provider is excluded
+      // from admission for the rest of this pass; already-ready alternatives may
+      // still execute from their own fresh evidence.
+      if (
+        measuredSingle
+        && wallet
+        && resourceReady
+        && (measuredSingle.provider === 'aave_v3' || measuredSingle.provider === 'morpho_blue')
+        && !capabilities.single.has(measuredSingle.provider)
+        && !bootstrappedProviders.has(measuredSingle.provider)
+      ) {
+        const ensured = await ensureProviderSpecificReceiverCapability({
+          kind: measuredSingle.provider,
+          chain: chain as any,
+          provider,
+          wallet,
+          fundingMode: funding.mode as ReceiverFundingMode,
+          executeSetupCalls: calls => context.executeSetupCalls(
+            chain as any,
+            provider,
+            wallet,
+            funding.mode as ReceiverFundingMode,
+            calls,
+          ),
+        }).catch(error => {
+          logger.debug('[ZeroCapitalFlashProvider] Provider-specific receiver cold start failed locally', {
+            component: 'ZeroCapitalFlashProviderWiring',
+            chain,
+            provider: measuredSingle.provider,
+            opportunityId: opportunity.id,
+            error: error instanceof Error ? error.message : String(error),
+            otherProviderAdmissionBlocked: false,
+            personalFundingRequested: false,
+            executionAuthority: false,
+          });
+          return null;
+        });
+        if (ensured) {
+          capabilities.single.set(measuredSingle.provider, ensured);
+          if (ensured.provenance.includes('provider_receiver_cold_start_route_local:true')) {
+            bootstrappedProviders.add(measuredSingle.provider);
+          }
+        }
+      }
+
+      const allowedProviders = [...capabilities.single.keys()]
+        .filter(providerKind => !bootstrappedProviders.has(providerKind));
       const selectedSingle = selectMeasuredFlashLoanProvider(evidence, opportunity.flashLoanAmount, allowedProviders);
       const selectedCapability = selectedSingle ? capabilities.single.get(selectedSingle.provider) ?? null : null;
       const selectedDual = capabilities.dual
@@ -462,6 +513,33 @@ export async function repriceZeroCapitalProviderEconomics(input: {
               extraProvenance: [...bootstrapEvidence.provenance, 'provider_reprice_input_immutable:true'],
             });
             repriced.push(bootstrapOpportunity);
+            continue;
+          }
+        }
+
+        // A provider-specific receiver deployed in this pass invalidates the quote
+        // that triggered its setup. Preserve measured economics, but never execute
+        // that stale quote. A ready alternative was already exhausted above.
+        if (measuredSingle && bootstrappedProviders.has(measuredSingle.provider)) {
+          const refreshFlashFee = calculateMeasuredFlashLoanFee(measuredSingle, opportunity.flashLoanAmount);
+          if (refreshFlashFee !== null) {
+            const refreshValues = repriceOpportunity(opportunity, refreshFlashFee);
+            recordReprice(opportunity, chain, refreshValues);
+            zeroCapitalRouteEvidenceRegistry.remove(opportunity.id);
+            updateCandidate({
+              opportunity,
+              selected: measuredSingle,
+              eligible: false,
+              reason: `The ${measuredSingle.provider} receiver was cold-started with zero operator funding; the triggering quote is intentionally invalid until canonical discovery reacquires fresh executable evidence`,
+              missingInformation: ['fresh_quote_after_provider_receiver_bootstrap'],
+              receiverBindingProvenance: 'provider_receiver_binding:route_local_cold_start_completed',
+              extraProvenance: [
+                'provider_receiver_cold_start_route_local:true',
+                'stale_quote_execution_allowed:false',
+                'other_provider_admission_blocked:false',
+                'provider_reprice_input_immutable:true',
+              ],
+            });
             continue;
           }
         }
