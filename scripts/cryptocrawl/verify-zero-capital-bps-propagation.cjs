@@ -16,8 +16,13 @@ const scheduler = read('server/services/cryptocrawl/execution/canonical-executio
 const executorEntry = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 const executorFlash = read('server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts');
 const executorAlternative = read('server/services/cryptocrawl/execution/zero-capital-alternative-prepared-executor.ts');
-const executor = `${executorEntry}\n${executorFlash}\n${executorAlternative}`;
+const executorComposite = read('server/services/cryptocrawl/execution/zero-capital-composite-prepared-executor.ts');
+const executor = `${executorEntry}\n${executorFlash}\n${executorAlternative}\n${executorComposite}`;
 const alternativeRegistry = read('server/services/cryptocrawl/ghost-wallet/zero-capital-alternative-selection-registry.ts');
+const compositeSelectionRegistry = read('server/services/cryptocrawl/execution/zero-capital-composite-selection-registry.ts');
+const compositeEvidenceRegistry = read('server/services/cryptocrawl/optimization/zero-capital-composite-evidence-registry.ts');
+const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
+const dailyProfitBudget = read('server/services/cryptocrawl/governance/profit-ladder-daily-profit-budget.ts');
 const realizedPolicy = read('server/services/cryptocrawl/execution/zero-capital-realized-profit-policy.ts');
 const gasFunding = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
 const dynamicChainRegistry = read('server/services/cryptocrawl/core/dynamic-chain-registry.ts');
@@ -74,7 +79,6 @@ assert.match(discovery, /alternativeCapitalDoesNotDisplaceWorkingFlashSelection:
 assert.match(discovery, /executionAuthority: false/);
 assert.match(discovery, /synthetic_evidence:false/);
 
-// Receiver preparation is route-local setup, never a global admission lock.
 assert.match(discovery, /refreshReceiverFleetForCycle\(target\)/);
 assert.match(discovery, /globalReceiverFailureBlocksProviderAdmission: false/);
 assert.match(discovery, /chainLocalResourceProofRequired: true/);
@@ -107,9 +111,6 @@ assert.match(engine, /monteCarloExecutionAuthority:\s*false/);
 assert.match(gasAuthority, /getProvenZeroCapitalGasFundingDecision/);
 assert.match(engine, /return getProvenZeroCapitalGasFundingDecision\(this, chain\)/);
 
-// Configured topology is not allowed to promote its static zero gas seed into BPS economics.
-// The exact funding decision and live market/gas evidence must be applied first, and the same
-// enriched route set must be reused by rescue requotes so sizing cannot erase gas cost.
 assert.match(engine, /enrichConfiguredZeroCapitalGasEconomics/);
 assert.match(engine, /const funding = await this\.getGasFundingDecision\(chain\);[\s\S]{0,300}enrichConfiguredZeroCapitalGasEconomics\(chain, provider, explicitRoutes, funding\)[\s\S]{0,300}quoteConfiguredZeroCapitalRoutesForChain\(chain, provider, gasEconomics\.routes\)/);
 assert.match(engine, /configuredRoutes: gasEconomics\.routes/);
@@ -125,22 +126,27 @@ assert.match(configuredGasEconomics, /estimatedGasCostInInputToken: gasUsdToToke
 assert.match(configuredGasEconomics, /ZERO_CAPITAL_CONFIGURED_EXECUTION_GAS_UNITS/);
 assert.match(configuredGasEconomics, /ZERO_CAPITAL_CONFIGURED_GAS_SAFETY_MULTIPLIER/);
 
-// Profit Ladder may broaden quote-only measurement before execution readiness,
-// but it still cannot grant exposure or bypass StageManager.
-assert.match(profitLadderNotional, /getProfitLadderDiscoveryNotionalAuthority/);
-assert.match(profitLadderNotional, /authority: 'profit_ladder_quote_only_capital_curve'/);
-assert.match(profitLadderNotional, /quoteOnly: true/);
-assert.match(profitLadderNotional, /executionAuthority: false/);
-assert.match(profitLadderNotional, /canBroadenExposure: false/);
+// Profit Ladder controls daily realized profit only. Atomic quote/borrow notional is
+// independent and later bounded by live provider liquidity/headroom + route economics.
+assert.match(profitLadderNotional, /getZeroCapitalDiscoveryNotionalAuthority/);
+assert.match(profitLadderNotional, /authority: 'zero_capital_quote_only_system_curve'/);
+assert.match(profitLadderNotional, /profitLadderNotionalAuthority: false/);
+assert.match(profitLadderNotional, /maxQuoteNotionalUsd: SYSTEM_MAX_NOTIONAL_USD/);
+assert.match(profitLadderNotional, /getProfitLadderDiscoveryNotionalAuthority[\s\S]{0,220}getZeroCapitalDiscoveryNotionalAuthority/);
 assert.match(profitLadderNotional, /const maxNotionalUsd = rung\.aligned && rung\.stage\.canExecuteTrades/);
 assert.match(routeQuoter, /getProfitLadderDiscoveryNotionalAuthority/);
 assert.match(routeQuoter, /maximumNotionalUsd/);
 assert.doesNotMatch(routeQuoter, /stageCanExecute \? maximum : seedUsd/);
-assert.match(rescue, /getProfitLadderDiscoveryNotionalAuthority/);
+assert.doesNotMatch(rescue, /getProfitLadderDiscoveryNotionalAuthority/);
 assert.doesNotMatch(rescue, /getProfitLadderNotionalAuthority/);
+assert.match(rescue, /providerSafeBorrowAmount/);
+assert.match(rescue, /liveBorrowCeilingUsd/);
+assert.match(rescue, /getProfitLadderDailyProfitBudget/);
+assert.match(rescue, /profitLadderBorrowingNotionalAuthority: false/);
+assert.match(dailyProfitBudget, /authority: 'profit_ladder_daily_realized_profit_only'/);
+assert.match(dailyProfitBudget, /borrowingNotionalAuthority: false/);
+assert.match(dailyProfitBudget, /remainingProfitUsd/);
 
-// Quote evidence must be fresher than the opportunity it describes. Historical
-// ranking can persist longer, but cannot masquerade as current executable BPS.
 for (const field of ['recentGrossProfitBps', 'recentAllInCostBps', 'recentBreakEvenBps', 'recentBpsToBreakEven', 'recentNetProfitBps']) {
   assert.ok(routePreselection.includes(field), `route preselection must preserve ${field}`);
 }
@@ -154,8 +160,6 @@ assert.match(recoveryObservability, /staleRouteEvidencePublishedAsActionable: fa
 assert.match(routeQuoter, /ZERO_CAPITAL_MAX_QUOTE_LATENCY_MS \|\| 1_000/);
 assert.match(routeQuoter, /ZERO_CAPITAL_ROUTE_TTL_MS \|\| 3_000/);
 
-// Live USD conversion is alternate-first. CoinGecko is last-resort redundancy for symbols
-// the parallel CMC/CoinCap/Coinbase mesh did not cover; no first-provider price is authoritative.
 assert.match(priceMesh, /mergeLivePriceEvidence/);
 assert.match(priceMesh, /const median = values\.length % 2 === 1/);
 assert.match(priceMesh, /this\.fetchCoinMarketCapKeylessByCoinIds\(coinIds, vsCurrency\)/);
@@ -178,8 +182,6 @@ assert.doesNotMatch(providerReprice, /target\.executeFunded\s*=/);
 assert.match(providerReprice, /BPS_PRECISION_SCALE\s*=\s*1_000_000n/);
 assert.match(providerReprice, /bootstrapFlashFee/);
 
-// Alternative-capital repricing is flash-fallback only and must carry an executable
-// prepared transaction with exact on-chain simulation before eligibility promotion.
 assert.match(alternativeReprice, /measureConfiguredGhostWalletSources\(/);
 assert.match(alternativeReprice, /await input\.provider\.call\(exactEnvelope\)/);
 assert.match(alternativeReprice, /input\.provider\.estimateGas\(exactEnvelope\)/);
@@ -197,13 +199,18 @@ assert.match(scheduler, /opportunity\.expectedProfit > 0n/);
 assert.doesNotMatch(scheduler, /opportunity\.netProfitBps > 0/);
 assert.match(scheduler, /executeCanonicalZeroCapitalOpportunity\(/);
 
-// The entrypoint remains singular. Existing flash/builder execution wins if it
-// appears after alternative repricing; only then may the prepared alternative run.
+// Canonical money boundary: ordinary flash/builder/alternative semantics remain,
+// while atomic-stack parents can execute only through their exact prepared selection.
 assert.match(executorEntry, /ghostWalletAlternativeZeroCapitalSelectionRegistry\.get\(opportunity\.id\)/);
+assert.match(executorEntry, /zeroCapitalCompositeSelectionRegistry\.get\(opportunity\.id\)/);
 assert.match(executorEntry, /flashLoanProviderSelectionRegistry\.get\(opportunity\.id\)/);
 assert.match(executorEntry, /builderSponsoredZeroCapitalRegistry\.get\(opportunity\.id\)/);
 assert.match(executorEntry, /return executeFlashCanonicalZeroCapitalOpportunity\(opportunity\)/);
 assert.match(executorEntry, /executeAlternativePreparedWithinCanonicalExecutor\(/);
+assert.match(executorEntry, /executeCompositePreparedWithinCanonicalExecutor\(/);
+assert.match(executorEntry, /single-route fallback is prohibited/);
+assert.match(executorEntry, /dailyProfitBudgetFailure\(opportunity\)/);
+assert.match(executorEntry, /expectedProfitFitsDailyBudget/);
 assert.match(executorAlternative, /selection\.expectedNetProfit !== opportunity\.expectedProfit/);
 assert.match(executorAlternative, /await provider\.call\(request\)/);
 assert.match(executorAlternative, /await provider\.estimateGas\(request\)/);
@@ -211,9 +218,13 @@ assert.match(executorAlternative, /estimatedGasUnits > selection\.estimatedGasUn
 assert.match(executorAlternative, /source_specific|parseAlternativeProfit/);
 assert.match(executorAlternative, /intermediaryEnding !== intermediaryStarting/);
 assert.match(executorAlternative, /recipientDelta !== grossProfit/);
+assert.match(executorComposite, /selection\.expectedNetProfit !== opportunity\.expectedProfit/);
+assert.match(executorComposite, /await provider\.call\(request\)/);
+assert.match(executorComposite, /estimatedGasUnits > selection\.estimatedGasUnits/);
+assert.match(executorComposite, /profit_below_threshold|target economics|target-bound/);
+assert.match(executorComposite, /receiverEnding !== receiverStarting/);
+assert.match(executorComposite, /recipientDelta !== grossProfit/);
 
-// Existing flash execution invariants remain strict: optimization may recover a
-// negative near-miss before scheduling, but execution itself never accepts one.
 assert.match(executor, /Date\.now\(\) >= opportunity\.expiresAt/);
 assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
@@ -228,9 +239,6 @@ assert.match(executor, /extractProfit\(receipt/);
 assert.match(executor, /terminalEconomics\(/);
 assert.match(executor, /synthetic_evidence:false/);
 
-// ZERO_CAPITAL_ATOMIC is a hard zero-personal-cost boundary. Provider-fronted gas
-// is admissible only when independent evidence proves that it creates no operator
-// or application billing liability. This rule is not environment-optional.
 assert.match(gasFunding, /function strictZeroOperatorCostRequired\(\): boolean \{\s*return true;\s*\}/);
 assert.match(gasFunding, /sponsorOperatorMonetaryCostProvenZero === true/);
 assert.match(gasFunding, /providerBillingLiability: false/);
@@ -244,14 +252,20 @@ assert.doesNotMatch(executor, /zeroMonetaryGasVerified:\s*sponsoredExecution\s*[
 assert.match(executor, /Legacy EOA builder cold-start is not zero-native-capital authority/);
 assert.match(sponsoredReceiverManager, /await this\.sponsor\.execute\(/);
 assert.match(sponsoredReceiverManager, /ZERO_CAPITAL_SPONSORED_RECEIVER_DEPLOY_TIMEOUT_MS/);
-// Chain configuration may advertise route capability, but must never grant hosted
-// sponsorship by assumption. A future sponsored path can only become admissible
-// through the canonical proof above with explicit zero-billing-liability evidence.
 assert.doesNotMatch(dynamicChainRegistry, /sponsoredBootstrap: true/);
 assert.match(dynamicChainRegistry, /\{ id: 'bsc', family: 'evm', nativeAsset: 'BNB', sponsoredBootstrap: false, executionMode: 'native_only' \}/);
 assert.match(dynamicChainRegistry, /hostedSponsorshipAssumedByChainConfig: false/);
 assert.match(dynamicChainRegistry, /receiverCapabilityImpliedGasSponsorship: false/);
 
+// -10 BPS is the near-miss entry window; +10 BPS is the configurable minimum
+// target for the atomic-surplus lane. Above the floor, rank by real net dollars.
+assert.match(rescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10/);
+assert.match(rescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10/);
+assert.match(rescue, /recoverableByAtomicSurplus/);
+assert.match(rescue, /grossPositiveRequiredForAtomicSurplusRescue: false/);
+assert.match(rescue, /exactTargetSurplusRequiredBeforePromotion: true/);
+assert.match(rescue, /principalRepaymentAndFlashFeeIncludedInNetEconomics: true/);
+assert.match(rescue, /netDollarOptimizationAboveTarget: true/);
 assert.match(rescue, /buildBpsReductionSuperPlan/);
 assert.match(rescue, /buildResearchBpsExecutionPlan/);
 assert.match(rescue, /adviseEconomicTransformations/);
@@ -266,6 +280,19 @@ assert.match(rescue, /executionAuthority: false/);
 assert.doesNotMatch(rescue, /expectedProfit\s*=\s*Math\.max/);
 assert.doesNotMatch(rescue, /netProfitBps\s*=\s*Math\.max/);
 
+// Shared-principal composition is measurement-only until an exact target-bound
+// composite parent is prepared. Original member opportunities are not mutated.
+assert.match(atomicStack, /getCompatibleForAtomicSurplus/);
+assert.match(atomicStack, /measureBalancerFlashLoanEconomics/);
+assert.match(atomicStack, /targetProfitBaseUnits/);
+assert.match(atomicStack, /combinedExpectedProfit < targetNetProfitBaseUnits/);
+assert.match(atomicStack, /zeroCapitalCompositeSelectionRegistry\.record\(selection\)/);
+assert.match(atomicStack, /zeroCapitalRouteEvidenceRegistry\.record\(opportunity\)/);
+assert.match(atomicStack, /opportunityId\.startsWith\(COMPOSITE_ID_PREFIX\)/);
+assert.match(atomicStack, /netDollarOptimizationAboveTarget: true/);
+assert.match(compositeSelectionRegistry, /expectedNetProfit < selection\.targetNetProfitBaseUnits/);
+assert.match(compositeEvidenceRegistry, /combinedExpectedProfit < input\.targetNetProfitBaseUnits/);
+
 assert.match(payloadBuilder, /export type UniswapV3FeeTier = 100 \| 500 \| 3000 \| 10000/);
 assert.match(payloadBuilder, /'pancakeswapV2'/);
 assert.match(payloadBuilder, /'traderJoeV1'/);
@@ -277,7 +304,6 @@ assert.match(routePlanner, /if \(fee <= 0\.0001\) return 100/);
 assert.match(receiverCapability, /if \(fee <= 0\.0001\) return 100/);
 assert.match(routeQuoter, /return \(feeTier \|\| 3000\) \/ 1_000_000/);
 
-// Builder cold-start repayment is a measured route+path mesh, not a mandatory Sushi/direct-WETH path.
 assert.match(repaymentRoute, /BuilderRepaymentRouteName = 'uniswap_v2' \| 'sushiswap_v2'/);
 assert.match(repaymentRoute, /0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D/);
 assert.match(repaymentRoute, /0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F/);
@@ -296,7 +322,6 @@ assert.match(builderReceiverBootstrap, /selectBuilderRepaymentRoute\(/);
 assert.match(builderColdStart, /sub_bps_precision_preserved:true/);
 assert.match(builderReceiverBootstrap, /sub_bps_precision_preserved:true/);
 
-// Builder transport remains one canonical caller while a candidate can survive a bounded block window.
 assert.match(builderTransport, /ZERO_CAPITAL_BUILDER_BLOCK_WINDOW \|\| 3/);
 assert.match(builderTransport, /Math\.max\(1, Math\.min\(5, Math\.trunc\(raw\)\)\)/);
 assert.match(builderTransport, /maxTargetBlock/);
@@ -314,8 +339,9 @@ console.log(JSON.stringify({
   zeroCapitalBpsPropagation: 'verified_on_single_canonical_pipeline',
   canonicalRouteAuthority: true,
   canonicalDiscoveryOwnsFreshMeasurement: true,
-  quoteOnlyProfitLadderNotionalDiscovery: true,
-  executionNotionalAuthorityStillFailClosed: true,
+  profitLadderDailyProfitOnly: true,
+  atomicBorrowNotionalIndependentOfProfitLadder: true,
+  liveProviderLiquidityBoundsAtomicBorrowing: true,
   globalReceiverFailureCannotBlockHealthyChainAdmission: true,
   completeFreshBpsDecompositionVisible: true,
   actionableBpsBoundedByRouteTtl: true,
@@ -327,10 +353,14 @@ console.log(JSON.stringify({
   alternativeCapitalExactSimulationRequired: true,
   canonicalParentSchedulerOwnsDispatch: true,
   canonicalZeroCapitalExecutorOwnsMoneyBoundary: true,
+  compositeParentCannotFallBackToSingleRoute: true,
+  atomicSurplusEntryFloorBps: -10,
+  atomicSurplusTargetFloorBps: 10,
+  atomicSurplusNetDollarOptimization: true,
   runtimeParallelScheduler: false,
   runtimeDispatchMutation: false,
   zeroCapitalBpsSuperEngineOperational: true,
-  positiveExecutionFloorPreserved: true,
+  positiveExecutionFloorPreservedOutsideAtomicSurplusLane: true,
   zeroInitialCapitalPaymasterTruthBound: true,
   providerSponsoredGasChargedInRealizedEconomics: true,
   legacyEoaBuilderNotGasSponsor: true,
