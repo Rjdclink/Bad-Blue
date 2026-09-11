@@ -12,7 +12,6 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
-import { getProfitLadderDiscoveryNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 import {
   buildBpsReductionSuperPlan,
   recordBpsRevalidationOutcome,
@@ -42,6 +41,14 @@ function bounded(raw: unknown, fallback: number, min: number, max: number): numb
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
 
+function atomicSurplusEntryFloorBps(): number {
+  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10, -100, 0);
+}
+
+function atomicSurplusTargetBps(): number {
+  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 0.000001, 1_000);
+}
+
 function bpsFromBaseUnits(value: bigint, notional: bigint): number {
   if (notional <= 0n) return Number.NaN;
   return Number((value * 10_000n * BPS_PRECISION_SCALE) / notional) / Number(BPS_PRECISION_SCALE);
@@ -69,15 +76,21 @@ function grossProfit(opportunity: ZeroCapitalOpportunity): bigint {
 }
 
 /**
- * Cost/BPS compression can only create a legitimate surplus when a positive
- * market spread exists before controllable costs. A zero/negative gross spread
- * requires a different route/size/market discovery, not accounting compression.
+ * The BPS reducer hands near-misses to the atomic-capital phase. The entry window
+ * is intentionally about measured all-in NET BPS, not about a pre-existing
+ * positive gross spread: the atomic phase is allowed to search fresh notional,
+ * provider and route economics. It still cannot manufacture economics; only an
+ * exact requote that repays principal/costs and clears the target may advance.
  */
-function recoverableByCostCompression(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
+function recoverableByAtomicSurplus(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
+  const floorBps = atomicSurplusEntryFloorBps();
+  const targetBps = atomicSurplusTargetBps();
   return opportunity.expectedProfit <= 0n
     && opportunity.expiresAt > now
     && opportunity.flashLoanAmount > 0n
-    && grossProfit(opportunity) > 0n;
+    && Number.isFinite(opportunity.netProfitBps)
+    && opportunity.netProfitBps >= floorBps
+    && opportunity.netProfitBps < targetBps;
 }
 
 function routeForOpportunity(routes: readonly ConfiguredZeroCapitalRoute[], opportunity: ZeroCapitalOpportunity): ConfiguredZeroCapitalRoute | null {
@@ -96,13 +109,20 @@ function providerFresh(evidence: FlashLoanProviderEconomics, now = Date.now()): 
   return evidence.executableEvidenceComplete && now - evidence.observedAt <= maxAgeMs;
 }
 
-function providerUsableForAmount(evidence: FlashLoanProviderEconomics, amount: bigint): boolean {
-  if (!providerFresh(evidence) || evidence.availableLiquidity === null || evidence.availableLiquidity <= 0n) return false;
+function providerSafeBorrowAmount(evidence: FlashLoanProviderEconomics): bigint {
+  if (!providerFresh(evidence) || evidence.availableLiquidity === null || evidence.availableLiquidity <= 0n) return 0n;
   const maxUtilization = bounded(process.env.ZERO_CAPITAL_PROVIDER_MAX_UTILIZATION, 0.8, 0.1, 0.95);
   const requiredHeadroom = bounded(process.env.ZERO_CAPITAL_PROVIDER_MIN_HEADROOM_RATIO, 1.15, 1, 5);
-  const utilizationOk = Number(amount) / Math.max(1, Number(evidence.availableLiquidity)) <= maxUtilization;
-  const headroomOk = Number(evidence.availableLiquidity) / Math.max(1, Number(amount)) >= requiredHeadroom;
-  return utilizationOk && headroomOk;
+  const precision = 1_000_000n;
+  const utilizationScaled = BigInt(Math.max(1, Math.floor(maxUtilization * Number(precision))));
+  const headroomScaled = BigInt(Math.max(Number(precision), Math.ceil(requiredHeadroom * Number(precision))));
+  const utilizationLimit = evidence.availableLiquidity * utilizationScaled / precision;
+  const headroomLimit = evidence.availableLiquidity * precision / headroomScaled;
+  return utilizationLimit < headroomLimit ? utilizationLimit : headroomLimit;
+}
+
+function providerUsableForAmount(evidence: FlashLoanProviderEconomics, amount: bigint): boolean {
+  return amount > 0n && amount <= providerSafeBorrowAmount(evidence);
 }
 
 function adjustForProvider(quote: QuotedZeroCapitalRoute, evidence: FlashLoanProviderEconomics): QuotedZeroCapitalRoute | null {
@@ -139,75 +159,113 @@ function bpsRescueContext(opportunity: ZeroCapitalOpportunity): ZeroCapitalBpsRe
 function candidateFactors(opportunity: ZeroCapitalOpportunity, context: ZeroCapitalBpsRescueContext | null): number[] {
   const sharedResidualFractions = context?.plan.residualNotionalFractions
     .filter(fraction => Number.isFinite(fraction) && fraction > 0 && fraction < 1) ?? [];
-  const gap = Math.max(0, -opportunity.netProfitBps);
+  const gap = Math.max(0, atomicSurplusTargetBps() - opportunity.netProfitBps);
   const gasPressureBps = opportunity.flashLoanAmount > 0n
     ? bpsFromBaseUnits(opportunity.estimatedExecutionCostInInputToken, opportunity.flashLoanAmount)
     : 0;
 
   let local: number[];
   if (context?.dominantCostDriver === 'slippage_impact' || context?.dominantCostDriver === 'latency_decay') {
-    local = [1, 0.85, 0.7, 0.5, 0.35];
+    local = [0.35, 0.5, 0.7, 0.85, 1, 1.25, 1.5];
   } else if (context?.dominantCostDriver === 'gas' || context?.dominantCostDriver === 'relay' || context?.dominantCostDriver === 'bridge') {
-    local = [1, 1.25, 1.5, 2, 3, 4, 5, 6, 8];
-  } else if (gap <= 5) {
-    local = [0.5, 0.7, 0.85, 1, 1.15, 1.3, 1.5, 1.8, 2.2];
+    local = [0.5, 0.75, 1, 1.5, 2, 3, 5, 8];
   } else if (gap <= 15) {
-    local = [0.4, 0.6, 0.8, 1, 1.25, 1.5, 2, 2.5, 3];
+    local = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 5];
   } else if (gasPressureBps >= 25) {
-    local = [0.75, 1, 1.5, 2, 3, 4, 5, 6, 8];
+    local = [0.75, 1, 1.5, 2, 3, 5, 8];
   } else {
-    local = [0.35, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5];
+    local = [0.5, 0.75, 1, 1.5, 2, 3, 5];
   }
   return [...new Set([...sharedResidualFractions, ...local])];
+}
+
+function geometricBorrowSizes(currentUsd: number, ceilingUsd: number, slots: number): number[] {
+  if (!(currentUsd > 0) || !(ceilingUsd > 0)) return [];
+  if (ceilingUsd <= currentUsd || slots <= 1) return [Math.min(currentUsd, ceilingUsd)];
+  const count = Math.max(2, Math.min(16, Math.trunc(slots)));
+  const ratio = Math.pow(ceilingUsd / currentUsd, 1 / (count - 1));
+  const values: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const value = index === count - 1 ? ceilingUsd : currentUsd * Math.pow(ratio, index);
+    if (Number.isFinite(value) && value > 0) values.push(value);
+  }
+  return values;
 }
 
 function candidateSizes(
   opportunity: ZeroCapitalOpportunity,
   route: ConfiguredZeroCapitalRoute,
   context: ZeroCapitalBpsRescueContext | null,
+  providerEvidence: readonly FlashLoanProviderEconomics[],
 ): number[] {
   const currentUsd = Math.max(0.01, usdFromBaseUnits(opportunity.flashLoanAmount, route.inputTokenDecimals));
-  const discoveryAuthority = getProfitLadderDiscoveryNotionalAuthority();
-  const ceiling = Math.max(currentUsd, discoveryAuthority.maxQuoteNotionalUsd || currentUsd);
-  const maxCandidates = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_SIZE_CANDIDATES, 7, 3, 12));
-  return [...new Set(candidateFactors(opportunity, context)
-    .slice(0, maxCandidates)
-    .map(factor => Math.max(0.01, Math.min(ceiling, currentUsd * factor))))]
+  const liveBorrowCeilingUsd = providerEvidence.reduce((maximum, evidence) => {
+    const safeAmount = providerSafeBorrowAmount(evidence);
+    return Math.max(maximum, usdFromBaseUnits(safeAmount, route.inputTokenDecimals));
+  }, 0);
+  if (!(liveBorrowCeilingUsd > 0)) return [];
+
+  const maxCandidates = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_SIZE_CANDIDATES, 9, 3, 16));
+  const local = candidateFactors(opportunity, context)
+    .map(factor => currentUsd * factor)
+    .filter(value => Number.isFinite(value) && value > 0 && value <= liveBorrowCeilingUsd);
+  const geometric = geometricBorrowSizes(Math.min(currentUsd, liveBorrowCeilingUsd), liveBorrowCeilingUsd, maxCandidates);
+  const candidates = [...new Set([...local, ...geometric, liveBorrowCeilingUsd]
+    .map(value => Math.max(0.01, Math.min(liveBorrowCeilingUsd, value)))
+    .map(value => Math.round(value * 1_000_000) / 1_000_000))]
     .sort((a, b) => a - b);
+
+  if (candidates.length <= maxCandidates) return candidates;
+  const selected = new Set<number>([candidates[0], candidates[candidates.length - 1]]);
+  const currentIndex = candidates.reduce((best, value, index) =>
+    Math.abs(value - currentUsd) < Math.abs(candidates[best] - currentUsd) ? index : best, 0);
+  selected.add(candidates[currentIndex]);
+  for (let step = 1; selected.size < maxCandidates; step += 1) {
+    const lower = currentIndex - step;
+    const upper = currentIndex + step;
+    if (lower >= 0) selected.add(candidates[lower]);
+    if (selected.size >= maxCandidates) break;
+    if (upper < candidates.length) selected.add(candidates[upper]);
+    if (lower < 0 && upper >= candidates.length) break;
+  }
+  selected.add(candidates[candidates.length - 1]);
+  return [...selected].sort((a, b) => a - b).slice(0, maxCandidates - 1).concat(candidates[candidates.length - 1]).filter((value, index, values) => index === 0 || value !== values[index - 1]);
 }
 
 function quoteBetter(current: QuotedZeroCapitalRoute | null, candidate: QuotedZeroCapitalRoute): QuotedZeroCapitalRoute {
   if (!current) return candidate;
-  if (candidate.netProfit > 0n && current.netProfit <= 0n) return candidate;
-  if (candidate.netProfit <= 0n && current.netProfit > 0n) return current;
-  if (candidate.netProfit > 0n && current.netProfit > 0n) {
+  const target = atomicSurplusTargetBps();
+  const candidateClearsTarget = candidate.netProfit > 0n && candidate.netProfitBps >= target;
+  const currentClearsTarget = current.netProfit > 0n && current.netProfitBps >= target;
+  if (candidateClearsTarget !== currentClearsTarget) return candidateClearsTarget ? candidate : current;
+  if (candidateClearsTarget && currentClearsTarget) {
     if (candidate.netProfit !== current.netProfit) return candidate.netProfit > current.netProfit ? candidate : current;
     return candidate.quoteLatencyMs < current.quoteLatencyMs ? candidate : current;
   }
   if (candidate.netProfitBps !== current.netProfitBps) return candidate.netProfitBps > current.netProfitBps ? candidate : current;
+  if (candidate.netProfit !== current.netProfit) return candidate.netProfit > current.netProfit ? candidate : current;
   return candidate.quoteLatencyMs < current.quoteLatencyMs ? candidate : current;
 }
 
 function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZeroCapitalRoute): boolean {
-  if (candidate.netProfit > 0n && original.expectedProfit <= 0n) return true;
-  if (candidate.netProfit <= 0n && original.expectedProfit > 0n) return false;
-  if (candidate.netProfit > 0n && original.expectedProfit > 0n) return candidate.netProfit > original.expectedProfit;
   return Number.isFinite(candidate.netProfitBps)
     && Number.isFinite(original.netProfitBps)
     && candidate.netProfitBps > original.netProfitBps;
 }
 
+function clearsAtomicSurplusTarget(candidate: QuotedZeroCapitalRoute): boolean {
+  return candidate.netProfit > 0n && candidate.netProfitBps >= atomicSurplusTargetBps();
+}
+
 function rescuePriority(opportunity: ZeroCapitalOpportunity, context: ZeroCapitalBpsRescueContext | null, now = Date.now()): number {
-  if (!recoverableByCostCompression(opportunity, now)) return Number.NEGATIVE_INFINITY;
+  if (!recoverableByAtomicSurplus(opportunity, now)) return Number.NEGATIVE_INFINITY;
   const ageMs = Math.max(0, now - opportunity.timestamp);
   const routeLifetimeMs = Math.max(250, opportunity.expiresAt - opportunity.timestamp);
   const configuredHalfLife = bounded(process.env.ZERO_CAPITAL_RESCUE_HALF_LIFE_MS, routeLifetimeMs / 2, 250, 120_000);
   const agePenalty = Math.exp(-ageMs / Math.min(configuredHalfLife, routeLifetimeMs));
-  const gap = Math.max(0.01, Math.abs(opportunity.netProfitBps));
+  const targetGap = Math.max(0.01, atomicSurplusTargetBps() - opportunity.netProfitBps);
   const confidence = Math.max(0.05, Math.min(1, opportunity.confidence));
-  const grossSpreadBps = Math.max(0.000001, bpsFromBaseUnits(grossProfit(opportunity), opportunity.flashLoanAmount));
-  const recoverability = grossSpreadBps / Math.max(grossSpreadBps, gap);
-  const basePriority = (1 / gap) * confidence * agePenalty * Math.max(0.05, recoverability);
+  const basePriority = (1 / targetGap) * confidence * agePenalty;
   const superPriority = context?.plan.effectivePriorityScore;
   return superPriority !== undefined && Number.isFinite(superPriority) && superPriority > 0
     ? basePriority * superPriority
@@ -222,7 +280,7 @@ function selectRescueIds(opportunities: readonly ZeroCapitalOpportunity[], route
     return contexts.get(item.id) ?? null;
   };
   const ranked = opportunities
-    .filter(item => recoverableByCostCompression(item))
+    .filter(item => recoverableByAtomicSurplus(item))
     .sort((a, b) => rescuePriority(b, contextFor(b)) - rescuePriority(a, contextFor(a)));
   const selected: string[] = [];
   const families = new Set<string>();
@@ -260,13 +318,17 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   let remainingQuoteBudget = totalQuoteBudget;
   let improved = 0;
   let positivesRecovered = 0;
+  let targetSurplusRecovered = 0;
   let staleProviderEvidenceRejected = 0;
   let insufficientLiquidityRejected = 0;
   let expiredBeforeRequote = 0;
   let invalidFreshRefinement = 0;
   let bpsSuperEngineCandidates = 0;
   let bpsSuperEnginePositiveRecoveries = 0;
-  const negativeGrossSkipped = opportunities.filter(item => item.expectedProfit <= 0n && grossProfit(item) <= 0n).length;
+  const outsideAtomicSurplusWindow = opportunities.filter(item =>
+    item.expectedProfit <= 0n
+    && (!Number.isFinite(item.netProfitBps) || item.netProfitBps < atomicSurplusEntryFloorBps()),
+  ).length;
   const bpsDrivers = new Map<string, number>();
   const output: ZeroCapitalOpportunity[] = [];
 
@@ -301,7 +363,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
       }
 
       let best: QuotedZeroCapitalRoute | null = null;
-      const sizes = candidateSizes(opportunity, route, bpsContext).slice(0, remainingQuoteBudget);
+      const sizes = candidateSizes(opportunity, route, bpsContext, providerEvidence).slice(0, remainingQuoteBudget);
       remainingQuoteBudget -= sizes.length;
       const settled = await Promise.allSettled(sizes.map(sizeUsd =>
         quoteConfiguredZeroCapitalRoute({ ...route, amountIn: baseUnitsFromUsd(sizeUsd, route.inputTokenDecimals) }, provider),
@@ -325,11 +387,11 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
       if (bpsContext) {
         recordBpsRevalidationOutcome(bpsContext.plan, {
           deterministicPositive: best?.netProfit && best.netProfit > 0n ? 1 : 0,
-          eligibleCandidates: 0,
+          eligibleCandidates: best && clearsAtomicSurplusTarget(best) ? 1 : 0,
         });
       }
 
-      if (!best || !strictImprovement(opportunity, best)) {
+      if (!best || !strictImprovement(opportunity, best) || !clearsAtomicSurplusTarget(best)) {
         output.push(opportunity);
         continue;
       }
@@ -349,6 +411,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
       improved += 1;
       if (best.netProfit > 0n) {
         positivesRecovered += 1;
+        targetSurplusRecovered += 1;
         if (bpsContext) bpsSuperEnginePositiveRecoveries += 1;
       }
     } catch (error) {
@@ -373,7 +436,10 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     minimumRemainingLifetimeMs,
     improved,
     positivesRecovered,
-    negativeGrossSkipped,
+    targetSurplusRecovered,
+    atomicSurplusEntryFloorBps: atomicSurplusEntryFloorBps(),
+    atomicSurplusTargetBps: atomicSurplusTargetBps(),
+    outsideAtomicSurplusWindow,
     staleProviderEvidenceRejected,
     insufficientLiquidityRejected,
     expiredBeforeRequote,
@@ -382,16 +448,17 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     bpsSuperEnginePositiveRecoveries,
     bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
     bpsPriorityAuthority: 'shared_bps_super_engine_effective_priority_score',
-    bpsResidualNotionalAuthority: 'shared_bps_super_engine_residual_notional_fractions_plus_fixed_cost_dilution_probes',
-    liveNotionalCeilingAuthority: 'profit_ladder_quote_only_capital_curve',
+    bpsResidualNotionalAuthority: 'shared_bps_super_engine_residual_notional_fractions_plus_live_provider_liquidity_curve',
+    liveNotionalCeilingAuthority: 'fresh_flash_provider_liquidity_with_headroom',
     inputTokenDecimalsAuthoritative: true,
     providerFreshnessRequired: true,
     providerLiquidityHeadroomRequired: true,
     providerUtilizationBounded: true,
     adaptiveGapAwareSizing: true,
-    grossPositiveRequiredForCostCompressionRescue: true,
-    nonpositiveGrossRequiresAlternateRouteDiscovery: true,
-    finalResidualCostMustBeBelowGrossSpread: true,
+    grossPositiveRequiredForAtomicSurplusRescue: false,
+    atomicBorrowingIndependentOfProfitLadderNotional: true,
+    exactTargetSurplusRequiredBeforePromotion: true,
+    principalRepaymentAndFlashFeeIncludedInNetEconomics: true,
     routeFamilyDiversity: true,
     strictImprovementRequired: true,
     existingPositiveNeverReplacedByNegative: true,
