@@ -73,11 +73,19 @@ assert.match(source, /borrowCapacityAssetUnits/);
 assert.match(source, /availablePrincipal = minBigInt\(minBigInt\(allowance, liquid\), borrowCapacityAssetUnits\)/);
 
 // Freshness/failover: refresh single-flight, provider health can be re-probed, and Ghost settlement
-// keeps every monitored address while containing WebSocket/provider failure inside the route.
+// keeps every monitored address while containing WebSocket/provider/log-range failure inside the route.
 assert.match(providerMesh, /providerHealthTtlMs/);
 assert.match(providerMesh, /lastProbeAt/);
+assert.match(providerMesh, /async getProviders\(chain: string\)/);
 assert.match(chainEvents, /backfillSettlementLogs/);
-assert.match(chainEvents, /input\.addresses\.map\(address => input\.provider\.getLogs/);
+assert.match(chainEvents, /ghostWalletProviderMesh\.getProviders\(chain\)/);
+assert.match(chainEvents, /querySettlementLogsWithFailover/);
+assert.match(chainEvents, /collectSettlementLogs/);
+assert.match(chainEvents, /pending\.unshift\(\[fromBlock, midpoint\], \[midpoint \+ 1, toBlock\]\)/);
+assert.match(chainEvents, /failure\.rangeLimited = sawRangeLimit/);
+assert.match(chainEvents, /logBackfillProviderFailover: true/);
+assert.match(chainEvents, /logBackfillAdaptiveRangeSplit: true/);
+assert.doesNotMatch(chainEvents, /input\.addresses\.map\(address => input\.provider\.getLogs/);
 assert.doesNotMatch(chainEvents, /address:\s*input\.addresses/);
 assert.match(chainEvents, /from 'ws'/);
 assert.match(chainEvents, /eth_subscribe/);
