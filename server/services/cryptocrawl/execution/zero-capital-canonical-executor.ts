@@ -1,7 +1,7 @@
 import { ethers, type Wallet, type providers } from 'ethers';
 import logger from '../../../logger.js';
 import type { CryptaraExecutionFeedback } from '../../cryptara/index.js';
-import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import { retainedProfitLedger } from '../compensation/retained-profit-ledger.js';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { resolveOperationalProfitRecipient } from '../core/wallet-identity.js';
@@ -103,7 +103,7 @@ async function terminalEconomics(input: {
 
   let prices = new Map<string, number>();
   try {
-    prices = await coinGeckoPriceClient.getLiveSymbolPrices([...new Set(symbols)]);
+    prices = await livePriceMesh.getLiveSymbolPrices([...new Set(symbols)]);
   } catch {
     // Settlement truth is preserved; economics fail closed below if pricing is unavailable.
   }
