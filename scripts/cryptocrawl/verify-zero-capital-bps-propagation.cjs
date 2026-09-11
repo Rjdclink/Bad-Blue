@@ -126,7 +126,7 @@ assert.match(engine, /provider: rescueProvider/);
 assert.match(engine, /configuredRoutes: gasEconomics\.routes/);
 assert.match(engine, /zeroSeedPromotedToExecutableEconomics: false/);
 assert.match(configuredGasEconomics, /provider\.getFeeData\(\)/);
-assert.match(configuredGasEconomics, /coinGeckoPriceClient\.getLiveSymbolPrices\(\[nativeSymbol, \.\.\.inputSymbols\]\)/);
+assert.match(configuredGasEconomics, /livePriceMesh\.getLiveSymbolPrices\(\[nativeSymbol, \.\.\.inputSymbols\]\)/);
 assert.match(configuredGasEconomics, /funding\.mode === 'sponsored'/);
 assert.match(configuredGasEconomics, /funding\.paymentSource === 'provider_sponsored'/);
 assert.match(configuredGasEconomics, /funding\.sponsorOperatorMonetaryCostProvenZero === true/);
