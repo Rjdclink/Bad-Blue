@@ -101,12 +101,14 @@ check('Across executor has no direct raw-provider principal submission bypass', 
 check('Across recovery reuses exact signed bytes through system-owned gas authority', acrossRecovery.includes('executePreparedSystemOwnedNativeTransaction({') && acrossRecovery.includes("idempotencyKey: `across-origin:${row.depositTxnRef.toLowerCase()}`"));
 check('Across recovery has no raw-provider rebroadcast bypass', !acrossRecovery.includes('provider.sendTransaction(raw)'));
 
-check('hosted sponsor satisfies zero-initial-capital while billed gas remains explicit',
-  gasPolicy.includes('strictZeroInitialCapitalEligible: true')
-  && gasPolicy.includes('operatorMonetaryInputRequired: false')
-  && gasPolicy.includes('providerBillingLiability: !sponsorCostProvenZero')
-  && zeroCapitalExecutor.includes('providerBillingLiability: funding.providerBillingLiability === true')
-  && zeroCapitalExecutor.includes('zeroMonetaryGasVerified: sponsoredExecution && funding.sponsorOperatorMonetaryCostProvenZero === true'));
+check('billed hosted sponsor is rejected from strict zero-operator-cost admission',
+  gasPolicy.includes('const sponsorCostProvenZero = proof.sponsorOperatorMonetaryCostProvenZero === true')
+  && gasPolicy.includes('chain.sponsoredBootstrap && sponsorReady && sponsorCostProvenZero')
+  && gasPolicy.includes('providerBillingLiability: false')
+  && gasPolicy.includes('strictZeroInitialCapitalEligible: false')
+  && gasPolicy.includes('operatorMonetaryInputRequired: true')
+  && gasPolicy.includes('providerBillingLiability: chain.sponsoredBootstrap && sponsorReady && !sponsorCostProvenZero')
+  && gasPolicy.includes('not admissible without proof of zero operator billing liability'));
 check('raw native balance is not promoted without system-owned proof', gasPolicy.includes('nativeSystemOwnedProven') && gasPolicy.includes('native balance exists but SELF_FUNDED system ownership is not proven'));
 check('durable native gas proof wiring keeps hosted sponsorship unproven', nativeGasProof.includes('sponsorOperatorMonetaryCostProvenZero: false'));
 check('durable native gas proof requires system ownership authority', nativeGasProof.includes('getSystemNativeGasAuthority'));
@@ -131,4 +133,4 @@ if (failed.length) {
   process.exit(1);
 }
 
-console.log('[atomic-zero-capital-strategy-coverage] all measured strategy topologies including Kalshi prediction events and bidirectional funding remain under one zero-personal-principal/gas/collateral policy; asynchronous/multi-period Kalshi lanes use provenance-backed system capital and authenticated liabilities rather than false flash atomicity');
+console.log('[atomic-zero-capital-strategy-coverage] all measured strategy topologies including Kalshi prediction events and bidirectional funding remain under one zero-personal-principal/gas/collateral policy; billed sponsorship is never treated as zero-operator-cost, while asynchronous/multi-period lanes use provenance-backed system capital and authenticated liabilities rather than false flash atomicity');

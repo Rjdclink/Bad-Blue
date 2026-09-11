@@ -8,7 +8,12 @@ import { prepareZeroXAtomicRoundTrip } from '../execution/dex-zerox-atomic-execu
 import { getMeasuredErc20Decimals } from '../intelligence/erc20-decimals-authority.js';
 import { marketDataProviders, type DexQuoteObservation } from '../intelligence/market-data-providers.js';
 import { inspectZeroXFeeEconomics } from '../intelligence/zerox-fee-economics.js';
+import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
+
+type IndicativeDexQuote = Omit<DexQuoteObservation, 'source'> & {
+  source: '0x' | 'openocean';
+};
 
 function marketDataDiscoveryChains(): ChainId[] {
   return (Object.keys(SUPPORTED_CHAINS) as ChainId[]).filter(chain => {
@@ -36,8 +41,27 @@ function unitsToUsd(raw: string | undefined, decimals: number): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-function quoteEvidence(quote: DexQuoteObservation, chain: ChainId) {
-  const fees = inspectZeroXFeeEconomics(quote);
+function quoteEvidence(quote: IndicativeDexQuote, chain: ChainId) {
+  if (quote.source === 'openocean') {
+    return {
+      source: 'openocean',
+      venue: 'openocean',
+      chain,
+      observedAt: quote.observedAt,
+      amountIn: quote.sellAmount,
+      amountOut: quote.buyAmount ?? null,
+      price: quote.price ?? null,
+      executable: false,
+      provenance: [
+        'openocean:v4_quote',
+        'openocean:quote_only_discovery',
+        'openocean:estimated_gas_reference_only',
+        'openocean:execution_authority:false',
+        'synthetic_evidence:false',
+      ],
+    };
+  }
+  const fees = inspectZeroXFeeEconomics(quote as DexQuoteObservation);
   return {
     source: '0x',
     venue: '0x',
@@ -59,14 +83,95 @@ function quoteEvidence(quote: DexQuoteObservation, chain: ChainId) {
   };
 }
 
-function isDiscoveryPriceEvidence(quote: DexQuoteObservation | null): quote is DexQuoteObservation {
+function isDiscoveryPriceEvidence(quote: IndicativeDexQuote | null): quote is IndicativeDexQuote {
   return !!quote
     && quote.quoteKind === 'price'
     && quote.executable === false
     && quote.transaction === undefined;
 }
 
-async function measuredGasUsd(chain: ChainId, quotes: DexQuoteObservation[]): Promise<number | null> {
+function openOceanChainCode(chain: ChainId): string {
+  if (chain === 'avalanche') return 'avax';
+  return chain;
+}
+
+function percentToFraction(value: unknown): number | undefined {
+  const raw = String(value ?? '').trim();
+  if (!raw) return undefined;
+  const percent = Number(raw.replace(/%$/, ''));
+  return Number.isFinite(percent) ? percent / 100 : undefined;
+}
+
+async function openOceanDiscoveryQuote(input: {
+  chain: ChainId;
+  chainId: number;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+}): Promise<IndicativeDexQuote | null> {
+  try {
+    const gas = await gasOracle.getGasPrice(input.chain);
+    const gasPriceDecimals = BigInt(Math.max(1, Math.ceil(gas.gweiPrice * 1_000_000_000))).toString();
+    const query = new URLSearchParams({
+      inTokenAddress: input.sellToken,
+      outTokenAddress: input.buyToken,
+      amountDecimals: input.sellAmount,
+      gasPriceDecimals,
+    });
+    const payload = await fetchJsonWithRetry<any>(
+      `https://open-api.openocean.finance/v4/${openOceanChainCode(input.chain)}/quote?${query.toString()}`,
+      { maxRetries: 1, baseDelayMs: 150, maxDelayMs: 500, timeoutMs: 2_500 },
+    );
+    const data = payload?.code === 200 ? payload?.data : null;
+    const outAmount = typeof data?.outAmount === 'string' && /^\d+$/.test(data.outAmount) && BigInt(data.outAmount) > 0n
+      ? data.outAmount
+      : null;
+    if (!outAmount) return null;
+    const sellNumber = Number(input.sellAmount);
+    const buyNumber = Number(outAmount);
+    const estimatedGas = String(data?.estimatedGas ?? '').trim();
+    return {
+      chainId: input.chainId,
+      sellToken: input.sellToken,
+      buyToken: input.buyToken,
+      sellAmount: input.sellAmount,
+      buyAmount: outAmount,
+      amountMode: 'exact_in',
+      tradeSurplusRequested: false,
+      price: Number.isFinite(sellNumber) && sellNumber > 0 && Number.isFinite(buyNumber) ? buyNumber / sellNumber : undefined,
+      liquidityAvailable: true,
+      priceImpact: percentToFraction(data?.price_impact),
+      estimatedGas: /^\d+$/.test(estimatedGas) ? estimatedGas : undefined,
+      gasPrice: gasPriceDecimals,
+      quoteKind: 'price',
+      executable: false,
+      observedAt: Date.now(),
+      source: 'openocean',
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function firstPassDexQuote(input: {
+  chain: ChainId;
+  chainId: number;
+  sellToken: string;
+  buyToken: string;
+  sellAmount: string;
+}): Promise<IndicativeDexQuote | null> {
+  const zeroX = await marketDataProviders.getDexQuote({
+    chainId: input.chainId,
+    sellToken: input.sellToken,
+    buyToken: input.buyToken,
+    sellAmount: input.sellAmount,
+    purpose: 'discovery',
+  }).catch(() => null);
+  if (isDiscoveryPriceEvidence(zeroX)) return zeroX;
+  return openOceanDiscoveryQuote(input);
+}
+
+async function measuredGasUsd(chain: ChainId, quotes: IndicativeDexQuote[]): Promise<number | null> {
   if (quotes.some(quote => !quote.estimatedGas || !/^\d+$/.test(quote.estimatedGas))) return null;
   const gas = await gasOracle.getGasPrice(chain).catch(() => null);
   if (!gas || !Number.isFinite(gas.usdCost) || gas.usdCost < 0) return null;
@@ -81,11 +186,11 @@ function missingDexCandidate(input: {
   observedAt: number;
   ttlMs: number;
   opportunityId: string;
-  first: DexQuoteObservation | null;
-  second: DexQuoteObservation | null;
+  first: IndicativeDexQuote | null;
+  second: IndicativeDexQuote | null;
   missing: string[];
 }): MeasuredCandidate {
-  const rawQuotes = [input.first, input.second].filter((value): value is DexQuoteObservation => !!value);
+  const rawQuotes = [input.first, input.second].filter((value): value is IndicativeDexQuote => !!value);
   return measuredCandidateRegistry.record({
     opportunityId: input.opportunityId,
     topology: 'DEX_ATOMIC',
@@ -93,7 +198,7 @@ function missingDexCandidate(input: {
     expiresAt: input.observedAt + input.ttlMs,
     status: 'observed',
     assets: ['USDC', 'USDT'],
-    venues: rawQuotes.length > 0 ? ['0x'] : [],
+    venues: [...new Set(rawQuotes.map(quote => quote.source))],
     chains: [input.chain],
     rawQuotes: rawQuotes.map(quote => quoteEvidence(quote, input.chain)),
     depth: { status: 'unavailable', detail: 'All configured first-pass evidence acquisition paths were attempted in this cycle; this observation remains explicit and cannot silently disappear' },
@@ -120,6 +225,7 @@ function missingDexCandidate(input: {
     missingInformation: [...new Set(input.missing.map(item => `required:${item}`))],
     provenance: [
       '0x:first_pass_redundant_credential_and_http_retry_acquisition',
+      'openocean:v4_quote_route_local_fallback_attempted',
       'dex_missing_evidence:explicit_observation_retained',
       'missing_evidence_execution_authority:false',
       'synthetic_evidence:false',
@@ -131,8 +237,8 @@ type IndicativeRoundTrip = {
   notionalUsd: number;
   observedAt: number;
   opportunityId: string;
-  first: DexQuoteObservation;
-  second: DexQuoteObservation;
+  first: IndicativeDexQuote;
+  second: IndicativeDexQuote;
   grossProfitUsd: number | null;
   discoveryGasUsd: number | null;
   grossAfterIndicativeGasBps: number | null;
@@ -185,34 +291,34 @@ async function discoverChainCandidates(
   for (const notionalUsd of notionals) {
     const observedAt = Date.now();
     const opportunityId = `dex-0x-roundtrip:${chain}:USDC-USDT:${notionalUsd}:${observedAt}`;
-    const first = await marketDataProviders.getDexQuote({
+    const first = await firstPassDexQuote({
+      chain,
       chainId: config.chainId,
       sellToken: config.usdc,
       buyToken: config.usdt,
       sellAmount: stableUnits(notionalUsd, usdcDecimals),
-      purpose: 'discovery',
-    }).catch(() => null);
+    });
     if (!isDiscoveryPriceEvidence(first) || !first.liquidityAvailable || !first.buyAmount) {
       observed.push(missingDexCandidate({
         chain, notionalUsd, observedAt, ttlMs, opportunityId,
         first, second: null,
-        missing: ['indicative_0x_first_leg_quote', 'measured_first_leg_liquidity'],
+        missing: ['indicative_dex_first_leg_quote', 'measured_first_leg_liquidity'],
       }));
       continue;
     }
 
-    const second = await marketDataProviders.getDexQuote({
+    const second = await firstPassDexQuote({
+      chain,
       chainId: config.chainId,
       sellToken: config.usdt,
       buyToken: config.usdc,
       sellAmount: first.buyAmount,
-      purpose: 'discovery',
-    }).catch(() => null);
+    });
     if (!isDiscoveryPriceEvidence(second) || !second.liquidityAvailable || !second.buyAmount) {
       observed.push(missingDexCandidate({
         chain, notionalUsd, observedAt, ttlMs, opportunityId,
         first, second,
-        missing: ['indicative_0x_second_leg_quote', 'measured_second_leg_liquidity'],
+        missing: ['indicative_dex_second_leg_quote', 'measured_second_leg_liquidity'],
       }));
       continue;
     }
@@ -290,6 +396,7 @@ async function discoverChainCandidates(
     const status = prepared && prepared.deterministicNetProfitUsd > 0 && explicitFeeTreatmentComplete
       ? 'eligible' as const
       : 'enriched' as const;
+    const discoveryVenues = [...new Set([item.first.source, item.second.source, 'balancer_v2'])];
 
     observed.push(measuredCandidateRegistry.record({
       opportunityId: item.opportunityId,
@@ -298,7 +405,7 @@ async function discoverChainCandidates(
       expiresAt: prepared ? Math.min(item.observedAt + ttlMs, prepared.expiresAt) : item.observedAt + ttlMs,
       status,
       assets: ['USDC', 'USDT'],
-      venues: ['0x', 'balancer_v2'],
+      venues: discoveryVenues,
       chains: [chain],
       rawQuotes: prepared
         ? [quoteEvidence(item.first, chain), quoteEvidence(item.second, chain), quoteEvidence(prepared.firstQuote, chain), quoteEvidence(prepared.secondQuote, chain)]
@@ -306,8 +413,8 @@ async function discoverChainCandidates(
       depth: {
         status: 'measured',
         detail: prepared
-          ? '0x indicative route plus two firm allowance-holder quotes, explicit fee treatment, existing receiver permissions, and exact gas estimation'
-          : '0x /price liquidityAvailable round-trip measured independently of receiver execution readiness; firm atomic hydration is attempted whenever the chain has a reviewed receiver surface',
+          ? 'Indicative DEX route plus two firm 0x allowance-holder quotes, explicit fee treatment, existing receiver permissions, and exact gas estimation'
+          : 'Independent quote-only DEX round-trip measured without granting execution authority; firm 0x atomic hydration remains required until another transaction adapter is fully verified',
       },
       economics: prepared ? {
         grossProfitUsd: prepared.grossProfitUsd,
@@ -345,15 +452,16 @@ async function discoverChainCandidates(
       quoteAgeMs,
       executableCapability: prepared !== null && explicitFeeTreatmentComplete,
       executionCapabilityReason: prepared && explicitFeeTreatmentComplete
-        ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; 0x explicit fee effects are classified without double subtraction, current flash fee and exact receiver gas are measured, and existing permissions are verified'
+        ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; explicit fee effects are classified without double subtraction, current flash fee and exact receiver gas are measured, and existing permissions are verified'
         : prepared
           ? 'Firm 0x atomic preparation exists, but an explicit 0x fee component lacks a complete same-chain economic treatment and therefore cannot be promoted'
           : receiverExecutionSupported
-            ? 'Numeric observation BPS is preserved from live 0x route outputs while firm atomic hydration remains temporarily unavailable'
-            : '0x market discovery remains active and visible even though this chain does not yet have a reviewed receiver-backed atomic execution surface',
+            ? 'Numeric observation BPS is preserved from live independent DEX route outputs while firm atomic hydration remains temporarily unavailable'
+            : 'DEX market discovery remains active and visible even though this chain does not yet have a reviewed receiver-backed atomic execution surface',
       missingInformation,
       provenance: [
-        '0x:price_only_discovery',
+        `${item.first.source}:price_only_discovery`,
+        `${item.second.source}:price_only_discovery`,
         `token_decimals:usdc:${usdcDecimals}`,
         `token_decimals:usdt:${usdtDecimals}`,
         'token_decimals:measured_onchain',
@@ -365,6 +473,10 @@ async function discoverChainCandidates(
         ...(observedFlashFeeBps !== null ? ['balancer_v2:flash_fee_measured_onchain_for_observation_bps'] : ['balancer_v2:flash_fee_unavailable']),
         'dex_observation_bps:indicative_not_execution_authority',
         'gas_oracle:measured_when_available',
+        item.first.source === 'openocean' || item.second.source === 'openocean'
+          ? 'dex_discovery_fallback:openocean_v4_current_quote'
+          : 'dex_discovery_primary:0x_v2_price',
+        'dex_discovery_provider_failure:route_local',
         receiverExecutionSupported ? 'receiver_chain_capability:verified' : 'receiver_chain_capability:not_yet_available_discovery_continues',
         'discovery_infrastructure_mutation:false',
         'unknown_flash_fee_is_not_zero',
