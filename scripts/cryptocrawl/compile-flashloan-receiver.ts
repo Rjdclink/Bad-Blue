@@ -195,22 +195,23 @@ export async function writeSushiV3FlashReceiverArtifact(outputPath?: string): Pr
 
 const isDirectInvocation = /(?:^|\/)compile-flashloan-receiver\.(?:ts|js)$/.test(process.argv[1] || '');
 if (isDirectInvocation) {
-  Promise.all([
-    writeFlashLoanReceiverArtifact(),
-    writeCompositeFlashLoanReceiverArtifact(),
-    writeAaveV3FlashLoanReceiverArtifact(),
-    writeMorphoBlueFlashLoanReceiverArtifact(),
-    writeAaveBalancerDualFlashLoanReceiverArtifact(),
-  ])
-    .then(([balancerPath, compositePath, aavePath, morphoPath, dualPath]) => {
-      console.log(`Compiled ${CONTRACT_NAME} artifact: ${balancerPath}`);
-      console.log(`Compiled ${COMPOSITE_CONTRACT_NAME} artifact: ${compositePath}`);
-      console.log(`Compiled ${AAVE_CONTRACT_NAME} artifact: ${aavePath}`);
-      console.log(`Compiled ${MORPHO_CONTRACT_NAME} artifact: ${morphoPath}`);
-      console.log(`Compiled ${DUAL_CONTRACT_NAME} artifact: ${dualPath}`);
-    })
-    .catch(error => {
-      console.error('[compile-flashloan-receiver] failed:', error instanceof Error ? error.message : String(error));
-      process.exitCode = 1;
-    });
+  (async () => {
+    // npm exec uses a shared temporary cache for identical package sets. Compile
+    // these artifacts serially so the compiler installs once instead of racing
+    // five concurrent installs against the same cache directory.
+    const balancerPath = await writeFlashLoanReceiverArtifact();
+    const compositePath = await writeCompositeFlashLoanReceiverArtifact();
+    const aavePath = await writeAaveV3FlashLoanReceiverArtifact();
+    const morphoPath = await writeMorphoBlueFlashLoanReceiverArtifact();
+    const dualPath = await writeAaveBalancerDualFlashLoanReceiverArtifact();
+
+    console.log(`Compiled ${CONTRACT_NAME} artifact: ${balancerPath}`);
+    console.log(`Compiled ${COMPOSITE_CONTRACT_NAME} artifact: ${compositePath}`);
+    console.log(`Compiled ${AAVE_CONTRACT_NAME} artifact: ${aavePath}`);
+    console.log(`Compiled ${MORPHO_CONTRACT_NAME} artifact: ${morphoPath}`);
+    console.log(`Compiled ${DUAL_CONTRACT_NAME} artifact: ${dualPath}`);
+  })().catch(error => {
+    console.error('[compile-flashloan-receiver] failed:', error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
 }
