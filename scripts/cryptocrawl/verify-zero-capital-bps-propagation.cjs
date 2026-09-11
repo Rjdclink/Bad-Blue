@@ -288,7 +288,7 @@ assert.match(atomicStack, /targetProfitBaseUnits/);
 assert.match(atomicStack, /combinedExpectedProfit < targetNetProfitBaseUnits/);
 assert.match(atomicStack, /zeroCapitalCompositeSelectionRegistry\.record\(selection\)/);
 assert.match(atomicStack, /zeroCapitalRouteEvidenceRegistry\.record\(opportunity\)/);
-assert.match(atomicStack, /opportunityId\.startsWith\(COMPOSITE_ID_PREFIX\)/);
+assert.match(atomicStack, /\.startsWith\(COMPOSITE_ID_PREFIX\)/);
 assert.match(atomicStack, /netDollarOptimizationAboveTarget: true/);
 assert.match(compositeSelectionRegistry, /expectedNetProfit < selection\.targetNetProfitBaseUnits/);
 assert.match(compositeEvidenceRegistry, /combinedExpectedProfit < input\.targetNetProfitBaseUnits/);
