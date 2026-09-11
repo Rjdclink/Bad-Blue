@@ -189,7 +189,7 @@ function parseTokenCatalog(payload: unknown): AcrossCatalogToken[] {
   }));
 }
 
-async function fetchAcrossTokenCatalog(credentials: { apiKey: string }): Promise<TokenCatalogCache | null> {
+async function fetchAcrossTokenCatalog(credentials: { apiKey: string; integratorId: string }): Promise<TokenCatalogCache | null> {
   const now = Date.now();
   if (tokenCatalogCache && tokenCatalogCache.expiresAt > now) return tokenCatalogCache;
   if (tokenCatalogInFlight) return tokenCatalogInFlight;
@@ -198,7 +198,8 @@ async function fetchAcrossTokenCatalog(credentials: { apiKey: string }): Promise
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Math.max(3_000, Number(process.env.ACROSS_TOKEN_CATALOG_TIMEOUT_MS || 8_000)));
     try {
-      const response = await fetch('https://app.across.to/api/swap/tokens', {
+      const params = new URLSearchParams({ integratorId: credentials.integratorId });
+      const response = await fetch(`https://app.across.to/api/swap/tokens?${params.toString()}`, {
         method: 'GET',
         headers: { accept: 'application/json', Authorization: `Bearer ${credentials.apiKey}` },
         signal: controller.signal,
@@ -225,7 +226,7 @@ async function fetchAcrossTokenCatalog(credentials: { apiKey: string }): Promise
 }
 
 async function resolveAcrossToken(
-  credentials: { apiKey: string },
+  credentials: { apiKey: string; integratorId: string },
   chain: ChainId,
   symbol: AcrossStableSymbol,
 ): Promise<AcrossTokenIdentity | null> {
