@@ -18,6 +18,7 @@ import {
 import type { GasFundingDecision } from '../capital-free/dynamic-gas-funding-engine.js';
 import { repriceZeroCapitalProviderEconomics } from '../integration/zero-capital-flash-provider-wiring.js';
 import { repriceZeroCapitalAlternativeCapital } from '../integration/zero-capital-alternative-capital-wiring.js';
+import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import { executeSystemOwnedNativeTransaction } from '../execution/system-owned-native-transaction.js';
@@ -420,13 +421,31 @@ async function scanOneChain(
   const exact = [...configured, ...dynamic].filter(opportunity => opportunity.expiresAt > Date.now());
   if (exact.length === 0) return;
 
+  const rescueReady = await runFairZeroCapitalProfitabilityRescue({
+    chain,
+    provider,
+    opportunities: exact,
+    configuredRoutes: executionRoutes(target),
+    fromQuotedRoute: target.fromQuotedRoute,
+  }).catch(error => {
+    logger.warn('[ZeroCapitalDiscovery] Fair profitability rescue degraded; original fresh candidates continue through canonical provider repricing', {
+      component: 'CanonicalZeroCapitalDiscovery',
+      chain,
+      error: error instanceof Error ? error.message : String(error),
+      executionAuthority: false,
+      staleQuotePreserved: false,
+    });
+    return exact;
+  });
+  if (rescueReady.length === 0) return;
+
   // Preserve the existing flash mesh as first authority. Alternative capital sees
   // only opportunities the existing mesh did not make executable, so a working
   // provider path can never be displaced by this extension.
   const selected = await repriceZeroCapitalProviderEconomics({
     chain,
     provider,
-    opportunities: exact,
+    opportunities: rescueReady,
     context: {
       executionWallets: target.executionWallets,
       receiverManager: target.receiverManager,
@@ -445,7 +464,7 @@ async function scanOneChain(
     },
   });
   const flashSelectedIds = new Set(selected.map(opportunity => opportunity.id));
-  const remaining = exact.filter(opportunity => !flashSelectedIds.has(opportunity.id));
+  const remaining = rescueReady.filter(opportunity => !flashSelectedIds.has(opportunity.id));
   const alternatives = await repriceZeroCapitalAlternativeCapital({
     chain,
     provider,
@@ -537,7 +556,7 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     routeAuthority: 'zero_capital_route_authority',
     executionAuthority: false,
     schedulerAuthority: false,
-    eligibilityAuthority: 'canonical_flash_first_then_measured_alternative_capital_repricing',
+    eligibilityAuthority: 'fair_measured_rescue_then_canonical_flash_first_then_measured_alternative_capital_repricing',
     gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
     receiverSetupAuthority: 'canonical_discovery_resource_stage_with_system_owned_native_reservations',
     alternativeCapitalAuthority: 'configured_onchain_intermediary_exact_simulation_only',
