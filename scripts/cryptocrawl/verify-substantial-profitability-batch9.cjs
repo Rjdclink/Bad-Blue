@@ -48,7 +48,7 @@ const behaviors = [
   ['cex', 'smallest_risk_adjusted_then_exact_bps_to_break_even_first', 'risk-adjusted near-miss ordering'],
 
   ['zero', 'baseUnitsFromUsd(usd: number, decimals: number)', 'token-decimal-correct sizing'],
-  ['zero', 'opportunity.expiresAt <= now', 'expired zero-capital rescue exclusion'],
+  ['zero', 'opportunity.expiresAt > now', 'fresh-only zero-capital rescue selection'],
   ['zero', 'refined.expiresAt = Math.min', 'refined opportunity expiry cannot extend'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS', 'provider evidence freshness bound'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_MAX_UTILIZATION', 'provider utilization ceiling'],
@@ -94,6 +94,11 @@ for (const [fileKey, pattern, name] of behaviors) {
   }
 }
 
+if (!source.zero.includes('function recoverableByCostCompression') ||
+    !source.zero.includes('opportunity.expiresAt > now') ||
+    !source.zero.includes('opportunity.expiresAt <= Date.now()')) {
+  throw new Error('[substantial-profitability-batch9] zero-capital rescue must exclude expired candidates both before selection and immediately before refinement');
+}
 if (!source.cex.includes('function scheduleNext') ||
     !source.cex.includes('setTimeout(() =>') ||
     !source.cex.includes('observeFailClosed().finally(scheduleNext)')) {
