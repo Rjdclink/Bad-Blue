@@ -29,10 +29,23 @@ function compiler() {
       .trim().split(/\s+/).filter(Boolean);
     return { command: configured, args, label: `${configured} ${args.join(' ')}`.trim() };
   }
+
+  // Keep solc and its exact hashing dependency in the same npm-exec environment.
+  // This avoids the incomplete isolated npx install that can otherwise break a
+  // production build before contract artifacts are generated.
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   return {
-    command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    args: ['--yes', 'solc@0.8.24', '--standard-json'],
-    label: 'npx --yes solc@0.8.24 --standard-json',
+    command: npm,
+    args: [
+      'exec',
+      '--yes',
+      '--package=solc@0.8.24',
+      '--package=js-sha3@0.8.0',
+      '--',
+      'solcjs',
+      '--standard-json',
+    ],
+    label: 'npm exec --package=solc@0.8.24 --package=js-sha3@0.8.0 -- solcjs --standard-json',
   };
 }
 

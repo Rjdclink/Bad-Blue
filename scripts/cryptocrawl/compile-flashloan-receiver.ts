@@ -60,10 +60,22 @@ function resolveCompiler(): { command: string; args: string[]; label: string } {
     };
   }
 
+  // Keep the compiler and the exact hashing dependency it requires in one npm-exec
+  // environment. This avoids an incomplete isolated npx install from making a
+  // supported receiver disappear from the production build.
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   return {
-    command: 'npx',
-    args: ['--yes', 'solc@0.8.24', '--standard-json'],
-    label: 'npx --yes solc@0.8.24 --standard-json',
+    command: npm,
+    args: [
+      'exec',
+      '--yes',
+      '--package=solc@0.8.24',
+      '--package=js-sha3@0.8.0',
+      '--',
+      'solcjs',
+      '--standard-json',
+    ],
+    label: 'npm exec --package=solc@0.8.24 --package=js-sha3@0.8.0 -- solcjs --standard-json',
   };
 }
 
