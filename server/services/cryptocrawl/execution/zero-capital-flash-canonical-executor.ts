@@ -218,7 +218,9 @@ function normalizedSettlement(input: {
         input.builderReceiverBootstrap ? 'canonical_builder_receiver_bootstrap_evidence' : 'canonical_provider_selection_registry',
         input.builderReceiverBootstrap ? 'receiver_bootstrap:create2_deployment_and_permissions_same_atomic_bundle' : 'receiver_capability:preverified',
         'builder_bundle:exact_signed_execution_conversion_payment',
-        'builder_private_bundle:requires_system_owned_native_sender_gas',
+        'builder_native_prefund:titan_or_quasar_sponsored_bundle',
+        'operator_native_gas_input_required:false',
+        'builder_sponsorship_repaid_from_execution_created_value:true',
         'builder_payment_source:execution_created_value',
         'receiver_starting_loan_token_balance_zero',
         'receiver_event:gross_profit_before_builder_repayment',
@@ -359,15 +361,24 @@ async function executeBuilderColdStart(input: {
     return failed(opportunity, 'Builder-sponsored evidence does not match the exact Ethereum opportunity');
   }
 
-  // Standard EOA eth_sendBundle does not remove the protocol requirement that the
-  // sender can fund its own gas. Keep this private-bundle path only after native gas
-  // is already proven system-owned; true zero-initial startup uses the paymaster lane.
-  const builderFunding = await getProvenZeroCapitalGasFundingDecision(runtime(), opportunity.chain);
-  if (builderFunding.mode !== 'native' || builderFunding.paymentSource !== 'system_owned_native') {
-    return {
-      ...failed(opportunity, 'Legacy EOA builder cold-start is not zero-native-capital authority; canonical paymaster or proven system-owned native gas is required'),
-      status: 'deferred',
-    };
+  if (
+    evidence.requiredSponsorshipWei <= 0n
+    || evidence.minimumBuilderResidualWei <= 0n
+    || evidence.builderPaymentWei < evidence.requiredSponsorshipWei + evidence.minimumBuilderResidualWei
+    || evidence.guaranteedNetProfitInInputToken <= 0n
+  ) {
+    return failed(opportunity, 'Builder-sponsored cold-start economics do not prove sponsorship reimbursement plus positive residual');
+  }
+  const structurallySponsored = evidence.candidates.some(candidate => (
+    candidate.operatorNativeGasInputRequired === false
+    && candidate.coldStartStructurallyEligible === true
+    && candidate.paymentProvenance === 'execution_created_value'
+    && candidate.requiredSponsorshipWei === evidence.requiredSponsorshipWei
+    && candidate.builderPaymentWei === evidence.builderPaymentWei
+    && candidate.minimumBuilderResidualWei === evidence.minimumBuilderResidualWei
+  ));
+  if (!structurallySponsored) {
+    return failed(opportunity, 'Builder-sponsored candidate no longer proves zero-operator-native prefunding and execution-created repayment');
   }
 
   if (evidence.receiver.toLowerCase() !== receiver.toLowerCase() || evidence.providerLabel !== input.providerLabel) {
@@ -516,7 +527,7 @@ async function executeBuilderColdStart(input: {
     latencyMs: Date.now() - startedAt,
     blockNumber: receipt.blockNumber,
     normalized,
-    capitalProvenanceVerified: false,
+    capitalProvenanceVerified: true,
     error: positive ? undefined : economics.economicsComplete
       ? 'Builder-funded terminal settlement realized non-positive residual profit'
       : `Builder-funded terminal economics are incomplete: ${economics.missingInformation.join(', ')}`,
@@ -535,7 +546,7 @@ async function executeBuilderColdStart(input: {
     }
   }
 
-  logger.info('[ZeroCapitalExecutor] Builder private-bundle terminal result', {
+  logger.info('[ZeroCapitalExecutor] Builder-sponsored zero-native-capital terminal result', {
     component: 'CanonicalZeroCapitalExecutor', opportunityId: opportunity.id, chain: opportunity.chain,
     provider: input.providerLabel, builder: submitted.candidate.builder, transactionHash,
     bundleHash: submitted.result.bundleHash, settlementConfirmed: true,
@@ -543,7 +554,10 @@ async function executeBuilderColdStart(input: {
     grossProfitBaseUnits: grossProfit.toString(), realizedBuilderCostBaseUnits: realizedBuilderCostBaseUnits.toString(),
     residualProfitBaseUnits: residualProfit.toString(), realizedNetProfitUsd: economics.netProfitUsd,
     realizedBuilderCostUsd: economics.gasUsd, positiveAfterAllInCost: positive,
-    operatorNativeGasInputRequired: false, systemOwnedNativeGasRequired: true,
+    operatorNativeGasInputRequired: false, systemOwnedNativeGasRequired: false,
+    builderNativePrefundVerified: true,
+    builderSponsorshipRepaidFromExecutionCreatedValue: true,
+    capitalProvenanceVerified: true,
     receiverStartingBalanceZero: receiverStarting === 0n,
     treasuryRecorded: result.treasuryRecorded === true, singleSchedulerAuthority: true,
   });
@@ -552,10 +566,10 @@ async function executeBuilderColdStart(input: {
 
 /**
  * Sole ZERO_CAPITAL_ATOMIC execution route. The canonical parent scheduler is the
- * only caller. Provider paymaster sponsorship is the cold-start authority because
- * it can remove the execution account's native-balance prerequisite. Legacy EOA
- * builder bundles are private-inclusion transports only and require already-proven
- * system-owned native sender gas.
+ * only caller. A fresh Titan/Quasar sponsored-bundle proof may cold-start Ethereum
+ * without pre-existing native capital because builder prefunding is reimbursed from
+ * execution-created value. Ordinary execution still requires the canonical proven
+ * gas-funding boundary and never treats provider-billed sponsorship as zero cost.
  */
 export async function executeCanonicalZeroCapitalOpportunity(
   opportunity: ZeroCapitalOpportunity,
