@@ -25,6 +25,14 @@ export const ETHEREUM_PROTOCOL_ANCHORS = {
 
 const DEAD = '0x000000000000000000000000000000000000dEaD';
 const FLUID_SWAP_RESULT_SELECTOR = ethers.utils.id('FluidDexSwapResult(uint256)').slice(0, 10).toLowerCase();
+const GSM_NEGATIVE_CAPACITY_TTL_MS = Math.max(
+  500,
+  Math.min(5000, Number(process.env.AAVE_GHO_GSM_NEGATIVE_CAPACITY_TTL_MS || 2500)),
+);
+
+type GsmNegativeCapacityObservation = { untilMs: number; error: Error };
+const gsmQuoteInFlight = new Map<string, Promise<BigNumber>>();
+const gsmNegativeCapacity = new Map<string, GsmNegativeCapacityObservation>();
 
 const GSM_ABI = [
   'function GHO_TOKEN() view returns (address)',
@@ -201,7 +209,11 @@ function assertGsmIdentityAndState(input: {
   if (!input.canSwap || input.frozen || input.seized) throw new Error('Aave GHO GSM is not currently swappable');
 }
 
-async function quoteGsm(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
+function gsmQuoteKey(leg: ProtocolAnchorLeg, amountIn: BigNumber): string {
+  return `${leg.pool.toLowerCase()}:${leg.tokenIn.toLowerCase()}:${leg.tokenOut.toLowerCase()}:${amountIn.toString()}`;
+}
+
+async function quoteGsmLive(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
   const { ghoIn, underlying } = validateKnownGsmLeg(leg);
   const gsm = new Contract(leg.pool, GSM_ABI, provider);
 
@@ -242,6 +254,35 @@ async function quoteGsm(provider: providers.Provider, leg: ProtocolAnchorLeg, am
     throw new Error('Aave GHO GSM sell-side capacity is insufficient');
   }
   return ghoAmount;
+}
+
+async function quoteGsm(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
+  const key = gsmQuoteKey(leg, amountIn);
+  const cachedFailure = gsmNegativeCapacity.get(key);
+  if (cachedFailure) {
+    if (cachedFailure.untilMs > Date.now()) throw cachedFailure.error;
+    gsmNegativeCapacity.delete(key);
+  }
+
+  const active = gsmQuoteInFlight.get(key);
+  if (active) return active;
+
+  const pending = quoteGsmLive(provider, leg, amountIn)
+    .catch(error => {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      if (normalized.message.includes('capacity is insufficient')) {
+        gsmNegativeCapacity.set(key, {
+          untilMs: Date.now() + GSM_NEGATIVE_CAPACITY_TTL_MS,
+          error: normalized,
+        });
+      }
+      throw error;
+    })
+    .finally(() => {
+      gsmQuoteInFlight.delete(key);
+    });
+  gsmQuoteInFlight.set(key, pending);
+  return pending;
 }
 
 async function quoteStata(provider: providers.Provider, leg: ProtocolAnchorLeg, amountIn: BigNumber): Promise<BigNumber> {
