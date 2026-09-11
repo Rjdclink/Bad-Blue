@@ -8,7 +8,10 @@ import {
   type CexSettlementAdapter,
   type ExecutableCexVenue,
 } from '../execution/cex-settlement.js';
+import { requestSelfFundedCexBootstrap } from '../execution/self-funded-cex-bootstrap.js';
+import { getCryptocrawlGovernance } from '../governance/index.js';
 import { isStrictlyPositiveAllInNetProfit } from '../governance/profit-admission-authority.js';
+import { getProfitLadderNotionalAuthority } from '../governance/profit-ladder-notional-authority.js';
 
 const installed = new WeakSet<object>();
 const balanceCache = new Map<ExecutableCexVenue, { expiresAt: number; balances: Record<string, string> }>();
@@ -179,6 +182,54 @@ async function reconcilePairBalances(plan: VerifiedArbitragePlan): Promise<boole
   }
 }
 
+async function freshExactPair(plan: VerifiedArbitragePlan, notionalUsd: number): Promise<VerifiedArbitragePlan | null> {
+  const maxQuoteAgeMs = Math.max(250, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
+  const refreshed = await arbitrageVerifier.evaluateOnce({
+    symbol: plan.symbol,
+    notionalUsd,
+    maxQuoteAgeMs,
+  }).catch(error => {
+    logger.warn('[InventoryConstrainedCex] Fresh post-balance economics evaluation failed closed', {
+      component: 'InventoryConstrainedCexExecutionWiring',
+      symbol: plan.symbol,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+  if (!refreshed) return null;
+  if (refreshed.buyVenue !== plan.buyVenue || refreshed.sellVenue !== plan.sellVenue) return null;
+  if (feeFreshnessRejection(refreshed)) return null;
+  if (!isStrictlyPositiveAllInNetProfit(refreshed.netProfitUsd)) return null;
+  return refreshed;
+}
+
+async function deferIntoSelfFundedBootstrap(plan: VerifiedArbitragePlan): Promise<ReoptimizationDecision> {
+  const fresh = await freshExactPair(plan, Math.max(0, plan.requestedNotionalUsd || plan.notionalUsd));
+  if (!fresh) {
+    return { kind: 'reject', reason: 'REJECT_BOOTSTRAP_REQUOTE: zero-inventory candidate no longer has fresh exact-pair positive economics' };
+  }
+
+  getCryptocrawlGovernance().requireAllowed('EXECUTE_OPPORTUNITY', { pair: fresh.symbol });
+  const notionalAuthority = getProfitLadderNotionalAuthority();
+  if (
+    !Number.isFinite(fresh.notionalUsd) || fresh.notionalUsd <= 0 ||
+    !notionalAuthority.aligned || !(notionalAuthority.maxNotionalUsd > 0) ||
+    fresh.notionalUsd > notionalAuthority.maxNotionalUsd + 1e-9
+  ) {
+    return {
+      kind: 'reject',
+      reason: `REJECT_PROFIT_LADDER_NOTIONAL: requested=${fresh.notionalUsd} max=${notionalAuthority.maxNotionalUsd} rung=${notionalAuthority.rungKey} aligned=${notionalAuthority.aligned}`,
+    };
+  }
+
+  const bootstrap = await requestSelfFundedCexBootstrap({ plan: fresh, notionalAuthority });
+  const summary = bootstrap.demands.map(item => `${item.role}:${item.venue}:${item.asset}:${item.status}`).join(',');
+  return {
+    kind: 'reject',
+    reason: `DEFER_BOOTSTRAP_PENDING: ${bootstrap.opportunityId} ${summary || 'no_missing_inventory_demand'}`,
+  };
+}
+
 async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<ReoptimizationDecision> {
   const capabilityRejection = activeExecutionCapability(plan);
   if (capabilityRejection) return { kind: 'reject', reason: capabilityRejection };
@@ -194,44 +245,17 @@ async function reoptimizeForInventory(plan: VerifiedArbitragePlan): Promise<Reop
   const capacity = inventoryCapacity(plan);
   if (!capacity) return { kind: 'reject', reason: 'REJECT_INVENTORY_EVIDENCE: inventory capacity could not be measured for this spot pair' };
   if (!(capacity.maxFundableNotionalUsd > 0) || capacity.buyQuoteSpendable <= 0 || capacity.sellBaseSpendable <= 0) {
-    return { kind: 'reject', reason: 'REJECT_BALANCE_INSUFFICIENT: no positive two-sided authenticated inventory capacity' };
+    return deferIntoSelfFundedBootstrap(plan);
   }
 
   // Balance I/O can outlive the quote that entered this wrapper. Always
   // re-quote after reconciliation so inventory checks never authorize stale edge.
-  const maxQuoteAgeMs = Math.max(250, Number(process.env.CRYPTO_ARBITRAGE_MAX_QUOTE_AGE_MS || 5_000));
   const freshBound = capacity.fullPlanFundable
     ? Math.min(plan.requestedNotionalUsd || plan.notionalUsd, capacity.maxFundableNotionalUsd)
     : capacity.maxFundableNotionalUsd;
-  const refreshed = await arbitrageVerifier.evaluateOnce({
-    symbol: plan.symbol,
-    notionalUsd: freshBound,
-    maxQuoteAgeMs,
-  }).catch(error => {
-    logger.warn('[InventoryConstrainedCex] Fresh post-balance economics evaluation failed closed', {
-      component: 'InventoryConstrainedCexExecutionWiring',
-      symbol: plan.symbol,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  });
+  const refreshed = await freshExactPair(plan, freshBound);
 
-  if (!refreshed) return { kind: 'reject', reason: 'REJECT_RESIZE_REQUOTE: no fresh verified plan after authenticated inventory reconciliation' };
-  if (feeFreshnessRejection(refreshed)) return { kind: 'reject', reason: 'REJECT_RESIZED_FEE_EVIDENCE: fresh-sized plan lacks current fee evidence' };
-  if (refreshed.buyVenue !== plan.buyVenue || refreshed.sellVenue !== plan.sellVenue) {
-    logger.info('[InventoryConstrainedCex] Fresh best venue pair changed; preserving opportunity identity and returning to discovery', {
-      component: 'InventoryConstrainedCexExecutionWiring',
-      symbol: plan.symbol,
-      originalPair: `${plan.buyVenue}->${plan.sellVenue}`,
-      freshPair: `${refreshed.buyVenue}->${refreshed.sellVenue}`,
-      requestedNotionalUsd: plan.requestedNotionalUsd,
-      maxFundableNotionalUsd: capacity.maxFundableNotionalUsd,
-    });
-    return { kind: 'reject', reason: 'REJECT_VENUE_DRIFT: fresh inventory-bounded optimization changed venue pair' };
-  }
-  if (!isStrictlyPositiveAllInNetProfit(refreshed.netProfitUsd)) {
-    return { kind: 'reject', reason: 'REJECT_RESIZED_NEGATIVE_NET: fresh post-balance plan is not strictly profitable after measured costs' };
-  }
+  if (!refreshed) return { kind: 'reject', reason: 'REJECT_RESIZE_REQUOTE: no fresh exact-pair verified plan after authenticated inventory reconciliation' };
 
   const refreshedCapacity = inventoryCapacity(refreshed);
   if (!refreshedCapacity?.fullPlanFundable) {
@@ -275,12 +299,13 @@ export function ensureInventoryConstrainedCexExecutionWiring(): void {
   target.execute = async (plan: VerifiedArbitragePlan): Promise<ArbitrageExecutionResult> => {
     const decision = await reoptimizeForInventory(plan);
     if (decision.kind === 'reject') {
-      logger.info('[InventoryConstrainedCex] Execution rejected before downstream admission', {
+      logger.info('[InventoryConstrainedCex] Execution rejected/deferred before downstream admission', {
         component: 'InventoryConstrainedCexExecutionWiring',
         symbol: plan.symbol,
         venuePair: `${plan.buyVenue}->${plan.sellVenue}`,
         reason: decision.reason,
-        resourceWorkAvoided: true,
+        bootstrapDeferred: decision.reason.startsWith('DEFER_BOOTSTRAP_PENDING:'),
+        resourceWorkAvoided: !decision.reason.startsWith('DEFER_BOOTSTRAP_PENDING:'),
       });
       return reject(decision.reason);
     }
@@ -296,6 +321,9 @@ export function ensureInventoryConstrainedCexExecutionWiring(): void {
     boundedFeeEvidenceAgeMs: maxFeeEvidenceAgeMs(),
     partialInventoryCanResize: true,
     zeroInventoryBypass: false,
+    zeroInventoryBootstrapDeferred: true,
+    selfFundedBootstrapAuthority: 'cryptara_profit_ladder_stage_manager',
+    freshEconomicsRequiredBeforeBootstrap: true,
     freshEconomicsRequiredAfterEveryBalanceReconciliation: true,
     sameVenuePairRequired: true,
     inactiveVenueExecutionRejectedUpstream: true,
