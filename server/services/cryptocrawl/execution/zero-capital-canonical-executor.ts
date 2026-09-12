@@ -41,6 +41,8 @@ export type { CanonicalZeroCapitalExecutionResult } from './zero-capital-flash-c
 
 const TREASURY_FRACTION_SCALE = 100_000_000n;
 const COMPOSITE_ID_PREFIX = 'atomic-stack:';
+const ATOMIC_MINIMUM_TARGET_BPS = 10;
+const ATOMIC_BPS_SCALE = 1_000_000n;
 const NATIVE_SYMBOL: Partial<Record<SupportedChain, 'ETH' | 'POL' | 'BNB' | 'AVAX'>> = {
   ethereum: 'ETH',
   polygon: 'POL',
@@ -111,8 +113,19 @@ function splitGrossBaseUnits(grossProfitBaseUnits: bigint, retainedFraction: num
 }
 
 function atomicSurplusTargetBps(): number {
-  const parsed = Number(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS);
-  return Number.isFinite(parsed) ? Math.max(0.000001, Math.min(1_000, parsed)) : 10;
+  const parsed = Number(
+    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
+    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
+    ?? ATOMIC_MINIMUM_TARGET_BPS,
+  );
+  const finite = Number.isFinite(parsed) ? parsed : ATOMIC_MINIMUM_TARGET_BPS;
+  return Math.max(ATOMIC_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
+}
+
+function minimumAtomicTargetProfitBaseUnits(opportunity: ZeroCapitalOpportunity): bigint {
+  const scaledBps = BigInt(Math.ceil(atomicSurplusTargetBps() * Number(ATOMIC_BPS_SCALE)));
+  const denominator = 10_000n * ATOMIC_BPS_SCALE;
+  return (opportunity.flashLoanAmount * scaledBps + denominator - 1n) / denominator;
 }
 
 function expectedNetProfitUsd(opportunity: ZeroCapitalOpportunity): number {
@@ -464,8 +477,8 @@ function preparedResult(input: {
     error: input.economics.economicsComplete
       ? positive
         ? undefined
-        : input.mode === 'composite_atomic' && !targetSatisfied
-          ? 'Composite terminal settlement did not preserve the required +10 BPS-or-configured target after realized costs'
+        : !targetSatisfied
+          ? `${input.mode} terminal settlement did not preserve the required +10 BPS-or-configured-higher target after realized costs`
           : `${input.mode} terminal settlement realized non-positive all-in net profit`
       : `${input.mode} terminal economics are incomplete: ${input.economics.missingInformation.join(', ')}`,
   };
@@ -543,7 +556,15 @@ async function executeCanonicalAlternative(
       economics.economicsComplete ? 'realized_all_in_net_profit' : 'realized_all_in_economics_incomplete',
     ],
   });
-  const result = preparedResult({ opportunity, facts, economics, normalized, startedAt, mode: 'alternative_capital' });
+  const result = preparedResult({
+    opportunity,
+    facts,
+    economics,
+    normalized,
+    startedAt,
+    targetNetProfitBaseUnits: minimumAtomicTargetProfitBaseUnits(opportunity),
+    mode: 'alternative_capital',
+  });
   await persistPreparedProfit({
     opportunity,
     result,
@@ -561,7 +582,7 @@ async function executeCanonicalAlternative(
     transactionHash: facts.transactionHash,
     settlementConfirmed: true,
     realizedNetProfitUsd: economics.netProfitUsd,
-    positiveAfterAllInCost: result.success,
+    targetSatisfied: result.success,
     treasuryRecorded: result.treasuryRecorded === true,
     singleSchedulerAuthority: true,
   });
@@ -691,8 +712,12 @@ export async function executeCanonicalZeroCapitalOpportunity(
   if (Date.now() >= opportunity.expiresAt) return failed(opportunity, 'Exact zero-capital opportunity expired before canonical execution');
   if (opportunity.expectedProfit <= 0n) return failed(opportunity, 'Canonical all-in net economics are not strictly positive');
   const targetBps = atomicSurplusTargetBps();
+  const targetProfitBaseUnits = minimumAtomicTargetProfitBaseUnits(opportunity);
   if (!Number.isFinite(opportunity.netProfitBps) || opportunity.netProfitBps + 1e-9 < targetBps) {
     return failed(opportunity, `Atomic all-in net economics ${opportunity.netProfitBps} BPS are below the required ${targetBps} BPS surplus target`);
+  }
+  if (opportunity.expectedProfit < targetProfitBaseUnits) {
+    return failed(opportunity, `Atomic all-in net profit in base units is below the required ${targetBps} BPS surplus target`);
   }
 
   void observeDailyProfitBudget(opportunity);
