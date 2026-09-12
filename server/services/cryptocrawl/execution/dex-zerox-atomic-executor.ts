@@ -1,4 +1,4 @@
-import { BigNumber, Contract, Wallet, ethers } from 'ethers';
+import { BigNumber, Wallet, ethers } from 'ethers';
 import logger from '../../../logger.js';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
@@ -18,24 +18,31 @@ import { marketDataProviders, type DexQuoteObservation } from '../intelligence/m
 import { getGasSponsorManager, type SponsoredCall } from '../strategies/gas-sponsorship.js';
 import { executeSystemOwnedNativeTransaction } from './system-owned-native-transaction.js';
 import {
+  calculateMeasuredFlashLoanFee,
+  measureFlashLoanProviders,
+  selectMeasuredFlashLoanProvider,
+  type FlashLoanProviderEconomics,
+  type FlashLoanProviderKind,
+} from './adapters/flash-loan-provider-economics.js';
+import { ensureProviderSpecificReceiverCapability } from './adapters/provider-specific-receiver-bootstrap.js';
+import { verifyFlashLoanReceiverCapability } from './adapters/flash-loan-receiver-capability.js';
+import {
   getSponsoredReceiverManager,
-  resolveSponsoredReceiverVault,
-  supportsSponsoredReceiverChain,
   type ReceiverFundingMode,
 } from './adapters/sponsored-receiver-manager.js';
 
 const RECEIVER_ABI = [
   'function executeBalancerFlashLoan(address loanToken,uint256 loanAmount,(address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps,uint256 minProfit,address profitRecipient) external',
+  'function executeAaveFlashLoan(address loanToken,uint256 loanAmount,(address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps,uint256 minProfit,address profitRecipient) external',
+  'function executeMorphoFlashLoan(address loanToken,uint256 loanAmount,(address target,uint256 value,bytes callData,address approvalToken,uint256 approvalAmount)[] steps,uint256 minProfit,address profitRecipient) external',
   'event FlashLoanExecuted(address indexed initiator,address indexed loanToken,uint256 loanAmount,uint256 profit)',
 ];
-const BALANCER_VAULT_ABI = ['function getProtocolFeesCollector() view returns (address)'];
-const BALANCER_FEE_COLLECTOR_ABI = ['function getFlashLoanFeePercentage() view returns (uint256)'];
-const ONE_18 = BigNumber.from('1000000000000000000');
 
 export interface ZeroXAtomicRoundTripPreparation {
   opportunityId: string;
   chain: ChainId;
   receiver: string;
+  flashLoanProvider: FlashLoanProviderKind;
   inputToken: string;
   intermediateToken: string;
   inputTokenDecimals: number;
@@ -179,6 +186,76 @@ function rememberInfrastructureNeed(input: AtomicRequest): void {
   pendingInfrastructure.set(input.opportunityId, { ...input, queuedAt: Date.now() });
 }
 
+function orderedMeasuredProviders(
+  evidence: readonly FlashLoanProviderEconomics[],
+  requestedAmount: bigint,
+): FlashLoanProviderEconomics[] {
+  const remaining = new Set<FlashLoanProviderKind>(['morpho_blue', 'aave_v3', 'balancer_v2']);
+  const ordered: FlashLoanProviderEconomics[] = [];
+  while (remaining.size > 0) {
+    const selected = selectMeasuredFlashLoanProvider(evidence, requestedAmount, [...remaining]);
+    if (!selected) break;
+    ordered.push(selected);
+    remaining.delete(selected.provider);
+  }
+  return ordered;
+}
+
+async function existingReceiverForProvider(input: {
+  providerKind: FlashLoanProviderKind;
+  chain: ChainId;
+  provider: ethers.providers.JsonRpcProvider;
+  wallet: Wallet;
+}): Promise<string | null> {
+  if (input.providerKind === 'balancer_v2') {
+    const record = await getSponsoredReceiverManager().inspectExistingReceiver({
+      chain: input.chain,
+      provider: input.provider,
+      owner: input.wallet.address,
+    }).catch(() => null);
+    if (!record) return null;
+    const verified = await verifyFlashLoanReceiverCapability({
+      kind: 'balancer_v1',
+      chain: input.chain as any,
+      provider: input.provider,
+      expectedOwner: input.wallet.address,
+      address: record.address,
+    }).catch(() => null);
+    return verified?.address ?? null;
+  }
+  const verified = await verifyFlashLoanReceiverCapability({
+    kind: input.providerKind,
+    chain: input.chain as any,
+    provider: input.provider,
+    expectedOwner: input.wallet.address,
+  }).catch(() => null);
+  return verified?.address ?? null;
+}
+
+async function selectExistingProviderReceiver(input: {
+  chain: ChainId;
+  provider: ethers.providers.JsonRpcProvider;
+  wallet: Wallet;
+  asset: string;
+  requestedAmount: bigint;
+}): Promise<{ economics: FlashLoanProviderEconomics; receiver: string } | null> {
+  const evidence = await measureFlashLoanProviders({
+    chain: input.chain as any,
+    provider: input.provider,
+    asset: input.asset,
+  });
+  for (const economics of orderedMeasuredProviders(evidence, input.requestedAmount)) {
+    const receiver = await existingReceiverForProvider({
+      providerKind: economics.provider,
+      chain: input.chain,
+      provider: input.provider,
+      wallet: input.wallet,
+    });
+    if (receiver) return { economics, receiver };
+  }
+  return null;
+}
+
 function quoteTransaction(quote: DexQuoteObservation, expectedSellAmount: BigNumber): {
   target: string;
   data: string;
@@ -202,19 +279,6 @@ function quoteTransaction(quote: DexQuoteObservation, expectedSellAmount: BigNum
   const quotedSellAmount = asPositiveInteger('0x firm quote sellAmount', quote.sellAmount);
   if (!quotedSellAmount.eq(expectedSellAmount)) throw new Error('0x firm quote sell amount drifted from the requested atomic amount');
   return { target, data, value, gas, allowanceSpender: spender };
-}
-
-async function measureBalancerFlashFeeBps(chain: ChainId, provider: ethers.providers.JsonRpcProvider): Promise<number> {
-  const vaultAddress = resolveSponsoredReceiverVault(chain);
-  if (!vaultAddress) throw new Error(`No reviewed Balancer V2 vault is configured for ${chain}`);
-  const vault = new Contract(vaultAddress, BALANCER_VAULT_ABI, provider);
-  const collectorAddress = asAddress('Balancer protocol fee collector', await vault.getProtocolFeesCollector());
-  const collector = new Contract(collectorAddress, BALANCER_FEE_COLLECTOR_ABI, provider);
-  const raw = BigNumber.from(await collector.getFlashLoanFeePercentage());
-  if (raw.lt(0) || raw.gt(ONE_18)) throw new Error('Balancer flash-loan fee percentage is outside the valid fixed-point range');
-  const bps = Number(raw.mul(10_000).div(ONE_18).toString());
-  if (!Number.isFinite(bps) || bps < 0 || bps > 10_000) throw new Error('Balancer flash-loan fee BPS could not be measured');
-  return bps;
 }
 
 function infrastructureFundingMode(): ReceiverFundingMode {
@@ -251,6 +315,7 @@ async function executeInfrastructureCalls(input: {
 }
 
 function encodeReceiverPayload(input: {
+  providerKind: FlashLoanProviderKind;
   receiver: string;
   loanToken: string;
   loanAmount: BigNumber;
@@ -261,7 +326,12 @@ function encodeReceiverPayload(input: {
   intermediateAmount: BigNumber;
   intermediateToken: string;
 }): string {
-  return new ethers.utils.Interface(RECEIVER_ABI).encodeFunctionData('executeBalancerFlashLoan', [
+  const functionName = input.providerKind === 'aave_v3'
+    ? 'executeAaveFlashLoan'
+    : input.providerKind === 'morpho_blue'
+      ? 'executeMorphoFlashLoan'
+      : 'executeBalancerFlashLoan';
+  return new ethers.utils.Interface(RECEIVER_ABI).encodeFunctionData(functionName, [
     input.loanToken,
     input.loanAmount,
     [
@@ -328,8 +398,43 @@ async function firmRoundTripQuotes(input: {
   return { loanAmount, inputTokenDecimals, intermediateTokenDecimals, firstQuote, secondQuote, intermediateAmount, finalAmount, first, second };
 }
 
+async function ensureProviderReceiver(input: {
+  economics: FlashLoanProviderEconomics;
+  request: AtomicRequest;
+  provider: ethers.providers.JsonRpcProvider;
+  wallet: Wallet;
+  fundingMode: ReceiverFundingMode;
+}): Promise<string> {
+  const connectedWallet = input.wallet.connect(input.provider);
+  if (input.economics.provider === 'balancer_v2') {
+    const record = await getSponsoredReceiverManager().ensureReceiver({
+      chain: input.request.chain,
+      provider: input.provider,
+      wallet: connectedWallet,
+      fundingMode: input.fundingMode,
+    });
+    return record.address;
+  }
+  const capability = await ensureProviderSpecificReceiverCapability({
+    kind: input.economics.provider,
+    chain: input.request.chain as any,
+    provider: input.provider,
+    wallet: connectedWallet,
+    fundingMode: input.fundingMode,
+    executeSetupCalls: calls => executeInfrastructureCalls({
+      chain: input.request.chain,
+      chainId: SUPPORTED_CHAINS[input.request.chain].chainId,
+      wallet: connectedWallet,
+      provider: input.provider,
+      fundingMode: input.fundingMode,
+      calls,
+    }),
+  });
+  if (!capability) throw new Error(`${input.economics.provider} receiver capability is unavailable`);
+  return capability.address;
+}
+
 async function ensureInfrastructureForRequest(request: AtomicRequest): Promise<void> {
-  if (!supportsSponsoredReceiverChain(request.chain)) throw new Error(`${request.chain} has no reviewed receiver-backed Balancer execution surface`);
   const config = SUPPORTED_CHAINS[request.chain];
   if (!config?.usdc || !config?.usdt) throw new Error(`${request.chain} stablecoin contract identities are incomplete`);
   await multiProviderRpcManager.initialize([request.chain]);
@@ -340,16 +445,30 @@ async function ensureInfrastructureForRequest(request: AtomicRequest): Promise<v
   const network = await provider.getNetwork();
   if (network.chainId !== config.chainId) throw new Error(`DEX atomic provider chain mismatch for ${request.chain}`);
   const fundingMode = infrastructureFundingMode();
-  const manager = getSponsoredReceiverManager();
-  const receiverRecord = await manager.ensureReceiver({ chain: request.chain, provider, wallet: connectedWallet, fundingMode });
-  const firm = await firmRoundTripQuotes({ request, receiver: receiverRecord.address });
-  const calls = await manager.buildMissingExplicitPermissionCalls({
-    receiver: receiverRecord.address,
-    provider,
-    targets: [firm.first.target, firm.second.target],
-    approvalTokens: [config.usdc, config.usdt],
-  });
-  await executeInfrastructureCalls({ chain: request.chain, chainId: config.chainId, wallet: connectedWallet, provider, fundingMode, calls });
+  const inputTokenDecimals = await getMeasuredErc20Decimals(request.chain, config.usdc);
+  const requestedAmount = BigInt(stableUnits(request.notionalUsd, inputTokenDecimals));
+  const evidence = await measureFlashLoanProviders({ chain: request.chain as any, provider, asset: config.usdc });
+  const candidates = orderedMeasuredProviders(evidence, requestedAmount);
+  if (candidates.length === 0) throw new Error(`No compatible measured flash-loan provider can fund DEX_ATOMIC on ${request.chain}`);
+
+  const failures: string[] = [];
+  for (const economics of candidates) {
+    try {
+      const receiver = await ensureProviderReceiver({ economics, request, provider, wallet: connectedWallet, fundingMode });
+      const firm = await firmRoundTripQuotes({ request, receiver });
+      const calls = await getSponsoredReceiverManager().buildMissingExplicitPermissionCalls({
+        receiver,
+        provider,
+        targets: [firm.first.target, firm.second.target],
+        approvalTokens: [config.usdc, config.usdt],
+      });
+      await executeInfrastructureCalls({ chain: request.chain, chainId: config.chainId, wallet: connectedWallet, provider, fundingMode, calls });
+      return;
+    } catch (error) {
+      failures.push(`${economics.provider}:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw new Error(`DEX_ATOMIC provider-local infrastructure alternatives exhausted: ${failures.join(' | ')}`);
 }
 
 export async function reconcilePendingZeroXAtomicInfrastructure(maxRequests = 1): Promise<ZeroXAtomicInfrastructureResult> {
@@ -396,7 +515,6 @@ export function getPreparedZeroXAtomicPlan(opportunityId: string): ZeroXAtomicRo
 
 export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise<ZeroXAtomicRoundTripPreparation> {
   requestInputs.set(input.opportunityId, { ...input });
-  if (!supportsSponsoredReceiverChain(input.chain)) throw new Error(`${input.chain} has no reviewed receiver-backed Balancer execution surface`);
   const config = SUPPORTED_CHAINS[input.chain];
   if (!config?.usdc || !config?.usdt) throw new Error(`${input.chain} stablecoin contract identities are incomplete`);
   if (!Number.isFinite(input.notionalUsd) || input.notionalUsd <= 0) throw new Error('DEX atomic notional must be positive');
@@ -409,16 +527,23 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   const network = await provider.getNetwork();
   if (network.chainId !== config.chainId) throw new Error(`DEX atomic provider chain mismatch for ${input.chain}`);
 
-  const manager = getSponsoredReceiverManager();
-  const receiverRecord = await manager.inspectExistingReceiver({ chain: input.chain, provider, owner: connectedWallet.address });
-  if (!receiverRecord) {
+  const inputTokenDecimalsForSelection = await getMeasuredErc20Decimals(input.chain, config.usdc);
+  const requestedAmount = BigInt(stableUnits(input.notionalUsd, inputTokenDecimalsForSelection));
+  const selected = await selectExistingProviderReceiver({
+    chain: input.chain,
+    provider,
+    wallet: connectedWallet,
+    asset: config.usdc,
+    requestedAmount,
+  });
+  if (!selected) {
     rememberInfrastructureNeed(input);
-    throw new Error('DEX_ATOMIC_RECEIVER_NOT_READY');
+    throw new Error('DEX_ATOMIC_COMPATIBLE_PROVIDER_RECEIVER_NOT_READY');
   }
-  const receiver = receiverRecord.address;
+  const receiver = selected.receiver;
   const firm = await firmRoundTripQuotes({ request: input, receiver });
 
-  const missingPermissionCalls = await manager.buildMissingExplicitPermissionCalls({
+  const missingPermissionCalls = await getSponsoredReceiverManager().buildMissingExplicitPermissionCalls({
     receiver,
     provider,
     targets: [firm.first.target, firm.second.target],
@@ -430,13 +555,25 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   }
   pendingInfrastructure.delete(input.opportunityId);
 
-  const flashLoanFeeBps = await measureBalancerFlashFeeBps(input.chain, provider);
-  const flashLoanFeeAmount = firm.loanAmount.mul(Math.round(flashLoanFeeBps * 1000)).div(10_000_000);
+  const refreshedEvidence = await measureFlashLoanProviders({ chain: input.chain as any, provider, asset: config.usdc });
+  const refreshedSelected = selectMeasuredFlashLoanProvider(
+    refreshedEvidence,
+    BigInt(firm.loanAmount.toString()),
+    [selected.economics.provider],
+  );
+  if (!refreshedSelected) throw new Error(`DEX_ATOMIC_${selected.economics.provider.toUpperCase()}_EVIDENCE_EXPIRED_OR_INSUFFICIENT`);
+  const measuredFlashFee = calculateMeasuredFlashLoanFee(refreshedSelected, BigInt(firm.loanAmount.toString()));
+  if (measuredFlashFee === null || refreshedSelected.feeBps === null) {
+    throw new Error(`DEX_ATOMIC_${selected.economics.provider.toUpperCase()}_FLASH_FEE_UNMEASURED`);
+  }
+  const flashLoanFeeBps = refreshedSelected.feeBps;
+  const flashLoanFeeAmount = BigNumber.from(measuredFlashFee.toString());
   const grossBaseUnits = firm.finalAmount.sub(firm.loanAmount);
   if (grossBaseUnits.lte(0)) throw new Error('0x firm round-trip gross economics are not positive');
   const profitRecipient = asAddress('operational profit recipient', resolveOperationalProfitRecipient());
   const canonicalMinProfit = BigNumber.from(minimumPositiveProfitBaseUnits().toString());
   const finalData = encodeReceiverPayload({
+    providerKind: refreshedSelected.provider,
     receiver, loanToken: config.usdc, loanAmount: firm.loanAmount, minProfit: canonicalMinProfit, profitRecipient,
     first: firm.first, second: firm.second, intermediateAmount: firm.intermediateAmount, intermediateToken: config.usdt,
   });
@@ -452,14 +589,12 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
       component: 'DexZeroXAtomicExecutor',
       opportunityId: input.opportunityId,
       chain: input.chain,
+      flashLoanProvider: refreshedSelected.provider,
       simulationAdvisoryError,
       simulationVetoAuthority: false,
     });
   }
 
-  // Gas-limit/economic measurement remains required because the transaction
-  // cannot be priced all-in or submitted safely without a current gas bound.
-  // This is execution-parameter evidence, not an independent simulation veto.
   const estimatedGas = await provider.estimateGas({ from: connectedWallet.address, to: receiver, data: finalData, value: 0 });
   const gas = await gasOracle.getGasPrice(input.chain);
   const gasUsd = gas.usdCost * Number(estimatedGas.toString()) / DEFAULT_GAS_LIMIT;
@@ -476,13 +611,14 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
   const allInCostBps = flashLoanFeeBps + gasCostBps;
   const netProfitBps = deterministicNetProfitUsd / input.notionalUsd * 10_000;
   const quoteTtlMs = Math.max(500, Number(process.env.ZEROX_QUOTE_TTL_MS || 2_000));
-  const expiresAt = Math.min(firm.firstQuote.observedAt + quoteTtlMs, firm.secondQuote.observedAt + quoteTtlMs);
-  if (expiresAt <= Date.now()) throw new Error('0x firm quote expired during exact atomic preparation');
+  const expiresAt = Math.min(firm.firstQuote.observedAt + quoteTtlMs, firm.secondQuote.observedAt + quoteTtlMs, refreshedSelected.observedAt + quoteTtlMs);
+  if (expiresAt <= Date.now()) throw new Error('0x firm quote or flash-provider evidence expired during exact atomic preparation');
 
   const plan: ZeroXAtomicRoundTripPreparation = {
     opportunityId: input.opportunityId,
     chain: input.chain,
     receiver,
+    flashLoanProvider: refreshedSelected.provider,
     inputToken: config.usdc,
     intermediateToken: config.usdt,
     inputTokenDecimals: firm.inputTokenDecimals,
@@ -519,14 +655,16 @@ export async function prepareZeroXAtomicRoundTrip(input: AtomicRequest): Promise
       `token_decimals:input:${firm.inputTokenDecimals}`,
       `token_decimals:intermediate:${firm.intermediateTokenDecimals}`,
       'token_decimals:measured_onchain',
-      'receiver:existing_deployment_verified_read_only',
+      `flash_loan_provider:${refreshedSelected.provider}`,
+      'flash_loan_provider:fee_and_liquidity_remeasured_after_firm_quote',
+      'provider_receiver:existing_deployment_verified_read_only',
       'receiver:permissions_verified_read_only',
-      'balancer_v2:flash_fee_measured_onchain',
       simulated ? 'receiver:eth_call_simulation_advisory_passed' : 'receiver:eth_call_simulation_advisory_unavailable_or_failed',
       'receiver:eth_call_simulation_veto_authority:false',
       'receiver:exact_gas_estimate_required_for_all_in_cost_and_tx_limit',
       'profit_admission:single_strictly_positive_authority',
       'gas:system_owned_native_reservation_required_at_execution',
+      'provider_failure_scope:route_local',
       'discovery_infrastructure_mutation:false',
       'synthetic_evidence:false',
     ],
@@ -579,8 +717,8 @@ export async function executePreparedZeroXAtomicRoundTrip(
         chain: request.chain,
         wallet: connectedWallet,
         provider,
-        idempotencyKey: `dex-atomic:${opportunityId}:${plan.receiver.toLowerCase()}`,
-        purpose: 'dex_atomic_execution',
+        idempotencyKey: `dex-atomic:${opportunityId}:${plan.flashLoanProvider}:${plan.receiver.toLowerCase()}`,
+        purpose: `dex_atomic_${plan.flashLoanProvider}_execution`,
         transaction: { to: plan.payload.to, data: plan.payload.data, value: 0, gasLimit: plan.payload.gasLimit },
         confirmations: 1,
       });
@@ -620,6 +758,7 @@ export async function executePreparedZeroXAtomicRoundTrip(
     const realizedProfitBps = realizedProfitUsd / request.notionalUsd * 10_000;
     logger.info('[DexAtomic] Terminal 0x receiver event confirmed; all-in reconciliation pending', {
       component: 'DexZeroXAtomicExecutor', opportunityId, chain: request.chain, transactionHash, fundingModeUsed,
+      flashLoanProvider: plan.flashLoanProvider,
       receiverProfitUsd: realizedProfitUsd, receiverProfitBps: realizedProfitBps,
       inputTokenDecimals: plan.inputTokenDecimals,
       terminalTradeSurplusCaptureRequested: plan.secondQuote.tradeSurplusRequested,
