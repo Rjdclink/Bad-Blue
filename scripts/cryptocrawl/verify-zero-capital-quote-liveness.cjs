@@ -39,6 +39,13 @@ assert.doesNotMatch(dynamic, /ZERO_CAPITAL_DYNAMIC_FLASH_LOAN_FEE_BPS/);
 assert.doesNotMatch(dynamic, /flashLoanFeeBps:\s*bounded\(/);
 assert.match(dynamic, /Preliminary discovery intentionally leaves flash-loan cost unpriced/);
 
+// Dynamic gas valuation must use the same provider-neutral live-price authority as
+// configured-route economics. Direct CoinGecko dependence can never suppress the
+// dynamic candidate/BPS stream when that one provider is exhausted or cooling down.
+assert.match(dynamic, /import \{ livePriceMesh \} from '\.\.\/bridge\/live-price-mesh\.js'/);
+assert.match(dynamic, /livePriceMesh\.getLiveSymbolPrices\(\['ETH'\]\)/);
+assert.doesNotMatch(dynamic, /coinGeckoPriceClient/);
+
 // Provider evidence is independently bounded. Each applicable protocol gets its
 // own timeout and route-local canonical RPC failover. Cross-protocol aggregation
 // uses allSettled so one rejected protocol cannot erase fulfilled evidence from
@@ -84,6 +91,8 @@ assert.match(discovery, /runChainScanWithWatchdog\(chain, provider\)/);
 assert.match(discovery, /const chainScanTasks = new Map<SupportedChain, Promise<void>>\(\)/);
 assert.match(discovery, /if \(existing\) \{[\s\S]*duplicate scan suppressed[\s\S]*return;/);
 assert.match(discovery, /await withWatchdog\(tracked, chainScanWatchdogMs\(\), `zero-capital \$\{chain\} chain scan`\)/);
+assert.match(discovery, /timedOutScanOwnershipReleased: error instanceof DiscoveryWatchdogTimeoutError/);
+assert.match(discovery, /lateTimedOutScanGenerationInvalidated: error instanceof DiscoveryWatchdogTimeoutError/);
 assert.match(discovery, /function schedule\(\): void/);
 assert.match(discovery, /cycleInFlight = cycle\(\)\.finally\(\(\) => \{ cycleInFlight = null; schedule\(\); \}\)/);
 assert.match(discovery, /degradedReceiverCycleMode: 'chain_local_admission_provider_repricing_continues'/);
@@ -108,4 +117,4 @@ assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /Canonical all-in net economics are not strictly positive/);
 
-console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
+console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, live-price mesh gas valuation, timeout ownership recovery, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
