@@ -7,6 +7,7 @@ import {
   ensureKalshiSystemWiring,
   refreshKalshiSystemEvidenceNow,
 } from './kalshi-system-wiring.js';
+import { ensureStageOneSpreadObservability } from './stage-one-spread-observability.js';
 
 let timer: NodeJS.Timeout | null = null;
 let inFlight: Promise<void> | null = null;
@@ -85,6 +86,10 @@ export function getPredictionMarketDiscoverySnapshot() {
 }
 
 export function ensurePredictionMarketDiscoveryWiring(): void {
+  // Stage-1 spread visibility is measurement-only and remains installed even if
+  // one optional prediction discovery source is disabled. This piggybacks on an
+  // already canonical runtime installer without creating another lifecycle owner.
+  ensureStageOneSpreadObservability();
   if (timer || process.env.PREDICTION_MARKET_DISCOVERY_ENABLED === 'false') return;
   // One strategy cadence owns both public parity discovery and the Kalshi event
   // evidence surface. Targeted evidence repair joins the same in-flight Kalshi
