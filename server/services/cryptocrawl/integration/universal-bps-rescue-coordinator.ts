@@ -195,7 +195,7 @@ async function runTopologyReacquisition(candidate: MeasuredCandidate): Promise<v
 }
 
 function requestTopologyReacquisition(candidate: MeasuredCandidate, state: UniversalBpsRescueState): void {
-  if (state === 'target_achieved' || state === 'measured_impossibility' || state === 'evidence_expired') return;
+  if (state === 'target_achieved' || state === 'measured_impossibility') return;
   if (candidate.topology === 'ZERO_CAPITAL_ATOMIC') return;
   const key = reacquisitionKey(candidate);
   if (reacquisitionInFlight.has(key) || (reacquisitionCooldownUntil.get(key) || 0) > Date.now()) return;
