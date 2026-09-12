@@ -7,6 +7,7 @@ const files = {
   cex: 'server/services/cryptocrawl/integration/cex-four-mode-observability-wiring.ts',
   zero: 'server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts',
   core: 'server/services/cryptocrawl/core/zero-capital-engine.ts',
+  zeroDiscovery: 'server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts',
   executor: 'server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts',
   flashExecutor: 'server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts',
   dailyBudget: 'server/services/cryptocrawl/governance/profit-ladder-daily-profit-budget.ts',
@@ -119,9 +120,11 @@ if (!source.cex.includes('function scheduleNext') ||
     !source.cex.includes('observeFailClosed().finally(scheduleNext)')) {
   throw new Error('[substantial-profitability-batch9] adaptive CEX rescheduling must remain one-shot, recursive, and failure-resilient');
 }
-if (!source.core.includes("import { runZeroCapitalProfitabilityRescueV2 } from '../integration/zero-capital-profitability-rescue-v2.js';") ||
-    !source.core.includes('return runZeroCapitalProfitabilityRescueV2({')) {
-  throw new Error('[substantial-profitability-batch9] zero-capital profitability rescue v2 must be invoked directly by the canonical core scan');
+if (source.core.includes('runZeroCapitalProfitabilityRescueV2') ||
+    !source.core.includes('duplicateAtomicRescuePass: false') ||
+    !source.zeroDiscovery.includes("import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';") ||
+    !source.zeroDiscovery.includes('const rescueReady = await runFairZeroCapitalProfitabilityRescue({')) {
+  throw new Error('[substantial-profitability-batch9] Atomic rescue must be single-owner: canonical discovery runs one fairness-ordered rescue pass after configured and dynamic measurement; the core scan must remain measurement-only');
 }
 if (source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2') || source.zero.includes('target.scanChain =')) {
   throw new Error('[substantial-profitability-batch9] retired zero-capital rescue installer/scan mutation must not return');
@@ -160,4 +163,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue is core-direct, price-aware and provider-capacity-bounded; fresh requotes supersede stale seeds without extending stale evidence; Profit Ladder limits daily realized profit rather than flash principal; canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue is single-owner in canonical discovery, fairness-ordered, price-aware and provider-capacity-bounded; fresh requotes supersede stale seeds without extending stale evidence; Profit Ladder limits daily realized profit rather than flash principal; canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
