@@ -32,8 +32,8 @@ assert.match(
 assert.match(providerWiring, /provider_reprice_input_immutable:true/, 'provider repricing must publish its immutable-input provenance');
 assert.match(
   discovery,
-  /const selected = await repriceZeroCapitalProviderEconomics\([\s\S]{0,1800}const remaining = exact\.filter\(opportunity => !flashSelectedIds\.has\(opportunity\.id\)\)[\s\S]{0,600}repriceZeroCapitalAlternativeCapital\([\s\S]{0,300}opportunities: remaining/,
-  'alternative-capital repricing must derive its fallback set from pristine canonical exact opportunities after provider comparison',
+  /const selected = await repriceZeroCapitalProviderEconomics\([\s\S]{0,1800}const remaining = rescueReady\.filter\(opportunity => !flashSelectedIds\.has\(opportunity\.id\)\)[\s\S]{0,600}repriceZeroCapitalAlternativeCapital\([\s\S]{0,300}opportunities: remaining/,
+  'alternative-capital repricing must derive its fallback set from the post-rescue candidate set after provider comparison',
 );
 assert.match(executor, /receiver_appeared:fell_through_to_verified_standard_path/, 'an already-deployed receiver must fall through to its verified normal path');
 assert.match(executor, /economicReconciliationStatus: 'exception'/, 'confirmed execution must remain distinct from reconciliation exceptions');
@@ -44,4 +44,4 @@ for (const [name, source] of [['executor', executor], ['scheduler', scheduler], 
 assert.match(measured, /deterministicNetProfitUsd > 0/, 'minimum sufficient evidence must use canonical net profit truth');
 assert.doesNotMatch(multileg, /netProfitBps !== null && netProfitBps <= 0/, 'multi-leg composition must not reject positive profit due rounded BPS');
 
-console.log('[zero-capital-capability-monotonicity] PASS: regression repairs preserve exact-positive admission, immutable preparation/provider comparison, pristine alternative fallback economics, evidence continuity, provider diversity, normal receiver fallthrough, latency tolerance, and on-chain execution truth');
+console.log('[zero-capital-capability-monotonicity] PASS: regression repairs preserve exact-positive admission, immutable preparation/provider comparison, post-rescue alternative fallback economics, evidence continuity, provider diversity, normal receiver fallthrough, latency tolerance, and on-chain execution truth');
