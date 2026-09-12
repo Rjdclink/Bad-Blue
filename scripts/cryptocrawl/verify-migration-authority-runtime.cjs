@@ -130,7 +130,7 @@ assert.doesNotMatch(canonicalRuntime, /from\s+['"]\.\.\/\.\.\/\.\.\/db\.js['"]|r
 // The known v26 -> v27 production transition is exactly the Ghost Wallet durable
 // schema delta. Older/unknown states retain the full idempotent recovery path.
 assert.match(overflowRuntimeSchema, /const\s+INCREMENTAL_MIGRATIONS/);
-assert.match(overflowRuntimeSchema, /26:\s*\['057_cryptocrawler_ghost_wallet_runtime\.sql'\]/);
+assert.match(overflowRuntimeSchema, /26:\s*\['057_cryptocrawler_ghost_wallet_runtime\.sql',\s*'059_cryptocrawler_zero_capital_rescue_fairness\.sql'\]/);
 assert.match(overflowRuntimeSchema, /function migrationPlan/);
 assert.match(overflowRuntimeSchema, /return MIGRATIONS/);
 assert.match(overflowRuntimeSchema, /verifyRequiredObjects\(client\)/);
