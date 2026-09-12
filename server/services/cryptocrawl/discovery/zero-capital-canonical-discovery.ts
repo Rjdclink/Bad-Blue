@@ -94,6 +94,15 @@ function boundedWatchdogMs(raw: string | undefined, fallback: number, min: numbe
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
 }
 
+function boundedNumber(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+}
+
+function atomicSurplusTargetBps(): number {
+  return boundedNumber(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 0.000001, 1_000);
+}
+
 function receiverFleetWatchdogMs(): number {
   return boundedWatchdogMs(process.env.ZERO_CAPITAL_RECEIVER_FLEET_WATCHDOG_MS, 30_000, 5_000, 120_000);
 }
@@ -439,9 +448,10 @@ async function scanOneChain(
   });
   if (rescueReady.length === 0) return;
 
-  // Preserve the existing flash mesh as first authority. Alternative capital sees
-  // only opportunities the existing mesh did not make executable, so a working
-  // provider path can never be displaced by this extension.
+  // Preserve the flash mesh as the first measured capital-source path. A flash
+  // result only completes Atomic search when it clears the configured target;
+  // positive-but-subtarget results remain available to alternative capital and
+  // composite rescue rather than suppressing those compatible paths.
   const selected = await repriceZeroCapitalProviderEconomics({
     chain,
     provider,
@@ -463,8 +473,10 @@ async function scanOneChain(
       },
     },
   });
-  const flashSelectedIds = new Set(selected.map(opportunity => opportunity.id));
-  const remaining = rescueReady.filter(opportunity => !flashSelectedIds.has(opportunity.id));
+  const flashTargetClearingIds = new Set(selected
+    .filter(opportunity => Number.isFinite(opportunity.netProfitBps) && opportunity.netProfitBps >= atomicSurplusTargetBps())
+    .map(opportunity => opportunity.id));
+  const remaining = rescueReady.filter(opportunity => !flashTargetClearingIds.has(opportunity.id));
   const alternatives = await repriceZeroCapitalAlternativeCapital({
     chain,
     provider,
@@ -472,11 +484,13 @@ async function scanOneChain(
     executionWallets: target.executionWallets,
     getGasFundingDecision: selectedChain => strictFunding(target, selectedChain),
   }).catch(error => {
-    logger.debug('[ZeroCapitalDiscovery] Alternative atomic-capital fallback failed closed without disturbing flash-provider selection', {
+    logger.debug('[ZeroCapitalDiscovery] Alternative atomic-capital fallback failed closed without disturbing target-clearing flash-provider selection', {
       component: 'CanonicalZeroCapitalDiscovery',
       chain,
       error: error instanceof Error ? error.message : String(error),
-      flashProviderSelectionsPreserved: selected.length,
+      flashProviderSelectionsObserved: selected.length,
+      flashProviderTargetClearingSelections: flashTargetClearingIds.size,
+      subtargetFlashCandidatesRemainRescueEligible: true,
       executionAuthority: false,
     });
     return [] as ZeroCapitalOpportunity[];
@@ -560,7 +574,9 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
     receiverSetupAuthority: 'canonical_discovery_resource_stage_with_system_owned_native_reservations',
     alternativeCapitalAuthority: 'configured_onchain_intermediary_exact_simulation_only',
-    alternativeCapitalDoesNotDisplaceWorkingFlashSelection: true,
+    alternativeCapitalDoesNotDisplaceTargetClearingFlashSelection: true,
+    subtargetFlashSelectionCompletesAtomicSearch: false,
+    atomicSurplusTargetBps: atomicSurplusTargetBps(),
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
     chainScanWatchdogMs: chainScanWatchdogMs(),
