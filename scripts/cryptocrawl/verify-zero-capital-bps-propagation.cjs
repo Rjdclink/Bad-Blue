@@ -74,13 +74,13 @@ assert.match(discovery, /executableCapability: false/);
 assert.match(discovery, /const selected = await repriceZeroCapitalProviderEconomics\(/);
 assert.match(discovery, /const alternatives = await repriceZeroCapitalAlternativeCapital\(/);
 assert.match(discovery, /const remaining = rescueReady\.filter\(opportunity => !flashSelectedIds\.has\(opportunity\.id\)\)/);
-assert.match(discovery, /eligibilityAuthority: 'canonical_flash_first_then_measured_alternative_capital_repricing'/);
-assert.match(discovery, /alternativeCapitalDoesNotDisplaceWorkingFlashSelection: true/);
+assert.match(discovery, /eligibility_authority:canonical_measured_capital_repricing_only/);
+assert.match(discovery, /repriceZeroCapitalAlternativeCapital\(\{[\s\S]{0,220}opportunities: remaining/);
 assert.match(discovery, /executionAuthority: false/);
 assert.match(discovery, /synthetic_evidence:false/);
 
 assert.match(discovery, /refreshReceiverFleetForCycle\(target\)/);
-assert.match(discovery, /globalReceiverFailureBlocksProviderAdmission: false/);
+assert.match(discovery, /globalProviderAdmissionBlocked: false/);
 assert.match(discovery, /chainLocalResourceProofRequired: true/);
 assert.doesNotMatch(discovery, /allowProviderAdmission/);
 assert.doesNotMatch(discovery, /providerRepricingSkipped: true/);
