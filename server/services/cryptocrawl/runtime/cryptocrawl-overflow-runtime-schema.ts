@@ -6,8 +6,8 @@ import {
   coordinationPool,
 } from './cryptocrawl-runtime-database.js';
 
-const SCHEMA_VERSION = 27;
-const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v27';
+const SCHEMA_VERSION = 28;
+const LOCK_NAME = 'cryptocrawl:overflow-runtime-schema:v28';
 
 const MIGRATIONS = [
   'overflow/003_cryptocrawler_runtime_prerequisites.sql',
@@ -61,16 +61,18 @@ const MIGRATIONS = [
   '055_cryptocrawler_coinbase_system_owned_capital.sql',
   '056_subagent_runtime_prerequisites.sql',
   '057_cryptocrawler_ghost_wallet_runtime.sql',
+  '059_cryptocrawler_zero_capital_rescue_fairness.sql',
   'overflow/004_cryptocrawler_terminal_support.sql',
 ] as const;
 
 type MigrationPath = typeof MIGRATIONS[number];
 
-// Schema v26 was the last production marker before Ghost Wallet's durable runtime
-// was added. Advance that known state with only the missing delta; older/unknown
-// states retain the complete idempotent repair path.
+// Schema v26 predates Ghost Wallet durability and v27 predates the Atomic rescue
+// fairness ledger. Advance either known state with only its missing deltas;
+// older/unknown states retain the complete idempotent repair path.
 const INCREMENTAL_MIGRATIONS: Readonly<Record<number, readonly MigrationPath[]>> = {
-  26: ['057_cryptocrawler_ghost_wallet_runtime.sql'],
+  26: ['057_cryptocrawler_ghost_wallet_runtime.sql', '059_cryptocrawler_zero_capital_rescue_fairness.sql'],
+  27: ['059_cryptocrawler_zero_capital_rescue_fairness.sql'],
 };
 
 const REQUIRED_TABLES = [
@@ -81,6 +83,7 @@ const REQUIRED_TABLES = [
   'public.railway_bootstrap_budget_reservations',
   'public.cryptocrawl_governance_state',
   'public.zero_capital_native_gas_funding_attempts',
+  'public.cryptocrawler_zero_capital_rescue_fairness',
   'public.cryptocrawler_resource_leases',
   'public.cryptocrawler_mc_calibration_v1',
   'private.cryptocrawler_kraken_nonce_state',
