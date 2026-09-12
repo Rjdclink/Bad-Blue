@@ -31,6 +31,15 @@ type ViableMakerSymbol = {
   usableBooks: MeasuredMakerBook[];
 };
 
+type ConditionalMakerEconomics = {
+  notionalUsd: number;
+  grossProfitUsd: number;
+  feeUsd: number;
+  grossProfitBps: number;
+  netProfitBps: number;
+  bpsToBreakEven: number;
+};
+
 function effectiveMakerFeeBps(fee: CexFeeEvidence | null | undefined): number | null {
   if (!fee || fee.source === 'configured_override') return null;
   if (fee.makerFeeBps !== null && Number.isFinite(fee.makerFeeBps)) return Math.max(0, fee.makerFeeBps);
@@ -41,6 +50,33 @@ function effectiveMakerFeeBps(fee: CexFeeEvidence | null | undefined): number | 
 function paperProbeNotionalUsd(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_MAKER_PAPER_NOTIONAL_USD || 1_000);
   return Math.max(10, Math.min(5_000, Number.isFinite(parsed) ? parsed : 1_000));
+}
+
+function measuredConditionalMakerEconomics(input: {
+  buyQuote: StreamOrderBookQuote;
+  sellQuote: StreamOrderBookQuote;
+  buyMakerFeeBps: number;
+  sellMakerFeeBps: number;
+  notionalUsd: number;
+}): ConditionalMakerEconomics | null {
+  if (!(input.notionalUsd > 0) || !(input.buyQuote.bid > 0) || !(input.sellQuote.ask > 0)) return null;
+  const quantity = input.notionalUsd / input.buyQuote.bid;
+  const buyNotionalUsd = input.buyQuote.bid * quantity;
+  const sellNotionalUsd = input.sellQuote.ask * quantity;
+  const grossProfitUsd = sellNotionalUsd - buyNotionalUsd;
+  const feeUsd = (buyNotionalUsd * input.buyMakerFeeBps + sellNotionalUsd * input.sellMakerFeeBps) / 10_000;
+  const netProfitUsd = grossProfitUsd - feeUsd;
+  const grossProfitBps = grossProfitUsd / input.notionalUsd * 10_000;
+  const netProfitBps = netProfitUsd / input.notionalUsd * 10_000;
+  if (![grossProfitUsd, feeUsd, grossProfitBps, netProfitBps].every(Number.isFinite)) return null;
+  return {
+    notionalUsd: input.notionalUsd,
+    grossProfitUsd,
+    feeUsd,
+    grossProfitBps,
+    netProfitBps,
+    bpsToBreakEven: netProfitBps < 0 ? Math.abs(netProfitBps) : 0,
+  };
 }
 
 function liveMakerTargetNotionalUsd(): number {
@@ -263,6 +299,13 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
         const buyMakerFeeBps = effectiveMakerFeeBps(buy.fee);
         const sellMakerFeeBps = effectiveMakerFeeBps(sell.fee);
         const makerFeeKnown = buyMakerFeeBps !== null && sellMakerFeeBps !== null;
+        const conditionalEconomics = makerFeeKnown ? measuredConditionalMakerEconomics({
+          buyQuote: buy.quote,
+          sellQuote: sell.quote,
+          buyMakerFeeBps: buyMakerFeeBps!,
+          sellMakerFeeBps: sellMakerFeeBps!,
+          notionalUsd: paperProbeNotionalUsd(),
+        }) : null;
         const paperProof = makerFeeKnown ? observeMakerPaperProof({
           symbol,
           buyVenue: buy.venue,
@@ -302,13 +345,17 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
               : 'Live CEX order-book evidence exists; authenticated maker fee evidence was requested for this viable symbol but did not produce enough current evidence for a paired paper proof',
           },
           economics: {
-            grossProfitUsd: null,
+            grossProfitUsd: conditionalEconomics?.grossProfitUsd ?? null,
             deterministicNetProfitUsd: null,
-            feeUsd: null,
+            feeUsd: conditionalEconomics?.feeUsd ?? null,
             gasUsd: 0,
             bridgeUsd: 0,
             expectedSlippageBps: null,
             expectedPriceImpactBps: null,
+            notionalUsd: conditionalEconomics?.notionalUsd ?? null,
+            grossProfitBps: conditionalEconomics?.grossProfitBps ?? null,
+            netProfitBps: conditionalEconomics?.netProfitBps ?? null,
+            bpsToBreakEven: conditionalEconomics?.bpsToBreakEven ?? null,
           },
           quoteAgeMs: Math.max(0, Date.now() - observedAt),
           executableCapability: false,
@@ -327,6 +374,10 @@ export async function discoverMeasuredMakerCandidates(): Promise<MeasuredCandida
             'maker_live_evaluation:all_viable_symbols_first_pass',
             'usd_normalized_quote_evidence',
             'canonical_cex_venues:coinbase_kraken_okx',
+            ...(conditionalEconomics ? [
+              'maker_conditional_bps:measured_live_books_plus_authenticated_fees',
+              'maker_conditional_bps_execution_authority:false',
+            ] : []),
             ...(paperProof ? [`paper_probe:${paperProof.state}`, `paper_probe_ttl_ms:${paperProof.adaptiveTtlMs}`] : []),
             ...(paperProof?.paperNetProfitUsd !== null && paperProof?.paperNetProfitUsd !== undefined
               ? [`paper_net_profit_usd:${paperProof.paperNetProfitUsd.toFixed(6)}`]
