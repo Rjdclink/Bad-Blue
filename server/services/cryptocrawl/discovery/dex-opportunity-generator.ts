@@ -2,8 +2,11 @@ import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
-import { measureBalancerFlashLoanEconomics } from '../execution/adapters/flash-loan-provider-economics.js';
-import { supportsSponsoredReceiverChain } from '../execution/adapters/sponsored-receiver-manager.js';
+import {
+  measureFlashLoanProviders,
+  selectMeasuredFlashLoanProvider,
+  type FlashLoanProviderEconomics,
+} from '../execution/adapters/flash-loan-provider-economics.js';
 import { prepareZeroXAtomicRoundTrip } from '../execution/dex-zerox-atomic-executor.js';
 import { getMeasuredErc20Decimals } from '../intelligence/erc20-decimals-authority.js';
 import { marketDataProviders, type DexQuoteObservation } from '../intelligence/market-data-providers.js';
@@ -245,6 +248,19 @@ type IndicativeRoundTrip = {
   priceImpactBps: number;
 };
 
+async function measureChainFlashProviders(
+  chain: ChainId,
+  asset: string,
+): Promise<FlashLoanProviderEconomics[]> {
+  try {
+    await multiProviderRpcManager.initialize([chain]);
+    const { http: provider } = await multiProviderRpcManager.getProvider(chain, 'json_rpc');
+    return await measureFlashLoanProviders({ chain: chain as any, provider, asset });
+  } catch {
+    return [];
+  }
+}
+
 async function discoverChainCandidates(
   chain: ChainId,
   notionals: readonly number[],
@@ -253,7 +269,6 @@ async function discoverChainCandidates(
   const config = SUPPORTED_CHAINS[chain];
   if (!config?.usdc || !config?.usdt) return [];
   const observed: MeasuredCandidate[] = [];
-  const receiverExecutionSupported = supportsSponsoredReceiverChain(chain);
 
   let usdcDecimals: number;
   let usdtDecimals: number;
@@ -276,16 +291,7 @@ async function discoverChainCandidates(
     }));
   }
 
-  const balancerEvidence = receiverExecutionSupported
-    ? await multiProviderRpcManager.execute(
-        chain,
-        'contract_calls',
-        provider => measureBalancerFlashLoanEconomics({ chain, provider, asset: config.usdc }),
-      ).then(result => result.result).catch(() => null)
-    : null;
-  const observedFlashFeeBps = balancerEvidence?.feeBps !== null && balancerEvidence?.feeBps !== undefined && Number.isFinite(balancerEvidence.feeBps)
-    ? Number(balancerEvidence.feeBps)
-    : null;
+  const flashProviderEvidence = await measureChainFlashProviders(chain, config.usdc);
 
   const indicative: IndicativeRoundTrip[] = [];
   for (const notionalUsd of notionals) {
@@ -344,15 +350,14 @@ async function discoverChainCandidates(
   const hydrationTargets = new Set(indicative.map(item => item.opportunityId));
 
   for (const item of indicative) {
+    const requestedAmount = BigInt(stableUnits(item.notionalUsd, usdcDecimals));
+    const observationProvider = selectMeasuredFlashLoanProvider(flashProviderEvidence, requestedAmount);
+    const observedFlashFeeBps = observationProvider?.feeBps ?? null;
     let prepared: Awaited<ReturnType<typeof prepareZeroXAtomicRoundTrip>> | null = null;
     let preparationUnavailable = false;
-    if (receiverExecutionSupported) {
-      try {
-        prepared = await prepareZeroXAtomicRoundTrip({ opportunityId: item.opportunityId, chain, notionalUsd: item.notionalUsd });
-      } catch {
-        preparationUnavailable = true;
-      }
-    } else {
+    try {
+      prepared = await prepareZeroXAtomicRoundTrip({ opportunityId: item.opportunityId, chain, notionalUsd: item.notionalUsd });
+    } catch {
       preparationUnavailable = true;
     }
 
@@ -386,9 +391,7 @@ async function discoverChainCandidates(
       ...(!explicitFeeTreatmentComplete ? ['required:complete_0x_explicit_fee_economic_treatment'] : []),
     ] : [
       'required:firm_0x_atomic_quote',
-      ...(!receiverExecutionSupported ? ['required:reviewed_receiver_execution_surface'] : []),
-      ...((observedFlashFeeBps === null) ? ['required:measured_balancer_flash_loan_fee'] : []),
-      ...((balancerEvidence?.availableLiquidity === null || balancerEvidence?.availableLiquidity === undefined) ? ['required:measured_balancer_flash_loan_liquidity'] : []),
+      ...(!observationProvider ? ['required:measured_compatible_flash_loan_fee', 'required:measured_compatible_flash_loan_liquidity'] : []),
       'required:exact_receiver_gas_cost',
       'required:receiver_permission_readiness',
       ...(preparationUnavailable ? ['required:atomic_execution_preparation_currently_unavailable'] : []),
@@ -396,7 +399,11 @@ async function discoverChainCandidates(
     const status = prepared && prepared.deterministicNetProfitUsd > 0 && explicitFeeTreatmentComplete
       ? 'eligible' as const
       : 'enriched' as const;
-    const discoveryVenues = [...new Set([item.first.source, item.second.source, 'balancer_v2'])];
+    const discoveryVenues = [...new Set([
+      item.first.source,
+      item.second.source,
+      ...(observationProvider ? [observationProvider.provider] : []),
+    ])];
 
     observed.push(measuredCandidateRegistry.record({
       opportunityId: item.opportunityId,
@@ -413,8 +420,10 @@ async function discoverChainCandidates(
       depth: {
         status: 'measured',
         detail: prepared
-          ? 'Indicative DEX route plus two firm 0x allowance-holder quotes, explicit fee treatment, existing receiver permissions, and exact gas estimation'
-          : 'Independent quote-only DEX round-trip measured without granting execution authority; firm 0x atomic hydration remains required until another transaction adapter is fully verified',
+          ? `Indicative DEX route plus two firm 0x allowance-holder quotes, explicit fee treatment, verified ${prepared.flashLoanProvider} receiver permissions, and exact gas estimation`
+          : observationProvider
+            ? `Independent quote-only DEX round-trip plus exact-liquidity ${observationProvider.provider} fee evidence measured without granting execution authority; firm atomic hydration remains required`
+            : 'Independent quote-only DEX round-trip measured without a compatible complete flash-provider funding proof; discovery remains visible while provider evidence is reacquired',
       },
       economics: prepared ? {
         grossProfitUsd: prepared.grossProfitUsd,
@@ -452,12 +461,12 @@ async function discoverChainCandidates(
       quoteAgeMs,
       executableCapability: prepared !== null && explicitFeeTreatmentComplete,
       executionCapabilityReason: prepared && explicitFeeTreatmentComplete
-        ? 'Two fresh 0x v2 firm quotes are atomically compiled into an already-verified Balancer receiver; explicit fee effects are classified without double subtraction, current flash fee and exact receiver gas are measured, and existing permissions are verified'
+        ? `Two fresh 0x v2 firm quotes are atomically compiled into a verified ${prepared.flashLoanProvider} receiver; explicit fee effects, current flash fee, exact receiver gas, permissions, and exact provider liquidity are measured without double subtraction`
         : prepared
           ? 'Firm 0x atomic preparation exists, but an explicit 0x fee component lacks a complete same-chain economic treatment and therefore cannot be promoted'
-          : receiverExecutionSupported
-            ? 'Numeric observation BPS is preserved from live independent DEX route outputs while firm atomic hydration remains temporarily unavailable'
-            : 'DEX market discovery remains active and visible even though this chain does not yet have a reviewed receiver-backed atomic execution surface',
+          : observationProvider
+            ? `Numeric observation BPS is preserved from live DEX route outputs plus measured ${observationProvider.provider} fee/current gas while firm provider-bound execution hydration remains temporarily unavailable`
+            : 'DEX market discovery remains active and visible while compatible flash-provider fee/liquidity evidence is reacquired; no unknown fee is treated as zero',
       missingInformation,
       provenance: [
         `${item.first.source}:price_only_discovery`,
@@ -470,14 +479,16 @@ async function discoverChainCandidates(
         hydrationTargets.has(item.opportunityId) ? 'firm_hydration:all_measured_routes_same_cycle' : 'firm_hydration:invariant_violation',
         'firm_hydration:fixed_negative_bps_gate_removed',
         'firm_hydration:budget_defer_removed',
-        ...(observedFlashFeeBps !== null ? ['balancer_v2:flash_fee_measured_onchain_for_observation_bps'] : ['balancer_v2:flash_fee_unavailable']),
+        ...(observationProvider
+          ? [`flash_loan_provider:${observationProvider.provider}`, 'flash_loan_provider:exact_liquidity_and_fee_measured_for_observation_bps']
+          : ['flash_loan_provider:no_complete_compatible_evidence_unknown_fee_not_zero']),
         'dex_observation_bps:indicative_not_execution_authority',
         'gas_oracle:measured_when_available',
         item.first.source === 'openocean' || item.second.source === 'openocean'
           ? 'dex_discovery_fallback:openocean_v4_current_quote'
           : 'dex_discovery_primary:0x_v2_price',
         'dex_discovery_provider_failure:route_local',
-        receiverExecutionSupported ? 'receiver_chain_capability:verified' : 'receiver_chain_capability:not_yet_available_discovery_continues',
+        prepared ? 'provider_receiver_capability:verified' : 'provider_receiver_capability:hydration_pending_discovery_continues',
         'discovery_infrastructure_mutation:false',
         'unknown_flash_fee_is_not_zero',
         'synthetic_evidence:false',
