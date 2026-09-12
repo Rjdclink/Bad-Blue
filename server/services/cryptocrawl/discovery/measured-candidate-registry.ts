@@ -166,6 +166,15 @@ function measuredSignedUsdToBps(valueUsd: unknown, notionalUsd: number | null): 
   return value / notionalUsd * 10_000;
 }
 
+function measuredNetBps(economics: MeasuredCandidate['economics'], notionalUsd: number | null): number | null {
+  const deterministicNetProfitUsd = finite(economics.deterministicNetProfitUsd);
+  if (deterministicNetProfitUsd !== null && notionalUsd !== null && notionalUsd > 0) {
+    const derived = deterministicNetProfitUsd / notionalUsd * 10_000;
+    if (Number.isFinite(derived)) return derived;
+  }
+  return finite(economics.netProfitBps);
+}
+
 function buildCanonicalBps(economics: MeasuredCandidate['economics'], measuredAt: number): CanonicalBpsEconomics {
   const notionalUsd = measuredNotionalUsd(economics);
   return {
@@ -181,7 +190,7 @@ function buildCanonicalBps(economics: MeasuredCandidate['economics'], measuredAt
     relayBps: finite(economics.relayCostBps),
     allInCostBps: finite(economics.allInCostBps),
     breakEvenBps: finite(economics.breakEvenBps),
-    netBps: finite(economics.netProfitBps),
+    netBps: measuredNetBps(economics, notionalUsd),
     bpsToBreakEven: finite(economics.bpsToBreakEven),
     realizedNetBps: finite(economics.realizedNetProfitBps),
     source: 'measured_candidate_registry',
@@ -205,7 +214,6 @@ function explicitlyRequiredMissingInformation(item: string): boolean {
 
 export function hasMinimumSufficientExecutionEvidence(candidate: MeasuredCandidate, now = Date.now()): boolean {
   const notionalUsd = finite(candidate.canonicalBps.notionalUsd);
-  const netBps = finite(candidate.canonicalBps.netBps);
   const deterministicNetProfitUsd = finite(candidate.economics.deterministicNetProfitUsd);
   return candidate.status === 'eligible'
     && candidate.executableCapability === true
@@ -213,7 +221,6 @@ export function hasMinimumSufficientExecutionEvidence(candidate: MeasuredCandida
     && candidate.depth.status !== 'unavailable'
     && notionalUsd !== null
     && notionalUsd > 0
-    && netBps !== null
     && deterministicNetProfitUsd !== null
     && deterministicNetProfitUsd > 0;
 }
