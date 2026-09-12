@@ -6,9 +6,12 @@ const assert = require('node:assert/strict');
 const read = path => fs.readFileSync(path, 'utf8');
 const recovery = read('server/services/cryptocrawl/integration/zero-capital-recovery-observability.ts');
 const mesh = read('server/services/cryptocrawl/integration/bps-compression-mesh.ts');
+const registry = read('server/services/cryptocrawl/discovery/measured-candidate-registry.ts');
+const transformation = read('server/services/cryptocrawl/integration/economic-transformation-wiring.ts');
+const coordinator = read('server/services/cryptocrawl/integration/universal-bps-rescue-coordinator.ts');
 
-// The zero-capital recovery projection must react to the canonical candidate
-// registry rather than relying only on a coarse polling interval.
+// The zero-capital recovery projection still reacts to canonical ZERO_CAPITAL_ATOMIC
+// candidate updates rather than relying only on a coarse polling interval.
 assert.match(recovery, /measuredCandidateRegistry\.onUpdate\(scheduleCandidateRefresh\)/);
 assert.match(recovery, /candidate\.topology !== 'ZERO_CAPITAL_ATOMIC'/);
 assert.match(recovery, /candidateRefreshTimer = setTimeout\([\s\S]{0,220}refresh\(\)[\s\S]{0,120}250\)/);
@@ -18,8 +21,8 @@ assert.match(recovery, /staleCandidateEconomicAuthority: false/);
 assert.match(recovery, /syntheticProfitAllowed: false/);
 assert.match(recovery, /timer = setInterval\(refresh, intervalMs\)/);
 
-// The BPS mesh must initialize from that current projection and refresh from its
-// update signal, while retaining the periodic timer only as a resilience fallback.
+// The BPS mesh still initializes from that current projection and refreshes from
+// its update signal, while retaining the periodic timer only as a resilience fallback.
 assert.match(mesh, /ensureZeroCapitalRecoveryObservability\(\);[\s\S]{0,180}onZeroCapitalRecoveryUpdate\(\(\) => scheduleRecoveryDrivenRefresh\(\)\)/);
 assert.match(mesh, /function scheduleRecoveryDrivenRefresh\(\)[\s\S]{0,220}refreshBpsCompressionMesh\(\)[\s\S]{0,120}50\)/);
 assert.match(mesh, /timer = setInterval\(refreshBpsCompressionMesh, intervalMs\)/);
@@ -29,4 +32,65 @@ assert.match(mesh, /syntheticEvidenceAllowed: false/);
 assert.doesNotMatch(mesh, /measuredCandidateRegistry\.(record|updateStatus)\(/);
 assert.doesNotMatch(mesh, /canonicalBps\.[A-Za-z]+\s*=/);
 
-console.log('[bps-zero-capital-event-handoff] PASS: canonical zero-capital candidate updates coalesce into recovery telemetry and immediately invalidate/refetch the BPS mesh; periodic fallback, fail-closed economics, stale-evidence rejection, and execution-authority boundaries remain intact');
+// Canonical BPS health is now explicit for every measured topology without adding
+// a second economics authority. Legacy zeroCapitalBps compatibility remains.
+assert.match(registry, /bpsByTopology: Record<MeasuredOpportunityTopology, TopologyBpsMetrics>/);
+for (const topology of [
+  'CEX_CEX', 'DEX_ATOMIC', 'ZERO_CAPITAL_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN',
+  'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE', 'PREDICTION_EVENT',
+]) {
+  assert.match(registry, new RegExp(`'${topology}'`));
+}
+assert.match(registry, /rescueBand: nets\.filter\(net => net >= -10 && net < 0\)\.length/);
+assert.match(registry, /positiveBelowTarget: nets\.filter\(net => net > 0 && net < 10\)\.length/);
+assert.match(registry, /targetClearing: nets\.filter\(net => net >= 10\)\.length/);
+assert.match(registry, /zeroCapitalBps: \{/);
+assert.match(registry, /canonicalBps: buildCanonicalBps\(economics, updatedAt\)/);
+
+// Candidate updates immediately wake the existing bounded BPS Super Engine pass.
+// This is a scheduling/liveness change only: the same ranking, per-candidate
+// cooldowns, transformation engine, and periodic fallback remain authoritative.
+assert.match(transformation, /function scheduleCandidateRefresh\(\): void/);
+assert.match(transformation, /candidateRefreshTimer = setTimeout\([\s\S]{0,160}refresh\(\)/);
+assert.match(transformation, /measuredCandidateRegistry\.onUpdate\(candidate => \{[\s\S]{0,260}scheduleCandidateRefresh\(\)/);
+assert.match(transformation, /ensureUniversalBpsRescueCoordinator\(\)/);
+assert.match(transformation, /timer = setInterval\(refresh, intervalMs\)/);
+assert.match(transformation, /executionAuthority: false/);
+
+// The universal coordinator owns the state transition for every topology but may
+// neither rewrite canonical economics nor create an execution authority. Missing
+// resource readiness does not terminate rescue ownership; only expiry, explicit
+// measured impossibility/exhausted compatible alternatives, or target achievement do.
+assert.match(coordinator, /measuredCandidateRegistry\.onUpdate\(acceptCandidate\)/);
+for (const state of [
+  'bps_hydration_pending',
+  'bps_reduction_owned',
+  'atomic_rescue_owned',
+  'target_achieved',
+  'measured_impossibility',
+  'evidence_expired',
+]) {
+  assert.match(coordinator, new RegExp(`'${state}'`));
+}
+for (const topology of [
+  'CEX_CEX', 'DEX_ATOMIC', 'ZERO_CAPITAL_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN',
+  'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE', 'PREDICTION_EVENT',
+]) {
+  assert.match(coordinator, new RegExp(`case '${topology}'| '${topology}'`));
+}
+assert.match(coordinator, /getAtomicZeroCapitalStrategyCoverage\(candidate\.topology\)/);
+assert.match(coordinator, /else if \(netBps < entry\)/);
+assert.match(coordinator, /else if \(netBps < target\)/);
+assert.match(coordinator, /normalStrictPositiveExecutionMayProceed: netBps !== null && netBps > 0/);
+assert.match(coordinator, /missingExecutionResourceDoesNotReleaseRescueOwnership: true/);
+assert.match(coordinator, /nonAtomicTopologiesRemainTopologySpecific: true/);
+assert.match(coordinator, /strictPositiveExecutionFloorUnchanged: true/);
+assert.match(coordinator, /canonicalEconomicsAuthority: 'measured_candidate_registry\.canonicalBps'/);
+assert.match(coordinator, /bpsReductionAuthority: 'existing_bps_reduction_super_engine'/);
+assert.match(coordinator, /syntheticEconomicsAllowed: false/);
+assert.match(coordinator, /canonicalBpsMutation: false/);
+assert.match(coordinator, /executionAuthority: false/);
+assert.doesNotMatch(coordinator, /measuredCandidateRegistry\.(record|updateStatus)\(/);
+assert.doesNotMatch(coordinator, /canonicalBps\.[A-Za-z]+\s*=/);
+
+console.log('[bps-zero-capital-event-handoff] PASS: canonical candidate updates drive fresh BPS transformation work and universal all-topology rescue ownership; -10-to-+10 handoff, topology-specific reacquisition, zero-capital event projection, strict-positive execution, periodic fallback, stale-evidence rejection, synthetic-economics prohibition, and execution-authority boundaries remain intact');
