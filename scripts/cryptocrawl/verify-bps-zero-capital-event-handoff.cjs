@@ -64,9 +64,9 @@ assert.match(transformation, /timer = setInterval\(refresh, intervalMs\)/);
 assert.match(transformation, /executionAuthority: false/);
 
 // The universal coordinator owns the state transition for every topology but may
-// neither rewrite canonical economics nor create an execution authority. Missing
-// resource readiness does not terminate rescue ownership; only expiry, explicit
-// measured impossibility/exhausted compatible alternatives, or target achievement do.
+// neither rewrite canonical economics nor create an execution authority. Expired
+// evidence must trigger fresh topology-local reacquisition; only target achievement
+// and explicit measured impossibility are terminal ownership states.
 assert.match(coordinator, /measuredCandidateRegistry\.onUpdate\(acceptCandidate\)/);
 for (const state of [
   'bps_hydration_pending',
@@ -91,6 +91,8 @@ assert.match(coordinator, /else if \(netBps < target\)/);
 assert.match(coordinator, /normalStrictPositiveExecutionMayProceed: netBps !== null && netBps > 0/);
 assert.match(coordinator, /previous\?\.state === 'bps_reduction_owned' && next\.state === 'atomic_rescue_owned'/);
 assert.match(coordinator, /rescueBandHandoffs/);
+assert.match(coordinator, /if \(state === 'target_achieved' \|\| state === 'measured_impossibility'\) return;/);
+assert.doesNotMatch(coordinator, /state === 'measured_impossibility' \|\| state === 'evidence_expired'/);
 assert.match(coordinator, /missingExecutionResourceDoesNotReleaseRescueOwnership: true/);
 assert.match(coordinator, /nonAtomicTopologiesRemainTopologySpecific: true/);
 assert.match(coordinator, /strictPositiveExecutionFloorUnchanged: true/);
@@ -104,4 +106,4 @@ assert.doesNotMatch(coordinator, /canonicalBps\.[A-Za-z]+\s*=/);
 assert.match(coordinator, /venues\.has\('polymarket'\)[\s\S]{0,120}discoverPredictionMarketParityOpportunities\(\)/, 'Polymarket prediction rescue must reacquire Polymarket evidence rather than substituting Kalshi');
 assert.match(coordinator, /venues\.has\('kalshi'\)[\s\S]{0,160}refreshKalshiSystemEvidenceNow\(\)/, 'Kalshi prediction rescue must remain on the canonical Kalshi evidence path');
 
-console.log('[bps-zero-capital-event-handoff] PASS: one canonical BPS seam owns the -10 boundary; BPS actuation remains below the shared entry floor, Atomic owns entry-floor-through-target rescue, topology/venue-specific reacquisition stays intact, strict-positive execution is unchanged, and no synthetic or parallel economics authority is introduced');
+console.log('[bps-zero-capital-event-handoff] PASS: one canonical BPS seam owns the -10 boundary; BPS actuation remains below the shared entry floor, Atomic owns entry-floor-through-target rescue, expired evidence reacquires through topology-local scanners, strict-positive execution is unchanged, and no synthetic or parallel economics authority is introduced');
