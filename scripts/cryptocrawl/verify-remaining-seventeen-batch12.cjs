@@ -25,6 +25,7 @@ const memory = read('server/services/cryptocrawl/intelligence/canonical-intellig
 const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts');
 const atomicSize = read('server/services/cryptocrawl/execution/adapters/atomic-size-optimizer.ts');
 const zeroCapitalCore = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
+const zeroCapitalDiscovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 // verify-deployment-preflight redirects path-based reads of this filename to the
 // preserved flash implementation for legacy verifiers. This verifier needs the
 // physical canonical router, so read it by descriptor to bypass that compatibility shim.
@@ -65,7 +66,11 @@ assert(dynamicRoutes.includes('truePositiveQuotes = quotes.filter(quote => quote
 assert(dynamicRoutes.includes('state.measuredQuotes += quotes.length'), 'measured quote count must reflect actual measured quotes');
 assert(atomicSize.includes('profit > 0n') && atomicSize.includes('bestPositive'), 'atomic size optimizer must prefer strict-positive measured dollar profit');
 assert(atomicSize.includes('bpsToBreakEven') && atomicSize.includes('bestNearMiss'), 'all-negative atomic size fallback must preserve the closest measured BPS near miss only');
-assert(zeroCapitalCore.includes('runZeroCapitalProfitabilityRescueV2({'), 'canonical zero-capital scan must invoke BPS rescue directly');
+assert(!zeroCapitalCore.includes('runZeroCapitalProfitabilityRescueV2') &&
+  zeroCapitalCore.includes('duplicateAtomicRescuePass: false') &&
+  zeroCapitalDiscovery.includes("import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';") &&
+  zeroCapitalDiscovery.includes('const rescueReady = await runFairZeroCapitalProfitabilityRescue({'),
+'Atomic rescue must be single-owner in canonical discovery after measurement; core scan must remain measurement-only');
 assert(zeroCapitalCore.includes('tokenUnitEqualsUsdAssumption: false'), 'zero-capital runtime context must explicitly reject token-unit-equals-USD authority');
 assert(canonicalZeroCapitalExecutor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';"), 'canonical zero-capital executor must use the provider-mesh live price surface');
 assert(canonicalZeroCapitalExecutor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])'), 'canonical zero-capital terminal economics must request live token prices through the mesh');
@@ -127,4 +132,4 @@ assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVe
 assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring())"), 'candidate expiry guard must be isolated and installed');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, self-funded notional rungs isolated from provider-capacity-bounded zero-capital borrowing, Profit Ladder daily-realized-profit-only authority, canonical direct BPS rescue with measured provider fees/liquidity and live-price-mesh token valuation, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, self-funded notional rungs isolated from provider-capacity-bounded zero-capital borrowing, Profit Ladder daily-realized-profit-only authority, single-owner fairness-ordered BPS rescue in canonical discovery with measured provider fees/liquidity and live-price-mesh token valuation, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
