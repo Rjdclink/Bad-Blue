@@ -2,9 +2,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
 const quoter = fs.readFileSync('server/services/cryptocrawl/execution/adapters/onchain-route-quoter.ts', 'utf8');
+const core = fs.readFileSync('server/services/cryptocrawl/core/zero-capital-engine.ts', 'utf8');
 const discovery = fs.readFileSync('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts', 'utf8');
 const dynamic = fs.readFileSync('server/services/cryptocrawl/discovery/dynamic-zero-capital-routes.ts', 'utf8');
 const providerEconomics = fs.readFileSync('server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.ts', 'utf8');
+const fairness = fs.readFileSync('server/services/cryptocrawl/execution/zero-capital-rescue-fairness.ts', 'utf8');
+const overflowSchema = fs.readFileSync('server/services/cryptocrawl/runtime/cryptocrawl-overflow-runtime-schema.ts', 'utf8');
+const fairnessMigration = fs.readFileSync('server/migrations/059_cryptocrawler_zero_capital_rescue_fairness.sql', 'utf8');
 const mesh = fs.readFileSync('server/services/cryptocrawl/integration/bps-compression-mesh.ts', 'utf8');
 const executor = fs.readFileSync('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts', 'utf8');
 
@@ -76,6 +80,7 @@ assert.match(providerEconomics, /synthetic_evidence:false/);
 assert.match(discovery, /class DiscoveryWatchdogTimeoutError extends Error/);
 assert.match(discovery, /function receiverFleetWatchdogMs\(\): number/);
 assert.match(discovery, /function chainScanWatchdogMs\(\): number/);
+assert.match(discovery, /ZERO_CAPITAL_CHAIN_SCAN_WATCHDOG_MS, 45_000, 5_000, 120_000/);
 assert.match(discovery, /function withWatchdog<T>/);
 assert.match(discovery, /function currentReceiverFleetTask\(target: CanonicalZeroCapitalRuntime\): Promise<void>/);
 assert.match(discovery, /if \(receiverFleetTask\) return receiverFleetTask/);
@@ -85,6 +90,7 @@ assert.match(discovery, /void withWatchdog\(task, receiverFleetWatchdogMs\(\), '
 assert.match(discovery, /globalProviderAdmissionBlocked: false/);
 assert.match(discovery, /async function scanOneChain\([\s\S]*const funding = await strictFunding\(target, chain\)/);
 assert.match(discovery, /const resourceReady = funding\.mode !== 'unavailable'[\s\S]*funding\.strictZeroInitialCapitalEligible === true[\s\S]*funding\.operatorMonetaryInputRequired === false[\s\S]*receiverReady/);
+assert.match(discovery, /runFairZeroCapitalProfitabilityRescue\(/);
 assert.match(discovery, /const selected = await repriceZeroCapitalProviderEconomics\(/);
 assert.match(discovery, /getGasFundingDecision: selectedChain => strictFunding\(target, selectedChain\)/);
 assert.match(discovery, /runChainScanWithWatchdog\(chain, provider\)/);
@@ -99,6 +105,29 @@ assert.match(discovery, /degradedReceiverCycleMode: 'chain_local_admission_provi
 assert.match(discovery, /globalReceiverFailureBlocksProviderAdmission: false/);
 assert.match(discovery, /schedulerAuthority:\s*false/);
 assert.match(discovery, /executionAuthority:\s*false/);
+
+// The runtime core is measurement-only. Configured and dynamic candidates must
+// converge before one fairness-ordered Atomic transformation pass; a hidden first
+// Rescue V2 pass here consumes the short live evidence TTL and is forbidden.
+assert.match(core, /Atomic rescue belongs to that canonical discovery layer/);
+assert.match(core, /duplicateAtomicRescuePass: false/);
+assert.match(core, /return accepted;/);
+assert.doesNotMatch(core, /runZeroCapitalProfitabilityRescueV2/);
+
+// Atomic fairness is durable Overflow scheduling metadata, not an execution or
+// economics authority. The runtime schema must provision and verify the existing
+// migration instead of allowing a stale schema marker to skip it.
+assert.match(fairness, /public\.cryptocrawler_zero_capital_rescue_fairness/);
+assert.match(fairness, /pg_advisory_xact_lock/);
+assert.match(overflowSchema, /const SCHEMA_VERSION = 28/);
+assert.match(overflowSchema, /cryptocrawl:overflow-runtime-schema:v28/);
+assert.match(overflowSchema, /'059_cryptocrawler_zero_capital_rescue_fairness\.sql'/);
+assert.match(overflowSchema, /26: \['057_cryptocrawler_ghost_wallet_runtime\.sql', '059_cryptocrawler_zero_capital_rescue_fairness\.sql'\]/);
+assert.match(overflowSchema, /27: \['059_cryptocrawler_zero_capital_rescue_fairness\.sql'\]/);
+assert.match(overflowSchema, /'public\.cryptocrawler_zero_capital_rescue_fairness'/);
+assert.match(fairnessMigration, /CREATE TABLE IF NOT EXISTS public\.cryptocrawler_zero_capital_rescue_fairness/);
+assert.match(fairnessMigration, /PRIMARY KEY \(chain, route_id\)/);
+assert.match(fairnessMigration, /stores no executable quote and never changes canonical profitability or execution authority/);
 
 // Search/compute attention may retain a bounded exploration lane, but stale
 // cumulative zero-capital history cannot claim variable profitability allocation
@@ -117,4 +146,4 @@ assert.match(executor, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /Canonical all-in net economics are not strictly positive/);
 
-console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, live-price mesh gas valuation, timeout ownership recovery, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
+console.log('[zero-capital-quote-liveness] bounded RPC/provider/receiver/chain work, live-price mesh gas valuation, timeout ownership recovery, route-local RPC failover, cross-provider rejection isolation, chain-local funding proof, single-pass fairness-ordered Atomic rescue, durable fairness schema authority, dynamic provider economics, current-candidate BPS allocation, numeric negative-route measurement, recurring liveness recovery, and positive-only canonical execution verified');
