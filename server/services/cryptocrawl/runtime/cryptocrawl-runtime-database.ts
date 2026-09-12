@@ -43,20 +43,25 @@ const overflowParsed = parsedPostgresUrl(configuredOverflowUrl);
 export const isDatabaseConfigured = Boolean(configuredOverflowUrl && overflowParsed);
 export const isCryptocrawlRuntimeDatabaseConfigured = isDatabaseConfigured;
 
-const transactionUrl = isDatabaseConfigured
-  ? (derivePoolerMode(configuredOverflowUrl, '6543') || configuredOverflowUrl)
+// Railway is a persistent backend with a deliberately tiny application-side pool.
+// If the configured Overflow URL is the shared Supabase pooler, keep BOTH hot
+// mutation and coordination lanes on session-capable port 5432. Transaction mode
+// (6543) can recycle backend session state across clients; a contaminated read-only
+// backend must never become an intermittent execution-state authority.
+const ordinaryUrl = isDatabaseConfigured
+  ? (derivePoolerMode(configuredOverflowUrl, '5432') || configuredOverflowUrl)
   : 'postgresql://127.0.0.1:1/cryptocrawl-overflow-disabled';
 const coordinationUrl = isDatabaseConfigured
   ? (derivePoolerMode(configuredOverflowUrl, '5432') || configuredOverflowUrl)
   : 'postgresql://127.0.0.1:1/cryptocrawl-overflow-coordination-disabled';
 
-const ordinaryUsesTransactionPool = isSharedPooler(transactionUrl)
-  && parsedPostgresUrl(transactionUrl)?.port === '6543';
+const ordinaryUsesTransactionPool = isSharedPooler(ordinaryUrl)
+  && parsedPostgresUrl(ordinaryUrl)?.port === '6543';
 const coordinationUsesTransactionPool = isSharedPooler(coordinationUrl)
   && parsedPostgresUrl(coordinationUrl)?.port === '6543';
 
-if (isDatabaseConfigured && coordinationUsesTransactionPool) {
-  throw new Error('[CryptoCrawlerRuntimeDB] Overflow coordination lane must be session-capable; transaction pool port 6543 is not allowed');
+if (isDatabaseConfigured && (ordinaryUsesTransactionPool || coordinationUsesTransactionPool)) {
+  throw new Error('[CryptoCrawlerRuntimeDB] Overflow hot mutation/coordination lanes must be session-capable; shared transaction pool port 6543 is not allowed');
 }
 
 const ordinaryPoolMax = boundedInt(process.env.CRYPTOCRAWL_OVERFLOW_POOL_MAX, 2, 1, 4);
@@ -76,10 +81,10 @@ const ssl = process.env.PGSSLMODE !== 'disable'
   : false;
 
 export const pool = new Pool({
-  connectionString: transactionUrl,
+  connectionString: ordinaryUrl,
   max: ordinaryPoolMax,
   min: 0,
-  idleTimeoutMillis: ordinaryUsesTransactionPool ? 10_000 : 15_000,
+  idleTimeoutMillis: 15_000,
   connectionTimeoutMillis: 15_000,
   query_timeout: 30_000,
   keepAlive: true,
