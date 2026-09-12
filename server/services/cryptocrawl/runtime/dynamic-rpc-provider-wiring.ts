@@ -90,11 +90,11 @@ function costSafePublicDefinitions(): ProviderDefinition[] {
 }
 
 /**
- * Public dRPC endpoints are a separate free streaming lane. Current dRPC
- * documentation exposes both HTTPS and WSS endpoints and standard
- * newPendingTransactions subscriptions on these networks. They are registered
- * independently rather than borrowing a WebSocket from a different HTTP provider,
- * which keeps provider provenance and failure accounting truthful.
+ * Public dRPC endpoints are a separate free streaming lane. They retain pending
+ * transaction capability, but deliberately rank below the ordinary PublicNode /
+ * official HTTP lanes for general RPC. dRPC's free tier has aggressive regional
+ * rate limits and short timeouts, so making this streaming transport the highest
+ * priority HTTP provider causes unrelated quote/log traffic to consume its budget.
  */
 function freeStreamingDefinitions(): ProviderDefinition[] {
   if (process.env.CRYPTOCRAWL_FREE_STREAMING_RPC_ENABLED?.trim().toLowerCase() === 'false') return [];
@@ -114,7 +114,7 @@ function freeStreamingDefinitions(): ProviderDefinition[] {
       chain,
       httpUrl: `https://${slug}.drpc.org/`,
       websocketUrl: `wss://${slug}.drpc.org`,
-      priority: 105,
+      priority: 85,
       pendingTransactions: true,
     } satisfies ProviderDefinition];
   });
@@ -232,6 +232,7 @@ async function registerConfiguredMesh(): Promise<void> {
     endpointUrlsLogged: false,
     providerManagerAuthoritative: true,
     costSafePublicRpcPreferred: true,
+    streamingHttpIsGeneralAuthority: false,
     independentNoKeyPublicFailover: true,
     deprecatedCloudflarePublicGatewayAdmitted: false,
     alchemyOperationalAuthority: false,
