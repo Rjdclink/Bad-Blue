@@ -20,6 +20,7 @@ import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import { getClosestCexNearMissesBySymbol } from './cex-four-mode-observability-wiring.js';
 
 let timer: NodeJS.Timeout | null = null;
+let candidateRefreshTimer: NodeJS.Timeout | null = null;
 let latest: EconomicTransformationAdvice[] = [];
 let candidateSubscription: (() => void) | null = null;
 const actionInFlight = new Map<string, Promise<void>>();
@@ -46,6 +47,11 @@ function operationalCooldownMs(): number {
 function anomalyCooldownMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_ANOMALY_REVALIDATION_COOLDOWN_MS || 5_000);
   return Number.isFinite(parsed) ? Math.max(500, Math.min(60_000, Math.trunc(parsed))) : 5_000;
+}
+
+function candidateRefreshDelayMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_BPS_CANDIDATE_REFRESH_MS || 50);
+  return Number.isFinite(parsed) ? Math.max(10, Math.min(1_000, Math.trunc(parsed))) : 50;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -117,18 +123,31 @@ function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
   anomalyInFlight.set(symbol, task);
 }
 
+function scheduleCandidateRefresh(): void {
+  if (candidateRefreshTimer) return;
+  candidateRefreshTimer = setTimeout(() => {
+    candidateRefreshTimer = null;
+    refresh();
+  }, candidateRefreshDelayMs());
+  candidateRefreshTimer.unref?.();
+}
+
 function installCandidateBpsSubscription(): void {
   if (candidateSubscription) return;
   for (const candidate of measuredCandidateRegistry.getRecent(4096)) recordBpsCandidateAttribution(candidate);
   candidateSubscription = measuredCandidateRegistry.onUpdate(candidate => {
     recordBpsCandidateAttribution(candidate);
     queueAnomalyRevalidation(candidate);
+    scheduleCandidateRefresh();
   });
   logger.info('[EconomicTransformation] Canonical candidate BPS subscription installed', {
     component: 'EconomicTransformationWiring',
     sourceAuthority: 'measured_candidate_registry.canonicalBps',
     registryMethodMutation: false,
     allTopologiesAttributed: true,
+    candidateDrivenTransformationRefresh: true,
+    candidateRefreshDelayMs: candidateRefreshDelayMs(),
+    periodicFallbackRetained: true,
     realizedOutcomeGovernorFeedback: true,
     anomalyDiscardWithoutRecheck: false,
     executionAuthority: false,
