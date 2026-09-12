@@ -120,6 +120,7 @@ class MultiTopologyDiscoveryController {
       topologyTaskWatchdogMs: topologyTaskWatchdogMs(),
       hungTopologyIsolation: true,
       duplicateHungTopologySuppression: true,
+      timedOutTopologyOwnershipReleased: true,
       fixedTopologyPriority: false,
       adaptiveScanAllocationApplied: true,
       topologies: ['CEX_CEX', 'DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE'],
@@ -145,6 +146,7 @@ class MultiTopologyDiscoveryController {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.topologyTasks.clear();
   }
 
   private runScheduledCycle(): void {
@@ -195,12 +197,15 @@ class MultiTopologyDiscoveryController {
       return { value, durationMs: elapsedMs(startedAt), skipped: false, reusedInFlight };
     } catch (error) {
       if (error instanceof TopologyTaskWatchdogError) {
+        if (this.topologyTasks.get(key) === tracked) this.topologyTasks.delete(key);
         logger.warn('[OpportunityGraph] Topology discovery task exceeded its watchdog; other topologies and future controller cycles continue', {
           component: 'MultiTopologyDiscoveryController',
           topologyTask: key,
           timeoutMs: topologyTaskWatchdogMs(),
           reusedInFlight,
           duplicateTaskSuppressedWhilePending: true,
+          timedOutTaskOwnershipReleased: true,
+          futureCycleMayStartFreshTask: true,
           executionAuthority: false,
         });
       }
@@ -281,8 +286,9 @@ class MultiTopologyDiscoveryController {
 
       // Every selected producer is bounded independently. Promise.allSettled alone
       // cannot finish while any member remains permanently pending, so each task has
-      // a watchdog and a single-flight identity. A timed-out underlying task remains
-      // isolated and cannot be duplicated until it eventually settles.
+      // a watchdog and a single-flight identity. A timed-out task relinquishes the
+      // single-flight slot so a future cycle can reacquire fresh evidence instead of
+      // permanently inheriting an unresolved promise.
       const [cex, dex, cross, mempool, liquidation, maker, funding] = await Promise.allSettled([
         this.runTopologyTask('cex', runCex, () => measuredOpportunityGraph.scanOnce()),
         this.runTopologyTask('dex', runDex, async () => { await rpcReady; return discoverMeasuredDexCandidates(); }),
@@ -376,6 +382,7 @@ class MultiTopologyDiscoveryController {
         durationMsByTopology,
         topologyTaskWatchdogMs: topologyTaskWatchdogMs(),
         isolatedPendingTopologyTasks: [...this.topologyTasks.keys()],
+        timedOutTopologyOwnershipReleased: true,
         fixedTopologyPriority: false,
         adaptiveScanAllocationApplied: true,
         skippedTopologies,
