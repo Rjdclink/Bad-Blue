@@ -6,6 +6,7 @@ import { discoverMeasuredDexCandidates } from '../discovery/dex-opportunity-gene
 import { discoverMeasuredLiquidationCandidates } from '../discovery/liquidation-opportunity-generator.js';
 import { discoverMeasuredMakerCandidates } from '../discovery/maker-opportunity-generator.js';
 import { discoverMeasuredMempoolCandidates } from '../discovery/mempool-opportunity-generator.js';
+import { discoverPredictionMarketParityOpportunities } from '../discovery/prediction-market-opportunity-generator.js';
 import {
   measuredCandidateRegistry,
   type MeasuredCandidate,
@@ -184,9 +185,12 @@ async function runTopologyReacquisition(candidate: MeasuredCandidate): Promise<v
     case 'FUNDING_ARBITRAGE':
       await fundingRateMonitor.scanOnce();
       return;
-    case 'PREDICTION_EVENT':
-      await refreshKalshiSystemEvidenceNow();
+    case 'PREDICTION_EVENT': {
+      const venues = new Set(candidate.venues.map(value => value.trim().toLowerCase()).filter(Boolean));
+      if (venues.has('polymarket')) await discoverPredictionMarketParityOpportunities();
+      if (venues.has('kalshi') || !venues.has('polymarket')) await refreshKalshiSystemEvidenceNow();
       return;
+    }
   }
 }
 
