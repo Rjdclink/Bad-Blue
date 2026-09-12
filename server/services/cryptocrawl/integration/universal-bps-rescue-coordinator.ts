@@ -102,7 +102,7 @@ function candidateSymbol(candidate: MeasuredCandidate): string | null {
 }
 
 function normalizeOpportunityStem(opportunityId: string): string {
-  return opportunityId.replace(/:\d{10,}$/, '');
+  return opportunityId.replace(/:\d{12,14}$/, '');
 }
 
 function normalizedValues(values: readonly string[]): string[] {
@@ -115,7 +115,8 @@ function normalizedValues(values: readonly string[]): string[] {
 function sameNormalizedValues(left: readonly string[], right: readonly string[]): boolean {
   const normalizedLeft = normalizedValues(left);
   const normalizedRight = normalizedValues(right);
-  if (normalizedLeft.length === 0 || normalizedRight.length === 0) return true;
+  if (normalizedLeft.length === 0 && normalizedRight.length === 0) return true;
+  if (normalizedLeft.length === 0 || normalizedRight.length === 0) return false;
   if (normalizedLeft.length !== normalizedRight.length) return false;
   return normalizedLeft.every((value, index) => value === normalizedRight[index]);
 }
