@@ -209,12 +209,13 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
   const enforcedMinimumProfit = atomicReceiverMinimum !== null && atomicReceiverMinimum > requestedMinimumProfit
     ? atomicReceiverMinimum
     : requestedMinimumProfit;
-  // expectedProfit is all-in after gas/relay, while receiver minProfit is checked
-  // before those external costs. Compare the Atomic-adjusted receiver floor against
-  // the corresponding pre-external measured profit rather than double-charging it.
-  const expectedReceiverProfit = expectedProfit
-    + optionalBaseUnits(opportunity.estimatedGasCostInInputToken)
-    + optionalBaseUnits(opportunity.relayFeeInInputToken);
+  // Only Atomic target accounting compares an all-in quote with the receiver's
+  // pre-external-cost threshold. Ordinary callers retain the original exact check.
+  const expectedReceiverProfit = opportunity.type === 'ZERO_CAPITAL_ATOMIC'
+    ? expectedProfit
+      + optionalBaseUnits(opportunity.estimatedGasCostInInputToken)
+      + optionalBaseUnits(opportunity.relayFeeInInputToken)
+    : expectedProfit;
   if (enforcedMinimumProfit > expectedReceiverProfit) throw new Error('Autonomous zero-capital minimum execution profit exceeds the measured executable profit');
 
   const minOutputBps = boundedBps(
