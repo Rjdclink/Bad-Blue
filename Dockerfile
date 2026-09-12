@@ -114,6 +114,7 @@ COPY --from=builder /app/server/migrations/054_cryptocrawler_polymarket_redempti
 COPY --from=builder /app/server/migrations/055_cryptocrawler_coinbase_system_owned_capital.sql ./dist/migrations/055_cryptocrawler_coinbase_system_owned_capital.sql
 COPY --from=builder /app/server/migrations/056_subagent_runtime_prerequisites.sql ./dist/migrations/056_subagent_runtime_prerequisites.sql
 COPY --from=builder /app/server/migrations/057_cryptocrawler_ghost_wallet_runtime.sql ./dist/migrations/057_cryptocrawler_ghost_wallet_runtime.sql
+COPY --from=builder /app/server/migrations/059_cryptocrawler_zero_capital_rescue_fairness.sql ./dist/migrations/059_cryptocrawler_zero_capital_rescue_fairness.sql
 COPY --from=builder /app/server/migrations/overflow/001_cryptara_comp_cache.sql ./dist/migrations/overflow/001_cryptara_comp_cache.sql
 COPY --from=builder /app/server/migrations/overflow/002_cryptara_parallel_proxy.sql ./dist/migrations/overflow/002_cryptara_parallel_proxy.sql
 COPY --from=builder /app/server/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql ./dist/migrations/overflow/003_cryptocrawler_runtime_prerequisites.sql
