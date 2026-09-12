@@ -112,8 +112,9 @@ assert.match(gasAuthority, /getProvenZeroCapitalGasFundingDecision/);
 assert.match(engine, /return getProvenZeroCapitalGasFundingDecision\(this, chain\)/);
 
 // Canonical discovery owns lifecycle/admission. The runtime context retains only
-// the explicit-route measurement helper, and each RPC capability can fail over
-// independently rather than binding gas, block, quote, and rescue work to one provider.
+// the explicit-route measurement helper. Gas, block, and quote capabilities can
+// fail over independently, while Atomic rescue runs exactly once after configured
+// and dynamic candidates converge in canonical discovery.
 assert.match(engine, /Explicit-route measurement helper used only by CanonicalZeroCapitalDiscovery/);
 assert.match(engine, /const gasProvider = \(await multiProviderRpcManager\.execute\(rpcChain, 'gas'/);
 assert.match(engine, /const funding = await this\.getGasFundingDecision\(chain\);/);
@@ -121,9 +122,14 @@ assert.match(engine, /enrichConfiguredZeroCapitalGasEconomics\(chain, gasProvide
 assert.match(engine, /multiProviderRpcManager\.execute\(rpcChain, 'blocks'/);
 assert.match(engine, /const quoteProvider = \(await multiProviderRpcManager\.execute\(rpcChain, 'contract_calls'/);
 assert.match(engine, /quoteConfiguredZeroCapitalRoutesForChain\(chain, quoteProvider, gasEconomics\.routes\)/);
-assert.match(engine, /const rescueProvider = \(await multiProviderRpcManager\.execute\(rpcChain, 'contract_calls'/);
-assert.match(engine, /provider: rescueProvider/);
-assert.match(engine, /configuredRoutes: gasEconomics\.routes/);
+assert.match(engine, /Atomic rescue belongs to that canonical discovery layer/);
+assert.match(engine, /atomicRescueAuthority: 'CanonicalZeroCapitalDiscovery'/);
+assert.match(engine, /duplicateAtomicRescuePass: false/);
+assert.doesNotMatch(engine, /runZeroCapitalProfitabilityRescueV2/);
+assert.doesNotMatch(engine, /const rescueProvider = \(await multiProviderRpcManager\.execute\(rpcChain, 'contract_calls'/);
+assert.match(discovery, /const rescueReady = await runFairZeroCapitalProfitabilityRescue\(\{/);
+assert.match(discovery, /runFairZeroCapitalProfitabilityRescue\(\{[\s\S]{0,160}provider,[\s\S]{0,160}opportunities: exact/);
+assert.match(discovery, /configuredRoutes: executionRoutes\(target\)/);
 assert.match(engine, /zeroSeedPromotedToExecutableEconomics: false/);
 assert.match(configuredGasEconomics, /provider\.getFeeData\(\)/);
 assert.match(configuredGasEconomics, /livePriceMesh\.getLiveSymbolPrices\(\[nativeSymbol, \.\.\.inputSymbols\]\)/);
