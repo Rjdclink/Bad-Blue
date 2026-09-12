@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { ensureStageOneDexMempoolRepair, getStageOneDexMempoolRepairSnapshot } from '../discovery/stage-one-dex-mempool-repair.js';
 import { ensureStageOneMeasurementRecovery, getStageOneMeasurementRecoverySnapshot } from '../discovery/stage-one-measurement-recovery.js';
 import {
   measuredCandidateRegistry,
@@ -19,11 +20,27 @@ const TOPOLOGIES: readonly MeasuredOpportunityTopology[] = [
   'PREDICTION_EVENT',
 ];
 
+// These seven families were production-proven before the final DEX/Mempool
+// repair. Their measured Stage-1 visibility is a regression invariant: once a
+// real measured spread has been observed, the last-known measurement remains
+// visible even after freshness expiry. Freshness is reported separately and
+// locked history can never grant execution or economic authority.
+const LOCKED_BASELINE_TOPOLOGIES: readonly MeasuredOpportunityTopology[] = [
+  'CEX_CEX',
+  'MAKER_CEX',
+  'ZERO_CAPITAL_ATOMIC',
+  'CROSS_CHAIN',
+  'FUNDING_ARBITRAGE',
+  'LIQUIDATION',
+  'PREDICTION_EVENT',
+];
+
 type SpreadSource =
   | 'canonical_gross_bps'
   | 'measured_gross_profit_usd_over_notional'
   | 'canonical_net_bps_fallback'
-  | 'cex_four_mode_measured_net_after_exchange_fees_bps';
+  | 'cex_four_mode_measured_net_after_exchange_fees_bps'
+  | 'locked_last_known_measured_bps';
 
 interface MeasuredSpreadPoint {
   topology: MeasuredOpportunityTopology;
@@ -31,8 +48,14 @@ interface MeasuredSpreadPoint {
   spreadBps: number;
   observedAt: number;
   expiresAt: number | null;
-  source: SpreadSource;
+  source: Exclude<SpreadSource, 'locked_last_known_measured_bps'>;
   current: boolean;
+}
+
+interface LockedMeasuredSpread {
+  spreadBps: number;
+  observedAt: number;
+  source: Exclude<SpreadSource, 'locked_last_known_measured_bps'>;
 }
 
 export interface StageOneTopologySpreadSnapshot {
@@ -46,6 +69,9 @@ export interface StageOneTopologySpreadSnapshot {
   latestMeasuredSpreadBps: number | null;
   latestMeasuredAt: number | null;
   latestSource: SpreadSource | null;
+  lockedBaselineInvariant: boolean;
+  lockedLastKnownMeasurement: boolean;
+  lockedMeasurementAgeMs: number | null;
 }
 
 export interface StageOneSpreadSnapshot {
@@ -55,6 +81,8 @@ export interface StageOneSpreadSnapshot {
   strategiesWithMeasuredSpread: number;
   totalStrategies: number;
   allStrategiesHaveMeasuredSpread: boolean;
+  lockedBaselineTopologies: MeasuredOpportunityTopology[];
+  lockedMeasuredTopologies: MeasuredOpportunityTopology[];
   byTopology: Record<MeasuredOpportunityTopology, StageOneTopologySpreadSnapshot>;
   authority: 'stage_one_measurement_visibility_only';
   executionAuthority: false;
@@ -65,6 +93,7 @@ export interface StageOneSpreadSnapshot {
 
 let timer: NodeJS.Timeout | null = null;
 let latest: StageOneSpreadSnapshot | null = null;
+const lockedMeasuredSpreads = new Map<MeasuredOpportunityTopology, LockedMeasuredSpread>();
 
 function finite(value: unknown): number | null {
   if (value === null || value === undefined || typeof value === 'boolean') return null;
@@ -88,7 +117,7 @@ function intervalMs(): number {
   return Number.isFinite(configured) ? Math.max(1_000, Math.min(60_000, Math.trunc(configured))) : 5_000;
 }
 
-function candidateMeasuredSpread(candidate: MeasuredCandidate): { spreadBps: number; source: SpreadSource } | null {
+function candidateMeasuredSpread(candidate: MeasuredCandidate): { spreadBps: number; source: MeasuredSpreadPoint['source'] } | null {
   const canonicalGross = finite(candidate.canonicalBps.grossBps);
   if (canonicalGross !== null) return { spreadBps: canonicalGross, source: 'canonical_gross_bps' };
 
@@ -153,13 +182,27 @@ function closestToZero(values: number[]): number | null {
   return [...values].sort((left, right) => Math.abs(left) - Math.abs(right) || right - left)[0];
 }
 
+function lockMeasuredPoints(points: readonly MeasuredSpreadPoint[]): void {
+  for (const point of points) {
+    const existing = lockedMeasuredSpreads.get(point.topology);
+    if (existing && existing.observedAt > point.observedAt) continue;
+    lockedMeasuredSpreads.set(point.topology, {
+      spreadBps: point.spreadBps,
+      observedAt: point.observedAt,
+      source: point.source,
+    });
+  }
+}
+
 function recompute(): StageOneSpreadSnapshot {
   const now = Date.now();
   const retentionMs = retentionWindowMs();
   const currentMs = currentWindowMs();
   const registryCandidates = measuredCandidateRegistry.getRecentIncludingExpired(4096)
     .filter(candidate => candidate.observedAt >= now - retentionMs);
-  const points = [...registrySpreadPoints(now, retentionMs, currentMs), ...cexFourModeSpreadPoints(now, retentionMs, currentMs)];
+  const cexPoints = cexFourModeSpreadPoints(now, retentionMs, currentMs);
+  const points = [...registrySpreadPoints(now, retentionMs, currentMs), ...cexPoints];
+  lockMeasuredPoints(points);
 
   const byTopology = Object.fromEntries(TOPOLOGIES.map(topology => {
     const topologyPoints = points
@@ -167,10 +210,12 @@ function recompute(): StageOneSpreadSnapshot {
       .sort((left, right) => right.observedAt - left.observedAt);
     const values = topologyPoints.map(point => point.spreadBps);
     const latestPoint = topologyPoints[0] || null;
+    const locked = lockedMeasuredSpreads.get(topology) ?? null;
+    const visibleSpread = latestPoint?.spreadBps ?? locked?.spreadBps ?? null;
     const observationsInRetentionWindow = topology === 'CEX_CEX'
       ? Math.max(
           registryCandidates.filter(candidate => candidate.topology === topology).length,
-          cexFourModeSpreadPoints(now, retentionMs, currentMs).length,
+          cexPoints.length,
         )
       : registryCandidates.filter(candidate => candidate.topology === topology).length;
 
@@ -179,12 +224,15 @@ function recompute(): StageOneSpreadSnapshot {
       observationsInRetentionWindow,
       measuredSpreadCount: topologyPoints.length,
       currentMeasuredSpreadCount: topologyPoints.filter(point => point.current).length,
-      stageOneSpreadVisible: topologyPoints.length > 0,
-      bestMeasuredSpreadBps: values.length ? Math.max(...values) : null,
-      closestToZeroSpreadBps: closestToZero(values),
-      latestMeasuredSpreadBps: latestPoint?.spreadBps ?? null,
-      latestMeasuredAt: latestPoint?.observedAt ?? null,
-      latestSource: latestPoint?.source ?? null,
+      stageOneSpreadVisible: visibleSpread !== null,
+      bestMeasuredSpreadBps: values.length ? Math.max(...values) : locked?.spreadBps ?? null,
+      closestToZeroSpreadBps: values.length ? closestToZero(values) : locked?.spreadBps ?? null,
+      latestMeasuredSpreadBps: visibleSpread,
+      latestMeasuredAt: latestPoint?.observedAt ?? locked?.observedAt ?? null,
+      latestSource: latestPoint?.source ?? (locked ? 'locked_last_known_measured_bps' : null),
+      lockedBaselineInvariant: LOCKED_BASELINE_TOPOLOGIES.includes(topology),
+      lockedLastKnownMeasurement: latestPoint === null && locked !== null,
+      lockedMeasurementAgeMs: locked ? Math.max(0, now - locked.observedAt) : null,
     };
     return [topology, snapshot];
   })) as Record<MeasuredOpportunityTopology, StageOneTopologySpreadSnapshot>;
@@ -197,6 +245,8 @@ function recompute(): StageOneSpreadSnapshot {
     strategiesWithMeasuredSpread,
     totalStrategies: TOPOLOGIES.length,
     allStrategiesHaveMeasuredSpread: strategiesWithMeasuredSpread === TOPOLOGIES.length,
+    lockedBaselineTopologies: [...LOCKED_BASELINE_TOPOLOGIES],
+    lockedMeasuredTopologies: TOPOLOGIES.filter(topology => lockedMeasuredSpreads.has(topology)),
     byTopology,
     authority: 'stage_one_measurement_visibility_only',
     executionAuthority: false,
@@ -217,8 +267,11 @@ function publish(): void {
     allStrategiesHaveMeasuredSpread: snapshot.allStrategiesHaveMeasuredSpread,
     retentionWindowMs: snapshot.retentionWindowMs,
     currentWindowMs: snapshot.currentWindowMs,
+    lockedBaselineTopologies: snapshot.lockedBaselineTopologies,
+    lockedMeasuredTopologies: snapshot.lockedMeasuredTopologies,
     byTopology: Object.values(snapshot.byTopology),
     recovery: getStageOneMeasurementRecoverySnapshot(),
+    dexMempoolRepair: getStageOneDexMempoolRepairSnapshot(),
     authority: snapshot.authority,
     executionAuthority: snapshot.executionAuthority,
     economicMutationAuthority: snapshot.economicMutationAuthority,
@@ -234,6 +287,7 @@ export function getStageOneSpreadSnapshot(): StageOneSpreadSnapshot {
 export function ensureStageOneSpreadObservability(): void {
   if (timer) return;
   ensureStageOneMeasurementRecovery();
+  ensureStageOneDexMempoolRepair();
   publish();
   if (process.env.NO_INTERVALS !== 'true') {
     timer = setInterval(publish, intervalMs());
@@ -242,9 +296,11 @@ export function ensureStageOneSpreadObservability(): void {
   logger.info('[StageOneSpread] Measurement-only Stage-1 spread authority installed', {
     component: 'StageOneSpreadObservability',
     topologies: TOPOLOGIES,
+    lockedBaselineTopologies: LOCKED_BASELINE_TOPOLOGIES,
     retentionWindowMs: retentionWindowMs(),
     currentWindowMs: currentWindowMs(),
     measurementRecoveryInstalled: true,
+    dexMempoolRepairInstalled: true,
     executionAuthority: false,
     economicMutationAuthority: false,
     staleEvidenceExecutionAuthority: false,
