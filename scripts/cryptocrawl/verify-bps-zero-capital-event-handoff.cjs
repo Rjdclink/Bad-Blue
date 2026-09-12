@@ -92,5 +92,7 @@ assert.match(coordinator, /canonicalBpsMutation: false/);
 assert.match(coordinator, /executionAuthority: false/);
 assert.doesNotMatch(coordinator, /measuredCandidateRegistry\.(record|updateStatus)\(/);
 assert.doesNotMatch(coordinator, /canonicalBps\.[A-Za-z]+\s*=/);
+assert.match(coordinator, /venues\.has\('polymarket'\)[\s\S]{0,120}discoverPredictionMarketParityOpportunities\(\)/, 'Polymarket prediction rescue must reacquire Polymarket evidence rather than substituting Kalshi');
+assert.match(coordinator, /venues\.has\('kalshi'\)[\s\S]{0,160}refreshKalshiSystemEvidenceNow\(\)/, 'Kalshi prediction rescue must remain on the canonical Kalshi evidence path');
 
-console.log('[bps-zero-capital-event-handoff] PASS: canonical candidate updates drive fresh BPS transformation work and universal all-topology rescue ownership; -10-to-+10 handoff, topology-specific reacquisition, zero-capital event projection, strict-positive execution, periodic fallback, stale-evidence rejection, synthetic-economics prohibition, and execution-authority boundaries remain intact');
+console.log('[bps-zero-capital-event-handoff] PASS: canonical candidate updates drive fresh BPS transformation work and universal all-topology rescue ownership; -10-to-+10 handoff, topology/venue-specific reacquisition, zero-capital event projection, strict-positive execution, periodic fallback, stale-evidence rejection, synthetic-economics prohibition, and execution-authority boundaries remain intact');
