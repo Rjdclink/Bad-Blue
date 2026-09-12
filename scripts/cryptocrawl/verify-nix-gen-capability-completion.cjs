@@ -149,12 +149,18 @@ must(combinedAdapter, "if (result.status === 'REFUNDED') return 'refunded';", 'c
 must(combinedAdapter, "return 'failed';", 'origin failures are recorded as failed terminal executions');
 must(combinedAdapter, "const submitted = (result.status === 'opened' || result.status === 'opening') && Boolean(result.lifecycleId);", 'ambiguous funding opening consumes the parent submission slot');
 
-// Lifecycle risk-management maintenance must run before and gate all new exposure.
-must(canonicalScheduler, 'await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);', 'long-lived lifecycle recovery runs on the canonical scheduler cadence');
-mustBefore(canonicalScheduler, 'await fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4);', "if (!isLiveExecutionPosture())", 'lifecycle recovery runs before new-exposure posture gates');
+// Lifecycle maintenance starts every canonical scheduler cadence. Fresh positive CEX
+// evidence does not wait on unrelated long-lived recovery; lifecycle-dependent
+// measured and Kalshi exposure remains gated by successful maintenance.
+must(canonicalScheduler, 'const lifecycleMaintenance = this.maintainLifecycleLanes();', 'lifecycle recovery starts on every canonical scheduler cadence');
+mustBefore(canonicalScheduler, 'const lifecycleMaintenance = this.maintainLifecycleLanes();', "if (!isLiveExecutionPosture())", 'lifecycle recovery starts before new-exposure posture gates');
+must(canonicalScheduler, 'fundingCrossChainExecutionAdapter.advanceOpenFundingLifecycles(4)', 'long-lived funding recovery remains in canonical lifecycle maintenance');
+must(canonicalScheduler, 'const maintenance = await lifecycleMaintenance;', 'lifecycle-dependent exposure awaits the already-running maintenance lane');
+mustBefore(canonicalScheduler, 'const maintenance = await lifecycleMaintenance;', 'measured = await this.dispatchMeasuredTopologies();', 'measured lifecycle-dependent exposure waits for maintenance success');
 must(canonicalScheduler, "this.setIdle('lifecycle_maintenance_failed');", 'maintenance failure has an explicit scheduler state');
-must(canonicalScheduler, 'cycleTerminatedBeforeNewExposure: true', 'maintenance failure declares cycle termination before new exposure');
-mustBetween(canonicalScheduler, "this.setIdle('lifecycle_maintenance_failed');", 'return;', "if (!isLiveExecutionPosture())", 'maintenance failure actually returns before any new-exposure gate');
+mustBetween(canonicalScheduler, "this.setIdle('lifecycle_maintenance_failed');", 'return;', 'measured = await this.dispatchMeasuredTopologies();', 'maintenance failure returns before lifecycle-dependent measured exposure');
+must(canonicalScheduler, 'freshCexQuoteCriticalMaintenanceAwait: false', 'fresh CEX fast lane remains non-blocking on unrelated lifecycle maintenance');
+must(canonicalScheduler, 'dispatchKalshiAfterCexMiss({ lifecycleMaintenance })', 'post-CEX Kalshi fallback shares the existing lifecycle maintenance gate');
 
 // Funding entry remains projected expected value. Only authenticated terminal fills/bills establish realized profit.
 must(funding, 'deterministicNetProfitUsd: null', 'funding discovery never writes projected carry into deterministic profit');
