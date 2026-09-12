@@ -30,7 +30,6 @@ import type { InitialGasReadiness } from '../initial-gas-readiness.js';
 import { getGasSponsorManager } from '../strategies/gas-sponsorship.js';
 import { getProfitEstimates, type ProfitEstimate } from '../intelligence/profit-estimator.js';
 import { enrichConfiguredZeroCapitalGasEconomics } from '../discovery/configured-zero-capital-gas-economics.js';
-import { runZeroCapitalProfitabilityRescueV2 } from '../integration/zero-capital-profitability-rescue-v2.js';
 import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-wiring.js';
 import { getProvenZeroCapitalGasFundingDecision } from '../runtime/system-owned-gas-funding-proof-wiring.js';
 import { assertConfiguredWalletAddress, normalizePrivateKey, resolveConfiguredWalletAddress, walletFromPrivateKey } from './wallet-identity.js';
@@ -372,7 +371,11 @@ export class AutonomousZeroCapitalEngine {
     if (wallet) this.executionWallets.set(chain, wallet.connect(provider));
   }
 
-  /** Explicit-route measurement helper used only by CanonicalZeroCapitalDiscovery. */
+  /**
+   * Explicit-route measurement helper used only by CanonicalZeroCapitalDiscovery.
+   * This method measures gas and route economics only; the canonical discovery
+   * layer is the single owner of profitability rescue/transformation.
+   */
   async scanChain(
     chain: SupportedChain,
     _provider: providers.JsonRpcProvider,
@@ -384,8 +387,8 @@ export class AutonomousZeroCapitalEngine {
     const activeChain = chain as ActiveExecutionChain;
 
     // Keep the RPC manager's bounded timeout around one cheap health-capability
-    // probe only. Multi-step gas enrichment, route quoting, and profitability
-    // rescue own their own bounded work and must not be killed by a 12s wrapper.
+    // probe only. Multi-step gas enrichment and route quoting own their own bounded
+    // work; profitability rescue belongs to CanonicalZeroCapitalDiscovery.
     const gasProvider = (await multiProviderRpcManager.execute(rpcChain, 'gas', async provider => {
       await provider.getFeeData();
       this.adoptLiveProvider(activeChain, provider);
@@ -406,27 +409,17 @@ export class AutonomousZeroCapitalEngine {
     })).result;
     const quotes = await quoteConfiguredZeroCapitalRoutesForChain(chain, quoteProvider, gasEconomics.routes);
     const accepted = quotes.map(quote => this.fromQuotedRoute(quote, block.timestamp));
-    logger.debug('[ZeroCapitalEngine] Configured-route gas economics measured before BPS admission', {
+    logger.debug('[ZeroCapitalEngine] Configured-route gas economics measured before canonical rescue', {
       component: 'ZeroCapitalEngine',
       chain,
       routes: gasEconomics.routes.length,
+      measuredOpportunities: accepted.length,
       gasCostAuthority: gasEconomics.gasCostAuthority,
       estimatedGasUnits: gasEconomics.estimatedGasUnits,
       zeroSeedPromotedToExecutableEconomics: false,
+      profitabilityRescueAuthority: false,
     });
-
-    const rescueProvider = (await multiProviderRpcManager.execute(rpcChain, 'contract_calls', async provider => {
-      await provider.getBlockNumber();
-      this.adoptLiveProvider(activeChain, provider);
-      return provider;
-    })).result;
-    return runZeroCapitalProfitabilityRescueV2({
-      chain,
-      provider: rescueProvider,
-      opportunities: accepted,
-      configuredRoutes: gasEconomics.routes,
-      fromQuotedRoute: (quote, blockTimestamp) => this.fromQuotedRoute(quote, blockTimestamp),
-    });
+    return accepted;
   }
 
   fromQuotedRoute(quote: QuotedZeroCapitalRoute, blockTimestamp: number): ZeroCapitalOpportunity {
