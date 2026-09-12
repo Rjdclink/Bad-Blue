@@ -18,6 +18,7 @@ import {
 } from '../optimization/research-bps-execution-tactics.js';
 import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import { getClosestCexNearMissesBySymbol } from './cex-four-mode-observability-wiring.js';
+import { ensureUniversalBpsRescueCoordinator } from './universal-bps-rescue-coordinator.js';
 
 let timer: NodeJS.Timeout | null = null;
 let candidateRefreshTimer: NodeJS.Timeout | null = null;
@@ -435,6 +436,7 @@ export function getEconomicTransformationSnapshot(): EconomicTransformationAdvic
 export function ensureEconomicTransformationWiring(): void {
   if (timer || process.env.CRYPTOCRAWL_ECONOMIC_TRANSFORMATION_ENABLED === 'false') return;
   installCandidateBpsSubscription();
+  ensureUniversalBpsRescueCoordinator();
   refresh();
   if (process.env.NO_INTERVALS !== 'true') {
     const intervalMs = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTOCRAWL_ECONOMIC_TRANSFORMATION_INTERVAL_MS || 15_000)));
