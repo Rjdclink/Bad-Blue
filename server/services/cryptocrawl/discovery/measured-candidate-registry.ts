@@ -1,3 +1,5 @@
+import { assertCurrentCandidatePublication } from './candidate-publication-generation.js';
+
 export type MeasuredOpportunityTopology =
   | 'CEX_CEX'
   | 'DEX_ATOMIC'
@@ -376,6 +378,7 @@ class MeasuredCandidateRegistry {
   }
 
   record(input: CandidateRecordInput): MeasuredCandidate {
+    assertCurrentCandidatePublication(input.topology);
     if (!input.opportunityId.trim()) throw new Error('Measured candidate requires opportunityId');
     if (!Number.isFinite(input.observedAt) || input.observedAt <= 0) throw new Error('Measured candidate requires observedAt');
     if (!Number.isFinite(input.expiresAt) || input.expiresAt < input.observedAt) throw new Error('Measured candidate requires a valid expiration');
@@ -410,6 +413,7 @@ class MeasuredCandidateRegistry {
   ): MeasuredCandidate | null {
     const previous = this.candidates.get(opportunityId);
     if (!previous) return null;
+    assertCurrentCandidatePublication(previous.topology);
     const next = clone(previous, true);
     next.status = status;
     next.updatedAt = Date.now();
