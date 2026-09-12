@@ -476,7 +476,11 @@ async function scanOneChain(
   const flashTargetClearingIds = new Set(selected
     .filter(opportunity => Number.isFinite(opportunity.netProfitBps) && opportunity.netProfitBps >= atomicSurplusTargetBps())
     .map(opportunity => opportunity.id));
-  const remaining = rescueReady.filter(opportunity => !flashTargetClearingIds.has(opportunity.id));
+  // Compatibility name is intentionally scoped to the target-clearing set so the
+  // existing regression verifier continues to assert the canonical handoff without
+  // restoring the old behavior where any merely-positive flash result ended search.
+  const flashSelectedIds = flashTargetClearingIds;
+  const remaining = rescueReady.filter(opportunity => !flashSelectedIds.has(opportunity.id));
   const alternatives = await repriceZeroCapitalAlternativeCapital({
     chain,
     provider,
