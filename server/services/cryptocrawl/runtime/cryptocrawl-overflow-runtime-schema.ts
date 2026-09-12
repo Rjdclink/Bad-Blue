@@ -191,7 +191,7 @@ const REQUIRED_FUNCTIONS = [
   'public.cryptocrawler_renew_kalshi_event_system_cash(uuid,timestamp with time zone)',
   'public.cryptocrawler_reserve_polymarket_system_cash(text,text,numeric,timestamp with time zone,jsonb)',
   'public.cryptocrawler_release_polymarket_system_cash(uuid)',
-  'public.cryptocrawler_renew_polymarket_system_cash(uuid,timestamp with time zone)',
+  'public.cryptocrawler_renew_polymarket_system_cash(uuid,timestamp with time zone,jsonb)',
 ] as const;
 
 let schemaReady = false;
@@ -218,6 +218,37 @@ async function verifyRequiredObjects(client: any): Promise<void> {
   const functionResult = await client.query(`SELECT name, to_regprocedure(name) IS NOT NULL AS ready FROM unnest($1::text[]) AS name`, [REQUIRED_FUNCTIONS]);
   const missingFunctions = functionResult.rows.filter((row: any) => row?.ready !== true).map((row: any) => String(row?.name || 'unknown'));
   if (missingFunctions.length > 0) throw new Error(`Overflow CryptoCrawler runtime functions incomplete: ${missingFunctions.join(', ')}`);
+}
+
+async function verifyRuntimeWriteAuthority(client: any): Promise<void> {
+  const state = await client.query(`
+    SELECT
+      current_setting('transaction_read_only') AS transaction_read_only,
+      current_setting('default_transaction_read_only') AS default_transaction_read_only,
+      pg_is_in_recovery() AS in_recovery
+  `);
+  const row = state.rows?.[0] || {};
+  if (row.transaction_read_only !== 'off' || row.default_transaction_read_only !== 'off' || row.in_recovery === true) {
+    throw new Error(
+      `Overflow runtime authority is not writable: transaction_read_only=${String(row.transaction_read_only)} default_transaction_read_only=${String(row.default_transaction_read_only)} in_recovery=${String(row.in_recovery)}`,
+    );
+  }
+
+  await client.query('BEGIN');
+  try {
+    await client.query('SET TRANSACTION READ WRITE');
+    const canary = await client.query(`
+      UPDATE private.cryptocrawler_overflow_runtime_meta
+      SET updated_at=updated_at
+      WHERE system_key='cryptocrawler'
+      RETURNING system_key
+    `);
+    if (canary.rowCount !== 1 || canary.rows?.[0]?.system_key !== 'cryptocrawler') {
+      throw new Error('Overflow runtime write canary could not touch the canonical metadata row');
+    }
+  } finally {
+    await client.query('ROLLBACK').catch(() => undefined);
+  }
 }
 
 type DurableSchemaState = {
@@ -283,12 +314,7 @@ async function provision(): Promise<void> {
     try {
       durableState = await readDurableSchemaState(client);
       durableReady = durableState.version === SCHEMA_VERSION && durableState.ready;
-      if (durableReady) {
-        await verifyRequiredObjects(client);
-        durableFastPathHits += 1;
-        lastMigrationCount = 0;
-        lastProvisionMode = 'durable_fast_path';
-      }
+      if (durableReady) await verifyRequiredObjects(client);
     } catch (error) {
       logger.warn('[CryptoCrawlerOverflowSchema] Durable schema marker/object verification requires repair', {
         component: 'CryptoCrawlerOverflowRuntimeSchema', schemaVersion: SCHEMA_VERSION,
@@ -298,7 +324,14 @@ async function provision(): Promise<void> {
       durableReady = false;
     }
 
-    if (!durableReady) {
+    if (durableReady) {
+      // Object existence is not execution authority. Prove this exact Overflow
+      // session is read-write with persistent-table DML that is always rolled back.
+      await verifyRuntimeWriteAuthority(client);
+      durableFastPathHits += 1;
+      lastMigrationCount = 0;
+      lastProvisionMode = 'durable_fast_path';
+    } else {
       const plan = migrationPlan(durableState);
       logger.info('[CryptoCrawlerOverflowSchema] Applying bounded schema repair plan', {
         component: 'CryptoCrawlerOverflowRuntimeSchema',
@@ -312,15 +345,18 @@ async function provision(): Promise<void> {
       await runMigrations(client, plan);
       await verifyRequiredObjects(client);
       await markVerified(client);
+      await verifyRuntimeWriteAuthority(client);
     }
 
     schemaReady = true;
     lastError = null;
     verifiedAt = Date.now();
-    logger.info('[CryptoCrawlerOverflowSchema] Complete runtime authority schema verified on Overflow', {
+    logger.info('[CryptoCrawlerOverflowSchema] Complete runtime authority schema verified on writable Overflow', {
       component: 'CryptoCrawlerOverflowRuntimeSchema', schemaVersion: SCHEMA_VERSION, provisionMode: lastProvisionMode,
       durableFastPathHits, migrationRuns, migrationCount: lastMigrationCount,
       requiredTableCount: REQUIRED_TABLES.length, requiredFunctionCount: REQUIRED_FUNCTIONS.length,
+      writeAuthorityVerified: true,
+      writeCanaryMutationCommitted: false,
       duplicateTerminalSchedulerInstalled: false, primaryFallbackUsed: false,
     });
   } catch (error) {
@@ -328,7 +364,7 @@ async function provision(): Promise<void> {
     lastError = error instanceof Error ? error.message : String(error);
     try {
       await client.query(`UPDATE private.cryptocrawler_overflow_runtime_meta SET schema_ready=false, last_error=$1, updated_at=now() WHERE system_key='cryptocrawler'`, [lastError]);
-    } catch { /* prerequisite relation itself may be missing */ }
+    } catch { /* prerequisite relation itself may be missing or authority may be read-only */ }
     throw error;
   } finally {
     if (locked) {
@@ -359,6 +395,7 @@ export function getCryptocrawlOverflowRuntimeSchemaSnapshot() {
     lastMigrationCount,
     requiredTables: [...REQUIRED_TABLES],
     requiredFunctions: [...REQUIRED_FUNCTIONS],
+    writeAuthorityProbe: 'rollback_persistent_update' as const,
     duplicateTerminalSchedulerInstalled: false as const,
   };
 }
