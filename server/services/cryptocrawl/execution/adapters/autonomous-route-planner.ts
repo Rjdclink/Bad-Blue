@@ -24,13 +24,21 @@ export interface RoutePlanningSwapStep {
 
 export interface RoutePlanningOpportunity {
   chain: SupportedExecutionChain;
+  type?: string;
   inputToken: string;
   flashLoanAmount: bigint | string;
   expectedProfit: bigint | string;
+  estimatedGasCostInInputToken?: bigint | string;
+  relayFeeInInputToken?: bigint | string;
+  netProfitBps?: number;
   route: RoutePlanningSwapStep[];
   timestamp?: number;
   expiresAt?: number;
 }
+
+const ATOMIC_MINIMUM_TARGET_BPS = 10;
+const BPS_SCALE = 1_000_000n;
+const BPS_DENOMINATOR_SCALED = 10_000n * BPS_SCALE;
 
 function bigintishToString(value: bigint | string): string {
   if (typeof value === 'bigint') return value.toString();
@@ -39,6 +47,44 @@ function bigintishToString(value: bigint | string): string {
     throw new Error('Route planning values must be integer strings denominated in base units');
   }
   return normalized;
+}
+
+function optionalBaseUnits(value: bigint | string | undefined): bigint {
+  if (value === undefined) return 0n;
+  return BigInt(bigintishToString(value));
+}
+
+function atomicTargetBps(): number {
+  const configured = Number(
+    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
+    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
+    ?? ATOMIC_MINIMUM_TARGET_BPS,
+  );
+  const finite = Number.isFinite(configured) ? configured : ATOMIC_MINIMUM_TARGET_BPS;
+  return Math.max(ATOMIC_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
+}
+
+function minimumAtomicNetProfitBaseUnits(loanAmount: bigint): bigint {
+  const targetBps = atomicTargetBps();
+  const scaledBps = BigInt(Math.ceil(targetBps * Number(BPS_SCALE)));
+  return (loanAmount * scaledBps + BPS_DENOMINATOR_SCALED - 1n) / BPS_DENOMINATOR_SCALED;
+}
+
+function minimumAtomicReceiverProfitBaseUnits(
+  opportunity: RoutePlanningOpportunity,
+  loanAmount: bigint,
+): bigint | null {
+  if (opportunity.type !== 'ZERO_CAPITAL_ATOMIC') return null;
+  const targetBps = atomicTargetBps();
+  const measuredNetBps = Number(opportunity.netProfitBps);
+  if (!Number.isFinite(measuredNetBps) || measuredNetBps < targetBps) return null;
+  // Receiver profit is measured after principal/provider-fee repayment, but before
+  // operator-side gas/relay settlement. Add only those external costs so the
+  // encoded atomic threshold preserves the all-in target without double-counting
+  // the flash-loan fee already repaid inside the receiver.
+  const externalExecutionCost = optionalBaseUnits(opportunity.estimatedGasCostInInputToken)
+    + optionalBaseUnits(opportunity.relayFeeInInputToken);
+  return minimumAtomicNetProfitBaseUnits(loanAmount) + externalExecutionCost;
 }
 
 function applyHaircut(raw: bigint, bps: number): string {
@@ -159,7 +205,17 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     : BigInt(bigintishToString(options.minProfitBaseUnits));
   if (!isStrictlyPositiveProfitBaseUnits(requestedMinimumProfit)) throw new Error('Autonomous zero-capital minimum execution profit must be strictly greater than zero');
   if (requestedMinimumProfit < canonicalMinimumProfit) throw new Error('Autonomous zero-capital minimum execution profit cannot weaken the canonical positive-profit floor');
-  if (requestedMinimumProfit > expectedProfit) throw new Error('Autonomous zero-capital minimum execution profit exceeds the measured expected profit');
+  const atomicReceiverMinimum = minimumAtomicReceiverProfitBaseUnits(opportunity, flashLoanAmount);
+  const enforcedMinimumProfit = atomicReceiverMinimum !== null && atomicReceiverMinimum > requestedMinimumProfit
+    ? atomicReceiverMinimum
+    : requestedMinimumProfit;
+  // expectedProfit is all-in after gas/relay, while receiver minProfit is checked
+  // before those external costs. Compare the Atomic-adjusted receiver floor against
+  // the corresponding pre-external measured profit rather than double-charging it.
+  const expectedReceiverProfit = expectedProfit
+    + optionalBaseUnits(opportunity.estimatedGasCostInInputToken)
+    + optionalBaseUnits(opportunity.relayFeeInInputToken);
+  if (enforcedMinimumProfit > expectedReceiverProfit) throw new Error('Autonomous zero-capital minimum execution profit exceeds the measured executable profit');
 
   const minOutputBps = boundedBps(
     'ZERO_CAPITAL_ROUTE_MIN_OUTPUT_BPS',
@@ -217,7 +273,7 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     provider: options?.provider || 'balancer_v2',
     loanToken: inputToken,
     loanAmount: flashLoanAmount.toString(),
-    minProfit: requestedMinimumProfit.toString(),
+    minProfit: enforcedMinimumProfit.toString(),
     profitRecipient,
     steps,
     gasLimit: 1400000,
