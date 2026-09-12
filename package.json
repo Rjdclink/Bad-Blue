@@ -150,7 +150,7 @@
     "groq-sdk": "^0.37.0",
     "input-otp": "^1.4.2",
     "ioredis": "^5.8.2",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.1.1",
     "jspdf": "^3.0.4",
     "leaflet": "^1.9.4",
     "leaflet.heat": "^0.2.0",
