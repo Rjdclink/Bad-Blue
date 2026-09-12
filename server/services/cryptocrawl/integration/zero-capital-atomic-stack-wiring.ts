@@ -18,7 +18,7 @@ import {
 } from '../execution/adapters/flash-loan-provider-economics.js';
 import { verifyFlashLoanReceiverCapability } from '../execution/adapters/flash-loan-receiver-capability.js';
 import { zeroCapitalCompositeSelectionRegistry, type ZeroCapitalCompositePreparedSelection } from '../execution/zero-capital-composite-selection-registry.js';
-import { getProfitLadderDailyProfitBudget, expectedProfitFitsDailyBudget } from '../governance/profit-ladder-daily-profit-budget.js';
+import { getProfitLadderDailyProfitBudget } from '../governance/profit-ladder-daily-profit-budget.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { zeroCapitalCompositeEvidenceRegistry, type ZeroCapitalCompositeEvidence } from '../optimization/zero-capital-composite-evidence-registry.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
@@ -527,7 +527,9 @@ function candidateCanTriggerStack(candidate: MeasuredCandidate): boolean {
     || candidate.depth.status === 'unavailable'
   ) return false;
   const netBps = Number(candidate.canonicalBps.netBps ?? candidate.economics.netProfitBps);
-  return Number.isFinite(netBps) && netBps >= atomicSurplusEntryFloorBps();
+  return Number.isFinite(netBps)
+    && netBps >= atomicSurplusEntryFloorBps()
+    && netBps < atomicSurplusTargetBps();
 }
 
 function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: MeasuredCandidate): void {
@@ -559,10 +561,12 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
       const stack = chooseStack(compatible);
       if (stack.length < 2) return;
 
+      // Profit Ladder remains useful telemetry, but it is not an Atomic rescue,
+      // borrowing, composition, profitability, or execution veto authority.
       const budget = await getProfitLadderDailyProfitBudget().catch(() => null);
-      if (!budget || budget.exhausted) return;
       const variants = stackVariants(stack);
       const measured: MeasuredTargetStack[] = [];
+      let outsideRemainingDailyProfitBudget = 0;
       for (const variant of variants) {
         if (variant.some(member => member.expiresAt <= Date.now())) continue;
         const result = await measureTargetStack({
@@ -580,7 +584,11 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
           result.evidence.inputTokenDecimals,
           inputTokenUsdPrice,
         );
-        if (!expectedProfitFitsDailyBudget(expectedNetProfitUsd, budget)) continue;
+        if (
+          budget?.remainingProfitUsd !== null
+          && budget?.remainingProfitUsd !== undefined
+          && expectedNetProfitUsd > budget.remainingProfitUsd + 0.01
+        ) outsideRemainingDailyProfitBudget += 1;
         measured.push(result);
       }
       if (measured.length === 0) return;
@@ -611,11 +619,14 @@ function scheduleStackAdvisory(target: ZeroCapitalStackRuntime, candidate: Measu
         achievedNetProfitBps: best.evidence.sharedPrincipalStackedBps,
         measuredCompositionGain: best.evidence.measuredCompositionGain.toString(),
         estimatedGas: best.evidence.estimatedGas.toString(),
-        dailyProfitCapUsd: budget.dailyProfitCapUsd,
-        dailyRealizedProfitUsd: budget.realizedProfitUsd,
-        dailyRemainingProfitUsd: budget.remainingProfitUsd,
-        profitLadderStageAlignedTelemetry: budget.stageAligned,
+        dailyProfitCapUsd: budget?.dailyProfitCapUsd ?? null,
+        dailyRealizedProfitUsd: budget?.realizedProfitUsd ?? null,
+        dailyRemainingProfitUsd: budget?.remainingProfitUsd ?? null,
+        profitLadderStageAlignedTelemetry: budget?.stageAligned ?? null,
+        variantsOutsideRemainingDailyProfitBudget: outsideRemainingDailyProfitBudget,
         borrowingNotionalAuthority: false,
+        profitLadderCompositionVetoAuthority: false,
+        profitLadderExecutionVetoAuthority: false,
         netDollarOptimizationAboveTarget: true,
         exactTargetSimulationPassed: true,
         executionAuthority: false,
@@ -657,8 +668,10 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     exactCompositeGasEstimateRequired: true,
     measuredBalancerFlashFeeRequired: true,
     measuredCompositionBenefitRequired: true,
-    dailyProfitBudgetAuthority: 'profit_ladder_daily_realized_profit_only',
+    dailyProfitBudgetAuthority: 'profit_ladder_daily_realized_profit_telemetry_only',
     profitLadderStageAlignmentAuthority: false,
+    profitLadderCompositionVetoAuthority: false,
+    profitLadderExecutionVetoAuthority: false,
     borrowingNotionalAuthority: false,
     netDollarOptimizationAboveTarget: true,
     tokenPriceBoundUsdAccounting: true,
