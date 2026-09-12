@@ -454,6 +454,22 @@ export async function repriceZeroCapitalAlternativeCapital(input: {
     const best = alternatives[0];
     if (!best) continue;
 
+    // Alternative capital is an optimizer, never a downgrade authority. Canonical
+    // flash repricing may already have made the same route positive-but-subtarget;
+    // keep searching toward the Atomic target, but replace that incumbent only
+    // when this exact alternative-capital simulation is strictly better.
+    const incumbentCandidate = measuredCandidateRegistry.get(opportunity.id);
+    const incumbentNetBps = Number(
+      incumbentCandidate?.economics.netProfitBps
+      ?? incumbentCandidate?.canonicalBps.netBps
+      ?? opportunity.netProfitBps,
+    );
+    if (Number.isFinite(incumbentNetBps) && best.netProfitBps <= incumbentNetBps + 1e-9) continue;
+    best.provenance = [
+      ...best.provenance,
+      'alternative_capital_strict_net_bps_improvement_vs_current_canonical_candidate',
+    ];
+
     opportunity.flashLoanFeeInInputToken = best.sourceFee;
     opportunity.estimatedGasCostInInputToken = best.gasCostInInputToken;
     opportunity.estimatedExecutionCostInInputToken = best.allInCost;

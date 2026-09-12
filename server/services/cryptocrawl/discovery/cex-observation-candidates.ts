@@ -3,6 +3,36 @@ import type { PublicCexBboObservation } from './public-cex-discovery.js';
 
 const INTEGRATED_EXECUTABLE_CEX_VENUES = new Set(['coinbase', 'kraken', 'okx']);
 
+type GrossCexObservation = {
+  buyVenue: string;
+  sellVenue: string;
+  buyAsk: number;
+  sellBid: number;
+  grossSpreadBps: number;
+};
+
+function bestMeasuredGrossSpread(rows: readonly PublicCexBboObservation[]): GrossCexObservation | null {
+  let best: GrossCexObservation | null = null;
+  for (const buy of rows) {
+    if (!Number.isFinite(buy.ask) || !(buy.ask > 0)) continue;
+    for (const sell of rows) {
+      if (buy.venue === sell.venue || !Number.isFinite(sell.bid) || !(sell.bid > 0)) continue;
+      const grossSpreadBps = ((sell.bid - buy.ask) / buy.ask) * 10_000;
+      if (!Number.isFinite(grossSpreadBps)) continue;
+      if (!best || grossSpreadBps > best.grossSpreadBps) {
+        best = {
+          buyVenue: buy.venue,
+          sellVenue: sell.venue,
+          buyAsk: buy.ask,
+          sellBid: sell.bid,
+          grossSpreadBps,
+        };
+      }
+    }
+  }
+  return best;
+}
+
 /**
  * Convert measured discovery-only public BBOs into non-executable CEX_CEX
  * observation candidates. This is observability/search evidence only: no fee,
@@ -43,6 +73,7 @@ export function buildObservedCexCandidates(
     const executionHydrationPossible = integratedVenues.length >= 2;
     const observedAt = Math.max(...measured.map(row => row.observedAt));
     const expiry = observedAt + Math.max(250, ttlMs);
+    const grossObservation = bestMeasuredGrossSpread(measured);
     candidates.push({
       opportunityId: `public-cex-observed:${symbol}`,
       topology: 'CEX_CEX',
@@ -85,6 +116,9 @@ export function buildObservedCexCandidates(
         bridgeUsd: null,
         expectedSlippageBps: null,
         expectedPriceImpactBps: null,
+        grossProfitBps: grossObservation?.grossSpreadBps ?? null,
+        netProfitBps: null,
+        bpsToBreakEven: null,
       },
       quoteAgeMs: Math.max(0, Date.now() - observedAt),
       executableCapability: false,
@@ -104,6 +138,11 @@ export function buildObservedCexCandidates(
         'measured_public_cex_bbo',
         'cross_venue_observation',
         'discovery_only_non_authoritative_for_execution',
+        ...(grossObservation ? [
+          `measured_gross_bps:${grossObservation.grossSpreadBps}`,
+          `measured_gross_route:${grossObservation.buyVenue}->${grossObservation.sellVenue}`,
+          'measured_gross_bps_execution_authority:false',
+        ] : []),
         executionHydrationPossible
           ? 'execution_hydration_possible:two_or_more_integrated_venues'
           : 'execution_hydration_not_applicable:public_only_venue_scope',

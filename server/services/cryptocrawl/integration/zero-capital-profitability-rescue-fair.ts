@@ -22,8 +22,7 @@ function targetBps(): number {
 }
 
 function recoverable(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
-  return opportunity.expectedProfit <= 0n
-    && opportunity.expiresAt > now
+  return opportunity.expiresAt > now
     && opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
     && opportunity.netProfitBps >= entryFloorBps()
@@ -55,9 +54,6 @@ function guaranteedSelectedRouteBudget(): number {
   const maxRoutes = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_ROUTES, 6, 1, 16));
   const maxSizesPerRoute = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_SIZE_CANDIDATES, 9, 3, 16));
   const totalQuoteBudget = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET, 42, 6, 96));
-  // V2 spends at most maxSizesPerRoute quotes on a selected route. Limiting the
-  // selected set this way prevents an earlier route from consuming the entire
-  // shared budget before a later selected route receives a real requote attempt.
   return Math.max(1, Math.min(maxRoutes, Math.floor(totalQuoteBudget / maxSizesPerRoute) || 1));
 }
 
@@ -70,10 +66,10 @@ export interface FairZeroCapitalProfitabilityRescueInput {
 }
 
 /**
- * Scheduling wrapper only. V2 remains the sole transformation/economic requote
- * engine. Eligible routes that cannot receive bounded work this cycle are removed
- * from the current execution pipeline and must reappear with fresh evidence in a
- * later discovery cycle; no stale opportunity is persisted or made executable.
+ * Scheduling/telemetry wrapper only. V2 remains the sole transformation/economic
+ * requote engine. Fairness persistence may order work and record scheduling debt,
+ * but it never removes a fresh recoverable route from the current Atomic rescue
+ * pipeline and never grants execution authority.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
@@ -96,12 +92,12 @@ export async function runFairZeroCapitalProfitabilityRescue(
     return runZeroCapitalProfitabilityRescueV2(input as ZeroCapitalProfitabilityRescueInput);
   }
 
-  const candidateIds = new Set(candidates.map(candidate => candidate.opportunityId));
   const maxCandidates = guaranteedSelectedRouteBudget();
-  let selectedOpportunityIds: Set<string>;
-  let deferredOpportunityIds: Set<string>;
-  let selectedRouteIds: string[];
-  let deferredRouteIds: string[];
+  let selectedOpportunityIds = new Set<string>();
+  let deferredOpportunityIds = new Set<string>();
+  let selectedRouteIds: string[] = [];
+  let deferredRouteIds: string[] = [];
+  let persistedFairnessAvailable = true;
 
   try {
     const fairness = await selectFairZeroCapitalRescueCandidates({
@@ -114,33 +110,44 @@ export async function runFairZeroCapitalProfitabilityRescue(
     selectedRouteIds = fairness.selectedRouteIds;
     deferredRouteIds = fairness.deferredRouteIds;
   } catch (error) {
-    // Scheduling metadata failure must not turn a recoverable route into a
-    // terminal economic rejection. Defer every route requiring fairness state;
-    // unrelated/non-recoverable opportunities continue through their old path.
-    selectedOpportunityIds = new Set<string>();
-    deferredOpportunityIds = new Set(candidateIds);
-    selectedRouteIds = [];
-    deferredRouteIds = candidates.map(candidate => candidate.routeId);
-    logger.warn('[ZeroCapitalProfitabilityRescueFair] Fairness state unavailable; recoverable routes deferred rather than rejected', {
+    persistedFairnessAvailable = false;
+    const ranked = [...candidates].sort((left, right) => right.priority - left.priority);
+    const selected = ranked.slice(0, maxCandidates);
+    const deferred = ranked.slice(maxCandidates);
+    selectedOpportunityIds = new Set(selected.map(candidate => candidate.opportunityId));
+    deferredOpportunityIds = new Set(deferred.map(candidate => candidate.opportunityId));
+    selectedRouteIds = selected.map(candidate => candidate.routeId);
+    deferredRouteIds = deferred.map(candidate => candidate.routeId);
+    logger.warn('[ZeroCapitalProfitabilityRescueFair] Fairness state unavailable; fresh Atomic rescue continues with deterministic in-memory ordering', {
       component: 'ZeroCapitalProfitabilityRescueFair',
       chain: input.chain,
+      selectedOpportunityIds: [...selectedOpportunityIds],
       deferredOpportunityIds: [...deferredOpportunityIds],
       error: error instanceof Error ? error.message : String(error),
       executionAuthority: false,
+      rescueAdmissionAuthority: false,
       staleQuotePreserved: false,
     });
   }
 
-  const selectedOrUnrelated = input.opportunities.filter(opportunity =>
-    !candidateIds.has(opportunity.id) || selectedOpportunityIds.has(opportunity.id),
-  );
+  // Fairness never removes a fresh candidate from the economic search. Put the
+  // bounded fairness selection first so V2's shared quote budget reaches the routes
+  // selected for this cycle, then retain every other fresh route behind them. This
+  // preserves bounded work while preventing stable input ordering from starving a
+  // recoverable route indefinitely across fairness rotations.
+  const opportunityById = new Map(input.opportunities.map(opportunity => [opportunity.id, opportunity]));
+  const selectedFirst = [...selectedOpportunityIds]
+    .map(opportunityId => opportunityById.get(opportunityId))
+    .filter((opportunity): opportunity is ZeroCapitalOpportunity => Boolean(opportunity));
+  const remainingFresh = input.opportunities.filter(opportunity => !selectedOpportunityIds.has(opportunity.id));
+  const orderedOpportunities = [...selectedFirst, ...remainingFresh];
 
   const rescued = await runZeroCapitalProfitabilityRescueV2({
     ...input,
-    opportunities: selectedOrUnrelated,
+    opportunities: orderedOpportunities,
   });
 
-  logger.info('[ZeroCapitalProfitabilityRescueFair] Recoverable routes scheduled with durable fairness', {
+  logger.info('[ZeroCapitalProfitabilityRescueFair] Recoverable routes observed with non-authoritative fairness', {
     component: 'ZeroCapitalProfitabilityRescueFair',
     chain: input.chain,
     recoverableRoutes: new Set(candidates.map(candidate => candidate.routeId)).size,
@@ -149,8 +156,13 @@ export async function runFairZeroCapitalProfitabilityRescue(
     deferredRouteIds,
     selectedOpportunityIds: [...selectedOpportunityIds],
     deferredOpportunityIds: [...deferredOpportunityIds],
-    deferredRemovedFromCurrentExecutionPipeline: true,
-    freshRediscoveryRequiredForDeferredRoutes: true,
+    persistedFairnessAvailable,
+    deferredRemovedFromCurrentExecutionPipeline: false,
+    freshRediscoveryRequiredForDeferredRoutes: false,
+    fairnessExecutionVetoAuthority: false,
+    fairnessEconomicAdmissionAuthority: false,
+    v2ReceivesAllFreshRecoverableCandidates: true,
+    v2ReceivesSelectedRoutesFirst: true,
     staleQuotePreserved: false,
     v2EconomicAuthorityPreserved: true,
     executionAuthority: false,

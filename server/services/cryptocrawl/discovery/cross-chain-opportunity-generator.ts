@@ -4,7 +4,7 @@ import {
   type AcrossBridgeQuote,
   type AcrossStableSymbol,
 } from '../bridge/across-bridge-provider.js';
-import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { ChainId } from '../bridge/types.js';
 import { multiProviderRpcManager } from '../api/blockchain-providers.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
@@ -278,7 +278,7 @@ export async function discoverMeasuredCrossChainCandidates(): Promise<MeasuredCa
 
   const [quotes, prices] = await Promise.all([
     acquireRouteQuotes(routes, notionalUsd),
-    coinGeckoPriceClient.getLiveSymbolPrices([...ASSETS]).catch(() => new Map<string, number>()),
+    livePriceMesh.getLiveSymbolPrices([...ASSETS]).catch(() => new Map<string, number>()),
   ]);
 
   for (const [id, prepared] of preparedCrossChainQuotes.entries()) {

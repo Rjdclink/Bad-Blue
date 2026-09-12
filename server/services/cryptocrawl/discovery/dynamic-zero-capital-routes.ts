@@ -1,7 +1,7 @@
 import type { providers } from 'ethers';
 import logger from '../../../logger.js';
 import { DEFAULT_GAS_LIMIT, SUPPORTED_CHAINS } from '../bridge/chain-config.js';
-import { coinGeckoPriceClient } from '../bridge/coingecko-client.js';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import { gasOracle } from '../bridge/gas-oracle.js';
 import type { ChainId } from '../bridge/types.js';
 import type { GasFundingDecision, GasFundingMode } from '../capital-free/dynamic-gas-funding-engine.js';
@@ -495,7 +495,7 @@ async function enrichMeasuredGasCost(
   if (chain === 'ethereum' || chain === 'optimism') {
     const [feeData, prices] = await Promise.all([
       provider.getFeeData(),
-      coinGeckoPriceClient.getLiveSymbolPrices(['ETH']),
+      livePriceMesh.getLiveSymbolPrices(['ETH']),
     ]);
     const gasPriceWei = feeData.maxFeePerGas ?? feeData.gasPrice;
     const ethUsd = prices.get('ETH');

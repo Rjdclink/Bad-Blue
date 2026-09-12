@@ -18,8 +18,10 @@ import {
 } from '../optimization/research-bps-execution-tactics.js';
 import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import { getClosestCexNearMissesBySymbol } from './cex-four-mode-observability-wiring.js';
+import { ensureUniversalBpsRescueCoordinator } from './universal-bps-rescue-coordinator.js';
 
 let timer: NodeJS.Timeout | null = null;
+let candidateRefreshTimer: NodeJS.Timeout | null = null;
 let latest: EconomicTransformationAdvice[] = [];
 let candidateSubscription: (() => void) | null = null;
 const actionInFlight = new Map<string, Promise<void>>();
@@ -38,6 +40,11 @@ function minFeasibility(): number {
   return Number.isFinite(parsed) ? Math.max(0.05, Math.min(0.9, parsed)) : 0.15;
 }
 
+function bpsReductionOwnershipFloorBps(): number {
+  const parsed = Number(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS ?? -10);
+  return Number.isFinite(parsed) ? Math.max(-100, Math.min(0, parsed)) : -10;
+}
+
 function operationalCooldownMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_BPS_TRANSFORM_ACTION_COOLDOWN_MS || 5_000);
   return Number.isFinite(parsed) ? Math.max(500, Math.min(60_000, Math.trunc(parsed))) : 5_000;
@@ -46,6 +53,11 @@ function operationalCooldownMs(): number {
 function anomalyCooldownMs(): number {
   const parsed = Number(process.env.CRYPTOCRAWL_ANOMALY_REVALIDATION_COOLDOWN_MS || 5_000);
   return Number.isFinite(parsed) ? Math.max(500, Math.min(60_000, Math.trunc(parsed))) : 5_000;
+}
+
+function candidateRefreshDelayMs(): number {
+  const parsed = Number(process.env.CRYPTOCRAWL_BPS_CANDIDATE_REFRESH_MS || 50);
+  return Number.isFinite(parsed) ? Math.max(10, Math.min(1_000, Math.trunc(parsed))) : 50;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -117,18 +129,31 @@ function queueAnomalyRevalidation(candidate: MeasuredCandidate): void {
   anomalyInFlight.set(symbol, task);
 }
 
+function scheduleCandidateRefresh(): void {
+  if (candidateRefreshTimer) return;
+  candidateRefreshTimer = setTimeout(() => {
+    candidateRefreshTimer = null;
+    refresh();
+  }, candidateRefreshDelayMs());
+  candidateRefreshTimer.unref?.();
+}
+
 function installCandidateBpsSubscription(): void {
   if (candidateSubscription) return;
   for (const candidate of measuredCandidateRegistry.getRecent(4096)) recordBpsCandidateAttribution(candidate);
   candidateSubscription = measuredCandidateRegistry.onUpdate(candidate => {
     recordBpsCandidateAttribution(candidate);
     queueAnomalyRevalidation(candidate);
+    scheduleCandidateRefresh();
   });
   logger.info('[EconomicTransformation] Canonical candidate BPS subscription installed', {
     component: 'EconomicTransformationWiring',
     sourceAuthority: 'measured_candidate_registry.canonicalBps',
     registryMethodMutation: false,
     allTopologiesAttributed: true,
+    candidateDrivenTransformationRefresh: true,
+    candidateRefreshDelayMs: candidateRefreshDelayMs(),
+    periodicFallbackRetained: true,
     realizedOutcomeGovernorFeedback: true,
     anomalyDiscardWithoutRecheck: false,
     executionAuthority: false,
@@ -145,6 +170,7 @@ function nextResidualFraction(symbol: string, fractions: readonly number[]): num
 
 function queueOperationalTransformation(candidate: MeasuredCandidate, advice: EconomicTransformationAdvice): void {
   if (candidate.expiresAt <= Date.now()) return;
+  if (advice.netProfitBps === null || advice.netProfitBps >= bpsReductionOwnershipFloorBps()) return;
   const key = candidate.opportunityId;
   if (actionInFlight.has(key) || (actionCooldownUntil.get(key) || 0) > Date.now()) return;
   const symbol = candidateSymbol(candidate);
@@ -261,7 +287,9 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
 }
 
 function queueCexNearMissRecovery(): void {
-  const nearMisses = getClosestCexNearMissesBySymbol(12);
+  const reductionGapFloor = Math.abs(bpsReductionOwnershipFloorBps());
+  const nearMisses = getClosestCexNearMissesBySymbol(12)
+    .filter(item => Number.isFinite(item.bpsToBreakEven) && item.bpsToBreakEven > reductionGapFloor);
   if (nearMisses.length === 0) return;
   const symbols = [...new Set(nearMisses.map(item => item.symbol.trim().toUpperCase()).filter(Boolean))].slice(0, 12);
   const signature = `cex-near-miss:${symbols.join(',')}`;
@@ -284,6 +312,8 @@ function queueCexNearMissRecovery(): void {
         component: 'EconomicTransformationWiring',
         symbols,
         nearMisses: nearMisses.slice(0, 12),
+        bpsReductionOwnershipFloorBps: bpsReductionOwnershipFloorBps(),
+        atomicRescueBandExcludedFromBpsActuation: true,
         canonicalDeterministicPositive: cycle.deterministicPositive,
         canonicalEligibleCandidates: cycle.eligibleCandidates,
         canonicalCycleId: cycle.cycleId,
@@ -310,6 +340,7 @@ function refresh(): void {
   const now = Date.now();
   const recent = measuredCandidateRegistry.getRecent(1024);
   const mesh = getBpsCompressionMeshSnapshot();
+  const reductionOwnershipFloor = bpsReductionOwnershipFloorBps();
   const ranked = recent
     .filter(candidate => candidate.expiresAt > now)
     .map(candidate => {
@@ -320,7 +351,7 @@ function refresh(): void {
       const decayAdjustedPriority = superPlan.effectivePriorityScore * decay.survivalProbability;
       return { candidate, advice, superPlan, survivalProbability: decay.survivalProbability, decayAdjustedPriority };
     })
-    .filter(item => item.advice.netProfitBps !== null && item.advice.netProfitBps <= 0)
+    .filter(item => item.advice.netProfitBps !== null && item.advice.netProfitBps < reductionOwnershipFloor)
     .filter(item => item.advice.transformationFeasibilityScore >= minFeasibility())
     .sort((left, right) => right.decayAdjustedPriority - left.decayAdjustedPriority
       || Number(right.advice.dominantCostAloneCouldCoverGap) - Number(left.advice.dominantCostAloneCouldCoverGap)
@@ -359,7 +390,8 @@ function refresh(): void {
 
   selected.sort((left, right) => right.decayAdjustedPriority - left.decayAdjustedPriority);
   latest = selected.map(item => item.advice);
-  const cexNearMisses = getClosestCexNearMissesBySymbol(16);
+  const cexNearMisses = getClosestCexNearMissesBySymbol(16)
+    .filter(item => Number.isFinite(item.bpsToBreakEven) && item.bpsToBreakEven > Math.abs(reductionOwnershipFloor));
   const superSnapshot = getBpsReductionSuperEngineSnapshot();
   logger.info('[EconomicTransformation] Near-break-even rescue portfolio refreshed', {
     component: 'EconomicTransformationWiring',
@@ -369,6 +401,8 @@ function refresh(): void {
     topologyFloorCandidates: closestByTopology.size,
     maxPerTopologyDriver: maxPerTopologyDriver(),
     minFeasibility: minFeasibility(),
+    bpsReductionOwnershipFloorBps: reductionOwnershipFloor,
+    atomicRescueBandExcludedFromBpsActuation: true,
     bpsSuperEngine: {
       ledgerRows: superSnapshot.ledgerRows,
       realizedRows: superSnapshot.realizedRows,
@@ -397,7 +431,7 @@ function refresh(): void {
       transformations: item.advice.transformations,
     })),
     cexModeRescueAttention: cexNearMisses,
-    cexRescueObjective: 'smallest_exact_bps_gap_per_symbol_then_fresh_transform_revalidation',
+    cexRescueObjective: 'canonical_gap_below_atomic_entry_floor_then_fresh_transform_revalidation',
     portfolioDiversityAuthority: 'search_scheduling_only',
     cexRescueAuthority: 'canonical_revalidation_and_residual_replan_only',
     decayAuthority: 'scheduling_only',
@@ -416,6 +450,7 @@ export function getEconomicTransformationSnapshot(): EconomicTransformationAdvic
 export function ensureEconomicTransformationWiring(): void {
   if (timer || process.env.CRYPTOCRAWL_ECONOMIC_TRANSFORMATION_ENABLED === 'false') return;
   installCandidateBpsSubscription();
+  ensureUniversalBpsRescueCoordinator();
   refresh();
   if (process.env.NO_INTERVALS !== 'true') {
     const intervalMs = Math.max(5_000, Math.min(120_000, Number(process.env.CRYPTOCRAWL_ECONOMIC_TRANSFORMATION_INTERVAL_MS || 15_000)));

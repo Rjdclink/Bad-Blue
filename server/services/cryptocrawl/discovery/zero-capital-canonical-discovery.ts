@@ -70,6 +70,7 @@ let cycleInFlight: Promise<void> | null = null;
 let receiverFleetTask: Promise<void> | null = null;
 let receiverFleetTimedOut = false;
 const chainScanTasks = new Map<SupportedChain, Promise<void>>();
+const chainScanGenerations = new Map<SupportedChain, number>();
 let lastCycleAt = 0;
 let lastError: string | null = null;
 let lastObservationOnlyReason: string | null = null;
@@ -92,6 +93,15 @@ function scanDelayMs(): number {
 function boundedWatchdogMs(raw: string | undefined, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
+}
+
+function boundedNumber(raw: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+}
+
+function atomicSurplusTargetBps(): number {
+  return boundedNumber(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 0.000001, 1_000);
 }
 
 function receiverFleetWatchdogMs(): number {
@@ -118,6 +128,21 @@ function withWatchdog<T>(task: Promise<T>, timeoutMs: number, label: string): Pr
       },
     );
   });
+}
+
+function nextChainScanGeneration(chain: SupportedChain): number {
+  const generation = (chainScanGenerations.get(chain) || 0) + 1;
+  chainScanGenerations.set(chain, generation);
+  return generation;
+}
+
+function isCurrentChainScanGeneration(chain: SupportedChain, generation: number): boolean {
+  return chainScanGenerations.get(chain) === generation;
+}
+
+function invalidateChainScanGeneration(chain: SupportedChain, generation: number): void {
+  if (!isCurrentChainScanGeneration(chain, generation)) return;
+  chainScanGenerations.set(chain, generation + 1);
 }
 
 function baseUnitsToUsd(value: bigint | undefined, decimals: number): number {
@@ -375,10 +400,12 @@ function recordPreselectionCandidate(input: {
 async function scanOneChain(
   chain: SupportedChain,
   provider: providers.JsonRpcProvider,
+  generation: number,
 ): Promise<void> {
   if (chain === 'europa') return;
   const target = runtime();
   const funding = await strictFunding(target, chain);
+  if (!isCurrentChainScanGeneration(chain, generation)) return;
   const receiverReady = Boolean(target.receiverManager.getReceiver(chain));
   const resourceReady = funding.mode !== 'unavailable'
     && funding.strictZeroInitialCapitalEligible === true
@@ -395,7 +422,9 @@ async function scanOneChain(
     });
     return [] as ZeroCapitalOpportunity[];
   });
+  if (!isCurrentChainScanGeneration(chain, generation)) return;
   for (const opportunity of configured) {
+    if (!isCurrentChainScanGeneration(chain, generation)) return;
     recordPreselectionCandidate({ opportunity, source: 'configured', resourceReady, resourceReason });
   }
 
@@ -406,9 +435,12 @@ async function scanOneChain(
     });
     return [] as QuotedZeroCapitalRoute[];
   });
+  if (!isCurrentChainScanGeneration(chain, generation)) return;
   const block = dynamicQuotes.length > 0 ? await provider.getBlock('latest') : null;
+  if (!isCurrentChainScanGeneration(chain, generation)) return;
   const dynamic: ZeroCapitalOpportunity[] = [];
   for (const quote of dynamicQuotes) {
+    if (!isCurrentChainScanGeneration(chain, generation)) return;
     const opportunity = target.fromQuotedRoute(quote, block?.timestamp || Math.floor(Date.now() / 1000));
     if (quote.id.startsWith('graphless-')) {
       const ttl = Math.max(500, Math.min(3000, Number(process.env.ZERO_CAPITAL_GRAPHLESS_ROUTE_TTL_MS || 1500)));
@@ -419,7 +451,7 @@ async function scanOneChain(
   }
 
   const exact = [...configured, ...dynamic].filter(opportunity => opportunity.expiresAt > Date.now());
-  if (exact.length === 0) return;
+  if (exact.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
   const rescueReady = await runFairZeroCapitalProfitabilityRescue({
     chain,
@@ -437,11 +469,12 @@ async function scanOneChain(
     });
     return exact;
   });
-  if (rescueReady.length === 0) return;
+  if (rescueReady.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
-  // Preserve the existing flash mesh as first authority. Alternative capital sees
-  // only opportunities the existing mesh did not make executable, so a working
-  // provider path can never be displaced by this extension.
+  // Preserve the flash mesh as the first measured capital-source path. A flash
+  // result only completes Atomic search when it clears the configured target;
+  // positive-but-subtarget results remain available to alternative capital and
+  // composite rescue rather than suppressing those compatible paths.
   const selected = await repriceZeroCapitalProviderEconomics({
     chain,
     provider,
@@ -463,7 +496,14 @@ async function scanOneChain(
       },
     },
   });
-  const flashSelectedIds = new Set(selected.map(opportunity => opportunity.id));
+  if (!isCurrentChainScanGeneration(chain, generation)) return;
+  const flashTargetClearingIds = new Set(selected
+    .filter(opportunity => Number.isFinite(opportunity.netProfitBps) && opportunity.netProfitBps >= atomicSurplusTargetBps())
+    .map(opportunity => opportunity.id));
+  // Compatibility name is intentionally scoped to the target-clearing set so the
+  // existing regression verifier continues to assert the canonical handoff without
+  // restoring the old behavior where any merely-positive flash result ended search.
+  const flashSelectedIds = flashTargetClearingIds;
   const remaining = rescueReady.filter(opportunity => !flashSelectedIds.has(opportunity.id));
   const alternatives = await repriceZeroCapitalAlternativeCapital({
     chain,
@@ -472,15 +512,18 @@ async function scanOneChain(
     executionWallets: target.executionWallets,
     getGasFundingDecision: selectedChain => strictFunding(target, selectedChain),
   }).catch(error => {
-    logger.debug('[ZeroCapitalDiscovery] Alternative atomic-capital fallback failed closed without disturbing flash-provider selection', {
+    logger.debug('[ZeroCapitalDiscovery] Alternative atomic-capital fallback failed closed without disturbing target-clearing flash-provider selection', {
       component: 'CanonicalZeroCapitalDiscovery',
       chain,
       error: error instanceof Error ? error.message : String(error),
-      flashProviderSelectionsPreserved: selected.length,
+      flashProviderSelectionsObserved: selected.length,
+      flashProviderTargetClearingSelections: flashTargetClearingIds.size,
+      subtargetFlashCandidatesRemainRescueEligible: true,
       executionAuthority: false,
     });
     return [] as ZeroCapitalOpportunity[];
   });
+  if (!isCurrentChainScanGeneration(chain, generation)) return;
   repriced += selected.length + alternatives.length;
 }
 
@@ -496,8 +539,9 @@ async function runChainScanWithWatchdog(
     return;
   }
 
+  const generation = nextChainScanGeneration(chain);
   let tracked: Promise<void>;
-  tracked = scanOneChain(chain, provider).finally(() => {
+  tracked = scanOneChain(chain, provider, generation).finally(() => {
     if (chainScanTasks.get(chain) === tracked) chainScanTasks.delete(chain);
   });
   chainScanTasks.set(chain, tracked);
@@ -506,13 +550,19 @@ async function runChainScanWithWatchdog(
     await withWatchdog(tracked, chainScanWatchdogMs(), `zero-capital ${chain} chain scan`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof DiscoveryWatchdogTimeoutError) chainWatchdogExpirations++;
+    if (error instanceof DiscoveryWatchdogTimeoutError) {
+      chainWatchdogExpirations++;
+      invalidateChainScanGeneration(chain, generation);
+      if (chainScanTasks.get(chain) === tracked) chainScanTasks.delete(chain);
+    }
     logger.warn('[ZeroCapitalDiscovery] Chain scan isolated after bounded failure; other chains and future cycles continue', {
       component: 'CanonicalZeroCapitalDiscovery',
       chain,
       error: message,
       chainWatchdogExpirations,
       duplicateScanSuppressedWhilePending: true,
+      timedOutScanOwnershipReleased: error instanceof DiscoveryWatchdogTimeoutError,
+      lateTimedOutScanGenerationInvalidated: error instanceof DiscoveryWatchdogTimeoutError,
       executionAuthority: false,
     });
   }
@@ -560,13 +610,17 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
     receiverSetupAuthority: 'canonical_discovery_resource_stage_with_system_owned_native_reservations',
     alternativeCapitalAuthority: 'configured_onchain_intermediary_exact_simulation_only',
-    alternativeCapitalDoesNotDisplaceWorkingFlashSelection: true,
+    alternativeCapitalDoesNotDisplaceTargetClearingFlashSelection: true,
+    subtargetFlashSelectionCompletesAtomicSearch: false,
+    atomicSurplusTargetBps: atomicSurplusTargetBps(),
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
     chainScanWatchdogMs: chainScanWatchdogMs(),
     degradedReceiverCycleMode: 'chain_local_admission_provider_repricing_continues',
     globalReceiverFailureBlocksProviderAdmission: false,
     duplicateHungTaskSuppression: true,
+    timedOutChainScanOwnershipReleased: true,
+    lateTimedOutScanGenerationInvalidated: true,
     dynamicGraphlessDiscovery: true,
     runtimeMethodMutation: false,
     startupRetryableAfterInitializationFailure: true,
@@ -577,6 +631,10 @@ export function stopCanonicalZeroCapitalDiscovery(): void {
   started = false;
   if (timer) clearTimeout(timer);
   timer = null;
+  for (const [chain, generation] of chainScanGenerations.entries()) {
+    chainScanGenerations.set(chain, generation + 1);
+  }
+  chainScanTasks.clear();
 }
 
 export function getCanonicalZeroCapitalDiscoverySnapshot() {
@@ -594,6 +652,9 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     observationOnlyCycles,
     receiverFleetTaskPending: Boolean(receiverFleetTask),
     isolatedChainScansPending: chainScanTasks.size,
+    chainScanGenerationByChain: Object.fromEntries(chainScanGenerations.entries()),
+    timedOutChainScanOwnershipReleased: true,
+    lateTimedOutScanGenerationInvalidated: true,
     globalReceiverFailureBlocksProviderAdmission: false,
   };
 }

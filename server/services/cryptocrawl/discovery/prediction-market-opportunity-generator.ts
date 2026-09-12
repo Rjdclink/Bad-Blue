@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { measuredCandidateRegistry } from './measured-candidate-registry.js';
 
 export interface PredictionParityOpportunity {
   id: string;
@@ -110,6 +111,74 @@ async function fetchBooks(tokenIds: string[]): Promise<Map<string, ClobBook>> {
   return result;
 }
 
+function registerParityObservation(opportunity: PredictionParityOpportunity): void {
+  const notionalUsd = opportunity.combinedAsk * opportunity.matchedShares;
+  measuredCandidateRegistry.record({
+    opportunityId: opportunity.id,
+    topology: 'PREDICTION_EVENT',
+    observedAt: opportunity.observedAt,
+    expiresAt: opportunity.expiresAt,
+    status: 'enriched',
+    assets: ['PREDICTION_EVENT'],
+    venues: ['polymarket'],
+    chains: [],
+    rawQuotes: [
+      {
+        source: 'polymarket_clob_yes_ask',
+        venue: 'polymarket',
+        symbol: opportunity.marketId || opportunity.conditionId || opportunity.yesTokenId,
+        observedAt: opportunity.observedAt,
+        price: opportunity.yesAsk,
+        executable: false,
+        provenance: ['public_clob_best_ask', 'prediction_parity_leg:yes'],
+      },
+      {
+        source: 'polymarket_clob_no_ask',
+        venue: 'polymarket',
+        symbol: opportunity.marketId || opportunity.conditionId || opportunity.noTokenId,
+        observedAt: opportunity.observedAt,
+        price: opportunity.noAsk,
+        executable: false,
+        provenance: ['public_clob_best_ask', 'prediction_parity_leg:no'],
+      },
+    ],
+    depth: {
+      status: 'measured',
+      detail: `Public CLOB matched depth=${opportunity.matchedShares}; gross YES+NO parity is measured but authenticated fees and matched-fill execution are not yet authoritative`,
+    },
+    economics: {
+      grossProfitUsd: opportunity.grossLockedProfitUsd,
+      deterministicNetProfitUsd: null,
+      feeUsd: null,
+      gasUsd: 0,
+      bridgeUsd: 0,
+      expectedSlippageBps: null,
+      expectedPriceImpactBps: null,
+      notionalUsd: notionalUsd > 0 ? notionalUsd : null,
+      grossProfitBps: opportunity.grossProfitBps,
+      netProfitBps: null,
+      bpsToBreakEven: null,
+    },
+    quoteAgeMs: Math.max(0, Date.now() - opportunity.observedAt),
+    executableCapability: false,
+    executionCapabilityReason: opportunity.executionCapabilityReason,
+    missingInformation: [
+      'required:authenticated_prediction_market_fee_evidence',
+      'required:matched_fill_atomicity_or_hedge_evidence',
+      'required:terminal_prediction_settlement_lifecycle',
+      'required:system_owned_event_capital_or_proven_solver_fronted_source',
+    ],
+    provenance: [
+      ...opportunity.provenance,
+      'canonical_topology:PREDICTION_EVENT',
+      'prediction_gross_bps:measured_public_clob_parity',
+      'prediction_net_bps:pending_authenticated_cost_and_execution_evidence',
+      'prediction_gross_bps_execution_authority:false',
+      'synthetic_economics:false',
+    ],
+  });
+}
+
 /**
  * Public-data parity scanner for binary prediction markets. It detects the
  * mechanically locked gross condition YES ask + NO ask < 1 using live public
@@ -141,7 +210,7 @@ export async function discoverPredictionMarketParityOpportunities(): Promise<Pre
       const grossLockedProfitUsd = (1 - combinedAsk) * matchedShares;
       const grossProfitBps = combinedAsk > 0 ? ((1 - combinedAsk) / combinedAsk) * 10_000 : 0;
       if (!(grossLockedProfitUsd > 0) || !Number.isFinite(grossProfitBps)) continue;
-      opportunities.push({
+      const opportunity: PredictionParityOpportunity = {
         id: `prediction:polymarket:${item.market.id || item.market.conditionId || item.yesTokenId}:${observedAt}`,
         venue: 'polymarket',
         marketId: String(item.market.id || ''),
@@ -168,7 +237,9 @@ export async function discoverPredictionMarketParityOpportunities(): Promise<Pre
           'execution_authority:false',
           'synthetic_evidence:false',
         ],
-      });
+      };
+      registerParityObservation(opportunity);
+      opportunities.push(opportunity);
     }
 
     opportunities.sort((left, right) => right.grossLockedProfitUsd - left.grossLockedProfitUsd || right.grossProfitBps - left.grossProfitBps);
@@ -178,7 +249,9 @@ export async function discoverPredictionMarketParityOpportunities(): Promise<Pre
       markets: markets.length,
       binaryMarkets: binary.length,
       opportunities: opportunities.length,
+      canonicalCandidatesRecorded: opportunities.length,
       bestGrossProfitBps: opportunities[0]?.grossProfitBps ?? null,
+      canonicalNetBpsPendingAuthenticatedCosts: true,
       apiKeyRequiredForDiscovery: false,
       signUpRequiredForDiscovery: false,
       deterministicNetProfitAuthority: false,

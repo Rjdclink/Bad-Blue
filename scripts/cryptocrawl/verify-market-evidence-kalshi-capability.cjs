@@ -28,6 +28,17 @@ assert.match(runtimeObservability, /directCexMarketEvidenceReady/, 'fresh direct
 assert.match(runtimeObservability, /coinGeckoRequiredForCoreCexDiscovery: false/, 'CoinGecko must never be a global core-CEX discovery requirement');
 assert.doesNotMatch(runtimeObservability, /requiredForCoreCexDiscovery:\s*status\.provider\s*===\s*['"]coingecko['"]/, 'provider telemetry must not reintroduce CoinGecko as a required authority');
 
+// Runtime readiness must report the capability that the canonical Kalshi adapters
+// can actually use. Omitting either of these inputs makes the pure readiness policy
+// correctly default them to false/zero and produces a misleading heartbeat even
+// though the exchange integration itself is installed.
+assert.match(runtimeObservability, /import \{ kalshiCredentialsPresent \} from ['"]\.\.\/intelligence\/kalshi-authenticated-authority\.js['"];/, 'runtime observability must reuse the canonical scoped Kalshi credential authority');
+assert.match(runtimeObservability, /const kalshiEventConfigured = kalshiCredentialsPresent\(['"]event['"]\);/, 'event credentials must be measured through the canonical authority');
+assert.match(runtimeObservability, /const kalshiPerpsConfigured = kalshiCredentialsPresent\(['"]perps['"]\);/, 'perps credentials must be measured separately through the canonical authority');
+assert.match(runtimeObservability, /kalshiExecutionConfigured: execution\.kalshiExecutionConfigured/, 'Kalshi credential capability must be passed into readiness instead of defaulting false');
+assert.match(runtimeObservability, /eligibleKalshiCandidates: candidateMetrics\.byTopology\.PREDICTION_EVENT\.eligible/, 'canonical prediction-event eligible count must be passed into readiness instead of defaulting zero');
+assert.doesNotMatch(runtimeObservability, /kalshiExecutionConfigured:\s*false/, 'runtime telemetry must not hard-code Kalshi execution configuration false');
+
 for (const [name, source] of [['event fee authority', eventFees], ['prediction intelligence', prediction]]) {
   assert.match(source, /\/trade-api\/v2\/events\/fee_changes/, `${name} must use the documented event fee-change endpoint`);
   assert.doesNotMatch(source, /\/trade-api\/v2\/series\/fee_changes/, `${name} must not call the removed series fee-change endpoint`);
@@ -43,4 +54,4 @@ assert.doesNotMatch(generator, /minExpectedNetUsd/, 'Kalshi discovery must not i
 assert.doesNotMatch(lifecycle, /minimumExpectedNetUsd/, 'Kalshi execution must not reintroduce an arbitrary profit magnitude floor');
 assert.match(lifecycle, /currentExpectedNetProfitUsd > requiredNet/, 'fresh execution economics must remain strictly positive after route-specific costs');
 
-console.log('[market-evidence-kalshi-capability] PASS: alternate providers run concurrently, CoinGecko is missing-symbol fallback only, complete-only cache semantics and exact-positive Kalshi evidence preserve capability');
+console.log('[market-evidence-kalshi-capability] PASS: alternate providers run concurrently, CoinGecko is missing-symbol fallback only, complete-only cache semantics, exact-positive Kalshi evidence, and truthful runtime Kalshi readiness preserve capability');

@@ -10,6 +10,7 @@ import { canonicalExecutionScheduler } from '../execution/canonical-execution-sc
 import { cexInventoryLedger } from '../execution/cex-inventory-ledger.js';
 import { inventoryRebalancer } from '../execution/inventory-rebalancer.js';
 import { canonicalIntelligenceOutbox } from '../intelligence/canonical-intelligence-outbox.js';
+import { kalshiCredentialsPresent } from '../intelligence/kalshi-authenticated-authority.js';
 import { marketDataProviders } from '../intelligence/market-data-providers.js';
 import { canonicalOpportunityState } from '../intelligence/canonical-opportunity-state.js';
 import { stageManager } from '../governance/stage-management.js';
@@ -60,6 +61,9 @@ function executionConfiguration() {
     (process.env.COINBASE_API_KEY?.trim() || process.env.COINBASE_KEY_NAME?.trim() || process.env.CDP_API_KEY_NAME?.trim())
     && (process.env.COINBASE_API_SECRET?.trim() || process.env.COINBASE_KEY_SECRET?.trim() || process.env.CDP_API_KEY_SECRET?.trim())
   );
+  const kalshiEventConfigured = kalshiCredentialsPresent('event');
+  const kalshiPerpsConfigured = kalshiCredentialsPresent('perps');
+  const kalshiExecutionConfigured = kalshiEventConfigured || kalshiPerpsConfigured;
   const configuredVenueCount = [coinbaseConfigured, krakenConfigured, okxConfigured].filter(Boolean).length;
   const noExecutionGuardEnabled = process.env.NO_EXECUTION === 'true';
   const liveExecutionEnabled = process.env.CRYPTO_ARBITRAGE_LIVE_EXECUTION === 'true';
@@ -68,6 +72,9 @@ function executionConfiguration() {
     coinbaseConfigured,
     krakenConfigured,
     okxConfigured,
+    kalshiEventConfigured,
+    kalshiPerpsConfigured,
+    kalshiExecutionConfigured,
     configuredVenueCount,
     noExecutionGuardEnabled,
     liveExecutionEnabled,
@@ -267,6 +274,8 @@ export async function emitCryptoRuntimeHeartbeat(): Promise<void> {
       eligibleCandidates: candidateMetrics.eligible,
       eligibleCexCandidates: candidateMetrics.byTopology.CEX_CEX.eligible,
       eligibleZeroCapitalCandidates: candidateMetrics.byTopology.ZERO_CAPITAL_ATOMIC.eligible,
+      eligibleKalshiCandidates: candidateMetrics.byTopology.PREDICTION_EVENT.eligible,
+      kalshiExecutionConfigured: execution.kalshiExecutionConfigured,
       stageCanExecute,
       currentStage: stage.currentStage,
       initialGasReady: stageManager.isInitialGasReady(),

@@ -95,16 +95,15 @@ function grossProfit(opportunity: ZeroCapitalOpportunity): bigint {
 
 /**
  * The BPS reducer hands near-misses to the atomic-capital phase. The entry window
- * is intentionally about measured all-in NET BPS, not about a pre-existing
- * positive gross spread: the atomic phase is allowed to search fresh notional,
- * provider and route economics. It still cannot manufacture economics; only an
- * exact requote that repays principal/costs and clears the target may advance.
+ * is intentionally about measured all-in NET BPS, not about the sign of the seed
+ * candidate: Atomic retains ownership from the configured entry floor until the
+ * configured target is actually reached. It still cannot manufacture economics;
+ * only an exact requote that repays principal/costs and clears the target advances.
  */
 function recoverableByAtomicSurplus(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
   const floorBps = atomicSurplusEntryFloorBps();
   const targetBps = atomicSurplusTargetBps();
-  return opportunity.expectedProfit <= 0n
-    && opportunity.expiresAt > now
+  return opportunity.expiresAt > now
     && opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
     && opportunity.netProfitBps >= floorBps
@@ -350,11 +349,12 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   try {
     dailyProfitBudget = await getProfitLadderDailyProfitBudget();
   } catch (error) {
-    logger.debug('[ZeroCapitalProfitabilityRescueV2] Daily profit budget unavailable for quote ranking; measurement continues without granting execution authority', {
+    logger.debug('[ZeroCapitalProfitabilityRescueV2] Daily profit budget unavailable for telemetry; Atomic measurement continues without changing execution authority', {
       component: 'ZeroCapitalProfitabilityRescueV2',
       chain,
       error: error instanceof Error ? error.message : String(error),
       executionAuthority: false,
+      profitLadderRescueVetoAuthority: false,
     });
   }
 
@@ -374,8 +374,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   let bpsSuperEngineCandidates = 0;
   let bpsSuperEnginePositiveRecoveries = 0;
   const outsideAtomicSurplusWindow = opportunities.filter(item =>
-    item.expectedProfit <= 0n
-    && (!Number.isFinite(item.netProfitBps) || item.netProfitBps < atomicSurplusEntryFloorBps()),
+    !Number.isFinite(item.netProfitBps) || item.netProfitBps < atomicSurplusEntryFloorBps(),
   ).length;
   const bpsDrivers = new Map<string, number>();
   const output: ZeroCapitalOpportunity[] = [];
@@ -443,8 +442,9 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
             clearsAtomicSurplusTarget(adjusted)
             && !quoteFitsDailyProfitBudget(adjusted, route.inputTokenDecimals, inputTokenUsdPrice, dailyProfitBudget)
           ) {
+            // Profit Ladder is realized-profit telemetry/control only for this lane.
+            // A target-clearing deterministic Atomic quote must not be discarded.
             budgetRejectedTargetQuotes += 1;
-            continue;
           }
           best = quoteBetter(best, adjusted);
         }
@@ -509,6 +509,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     profitLadderRemainingProfitUsd: dailyProfitBudget?.remainingProfitUsd ?? null,
     profitLadderStageAlignedTelemetry: dailyProfitBudget?.stageAligned ?? null,
     profitLadderBorrowingNotionalAuthority: false,
+    profitLadderRescueVetoAuthority: false,
     staleProviderEvidenceRejected,
     insufficientLiquidityRejected,
     expiredBeforeRequote,
