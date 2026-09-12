@@ -110,6 +110,11 @@ function splitGrossBaseUnits(grossProfitBaseUnits: bigint, retainedFraction: num
   };
 }
 
+function atomicSurplusTargetBps(): number {
+  const parsed = Number(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS);
+  return Number.isFinite(parsed) ? Math.max(0.000001, Math.min(1_000, parsed)) : 10;
+}
+
 function expectedNetProfitUsd(opportunity: ZeroCapitalOpportunity): number {
   const tokenAmount = Number(ethers.utils.formatUnits(opportunity.expectedProfit.toString(), opportunity.inputTokenDecimals));
   if (!Number.isFinite(tokenAmount) || tokenAmount <= 0) return 0;
@@ -136,25 +141,37 @@ async function resolveExpectedNetProfitUsdForBudget(opportunity: ZeroCapitalOppo
   return Number.isFinite(usd) && usd > 0 ? usd : null;
 }
 
-async function dailyProfitBudgetFailure(opportunity: ZeroCapitalOpportunity): Promise<string | null> {
-  let budget;
+/** Profit Ladder is telemetry here, never ZERO_CAPITAL_ATOMIC execution authority. */
+async function observeDailyProfitBudget(opportunity: ZeroCapitalOpportunity): Promise<void> {
   try {
-    budget = await getProfitLadderDailyProfitBudget();
+    const budget = await getProfitLadderDailyProfitBudget();
+    const expectedUsd = budget.remainingProfitUsd === null
+      ? null
+      : await resolveExpectedNetProfitUsdForBudget(opportunity);
+    const fits = expectedUsd === null ? null : expectedProfitFitsDailyBudget(expectedUsd, budget);
+    logger.debug('[ZeroCapitalExecutor] Profit Ladder observed without Atomic execution veto', {
+      component: 'CanonicalZeroCapitalExecutor',
+      opportunityId: opportunity.id,
+      dailyProfitCapUsd: budget.dailyProfitCapUsd,
+      dailyRealizedProfitUsd: budget.realizedProfitUsd,
+      dailyRemainingProfitUsd: budget.remainingProfitUsd,
+      exhausted: budget.exhausted,
+      expectedNetProfitUsd: expectedUsd,
+      expectedProfitFitsRemainingBudget: fits,
+      borrowingNotionalAuthority: false,
+      profitabilityAuthority: false,
+      executionVetoAuthority: false,
+    });
   } catch (error) {
-    return `Profit Ladder daily realized-profit budget is unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    logger.debug('[ZeroCapitalExecutor] Profit Ladder telemetry unavailable; target-qualified Atomic execution remains governed by canonical economics', {
+      component: 'CanonicalZeroCapitalExecutor',
+      opportunityId: opportunity.id,
+      error: error instanceof Error ? error.message : String(error),
+      borrowingNotionalAuthority: false,
+      profitabilityAuthority: false,
+      executionVetoAuthority: false,
+    });
   }
-  if (budget.exhausted) {
-    return `Profit Ladder daily realized-profit cap is exhausted at $${budget.realizedProfitUsd.toFixed(2)}`;
-  }
-  if (budget.remainingProfitUsd === null) return null;
-  const expectedUsd = await resolveExpectedNetProfitUsdForBudget(opportunity);
-  if (expectedUsd === null) {
-    return 'Profit Ladder daily profit budget cannot be verified because the input-token USD price is unavailable';
-  }
-  if (!expectedProfitFitsDailyBudget(expectedUsd, budget)) {
-    return `Expected net profit $${expectedUsd.toFixed(2)} exceeds remaining Profit Ladder daily capacity $${budget.remainingProfitUsd.toFixed(2)}`;
-  }
-  return null;
 }
 
 async function terminalEconomics(input: {
@@ -660,10 +677,11 @@ async function executeCanonicalComposite(
 }
 
 /**
- * Sole ZERO_CAPITAL_ATOMIC entrypoint. Profit Ladder is consulted only for the
- * remaining DAILY PROFIT budget. It never limits borrowed principal/notional.
- * `atomic-stack:` opportunities are fail-closed to their exact prepared composite
- * selection and can never fall through into a member/single-route executor.
+ * Sole ZERO_CAPITAL_ATOMIC entrypoint. Atomic execution is target-bound: fresh
+ * exact all-in net BPS must clear the configured surplus target before any flash,
+ * alternative-capital, or composite submission path is selected. Profit Ladder
+ * is observed only as telemetry and cannot veto deterministic target-qualified
+ * Atomic execution.
  */
 export async function executeCanonicalZeroCapitalOpportunity(
   opportunity: ZeroCapitalOpportunity,
@@ -672,9 +690,12 @@ export async function executeCanonicalZeroCapitalOpportunity(
   if (opportunity.chain === 'europa') return failed(opportunity, 'Europa execution is retired');
   if (Date.now() >= opportunity.expiresAt) return failed(opportunity, 'Exact zero-capital opportunity expired before canonical execution');
   if (opportunity.expectedProfit <= 0n) return failed(opportunity, 'Canonical all-in net economics are not strictly positive');
+  const targetBps = atomicSurplusTargetBps();
+  if (!Number.isFinite(opportunity.netProfitBps) || opportunity.netProfitBps + 1e-9 < targetBps) {
+    return failed(opportunity, `Atomic all-in net economics ${opportunity.netProfitBps} BPS are below the required ${targetBps} BPS surplus target`);
+  }
 
-  const budgetFailure = await dailyProfitBudgetFailure(opportunity);
-  if (budgetFailure) return failed(opportunity, budgetFailure);
+  void observeDailyProfitBudget(opportunity);
 
   const composite = zeroCapitalCompositeSelectionRegistry.get(opportunity.id);
   const compositeParent = opportunity.id.startsWith(COMPOSITE_ID_PREFIX);
