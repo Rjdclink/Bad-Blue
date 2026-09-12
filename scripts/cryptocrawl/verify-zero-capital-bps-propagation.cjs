@@ -73,7 +73,7 @@ assert.match(discovery, /status: positive \? 'deterministic_positive' : 'enriche
 assert.match(discovery, /executableCapability: false/);
 assert.match(discovery, /const selected = await repriceZeroCapitalProviderEconomics\(/);
 assert.match(discovery, /const alternatives = await repriceZeroCapitalAlternativeCapital\(/);
-assert.match(discovery, /const remaining = exact\.filter\(opportunity => !flashSelectedIds\.has\(opportunity\.id\)\)/);
+assert.match(discovery, /const remaining = rescueReady\.filter\(opportunity => !flashSelectedIds\.has\(opportunity\.id\)\)/);
 assert.match(discovery, /eligibilityAuthority: 'canonical_flash_first_then_measured_alternative_capital_repricing'/);
 assert.match(discovery, /alternativeCapitalDoesNotDisplaceWorkingFlashSelection: true/);
 assert.match(discovery, /executionAuthority: false/);
