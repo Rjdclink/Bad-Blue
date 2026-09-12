@@ -103,6 +103,20 @@ export type MeasuredCandidateUpdatePatch = Partial<Pick<MeasuredCandidate,
   resolvedMissingInformation?: readonly string[];
 };
 
+export interface TopologyBpsMetrics {
+  observed: number;
+  observedWithBps: number;
+  bpsPending: number;
+  nearBreakEven: number;
+  rescueBand: number;
+  positive: number;
+  positiveBelowTarget: number;
+  targetClearing: number;
+  bestNetProfitBps: number | null;
+  averageBpsToBreakEven: number | null;
+  averageAllInCostBps: number | null;
+}
+
 export interface MeasuredCandidateMetrics {
   windowMs: number;
   observed: number;
@@ -120,6 +134,7 @@ export interface MeasuredCandidateMetrics {
     activeBacklog: number;
     nearBreakEven: number;
   }>;
+  bpsByTopology: Record<MeasuredOpportunityTopology, TopologyBpsMetrics>;
   zeroCapitalBps: {
     observedWithBps: number;
     nearBreakEven: number;
@@ -273,6 +288,44 @@ function emptyTopologyMetrics() {
     FUNDING_ARBITRAGE: topologyMetric(),
     PREDICTION_EVENT: topologyMetric(),
   } satisfies MeasuredCandidateMetrics['byTopology'];
+}
+
+const ALL_TOPOLOGIES: readonly MeasuredOpportunityTopology[] = [
+  'CEX_CEX',
+  'DEX_ATOMIC',
+  'ZERO_CAPITAL_ATOMIC',
+  'CROSS_CHAIN',
+  'MEMPOOL_BACKRUN',
+  'LIQUIDATION',
+  'MAKER_CEX',
+  'FUNDING_ARBITRAGE',
+  'PREDICTION_EVENT',
+];
+
+function topologyBpsMetrics(candidates: readonly MeasuredCandidate[]): TopologyBpsMetrics {
+  const withBps = candidates.filter(candidate =>
+    candidate.canonicalBps.netBps !== null && Number.isFinite(candidate.canonicalBps.netBps),
+  );
+  const nets = withBps.map(candidate => Number(candidate.canonicalBps.netBps));
+  const bpsToBreakEven = withBps
+    .map(candidate => candidate.canonicalBps.bpsToBreakEven)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const allInCostBps = withBps
+    .map(candidate => candidate.canonicalBps.allInCostBps)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  return {
+    observed: candidates.length,
+    observedWithBps: withBps.length,
+    bpsPending: Math.max(0, candidates.length - withBps.length),
+    nearBreakEven: withBps.filter(isNearBreakEven).length,
+    rescueBand: nets.filter(net => net >= -10 && net < 0).length,
+    positive: nets.filter(net => net > 0).length,
+    positiveBelowTarget: nets.filter(net => net > 0 && net < 10).length,
+    targetClearing: nets.filter(net => net >= 10).length,
+    bestNetProfitBps: nets.length > 0 ? Math.max(...nets) : null,
+    averageBpsToBreakEven: average(bpsToBreakEven),
+    averageAllInCostBps: average(allInCostBps),
+  };
 }
 
 function boundedFrequency(
@@ -439,19 +492,11 @@ class MeasuredCandidateRegistry {
       recent.flatMap(candidate => candidate.missingInformation),
       'item',
     ) as Array<{ item: string; count: number }>;
-    const zeroCapitalWithBps = recent.filter(candidate =>
-      candidate.topology === 'ZERO_CAPITAL_ATOMIC' &&
-      candidate.canonicalBps.netBps !== null &&
-      Number.isFinite(candidate.canonicalBps.netBps),
-    );
-    const nearBreakEven = zeroCapitalWithBps.filter(isNearBreakEven);
-    const positiveBps = zeroCapitalWithBps.filter(candidate => Number(candidate.canonicalBps.netBps) > 0);
-    const bpsToBreakEven = nearBreakEven
-      .map(candidate => candidate.canonicalBps.bpsToBreakEven)
-      .filter((value): value is number => value !== null && Number.isFinite(value));
-    const allInCostBps = zeroCapitalWithBps
-      .map(candidate => candidate.canonicalBps.allInCostBps)
-      .filter((value): value is number => value !== null && Number.isFinite(value));
+    const bpsByTopology = Object.fromEntries(ALL_TOPOLOGIES.map(topology => [
+      topology,
+      topologyBpsMetrics(recent.filter(candidate => candidate.topology === topology)),
+    ])) as Record<MeasuredOpportunityTopology, TopologyBpsMetrics>;
+    const zeroCapital = bpsByTopology.ZERO_CAPITAL_ATOMIC;
 
     return {
       windowMs,
@@ -464,15 +509,14 @@ class MeasuredCandidateRegistry {
       blockedReasons,
       missingInformationFrequency,
       byTopology,
+      bpsByTopology,
       zeroCapitalBps: {
-        observedWithBps: zeroCapitalWithBps.length,
-        nearBreakEven: nearBreakEven.length,
-        positive: positiveBps.length,
-        bestNetProfitBps: zeroCapitalWithBps.length > 0
-          ? Math.max(...zeroCapitalWithBps.map(candidate => Number(candidate.canonicalBps.netBps)))
-          : null,
-        averageBpsToBreakEven: average(bpsToBreakEven),
-        averageAllInCostBps: average(allInCostBps),
+        observedWithBps: zeroCapital.observedWithBps,
+        nearBreakEven: zeroCapital.nearBreakEven,
+        positive: zeroCapital.positive,
+        bestNetProfitBps: zeroCapital.bestNetProfitBps,
+        averageBpsToBreakEven: zeroCapital.averageBpsToBreakEven,
+        averageAllInCostBps: zeroCapital.averageAllInCostBps,
       },
     };
   }
