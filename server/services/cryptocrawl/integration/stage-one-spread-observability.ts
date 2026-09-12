@@ -1,4 +1,5 @@
 import logger from '../../../logger.js';
+import { ensureStageOneMeasurementRecovery, getStageOneMeasurementRecoverySnapshot } from '../discovery/stage-one-measurement-recovery.js';
 import {
   measuredCandidateRegistry,
   type MeasuredCandidate,
@@ -217,6 +218,7 @@ function publish(): void {
     retentionWindowMs: snapshot.retentionWindowMs,
     currentWindowMs: snapshot.currentWindowMs,
     byTopology: Object.values(snapshot.byTopology),
+    recovery: getStageOneMeasurementRecoverySnapshot(),
     authority: snapshot.authority,
     executionAuthority: snapshot.executionAuthority,
     economicMutationAuthority: snapshot.economicMutationAuthority,
@@ -231,6 +233,7 @@ export function getStageOneSpreadSnapshot(): StageOneSpreadSnapshot {
 
 export function ensureStageOneSpreadObservability(): void {
   if (timer) return;
+  ensureStageOneMeasurementRecovery();
   publish();
   if (process.env.NO_INTERVALS !== 'true') {
     timer = setInterval(publish, intervalMs());
@@ -241,6 +244,7 @@ export function ensureStageOneSpreadObservability(): void {
     topologies: TOPOLOGIES,
     retentionWindowMs: retentionWindowMs(),
     currentWindowMs: currentWindowMs(),
+    measurementRecoveryInstalled: true,
     executionAuthority: false,
     economicMutationAuthority: false,
     staleEvidenceExecutionAuthority: false,
