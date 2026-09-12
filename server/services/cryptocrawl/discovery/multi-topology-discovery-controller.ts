@@ -3,6 +3,11 @@ import { ensureDynamicRpcProviderWiring } from '../runtime/dynamic-rpc-provider-
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import { unifiedMultiLegArbitrageEngine } from '../optimization/unified-multileg-arbitrage-engine.js';
 import { routeRecentMeasuredOpportunities } from '../execution/unified-execution-router.js';
+import {
+  invalidateCandidatePublicationGeneration,
+  nextCandidatePublicationGeneration,
+  runWithCandidatePublicationGeneration,
+} from './candidate-publication-generation.js';
 import { measuredOpportunityGraph } from './opportunity-graph.js';
 import { fundingRateMonitor } from './funding-rate-monitor.js';
 import { discoverMeasuredDexCandidates } from './dex-opportunity-generator.js';
@@ -45,6 +50,16 @@ export interface MultiTopologyDiscoveryCycle {
 }
 
 type TopologyTaskKey = 'cex' | 'dex' | 'cross_chain' | 'mempool' | 'liquidation' | 'maker' | 'funding';
+
+const TASK_TO_TOPOLOGY: Record<TopologyTaskKey, MeasuredOpportunityTopology> = {
+  cex: 'CEX_CEX',
+  dex: 'DEX_ATOMIC',
+  cross_chain: 'CROSS_CHAIN',
+  mempool: 'MEMPOOL_BACKRUN',
+  liquidation: 'LIQUIDATION',
+  maker: 'MAKER_CEX',
+  funding: 'FUNDING_ARBITRAGE',
+};
 
 interface TimedTopologyResult<T> {
   value: T | null;
@@ -108,6 +123,7 @@ class MultiTopologyDiscoveryController {
   private cycleSequence = 0;
   private readonly lastTopologyScanAt = new Map<MeasuredOpportunityTopology, number>();
   private readonly topologyTasks = new Map<TopologyTaskKey, Promise<unknown>>();
+  private readonly topologyTaskGenerations = new Map<TopologyTaskKey, { topology: MeasuredOpportunityTopology; generation: number }>();
 
   start(): void {
     if (this.running) return;
@@ -121,6 +137,7 @@ class MultiTopologyDiscoveryController {
       hungTopologyIsolation: true,
       duplicateHungTopologySuppression: true,
       timedOutTopologyOwnershipReleased: true,
+      lateTimedOutCandidatePublicationRejected: true,
       fixedTopologyPriority: false,
       adaptiveScanAllocationApplied: true,
       topologies: ['CEX_CEX', 'DEX_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN', 'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE'],
@@ -146,7 +163,11 @@ class MultiTopologyDiscoveryController {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    for (const lease of this.topologyTaskGenerations.values()) {
+      invalidateCandidatePublicationGeneration(lease.topology, lease.generation);
+    }
     this.topologyTasks.clear();
+    this.topologyTaskGenerations.clear();
   }
 
   private runScheduledCycle(): void {
@@ -182,14 +203,19 @@ class MultiTopologyDiscoveryController {
     let tracked = this.topologyTasks.get(key) as Promise<T> | undefined;
     const reusedInFlight = Boolean(tracked);
     if (!tracked) {
+      const topology = TASK_TO_TOPOLOGY[key];
+      const generation = nextCandidatePublicationGeneration(topology);
       let owned!: Promise<T>;
-      owned = Promise.resolve()
-        .then(operation)
+      owned = runWithCandidatePublicationGeneration(topology, generation, operation)
         .finally(() => {
-          if (this.topologyTasks.get(key) === owned) this.topologyTasks.delete(key);
+          if (this.topologyTasks.get(key) === owned) {
+            this.topologyTasks.delete(key);
+            this.topologyTaskGenerations.delete(key);
+          }
         });
       tracked = owned;
       this.topologyTasks.set(key, owned as Promise<unknown>);
+      this.topologyTaskGenerations.set(key, { topology, generation });
     }
 
     try {
@@ -197,7 +223,12 @@ class MultiTopologyDiscoveryController {
       return { value, durationMs: elapsedMs(startedAt), skipped: false, reusedInFlight };
     } catch (error) {
       if (error instanceof TopologyTaskWatchdogError) {
-        if (this.topologyTasks.get(key) === tracked) this.topologyTasks.delete(key);
+        const lease = this.topologyTaskGenerations.get(key);
+        if (this.topologyTasks.get(key) === tracked) {
+          if (lease) invalidateCandidatePublicationGeneration(lease.topology, lease.generation);
+          this.topologyTasks.delete(key);
+          this.topologyTaskGenerations.delete(key);
+        }
         logger.warn('[OpportunityGraph] Topology discovery task exceeded its watchdog; other topologies and future controller cycles continue', {
           component: 'MultiTopologyDiscoveryController',
           topologyTask: key,
@@ -205,6 +236,7 @@ class MultiTopologyDiscoveryController {
           reusedInFlight,
           duplicateTaskSuppressedWhilePending: true,
           timedOutTaskOwnershipReleased: true,
+          lateTimedOutCandidatePublicationRejected: true,
           futureCycleMayStartFreshTask: true,
           executionAuthority: false,
         });
@@ -287,8 +319,8 @@ class MultiTopologyDiscoveryController {
       // Every selected producer is bounded independently. Promise.allSettled alone
       // cannot finish while any member remains permanently pending, so each task has
       // a watchdog and a single-flight identity. A timed-out task relinquishes the
-      // single-flight slot so a future cycle can reacquire fresh evidence instead of
-      // permanently inheriting an unresolved promise.
+      // single-flight slot and its canonical publication generation so a future cycle
+      // can reacquire fresh evidence without a late stale producer overwriting it.
       const [cex, dex, cross, mempool, liquidation, maker, funding] = await Promise.allSettled([
         this.runTopologyTask('cex', runCex, () => measuredOpportunityGraph.scanOnce()),
         this.runTopologyTask('dex', runDex, async () => { await rpcReady; return discoverMeasuredDexCandidates(); }),
@@ -383,6 +415,7 @@ class MultiTopologyDiscoveryController {
         topologyTaskWatchdogMs: topologyTaskWatchdogMs(),
         isolatedPendingTopologyTasks: [...this.topologyTasks.keys()],
         timedOutTopologyOwnershipReleased: true,
+        lateTimedOutCandidatePublicationRejected: true,
         fixedTopologyPriority: false,
         adaptiveScanAllocationApplied: true,
         skippedTopologies,
