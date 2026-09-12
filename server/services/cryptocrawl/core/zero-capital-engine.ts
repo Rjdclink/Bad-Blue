@@ -189,6 +189,7 @@ export class AutonomousZeroCapitalEngine {
   configuredRoutes: ConfiguredZeroCapitalRoute[] = [];
 
   private initialized = false;
+  private walletResourceRefreshInFlight: Promise<void> | null = null;
   private state: SystemState;
 
   constructor() {
@@ -220,12 +221,13 @@ export class AutonomousZeroCapitalEngine {
 
   async initialize(): Promise<void> {
     if (this.initialized) {
-      await this.refreshWalletResources();
+      this.scheduleWalletResourceRefresh();
       this.state.receiverRegistry = this.receiverManager.getRecords();
       this.state.isRunning = true;
       return;
     }
 
+    const initializationStartedAt = Date.now();
     this.configuredRoutes = composeConfiguredZeroCapitalRoutes(loadConfiguredZeroCapitalRoutes());
     const configuredDynamicChains = loadDynamicChainRegistry();
     const dynamicEvmOverrides = new Map<ActiveExecutionChain, DynamicChainConfig>();
@@ -250,8 +252,10 @@ export class AutonomousZeroCapitalEngine {
         family: 'evm',
         rpcUrl: RPC_ENDPOINTS[chain],
         nativeAsset: NATIVE_ASSETS[chain],
-        sponsoredBootstrap: supportsSponsoredReceiverChain(chain),
-        executionMode: supportsSponsoredReceiverChain(chain) ? 'sponsored_or_native' : 'native_only',
+        // Receiver support proves only that a compatible receiver may exist. It
+        // never proves an external gas payer or zero operator monetary liability.
+        sponsoredBootstrap: false,
+        executionMode: 'native_only',
       };
       this.dynamicChainConfigs.set(chain, dynamicEvmOverrides.get(chain) || fallback);
     }
@@ -261,33 +265,37 @@ export class AutonomousZeroCapitalEngine {
     // paid telemetry dependency for this engine.
     await ensureDynamicRpcProviderWiring();
     await multiProviderRpcManager.initialize(chains as RpcSupportedChain[]);
-    for (const chain of chains) {
+
+    // Provider health/chain identity was already established by the canonical RPC
+    // manager. Resolve chains concurrently so one slow provider remains local.
+    const providerOutcomes = await Promise.allSettled(chains.map(async chain => {
+      const chainConfig = this.dynamicChainConfigs.get(chain)!;
+      let managed;
       try {
-        const chainConfig = this.dynamicChainConfigs.get(chain)!;
-        let managed;
-        try {
-          managed = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
-        } catch {
-          await multiProviderRpcManager.registerProvider({
-            provider: 'ZeroCapitalConfiguredRPC',
-            chain: chain as RpcSupportedChain,
-            httpUrl: chainConfig.rpcUrl,
-            priority: 1,
-          });
-          managed = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
-        }
-        const network = await managed.http.getNetwork();
-        if (!Number.isSafeInteger(network.chainId) || network.chainId <= 0) throw new Error('RPC returned an invalid chain id');
-        this.providers.set(chain, managed.http);
-      } catch (error) {
+        managed = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
+      } catch {
+        await multiProviderRpcManager.registerProvider({
+          provider: 'ZeroCapitalConfiguredRPC',
+          chain: chain as RpcSupportedChain,
+          httpUrl: chainConfig.rpcUrl,
+          priority: 1,
+        });
+        managed = await multiProviderRpcManager.getProvider(chain as RpcSupportedChain, 'json_rpc');
+      }
+      this.providers.set(chain, managed.http);
+      return chain;
+    }));
+    providerOutcomes.forEach((outcome, index) => {
+      if (outcome.status === 'rejected') {
         logger.warn('[ZeroCapitalEngine] RPC unavailable to canonical zero-capital runtime context', {
           component: 'ZeroCapitalEngine',
-          chain,
-          error: error instanceof Error ? error.message : String(error),
+          chain: chains[index],
+          error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
           executionAuthority: false,
+          routeLocalFailure: true,
         });
       }
-    }
+    });
 
     const rawPrivateKey = process.env.WALLET_PRIVATE_KEY;
     const privateKey = normalizePrivateKey(rawPrivateKey) || undefined;
@@ -299,15 +307,21 @@ export class AutonomousZeroCapitalEngine {
       }
     }
 
-    await this.refreshWalletResources();
+    // Operator wallet balances are redundancy/telemetry for zero-capital routes,
+    // never a cold-start prerequisite. Mark the runtime ready first and refresh
+    // balances asynchronously through the existing route-local provider failover.
     this.state.receiverRegistry = this.receiverManager.getRecords();
     this.state.isRunning = true;
     this.initialized = true;
+    this.scheduleWalletResourceRefresh();
 
     logger.info('[ZeroCapitalEngine] Canonical zero-capital runtime context initialized', {
       component: 'ZeroCapitalEngine',
       connectedChains: Array.from(this.providers.keys()),
       explicitConfiguredRoutes: this.configuredRoutes.length,
+      initializationDurationMs: Date.now() - initializationStartedAt,
+      walletResourceTelemetryBlocksStartup: false,
+      providerIdentityReprobedAfterCanonicalHealth: false,
       providerAuthority: 'multiProviderRpcManager_free_and_configured_mesh',
       alchemyOperationalAuthority: false,
       routeAuthority: 'zero_capital_route_authority',
@@ -320,6 +334,7 @@ export class AutonomousZeroCapitalEngine {
       independentExecutionLoop: false,
       runtimeMethodMutation: false,
       tokenUnitEqualsUsdAssumption: false,
+      receiverCapabilityImpliesGasSponsorship: false,
       globalHaltAuthority: false,
     });
   }
@@ -497,6 +512,23 @@ export class AutonomousZeroCapitalEngine {
     return decisions;
   }
 
+  private scheduleWalletResourceRefresh(): void {
+    if (this.walletResourceRefreshInFlight) return;
+    this.walletResourceRefreshInFlight = this.refreshWalletResources()
+      .then(() => undefined)
+      .catch(error => {
+        logger.debug('[ZeroCapitalEngine] Optional wallet-resource telemetry refresh degraded', {
+          component: 'ZeroCapitalEngine',
+          error: error instanceof Error ? error.message : String(error),
+          executionAuthority: false,
+          zeroCapitalDiscoveryBlocked: false,
+        });
+      })
+      .finally(() => {
+        this.walletResourceRefreshInFlight = null;
+      });
+  }
+
   private async refreshWalletResources(): Promise<WalletResourceSnapshot[]> {
     const configured = resolveConfiguredWalletAddress();
     const snapshots = await Promise.all(Array.from(this.providers.entries()).map(async ([chain, existingProvider]) => {
@@ -629,6 +661,8 @@ export class AutonomousZeroCapitalEngine {
       independentScanLoop: false,
       independentExecutionLoop: false,
       runtimeMethodMutation: false,
+      walletResourceTelemetryBlocksStartup: false,
+      receiverCapabilityImpliesGasSponsorship: false,
       capitalRequired: 'Zero-personal-capital execution is admitted only from externally sponsored or proven system-owned resources',
       zeroCapitalSpecificExecutionFlagAuthority: false,
       tokenUnitEqualsUsdAssumption: false,
