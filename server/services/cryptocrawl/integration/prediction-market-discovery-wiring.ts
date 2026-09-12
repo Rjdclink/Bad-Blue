@@ -3,6 +3,7 @@ import {
   discoverPredictionMarketParityOpportunities,
   type PredictionParityOpportunity,
 } from '../discovery/prediction-market-opportunity-generator.js';
+import { ensureStageOneVeloraRecovery } from '../discovery/stage-one-dex-mempool-velora-recovery.js';
 import {
   ensureKalshiSystemWiring,
   refreshKalshiSystemEvidenceNow,
@@ -86,9 +87,9 @@ export function getPredictionMarketDiscoverySnapshot() {
 }
 
 export function ensurePredictionMarketDiscoveryWiring(): void {
-  // Stage-1 spread visibility is measurement-only and remains installed even if
-  // one optional prediction discovery source is disabled. This piggybacks on an
-  // already canonical runtime installer without creating another lifecycle owner.
+  // Stage-1 spread visibility and its route-local acquisition fallbacks are
+  // measurement-only and remain installed even if prediction discovery is disabled.
+  ensureStageOneVeloraRecovery();
   ensureStageOneSpreadObservability();
   if (timer || process.env.PREDICTION_MARKET_DISCOVERY_ENABLED === 'false') return;
   // One strategy cadence owns both public parity discovery and the Kalshi event
