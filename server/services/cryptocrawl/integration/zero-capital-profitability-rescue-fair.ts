@@ -130,12 +130,21 @@ export async function runFairZeroCapitalProfitabilityRescue(
     });
   }
 
-  // Fairness never removes a fresh candidate from the economic search. V2 keeps
-  // its bounded quote/search budgets and route-local failure behavior; fairness is
-  // only durable/in-memory ordering telemetry around that search.
+  // Fairness never removes a fresh candidate from the economic search. Put the
+  // bounded fairness selection first so V2's shared quote budget reaches the routes
+  // selected for this cycle, then retain every other fresh route behind them. This
+  // preserves bounded work while preventing stable input ordering from starving a
+  // recoverable route indefinitely across fairness rotations.
+  const opportunityById = new Map(input.opportunities.map(opportunity => [opportunity.id, opportunity]));
+  const selectedFirst = [...selectedOpportunityIds]
+    .map(opportunityId => opportunityById.get(opportunityId))
+    .filter((opportunity): opportunity is ZeroCapitalOpportunity => Boolean(opportunity));
+  const remainingFresh = input.opportunities.filter(opportunity => !selectedOpportunityIds.has(opportunity.id));
+  const orderedOpportunities = [...selectedFirst, ...remainingFresh];
+
   const rescued = await runZeroCapitalProfitabilityRescueV2({
     ...input,
-    opportunities: input.opportunities,
+    opportunities: orderedOpportunities,
   });
 
   logger.info('[ZeroCapitalProfitabilityRescueFair] Recoverable routes observed with non-authoritative fairness', {
@@ -153,6 +162,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     fairnessExecutionVetoAuthority: false,
     fairnessEconomicAdmissionAuthority: false,
     v2ReceivesAllFreshRecoverableCandidates: true,
+    v2ReceivesSelectedRoutesFirst: true,
     staleQuotePreserved: false,
     v2EconomicAuthorityPreserved: true,
     executionAuthority: false,
