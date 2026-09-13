@@ -63,8 +63,9 @@ assert.doesNotMatch(handoff, /from ['"][^'"]*supabase/i);
 assert.doesNotMatch(handoff, /from ['"][^'"]*(redis|kafka|rabbit|bull)/i);
 
 // Momentum: all probes may start concurrently, but the hot path consumes them in
-// completion order and does not wait for the slowest sibling once exact profitability
-// exists. A freshness deadline reserves opportunity lifetime for canonical execution.
+// completion order and does not wait for the slowest sibling once a strictly-positive
+// result is also a strict improvement over the incumbent. A worse positive result
+// cannot prematurely stop search. Freshness reserve remains protected for execution.
 assert.match(anytimeRace, /Promise\.race/);
 assert.match(anytimeRace, /stoppedOnAcceptable/);
 assert.match(anytimeRace, /ignoredStragglers/);
@@ -73,9 +74,11 @@ assert.match(anytimeRace, /late results cannot delay or overwrite/);
 assert.doesNotMatch(anytimeRace, /Promise\.allSettled/);
 assert.match(engine, /runAtomicBpsAnytimeRace/);
 assert.match(engine, /quoteDecisionDeadlineAt = opportunity\.expiresAt - minimumRemainingLifetimeMs/);
+assert.match(engine, /acceptable: probe => probe\.candidate !== null[\s\S]{0,160}clearsStrictProfitability\(probe\.candidate\)[\s\S]{0,160}strictImprovement\(opportunity, probe\.candidate\)/);
 assert.match(engine, /anytimeIncumbentSelection: true/);
 assert.match(engine, /waitsForAllQuoteStragglers: false/);
-assert.match(engine, /firstStrictPositiveIncumbentStopsWaiting: true/);
+assert.match(engine, /firstStrictPositiveImprovementStopsWaiting: true/);
+assert.match(engine, /worsePositiveCannotStopSearch: true/);
 assert.match(engine, /freshnessReserveProtectedForExecution: true/);
 assert.match(engine, /lateProbeOverwriteAllowed: false/);
 assert.doesNotMatch(engine, /Promise\.allSettled\(sizes\.map/);
@@ -179,4 +182,4 @@ assert.match(providerEconomics, /aave_v3/);
 assert.match(providerEconomics, /morpho_blue/);
 assert.match(providerEconomics, /calculateMeasuredFlashLoanFee/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, anytime profitable-incumbent selection, freshness-reserved execution, straggler avoidance, parallel prewarming, engine-owned composite tactics, exact strict-positive economics across all capital paths, stateful builder gas measurement, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
+console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, anytime profitable-improvement selection, freshness-reserved execution, straggler avoidance, parallel prewarming, engine-owned composite tactics, exact strict-positive economics across all capital paths, stateful builder gas measurement, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
