@@ -33,6 +33,36 @@ export interface CompiledPostVictimBackrun {
   provenance: string[];
 }
 
+/**
+ * Measurement-only Mempool economics captured before the positive execution
+ * admission gate. This is the all-in economics of the fresh compatible route
+ * plus the raw EOA bundle's current gas and relay burden. It is deliberately not
+ * represented as deterministic post-victim profit until the exact victim-first
+ * signed bundle passes relay simulation.
+ */
+export interface MeasuredPostVictimBackrunEconomics {
+  opportunityId: string;
+  sourceZeroCapitalOpportunityId: string;
+  victimHash: string;
+  measuredAt: number;
+  expiresAt: number;
+  grossProfitUsd: number;
+  grossProfitBps: number;
+  flashLoanFeeUsd: number;
+  flashLoanFeeBps: number;
+  expectedGasUsd: number;
+  gasCostBps: number;
+  relayFeeUsd: number;
+  relayCostBps: number;
+  notionalUsd: number;
+  measuredNetProfitUsd: number;
+  measuredNetProfitBps: number;
+  clearsExecutionResidual: boolean;
+  executionAuthority: false;
+  exactVictimFirstSimulationRequired: true;
+  provenance: string[];
+}
+
 type SimulationAuthority = {
   initialize(): Promise<void>;
   simulateBundle(bundle: { signedTransactions: string[]; targetBlock: number }, targetBlock: number): Promise<{
@@ -243,7 +273,38 @@ class ExactPostVictimBackrunRegistry {
   }
 }
 
+class MeasuredPostVictimBackrunEconomicsRegistry {
+  private readonly entries = new Map<string, MeasuredPostVictimBackrunEconomics>();
+
+  record(evidence: MeasuredPostVictimBackrunEconomics): void {
+    if (evidence.expiresAt <= evidence.measuredAt) return;
+    this.entries.set(evidence.opportunityId, { ...evidence, provenance: [...evidence.provenance] });
+    this.prune();
+  }
+
+  get(opportunityId: string, now = Date.now()): MeasuredPostVictimBackrunEconomics | null {
+    const evidence = this.entries.get(opportunityId);
+    if (!evidence || evidence.expiresAt <= now) {
+      if (evidence) this.entries.delete(opportunityId);
+      return null;
+    }
+    return { ...evidence, provenance: [...evidence.provenance] };
+  }
+
+  remove(opportunityId: string): void { this.entries.delete(opportunityId); }
+
+  private prune(): void {
+    const now = Date.now();
+    for (const [id, evidence] of this.entries) if (evidence.expiresAt <= now) this.entries.delete(id);
+    const max = Math.max(32, Math.min(2048, Number(process.env.CRYPTOCRAWL_BACKRUN_MEASUREMENT_REGISTRY_MAX || 512)));
+    if (this.entries.size <= max) return;
+    const oldest = [...this.entries.values()].sort((left, right) => left.measuredAt - right.measuredAt);
+    for (let index = 0; index < oldest.length - max; index += 1) this.entries.delete(oldest[index].opportunityId);
+  }
+}
+
 export const exactPostVictimBackrunRegistry = new ExactPostVictimBackrunRegistry();
+export const measuredPostVictimBackrunEconomicsRegistry = new MeasuredPostVictimBackrunEconomicsRegistry();
 
 /**
  * Compile one exact Ethereum victim-first private bundle. This function never
@@ -306,6 +367,52 @@ export async function compileExactPostVictimBackrun(input: {
       ? selection.totalMeasuredFlashFee
       : opportunity.flashLoanFeeInInputToken || 0n;
     const measuredReceiverProfit = grossProfit - flashFee;
+
+    const tokenPrice = (await coinGeckoPriceClient.getLiveSymbolPrices([opportunity.inputAssetSymbol])).get(opportunity.inputAssetSymbol);
+    if (!Number.isFinite(tokenPrice) || Number(tokenPrice) <= 0) return null;
+    const price = Number(tokenPrice);
+    const measuredNetBaseUnits = measuredReceiverProfit - gas.baseUnits - relayFee;
+    const measuredExpiresAt = Math.min(input.candidateExpiresAt, opportunity.expiresAt, selection.expiresAt, now + 12_000);
+    const notionalUsd = usdFromBaseUnits(opportunity.flashLoanAmount, opportunity.inputTokenDecimals, price);
+    if (!(notionalUsd > 0) || measuredExpiresAt <= now) return null;
+    measuredPostVictimBackrunEconomicsRegistry.record({
+      opportunityId: input.candidateOpportunityId,
+      sourceZeroCapitalOpportunityId: opportunity.id,
+      victimHash: input.observation.hash,
+      measuredAt: now,
+      expiresAt: measuredExpiresAt,
+      grossProfitUsd: usdFromBaseUnits(grossProfit, opportunity.inputTokenDecimals, price),
+      grossProfitBps: preciseBps(grossProfit, opportunity.flashLoanAmount),
+      flashLoanFeeUsd: usdFromBaseUnits(flashFee, opportunity.inputTokenDecimals, price),
+      flashLoanFeeBps: preciseBps(flashFee, opportunity.flashLoanAmount),
+      expectedGasUsd: gas.usd,
+      gasCostBps: preciseBps(gas.baseUnits, opportunity.flashLoanAmount),
+      relayFeeUsd: usdFromBaseUnits(relayFee, opportunity.inputTokenDecimals, price),
+      relayCostBps: preciseBps(relayFee, opportunity.flashLoanAmount),
+      notionalUsd,
+      measuredNetProfitUsd: usdFromBaseUnits(measuredNetBaseUnits, opportunity.inputTokenDecimals, price),
+      measuredNetProfitBps: preciseBps(measuredNetBaseUnits, opportunity.flashLoanAmount),
+      clearsExecutionResidual: measuredNetBaseUnits >= minimumResidual,
+      executionAuthority: false,
+      exactVictimFirstSimulationRequired: true,
+      provenance: [
+        `source_zero_capital_opportunity:${opportunity.id}`,
+        `flash_provider:${selection.provider}`,
+        'mempool_stage_two:compatible_route_all_in_measurement',
+        'mempool_stage_two:raw_eoa_bundle_gas_remeasured',
+        'mempool_stage_two:relay_fee_included',
+        'mempool_stage_two:flash_fee_included',
+        'exact_post_victim_state_not_assumed',
+        'exact_victim_first_bundle_simulation_required_for_execution',
+        'predicted_savings_credited:false',
+        'synthetic_economics:false',
+        'execution_authority:false',
+      ],
+    });
+
+    // This existing execution gate remains authoritative. A non-positive or
+    // insufficient residual is now observable to Stage 2, but still cannot be
+    // compiled into an executable backrun.
     if (measuredReceiverProfit < requiredReceiverProfit) return null;
 
     const planningOpportunity: ZeroCapitalOpportunity = {
@@ -352,13 +459,11 @@ export async function compileExactPostVictimBackrun(input: {
     const parsedBackrun = ethers.utils.parseTransaction(signedBackrunTransaction);
     if (!parsedBackrun.hash || parsedBackrun.from?.toLowerCase() !== wallet.address.toLowerCase()) return null;
 
-    const expiresAt = Math.min(input.candidateExpiresAt, opportunity.expiresAt, selection.expiresAt, now + 12_000);
+    const expiresAt = measuredExpiresAt;
     if (expiresAt <= now) return null;
-    const tokenPrice = (await coinGeckoPriceClient.getLiveSymbolPrices([opportunity.inputAssetSymbol])).get(opportunity.inputAssetSymbol);
-    if (!Number.isFinite(tokenPrice) || Number(tokenPrice) <= 0) return null;
     const guaranteedNetBaseUnits = requiredReceiverProfit - gas.baseUnits - relayFee;
     if (guaranteedNetBaseUnits <= 0n) return null;
-    const deterministicNetProfitUsd = usdFromBaseUnits(guaranteedNetBaseUnits, opportunity.inputTokenDecimals, Number(tokenPrice));
+    const deterministicNetProfitUsd = usdFromBaseUnits(guaranteedNetBaseUnits, opportunity.inputTokenDecimals, price);
     if (!Number.isFinite(deterministicNetProfitUsd) || deterministicNetProfitUsd <= 0) return null;
 
     const exactPlan: ExactBackrunPlan = {

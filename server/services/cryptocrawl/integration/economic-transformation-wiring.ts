@@ -18,6 +18,7 @@ import {
 } from '../optimization/research-bps-execution-tactics.js';
 import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import { getClosestCexNearMissesBySymbol } from './cex-four-mode-observability-wiring.js';
+import { realizeStageTwoCrossChainReduction } from './stage-two-cross-chain-reduction.js';
 import { ensureUniversalBpsRescueCoordinator } from './universal-bps-rescue-coordinator.js';
 
 let timer: NodeJS.Timeout | null = null;
@@ -170,7 +171,8 @@ function nextResidualFraction(symbol: string, fractions: readonly number[]): num
 
 function queueOperationalTransformation(candidate: MeasuredCandidate, advice: EconomicTransformationAdvice): void {
   if (candidate.expiresAt <= Date.now()) return;
-  if (advice.netProfitBps === null || advice.netProfitBps >= bpsReductionOwnershipFloorBps()) return;
+  if (advice.netProfitBps === null || advice.netProfitBps > bpsReductionOwnershipFloorBps()) return;
+  if (candidate.topology === 'CROSS_CHAIN' && candidate.provenance.includes('stage_two_bps_reduction:true')) return;
   const key = candidate.opportunityId;
   if (actionInFlight.has(key) || (actionCooldownUntil.get(key) || 0) > Date.now()) return;
   const symbol = candidateSymbol(candidate);
@@ -224,6 +226,10 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
       });
     }
 
+    const topologySpecificMeasuredAlternatives = candidate.topology === 'CROSS_CHAIN'
+      ? (await realizeStageTwoCrossChainReduction(candidate)).length
+      : 0;
+
     logger.info('[EconomicTransformation] Measured transformation converted into adaptive BPS super-engine work', {
       component: 'EconomicTransformationWiring',
       opportunityId: candidate.opportunityId,
@@ -261,7 +267,10 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
         ? 'canonical_cex_revalidation_and_residual_replan'
         : candidate.topology === 'ZERO_CAPITAL_ATOMIC'
           ? 'zero_capital_profitability_rescue_v2_exact_requote'
-          : 'unified_router_plus_topology_discovery_reacquisition',
+          : candidate.topology === 'CROSS_CHAIN'
+            ? 'across_exact_variable_notional_requote'
+            : 'unified_router_plus_topology_discovery_reacquisition',
+      topologySpecificMeasuredAlternatives,
       canonicalRevalidationRequested: effectiveResearchPlan.canonicalRevalidationRequested,
       canonicalDeterministicPositive: canonicalCycle?.deterministicPositive ?? null,
       canonicalEligibleCandidates: canonicalCycle?.eligibleCandidates ?? null,
@@ -289,7 +298,7 @@ function queueOperationalTransformation(candidate: MeasuredCandidate, advice: Ec
 function queueCexNearMissRecovery(): void {
   const reductionGapFloor = Math.abs(bpsReductionOwnershipFloorBps());
   const nearMisses = getClosestCexNearMissesBySymbol(12)
-    .filter(item => Number.isFinite(item.bpsToBreakEven) && item.bpsToBreakEven > reductionGapFloor);
+    .filter(item => Number.isFinite(item.bpsToBreakEven) && item.bpsToBreakEven >= reductionGapFloor);
   if (nearMisses.length === 0) return;
   const symbols = [...new Set(nearMisses.map(item => item.symbol.trim().toUpperCase()).filter(Boolean))].slice(0, 12);
   const signature = `cex-near-miss:${symbols.join(',')}`;
@@ -351,7 +360,7 @@ function refresh(): void {
       const decayAdjustedPriority = superPlan.effectivePriorityScore * decay.survivalProbability;
       return { candidate, advice, superPlan, survivalProbability: decay.survivalProbability, decayAdjustedPriority };
     })
-    .filter(item => item.advice.netProfitBps !== null && item.advice.netProfitBps < reductionOwnershipFloor)
+    .filter(item => item.advice.netProfitBps !== null && item.advice.netProfitBps <= reductionOwnershipFloor)
     .filter(item => item.advice.transformationFeasibilityScore >= minFeasibility())
     .sort((left, right) => right.decayAdjustedPriority - left.decayAdjustedPriority
       || Number(right.advice.dominantCostAloneCouldCoverGap) - Number(left.advice.dominantCostAloneCouldCoverGap)
@@ -391,7 +400,7 @@ function refresh(): void {
   selected.sort((left, right) => right.decayAdjustedPriority - left.decayAdjustedPriority);
   latest = selected.map(item => item.advice);
   const cexNearMisses = getClosestCexNearMissesBySymbol(16)
-    .filter(item => Number.isFinite(item.bpsToBreakEven) && item.bpsToBreakEven > Math.abs(reductionOwnershipFloor));
+    .filter(item => Number.isFinite(item.bpsToBreakEven) && item.bpsToBreakEven >= Math.abs(reductionOwnershipFloor));
   const superSnapshot = getBpsReductionSuperEngineSnapshot();
   logger.info('[EconomicTransformation] Near-break-even rescue portfolio refreshed', {
     component: 'EconomicTransformationWiring',
