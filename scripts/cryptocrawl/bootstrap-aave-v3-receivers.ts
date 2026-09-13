@@ -1,10 +1,10 @@
 import 'dotenv/config';
-import { Wallet } from 'ethers';
+import { BigNumber, Wallet } from 'ethers';
 import { multiProviderRpcManager } from '../../server/services/cryptocrawl/api/blockchain-providers.js';
-import { getAaveV3ReceiverManager } from '../../server/services/cryptocrawl/execution/adapters/aave-v3-receiver-manager.js';
+import { ensureProviderSpecificReceiverCapability } from '../../server/services/cryptocrawl/execution/adapters/provider-specific-receiver-bootstrap.js';
 import { resolveAaveV3Pool } from '../../server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.js';
 import type { SupportedExecutionChain } from '../../server/services/cryptocrawl/execution/adapters/onchain-payload-builder.js';
-import { writeAaveV3FlashLoanReceiverArtifact } from './compile-flashloan-receiver.js';
+import { getGasSponsorManager } from '../../server/services/cryptocrawl/strategies/gas-sponsorship.js';
 
 const TARGET_CHAINS: SupportedExecutionChain[] = ['ethereum', 'polygon'];
 
@@ -15,37 +15,52 @@ function configuredWallet(): Wallet {
 }
 
 async function main(): Promise<void> {
-  const artifactPath = await writeAaveV3FlashLoanReceiverArtifact();
   const wallet = configuredWallet();
-  const manager = getAaveV3ReceiverManager();
-  const records: Array<{ chain: SupportedExecutionChain; address: string; pool: string; transactionHash?: string }> = [];
+  const sponsor = getGasSponsorManager();
+  const readiness = sponsor.getReadiness();
+  if (!readiness.ready) throw new Error(readiness.reason || 'Provider-sponsored Aave receiver bootstrap is unavailable');
 
+  const records: Array<{ chain: SupportedExecutionChain; address: string; pool: string }> = [];
   for (const chain of TARGET_CHAINS) {
     const pool = resolveAaveV3Pool(chain);
     if (!pool) continue;
     await multiProviderRpcManager.initialize([chain]);
     const { http: provider } = await multiProviderRpcManager.getProvider(chain, 'json_rpc');
-    const record = await manager.ensureReceiver({
+    const connectedWallet = wallet.connect(provider);
+    const network = await provider.getNetwork();
+
+    const capability = await ensureProviderSpecificReceiverCapability({
+      kind: 'aave_v3',
       chain,
       provider,
-      wallet,
+      wallet: connectedWallet,
       fundingMode: 'sponsored',
+      executeSetupCalls: async calls => {
+        if (calls.length === 0) return;
+        await sponsor.execute({
+          wallet: connectedWallet,
+          chainId: network.chainId,
+          calls: calls.map(call => ({
+            to: call.to,
+            data: call.data,
+            value: BigNumber.from(call.value || 0),
+          })),
+          timeoutMs: Math.max(10_000, Number(process.env.ZERO_CAPITAL_SPONSORED_RECEIVER_DEPLOY_TIMEOUT_MS || 90_000)),
+        });
+      },
     });
-    records.push({
-      chain,
-      address: record.address,
-      pool: record.pool,
-      ...(record.deploymentTransactionHash ? { transactionHash: record.deploymentTransactionHash } : {}),
-    });
+
+    if (!capability) throw new Error(`Aave V3 receiver capability could not be established for ${chain}`);
+    records.push({ chain, address: capability.address, pool: capability.infrastructure });
     console.log(JSON.stringify({
       marker: 'AAVE_V3_RECEIVER_BOOTSTRAP',
       chain,
-      address: record.address,
-      pool: record.pool,
-      owner: record.owner,
-      factory: record.factory,
-      deployedNow: Boolean(record.deploymentTransactionHash),
-      transactionHash: record.deploymentTransactionHash || null,
+      address: capability.address,
+      pool: capability.infrastructure,
+      owner: capability.owner,
+      codeHash: capability.codeHash,
+      provenance: capability.provenance,
+      operatorMonetaryInputRequired: false,
       syntheticEvidence: false,
     }));
   }
@@ -53,9 +68,10 @@ async function main(): Promise<void> {
   if (records.length === 0) throw new Error('No configured Aave V3 pool was eligible for receiver bootstrap');
   console.log(JSON.stringify({
     marker: 'AAVE_V3_RECEIVER_BOOTSTRAP_COMPLETE',
-    artifactPath,
     receivers: Object.fromEntries(records.map(record => [record.chain, record.address])),
     receiverCount: records.length,
+    fundingMode: 'provider_sponsored',
+    operatorMonetaryInputRequired: false,
   }));
 }
 
