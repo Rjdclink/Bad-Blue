@@ -19,6 +19,7 @@ import {
 } from '../optimization/bps-reduction-super-engine.js';
 import { adviseEconomicTransformations } from '../optimization/economic-transformation-engine.js';
 import { buildResearchBpsExecutionPlan } from '../optimization/research-bps-execution-tactics.js';
+import { runAtomicBpsAnytimeRace } from './atomic-bps-anytime-race.js';
 import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import {
   observeAtomicBpsOutcome,
@@ -28,6 +29,12 @@ import {
 type AtomicBpsContext = {
   plan: BpsReductionSuperPlan;
   dominantCostDriver: string;
+};
+
+type AtomicBpsProbeResult = {
+  candidate: QuotedZeroCapitalRoute | null;
+  insufficientLiquidityRejected: number;
+  budgetOutsideTelemetryQuotes: number;
 };
 
 export interface ZeroCapitalAtomicBpsEngineInput {
@@ -271,6 +278,13 @@ function quoteBetter(
   return candidate.quoteLatencyMs < current.quoteLatencyMs ? candidate : current;
 }
 
+function probeBetter(current: AtomicBpsProbeResult | null, candidate: AtomicBpsProbeResult): AtomicBpsProbeResult {
+  if (!current) return candidate;
+  if (!current.candidate) return candidate.candidate ? candidate : current;
+  if (!candidate.candidate) return current;
+  return quoteBetter(current.candidate, candidate.candidate) === candidate.candidate ? candidate : current;
+}
+
 function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZeroCapitalRoute): boolean {
   if (candidate.netProfit !== original.expectedProfit) return candidate.netProfit > original.expectedProfit;
   return Number.isFinite(candidate.netProfitBps)
@@ -366,8 +380,10 @@ function quoteFitsDailyProfitBudget(
 /**
  * Sole post-Stage-1 transformation pipeline for ZERO_CAPITAL_ATOMIC. BPS reduction
  * intelligence and Atomic notional/provider search operate inside one quote budget,
- * against one fresh evidence set, and produce one best exact result. No serial
- * Stage-2→Stage-3 handoff and no database scheduler is in the hot path.
+ * against one fresh evidence set, and produce one exact incumbent. Probes start in
+ * parallel, but the hot path never waits for slower siblings after a strictly-positive
+ * incumbent exists. No serial Stage-2→Stage-3 handoff and no database scheduler is in
+ * the hot path.
  */
 export async function runZeroCapitalAtomicBpsEngine(
   input: ZeroCapitalAtomicBpsEngineInput,
@@ -411,6 +427,10 @@ export async function runZeroCapitalAtomicBpsEngine(
   let budgetOutsideTelemetryQuotes = 0;
   let bpsSuperEngineCandidates = 0;
   let bpsSuperEnginePositiveRecoveries = 0;
+  let anytimePositiveStops = 0;
+  let freshnessDeadlineStops = 0;
+  let ignoredQuoteStragglers = 0;
+  let quoteProbesConsumed = 0;
   const bpsDrivers = new Map<string, number>();
 
   const refinedPairs = await Promise.all(selected.map(async (opportunity, index) => {
@@ -454,36 +474,69 @@ export async function runZeroCapitalAtomicBpsEngine(
       );
       if (sizes.length === 0) return [opportunity.id, opportunity] as const;
 
-      const settled = await Promise.allSettled(sizes.map(sizeUsd => withQuoteDeadline(
-        quoteConfiguredZeroCapitalRoute({
-          ...measuredRoute,
-          amountIn: baseUnitsFromUsd(sizeUsd, measuredRoute.inputTokenDecimals, evidence.inputTokenUsdPrice!),
-        }, input.provider),
-        Math.min(maxQuoteLatencyMs, Math.max(100, opportunity.expiresAt - Date.now() - 100)),
-        `${input.chain}:${opportunity.id}`,
-      )));
-
-      let best: QuotedZeroCapitalRoute | null = null;
-      for (const result of settled) {
-        if (result.status !== 'fulfilled' || !result.value) {
-          boundedQuoteTimeouts += 1;
-          continue;
-        }
-        for (const providerMeasurement of providerEvidence) {
-          if (!providerUsableForAmount(providerMeasurement, result.value.amountIn)) {
-            insufficientLiquidityRejected += 1;
-            continue;
-          }
-          const adjusted = adjustForProvider(result.value, providerMeasurement);
-          if (!adjusted) continue;
-          if (
-            clearsStrictProfitability(adjusted)
-            && !quoteFitsDailyProfitBudget(adjusted, measuredRoute.inputTokenDecimals, evidence.inputTokenUsdPrice, dailyProfitBudget)
-          ) budgetOutsideTelemetryQuotes += 1;
-          best = quoteBetter(best, adjusted);
-        }
+      // Preserve enough lifetime for the downstream canonical executor instead of
+      // spending the entire opportunity TTL waiting for quote stragglers.
+      const quoteDecisionDeadlineAt = opportunity.expiresAt - minimumRemainingLifetimeMs;
+      if (quoteDecisionDeadlineAt <= Date.now()) {
+        expiredBeforeRequote += 1;
+        return [opportunity.id, opportunity] as const;
       }
 
+      const probeTasks = sizes.map(sizeUsd => {
+        const timeoutMs = Math.min(maxQuoteLatencyMs, Math.max(1, quoteDecisionDeadlineAt - Date.now()));
+        return withQuoteDeadline(
+          quoteConfiguredZeroCapitalRoute({
+            ...measuredRoute,
+            amountIn: baseUnitsFromUsd(sizeUsd, measuredRoute.inputTokenDecimals, evidence.inputTokenUsdPrice!),
+          }, input.provider),
+          timeoutMs,
+          `${input.chain}:${opportunity.id}`,
+        ).then<AtomicBpsProbeResult>(quote => {
+          if (!quote) {
+            return { candidate: null, insufficientLiquidityRejected: 0, budgetOutsideTelemetryQuotes: 0 };
+          }
+          let probeBest: QuotedZeroCapitalRoute | null = null;
+          let probeInsufficientLiquidity = 0;
+          let probeBudgetOutsideTelemetry = 0;
+          for (const providerMeasurement of providerEvidence) {
+            if (!providerUsableForAmount(providerMeasurement, quote.amountIn)) {
+              probeInsufficientLiquidity += 1;
+              continue;
+            }
+            const adjusted = adjustForProvider(quote, providerMeasurement);
+            if (!adjusted) continue;
+            if (
+              clearsStrictProfitability(adjusted)
+              && !quoteFitsDailyProfitBudget(adjusted, measuredRoute.inputTokenDecimals, evidence.inputTokenUsdPrice!, dailyProfitBudget)
+            ) probeBudgetOutsideTelemetry += 1;
+            probeBest = quoteBetter(probeBest, adjusted);
+          }
+          return {
+            candidate: probeBest,
+            insufficientLiquidityRejected: probeInsufficientLiquidity,
+            budgetOutsideTelemetryQuotes: probeBudgetOutsideTelemetry,
+          };
+        });
+      });
+
+      const race = await runAtomicBpsAnytimeRace<AtomicBpsProbeResult>({
+        tasks: probeTasks,
+        deadlineAt: quoteDecisionDeadlineAt,
+        acceptable: probe => probe.candidate !== null && clearsStrictProfitability(probe.candidate),
+        better: probeBetter,
+        onConsumed: outcome => {
+          if (outcome.status !== 'fulfilled') return;
+          insufficientLiquidityRejected += outcome.value.insufficientLiquidityRejected;
+          budgetOutsideTelemetryQuotes += outcome.value.budgetOutsideTelemetryQuotes;
+        },
+      });
+      boundedQuoteTimeouts += race.rejected;
+      ignoredQuoteStragglers += race.ignoredStragglers;
+      quoteProbesConsumed += race.completed;
+      if (race.stoppedOnAcceptable) anytimePositiveStops += 1;
+      if (race.stoppedOnDeadline) freshnessDeadlineStops += 1;
+
+      const best = race.best?.candidate ?? null;
       const profitable = best ? clearsStrictProfitability(best) : false;
       const better = best ? strictImprovement(opportunity, best) : false;
       observeAtomicBpsOutcome({
@@ -493,7 +546,7 @@ export async function runZeroCapitalAtomicBpsEngine(
         bestExpectedProfit: best?.netProfit ?? null,
         sourceNetProfitBps: opportunity.netProfitBps,
         bestNetProfitBps: best?.netProfitBps ?? null,
-        quoteCount: sizes.length,
+        quoteCount: race.completed,
         elapsedMs: Date.now() - startedAt,
         profitable,
         improved: better,
@@ -548,6 +601,10 @@ export async function runZeroCapitalAtomicBpsEngine(
     unpricedInputTokenRejected,
     boundedQuoteTimeouts,
     budgetOutsideTelemetryQuotes,
+    anytimePositiveStops,
+    freshnessDeadlineStops,
+    ignoredQuoteStragglers,
+    quoteProbesConsumed,
     bpsSuperEngineCandidates,
     bpsSuperEnginePositiveRecoveries,
     bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
@@ -561,6 +618,12 @@ export async function runZeroCapitalAtomicBpsEngine(
     supabaseSchedulingOnHotPath: false,
     parallelEvidencePrewarm: true,
     parallelRouteOptimization: true,
+    anytimeIncumbentSelection: true,
+    waitsForAllQuoteStragglers: false,
+    firstStrictPositiveIncumbentStopsWaiting: true,
+    sameTurnBetterIncumbentMayReplace: true,
+    freshnessReserveProtectedForExecution: true,
+    lateProbeOverwriteAllowed: false,
     serialPostProfitOptimizationPasses: 0,
     netDollarOptimizationAfterProfitability: true,
     grossPositiveRequiredForAtomicSurplusRescue: false,
