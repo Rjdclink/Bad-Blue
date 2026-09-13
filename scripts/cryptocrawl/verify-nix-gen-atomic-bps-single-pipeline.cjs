@@ -12,6 +12,7 @@ const engine = read('server/services/cryptocrawl/integration/zero-capital-atomic
 const workers = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-workers.ts');
 const alternativeCapital = read('server/services/cryptocrawl/integration/zero-capital-alternative-capital-wiring.ts');
 const builderColdStart = read('server/services/cryptocrawl/execution/builder-sponsored-zero-capital-coldstart.ts');
+const builderGasSimulator = read('server/services/cryptocrawl/execution/adapters/builder-sequential-gas-simulator.ts');
 const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 const flashExecutor = read('server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts');
 const providerEconomics = read('server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.ts');
@@ -94,6 +95,22 @@ assert.match(alternativeCapital, /strict_positive_all_in_net_after_source_fee_an
 assert.match(builderColdStart, /const minimumRetained = minimumPositiveProfitBaseUnits\(\);/);
 assert.match(builderColdStart, /minimum_residual:canonical_strict_positive_base_units/);
 
+// Standard builder cold-start now measures the whole dependent sequence against
+// evolving EVM state. Fixed estimates survive only as a capability-preserving
+// fallback when RPCs lack eth_simulateV1, never after a real simulated EVM failure.
+assert.match(builderGasSimulator, /eth_simulateV1/);
+assert.match(builderGasSimulator, /blockStateCalls/);
+assert.match(builderGasSimulator, /simulateBuilderSequentialGas/);
+assert.match(builderGasSimulator, /BuilderSequentialSimulationExecutionError/);
+assert.match(builderGasSimulator, /multiProviderRpcManager\.execute/);
+assert.match(builderColdStart, /simulateBuilderSequentialGas/);
+assert.match(builderColdStart, /maxBuilderGasVectors/);
+assert.match(builderColdStart, /builder_gas_measurement:eth_simulateV1_sequential_stateful/);
+assert.match(builderColdStart, /fixed_gas_ceiling_admission:false/);
+assert.match(builderColdStart, /legacy_conservative_capability_fallback/);
+assert.match(builderColdStart, /error instanceof BuilderSequentialSimulationExecutionError/);
+assert.match(builderColdStart, /fixedGasPreferred: false/);
+
 // Workers reduce waiting only. They never decide economics or execute money.
 assert.match(workers, /prewarmAtomicBpsEvidence/);
 assert.match(workers, /priceInFlight/);
@@ -125,4 +142,4 @@ assert.match(providerEconomics, /aave_v3/);
 assert.match(providerEconomics, /morpho_blue/);
 assert.match(providerEconomics, /calculateMeasuredFlashLoanFee/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, parallel prewarming, exact strict-positive economics across all capital paths, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
+console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, parallel prewarming, exact strict-positive economics across all capital paths, stateful builder gas measurement, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
