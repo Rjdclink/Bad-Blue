@@ -482,7 +482,7 @@ async function scanOneChain(
           provider,
           opportunities: configuredFresh,
           configuredRoutes: routes,
-          fromQuotedRoute: target.fromQuotedRoute,
+          fromQuotedRoute: (quote, blockTimestamp) => target.fromQuotedRoute(quote, blockTimestamp),
         }).catch(error => {
           logger.warn('[ZeroCapitalDiscovery] Immediate configured-route profitability rescue degraded; original fresh configured candidates retained', {
             component: 'CanonicalZeroCapitalDiscovery',
@@ -531,7 +531,7 @@ async function scanOneChain(
         provider,
         opportunities: dynamicFresh,
         configuredRoutes: routes,
-        fromQuotedRoute: target.fromQuotedRoute,
+        fromQuotedRoute: (quote, blockTimestamp) => target.fromQuotedRoute(quote, blockTimestamp),
       }).catch(error => {
         logger.warn('[ZeroCapitalDiscovery] Dynamic-route profitability rescue degraded; original fresh dynamic candidates retained', {
           component: 'CanonicalZeroCapitalDiscovery',
