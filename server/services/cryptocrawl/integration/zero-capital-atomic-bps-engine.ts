@@ -382,8 +382,8 @@ function quoteFitsDailyProfitBudget(
  * intelligence and Atomic notional/provider search operate inside one quote budget,
  * against one fresh evidence set, and produce one exact incumbent. Probes start in
  * parallel, but the hot path never waits for slower siblings after a strictly-positive
- * incumbent exists. No serial Stage-2→Stage-3 handoff and no database scheduler is in
- * the hot path.
+ * strict improvement exists. No serial Stage-2→Stage-3 handoff and no database
+ * scheduler is in the hot path.
  */
 export async function runZeroCapitalAtomicBpsEngine(
   input: ZeroCapitalAtomicBpsEngineInput,
@@ -427,7 +427,7 @@ export async function runZeroCapitalAtomicBpsEngine(
   let budgetOutsideTelemetryQuotes = 0;
   let bpsSuperEngineCandidates = 0;
   let bpsSuperEnginePositiveRecoveries = 0;
-  let anytimePositiveStops = 0;
+  let anytimePositiveImprovementStops = 0;
   let freshnessDeadlineStops = 0;
   let ignoredQuoteStragglers = 0;
   let quoteProbesConsumed = 0;
@@ -522,7 +522,9 @@ export async function runZeroCapitalAtomicBpsEngine(
       const race = await runAtomicBpsAnytimeRace<AtomicBpsProbeResult>({
         tasks: probeTasks,
         deadlineAt: quoteDecisionDeadlineAt,
-        acceptable: probe => probe.candidate !== null && clearsStrictProfitability(probe.candidate),
+        acceptable: probe => probe.candidate !== null
+          && clearsStrictProfitability(probe.candidate)
+          && strictImprovement(opportunity, probe.candidate),
         better: probeBetter,
         onConsumed: outcome => {
           if (outcome.status !== 'fulfilled') return;
@@ -533,7 +535,7 @@ export async function runZeroCapitalAtomicBpsEngine(
       boundedQuoteTimeouts += race.rejected;
       ignoredQuoteStragglers += race.ignoredStragglers;
       quoteProbesConsumed += race.completed;
-      if (race.stoppedOnAcceptable) anytimePositiveStops += 1;
+      if (race.stoppedOnAcceptable) anytimePositiveImprovementStops += 1;
       if (race.stoppedOnDeadline) freshnessDeadlineStops += 1;
 
       const best = race.best?.candidate ?? null;
@@ -601,7 +603,7 @@ export async function runZeroCapitalAtomicBpsEngine(
     unpricedInputTokenRejected,
     boundedQuoteTimeouts,
     budgetOutsideTelemetryQuotes,
-    anytimePositiveStops,
+    anytimePositiveImprovementStops,
     freshnessDeadlineStops,
     ignoredQuoteStragglers,
     quoteProbesConsumed,
@@ -620,7 +622,8 @@ export async function runZeroCapitalAtomicBpsEngine(
     parallelRouteOptimization: true,
     anytimeIncumbentSelection: true,
     waitsForAllQuoteStragglers: false,
-    firstStrictPositiveIncumbentStopsWaiting: true,
+    firstStrictPositiveImprovementStopsWaiting: true,
+    worsePositiveCannotStopSearch: true,
     sameTurnBetterIncumbentMayReplace: true,
     freshnessReserveProtectedForExecution: true,
     lateProbeOverwriteAllowed: false,
