@@ -362,8 +362,9 @@ assert.doesNotMatch(rescue, /netProfitBps\s*=\s*Math\.max/);
 
 // Shared-principal composition remains measurement-only until an exact prepared
 // composite parent proves at least one base unit of all-in profit. Original members
-// are not mutated and the compatibility registry fields retain exact base-unit truth.
-assert.match(atomicStack, /getCompatibleForAtomicSurplus/);
+// are not mutated; stack eligibility is constrained to fresh measured ZERO_CAPITAL_ATOMIC candidates.
+assert.match(atomicStack, /measuredCandidateRegistry\.get\(opportunity\.id\)/);
+assert.match(atomicStack, /candidate\?\.topology === 'ZERO_CAPITAL_ATOMIC'/);
 assert.match(atomicStack, /measureBalancerFlashLoanEconomics/);
 assert.doesNotMatch(atomicStack, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
 assert.doesNotMatch(atomicStack, /atomicSurplusTargetBps/);
