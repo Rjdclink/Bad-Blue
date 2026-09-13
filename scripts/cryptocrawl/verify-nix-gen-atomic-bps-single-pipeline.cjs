@@ -10,6 +10,7 @@ const gateway = read('server/services/cryptocrawl/integration/zero-capital-profi
 const handoff = read('server/services/cryptocrawl/integration/zero-capital-stage-handoff-supervisor.ts');
 const engine = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
 const workers = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-workers.ts');
+const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 const alternativeCapital = read('server/services/cryptocrawl/integration/zero-capital-alternative-capital-wiring.ts');
 const builderColdStart = read('server/services/cryptocrawl/execution/builder-sponsored-zero-capital-coldstart.ts');
 const builderGasSimulator = read('server/services/cryptocrawl/execution/adapters/builder-sequential-gas-simulator.ts');
@@ -27,12 +28,16 @@ assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 // cannot re-enter the live Atomic BPS path.
 assert.match(gateway, /handoffStageOneToAtomicBps/);
 assert.match(gateway, /runZeroCapitalAtomicBpsEngine/);
+assert.match(gateway, /runZeroCapitalAtomicStackTactic/);
 assert.match(gateway, /oneTransformationAuthority: true/);
 assert.match(gateway, /oneTransformationPipeline: true/);
 assert.match(gateway, /stageOneDirectInMemoryHandoff: true/);
 assert.match(gateway, /boundedRecursiveHandoffSupervision: true/);
 assert.match(gateway, /concurrentDuplicateStageTwoRuns: false/);
 assert.match(gateway, /staleHandoffReplayAllowed: false/);
+assert.match(gateway, /compositeTacticInsideSamePipeline: true/);
+assert.match(gateway, /compositeTacticBlocksSingleRouteReturn: false/);
+assert.match(gateway, /independentCompositePromotionLoop: false/);
 assert.match(gateway, /persistedFairnessOnHotPath: false/);
 assert.match(gateway, /stageTwoSerialPass: false/);
 assert.doesNotMatch(gateway, /runStageTwoZeroCapitalBpsReduction/);
@@ -78,6 +83,19 @@ assert.doesNotMatch(engine, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
 assert.doesNotMatch(engine, /atomicSurplusTargetBps/);
 assert.doesNotMatch(engine, /from ['"][^'"]*quant/i);
 assert.doesNotMatch(engine, /from ['"][^'"]*supabase/i);
+
+// Shared-principal composition is now a tactic owned by the same pipeline. Runtime
+// startup may register capability metadata, but no registry listener can autonomously
+// promote a candidate and no duplicate configurable Stage-1 threshold remains here.
+assert.match(atomicStack, /runZeroCapitalAtomicStackTactic/);
+assert.match(atomicStack, /independentMeasuredCandidateListener: false/);
+assert.match(atomicStack, /independentPromotionAuthority: false/);
+assert.match(atomicStack, /stageOneThresholdAuthority: false/);
+assert.match(atomicStack, /stageOneEnvironmentThresholdRead: false/);
+assert.match(atomicStack, /parallelVariantMeasurement: true/);
+assert.match(atomicStack, /tacticInFlight/);
+assert.doesNotMatch(atomicStack, /measuredCandidateRegistry\.onUpdate/);
+assert.doesNotMatch(atomicStack, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 
 // Alternative-capital and builder-funded paths cannot secretly revive the retired
 // +10 BPS target after the single engine has admitted a strictly-positive route.
@@ -142,4 +160,4 @@ assert.match(providerEconomics, /aave_v3/);
 assert.match(providerEconomics, /morpho_blue/);
 assert.match(providerEconomics, /calculateMeasuredFlashLoanFee/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, parallel prewarming, exact strict-positive economics across all capital paths, stateful builder gas measurement, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
+console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, parallel prewarming, engine-owned composite tactics, exact strict-positive economics across all capital paths, stateful builder gas measurement, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
