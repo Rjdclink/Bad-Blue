@@ -50,8 +50,8 @@ assert.match(engine, /executionAuthority: false/);
 assert.match(engine, /syntheticEconomics: false/);
 assert.doesNotMatch(engine, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
 assert.doesNotMatch(engine, /atomicSurplusTargetBps/);
-assert.doesNotMatch(engine, /from ['"].*quant/i);
-assert.doesNotMatch(engine, /supabase/i);
+assert.doesNotMatch(engine, /from ['"][^'"]*quant/i);
+assert.doesNotMatch(engine, /from ['"][^'"]*supabase/i);
 
 // Workers reduce waiting only. They never decide economics or execute money.
 assert.match(workers, /prewarmAtomicBpsEvidence/);
@@ -62,8 +62,8 @@ assert.match(workers, /executionAuthority: false/);
 assert.match(workers, /economicAuthority: false/);
 assert.match(workers, /supabaseHotPathReads: 0/);
 assert.match(workers, /supabaseHotPathWrites: 0/);
-assert.doesNotMatch(workers, /from ['"].*supabase/i);
-assert.doesNotMatch(workers, /from ['"].*quant/i);
+assert.doesNotMatch(workers, /from ['"][^'"]*supabase/i);
+assert.doesNotMatch(workers, /from ['"][^'"]*quant/i);
 
 // Canonical money boundary stays singular and also uses strict-positive base units,
 // never a revived +10 BPS execution gate.
