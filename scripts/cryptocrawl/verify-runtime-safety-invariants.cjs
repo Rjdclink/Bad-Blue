@@ -26,21 +26,25 @@ function forbid(relativePath, forbiddenFragments) {
   }
 }
 
-// 1) Unified execution remains strictly positive on measured all-in economics
-// for every deterministic topology. Funding arbitrage and calibrated prediction
-// events are explicit bounded expected-value domains because terminal settlement
-// remains the realized-profit authority. Missing/advisory evidence remains
-// reacquisition or ranking input and cannot independently veto a qualifying
-// positive candidate.
+// 1) Unified execution preserves canonical economics and the Stage-3 contract:
+// every measured topology must reach at least +10 BPS canonical all-in net before
+// Stage 4 admission. Funding arbitrage and calibrated prediction events remain
+// bounded expected-value domains, but they do not bypass the Stage-3 target.
+// Missing/advisory evidence remains reacquisition or ranking input and cannot
+// independently veto a target-qualified candidate.
 const unifiedRouter = requireAll('server/services/cryptocrawl/execution/unified-execution-router.ts', [
   'export interface AdvisoryEvidenceScores',
   'advisoryOnly: true',
+  'const STAGE_THREE_MINIMUM_TARGET_BPS = 10;',
+  'return Math.max(STAGE_THREE_MINIMUM_TARGET_BPS, Math.min(1_000, finite));',
   'const deterministicPositive = Number.isFinite(deterministicNet) && deterministicNet > 0;',
   'const deterministicNegative = Number.isFinite(deterministicNet) && deterministicNet < 0;',
   'const fundingProjectedPositive = isFunding && projectedFunding !== null && projectedFunding > 0;',
   'const fundingProjectedNegative = isFunding && projectedFunding !== null && projectedFunding < 0;',
   'const predictionProjectedPositive = isPredictionEvent && projectedPredictionEvent !== null && projectedPredictionEvent > 0;',
   'const predictionProjectedNegative = isPredictionEvent && projectedPredictionEvent !== null && projectedPredictionEvent < 0;',
+  'const stageThreeTargetSatisfied = netBps !== null && netBps + 1e-9 >= stageThreeTarget;',
+  'const stageThreeRescueRequired = stageTwoBoundaryCrossed && !stageThreeTargetSatisfied;',
   "if (!isFunding && !isPredictionEvent && deterministicNegative) hardVetoReasons.push('blocked:verified_negative_all_in_net');",
   "if (fundingProjectedNegative) hardVetoReasons.push('blocked:verified_negative_projected_funding_net');",
   "if (predictionProjectedNegative) hardVetoReasons.push('blocked:verified_negative_calibrated_prediction_event_net');",
@@ -48,14 +52,22 @@ const unifiedRouter = requireAll('server/services/cryptocrawl/execution/unified-
   "hardVetoReasons.push('blocked:no_authoritative_execution_path')",
   'const evidenceReacquisitionRequired = economicsMissing',
   '|| (!isFunding && !isPredictionEvent && deterministicZero)',
+  '|| !stageThreeTargetSatisfied',
   'candidate.missingInformation.length > 0;',
+  "else if (stageThreeRescueRequired) reasons.push('reacquire:stage3_atomic_surplus_target_not_met');",
   'advisory:adaptive_profitability_or_confidence_below_ranking_threshold',
   'const economicsAdmitted = isFunding',
   '? fundingProjectedPositive',
   ': isPredictionEvent',
   '? predictionProjectedPositive',
   ': deterministicPositive;',
-  'const admitted = economicsAdmitted && pathAvailable && candidate.executableCapability && fresh && depthReady && hardVetoReasons.length === 0;',
+  'const admitted = economicsAdmitted',
+  '&& stageThreeTargetSatisfied',
+  '&& pathAvailable',
+  '&& candidate.executableCapability',
+  '&& fresh',
+  '&& depthReady',
+  '&& hardVetoReasons.length === 0;',
   'funding_projected_profit_is_not_deterministic_profit',
   'prediction_event_expected_profit_is_calibrated_not_deterministic',
   'raw_market_probability_execution_authority=false',
@@ -66,9 +78,10 @@ for (const forbidden of [
   'candidate.missingInformation.length === 0',
   'const economicsAdmitted = isFunding ? true : deterministicPositive;',
   'const economicsAdmitted = isFunding ? projectedFunding !== null : deterministicPositive;',
+  'const admitted = economicsAdmitted && pathAvailable && candidate.executableCapability && fresh && depthReady && hardVetoReasons.length === 0;',
 ]) {
   if (unifiedRouter.includes(forbidden)) {
-    throw new Error(`unified execution router reintroduced a duplicate/advisory execution veto or bounded expected-value admission bypass: ${forbidden}`);
+    throw new Error(`unified execution router reintroduced a duplicate/advisory execution veto or Stage-3 target bypass: ${forbidden}`);
   }
 }
 
@@ -176,4 +189,4 @@ forbid('server/services/cryptocrawl/execution/cex-spot-product-policy.ts', [
   'canonicalPair(raw.baseCcy, raw.quoteCcy);',
 ]);
 
-console.log('[runtime-safety-invariants] PASS: deterministic topologies preserve strict positive economics; funding and calibrated prediction events use bounded positive expected value before terminal realized settlement; advisory evidence scoring, active reacquisition, no duplicate missing-information veto, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, measured zero-capital repricing, bounded production observability, and semantic venue-asset identity invariants preserved');
+console.log('[runtime-safety-invariants] PASS: deterministic topologies preserve canonical economics and the Stage-3 +10 BPS all-in net gate; funding and calibrated prediction events retain bounded expected-value semantics without bypassing Stage 3; advisory evidence scoring, active reacquisition, no duplicate missing-information veto, implemented CEX topology, governance boundaries, advisory-only optimizer/provider intelligence, terminal settlement learning, measured zero-capital repricing, bounded production observability, and semantic venue-asset identity invariants preserved');
