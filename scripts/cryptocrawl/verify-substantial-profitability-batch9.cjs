@@ -70,7 +70,7 @@ const behaviors = [
   ['zero', 'ZERO_CAPITAL_PROVIDER_MAX_UTILIZATION', 'provider utilization ceiling'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_MIN_HEADROOM_RATIO', 'provider liquidity headroom floor'],
   ['zero', 'calculateMeasuredFlashLoanFee', 'exact measured provider fee recomputation'],
-  ['zero', 'else if (gap <= 15)', 'near-target dense sizing curve'],
+  ['zero', 'else if (gapToBreakEvenBps <= 15)', 'near-break-even dense sizing curve'],
   ['zero', 'gasPressureBps >= 25', 'gas-pressure sizing curve'],
   ['zero', 'sharedResidualFractions', 'shared BPS Super Engine nonlinear sizing input'],
   ['zero', 'buildBpsReductionSuperPlan', 'shared BPS Super Engine operational zero-capital plan'],
@@ -80,8 +80,8 @@ const behaviors = [
   ['zero', 'const confidence =', 'confidence-weighted rescue priority'],
   ['zero', 'ZERO_CAPITAL_RESCUE_MAX_QUOTE_LATENCY_MS', 'quote-latency rejection bound'],
   ['zero', 'for (const evidence of providerEvidence)', 'multi-provider evaluation per quote'],
-  ['zero', 'candidateClearsTarget && currentClearsTarget', 'target-clearing candidates rank by absolute net'],
-  ['zero', 'candidate.netProfitBps > current.netProfitBps', 'sub-target candidates rank by closest BPS'],
+  ['zero', 'candidateProfitable && currentProfitable', 'profitable candidates rank by absolute net'],
+  ['zero', 'candidate.netProfitBps > current.netProfitBps', 'non-profitable candidates rank by closest BPS'],
   ['zero', 'strictImprovement(original', 'strict replacement improvement'],
   ['zero', 'existingPositiveNeverReplacedByNegative: true', 'positive candidates cannot regress to negative'],
   ['zero', 'inputTokenDecimalsAuthoritative: true', 'denomination authority attestation'],
@@ -150,7 +150,7 @@ if (!source.dailyBudget.includes("authority: 'profit_ladder_daily_realized_profi
     !source.executor.includes('expectedProfitFitsDailyBudget') ||
     !source.executor.includes('executionVetoAuthority: false') ||
     source.executor.includes('dailyProfitBudgetFailure')) {
-  throw new Error('[substantial-profitability-batch9] Profit Ladder must remain realized-profit telemetry/accounting for Atomic while borrowing and target-qualified execution remain independently governed by provider capacity and canonical Stage-3 economics');
+  throw new Error('[substantial-profitability-batch9] Profit Ladder must remain realized-profit telemetry/accounting for Atomic while borrowing and strict-positive execution remain independently governed by provider capacity and canonical economics');
 }
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
   throw new Error('[substantial-profitability-batch9] active CEX quote topology must remain restricted to fully implemented Coinbase/Kraken/OKX paths');

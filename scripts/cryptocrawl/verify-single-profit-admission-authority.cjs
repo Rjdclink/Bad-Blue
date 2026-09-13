@@ -40,19 +40,20 @@ assert.match(verifier, /isStrictlyPositiveAllInNetProfit\(plan\.netProfitUsd\)/)
 assert.ok(!verifier.includes('minNetProfitUsd'), 'CEX verifier must not expose a second dollar-profit threshold');
 assert.ok(!verifier.includes('CRYPTO_ARBITRAGE_MIN_NET_PROFIT_USD'), 'CEX verifier must not expose an environment profit floor');
 
-// Ordinary route admission retains the canonical one-base-unit positive floor.
-// ZERO_CAPITAL_ATOMIC then raises the receiver threshold to the explicit Stage-3
-// all-in target (minimum +10 BPS) without creating a second global profit authority.
+// Autonomous route planning uses the same canonical one-base-unit positive floor.
+// Execution transports may request a higher exact base-unit minimum only when the
+// measured opportunity can actually produce it; ZERO_CAPITAL_ATOMIC has no local
+// +10 BPS magnitude floor or environment-configurable target.
 assert.match(planner, /profit-admission-authority\.js/);
 assert.match(planner, /const canonicalMinimumProfit = minimumPositiveProfitBaseUnits\(\);/);
 assert.match(planner, /requestedMinimumProfit < canonicalMinimumProfit/);
-assert.match(planner, /const ATOMIC_MINIMUM_TARGET_BPS = 10;/);
-assert.match(planner, /return Math\.max\(ATOMIC_MINIMUM_TARGET_BPS, Math\.min\(1_000, finite\)\);/);
-assert.match(planner, /const atomicReceiverMinimum = minimumAtomicReceiverProfitBaseUnits\(opportunity, flashLoanAmount\);/);
-assert.match(planner, /const enforcedMinimumProfit = atomicReceiverMinimum !== null && atomicReceiverMinimum > requestedMinimumProfit/);
+assert.match(planner, /const enforcedMinimumProfit = requestedMinimumProfit;/);
 assert.match(planner, /const expectedReceiverProfit = opportunity\.type === 'ZERO_CAPITAL_ATOMIC'/);
 assert.match(planner, /if \(enforcedMinimumProfit > expectedReceiverProfit\)/);
 assert.match(planner, /minProfit: enforcedMinimumProfit\.toString\(\)/);
+assert.ok(!planner.includes('ATOMIC_MINIMUM_TARGET_BPS'), 'autonomous planner must not restore a +10 Atomic magnitude floor');
+assert.ok(!planner.includes('ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS'), 'autonomous planner must not restore an Atomic target environment variable');
+assert.ok(!planner.includes('ZERO_CAPITAL_RESCUE_TARGET_NET_BPS'), 'autonomous planner must not restore a rescue target environment variable');
 assert.ok(!planner.includes('ZERO_CAPITAL_MIN_PROFIT_BPS'), 'autonomous planner must not contain a retired separate profit BPS authority');
 assert.ok(!planner.includes('minProfitBps'), 'autonomous planner must not accept a caller-provided strategy-specific profit-floor option');
 
@@ -125,4 +126,4 @@ for (const token of ['AutonomousOptimizer', 'NexGenProtocolLayer']) {
 }
 assert.ok(!optimizationBarrel.includes('DivineOptimizationEngine'), 'DivineOptimizationEngine must remain outside the production optimization namespace');
 
-console.log('[single-profit-admission-authority] PASS: one non-configurable >0 all-in-net-profit authority; no live dollar/BPS magnitude floor; no runtime profit patch; deployment templates cannot resurrect retired floors; advisory compatibility telemetry has no execution authority; ordinary routes preserve the canonical one-base-unit floor while ZERO_CAPITAL_ATOMIC raises receiver minProfit to the explicit Stage-3 minimum +10 BPS all-in target within measured expected receiver economics; legacy threshold engines remain non-production');
+console.log('[single-profit-admission-authority] PASS: one non-configurable >0 all-in-net-profit authority; no live dollar/BPS magnitude floor in ZERO_CAPITAL_ATOMIC route planning; no runtime profit patch; deployment templates cannot resurrect retired floors; advisory compatibility telemetry has no execution authority; execution transports may only raise minProfit within exact measured receiver economics; legacy threshold engines remain non-production');

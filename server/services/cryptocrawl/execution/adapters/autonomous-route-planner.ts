@@ -36,10 +36,6 @@ export interface RoutePlanningOpportunity {
   expiresAt?: number;
 }
 
-const ATOMIC_MINIMUM_TARGET_BPS = 10;
-const BPS_SCALE = 1_000_000n;
-const BPS_DENOMINATOR_SCALED = 10_000n * BPS_SCALE;
-
 function bigintishToString(value: bigint | string): string {
   if (typeof value === 'bigint') return value.toString();
   const normalized = String(value).trim();
@@ -52,39 +48,6 @@ function bigintishToString(value: bigint | string): string {
 function optionalBaseUnits(value: bigint | string | undefined): bigint {
   if (value === undefined) return 0n;
   return BigInt(bigintishToString(value));
-}
-
-function atomicTargetBps(): number {
-  const configured = Number(
-    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
-    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
-    ?? ATOMIC_MINIMUM_TARGET_BPS,
-  );
-  const finite = Number.isFinite(configured) ? configured : ATOMIC_MINIMUM_TARGET_BPS;
-  return Math.max(ATOMIC_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
-}
-
-function minimumAtomicNetProfitBaseUnits(loanAmount: bigint): bigint {
-  const targetBps = atomicTargetBps();
-  const scaledBps = BigInt(Math.ceil(targetBps * Number(BPS_SCALE)));
-  return (loanAmount * scaledBps + BPS_DENOMINATOR_SCALED - 1n) / BPS_DENOMINATOR_SCALED;
-}
-
-function minimumAtomicReceiverProfitBaseUnits(
-  opportunity: RoutePlanningOpportunity,
-  loanAmount: bigint,
-): bigint | null {
-  if (opportunity.type !== 'ZERO_CAPITAL_ATOMIC') return null;
-  const targetBps = atomicTargetBps();
-  const measuredNetBps = Number(opportunity.netProfitBps);
-  if (!Number.isFinite(measuredNetBps) || measuredNetBps < targetBps) return null;
-  // Receiver profit is measured after principal/provider-fee repayment, but before
-  // operator-side gas/relay settlement. Add only those external costs so the
-  // encoded atomic threshold preserves the all-in target without double-counting
-  // the flash-loan fee already repaid inside the receiver.
-  const externalExecutionCost = optionalBaseUnits(opportunity.estimatedGasCostInInputToken)
-    + optionalBaseUnits(opportunity.relayFeeInInputToken);
-  return minimumAtomicNetProfitBaseUnits(loanAmount) + externalExecutionCost;
 }
 
 function applyHaircut(raw: bigint, bps: number): string {
@@ -205,12 +168,11 @@ export function buildFlashLoanExecutionPlanFromOpportunity(
     : BigInt(bigintishToString(options.minProfitBaseUnits));
   if (!isStrictlyPositiveProfitBaseUnits(requestedMinimumProfit)) throw new Error('Autonomous zero-capital minimum execution profit must be strictly greater than zero');
   if (requestedMinimumProfit < canonicalMinimumProfit) throw new Error('Autonomous zero-capital minimum execution profit cannot weaken the canonical positive-profit floor');
-  const atomicReceiverMinimum = minimumAtomicReceiverProfitBaseUnits(opportunity, flashLoanAmount);
-  const enforcedMinimumProfit = atomicReceiverMinimum !== null && atomicReceiverMinimum > requestedMinimumProfit
-    ? atomicReceiverMinimum
-    : requestedMinimumProfit;
-  // Only Atomic target accounting compares an all-in quote with the receiver's
-  // pre-external-cost threshold. Ordinary callers retain the original exact check.
+  const enforcedMinimumProfit = requestedMinimumProfit;
+  // ZERO_CAPITAL_ATOMIC expectedProfit is canonical all-in profit after external
+  // gas/relay accounting, while receiver minProfit is enforced before those
+  // operator-side costs. Preserve that denomination distinction without adding
+  // any arbitrary BPS magnitude floor.
   const expectedReceiverProfit = opportunity.type === 'ZERO_CAPITAL_ATOMIC'
     ? expectedProfit
       + optionalBaseUnits(opportunity.estimatedGasCostInInputToken)
