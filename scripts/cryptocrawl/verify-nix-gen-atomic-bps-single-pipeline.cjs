@@ -10,6 +10,8 @@ const gateway = read('server/services/cryptocrawl/integration/zero-capital-profi
 const handoff = read('server/services/cryptocrawl/integration/zero-capital-stage-handoff-supervisor.ts');
 const engine = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
 const workers = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-workers.ts');
+const alternativeCapital = read('server/services/cryptocrawl/integration/zero-capital-alternative-capital-wiring.ts');
+const builderColdStart = read('server/services/cryptocrawl/execution/builder-sponsored-zero-capital-coldstart.ts');
 const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 const flashExecutor = read('server/services/cryptocrawl/execution/zero-capital-flash-canonical-executor.ts');
 const providerEconomics = read('server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.ts');
@@ -76,6 +78,22 @@ assert.doesNotMatch(engine, /atomicSurplusTargetBps/);
 assert.doesNotMatch(engine, /from ['"][^'"]*quant/i);
 assert.doesNotMatch(engine, /from ['"][^'"]*supabase/i);
 
+// Alternative-capital and builder-funded paths cannot secretly revive the retired
+// +10 BPS target after the single engine has admitted a strictly-positive route.
+for (const source of [alternativeCapital, builderColdStart]) {
+  assert.match(source, /minimumPositiveProfitBaseUnits/);
+  assert.doesNotMatch(source, /ATOMIC_MINIMUM_TARGET_BPS/);
+  assert.doesNotMatch(source, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
+  assert.doesNotMatch(source, /ZERO_CAPITAL_RESCUE_TARGET_NET_BPS/);
+  assert.doesNotMatch(source, /atomicTargetBps/);
+  assert.doesNotMatch(source, /minimumAtomicTargetProfitBaseUnits/);
+  assert.doesNotMatch(source, /target_bound_10_bps_or_higher/);
+}
+assert.match(alternativeCapital, /const requiredNetProfit = minimumPositiveProfitBaseUnits\(\);/);
+assert.match(alternativeCapital, /strict_positive_all_in_net_after_source_fee_and_execution_cost/);
+assert.match(builderColdStart, /const minimumRetained = minimumPositiveProfitBaseUnits\(\);/);
+assert.match(builderColdStart, /minimum_residual:canonical_strict_positive_base_units/);
+
 // Workers reduce waiting only. They never decide economics or execute money.
 assert.match(workers, /prewarmAtomicBpsEvidence/);
 assert.match(workers, /priceInFlight/);
@@ -107,4 +125,4 @@ assert.match(providerEconomics, /aave_v3/);
 assert.match(providerEconomics, /morpho_blue/);
 assert.match(providerEconomics, /calculateMeasuredFlashLoanFee/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, parallel prewarming, exact strict-positive economics, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
+console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, parallel prewarming, exact strict-positive economics across all capital paths, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
