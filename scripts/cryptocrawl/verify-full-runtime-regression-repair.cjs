@@ -37,15 +37,15 @@ assert.match(runtime, /startOverflowSchemaRepair/);
 assert.doesNotMatch(build, /gateReplacement|importReplacement|source\.replace\(importNeedle/);
 assert.match(index, /Required CryptoCrawler automatic runtime resume failed/);
 
-// Near-miss funding rescue: gross-positive routes may be repriced, while Stage 3
-// requires ZERO_CAPITAL_ATOMIC alternatives to clear the target-qualified minimum
-// (at least +10 BPS) before promotion. Other deterministic routes retain the
-// canonical minimum-positive-profit authority.
+// Near-miss funding rescue may reprice gross-positive routes, but ZERO_CAPITAL_ATOMIC
+// now has one exact finish line after the locked Stage-1 classifier: strictly-positive
+// all-in net profit in base units. The retired +10-BPS magnitude target cannot return.
 assert.match(alternative, /grossProfitForFundingReprice/);
 assert.match(alternative, /alternative_capital_reprice_independent_of_prior_funding_net/);
-assert.match(alternative, /const requiredNetProfit = minimumRequiredNetProfit\(input\.opportunity\)/);
+assert.match(alternative, /const requiredNetProfit = minimumPositiveProfitBaseUnits\(\)/);
 assert.match(alternative, /if \(netProfit < requiredNetProfit\) return null/);
-assert.match(alternative, /atomic_minimum_net:target_bound_10_bps_or_higher/);
+assert.match(alternative, /strict_positive_all_in_net_after_source_fee_and_execution_cost/);
+assert.doesNotMatch(alternative, /minimumRequiredNetProfit|ATOMIC_MINIMUM_TARGET_BPS|ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS|atomicTargetBps|minimumAtomicTargetProfitBaseUnits|target_bound_10_bps_or_higher/);
 assert.match(alternative, /discoverExistingGhostArbitrageInfrastructure/);
 assert.match(rediscovery, /getCode/);
 assert.match(rediscovery, /server_deployment_attempted:false/);
