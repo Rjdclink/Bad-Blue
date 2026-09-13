@@ -32,6 +32,26 @@ type StageTwoReductionContext = {
   dominantCostDriver: string;
 };
 
+type SharedProviderEvidence = {
+  measurements: FlashLoanProviderEconomics[];
+  fresh: FlashLoanProviderEconomics[];
+  staleRejected: number;
+};
+
+type StageTwoRouteState = {
+  source: ZeroCapitalOpportunity;
+  route: ConfiguredZeroCapitalRoute;
+  context: StageTwoReductionContext | null;
+  inputTokenUsdPrice: number;
+  providerEvidence: readonly FlashLoanProviderEconomics[];
+  allSizes: number[];
+  triedSizes: number[];
+  best: QuotedZeroCapitalRoute | null;
+  measuredAlternatives: number;
+  attemptedQuotes: number;
+  deadlineRejected: boolean;
+};
+
 const BPS_PRECISION_SCALE = 1_000_000n;
 
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
@@ -51,12 +71,24 @@ function minimumRemainingLifetimeMs(): number {
   return bounded(process.env.ZERO_CAPITAL_RESCUE_MIN_REMAINING_LIFETIME_MS, 500, 100, 5_000);
 }
 
+function deadlineSafetyMarginMs(): number {
+  return bounded(process.env.ZERO_CAPITAL_STAGE_TWO_DEADLINE_SAFETY_MS, 150, 50, 2_000);
+}
+
 function stageTwoQuoteBudget(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_STAGE_TWO_TOTAL_QUOTE_BUDGET, 24, 4, 64));
 }
 
 function stageTwoRouteBudget(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_ROUTES, 6, 1, 16));
+}
+
+function stageTwoInitialProbeBudget(): number {
+  return Math.trunc(bounded(process.env.ZERO_CAPITAL_STAGE_TWO_INITIAL_PROBES_PER_ROUTE, 3, 1, 4));
+}
+
+function stageTwoEscalationRouteBudget(): number {
+  return Math.trunc(bounded(process.env.ZERO_CAPITAL_STAGE_TWO_ESCALATION_ROUTES, 2, 1, 4));
 }
 
 function bpsFromBaseUnits(value: bigint, notional: bigint): number {
@@ -85,23 +117,27 @@ function usdFromBaseUnits(value: bigint, decimals: number, inputTokenUsdPrice: n
   return Number.isFinite(usd) ? usd : 0;
 }
 
-async function resolveInputTokenUsdPrice(opportunity: ZeroCapitalOpportunity): Promise<number | null> {
-  const quoted = Number(opportunity.inputAssetUsdPrice);
-  if (Number.isFinite(quoted) && quoted > 0) return quoted;
-  try {
-    const prices = await livePriceMesh.getLiveSymbolPrices([opportunity.inputAssetSymbol]);
-    const measured = Number(prices.get(opportunity.inputAssetSymbol));
-    return Number.isFinite(measured) && measured > 0 ? measured : null;
-  } catch {
-    return null;
-  }
-}
-
 function stageTwoOwned(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
   return opportunity.expiresAt > now
     && opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
     && opportunity.netProfitBps <= stageTwoEntryFloorBps();
+}
+
+function predictedQuoteServiceMs(opportunity: ZeroCapitalOpportunity): number {
+  const observed = Number(opportunity.quoteLatencyMs);
+  const fallback = Math.min(maxQuoteLatencyMs(), 500);
+  if (!(Number.isFinite(observed) && observed > 0)) return fallback;
+  return Math.max(100, Math.min(maxQuoteLatencyMs(), observed));
+}
+
+function deadlineSlackMs(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
+  return opportunity.expiresAt - now - predictedQuoteServiceMs(opportunity) - deadlineSafetyMarginMs();
+}
+
+function deadlineViable(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
+  const remaining = opportunity.expiresAt - now;
+  return remaining > minimumRemainingLifetimeMs() && deadlineSlackMs(opportunity, now) > 0;
 }
 
 function routeForOpportunity(
@@ -296,22 +332,27 @@ function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZe
 }
 
 function stageTwoPriority(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
-  if (!stageTwoOwned(opportunity, now)) return Number.NEGATIVE_INFINITY;
+  if (!stageTwoOwned(opportunity, now) || !deadlineViable(opportunity, now)) return Number.NEGATIVE_INFINITY;
   const gap = Math.max(0.000001, stageTwoEntryFloorBps() - opportunity.netProfitBps);
-  const remainingLifetime = Math.max(1, opportunity.expiresAt - now);
   const confidence = Math.max(0.01, Math.min(1, opportunity.confidence));
-  return confidence * Math.log1p(remainingLifetime) / gap;
+  const predicted = predictedQuoteServiceMs(opportunity);
+  const slack = Math.max(1, deadlineSlackMs(opportunity, now));
+  const urgency = 1 + Math.min(4, predicted / slack);
+  return confidence * urgency / (1 + gap);
 }
 
-function selectStageTwoIds(
+function selectStageTwoWork(
   opportunities: readonly ZeroCapitalOpportunity[],
   routes: readonly ConfiguredZeroCapitalRoute[],
-): Set<string> {
+  now = Date.now(),
+): ZeroCapitalOpportunity[] {
   const ranked = opportunities
-    .filter(opportunity => stageTwoOwned(opportunity))
-    .sort((left, right) => stageTwoPriority(right) - stageTwoPriority(left));
-  const selected: string[] = [];
+    .filter(opportunity => stageTwoOwned(opportunity, now) && deadlineViable(opportunity, now))
+    .sort((left, right) => stageTwoPriority(right, now) - stageTwoPriority(left, now));
+  const selected: ZeroCapitalOpportunity[] = [];
+  const selectedIds = new Set<string>();
   const families = new Set<string>();
+
   for (const opportunity of ranked) {
     if (selected.length >= stageTwoRouteBudget()) break;
     const route = routeForOpportunity(routes, opportunity);
@@ -319,13 +360,239 @@ function selectStageTwoIds(
     const family = routeFamily(route);
     if (families.has(family)) continue;
     families.add(family);
-    selected.push(opportunity.id);
+    selectedIds.add(opportunity.id);
+    selected.push(opportunity);
   }
   for (const opportunity of ranked) {
     if (selected.length >= stageTwoRouteBudget()) break;
-    if (!selected.includes(opportunity.id) && routeForOpportunity(routes, opportunity)) selected.push(opportunity.id);
+    if (!selectedIds.has(opportunity.id) && routeForOpportunity(routes, opportunity)) {
+      selectedIds.add(opportunity.id);
+      selected.push(opportunity);
+    }
   }
-  return new Set(selected);
+  return selected.sort((left, right) => stageTwoPriority(right, now) - stageTwoPriority(left, now));
+}
+
+function createSharedPricePromises(opportunities: readonly ZeroCapitalOpportunity[]): Map<string, Promise<number | null>> {
+  const symbols = [...new Set(opportunities
+    .filter(opportunity => !(Number.isFinite(Number(opportunity.inputAssetUsdPrice)) && Number(opportunity.inputAssetUsdPrice) > 0))
+    .map(opportunity => opportunity.inputAssetSymbol))];
+  const result = new Map<string, Promise<number | null>>();
+  if (symbols.length === 0) return result;
+
+  const shared = livePriceMesh.getLiveSymbolPrices(symbols).catch(() => new Map<string, number>());
+  for (const symbol of symbols) {
+    result.set(symbol, shared.then(prices => {
+      const value = Number(prices.get(symbol));
+      return Number.isFinite(value) && value > 0 ? value : null;
+    }));
+  }
+  return result;
+}
+
+function inputTokenPricePromise(
+  opportunity: ZeroCapitalOpportunity,
+  shared: Map<string, Promise<number | null>>,
+): Promise<number | null> {
+  const quoted = Number(opportunity.inputAssetUsdPrice);
+  if (Number.isFinite(quoted) && quoted > 0) return Promise.resolve(quoted);
+  return shared.get(opportunity.inputAssetSymbol) ?? Promise.resolve(null);
+}
+
+function createSharedProviderEvidencePromises(
+  input: StageTwoZeroCapitalBpsReductionInput,
+  opportunities: readonly ZeroCapitalOpportunity[],
+): Map<string, Promise<SharedProviderEvidence>> {
+  const result = new Map<string, Promise<SharedProviderEvidence>>();
+  for (const opportunity of opportunities) {
+    const key = opportunity.inputToken.toLowerCase();
+    if (result.has(key)) continue;
+    const promise = measureFlashLoanProviders({
+      chain: input.chain as any,
+      provider: input.provider,
+      asset: opportunity.inputToken,
+    }).then(measurements => {
+      const fresh = measurements.filter(item => providerFresh(item));
+      return {
+        measurements,
+        fresh,
+        staleRejected: Math.max(0, measurements.length - fresh.length),
+      };
+    }).catch(error => {
+      logger.debug('[StageTwoZeroCapitalBpsReduction] Shared provider evidence degraded for one asset', {
+        component: 'StageTwoZeroCapitalBpsReduction',
+        chain: input.chain,
+        inputToken: opportunity.inputToken,
+        error: error instanceof Error ? error.message : String(error),
+        otherAssetsBlocked: false,
+        executionAuthority: false,
+      });
+      return { measurements: [], fresh: [], staleRejected: 0 };
+    });
+    result.set(key, promise);
+  }
+  return result;
+}
+
+function nearestCandidate(candidates: readonly number[], target: number): number | null {
+  if (candidates.length === 0 || !Number.isFinite(target) || target <= 0) return null;
+  return candidates.reduce((best, value) =>
+    Math.abs(value - target) < Math.abs(best - target) ? value : best,
+  candidates[0]);
+}
+
+function heuristicFloorCrossingUsd(
+  opportunity: ZeroCapitalOpportunity,
+  inputTokenUsdPrice: number,
+): number | null {
+  if (opportunity.flashLoanAmount <= 0n) return null;
+  const gross = opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
+  const grossBps = bpsFromBaseUnits(gross, opportunity.flashLoanAmount);
+  const flashFeeBps = bpsFromBaseUnits(opportunity.flashLoanFeeInInputToken ?? 0n, opportunity.flashLoanAmount);
+  const fixedCost = (opportunity.estimatedGasCostInInputToken ?? 0n) + (opportunity.relayFeeInInputToken ?? 0n);
+  const fixedCostUsd = usdFromBaseUnits(fixedCost, opportunity.inputTokenDecimals, inputTokenUsdPrice);
+  const denominatorBps = grossBps - flashFeeBps - stageTwoEntryFloorBps();
+  if (!(Number.isFinite(denominatorBps) && denominatorBps > 0 && fixedCostUsd > 0)) return null;
+  const requiredUsd = fixedCostUsd * 10_000 / denominatorBps;
+  return Number.isFinite(requiredUsd) && requiredUsd > 0 ? requiredUsd : null;
+}
+
+function selectInitialProbeSizes(
+  state: Pick<StageTwoRouteState, 'source' | 'route' | 'context' | 'inputTokenUsdPrice' | 'allSizes'>,
+  count: number,
+): number[] {
+  const candidates = state.allSizes;
+  if (candidates.length <= count) return [...candidates];
+  const currentUsd = Math.max(0.01, usdFromBaseUnits(
+    state.source.flashLoanAmount,
+    state.route.inputTokenDecimals,
+    state.inputTokenUsdPrice,
+  ));
+  const smallest = candidates[0];
+  const largest = candidates[candidates.length - 1];
+  const selected: number[] = [];
+  const addNearest = (target: number | null) => {
+    if (target === null) return;
+    const value = nearestCandidate(candidates, target);
+    if (value !== null && !selected.includes(value)) selected.push(value);
+  };
+  const driver = state.context?.dominantCostDriver;
+
+  if (driver === 'gas' || driver === 'relay' || driver === 'bridge' || driver === 'flash_premium') {
+    addNearest(currentUsd);
+    addNearest(heuristicFloorCrossingUsd(state.source, state.inputTokenUsdPrice));
+    addNearest(largest);
+  } else if (driver === 'slippage_impact' || driver === 'latency_decay') {
+    addNearest(smallest);
+    addNearest(currentUsd * 0.7);
+    addNearest(currentUsd);
+  } else {
+    addNearest(currentUsd);
+    addNearest(candidates[Math.floor(candidates.length / 2)]);
+    addNearest(largest);
+  }
+
+  for (const candidate of candidates) {
+    if (selected.length >= count) break;
+    if (!selected.includes(candidate)) selected.push(candidate);
+  }
+  return selected.slice(0, count);
+}
+
+function sizeAlreadyTried(value: number, tried: readonly number[]): boolean {
+  return tried.some(existing => Math.abs(existing - value) < 1e-9);
+}
+
+function escalationSizes(state: StageTwoRouteState): number[] {
+  const remaining = state.allSizes.filter(value => !sizeAlreadyTried(value, state.triedSizes));
+  if (remaining.length <= 1) return remaining;
+  if (state.best) {
+    const bestUsd = usdFromBaseUnits(state.best.amountIn, state.route.inputTokenDecimals, state.inputTokenUsdPrice);
+    return remaining.sort((left, right) => Math.abs(left - bestUsd) - Math.abs(right - bestUsd));
+  }
+  const driver = state.context?.dominantCostDriver;
+  if (driver === 'gas' || driver === 'relay' || driver === 'bridge' || driver === 'flash_premium') {
+    return remaining.sort((left, right) => right - left);
+  }
+  if (driver === 'slippage_impact' || driver === 'latency_decay') {
+    return remaining.sort((left, right) => left - right);
+  }
+  return remaining;
+}
+
+async function quoteSizes(
+  state: StageTwoRouteState,
+  sizes: readonly number[],
+  provider: providers.JsonRpcProvider,
+): Promise<StageTwoRouteState> {
+  if (sizes.length === 0) return state;
+  if (!deadlineViable(state.source)) return { ...state, deadlineRejected: true };
+
+  const measuredRoute = bindCurrentMeasuredCosts(state.route, state.source);
+  const settled = await Promise.allSettled(sizes.map(sizeUsd =>
+    quoteConfiguredZeroCapitalRoute({
+      ...measuredRoute,
+      amountIn: baseUnitsFromUsd(sizeUsd, measuredRoute.inputTokenDecimals, state.inputTokenUsdPrice),
+    }, provider),
+  ));
+
+  let best = state.best;
+  let measuredAlternatives = state.measuredAlternatives;
+  for (const result of settled) {
+    if (result.status !== 'fulfilled' || !result.value || result.value.quoteLatencyMs > maxQuoteLatencyMs()) continue;
+    for (const evidence of state.providerEvidence) {
+      const adjusted = adjustForProvider(result.value, evidence);
+      if (!adjusted) continue;
+      measuredAlternatives += 1;
+      best = quoteBetter(best, adjusted);
+    }
+  }
+
+  return {
+    ...state,
+    best,
+    measuredAlternatives,
+    attemptedQuotes: state.attemptedQuotes + sizes.length,
+    triedSizes: [...state.triedSizes, ...sizes],
+  };
+}
+
+function escalationPriority(state: StageTwoRouteState): number {
+  const measuredNet = state.best?.netProfitBps ?? state.source.netProfitBps;
+  const improvement = Math.max(0, measuredNet - state.source.netProfitBps);
+  const floorGap = Math.max(0, stageTwoEntryFloorBps() - measuredNet);
+  const measuredWinnerBoost = improvement > 0 ? 1_000 : 0;
+  return measuredWinnerBoost + improvement * 10 + 1 / (1 + floorGap) + stageTwoPriority(state.source);
+}
+
+function allocateEscalationBudget(
+  states: readonly StageTwoRouteState[],
+  budget: number,
+): Map<string, number[]> {
+  const eligible = states
+    .filter(state => !state.deadlineRejected && deadlineViable(state.source) && escalationSizes(state).length > 0)
+    .sort((left, right) => escalationPriority(right) - escalationPriority(left))
+    .slice(0, Math.min(stageTwoEscalationRouteBudget(), states.length));
+  const available = new Map(eligible.map(state => [state.source.id, escalationSizes(state)]));
+  const allocated = new Map<string, number[]>();
+  let remaining = Math.max(0, Math.trunc(budget));
+
+  while (remaining > 0) {
+    let assigned = false;
+    for (const state of eligible) {
+      if (remaining <= 0) break;
+      const queue = available.get(state.source.id) ?? [];
+      const next = queue.shift();
+      if (next === undefined) continue;
+      const current = allocated.get(state.source.id) ?? [];
+      current.push(next);
+      allocated.set(state.source.id, current);
+      remaining -= 1;
+      assigned = true;
+    }
+    if (!assigned) break;
+  }
+  return allocated;
 }
 
 function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
@@ -409,6 +676,8 @@ function publishMeasuredSuccessor(
       `stage_two_atomic_entry_floor_bps:${stageTwoEntryFloorBps()}`,
       'stage_two_current_measured_fixed_costs_bound:true',
       'stage_two_fresh_flash_provider_fee_bound:true',
+      'stage_two_deadline_aware_parallel_scheduler:true',
+      'stage_two_shared_provider_evidence:true',
       'predicted_savings_credited:false',
       'synthetic_economics:false',
       'execution_authority:false',
@@ -420,108 +689,86 @@ function publishMeasuredSuccessor(
  * Stage-2-only ZERO_CAPITAL_ATOMIC actuator. It consumes Stage 1 measured routes
  * at/below the BPS-reduction ownership floor, searches real alternate notionals,
  * rebinds fresh flash-provider economics, and publishes only strict measured
- * improvements. It grants no eligibility and cannot manufacture profitability.
+ * improvements. Work scheduling is deadline-aware and parallel, but scheduling
+ * heuristics never mutate economics or grant execution authority.
  */
 export async function runStageTwoZeroCapitalBpsReduction(
   input: StageTwoZeroCapitalBpsReductionInput,
 ): Promise<ZeroCapitalOpportunity[]> {
   if (input.chain === 'europa' || input.opportunities.length === 0) return [...input.opportunities];
 
-  const selectedIds = selectStageTwoIds(input.opportunities, input.configuredRoutes);
-  if (selectedIds.size === 0) return [...input.opportunities];
+  const selectionAt = Date.now();
+  const ownedWithRoute = input.opportunities.filter(opportunity =>
+    stageTwoOwned(opportunity, selectionAt) && routeForOpportunity(input.configuredRoutes, opportunity) !== null,
+  );
+  const deadlineRejectedBeforeSelection = ownedWithRoute.filter(opportunity => !deadlineViable(opportunity, selectionAt)).length;
+  const selected = selectStageTwoWork(input.opportunities, input.configuredRoutes, selectionAt);
+  if (selected.length === 0) return [...input.opportunities];
 
-  let remainingQuoteBudget = stageTwoQuoteBudget();
-  let measuredAlternatives = 0;
-  let improved = 0;
-  let crossedAtomicEntryFloor = 0;
+  const totalQuoteBudget = stageTwoQuoteBudget();
+  const initialPerRoute = Math.max(1, Math.min(
+    stageTwoInitialProbeBudget(),
+    Math.floor(totalQuoteBudget / Math.max(1, selected.length)),
+  ));
+  const sharedPrices = createSharedPricePromises(selected);
+  const sharedProviders = createSharedProviderEvidencePromises(input, selected);
+
   let staleProviderEvidenceRejected = 0;
-  let expiredBeforeRequote = 0;
   let unpricedInputTokenRejected = 0;
-  const output: ZeroCapitalOpportunity[] = [];
+  let providerEvidenceUnavailable = 0;
 
-  for (const source of input.opportunities) {
-    const remainingLifetime = source.expiresAt - Date.now();
-    if (!selectedIds.has(source.id) || remainingQuoteBudget <= 0 || remainingLifetime <= minimumRemainingLifetimeMs()) {
-      if (selectedIds.has(source.id) && remainingLifetime <= minimumRemainingLifetimeMs()) expiredBeforeRequote += 1;
-      output.push(source);
-      continue;
-    }
-
+  const firstPassSettled = await Promise.all(selected.map(async source => {
     const route = routeForOpportunity(input.configuredRoutes, source);
-    if (!route) {
-      output.push(source);
-      continue;
-    }
-
+    if (!route) return null;
     try {
-      const inputTokenUsdPrice = await resolveInputTokenUsdPrice(source);
+      const [inputTokenUsdPrice, sharedProvider] = await Promise.all([
+        inputTokenPricePromise(source, sharedPrices),
+        sharedProviders.get(source.inputToken.toLowerCase()) ?? Promise.resolve({ measurements: [], fresh: [], staleRejected: 0 }),
+      ]);
       if (inputTokenUsdPrice === null) {
         unpricedInputTokenRejected += 1;
-        output.push(source);
-        continue;
+        return null;
       }
-
-      const providerMeasurements = await measureFlashLoanProviders({
-        chain: input.chain as any,
-        provider: input.provider,
-        asset: source.inputToken,
-      });
-      const providerEvidence = providerMeasurements.filter(item => providerFresh(item));
-      staleProviderEvidenceRejected += Math.max(0, providerMeasurements.length - providerEvidence.length);
-      if (providerEvidence.length === 0 || source.expiresAt - Date.now() <= minimumRemainingLifetimeMs()) {
-        if (source.expiresAt - Date.now() <= minimumRemainingLifetimeMs()) expiredBeforeRequote += 1;
-        output.push(source);
-        continue;
+      if (sharedProvider.fresh.length === 0) {
+        providerEvidenceUnavailable += 1;
+        return null;
+      }
+      if (!deadlineViable(source)) {
+        return {
+          source,
+          route,
+          context: reductionContext(source),
+          inputTokenUsdPrice,
+          providerEvidence: sharedProvider.fresh,
+          allSizes: [],
+          triedSizes: [],
+          best: null,
+          measuredAlternatives: 0,
+          attemptedQuotes: 0,
+          deadlineRejected: true,
+        } satisfies StageTwoRouteState;
       }
 
       const context = reductionContext(source);
       const measuredRoute = bindCurrentMeasuredCosts(route, source);
-      const sizes = candidateSizes(source, measuredRoute, context, providerEvidence, inputTokenUsdPrice)
-        .slice(0, remainingQuoteBudget);
-      remainingQuoteBudget -= sizes.length;
-
-      const settled = await Promise.allSettled(sizes.map(sizeUsd =>
-        quoteConfiguredZeroCapitalRoute({
-          ...measuredRoute,
-          amountIn: baseUnitsFromUsd(sizeUsd, measuredRoute.inputTokenDecimals, inputTokenUsdPrice),
-        }, input.provider),
-      ));
-
-      let best: QuotedZeroCapitalRoute | null = null;
-      for (const result of settled) {
-        if (result.status !== 'fulfilled' || !result.value || result.value.quoteLatencyMs > maxQuoteLatencyMs()) continue;
-        for (const evidence of providerEvidence) {
-          const adjusted = adjustForProvider(result.value, evidence);
-          if (!adjusted) continue;
-          measuredAlternatives += 1;
-          best = quoteBetter(best, adjusted);
-        }
-      }
-
-      if (!best || !strictImprovement(source, best)) {
-        output.push(source);
-        continue;
-      }
-
-      const refined = input.fromQuotedRoute(best, blockTimestamp(source));
-      if (source.inputAssetUsdPrice !== undefined) refined.inputAssetUsdPrice = source.inputAssetUsdPrice;
-      else refined.inputAssetUsdPrice = inputTokenUsdPrice;
-      if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
-        output.push(source);
-        continue;
-      }
-
-      const existing = measuredCandidateRegistry.get(source.id);
-      zeroCapitalRouteEvidenceRegistry.record(refined);
-      publishMeasuredSuccessor(existing, source, refined, inputTokenUsdPrice);
-      output.push(refined);
-      improved += 1;
-      if (source.netProfitBps <= stageTwoEntryFloorBps() && refined.netProfitBps > stageTwoEntryFloorBps()) {
-        crossedAtomicEntryFloor += 1;
-      }
+      const allSizes = candidateSizes(source, measuredRoute, context, sharedProvider.fresh, inputTokenUsdPrice);
+      const state: StageTwoRouteState = {
+        source,
+        route,
+        context,
+        inputTokenUsdPrice,
+        providerEvidence: sharedProvider.fresh,
+        allSizes,
+        triedSizes: [],
+        best: null,
+        measuredAlternatives: 0,
+        attemptedQuotes: 0,
+        deadlineRejected: false,
+      };
+      const firstSizes = selectInitialProbeSizes(state, initialPerRoute);
+      return await quoteSizes(state, firstSizes, input.provider);
     } catch (error) {
-      output.push(source);
-      logger.debug('[StageTwoZeroCapitalBpsReduction] Route-local exact requote degraded; original candidate retained', {
+      logger.debug('[StageTwoZeroCapitalBpsReduction] Route-local first-pass requote degraded; original candidate retained', {
         component: 'StageTwoZeroCapitalBpsReduction',
         chain: input.chain,
         opportunityId: source.id,
@@ -529,22 +776,101 @@ export async function runStageTwoZeroCapitalBpsReduction(
         otherRoutesBlocked: false,
         executionAuthority: false,
       });
+      return null;
+    }
+  }));
+
+  for (const evidencePromise of sharedProviders.values()) {
+    const evidence = await evidencePromise;
+    staleProviderEvidenceRejected += evidence.staleRejected;
+  }
+
+  let states = firstPassSettled.filter((state): state is StageTwoRouteState => state !== null);
+  const firstPassQuotesUsed = states.reduce((sum, state) => sum + state.attemptedQuotes, 0);
+  const remainingAfterFirstPass = Math.max(0, totalQuoteBudget - firstPassQuotesUsed);
+  const escalation = allocateEscalationBudget(states, remainingAfterFirstPass);
+
+  states = await Promise.all(states.map(async state => {
+    const sizes = escalation.get(state.source.id) ?? [];
+    if (sizes.length === 0) return state;
+    try {
+      return await quoteSizes(state, sizes, input.provider);
+    } catch (error) {
+      logger.debug('[StageTwoZeroCapitalBpsReduction] Route-local escalation requote degraded; first-pass measurement retained', {
+        component: 'StageTwoZeroCapitalBpsReduction',
+        chain: input.chain,
+        opportunityId: state.source.id,
+        error: error instanceof Error ? error.message : String(error),
+        otherRoutesBlocked: false,
+        executionAuthority: false,
+      });
+      return state;
+    }
+  }));
+
+  const refinedById = new Map<string, ZeroCapitalOpportunity>();
+  let measuredAlternatives = 0;
+  let improved = 0;
+  let crossedAtomicEntryFloor = 0;
+  let expiredBeforeRequote = deadlineRejectedBeforeSelection;
+
+  for (const state of states) {
+    measuredAlternatives += state.measuredAlternatives;
+    if (state.deadlineRejected) {
+      expiredBeforeRequote += 1;
+      continue;
+    }
+    const best = state.best;
+    if (!best || !strictImprovement(state.source, best)) continue;
+
+    const refined = input.fromQuotedRoute(best, blockTimestamp(state.source));
+    if (state.source.inputAssetUsdPrice !== undefined) refined.inputAssetUsdPrice = state.source.inputAssetUsdPrice;
+    else refined.inputAssetUsdPrice = state.inputTokenUsdPrice;
+    if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
+      expiredBeforeRequote += 1;
+      continue;
+    }
+
+    const existing = measuredCandidateRegistry.get(state.source.id);
+    zeroCapitalRouteEvidenceRegistry.record(refined);
+    publishMeasuredSuccessor(existing, state.source, refined, state.inputTokenUsdPrice);
+    refinedById.set(state.source.id, refined);
+    improved += 1;
+    if (state.source.netProfitBps <= stageTwoEntryFloorBps() && refined.netProfitBps > stageTwoEntryFloorBps()) {
+      crossedAtomicEntryFloor += 1;
     }
   }
+
+  const quotesUsed = states.reduce((sum, state) => sum + state.attemptedQuotes, 0);
+  const secondPassQuotesUsed = Math.max(0, quotesUsed - firstPassQuotesUsed);
+  const output = input.opportunities.map(source => refinedById.get(source.id) ?? source);
 
   logger.info('[StageTwoBpsReduction] Zero-capital exact variable-notional search completed', {
     component: 'StageTwoZeroCapitalBpsReduction',
     chain: input.chain,
-    selectedRoutes: selectedIds.size,
+    selectedRoutes: selected.length,
     measuredAlternatives,
     improved,
     crossedAtomicEntryFloor,
     stageTwoEntryFloorBps: stageTwoEntryFloorBps(),
-    totalQuoteBudget: stageTwoQuoteBudget(),
-    remainingQuoteBudget,
+    totalQuoteBudget,
+    remainingQuoteBudget: Math.max(0, totalQuoteBudget - quotesUsed),
+    firstPassQuotesUsed,
+    secondPassQuotesUsed,
+    initialProbesPerRoute: initialPerRoute,
+    escalationRoutes: escalation.size,
+    deadlineRejectedBeforeSelection,
     staleProviderEvidenceRejected,
     expiredBeforeRequote,
     unpricedInputTokenRejected,
+    providerEvidenceUnavailable,
+    sharedProviderEvidenceKeys: sharedProviders.size,
+    sharedPriceLookupSymbols: sharedPrices.size,
+    selectedWorkRunsInPriorityOrder: true,
+    parallelSharedEvidencePrefetch: true,
+    parallelFirstPassRouteRequotes: true,
+    boundedWinnerEscalation: true,
+    deadlineAwareAdmission: true,
     currentMeasuredFixedCostsBound: true,
     freshFlashProviderEconomicsBound: true,
     strictMeasuredImprovementRequired: true,
