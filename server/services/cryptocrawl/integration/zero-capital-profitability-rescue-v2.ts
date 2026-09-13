@@ -48,7 +48,7 @@ function atomicSurplusEntryFloorBps(): number {
 }
 
 function atomicSurplusTargetBps(): number {
-  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 0.000001, 1_000);
+  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 10, 1_000);
 }
 
 function bpsFromBaseUnits(value: bigint, notional: bigint): number {
