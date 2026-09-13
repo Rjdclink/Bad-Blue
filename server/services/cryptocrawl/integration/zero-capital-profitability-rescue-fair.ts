@@ -3,6 +3,7 @@ import type { providers } from 'ethers';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
+import { handoffStageOneToAtomicBps } from './zero-capital-stage-handoff-supervisor.js';
 
 export interface FairZeroCapitalProfitabilityRescueInput {
   chain: SupportedChain;
@@ -14,9 +15,11 @@ export interface FairZeroCapitalProfitabilityRescueInput {
 
 /**
  * Compatibility entry name retained for canonical discovery. Runtime behavior is
- * deliberately singular: one call enters one Atomic BPS transformation engine.
- * There is no persisted fairness scheduler, no Stage-2-first pass, and no second
- * transformation authority. The canonical executor remains downstream authority.
+ * deliberately singular: locked Stage-1 output is handed directly in-memory to
+ * one Atomic BPS transformation engine. The handoff supervisor only deduplicates
+ * and serially replays a definitively failed delivery; it has no economic or
+ * execution authority. There is no persisted fairness scheduler, no Stage-2-first
+ * pass, and no second transformation authority.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
@@ -24,17 +27,25 @@ export async function runFairZeroCapitalProfitabilityRescue(
   const fromQuotedRoute: FairZeroCapitalProfitabilityRescueInput['fromQuotedRoute'] =
     (quote, blockTimestamp) => input.fromQuotedRoute.call(zeroCapitalEngine, quote, blockTimestamp);
 
-  const result = await runZeroCapitalAtomicBpsEngine({
-    ...input,
-    fromQuotedRoute,
+  const result = await handoffStageOneToAtomicBps({
+    chain: input.chain,
+    opportunities: input.opportunities,
+    consume: () => runZeroCapitalAtomicBpsEngine({
+      ...input,
+      fromQuotedRoute,
+    }),
   });
 
-  logger.debug('[ZeroCapitalProfitabilityRescueFair] Compatibility gateway used single Atomic BPS pipeline', {
+  logger.debug('[ZeroCapitalProfitabilityRescueFair] Compatibility gateway used supervised direct Atomic BPS pipeline', {
     component: 'ZeroCapitalProfitabilityRescueFair',
     chain: input.chain,
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
     oneTransformationAuthority: true,
     oneTransformationPipeline: true,
+    stageOneDirectInMemoryHandoff: true,
+    boundedRecursiveHandoffSupervision: true,
+    concurrentDuplicateStageTwoRuns: false,
+    staleHandoffReplayAllowed: false,
     persistedFairnessOnHotPath: false,
     stageTwoSerialPass: false,
     executionAuthority: false,
