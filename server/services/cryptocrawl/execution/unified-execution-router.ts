@@ -40,21 +40,14 @@ export interface UnifiedExecutionDecision {
   reasons: string[];
 }
 
+// The historical +10 Stage-3 target remains unchanged for topologies outside the
+// new Atomic BPS Zero-Initial-Capital lane. ZERO_CAPITAL_ATOMIC now uses the one
+// canonical finish line: exact deterministic all-in profit must be strictly > 0.
 const STAGE_THREE_MINIMUM_TARGET_BPS = 10;
 
 function stageThreeEntryFloorBps(): number {
   const parsed = Number(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS ?? -10);
   return Number.isFinite(parsed) ? Math.max(-100, Math.min(0, parsed)) : -10;
-}
-
-function stageThreeTargetBps(): number {
-  const parsed = Number(
-    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
-    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
-    ?? STAGE_THREE_MINIMUM_TARGET_BPS,
-  );
-  const finite = Number.isFinite(parsed) ? parsed : STAGE_THREE_MINIMUM_TARGET_BPS;
-  return Math.max(STAGE_THREE_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
 }
 
 function canonicalNetBps(candidate: MeasuredCandidate): number | null {
@@ -161,6 +154,7 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   const deterministicNet = Number(candidate.economics.deterministicNetProfitUsd);
   const isFunding = candidate.topology === 'FUNDING_ARBITRAGE';
   const isPredictionEvent = candidate.topology === 'PREDICTION_EVENT';
+  const isZeroCapitalAtomic = candidate.topology === 'ZERO_CAPITAL_ATOMIC';
   const projectedFunding = projectedFundingNet(candidate);
   const projectedPredictionEvent = projectedPredictionEventNet(candidate);
   const deterministicPositive = Number.isFinite(deterministicNet) && deterministicNet > 0;
@@ -176,9 +170,11 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   const aboveAdaptiveThreshold = score.profitabilityScore > threshold.profitabilityScoreThreshold && score.confidenceLevel >= threshold.confidenceThreshold;
   const netBps = canonicalNetBps(candidate);
   const stageThreeEntryFloor = stageThreeEntryFloorBps();
-  const stageThreeTarget = stageThreeTargetBps();
+  const stageThreeTarget = isZeroCapitalAtomic ? null : STAGE_THREE_MINIMUM_TARGET_BPS;
   const stageTwoBoundaryCrossed = netBps !== null && netBps > stageThreeEntryFloor;
-  const stageThreeTargetSatisfied = netBps !== null && netBps + 1e-9 >= stageThreeTarget;
+  const stageThreeTargetSatisfied = isZeroCapitalAtomic
+    ? deterministicPositive
+    : netBps !== null && stageThreeTarget !== null && netBps + 1e-9 >= stageThreeTarget;
   const stageThreeRescueRequired = stageTwoBoundaryCrossed && !stageThreeTargetSatisfied;
 
   const hardVetoReasons: string[] = [];
@@ -222,7 +218,7 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
     `evidence_confidence=${evidence.confidence.toFixed(2)}`,
     `evidence_overall=${evidence.overall.toFixed(2)}`,
     `stage3_entry_floor_bps=${stageThreeEntryFloor}`,
-    `stage3_target_bps=${stageThreeTarget}`,
+    `stage3_target=${isZeroCapitalAtomic ? 'strict_positive_all_in_base_units' : `${stageThreeTarget}_bps`}`,
     `canonical_all_in_net_bps=${netBps ?? 'unknown'}`,
     ...(isFunding ? [`funding_projected_net_usd=${projectedFunding ?? 'unknown'}`, 'funding_projected_profit_is_not_deterministic_profit'] : []),
     ...(isPredictionEvent ? [`prediction_event_expected_net_usd=${projectedPredictionEvent ?? 'unknown'}`, 'prediction_event_expected_profit_is_calibrated_not_deterministic', 'raw_market_probability_execution_authority=false'] : []),
@@ -237,7 +233,9 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   if (economicsMissing) reasons.push(isFunding ? 'reacquire:projected_funding_economics_unavailable' : isPredictionEvent ? 'reacquire:calibrated_prediction_event_economics_unavailable' : 'reacquire:deterministic_economics_unavailable');
   if (netBps === null) reasons.push('reacquire:canonical_all_in_net_bps_unavailable');
   else if (!stageTwoBoundaryCrossed) reasons.push('reacquire:stage2_boundary_not_crossed');
-  else if (stageThreeRescueRequired) reasons.push('reacquire:stage3_atomic_surplus_target_not_met');
+  else if (stageThreeRescueRequired) reasons.push(isZeroCapitalAtomic
+    ? 'reacquire:atomic_bps_strict_positive_profit_not_met'
+    : 'reacquire:stage3_target_not_met');
   if (!fresh) reasons.push('reacquire:fresh_execution_evidence');
   if (!candidate.executableCapability) reasons.push('reacquire:authoritative_execution_path');
   if (!depthReady) reasons.push('reacquire:executable_depth');
