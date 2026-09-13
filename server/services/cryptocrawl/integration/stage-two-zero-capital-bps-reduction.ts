@@ -52,7 +52,15 @@ type StageTwoRouteState = {
   deadlineRejected: boolean;
 };
 
+class StageTwoDeadlineExceededError extends Error {
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} exceeded ${timeoutMs}ms Stage-2 evidence deadline`);
+    this.name = 'StageTwoDeadlineExceededError';
+  }
+}
+
 const BPS_PRECISION_SCALE = 1_000_000n;
+const sharedProviderEvidenceInFlight = new Map<string, Promise<SharedProviderEvidence>>();
 
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const value = Number(raw);
@@ -138,6 +146,24 @@ function deadlineSlackMs(opportunity: ZeroCapitalOpportunity, now = Date.now()):
 function deadlineViable(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
   const remaining = opportunity.expiresAt - now;
   return remaining > minimumRemainingLifetimeMs() && deadlineSlackMs(opportunity, now) > 0;
+}
+
+function withStageTwoDeadline<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  const boundedMs = Math.max(1, Math.trunc(timeoutMs));
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new StageTwoDeadlineExceededError(label, boundedMs)), boundedMs);
+    timer.unref?.();
+    promise.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      error => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function routeForOpportunity(
@@ -405,8 +431,15 @@ function createSharedProviderEvidencePromises(
 ): Map<string, Promise<SharedProviderEvidence>> {
   const result = new Map<string, Promise<SharedProviderEvidence>>();
   for (const opportunity of opportunities) {
-    const key = opportunity.inputToken.toLowerCase();
-    if (result.has(key)) continue;
+    const tokenKey = opportunity.inputToken.toLowerCase();
+    if (result.has(tokenKey)) continue;
+    const inFlightKey = `${input.chain}:${tokenKey}`;
+    const existing = sharedProviderEvidenceInFlight.get(inFlightKey);
+    if (existing) {
+      result.set(tokenKey, existing);
+      continue;
+    }
+
     const promise = measureFlashLoanProviders({
       chain: input.chain as any,
       provider: input.provider,
@@ -428,8 +461,13 @@ function createSharedProviderEvidencePromises(
         executionAuthority: false,
       });
       return { measurements: [], fresh: [], staleRejected: 0 };
+    }).finally(() => {
+      if (sharedProviderEvidenceInFlight.get(inFlightKey) === promise) {
+        sharedProviderEvidenceInFlight.delete(inFlightKey);
+      }
     });
-    result.set(key, promise);
+    sharedProviderEvidenceInFlight.set(inFlightKey, promise);
+    result.set(tokenKey, promise);
   }
   return result;
 }
@@ -712,19 +750,28 @@ export async function runStageTwoZeroCapitalBpsReduction(
   ));
   const sharedPrices = createSharedPricePromises(selected);
   const sharedProviders = createSharedProviderEvidencePromises(input, selected);
+  const countedProviderKeys = new Set<string>();
 
   let staleProviderEvidenceRejected = 0;
   let unpricedInputTokenRejected = 0;
   let providerEvidenceUnavailable = 0;
+  let prefetchDeadlineRejected = 0;
 
   const firstPassSettled = await Promise.all(selected.map(async source => {
     const route = routeForOpportunity(input.configuredRoutes, source);
     if (!route) return null;
     try {
-      const [inputTokenUsdPrice, sharedProvider] = await Promise.all([
+      const evidenceDeadlineMs = Math.max(1, deadlineSlackMs(source));
+      const [inputTokenUsdPrice, sharedProvider] = await withStageTwoDeadline(Promise.all([
         inputTokenPricePromise(source, sharedPrices),
         sharedProviders.get(source.inputToken.toLowerCase()) ?? Promise.resolve({ measurements: [], fresh: [], staleRejected: 0 }),
-      ]);
+      ]), evidenceDeadlineMs, `${input.chain}:${source.id}:shared_evidence`);
+
+      const providerKey = source.inputToken.toLowerCase();
+      if (!countedProviderKeys.has(providerKey)) {
+        countedProviderKeys.add(providerKey);
+        staleProviderEvidenceRejected += sharedProvider.staleRejected;
+      }
       if (inputTokenUsdPrice === null) {
         unpricedInputTokenRejected += 1;
         return null;
@@ -768,11 +815,13 @@ export async function runStageTwoZeroCapitalBpsReduction(
       const firstSizes = selectInitialProbeSizes(state, initialPerRoute);
       return await quoteSizes(state, firstSizes, input.provider);
     } catch (error) {
+      if (error instanceof StageTwoDeadlineExceededError) prefetchDeadlineRejected += 1;
       logger.debug('[StageTwoZeroCapitalBpsReduction] Route-local first-pass requote degraded; original candidate retained', {
         component: 'StageTwoZeroCapitalBpsReduction',
         chain: input.chain,
         opportunityId: source.id,
         error: error instanceof Error ? error.message : String(error),
+        deadlineExceeded: error instanceof StageTwoDeadlineExceededError,
         otherRoutesBlocked: false,
         executionAuthority: false,
       });
@@ -780,39 +829,43 @@ export async function runStageTwoZeroCapitalBpsReduction(
     }
   }));
 
-  for (const evidencePromise of sharedProviders.values()) {
-    const evidence = await evidencePromise;
-    staleProviderEvidenceRejected += evidence.staleRejected;
-  }
-
   let states = firstPassSettled.filter((state): state is StageTwoRouteState => state !== null);
   const firstPassQuotesUsed = states.reduce((sum, state) => sum + state.attemptedQuotes, 0);
   const remainingAfterFirstPass = Math.max(0, totalQuoteBudget - firstPassQuotesUsed);
-  const escalation = allocateEscalationBudget(states, remainingAfterFirstPass);
+  const firstPassCrossedAtomicFloor = states.some(state =>
+    state.best !== null
+    && strictImprovement(state.source, state.best)
+    && state.best.netProfitBps > stageTwoEntryFloorBps(),
+  );
+  const escalation = firstPassCrossedAtomicFloor
+    ? new Map<string, number[]>()
+    : allocateEscalationBudget(states, remainingAfterFirstPass);
 
-  states = await Promise.all(states.map(async state => {
-    const sizes = escalation.get(state.source.id) ?? [];
-    if (sizes.length === 0) return state;
-    try {
-      return await quoteSizes(state, sizes, input.provider);
-    } catch (error) {
-      logger.debug('[StageTwoZeroCapitalBpsReduction] Route-local escalation requote degraded; first-pass measurement retained', {
-        component: 'StageTwoZeroCapitalBpsReduction',
-        chain: input.chain,
-        opportunityId: state.source.id,
-        error: error instanceof Error ? error.message : String(error),
-        otherRoutesBlocked: false,
-        executionAuthority: false,
-      });
-      return state;
-    }
-  }));
+  if (!firstPassCrossedAtomicFloor) {
+    states = await Promise.all(states.map(async state => {
+      const sizes = escalation.get(state.source.id) ?? [];
+      if (sizes.length === 0) return state;
+      try {
+        return await quoteSizes(state, sizes, input.provider);
+      } catch (error) {
+        logger.debug('[StageTwoZeroCapitalBpsReduction] Route-local escalation requote degraded; first-pass measurement retained', {
+          component: 'StageTwoZeroCapitalBpsReduction',
+          chain: input.chain,
+          opportunityId: state.source.id,
+          error: error instanceof Error ? error.message : String(error),
+          otherRoutesBlocked: false,
+          executionAuthority: false,
+        });
+        return state;
+      }
+    }));
+  }
 
   const refinedById = new Map<string, ZeroCapitalOpportunity>();
   let measuredAlternatives = 0;
   let improved = 0;
   let crossedAtomicEntryFloor = 0;
-  let expiredBeforeRequote = deadlineRejectedBeforeSelection;
+  let expiredBeforeRequote = deadlineRejectedBeforeSelection + prefetchDeadlineRejected;
 
   for (const state of states) {
     measuredAlternatives += state.measuredAlternatives;
@@ -859,14 +912,16 @@ export async function runStageTwoZeroCapitalBpsReduction(
     secondPassQuotesUsed,
     initialProbesPerRoute: initialPerRoute,
     escalationRoutes: escalation.size,
+    secondPassSkippedForAtomicHandoff: firstPassCrossedAtomicFloor,
     deadlineRejectedBeforeSelection,
+    prefetchDeadlineRejected,
     staleProviderEvidenceRejected,
     expiredBeforeRequote,
     unpricedInputTokenRejected,
     providerEvidenceUnavailable,
     sharedProviderEvidenceKeys: sharedProviders.size,
     sharedPriceLookupSymbols: sharedPrices.size,
-    selectedWorkRunsInPriorityOrder: true,
+    priorityOrderedSelection: true,
     parallelSharedEvidencePrefetch: true,
     parallelFirstPassRouteRequotes: true,
     boundedWinnerEscalation: true,
