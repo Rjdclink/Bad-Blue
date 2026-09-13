@@ -1,6 +1,6 @@
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
-import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import { selectFairZeroCapitalRescueCandidates } from '../execution/zero-capital-rescue-fairness.js';
 import { runStageTwoZeroCapitalBpsReduction } from './stage-two-zero-capital-bps-reduction.js';
@@ -67,6 +67,20 @@ export interface FairZeroCapitalProfitabilityRescueInput {
 }
 
 /**
+ * Canonical discovery passes AutonomousZeroCapitalEngine.fromQuotedRoute as a
+ * callback. Calling that method through a different object changes JavaScript's
+ * `this`, which makes the engine's private expectedSlippageBps() helper
+ * unreachable. Bind the supplied converter to the canonical runtime once at the
+ * rescue boundary so Stage 2 and Atomic rescue use the same proven conversion
+ * logic without duplicating slippage economics.
+ */
+function bindCanonicalQuoteConverter(
+  converter: FairZeroCapitalProfitabilityRescueInput['fromQuotedRoute'],
+): FairZeroCapitalProfitabilityRescueInput['fromQuotedRoute'] {
+  return (quote, blockTimestamp) => converter.call(zeroCapitalEngine, quote, blockTimestamp);
+}
+
+/**
  * Canonical zero-capital handoff wrapper. Stage 2 owns exact measured BPS reduction
  * at/below the entry floor. V2 remains the sole Atomic-surplus transformation engine
  * once a candidate reaches the configured entry band. Fairness persistence may
@@ -76,7 +90,12 @@ export interface FairZeroCapitalProfitabilityRescueInput {
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
 ): Promise<ZeroCapitalOpportunity[]> {
-  const stageTwoOpportunities = await runStageTwoZeroCapitalBpsReduction(input).catch(error => {
+  const fromQuotedRoute = bindCanonicalQuoteConverter(input.fromQuotedRoute);
+  const stageTwoInput: FairZeroCapitalProfitabilityRescueInput = {
+    ...input,
+    fromQuotedRoute,
+  };
+  const stageTwoOpportunities = await runStageTwoZeroCapitalBpsReduction(stageTwoInput).catch(error => {
     logger.warn('[ZeroCapitalProfitabilityRescueFair] Stage 2 zero-capital BPS reduction degraded; original fresh candidates retained for Atomic rescue', {
       component: 'ZeroCapitalProfitabilityRescueFair',
       chain: input.chain,
@@ -88,7 +107,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     return [...input.opportunities];
   });
   const stageInput: FairZeroCapitalProfitabilityRescueInput = {
-    ...input,
+    ...stageTwoInput,
     opportunities: stageTwoOpportunities,
   };
 
