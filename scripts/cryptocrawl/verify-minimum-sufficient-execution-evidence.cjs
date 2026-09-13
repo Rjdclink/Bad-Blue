@@ -22,9 +22,9 @@ has(registry, 'const next = clone(previous, true);', 'internal updates must pres
 has(registry, 'advisory_missing_nonblocking:', 'nonblocking evidence gaps must remain observable through provenance');
 
 // Canonical execution requires the concrete facts needed to submit this route:
-// positive all-in economics for its domain, an available execution path,
-// authoritative capability, freshness and executable depth.
-has(router, 'const admitted = economicsAdmitted && pathAvailable && candidate.executableCapability && fresh && depthReady && hardVetoReasons.length === 0;', 'router must require all concrete execution evidence and no hard veto');
+// positive all-in economics for its domain, the Stage-3 minimum target, an available
+// execution path, authoritative capability, freshness and executable depth.
+has(router, 'const admitted = economicsAdmitted\n    && stageThreeTargetSatisfied\n    && pathAvailable\n    && candidate.executableCapability\n    && fresh\n    && depthReady\n    && hardVetoReasons.length === 0;', 'router must require Stage-3 target-clearing economics, all concrete execution evidence and no hard veto');
 has(router, 'advisory:missing_information:', 'non-required missing information must remain advisory');
 has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler must retain defense-in-depth over registry-filtered required gaps');
 
@@ -62,4 +62,4 @@ has(multileg, 'netProfitUsd <= 0', 'multileg selection must require positive det
 has(multileg, 'if (!pathDecision?.executableNow) return null;', 'multileg selection must require an executable path');
 has(multileg, 'requiresIndependentFinalAdmission: true', 'multileg optimization cannot bypass final execution admission');
 
-console.log('[required-execution-evidence] PASS: execution remains guarded by minimum sufficient live evidence; zero-capital atomic surplus may transform fresh near-misses but only promotes an exact measured target-clearing composite, while Profit Ladder/optional/advisory completeness and simulations cannot become shadow vetoes');
+console.log('[required-execution-evidence] PASS: execution remains guarded by Stage-3 target-clearing economics plus minimum sufficient live evidence; zero-capital atomic surplus may transform fresh near-misses but only promotes an exact measured target-clearing composite, while Profit Ladder/optional/advisory completeness and simulations cannot become shadow vetoes');
