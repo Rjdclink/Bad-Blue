@@ -29,7 +29,6 @@ const APPROVAL_GAS = 100_000;
 const CONVERSION_GAS = 300_000;
 const PAYMENT_GAS = 21_000;
 const BPS_PRECISION = 1_000_000n;
-const ATOMIC_MINIMUM_TARGET_BPS = 10;
 
 export interface BuilderSponsoredReceiverBootstrapEvidence {
   owner: string;
@@ -86,26 +85,6 @@ function sameAddress(left: string, right: string): boolean {
 function preciseBps(value: bigint, notional: bigint): number {
   if (notional <= 0n) return Number.NEGATIVE_INFINITY;
   return Number((value * 10_000n * BPS_PRECISION) / notional) / Number(BPS_PRECISION);
-}
-
-function atomicTargetBps(): number {
-  const configured = Number(
-    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
-    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
-    ?? ATOMIC_MINIMUM_TARGET_BPS,
-  );
-  const finite = Number.isFinite(configured) ? configured : ATOMIC_MINIMUM_TARGET_BPS;
-  return Math.max(ATOMIC_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
-}
-
-function minimumAtomicTargetProfitBaseUnits(opportunity: ZeroCapitalOpportunity): bigint {
-  const scaledBps = BigInt(Math.ceil(atomicTargetBps() * Number(BPS_PRECISION)));
-  const denominator = 10_000n * BPS_PRECISION;
-  return (opportunity.flashLoanAmount * scaledBps + denominator - 1n) / denominator;
-}
-
-function maxBigInt(left: bigint, right: bigint): bigint {
-  return left >= right ? left : right;
 }
 
 function maxBigNumber(left: BigNumber | null | undefined, right: BigNumber): BigNumber {
@@ -258,13 +237,7 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
   const relayFee = opportunity.relayFeeInInputToken || 0n;
   const grossProfit = opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
   const preBuilderProfit = grossProfit - flashFee - relayFee;
-  const configuredMinimumRetained = BigInt(
-    process.env.ZERO_CAPITAL_BUILDER_MIN_RETAINED_PROFIT_BASE_UNITS || minimumPositiveProfitBaseUnits().toString(),
-  );
-  const atomicMinimumRetained = opportunity.type === 'ZERO_CAPITAL_ATOMIC'
-    ? minimumAtomicTargetProfitBaseUnits(opportunity)
-    : minimumPositiveProfitBaseUnits();
-  const minimumRetained = maxBigInt(configuredMinimumRetained, atomicMinimumRetained);
+  const minimumRetained = minimumPositiveProfitBaseUnits();
   const minimumReceiverProfit = builderGasCostInInputToken + minimumRetained;
   if (minimumRetained <= 0n || preBuilderProfit < minimumReceiverProfit) return null;
 
@@ -380,7 +353,6 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
 
   const admittedNetProfitBps = preciseBps(guaranteedNetProfitInInputToken, opportunity.flashLoanAmount);
   if (!isStrictlyPositiveProfitBaseUnits(guaranteedNetProfitInInputToken)) return null;
-  if (opportunity.type === 'ZERO_CAPITAL_ATOMIC' && admittedNetProfitBps < atomicTargetBps()) return null;
 
   const evidence: BuilderSponsoredZeroCapitalEvidence = {
     opportunityId: opportunity.id,
@@ -409,9 +381,7 @@ export async function prepareBuilderSponsoredZeroCapitalColdStart(input: {
       'builder_payment_transport:titan_or_quasar',
       ...repaymentRoute.provenance,
       'builder_all_in_cost_attribution:stablecoin_input_max',
-      opportunity.type === 'ZERO_CAPITAL_ATOMIC'
-        ? 'atomic_minimum_residual:target_bound_10_bps_or_higher'
-        : 'ordinary_minimum_residual:canonical_positive',
+      'minimum_residual:canonical_strict_positive_base_units',
       'forced_future_native_reserve_seeding:false',
       'gas_fee_ceiling:eip1559_base_fee_x2_plus_priority',
       'generic_gas_authority_not_overridden',
