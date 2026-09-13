@@ -80,6 +80,11 @@ let readyReceiverChains = 0;
 let receiverWatchdogExpirations = 0;
 let chainWatchdogExpirations = 0;
 let observationOnlyCycles = 0;
+let configuredFastPathDispatches = 0;
+let configuredFastPathCandidates = 0;
+let configuredFastPathExpiredBeforeDispatch = 0;
+let configuredFastPathLastHandoffLatencyMs = 0;
+let configuredFastPathLastMinRemainingLifetimeMs = 0;
 
 function runtime(): CanonicalZeroCapitalRuntime {
   return zeroCapitalEngine as unknown as CanonicalZeroCapitalRuntime;
@@ -164,6 +169,21 @@ function executionRoutes(target: CanonicalZeroCapitalRuntime): ConfiguredZeroCap
     providerChains: target.providers.keys(),
     configuredRoutes: target.configuredRoutes,
   });
+}
+
+function mergeFreshOpportunityStreams(
+  streams: readonly (readonly ZeroCapitalOpportunity[])[],
+  now = Date.now(),
+): ZeroCapitalOpportunity[] {
+  const byId = new Map<string, ZeroCapitalOpportunity>();
+  for (const stream of streams) {
+    for (const opportunity of stream) {
+      if (opportunity.expiresAt <= now) continue;
+      const current = byId.get(opportunity.id);
+      if (!current || opportunity.timestamp >= current.timestamp) byId.set(opportunity.id, opportunity);
+    }
+  }
+  return [...byId.values()];
 }
 
 async function strictFunding(target: CanonicalZeroCapitalRuntime, chain: SupportedChain): Promise<GasFundingDecision> {
@@ -423,18 +443,72 @@ async function scanOneChain(
     return [] as ZeroCapitalOpportunity[];
   });
   if (!isCurrentChainScanGeneration(chain, generation)) return;
+
+  const configuredMeasurementCompletedAt = Date.now();
   for (const opportunity of configured) {
     if (!isCurrentChainScanGeneration(chain, generation)) return;
     recordPreselectionCandidate({ opportunity, source: 'configured', resourceReady, resourceReason });
   }
 
-  const dynamicQuotes = await discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode).catch(error => {
+  const configuredStageTwoDispatchAt = Date.now();
+  const configuredFresh = configured.filter(opportunity => opportunity.expiresAt > configuredStageTwoDispatchAt);
+  const configuredExpired = configured.length - configuredFresh.length;
+  configuredFastPathExpiredBeforeDispatch += configuredExpired;
+  configuredFastPathLastHandoffLatencyMs = Math.max(0, configuredStageTwoDispatchAt - configuredMeasurementCompletedAt);
+  configuredFastPathLastMinRemainingLifetimeMs = configuredFresh.length > 0
+    ? Math.min(...configuredFresh.map(opportunity => Math.max(0, opportunity.expiresAt - configuredStageTwoDispatchAt)))
+    : 0;
+
+  const routes = executionRoutes(target);
+  const configuredRescuePromise: Promise<ZeroCapitalOpportunity[]> = configuredFresh.length > 0
+    ? (() => {
+        configuredFastPathDispatches++;
+        configuredFastPathCandidates += configuredFresh.length;
+        logger.info('[ZeroCapitalDiscovery] Fresh configured routes dispatched immediately to Stage 2', {
+          component: 'CanonicalZeroCapitalDiscovery',
+          chain,
+          configuredCandidates: configured.length,
+          freshConfiguredCandidates: configuredFresh.length,
+          expiredBeforeFastPathDispatch: configuredExpired,
+          handoffLatencyMs: configuredFastPathLastHandoffLatencyMs,
+          minimumRemainingLifetimeMs: configuredFastPathLastMinRemainingLifetimeMs,
+          dynamicDiscoveryWaitedForBeforeStageTwo: false,
+          inProcessFastPath: true,
+          economicExpiryExtended: false,
+          executionAuthority: false,
+        });
+        return runFairZeroCapitalProfitabilityRescue({
+          chain,
+          provider,
+          opportunities: configuredFresh,
+          configuredRoutes: routes,
+          fromQuotedRoute: target.fromQuotedRoute,
+        }).catch(error => {
+          logger.warn('[ZeroCapitalDiscovery] Immediate configured-route profitability rescue degraded; original fresh configured candidates retained', {
+            component: 'CanonicalZeroCapitalDiscovery',
+            chain,
+            error: error instanceof Error ? error.message : String(error),
+            dynamicDiscoveryBlocked: false,
+            staleQuotePreserved: false,
+            executionAuthority: false,
+          });
+          return configuredFresh;
+        });
+      })()
+    : Promise.resolve([] as ZeroCapitalOpportunity[]);
+
+  // Dynamic discovery runs concurrently with the configured-route Stage-2 fast path.
+  // The two streams only rejoin after each has completed its own canonical rescue,
+  // so dynamic/graphless work can never consume configured-route evidence lifetime.
+  const dynamicQuotesPromise = discoverDynamicZeroCapitalQuotes(chain, provider, funding.mode).catch(error => {
     logger.warn('[ZeroCapitalDiscovery] Dynamic graphless measurement degraded', {
       component: 'CanonicalZeroCapitalDiscovery', chain,
       error: error instanceof Error ? error.message : String(error),
     });
     return [] as QuotedZeroCapitalRoute[];
   });
+
+  const dynamicQuotes = await dynamicQuotesPromise;
   if (!isCurrentChainScanGeneration(chain, generation)) return;
   const block = dynamicQuotes.length > 0 ? await provider.getBlock('latest') : null;
   if (!isCurrentChainScanGeneration(chain, generation)) return;
@@ -450,26 +524,35 @@ async function scanOneChain(
     dynamic.push(opportunity);
   }
 
-  const exact = [...configured, ...dynamic].filter(opportunity => opportunity.expiresAt > Date.now());
-  if (exact.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
+  const dynamicFresh = dynamic.filter(opportunity => opportunity.expiresAt > Date.now());
+  const dynamicRescuePromise: Promise<ZeroCapitalOpportunity[]> = dynamicFresh.length > 0
+    ? runFairZeroCapitalProfitabilityRescue({
+        chain,
+        provider,
+        opportunities: dynamicFresh,
+        configuredRoutes: routes,
+        fromQuotedRoute: target.fromQuotedRoute,
+      }).catch(error => {
+        logger.warn('[ZeroCapitalDiscovery] Dynamic-route profitability rescue degraded; original fresh dynamic candidates retained', {
+          component: 'CanonicalZeroCapitalDiscovery',
+          chain,
+          error: error instanceof Error ? error.message : String(error),
+          configuredFastPathBlocked: false,
+          staleQuotePreserved: false,
+          executionAuthority: false,
+        });
+        return dynamicFresh;
+      })
+    : Promise.resolve([] as ZeroCapitalOpportunity[]);
 
-  const rescueReady = await runFairZeroCapitalProfitabilityRescue({
-    chain,
-    provider,
-    opportunities: exact,
-    configuredRoutes: executionRoutes(target),
-    fromQuotedRoute: target.fromQuotedRoute,
-  }).catch(error => {
-    logger.warn('[ZeroCapitalDiscovery] Fair profitability rescue degraded; original fresh candidates continue through canonical provider repricing', {
-      component: 'CanonicalZeroCapitalDiscovery',
-      chain,
-      error: error instanceof Error ? error.message : String(error),
-      executionAuthority: false,
-      staleQuotePreserved: false,
-    });
-    return exact;
-  });
-  if (rescueReady.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
+  const [configuredRescueReady, dynamicRescueReady] = await Promise.all([
+    configuredRescuePromise,
+    dynamicRescuePromise,
+  ]);
+  if (!isCurrentChainScanGeneration(chain, generation)) return;
+
+  const rescueReady = mergeFreshOpportunityStreams([configuredRescueReady, dynamicRescueReady]);
+  if (rescueReady.length === 0) return;
 
   // Preserve the flash mesh as the first measured capital-source path. A flash
   // result only completes Atomic search when it clears the configured target;
@@ -616,6 +699,10 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
     chainScanWatchdogMs: chainScanWatchdogMs(),
+    configuredStageTwoFastPath: true,
+    configuredStageTwoWaitsForDynamicDiscovery: false,
+    dynamicDiscoveryRunsParallelWithConfiguredStageTwo: true,
+    economicFreshnessExtensionAllowed: false,
     degradedReceiverCycleMode: 'chain_local_admission_provider_repricing_continues',
     globalReceiverFailureBlocksProviderAdmission: false,
     duplicateHungTaskSuppression: true,
@@ -650,6 +737,14 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     receiverWatchdogExpirations,
     chainWatchdogExpirations,
     observationOnlyCycles,
+    configuredFastPathDispatches,
+    configuredFastPathCandidates,
+    configuredFastPathExpiredBeforeDispatch,
+    configuredFastPathLastHandoffLatencyMs,
+    configuredFastPathLastMinRemainingLifetimeMs,
+    configuredStageTwoWaitsForDynamicDiscovery: false,
+    dynamicDiscoveryRunsParallelWithConfiguredStageTwo: true,
+    economicFreshnessExtensionAllowed: false,
     receiverFleetTaskPending: Boolean(receiverFleetTask),
     isolatedChainScansPending: chainScanTasks.size,
     chainScanGenerationByChain: Object.fromEntries(chainScanGenerations.entries()),
