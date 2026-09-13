@@ -27,6 +27,7 @@ const realizedPolicy = read('server/services/cryptocrawl/execution/zero-capital-
 const gasFunding = read('server/services/cryptocrawl/capital-free/dynamic-gas-funding-engine.ts');
 const dynamicChainRegistry = read('server/services/cryptocrawl/core/dynamic-chain-registry.ts');
 const sponsoredReceiverManager = read('server/services/cryptocrawl/execution/adapters/sponsored-receiver-manager.ts');
+const fairRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const rescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts');
 const scale = read('server/services/cryptocrawl/scaling/dynamic-scale-pressure-wiring.ts');
 const engine = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
@@ -88,6 +89,16 @@ assert.match(discovery, /function atomicSurplusEntryFloorBps\(\): number \{\s*re
 assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 assert.match(discovery, /zeroCapitalRouteEvidenceRegistry\.record\(opportunity\);[\s\S]{0,260}opportunity\.netProfitBps < atomicSurplusEntryFloorBps\(\)/);
 assert.match(discovery, /stageOneLock: 'explicit_operator_authorization_required'/);
+
+// Atomic BPS profitability is exact strict-positive all-in base units. The former
+// +10 BPS target cannot reappear as a canonical or rescue admission dependency.
+assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
+assert.doesNotMatch(discovery, /atomicSurplusTargetBps/);
+assert.match(discovery, /filter\(opportunity => opportunity\.expectedProfit > 0n/);
+assert.match(discovery, /profitabilityFinishLine: 'strict_positive_all_in_base_units'/);
+assert.doesNotMatch(fairRescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
+assert.match(fairRescue, /profitabilityFinishLine: 'strict_positive_all_in_base_units'/);
+assert.match(fairRescue, /bpsReductionRunsBeforeAtomicForThisChange: true/);
 
 assert.match(discovery, /refreshReceiverFleetForCycle\(target\)/);
 assert.match(discovery, /globalProviderAdmissionBlocked: false/);
@@ -292,15 +303,18 @@ assert.match(dynamicChainRegistry, /\{ id: 'bsc', family: 'evm', nativeAsset: 'B
 assert.match(dynamicChainRegistry, /hostedSponsorshipAssumedByChainConfig: false/);
 assert.match(dynamicChainRegistry, /receiverCapabilityImpliedGasSponsorship: false/);
 
-// -10 BPS is the near-miss entry window; +10 BPS is the configurable minimum
-// target for the atomic-surplus lane. Above the floor, rank by real net dollars.
+// Stage-1 admission remains -10 BPS, but Atomic BPS rescue itself has no positive
+// BPS target. Strictly positive exact all-in base units are the only finish line.
 assert.match(rescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10/);
-assert.match(rescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10/);
+assert.doesNotMatch(rescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
+assert.doesNotMatch(rescue, /atomicSurplusTargetBps/);
 assert.match(rescue, /recoverableByAtomicSurplus/);
+assert.match(rescue, /function clearsStrictProfitability[\s\S]{0,160}candidate\.netProfit > 0n/);
+assert.match(rescue, /candidate\.executablePositive === true/);
 assert.match(rescue, /grossPositiveRequiredForAtomicSurplusRescue: false/);
-assert.match(rescue, /exactTargetSurplusRequiredBeforePromotion: true/);
+assert.match(rescue, /exactStrictPositiveRequiredBeforePromotion: true/);
 assert.match(rescue, /principalRepaymentAndFlashFeeIncludedInNetEconomics: true/);
-assert.match(rescue, /netDollarOptimizationAboveTarget: true/);
+assert.match(rescue, /netDollarOptimizationAfterProfitability: true/);
 assert.match(rescue, /buildBpsReductionSuperPlan/);
 assert.match(rescue, /buildResearchBpsExecutionPlan/);
 assert.match(rescue, /adviseEconomicTransformations/);
@@ -311,20 +325,26 @@ assert.match(rescue, /recordBpsRevalidationOutcome/);
 assert.match(rescue, /freshExactRequoteRequired: true/);
 assert.match(rescue, /strictImprovementRequired: true/);
 assert.match(rescue, /existingPositiveNeverReplacedByNegative: true/);
+assert.match(rescue, /profitabilityFinishLine: 'strict_positive_all_in_base_units'/);
 assert.match(rescue, /executionAuthority: false/);
 assert.doesNotMatch(rescue, /expectedProfit\s*=\s*Math\.max/);
 assert.doesNotMatch(rescue, /netProfitBps\s*=\s*Math\.max/);
 
-// Shared-principal composition is measurement-only until an exact target-bound
-// composite parent is prepared. Original member opportunities are not mutated.
+// Shared-principal composition remains measurement-only until an exact prepared
+// composite parent proves at least one base unit of all-in profit. Original members
+// are not mutated and the compatibility registry fields retain exact base-unit truth.
 assert.match(atomicStack, /getCompatibleForAtomicSurplus/);
 assert.match(atomicStack, /measureBalancerFlashLoanEconomics/);
-assert.match(atomicStack, /targetProfitBaseUnits/);
+assert.doesNotMatch(atomicStack, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
+assert.doesNotMatch(atomicStack, /atomicSurplusTargetBps/);
+assert.match(atomicStack, /const STRICT_POSITIVE_PROFIT_BASE_UNITS = 1n;/);
+assert.match(atomicStack, /const targetNetProfitBaseUnits = STRICT_POSITIVE_PROFIT_BASE_UNITS;/);
 assert.match(atomicStack, /combinedExpectedProfit < targetNetProfitBaseUnits/);
 assert.match(atomicStack, /zeroCapitalCompositeSelectionRegistry\.record\(selection\)/);
 assert.match(atomicStack, /zeroCapitalRouteEvidenceRegistry\.record\(opportunity\)/);
 assert.match(atomicStack, /\.startsWith\(COMPOSITE_ID_PREFIX\)/);
-assert.match(atomicStack, /netDollarOptimizationAboveTarget: true/);
+assert.match(atomicStack, /netDollarOptimizationAfterProfitability: true/);
+assert.match(atomicStack, /exactStrictPositiveSimulationPassed: true/);
 assert.match(compositeSelectionRegistry, /expectedNetProfit < selection\.targetNetProfitBaseUnits/);
 assert.match(compositeEvidenceRegistry, /combinedExpectedProfit < input\.targetNetProfitBaseUnits/);
 assert.match(payloadBuilder, /export type UniswapV3FeeTier = 100 \| 500 \| 3000 \| 10000/);
@@ -390,8 +410,9 @@ console.log(JSON.stringify({
   canonicalZeroCapitalExecutorOwnsMoneyBoundary: true,
   compositeParentCannotFallBackToSingleRoute: true,
   atomicSurplusEntryFloorBps: -10,
-  atomicSurplusTargetFloorBps: 10,
-  atomicSurplusNetDollarOptimization: true,
+  atomicBpsProfitabilityFinishLine: 'strict_positive_all_in_base_units',
+  atomicBpsMinimumProfitBaseUnits: '1',
+  atomicBpsNetDollarMomentum: true,
   runtimeParallelScheduler: false,
   runtimeDispatchMutation: false,
   zeroCapitalBpsSuperEngineOperational: true,
