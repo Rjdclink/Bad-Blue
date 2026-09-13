@@ -37,10 +37,15 @@ assert.match(runtime, /startOverflowSchemaRepair/);
 assert.doesNotMatch(build, /gateReplacement|importReplacement|source\.replace\(importNeedle/);
 assert.match(index, /Required CryptoCrawler automatic runtime resume failed/);
 
-// Near-miss funding rescue: gross-positive routes may be repriced, execution still requires strict positive net.
+// Near-miss funding rescue: gross-positive routes may be repriced, while Stage 3
+// requires ZERO_CAPITAL_ATOMIC alternatives to clear the target-qualified minimum
+// (at least +10 BPS) before promotion. Other deterministic routes retain the
+// canonical minimum-positive-profit authority.
 assert.match(alternative, /grossProfitForFundingReprice/);
 assert.match(alternative, /alternative_capital_reprice_independent_of_prior_funding_net/);
-assert.match(alternative, /if \(netProfit <= 0n\) return null/);
+assert.match(alternative, /const requiredNetProfit = minimumRequiredNetProfit\(input\.opportunity\)/);
+assert.match(alternative, /if \(netProfit < requiredNetProfit\) return null/);
+assert.match(alternative, /atomic_minimum_net:target_bound_10_bps_or_higher/);
 assert.match(alternative, /discoverExistingGhostArbitrageInfrastructure/);
 assert.match(rediscovery, /getCode/);
 assert.match(rediscovery, /server_deployment_attempted:false/);
