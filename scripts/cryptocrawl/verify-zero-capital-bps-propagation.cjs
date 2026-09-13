@@ -28,6 +28,8 @@ const gasFunding = read('server/services/cryptocrawl/capital-free/dynamic-gas-fu
 const dynamicChainRegistry = read('server/services/cryptocrawl/core/dynamic-chain-registry.ts');
 const sponsoredReceiverManager = read('server/services/cryptocrawl/execution/adapters/sponsored-receiver-manager.ts');
 const fairRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
+const atomicBpsEngine = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
+const atomicBpsWorkers = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-workers.ts');
 const rescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v2.ts');
 const scale = read('server/services/cryptocrawl/scaling/dynamic-scale-pressure-wiring.ts');
 const engine = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
@@ -91,14 +93,39 @@ assert.match(discovery, /zeroCapitalRouteEvidenceRegistry\.record\(opportunity\)
 assert.match(discovery, /stageOneLock: 'explicit_operator_authorization_required'/);
 
 // Atomic BPS profitability is exact strict-positive all-in base units. The former
-// +10 BPS target cannot reappear as a canonical or rescue admission dependency.
+// +10 BPS target cannot reappear as a canonical, transformation, or execution dependency.
 assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
 assert.doesNotMatch(discovery, /atomicSurplusTargetBps/);
 assert.match(discovery, /filter\(opportunity => opportunity\.expectedProfit > 0n/);
 assert.match(discovery, /profitabilityFinishLine: 'strict_positive_all_in_base_units'/);
 assert.doesNotMatch(fairRescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
 assert.match(fairRescue, /profitabilityFinishLine: 'strict_positive_all_in_base_units'/);
-assert.match(fairRescue, /bpsReductionRunsBeforeAtomicForThisChange: true/);
+assert.match(fairRescue, /runZeroCapitalAtomicBpsEngine/);
+assert.match(fairRescue, /oneTransformationAuthority: true/);
+assert.match(fairRescue, /oneTransformationPipeline: true/);
+assert.match(fairRescue, /persistedFairnessOnHotPath: false/);
+assert.match(fairRescue, /stageTwoSerialPass: false/);
+assert.doesNotMatch(fairRescue, /runStageTwoZeroCapitalBpsReduction/);
+assert.doesNotMatch(fairRescue, /runZeroCapitalProfitabilityRescueV2/);
+assert.doesNotMatch(fairRescue, /selectFairZeroCapitalRescueCandidates/);
+assert.match(atomicBpsEngine, /candidate\.netProfit > 0n && candidate\.executablePositive === true/);
+assert.match(atomicBpsEngine, /oneSharedQuoteBudget: true/);
+assert.match(atomicBpsEngine, /parallelEvidencePrewarm: true/);
+assert.match(atomicBpsEngine, /parallelRouteOptimization: true/);
+assert.match(atomicBpsEngine, /serialStageTwoThenAtomic: false/);
+assert.match(atomicBpsEngine, /supabaseSchedulingOnHotPath: false/);
+assert.match(atomicBpsEngine, /strictImprovementRequired: true/);
+assert.match(atomicBpsEngine, /providerFreshnessRequired: true/);
+assert.match(atomicBpsEngine, /providerLiquidityHeadroomRequired: true/);
+assert.match(atomicBpsEngine, /executionAuthority: false/);
+assert.doesNotMatch(atomicBpsEngine, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
+assert.doesNotMatch(atomicBpsEngine, /atomicSurplusTargetBps/);
+assert.match(atomicBpsWorkers, /prewarmAtomicBpsEvidence/);
+assert.match(atomicBpsWorkers, /queueMicrotask/);
+assert.match(atomicBpsWorkers, /supabaseHotPathReads: 0/);
+assert.match(atomicBpsWorkers, /supabaseHotPathWrites: 0/);
+assert.match(atomicBpsWorkers, /executionAuthority: false/);
+assert.match(atomicBpsWorkers, /economicAuthority: false/);
 
 assert.match(discovery, /refreshReceiverFleetForCycle\(target\)/);
 assert.match(discovery, /globalProviderAdmissionBlocked: false/);
@@ -254,6 +281,9 @@ assert.match(executorEntry, /observeDailyProfitBudget\(opportunity\)/);
 assert.match(executorEntry, /expectedProfitFitsDailyBudget/);
 assert.match(executorEntry, /executionVetoAuthority: false/);
 assert.doesNotMatch(executorEntry, /dailyProfitBudgetFailure\(/);
+assert.doesNotMatch(executorEntry, /ATOMIC_MINIMUM_TARGET_BPS/);
+assert.doesNotMatch(executorEntry, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
+assert.doesNotMatch(executorEntry, /atomicSurplusTargetBps/);
 assert.match(executorAlternative, /selection\.expectedNetProfit !== opportunity\.expectedProfit/);
 assert.match(executorAlternative, /await provider\.call\(request\)/);
 assert.match(executorAlternative, /await provider\.estimateGas\(request\)/);
@@ -413,6 +443,10 @@ console.log(JSON.stringify({
   atomicBpsProfitabilityFinishLine: 'strict_positive_all_in_base_units',
   atomicBpsMinimumProfitBaseUnits: '1',
   atomicBpsNetDollarMomentum: true,
+  atomicBpsSingleTransformationAuthority: true,
+  atomicBpsSingleTransformationPipeline: true,
+  atomicBpsParallelPrewarmWorkersNonAuthoritative: true,
+  atomicBpsSupabaseHotPathScheduling: false,
   runtimeParallelScheduler: false,
   runtimeDispatchMutation: false,
   zeroCapitalBpsSuperEngineOperational: true,
