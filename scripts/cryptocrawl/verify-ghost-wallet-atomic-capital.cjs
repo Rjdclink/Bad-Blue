@@ -125,15 +125,16 @@ const admittedBlock = coverage.match(/const ATOMIC_EXTERNAL_PRINCIPAL_SOURCES:[\
 assert.doesNotMatch(admittedBlock, /protocol_deferred_settlement_capital/);
 
 // Existing arbitrage zero-capital execution remains under the same canonical authority.
-// Stage 3 strengthens alternative-capital promotion: ZERO_CAPITAL_ATOMIC must meet
-// the target-qualified minimum (at least +10 BPS), not merely remain above zero.
+// Alternative-capital promotion uses the same exact strict-positive all-in base-unit
+// boundary as the single Atomic-BPS pipeline; no retired +10 BPS magnitude gate may reappear.
 assert.match(discovery, /repriceZeroCapitalProviderEconomics\(/);
 assert.match(discovery, /repriceZeroCapitalAlternativeCapital\(/);
 assert.match(alternativeReprice, /await input\.provider\.call\(exactEnvelope\)/);
 assert.match(alternativeReprice, /input\.provider\.estimateGas\(exactEnvelope\)/);
-assert.match(alternativeReprice, /const requiredNetProfit = minimumRequiredNetProfit\(input\.opportunity\)/);
+assert.match(alternativeReprice, /const requiredNetProfit = minimumPositiveProfitBaseUnits\(\)/);
 assert.match(alternativeReprice, /if \(netProfit < requiredNetProfit\) return null/);
-assert.match(alternativeReprice, /atomic_minimum_net:target_bound_10_bps_or_higher/);
+assert.match(alternativeReprice, /strict_positive_all_in_net_after_source_fee_and_execution_cost/);
+assert.doesNotMatch(alternativeReprice, /minimumRequiredNetProfit|ATOMIC_MINIMUM_TARGET_BPS|ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS|target_bound_10_bps_or_higher/);
 assert.match(alternativeRegistry, /selection\.expectedNetProfit <= 0n/);
 assert.match(canonicalRouter, /return executeFlashCanonicalZeroCapitalOpportunity\(opportunity\)/);
 assert.match(canonicalRouter, /executeAlternativePreparedWithinCanonicalExecutor/);
