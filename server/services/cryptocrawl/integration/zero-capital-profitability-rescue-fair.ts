@@ -32,11 +32,17 @@ export async function runFairZeroCapitalProfitabilityRescue(
   const result = await handoffStageOneToAtomicBps({
     chain: input.chain,
     opportunities: input.opportunities,
-    consume: async () => {
+    consume: async handoff => {
+      // ACK is emitted by the actual Stage-2 consumer, not by the supervisor. This
+      // makes a broken Stage-1 -> Stage-2 call contract observable immediately while
+      // keeping the healthy path a same-stack, in-memory handoff with no I/O wait.
+      handoff.acknowledge();
       const transformed = await runZeroCapitalAtomicBpsEngine({
         ...input,
         fromQuotedRoute,
       });
+      if (!handoff.isActive()) return transformed;
+
       // Composite search is an internal tactic, not a second stage. It is kicked
       // off only by this one pipeline and never sits between a profitable route and
       // its normal downstream provider/execution path.
@@ -64,6 +70,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     oneTransformationAuthority: true,
     oneTransformationPipeline: true,
     stageOneDirectInMemoryHandoff: true,
+    stageTwoExplicitAcknowledgement: true,
     boundedRecursiveHandoffSupervision: true,
     concurrentDuplicateStageTwoRuns: false,
     staleHandoffReplayAllowed: false,
