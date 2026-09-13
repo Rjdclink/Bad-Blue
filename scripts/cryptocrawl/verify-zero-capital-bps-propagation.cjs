@@ -229,8 +229,10 @@ assert.match(executorEntry, /return executeFlashCanonicalZeroCapitalOpportunity\
 assert.match(executorEntry, /executeAlternativePreparedWithinCanonicalExecutor\(/);
 assert.match(executorEntry, /executeCompositePreparedWithinCanonicalExecutor\(/);
 assert.match(executorEntry, /single-route fallback is prohibited/);
-assert.match(executorEntry, /dailyProfitBudgetFailure\(opportunity\)/);
+assert.match(executorEntry, /observeDailyProfitBudget\(opportunity\)/);
 assert.match(executorEntry, /expectedProfitFitsDailyBudget/);
+assert.match(executorEntry, /executionVetoAuthority: false/);
+assert.doesNotMatch(executorEntry, /dailyProfitBudgetFailure\(/);
 assert.match(executorAlternative, /selection\.expectedNetProfit !== opportunity\.expectedProfit/);
 assert.match(executorAlternative, /await provider\.call\(request\)/);
 assert.match(executorAlternative, /await provider\.estimateGas\(request\)/);
