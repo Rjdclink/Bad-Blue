@@ -103,3 +103,8 @@ if (failures.length > 0) {
 }
 
 console.log('[unified-multileg-adaptive-engine] PASS: ordinary composite admission remains deterministic-positive; zero-capital composition is a parallel tactic inside the one Atomic-BPS pipeline, with exact strictly-positive shared-principal evidence, no duplicate Stage-1 threshold, no independent promotion loop, and no arbitrary +10 BPS finish line.');
+
+// This script already runs in prebuild. Chain the comprehensive Atomic-BPS invariant
+// verifier here so every Railway preview/build proves Stage 1 remains locked and the
+// post-Stage-1 pipeline retains its handoff, momentum, economics, and authority rules.
+require('./verify-nix-gen-atomic-bps-single-pipeline.cjs');
