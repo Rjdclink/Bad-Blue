@@ -74,4 +74,9 @@ has(multileg, 'netProfitUsd <= 0', 'multileg selection must require positive det
 has(multileg, 'if (!pathDecision?.executableNow) return null;', 'multileg selection must require an executable path');
 has(multileg, 'requiresIndependentFinalAdmission: true', 'multileg optimization cannot bypass final execution admission');
 
+// This verifier already runs inside deployment-preflight. Pull the dedicated
+// Atomic-BPS structural gate into the same mandatory prebuild path so these
+// invariants cannot drift without failing the build.
+require('./verify-nix-gen-atomic-bps-single-pipeline.cjs');
+
 console.log('[required-execution-evidence] PASS: execution remains guarded by topology-correct economics plus minimum sufficient live evidence; ZERO_CAPITAL_ATOMIC uses exact strict-positive all-in base units with no +10 magnitude floor; Atomic composition is an internal single-pipeline tactic over Stage-1-admitted candidates and may promote only when exact simulation proves positive net plus measured composition gain; Profit Ladder/optional/advisory completeness cannot become shadow vetoes');
