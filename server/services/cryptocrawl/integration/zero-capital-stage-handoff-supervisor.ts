@@ -121,6 +121,11 @@ async function recursivelyDeliver(
       active = false;
       state.acknowledgementMisses += 1;
       acknowledgementMisses += 1;
+      // The first consumer may still be running even though it violated the ACK
+      // contract. Never start a replay concurrently with indeterminate work. Wait
+      // only on this fault path for that attempt to settle, discard its result, then
+      // bounded replay may begin if the candidate is still fresh.
+      await consumption.catch(() => undefined);
       throw new Error('Atomic BPS consumer failed to acknowledge direct Stage-1 handoff');
     }
 
@@ -140,7 +145,7 @@ async function recursivelyDeliver(
 
     // FIX-style bounded replay semantics, adapted for this in-process hot path:
     // replay uses the exact same immutable Stage-1 identity and only begins after
-    // the prior attempt has definitively rejected. There are never concurrent
+    // the prior attempt has definitively settled/rejected. There are never concurrent
     // duplicate Stage-2 transformations for one handoff. Stale candidates are never
     // replayed; canonical discovery reacquires them on the next fresh scan.
     state.replayAttempts += 1;
@@ -154,11 +159,11 @@ async function recursivelyDeliver(
  * Bounded "hand under a hand under a hand" supervision for the locked Stage-1 ->
  * Atomic-BPS boundary. Healthy flow is a direct same-process call with no added
  * I/O wait. The Stage-2 consumer must explicitly acknowledge receipt immediately.
- * Duplicate delivery shares the same in-flight promise. A definitively rejected
- * handoff is replayed serially with the same identity up to a small bounded depth;
- * stale candidates are never blindly replayed and are left for canonical fresh
- * discovery. This module has no Stage-1 classification, economic, admission, or
- * execution authority.
+ * Duplicate delivery shares the same in-flight promise. A definitively settled
+ * failed handoff is replayed serially with the same identity up to a small bounded
+ * depth; stale candidates are never blindly replayed and are left for canonical
+ * fresh discovery. This module has no Stage-1 classification, economic, admission,
+ * or execution authority.
  */
 export async function handoffStageOneToAtomicBps(
   input: ZeroCapitalStageHandoffInput,
