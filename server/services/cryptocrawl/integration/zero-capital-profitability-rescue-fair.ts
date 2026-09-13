@@ -3,6 +3,7 @@ import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import { selectFairZeroCapitalRescueCandidates } from '../execution/zero-capital-rescue-fairness.js';
+import { runStageTwoZeroCapitalBpsReduction } from './stage-two-zero-capital-bps-reduction.js';
 import {
   runZeroCapitalProfitabilityRescueV2,
   type ZeroCapitalProfitabilityRescueInput,
@@ -66,18 +67,35 @@ export interface FairZeroCapitalProfitabilityRescueInput {
 }
 
 /**
- * Scheduling/telemetry wrapper only. V2 remains the sole transformation/economic
- * requote engine. Fairness persistence may order work and record scheduling debt,
- * but it never removes a fresh recoverable route from the current Atomic rescue
- * pipeline and never grants execution authority.
+ * Canonical zero-capital handoff wrapper. Stage 2 owns exact measured BPS reduction
+ * at/below the entry floor. V2 remains the sole Atomic-surplus transformation engine
+ * after a candidate reaches the configured entry band. Fairness persistence may
+ * order Stage-3 work, but it never grants execution authority or removes a fresh
+ * candidate from the current pipeline.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
 ): Promise<ZeroCapitalOpportunity[]> {
+  const stageTwoOpportunities = await runStageTwoZeroCapitalBpsReduction(input).catch(error => {
+    logger.warn('[ZeroCapitalProfitabilityRescueFair] Stage 2 zero-capital BPS reduction degraded; original fresh candidates retained for Atomic rescue', {
+      component: 'ZeroCapitalProfitabilityRescueFair',
+      chain: input.chain,
+      error: error instanceof Error ? error.message : String(error),
+      stageTwoFailureBlocksAtomicRescue: false,
+      staleQuotePreserved: false,
+      executionAuthority: false,
+    });
+    return [...input.opportunities];
+  });
+  const stageInput: FairZeroCapitalProfitabilityRescueInput = {
+    ...input,
+    opportunities: stageTwoOpportunities,
+  };
+
   const now = Date.now();
-  const candidates = input.opportunities.flatMap(opportunity => {
+  const candidates = stageInput.opportunities.flatMap(opportunity => {
     if (!recoverable(opportunity, now)) return [];
-    const route = routeForOpportunity(input.configuredRoutes, opportunity);
+    const route = routeForOpportunity(stageInput.configuredRoutes, opportunity);
     if (!route) return [];
     return [{
       opportunityId: opportunity.id,
@@ -89,7 +107,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
   });
 
   if (candidates.length === 0) {
-    return runZeroCapitalProfitabilityRescueV2(input as ZeroCapitalProfitabilityRescueInput);
+    return runZeroCapitalProfitabilityRescueV2(stageInput as ZeroCapitalProfitabilityRescueInput);
   }
 
   const maxCandidates = guaranteedSelectedRouteBudget();
@@ -101,7 +119,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
 
   try {
     const fairness = await selectFairZeroCapitalRescueCandidates({
-      chain: input.chain,
+      chain: stageInput.chain,
       candidates,
       maxCandidates,
     });
@@ -120,7 +138,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     deferredRouteIds = deferred.map(candidate => candidate.routeId);
     logger.warn('[ZeroCapitalProfitabilityRescueFair] Fairness state unavailable; fresh Atomic rescue continues with deterministic in-memory ordering', {
       component: 'ZeroCapitalProfitabilityRescueFair',
-      chain: input.chain,
+      chain: stageInput.chain,
       selectedOpportunityIds: [...selectedOpportunityIds],
       deferredOpportunityIds: [...deferredOpportunityIds],
       error: error instanceof Error ? error.message : String(error),
@@ -135,21 +153,21 @@ export async function runFairZeroCapitalProfitabilityRescue(
   // selected for this cycle, then retain every other fresh route behind them. This
   // preserves bounded work while preventing stable input ordering from starving a
   // recoverable route indefinitely across fairness rotations.
-  const opportunityById = new Map(input.opportunities.map(opportunity => [opportunity.id, opportunity]));
+  const opportunityById = new Map(stageInput.opportunities.map(opportunity => [opportunity.id, opportunity]));
   const selectedFirst = [...selectedOpportunityIds]
     .map(opportunityId => opportunityById.get(opportunityId))
     .filter((opportunity): opportunity is ZeroCapitalOpportunity => Boolean(opportunity));
-  const remainingFresh = input.opportunities.filter(opportunity => !selectedOpportunityIds.has(opportunity.id));
+  const remainingFresh = stageInput.opportunities.filter(opportunity => !selectedOpportunityIds.has(opportunity.id));
   const orderedOpportunities = [...selectedFirst, ...remainingFresh];
 
   const rescued = await runZeroCapitalProfitabilityRescueV2({
-    ...input,
+    ...stageInput,
     opportunities: orderedOpportunities,
   });
 
   logger.info('[ZeroCapitalProfitabilityRescueFair] Recoverable routes observed with non-authoritative fairness', {
     component: 'ZeroCapitalProfitabilityRescueFair',
-    chain: input.chain,
+    chain: stageInput.chain,
     recoverableRoutes: new Set(candidates.map(candidate => candidate.routeId)).size,
     maxCandidates,
     selectedRouteIds,
@@ -157,6 +175,8 @@ export async function runFairZeroCapitalProfitabilityRescue(
     selectedOpportunityIds: [...selectedOpportunityIds],
     deferredOpportunityIds: [...deferredOpportunityIds],
     persistedFairnessAvailable,
+    stageTwoExactReductionRunsBeforeAtomicFairness: true,
+    stageTwoCrossingFeedsAtomicRescueSameCycle: true,
     deferredRemovedFromCurrentExecutionPipeline: false,
     freshRediscoveryRequiredForDeferredRoutes: false,
     fairnessExecutionVetoAuthority: false,
