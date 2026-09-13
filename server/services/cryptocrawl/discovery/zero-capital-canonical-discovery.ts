@@ -80,6 +80,7 @@ let readyReceiverChains = 0;
 let receiverWatchdogExpirations = 0;
 let chainWatchdogExpirations = 0;
 let observationOnlyCycles = 0;
+let filteredBelowStageOneFloor = 0;
 
 function runtime(): CanonicalZeroCapitalRuntime {
   return zeroCapitalEngine as unknown as CanonicalZeroCapitalRuntime;
@@ -98,6 +99,10 @@ function boundedWatchdogMs(raw: string | undefined, fallback: number, min: numbe
 function boundedNumber(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+}
+
+function atomicSurplusEntryFloorBps(): number {
+  return boundedNumber(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10, -100, 0);
 }
 
 function atomicSurplusTargetBps(): number {
@@ -351,7 +356,14 @@ function recordPreselectionCandidate(input: {
     });
   }
 
+  // Preserve raw route evidence for discovery/research, but Stage 1 only promotes
+  // finite Zero-Initial-Capital candidates at or above the configured -10 BPS floor.
   zeroCapitalRouteEvidenceRegistry.record(opportunity);
+  if (!Number.isFinite(opportunity.netProfitBps) || opportunity.netProfitBps < atomicSurplusEntryFloorBps()) {
+    filteredBelowStageOneFloor++;
+    return;
+  }
+
   measuredCandidateRegistry.record({
     opportunityId: opportunity.id,
     topology: 'ZERO_CAPITAL_ATOMIC',
@@ -450,7 +462,11 @@ async function scanOneChain(
     dynamic.push(opportunity);
   }
 
-  const exact = [...configured, ...dynamic].filter(opportunity => opportunity.expiresAt > Date.now());
+  const exact = [...configured, ...dynamic].filter(opportunity =>
+    opportunity.expiresAt > Date.now()
+    && Number.isFinite(opportunity.netProfitBps)
+    && opportunity.netProfitBps >= atomicSurplusEntryFloorBps()
+  );
   if (exact.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
   const rescueReady = await runFairZeroCapitalProfitabilityRescue({
@@ -612,6 +628,9 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     alternativeCapitalAuthority: 'configured_onchain_intermediary_exact_simulation_only',
     alternativeCapitalDoesNotDisplaceTargetClearingFlashSelection: true,
     subtargetFlashSelectionCompletesAtomicSearch: false,
+    stageOneCandidateFloorBps: atomicSurplusEntryFloorBps(),
+    stageOneBelowFloorPromoted: false,
+    rawBelowFloorRouteEvidencePreserved: true,
     atomicSurplusTargetBps: atomicSurplusTargetBps(),
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
@@ -646,6 +665,8 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     lastObservationOnlyReason,
     observed,
     repriced,
+    filteredBelowStageOneFloor,
+    stageOneCandidateFloorBps: atomicSurplusEntryFloorBps(),
     readyReceiverChains,
     receiverWatchdogExpirations,
     chainWatchdogExpirations,
