@@ -26,7 +26,7 @@ function recoverable(opportunity: ZeroCapitalOpportunity, now = Date.now()): boo
   return opportunity.expiresAt > now
     && opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
-    && opportunity.netProfitBps > entryFloorBps()
+    && opportunity.netProfitBps >= entryFloorBps()
     && opportunity.netProfitBps < targetBps();
 }
 
@@ -69,8 +69,8 @@ export interface FairZeroCapitalProfitabilityRescueInput {
 /**
  * Canonical zero-capital handoff wrapper. Stage 2 owns exact measured BPS reduction
  * at/below the entry floor. V2 remains the sole Atomic-surplus transformation engine
- * after a candidate crosses above the configured entry floor. Fairness persistence
- * may order Stage-3 work, but it never grants execution authority or removes a fresh
+ * once a candidate reaches the configured entry band. Fairness persistence may
+ * order Stage-3 work, but it never grants execution authority or removes a fresh
  * candidate from the current pipeline.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
