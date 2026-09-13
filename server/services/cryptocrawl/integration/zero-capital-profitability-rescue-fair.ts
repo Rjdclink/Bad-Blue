@@ -18,7 +18,7 @@ function entryFloorBps(): number {
 }
 
 function targetBps(): number {
-  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 0.000001, 1_000);
+  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 10, 1_000);
 }
 
 function recoverable(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
