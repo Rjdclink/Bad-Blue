@@ -36,7 +36,6 @@ const AAVE_POOL_ABI = [
 const AAVE_POOL_INTERFACE = new ethers.utils.Interface(AAVE_POOL_ABI);
 const ZERO = ethers.constants.AddressZero;
 const BPS_SCALE = 1_000_000n;
-const ATOMIC_MINIMUM_TARGET_BPS = 10;
 
 interface AlternativeCandidate {
   source: GhostWalletAlternativeZeroCapitalSource;
@@ -56,28 +55,6 @@ interface AlternativeCandidate {
 function bpsFromBaseUnits(value: bigint, notional: bigint): number {
   if (notional <= 0n) return Number.NEGATIVE_INFINITY;
   return Number((value * 10_000n * BPS_SCALE) / notional) / Number(BPS_SCALE);
-}
-
-function atomicTargetBps(): number {
-  const configured = Number(
-    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
-    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
-    ?? ATOMIC_MINIMUM_TARGET_BPS,
-  );
-  const finite = Number.isFinite(configured) ? configured : ATOMIC_MINIMUM_TARGET_BPS;
-  return Math.max(ATOMIC_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
-}
-
-function minimumAtomicTargetProfitBaseUnits(opportunity: ZeroCapitalOpportunity): bigint {
-  const scaledBps = BigInt(Math.ceil(atomicTargetBps() * Number(BPS_SCALE)));
-  const denominator = 10_000n * BPS_SCALE;
-  return (opportunity.flashLoanAmount * scaledBps + denominator - 1n) / denominator;
-}
-
-function minimumRequiredNetProfit(opportunity: ZeroCapitalOpportunity): bigint {
-  return opportunity.type === 'ZERO_CAPITAL_ATOMIC'
-    ? minimumAtomicTargetProfitBaseUnits(opportunity)
-    : minimumPositiveProfitBaseUnits();
 }
 
 function scaledGasCost(originalCost: bigint, originalGasUnits: bigint, measuredGasUnits: bigint): bigint {
@@ -130,7 +107,7 @@ function routeSteps(opportunity: ZeroCapitalOpportunity, intermediary: string, p
   // The shared planner's positive-profit check protects execution. During funding
   // repricing, plan from the measured positive gross route value so an expensive
   // incumbent funding source cannot prevent a cheaper Ghost source from being
-  // evaluated. Only simulateCandidate may promote a target-qualified all-in result.
+  // evaluated. Only simulateCandidate may promote a strict-positive all-in result.
   const planningOpportunity = { ...opportunity, expectedProfit: grossProfit };
   const plan = buildFlashLoanExecutionPlanFromOpportunity(planningOpportunity, {
     receiver: intermediary,
@@ -225,7 +202,7 @@ async function simulateCandidate(input: {
   if (!sponsoredZeroCost && (input.opportunity.estimatedGasCostInInputToken || 0n) <= 0n) return null;
 
   const canonicalMinimum = minimumPositiveProfitBaseUnits();
-  const requiredNetProfit = minimumRequiredNetProfit(input.opportunity);
+  const requiredNetProfit = minimumPositiveProfitBaseUnits();
   let prepared = input.build(canonicalMinimum);
   const envelope = { from: input.wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
   await input.provider.call(envelope);
@@ -314,9 +291,7 @@ async function simulateCandidate(input: {
       sponsoredZeroCost
         ? 'execution_gas_operator_cost:zero_proven_sponsored'
         : 'execution_gas_cost:scaled_from_current_canonical_input_token_quote_with_current_fee_data_bound',
-      input.opportunity.type === 'ZERO_CAPITAL_ATOMIC'
-        ? 'atomic_minimum_net:target_bound_10_bps_or_higher'
-        : 'strict_positive_all_in_net_after_source_fee_and_execution_cost',
+      'strict_positive_all_in_net_after_source_fee_and_execution_cost',
       'canonical_flash_provider_behavior_unchanged',
       'synthetic_evidence:false',
     ],
@@ -515,9 +490,8 @@ export async function repriceZeroCapitalAlternativeCapital(input: {
     if (!best) continue;
 
     // Alternative capital is an optimizer, never a downgrade authority. Canonical
-    // flash repricing may already have made the same route positive-but-subtarget;
-    // keep searching toward the Atomic target, but replace that incumbent only
-    // when this exact alternative-capital simulation is strictly better.
+    // flash repricing may already have made the same route positive; replace that
+    // incumbent only when this exact alternative-capital simulation is strictly better.
     const incumbentCandidate = measuredCandidateRegistry.get(opportunity.id);
     const incumbentNetBps = Number(
       incumbentCandidate?.economics.netProfitBps
