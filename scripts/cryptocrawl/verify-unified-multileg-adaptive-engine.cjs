@@ -13,6 +13,7 @@ const source = {
   compatibility: read('server/services/cryptocrawl/optimization/dynamic-execution-path-selector.ts'),
   admission: read('server/services/cryptocrawl/integration/dynamic-profitability-admission-wiring.ts'),
   riskGovernor: read('server/services/cryptocrawl/governance/risk-governor.ts'),
+  gateway: read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts'),
   stack: read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts'),
   compositeRegistry: read('server/services/cryptocrawl/optimization/zero-capital-composite-evidence-registry.ts'),
   compositeSelection: read('server/services/cryptocrawl/execution/zero-capital-composite-selection-registry.ts'),
@@ -26,9 +27,7 @@ const forbid = (key, pattern, label) => {
   if (pattern.test(source[key])) failures.push(`forbidden ${label}: ${pattern}`);
 };
 
-// The generic composite assembler remains advisory and operates on already-positive
-// executable legs. The dedicated zero-capital Atomic BPS composer is the only place
-// where fresh near-misses may be transformed before canonical admission.
+// Generic multileg remains advisory and operates on already-positive executable legs.
 requireText('assembler', 'executionAuthority: false', 'advisory-only composite authority');
 requireText('assembler', 'requiresIndependentFinalAdmission: true', 'independent final admission');
 requireText('assembler', "candidate.status !== 'eligible' || !candidate.executableCapability", 'eligible executable leg requirement');
@@ -60,14 +59,24 @@ requireText('riskGovernor', 'Monte Carlo is advisory', 'Monte Carlo advisory aut
 requireText('riskGovernor', 'monteCarloCheck: true', 'Monte Carlo cannot fail canonical risk approval');
 requireText('riskGovernor', 'duplicateRiskScoreVetoAuthority: false', 'aggregate risk score cannot regain veto authority');
 
-// Atomic BPS composition may inspect fresh near-misses down to the configured -10 BPS
-// entry floor, but promotion requires measured provider fee/liquidity, exact eth_call
-// plus gas measurement, positive composition gain, and strictly positive exact all-in
-// base-unit profit. There is no arbitrary +10 BPS post-Stage-1 target.
-requireText('stack', 'getCompatibleForAtomicSurplus', 'near-miss measurement view');
-requireText('stack', 'ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS', 'atomic surplus entry floor');
+// Shared-principal Atomic composition is no longer an independent registry listener.
+// The same Stage-2 pipeline triggers it in parallel from the already Stage-1-admitted
+// candidate set; therefore the stack has no duplicate configurable -10 threshold.
+requireText('gateway', 'runZeroCapitalAtomicStackTactic', 'single-pipeline composite tactic trigger');
+requireText('gateway', 'compositeTacticInsideSamePipeline: true', 'composite tactic stays inside pipeline');
+requireText('gateway', 'compositeTacticBlocksSingleRouteReturn: false', 'composite tactic cannot delay good single route');
+requireText('gateway', 'independentCompositePromotionLoop: false', 'no second composite promotion loop');
+requireText('stack', 'runZeroCapitalAtomicStackTactic', 'engine-owned composite tactic');
 requireText('stack', 'const STRICT_POSITIVE_PROFIT_BASE_UNITS = 1n;', 'strict-positive base-unit floor');
 requireText('stack', 'const targetNetProfitBaseUnits = STRICT_POSITIVE_PROFIT_BASE_UNITS;', 'compatibility target resolves to strict positivity');
+requireText('stack', 'input_authority:single_atomic_bps_engine_stage1_admitted_candidates', 'Stage-1-admitted input authority');
+requireText('stack', 'stageOneThresholdAuthority: false', 'stack cannot own Stage-1 threshold');
+requireText('stack', 'stageOneEnvironmentThresholdRead: false', 'stack cannot read alternate Stage-1 threshold');
+requireText('stack', 'independentMeasuredCandidateListener: false', 'no independent measured-candidate listener');
+requireText('stack', 'independentPromotionAuthority: false', 'no independent promotion authority');
+requireText('stack', 'parallelVariantMeasurement: true', 'parallel bounded variant measurement');
+forbid('stack', /measuredCandidateRegistry\.onUpdate/, 'independent registry-triggered promotion');
+forbid('stack', /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/, 'duplicate configurable Stage-1 entry floor');
 forbid('stack', /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/, 'retired atomic +10 target variable');
 forbid('stack', /atomicSurplusTargetBps/, 'retired atomic +10 target helper');
 requireText('stack', 'measureBalancerFlashLoanEconomics', 'measured composite provider economics');
@@ -78,9 +87,8 @@ requireText('stack', 'measuredCompositionGain <= 0n', 'composition gain must be 
 requireText('stack', 'combinedExpectedProfit < targetNetProfitBaseUnits', 'strict-positive net floor must be cleared');
 requireText('stack', 'estimatedGas > allowedGas', 'bounded block-gas feasibility');
 requireText('stack', 'zeroCapitalCompositeSelectionRegistry.record(selection)', 'prepared selection registration');
-requireText('stack', 'netDollarOptimizationAfterProfitability: true', 'net-dollar optimization after profitability');
-requireText('stack', 'exactStrictPositiveSimulationPassed: true', 'exact strict-positive simulation proof');
-requireText('stack', 'borrowingNotionalAuthority: false', 'Profit Ladder cannot cap atomic principal');
+requireText('stack', "promotion_authority:single_atomic_bps_engine", 'single pipeline owns promotion');
+requireText('stack', 'profitLadderCompositionVetoAuthority: false', 'Profit Ladder cannot veto composition');
 requireText('compositeRegistry', 'targetNetProfitBaseUnits', 'exact base-unit compatibility binding retained in evidence');
 requireText('compositeRegistry', 'combinedExpectedProfit < input.targetNetProfitBaseUnits', 'evidence rejects nonpositive compatibility result');
 requireText('compositeSelection', 'expectedNetProfit < selection.targetNetProfitBaseUnits', 'prepared selection rejects nonpositive compatibility result');
@@ -94,4 +102,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[unified-multileg-adaptive-engine] PASS: ordinary composite admission remains deterministic-positive; zero-capital near-misses may be transformed only by exact strictly-positive shared-principal evidence before canonical execution, with no arbitrary +10 BPS finish line.');
+console.log('[unified-multileg-adaptive-engine] PASS: ordinary composite admission remains deterministic-positive; zero-capital composition is a parallel tactic inside the one Atomic-BPS pipeline, with exact strictly-positive shared-principal evidence, no duplicate Stage-1 threshold, no independent promotion loop, and no arbitrary +10 BPS finish line.');
