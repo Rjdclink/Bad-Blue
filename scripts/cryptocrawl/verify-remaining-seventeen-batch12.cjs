@@ -69,8 +69,14 @@ assert(atomicSize.includes('bpsToBreakEven') && atomicSize.includes('bestNearMis
 assert(!zeroCapitalCore.includes('runZeroCapitalProfitabilityRescueV2') &&
   zeroCapitalCore.includes('duplicateAtomicRescuePass: false') &&
   zeroCapitalDiscovery.includes("import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';") &&
-  zeroCapitalDiscovery.includes('const rescueReady = await runFairZeroCapitalProfitabilityRescue({'),
-'Atomic rescue must be single-owner in canonical discovery after measurement; core scan must remain measurement-only');
+  zeroCapitalDiscovery.includes('const configuredRescuePromise: Promise<ZeroCapitalOpportunity[]>') &&
+  zeroCapitalDiscovery.includes('opportunities: configuredFresh') &&
+  zeroCapitalDiscovery.includes('const dynamicRescuePromise: Promise<ZeroCapitalOpportunity[]>') &&
+  zeroCapitalDiscovery.includes('opportunities: dynamicFresh') &&
+  zeroCapitalDiscovery.includes('mergeFreshOpportunityStreams([configuredRescueReady, dynamicRescueReady])') &&
+  zeroCapitalDiscovery.includes('configuredStageTwoWaitsForDynamicDiscovery: false') &&
+  zeroCapitalDiscovery.includes('economicFreshnessExtensionAllowed: false'),
+'Atomic rescue must remain single-owner in canonical discovery while configured candidates enter Stage 2 immediately, dynamic discovery runs independently, fresh streams rejoin under the same authority, and economic expiry is never extended');
 assert(zeroCapitalCore.includes('tokenUnitEqualsUsdAssumption: false'), 'zero-capital runtime context must explicitly reject token-unit-equals-USD authority');
 assert(canonicalZeroCapitalExecutor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';"), 'canonical zero-capital executor must use the provider-mesh live price surface');
 assert(canonicalZeroCapitalExecutor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])'), 'canonical zero-capital terminal economics must request live token prices through the mesh');
@@ -132,4 +138,4 @@ assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVe
 assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring())"), 'candidate expiry guard must be isolated and installed');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, self-funded notional rungs isolated from provider-capacity-bounded zero-capital borrowing, Profit Ladder daily-realized-profit-only authority, single-owner fairness-ordered BPS rescue in canonical discovery with measured provider fees/liquidity and live-price-mesh token valuation, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, self-funded notional rungs isolated from provider-capacity-bounded zero-capital borrowing, Profit Ladder daily-realized-profit-only authority, single-owner fairness-ordered BPS rescue in canonical discovery with an immediate configured Stage-2 fast path plus independent dynamic rescue, measured provider fees/liquidity and live-price-mesh token valuation, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
