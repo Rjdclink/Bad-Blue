@@ -36,6 +36,7 @@ const AAVE_POOL_ABI = [
 const AAVE_POOL_INTERFACE = new ethers.utils.Interface(AAVE_POOL_ABI);
 const ZERO = ethers.constants.AddressZero;
 const BPS_SCALE = 1_000_000n;
+const ATOMIC_MINIMUM_TARGET_BPS = 10;
 
 interface AlternativeCandidate {
   source: GhostWalletAlternativeZeroCapitalSource;
@@ -55,6 +56,28 @@ interface AlternativeCandidate {
 function bpsFromBaseUnits(value: bigint, notional: bigint): number {
   if (notional <= 0n) return Number.NEGATIVE_INFINITY;
   return Number((value * 10_000n * BPS_SCALE) / notional) / Number(BPS_SCALE);
+}
+
+function atomicTargetBps(): number {
+  const configured = Number(
+    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
+    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
+    ?? ATOMIC_MINIMUM_TARGET_BPS,
+  );
+  const finite = Number.isFinite(configured) ? configured : ATOMIC_MINIMUM_TARGET_BPS;
+  return Math.max(ATOMIC_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
+}
+
+function minimumAtomicTargetProfitBaseUnits(opportunity: ZeroCapitalOpportunity): bigint {
+  const scaledBps = BigInt(Math.ceil(atomicTargetBps() * Number(BPS_SCALE)));
+  const denominator = 10_000n * BPS_SCALE;
+  return (opportunity.flashLoanAmount * scaledBps + denominator - 1n) / denominator;
+}
+
+function minimumRequiredNetProfit(opportunity: ZeroCapitalOpportunity): bigint {
+  return opportunity.type === 'ZERO_CAPITAL_ATOMIC'
+    ? minimumAtomicTargetProfitBaseUnits(opportunity)
+    : minimumPositiveProfitBaseUnits();
 }
 
 function scaledGasCost(originalCost: bigint, originalGasUnits: bigint, measuredGasUnits: bigint): bigint {
@@ -107,7 +130,7 @@ function routeSteps(opportunity: ZeroCapitalOpportunity, intermediary: string, p
   // The shared planner's positive-profit check protects execution. During funding
   // repricing, plan from the measured positive gross route value so an expensive
   // incumbent funding source cannot prevent a cheaper Ghost source from being
-  // evaluated. Only simulateCandidate may promote a newly positive all-in result.
+  // evaluated. Only simulateCandidate may promote a target-qualified all-in result.
   const planningOpportunity = { ...opportunity, expectedProfit: grossProfit };
   const plan = buildFlashLoanExecutionPlanFromOpportunity(planningOpportunity, {
     receiver: intermediary,
@@ -201,8 +224,9 @@ async function simulateCandidate(input: {
   // route-specific gas-unit measurement before promotion.
   if (!sponsoredZeroCost && (input.opportunity.estimatedGasCostInInputToken || 0n) <= 0n) return null;
 
-  const minimumUnit = minimumPositiveProfitBaseUnits();
-  let prepared = input.build(minimumUnit);
+  const canonicalMinimum = minimumPositiveProfitBaseUnits();
+  const requiredNetProfit = minimumRequiredNetProfit(input.opportunity);
+  let prepared = input.build(canonicalMinimum);
   const envelope = { from: input.wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
   await input.provider.call(envelope);
   const gas = await input.provider.estimateGas(envelope);
@@ -214,27 +238,61 @@ async function simulateCandidate(input: {
   );
   const operatorGasCost = sponsoredZeroCost ? 0n : measuredGasCost;
   const relayFee = input.opportunity.relayFeeInInputToken || 0n;
-  const requiredOnchainResidual = operatorGasCost + relayFee + minimumUnit;
+  let requiredOnchainResidual = operatorGasCost + relayFee + requiredNetProfit;
   prepared = input.build(requiredOnchainResidual);
-  const exactEnvelope = { from: input.wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
+  let exactEnvelope = { from: input.wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
   await input.provider.call(exactEnvelope);
-  const [exactGas, feeData] = await Promise.all([
+  let [exactGas, feeData] = await Promise.all([
     input.provider.estimateGas(exactEnvelope),
     sponsoredZeroCost ? Promise.resolve(null) : input.provider.getFeeData(),
   ]);
-  const exactGasUnits = BigInt(exactGas.toString());
+  let exactGasUnits = BigInt(exactGas.toString());
   const expectedGasPrice = feeData ? expectedExecutionGasPriceWei(feeData) : 0n;
   if (!sponsoredZeroCost && expectedGasPrice <= 0n) return null;
-  const exactMeasuredGasCost = scaledGasCost(
+  let exactMeasuredGasCost = scaledGasCost(
     input.opportunity.estimatedGasCostInInputToken || 0n,
     input.opportunity.gasEstimate,
     exactGasUnits,
   );
-  const exactOperatorGasCost = sponsoredZeroCost ? 0n : exactMeasuredGasCost;
+  let exactOperatorGasCost = sponsoredZeroCost ? 0n : exactMeasuredGasCost;
+  const exactRequiredOnchainResidual = exactOperatorGasCost + relayFee + requiredNetProfit;
+  if (exactRequiredOnchainResidual !== requiredOnchainResidual) {
+    requiredOnchainResidual = exactRequiredOnchainResidual;
+    prepared = input.build(requiredOnchainResidual);
+    exactEnvelope = { from: input.wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
+    await input.provider.call(exactEnvelope);
+    exactGas = await input.provider.estimateGas(exactEnvelope);
+    const finalGasUnits = BigInt(exactGas.toString());
+    if (finalGasUnits > exactGasUnits) {
+      exactGasUnits = finalGasUnits;
+      exactMeasuredGasCost = scaledGasCost(
+        input.opportunity.estimatedGasCostInInputToken || 0n,
+        input.opportunity.gasEstimate,
+        exactGasUnits,
+      );
+      exactOperatorGasCost = sponsoredZeroCost ? 0n : exactMeasuredGasCost;
+      const finalRequiredOnchainResidual = exactOperatorGasCost + relayFee + requiredNetProfit;
+      if (finalRequiredOnchainResidual > requiredOnchainResidual) {
+        requiredOnchainResidual = finalRequiredOnchainResidual;
+        prepared = input.build(requiredOnchainResidual);
+        exactEnvelope = { from: input.wallet.address, to: prepared.to, data: prepared.data, value: prepared.value };
+        await input.provider.call(exactEnvelope);
+        exactGas = await input.provider.estimateGas(exactEnvelope);
+        exactGasUnits = BigInt(exactGas.toString());
+        exactMeasuredGasCost = scaledGasCost(
+          input.opportunity.estimatedGasCostInInputToken || 0n,
+          input.opportunity.gasEstimate,
+          exactGasUnits,
+        );
+        exactOperatorGasCost = sponsoredZeroCost ? 0n : exactMeasuredGasCost;
+        if (exactOperatorGasCost + relayFee + requiredNetProfit > requiredOnchainResidual) return null;
+      }
+    }
+  }
   const grossProfit = grossProfitForFundingReprice(input.opportunity);
   const allInCost = input.sourceFee + exactOperatorGasCost + relayFee;
   const netProfit = grossProfit - allInCost;
-  if (netProfit <= 0n) return null;
+  if (netProfit < requiredNetProfit) return null;
 
   return {
     source: input.source,
@@ -256,7 +314,9 @@ async function simulateCandidate(input: {
       sponsoredZeroCost
         ? 'execution_gas_operator_cost:zero_proven_sponsored'
         : 'execution_gas_cost:scaled_from_current_canonical_input_token_quote_with_current_fee_data_bound',
-      'strict_positive_all_in_net_after_source_fee_and_execution_cost',
+      input.opportunity.type === 'ZERO_CAPITAL_ATOMIC'
+        ? 'atomic_minimum_net:target_bound_10_bps_or_higher'
+        : 'strict_positive_all_in_net_after_source_fee_and_execution_cost',
       'canonical_flash_provider_behavior_unchanged',
       'synthetic_evidence:false',
     ],
