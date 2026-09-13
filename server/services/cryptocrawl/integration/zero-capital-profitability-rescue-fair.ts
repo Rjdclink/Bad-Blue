@@ -18,16 +18,11 @@ function entryFloorBps(): number {
   return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10, -100, 0);
 }
 
-function targetBps(): number {
-  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 10, 1_000);
-}
-
 function recoverable(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
   return opportunity.expiresAt > now
     && opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
-    && opportunity.netProfitBps >= entryFloorBps()
-    && opportunity.netProfitBps < targetBps();
+    && opportunity.netProfitBps >= entryFloorBps();
 }
 
 function routeForOpportunity(
@@ -46,9 +41,9 @@ function routeFamily(route: ConfiguredZeroCapitalRoute): string {
 
 function freshPriority(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
   const remainingLifetime = Math.max(1, opportunity.expiresAt - now);
-  const targetGap = Math.max(0.000001, targetBps() - opportunity.netProfitBps);
+  const breakEvenGap = Math.max(0, -opportunity.netProfitBps);
   const confidence = Math.max(0.01, Math.min(1, opportunity.confidence));
-  return confidence * Math.log1p(remainingLifetime) / targetGap;
+  return confidence * Math.log1p(remainingLifetime) / (1 + breakEvenGap);
 }
 
 function guaranteedSelectedRouteBudget(): number {
@@ -71,7 +66,7 @@ export interface FairZeroCapitalProfitabilityRescueInput {
  * callback. Calling that method through a different object changes JavaScript's
  * `this`, which makes the engine's private expectedSlippageBps() helper
  * unreachable. Bind the supplied converter to the canonical runtime once at the
- * rescue boundary so Stage 2 and Atomic rescue use the same proven conversion
+ * rescue boundary so BPS reduction and Atomic rescue use the same proven conversion
  * logic without duplicating slippage economics.
  */
 function bindCanonicalQuoteConverter(
@@ -81,11 +76,11 @@ function bindCanonicalQuoteConverter(
 }
 
 /**
- * Canonical zero-capital handoff wrapper. Stage 2 owns exact measured BPS reduction
- * at/below the entry floor. V2 remains the sole Atomic-surplus transformation engine
- * once a candidate reaches the configured entry band. Fairness persistence may
- * order Stage-3 work, but it never grants execution authority or removes a fresh
- * candidate from the current pipeline.
+ * Canonical zero-capital handoff wrapper. The existing bounded BPS-reduction pass
+ * remains first for this change and its exact measured successor is handed directly
+ * to Atomic rescue. Neither side owns execution authority and neither may require an
+ * arbitrary positive BPS target: exact strict-positive all-in economics is the only
+ * profitability finish line. Dynamic one-path selection is introduced separately.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
@@ -96,11 +91,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
     fromQuotedRoute,
   };
   const stageTwoOpportunities = await runStageTwoZeroCapitalBpsReduction(stageTwoInput).catch(error => {
-    logger.warn('[ZeroCapitalProfitabilityRescueFair] Stage 2 zero-capital BPS reduction degraded; original fresh candidates retained for Atomic rescue', {
+    logger.warn('[ZeroCapitalProfitabilityRescueFair] BPS reduction degraded; original fresh candidates retained for Atomic rescue', {
       component: 'ZeroCapitalProfitabilityRescueFair',
       chain: input.chain,
       error: error instanceof Error ? error.message : String(error),
-      stageTwoFailureBlocksAtomicRescue: false,
+      bpsReductionFailureBlocksAtomicRescue: false,
       staleQuotePreserved: false,
       executionAuthority: false,
     });
@@ -155,7 +150,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     deferredOpportunityIds = new Set(deferred.map(candidate => candidate.opportunityId));
     selectedRouteIds = selected.map(candidate => candidate.routeId);
     deferredRouteIds = deferred.map(candidate => candidate.routeId);
-    logger.warn('[ZeroCapitalProfitabilityRescueFair] Fairness state unavailable; fresh Atomic rescue continues with deterministic in-memory ordering', {
+    logger.warn('[ZeroCapitalProfitabilityRescueFair] Fairness state unavailable; fresh Atomic BPS rescue continues with deterministic in-memory ordering', {
       component: 'ZeroCapitalProfitabilityRescueFair',
       chain: stageInput.chain,
       selectedOpportunityIds: [...selectedOpportunityIds],
@@ -169,9 +164,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
 
   // Fairness never removes a fresh candidate from the economic search. Put the
   // bounded fairness selection first so V2's shared quote budget reaches the routes
-  // selected for this cycle, then retain every other fresh route behind them. This
-  // preserves bounded work while preventing stable input ordering from starving a
-  // recoverable route indefinitely across fairness rotations.
+  // selected for this cycle, then retain every other fresh route behind them.
   const opportunityById = new Map(stageInput.opportunities.map(opportunity => [opportunity.id, opportunity]));
   const selectedFirst = [...selectedOpportunityIds]
     .map(opportunityId => opportunityById.get(opportunityId))
@@ -194,8 +187,9 @@ export async function runFairZeroCapitalProfitabilityRescue(
     selectedOpportunityIds: [...selectedOpportunityIds],
     deferredOpportunityIds: [...deferredOpportunityIds],
     persistedFairnessAvailable,
-    stageTwoExactReductionRunsBeforeAtomicFairness: true,
-    stageTwoCrossingFeedsAtomicRescueSameCycle: true,
+    bpsReductionRunsBeforeAtomicForThisChange: true,
+    exactMeasuredSuccessorFeedsAtomicSameCycle: true,
+    profitabilityFinishLine: 'strict_positive_all_in_base_units',
     deferredRemovedFromCurrentExecutionPipeline: false,
     freshRediscoveryRequiredForDeferredRoutes: false,
     fairnessExecutionVetoAuthority: false,

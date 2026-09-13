@@ -47,10 +47,6 @@ function atomicSurplusEntryFloorBps(): number {
   return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10, -100, 0);
 }
 
-function atomicSurplusTargetBps(): number {
-  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 10, 1_000);
-}
-
 function bpsFromBaseUnits(value: bigint, notional: bigint): number {
   if (notional <= 0n) return Number.NaN;
   return Number((value * 10_000n * BPS_PRECISION_SCALE) / notional) / Number(BPS_PRECISION_SCALE);
@@ -94,20 +90,18 @@ function grossProfit(opportunity: ZeroCapitalOpportunity): bigint {
 }
 
 /**
- * The BPS reducer hands near-misses to the atomic-capital phase. The entry window
- * is intentionally about measured all-in NET BPS, not about the sign of the seed
- * candidate: Atomic retains ownership from the configured entry floor until the
- * configured target is actually reached. It still cannot manufacture economics;
- * only an exact requote that repays principal/costs and clears the target advances.
+ * Atomic BPS rescue owns fresh candidates from the Stage-1 entry floor upward.
+ * Break-even is not the finish line and no arbitrary positive BPS target exists:
+ * only exact all-in expectedProfit > 0n can become profitable, while already
+ * positive candidates may keep participating when a strict economic improvement
+ * is available inside the bounded quote budget.
  */
 function recoverableByAtomicSurplus(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
   const floorBps = atomicSurplusEntryFloorBps();
-  const targetBps = atomicSurplusTargetBps();
   return opportunity.expiresAt > now
     && opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
-    && opportunity.netProfitBps >= floorBps
-    && opportunity.netProfitBps < targetBps;
+    && opportunity.netProfitBps >= floorBps;
 }
 
 function routeForOpportunity(routes: readonly ConfiguredZeroCapitalRoute[], opportunity: ZeroCapitalOpportunity): ConfiguredZeroCapitalRoute | null {
@@ -176,7 +170,7 @@ function bpsRescueContext(opportunity: ZeroCapitalOpportunity): ZeroCapitalBpsRe
 function candidateFactors(opportunity: ZeroCapitalOpportunity, context: ZeroCapitalBpsRescueContext | null): number[] {
   const sharedResidualFractions = context?.plan.residualNotionalFractions
     .filter(fraction => Number.isFinite(fraction) && fraction > 0 && fraction < 1) ?? [];
-  const gap = Math.max(0, atomicSurplusTargetBps() - opportunity.netProfitBps);
+  const gapToBreakEvenBps = Math.max(0, -opportunity.netProfitBps);
   const gasPressureBps = opportunity.flashLoanAmount > 0n
     ? bpsFromBaseUnits(opportunity.estimatedExecutionCostInInputToken, opportunity.flashLoanAmount)
     : 0;
@@ -186,7 +180,7 @@ function candidateFactors(opportunity: ZeroCapitalOpportunity, context: ZeroCapi
     local = [0.35, 0.5, 0.7, 0.85, 1, 1.25, 1.5];
   } else if (context?.dominantCostDriver === 'gas' || context?.dominantCostDriver === 'relay' || context?.dominantCostDriver === 'bridge') {
     local = [0.5, 0.75, 1, 1.5, 2, 3, 5, 8];
-  } else if (gap <= 15) {
+  } else if (gapToBreakEvenBps <= 15) {
     local = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 5];
   } else if (gasPressureBps >= 25) {
     local = [0.75, 1, 1.5, 2, 3, 5, 8];
@@ -247,7 +241,11 @@ function candidateSizes(
     if (lower < 0 && upper >= candidates.length) break;
   }
   selected.add(candidates[candidates.length - 1]);
-  return [...selected].sort((a, b) => a - b).slice(0, maxCandidates - 1).concat(candidates[candidates.length - 1]).filter((value, index, values) => index === 0 || value !== values[index - 1]);
+  return [...selected]
+    .sort((a, b) => a - b)
+    .slice(0, maxCandidates - 1)
+    .concat(candidates[candidates.length - 1])
+    .filter((value, index, values) => index === 0 || value !== values[index - 1]);
 }
 
 function quoteFitsDailyProfitBudget(
@@ -262,17 +260,21 @@ function quoteFitsDailyProfitBudget(
   return expectedNetProfitUsd > 0 && expectedNetProfitUsd <= budget.remainingProfitUsd + 0.01;
 }
 
+function clearsStrictProfitability(candidate: QuotedZeroCapitalRoute): boolean {
+  return candidate.netProfit > 0n && candidate.executablePositive === true;
+}
+
 function quoteBetter(
   current: QuotedZeroCapitalRoute | null,
   candidate: QuotedZeroCapitalRoute,
 ): QuotedZeroCapitalRoute {
   if (!current) return candidate;
-  const target = atomicSurplusTargetBps();
-  const candidateClearsTarget = candidate.netProfit > 0n && candidate.netProfitBps >= target;
-  const currentClearsTarget = current.netProfit > 0n && current.netProfitBps >= target;
-  if (candidateClearsTarget !== currentClearsTarget) return candidateClearsTarget ? candidate : current;
-  if (candidateClearsTarget && currentClearsTarget) {
+  const candidateProfitable = clearsStrictProfitability(candidate);
+  const currentProfitable = clearsStrictProfitability(current);
+  if (candidateProfitable !== currentProfitable) return candidateProfitable ? candidate : current;
+  if (candidateProfitable && currentProfitable) {
     if (candidate.netProfit !== current.netProfit) return candidate.netProfit > current.netProfit ? candidate : current;
+    if (candidate.netProfitBps !== current.netProfitBps) return candidate.netProfitBps > current.netProfitBps ? candidate : current;
     return candidate.quoteLatencyMs < current.quoteLatencyMs ? candidate : current;
   }
   if (candidate.netProfitBps !== current.netProfitBps) return candidate.netProfitBps > current.netProfitBps ? candidate : current;
@@ -281,13 +283,10 @@ function quoteBetter(
 }
 
 function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZeroCapitalRoute): boolean {
+  if (candidate.netProfit !== original.expectedProfit) return candidate.netProfit > original.expectedProfit;
   return Number.isFinite(candidate.netProfitBps)
     && Number.isFinite(original.netProfitBps)
     && candidate.netProfitBps > original.netProfitBps;
-}
-
-function clearsAtomicSurplusTarget(candidate: QuotedZeroCapitalRoute): boolean {
-  return candidate.netProfit > 0n && candidate.netProfitBps >= atomicSurplusTargetBps();
 }
 
 function rescuePriority(opportunity: ZeroCapitalOpportunity, context: ZeroCapitalBpsRescueContext | null, now = Date.now()): number {
@@ -296,9 +295,9 @@ function rescuePriority(opportunity: ZeroCapitalOpportunity, context: ZeroCapita
   const routeLifetimeMs = Math.max(250, opportunity.expiresAt - opportunity.timestamp);
   const configuredHalfLife = bounded(process.env.ZERO_CAPITAL_RESCUE_HALF_LIFE_MS, routeLifetimeMs / 2, 250, 120_000);
   const agePenalty = Math.exp(-ageMs / Math.min(configuredHalfLife, routeLifetimeMs));
-  const targetGap = Math.max(0.01, atomicSurplusTargetBps() - opportunity.netProfitBps);
+  const breakEvenGap = Math.max(0, -opportunity.netProfitBps);
   const confidence = Math.max(0.05, Math.min(1, opportunity.confidence));
-  const basePriority = (1 / targetGap) * confidence * agePenalty;
+  const basePriority = confidence * agePenalty / (1 + breakEvenGap);
   const superPriority = context?.plan.effectivePriorityScore;
   return superPriority !== undefined && Number.isFinite(superPriority) && superPriority > 0
     ? basePriority * superPriority
@@ -349,7 +348,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   try {
     dailyProfitBudget = await getProfitLadderDailyProfitBudget();
   } catch (error) {
-    logger.debug('[ZeroCapitalProfitabilityRescueV2] Daily profit budget unavailable for telemetry; Atomic measurement continues without changing execution authority', {
+    logger.debug('[ZeroCapitalProfitabilityRescueV2] Daily profit budget unavailable for telemetry; Atomic BPS measurement continues without changing execution authority', {
       component: 'ZeroCapitalProfitabilityRescueV2',
       chain,
       error: error instanceof Error ? error.message : String(error),
@@ -363,9 +362,8 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   const minimumRemainingLifetimeMs = bounded(process.env.ZERO_CAPITAL_RESCUE_MIN_REMAINING_LIFETIME_MS, 500, 100, 5_000);
   let remainingQuoteBudget = totalQuoteBudget;
   let improved = 0;
-  let positivesRecovered = 0;
-  let targetSurplusRecovered = 0;
-  let budgetRejectedTargetQuotes = 0;
+  let strictPositiveRecoveries = 0;
+  let budgetOutsideTelemetryQuotes = 0;
   let staleProviderEvidenceRejected = 0;
   let insufficientLiquidityRejected = 0;
   let expiredBeforeRequote = 0;
@@ -439,12 +437,12 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
           const adjusted = adjustForProvider(result.value, evidence);
           if (!adjusted) continue;
           if (
-            clearsAtomicSurplusTarget(adjusted)
+            clearsStrictProfitability(adjusted)
             && !quoteFitsDailyProfitBudget(adjusted, route.inputTokenDecimals, inputTokenUsdPrice, dailyProfitBudget)
           ) {
             // Profit Ladder is realized-profit telemetry/control only for this lane.
-            // A target-clearing deterministic Atomic quote must not be discarded.
-            budgetRejectedTargetQuotes += 1;
+            // A strictly profitable deterministic Atomic BPS quote must not be discarded.
+            budgetOutsideTelemetryQuotes += 1;
           }
           best = quoteBetter(best, adjusted);
         }
@@ -454,11 +452,11 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
       if (bpsContext) {
         recordBpsRevalidationOutcome(bpsContext.plan, {
           deterministicPositive: best?.netProfit && best.netProfit > 0n ? 1 : 0,
-          eligibleCandidates: best && clearsAtomicSurplusTarget(best) ? 1 : 0,
+          eligibleCandidates: best && clearsStrictProfitability(best) ? 1 : 0,
         });
       }
 
-      if (!best || !strictImprovement(opportunity, best) || !clearsAtomicSurplusTarget(best)) {
+      if (!best || !strictImprovement(opportunity, best) || !clearsStrictProfitability(best)) {
         output.push(opportunity);
         continue;
       }
@@ -471,11 +469,8 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
       }
       output.push(refined);
       improved += 1;
-      if (best.netProfit > 0n) {
-        positivesRecovered += 1;
-        targetSurplusRecovered += 1;
-        if (bpsContext) bpsSuperEnginePositiveRecoveries += 1;
-      }
+      strictPositiveRecoveries += 1;
+      if (bpsContext) bpsSuperEnginePositiveRecoveries += 1;
     } catch (error) {
       output.push(opportunity);
       if (bpsContext) recordBpsRevalidationOutcome(bpsContext.plan, { deterministicPositive: 0, eligibleCandidates: 0 });
@@ -489,7 +484,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     }
   }
 
-  logger.info('[ZeroCapitalProfitabilityRescueV2] Canonical measured rescue pass completed', {
+  logger.info('[ZeroCapitalProfitabilityRescueV2] Canonical measured Atomic BPS rescue pass completed', {
     component: 'ZeroCapitalProfitabilityRescueV2',
     chain,
     rescueRoutes: rescueIds.size,
@@ -497,12 +492,11 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     remainingQuoteBudget,
     minimumRemainingLifetimeMs,
     improved,
-    positivesRecovered,
-    targetSurplusRecovered,
+    strictPositiveRecoveries,
     atomicSurplusEntryFloorBps: atomicSurplusEntryFloorBps(),
-    atomicSurplusTargetBps: atomicSurplusTargetBps(),
+    profitabilityFinishLine: 'strict_positive_all_in_base_units',
+    budgetOutsideTelemetryQuotes,
     outsideAtomicSurplusWindow,
-    budgetRejectedTargetQuotes,
     profitLadderTierId: dailyProfitBudget?.tierId ?? null,
     profitLadderDailyCapUsd: dailyProfitBudget?.dailyProfitCapUsd ?? null,
     profitLadderRealizedProfitUsd: dailyProfitBudget?.realizedProfitUsd ?? null,
@@ -528,10 +522,10 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     providerLiquidityHeadroomRequired: true,
     providerUtilizationBounded: true,
     adaptiveGapAwareSizing: true,
-    netDollarOptimizationAboveTarget: true,
+    netDollarOptimizationAfterProfitability: true,
     grossPositiveRequiredForAtomicSurplusRescue: false,
     atomicBorrowingIndependentOfProfitLadderNotional: true,
-    exactTargetSurplusRequiredBeforePromotion: true,
+    exactStrictPositiveRequiredBeforePromotion: true,
     principalRepaymentAndFlashFeeIncludedInNetEconomics: true,
     routeFamilyDiversity: true,
     strictImprovementRequired: true,

@@ -102,17 +102,8 @@ function boundedWatchdogMs(raw: string | undefined, fallback: number, min: numbe
   return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback;
 }
 
-function boundedNumber(raw: unknown, fallback: number, min: number, max: number): number {
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
-}
-
 function atomicSurplusEntryFloorBps(): number {
   return STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS;
-}
-
-function atomicSurplusTargetBps(): number {
-  return boundedNumber(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 10, 1_000);
 }
 
 function receiverFleetWatchdogMs(): number {
@@ -493,10 +484,10 @@ async function scanOneChain(
   });
   if (rescueReady.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
-  // Preserve the flash mesh as the first measured capital-source path. A flash
-  // result only completes Atomic search when it clears the configured target;
-  // positive-but-subtarget results remain available to alternative capital and
-  // composite rescue rather than suppressing those compatible paths.
+  // Preserve the flash mesh as the first measured capital-source path. A fresh
+  // flash result completes this profitability search only when exact all-in base
+  // units are strictly positive. Non-profitable results remain eligible for the
+  // compatible alternative-capital fallback; no arbitrary positive BPS target exists.
   const selected = await repriceZeroCapitalProviderEconomics({
     chain,
     provider,
@@ -519,13 +510,10 @@ async function scanOneChain(
     },
   });
   if (!isCurrentChainScanGeneration(chain, generation)) return;
-  const flashTargetClearingIds = new Set(selected
-    .filter(opportunity => Number.isFinite(opportunity.netProfitBps) && opportunity.netProfitBps >= atomicSurplusTargetBps())
+  const flashStrictPositiveIds = new Set(selected
+    .filter(opportunity => opportunity.expectedProfit > 0n && Number.isFinite(opportunity.netProfitBps))
     .map(opportunity => opportunity.id));
-  // Compatibility name is intentionally scoped to the target-clearing set so the
-  // existing regression verifier continues to assert the canonical handoff without
-  // restoring the old behavior where any merely-positive flash result ended search.
-  const flashSelectedIds = flashTargetClearingIds;
+  const flashSelectedIds = flashStrictPositiveIds;
   const remaining = rescueReady.filter(opportunity => !flashSelectedIds.has(opportunity.id));
   const alternatives = await repriceZeroCapitalAlternativeCapital({
     chain,
@@ -534,13 +522,13 @@ async function scanOneChain(
     executionWallets: target.executionWallets,
     getGasFundingDecision: selectedChain => strictFunding(target, selectedChain),
   }).catch(error => {
-    logger.debug('[ZeroCapitalDiscovery] Alternative atomic-capital fallback failed closed without disturbing target-clearing flash-provider selection', {
+    logger.debug('[ZeroCapitalDiscovery] Alternative atomic-capital fallback failed closed without disturbing strictly-profitable flash-provider selection', {
       component: 'CanonicalZeroCapitalDiscovery',
       chain,
       error: error instanceof Error ? error.message : String(error),
       flashProviderSelectionsObserved: selected.length,
-      flashProviderTargetClearingSelections: flashTargetClearingIds.size,
-      subtargetFlashCandidatesRemainRescueEligible: true,
+      flashProviderStrictPositiveSelections: flashStrictPositiveIds.size,
+      nonProfitableFlashCandidatesRemainFallbackEligible: true,
       executionAuthority: false,
     });
     return [] as ZeroCapitalOpportunity[];
@@ -632,13 +620,13 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     gasFundingAuthority: 'getProvenZeroCapitalGasFundingDecision',
     receiverSetupAuthority: 'canonical_discovery_resource_stage_with_system_owned_native_reservations',
     alternativeCapitalAuthority: 'configured_onchain_intermediary_exact_simulation_only',
-    alternativeCapitalDoesNotDisplaceTargetClearingFlashSelection: true,
-    subtargetFlashSelectionCompletesAtomicSearch: false,
+    alternativeCapitalDoesNotDisplaceStrictPositiveFlashSelection: true,
+    nonProfitableFlashSelectionCompletesProfitabilitySearch: false,
     stageOneCandidateFloorBps: atomicSurplusEntryFloorBps(),
     stageOneBelowFloorPromoted: false,
     rawBelowFloorRouteEvidencePreserved: true,
     stageOneLock: 'explicit_operator_authorization_required',
-    atomicSurplusTargetBps: atomicSurplusTargetBps(),
+    profitabilityFinishLine: 'strict_positive_all_in_base_units',
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
     chainScanWatchdogMs: chainScanWatchdogMs(),
@@ -675,6 +663,7 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     filteredBelowStageOneFloor,
     stageOneCandidateFloorBps: atomicSurplusEntryFloorBps(),
     stageOneLock: 'explicit_operator_authorization_required',
+    profitabilityFinishLine: 'strict_positive_all_in_base_units',
     readyReceiverChains,
     receiverWatchdogExpirations,
     chainWatchdogExpirations,
