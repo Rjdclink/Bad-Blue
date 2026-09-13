@@ -8,9 +8,11 @@ export interface AtomicBpsAnytimeRaceResult<T> {
   elapsedMs: number;
 }
 
-type Settled<T> =
+export type AtomicBpsAnytimeConsumed<T> =
   | { index: number; status: 'fulfilled'; value: T }
   | { index: number; status: 'rejected'; error: unknown };
+
+type Settled<T> = AtomicBpsAnytimeConsumed<T>;
 
 interface PendingState<T> {
   settled: boolean;
@@ -56,6 +58,7 @@ export async function runAtomicBpsAnytimeRace<T>(input: {
   deadlineAt: number;
   acceptable: (value: T) => boolean;
   better: (current: T | null, candidate: T) => T;
+  onConsumed?: (outcome: AtomicBpsAnytimeConsumed<T>) => void;
 }): Promise<AtomicBpsAnytimeRaceResult<T>> {
   const startedAt = Date.now();
   if (input.tasks.length === 0 || input.deadlineAt <= startedAt) {
@@ -99,6 +102,7 @@ export async function runAtomicBpsAnytimeRace<T>(input: {
     if (state.consumed) return;
     state.consumed = true;
     completed += 1;
+    input.onConsumed?.(outcome);
     if (outcome.status === 'rejected') {
       rejected += 1;
       return;
