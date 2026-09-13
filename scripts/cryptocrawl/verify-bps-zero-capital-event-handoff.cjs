@@ -47,14 +47,14 @@ assert.match(registry, /targetClearing: nets\.filter\(net => net >= 10\)\.length
 assert.match(registry, /zeroCapitalBps: \{/);
 assert.match(registry, /canonicalBps: buildCanonicalBps\(economics, updatedAt\)/);
 
-// Candidate updates immediately wake the existing bounded BPS Super Engine pass,
-// but the shared configured entry floor is a single-owner seam: BPS reduction owns
-// only values below the floor; the floor through the +10 target is Atomic-owned.
+// Candidate updates immediately wake the existing bounded BPS Super Engine pass.
+// Stage 2 owns values at or below the configured entry floor and must reduce them
+// strictly above that floor before Atomic rescue may own the floor-to-+10 range.
 assert.match(transformation, /function scheduleCandidateRefresh\(\): void/);
 assert.match(transformation, /candidateRefreshTimer = setTimeout\([\s\S]{0,160}refresh\(\)/);
 assert.match(transformation, /measuredCandidateRegistry\.onUpdate\(candidate => \{[\s\S]{0,260}scheduleCandidateRefresh\(\)/);
 assert.match(transformation, /function bpsReductionOwnershipFloorBps\(\): number[\s\S]{0,220}ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
-assert.match(transformation, /advice\.netProfitBps === null \|\| advice\.netProfitBps >= bpsReductionOwnershipFloorBps\(\)/);
+assert.match(transformation, /advice\.netProfitBps === null \|\| advice\.netProfitBps > bpsReductionOwnershipFloorBps\(\)/);
 assert.match(transformation, /item\.advice\.netProfitBps !== null && item\.advice\.netProfitBps < reductionOwnershipFloor/);
 assert.match(transformation, /item\.bpsToBreakEven > reductionGapFloor/);
 assert.match(transformation, /atomicRescueBandExcludedFromBpsActuation: true/);
@@ -86,7 +86,7 @@ for (const topology of [
 }
 assert.match(coordinator, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 assert.match(coordinator, /getAtomicZeroCapitalStrategyCoverage\(candidate\.topology\)/);
-assert.match(coordinator, /else if \(netBps < entry\)/);
+assert.match(coordinator, /else if \(netBps <= entry\)/);
 assert.match(coordinator, /else if \(netBps < target\)/);
 assert.match(coordinator, /normalStrictPositiveExecutionMayProceed: netBps !== null && netBps > 0/);
 assert.match(coordinator, /previous\?\.state === 'bps_reduction_owned' && next\.state === 'atomic_rescue_owned'/);
@@ -104,4 +104,4 @@ assert.doesNotMatch(coordinator, /canonicalBps\.[A-Za-z]+\s*=/);
 assert.match(coordinator, /venues\.has\('polymarket'\)[\s\S]{0,120}discoverPredictionMarketParityOpportunities\(\)/, 'Polymarket prediction rescue must reacquire Polymarket evidence rather than substituting Kalshi');
 assert.match(coordinator, /venues\.has\('kalshi'\)[\s\S]{0,160}refreshKalshiSystemEvidenceNow\(\)/, 'Kalshi prediction rescue must remain on the canonical Kalshi evidence path');
 
-console.log('[bps-zero-capital-event-handoff] PASS: one canonical BPS seam owns the -10 boundary; BPS actuation remains below the shared entry floor, Atomic owns entry-floor-through-target rescue, topology/venue-specific reacquisition stays intact, strict-positive execution is unchanged, and no synthetic or parallel economics authority is introduced');
+console.log('[bps-zero-capital-event-handoff] PASS: one canonical BPS seam owns the -10 boundary; Stage 2 retains values at or below the entry floor until fresh measured BPS is strictly above it, Atomic then owns the range through the +10 target, topology/venue-specific reacquisition stays intact, strict-positive execution is unchanged, and no synthetic or parallel economics authority is introduced');
