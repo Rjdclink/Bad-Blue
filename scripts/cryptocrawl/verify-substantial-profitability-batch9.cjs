@@ -145,9 +145,12 @@ if (!source.dailyBudget.includes("authority: 'profit_ladder_daily_realized_profi
     !source.dailyBudget.includes('borrowingNotionalAuthority: false') ||
     !source.dailyBudget.includes('expectedProfitFitsDailyBudget') ||
     !source.zero.includes('getProfitLadderDailyProfitBudget') ||
-    !source.executor.includes('dailyProfitBudgetFailure(opportunity)') ||
-    !source.executor.includes('expectedProfitFitsDailyBudget')) {
-  throw new Error('[substantial-profitability-batch9] Profit Ladder must constrain daily realized profit while zero-capital borrowing remains independent');
+    !source.zero.includes('profitLadderRescueVetoAuthority: false') ||
+    !source.executor.includes('void observeDailyProfitBudget(opportunity);') ||
+    !source.executor.includes('expectedProfitFitsDailyBudget') ||
+    !source.executor.includes('executionVetoAuthority: false') ||
+    source.executor.includes('dailyProfitBudgetFailure')) {
+  throw new Error('[substantial-profitability-batch9] Profit Ladder must remain realized-profit telemetry/accounting for Atomic while borrowing and target-qualified execution remain independently governed by provider capacity and canonical Stage-3 economics');
 }
 if (!source.venue.includes("getActiveExecutableQuoteVenues(): Array<'coinbase' | 'kraken' | 'okx'>")) {
   throw new Error('[substantial-profitability-batch9] active CEX quote topology must remain restricted to fully implemented Coinbase/Kraken/OKX paths');
@@ -163,4 +166,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue is single-owner in canonical discovery, fairness-ordered, price-aware and provider-capacity-bounded; fresh requotes supersede stale seeds without extending stale evidence; Profit Ladder limits daily realized profit rather than flash principal; canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue is single-owner in canonical discovery, fairness-ordered, price-aware and provider-capacity-bounded; fresh requotes supersede stale seeds without extending stale evidence; Profit Ladder remains realized-profit telemetry/accounting rather than Atomic borrowing or execution veto authority; canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
