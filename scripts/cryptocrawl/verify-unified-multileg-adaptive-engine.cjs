@@ -27,8 +27,8 @@ const forbid = (key, pattern, label) => {
 };
 
 // The generic composite assembler remains advisory and operates on already-positive
-// executable legs. The dedicated zero-capital atomic-surplus composer is the only
-// place where fresh near-misses may be transformed before canonical admission.
+// executable legs. The dedicated zero-capital Atomic BPS composer is the only place
+// where fresh near-misses may be transformed before canonical admission.
 requireText('assembler', 'executionAuthority: false', 'advisory-only composite authority');
 requireText('assembler', 'requiresIndependentFinalAdmission: true', 'independent final admission');
 requireText('assembler', "candidate.status !== 'eligible' || !candidate.executableCapability", 'eligible executable leg requirement');
@@ -60,26 +60,30 @@ requireText('riskGovernor', 'Monte Carlo is advisory', 'Monte Carlo advisory aut
 requireText('riskGovernor', 'monteCarloCheck: true', 'Monte Carlo cannot fail canonical risk approval');
 requireText('riskGovernor', 'duplicateRiskScoreVetoAuthority: false', 'aggregate risk score cannot regain veto authority');
 
-// Atomic-surplus composition may inspect fresh near-misses down to the configured
-// -10 BPS entry floor, but promotion requires measured Balancer fee/liquidity,
-// exact target-bound eth_call + gas estimate, positive composition gain, +10 BPS
-// (or configured target) final all-in net, and a prepared canonical selection.
+// Atomic BPS composition may inspect fresh near-misses down to the configured -10 BPS
+// entry floor, but promotion requires measured provider fee/liquidity, exact eth_call
+// plus gas measurement, positive composition gain, and strictly positive exact all-in
+// base-unit profit. There is no arbitrary +10 BPS post-Stage-1 target.
 requireText('stack', 'getCompatibleForAtomicSurplus', 'near-miss measurement view');
 requireText('stack', 'ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS', 'atomic surplus entry floor');
-requireText('stack', 'ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS', 'atomic surplus target floor');
+requireText('stack', 'const STRICT_POSITIVE_PROFIT_BASE_UNITS = 1n;', 'strict-positive base-unit floor');
+requireText('stack', 'const targetNetProfitBaseUnits = STRICT_POSITIVE_PROFIT_BASE_UNITS;', 'compatibility target resolves to strict positivity');
+forbid('stack', /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/, 'retired atomic +10 target variable');
+forbid('stack', /atomicSurplusTargetBps/, 'retired atomic +10 target helper');
 requireText('stack', 'measureBalancerFlashLoanEconomics', 'measured composite provider economics');
 requireText('stack', 'calculateMeasuredFlashLoanFee', 'measured shared-principal flash fee');
-requireText('stack', 'input.provider.call', 'exact target-bound composite call');
+requireText('stack', 'input.provider.call', 'exact strict-positive composite call');
 requireText('stack', 'input.provider.estimateGas', 'exact composite gas measurement');
 requireText('stack', 'measuredCompositionGain <= 0n', 'composition gain must be measured positive');
-requireText('stack', 'combinedExpectedProfit < targetNetProfitBaseUnits', 'target net floor must be cleared');
+requireText('stack', 'combinedExpectedProfit < targetNetProfitBaseUnits', 'strict-positive net floor must be cleared');
 requireText('stack', 'estimatedGas > allowedGas', 'bounded block-gas feasibility');
 requireText('stack', 'zeroCapitalCompositeSelectionRegistry.record(selection)', 'prepared selection registration');
-requireText('stack', 'netDollarOptimizationAboveTarget: true', 'net-dollar optimization above target');
+requireText('stack', 'netDollarOptimizationAfterProfitability: true', 'net-dollar optimization after profitability');
+requireText('stack', 'exactStrictPositiveSimulationPassed: true', 'exact strict-positive simulation proof');
 requireText('stack', 'borrowingNotionalAuthority: false', 'Profit Ladder cannot cap atomic principal');
-requireText('compositeRegistry', 'targetNetProfitBaseUnits', 'target binding retained in evidence');
-requireText('compositeRegistry', 'combinedExpectedProfit < input.targetNetProfitBaseUnits', 'evidence rejects sub-target composite');
-requireText('compositeSelection', 'expectedNetProfit < selection.targetNetProfitBaseUnits', 'prepared selection rejects sub-target economics');
+requireText('compositeRegistry', 'targetNetProfitBaseUnits', 'exact base-unit compatibility binding retained in evidence');
+requireText('compositeRegistry', 'combinedExpectedProfit < input.targetNetProfitBaseUnits', 'evidence rejects nonpositive compatibility result');
+requireText('compositeSelection', 'expectedNetProfit < selection.targetNetProfitBaseUnits', 'prepared selection rejects nonpositive compatibility result');
 
 requireText('admission', 'missing_hard_execution_evidence', 'active evidence reacquisition trigger');
 requireText('admission', 'hotPathExecutionAuthority: false', 'evidence scanner cannot execute independently');
@@ -90,4 +94,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[unified-multileg-adaptive-engine] PASS: ordinary composite admission remains deterministic-positive; zero-capital near-misses may be transformed only by exact target-bound shared-principal evidence before canonical execution.');
+console.log('[unified-multileg-adaptive-engine] PASS: ordinary composite admission remains deterministic-positive; zero-capital near-misses may be transformed only by exact strictly-positive shared-principal evidence before canonical execution, with no arbitrary +10 BPS finish line.');
