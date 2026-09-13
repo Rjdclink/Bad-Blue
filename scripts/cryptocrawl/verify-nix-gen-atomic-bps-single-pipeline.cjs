@@ -33,6 +33,8 @@ assert.match(gateway, /runZeroCapitalAtomicStackTactic/);
 assert.match(gateway, /oneTransformationAuthority: true/);
 assert.match(gateway, /oneTransformationPipeline: true/);
 assert.match(gateway, /stageOneDirectInMemoryHandoff: true/);
+assert.match(gateway, /stageTwoExplicitAcknowledgement: true/);
+assert.match(gateway, /handoff\.acknowledge\(\)/);
 assert.match(gateway, /boundedRecursiveHandoffSupervision: true/);
 assert.match(gateway, /concurrentDuplicateStageTwoRuns: false/);
 assert.match(gateway, /staleHandoffReplayAllowed: false/);
@@ -46,14 +48,19 @@ assert.doesNotMatch(gateway, /runZeroCapitalProfitabilityRescueV2/);
 assert.doesNotMatch(gateway, /selectFairZeroCapitalRescueCandidates/);
 
 // Handoff redundancy is layered around delivery only. Healthy flow stays direct and
-// in-memory; failed deliveries replay serially under one Stage-2 authority, duplicate
-// deliveries share one promise, and stale candidates are never blindly replayed.
+// in-memory; Stage 2 must explicitly ACK, failed deliveries replay serially under one
+// authority, duplicate deliveries share one promise, and stale candidates are never
+// blindly replayed.
 assert.match(handoff, /directInMemoryHandoff: true/);
+assert.match(handoff, /explicitStageTwoAcknowledgement: true/);
 assert.match(handoff, /externalQueueOnHotPath: false/);
 assert.match(handoff, /databaseOnHotPath: false/);
 assert.match(handoff, /boundedRecursiveSupervision: true/);
 assert.match(handoff, /const inFlight = new Map/);
 assert.match(handoff, /const completed = new Map/);
+assert.match(handoff, /input\.consume\(control\)/);
+assert.match(handoff, /if \(!attemptAcknowledged\)/);
+assert.match(handoff, /supervisor never self-acknowledges/);
 assert.match(handoff, /if \(attempt >= maxAttempts\(\)/);
 assert.match(handoff, /return recursivelyDeliver\(input, state, attempt \+ 1\)/);
 assert.match(handoff, /anyCandidateStillFresh/);
@@ -63,9 +70,9 @@ assert.doesNotMatch(handoff, /from ['"][^'"]*supabase/i);
 assert.doesNotMatch(handoff, /from ['"][^'"]*(redis|kafka|rabbit|bull)/i);
 
 // Momentum: all probes may start concurrently, but the hot path consumes them in
-// completion order and does not wait for the slowest sibling once a strictly-positive
-// result is also a strict improvement over the incumbent. A worse positive result
-// cannot prematurely stop search. Freshness reserve remains protected for execution.
+// completion order and does not wait for size-level OR route-level stragglers once a
+// protected strict-positive incumbent can continue. A worse positive result cannot
+// prematurely stop search. Freshness reserve remains protected for execution.
 assert.match(anytimeRace, /Promise\.race/);
 assert.match(anytimeRace, /stoppedOnAcceptable/);
 assert.match(anytimeRace, /ignoredStragglers/);
@@ -75,13 +82,19 @@ assert.doesNotMatch(anytimeRace, /Promise\.allSettled/);
 assert.match(engine, /runAtomicBpsAnytimeRace/);
 assert.match(engine, /quoteDecisionDeadlineAt = opportunity\.expiresAt - minimumRemainingLifetimeMs/);
 assert.match(engine, /acceptable: probe => probe\.candidate !== null[\s\S]{0,160}clearsStrictProfitability\(probe\.candidate\)[\s\S]{0,160}strictImprovement\(opportunity, probe\.candidate\)/);
-assert.match(engine, /anytimeIncumbentSelection: true/);
+assert.match(engine, /const settledPairs = new Map/);
+assert.match(engine, /const firstPositive = new Promise/);
+assert.match(engine, /const decision = await Promise\.race/);
+assert.match(engine, /hasProtectedPositiveIncumbent/);
 assert.match(engine, /waitsForAllQuoteStragglers: false/);
+assert.match(engine, /waitsForAllRouteStragglers: false/);
 assert.match(engine, /firstStrictPositiveImprovementStopsWaiting: true/);
+assert.match(engine, /existingStrictPositiveIncumbentStopsWaiting: true/);
 assert.match(engine, /worsePositiveCannotStopSearch: true/);
 assert.match(engine, /freshnessReserveProtectedForExecution: true/);
 assert.match(engine, /lateProbeOverwriteAllowed: false/);
 assert.doesNotMatch(engine, /Promise\.allSettled\(sizes\.map/);
+assert.doesNotMatch(engine, /const refinedPairs = await Promise\.all\(selected\.map/);
 
 // Exact all-in positive base units are the only post-Stage-1 profitability boundary.
 assert.match(engine, /candidate\.netProfit > 0n && candidate\.executablePositive === true/);
@@ -151,10 +164,15 @@ assert.match(builderColdStart, /legacy_conservative_capability_fallback/);
 assert.match(builderColdStart, /error instanceof BuilderSequentialSimulationExecutionError/);
 assert.match(builderColdStart, /fixedGasPreferred: false/);
 
-// Workers reduce waiting only. They never decide economics or execute money.
+// Workers reduce waiting only. They never decide economics or execute money. Cache
+// freshness tightens automatically for short-lived opportunities rather than using a
+// single stale-friendly TTL for every route.
 assert.match(workers, /prewarmAtomicBpsEvidence/);
 assert.match(workers, /priceInFlight/);
 assert.match(workers, /providerInFlight/);
+assert.match(workers, /freshnessBudgetMs/);
+assert.match(workers, /Math\.floor\(remaining \/ 4\)/);
+assert.match(workers, /opportunityLifetimeBoundedFreshness: true/);
 assert.match(workers, /queueMicrotask/);
 assert.match(workers, /executionAuthority: false/);
 assert.match(workers, /economicAuthority: false/);
@@ -182,4 +200,4 @@ assert.match(providerEconomics, /aave_v3/);
 assert.match(providerEconomics, /morpho_blue/);
 assert.match(providerEconomics, /calculateMeasuredFlashLoanFee/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, anytime profitable-improvement selection, freshness-reserved execution, straggler avoidance, parallel prewarming, engine-owned composite tactics, exact strict-positive economics across all capital paths, stateful builder gas measurement, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
+console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with explicit ACK, bounded recursive replay, in-flight deduplication, anytime profitable-improvement selection across size and route probes, protected existing-positive incumbents, freshness-reserved execution, straggler avoidance, lifetime-bounded prewarming, engine-owned composite tactics, exact strict-positive economics across all capital paths, stateful builder gas measurement, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
