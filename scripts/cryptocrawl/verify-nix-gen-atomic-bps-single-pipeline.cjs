@@ -3,7 +3,14 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 
 const root = process.cwd();
-const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
+// Deployment preflight temporarily redirects ordinary readFileSync(path) calls for
+// legacy flash-executor structural checks. Read through a file descriptor so this
+// verifier always inspects the actual checked-out files, including the canonical
+// router, whether invoked standalone or from inside that preflight.
+const read = relative => {
+  const fd = fs.openSync(path.join(root, relative), 'r');
+  try { return fs.readFileSync(fd, 'utf8'); } finally { fs.closeSync(fd); }
+};
 
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const gateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
@@ -144,6 +151,9 @@ for (const source of [alternativeCapital, builderColdStart]) {
   assert.doesNotMatch(source, /target_bound_10_bps_or_higher/);
 }
 assert.match(alternativeCapital, /const requiredNetProfit = minimumPositiveProfitBaseUnits\(\);/);
+assert.match(alternativeCapital, /const incumbentNetProfit = opportunity\.expectedProfit;/);
+assert.match(alternativeCapital, /best\.netProfit <= incumbentNetProfit/);
+assert.doesNotMatch(alternativeCapital, /incumbentNetBps/);
 assert.match(alternativeCapital, /strict_positive_all_in_net_after_source_fee_and_execution_cost/);
 assert.match(builderColdStart, /const minimumRetained = minimumPositiveProfitBaseUnits\(\);/);
 assert.match(builderColdStart, /minimum_residual:canonical_strict_positive_base_units/);
