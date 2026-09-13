@@ -112,10 +112,9 @@ assert.match(gasAuthority, /getProvenZeroCapitalGasFundingDecision/);
 assert.match(engine, /return getProvenZeroCapitalGasFundingDecision\(this, chain\)/);
 
 // Canonical discovery owns lifecycle/admission. The runtime context retains only
-// the explicit-route measurement helper. Configured-route Atomic rescue starts on
-// the in-process fast path immediately after Stage-1 measurement while dynamic
-// discovery proceeds independently; both still use the same canonical rescue and
-// provider/alternative-capital authorities, and economic expiry is never extended.
+// the explicit-route measurement helper. Gas, block, and quote capabilities can
+// fail over independently, while Atomic rescue runs exactly once after configured
+// and dynamic candidates converge in canonical discovery.
 assert.match(engine, /Explicit-route measurement helper used only by CanonicalZeroCapitalDiscovery/);
 assert.match(engine, /const gasProvider = \(await multiProviderRpcManager\.execute\(rpcChain, 'gas'/);
 assert.match(engine, /const funding = await this\.getGasFundingDecision\(chain\);/);
@@ -128,18 +127,9 @@ assert.match(engine, /atomicRescueAuthority: 'CanonicalZeroCapitalDiscovery'/);
 assert.match(engine, /duplicateAtomicRescuePass: false/);
 assert.doesNotMatch(engine, /runZeroCapitalProfitabilityRescueV2/);
 assert.doesNotMatch(engine, /const rescueProvider = \(await multiProviderRpcManager\.execute\(rpcChain, 'contract_calls'/);
-assert.match(discovery, /const configuredFresh = configured\.filter\(opportunity => opportunity\.expiresAt > configuredStageTwoDispatchAt\)/);
-assert.match(discovery, /const configuredRescuePromise: Promise<ZeroCapitalOpportunity\[]>/);
-assert.match(discovery, /runFairZeroCapitalProfitabilityRescue\(\{[\s\S]{0,180}opportunities: configuredFresh[\s\S]{0,180}configuredRoutes: routes/);
-assert.match(discovery, /const dynamicQuotesPromise = discoverDynamicZeroCapitalQuotes\(chain, provider, funding\.mode\)/);
-assert.match(discovery, /const dynamicRescuePromise: Promise<ZeroCapitalOpportunity\[]>/);
-assert.match(discovery, /await Promise\.all\(\[[\s\S]{0,120}configuredRescuePromise,[\s\S]{0,120}dynamicRescuePromise/);
-assert.match(discovery, /mergeFreshOpportunityStreams\(\[configuredRescueReady, dynamicRescueReady\]\)/);
-assert.match(discovery, /dynamicDiscoveryWaitedForBeforeStageTwo: false/);
-assert.match(discovery, /configuredStageTwoWaitsForDynamicDiscovery: false/);
-assert.match(discovery, /dynamicDiscoveryRunsParallelWithConfiguredStageTwo: true/);
-assert.match(discovery, /economicFreshnessExtensionAllowed: false/);
-assert.doesNotMatch(discovery, /const exact = \[\.\.\.configured, \.\.\.dynamic\]/);
+assert.match(discovery, /const rescueReady = await runFairZeroCapitalProfitabilityRescue\(\{/);
+assert.match(discovery, /runFairZeroCapitalProfitabilityRescue\(\{[\s\S]{0,160}provider,[\s\S]{0,160}opportunities: exact/);
+assert.match(discovery, /configuredRoutes: executionRoutes\(target\)/);
 assert.match(engine, /zeroSeedPromotedToExecutableEconomics: false/);
 assert.match(configuredGasEconomics, /provider\.getFeeData\(\)/);
 assert.match(configuredGasEconomics, /livePriceMesh\.getLiveSymbolPrices\(\[nativeSymbol, \.\.\.inputSymbols\]\)/);
@@ -374,9 +364,6 @@ console.log(JSON.stringify({
   zeroCapitalBpsPropagation: 'verified_on_single_canonical_pipeline',
   canonicalRouteAuthority: true,
   canonicalDiscoveryOwnsFreshMeasurement: true,
-  configuredStageTwoFastPath: true,
-  dynamicDiscoveryParallelWithConfiguredStageTwo: true,
-  economicFreshnessExtensionAllowed: false,
   profitLadderDailyProfitOnly: true,
   atomicBorrowNotionalIndependentOfProfitLadder: true,
   liveProviderLiquidityBoundsAtomicBorrowing: true,

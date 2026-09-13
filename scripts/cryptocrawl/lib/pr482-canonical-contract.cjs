@@ -170,7 +170,7 @@ function verifyCexExecutionContract() {
   requirePattern(coreRuntime, /ensureZeroCapitalRealizedProfitWiring\(\);[\s\S]{0,6000}createCryptoCrawlerCoreLifecycle\s*\(/, 'core lifecycle installs the idempotent realized-profit compatibility boundary before lifecycle construction');
   forbidPattern(coreRuntime, /scheduleZeroCapitalProfitWiring|zeroCapitalRealizedProfitPolicyScheduled/, 'deferred duplicate realized-profit authority scheduling');
   requirePattern(canonicalDiscovery, /async\s+function\s+strictFunding[\s\S]{0,240}getProvenZeroCapitalGasFundingDecision\(target,\s*chain\)/, 'canonical zero-capital discovery obtains the proven live gas-funding decision');
-  requirePattern(canonicalDiscovery, /const\s+funding\s*=\s*await\s+strictFunding\(target,\s*chain\)[\s\S]{0,12000}discoverDynamicZeroCapitalQuotes\(chain,\s*provider,\s*funding\.mode\)/, 'dynamic quote economics consume that same live gas-funding decision across the configured Stage-2 fast path');
+  requirePattern(canonicalDiscovery, /const\s+funding\s*=\s*await\s+strictFunding\(target,\s*chain\)[\s\S]{0,1800}discoverDynamicZeroCapitalQuotes\(chain,\s*provider,\s*funding\.mode\)/, 'dynamic quote economics consume that same live gas-funding decision');
   forbidPattern(zeroResource, /target\.getGasFundingDecision\s*\(|discoverDynamicZeroCapitalQuotes\s*\(/, 'retired zero-capital resource wrapper must not regain gas or quote authority');
   requirePattern(dynamicRoutes, /fundingMode\s*===\s*'sponsored'/, 'dynamic route gas compression recognizes verified sponsored funding');
   requirePattern(dynamicRoutes, /gasCostAuthority:\s*'verified_sponsored_user_cost_zero'/, 'sponsored zero-user-gas economics are explicitly provenance-bound');
