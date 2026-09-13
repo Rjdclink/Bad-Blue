@@ -7,6 +7,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const gateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
+const handoff = read('server/services/cryptocrawl/integration/zero-capital-stage-handoff-supervisor.ts');
 const engine = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
 const workers = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-workers.ts');
 const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
@@ -21,14 +22,36 @@ assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 
 // One runtime transformation gateway, one engine. Retired serial Stage-2/V2/fairness DB work
 // cannot re-enter the live Atomic BPS path.
+assert.match(gateway, /handoffStageOneToAtomicBps/);
 assert.match(gateway, /runZeroCapitalAtomicBpsEngine/);
 assert.match(gateway, /oneTransformationAuthority: true/);
 assert.match(gateway, /oneTransformationPipeline: true/);
+assert.match(gateway, /stageOneDirectInMemoryHandoff: true/);
+assert.match(gateway, /boundedRecursiveHandoffSupervision: true/);
+assert.match(gateway, /concurrentDuplicateStageTwoRuns: false/);
+assert.match(gateway, /staleHandoffReplayAllowed: false/);
 assert.match(gateway, /persistedFairnessOnHotPath: false/);
 assert.match(gateway, /stageTwoSerialPass: false/);
 assert.doesNotMatch(gateway, /runStageTwoZeroCapitalBpsReduction/);
 assert.doesNotMatch(gateway, /runZeroCapitalProfitabilityRescueV2/);
 assert.doesNotMatch(gateway, /selectFairZeroCapitalRescueCandidates/);
+
+// Handoff redundancy is layered around delivery only. Healthy flow stays direct and
+// in-memory; failed deliveries replay serially under one Stage-2 authority, duplicate
+// deliveries share one promise, and stale candidates are never blindly replayed.
+assert.match(handoff, /directInMemoryHandoff: true/);
+assert.match(handoff, /externalQueueOnHotPath: false/);
+assert.match(handoff, /databaseOnHotPath: false/);
+assert.match(handoff, /boundedRecursiveSupervision: true/);
+assert.match(handoff, /const inFlight = new Map/);
+assert.match(handoff, /const completed = new Map/);
+assert.match(handoff, /if \(attempt >= maxAttempts\(\)/);
+assert.match(handoff, /return recursivelyDeliver\(input, state, attempt \+ 1\)/);
+assert.match(handoff, /anyCandidateStillFresh/);
+assert.match(handoff, /economicAuthority: false/);
+assert.match(handoff, /executionAuthority: false/);
+assert.doesNotMatch(handoff, /from ['"][^'"]*supabase/i);
+assert.doesNotMatch(handoff, /from ['"][^'"]*(redis|kafka|rabbit|bull)/i);
 
 // Exact all-in positive base units are the only post-Stage-1 profitability boundary.
 assert.match(engine, /candidate\.netProfit > 0n && candidate\.executablePositive === true/);
@@ -84,4 +107,4 @@ assert.match(providerEconomics, /aave_v3/);
 assert.match(providerEconomics, /morpho_blue/);
 assert.match(providerEconomics, /calculateMeasuredFlashLoanFee/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one in-memory Atomic BPS pipeline with parallel prewarming, exact strict-positive economics, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
+console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, parallel prewarming, exact strict-positive economics, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
