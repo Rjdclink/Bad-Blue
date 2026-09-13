@@ -40,6 +40,28 @@ export interface UnifiedExecutionDecision {
   reasons: string[];
 }
 
+const STAGE_THREE_MINIMUM_TARGET_BPS = 10;
+
+function stageThreeEntryFloorBps(): number {
+  const parsed = Number(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS ?? -10);
+  return Number.isFinite(parsed) ? Math.max(-100, Math.min(0, parsed)) : -10;
+}
+
+function stageThreeTargetBps(): number {
+  const parsed = Number(
+    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
+    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
+    ?? STAGE_THREE_MINIMUM_TARGET_BPS,
+  );
+  const finite = Number.isFinite(parsed) ? parsed : STAGE_THREE_MINIMUM_TARGET_BPS;
+  return Math.max(STAGE_THREE_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
+}
+
+function canonicalNetBps(candidate: MeasuredCandidate): number | null {
+  const value = Number(candidate.economics.netProfitBps);
+  return Number.isFinite(value) ? value : null;
+}
+
 function predictionEventAuthority(candidate: MeasuredCandidate): boolean {
   if (candidate.topology !== 'PREDICTION_EVENT') return false;
   const provenance = new Set(candidate.provenance);
@@ -152,6 +174,12 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   const pathAvailable = path !== 'UNAVAILABLE';
   const depthReady = candidate.depth.status !== 'unavailable';
   const aboveAdaptiveThreshold = score.profitabilityScore > threshold.profitabilityScoreThreshold && score.confidenceLevel >= threshold.confidenceThreshold;
+  const netBps = canonicalNetBps(candidate);
+  const stageThreeEntryFloor = stageThreeEntryFloorBps();
+  const stageThreeTarget = stageThreeTargetBps();
+  const stageTwoBoundaryCrossed = netBps !== null && netBps > stageThreeEntryFloor;
+  const stageThreeTargetSatisfied = netBps !== null && netBps + 1e-9 >= stageThreeTarget;
+  const stageThreeRescueRequired = stageTwoBoundaryCrossed && !stageThreeTargetSatisfied;
 
   const hardVetoReasons: string[] = [];
   if (!isFunding && !isPredictionEvent && deterministicNegative) hardVetoReasons.push('blocked:verified_negative_all_in_net');
@@ -174,6 +202,7 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   const evidenceReacquisitionRequired = economicsMissing
     || (!isFunding && !isPredictionEvent && deterministicZero)
     || projectedZero
+    || !stageThreeTargetSatisfied
     || !fresh
     || !candidate.executableCapability
     || !depthReady
@@ -192,6 +221,9 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
     `evidence_validation=${evidence.validation.toFixed(2)}`,
     `evidence_confidence=${evidence.confidence.toFixed(2)}`,
     `evidence_overall=${evidence.overall.toFixed(2)}`,
+    `stage3_entry_floor_bps=${stageThreeEntryFloor}`,
+    `stage3_target_bps=${stageThreeTarget}`,
+    `canonical_all_in_net_bps=${netBps ?? 'unknown'}`,
     ...(isFunding ? [`funding_projected_net_usd=${projectedFunding ?? 'unknown'}`, 'funding_projected_profit_is_not_deterministic_profit'] : []),
     ...(isPredictionEvent ? [`prediction_event_expected_net_usd=${projectedPredictionEvent ?? 'unknown'}`, 'prediction_event_expected_profit_is_calibrated_not_deterministic', 'raw_market_probability_execution_authority=false'] : []),
     ...(candidate.topology === 'MEMPOOL_BACKRUN' ? [
@@ -203,6 +235,9 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
   if (!isFunding && !isPredictionEvent && deterministicZero) reasons.push('reacquire:deterministic_all_in_net_equals_zero');
   if (projectedZero) reasons.push('reacquire:calibrated_prediction_event_net_equals_zero');
   if (economicsMissing) reasons.push(isFunding ? 'reacquire:projected_funding_economics_unavailable' : isPredictionEvent ? 'reacquire:calibrated_prediction_event_economics_unavailable' : 'reacquire:deterministic_economics_unavailable');
+  if (netBps === null) reasons.push('reacquire:canonical_all_in_net_bps_unavailable');
+  else if (!stageTwoBoundaryCrossed) reasons.push('reacquire:stage2_boundary_not_crossed');
+  else if (stageThreeRescueRequired) reasons.push('reacquire:stage3_atomic_surplus_target_not_met');
   if (!fresh) reasons.push('reacquire:fresh_execution_evidence');
   if (!candidate.executableCapability) reasons.push('reacquire:authoritative_execution_path');
   if (!depthReady) reasons.push('reacquire:executable_depth');
@@ -214,7 +249,13 @@ export function routeMeasuredOpportunity(candidate: MeasuredCandidate): UnifiedE
     : isPredictionEvent
       ? predictionProjectedPositive
       : deterministicPositive;
-  const admitted = economicsAdmitted && pathAvailable && candidate.executableCapability && fresh && depthReady && hardVetoReasons.length === 0;
+  const admitted = economicsAdmitted
+    && stageThreeTargetSatisfied
+    && pathAvailable
+    && candidate.executableCapability
+    && fresh
+    && depthReady
+    && hardVetoReasons.length === 0;
 
   return {
     opportunityId: candidate.opportunityId,
