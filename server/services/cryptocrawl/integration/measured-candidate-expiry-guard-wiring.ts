@@ -4,6 +4,7 @@ import {
   type MeasuredCandidate,
   type MeasuredCandidateStatus,
 } from '../discovery/measured-candidate-registry.js';
+import { ensureEconomicTransformationWiring } from './economic-transformation-wiring.js';
 
 let installed = false;
 
@@ -68,12 +69,19 @@ export function ensureMeasuredCandidateExpiryGuardWiring(): void {
     return originalUpdateStatus(opportunityId, status, patch);
   };
 
+  // Stage 2 is candidate-driven and must start with the canonical measured-candidate
+  // lifecycle. This reuses the existing in-process registry subscription/refresh loop;
+  // it does not add Supabase polling, Realtime subscriptions, or database reads.
+  ensureEconomicTransformationWiring();
+
   logger.info('[MeasuredCandidateExpiryGuard] Freshness-bound candidate promotion and read filtering installed', {
     component: 'MeasuredCandidateExpiryGuardWiring',
     guardedTransitions: [...PROMOTION_STATUSES],
     stalePromotionAllowed: false,
     staleRecentReadAllowed: false,
     freshnessAuthority: 'candidate_expires_at',
+    stageTwoEconomicTransformationWorkerInstalled: true,
+    stageTwoAdditionalSupabaseEgress: false,
     executionAuthority: false,
   });
 }
