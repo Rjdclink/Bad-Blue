@@ -37,6 +37,8 @@ type AtomicBpsProbeResult = {
   budgetOutsideTelemetryQuotes: number;
 };
 
+type AtomicBpsRoutePair = readonly [string, ZeroCapitalOpportunity];
+
 export interface ZeroCapitalAtomicBpsEngineInput {
   chain: SupportedChain;
   provider: providers.JsonRpcProvider;
@@ -381,9 +383,9 @@ function quoteFitsDailyProfitBudget(
  * Sole post-Stage-1 transformation pipeline for ZERO_CAPITAL_ATOMIC. BPS reduction
  * intelligence and Atomic notional/provider search operate inside one quote budget,
  * against one fresh evidence set, and produce one exact incumbent. Probes start in
- * parallel, but the hot path never waits for slower siblings after a strictly-positive
- * strict improvement exists. No serial Stage-2→Stage-3 handoff and no database
- * scheduler is in the hot path.
+ * parallel, and both size-level and route-level stragglers are ignored once a fresh
+ * strictly-positive incumbent can continue downstream. No serial Stage-2→Stage-3
+ * handoff and no database scheduler is in the hot path.
  */
 export async function runZeroCapitalAtomicBpsEngine(
   input: ZeroCapitalAtomicBpsEngineInput,
@@ -431,9 +433,19 @@ export async function runZeroCapitalAtomicBpsEngine(
   let freshnessDeadlineStops = 0;
   let ignoredQuoteStragglers = 0;
   let quoteProbesConsumed = 0;
+  let routeStragglersIgnored = 0;
+  let returnedOnExistingPositiveIncumbent = false;
+  let returnedOnFirstPositiveImprovement = false;
   const bpsDrivers = new Map<string, number>();
 
-  const refinedPairs = await Promise.all(selected.map(async (opportunity, index) => {
+  const settledPairs = new Map<string, AtomicBpsRoutePair>();
+  let firstPositiveResolved = false;
+  let resolveFirstPositive!: (pair: AtomicBpsRoutePair) => void;
+  const firstPositive = new Promise<AtomicBpsRoutePair>(resolve => {
+    resolveFirstPositive = resolve;
+  });
+
+  const routeTasks = selected.map((opportunity, index) => (async (): Promise<AtomicBpsRoutePair> => {
     const startedAt = Date.now();
     const context = bpsContext(opportunity);
     if (context) {
@@ -585,7 +597,52 @@ export async function runZeroCapitalAtomicBpsEngine(
       });
       return [opportunity.id, opportunity] as const;
     }
+  })().then(pair => {
+    settledPairs.set(pair[0], pair);
+    const original = input.opportunities.find(item => item.id === pair[0]);
+    const candidate = pair[1];
+    if (
+      !firstPositiveResolved
+      && original
+      && candidate !== original
+      && candidate.expectedProfit > 0n
+      && candidate.expiresAt > Date.now()
+    ) {
+      firstPositiveResolved = true;
+      resolveFirstPositive(pair);
+    }
+    return pair;
   }));
+
+  const allRoutes = Promise.all(routeTasks);
+  const hasProtectedPositiveIncumbent = input.opportunities.some(opportunity =>
+    recoverable(opportunity) && opportunity.expectedProfit > 0n
+  );
+
+  let refinedPairs: readonly AtomicBpsRoutePair[];
+  if (hasProtectedPositiveIncumbent) {
+    // A Stage-1 candidate that is already exactly profitable is the incumbent. Do
+    // not age it while sibling optimizers finish. Already-started work may settle in
+    // this same turn, but late results cannot hold up downstream execution readiness.
+    returnedOnExistingPositiveIncumbent = true;
+    await Promise.resolve();
+    refinedPairs = [...settledPairs.values()];
+  } else {
+    const decision = await Promise.race([
+      allRoutes.then(pairs => ({ kind: 'all' as const, pairs })),
+      firstPositive.then(pair => ({ kind: 'positive' as const, pair })),
+    ]);
+    if (decision.kind === 'all') {
+      refinedPairs = decision.pairs;
+    } else {
+      returnedOnFirstPositiveImprovement = true;
+      // Same-turn drain only: co-settled improvements may join the output without
+      // creating a tail-latency barrier. Unfinished sibling routes remain originals.
+      await Promise.resolve();
+      refinedPairs = [...settledPairs.values()];
+    }
+  }
+  routeStragglersIgnored = Math.max(0, selected.length - refinedPairs.length);
 
   const refinedById = new Map(refinedPairs);
   const output = input.opportunities.map(item => selectedIds.has(item.id) ? (refinedById.get(item.id) ?? item) : item);
@@ -606,7 +663,10 @@ export async function runZeroCapitalAtomicBpsEngine(
     anytimePositiveImprovementStops,
     freshnessDeadlineStops,
     ignoredQuoteStragglers,
+    routeStragglersIgnored,
     quoteProbesConsumed,
+    returnedOnExistingPositiveIncumbent,
+    returnedOnFirstPositiveImprovement,
     bpsSuperEngineCandidates,
     bpsSuperEnginePositiveRecoveries,
     bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
@@ -622,7 +682,9 @@ export async function runZeroCapitalAtomicBpsEngine(
     parallelRouteOptimization: true,
     anytimeIncumbentSelection: true,
     waitsForAllQuoteStragglers: false,
+    waitsForAllRouteStragglers: false,
     firstStrictPositiveImprovementStopsWaiting: true,
+    existingStrictPositiveIncumbentStopsWaiting: true,
     worsePositiveCannotStopSearch: true,
     sameTurnBetterIncumbentMayReplace: true,
     freshnessReserveProtectedForExecution: true,
