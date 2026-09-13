@@ -16,13 +16,21 @@ interface HandoffState {
   completedAt: number | null;
   attempts: number;
   replayAttempts: number;
+  acknowledgementMisses: number;
   lastError: string | null;
+}
+
+export interface ZeroCapitalStageHandoffControl {
+  handoffId: string;
+  sequence: number;
+  acknowledge: () => void;
+  isActive: () => boolean;
 }
 
 export interface ZeroCapitalStageHandoffInput {
   chain: SupportedChain;
   opportunities: readonly ZeroCapitalOpportunity[];
-  consume: () => Promise<ZeroCapitalOpportunity[]>;
+  consume: (control: ZeroCapitalStageHandoffControl) => Promise<ZeroCapitalOpportunity[]>;
 }
 
 const inFlight = new Map<string, Promise<ZeroCapitalOpportunity[]>>();
@@ -36,6 +44,7 @@ let completedHandoffs = 0;
 let replayAttempts = 0;
 let deduplicatedHandoffs = 0;
 let exhaustedHandoffs = 0;
+let acknowledgementMisses = 0;
 
 function boundedInteger(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(raw);
@@ -85,31 +94,55 @@ async function recursivelyDeliver(
     throw new Error('Stage-1 candidates expired before Atomic BPS handoff could complete');
   }
 
-  // ACK means the one canonical Stage-2 engine has actually been invoked in this
-  // process. No queue, database, network hop or second economic authority sits
-  // between the locked Stage-1 output and the Atomic BPS engine.
-  if (state.acknowledgedAt === null) {
-    state.acknowledgedAt = Date.now();
-    acknowledgedHandoffs += 1;
-  }
+  let active = true;
+  let attemptAcknowledged = false;
+  const control: ZeroCapitalStageHandoffControl = {
+    handoffId: state.handoffId,
+    sequence: state.sequence,
+    acknowledge: () => {
+      if (!active || attemptAcknowledged) return;
+      attemptAcknowledged = true;
+      if (state.acknowledgedAt === null) {
+        state.acknowledgedAt = Date.now();
+        acknowledgedHandoffs += 1;
+      }
+    },
+    isActive: () => active && anyCandidateStillFresh(input.opportunities),
+  };
 
   try {
-    const result = await input.consume();
+    // The consumer itself must ACK synchronously when the single canonical Stage-2
+    // engine is entered. The supervisor never self-acknowledges on its behalf.
+    // One microtask is enough to detect a broken handoff contract without adding a
+    // network/database/queue wait to the healthy path.
+    const consumption = Promise.resolve(input.consume(control));
+    await Promise.resolve();
+    if (!attemptAcknowledged) {
+      active = false;
+      state.acknowledgementMisses += 1;
+      acknowledgementMisses += 1;
+      throw new Error('Atomic BPS consumer failed to acknowledge direct Stage-1 handoff');
+    }
+
+    const result = await consumption;
+    active = false;
     state.completedAt = Date.now();
     state.lastError = null;
     completedHandoffs += 1;
     return result;
   } catch (error) {
+    active = false;
     state.lastError = error instanceof Error ? error.message : String(error);
     if (attempt >= maxAttempts() || !anyCandidateStillFresh(input.opportunities)) {
       exhaustedHandoffs += 1;
       throw error;
     }
 
-    // FIX/Kafka-style replay semantics, adapted for this in-process hot path:
+    // FIX-style bounded replay semantics, adapted for this in-process hot path:
     // replay uses the exact same immutable Stage-1 identity and only begins after
     // the prior attempt has definitively rejected. There are never concurrent
-    // duplicate Stage-2 transformations for one handoff.
+    // duplicate Stage-2 transformations for one handoff. Stale candidates are never
+    // replayed; canonical discovery reacquires them on the next fresh scan.
     state.replayAttempts += 1;
     replayAttempts += 1;
     await Promise.resolve();
@@ -120,10 +153,12 @@ async function recursivelyDeliver(
 /**
  * Bounded "hand under a hand under a hand" supervision for the locked Stage-1 ->
  * Atomic-BPS boundary. Healthy flow is a direct same-process call with no added
- * wait. Duplicate delivery shares the same in-flight promise. A rejected handoff
- * is replayed serially with the same identity up to a small bounded depth; stale
- * candidates are never blindly replayed and are left for canonical fresh discovery.
- * This module has no Stage-1 classification, economic, admission, or execution authority.
+ * I/O wait. The Stage-2 consumer must explicitly acknowledge receipt immediately.
+ * Duplicate delivery shares the same in-flight promise. A definitively rejected
+ * handoff is replayed serially with the same identity up to a small bounded depth;
+ * stale candidates are never blindly replayed and are left for canonical fresh
+ * discovery. This module has no Stage-1 classification, economic, admission, or
+ * execution authority.
  */
 export async function handoffStageOneToAtomicBps(
   input: ZeroCapitalStageHandoffInput,
@@ -155,6 +190,7 @@ export async function handoffStageOneToAtomicBps(
     completedAt: null,
     attempts: 0,
     replayAttempts: 0,
+    acknowledgementMisses: 0,
     lastError: null,
   };
   states.set(key, state);
@@ -184,6 +220,7 @@ export async function handoffStageOneToAtomicBps(
       candidateIds: state.candidateIds,
       attempts: state.attempts,
       replayAttempts: state.replayAttempts,
+      acknowledgementMisses: state.acknowledgementMisses,
       error: state.lastError || (error instanceof Error ? error.message : String(error)),
       stageOneAuthorityChanged: false,
       economicAuthority: false,
@@ -199,6 +236,7 @@ export function getZeroCapitalStageHandoffSnapshot() {
   const latest = [...states.values()].sort((left, right) => right.sequence - left.sequence)[0] || null;
   return {
     directInMemoryHandoff: true,
+    explicitStageTwoAcknowledgement: true,
     externalQueueOnHotPath: false,
     databaseOnHotPath: false,
     boundedRecursiveSupervision: true,
@@ -209,6 +247,7 @@ export function getZeroCapitalStageHandoffSnapshot() {
     replayAttempts,
     deduplicatedHandoffs,
     exhaustedHandoffs,
+    acknowledgementMisses,
     inFlight: inFlight.size,
     latest: latest ? { ...latest, candidateIds: [...latest.candidateIds] } : null,
     stageOneAuthority: false,
