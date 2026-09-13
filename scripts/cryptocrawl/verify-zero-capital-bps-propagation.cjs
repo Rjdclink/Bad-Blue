@@ -79,6 +79,16 @@ assert.match(discovery, /repriceZeroCapitalAlternativeCapital\(\{[\s\S]{0,220}op
 assert.match(discovery, /executionAuthority: false/);
 assert.match(discovery, /synthetic_evidence:false/);
 
+// Stage 1 Zero-Initial-Capital is locked to the production-proven candidate
+// composition. Raw observations stay visible, while promotion is fixed at -10 BPS.
+// This is a discovery/classification invariant only and cannot become execution authority.
+assert.match(discovery, /STAGE_ONE_LOCKED_INVARIANT/);
+assert.match(discovery, /const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;/);
+assert.match(discovery, /function atomicSurplusEntryFloorBps\(\): number \{\s*return STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS;\s*\}/);
+assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
+assert.match(discovery, /zeroCapitalRouteEvidenceRegistry\.record\(opportunity\);[\s\S]{0,260}opportunity\.netProfitBps < atomicSurplusEntryFloorBps\(\)/);
+assert.match(discovery, /stageOneLock: 'explicit_operator_authorization_required'/);
+
 assert.match(discovery, /refreshReceiverFleetForCycle\(target\)/);
 assert.match(discovery, /globalProviderAdmissionBlocked: false/);
 assert.match(discovery, /chainLocalResourceProofRequired: true/);
@@ -317,7 +327,6 @@ assert.match(atomicStack, /\.startsWith\(COMPOSITE_ID_PREFIX\)/);
 assert.match(atomicStack, /netDollarOptimizationAboveTarget: true/);
 assert.match(compositeSelectionRegistry, /expectedNetProfit < selection\.targetNetProfitBaseUnits/);
 assert.match(compositeEvidenceRegistry, /combinedExpectedProfit < input\.targetNetProfitBaseUnits/);
-
 assert.match(payloadBuilder, /export type UniswapV3FeeTier = 100 \| 500 \| 3000 \| 10000/);
 assert.match(payloadBuilder, /'pancakeswapV2'/);
 assert.match(payloadBuilder, /'traderJoeV1'/);
@@ -362,6 +371,7 @@ assert.doesNotMatch(scale, /profitabilityPressure\s*=\s*[^;]*zeroCapitalNearBrea
 
 console.log(JSON.stringify({
   zeroCapitalBpsPropagation: 'verified_on_single_canonical_pipeline',
+  stageOneZeroCapitalLock: 'explicit_operator_authorization_required',
   canonicalRouteAuthority: true,
   canonicalDiscoveryOwnsFreshMeasurement: true,
   profitLadderDailyProfitOnly: true,
