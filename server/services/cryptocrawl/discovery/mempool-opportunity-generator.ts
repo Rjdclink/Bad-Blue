@@ -6,6 +6,7 @@ import { decodePendingSwapRoute } from '../capital-free/pending-swap-route-decod
 import {
   compileExactPostVictimBackrun,
   exactPostVictimBackrunRegistry,
+  measuredPostVictimBackrunEconomicsRegistry,
 } from '../execution/exact-post-victim-backrun-compiler.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from './measured-candidate-registry.js';
 import { getMempoolCapabilities } from './mempool-capability-registry.js';
@@ -94,6 +95,7 @@ export async function discoverMeasuredMempoolCandidates(): Promise<MeasuredCandi
         decoded: decodedRoute,
         candidateExpiresAt: expiresAt,
       });
+      const measuredNearMiss = measuredPostVictimBackrunEconomicsRegistry.get(opportunityId);
       if (compiled) {
         const notionalUsd = backrunNotionalUsd(compiled.deterministicNetProfitUsd, compiled.deterministicNetProfitBps);
         candidate = measuredCandidateRegistry.updateStatus(opportunityId, 'eligible', {
@@ -127,6 +129,50 @@ export async function discoverMeasuredMempoolCandidates(): Promise<MeasuredCandi
             'sandwichOrFrontrun:false',
           ],
         }) || candidate;
+      } else if (measuredNearMiss) {
+        const allInCostBps = measuredNearMiss.flashLoanFeeBps + measuredNearMiss.gasCostBps + measuredNearMiss.relayCostBps;
+        candidate = measuredCandidateRegistry.updateStatus(opportunityId, 'enriched', {
+          economics: {
+            ...candidate.economics,
+            grossProfitUsd: measuredNearMiss.grossProfitUsd,
+            deterministicNetProfitUsd: null,
+            feeUsd: 0,
+            gasUsd: measuredNearMiss.expectedGasUsd,
+            bridgeUsd: 0,
+            expectedSlippageBps: null,
+            expectedPriceImpactBps: null,
+            notionalUsd: measuredNearMiss.notionalUsd,
+            grossProfitBps: measuredNearMiss.grossProfitBps,
+            flashLoanFeeBps: measuredNearMiss.flashLoanFeeBps,
+            gasCostBps: measuredNearMiss.gasCostBps,
+            relayCostBps: measuredNearMiss.relayCostBps,
+            allInCostBps,
+            netProfitBps: measuredNearMiss.measuredNetProfitBps,
+            bpsToBreakEven: measuredNearMiss.measuredNetProfitBps < 0 ? Math.abs(measuredNearMiss.measuredNetProfitBps) : 0,
+            realizedNetProfitBps: null,
+          },
+          depth: {
+            status: 'not_applicable',
+            detail: 'Fresh compatible route, measured flash fee, raw EOA bundle gas ceiling and relay cost are available for Stage-2 BPS reduction; exact post-victim state remains unproven until signed victim-first simulation',
+          },
+          executableCapability: false,
+          executionCapabilityReason: 'Stage-2 all-in compatible-route economics are measured, but exact victim-first post-state bundle simulation did not grant execution eligibility',
+          quoteAgeMs: Math.max(0, Date.now() - measuredNearMiss.measuredAt),
+          replaceMissingInformation: true,
+          missingInformation: [
+            'required:exact_post_victim_pool_state',
+            'required:exact_victim_first_bundle_simulation',
+            'advisory:relay_inclusion_probability_not_execution_authority',
+          ],
+          provenance: [
+            ...measuredNearMiss.provenance,
+            `mempool_stage_two_source_route:${measuredNearMiss.sourceZeroCapitalOpportunityId}`,
+            'mempool_stage_two_canonical_near_miss_published:true',
+            'deterministic_post_victim_profit_claimed:false',
+            'execution_authority:false',
+          ],
+        }) || candidate;
+        exactPostVictimBackrunRegistry.remove(opportunityId);
       } else {
         exactPostVictimBackrunRegistry.remove(opportunityId);
       }
