@@ -8,6 +8,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const gateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const handoff = read('server/services/cryptocrawl/integration/zero-capital-stage-handoff-supervisor.ts');
+const anytimeRace = read('server/services/cryptocrawl/integration/atomic-bps-anytime-race.ts');
 const engine = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
 const workers = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-workers.ts');
 const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
@@ -60,6 +61,24 @@ assert.match(handoff, /economicAuthority: false/);
 assert.match(handoff, /executionAuthority: false/);
 assert.doesNotMatch(handoff, /from ['"][^'"]*supabase/i);
 assert.doesNotMatch(handoff, /from ['"][^'"]*(redis|kafka|rabbit|bull)/i);
+
+// Momentum: all probes may start concurrently, but the hot path consumes them in
+// completion order and does not wait for the slowest sibling once exact profitability
+// exists. A freshness deadline reserves opportunity lifetime for canonical execution.
+assert.match(anytimeRace, /Promise\.race/);
+assert.match(anytimeRace, /stoppedOnAcceptable/);
+assert.match(anytimeRace, /ignoredStragglers/);
+assert.match(anytimeRace, /await Promise\.resolve\(\)/);
+assert.match(anytimeRace, /late results cannot delay or overwrite/);
+assert.doesNotMatch(anytimeRace, /Promise\.allSettled/);
+assert.match(engine, /runAtomicBpsAnytimeRace/);
+assert.match(engine, /quoteDecisionDeadlineAt = opportunity\.expiresAt - minimumRemainingLifetimeMs/);
+assert.match(engine, /anytimeIncumbentSelection: true/);
+assert.match(engine, /waitsForAllQuoteStragglers: false/);
+assert.match(engine, /firstStrictPositiveIncumbentStopsWaiting: true/);
+assert.match(engine, /freshnessReserveProtectedForExecution: true/);
+assert.match(engine, /lateProbeOverwriteAllowed: false/);
+assert.doesNotMatch(engine, /Promise\.allSettled\(sizes\.map/);
 
 // Exact all-in positive base units are the only post-Stage-1 profitability boundary.
 assert.match(engine, /candidate\.netProfit > 0n && candidate\.executablePositive === true/);
@@ -160,4 +179,4 @@ assert.match(providerEconomics, /aave_v3/);
 assert.match(providerEconomics, /morpho_blue/);
 assert.match(providerEconomics, /calculateMeasuredFlashLoanFee/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, parallel prewarming, engine-owned composite tactics, exact strict-positive economics across all capital paths, stateful builder gas measurement, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
+console.log('[atomic-bps-single-pipeline] PASS: Stage 1 remains locked at -10 BPS; post-Stage-1 transformation is one direct in-memory Atomic BPS pipeline with bounded handoff replay, in-flight deduplication, anytime profitable-incumbent selection, freshness-reserved execution, straggler avoidance, parallel prewarming, engine-owned composite tactics, exact strict-positive economics across all capital paths, stateful builder gas measurement, non-authority workers, measured provider alternatives, and one unchanged canonical execution boundary');
