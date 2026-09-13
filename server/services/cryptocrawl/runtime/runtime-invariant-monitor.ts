@@ -1,8 +1,10 @@
 import logger from '../../../logger.js';
+import { measuredCandidateRegistry } from '../discovery/measured-candidate-registry.js';
 import type { CanonicalOpportunitySnapshot } from '../intelligence/canonical-opportunity-state.js';
 
 export type RuntimeInvariantCode =
   | 'ELIGIBLE_WITHOUT_POSITIVE_NET'
+  | 'ELIGIBLE_BELOW_STAGE3_TARGET'
   | 'ELIGIBLE_WITHOUT_MEASURED_LIQUIDITY'
   | 'ELIGIBLE_WITH_STALE_MARKET_EVIDENCE'
   | 'INVALID_DETERMINISTIC_COSTS'
@@ -37,6 +39,8 @@ export interface RuntimeInvariantMonitorSnapshot {
   }>;
 }
 
+const STAGE_THREE_MINIMUM_TARGET_BPS = 10;
+
 function finiteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -48,6 +52,28 @@ function finiteNonNegative(value: unknown): value is number {
 function economicsTolerance(...values: number[]): number {
   const scale = Math.max(1, ...values.map(value => Math.abs(value)));
   return Math.max(0.000001, scale * 1e-9);
+}
+
+function stageThreeTargetBps(): number {
+  const parsed = Number(
+    process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS
+    ?? process.env.ZERO_CAPITAL_RESCUE_TARGET_NET_BPS
+    ?? STAGE_THREE_MINIMUM_TARGET_BPS,
+  );
+  const finite = Number.isFinite(parsed) ? parsed : STAGE_THREE_MINIMUM_TARGET_BPS;
+  return Math.max(STAGE_THREE_MINIMUM_TARGET_BPS, Math.min(1_000, finite));
+}
+
+function canonicalStageThreeNetBps(snapshot: CanonicalOpportunitySnapshot): number | null {
+  const measured = measuredCandidateRegistry.get(snapshot.opportunityId);
+  const measuredNetBps = measured?.canonicalBps.netBps;
+  if (measuredNetBps !== null && measuredNetBps !== undefined && Number.isFinite(Number(measuredNetBps))) {
+    return Number(measuredNetBps);
+  }
+  const plan = snapshot.plan;
+  if (!plan || !Number.isFinite(plan.netProfitUsd) || !Number.isFinite(plan.notionalUsd) || plan.notionalUsd <= 0) return null;
+  const derived = plan.netProfitUsd / plan.notionalUsd * 10_000;
+  return Number.isFinite(derived) ? derived : null;
 }
 
 function maxQuoteAgeMs(): number {
@@ -78,6 +104,16 @@ function inspectSnapshot(snapshot: CanonicalOpportunitySnapshot): RuntimeInvaria
     if (!plan || !Number.isFinite(plan.netProfitUsd) || plan.netProfitUsd <= 0) {
       push('ELIGIBLE_WITHOUT_POSITIVE_NET', 'Eligible state requires a finite strictly-positive deterministic all-in net profit');
     }
+
+    const stageThreeNetBps = canonicalStageThreeNetBps(snapshot);
+    const stageThreeTarget = stageThreeTargetBps();
+    if (stageThreeNetBps === null || stageThreeNetBps + 1e-9 < stageThreeTarget) {
+      push(
+        'ELIGIBLE_BELOW_STAGE3_TARGET',
+        `Stage-4 admission requires canonical all-in net BPS >= ${stageThreeTarget}; observed=${stageThreeNetBps ?? 'unknown'}`,
+      );
+    }
+
     if (!plan || plan.liquidity.status !== 'measured' || plan.liquidity.buyAvailableBaseQty === null || plan.liquidity.sellAvailableBaseQty === null) {
       push('ELIGIBLE_WITHOUT_MEASURED_LIQUIDITY', 'Eligible CEX state requires measured executable depth on both legs');
     }
