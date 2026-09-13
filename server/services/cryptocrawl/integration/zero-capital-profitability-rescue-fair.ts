@@ -22,6 +22,57 @@ function targetBps(): number {
   return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS, 10, 10, 1_000);
 }
 
+function stageOneMinimumEntryShare(): number {
+  const raw = Number(process.env.ZERO_CAPITAL_STAGE_ONE_MIN_ATOMIC_ENTRY_SHARE ?? 0.8);
+  const normalized = Number.isFinite(raw) && raw > 1 && raw <= 100 ? raw / 100 : raw;
+  return Number.isFinite(normalized) ? Math.max(0.8, Math.min(1, normalized)) : 0.8;
+}
+
+function selectStageOnePromotedOpportunities(
+  opportunities: readonly ZeroCapitalOpportunity[],
+): {
+  promoted: ZeroCapitalOpportunity[];
+  aboveFloorCount: number;
+  retainedBelowFloorCount: number;
+  deferredBelowFloorCount: number;
+  targetShare: number;
+  achievedShare: number;
+  entryFloorBps: number;
+} {
+  const floor = entryFloorBps();
+  const targetShare = stageOneMinimumEntryShare();
+  const aboveFloor = opportunities.filter(opportunity => Number.isFinite(opportunity.netProfitBps) && opportunity.netProfitBps >= floor);
+  const belowFloor = opportunities.filter(opportunity => !Number.isFinite(opportunity.netProfitBps) || opportunity.netProfitBps < floor);
+
+  const maximumBelowFloor = targetShare >= 1
+    ? 0
+    : Math.floor(aboveFloor.length * (1 - targetShare) / targetShare);
+  const retainedBelowFloor = [...belowFloor]
+    .sort((left, right) => {
+      const leftBps = Number.isFinite(left.netProfitBps) ? left.netProfitBps : Number.NEGATIVE_INFINITY;
+      const rightBps = Number.isFinite(right.netProfitBps) ? right.netProfitBps : Number.NEGATIVE_INFINITY;
+      if (rightBps !== leftBps) return rightBps - leftBps;
+      if (right.confidence !== left.confidence) return right.confidence - left.confidence;
+      return right.expiresAt - left.expiresAt;
+    })
+    .slice(0, maximumBelowFloor);
+  const retainedBelowFloorIds = new Set(retainedBelowFloor.map(opportunity => opportunity.id));
+  const promoted = opportunities.filter(opportunity => (
+    Number.isFinite(opportunity.netProfitBps) && opportunity.netProfitBps >= floor
+  ) || retainedBelowFloorIds.has(opportunity.id));
+  const achievedShare = promoted.length > 0 ? aboveFloor.length / promoted.length : 1;
+
+  return {
+    promoted,
+    aboveFloorCount: aboveFloor.length,
+    retainedBelowFloorCount: retainedBelowFloor.length,
+    deferredBelowFloorCount: Math.max(0, belowFloor.length - retainedBelowFloor.length),
+    targetShare,
+    achievedShare,
+    entryFloorBps: floor,
+  };
+}
+
 function recoverable(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
   return opportunity.expiresAt > now
     && opportunity.flashLoanAmount > 0n
@@ -81,22 +132,46 @@ function bindCanonicalQuoteConverter(
 }
 
 /**
- * Canonical zero-capital handoff wrapper. Stage 2 owns exact measured BPS reduction
- * at/below the entry floor. V2 remains the sole Atomic-surplus transformation engine
- * once a candidate reaches the configured entry band. Fairness persistence may
- * order Stage-3 work, but it never grants execution authority or removes a fresh
- * candidate from the current pipeline.
+ * Canonical zero-capital handoff wrapper. Stage 1 preserves every raw discovery
+ * observation but promotes a stream whose natural BPS composition is at least 80%
+ * inside the canonical Atomic-entry band. Stage 2 then owns exact measured BPS
+ * reduction at/below that entry floor. V2 remains the sole Atomic-surplus
+ * transformation engine once a candidate reaches the configured entry band.
+ * Fairness persistence may order Stage-3 work, but it never grants execution
+ * authority or removes a fresh candidate from discovery.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
 ): Promise<ZeroCapitalOpportunity[]> {
   const fromQuotedRoute = bindCanonicalQuoteConverter(input.fromQuotedRoute);
+  const stageOneSelection = selectStageOnePromotedOpportunities(input.opportunities);
+
+  logger.info('[ZeroCapitalProfitabilityRescueFair] Stage 1 natural-BPS composition gate applied', {
+    component: 'ZeroCapitalProfitabilityRescueFair',
+    chain: input.chain,
+    rawFreshCandidates: input.opportunities.length,
+    promotedCandidates: stageOneSelection.promoted.length,
+    naturalAboveEntryFloor: stageOneSelection.aboveFloorCount,
+    retainedBelowEntryFloor: stageOneSelection.retainedBelowFloorCount,
+    deferredBelowEntryFloor: stageOneSelection.deferredBelowFloorCount,
+    entryFloorBps: stageOneSelection.entryFloorBps,
+    minimumAboveEntryFloorShare: stageOneSelection.targetShare,
+    achievedAboveEntryFloorShare: stageOneSelection.achievedShare,
+    achievedAboveEntryFloorPercent: stageOneSelection.achievedShare * 100,
+    bpsRewrittenByGate: false,
+    rawDiscoverySuppressed: false,
+    deferredEligibleForFreshRediscovery: true,
+    positiveAllInCandidateVetoAuthority: false,
+    executionAuthority: false,
+  });
+
   const stageTwoInput: FairZeroCapitalProfitabilityRescueInput = {
     ...input,
+    opportunities: stageOneSelection.promoted,
     fromQuotedRoute,
   };
   const stageTwoOpportunities = await runStageTwoZeroCapitalBpsReduction(stageTwoInput).catch(error => {
-    logger.warn('[ZeroCapitalProfitabilityRescueFair] Stage 2 zero-capital BPS reduction degraded; original fresh candidates retained for Atomic rescue', {
+    logger.warn('[ZeroCapitalProfitabilityRescueFair] Stage 2 zero-capital BPS reduction degraded; Stage-1-promoted fresh candidates retained for Atomic rescue', {
       component: 'ZeroCapitalProfitabilityRescueFair',
       chain: input.chain,
       error: error instanceof Error ? error.message : String(error),
@@ -104,7 +179,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
       staleQuotePreserved: false,
       executionAuthority: false,
     });
-    return [...input.opportunities];
+    return [...stageTwoInput.opportunities];
   });
   const stageInput: FairZeroCapitalProfitabilityRescueInput = {
     ...stageTwoInput,
