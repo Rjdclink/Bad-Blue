@@ -82,6 +82,12 @@ let chainWatchdogExpirations = 0;
 let observationOnlyCycles = 0;
 let filteredBelowStageOneFloor = 0;
 
+// STAGE_ONE_LOCKED_INVARIANT — production baseline 907ee69eeee3436763e64e39b9db017ad833222c.
+// Preserve every raw observation, but only promote finite ZERO_CAPITAL_ATOMIC candidates
+// at or above -10 BPS into the Stage-1 candidate stream. This is classification only,
+// never execution-profitability authority. Change only with explicit operator authorization.
+const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;
+
 function runtime(): CanonicalZeroCapitalRuntime {
   return zeroCapitalEngine as unknown as CanonicalZeroCapitalRuntime;
 }
@@ -102,7 +108,7 @@ function boundedNumber(raw: unknown, fallback: number, min: number, max: number)
 }
 
 function atomicSurplusEntryFloorBps(): number {
-  return boundedNumber(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10, -100, 0);
+  return STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS;
 }
 
 function atomicSurplusTargetBps(): number {
@@ -357,7 +363,7 @@ function recordPreselectionCandidate(input: {
   }
 
   // Preserve raw route evidence for discovery/research, but Stage 1 only promotes
-  // finite Zero-Initial-Capital candidates at or above the configured -10 BPS floor.
+  // finite Zero-Initial-Capital candidates at or above the locked -10 BPS floor.
   zeroCapitalRouteEvidenceRegistry.record(opportunity);
   if (!Number.isFinite(opportunity.netProfitBps) || opportunity.netProfitBps < atomicSurplusEntryFloorBps()) {
     filteredBelowStageOneFloor++;
@@ -631,6 +637,7 @@ export async function startCanonicalZeroCapitalDiscovery(): Promise<void> {
     stageOneCandidateFloorBps: atomicSurplusEntryFloorBps(),
     stageOneBelowFloorPromoted: false,
     rawBelowFloorRouteEvidencePreserved: true,
+    stageOneLock: 'explicit_operator_authorization_required',
     atomicSurplusTargetBps: atomicSurplusTargetBps(),
     bpsAuthority: 'measured_candidate_registry',
     receiverFleetWatchdogMs: receiverFleetWatchdogMs(),
@@ -667,6 +674,7 @@ export function getCanonicalZeroCapitalDiscoverySnapshot() {
     repriced,
     filteredBelowStageOneFloor,
     stageOneCandidateFloorBps: atomicSurplusEntryFloorBps(),
+    stageOneLock: 'explicit_operator_authorization_required',
     readyReceiverChains,
     receiverWatchdogExpirations,
     chainWatchdogExpirations,
