@@ -1,6 +1,6 @@
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
-import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import { selectFairZeroCapitalRescueCandidates } from '../execution/zero-capital-rescue-fairness.js';
 import { runStageTwoZeroCapitalBpsReduction } from './stage-two-zero-capital-bps-reduction.js';
@@ -76,7 +76,17 @@ export interface FairZeroCapitalProfitabilityRescueInput {
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
 ): Promise<ZeroCapitalOpportunity[]> {
-  const stageTwoOpportunities = await runStageTwoZeroCapitalBpsReduction(input).catch(error => {
+  // The canonical converter is an instance method and reads other engine methods
+  // through `this`. Passing that method as a bare callback loses its receiver and
+  // caused successful Stage-2 refinements to fail at expectedSlippageBps(). Bind
+  // the existing converter once here so Stage 2 and Atomic V2 share the same
+  // canonical conversion authority without duplicating economics or slippage logic.
+  const boundInput: FairZeroCapitalProfitabilityRescueInput = {
+    ...input,
+    fromQuotedRoute: input.fromQuotedRoute.bind(zeroCapitalEngine),
+  };
+
+  const stageTwoOpportunities = await runStageTwoZeroCapitalBpsReduction(boundInput).catch(error => {
     logger.warn('[ZeroCapitalProfitabilityRescueFair] Stage 2 zero-capital BPS reduction degraded; original fresh candidates retained for Atomic rescue', {
       component: 'ZeroCapitalProfitabilityRescueFair',
       chain: input.chain,
@@ -88,7 +98,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     return [...input.opportunities];
   });
   const stageInput: FairZeroCapitalProfitabilityRescueInput = {
-    ...input,
+    ...boundInput,
     opportunities: stageTwoOpportunities,
   };
 
@@ -175,6 +185,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     selectedOpportunityIds: [...selectedOpportunityIds],
     deferredOpportunityIds: [...deferredOpportunityIds],
     persistedFairnessAvailable,
+    quotedRouteConversionContextBound: true,
     stageTwoExactReductionRunsBeforeAtomicFairness: true,
     stageTwoCrossingFeedsAtomicRescueSameCycle: true,
     deferredRemovedFromCurrentExecutionPipeline: false,
