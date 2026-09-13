@@ -78,11 +78,11 @@ export async function runAtomicBpsAnytimeRace<T>(input: {
       settled: false,
       consumed: false,
       outcome: null,
-      promise: Promise.resolve(null as never),
+      promise: Promise.resolve({ index, status: 'rejected', error: new Error('uninitialized') } as Settled<T>),
     };
-    state.promise = task.then<Settled<T>>(
-      value => ({ index, status: 'fulfilled', value }),
-      error => ({ index, status: 'rejected', error }),
+    state.promise = task.then(
+      (value): Settled<T> => ({ index, status: 'fulfilled', value }),
+      (error): Settled<T> => ({ index, status: 'rejected', error }),
     ).then(outcome => {
       state.settled = true;
       state.outcome = outcome;
