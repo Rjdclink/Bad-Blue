@@ -55,7 +55,7 @@ assert.match(transformation, /candidateRefreshTimer = setTimeout\([\s\S]{0,160}r
 assert.match(transformation, /measuredCandidateRegistry\.onUpdate\(candidate => \{[\s\S]{0,260}scheduleCandidateRefresh\(\)/);
 assert.match(transformation, /function bpsReductionOwnershipFloorBps\(\): number[\s\S]{0,220}ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 assert.match(transformation, /advice\.netProfitBps === null \|\| advice\.netProfitBps > bpsReductionOwnershipFloorBps\(\)/);
-assert.match(transformation, /item\.advice\.netProfitBps !== null && item\.advice\.netProfitBps < reductionOwnershipFloor/);
+assert.match(transformation, /item\.advice\.netProfitBps !== null && item\.advice\.netProfitBps <= reductionOwnershipFloor/);
 assert.match(transformation, /item\.bpsToBreakEven > reductionGapFloor/);
 assert.match(transformation, /atomicRescueBandExcludedFromBpsActuation: true/);
 assert.doesNotMatch(transformation, /item\.advice\.netProfitBps <= 0/);
