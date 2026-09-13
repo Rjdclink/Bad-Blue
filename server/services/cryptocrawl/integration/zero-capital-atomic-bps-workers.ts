@@ -12,6 +12,7 @@ export interface AtomicBpsPreparedEvidence {
   inputTokenUsdPrice: number | null;
   providerEvidence: FlashLoanProviderEconomics[];
   preparedAt: number;
+  freshnessBudgetMs: number;
 }
 
 export interface AtomicBpsAuditObservation {
@@ -38,6 +39,7 @@ let prewarmRequests = 0;
 let priceCacheHits = 0;
 let providerCacheHits = 0;
 let sharedInFlightHits = 0;
+let adaptiveFreshnessTightenings = 0;
 let auditObservations = 0;
 
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
@@ -49,14 +51,26 @@ function hotCacheTtlMs(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_ATOMIC_BPS_HOT_CACHE_TTL_MS, 1_250, 100, 5_000));
 }
 
-function fresh<T>(entry: TimedValue<T> | undefined, now = Date.now()): entry is TimedValue<T> {
-  return Boolean(entry && now - entry.observedAt <= hotCacheTtlMs());
+function freshnessBudgetMs(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
+  const configured = hotCacheTtlMs();
+  const remaining = Math.max(0, opportunity.expiresAt - now);
+  // Never allow a cache item to consume most of a short-lived quote's lifetime.
+  // A quarter-life ceiling is deliberately conservative and leaves room for exact
+  // requote, submission and inclusion. The configured TTL remains the upper bound.
+  const lifetimeBound = Math.max(100, Math.floor(remaining / 4));
+  const effective = Math.min(configured, lifetimeBound);
+  if (effective < configured) adaptiveFreshnessTightenings += 1;
+  return effective;
 }
 
-async function measuredPrice(symbol: string): Promise<number | null> {
+function fresh<T>(entry: TimedValue<T> | undefined, maxAgeMs = hotCacheTtlMs(), now = Date.now()): entry is TimedValue<T> {
+  return Boolean(entry && now - entry.observedAt <= Math.max(1, maxAgeMs));
+}
+
+async function measuredPrice(symbol: string, maxAgeMs = hotCacheTtlMs()): Promise<number | null> {
   const key = symbol.trim().toUpperCase();
   const cached = priceCache.get(key);
-  if (fresh(cached)) {
+  if (fresh(cached, maxAgeMs)) {
     priceCacheHits += 1;
     return cached.value;
   }
@@ -87,11 +101,12 @@ export async function getAtomicBpsProviderEvidence(
   chain: SupportedChain,
   provider: providers.Provider,
   asset: string,
+  maxAgeMs = hotCacheTtlMs(),
 ): Promise<FlashLoanProviderEconomics[]> {
   if (chain === 'europa') return [];
   const key = `${chain}:${asset.toLowerCase()}`;
   const cached = providerCache.get(key);
-  if (fresh(cached)) {
+  if (fresh(cached, maxAgeMs)) {
     providerCacheHits += 1;
     return cached.value.map(item => ({ ...item }));
   }
@@ -122,26 +137,31 @@ function prepareOne(input: {
   provider: providers.Provider;
   opportunity: ZeroCapitalOpportunity;
 }): Promise<AtomicBpsPreparedEvidence> {
+  const freshnessBudget = freshnessBudgetMs(input.opportunity);
   const quoted = Number(input.opportunity.inputAssetUsdPrice);
   const pricePromise = Number.isFinite(quoted) && quoted > 0
     ? Promise.resolve(quoted)
-    : measuredPrice(input.opportunity.inputAssetSymbol);
+    : measuredPrice(input.opportunity.inputAssetSymbol, freshnessBudget);
   const providerPromise = getAtomicBpsProviderEvidence(
     input.chain,
     input.provider,
     input.opportunity.inputToken,
+    freshnessBudget,
   );
   return Promise.all([pricePromise, providerPromise]).then(([inputTokenUsdPrice, providerEvidence]) => ({
     inputTokenUsdPrice,
     providerEvidence,
     preparedAt: Date.now(),
+    freshnessBudgetMs: freshnessBudget,
   }));
 }
 
 /**
  * Speed/freshness worker. It starts every independent price/provider read at once,
- * shares in-flight reads, and keeps only a very short hot cache. It has no economic,
- * admission, or execution authority; callers always re-check freshness and exact net.
+ * shares in-flight reads, and keeps only a very short hot cache. Cache age tightens
+ * automatically for short-lived opportunities so reuse never consumes most of a
+ * quote's remaining life. It has no economic, admission, or execution authority;
+ * callers always re-check freshness and exact net.
  */
 export function prewarmAtomicBpsEvidence(input: {
   chain: SupportedChain;
@@ -175,10 +195,12 @@ export function getAtomicBpsWorkerSnapshot() {
       executionAuthority: false,
       economicAuthority: false,
       cacheTtlMs: hotCacheTtlMs(),
+      opportunityLifetimeBoundedFreshness: true,
       prewarmRequests,
       priceCacheHits,
       providerCacheHits,
       sharedInFlightHits,
+      adaptiveFreshnessTightenings,
       priceCacheEntries: priceCache.size,
       providerCacheEntries: providerCache.size,
     },
