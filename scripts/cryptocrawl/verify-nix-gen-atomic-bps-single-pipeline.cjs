@@ -34,11 +34,25 @@ assert.match(gateway, /opportunities: input\.opportunities/);
 assert.match(gateway, /const activeRescueCandidates = residentFastPath\.filter/);
 assert.match(gateway, /opportunity\.expectedProfit <= 0n/);
 
-// Non-positive rescue-band candidates are actively measured by the existing bounded
-// rescue actuator. It returns derived evidence only and never gains execution authority.
+// Non-positive candidates are actively measured by the existing bounded rescue
+// actuator. Derived strict improvements may recurse in the same handoff; Stage One
+// itself is never mutated and the actuator never gains execution authority.
 assert.match(gateway, /runZeroCapitalProfitabilityRescueV2\(\{/);
-assert.match(gateway, /opportunities: residentFastPath/);
-assert.match(gateway, /return \{ \.\.\.candidate, id: resident\.id \}/);
+assert.match(gateway, /const passInput = transformed\.filter\(stillNeedsMeasuredRescue\)/);
+assert.match(gateway, /opportunities: passInput/);
+assert.match(gateway, /function strictDerivedImprovement\(/);
+assert.match(gateway, /if \(!strictDerivedImprovement\(prior, normalized\)\) return;/);
+assert.match(gateway, /normalized = \{ \.\.\.candidate, id: prior\.id \}/);
+assert.match(gateway, /transformed = transformed\.map\(candidate => replacements\.get\(candidate\.id\) \?\? candidate\)/);
+assert.match(gateway, /ZERO_CAPITAL_APE_RECURSIVE_PASSES/);
+assert.match(gateway, /ZERO_CAPITAL_APE_RECURSIVE_MAX_MS/);
+assert.match(gateway, /for \(let pass = 0; pass < maxPasses; pass \+= 1\)/);
+assert.match(gateway, /if \(passImprovements === 0\)/);
+assert.match(gateway, /opportunities: transformed/);
+assert.match(gateway, /recursivePartialImprovementFeedback: true/);
+assert.match(gateway, /recursiveStrictImprovementRequired: true/);
+assert.match(gateway, /recursiveStopsAtStrictPositivePerCandidate: true/);
+assert.match(gateway, /recursiveProviderFailureLocal: true/);
 assert.match(gateway, /derivedOverlayPreservesCandidateIdentity: true/);
 assert.match(gateway, /alternateRouteEvidencePreservedInDerivedOverlay: true/);
 assert.match(gateway, /activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV2'/);
@@ -86,4 +100,4 @@ assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 assert.doesNotMatch(activeRescue, /Promise\.allSettled\(sizes\.map/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked at -10 BPS; resident APE fast path is unchanged; active measured rescue preserves genuine partial BPS gains and candidate identity across alternate-route overlays, uses bounded route/provider/size hedging without waiting for the slowest quote, and still requires strict-positive all-in economics before downstream canonical execution');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked and enters the zero-I/O resident APE fast path by reference; active measured rescue preserves genuine partial BPS gains, recursively feeds only strict derived improvements back through bounded same-handoff passes, stops each candidate at strict-positive all-in economics, preserves candidate identity across alternate-route overlays, and keeps execution authority unchanged');
