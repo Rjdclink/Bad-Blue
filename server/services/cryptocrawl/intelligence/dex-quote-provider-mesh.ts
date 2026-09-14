@@ -94,6 +94,7 @@ const HEDGE_DELAY_MS = boundedInt(process.env.CRYPTOCRAWL_DEX_MESH_HEDGE_DELAY_M
 const REQUEST_TIMEOUT_MS = boundedInt(process.env.CRYPTOCRAWL_DEX_MESH_REQUEST_TIMEOUT_MS, 2_200, 500, 6_000);
 const PROVIDER_COOLDOWN_MS = boundedInt(process.env.CRYPTOCRAWL_DEX_MESH_PROVIDER_COOLDOWN_MS, 5_000, 500, 60_000);
 const WEAK_QUOTE_DISAGREEMENT_BPS = boundedNumber(process.env.CRYPTOCRAWL_DEX_MESH_WEAK_QUOTE_BPS, 8, 0.1, 250);
+const ROTATION_TELEMETRY_MS = boundedInt(process.env.CRYPTOCRAWL_DEX_MESH_ROTATION_TELEMETRY_MS, 15_000, 5_000, 300_000);
 
 function boundedInt(raw: unknown, fallback: number, min: number, max: number): number {
   const value = Number(raw);
@@ -163,6 +164,7 @@ const states = new Map<DexQuoteProviderName, ProviderState>(
 );
 const cache = new Map<string, { value: DexQuoteObservation | null; expiresAt: number }>();
 const inFlight = new Map<string, Promise<DexQuoteObservation | null>>();
+let lastRotationTelemetryAt = 0;
 
 function refill(state: ProviderState, now = Date.now()): void {
   const seconds = Math.max(0, now - state.lastRefillAt) / 1_000;
@@ -190,10 +192,17 @@ function healthScore(state: ProviderState, request: DexMeshQuoteRequest): number
   return budget * 0.28 + reliability * 0.27 + latency * 0.18 + quality * 0.17 + rotation * 0.1 + lowQuotaPressureBonus;
 }
 function rankedProviders(request: DexMeshQuoteRequest): DexQuoteProviderName[] {
+  // Eligibility, local cooldowns, budget pressure, quality, latency and reliability
+  // are still decided by healthScore. Among providers that remain eligible, make
+  // rotation explicit: the least-recently-used provider goes first, with health
+  // score retained as the deterministic tie-breaker (including at startup).
   return [...states.values()]
-    .map(state => ({ name: state.name, score: healthScore(state, request) }))
+    .map(state => ({ name: state.name, score: healthScore(state, request), lastUsedAt: state.lastUsedAt }))
     .filter(row => Number.isFinite(row.score))
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => {
+      if (a.lastUsedAt !== b.lastUsedAt) return a.lastUsedAt - b.lastUsedAt;
+      return b.score - a.score;
+    })
     .map(row => row.name);
 }
 function consume(state: ProviderState): boolean {
@@ -489,6 +498,28 @@ async function runHedgedMesh(request: DexMeshQuoteRequest): Promise<DexQuoteObse
       providersAttempted: results.length, activeProviders: primaryNames, hedgeUsed: results.length > primaryNames.length,
       globalCooldownApplied: false, zeroXProductionDependency: false,
     });
+    const now = Date.now();
+    if (now - lastRotationTelemetryAt >= ROTATION_TELEMETRY_MS) {
+      lastRotationTelemetryAt = now;
+      logger.info('[DexQuoteMesh] Rotation snapshot', {
+        component: 'DexQuoteProviderMesh',
+        chainId: request.chainId,
+        selectedProvider: selected.source,
+        activeProviders: primaryNames,
+        hedgeUsed: results.length > primaryNames.length,
+        rotationPolicy: 'least_recently_used_among_eligible',
+        providerActivity: [...states.values()].map(state => ({
+          provider: state.name,
+          lastUsedAt: state.lastUsedAt,
+          successes: state.successes,
+          failures: state.failures,
+          consecutiveFailures: state.consecutiveFailures,
+          cooldownUntil: state.cooldownUntil,
+        })),
+        globalCooldownApplied: false,
+        zeroXProductionDependency: false,
+      });
+    }
   }
   return selected;
 }
