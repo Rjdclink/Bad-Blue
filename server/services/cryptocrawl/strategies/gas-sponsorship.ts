@@ -1,4 +1,8 @@
 import { BigNumber, Wallet, ethers } from 'ethers';
+import {
+  selectExactCallGasProvider,
+  type ExactCallGasCoordinationDecision,
+} from '../execution/adapters/ravn-alchemy-gas-coordinator.js';
 
 const ALCHEMY_WALLET_API_BASE = 'https://api.g.alchemy.com/v2';
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -29,6 +33,10 @@ export interface SponsoredExecutionResult {
   blockNumber?: number;
   gasUsed?: bigint;
   receiptStatus: 0 | 1;
+  provider: 'alchemy-gas-manager';
+  preferredProvider: 'ravn';
+  fallbackUsed: boolean;
+  fallbackReason?: string;
 }
 
 interface JsonRpcEnvelope<T> {
@@ -70,10 +78,10 @@ function isDeterministicPolicyFailure(message: string): boolean {
 /**
  * Functional Alchemy Gas Manager fallback.
  *
- * This lane is deliberately not the preferred APE gas/execution path. Callers
- * must preserve provider billing liability in canonical all-in economics. RAVN
- * or any other route-local externally paid lane may win before this fallback is
- * selected, but a failed/incompatible alternative must not remove this capability.
+ * RAVN is evaluated first by a synchronous exact-call compatibility gate. The
+ * current RAVN public API cannot sponsor arbitrary prebuilt flash-receiver
+ * calldata, so that incompatibility stays local and adds no network wait before
+ * Alchemy. Provider billing liability remains part of canonical all-in economics.
  */
 export class AlchemyGasSponsorshipManager {
   private readonly apiKey: string;
@@ -107,6 +115,10 @@ export class AlchemyGasSponsorshipManager {
       };
     }
     return { ready: true, provider: 'alchemy-gas-manager' };
+  }
+
+  getCoordinationReadiness(): ExactCallGasCoordinationDecision {
+    return selectExactCallGasProvider({ alchemyReady: this.getReadiness().ready });
   }
 
   private markLivePolicyFailure(message: string): void {
@@ -211,6 +223,10 @@ export class AlchemyGasSponsorshipManager {
     timeoutMs?: number;
     pollMs?: number;
   }): Promise<SponsoredExecutionResult> {
+    const coordination = this.getCoordinationReadiness();
+    if (coordination.provider !== 'alchemy-gas-manager') {
+      throw new Error(coordination.reason);
+    }
     if (!Number.isSafeInteger(input.chainId) || input.chainId <= 0) throw new Error('chainId must be a positive integer');
     if (!Array.isArray(input.calls) || input.calls.length === 0) throw new Error('At least one sponsored call is required');
 
@@ -253,7 +269,17 @@ export class AlchemyGasSponsorshipManager {
         if (receiptStatus !== 1) throw new Error('Alchemy sponsored transaction reverted');
         const blockNumber = receipt?.blockNumber !== undefined ? Number(BigInt(receipt.blockNumber)) : undefined;
         const gasUsed = receipt?.gasUsed !== undefined ? BigInt(receipt.gasUsed) : undefined;
-        return { callId, transactionHash, blockNumber, gasUsed, receiptStatus: 1 };
+        return {
+          callId,
+          transactionHash,
+          blockNumber,
+          gasUsed,
+          receiptStatus: 1,
+          provider: 'alchemy-gas-manager',
+          preferredProvider: 'ravn',
+          fallbackUsed: coordination.fallbackUsed,
+          fallbackReason: coordination.reason,
+        };
       }
       if (numericStatus === 400) throw new Error('Alchemy sponsored call failed or reverted');
       await new Promise(resolve => setTimeout(resolve, pollMs));
