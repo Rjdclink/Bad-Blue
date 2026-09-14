@@ -17,6 +17,7 @@ const positiveCapture = read('server/services/cryptocrawl/runtime/positive-profi
 const source = read('server/services/cryptocrawl/ghost-wallet/onchain-capital-sources.ts');
 const providerMesh = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-provider-mesh.ts');
 const chainEvents = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-chain-events.ts');
+const logPolicy = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-log-policy.ts');
 const ingest = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-settlement-ingest.ts');
 const payout = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-payout.ts');
 const route = read('server/routes/cryptoWiring.routes.ts');
@@ -98,7 +99,9 @@ assert.doesNotMatch(chainEvents, /address:\s*input\.addresses/);
 assert.match(chainEvents, /from 'ws'/);
 assert.match(chainEvents, /eth_subscribe/);
 assert.doesNotMatch(chainEvents, /new providers\.WebSocketProvider/);
-assert.match(chainEvents, /rate limit\|too many requests\|throttl/);
+assert.match(chainEvents, /isGhostWalletThrottleError/);
+assert.match(logPolicy, /rate limit\|too many requests\|throttl/);
+assert.match(logPolicy, /limit exceeded\|\\b429\\b\|-32005\\b/);
 assert.match(chainEvents, /MAX_RECONNECT_DELAY_MS/);
 assert.match(chainEvents, /reconnectDelayMs/);
 assert.match(chainEvents, /routeLocalFailure: true/);
