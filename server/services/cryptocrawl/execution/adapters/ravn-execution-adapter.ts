@@ -126,6 +126,7 @@ async function postRavn(path: string, body: unknown, timeout: number): Promise<R
 export async function quoteRavnAtExecutionBoundary(input: RavnQuoteRequest): Promise<RavnQuoteSnapshot> {
   const chainId = RAVN_CHAIN_IDS[input.chain];
   if (!chainId) throw new Error(`RAVN execution check does not support ${input.chain}`);
+  const slippageBps = Number(input.slippageBps);
   const request = {
     inputChainId: chainId,
     outputChainId: chainId,
@@ -135,7 +136,7 @@ export async function quoteRavnAtExecutionBoundary(input: RavnQuoteRequest): Pro
     userAddress: requireEvmAddress('userAddress', input.userAddress),
     ...(input.destinationAddress ? { destinationAddress: requireEvmAddress('destinationAddress', input.destinationAddress) } : {}),
     ...(input.refundAddress ? { refundAddress: requireEvmAddress('refundAddress', input.refundAddress) } : {}),
-    ...(Number.isFinite(input.slippageBps) ? { slippageBps: Math.max(1, Math.min(5_000, Math.trunc(input.slippageBps!))) } : {}),
+    ...(Number.isFinite(slippageBps) ? { slippageBps: Math.max(1, Math.min(5_000, Math.trunc(slippageBps))) } : {}),
     rankingMode: 'best_output',
   };
   const response = await postRavn('/quote', request, timeoutMs(input.timeoutMs));
