@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  coinGeckoPriceClient,
   mergeLivePriceEvidence,
   normalizeCoinMarketCapQuotes,
   normalizeCoinLorePrices,
@@ -88,4 +89,120 @@ assert.deepEqual(mergeLivePriceEvidence(['ethereum'], [
   { ethereum: 9999 },
 ]), { ethereum: 2500 });
 
-console.log('Live-price four-provider failover regression verifier passed');
+async function verifyProviderMeshBehavior(): Promise<void> {
+  const client = coinGeckoPriceClient as any;
+  const resetRuntimeState = () => {
+    client.cache.clear();
+    client.inFlight.clear();
+    client.providerState.clear();
+    client.providerTelemetry.clear();
+    client.lastCanonicalProviderByCoinId = {};
+    client.lastTelemetryLogAt = Date.now();
+  };
+
+  // Pass one launches all four primaries. Complete primary evidence must never touch CoinGecko.
+  resetRuntimeState();
+  let primaryCalls = 0;
+  let coinGeckoCalls = 0;
+  client.fetchPrimaryProvider = async (provider: string, coinIds: string[]) => {
+    primaryCalls += 1;
+    return Object.fromEntries(coinIds.map(coinId => [coinId, provider === 'coinmarketcap-keyless' ? 2500 : 2501]));
+  };
+  client.fetchCoinGeckoByCoinIds = async () => {
+    coinGeckoCalls += 1;
+    return { ethereum: 2499 };
+  };
+  const primaryResult = await client.fetchLivePriceMesh(['ethereum'], 'usd');
+  assert.equal(primaryCalls, 4);
+  assert.equal(coinGeckoCalls, 0);
+  assert.ok(primaryResult.pricesByCoinId.ethereum > 0);
+
+  // If pass one has no usable evidence, all four primaries run again before CoinGecko.
+  resetRuntimeState();
+  primaryCalls = 0;
+  coinGeckoCalls = 0;
+  client.fetchPrimaryProvider = async (provider: string, coinIds: string[]) => {
+    primaryCalls += 1;
+    return primaryCalls > 4 && provider === 'defillama'
+      ? Object.fromEntries(coinIds.map(coinId => [coinId, 2500]))
+      : {};
+  };
+  client.fetchCoinGeckoByCoinIds = async () => {
+    coinGeckoCalls += 1;
+    return { ethereum: 2499 };
+  };
+  const secondPassResult = await client.fetchLivePriceMesh(['ethereum'], 'usd');
+  assert.equal(primaryCalls, 8);
+  assert.equal(coinGeckoCalls, 0);
+  assert.equal(secondPassResult.pricesByCoinId.ethereum, 2500);
+
+  // Only two exhausted primary passes may enter CoinGecko emergency redundancy.
+  resetRuntimeState();
+  primaryCalls = 0;
+  coinGeckoCalls = 0;
+  client.fetchPrimaryProvider = async () => {
+    primaryCalls += 1;
+    return {};
+  };
+  client.fetchCoinGeckoByCoinIds = async (coinIds: string[]) => {
+    coinGeckoCalls += 1;
+    return Object.fromEntries(coinIds.map(coinId => [coinId, 2500]));
+  };
+  const emergencyResult = await client.fetchLivePriceMesh(['ethereum'], 'usd');
+  assert.equal(primaryCalls, 8);
+  assert.equal(coinGeckoCalls, 1);
+  assert.equal(emergencyResult.pricesByCoinId.ethereum, 2500);
+
+  // Identical simultaneous requests share one fetch, then the short complete cache is reused.
+  resetRuntimeState();
+  let meshFetches = 0;
+  client.fetchLivePriceMesh = async (coinIds: string[]) => {
+    meshFetches += 1;
+    await new Promise(resolve => setTimeout(resolve, 20));
+    return {
+      pricesByCoinId: Object.fromEntries(coinIds.map(coinId => [coinId, 2500])),
+      canonicalProviderByCoinId: Object.fromEntries(coinIds.map(coinId => [coinId, 'defillama'])),
+    };
+  };
+  const [coalescedA, coalescedB] = await Promise.all([
+    client.getLiveSymbolPrices(['ETH']),
+    client.getLiveSymbolPrices(['ETH']),
+  ]);
+  assert.equal(meshFetches, 1);
+  assert.equal(coalescedA.get('ETH'), 2500);
+  assert.equal(coalescedB.get('ETH'), 2500);
+  await client.getLiveSymbolPrices(['ETH']);
+  assert.equal(meshFetches, 1);
+  let telemetry = client.getTelemetrySnapshot();
+  assert.equal(telemetry.providers.defillama.coalescedRequests, 1);
+  assert.equal(telemetry.providers.defillama.cacheHits, 1);
+  assert.equal(telemetry.coinGeckoRequests, 0);
+
+  // A 429 cools only the failing provider; another provider remains immediately eligible.
+  resetRuntimeState();
+  client.recordProviderFailure('coinlore', new Error('HTTP 429: rate limit'));
+  const coinLoreState = client.getProviderState('coinlore');
+  const defiLlamaState = client.getProviderState('defillama');
+  assert.ok(coinLoreState.cooldownUntil > Date.now());
+  assert.equal(defiLlamaState.cooldownUntil, 0);
+  assert.equal(await client.acquireProviderToken('coinlore'), false);
+  assert.equal(await client.acquireProviderToken('defillama'), true);
+
+  // Expired local cooldown is automatically probed and restored to service.
+  coinLoreState.cooldownUntil = Date.now() - 1;
+  coinLoreState.tokens = 1;
+  assert.equal(await client.acquireProviderToken('coinlore'), true);
+  telemetry = client.getTelemetrySnapshot();
+  assert.equal(telemetry.providers.coinlore.rateLimitedResponses, 1);
+  assert.equal(telemetry.providers.coinlore.cooldownSkips, 1);
+  assert.equal(telemetry.providers.coinlore.recoveryProbes, 1);
+  assert.equal(telemetry.providers.defillama.cooldownUntil, 0);
+  assert.equal(telemetry.coinGeckoRequests, 0);
+}
+
+verifyProviderMeshBehavior()
+  .then(() => console.log('Live-price four-provider failover regression verifier passed'))
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
