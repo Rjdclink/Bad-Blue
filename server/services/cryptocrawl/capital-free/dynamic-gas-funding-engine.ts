@@ -41,8 +41,10 @@ export function chooseGasFundingMode(
   const reserveFloor = specific ? ethers.utils.parseUnits(specific, 18).toBigInt() : defaultFloor;
   const requireZeroOperatorCost = strictZeroOperatorCostRequired();
   const sponsorCostProvenZero = proof.sponsorOperatorMonetaryCostProvenZero === true;
+  const sponsorConfiguredAndReady = chain.sponsoredBootstrap && sponsorReady;
 
-  if (chain.sponsoredBootstrap && sponsorReady && (!requireZeroOperatorCost || sponsorCostProvenZero)) {
+  // Highest priority: a sponsor independently proven to create zero operator cost.
+  if (sponsorConfiguredAndReady && sponsorCostProvenZero) {
     return {
       chain: chain.id,
       mode: 'sponsored',
@@ -51,14 +53,13 @@ export function chooseGasFundingMode(
       paymentSource: 'provider_sponsored',
       strictZeroInitialCapitalEligible: true,
       operatorMonetaryInputRequired: false,
-      providerBillingLiability: !sponsorCostProvenZero,
-      sponsorOperatorMonetaryCostProvenZero: sponsorCostProvenZero,
-      reason: sponsorCostProvenZero
-        ? 'Provider sponsorship proves zero upfront wallet capital and independently proves zero operator monetary gas cost'
-        : 'Provider sponsorship proves zero upfront wallet/native capital; provider-fronted gas remains a billing liability that canonical all-in economics must charge',
+      providerBillingLiability: false,
+      sponsorOperatorMonetaryCostProvenZero: true,
+      reason: 'Provider sponsorship proves zero upfront wallet capital and independently proves zero operator monetary gas cost',
     };
   }
 
+  // Prefer already-proven system-owned native gas over any billed provider fallback.
   if (nativeBalance >= reserveFloor && proof.nativeSystemOwnedProven === true) {
     return {
       chain: chain.id,
@@ -74,7 +75,23 @@ export function chooseGasFundingMode(
     };
   }
 
-  const sponsorReason = chain.sponsoredBootstrap && sponsorReady
+  // Functional last-resort sponsor: zero upfront wallet gas, but provider billing is real.
+  if (sponsorConfiguredAndReady && !requireZeroOperatorCost) {
+    return {
+      chain: chain.id,
+      mode: 'sponsored',
+      nativeBalance,
+      reserveFloor,
+      paymentSource: 'provider_sponsored',
+      strictZeroInitialCapitalEligible: true,
+      operatorMonetaryInputRequired: false,
+      providerBillingLiability: true,
+      sponsorOperatorMonetaryCostProvenZero: false,
+      reason: 'Billed provider fallback removes the upfront native-balance requirement; provider-fronted gas remains a billing liability that canonical all-in economics must charge',
+    };
+  }
+
+  const sponsorReason = sponsorConfiguredAndReady
     ? requireZeroOperatorCost
       ? 'sponsorship removes upfront native funding but explicit zero-operator-cost mode requires independent proof that the provider bill is zero'
       : 'configured sponsorship did not satisfy the executable funding boundary'
@@ -91,7 +108,7 @@ export function chooseGasFundingMode(
     paymentSource: nativeBalance >= reserveFloor ? 'unproven_native_balance' : 'unavailable',
     strictZeroInitialCapitalEligible: false,
     operatorMonetaryInputRequired: true,
-    providerBillingLiability: chain.sponsoredBootstrap && sponsorReady && !sponsorCostProvenZero,
+    providerBillingLiability: sponsorConfiguredAndReady && !sponsorCostProvenZero,
     sponsorOperatorMonetaryCostProvenZero: false,
     reason: `Zero-initial-capital funding rejected: ${sponsorReason}; ${nativeReason}`,
   };
