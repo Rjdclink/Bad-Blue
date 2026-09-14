@@ -52,10 +52,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
   if (activeRescueCandidates.length > 0) {
     activeMeasuredRescueInvoked = true;
     try {
-      const measured = await runZeroCapitalProfitabilityRescueV2({
+      transformed = await runZeroCapitalProfitabilityRescueV2({
         ...input,
         opportunities: residentFastPath,
       });
+      const measured = transformed;
 
       // V2 is a one-result-per-input transformation pass. Route-family rescue may
       // legitimately find a better quote on a different configured route, whose
