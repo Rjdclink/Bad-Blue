@@ -142,7 +142,7 @@ function recordCanonicalEventCandidate(candidate: KalshiEventCandidate): void {
     ? candidate.expectedPayoutUsd - entryCostUsd
     : null;
   const allInCostUsd = entryCostUsd !== null && candidate.entryFeeUsd !== null
-    ? candidate.entryFeeUsd + candidate.settlementCostReserveUsd + candidate.capitalLockCostUsd
+    ? candidate.entryFeeUsd + candidate.settlementCostReserveUsd
     : null;
   const allInCostBps = entryCostUsd !== null && entryCostUsd > 0 && allInCostUsd !== null
     ? allInCostUsd / entryCostUsd * 10_000
@@ -222,7 +222,8 @@ function recordCanonicalEventCandidate(candidate: KalshiEventCandidate): void {
       'raw_market_probability_execution_authority:false',
       'event_expected_net:conservative_calibrated_probability',
       'event_entry_cost:authenticated_sized_vwap',
-      'event_all_in_cost:fee_plus_settlement_plus_capital_lock',
+      'event_all_in_cost:fee_plus_settlement',
+      'capital_lock_opportunity_cost:ranking_only_not_profitability_gate',
     ],
   });
 }
@@ -286,13 +287,15 @@ async function buildOutcomeCandidate(
   const entryFeeUsd = fee.takerFeeUsd;
   const settleDeadline = settlementDeadline(signal, now);
   const lockYears = Math.max(0, settleDeadline - now) / (365.25 * 24 * 60 * 60_000);
+  // Capital opportunity cost is retained as a ranking signal only. It is not a
+  // venue charge, cash outflow, or profitability veto.
   const capitalLockCostUsd = entryCostUsd * capitalOpportunityApr() * lockYears;
   // Integer binary contracts have exact $1 payout and Kalshi documents zero
   // settlement fee for simple yes/no determinations. Fractional/scalar paths are
   // not admitted by this generator.
   const settlementCostReserveUsd = 0;
   const expectedPayoutUsd = probability.conservative * contracts;
-  const expectedNetProfitUsd = expectedPayoutUsd - entryCostUsd - entryFeeUsd - settlementCostReserveUsd - capitalLockCostUsd;
+  const expectedNetProfitUsd = expectedPayoutUsd - entryCostUsd - entryFeeUsd - settlementCostReserveUsd;
   const expectedNetBps = entryCostUsd > 0 ? expectedNetProfitUsd / entryCostUsd * 10_000 : null;
   const expiresAt = Math.min(signal.expiresAt, depth.expiresAt, fee.expiresAt, calibration.observedAt + boundedInt(process.env.CRYPTOCRAWL_KALSHI_EVENT_MAX_CALIBRATION_AGE_MS, 60_000, 5_000, 24 * 60 * 60_000));
   const identity = sha(JSON.stringify({
@@ -318,10 +321,11 @@ async function buildOutcomeCandidate(
     'expected_probability:95pct_conservative_bound',
     'event_contracts:integer_binary_only',
     'simple_binary_settlement_fee:documented_zero',
-    'capital_lock_cost:included',
+    'capital_lock_cost:ranking_only',
+    'variable_incentive_rewards:economic_credit_false_until_earned',
     'account_balance_mints_ownership:false',
     'system_owned_event_cash:required_at_execution',
-    'expected_net:all_in_positive_required',
+    'expected_net:strictly_positive_executable_costs_required',
   ];
   const positive = Number.isFinite(expectedNetProfitUsd) && expectedNetProfitUsd > 0 && expiresAt > now;
   const plan: KalshiEventExecutionPlan | null = positive ? {
@@ -338,7 +342,7 @@ async function buildOutcomeCandidate(
     calibrationBrierScore: calibration.brierScore,
     calibrationAuthority: 'cryptara_kalshi_terminal_calibration',
     expectedNetProfitUsd,
-    minimumExpectedNetProfitUsd: settlementCostReserveUsd + capitalLockCostUsd,
+    minimumExpectedNetProfitUsd: settlementCostReserveUsd,
     expiresAt,
     settlementDeadlineAt: settleDeadline,
     provenance: baseProvenance,
@@ -365,7 +369,7 @@ async function buildOutcomeCandidate(
     observedAt: Math.max(signal.observedAt, depth.observedAt, fee.observedAt, calibration.observedAt),
     expiresAt,
     settlementDeadlineAt: settleDeadline,
-    missingEvidence: positive ? [] : ['required:strictly_positive_conservative_all_in_expected_net'],
+    missingEvidence: positive ? [] : ['required:strictly_positive_conservative_executable_net'],
     plan,
     provenance: baseProvenance,
   };
@@ -378,9 +382,32 @@ export async function refreshKalshiEventOpportunities(snapshot: KalshiPrediction
   try {
     const cash = await getKalshiEventSystemCashSnapshot(true).catch(() => null);
     const usableSystemCashUsd = cash?.usableUsd ?? 0;
+    const incentiveCountByTicker = new Map<string, number>();
+    const incentiveRewardWeightByTicker = new Map<string, number>();
+    const incentiveIdsByTicker = new Map<string, string[]>();
+    for (const incentive of snapshot.incentives) {
+      if (incentive.paidOut) continue;
+      if (incentive.startAt !== null && incentive.startAt > now) continue;
+      if (incentive.endAt !== null && incentive.endAt <= now) continue;
+      const ticker = incentive.marketTicker.trim().toUpperCase();
+      if (!ticker) continue;
+      incentiveCountByTicker.set(ticker, (incentiveCountByTicker.get(ticker) ?? 0) + 1);
+      incentiveRewardWeightByTicker.set(ticker, (incentiveRewardWeightByTicker.get(ticker) ?? 0) + Math.max(0, incentive.periodReward ?? 0));
+      const ids = incentiveIdsByTicker.get(ticker) ?? [];
+      ids.push(incentive.id);
+      incentiveIdsByTicker.set(ticker, ids);
+    }
     const markets = snapshot.markets
       .filter(signal => signal.status === 'open' && signal.expiresAt > now && signal.asset && signal.rulesFingerprint)
-      .sort((a, b) => (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0) || (b.volume24h ?? 0) - (a.volume24h ?? 0))
+      .sort((a, b) => {
+        const aTicker = a.ticker.trim().toUpperCase();
+        const bTicker = b.ticker.trim().toUpperCase();
+        const incentiveCountDelta = (incentiveCountByTicker.get(bTicker) ?? 0) - (incentiveCountByTicker.get(aTicker) ?? 0);
+        if (incentiveCountDelta !== 0) return incentiveCountDelta;
+        const incentiveRewardDelta = (incentiveRewardWeightByTicker.get(bTicker) ?? 0) - (incentiveRewardWeightByTicker.get(aTicker) ?? 0);
+        if (incentiveRewardDelta !== 0) return incentiveRewardDelta;
+        return (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0) || (b.volume24h ?? 0) - (a.volume24h ?? 0);
+      })
       .slice(0, scanLimit());
 
     for (const signal of markets) {
@@ -390,6 +417,18 @@ export async function refreshKalshiEventOpportunities(snapshot: KalshiPrediction
           ? await buildOutcomeCandidate(signal, calibration, outcome, usableSystemCashUsd)
           : dataCollectionCandidate(signal, outcome, ['required:terminal_probability_calibration_authority']);
         if (!candidate) continue;
+        const ticker = signal.ticker.trim().toUpperCase();
+        const incentiveIds = incentiveIdsByTicker.get(ticker) ?? [];
+        if (incentiveIds.length > 0) {
+          const incentiveProvenance = [
+            `kalshi_active_incentive_program_count:${incentiveIds.length}`,
+            `kalshi_active_incentive_program_ids:${incentiveIds.join(',')}`,
+            'kalshi_incentive_program:ranking_priority_only',
+            'kalshi_variable_reward:economic_credit_false_until_terminally_earned',
+          ];
+          candidate.provenance = [...candidate.provenance, ...incentiveProvenance];
+          if (candidate.plan) candidate.plan = { ...candidate.plan, provenance: [...candidate.plan.provenance, ...incentiveProvenance] };
+        }
         recordCanonicalEventCandidate(candidate);
         next.set(candidate.opportunityId, candidate);
         if (candidate.plan && candidate.status === 'eligible') nextPlans.set(candidate.opportunityId, candidate.plan);
