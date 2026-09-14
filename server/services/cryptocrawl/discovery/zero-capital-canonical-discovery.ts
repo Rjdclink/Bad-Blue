@@ -466,22 +466,29 @@ async function scanOneChain(
   );
   if (exact.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
-  const rescueReady = await runFairZeroCapitalProfitabilityRescue({
-    chain,
-    provider,
-    opportunities: exact,
-    configuredRoutes: executionRoutes(target),
-    fromQuotedRoute: target.fromQuotedRoute,
-  }).catch(error => {
-    logger.warn('[ZeroCapitalDiscovery] Fair profitability rescue degraded; original fresh candidates continue through canonical provider repricing', {
+  // Fused Stage-1 -> APE continuation. This is deliberately synchronous: there is
+  // no Promise/ACK/queue boundary between the locked Stage-1 classification above
+  // and APE. Failure is still route-local/fail-soft; original fresh objects continue.
+  let rescueReady: ZeroCapitalOpportunity[];
+  try {
+    rescueReady = runFairZeroCapitalProfitabilityRescue({
+      chain,
+      provider,
+      opportunities: exact,
+      configuredRoutes: executionRoutes(target),
+      fromQuotedRoute: target.fromQuotedRoute,
+    });
+  } catch (error) {
+    logger.warn('[ZeroCapitalDiscovery] Fused profitability rescue degraded; original fresh candidates continue through canonical provider repricing', {
       component: 'CanonicalZeroCapitalDiscovery',
       chain,
       error: error instanceof Error ? error.message : String(error),
       executionAuthority: false,
       staleQuotePreserved: false,
+      stageOneClassificationChanged: false,
     });
-    return exact;
-  });
+    rescueReady = exact;
+  }
   if (rescueReady.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
   // Preserve the flash mesh as the first measured capital-source path. A fresh
