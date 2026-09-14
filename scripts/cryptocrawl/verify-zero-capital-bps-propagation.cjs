@@ -226,12 +226,16 @@ assert.match(routeQuoter, /ZERO_CAPITAL_ROUTE_TTL_MS \|\| 3_000/);
 
 assert.match(priceMesh, /mergeLivePriceEvidence/);
 assert.match(priceMesh, /const median = values\.length % 2 === 1/);
-assert.match(priceMesh, /this\.fetchCoinMarketCapKeylessByCoinIds\(coinIds, vsCurrency\)/);
-assert.match(priceMesh, /this\.fetchCoinCapByCoinIds\(coinIds, vsCurrency\)/);
-assert.match(priceMesh, /this\.fetchCoinbaseByCoinIds\(coinIds, vsCurrency\)/);
-assert.match(priceMesh, /const missing = coinIds\.filter/);
-assert.match(priceMesh, /this\.fetchCoinGeckoByCoinIds\(missing, vsCurrency\)/);
-assert.doesNotMatch(priceMesh, /this\.fetchCoinGeckoByCoinIds\(coinIds, vsCurrency\)[\s\S]{0,600}Promise\.allSettled\(providerTasks\)/);
+assert.match(priceMesh, /const PRIMARY_PROVIDERS: readonly LivePriceProvider\[\] = \[[\s\S]{0,220}'coinmarketcap-keyless',[\s\S]{0,80}'dexscreener',[\s\S]{0,80}'defillama',[\s\S]{0,80}'coinlore'/);
+assert.match(priceMesh, /case 'coinmarketcap-keyless': return this\.fetchCoinMarketCapKeylessByCoinIds\(coinIds, vsCurrency\);/);
+assert.match(priceMesh, /case 'dexscreener': return this\.fetchDexScreenerByCoinIds\(coinIds, vsCurrency\);/);
+assert.match(priceMesh, /case 'defillama': return this\.fetchDefiLlamaByCoinIds\(coinIds, vsCurrency\);/);
+assert.match(priceMesh, /case 'coinlore': return this\.fetchCoinLoreByCoinIds\(coinIds, vsCurrency\);/);
+assert.match(priceMesh, /const passOne = await this\.runPrimaryPass\(coinIds, vsCurrency\);/);
+assert.match(priceMesh, /const passTwo = await this\.runPrimaryPass\(missing, vsCurrency\);/);
+assert.match(priceMesh, /const passOne = await this\.runPrimaryPass\(coinIds, vsCurrency\);[\s\S]{0,1200}const passTwo = await this\.runPrimaryPass\(missing, vsCurrency\);[\s\S]{0,1200}const emergency = await this\.fetchCoinGeckoByCoinIds\(missing, vsCurrency\);/);
+assert.doesNotMatch(priceMesh, /const PRIMARY_PROVIDERS[\s\S]{0,180}'coingecko'/);
+assert.doesNotMatch(priceMesh, /fetchCoinCapByCoinIds|fetchCoinbaseByCoinIds/);
 
 assert.match(providerReprice, /measureFlashLoanProviders\(/);
 assert.match(providerReprice, /selectMeasuredFlashLoanProvider\(/);
