@@ -10,35 +10,28 @@ export interface DynamicChainConfig {
   family: ChainFamily;
   rpcUrl: string;
   nativeAsset: string;
-  /**
-   * True only when an independently proven zero-operator-cost sponsor exists for
-   * this exact runtime route. RPC/receiver support alone is never sponsorship.
-   */
+  /** True when this chain has a configured hosted-sponsorship fallback capability. */
   sponsoredBootstrap: boolean;
   executionMode: 'sponsored_or_native' | 'native_only';
 }
 
 /**
- * No chain is granted hosted sponsorship by configuration. The former Alchemy
- * Wallet/Paymaster assumption was retired because provider-fronted gas can create
- * an operator billing liability. A future external sponsor must be admitted by
- * the canonical gas-funding proof boundary with explicit non-recourse evidence;
- * until then these chain definitions are native/system-owned or caller-funded only.
+ * Hosted sponsorship is a fallback capability, never a zero-cost assumption.
+ * Lower-cost compatible lanes may win first; Alchemy remains available on the
+ * chains its Wallet API supports, with provider billing retained in economics.
  */
 const DEFINITIONS: ReadonlyArray<Omit<DynamicChainConfig, 'rpcUrl'>> = [
-  { id: 'ethereum', family: 'evm', nativeAsset: 'ETH', sponsoredBootstrap: false, executionMode: 'native_only' },
-  { id: 'polygon', family: 'evm', nativeAsset: 'POL', sponsoredBootstrap: false, executionMode: 'native_only' },
-  { id: 'arbitrum', family: 'evm', nativeAsset: 'ETH', sponsoredBootstrap: false, executionMode: 'native_only' },
-  { id: 'optimism', family: 'evm', nativeAsset: 'ETH', sponsoredBootstrap: false, executionMode: 'native_only' },
-  { id: 'bsc', family: 'evm', nativeAsset: 'BNB', sponsoredBootstrap: false, executionMode: 'native_only' },
+  { id: 'ethereum', family: 'evm', nativeAsset: 'ETH', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
+  { id: 'polygon', family: 'evm', nativeAsset: 'POL', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
+  { id: 'arbitrum', family: 'evm', nativeAsset: 'ETH', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
+  { id: 'optimism', family: 'evm', nativeAsset: 'ETH', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
+  { id: 'bsc', family: 'evm', nativeAsset: 'BNB', sponsoredBootstrap: true, executionMode: 'sponsored_or_native' },
   { id: 'avalanche', family: 'evm', nativeAsset: 'AVAX', sponsoredBootstrap: false, executionMode: 'native_only' },
   { id: 'solana', family: 'solana', nativeAsset: 'SOL', sponsoredBootstrap: false, executionMode: 'native_only' },
   { id: 'tron', family: 'tron', nativeAsset: 'TRX', sponsoredBootstrap: false, executionMode: 'native_only' },
 ];
 
 const ENV: Record<DynamicChainId, string[]> = {
-  // Preserve the historical Railway typo as a route-local compatibility fallback.
-  // ETHEREUM_RPC_URL remains canonical and wins whenever both are present.
   ethereum: ['ETHEREUM_RPC_URL', 'ETHEREM_RPC_URL'],
   polygon: ['POLYGON_RPC_URL'], arbitrum: ['ARBITRUM_RPC_URL'],
   optimism: ['OPTIMISM_RPC_URL'], bsc: ['BSC_RPC_URL', 'BNB_SMART_CHAIN_RPC_URL'],
@@ -55,7 +48,8 @@ export function loadDynamicChainRegistry(): DynamicChainConfig[] {
   logger.info('[DynamicChainRegistry] Configured RPC networks discovered', {
     component: 'DynamicChainRegistry',
     chains: configured.map(chain => `${chain.id}:${chain.family}`),
-    hostedSponsorshipAssumedByChainConfig: false,
+    hostedSponsorshipFallbackChains: configured.filter(chain => chain.sponsoredBootstrap).map(chain => chain.id),
+    hostedSponsorshipZeroCostAssumed: false,
     receiverCapabilityImpliedGasSponsorship: false,
   });
   return configured;
