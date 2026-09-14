@@ -2,56 +2,9 @@ import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
-import { selectFairZeroCapitalRescueCandidates } from '../execution/zero-capital-rescue-fairness.js';
-import { runStageTwoZeroCapitalBpsReduction } from './stage-two-zero-capital-bps-reduction.js';
-import {
-  runZeroCapitalProfitabilityRescueV2,
-  type ZeroCapitalProfitabilityRescueInput,
-} from './zero-capital-profitability-rescue-v2.js';
-
-function bounded(raw: unknown, fallback: number, min: number, max: number): number {
-  const value = Number(raw);
-  return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
-}
-
-function entryFloorBps(): number {
-  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10, -100, 0);
-}
-
-function recoverable(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
-  return opportunity.expiresAt > now
-    && opportunity.flashLoanAmount > 0n
-    && Number.isFinite(opportunity.netProfitBps)
-    && opportunity.netProfitBps >= entryFloorBps();
-}
-
-function routeForOpportunity(
-  routes: readonly ConfiguredZeroCapitalRoute[],
-  opportunity: ZeroCapitalOpportunity,
-): ConfiguredZeroCapitalRoute | null {
-  return routes
-    .filter(route => route.chain === opportunity.chain)
-    .filter(route => opportunity.id === route.id || opportunity.id.startsWith(`${route.id}-`))
-    .sort((left, right) => right.id.length - left.id.length)[0] ?? null;
-}
-
-function routeFamily(route: ConfiguredZeroCapitalRoute): string {
-  return `${route.chain}:${route.inputAssetSymbol}:${route.legs.map(leg => leg.protocol).join('>')}:${route.legs.slice(0, -1).map(leg => leg.tokenOut.toLowerCase()).join('>')}`;
-}
-
-function freshPriority(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
-  const remainingLifetime = Math.max(1, opportunity.expiresAt - now);
-  const breakEvenGap = Math.max(0, -opportunity.netProfitBps);
-  const confidence = Math.max(0.01, Math.min(1, opportunity.confidence));
-  return confidence * Math.log1p(remainingLifetime) / (1 + breakEvenGap);
-}
-
-function guaranteedSelectedRouteBudget(): number {
-  const maxRoutes = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_ROUTES, 6, 1, 16));
-  const maxSizesPerRoute = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_SIZE_CANDIDATES, 9, 3, 16));
-  const totalQuoteBudget = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET, 42, 6, 96));
-  return Math.max(1, Math.min(maxRoutes, Math.floor(totalQuoteBudget / maxSizesPerRoute) || 1));
-}
+import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
+import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
+import { handoffStageOneToAtomicBps } from './zero-capital-stage-handoff-supervisor.js';
 
 export interface FairZeroCapitalProfitabilityRescueInput {
   chain: SupportedChain;
@@ -62,144 +15,72 @@ export interface FairZeroCapitalProfitabilityRescueInput {
 }
 
 /**
- * Canonical discovery passes AutonomousZeroCapitalEngine.fromQuotedRoute as a
- * callback. Calling that method through a different object changes JavaScript's
- * `this`, which makes the engine's private expectedSlippageBps() helper
- * unreachable. Bind the supplied converter to the canonical runtime once at the
- * rescue boundary so BPS reduction and Atomic rescue use the same proven conversion
- * logic without duplicating slippage economics.
- */
-function bindCanonicalQuoteConverter(
-  converter: FairZeroCapitalProfitabilityRescueInput['fromQuotedRoute'],
-): FairZeroCapitalProfitabilityRescueInput['fromQuotedRoute'] {
-  return (quote, blockTimestamp) => converter.call(zeroCapitalEngine, quote, blockTimestamp);
-}
-
-/**
- * Canonical zero-capital handoff wrapper. The existing bounded BPS-reduction pass
- * remains first for this change and its exact measured successor is handed directly
- * to Atomic rescue. Neither side owns execution authority and neither may require an
- * arbitrary positive BPS target: exact strict-positive all-in economics is the only
- * profitability finish line. Dynamic one-path selection is introduced separately.
+ * Compatibility entry name retained for canonical discovery. Runtime behavior is
+ * deliberately singular: locked Stage-1 output is handed directly in-memory to
+ * one Atomic BPS transformation pipeline. The handoff supervisor only deduplicates
+ * and serially replays a definitively failed delivery; it has no economic or
+ * execution authority. Shared-principal composition is triggered only from inside
+ * this same Stage-2 pipeline and runs in parallel so it cannot delay a good single
+ * route. There is no persisted fairness scheduler or second transformation loop.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
 ): Promise<ZeroCapitalOpportunity[]> {
-  const fromQuotedRoute = bindCanonicalQuoteConverter(input.fromQuotedRoute);
-  const stageTwoInput: FairZeroCapitalProfitabilityRescueInput = {
-    ...input,
-    fromQuotedRoute,
-  };
-  const stageTwoOpportunities = await runStageTwoZeroCapitalBpsReduction(stageTwoInput).catch(error => {
-    logger.warn('[ZeroCapitalProfitabilityRescueFair] BPS reduction degraded; original fresh candidates retained for Atomic rescue', {
-      component: 'ZeroCapitalProfitabilityRescueFair',
-      chain: input.chain,
-      error: error instanceof Error ? error.message : String(error),
-      bpsReductionFailureBlocksAtomicRescue: false,
-      staleQuotePreserved: false,
-      executionAuthority: false,
-    });
-    return [...input.opportunities];
-  });
-  const stageInput: FairZeroCapitalProfitabilityRescueInput = {
-    ...stageTwoInput,
-    opportunities: stageTwoOpportunities,
-  };
+  const fromQuotedRoute: FairZeroCapitalProfitabilityRescueInput['fromQuotedRoute'] =
+    (quote, blockTimestamp) => input.fromQuotedRoute.call(zeroCapitalEngine, quote, blockTimestamp);
 
-  const now = Date.now();
-  const candidates = stageInput.opportunities.flatMap(opportunity => {
-    if (!recoverable(opportunity, now)) return [];
-    const route = routeForOpportunity(stageInput.configuredRoutes, opportunity);
-    if (!route) return [];
-    return [{
-      opportunityId: opportunity.id,
-      routeId: route.id,
-      routeFamily: routeFamily(route),
-      priority: freshPriority(opportunity, now),
-      netProfitBps: opportunity.netProfitBps,
-    }];
-  });
+  const result = await handoffStageOneToAtomicBps({
+    chain: input.chain,
+    opportunities: input.opportunities,
+    consume: async handoff => {
+      // ACK is emitted by the actual Stage-2 consumer, not by the supervisor. This
+      // makes a broken Stage-1 -> Stage-2 call contract observable immediately while
+      // keeping the healthy path a same-stack, in-memory handoff with no I/O wait.
+      handoff.acknowledge();
+      const transformed = await runZeroCapitalAtomicBpsEngine({
+        ...input,
+        fromQuotedRoute,
+      });
+      if (!handoff.isActive()) return transformed;
 
-  if (candidates.length === 0) {
-    return runZeroCapitalProfitabilityRescueV2(stageInput as ZeroCapitalProfitabilityRescueInput);
-  }
-
-  const maxCandidates = guaranteedSelectedRouteBudget();
-  let selectedOpportunityIds = new Set<string>();
-  let deferredOpportunityIds = new Set<string>();
-  let selectedRouteIds: string[] = [];
-  let deferredRouteIds: string[] = [];
-  let persistedFairnessAvailable = true;
-
-  try {
-    const fairness = await selectFairZeroCapitalRescueCandidates({
-      chain: stageInput.chain,
-      candidates,
-      maxCandidates,
-    });
-    selectedOpportunityIds = fairness.selectedOpportunityIds;
-    deferredOpportunityIds = fairness.deferredOpportunityIds;
-    selectedRouteIds = fairness.selectedRouteIds;
-    deferredRouteIds = fairness.deferredRouteIds;
-  } catch (error) {
-    persistedFairnessAvailable = false;
-    const ranked = [...candidates].sort((left, right) => right.priority - left.priority);
-    const selected = ranked.slice(0, maxCandidates);
-    const deferred = ranked.slice(maxCandidates);
-    selectedOpportunityIds = new Set(selected.map(candidate => candidate.opportunityId));
-    deferredOpportunityIds = new Set(deferred.map(candidate => candidate.opportunityId));
-    selectedRouteIds = selected.map(candidate => candidate.routeId);
-    deferredRouteIds = deferred.map(candidate => candidate.routeId);
-    logger.warn('[ZeroCapitalProfitabilityRescueFair] Fairness state unavailable; fresh Atomic BPS rescue continues with deterministic in-memory ordering', {
-      component: 'ZeroCapitalProfitabilityRescueFair',
-      chain: stageInput.chain,
-      selectedOpportunityIds: [...selectedOpportunityIds],
-      deferredOpportunityIds: [...deferredOpportunityIds],
-      error: error instanceof Error ? error.message : String(error),
-      executionAuthority: false,
-      rescueAdmissionAuthority: false,
-      staleQuotePreserved: false,
-    });
-  }
-
-  // Fairness never removes a fresh candidate from the economic search. Put the
-  // bounded fairness selection first so V2's shared quote budget reaches the routes
-  // selected for this cycle, then retain every other fresh route behind them.
-  const opportunityById = new Map(stageInput.opportunities.map(opportunity => [opportunity.id, opportunity]));
-  const selectedFirst = [...selectedOpportunityIds]
-    .map(opportunityId => opportunityById.get(opportunityId))
-    .filter((opportunity): opportunity is ZeroCapitalOpportunity => Boolean(opportunity));
-  const remainingFresh = stageInput.opportunities.filter(opportunity => !selectedOpportunityIds.has(opportunity.id));
-  const orderedOpportunities = [...selectedFirst, ...remainingFresh];
-
-  const rescued = await runZeroCapitalProfitabilityRescueV2({
-    ...stageInput,
-    opportunities: orderedOpportunities,
+      // Composite search is an internal tactic, not a second stage. It is kicked
+      // off only by this one pipeline and never sits between a profitable route and
+      // its normal downstream provider/execution path.
+      void runZeroCapitalAtomicStackTactic({
+        chain: input.chain,
+        provider: input.provider,
+        opportunities: transformed,
+      }).catch(error => {
+        logger.debug('[ZeroCapitalProfitabilityRescueFair] Parallel composite tactic degraded locally', {
+          component: 'ZeroCapitalProfitabilityRescueFair',
+          chain: input.chain,
+          error: error instanceof Error ? error.message : String(error),
+          singleRouteResultAffected: false,
+          executionAuthority: false,
+        });
+      });
+      return transformed;
+    },
   });
 
-  logger.info('[ZeroCapitalProfitabilityRescueFair] Recoverable routes observed with non-authoritative fairness', {
+  logger.debug('[ZeroCapitalProfitabilityRescueFair] Compatibility gateway used supervised direct Atomic BPS pipeline', {
     component: 'ZeroCapitalProfitabilityRescueFair',
-    chain: stageInput.chain,
-    recoverableRoutes: new Set(candidates.map(candidate => candidate.routeId)).size,
-    maxCandidates,
-    selectedRouteIds,
-    deferredRouteIds,
-    selectedOpportunityIds: [...selectedOpportunityIds],
-    deferredOpportunityIds: [...deferredOpportunityIds],
-    persistedFairnessAvailable,
-    bpsReductionRunsBeforeAtomicForThisChange: true,
-    exactMeasuredSuccessorFeedsAtomicSameCycle: true,
+    chain: input.chain,
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
-    deferredRemovedFromCurrentExecutionPipeline: false,
-    freshRediscoveryRequiredForDeferredRoutes: false,
-    fairnessExecutionVetoAuthority: false,
-    fairnessEconomicAdmissionAuthority: false,
-    v2ReceivesAllFreshRecoverableCandidates: true,
-    v2ReceivesSelectedRoutesFirst: true,
-    staleQuotePreserved: false,
-    v2EconomicAuthorityPreserved: true,
+    oneTransformationAuthority: true,
+    oneTransformationPipeline: true,
+    stageOneDirectInMemoryHandoff: true,
+    stageTwoExplicitAcknowledgement: true,
+    boundedRecursiveHandoffSupervision: true,
+    concurrentDuplicateStageTwoRuns: false,
+    staleHandoffReplayAllowed: false,
+    compositeTacticInsideSamePipeline: true,
+    compositeTacticBlocksSingleRouteReturn: false,
+    independentCompositePromotionLoop: false,
+    persistedFairnessOnHotPath: false,
+    stageTwoSerialPass: false,
     executionAuthority: false,
   });
 
-  return rescued;
+  return result;
 }
