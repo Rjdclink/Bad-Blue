@@ -2,6 +2,10 @@ import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import {
+  observeFlashLoanDemandHint,
+  resetFlashLoanDemandHints,
+} from '../execution/adapters/flash-loan-demand-hint.js';
+import {
   peekResidentBestBpsQuote,
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
@@ -135,6 +139,7 @@ export function runZeroCapitalAtomicBpsEngine(
   const ordered = orderApeResidentOpportunities(input.opportunities);
   const live = ordered.filter(opportunity => liveStageOneCandidate(opportunity));
   const refinedById = new Map<string, ZeroCapitalOpportunity>();
+  resetFlashLoanDemandHints(input.chain as any);
 
   let costRescueCandidates = 0;
   let edgeRescueCandidates = 0;
@@ -164,6 +169,12 @@ export function runZeroCapitalAtomicBpsEngine(
       refinedById.set(opportunity.id, refined);
     }
     const candidate = refined;
+    observeFlashLoanDemandHint({
+      chain: candidate.chain as any,
+      asset: candidate.inputToken,
+      amount: candidate.flashLoanAmount,
+      expiresAt: candidate.expiresAt,
+    });
     const netBps = exactNetBps(candidate);
     if (candidate.expectedProfit > 0n) {
       strictPositiveAlreadyArrived += 1;
@@ -217,6 +228,8 @@ export function runZeroCapitalAtomicBpsEngine(
       residentSizeEvidenceReadOnly: true,
       upstreamSizeSweepRepeatedByApe: false,
       overlayInheritsStageOneFreshness: true,
+      providerDemandHintResidentOnly: true,
+      providerDemandHintAuthority: false,
       crossThreadTransfer: false,
       ringBufferOnHotPath: false,
       intermediateQueueOnHotPath: false,
@@ -226,7 +239,7 @@ export function runZeroCapitalAtomicBpsEngine(
       residentRouting: '2_active_plus_1_hedge_plus_2_dormant_reserve',
       extraCandidatesFormAdditionalCohorts: true,
       betterResultMustAlreadyBePresentToLead: true,
-      canonicalProviderProofRemainsDownstreamAndUnchanged: true,
+      canonicalProviderProofRemainsDownstream: true,
       canonicalExecutionAuthorityChanged: false,
       stageOneMutation: false,
       syntheticEconomics: false,
