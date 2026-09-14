@@ -1,16 +1,20 @@
 import type { providers } from 'ethers';
 import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import type { FlashLoanProviderEconomics } from '../execution/adapters/flash-loan-provider-economics.js';
 import {
-  measureFlashLoanProviders,
-  type FlashLoanProviderEconomics,
-} from '../execution/adapters/flash-loan-provider-economics.js';
+  startAtomicProfitabilityProviderRace,
+  type AtomicProfitabilityProviderFailure,
+  type AtomicProfitabilityProviderRace,
+} from './atomic-profitability-provider-race.js';
 
 type TimedValue<T> = { value: T; observedAt: number };
 
 export interface AtomicBpsPreparedEvidence {
   inputTokenUsdPrice: number | null;
   providerEvidence: FlashLoanProviderEconomics[];
+  providerEvidenceSnapshot: () => FlashLoanProviderEconomics[];
+  providerFailures: () => AtomicProfitabilityProviderFailure[];
   preparedAt: number;
   freshnessBudgetMs: number;
 }
@@ -26,12 +30,15 @@ export interface AtomicBpsAuditObservation {
   elapsedMs: number;
   profitable: boolean;
   improved: boolean;
+  rescueMode?: 'cost' | 'edge' | 'execution';
+  routesTried?: number;
 }
 
 const priceCache = new Map<string, TimedValue<number | null>>();
 const providerCache = new Map<string, TimedValue<FlashLoanProviderEconomics[]>>();
 const priceInFlight = new Map<string, Promise<number | null>>();
-const providerInFlight = new Map<string, Promise<FlashLoanProviderEconomics[]>>();
+const providerInFlight = new Map<string, { generation: number; race: AtomicProfitabilityProviderRace }>();
+const providerGenerations = new Map<string, number>();
 const auditRing: AtomicBpsAuditObservation[] = [];
 const AUDIT_RING_MAX = 512;
 
@@ -41,6 +48,11 @@ let providerCacheHits = 0;
 let sharedInFlightHits = 0;
 let adaptiveFreshnessTightenings = 0;
 let auditObservations = 0;
+let providerEarlyReady = 0;
+let providerBackgroundEnrichments = 0;
+let providerMeasurementFailures = 0;
+let providerRefreshes = 0;
+let emptyFailureCaches = 0;
 
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const value = Number(raw);
@@ -54,9 +66,6 @@ function hotCacheTtlMs(): number {
 function freshnessBudgetMs(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
   const configured = hotCacheTtlMs();
   const remaining = Math.max(0, opportunity.expiresAt - now);
-  // Never allow a cache item to consume most of a short-lived quote's lifetime.
-  // A quarter-life ceiling is deliberately conservative and leaves room for exact
-  // requote, submission and inclusion. The configured TTL remains the upper bound.
   const lifetimeBound = Math.max(100, Math.floor(remaining / 4));
   const effective = Math.min(configured, lifetimeBound);
   if (effective < configured) adaptiveFreshnessTightenings += 1;
@@ -65,6 +74,10 @@ function freshnessBudgetMs(opportunity: ZeroCapitalOpportunity, now = Date.now()
 
 function fresh<T>(entry: TimedValue<T> | undefined, maxAgeMs = hotCacheTtlMs(), now = Date.now()): entry is TimedValue<T> {
   return Boolean(entry && now - entry.observedAt <= Math.max(1, maxAgeMs));
+}
+
+function cloneProviders(items: readonly FlashLoanProviderEconomics[]): FlashLoanProviderEconomics[] {
+  return items.map(item => ({ ...item, missingEvidence: [...item.missingEvidence], provenance: [...item.provenance] }));
 }
 
 async function measuredPrice(symbol: string, maxAgeMs = hotCacheTtlMs()): Promise<number | null> {
@@ -97,39 +110,84 @@ async function measuredPrice(symbol: string, maxAgeMs = hotCacheTtlMs()): Promis
   return task;
 }
 
+function providerKey(chain: SupportedChain, asset: string): string {
+  return `${chain}:${asset.toLowerCase()}`;
+}
+
+function startProviderRace(
+  chain: SupportedChain,
+  provider: providers.Provider,
+  asset: string,
+  forceRefresh = false,
+): AtomicProfitabilityProviderRace {
+  const key = providerKey(chain, asset);
+  const existing = providerInFlight.get(key);
+  if (existing && !forceRefresh) {
+    sharedInFlightHits += 1;
+    return existing.race;
+  }
+
+  if (forceRefresh) providerRefreshes += 1;
+  const generation = (providerGenerations.get(key) || 0) + 1;
+  providerGenerations.set(key, generation);
+  const race = startAtomicProfitabilityProviderRace({ chain: chain as any, provider, asset });
+  providerInFlight.set(key, { generation, race });
+
+  void race.ready.then(items => {
+    providerEarlyReady += 1;
+    providerMeasurementFailures += race.failures().length;
+    if (providerGenerations.get(key) !== generation) return;
+    if (items.length > 0 || race.applicableProviders.length === 0) {
+      providerCache.set(key, { value: cloneProviders(items), observedAt: Date.now() });
+    }
+  }).catch(() => {
+    providerMeasurementFailures += Math.max(1, race.failures().length);
+    // Deliberately do not cache [] for transport/contract failures. A failed race
+    // must not masquerade as fresh market evidence on the next APE attempt.
+    emptyFailureCaches += 0;
+  });
+
+  void race.settled.then(items => {
+    if (providerGenerations.get(key) !== generation) return;
+    const prior = providerCache.get(key)?.value ?? [];
+    if (items.length > prior.length) providerBackgroundEnrichments += 1;
+    if (items.length > 0 || race.applicableProviders.length === 0) {
+      providerCache.set(key, { value: cloneProviders(items), observedAt: Date.now() });
+    }
+  }).catch(() => undefined).finally(() => {
+    const current = providerInFlight.get(key);
+    if (current?.generation === generation) providerInFlight.delete(key);
+  });
+
+  return race;
+}
+
 export async function getAtomicBpsProviderEvidence(
   chain: SupportedChain,
   provider: providers.Provider,
   asset: string,
   maxAgeMs = hotCacheTtlMs(),
+  forceRefresh = false,
 ): Promise<FlashLoanProviderEconomics[]> {
   if (chain === 'europa') return [];
-  const key = `${chain}:${asset.toLowerCase()}`;
+  const key = providerKey(chain, asset);
   const cached = providerCache.get(key);
-  if (fresh(cached, maxAgeMs)) {
+  if (!forceRefresh && fresh(cached, maxAgeMs)) {
     providerCacheHits += 1;
-    return cached.value.map(item => ({ ...item }));
+    return cloneProviders(cached.value);
   }
-  const existing = providerInFlight.get(key);
-  if (existing) {
-    sharedInFlightHits += 1;
-    return existing.then(items => items.map(item => ({ ...item })));
-  }
-  const task = measureFlashLoanProviders({ chain: chain as any, provider, asset })
-    .then(items => {
-      const cloned = items.map(item => ({ ...item }));
-      providerCache.set(key, { value: cloned, observedAt: Date.now() });
-      return cloned;
-    })
-    .catch(() => {
-      providerCache.set(key, { value: [], observedAt: Date.now() });
-      return [] as FlashLoanProviderEconomics[];
-    })
-    .finally(() => {
-      if (providerInFlight.get(key) === task) providerInFlight.delete(key);
-    });
-  providerInFlight.set(key, task);
-  return task.then(items => items.map(item => ({ ...item })));
+  const race = startProviderRace(chain, provider, asset, forceRefresh);
+  const items = await race.ready;
+  return cloneProviders(items.length > 0 ? items : race.snapshot());
+}
+
+export function refreshAtomicBpsProviderEvidence(
+  chain: SupportedChain,
+  provider: providers.Provider,
+  asset: string,
+  maxAgeMs = hotCacheTtlMs(),
+): Promise<FlashLoanProviderEconomics[]> {
+  return getAtomicBpsProviderEvidence(chain, provider, asset, maxAgeMs, true);
 }
 
 function prepareOne(input: {
@@ -142,26 +200,44 @@ function prepareOne(input: {
   const pricePromise = Number.isFinite(quoted) && quoted > 0
     ? Promise.resolve(quoted)
     : measuredPrice(input.opportunity.inputAssetSymbol, freshnessBudget);
-  const providerPromise = getAtomicBpsProviderEvidence(
-    input.chain,
-    input.provider,
-    input.opportunity.inputToken,
-    freshnessBudget,
-  );
+
+  if (input.chain === 'europa') {
+    return pricePromise.then(inputTokenUsdPrice => ({
+      inputTokenUsdPrice,
+      providerEvidence: [],
+      providerEvidenceSnapshot: () => [],
+      providerFailures: () => [],
+      preparedAt: Date.now(),
+      freshnessBudgetMs: freshnessBudget,
+    }));
+  }
+
+  const key = providerKey(input.chain, input.opportunity.inputToken);
+  const cached = providerCache.get(key);
+  const cachedFresh = fresh(cached, freshnessBudget);
+  const race = cachedFresh ? null : startProviderRace(input.chain, input.provider, input.opportunity.inputToken);
+  if (cachedFresh) providerCacheHits += 1;
+  const providerPromise = cachedFresh
+    ? Promise.resolve(cloneProviders(cached.value))
+    : race!.ready.then(items => cloneProviders(items.length > 0 ? items : race!.snapshot()));
+
   return Promise.all([pricePromise, providerPromise]).then(([inputTokenUsdPrice, providerEvidence]) => ({
     inputTokenUsdPrice,
     providerEvidence,
+    providerEvidenceSnapshot: race
+      ? () => cloneProviders(race.snapshot())
+      : () => cloneProviders(providerCache.get(key)?.value ?? providerEvidence),
+    providerFailures: race ? () => race.failures() : () => [],
     preparedAt: Date.now(),
     freshnessBudgetMs: freshnessBudget,
   }));
 }
 
 /**
- * Speed/freshness worker. It starts every independent price/provider read at once,
- * shares in-flight reads, and keeps only a very short hot cache. Cache age tightens
- * automatically for short-lived opportunities so reuse never consumes most of a
- * quote's remaining life. It has no economic, admission, or execution authority;
- * callers always re-check freshness and exact net.
+ * APE speed/freshness worker. Price and flash-provider evidence start together.
+ * Provider preparation resolves on the first executable provider instead of an
+ * all-provider barrier; slower siblings only enrich the live snapshot. No economic,
+ * admission, settlement, or execution authority is granted here.
  */
 export function prewarmAtomicBpsEvidence(input: {
   chain: SupportedChain;
@@ -176,10 +252,7 @@ export function prewarmAtomicBpsEvidence(input: {
   return result;
 }
 
-/**
- * Audit/optimization worker. It records tiny in-memory outcome summaries in a
- * microtask after the hot-path decision. It never changes economics or execution.
- */
+/** Post-decision learning/audit only. Never participates in live admission. */
 export function observeAtomicBpsOutcome(observation: AtomicBpsAuditObservation): void {
   queueMicrotask(() => {
     auditObservations += 1;
@@ -191,7 +264,7 @@ export function observeAtomicBpsOutcome(observation: AtomicBpsAuditObservation):
 export function getAtomicBpsWorkerSnapshot() {
   return {
     speedWorker: {
-      purpose: 'prewarm_and_share_fresh_inputs',
+      purpose: 'ape_prewarm_first_usable_then_background_enrich',
       executionAuthority: false,
       economicAuthority: false,
       cacheTtlMs: hotCacheTtlMs(),
@@ -201,8 +274,16 @@ export function getAtomicBpsWorkerSnapshot() {
       providerCacheHits,
       sharedInFlightHits,
       adaptiveFreshnessTightenings,
+      providerEarlyReady,
+      providerBackgroundEnrichments,
+      providerMeasurementFailures,
+      providerRefreshes,
+      emptyFailureCaches,
       priceCacheEntries: priceCache.size,
       providerCacheEntries: providerCache.size,
+      providerRacesInFlight: providerInFlight.size,
+      waitsForAllProviderStragglers: false,
+      providerFailureIsLocal: true,
     },
     auditWorker: {
       purpose: 'post_decision_outcome_audit_only',
