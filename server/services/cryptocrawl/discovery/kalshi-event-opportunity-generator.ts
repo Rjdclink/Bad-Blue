@@ -81,6 +81,12 @@ function assetSymbol(signal: KalshiPredictionMarketSignal): string | null {
   const asset = signal.asset?.trim().toUpperCase() || null;
   return asset ? `${asset}USD` : null;
 }
+function isTradableKalshiMarketStatus(status: string): boolean {
+  const normalized = status.trim().toLowerCase();
+  // Kalshi's GET /markets?status=open filter returns rows whose lifecycle status
+  // is "active". Keep "open" for backward compatibility with older payloads.
+  return normalized === 'active' || normalized === 'open';
+}
 function settlementDeadline(signal: KalshiPredictionMarketSignal, now: number): number {
   const eventTime = [signal.expectedExpirationAt, signal.occurrenceAt]
     .filter((value): value is number => Number.isFinite(value) && Number(value) > now)
@@ -242,9 +248,9 @@ async function buildOutcomeCandidate(
     return dataCollectionCandidate(signal, outcome, ['required:calibration_confidence_interval_nonzero']);
   }
 
-  // Measure one contract first to establish executable price and fee shape. Size
-  // only from authenticated book depth and system-owned cash; account balance is
-  // capacity, never ownership.
+  // Measure one contract first to establish current price and fee economics.
+  // Stage-1 observation is allowed without Kalshi cash; cash is required only
+  // when turning a measured positive candidate into an execution plan.
   const one = await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome, side: 'buy', contracts: 1, forceRefresh: true });
   if (!one?.complete || one.vwapPrice === null || one.worstPrice === null || one.notionalUsd === null) {
     return dataCollectionCandidate(signal, outcome, ['required:authenticated_executable_depth']);
@@ -255,13 +261,15 @@ async function buildOutcomeCandidate(
   }
   const estimatedCashPerContract = one.notionalUsd + oneFee.takerFeeUsd;
   const cashCap = estimatedCashPerContract > 0 ? integerContracts(usableSystemCashUsd / estimatedCashPerContract) : 0;
-  const requestedContracts = Math.min(maxContractsPerCandidate(), cashCap);
-  if (requestedContracts < 1) {
-    return dataCollectionCandidate(signal, outcome, ['required:system_owned_kalshi_event_cash']);
-  }
+  const hasExecutionCash = cashCap >= 1;
+  const requestedContracts = hasExecutionCash
+    ? Math.min(maxContractsPerCandidate(), cashCap)
+    : 1;
 
   let contracts = requestedContracts;
-  let depth = await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome, side: 'buy', contracts });
+  let depth = contracts === 1
+    ? one
+    : await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome, side: 'buy', contracts });
   if (!depth?.complete) {
     // Find the largest integer size that current authenticated depth can execute.
     let low = 1;
@@ -269,7 +277,9 @@ async function buildOutcomeCandidate(
     let best = 0;
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
-      const measured = await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome, side: 'buy', contracts: mid });
+      const measured = mid === 1
+        ? one
+        : await measureKalshiEventSizedDepth({ ticker: signal.ticker, outcome, side: 'buy', contracts: mid });
       if (measured?.complete) { best = mid; low = mid + 1; depth = measured; }
       else high = mid - 1;
     }
@@ -279,7 +289,9 @@ async function buildOutcomeCandidate(
     return dataCollectionCandidate(signal, outcome, ['required:authenticated_sized_depth']);
   }
 
-  const fee = await estimateKalshiEventFees({ ticker: signal.ticker, contracts, price: depth.vwapPrice });
+  const fee = contracts === 1 && depth.observedAt === one.observedAt
+    ? oneFee
+    : await estimateKalshiEventFees({ ticker: signal.ticker, contracts, price: depth.vwapPrice });
   if (!fee?.economicCreditAllowed || fee.takerFeeUsd === null) {
     return dataCollectionCandidate(signal, outcome, ['required:authenticated_sized_fee_economics']);
   }
@@ -324,11 +336,13 @@ async function buildOutcomeCandidate(
     'capital_lock_cost:ranking_only',
     'variable_incentive_rewards:economic_credit_false_until_earned',
     'account_balance_mints_ownership:false',
+    'stage1_observation_requires_kalshi_cash:false',
     'system_owned_event_cash:required_at_execution',
     'expected_net:strictly_positive_executable_costs_required',
   ];
   const positive = Number.isFinite(expectedNetProfitUsd) && expectedNetProfitUsd > 0 && expiresAt > now;
-  const plan: KalshiEventExecutionPlan | null = positive ? {
+  const executable = positive && hasExecutionCash;
+  const plan: KalshiEventExecutionPlan | null = executable ? {
     opportunityId,
     ticker: signal.ticker,
     symbol,
@@ -355,7 +369,7 @@ async function buildOutcomeCandidate(
     asset: signal.asset,
     outcome,
     rulesFingerprint: signal.rulesFingerprint,
-    status: positive ? 'eligible' : 'blocked',
+    status: executable ? 'eligible' : positive ? 'data_collection' : 'blocked',
     contracts,
     calibratedProbability: probability.mean,
     conservativeProbability: probability.conservative,
@@ -369,7 +383,11 @@ async function buildOutcomeCandidate(
     observedAt: Math.max(signal.observedAt, depth.observedAt, fee.observedAt, calibration.observedAt),
     expiresAt,
     settlementDeadlineAt: settleDeadline,
-    missingEvidence: positive ? [] : ['required:strictly_positive_conservative_executable_net'],
+    missingEvidence: executable
+      ? []
+      : positive
+        ? ['required:system_owned_kalshi_event_cash']
+        : ['required:strictly_positive_conservative_executable_net'],
     plan,
     provenance: baseProvenance,
   };
@@ -398,7 +416,7 @@ export async function refreshKalshiEventOpportunities(snapshot: KalshiPrediction
       incentiveIdsByTicker.set(ticker, ids);
     }
     const markets = snapshot.markets
-      .filter(signal => signal.status === 'open' && signal.expiresAt > now && signal.asset && signal.rulesFingerprint)
+      .filter(signal => isTradableKalshiMarketStatus(signal.status) && signal.expiresAt > now && signal.asset && signal.rulesFingerprint)
       .sort((a, b) => {
         const aTicker = a.ticker.trim().toUpperCase();
         const bTicker = b.ticker.trim().toUpperCase();
