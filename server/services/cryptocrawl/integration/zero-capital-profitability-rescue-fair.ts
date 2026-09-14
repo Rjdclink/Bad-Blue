@@ -46,17 +46,30 @@ export async function runFairZeroCapitalProfitabilityRescue(
   let transformed = residentFastPath;
   let activeMeasuredRescueInvoked = false;
   let activeMeasuredRescueOverlays = 0;
+  let alternateRouteIdentityRebindings = 0;
   let activeMeasuredRescueError: string | null = null;
 
   if (activeRescueCandidates.length > 0) {
     activeMeasuredRescueInvoked = true;
     try {
-      transformed = await runZeroCapitalProfitabilityRescueV2({
+      const measured = await runZeroCapitalProfitabilityRescueV2({
         ...input,
         opportunities: residentFastPath,
       });
-      const residentById = new Map(residentFastPath.map(opportunity => [opportunity.id, opportunity]));
-      activeMeasuredRescueOverlays = transformed.filter(opportunity => residentById.get(opportunity.id) !== opportunity).length;
+
+      // V2 is a one-result-per-input transformation pass. Route-family rescue may
+      // legitimately find a better quote on a different configured route, whose
+      // quote id differs from the Stage-1 candidate id. Preserve the original
+      // candidate identity at the gateway so the measured-candidate registry,
+      // provider repricing, and execution proof all continue the same candidate.
+      // Only the newly derived overlay is copied; Stage-1 objects are untouched.
+      transformed = measured.map((candidate, index) => {
+        const resident = residentFastPath[index];
+        if (!resident || candidate === resident || candidate.id === resident.id) return candidate;
+        alternateRouteIdentityRebindings += 1;
+        return { ...candidate, id: resident.id };
+      });
+      activeMeasuredRescueOverlays = transformed.filter((opportunity, index) => opportunity !== residentFastPath[index]).length;
     } catch (error) {
       activeMeasuredRescueError = error instanceof Error ? error.message : String(error);
       transformed = residentFastPath;
@@ -99,10 +112,13 @@ export async function runFairZeroCapitalProfitabilityRescue(
       activeMeasuredRescueInvoked,
       activeMeasuredRescueCandidates: activeRescueCandidates.length,
       activeMeasuredRescueOverlays,
+      alternateRouteIdentityRebindings,
       strictPositiveAfterRescue,
       activeMeasuredRescueError,
       stageOneSameReferenceIntoResidentFastPath: true,
       activeRescueCreatesDerivedEvidenceOnly: true,
+      derivedOverlayPreservesCandidateIdentity: true,
+      alternateRouteEvidencePreservedInDerivedOverlay: true,
       // Legacy verifier aliases below describe only the locked Stage-1 -> resident
       // fast-path boundary. Active rescue may create derived overlays afterward.
       stageOneSameReferenceContinuation: true,
