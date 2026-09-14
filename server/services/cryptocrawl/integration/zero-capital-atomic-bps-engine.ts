@@ -1,6 +1,7 @@
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import type { FlashLoanProviderKind } from '../execution/adapters/flash-loan-provider-economics.js';
 import {
   observeFlashLoanDemandHint,
   resetFlashLoanDemandHints,
@@ -10,6 +11,10 @@ import {
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import {
+  getApeRealCostSurfaceSnapshot,
+  repriceApeOpportunityFromMeasuredFlashFee,
+} from './ape-real-cost-surface.js';
 import {
   getApeResidentPlacement,
   hasApeResidentPlacement,
@@ -88,32 +93,32 @@ function originalBlockTimestamp(opportunity: ZeroCapitalOpportunity): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1_000);
 }
 
+function measuredProviderProfile(raw: string | undefined): FlashLoanProviderKind | null {
+  if (raw === 'morpho_blue' || raw === 'aave_v3' || raw === 'balancer_v2') return raw;
+  return null;
+}
+
 /**
  * Consume only a quote that the existing upstream bounded size sweep already made.
- * Stage 1 keeps its original highest-dollar-profit candidate exactly as before; APE
- * may create a separate result overlay only when the resident variant has strictly
- * better measured net BPS. No Stage-1 object is mutated or structurally copied.
+ * Stage 1 keeps its original highest-dollar-profit candidate exactly as before. APE
+ * may create a separate result overlay only when BOTH the incumbent and resident
+ * variant can be repriced from fresh measured fee evidence for the already-proven
+ * compatible provider profile. Configured/default flash-fee assumptions therefore
+ * cannot make an APE overlay win.
  */
 function residentBestBpsOverlay(
   input: ZeroCapitalAtomicBpsEngineInput,
   opportunity: ZeroCapitalOpportunity,
+  providerProfile: FlashLoanProviderKind | null,
 ): ZeroCapitalOpportunity {
+  if (!providerProfile) return opportunity;
+  const incumbentMeasured = repriceApeOpportunityFromMeasuredFlashFee(opportunity, providerProfile);
+  if (!incumbentMeasured.selection) return opportunity;
+
   const route = routeForOpportunity(input.configuredRoutes, opportunity);
   if (!route) return opportunity;
   const resident = peekResidentBestBpsQuote(route.id);
-  if (!resident || resident.chain !== opportunity.chain) return opportunity;
-  const currentBps = exactNetBps(opportunity);
-  if (!Number.isFinite(resident.netProfitBps)) return opportunity;
-  const exactBpsHigher = strictlyHigherExactBps({
-    candidateProfit: resident.netProfit,
-    candidateAmount: resident.amountIn,
-    incumbentProfit: opportunity.expectedProfit,
-    incumbentAmount: opportunity.flashLoanAmount,
-  });
-  // Keep the numeric check as a compatibility guard, but exact base-unit ratio is
-  // authoritative when both representations round to the same displayed BPS.
-  if (resident.netProfitBps <= currentBps && !exactBpsHigher) return opportunity;
-  if (!exactBpsHigher) return opportunity;
+  if (!resident || resident.chain !== opportunity.chain || !Number.isFinite(resident.netProfitBps)) return opportunity;
 
   const refined = input.fromQuotedRoute(resident, originalBlockTimestamp(opportunity));
   if (refined.id !== opportunity.id) return opportunity;
@@ -124,7 +129,19 @@ function residentBestBpsOverlay(
   refined.expiresAt = opportunity.expiresAt;
   if (refined.expiresAt <= Date.now()) return opportunity;
   if (opportunity.inputAssetUsdPrice !== undefined) refined.inputAssetUsdPrice = opportunity.inputAssetUsdPrice;
-  return refined;
+
+  const residentMeasured = repriceApeOpportunityFromMeasuredFlashFee(refined, providerProfile);
+  if (!residentMeasured.selection) return opportunity;
+  const measuredCandidate = residentMeasured.opportunity;
+  const measuredIncumbent = incumbentMeasured.opportunity;
+  const exactBpsHigher = strictlyHigherExactBps({
+    candidateProfit: measuredCandidate.expectedProfit,
+    candidateAmount: measuredCandidate.flashLoanAmount,
+    incumbentProfit: measuredIncumbent.expectedProfit,
+    incumbentAmount: measuredIncumbent.flashLoanAmount,
+  });
+  if (!exactBpsHigher) return measuredIncumbent;
+  return measuredCandidate;
 }
 
 /**
@@ -134,12 +151,13 @@ function residentBestBpsOverlay(
  * opportunity objects by reference and performs only local, in-memory ordering and
  * exact all-in BPS comparison. It never quotes a route, measures a provider, reads
  * Supabase, persists state, calls a model, performs historical lookup, or waits for
- * unfinished alternatives. Route/provider/builder exploration belongs before the
- * hot path or in the existing canonical proof layers that are required anyway.
+ * unfinished alternatives. Real fee/liquidity measurements are prewarmed outside
+ * the hot path and APE consumes only already-resident evidence.
  *
  * Size optimization is not repeated: the existing upstream bounded notional sweep
  * retains its best-BPS quote in resident memory while preserving its Stage-1 return
- * semantics. APE can consume that already-arrived quote immediately as an overlay.
+ * semantics. APE can consume that already-arrived quote immediately as an overlay,
+ * but only after rebinding its funding cost to fresh measured provider evidence.
  *
  * The resident routing table is explicitly 2 active + 1 hedge + 2 dormant reserve
  * per same-spread contextual cohort. Every additional set of candidates forms
@@ -175,26 +193,53 @@ export function runZeroCapitalAtomicBpsEngine(
   let hedgeCandidates = 0;
   let reserveCandidates = 0;
   let residentBestBpsSizeOverlays = 0;
+  let realFeeOverlays = 0;
+  let measuredFundingFeeCandidates = 0;
+  let unresolvedRealFundingFeeCandidates = 0;
+  let morphoZeroFeeSelections = 0;
+  let measuredFeeImprovementBps = 0;
+  let measuredFeeCorrectionBps = 0;
   let bestAvailableStrictPositiveBps: number | null = null;
   let bestAvailableStrictPositiveId: string | null = null;
 
   for (const opportunity of live) {
-    const mode = rescueMode(opportunity);
-    if (mode === 'cost') costRescueCandidates += 1;
-    else if (mode === 'edge') edgeRescueCandidates += 1;
-    else executionRescueCandidates += 1;
-
     const placement = getApeResidentPlacement(opportunity.id);
     if (placement?.role === 'active') activeCandidates += 1;
     else if (placement?.role === 'hedge') hedgeCandidates += 1;
     else if (placement?.role === 'reserve') reserveCandidates += 1;
 
-    const refined = residentBestBpsOverlay(input, opportunity);
-    if (refined !== opportunity) {
-      residentBestBpsSizeOverlays += 1;
-      refinedById.set(opportunity.id, refined);
+    const providerProfile = measuredProviderProfile(placement?.residentProviderProfile);
+    const realFee = repriceApeOpportunityFromMeasuredFlashFee(opportunity, providerProfile);
+    let candidate = realFee.opportunity;
+    if (realFee.selection) {
+      measuredFundingFeeCandidates += 1;
+      if (realFee.selection.provider === 'morpho_blue' && realFee.selection.fee === 0n) morphoZeroFeeSelections += 1;
+      if (realFee.changed) {
+        realFeeOverlays += 1;
+        refinedById.set(opportunity.id, candidate);
+        if (realFee.improvementBps >= 0) measuredFeeImprovementBps += realFee.improvementBps;
+        else measuredFeeCorrectionBps += Math.abs(realFee.improvementBps);
+      }
+    } else {
+      // Unknown provider compatibility or stale/missing measured fee evidence is
+      // not replaced by a configured/default fee. The exact Stage-1 object keeps
+      // flowing to downstream canonical provider proof, but APE does not call its
+      // assumed funding economics "strict positive".
+      unresolvedRealFundingFeeCandidates += 1;
     }
-    const candidate = refined;
+
+    const mode = rescueMode(candidate);
+    if (mode === 'cost') costRescueCandidates += 1;
+    else if (mode === 'edge') edgeRescueCandidates += 1;
+    else executionRescueCandidates += 1;
+
+    const refined = residentBestBpsOverlay(input, candidate, providerProfile);
+    if (refined !== candidate) {
+      residentBestBpsSizeOverlays += 1;
+      candidate = refined;
+      refinedById.set(opportunity.id, candidate);
+    }
+
     observeFlashLoanDemandHint({
       chain: candidate.chain as any,
       asset: candidate.inputToken,
@@ -202,7 +247,7 @@ export function runZeroCapitalAtomicBpsEngine(
       expiresAt: candidate.expiresAt,
     });
     const netBps = exactNetBps(candidate);
-    if (candidate.expectedProfit > 0n) {
+    if (realFee.selection && candidate.expectedProfit > 0n) {
       strictPositiveAlreadyArrived += 1;
       if (bestAvailableStrictPositiveBps === null || netBps > bestAvailableStrictPositiveBps) {
         bestAvailableStrictPositiveBps = netBps;
@@ -216,6 +261,7 @@ export function runZeroCapitalAtomicBpsEngine(
   // Telemetry is explicitly behind the decision and behind the caller's Promise
   // continuation. No microtask is inserted between Stage 1, APE, or downstream proof.
   const telemetry = setImmediate(() => {
+    const realCostSurface = getApeRealCostSurfaceSnapshot();
     logger.info('[AtomicProfitabilityEngine] Fused zero-copy APE pass completed', {
       component: 'AtomicProfitabilityEngine',
       acronym: 'APE',
@@ -231,17 +277,31 @@ export function runZeroCapitalAtomicBpsEngine(
       executionRescueCandidates,
       strictPositiveAlreadyArrived,
       residentBestBpsSizeOverlays,
+      realFeeOverlays,
+      measuredFundingFeeCandidates,
+      unresolvedRealFundingFeeCandidates,
+      morphoZeroFeeSelections,
+      measuredFeeImprovementBps,
+      measuredFeeCorrectionBps,
       bestAvailableStrictPositiveId,
       bestAvailableStrictPositiveBps,
       elapsedMsBeforeReturn: Date.now() - startedAt,
       profitabilityFinishLine: 'strict_positive_all_in_base_units',
-      optimizationObjective: 'maximize_exact_executable_net_bps_from_already_arrived_evidence',
+      optimizationObjective: 'maximize_exact_executable_net_bps_from_already_arrived_real_cost_evidence',
       exactBaseUnitBpsWinnerComparison: true,
+      fundingFeeAuthority: 'fresh_measured_provider_evidence_bound_to_resident_compatible_provider',
+      assumedFlashFeeAcceptedByApe: false,
+      unknownFlashFeeCreatesApeStrictPositive: false,
+      morphoZeroFeeEligibleWhenMeasuredAndCompatible: true,
+      providerFeeRace: 'morpho_aave_balancer_parallel_prewarm',
+      lowerFeeRouteAuthority: 'live_route_amount_out_plus_measured_funding_fee',
+      staticDexTradingFeeDiscountAssumed: false,
+      cexDiscountAssumedWithoutZeroCapitalCompatibility: false,
       marginalVolumeClippingSource: 'already_measured_size_curve_only',
       sameSpreadVariantGrouping: 'same_chain_ordered_token_cycle_direction',
       sameSpreadVariantExtraMeasurement: false,
       stageOneObjectCopies: 0,
-      apeResultOverlaysCreated: residentBestBpsSizeOverlays,
+      apeResultOverlaysCreated: refinedById.size,
       unchangedCandidatesRetainExactStageOneReference: true,
       routeQuotesCreatedByApe: 0,
       rpcCallsCreatedByApe: 0,
@@ -256,6 +316,8 @@ export function runZeroCapitalAtomicBpsEngine(
       feeTierSweepsCreatedByApe: 0,
       exploratoryCallsCreatedByApe: 0,
       residentSizeEvidenceReadOnly: true,
+      residentRealCostEvidenceReadOnly: true,
+      realCostSurface,
       upstreamSizeSweepRepeatedByApe: false,
       overlayInheritsStageOneFreshness: true,
       providerDemandHintResidentOnly: true,
