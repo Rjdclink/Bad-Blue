@@ -48,6 +48,19 @@ function exactNetBps(opportunity: ZeroCapitalOpportunity): number {
   ) / Number(BPS_PRECISION_SCALE);
 }
 
+/**
+ * Exact ratio ordering for already-arrived evidence. Cross multiplication keeps
+ * every base-unit distinction and avoids turning sub-micro-BPS differences into a
+ * floating-point tie. This performs no measurement and allocates no economics.
+ */
+function compareExactNetBps(left: ZeroCapitalOpportunity, right: ZeroCapitalOpportunity): number {
+  if (left.flashLoanAmount <= 0n || right.flashLoanAmount <= 0n) return 0;
+  const leftRatio = left.expectedProfit * right.flashLoanAmount;
+  const rightRatio = right.expectedProfit * left.flashLoanAmount;
+  if (leftRatio === rightRatio) return 0;
+  return leftRatio > rightRatio ? -1 : 1;
+}
+
 function venuePath(opportunity: ZeroCapitalOpportunity): string {
   return opportunity.route.map(step => step.protocol).join('>') || 'unknown';
 }
@@ -56,14 +69,26 @@ function venueProfile(opportunity: ZeroCapitalOpportunity): string {
   return [...new Set(opportunity.route.map(step => step.protocol))].join('>') || 'unknown';
 }
 
+/**
+ * Same-spread identity deliberately ignores venue/provider/builder. Those are
+ * alternative ways to realize the SAME already-discovered token cycle. Direction
+ * and the ordered token path remain part of the identity, so unrelated spreads do
+ * not compete with one another merely because they borrow the same stablecoin.
+ */
+function spreadPath(opportunity: ZeroCapitalOpportunity): string {
+  if (opportunity.route.length === 0) {
+    return `${opportunity.inputToken.toLowerCase()}>${opportunity.outputToken.toLowerCase()}`;
+  }
+  const first = opportunity.route[0].tokenIn.toLowerCase();
+  const outputs = opportunity.route.map(step => step.tokenOut.toLowerCase());
+  return [first, ...outputs].join('>');
+}
+
 function competitionKey(opportunity: ZeroCapitalOpportunity): string {
-  const input = opportunity.inputToken.toLowerCase();
-  const output = opportunity.outputToken.toLowerCase();
   return [
     opportunity.chain,
-    input,
-    output,
-    `${input}>${output}`,
+    opportunity.inputToken.toLowerCase(),
+    spreadPath(opportunity),
   ].join('|');
 }
 
@@ -172,6 +197,9 @@ function prune(now = Date.now()): void {
  * Prepares the contextual 2-active + 1-hedge + 2-reserve layout before APE starts.
  * It stores metadata only and retains the caller's opportunity objects by reference;
  * no route/economics object is copied, serialized, persisted, or looked up remotely.
+ * Same-spread variants are grouped by chain + ordered token cycle/direction, then
+ * ranked by exact base-unit net-BPS ratio. Venue/provider/builder remain alternative
+ * realization dimensions rather than new opportunity identities.
  * Provider/builder context comes only from an already-resident advisory hint. Missing
  * context stays wildcard-compatible instead of causing measurement or a wait.
  * Larger candidate sets form additional five-wide cohorts so Stage-1 coverage is
@@ -195,6 +223,11 @@ export function primeApeResidentRouting(opportunities: readonly ZeroCapitalOppor
     for (const opportunity of group) hints.set(opportunity.id, residentHint(opportunity));
 
     group.sort((left, right) => {
+      const exactOrder = compareExactNetBps(left, right);
+      if (exactOrder !== 0) return exactOrder;
+
+      // Keep the numeric BPS representation only as a telemetry-compatible fallback;
+      // the exact base-unit ratio above owns the winner decision.
       const leftBps = exactNetBps(left);
       const rightBps = exactNetBps(right);
       if (rightBps !== leftBps) return rightBps - leftBps;
@@ -291,6 +324,9 @@ export function getApeResidentRoutingSnapshot() {
     activePerCohort: 2 as const,
     maximumHedgePerCohort: 1 as const,
     dormantReservesPerCohort: 2 as const,
+    competitionScope: 'same_chain_ordered_token_cycle_direction' as const,
+    sameSpreadVariantsCompeteInMemory: true as const,
+    exactBpsComparison: 'base_unit_cross_ratio' as const,
     providerDimension: 'resident_measured_or_any_compatible' as const,
     builderDimension: 'resident_measured_or_any_compatible' as const,
     residentHintsAdvisoryOnly: true as const,
