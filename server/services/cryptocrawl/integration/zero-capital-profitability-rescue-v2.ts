@@ -481,6 +481,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
   let staleSeedRequoted = 0;
   let quoteDeadlineTimeouts = 0;
   let routeAlternativesTried = 0;
+  let quoteAttemptsLaunched = 0;
   let invalidFreshRefinement = 0;
   let unpricedInputTokenRejected = 0;
   let bpsSuperEngineCandidates = 0;
@@ -549,14 +550,18 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
         if (bpsContext) recordBpsRevalidationOutcome(bpsContext.plan, { deterministicPositive: 0, eligibleCandidates: 0 });
         continue;
       }
-      remainingQuoteBudget -= attempts.length;
-      routeAlternativesTried += new Set(attempts.map(attempt => attempt.route.id)).size;
 
       let best: QuotedZeroCapitalRoute | null = null;
       let stopForStrictPositive = false;
-      for (let offset = 0; offset < attempts.length && !stopForStrictPositive; offset += hedgeWidth) {
+      const launchedRouteIds = new Set<string>();
+      for (let offset = 0; offset < attempts.length && !stopForStrictPositive && remainingQuoteBudget > 0; offset += hedgeWidth) {
         if (Date.now() >= quoteDeadlineAt) break;
-        const wave = attempts.slice(offset, offset + hedgeWidth);
+        const wave = attempts.slice(offset, Math.min(offset + hedgeWidth, offset + remainingQuoteBudget));
+        if (wave.length === 0) break;
+        remainingQuoteBudget -= wave.length;
+        quoteAttemptsLaunched += wave.length;
+        for (const attempt of wave) launchedRouteIds.add(attempt.route.id);
+
         const pending = new Map<number, Promise<{ index: number; result: TimedQuoteResult }>>();
         wave.forEach((attempt, index) => {
           const timeoutMs = Math.max(50, quoteDeadlineAt - Date.now());
@@ -601,6 +606,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
           }
         }
       }
+      routeAlternativesTried += launchedRouteIds.size;
 
       if (bpsContext) {
         recordBpsRevalidationOutcome(bpsContext.plan, {
@@ -651,6 +657,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     rescueRoutes: rescueIds.size,
     totalQuoteBudget,
     remainingQuoteBudget,
+    quoteAttemptsLaunched,
     minimumRemainingLifetimeMs,
     maxQuoteLatencyMs,
     hedgeWidth,
@@ -694,6 +701,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     providerSpecificCeilingsSampled: true,
     routeFamilyAlternativesActuated: true,
     quoteRaceWaitsForSlowest: false,
+    quoteBudgetConsumedOnlyWhenLaunched: true,
     partialMeasuredBpsImprovementPreserved: true,
     recentlyExpiredSeedIsStructuralOnly: true,
     priceAndProviderMeasurementParallel: true,
