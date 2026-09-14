@@ -22,7 +22,7 @@ export interface FairZeroCapitalProfitabilityRescueInput {
  *
  * The resident 2+1+2 contextual layout is primed synchronously from the already-
  * arrived Stage-1 evidence, then APE runs in the same call stack. Composite work is
- * scheduled only after the APE decision and cannot delay the returned result.
+ * scheduled only after the APE decision and after downstream Promise continuations.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
@@ -34,7 +34,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     opportunities: input.opportunities,
   });
 
-  queueMicrotask(() => {
+  const postDecision = setImmediate(() => {
     void runZeroCapitalAtomicStackTactic({
       chain: input.chain,
       provider: input.provider,
@@ -66,9 +66,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
       compositeTacticInsideSamePipeline: true,
       compositeTacticBlocksSingleRouteReturn: false,
       compositeTacticScheduledAfterApeDecision: true,
+      compositeTacticScheduledBehindPromiseContinuations: true,
       executionAuthority: false,
     });
   });
+  postDecision.unref?.();
 
   return transformed;
 }
