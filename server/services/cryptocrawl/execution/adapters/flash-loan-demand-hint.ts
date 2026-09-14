@@ -5,7 +5,7 @@ type FlashLoanDemandHint = {
   expiresAt: number;
 };
 
-const hints = new Map<string, FlashLoanDemandHint>();
+const hints = new Map<string, FlashLoanDemandHint[]>();
 
 function key(chain: SupportedExecutionChain, asset: string): string {
   return `${chain}:${asset.toLowerCase()}`;
@@ -23,10 +23,9 @@ export function resetFlashLoanDemandHints(chain: SupportedExecutionChain): void 
 }
 
 /**
- * Records the largest already-arrived live amount for one chain/asset in the
- * current APE pass. Canonical provider proof may use it only to know when at least
- * one measured provider can cover the whole resident batch without waiting for
- * slower siblings.
+ * Records already-arrived live amounts for one chain/asset in the current APE pass.
+ * Each amount keeps its own expiry so a smaller, longer-lived candidate can never
+ * extend the freshness of a larger amount.
  */
 export function observeFlashLoanDemandHint(input: {
   chain: SupportedExecutionChain;
@@ -34,14 +33,14 @@ export function observeFlashLoanDemandHint(input: {
   amount: bigint;
   expiresAt: number;
 }): void {
-  if (input.amount <= 0n || input.expiresAt <= Date.now()) return;
+  const now = Date.now();
+  if (input.amount <= 0n || input.expiresAt <= now) return;
   const entryKey = key(input.chain, input.asset);
-  const current = hints.get(entryKey);
-  if (!current || current.expiresAt <= Date.now() || input.amount > current.amount) {
-    hints.set(entryKey, { amount: input.amount, expiresAt: input.expiresAt });
-    return;
-  }
-  if (input.expiresAt > current.expiresAt) current.expiresAt = input.expiresAt;
+  const current = (hints.get(entryKey) || []).filter(item => item.expiresAt > now);
+  const matching = current.find(item => item.amount === input.amount);
+  if (matching) matching.expiresAt = Math.max(matching.expiresAt, input.expiresAt);
+  else current.push({ amount: input.amount, expiresAt: input.expiresAt });
+  hints.set(entryKey, current);
 }
 
 export function getFlashLoanDemandHint(
@@ -50,10 +49,15 @@ export function getFlashLoanDemandHint(
   now = Date.now(),
 ): bigint | null {
   const entryKey = key(chain, asset);
-  const current = hints.get(entryKey);
-  if (!current || current.expiresAt <= now) {
-    if (current) hints.delete(entryKey);
+  const live = (hints.get(entryKey) || []).filter(item => item.expiresAt > now);
+  if (live.length === 0) {
+    hints.delete(entryKey);
     return null;
   }
-  return current.amount;
+  hints.set(entryKey, live);
+  let maximum = live[0].amount;
+  for (let index = 1; index < live.length; index += 1) {
+    if (live[index].amount > maximum) maximum = live[index].amount;
+  }
+  return maximum;
 }
