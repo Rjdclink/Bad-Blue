@@ -270,29 +270,40 @@ function candidateSizes(
     .map(value => Math.round(value * 1_000_000) / 1_000_000))]
     .sort((a, b) => a - b);
 
-  if (candidates.length <= maxCandidates) return candidates;
-  const selected = new Set<number>([candidates[0], candidates[candidates.length - 1]]);
-  const currentIndex = candidates.reduce((best, value, index) =>
-    Math.abs(value - currentUsd) < Math.abs(candidates[best] - currentUsd) ? index : best, 0);
-  selected.add(candidates[currentIndex]);
-  for (let step = 1; selected.size < maxCandidates; step += 1) {
-    const lower = currentIndex - step;
-    const upper = currentIndex + step;
-    if (lower >= 0) selected.add(candidates[lower]);
-    if (selected.size >= maxCandidates) break;
-    if (upper < candidates.length) selected.add(candidates[upper]);
-    if (lower < 0 && upper >= candidates.length) break;
+  let selectedValues: number[];
+  if (candidates.length <= maxCandidates) {
+    selectedValues = [...candidates];
+  } else {
+    const selected = new Set<number>([candidates[0], candidates[candidates.length - 1]]);
+    const currentIndex = candidates.reduce((best, value, index) =>
+      Math.abs(value - currentUsd) < Math.abs(candidates[best] - currentUsd) ? index : best, 0);
+    selected.add(candidates[currentIndex]);
+    for (let step = 1; selected.size < maxCandidates; step += 1) {
+      const lower = currentIndex - step;
+      const upper = currentIndex + step;
+      if (lower >= 0) selected.add(candidates[lower]);
+      if (selected.size >= maxCandidates) break;
+      if (upper < candidates.length) selected.add(candidates[upper]);
+      if (lower < 0 && upper >= candidates.length) break;
+    }
+    for (const providerCeiling of providerCeilingsUsd) {
+      if (selected.size >= maxCandidates) break;
+      selected.add(providerCeiling);
+    }
+    selected.add(candidates[candidates.length - 1]);
+    selectedValues = [...selected]
+      .sort((a, b) => a - b)
+      .slice(0, maxCandidates - 1)
+      .concat(candidates[candidates.length - 1])
+      .filter((value, index, values) => index === 0 || value !== values[index - 1]);
   }
-  for (const providerCeiling of providerCeilingsUsd) {
-    if (selected.size >= maxCandidates) break;
-    selected.add(providerCeiling);
-  }
-  selected.add(candidates[candidates.length - 1]);
-  return [...selected]
-    .sort((a, b) => a - b)
-    .slice(0, maxCandidates - 1)
-    .concat(candidates[candidates.length - 1])
-    .filter((value, index, values) => index === 0 || value !== values[index - 1]);
+
+  const fixedCostDominant = context?.dominantCostDriver === 'gas'
+    || context?.dominantCostDriver === 'relay'
+    || context?.dominantCostDriver === 'bridge';
+  return fixedCostDominant
+    ? selectedValues.sort((a, b) => b - a)
+    : selectedValues.sort((a, b) => a - b);
 }
 
 function quoteFitsDailyProfitBudget(
@@ -327,10 +338,21 @@ function quoteBetter(current: QuotedZeroCapitalRoute | null, candidate: QuotedZe
 }
 
 function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZeroCapitalRoute): boolean {
+  if (!Number.isFinite(candidate.netProfitBps) || !Number.isFinite(original.netProfitBps)) return false;
+  const originalProfitable = original.expectedProfit > 0n;
+  const candidateProfitable = clearsStrictProfitability(candidate);
+
+  // Before profitability, BPS is the authoritative comparison because notionals
+  // may differ. Comparing absolute token losses across different notionals can
+  // accept a worse spread or reject a genuine BPS improvement.
+  if (!originalProfitable) return candidate.netProfitBps > original.netProfitBps;
+
+  // Once the original is profitable, never replace it with a negative quote.
+  // Among two profitable quotes, net dollars become the primary objective, with
+  // BPS as the strict tie-breaker.
+  if (!candidateProfitable) return false;
   if (candidate.netProfit !== original.expectedProfit) return candidate.netProfit > original.expectedProfit;
-  return Number.isFinite(candidate.netProfitBps)
-    && Number.isFinite(original.netProfitBps)
-    && candidate.netProfitBps > original.netProfitBps;
+  return candidate.netProfitBps > original.netProfitBps;
 }
 
 function rescuePriority(opportunity: ZeroCapitalOpportunity, context: ZeroCapitalBpsRescueContext | null, now = Date.now()): number {
@@ -705,6 +727,8 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     partialMeasuredBpsImprovementPreserved: true,
     recentlyExpiredSeedIsStructuralOnly: true,
     priceAndProviderMeasurementParallel: true,
+    gasDominantNotionalPriority: 'largest_safe_first',
+    improvementComparisonAuthority: 'bps_until_strict_positive_then_net_dollars',
     netDollarOptimizationAfterProfitability: true,
     grossPositiveRequiredForAtomicSurplusRescue: false,
     atomicBorrowingIndependentOfProfitLadderNotional: true,
