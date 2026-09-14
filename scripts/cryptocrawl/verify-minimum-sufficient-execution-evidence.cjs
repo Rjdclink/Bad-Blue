@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
 
 function read(path) { return fs.readFileSync(path, 'utf8'); }
 function must(ok, message) { if (!ok) throw new Error(message); }
@@ -76,7 +77,13 @@ has(multileg, 'requiresIndependentFinalAdmission: true', 'multileg optimization 
 
 // This verifier already runs inside deployment-preflight. Pull the dedicated
 // Atomic-BPS structural gate into the same mandatory prebuild path so these
-// invariants cannot drift without failing the build.
-require('./verify-nix-gen-atomic-bps-single-pipeline.cjs');
+// invariants cannot drift without failing the build. Run it in a clean process so
+// the legacy preflight read redirect cannot substitute the flash executor for the
+// canonical router while the modern single-pipeline assertions execute.
+execFileSync(
+  process.execPath,
+  ['scripts/cryptocrawl/verify-nix-gen-atomic-bps-single-pipeline.cjs'],
+  { stdio: 'inherit', env: process.env },
+);
 
 console.log('[required-execution-evidence] PASS: execution remains guarded by topology-correct economics plus minimum sufficient live evidence; ZERO_CAPITAL_ATOMIC uses exact strict-positive all-in base units with no +10 magnitude floor; Atomic composition is an internal single-pipeline tactic over Stage-1-admitted candidates and may promote only when exact simulation proves positive net plus measured composition gain; Profit Ladder/optional/advisory completeness cannot become shadow vetoes');
