@@ -19,6 +19,10 @@ export { ensureAuthoritativeMonteCarloWiring } from './integration/authoritative
 export { getCryptara } from '../cryptara/index.js';
 export { canonicalOpportunityState } from './intelligence/canonical-opportunity-state.js';
 export { marketDataProviders } from './intelligence/market-data-providers.js';
+export {
+  ensureDexMeshRuntimeProof,
+  emitDexMeshRuntimeProof,
+} from './intelligence/dex-mesh-runtime-proof.js';
 export { measuredOpportunityGraph } from './discovery/opportunity-graph.js';
 export { multiTopologyDiscoveryController } from './discovery/multi-topology-discovery-controller.js';
 export { measuredCandidateRegistry } from './discovery/measured-candidate-registry.js';
