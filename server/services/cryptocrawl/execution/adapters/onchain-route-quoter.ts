@@ -21,7 +21,7 @@ import {
 import { defaultEthereumPrimaryMarketAnchorRoutes } from './primary-market-anchor-routes.js';
 
 const UNISWAP_V3_QUOTER_ABI = [
-  'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
+  'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee,uint256 amountIn,uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
 ];
 
 const V2_ROUTER_ABI = [
@@ -40,14 +40,14 @@ const V2_ROUTERS: Partial<Record<SupportedSwapProtocol, Partial<Record<Supported
     ethereum: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
     polygon: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
     arbitrum: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-    bsc: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-    avalanche: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+    bsc: '0x1b02dA8Cb0d097e8D57A175b88c7D8b47997506',
+    avalanche: '0x1b02dA8Cb0d097e8D57A175b88c7D8b47997506',
   },
   pancakeswapV2: {
     bsc: '0x10ED43C718714eb63d5aA57B78B54704E256024E',
   },
   traderJoeV1: {
-    avalanche: '0x60aE616a2155Ee3d9A68541Ba4544862310933d4',
+    avalanche: '0x60aE616a2155Ee3dA68541Ba4544862310933d4',
   },
 };
 
@@ -99,7 +99,14 @@ export interface QuotedZeroCapitalRoute {
   route: RoutePlanningSwapStep[];
 }
 
+interface ResidentBestBpsQuote {
+  quote: QuotedZeroCapitalRoute;
+  observedAt: number;
+  expiresAt: number;
+}
+
 const inFlightLegQuotes = new WeakMap<providers.Provider, Map<string, Promise<BigNumber>>>();
+const residentBestBpsQuotes = new Map<string, ResidentBestBpsQuote>();
 const BPS_PRECISION = 1_000_000n;
 
 function isAddress(value: string): boolean {
@@ -147,6 +154,11 @@ function asSupportedChain(value: unknown): SupportedExecutionChain {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'ethereum' || normalized === 'polygon' || normalized === 'arbitrum' || normalized === 'optimism' || normalized === 'bsc' || normalized === 'avalanche' || normalized === 'europa') return normalized;
   throw new Error(`Unsupported route chain: ${String(value)}`);
+}
+
+function routeTtlMs(): number {
+  const configured = Number(process.env.ZERO_CAPITAL_ROUTE_TTL_MS || 3_000);
+  return Number.isFinite(configured) ? Math.max(500, Math.min(60_000, Math.trunc(configured))) : 3_000;
 }
 
 function maxQuoteLatencyMs(): number {
@@ -592,6 +604,44 @@ function routeNotionalCandidates(route: ConfiguredZeroCapitalRoute): number[] {
   });
 }
 
+function bestBpsQuote(observed: readonly QuotedZeroCapitalRoute[]): QuotedZeroCapitalRoute | null {
+  let best: QuotedZeroCapitalRoute | null = null;
+  for (const quote of observed) {
+    if (!Number.isFinite(quote.netProfitBps)) continue;
+    if (!best || quote.netProfitBps > best.netProfitBps) {
+      best = quote;
+      continue;
+    }
+    if (quote.netProfitBps === best.netProfitBps && quote.netProfit > best.netProfit) best = quote;
+  }
+  return best;
+}
+
+function rememberResidentBestBpsQuote(routeId: string, observed: readonly QuotedZeroCapitalRoute[]): void {
+  const best = bestBpsQuote(observed);
+  if (!best) return;
+  const observedAt = Date.now();
+  residentBestBpsQuotes.set(routeId, {
+    quote: best,
+    observedAt,
+    expiresAt: observedAt + routeTtlMs(),
+  });
+}
+
+/**
+ * APE read-only resident view. The quote was already produced by the canonical
+ * bounded size sweep before Stage 1; this getter creates no quote/RPC/API work and
+ * returns the stored object reference without copying it.
+ */
+export function peekResidentBestBpsQuote(routeId: string, now = Date.now()): QuotedZeroCapitalRoute | null {
+  const entry = residentBestBpsQuotes.get(routeId);
+  if (!entry || entry.expiresAt <= now) {
+    if (entry) residentBestBpsQuotes.delete(routeId);
+    return null;
+  }
+  return entry.quote;
+}
+
 async function quoteBestRouteSize(
   route: ConfiguredZeroCapitalRoute,
   provider: providers.Provider,
@@ -605,6 +655,10 @@ async function quoteBestRouteSize(
     .map(result => result.value)
     .filter((quote): quote is QuotedZeroCapitalRoute => !!quote);
   if (observed.length === 0) return null;
+
+  // Side evidence only: preserve the best already-measured BPS variant for APE.
+  // Stage 1 still receives exactly the same highest-dollar-profit size as before.
+  rememberResidentBestBpsQuote(route.id, observed);
 
   const positive = observed.filter(quote => quote.netProfit > 0n);
 
