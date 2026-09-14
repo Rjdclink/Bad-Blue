@@ -24,6 +24,7 @@ export interface FairZeroCapitalProfitabilityRescueInput {
  * The resident 2+1+2 contextual layout is primed synchronously from the already-
  * arrived Stage-1 evidence, then APE runs in the same call stack. Composite work is
  * scheduled only after the APE decision and after downstream Promise continuations.
+ * Build-verifier telemetry below is descriptive only and carries no execution authority.
  */
 export function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
