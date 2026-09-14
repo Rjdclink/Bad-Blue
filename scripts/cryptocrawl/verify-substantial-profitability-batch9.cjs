@@ -123,8 +123,10 @@ if (!source.cex.includes('function scheduleNext') ||
 if (source.core.includes('runZeroCapitalProfitabilityRescueV2') ||
     !source.core.includes('duplicateAtomicRescuePass: false') ||
     !source.zeroDiscovery.includes("import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';") ||
-    !source.zeroDiscovery.includes('const rescueReady = await runFairZeroCapitalProfitabilityRescue({')) {
-  throw new Error('[substantial-profitability-batch9] Atomic rescue must be single-owner: canonical discovery runs one fairness-ordered rescue pass after configured and dynamic measurement; the core scan must remain measurement-only');
+    !source.zeroDiscovery.includes('rescueReady = runFairZeroCapitalProfitabilityRescue({') ||
+    source.zeroDiscovery.includes('await runFairZeroCapitalProfitabilityRescue({') ||
+    !source.zeroDiscovery.includes('stageOneClassificationChanged: false')) {
+  throw new Error('[substantial-profitability-batch9] Atomic rescue must be single-owner and fused: canonical discovery runs one synchronous fairness-ordered rescue pass after locked Stage-1 classification, the core scan remains measurement-only, and Stage One classification remains unchanged');
 }
 if (source.canonical.includes('ensureZeroCapitalProfitabilityRescueV2') || source.zero.includes('target.scanChain =')) {
   throw new Error('[substantial-profitability-batch9] retired zero-capital rescue installer/scan mutation must not return');
@@ -166,4 +168,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue is single-owner in canonical discovery, fairness-ordered, price-aware and provider-capacity-bounded; fresh requotes supersede stale seeds without extending stale evidence; Profit Ladder remains realized-profit telemetry/accounting rather than Atomic borrowing or execution veto authority; canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue is single-owner and synchronously fused in canonical discovery after the locked Stage-1 classification, fairness-ordered, price-aware and provider-capacity-bounded; fresh requotes supersede stale seeds without extending stale evidence; Profit Ladder remains realized-profit telemetry/accounting rather than Atomic borrowing or execution veto authority; canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
