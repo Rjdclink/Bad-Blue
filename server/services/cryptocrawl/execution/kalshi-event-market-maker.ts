@@ -232,7 +232,7 @@ async function reserveAndInsert(plan: KalshiEventExecutionPlan, contracts: numbe
   });
   if (!reservation) return null;
   try {
-    const group = await createKalshiEventOrderGroup(Math.max(contracts, contracts * 2)).catch(() => null);
+    const group = await createKalshiEventOrderGroup(Math.max(contracts, contracts * 2), plan.ticker).catch(() => null);
     if (!group) {
       await releaseKalshiEventSystemCashReservation(reservation.reservationId);
       return null;
