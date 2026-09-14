@@ -69,6 +69,7 @@ export function runFairZeroCapitalProfitabilityRescue(
       compositeTacticBlocksSingleRouteReturn: false,
       compositeTacticScheduledAfterApeDecision: true,
       compositeTacticScheduledBehindPromiseContinuations: true,
+      independentCompositePromotionLoop: false,
       executionAuthority: false,
     });
   });
