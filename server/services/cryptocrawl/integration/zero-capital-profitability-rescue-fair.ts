@@ -5,6 +5,7 @@ import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../exec
 import { primeApeResidentRouting } from './atomic-profitability-resident-routing.js';
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
 import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
+import { runZeroCapitalProfitabilityRescueV2 } from './zero-capital-profitability-rescue-v2.js';
 
 export interface FairZeroCapitalProfitabilityRescueInput {
   chain: SupportedChain;
@@ -15,26 +16,64 @@ export interface FairZeroCapitalProfitabilityRescueInput {
 }
 
 /**
- * Compatibility gateway retained for canonical discovery, but the healthy path is
- * now fused zero-copy continuation: Stage 1 passes the exact same opportunity object
- * references directly into APE. There is no structural copy, queue, serialization,
- * persistence, ACK microtask, handoff supervisor, replay, Promise boundary, or
- * database boundary.
+ * Canonical Stage-1 -> APE gateway. The resident APE fast path always runs first on
+ * the exact Stage-1 opportunity objects. If that already-arrived evidence contains
+ * a strict-positive result, downstream proof can continue without extra measurement.
  *
- * The resident 2+1+2 contextual layout is primed synchronously from the already-
- * arrived Stage-1 evidence, then APE runs in the same call stack. Composite work is
- * scheduled only after the APE decision and after downstream Promise continuations.
- * Build-verifier telemetry below is descriptive only and carries no execution authority.
+ * When fresh rescue-band candidates remain non-positive, APE's attached measured
+ * actuator runs the existing bounded profitability-rescue pass. That pass creates
+ * only derived fresh quote results, never mutates Stage 1, never fabricates BPS, and
+ * never gains execution authority. Composite work remains post-decision and cannot
+ * block a single-route result.
  */
-export function runFairZeroCapitalProfitabilityRescue(
+export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
-): ZeroCapitalOpportunity[] {
+): Promise<ZeroCapitalOpportunity[]> {
   primeApeResidentRouting(input.opportunities);
 
-  const transformed = runZeroCapitalAtomicBpsEngine({
+  const residentFastPath = runZeroCapitalAtomicBpsEngine({
     ...input,
     opportunities: input.opportunities,
   });
+
+  const activeRescueCandidates = residentFastPath.filter(opportunity =>
+    opportunity.expiresAt > Date.now()
+    && opportunity.flashLoanAmount > 0n
+    && Number.isFinite(opportunity.netProfitBps)
+    && opportunity.expectedProfit <= 0n,
+  );
+
+  let transformed = residentFastPath;
+  let activeMeasuredRescueInvoked = false;
+  let activeMeasuredRescueOverlays = 0;
+  let activeMeasuredRescueError: string | null = null;
+
+  if (activeRescueCandidates.length > 0) {
+    activeMeasuredRescueInvoked = true;
+    try {
+      transformed = await runZeroCapitalProfitabilityRescueV2({
+        ...input,
+        opportunities: residentFastPath,
+      });
+      const residentById = new Map(residentFastPath.map(opportunity => [opportunity.id, opportunity]));
+      activeMeasuredRescueOverlays = transformed.filter(opportunity => residentById.get(opportunity.id) !== opportunity).length;
+    } catch (error) {
+      activeMeasuredRescueError = error instanceof Error ? error.message : String(error);
+      transformed = residentFastPath;
+      logger.warn('[ZeroCapitalProfitabilityRescueFair] Active measured APE rescue degraded locally; resident evidence continues', {
+        component: 'ZeroCapitalProfitabilityRescueFair',
+        chain: input.chain,
+        error: activeMeasuredRescueError,
+        stageOneMutation: false,
+        syntheticEconomics: false,
+        executionAuthority: false,
+      });
+    }
+  }
+
+  const strictPositiveAfterRescue = transformed.filter(opportunity =>
+    opportunity.expiresAt > Date.now() && opportunity.expectedProfit > 0n,
+  ).length;
 
   const postDecision = setImmediate(() => {
     void runZeroCapitalAtomicStackTactic({
@@ -51,25 +90,27 @@ export function runFairZeroCapitalProfitabilityRescue(
       });
     });
 
-    logger.debug('[ZeroCapitalProfitabilityRescueFair] Fused zero-copy Stage-1 -> APE continuation completed', {
+    logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> APE active rescue continuation completed', {
       component: 'ZeroCapitalProfitabilityRescueFair',
       chain: input.chain,
       profitabilityFinishLine: 'strict_positive_all_in_base_units',
-      oneTransformationAuthority: true,
-      oneTransformationPipeline: true,
-      stageOneSameReferenceContinuation: true,
-      stageOneStructuralCopies: 0,
-      stageOneToApePromiseBoundary: false,
-      stageTwoHandoffSupervisorOnHotPath: false,
-      stageTwoAcknowledgementWaitOnHotPath: false,
-      boundedReplayOnHealthyHotPath: false,
+      residentFastPathFirst: true,
+      activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV2',
+      activeMeasuredRescueInvoked,
+      activeMeasuredRescueCandidates: activeRescueCandidates.length,
+      activeMeasuredRescueOverlays,
+      strictPositiveAfterRescue,
+      activeMeasuredRescueError,
+      stageOneSameReferenceIntoResidentFastPath: true,
+      activeRescueCreatesDerivedEvidenceOnly: true,
+      stageOneMutation: false,
+      syntheticEconomics: false,
       externalQueueOnHotPath: false,
       persistenceOnHotPath: false,
       supabaseOnHotPath: false,
       compositeTacticInsideSamePipeline: true,
       compositeTacticBlocksSingleRouteReturn: false,
       compositeTacticScheduledAfterApeDecision: true,
-      compositeTacticScheduledBehindPromiseContinuations: true,
       independentCompositePromotionLoop: false,
       executionAuthority: false,
     });
