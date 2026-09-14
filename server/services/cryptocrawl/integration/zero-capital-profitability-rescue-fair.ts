@@ -15,16 +15,45 @@ export interface FairZeroCapitalProfitabilityRescueInput {
   fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
 }
 
+function bounded(raw: unknown, fallback: number, min: number, max: number): number {
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
+}
+
+function recursivePassLimit(): number {
+  return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_RECURSIVE_PASSES, 4, 1, 8));
+}
+
+function recursiveWallClockBudgetMs(): number {
+  return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_RECURSIVE_MAX_MS, 3_000, 250, 10_000));
+}
+
+function stillNeedsMeasuredRescue(opportunity: ZeroCapitalOpportunity): boolean {
+  return opportunity.expiresAt > Date.now()
+    && opportunity.flashLoanAmount > 0n
+    && Number.isFinite(opportunity.netProfitBps)
+    && opportunity.expectedProfit <= 0n;
+}
+
+function strictDerivedImprovement(before: ZeroCapitalOpportunity, after: ZeroCapitalOpportunity): boolean {
+  if (after === before) return false;
+  if (!Number.isFinite(before.netProfitBps) || !Number.isFinite(after.netProfitBps)) return false;
+  if (before.expectedProfit <= 0n) return after.netProfitBps > before.netProfitBps;
+  if (after.expectedProfit <= 0n) return false;
+  if (after.expectedProfit !== before.expectedProfit) return after.expectedProfit > before.expectedProfit;
+  return after.netProfitBps > before.netProfitBps;
+}
+
 /**
  * Canonical Stage-1 -> APE gateway. The resident APE fast path always runs first on
  * the exact Stage-1 opportunity objects. If that already-arrived evidence contains
  * a strict-positive result, downstream proof can continue without extra measurement.
  *
- * When fresh rescue-band candidates remain non-positive, APE's attached measured
- * actuator runs the existing bounded profitability-rescue pass. That pass creates
- * only derived fresh quote results, never mutates Stage 1, never fabricates BPS, and
- * never gains execution authority. Composite work remains post-decision and cannot
- * block a single-route result.
+ * Fresh still-nonpositive candidates then enter a bounded same-handoff refinement
+ * loop. Every pass uses V2's freshly measured derived quotes, preserves only strict
+ * improvement, and feeds that derived improvement back into the next pass. A
+ * candidate leaves the loop immediately once strict-positive all-in economics are
+ * reached. Stage-1 objects are never mutated or copied into a new authority.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
@@ -36,49 +65,79 @@ export async function runFairZeroCapitalProfitabilityRescue(
     opportunities: input.opportunities,
   });
 
-  const activeRescueCandidates = residentFastPath.filter(opportunity =>
-    opportunity.expiresAt > Date.now()
-    && opportunity.flashLoanAmount > 0n
-    && Number.isFinite(opportunity.netProfitBps)
-    && opportunity.expectedProfit <= 0n,
-  );
+  const activeRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
 
   let transformed = residentFastPath;
   let activeMeasuredRescueInvoked = false;
   let activeMeasuredRescueOverlays = 0;
   let alternateRouteIdentityRebindings = 0;
   let activeMeasuredRescueError: string | null = null;
+  let recursiveMeasuredPasses = 0;
+  let recursiveStrictPositiveStops = 0;
+  let recursiveNoImprovementStops = 0;
+  let recursiveWallClockStops = 0;
+  const rescueStartedAt = Date.now();
+  const maxPasses = recursivePassLimit();
+  const wallClockBudgetMs = recursiveWallClockBudgetMs();
 
   if (activeRescueCandidates.length > 0) {
     activeMeasuredRescueInvoked = true;
     try {
-      transformed = await runZeroCapitalProfitabilityRescueV2({
-        ...input,
-        opportunities: residentFastPath,
-      });
-      const measured = transformed;
+      for (let pass = 0; pass < maxPasses; pass += 1) {
+        if (Date.now() - rescueStartedAt >= wallClockBudgetMs) {
+          recursiveWallClockStops += 1;
+          break;
+        }
 
-      // V2 is a one-result-per-input transformation pass. Route-family rescue may
-      // legitimately find a better quote on a different configured route, whose
-      // quote id differs from the Stage-1 candidate id. Preserve the original
-      // candidate identity at the gateway so the measured-candidate registry,
-      // provider repricing, and execution proof all continue the same candidate.
-      // Only the newly derived overlay is copied; Stage-1 objects are untouched.
-      transformed = measured.map((candidate, index) => {
-        const resident = residentFastPath[index];
-        if (!resident || candidate === resident || candidate.id === resident.id) return candidate;
-        alternateRouteIdentityRebindings += 1;
-        return { ...candidate, id: resident.id };
-      });
-      activeMeasuredRescueOverlays = transformed.filter((opportunity, index) => opportunity !== residentFastPath[index]).length;
+        const passInput = transformed.filter(stillNeedsMeasuredRescue);
+        if (passInput.length === 0) break;
+
+        const measured = await runZeroCapitalProfitabilityRescueV2({
+          ...input,
+          opportunities: passInput,
+        });
+        recursiveMeasuredPasses += 1;
+
+        const replacements = new Map<string, ZeroCapitalOpportunity>();
+        let passImprovements = 0;
+        let passStrictPositive = 0;
+        measured.forEach((candidate, index) => {
+          const prior = passInput[index];
+          if (!prior) return;
+          let normalized = candidate;
+          // Route-family rescue may legitimately return a configured route id that
+          // differs from the original Stage-1 candidate id. Rebind only the derived
+          // overlay identity so registries keep following the same candidate.
+          if (candidate !== prior && candidate.id !== prior.id) {
+            alternateRouteIdentityRebindings += 1;
+            normalized = { ...candidate, id: prior.id };
+          }
+          if (!strictDerivedImprovement(prior, normalized)) return;
+          replacements.set(prior.id, normalized);
+          passImprovements += 1;
+          activeMeasuredRescueOverlays += 1;
+          if (normalized.expectedProfit > 0n) passStrictPositive += 1;
+        });
+
+        if (passImprovements === 0) {
+          recursiveNoImprovementStops += 1;
+          break;
+        }
+
+        transformed = transformed.map(candidate => replacements.get(candidate.id) ?? candidate);
+        recursiveStrictPositiveStops += passStrictPositive;
+      }
     } catch (error) {
       activeMeasuredRescueError = error instanceof Error ? error.message : String(error);
-      transformed = residentFastPath;
-      logger.warn('[ZeroCapitalProfitabilityRescueFair] Active measured APE rescue degraded locally; resident evidence continues', {
+      // Preserve every improvement already accepted by earlier passes. A later
+      // provider/route failure is local and cannot erase fresh derived evidence.
+      logger.warn('[ZeroCapitalProfitabilityRescueFair] Active measured APE recursion degraded locally; latest strict improvements continue', {
         component: 'ZeroCapitalProfitabilityRescueFair',
         chain: input.chain,
         error: activeMeasuredRescueError,
+        recursiveMeasuredPasses,
         stageOneMutation: false,
+        priorDerivedImprovementsPreserved: true,
         syntheticEconomics: false,
         executionAuthority: false,
       });
@@ -116,6 +175,16 @@ export async function runFairZeroCapitalProfitabilityRescue(
       alternateRouteIdentityRebindings,
       strictPositiveAfterRescue,
       activeMeasuredRescueError,
+      recursiveMeasuredPasses,
+      recursiveMeasuredPassLimit: maxPasses,
+      recursiveWallClockBudgetMs: wallClockBudgetMs,
+      recursiveStrictPositiveStops,
+      recursiveNoImprovementStops,
+      recursiveWallClockStops,
+      recursivePartialImprovementFeedback: true,
+      recursiveStrictImprovementRequired: true,
+      recursiveStopsAtStrictPositivePerCandidate: true,
+      recursiveProviderFailureLocal: true,
       stageOneSameReferenceIntoResidentFastPath: true,
       activeRescueCreatesDerivedEvidenceOnly: true,
       derivedOverlayPreservesCandidateIdentity: true,
