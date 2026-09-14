@@ -36,6 +36,22 @@ function exactNetBps(opportunity: ZeroCapitalOpportunity): number {
   ) / Number(BPS_PRECISION_SCALE);
 }
 
+/**
+ * Compare net-profit ratios in base units without converting either side to a
+ * floating-point BPS value. This lets already-arrived evidence win on arbitrarily
+ * small real BPS improvements without adding a quote, RPC call, or search step.
+ */
+function strictlyHigherExactBps(input: {
+  candidateProfit: bigint;
+  candidateAmount: bigint;
+  incumbentProfit: bigint;
+  incumbentAmount: bigint;
+}): boolean {
+  if (input.candidateAmount <= 0n || input.incumbentAmount <= 0n) return false;
+  return input.candidateProfit * input.incumbentAmount
+    > input.incumbentProfit * input.candidateAmount;
+}
+
 function grossProfit(opportunity: ZeroCapitalOpportunity): bigint {
   return opportunity.grossProfit
     ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
@@ -87,7 +103,17 @@ function residentBestBpsOverlay(
   const resident = peekResidentBestBpsQuote(route.id);
   if (!resident || resident.chain !== opportunity.chain) return opportunity;
   const currentBps = exactNetBps(opportunity);
-  if (!Number.isFinite(resident.netProfitBps) || resident.netProfitBps <= currentBps) return opportunity;
+  if (!Number.isFinite(resident.netProfitBps)) return opportunity;
+  const exactBpsHigher = strictlyHigherExactBps({
+    candidateProfit: resident.netProfit,
+    candidateAmount: resident.amountIn,
+    incumbentProfit: opportunity.expectedProfit,
+    incumbentAmount: opportunity.flashLoanAmount,
+  });
+  // Keep the numeric check as a compatibility guard, but exact base-unit ratio is
+  // authoritative when both representations round to the same displayed BPS.
+  if (resident.netProfitBps <= currentBps && !exactBpsHigher) return opportunity;
+  if (!exactBpsHigher) return opportunity;
 
   const refined = input.fromQuotedRoute(resident, originalBlockTimestamp(opportunity));
   if (refined.id !== opportunity.id) return opportunity;
@@ -116,10 +142,10 @@ function residentBestBpsOverlay(
  * semantics. APE can consume that already-arrived quote immediately as an overlay.
  *
  * The resident routing table is explicitly 2 active + 1 hedge + 2 dormant reserve
- * per contextual cohort. Every additional set of candidates forms another cohort,
- * so the lane width is never an eligibility cap. A better candidate may lead only
- * when its evidence has already arrived; no ready strict-positive candidate waits
- * for new evidence to be created.
+ * per same-spread contextual cohort. Every additional set of candidates forms
+ * another cohort, so the lane width is never an eligibility cap. A better candidate
+ * may lead only when its evidence has already arrived; no ready strict-positive
+ * candidate waits for new evidence to be created.
  */
 export function runZeroCapitalAtomicBpsEngine(
   input: ZeroCapitalAtomicBpsEngineInput,
@@ -210,6 +236,10 @@ export function runZeroCapitalAtomicBpsEngine(
       elapsedMsBeforeReturn: Date.now() - startedAt,
       profitabilityFinishLine: 'strict_positive_all_in_base_units',
       optimizationObjective: 'maximize_exact_executable_net_bps_from_already_arrived_evidence',
+      exactBaseUnitBpsWinnerComparison: true,
+      marginalVolumeClippingSource: 'already_measured_size_curve_only',
+      sameSpreadVariantGrouping: 'same_chain_ordered_token_cycle_direction',
+      sameSpreadVariantExtraMeasurement: false,
       stageOneObjectCopies: 0,
       apeResultOverlaysCreated: residentBestBpsSizeOverlays,
       unchangedCandidatesRetainExactStageOneReference: true,
