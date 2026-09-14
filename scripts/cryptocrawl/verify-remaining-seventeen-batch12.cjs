@@ -26,6 +26,7 @@ const dynamicRoutes = read('server/services/cryptocrawl/discovery/dynamic-zero-c
 const atomicSize = read('server/services/cryptocrawl/execution/adapters/atomic-size-optimizer.ts');
 const zeroCapitalCore = read('server/services/cryptocrawl/core/zero-capital-engine.ts');
 const zeroCapitalDiscovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
+const zeroCapitalFair = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 // verify-deployment-preflight redirects path-based reads of this filename to the
 // preserved flash implementation for legacy verifiers. This verifier needs the
 // physical canonical router, so read it by descriptor to bypass that compatibility shim.
@@ -69,10 +70,15 @@ assert(atomicSize.includes('bpsToBreakEven') && atomicSize.includes('bestNearMis
 assert(!zeroCapitalCore.includes('runZeroCapitalProfitabilityRescueV2') &&
   zeroCapitalCore.includes('duplicateAtomicRescuePass: false') &&
   zeroCapitalDiscovery.includes("import { runFairZeroCapitalProfitabilityRescue } from '../integration/zero-capital-profitability-rescue-fair.js';") &&
-  zeroCapitalDiscovery.includes('rescueReady = runFairZeroCapitalProfitabilityRescue({') &&
-  !zeroCapitalDiscovery.includes('await runFairZeroCapitalProfitabilityRescue({') &&
-  zeroCapitalDiscovery.includes('stageOneClassificationChanged: false'),
-'Atomic rescue must remain single-owner and synchronously fused in canonical discovery after locked Stage-1 classification; core scan remains measurement-only and Stage One classification remains unchanged');
+  zeroCapitalDiscovery.includes('rescueReady = await runFairZeroCapitalProfitabilityRescue({') &&
+  zeroCapitalDiscovery.includes('stageOneClassificationChanged: false') &&
+  zeroCapitalFair.includes('primeApeResidentRouting(input.opportunities);') &&
+  zeroCapitalFair.includes('const residentFastPath = runZeroCapitalAtomicBpsEngine({') &&
+  zeroCapitalFair.includes('transformed = await runZeroCapitalProfitabilityRescueV2({') &&
+  zeroCapitalFair.includes('activeRescueCreatesDerivedEvidenceOnly: true') &&
+  zeroCapitalFair.includes('stageOneMutation: false') &&
+  zeroCapitalFair.includes('executionAuthority: false'),
+'Atomic rescue must remain single-owner after locked Stage-1 classification: canonical discovery awaits the APE gateway, the resident APE fast path runs first on the exact Stage-1 references, active measured rescue derives fresh evidence only for rescue candidates, core scan remains measurement-only, Stage One stays unchanged, and execution authority remains downstream');
 assert(zeroCapitalCore.includes('tokenUnitEqualsUsdAssumption: false'), 'zero-capital runtime context must explicitly reject token-unit-equals-USD authority');
 assert(canonicalZeroCapitalExecutor.includes("import { livePriceMesh } from '../bridge/live-price-mesh.js';"), 'canonical zero-capital executor must use the provider-mesh live price surface');
 assert(canonicalZeroCapitalExecutor.includes('livePriceMesh.getLiveSymbolPrices([...new Set(symbols)])'), 'canonical zero-capital terminal economics must request live token prices through the mesh');
@@ -134,4 +140,4 @@ assert(runtime.includes("install('cross_venue_timing_guard', () => ensureCrossVe
 assert(runtime.includes("install('measured_candidate_expiry_guard', () => ensureMeasuredCandidateExpiryGuardWiring())"), 'candidate expiry guard must be isolated and installed');
 assert(runtime.includes('runtimeComponentIsolationGlobalShutdownAuthority: false'), 'component wiring failures must not own a global shutdown');
 assert(runtime.includes("executionEconomicFloor: 'strict_all_in_net_profit_usd_greater_than_zero'"), 'strict all-in positive economics must remain canonical');
-console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, self-funded notional rungs isolated from provider-capacity-bounded zero-capital borrowing, Profit Ladder daily-realized-profit-only authority, single-owner synchronously fused fairness-ordered BPS rescue in canonical discovery after locked Stage-1 classification with measured provider fees/liquidity and live-price-mesh token valuation, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
+console.log('[remaining-seventeen-batch12] PASS: executable CEX topology, exact inventory economics, synchronized timing, terminal learning, self-funded notional rungs isolated from provider-capacity-bounded zero-capital borrowing, Profit Ladder daily-realized-profit-only authority, single-owner APE rescue after locked Stage-1 classification with resident fast path first and bounded active measured derived-evidence rescue, measured provider fees/liquidity and live-price-mesh token valuation, FOK-preserving one-batch CEX execution, anti-rank-gaming partial accounting, fixed 90/10 treasury invariants, and isolated runtime protections preserved');
