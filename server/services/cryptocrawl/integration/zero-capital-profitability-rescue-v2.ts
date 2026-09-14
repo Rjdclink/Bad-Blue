@@ -123,18 +123,42 @@ function routeFamily(route: ConfiguredZeroCapitalRoute): string {
   return `${route.chain}:${route.inputAssetSymbol}:${route.legs.map(leg => leg.protocol).join('>')}:${route.legs.slice(0, -1).map(leg => leg.tokenOut.toLowerCase()).join('>')}`;
 }
 
+/**
+ * Stage 1 has already measured the chain/asset gas basis before APE receives an
+ * opportunity. Canonical route topology is structural and may still carry its
+ * zero seed, so rescue alternatives must inherit the exact Stage-1 measured
+ * gas/relay basis before they can be compared. This creates no new economics and
+ * performs no RPC work; fresh route output and flash-provider fees are still
+ * measured below for every attempted alternative.
+ */
+function alignRouteCostBasisToStageOne(
+  route: ConfiguredZeroCapitalRoute,
+  opportunity: ZeroCapitalOpportunity,
+): ConfiguredZeroCapitalRoute {
+  return {
+    ...route,
+    estimatedGasCostInInputToken: opportunity.estimatedGasCostInInputToken !== undefined
+      ? opportunity.estimatedGasCostInInputToken.toString()
+      : route.estimatedGasCostInInputToken,
+    relayFeeInInputToken: opportunity.relayFeeInInputToken !== undefined
+      ? opportunity.relayFeeInInputToken.toString()
+      : route.relayFeeInInputToken,
+  };
+}
+
 function compatibleRoutesForOpportunity(
   routes: readonly ConfiguredZeroCapitalRoute[],
   opportunity: ZeroCapitalOpportunity,
 ): ConfiguredZeroCapitalRoute[] {
   const maximum = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_ROUTE_ALTERNATIVES, 4, 1, 12));
-  const seed = routeForOpportunity(routes, opportunity);
+  const rawSeed = routeForOpportunity(routes, opportunity);
+  const seed = rawSeed ? alignRouteCostBasisToStageOne(rawSeed, opportunity) : null;
   const compatible = routes.filter(route =>
     route.chain === opportunity.chain
     && route.inputAssetSymbol === opportunity.inputAssetSymbol
     && route.inputTokenDecimals === opportunity.inputTokenDecimals
     && route.inputToken.toLowerCase() === opportunity.inputToken.toLowerCase(),
-  );
+  ).map(route => alignRouteCostBasisToStageOne(route, opportunity));
   const ordered = seed
     ? [seed, ...compatible.filter(route => route.id !== seed.id)]
     : compatible;
@@ -722,6 +746,8 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     adaptiveGapAwareSizing: true,
     providerSpecificCeilingsSampled: true,
     routeFamilyAlternativesActuated: true,
+    alternateRouteCostBasisAlignedToStageOne: true,
+    routeCostBasisAuthority: 'stage_one_measured_chain_asset_gas_and_relay',
     quoteRaceWaitsForSlowest: false,
     quoteBudgetConsumedOnlyWhenLaunched: true,
     partialMeasuredBpsImprovementPreserved: true,
