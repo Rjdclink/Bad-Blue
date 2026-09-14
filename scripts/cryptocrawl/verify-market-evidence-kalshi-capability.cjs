@@ -26,8 +26,8 @@ assert.match(prices, /recoveryProbes \+= 1/, 'expired provider cooldowns must au
 assert.match(prices, /maxRetries: 0/, 'mesh-level retry must remain the explicit second provider pass rather than hidden request retries');
 assert.match(prices, /const byChain = new Map/, 'DEX Screener requests must batch compatible token addresses by chain');
 assert.match(prices, /requested\.map\(entry => entry\.key\)\.join\(','\)/, 'DefiLlama must batch compatible coin keys');
-assert.match(prices, /requested\.map\(entry => entry\.coinLoreId\)\)\.join\(','\)/, 'CoinLore must batch compatible asset ids');
-assert.match(prices, /requested\.map\(entry => entry\.cmcId\)\)\.join\(','\)/, 'CoinMarketCap must batch compatible asset ids');
+assert.match(prices, /const ids = \[\.\.\.new Set\(requested\.map\(entry => entry\.coinLoreId\)\)\]\.join\(','\);/, 'CoinLore must batch compatible asset ids');
+assert.match(prices, /const ids = \[\.\.\.new Set\(requested\.map\(entry => entry\.cmcId\)\)\]\.join\(','\);/, 'CoinMarketCap must batch compatible asset ids');
 assert.match(prices, /private inFlight = new Map<string, Promise<PriceFetchResult>>\(\)/, 'identical price requests must share in-flight work');
 assert.match(prices, /this\.recordAttributedTelemetry\(result\.canonicalProviderByCoinId, 'coalescedRequests'\)/, 'coalesced price requests must be observable');
 assert.match(prices, /const DEFAULT_LIVE_CACHE_TTL_MS = Math\.max\([\s\S]*Math\.min\(15_000/, 'live-price cache must remain short lived');
