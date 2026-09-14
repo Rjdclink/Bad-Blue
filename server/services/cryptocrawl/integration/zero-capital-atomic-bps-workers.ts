@@ -91,9 +91,12 @@ export function prewarmAtomicBpsEvidence(input: {
   return result;
 }
 
-/** Post-decision audit only. Never participates in live ranking or admission. */
+/**
+ * Post-decision audit only. setImmediate deliberately places this behind promise
+ * continuations so a caller waiting on APE/provider progression resumes first.
+ */
 export function observeAtomicBpsOutcome(observation: AtomicBpsAuditObservation): void {
-  queueMicrotask(() => {
+  setImmediate(() => {
     auditObservations += 1;
     auditRing.push({ ...observation });
     if (auditRing.length > AUDIT_RING_MAX) auditRing.splice(0, auditRing.length - AUDIT_RING_MAX);
@@ -123,6 +126,7 @@ export function getAtomicBpsWorkerSnapshot() {
       economicAuthority: false,
       auditObservations,
       retainedObservations: auditRing.length,
+      scheduler: 'setImmediate_after_downstream_promise_continuations',
     },
     supabaseHotPathReads: 0,
     supabaseHotPathWrites: 0,
