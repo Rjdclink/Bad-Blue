@@ -110,9 +110,9 @@ export function runZeroCapitalAtomicBpsEngine(
     }
   }
 
-  // Telemetry is explicitly behind the decision. queueMicrotask is never used
-  // between Stage 1 and APE and never gates the returned opportunity array.
-  queueMicrotask(() => {
+  // Telemetry is explicitly behind the decision and behind the caller's Promise
+  // continuation. No microtask is inserted between Stage 1, APE, or downstream proof.
+  const telemetry = setImmediate(() => {
     logger.info('[AtomicProfitabilityEngine] Fused zero-copy APE pass completed', {
       component: 'AtomicProfitabilityEngine',
       acronym: 'APE',
@@ -161,6 +161,7 @@ export function runZeroCapitalAtomicBpsEngine(
       executionAuthority: false,
     });
   });
+  telemetry.unref?.();
 
   // New array, same exact Stage-1 object references. Nothing is mutated or copied.
   return ordered;
