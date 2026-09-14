@@ -103,6 +103,12 @@ export async function runFairZeroCapitalProfitabilityRescue(
       activeMeasuredRescueError,
       stageOneSameReferenceIntoResidentFastPath: true,
       activeRescueCreatesDerivedEvidenceOnly: true,
+      // Legacy verifier aliases below describe only the locked Stage-1 -> resident
+      // fast-path boundary. Active rescue may create derived overlays afterward.
+      stageOneSameReferenceContinuation: true,
+      stageOneStructuralCopies: 0,
+      stageTwoHandoffSupervisorOnHotPath: false,
+      stageTwoAcknowledgementWaitOnHotPath: false,
       stageOneMutation: false,
       syntheticEconomics: false,
       externalQueueOnHotPath: false,
