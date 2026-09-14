@@ -182,7 +182,8 @@ export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCan
     const eligible = snapshot.candidates
       .filter(candidate => candidate.status === 'eligible' && candidate.plan && candidate.expiresAt > Date.now())
       .sort((a, b) => (b.expectedNetProfitUsd ?? -Infinity) - (a.expectedNetProfitUsd ?? -Infinity)
-        || (b.expectedNetBps ?? -Infinity) - (a.expectedNetBps ?? -Infinity));
+        || (b.expectedNetBps ?? -Infinity) - (a.expectedNetBps ?? -Infinity)
+        || a.settlementDeadlineAt - b.settlementDeadlineAt);
     for (const candidate of eligible) {
       const measured = measuredCandidateRegistry.get(candidate.opportunityId);
       if (!measured
@@ -198,8 +199,11 @@ export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCan
 
       const plan = getPreparedKalshiEventPlan(candidate.opportunityId);
       if (!plan || plan.opportunityId !== measured.opportunityId) continue;
+      // Resource notional is actual system cash required by the route. Capital
+      // lock opportunity cost remains a ranking signal and never consumes cash
+      // capacity or vetoes an otherwise profitable candidate.
       const notionalUsd = Number(candidate.entryCostUsd ?? 0) + Number(candidate.entryFeeUsd ?? 0)
-        + Number(candidate.settlementCostReserveUsd ?? 0) + Number(candidate.capitalLockCostUsd ?? 0);
+        + Number(candidate.settlementCostReserveUsd ?? 0);
       if (!(notionalUsd > 0) || notionalUsd > ladder.maxNotionalUsd) continue;
       const resource = await acquireKalshiEventResourceLease({ opportunityId: candidate.opportunityId, notionalUsd, expiresAt: candidate.expiresAt });
       if (!resource) continue;
@@ -255,6 +259,7 @@ export async function dispatchBestKalshiEventCandidate(): Promise<KalshiEventCan
         logger.info('[KalshiEventDispatch] Canonical event parent submitted', {
           component: 'KalshiEventCanonicalDispatch', opportunityId: candidate.opportunityId,
           lifecycleId: result.lifecycleId, orderId: result.orderId, expectedNetProfitUsd: plan.expectedNetProfitUsd,
+          capitalLockCostUsd: candidate.capitalLockCostUsd, capitalLockRankingOnly: true,
           operatorSlotConsumed: true, systemOwnedCashOnly: true, rawProbabilityAuthority: false,
           dynamicProfitabilityAdmission: 'required', profitLadderRung: ladder.rungKey,
           profitLadderMaxNotionalUsd: ladder.maxNotionalUsd, exactMeasuredCandidateRequired: true,
