@@ -1,5 +1,6 @@
 import { providers } from 'ethers';
 import logger from '../../../logger.js';
+import { ghostWalletProviderSupportsSettlementLogs } from './ghost-wallet-log-policy.js';
 
 export type GhostWalletChain = 'ethereum' | 'polygon' | 'arbitrum' | 'optimism' | 'base' | 'bsc' | 'avalanche';
 
@@ -19,7 +20,7 @@ const HTTP_PUBLIC: Record<GhostWalletChain, string[]> = {
   arbitrum: ['https://arbitrum-one-rpc.publicnode.com', 'https://arb1.arbitrum.io/rpc'],
   optimism: ['https://optimism-rpc.publicnode.com', 'https://mainnet.optimism.io'],
   base: ['https://base-rpc.publicnode.com', 'https://mainnet.base.org'],
-  bsc: ['https://bsc-rpc.publicnode.com', 'https://bsc-dataseed.binance.org'],
+  bsc: ['https://bsc-rpc.publicnode.com', 'https://bsc.drpc.org', 'https://bsc-dataseed.binance.org'],
   avalanche: ['https://avalanche-c-chain-rpc.publicnode.com', 'https://api.avax.network/ext/bc/C/rpc'],
 };
 
@@ -198,6 +199,15 @@ class GhostWalletProviderMesh {
     return (this.healthy.get(normalized) || []).map(row => row.provider);
   }
 
+  async getLogProviders(chain: string): Promise<providers.JsonRpcProvider[]> {
+    const normalized = chain.trim().toLowerCase() as GhostWalletChain;
+    if (!(normalized in CHAIN_IDS)) return [];
+    await this.ensureChain(normalized);
+    return (this.healthy.get(normalized) || [])
+      .filter(row => ghostWalletProviderSupportsSettlementLogs(normalized, row.url))
+      .map(row => row.provider);
+  }
+
   getReadyProvider(chain: string): providers.JsonRpcProvider | null {
     const normalized = chain.trim().toLowerCase() as GhostWalletChain;
     return this.healthy.get(normalized)?.[0]?.provider || null;
@@ -216,6 +226,7 @@ class GhostWalletProviderMesh {
       healthTtlMs: providerHealthTtlMs(),
       alchemy: false,
       websocketCandidates: ghostWalletWebSocketUrls(chain).length,
+      settlementLogRedundancy: rows.filter(row => ghostWalletProviderSupportsSettlementLogs(chain, row.url)).length,
     }));
   }
 }
@@ -226,6 +237,7 @@ export const GHOST_WALLET_PROVIDER_POLICY = {
   alchemyAllowed: false,
   configuredRailwayRpcPreferred: true,
   independentPublicFallbacks: true,
+  methodAwareSettlementLogSelection: true,
   parallelInitialProbe: true,
   requestDrivenHealthRefresh: true,
   routeLocalFailure: true,

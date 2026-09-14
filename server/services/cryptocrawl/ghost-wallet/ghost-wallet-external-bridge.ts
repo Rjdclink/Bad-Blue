@@ -14,6 +14,7 @@ const BRIDGE_ABI = [
   'function profitRecipient() view returns (address)',
   'function minimumBrokerSpreadBps() view returns (uint16)',
 ];
+const BRIDGE_READ_TIMEOUT_MS = 8_000;
 
 interface BridgeArtifact {
   contractName: string;
@@ -38,6 +39,35 @@ export interface GhostWalletExternalBridgeDescriptor {
 }
 
 let artifactPromise: Promise<BridgeArtifact> | null = null;
+
+function timeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolvePromise, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    timer.unref?.();
+    promise.then(
+      value => { clearTimeout(timer); resolvePromise(value); },
+      error => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
+function firstSuccessful<T>(attempts: Array<Promise<T>>, label: string): Promise<T> {
+  return new Promise<T>((resolvePromise, reject) => {
+    if (attempts.length === 0) {
+      reject(new Error(label));
+      return;
+    }
+    let remaining = attempts.length;
+    let lastError: unknown;
+    for (const attempt of attempts) {
+      attempt.then(resolvePromise, error => {
+        lastError = error;
+        remaining -= 1;
+        if (remaining === 0) reject(lastError instanceof Error ? lastError : new Error(label));
+      });
+    }
+  });
+}
 
 async function artifact(): Promise<BridgeArtifact> {
   if (!artifactPromise) {
@@ -75,9 +105,8 @@ async function verifyFactory(provider: providers.JsonRpcProvider): Promise<void>
 export async function getGhostWalletExternalBridgeDescriptor(
   chain: GhostWalletChain,
 ): Promise<GhostWalletExternalBridgeDescriptor> {
-  const provider = await ghostWalletProviderMesh.getProvider(chain);
-  if (!provider) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
-  const network = await provider.getNetwork();
+  const availableProviders = await ghostWalletProviderMesh.getProviders(chain);
+  if (availableProviders.length === 0) throw new Error(`GHOST_WALLET_RPC_UNAVAILABLE:${chain}`);
   const built = await artifact();
   const recipient = canonicalRecipient();
   const initCode = ethers.utils.hexConcat([
@@ -89,49 +118,52 @@ export async function getGhostWalletExternalBridgeDescriptor(
     BRIDGE_SALT,
     ethers.utils.keccak256(initCode),
   );
-  const code = await provider.getCode(bridgeAddress);
-  if (code !== '0x') {
-    const bridge = new Contract(bridgeAddress, BRIDGE_ABI, provider);
-    const [owner, profitRecipient, minimumBrokerSpreadBps] = await Promise.all([
-      bridge.owner(), bridge.profitRecipient(), bridge.minimumBrokerSpreadBps(),
-    ]);
-    if (String(owner).toLowerCase() !== recipient.toLowerCase()
-      || String(profitRecipient).toLowerCase() !== recipient.toLowerCase()) {
-      throw new Error('GHOST_WALLET_EXTERNAL_BRIDGE_IDENTITY_MISMATCH');
+  return firstSuccessful(availableProviders.map(provider => timeout((async () => {
+    const network = await provider.getNetwork();
+    const code = await provider.getCode(bridgeAddress);
+    if (code !== '0x') {
+      const bridge = new Contract(bridgeAddress, BRIDGE_ABI, provider);
+      const [owner, profitRecipient, minimumBrokerSpreadBps] = await Promise.all([
+        bridge.owner(), bridge.profitRecipient(), bridge.minimumBrokerSpreadBps(),
+      ]);
+      if (String(owner).toLowerCase() !== recipient.toLowerCase()
+        || String(profitRecipient).toLowerCase() !== recipient.toLowerCase()) {
+        throw new Error('GHOST_WALLET_EXTERNAL_BRIDGE_IDENTITY_MISMATCH');
+      }
+      return {
+        chain,
+        chainId: network.chainId,
+        address: bridgeAddress,
+        deployed: true,
+        owner: recipient,
+        profitRecipient: recipient,
+        minimumBrokerSpreadBps: Number(minimumBrokerSpreadBps),
+        deployment: null,
+      } satisfies GhostWalletExternalBridgeDescriptor;
     }
+
+    // Deployment is deliberately not submitted by the Ghost server. Any borrower,
+    // integrator, builder or other third party may permissionlessly deploy the exact
+    // deterministic bridge through the verified singleton factory and pay that one
+    // transaction's gas. The user's/operator's monetary input remains exactly zero.
+    await verifyFactory(provider);
     return {
       chain,
       chainId: network.chainId,
       address: bridgeAddress,
-      deployed: true,
+      deployed: false,
       owner: recipient,
       profitRecipient: recipient,
-      minimumBrokerSpreadBps: Number(minimumBrokerSpreadBps),
-      deployment: null,
-    };
-  }
-
-  // Deployment is deliberately not submitted by the Ghost server. Any borrower,
-  // integrator, builder or other third party may permissionlessly deploy the exact
-  // deterministic bridge through the verified singleton factory and pay that one
-  // transaction's gas. The user's/operator's monetary input remains exactly zero.
-  await verifyFactory(provider);
-  return {
-    chain,
-    chainId: network.chainId,
-    address: bridgeAddress,
-    deployed: false,
-    owner: recipient,
-    profitRecipient: recipient,
-    minimumBrokerSpreadBps: 0,
-    deployment: {
-      to: CREATE2_DEPLOYER,
-      data: ethers.utils.hexConcat([BRIDGE_SALT, initCode]),
-      value: '0',
-      payer: 'transaction_initiator',
-      operatorCost: 0,
-    },
-  };
+      minimumBrokerSpreadBps: 0,
+      deployment: {
+        to: CREATE2_DEPLOYER,
+        data: ethers.utils.hexConcat([BRIDGE_SALT, initCode]),
+        value: '0',
+        payer: 'transaction_initiator',
+        operatorCost: 0,
+      },
+    } satisfies GhostWalletExternalBridgeDescriptor;
+  })(), BRIDGE_READ_TIMEOUT_MS, `Ghost external bridge descriptor ${chain}`)), `GHOST_WALLET_EXTERNAL_BRIDGE_UNAVAILABLE:${chain}`);
 }
 
 export async function getReadyGhostWalletExternalBridges(): Promise<GhostWalletExternalBridgeDescriptor[]> {
@@ -149,4 +181,6 @@ export const GHOST_WALLET_EXTERNAL_BRIDGE_POLICY = {
   lenderAllowlistRequired: false,
   supportedUpstreamAdapters: ['erc3156', 'aave_v3', 'morpho_blue', 'balancer_v2'] as const,
   fixedBpsSpreadFloor: false,
+  providerReadFailover: true,
+  providerReadTimeoutMs: BRIDGE_READ_TIMEOUT_MS,
 } as const;
