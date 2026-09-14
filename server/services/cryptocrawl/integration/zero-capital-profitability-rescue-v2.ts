@@ -124,6 +124,44 @@ function routeFamily(route: ConfiguredZeroCapitalRoute): string {
 }
 
 /**
+ * Route fee metadata is a launch-priority hint only. Fresh quote output remains
+ * the economic authority because the quoted amountOut already embeds pool/pair
+ * trading fees. We therefore never subtract this value from canonical net again.
+ */
+function explicitRouteTradingFeeBps(route: ConfiguredZeroCapitalRoute): number | null {
+  let totalBps = 0;
+  for (const leg of route.legs) {
+    if (leg.fee !== undefined) {
+      if (!Number.isFinite(leg.fee) || leg.fee < 0) return null;
+      totalBps += leg.fee * 10_000;
+      continue;
+    }
+    if (leg.feeTier !== undefined) {
+      if (!Number.isFinite(leg.feeTier) || leg.feeTier < 0) return null;
+      // Uniswap-style fee tiers are millionths: 100 => 0.01% => 1 BPS.
+      totalBps += leg.feeTier / 100;
+      continue;
+    }
+    // Unknown is not assumed to be free. Preserve original route order whenever
+    // either side lacks complete explicit pair/pool fee evidence.
+    return null;
+  }
+  return Number.isFinite(totalBps) ? totalBps : null;
+}
+
+function orderRoutesByExplicitTradingFee(routes: readonly ConfiguredZeroCapitalRoute[]): ConfiguredZeroCapitalRoute[] {
+  return routes
+    .map((route, index) => ({ route, index, feeBps: explicitRouteTradingFeeBps(route) }))
+    .sort((left, right) => {
+      if (left.feeBps !== null && right.feeBps !== null && left.feeBps !== right.feeBps) {
+        return left.feeBps - right.feeBps;
+      }
+      return left.index - right.index;
+    })
+    .map(item => item.route);
+}
+
+/**
  * Stage 1 has already measured the chain/asset gas basis before APE receives an
  * opportunity. Canonical route topology is structural and may still carry its
  * zero seed, so rescue alternatives must inherit the exact Stage-1 measured
@@ -159,9 +197,10 @@ function compatibleRoutesForOpportunity(
     && route.inputTokenDecimals === opportunity.inputTokenDecimals
     && route.inputToken.toLowerCase() === opportunity.inputToken.toLowerCase(),
   ).map(route => alignRouteCostBasisToStageOne(route, opportunity));
-  const ordered = seed
+  const originalOrder = seed
     ? [seed, ...compatible.filter(route => route.id !== seed.id)]
     : compatible;
+  const ordered = orderRoutesByExplicitTradingFee(originalOrder);
   const selected: ConfiguredZeroCapitalRoute[] = [];
   const deferred: ConfiguredZeroCapitalRoute[] = [];
   const families = new Set<string>();
@@ -185,6 +224,21 @@ function compatibleRoutesForOpportunity(
 function providerFresh(evidence: FlashLoanProviderEconomics, now = Date.now()): boolean {
   const maxAgeMs = bounded(process.env.ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS, 5_000, 500, 30_000);
   return evidence.executableEvidenceComplete && now - evidence.observedAt <= maxAgeMs;
+}
+
+function freshProvidersByLowestMeasuredFee(
+  evidence: readonly FlashLoanProviderEconomics[],
+  now = Date.now(),
+): FlashLoanProviderEconomics[] {
+  return evidence
+    .filter(item => providerFresh(item, now))
+    .sort((left, right) => {
+      const feeDelta = (left.feeBps ?? Number.POSITIVE_INFINITY) - (right.feeBps ?? Number.POSITIVE_INFINITY);
+      if (feeDelta !== 0) return feeDelta;
+      const leftLiquidity = left.availableLiquidity ?? 0n;
+      const rightLiquidity = right.availableLiquidity ?? 0n;
+      return leftLiquidity === rightLiquidity ? 0 : leftLiquidity > rightLiquidity ? -1 : 1;
+    });
 }
 
 function providerSafeBorrowAmount(evidence: FlashLoanProviderEconomics): bigint {
@@ -569,7 +623,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
         continue;
       }
 
-      const providerEvidence = providerMeasurements.filter(item => providerFresh(item));
+      const providerEvidence = freshProvidersByLowestMeasuredFee(providerMeasurements);
       staleProviderEvidenceRejected += Math.max(0, providerMeasurements.length - providerEvidence.length);
       if (providerEvidence.length === 0) {
         output.push(opportunity);
@@ -624,8 +678,13 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
           const quote = settled.result.quote;
           if (!quote || quote.quoteLatencyMs > maxQuoteLatencyMs) continue;
 
+          // measureFlashLoanProviders intentionally returns a live array once any
+          // provider can fund the resident demand. Re-read that same array for
+          // each settled quote so a slower zero-/lower-fee provider can join the
+          // already-running race without adding a wait to the critical path.
+          const liveProviderEvidence = freshProvidersByLowestMeasuredFee(providerMeasurements);
           let providerUsable = false;
-          for (const evidence of providerEvidence) {
+          for (const evidence of liveProviderEvidence) {
             if (!providerFresh(evidence)) {
               staleProviderEvidenceRejected += 1;
               continue;
@@ -746,6 +805,16 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     adaptiveGapAwareSizing: true,
     providerSpecificCeilingsSampled: true,
     routeFamilyAlternativesActuated: true,
+    explicitPairPoolFeePriority: true,
+    pairPoolFeePriorityAuthority: 'configured_explicit_leg_fee_or_fee_tier_ordering_only',
+    pairPoolFeeEconomicAuthority: 'fresh_route_quote_output',
+    pairPoolFeeDoubleCounted: false,
+    unknownPairPoolFeeAssumedFree: false,
+    flashProviderPriority: 'fresh_lowest_measured_fee_then_liquidity',
+    zeroFeeFlashProviderPreferredWhenFreshAndFundable: true,
+    liveFlashProviderEvidenceReevaluatedPerSettledQuote: true,
+    lateFlashProviderEvidenceCanJoinExistingRace: true,
+    flashFeePriorityAddsWait: false,
     alternateRouteCostBasisAlignedToStageOne: true,
     routeCostBasisAuthority: 'stage_one_measured_chain_asset_gas_and_relay',
     quoteRaceWaitsForSlowest: false,
