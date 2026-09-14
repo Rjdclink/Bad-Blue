@@ -16,6 +16,8 @@ const crossChain = read('server/services/cryptocrawl/discovery/cross-chain-oppor
 const chainEvents = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-chain-events.ts');
 const ingest = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-settlement-ingest.ts');
 const builder = read('server/services/cryptocrawl/execution/builder-sponsored-receiver-bootstrap.ts');
+const apeGateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
+const apeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v3.ts');
 
 const matrix = [
   ['Ethereum RPC capability preserved', /ethereum:\s*1/.test(rpc)],
@@ -42,6 +44,23 @@ const matrix = [
   ['90 percent payout remains preserved', /payoutFractionBps:\s*9_000/.test(ingest)],
   ['10 percent retained capital remains preserved', /retainedFractionBps:\s*1_000/.test(ingest)],
   ['builder cold start uses measured sequential gas', /eth_simulateV1/.test(builder) && /fixed_gas_ceiling_admission:false/.test(builder)],
+
+  // Atomic Profitability Engine V3: the resident APE and Stage One remain unchanged;
+  // active rescue replaces the quote storm with bounded measured transformations.
+  ['APE gateway preserves resident fast path before active rescue', /runZeroCapitalAtomicBpsEngine/.test(apeGateway) && /runZeroCapitalProfitabilityRescueV3/.test(apeGateway)],
+  ['APE recursion still requires strict measured improvement', /if \(passImprovements === 0\)/.test(apeGateway) && /recursiveStrictImprovementRequired: true/.test(apeGateway)],
+  ['APE shares provider races per pass and asset', /const providerRaces = new Map/.test(apeRescue) && /one_per_pass_chain_asset/.test(apeRescue)],
+  ['APE starts route quote and provider probe in parallel', /initialQuotePromise/.test(apeRescue) && /Promise\.all\(\[initialQuotePromise, providerRace\]\)/.test(apeRescue)],
+  ['APE evaluates independent candidates concurrently', /mapConcurrent\(opportunities, concurrency, evaluate\)/.test(apeRescue) && /candidateRescueSerial: false/.test(apeRescue)],
+  ['APE resizes provider-limited notionals instead of immediate rejection', /executableFundingCeiling/.test(apeRescue) && /targetedAmounts/.test(apeRescue) && /resizeInsteadOfReject: true/.test(apeRescue)],
+  ['APE retains verified Aave plus Balancer stacking path', /selectMeasuredDualFlashLoanAllocation/.test(apeRescue) && /aave_balancer_dual/.test(apeRescue)],
+  ['APE does not fabricate unsupported Morpho stacking', /morphoStackingEnabled: false/.test(apeRescue)],
+  ['APE separates provider liquidity from route quote capacity telemetry', /providerLiquidityTelemetrySeparatedFromRouteQuoteCapacity: true/.test(apeRescue) && /routeMeasuredCapacitySignals/.test(apeRescue)],
+  ['APE unsupported split-route execution remains fail-closed', /routeSplitExecutionSupported: false/.test(apeRescue) && /routeSplitPromotionSuppressed: true/.test(apeRescue)],
+  ['APE old global 42-quote budget is retired', !/ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET/.test(apeRescue) && /quoteStormBudget42Removed: true/.test(apeRescue)],
+  ['APE profit ladder cannot block the hot path', /postDecisionTelemetry = setImmediate/.test(apeRescue) && /profitLadderDatabaseReadOnCriticalPath: false/.test(apeRescue)],
+  ['APE advisory intelligence is outside active rescue critical path', !/buildResearchBpsExecutionPlan/.test(apeRescue) && !/buildBpsReductionSuperPlan/.test(apeRescue) && !/adviseEconomicTransformations/.test(apeRescue)],
+  ['APE preserves exact positive economics and no execution authority', /exactStrictPositiveRequiredBeforePromotion: true/.test(apeRescue) && /syntheticEconomics: false/.test(apeRescue) && /executionAuthority: false/.test(apeRescue)],
 ];
 
 for (const [name, ok] of matrix) {
