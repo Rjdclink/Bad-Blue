@@ -79,8 +79,9 @@ export interface KalshiPredictionIntelligenceSnapshot {
 const CACHE_MS = Math.max(2_000, Math.min(120_000, Number(process.env.KALSHI_PREDICTION_CACHE_MS || 15_000)));
 const QUOTE_TTL_MS = Math.max(1_000, Math.min(60_000, Number(process.env.KALSHI_PREDICTION_QUOTE_TTL_MS || 10_000)));
 const MARKET_LIMIT = Math.max(10, Math.min(5_000, Math.trunc(Number(process.env.KALSHI_PREDICTION_MARKET_LIMIT || 1_000))));
-const MARKET_PAGE_SIZE = Math.max(10, Math.min(1_000, Math.trunc(Number(process.env.KALSHI_PREDICTION_MARKET_PAGE_SIZE || 1_000))));
+const MARKET_PAGE_SIZE = Math.max(10, Math.min(1_000, Math.trunc(Number(process.env.KALSHI_PREDICTION_MARKET_PAGE_SIZE || 250))));
 const MARKET_MAX_PAGES = Math.max(1, Math.min(20, Math.trunc(Number(process.env.KALSHI_PREDICTION_MARKET_MAX_PAGES || 8))));
+const PUBLIC_FETCH_TIMEOUT_MS = Math.max(2_000, Math.min(30_000, Math.trunc(Number(process.env.KALSHI_PUBLIC_FETCH_TIMEOUT_MS || 12_000))));
 let snapshot: KalshiPredictionIntelligenceSnapshot = {
   observedAt: null,
   cycles: 0,
@@ -173,13 +174,25 @@ async function publicJson<T>(path: string): Promise<T> {
   if (!path.startsWith('/trade-api/v2/')) throw new Error('Kalshi public path rejected');
   const maxAttempts = 4;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const response = await fetch(`${getKalshiApiOrigin()}${path}`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (response.ok) return response.json() as Promise<T>;
-    if (response.status !== 429 || attempt === maxAttempts - 1) {
-      throw new Error(`Kalshi public request failed HTTP ${response.status} for ${path.split('?')[0]}`);
+    try {
+      const response = await fetch(`${getKalshiApiOrigin()}${path}`, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(PUBLIC_FETCH_TIMEOUT_MS),
+      });
+      if (response.ok) return response.json() as Promise<T>;
+      if (response.status !== 429 || attempt === maxAttempts - 1) {
+        throw new Error(`Kalshi public request failed HTTP ${response.status} for ${path.split('?')[0]}`);
+      }
+    } catch (error) {
+      if (attempt === maxAttempts - 1) throw error;
+      logger.debug('[KalshiPrediction] Retrying transient public request failure', {
+        component: 'KalshiPredictionMarketAuthority',
+        path: path.split('?')[0],
+        attempt: attempt + 1,
+        maxAttempts,
+        error: error instanceof Error ? error.message : String(error),
+        executionAuthority: false,
+      });
     }
     await new Promise(resolve => setTimeout(resolve, 125 * 2 ** attempt));
   }
@@ -352,6 +365,16 @@ export async function refreshKalshiPredictionIntelligence(forceRefresh = false):
       executionAuthority: false,
       syntheticEvidence: false,
     };
+    logger.info('[KalshiPrediction] Prediction intelligence refresh succeeded', {
+      component: 'KalshiPredictionMarketAuthority',
+      observedAt,
+      marketRowsFetched: marketPage.rows.length,
+      marketsNormalized: markets.length,
+      measuredSpreads: markets.filter(row => row.spreadBps !== null).length,
+      marketScanTruncated: marketPage.truncated,
+      executionAuthority: false,
+      syntheticEvidence: false,
+    });
     return getKalshiPredictionIntelligenceSnapshot();
   })().catch(error => {
     snapshot = {
