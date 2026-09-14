@@ -1,4 +1,8 @@
 import { BigNumber, Wallet, ethers } from 'ethers';
+import {
+  selectExactCallGasProvider,
+  type ExactCallGasCoordinationDecision,
+} from '../execution/adapters/ravn-alchemy-gas-coordinator.js';
 
 const ALCHEMY_WALLET_API_BASE = 'https://api.g.alchemy.com/v2';
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -26,6 +30,10 @@ export interface SponsoredExecutionResult {
   blockNumber?: number;
   gasUsed?: bigint;
   receiptStatus: 0 | 1;
+  provider: 'alchemy-gas-manager';
+  preferredProvider: 'ravn';
+  fallbackUsed: boolean;
+  fallbackReason?: string;
 }
 
 interface JsonRpcEnvelope<T> {
@@ -64,7 +72,11 @@ function isDeterministicPolicyFailure(message: string): boolean {
     || (normalized.includes('policy') && normalized.includes('application'));
 }
 
-/** Functional billed Alchemy fallback. Provider billing remains canonical cost. */
+/**
+ * Functional billed Alchemy fallback behind a zero-latency RAVN capability gate.
+ * RAVN remains preferred, but an incompatible RAVN execution model never delays
+ * or disables the working Alchemy arbitrary-call sponsor.
+ */
 export class AlchemyGasSponsorshipManager {
   private readonly apiKey: string;
   private readonly policyId: string;
@@ -93,6 +105,10 @@ export class AlchemyGasSponsorshipManager {
       };
     }
     return { ready: true, provider: 'alchemy-gas-manager' };
+  }
+
+  getCoordinationReadiness(): ExactCallGasCoordinationDecision {
+    return selectExactCallGasProvider({ alchemyReady: this.getReadiness().ready });
   }
 
   private markLivePolicyFailure(message: string): void {
@@ -168,6 +184,8 @@ export class AlchemyGasSponsorshipManager {
   }
 
   async execute(input: { wallet: Wallet; chainId: number; calls: SponsoredCall[]; timeoutMs?: number; pollMs?: number }): Promise<SponsoredExecutionResult> {
+    const coordination = this.getCoordinationReadiness();
+    if (coordination.provider !== 'alchemy-gas-manager') throw new Error(coordination.reason);
     if (!Number.isSafeInteger(input.chainId) || input.chainId <= 0) throw new Error('chainId must be a positive integer');
     if (!Array.isArray(input.calls) || input.calls.length === 0) throw new Error('At least one sponsored call is required');
     const from = requireHexAddress('wallet.address', input.wallet.address);
@@ -194,7 +212,17 @@ export class AlchemyGasSponsorshipManager {
         if (receiptStatus !== 1) throw new Error('Alchemy sponsored transaction reverted');
         const blockNumber = receipt?.blockNumber !== undefined ? Number(BigInt(receipt.blockNumber)) : undefined;
         const gasUsed = receipt?.gasUsed !== undefined ? BigInt(receipt.gasUsed) : undefined;
-        return { callId, transactionHash, blockNumber, gasUsed, receiptStatus: 1 };
+        return {
+          callId,
+          transactionHash,
+          blockNumber,
+          gasUsed,
+          receiptStatus: 1,
+          provider: 'alchemy-gas-manager',
+          preferredProvider: 'ravn',
+          fallbackUsed: coordination.fallbackUsed,
+          fallbackReason: coordination.reason,
+        };
       }
       if (numericStatus === 400) throw new Error('Alchemy sponsored call failed or reverted');
       await new Promise(resolve => setTimeout(resolve, pollMs));
