@@ -18,15 +18,16 @@ export interface FairZeroCapitalProfitabilityRescueInput {
  * Compatibility gateway retained for canonical discovery, but the healthy path is
  * now fused zero-copy continuation: Stage 1 passes the exact same opportunity object
  * references directly into APE. There is no structural copy, queue, serialization,
- * persistence, ACK microtask, handoff supervisor, replay, or database boundary.
+ * persistence, ACK microtask, handoff supervisor, replay, Promise boundary, or
+ * database boundary.
  *
  * The resident 2+1+2 contextual layout is primed synchronously from the already-
  * arrived Stage-1 evidence, then APE runs in the same call stack. Composite work is
  * scheduled only after the APE decision and after downstream Promise continuations.
  */
-export async function runFairZeroCapitalProfitabilityRescue(
+export function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
-): Promise<ZeroCapitalOpportunity[]> {
+): ZeroCapitalOpportunity[] {
   primeApeResidentRouting(input.opportunities);
 
   const transformed = runZeroCapitalAtomicBpsEngine({
@@ -57,6 +58,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
       oneTransformationPipeline: true,
       stageOneSameReferenceContinuation: true,
       stageOneStructuralCopies: 0,
+      stageOneToApePromiseBoundary: false,
       stageTwoHandoffSupervisorOnHotPath: false,
       stageTwoAcknowledgementWaitOnHotPath: false,
       boundedReplayOnHealthyHotPath: false,
