@@ -16,6 +16,12 @@ const crossChain = read('server/services/cryptocrawl/discovery/cross-chain-oppor
 const chainEvents = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-chain-events.ts');
 const ingest = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-settlement-ingest.ts');
 const builder = read('server/services/cryptocrawl/execution/builder-sponsored-receiver-bootstrap.ts');
+const apeGateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
+const apeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v3.ts');
+const apeRouteSplit = read('server/services/cryptocrawl/integration/zero-capital-route-split-rescue.ts');
+const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
+const compositeBuilder = read('server/services/cryptocrawl/execution/adapters/composite-flashloan-receiver-builder.ts');
+const canonicalExecutor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 
 const matrix = [
   ['Ethereum RPC capability preserved', /ethereum:\s*1/.test(rpc)],
@@ -42,6 +48,36 @@ const matrix = [
   ['90 percent payout remains preserved', /payoutFractionBps:\s*9_000/.test(ingest)],
   ['10 percent retained capital remains preserved', /retainedFractionBps:\s*1_000/.test(ingest)],
   ['builder cold start uses measured sequential gas', /eth_simulateV1/.test(builder) && /fixed_gas_ceiling_admission:false/.test(builder)],
+
+  // Atomic Profitability Engine V3: the resident APE and Stage One remain unchanged;
+  // active rescue replaces the quote storm with bounded measured transformations.
+  ['APE gateway preserves resident fast path before active rescue', /runZeroCapitalAtomicBpsEngine/.test(apeGateway) && /runZeroCapitalProfitabilityRescueV3/.test(apeGateway)],
+  ['APE recursion still requires strict measured improvement', /if \(passImprovements === 0\)/.test(apeGateway) && /recursiveStrictImprovementRequired: true/.test(apeGateway)],
+  ['APE shares provider races per pass and asset', /const providerRaces = new Map/.test(apeRescue) && /one_per_pass_chain_asset/.test(apeRescue)],
+  ['APE starts route quote and provider probe in parallel', /initialQuotePromise/.test(apeRescue) && /Promise\.all\(\[initialQuotePromise, providerRace\]\)/.test(apeRescue)],
+  ['APE evaluates independent candidates concurrently', /mapConcurrent\(opportunities, concurrency, evaluate\)/.test(apeRescue) && /candidateRescueSerial: false/.test(apeRescue)],
+  ['APE resizes provider-limited notionals instead of immediate rejection', /executableFundingCeiling/.test(apeRescue) && /targetedAmounts/.test(apeRescue) && /resizeInsteadOfReject: true/.test(apeRescue)],
+  ['APE retains Aave plus Balancer stacking economics', /selectMeasuredDualFlashLoanAllocation/.test(apeRescue) && /aave_balancer_dual/.test(apeRescue)],
+  ['APE does not fabricate unsupported Morpho stacking', /morphoStackingEnabled: false/.test(apeRescue)],
+  ['APE separates provider liquidity from route quote capacity telemetry', /providerLiquidityTelemetrySeparatedFromRouteQuoteCapacity: true/.test(apeRescue) && /routeMeasuredCapacitySignals/.test(apeRescue)],
+  ['APE direct single-route actuator never fabricates a split-route quote', /routeSplitExecutionSupported: false/.test(apeRescue) && /routeSplitPromotionSuppressed: true/.test(apeRescue)],
+  ['APE old global 42-quote budget is retired', !/ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET/.test(apeRescue) && /quoteStormBudget42Removed: true/.test(apeRescue)],
+  ['APE profit ladder cannot block the hot path', /postDecisionTelemetry = setImmediate/.test(apeRescue) && /profitLadderDatabaseReadOnCriticalPath: false/.test(apeRescue)],
+  ['APE advisory intelligence is outside active rescue critical path', !/buildResearchBpsExecutionPlan/.test(apeRescue) && !/buildBpsReductionSuperPlan/.test(apeRescue) && !/adviseEconomicTransformations/.test(apeRescue)],
+  ['APE preserves exact positive economics and no execution authority', /exactStrictPositiveRequiredBeforePromotion: true/.test(apeRescue) && /syntheticEconomics: false/.test(apeRescue) && /executionAuthority: false/.test(apeRescue)],
+
+  // Route splitting is a post-decision APE tactic that reuses the existing exact
+  // composite receiver and canonical executor. It never synthesizes a split quote.
+  ['APE route split is scheduled after the single-route decision', /runZeroCapitalRouteSplitRescue/.test(apeGateway) && /routeSplitTacticScheduledAfterApeDecision: true/.test(apeGateway)],
+  ['APE route split requires pool-disjoint route pairs', /routesArePoolDisjoint/.test(apeRouteSplit) && /pairConstraint: 'pool_disjoint'/.test(apeRouteSplit)],
+  ['APE route split quotes both partial paths concurrently', /Promise\.all\(\[/.test(apeRouteSplit) && /partialQuotesRunInParallel: true/.test(apeRouteSplit)],
+  ['APE route split uses bounded 50-50 65-35 35-65 allocation probes', /leftPercent: 50n/.test(apeRouteSplit) && /leftPercent: 65n/.test(apeRouteSplit) && /leftPercent: 35n/.test(apeRouteSplit)],
+  ['APE split children remain non-executable until exact composite validation', /executableCapability: false/.test(apeRouteSplit) && /required:composite_route_split_exact_simulation/.test(apeRouteSplit)],
+  ['APE split failures retain the parent opportunity', /parentOpportunityKilledOnSplitFailure: false/.test(apeRouteSplit) && /parent_opportunity_retained:true/.test(apeRouteSplit)],
+  ['APE split promotion delegates to existing Atomic Stack tactic', /runZeroCapitalAtomicStackTactic/.test(apeRouteSplit) && /existingCompositeReceiverReused: true/.test(apeRouteSplit)],
+  ['Atomic Stack exact-simulates and gas-estimates composite payloads', /provider\.call\(probeRequest\)/.test(atomicStack) && /provider\.estimateGas\(probeRequest\)/.test(atomicStack)],
+  ['Composite builder preserves closed-cycle boundaries', /cycleEndStepIndexes/.test(compositeBuilder) && /Composite final cycle must end at the final swap step/.test(compositeBuilder)],
+  ['Canonical executor remains sole composite execution authority', /zeroCapitalCompositeSelectionRegistry\.get\(opportunity\.id\)/.test(canonicalExecutor) && /executeCompositePreparedWithinCanonicalExecutor/.test(canonicalExecutor)],
 ];
 
 for (const [name, ok] of matrix) {
