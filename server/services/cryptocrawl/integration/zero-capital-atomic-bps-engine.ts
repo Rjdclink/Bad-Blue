@@ -24,7 +24,10 @@ import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 import {
   observeAtomicBpsOutcome,
   prewarmAtomicBpsEvidence,
+  refreshAtomicBpsProviderEvidence,
 } from './zero-capital-atomic-bps-workers.js';
+
+type ApeRescueMode = 'cost' | 'edge' | 'execution';
 
 type AtomicBpsContext = {
   plan: BpsReductionSuperPlan;
@@ -33,11 +36,23 @@ type AtomicBpsContext = {
 
 type AtomicBpsProbeResult = {
   candidate: QuotedZeroCapitalRoute | null;
+  routeId: string;
+  rescueMode: ApeRescueMode;
+  alternativeRoute: boolean;
   insufficientLiquidityRejected: number;
+  staleProviderEvidenceRejected: number;
+  incompleteProviderEvidenceRejected: number;
   budgetOutsideTelemetryQuotes: number;
 };
 
 type AtomicBpsRoutePair = readonly [string, ZeroCapitalOpportunity];
+
+type ProbeDescriptor = {
+  route: ConfiguredZeroCapitalRoute;
+  sizeUsd: number;
+  rescueMode: ApeRescueMode;
+  alternativeRoute: boolean;
+};
 
 export interface ZeroCapitalAtomicBpsEngineInput {
   chain: SupportedChain;
@@ -80,10 +95,19 @@ function usdFromBaseUnits(value: bigint, decimals: number, inputTokenUsdPrice: n
   return Number.isFinite(usd) ? usd : 0;
 }
 
+function sameAddress(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
 function recoverable(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
   return opportunity.expiresAt > now
     && opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps);
+}
+
+function routeMatchesOpportunity(route: ConfiguredZeroCapitalRoute, opportunity: ZeroCapitalOpportunity): boolean {
+  return route.chain === opportunity.chain
+    && (opportunity.id === route.id || opportunity.id.startsWith(`${route.id}-`));
 }
 
 function routeForOpportunity(
@@ -91,8 +115,7 @@ function routeForOpportunity(
   opportunity: ZeroCapitalOpportunity,
 ): ConfiguredZeroCapitalRoute | null {
   return routes
-    .filter(route => route.chain === opportunity.chain)
-    .filter(route => opportunity.id === route.id || opportunity.id.startsWith(`${route.id}-`))
+    .filter(route => routeMatchesOpportunity(route, opportunity))
     .sort((left, right) => right.id.length - left.id.length)[0] ?? null;
 }
 
@@ -100,27 +123,121 @@ function routeFamily(route: ConfiguredZeroCapitalRoute): string {
   return `${route.chain}:${route.inputAssetSymbol}:${route.legs.map(leg => leg.protocol).join('>')}:${route.legs.slice(0, -1).map(leg => leg.tokenOut.toLowerCase()).join('>')}`;
 }
 
-/** Bind Stage-1 measured fixed costs to every notional probe instead of silently
- * falling back to a stale template. Flash cost is rebound per measured provider. */
+function grossProfit(opportunity: ZeroCapitalOpportunity): bigint {
+  return opportunity.grossProfit ?? (opportunity.expectedProfit + opportunity.estimatedExecutionCostInInputToken);
+}
+
+function rescueMode(opportunity: ZeroCapitalOpportunity): ApeRescueMode {
+  if (opportunity.expectedProfit > 0n) return 'execution';
+  return grossProfit(opportunity) > 0n ? 'cost' : 'edge';
+}
+
+/**
+ * APE Edge Rescue is deliberately downstream of the sole canonical route authority.
+ * It may race compatible routes already supplied to it, but it never discovers or
+ * composes an independent route universe. Routes already represented by another
+ * Stage-1 candidate are left to that candidate so APE does not duplicate executions.
+ */
+function compatibleRoutesForOpportunity(
+  routes: readonly ConfiguredZeroCapitalRoute[],
+  opportunities: readonly ZeroCapitalOpportunity[],
+  opportunity: ZeroCapitalOpportunity,
+): ConfiguredZeroCapitalRoute[] {
+  const primary = routeForOpportunity(routes, opportunity);
+  const representedByOthers = new Set(
+    opportunities
+      .filter(item => item.id !== opportunity.id)
+      .map(item => routeForOpportunity(routes, item)?.id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const compatible = routes
+    .filter(route => route.chain === opportunity.chain)
+    .filter(route => sameAddress(route.inputToken, opportunity.inputToken))
+    .filter(route => route.inputTokenDecimals === opportunity.inputTokenDecimals)
+    .filter(route => route.legs.length >= 2)
+    .filter(route => sameAddress(route.legs[0].tokenIn, opportunity.inputToken))
+    .filter(route => sameAddress(route.legs[route.legs.length - 1].tokenOut, opportunity.inputToken))
+    .filter(route => route.id === primary?.id || !representedByOthers.has(route.id))
+    .sort((left, right) => {
+      if (left.id === primary?.id) return -1;
+      if (right.id === primary?.id) return 1;
+      const legDelta = left.legs.length - right.legs.length;
+      if (legDelta !== 0) return legDelta;
+      return left.id.localeCompare(right.id);
+    });
+  if (primary && !compatible.some(route => route.id === primary.id)) compatible.unshift(primary);
+  return compatible;
+}
+
+function measuredOpportunityForRoute(
+  opportunities: readonly ZeroCapitalOpportunity[],
+  route: ConfiguredZeroCapitalRoute,
+): ZeroCapitalOpportunity | null {
+  return opportunities
+    .filter(opportunity => routeMatchesOpportunity(route, opportunity))
+    .sort((left, right) => right.timestamp - left.timestamp)[0] ?? null;
+}
+
+/** Bind current measured fixed costs when this exact route already has Stage-1 evidence. */
 function bindCurrentMeasuredCosts(
   route: ConfiguredZeroCapitalRoute,
-  opportunity: ZeroCapitalOpportunity,
+  measured: ZeroCapitalOpportunity | null,
 ): ConfiguredZeroCapitalRoute {
   return {
     ...route,
-    estimatedGasCostInInputToken: opportunity.estimatedGasCostInInputToken !== undefined
-      ? opportunity.estimatedGasCostInInputToken.toString()
+    estimatedGasCostInInputToken: measured?.estimatedGasCostInInputToken !== undefined
+      ? measured.estimatedGasCostInInputToken.toString()
       : route.estimatedGasCostInInputToken,
-    relayFeeInInputToken: opportunity.relayFeeInInputToken !== undefined
-      ? opportunity.relayFeeInInputToken.toString()
+    relayFeeInInputToken: measured?.relayFeeInInputToken !== undefined
+      ? measured.relayFeeInInputToken.toString()
       : route.relayFeeInInputToken,
+    // Provider fee is rebound from fresh measured evidence below.
     flashLoanFeeBps: 0,
   };
 }
 
-function providerFresh(evidence: FlashLoanProviderEconomics, now = Date.now()): boolean {
-  const maxAgeMs = bounded(process.env.ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS, 5_000, 500, 30_000);
+function providerEvidenceMaxAgeMs(freshnessBudgetMs?: number): number {
+  const configured = bounded(process.env.ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS, 5_000, 500, 30_000);
+  return freshnessBudgetMs === undefined
+    ? configured
+    : Math.max(100, Math.min(configured, freshnessBudgetMs));
+}
+
+function providerFresh(evidence: FlashLoanProviderEconomics, maxAgeMs = providerEvidenceMaxAgeMs(), now = Date.now()): boolean {
   return evidence.executableEvidenceComplete && now - evidence.observedAt <= maxAgeMs;
+}
+
+function classifyProviderEvidence(
+  evidence: readonly FlashLoanProviderEconomics[],
+  maxAgeMs: number,
+  now = Date.now(),
+): { fresh: FlashLoanProviderEconomics[]; stale: number; incomplete: number } {
+  const fresh: FlashLoanProviderEconomics[] = [];
+  let stale = 0;
+  let incomplete = 0;
+  for (const item of evidence) {
+    if (!item.executableEvidenceComplete) {
+      incomplete += 1;
+      continue;
+    }
+    if (now - item.observedAt > maxAgeMs) {
+      stale += 1;
+      continue;
+    }
+    fresh.push(item);
+  }
+  return { fresh, stale, incomplete };
+}
+
+function mergeProviderEvidence(...batches: readonly (readonly FlashLoanProviderEconomics[])[]): FlashLoanProviderEconomics[] {
+  const byProvider = new Map<string, FlashLoanProviderEconomics>();
+  for (const batch of batches) {
+    for (const item of batch) {
+      const previous = byProvider.get(item.provider);
+      if (!previous || item.observedAt > previous.observedAt) byProvider.set(item.provider, item);
+    }
+  }
+  return [...byProvider.values()];
 }
 
 function providerSafeBorrowAmount(evidence: FlashLoanProviderEconomics): bigint {
@@ -220,7 +337,6 @@ function candidateSizes(
   context: AtomicBpsContext | null,
   providerEvidence: readonly FlashLoanProviderEconomics[],
   inputTokenUsdPrice: number,
-  routeBudget: number,
 ): number[] {
   const currentUsd = Math.max(0.01, usdFromBaseUnits(opportunity.flashLoanAmount, route.inputTokenDecimals, inputTokenUsdPrice));
   const liveBorrowCeilingUsd = providerEvidence.reduce((maximum, evidence) => {
@@ -230,38 +346,28 @@ function candidateSizes(
   if (!(liveBorrowCeilingUsd > 0)) return [];
 
   const configuredMax = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_SIZE_CANDIDATES, 9, 3, 16));
-  const maxCandidates = Math.max(1, Math.min(configuredMax, Math.trunc(routeBudget)));
   const local = candidateFactors(opportunity, context)
     .map(factor => currentUsd * factor)
     .filter(value => Number.isFinite(value) && value > 0 && value <= liveBorrowCeilingUsd);
   const geometric = geometricBorrowSizes(Math.min(currentUsd, liveBorrowCeilingUsd), liveBorrowCeilingUsd, configuredMax);
-  const candidates = [...new Set([...local, ...geometric, liveBorrowCeilingUsd]
+  const candidates = [...new Set([...local, ...geometric, Math.min(currentUsd, liveBorrowCeilingUsd), liveBorrowCeilingUsd]
     .map(value => Math.max(0.01, Math.min(liveBorrowCeilingUsd, value)))
-    .map(value => Math.round(value * 1_000_000) / 1_000_000))]
-    .sort((left, right) => left - right);
-  if (candidates.length <= maxCandidates) return candidates;
+    .map(value => Math.round(value * 1_000_000) / 1_000_000))];
 
-  const selected = new Set<number>();
-  const currentIndex = candidates.reduce((best, value, index) =>
-    Math.abs(value - currentUsd) < Math.abs(candidates[best] - currentUsd) ? index : best, 0);
-  selected.add(candidates[currentIndex]);
-  selected.add(candidates[0]);
-  selected.add(candidates[candidates.length - 1]);
-  for (let step = 1; selected.size < maxCandidates; step += 1) {
-    const lower = currentIndex - step;
-    const upper = currentIndex + step;
-    if (lower >= 0) selected.add(candidates[lower]);
-    if (selected.size >= maxCandidates) break;
-    if (upper < candidates.length) selected.add(candidates[upper]);
-    if (lower < 0 && upper >= candidates.length) break;
-  }
-  return [...selected].sort((left, right) => left - right).slice(0, maxCandidates);
+  return candidates
+    .sort((left, right) => {
+      const leftDistance = Math.abs(left - currentUsd);
+      const rightDistance = Math.abs(right - currentUsd);
+      return leftDistance === rightDistance ? left - right : leftDistance - rightDistance;
+    })
+    .slice(0, configuredMax);
 }
 
 function clearsStrictProfitability(candidate: QuotedZeroCapitalRoute): boolean {
   return candidate.netProfit > 0n && candidate.executablePositive === true;
 }
 
+/** APE maximizes executable net BPS first; dollars and latency are tie-breakers. */
 function quoteBetter(
   current: QuotedZeroCapitalRoute | null,
   candidate: QuotedZeroCapitalRoute,
@@ -270,11 +376,6 @@ function quoteBetter(
   const candidateProfitable = clearsStrictProfitability(candidate);
   const currentProfitable = clearsStrictProfitability(current);
   if (candidateProfitable !== currentProfitable) return candidateProfitable ? candidate : current;
-  if (candidateProfitable && currentProfitable) {
-    if (candidate.netProfit !== current.netProfit) return candidate.netProfit > current.netProfit ? candidate : current;
-    if (candidate.netProfitBps !== current.netProfitBps) return candidate.netProfitBps > current.netProfitBps ? candidate : current;
-    return candidate.quoteLatencyMs < current.quoteLatencyMs ? candidate : current;
-  }
   if (candidate.netProfitBps !== current.netProfitBps) return candidate.netProfitBps > current.netProfitBps ? candidate : current;
   if (candidate.netProfit !== current.netProfit) return candidate.netProfit > current.netProfit ? candidate : current;
   return candidate.quoteLatencyMs < current.quoteLatencyMs ? candidate : current;
@@ -288,7 +389,6 @@ function probeBetter(current: AtomicBpsProbeResult | null, candidate: AtomicBpsP
 }
 
 function strictImprovement(original: ZeroCapitalOpportunity, candidate: QuotedZeroCapitalRoute): boolean {
-  if (candidate.netProfit !== original.expectedProfit) return candidate.netProfit > original.expectedProfit;
   return Number.isFinite(candidate.netProfitBps)
     && Number.isFinite(original.netProfitBps)
     && candidate.netProfitBps > original.netProfitBps;
@@ -309,39 +409,23 @@ function priority(opportunity: ZeroCapitalOpportunity, context: AtomicBpsContext
     : base;
 }
 
+/**
+ * Stage 1 already owns the locked -10 BPS classification boundary. APE therefore
+ * adds no second BPS floor and no arbitrary route-count ceiling: every live Stage-1
+ * candidate with a compatible canonical route is admitted to at least one probe.
+ */
 function selectWork(
   opportunities: readonly ZeroCapitalOpportunity[],
   routes: readonly ConfiguredZeroCapitalRoute[],
 ): ZeroCapitalOpportunity[] {
-  const maxRoutes = Math.trunc(bounded(process.env.ZERO_CAPITAL_PROFITABILITY_RESCUE_ROUTES, 6, 1, 16));
   const contexts = new Map<string, AtomicBpsContext | null>();
   const contextFor = (item: ZeroCapitalOpportunity) => {
     if (!contexts.has(item.id)) contexts.set(item.id, bpsContext(item));
     return contexts.get(item.id) ?? null;
   };
-  const ranked = opportunities
-    .filter(item => recoverable(item) && routeForOpportunity(routes, item) !== null)
+  return opportunities
+    .filter(item => recoverable(item) && compatibleRoutesForOpportunity(routes, opportunities, item).length > 0)
     .sort((left, right) => priority(right, contextFor(right)) - priority(left, contextFor(left)));
-  const selected: ZeroCapitalOpportunity[] = [];
-  const selectedIds = new Set<string>();
-  const families = new Set<string>();
-  for (const item of ranked) {
-    if (selected.length >= maxRoutes) break;
-    const route = routeForOpportunity(routes, item);
-    if (!route) continue;
-    const family = routeFamily(route);
-    if (families.has(family)) continue;
-    families.add(family);
-    selectedIds.add(item.id);
-    selected.push(item);
-  }
-  for (const item of ranked) {
-    if (selected.length >= maxRoutes) break;
-    if (selectedIds.has(item.id)) continue;
-    selectedIds.add(item.id);
-    selected.push(item);
-  }
-  return selected;
 }
 
 function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
@@ -350,10 +434,10 @@ function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1000);
 }
 
-function withQuoteDeadline<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  const boundedMs = Math.max(1, Math.trunc(timeoutMs));
+function withDeadline<T>(promise: Promise<T>, deadlineAt: number, label: string): Promise<T> {
+  const remainingMs = Math.max(1, deadlineAt - Date.now());
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} quote deadline ${boundedMs}ms exceeded`)), boundedMs);
+    const timer = setTimeout(() => reject(new Error(`${label} APE deadline ${remainingMs}ms exceeded`)), remainingMs);
     timer.unref?.();
     promise.then(
       value => { clearTimeout(timer); resolve(value); },
@@ -362,10 +446,10 @@ function withQuoteDeadline<T>(promise: Promise<T>, timeoutMs: number, label: str
   });
 }
 
-function routeQuoteBudget(index: number, count: number, total: number): number {
+function routeQuoteBudget(index: number, count: number, total: number, minimum: number): number {
   if (count <= 0) return 0;
   const base = Math.floor(total / count);
-  return Math.max(1, base + (index < total % count ? 1 : 0));
+  return Math.max(minimum, base + (index < total % count ? 1 : 0));
 }
 
 function quoteFitsDailyProfitBudget(
@@ -379,13 +463,79 @@ function quoteFitsDailyProfitBudget(
   return expectedNetProfitUsd > 0 && expectedNetProfitUsd <= budget.remainingProfitUsd + 0.01;
 }
 
+function minimumCoverageProbes(
+  opportunity: ZeroCapitalOpportunity,
+  routes: readonly ConfiguredZeroCapitalRoute[],
+): number {
+  const mode = rescueMode(opportunity);
+  if (mode === 'edge' && routes.length > 1) return 2;
+  return 1;
+}
+
+function buildProbeDescriptors(input: {
+  opportunity: ZeroCapitalOpportunity;
+  allOpportunities: readonly ZeroCapitalOpportunity[];
+  routes: readonly ConfiguredZeroCapitalRoute[];
+  context: AtomicBpsContext | null;
+  providerEvidence: readonly FlashLoanProviderEconomics[];
+  inputTokenUsdPrice: number;
+  budget: number;
+}): ProbeDescriptor[] {
+  const mode = rescueMode(input.opportunity);
+  const primary = routeForOpportunity(input.routes, input.opportunity);
+  const routePlans = input.routes.map(route => {
+    const measured = measuredOpportunityForRoute(input.allOpportunities, route);
+    const measuredRoute = bindCurrentMeasuredCosts(route, measured);
+    return {
+      route: measuredRoute,
+      alternativeRoute: route.id !== primary?.id,
+      sizes: candidateSizes(input.opportunity, measuredRoute, input.context, input.providerEvidence, input.inputTokenUsdPrice),
+    };
+  }).filter(plan => plan.sizes.length > 0);
+
+  const descriptors: ProbeDescriptor[] = [];
+  // Round-robin across routes: first try the current-size neighborhood on every
+  // compatible road before spending budget on deep size exploration of one road.
+  for (let depth = 0; descriptors.length < input.budget; depth += 1) {
+    let added = false;
+    for (const plan of routePlans) {
+      const sizeUsd = plan.sizes[depth];
+      if (sizeUsd === undefined) continue;
+      descriptors.push({
+        route: plan.route,
+        sizeUsd,
+        rescueMode: mode,
+        alternativeRoute: plan.alternativeRoute,
+      });
+      added = true;
+      if (descriptors.length >= input.budget) break;
+    }
+    if (!added) break;
+  }
+  return descriptors;
+}
+
+function probeWaveWidth(): number {
+  return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_PROBE_WAVE_WIDTH, 4, 1, 16));
+}
+
+function apePassBudgetMs(): number {
+  return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_PASS_BUDGET_MS, 1_800, 500, 5_000));
+}
+
 /**
- * Sole post-Stage-1 transformation pipeline for ZERO_CAPITAL_ATOMIC. BPS reduction
- * intelligence and Atomic notional/provider search operate inside one quote budget,
- * against one fresh evidence set, and produce one exact incumbent. Probes start in
- * parallel, and both size-level and route-level stragglers are ignored once a fresh
- * strictly-positive incumbent can continue downstream. No serial Stage-2→Stage-3
- * handoff and no database scheduler is in the hot path.
+ * Canonical Atomic Profitability Engine (APE).
+ *
+ * APE is the sole post-Stage-1 ZERO_CAPITAL_ATOMIC transformation pipeline. It
+ * performs three tactics under one deadline and one exact economics authority:
+ * Cost Rescue (size/funding/cost compression), Edge Rescue (alternate canonical
+ * route/pool/venue paths when gross edge is bad), and nonblocking Execution Rescue
+ * (protect an already-positive incumbent while sibling optimization continues).
+ *
+ * The design is intentionally "skin graft" architecture: Stage 1, route authority,
+ * quote authority, execution authority, settlement authority and strict all-in net
+ * economics remain unchanged. APE only changes how compatible rescue alternatives
+ * race and retry.
  */
 export async function runZeroCapitalAtomicBpsEngine(
   input: ZeroCapitalAtomicBpsEngineInput,
@@ -406,8 +556,8 @@ export async function runZeroCapitalAtomicBpsEngine(
   void getProfitLadderDailyProfitBudget().then(value => {
     dailyProfitBudget = value;
   }).catch(error => {
-    logger.debug('[ZeroCapitalAtomicBpsEngine] Profit Ladder telemetry unavailable; hot path continues', {
-      component: 'ZeroCapitalAtomicBpsEngine',
+    logger.debug('[AtomicProfitabilityEngine] Profit Ladder telemetry unavailable; APE hot path continues', {
+      component: 'AtomicProfitabilityEngine',
       chain: input.chain,
       error: error instanceof Error ? error.message : String(error),
       executionAuthority: false,
@@ -415,13 +565,25 @@ export async function runZeroCapitalAtomicBpsEngine(
     });
   });
 
-  const totalQuoteBudget = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET, 42, 6, 96));
-  const maxQuoteLatencyMs = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_MAX_QUOTE_LATENCY_MS, 2_500, 250, 10_000));
+  const configuredQuoteBudget = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET, 42, 6, 96));
+  const routeSets = new Map<string, ConfiguredZeroCapitalRoute[]>();
+  let minimumCoverageBudget = 0;
+  for (const opportunity of selected) {
+    const routes = compatibleRoutesForOpportunity(input.configuredRoutes, input.opportunities, opportunity);
+    routeSets.set(opportunity.id, routes);
+    minimumCoverageBudget += minimumCoverageProbes(opportunity, routes);
+  }
+  // A quote budget is a concurrency/egress control, never a candidate rejection rule.
+  const totalQuoteBudget = Math.max(configuredQuoteBudget, minimumCoverageBudget);
   const minimumRemainingLifetimeMs = Math.trunc(bounded(process.env.ZERO_CAPITAL_RESCUE_MIN_REMAINING_LIFETIME_MS, 500, 100, 5_000));
+  const passDeadlineAt = Date.now() + apePassBudgetMs();
 
   let strictPositiveRecoveries = 0;
   let improved = 0;
   let staleProviderEvidenceRejected = 0;
+  let incompleteProviderEvidenceRejected = 0;
+  let providerRefreshes = 0;
+  let providerRaceFailures = 0;
   let insufficientLiquidityRejected = 0;
   let expiredBeforeRequote = 0;
   let unpricedInputTokenRejected = 0;
@@ -436,6 +598,14 @@ export async function runZeroCapitalAtomicBpsEngine(
   let routeStragglersIgnored = 0;
   let returnedOnExistingPositiveIncumbent = false;
   let returnedOnFirstPositiveImprovement = false;
+  let recursiveRescueWaves = 0;
+  let recursiveRetryOpportunities = 0;
+  let costRescueCandidates = 0;
+  let edgeRescueCandidates = 0;
+  let executionRescueCandidates = 0;
+  let alternativeRouteProbes = 0;
+  let edgeRescuePositiveRecoveries = 0;
+  let costRescuePositiveRecoveries = 0;
   const bpsDrivers = new Map<string, number>();
 
   const settledPairs = new Map<string, AtomicBpsRoutePair>();
@@ -447,110 +617,174 @@ export async function runZeroCapitalAtomicBpsEngine(
 
   const routeTasks = selected.map((opportunity, index) => (async (): Promise<AtomicBpsRoutePair> => {
     const startedAt = Date.now();
+    const mode = rescueMode(opportunity);
+    if (mode === 'cost') costRescueCandidates += 1;
+    else if (mode === 'edge') edgeRescueCandidates += 1;
+    else executionRescueCandidates += 1;
+
     const context = bpsContext(opportunity);
     if (context) {
       bpsSuperEngineCandidates += 1;
       bpsDrivers.set(context.dominantCostDriver, (bpsDrivers.get(context.dominantCostDriver) || 0) + 1);
     }
 
-    const route = routeForOpportunity(input.configuredRoutes, opportunity);
-    if (!route || opportunity.expiresAt - Date.now() <= minimumRemainingLifetimeMs) {
+    const compatibleRoutes = routeSets.get(opportunity.id) ?? [];
+    const perOpportunityDeadlineAt = Math.min(passDeadlineAt, opportunity.expiresAt - minimumRemainingLifetimeMs);
+    if (compatibleRoutes.length === 0 || perOpportunityDeadlineAt <= Date.now()) {
       expiredBeforeRequote += 1;
       return [opportunity.id, opportunity] as const;
     }
 
     try {
-      const evidence = await prepared.get(opportunity.id);
-      if (!evidence || evidence.inputTokenUsdPrice === null) {
+      const evidence = await withDeadline(
+        prepared.get(opportunity.id) ?? Promise.reject(new Error('APE prepared evidence missing')),
+        perOpportunityDeadlineAt,
+        `${input.chain}:${opportunity.id}:evidence`,
+      );
+      if (evidence.inputTokenUsdPrice === null) {
         unpricedInputTokenRejected += 1;
         if (context) recordBpsRevalidationOutcome(context.plan, { deterministicPositive: 0, eligibleCandidates: 0 });
         return [opportunity.id, opportunity] as const;
       }
 
-      const providerEvidence = evidence.providerEvidence.filter(item => providerFresh(item));
-      staleProviderEvidenceRejected += Math.max(0, evidence.providerEvidence.length - providerEvidence.length);
-      if (providerEvidence.length === 0 || opportunity.expiresAt - Date.now() <= minimumRemainingLifetimeMs) {
+      const evidenceAgeBudget = providerEvidenceMaxAgeMs(evidence.freshnessBudgetMs);
+      let providerBatch = mergeProviderEvidence(evidence.providerEvidence, evidence.providerEvidenceSnapshot());
+      let classified = classifyProviderEvidence(providerBatch, evidenceAgeBudget);
+      staleProviderEvidenceRejected += classified.stale;
+      incompleteProviderEvidenceRejected += classified.incomplete;
+      providerRaceFailures += evidence.providerFailures().length;
+
+      if (classified.fresh.length === 0 && Date.now() < perOpportunityDeadlineAt) {
+        providerRefreshes += 1;
+        const refreshed = await withDeadline(
+          refreshAtomicBpsProviderEvidence(
+            input.chain,
+            input.provider,
+            opportunity.inputToken,
+            evidence.freshnessBudgetMs,
+          ),
+          perOpportunityDeadlineAt,
+          `${input.chain}:${opportunity.id}:provider-refresh`,
+        );
+        providerBatch = mergeProviderEvidence(providerBatch, refreshed, evidence.providerEvidenceSnapshot());
+        classified = classifyProviderEvidence(providerBatch, evidenceAgeBudget);
+        staleProviderEvidenceRejected += classified.stale;
+        incompleteProviderEvidenceRejected += classified.incomplete;
+      }
+
+      if (classified.fresh.length === 0 || Date.now() >= perOpportunityDeadlineAt) {
         if (context) recordBpsRevalidationOutcome(context.plan, { deterministicPositive: 0, eligibleCandidates: 0 });
         return [opportunity.id, opportunity] as const;
       }
 
-      const measuredRoute = bindCurrentMeasuredCosts(route, opportunity);
-      const perRouteBudget = routeQuoteBudget(index, selected.length, totalQuoteBudget);
-      const sizes = candidateSizes(
+      const minimumProbes = minimumCoverageProbes(opportunity, compatibleRoutes);
+      const perRouteBudget = routeQuoteBudget(index, selected.length, totalQuoteBudget, minimumProbes);
+      const descriptors = buildProbeDescriptors({
         opportunity,
-        measuredRoute,
+        allOpportunities: input.opportunities,
+        routes: compatibleRoutes,
         context,
-        providerEvidence,
-        evidence.inputTokenUsdPrice,
-        perRouteBudget,
-      );
-      if (sizes.length === 0) return [opportunity.id, opportunity] as const;
+        providerEvidence: classified.fresh,
+        inputTokenUsdPrice: evidence.inputTokenUsdPrice,
+        budget: perRouteBudget,
+      });
+      if (descriptors.length === 0) return [opportunity.id, opportunity] as const;
 
-      // Preserve enough lifetime for the downstream canonical executor instead of
-      // spending the entire opportunity TTL waiting for quote stragglers.
-      const quoteDecisionDeadlineAt = opportunity.expiresAt - minimumRemainingLifetimeMs;
-      if (quoteDecisionDeadlineAt <= Date.now()) {
-        expiredBeforeRequote += 1;
-        return [opportunity.id, opportunity] as const;
+      let bestProbe: AtomicBpsProbeResult | null = null;
+      const waveWidth = probeWaveWidth();
+      let waveIndex = 0;
+      for (let offset = 0; offset < descriptors.length && Date.now() < perOpportunityDeadlineAt; offset += waveWidth) {
+        const wave = descriptors.slice(offset, offset + waveWidth);
+        if (waveIndex > 0) recursiveRetryOpportunities += waveIndex === 1 ? 1 : 0;
+        recursiveRescueWaves += 1;
+        waveIndex += 1;
+
+        const probeTasks = wave.map(descriptor => {
+          if (descriptor.alternativeRoute) alternativeRouteProbes += 1;
+          const amountIn = baseUnitsFromUsd(
+            descriptor.sizeUsd,
+            descriptor.route.inputTokenDecimals,
+            evidence.inputTokenUsdPrice!,
+          );
+          return withDeadline(
+            quoteConfiguredZeroCapitalRoute({ ...descriptor.route, amountIn }, input.provider),
+            perOpportunityDeadlineAt,
+            `${input.chain}:${opportunity.id}:${descriptor.route.id}`,
+          ).then<AtomicBpsProbeResult>(quote => {
+            if (!quote) {
+              return {
+                candidate: null,
+                routeId: descriptor.route.id,
+                rescueMode: descriptor.rescueMode,
+                alternativeRoute: descriptor.alternativeRoute,
+                insufficientLiquidityRejected: 0,
+                staleProviderEvidenceRejected: 0,
+                incompleteProviderEvidenceRejected: 0,
+                budgetOutsideTelemetryQuotes: 0,
+              };
+            }
+
+            const latestBatch = mergeProviderEvidence(providerBatch, evidence.providerEvidenceSnapshot());
+            const latest = classifyProviderEvidence(latestBatch, evidenceAgeBudget);
+            let probeBest: QuotedZeroCapitalRoute | null = null;
+            let probeInsufficientLiquidity = 0;
+            let probeBudgetOutsideTelemetry = 0;
+            for (const providerMeasurement of latest.fresh) {
+              if (!providerUsableForAmount(providerMeasurement, quote.amountIn)) {
+                probeInsufficientLiquidity += 1;
+                continue;
+              }
+              const adjusted = adjustForProvider(quote, providerMeasurement);
+              if (!adjusted) continue;
+              if (
+                clearsStrictProfitability(adjusted)
+                && !quoteFitsDailyProfitBudget(adjusted, descriptor.route.inputTokenDecimals, evidence.inputTokenUsdPrice!, dailyProfitBudget)
+              ) probeBudgetOutsideTelemetry += 1;
+              probeBest = quoteBetter(probeBest, adjusted);
+            }
+            return {
+              candidate: probeBest,
+              routeId: descriptor.route.id,
+              rescueMode: descriptor.rescueMode,
+              alternativeRoute: descriptor.alternativeRoute,
+              insufficientLiquidityRejected: probeInsufficientLiquidity,
+              staleProviderEvidenceRejected: latest.stale,
+              incompleteProviderEvidenceRejected: latest.incomplete,
+              budgetOutsideTelemetryQuotes: probeBudgetOutsideTelemetry,
+            };
+          });
+        });
+
+        const race = await runAtomicBpsAnytimeRace<AtomicBpsProbeResult>({
+          tasks: probeTasks,
+          deadlineAt: perOpportunityDeadlineAt,
+          acceptable: probe => probe.candidate !== null
+            && clearsStrictProfitability(probe.candidate)
+            && strictImprovement(opportunity, probe.candidate),
+          better: probeBetter,
+          onConsumed: outcome => {
+            if (outcome.status !== 'fulfilled') return;
+            insufficientLiquidityRejected += outcome.value.insufficientLiquidityRejected;
+            staleProviderEvidenceRejected += outcome.value.staleProviderEvidenceRejected;
+            incompleteProviderEvidenceRejected += outcome.value.incompleteProviderEvidenceRejected;
+            budgetOutsideTelemetryQuotes += outcome.value.budgetOutsideTelemetryQuotes;
+          },
+        });
+        boundedQuoteTimeouts += race.rejected;
+        ignoredQuoteStragglers += race.ignoredStragglers;
+        quoteProbesConsumed += race.completed;
+        if (race.stoppedOnAcceptable) anytimePositiveImprovementStops += 1;
+        if (race.stoppedOnDeadline) freshnessDeadlineStops += 1;
+        if (race.best) bestProbe = probeBetter(bestProbe, race.best);
+
+        if (
+          bestProbe?.candidate
+          && clearsStrictProfitability(bestProbe.candidate)
+          && strictImprovement(opportunity, bestProbe.candidate)
+        ) break;
       }
 
-      const probeTasks = sizes.map(sizeUsd => {
-        const timeoutMs = Math.min(maxQuoteLatencyMs, Math.max(1, quoteDecisionDeadlineAt - Date.now()));
-        return withQuoteDeadline(
-          quoteConfiguredZeroCapitalRoute({
-            ...measuredRoute,
-            amountIn: baseUnitsFromUsd(sizeUsd, measuredRoute.inputTokenDecimals, evidence.inputTokenUsdPrice!),
-          }, input.provider),
-          timeoutMs,
-          `${input.chain}:${opportunity.id}`,
-        ).then<AtomicBpsProbeResult>(quote => {
-          if (!quote) {
-            return { candidate: null, insufficientLiquidityRejected: 0, budgetOutsideTelemetryQuotes: 0 };
-          }
-          let probeBest: QuotedZeroCapitalRoute | null = null;
-          let probeInsufficientLiquidity = 0;
-          let probeBudgetOutsideTelemetry = 0;
-          for (const providerMeasurement of providerEvidence) {
-            if (!providerUsableForAmount(providerMeasurement, quote.amountIn)) {
-              probeInsufficientLiquidity += 1;
-              continue;
-            }
-            const adjusted = adjustForProvider(quote, providerMeasurement);
-            if (!adjusted) continue;
-            if (
-              clearsStrictProfitability(adjusted)
-              && !quoteFitsDailyProfitBudget(adjusted, measuredRoute.inputTokenDecimals, evidence.inputTokenUsdPrice!, dailyProfitBudget)
-            ) probeBudgetOutsideTelemetry += 1;
-            probeBest = quoteBetter(probeBest, adjusted);
-          }
-          return {
-            candidate: probeBest,
-            insufficientLiquidityRejected: probeInsufficientLiquidity,
-            budgetOutsideTelemetryQuotes: probeBudgetOutsideTelemetry,
-          };
-        });
-      });
-
-      const race = await runAtomicBpsAnytimeRace<AtomicBpsProbeResult>({
-        tasks: probeTasks,
-        deadlineAt: quoteDecisionDeadlineAt,
-        acceptable: probe => probe.candidate !== null
-          && clearsStrictProfitability(probe.candidate)
-          && strictImprovement(opportunity, probe.candidate),
-        better: probeBetter,
-        onConsumed: outcome => {
-          if (outcome.status !== 'fulfilled') return;
-          insufficientLiquidityRejected += outcome.value.insufficientLiquidityRejected;
-          budgetOutsideTelemetryQuotes += outcome.value.budgetOutsideTelemetryQuotes;
-        },
-      });
-      boundedQuoteTimeouts += race.rejected;
-      ignoredQuoteStragglers += race.ignoredStragglers;
-      quoteProbesConsumed += race.completed;
-      if (race.stoppedOnAcceptable) anytimePositiveImprovementStops += 1;
-      if (race.stoppedOnDeadline) freshnessDeadlineStops += 1;
-
-      const best = race.best?.candidate ?? null;
+      const best = bestProbe?.candidate ?? null;
       const profitable = best ? clearsStrictProfitability(best) : false;
       const better = best ? strictImprovement(opportunity, best) : false;
       observeAtomicBpsOutcome({
@@ -560,10 +794,12 @@ export async function runZeroCapitalAtomicBpsEngine(
         bestExpectedProfit: best?.netProfit ?? null,
         sourceNetProfitBps: opportunity.netProfitBps,
         bestNetProfitBps: best?.netProfitBps ?? null,
-        quoteCount: race.completed,
+        quoteCount: descriptors.length,
         elapsedMs: Date.now() - startedAt,
         profitable,
         improved: better,
+        rescueMode: mode,
+        routesTried: new Set(descriptors.map(descriptor => descriptor.route.id)).size,
       });
 
       if (context) {
@@ -583,14 +819,17 @@ export async function runZeroCapitalAtomicBpsEngine(
       else refined.inputAssetUsdPrice = evidence.inputTokenUsdPrice;
       improved += 1;
       strictPositiveRecoveries += 1;
+      if (mode === 'edge') edgeRescuePositiveRecoveries += 1;
+      if (mode === 'cost') costRescuePositiveRecoveries += 1;
       if (context) bpsSuperEnginePositiveRecoveries += 1;
       return [opportunity.id, refined] as const;
     } catch (error) {
       if (context) recordBpsRevalidationOutcome(context.plan, { deterministicPositive: 0, eligibleCandidates: 0 });
-      logger.debug('[ZeroCapitalAtomicBpsEngine] Route-local transformation degraded; original candidate retained', {
-        component: 'ZeroCapitalAtomicBpsEngine',
+      logger.debug('[AtomicProfitabilityEngine] Route-local rescue degraded; original candidate retained', {
+        component: 'AtomicProfitabilityEngine',
         chain: input.chain,
         opportunityId: opportunity.id,
+        rescueMode: mode,
         error: error instanceof Error ? error.message : String(error),
         otherRoutesBlocked: false,
         executionAuthority: false,
@@ -621,9 +860,9 @@ export async function runZeroCapitalAtomicBpsEngine(
 
   let refinedPairs: readonly AtomicBpsRoutePair[];
   if (hasProtectedPositiveIncumbent) {
-    // A Stage-1 candidate that is already exactly profitable is the incumbent. Do
-    // not age it while sibling optimizers finish. Already-started work may settle in
-    // this same turn, but late results cannot hold up downstream execution readiness.
+    // Execution Rescue rule: do not make a ready profitable candidate wait. Every
+    // sibling APE task has already been started and may continue as nonblocking
+    // optimization/audit work, but downstream receives the incumbent immediately.
     returnedOnExistingPositiveIncumbent = true;
     await Promise.resolve();
     refinedPairs = [...settledPairs.values()];
@@ -636,8 +875,6 @@ export async function runZeroCapitalAtomicBpsEngine(
       refinedPairs = decision.pairs;
     } else {
       returnedOnFirstPositiveImprovement = true;
-      // Same-turn drain only: co-settled improvements may join the output without
-      // creating a tail-latency barrier. Unfinished sibling routes remain originals.
       await Promise.resolve();
       refinedPairs = [...settledPairs.values()];
     }
@@ -647,14 +884,31 @@ export async function runZeroCapitalAtomicBpsEngine(
   const refinedById = new Map(refinedPairs);
   const output = input.opportunities.map(item => selectedIds.has(item.id) ? (refinedById.get(item.id) ?? item) : item);
 
-  logger.info('[ZeroCapitalAtomicBpsEngine] One-pipeline transformation pass completed', {
-    component: 'ZeroCapitalAtomicBpsEngine',
+  logger.info('[AtomicProfitabilityEngine] APE transformation pass completed', {
+    component: 'AtomicProfitabilityEngine',
+    acronym: 'APE',
     chain: input.chain,
+    eligibleCandidatesReceived: input.opportunities.length,
     selectedRoutes: selected.length,
+    candidatesSkippedByArbitraryRouteCap: 0,
+    fullStageOneCandidateCoverage: selected.length === input.opportunities.filter(item => recoverable(item)).length,
+    configuredQuoteBudget,
+    minimumCoverageBudget,
     totalQuoteBudget,
     improved,
     strictPositiveRecoveries,
+    costRescueCandidates,
+    edgeRescueCandidates,
+    executionRescueCandidates,
+    costRescuePositiveRecoveries,
+    edgeRescuePositiveRecoveries,
+    alternativeRouteProbes,
+    recursiveRescueWaves,
+    recursiveRetryOpportunities,
+    providerRefreshes,
+    providerRaceFailures,
     staleProviderEvidenceRejected,
+    incompleteProviderEvidenceRejected,
     insufficientLiquidityRejected,
     expiredBeforeRequote,
     unpricedInputTokenRejected,
@@ -671,6 +925,10 @@ export async function runZeroCapitalAtomicBpsEngine(
     bpsSuperEnginePositiveRecoveries,
     bpsDominantCostDrivers: [...bpsDrivers.entries()].map(([driver, count]) => ({ driver, count })),
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
+    optimizationObjective: 'maximize_exact_executable_net_bps',
+    rescueModes: ['cost', 'edge', 'execution'],
+    edgeRescueUsesCanonicalRouteAuthorityOnly: true,
+    duplicateRouteDiscoveryAuthority: false,
     oneTransformationAuthority: true,
     oneTransformationPipeline: true,
     oneSharedQuoteBudget: true,
@@ -680,7 +938,9 @@ export async function runZeroCapitalAtomicBpsEngine(
     supabaseSchedulingOnHotPath: false,
     parallelEvidencePrewarm: true,
     parallelRouteOptimization: true,
+    parallelProviderEvidenceRace: true,
     anytimeIncumbentSelection: true,
+    waitsForAllProviderStragglers: false,
     waitsForAllQuoteStragglers: false,
     waitsForAllRouteStragglers: false,
     firstStrictPositiveImprovementStopsWaiting: true,
@@ -688,13 +948,18 @@ export async function runZeroCapitalAtomicBpsEngine(
     worsePositiveCannotStopSearch: true,
     sameTurnBetterIncumbentMayReplace: true,
     freshnessReserveProtectedForExecution: true,
+    staleEvidenceRefreshesLocally: true,
+    providerFailureIsLocal: true,
     lateProbeOverwriteAllowed: false,
+    boundedRecursiveRescue: true,
+    newOpportunityBlockingBudgetMs: apePassBudgetMs(),
     serialPostProfitOptimizationPasses: 0,
-    netDollarOptimizationAfterProfitability: true,
+    netBpsOptimizationAfterProfitability: true,
+    netDollarOptimizationAfterProfitability: false,
     grossPositiveRequiredForAtomicSurplusRescue: false,
     exactStrictPositiveRequiredBeforePromotion: true,
     principalRepaymentAndFlashFeeIncludedInNetEconomics: true,
-    currentMeasuredFixedCostsBound: true,
+    currentMeasuredFixedCostsBoundWhenAvailable: true,
     providerFreshnessRequired: true,
     providerLiquidityHeadroomRequired: true,
     providerUtilizationBounded: true,
@@ -705,6 +970,7 @@ export async function runZeroCapitalAtomicBpsEngine(
     inputTokenDecimalsAuthoritative: true,
     profitLadderBorrowingNotionalAuthority: false,
     profitLadderRescueVetoAuthority: false,
+    stageOneMutation: false,
     syntheticEconomics: false,
     executionAuthority: false,
   });
