@@ -466,12 +466,12 @@ async function scanOneChain(
   );
   if (exact.length === 0 || !isCurrentChainScanGeneration(chain, generation)) return;
 
-  // Fused Stage-1 -> APE continuation. This is deliberately synchronous: there is
-  // no Promise/ACK/queue boundary between the locked Stage-1 classification above
-  // and APE. Failure is still route-local/fail-soft; original fresh objects continue.
+  // Stage-1 object identity remains unchanged at the boundary. The resident APE
+  // fast path runs first, then its bounded measured actuator may asynchronously
+  // derive fresh rescue evidence before canonical capital-source repricing.
   let rescueReady: ZeroCapitalOpportunity[];
   try {
-    rescueReady = runFairZeroCapitalProfitabilityRescue({
+    rescueReady = await runFairZeroCapitalProfitabilityRescue({
       chain,
       provider,
       opportunities: exact,
