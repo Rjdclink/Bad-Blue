@@ -42,14 +42,39 @@ function treatmentFor(field: string): ZeroXFeeTreatment {
   return 'unknown_fail_closed';
 }
 
+function runtimeQuoteSource(quote: DexQuoteObservation): string {
+  return String((quote as unknown as { source?: unknown }).source ?? '').trim().toLowerCase();
+}
+
+function noAdditionalExplicitFeeEvidence(): ZeroXFeeEconomicsEvidence {
+  return {
+    components: [],
+    embedded: [],
+    externalNative: [],
+    unknown: [],
+    completeForSameChainAllowanceHolder: true,
+    economicRule: 'embedded_fees_are_reflected_by_quote_output_and_must_not_be_subtracted_twice',
+  };
+}
+
 /**
  * 0x v2 returns explicit fee evidence in quote.fees. 0x documents zeroExFee and
  * integrator fee as deductions from sellAmount, so the returned buyAmount already
  * reflects their economic effect. They are attribution evidence, not another
  * amount to subtract from canonical net profit. Native bridge/gas fees are
  * additional costs and are not admitted by the same-chain stablecoin atomic lane.
+ *
+ * The hedged DEX provider mesh reuses the legacy DexQuoteObservation transport
+ * contract for Stage-1 compatibility. Non-0x providers therefore arrive here at
+ * runtime with their actual provider name even though older TypeScript consumers
+ * still narrow source to `0x`. Those providers request no integrator surcharge and
+ * expose route/pool economics in amountOut; they must not be interpreted as 0x fee
+ * objects or rejected merely because the shared transport type has not yet been
+ * widened. Exact gas is measured separately before execution.
  */
 export function inspectZeroXFeeEconomics(quote: DexQuoteObservation): ZeroXFeeEconomicsEvidence {
+  if (runtimeQuoteSource(quote) !== '0x') return noAdditionalExplicitFeeEvidence();
+
   const source = quote.fees && typeof quote.fees === 'object' ? quote.fees : {};
   const components: ZeroXFeeComponentEvidence[] = [];
 
