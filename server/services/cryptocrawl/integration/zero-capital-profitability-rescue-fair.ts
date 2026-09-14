@@ -2,6 +2,7 @@ import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
+import { prewarmApeRealCostEvidence } from './ape-real-cost-surface.js';
 import { primeApeResidentRouting } from './atomic-profitability-resident-routing.js';
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
 import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
@@ -44,6 +45,14 @@ function strictDerivedImprovement(before: ZeroCapitalOpportunity, after: ZeroCap
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
 ): Promise<ZeroCapitalOpportunity[]> {
+  // Start the complete Morpho/Aave/Balancer fee-liquidity measurement race without
+  // waiting on it. APE consumes only already-resident measured evidence, so this
+  // warms the next/currently-settled pass without adding RPC latency to Stage-1.
+  prewarmApeRealCostEvidence({
+    chain: input.chain,
+    provider: input.provider,
+    opportunities: input.opportunities,
+  });
   primeApeResidentRouting(input.opportunities);
   const residentFastPath = runZeroCapitalAtomicBpsEngine({ ...input, opportunities: input.opportunities });
   const activeRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
@@ -129,6 +138,8 @@ export async function runFairZeroCapitalProfitabilityRescue(
       derivedOverlayPreservesCandidateIdentity: true, alternateRouteEvidencePreservedInDerivedOverlay: true,
       stageOneSameReferenceContinuation: true, stageOneStructuralCopies: 0,
       stageTwoHandoffSupervisorOnHotPath: false, stageTwoAcknowledgementWaitOnHotPath: false,
+      apeRealCostPrewarmNonBlocking: true,
+      apeRealCostPrewarmProviders: ['morpho_blue', 'aave_v3', 'balancer_v2'],
       stageOneMutation: false, syntheticEconomics: false, externalQueueOnHotPath: false,
       persistenceOnHotPath: false, supabaseOnHotPath: false, compositeTacticInsideSamePipeline: true,
       compositeTacticBlocksSingleRouteReturn: false, compositeTacticScheduledAfterApeDecision: true,
