@@ -76,6 +76,7 @@ export interface KalshiEventQueuePosition {
 export interface KalshiEventOrderGroup {
   orderGroupId: string;
   subaccount: number;
+  exchangeIndex: number;
   contractsLimit: number;
   createdAt: number;
 }
@@ -202,6 +203,18 @@ export async function getKalshiEventOrder(orderIdInput: string): Promise<KalshiE
   return parsed;
 }
 
+export async function getKalshiEventExchangeIndex(tickerInput: string): Promise<number> {
+  const ticker = tickerInput.trim().toUpperCase();
+  if (!ticker) throw new Error('Kalshi event ticker is required for exchange routing');
+  const payload = await kalshiAuthenticatedRequest<any>(`/trade-api/v2/markets/${encodeURIComponent(ticker)}`);
+  const returnedTicker = String(payload?.market?.ticker || '').trim().toUpperCase();
+  const exchangeIndex = Number(payload?.market?.exchange_index);
+  if (returnedTicker !== ticker || !Number.isInteger(exchangeIndex) || exchangeIndex < 0) {
+    throw new Error(`KALSHI_EVENT_EXCHANGE_INDEX_UNAVAILABLE:${ticker}`);
+  }
+  return exchangeIndex;
+}
+
 export async function placeOrRecoverKalshiEventOrder(input: {
   scope: string;
   leg: string;
@@ -237,12 +250,14 @@ export async function placeOrRecoverKalshiEventOrder(input: {
     cancel_order_on_pause: input.cancelOrderOnPause !== false,
     reduce_only: input.reduceOnly === true,
     subaccount: 0,
-    exchange_index: 0,
   };
   if (input.orderGroupId) body.order_group_id = input.orderGroupId;
   if (input.expirationTime !== null && input.expirationTime !== undefined) body.expiration_time = Math.trunc(input.expirationTime);
 
   try {
+    // Current V2 event order routing auto-selects the exchange shard when the
+    // ticker is present and exchange_index is omitted. Never pin a live order
+    // to shard 0 because Kalshi can move product families between shards.
     const payload = await kalshiAuthenticatedRequest<any>('/trade-api/v2/portfolio/events/orders', { method: 'POST', body });
     const orderId = String(payload?.order_id || '').trim();
     if (!orderId) throw new Error('Kalshi event create response omitted order_id');
@@ -263,7 +278,11 @@ export async function placeOrRecoverKalshiEventOrder(input: {
 export async function cancelKalshiEventOrder(orderIdInput: string): Promise<void> {
   const orderId = orderIdInput.trim();
   if (!orderId) return;
-  await kalshiAuthenticatedRequest(`/trade-api/v2/portfolio/events/orders/${encodeURIComponent(orderId)}?subaccount=0&exchange_index=0`, { method: 'DELETE' });
+  const state = await getKalshiEventOrder(orderId);
+  const query = new URLSearchParams({ subaccount: '0', market_ticker: state.ticker });
+  // Supplying market_ticker while omitting exchange_index invokes Kalshi's V2
+  // auto-routing, so cancel remains valid after exchange-shard migrations.
+  await kalshiAuthenticatedRequest(`/trade-api/v2/portfolio/events/orders/${encodeURIComponent(orderId)}?${query.toString()}`, { method: 'DELETE' });
 }
 
 export async function getKalshiEventFillsForOrder(input: {
@@ -407,13 +426,17 @@ export async function getKalshiEventQueuePositions(): Promise<KalshiEventQueuePo
   });
 }
 
-export async function createKalshiEventOrderGroup(contractsLimit: number): Promise<KalshiEventOrderGroup> {
+export async function createKalshiEventOrderGroup(contractsLimit: number, tickerInput: string): Promise<KalshiEventOrderGroup> {
   if (!(contractsLimit > 0) || !Number.isFinite(contractsLimit)) throw new Error('Kalshi event order-group limit must be positive');
+  const exchangeIndex = await getKalshiEventExchangeIndex(tickerInput);
   const payload = await kalshiAuthenticatedRequest<any>('/trade-api/v2/portfolio/order_groups/create', {
     method: 'POST',
-    body: { subaccount: 0, contracts_limit_fp: fixed(contractsLimit, 2), exchange_index: 0 },
+    body: { subaccount: 0, contracts_limit_fp: fixed(contractsLimit, 2), exchange_index: exchangeIndex },
   });
   const orderGroupId = String(payload?.order_group_id || '').trim();
-  if (!orderGroupId) throw new Error('Kalshi event order-group response omitted order_group_id');
-  return { orderGroupId, subaccount: Number(payload?.subaccount || 0), contractsLimit, createdAt: Date.now() };
+  const returnedExchangeIndex = Number(payload?.exchange_index);
+  if (!orderGroupId || returnedExchangeIndex !== exchangeIndex) {
+    throw new Error('Kalshi event order-group response omitted identity or returned the wrong exchange shard');
+  }
+  return { orderGroupId, subaccount: Number(payload?.subaccount || 0), exchangeIndex, contractsLimit, createdAt: Date.now() };
 }
