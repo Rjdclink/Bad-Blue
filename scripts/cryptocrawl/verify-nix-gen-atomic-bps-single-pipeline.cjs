@@ -36,8 +36,11 @@ assert.match(gateway, /opportunity\.expectedProfit <= 0n/);
 
 // Non-positive rescue-band candidates are actively measured by the existing bounded
 // rescue actuator. It returns derived evidence only and never gains execution authority.
-assert.match(gateway, /await runZeroCapitalProfitabilityRescueV2\(\{/);
+assert.match(gateway, /runZeroCapitalProfitabilityRescueV2\(\{/);
 assert.match(gateway, /opportunities: residentFastPath/);
+assert.match(gateway, /return \{ \.\.\.candidate, id: resident\.id \}/);
+assert.match(gateway, /derivedOverlayPreservesCandidateIdentity: true/);
+assert.match(gateway, /alternateRouteEvidencePreservedInDerivedOverlay: true/);
 assert.match(gateway, /activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV2'/);
 assert.match(gateway, /activeRescueCreatesDerivedEvidenceOnly: true/);
 assert.match(gateway, /stageOneMutation: false/);
@@ -83,4 +86,4 @@ assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 assert.doesNotMatch(activeRescue, /Promise\.allSettled\(sizes\.map/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked at -10 BPS; resident APE fast path is unchanged; active measured rescue preserves genuine partial BPS gains, uses bounded route/provider/size hedging without waiting for the slowest quote, and still requires strict-positive all-in economics before downstream canonical execution');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked at -10 BPS; resident APE fast path is unchanged; active measured rescue preserves genuine partial BPS gains and candidate identity across alternate-route overlays, uses bounded route/provider/size hedging without waiting for the slowest quote, and still requires strict-positive all-in economics before downstream canonical execution');
