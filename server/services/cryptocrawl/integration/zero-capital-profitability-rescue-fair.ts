@@ -5,7 +5,7 @@ import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../exec
 import { primeApeResidentRouting } from './atomic-profitability-resident-routing.js';
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
 import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
-import { runZeroCapitalProfitabilityRescueV2 } from './zero-capital-profitability-rescue-v2.js';
+import { runZeroCapitalProfitabilityRescueV3 } from './zero-capital-profitability-rescue-v3.js';
 
 export interface FairZeroCapitalProfitabilityRescueInput {
   chain: SupportedChain;
@@ -71,7 +71,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
         }
         const passInput = transformed.filter(stillNeedsMeasuredRescue);
         if (passInput.length === 0) break;
-        const measured = await runZeroCapitalProfitabilityRescueV2({ ...input, opportunities: passInput });
+        const measured = await runZeroCapitalProfitabilityRescueV3({ ...input, opportunities: passInput });
         recursiveMeasuredPasses += 1;
         const replacements = new Map<string, ZeroCapitalOpportunity>();
         let passImprovements = 0;
@@ -118,7 +118,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> APE active rescue continuation completed', {
       component: 'ZeroCapitalProfitabilityRescueFair', chain: input.chain,
       profitabilityFinishLine: 'strict_positive_all_in_base_units', residentFastPathFirst: true,
-      activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV2', activeMeasuredRescueInvoked,
+      activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV3', activeMeasuredRescueInvoked,
       activeMeasuredRescueCandidates: activeRescueCandidates.length, activeMeasuredRescueOverlays,
       alternateRouteIdentityRebindings, strictPositiveAfterRescue, activeMeasuredRescueError,
       recursiveMeasuredPasses, recursiveMeasuredPassLimit: maxPasses, recursiveWallClockBudgetMs: wallClockBudgetMs,
