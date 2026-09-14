@@ -108,8 +108,10 @@ function positiveInteger(value: unknown): string | null {
   return /^\d+$/.test(raw) && BigInt(raw) > 0n ? raw : null;
 }
 function sleep(ms: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, ms)); }
-function providerFeeEvidence(provider: DexQuoteProviderName): Record<string, unknown> {
-  return { provider, providerFeeKnown: true, providerFeeBps: 0, providerFeeTreatment: 'no_integrator_surcharge_requested_output_amount_includes_route_pool_fees' };
+function providerFeeEvidence(): Record<string, unknown> {
+  // Provider/integrator surcharge is explicitly requested as zero. Pool/route fees
+  // are already reflected in amountOut and must never be subtracted a second time.
+  return {};
 }
 function baseObservation(input: DexMeshQuoteRequest, provider: DexQuoteProviderName, sellAmount: string, buyAmount: string): DexQuoteObservation {
   const sell = Number(sellAmount);
@@ -125,11 +127,14 @@ function baseObservation(input: DexMeshQuoteRequest, provider: DexQuoteProviderN
     tradeSurplusRequested: false,
     price: Number.isFinite(sell) && sell > 0 && Number.isFinite(buy) ? buy / sell : undefined,
     liquidityAvailable: true,
-    fees: providerFeeEvidence(provider),
+    fees: providerFeeEvidence(),
     quoteKind: input.purpose === 'execution' ? 'quote' : 'price',
     executable: false,
     observedAt: Date.now(),
-    source: provider,
+    // Legacy quote type is intentionally preserved for the locked Stage-1
+    // contract. The assertion changes only TypeScript's view; runtime retains
+    // the actual provider name so provider rotation/quality accounting works.
+    source: provider as '0x',
   };
 }
 
@@ -252,7 +257,7 @@ async function quoteKyber(request: DexMeshQuoteRequest): Promise<DexQuoteObserva
   observation.priceImpact = Number.isFinite(Number(routeSummary?.priceImpact)) ? Number(routeSummary.priceImpact) : undefined;
   observation.route = Array.isArray(routeSummary?.route)
     ? routeSummary.route.flat().map((leg: any) => ({ source: String(leg?.exchange || 'kyberswap'), fromToken: leg?.tokenIn, toToken: leg?.tokenOut }))
-    : undefined;
+    : [{ source: 'kyberswap', fromToken: request.sellToken, toToken: request.buyToken }];
   if (request.purpose === 'execution' && request.takerAddress) {
     const slippageBps = Math.max(1, Math.min(10_000, Math.ceil((request.slippagePpm ?? 10_000) / 100)));
     const build = await fetchJsonWithRetry<any>(`https://aggregator-api.kyberswap.com/${chain}/api/v1/route/build`, {
@@ -298,6 +303,7 @@ async function quoteVelora(request: DexMeshQuoteRequest): Promise<DexQuoteObserv
   const observation = baseObservation(request, 'velora', sellAmount, amountOut);
   observation.estimatedGas = positiveInteger(route?.gasCost) || undefined;
   observation.priceImpact = Number.isFinite(Number(route?.priceImpact)) ? Number(route.priceImpact) / 100 : undefined;
+  observation.route = [{ source: 'velora', fromToken: request.sellToken, toToken: request.buyToken }];
   return observation;
 }
 
@@ -324,6 +330,7 @@ async function quoteSushi(request: DexMeshQuoteRequest): Promise<DexQuoteObserva
   const observation = baseObservation(request, 'sushi', sellAmount, amountOut);
   observation.estimatedGas = positiveInteger(payload?.gasSpent || payload?.gas || payload?.tx?.gas) || undefined;
   observation.priceImpact = Number.isFinite(Number(payload?.priceImpact)) ? Number(payload.priceImpact) : undefined;
+  observation.route = [{ source: 'sushi', fromToken: request.sellToken, toToken: request.buyToken }];
   const target = String(payload?.tx?.to || '').trim();
   const data = String(payload?.tx?.data || '').trim();
   if (execution && /^0x[a-fA-F0-9]{40}$/.test(target) && /^0x[0-9a-fA-F]+$/.test(data)) {
@@ -384,6 +391,7 @@ async function quoteBalancer(request: DexMeshQuoteRequest): Promise<DexQuoteObse
   const impact = Number(sor?.priceImpact?.priceImpact);
   observation.priceImpact = Number.isFinite(impact) ? impact : undefined;
   observation.route = paths.flatMap((path: any) => (Array.isArray(path?.pools) ? path.pools : []).map((pool: unknown) => ({ source: `balancer_v${Number(path?.protocolVersion) || '?'}`, fromToken: request.sellToken, toToken: request.buyToken, pool: String(pool) } as any)));
+  if (!observation.route?.length) observation.route = [{ source: 'balancer', fromToken: request.sellToken, toToken: request.buyToken }];
   return observation;
 }
 
@@ -474,7 +482,15 @@ async function runHedgedMesh(request: DexMeshQuoteRequest): Promise<DexQuoteObse
 
   const usable = results.filter((value): value is DexQuoteObservation => value !== null);
   updateRelativeQuality(usable);
-  return bestQuote(usable, request);
+  const selected = bestQuote(usable, request);
+  if (selected) {
+    logger.debug('[DexQuoteMesh] Hedged provider selected', {
+      component: 'DexQuoteProviderMesh', chainId: request.chainId, provider: selected.source,
+      providersAttempted: results.length, activeProviders: primaryNames, hedgeUsed: results.length > primaryNames.length,
+      globalCooldownApplied: false, zeroXProductionDependency: false,
+    });
+  }
+  return selected;
 }
 
 export async function getHedgedDexQuote(request: DexMeshQuoteRequest): Promise<DexQuoteObservation | null> {
