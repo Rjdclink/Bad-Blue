@@ -149,16 +149,34 @@ function explicitRouteTradingFeeBps(route: ConfiguredZeroCapitalRoute): number |
   return Number.isFinite(totalBps) ? totalBps : null;
 }
 
+/**
+ * Reorder only proven fee-tier alternatives inside the same route family. This
+ * preserves cross-family discovery/routing order and never demotes an unknown-fee
+ * family on an assumption. If the current family representative has unknown fee
+ * metadata, it stays in place until fresh quote output supplies the real economics.
+ */
 function orderRoutesByExplicitTradingFee(routes: readonly ConfiguredZeroCapitalRoute[]): ConfiguredZeroCapitalRoute[] {
-  return routes
-    .map((route, index) => ({ route, index, feeBps: explicitRouteTradingFeeBps(route) }))
-    .sort((left, right) => {
-      if (left.feeBps !== null && right.feeBps !== null && left.feeBps !== right.feeBps) {
-        return left.feeBps - right.feeBps;
-      }
-      return left.index - right.index;
-    })
-    .map(item => item.route);
+  const ordered = [...routes];
+  for (let index = 0; index < ordered.length; index += 1) {
+    const current = ordered[index];
+    const currentFeeBps = explicitRouteTradingFeeBps(current);
+    if (currentFeeBps === null) continue;
+    const family = routeFamily(current);
+    let bestIndex = index;
+    let bestFeeBps = currentFeeBps;
+    for (let candidateIndex = index + 1; candidateIndex < ordered.length; candidateIndex += 1) {
+      const candidate = ordered[candidateIndex];
+      if (routeFamily(candidate) !== family) continue;
+      const candidateFeeBps = explicitRouteTradingFeeBps(candidate);
+      if (candidateFeeBps === null || candidateFeeBps >= bestFeeBps) continue;
+      bestIndex = candidateIndex;
+      bestFeeBps = candidateFeeBps;
+    }
+    if (bestIndex !== index) {
+      [ordered[index], ordered[bestIndex]] = [ordered[bestIndex], ordered[index]];
+    }
+  }
+  return ordered;
 }
 
 /**
@@ -806,7 +824,7 @@ export async function runZeroCapitalProfitabilityRescueV2(input: ZeroCapitalProf
     providerSpecificCeilingsSampled: true,
     routeFamilyAlternativesActuated: true,
     explicitPairPoolFeePriority: true,
-    pairPoolFeePriorityAuthority: 'configured_explicit_leg_fee_or_fee_tier_ordering_only',
+    pairPoolFeePriorityAuthority: 'same_family_configured_explicit_leg_fee_or_fee_tier_ordering_only',
     pairPoolFeeEconomicAuthority: 'fresh_route_quote_output',
     pairPoolFeeDoubleCounted: false,
     unknownPairPoolFeeAssumedFree: false,
