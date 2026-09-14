@@ -96,8 +96,31 @@ assert.match(activeRescue, /if \(!best \|\| !strictImprovement\(opportunity, bes
 assert.match(activeRescue, /partialBpsImprovements \+= 1/);
 assert.match(activeRescue, /candidate\.netProfit > 0n/);
 assert.match(activeRescue, /exactStrictPositiveRequiredBeforePromotion: true/);
+
+// Fee optimization is post-Stage-One and evidence-bound. Explicit pair/pool fee
+// metadata may reorder quote launches, but it is never subtracted a second time;
+// fresh route output remains the trading-fee economic authority. Flash providers
+// are re-read from the live evidence array for each settled quote so zero/lower-fee
+// evidence can join an already-running race without adding a wait.
+assert.match(activeRescue, /function explicitRouteTradingFeeBps\(/);
+assert.match(activeRescue, /totalBps \+= leg\.fee \* 10_000/);
+assert.match(activeRescue, /totalBps \+= leg\.feeTier \/ 100/);
+assert.match(activeRescue, /function orderRoutesByExplicitTradingFee\(/);
+assert.match(activeRescue, /const ordered = orderRoutesByExplicitTradingFee\(originalOrder\)/);
+assert.match(activeRescue, /function freshProvidersByLowestMeasuredFee\(/);
+assert.match(activeRescue, /const feeDelta = \(left\.feeBps \?\? Number\.POSITIVE_INFINITY\) - \(right\.feeBps \?\? Number\.POSITIVE_INFINITY\)/);
+assert.match(activeRescue, /const liveProviderEvidence = freshProvidersByLowestMeasuredFee\(providerMeasurements\)/);
+assert.match(activeRescue, /explicitPairPoolFeePriority: true/);
+assert.match(activeRescue, /pairPoolFeeEconomicAuthority: 'fresh_route_quote_output'/);
+assert.match(activeRescue, /pairPoolFeeDoubleCounted: false/);
+assert.match(activeRescue, /unknownPairPoolFeeAssumedFree: false/);
+assert.match(activeRescue, /flashProviderPriority: 'fresh_lowest_measured_fee_then_liquidity'/);
+assert.match(activeRescue, /zeroFeeFlashProviderPreferredWhenFreshAndFundable: true/);
+assert.match(activeRescue, /liveFlashProviderEvidenceReevaluatedPerSettledQuote: true/);
+assert.match(activeRescue, /lateFlashProviderEvidenceCanJoinExistingRace: true/);
+assert.match(activeRescue, /flashFeePriorityAddsWait: false/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 assert.doesNotMatch(activeRescue, /Promise\.allSettled\(sizes\.map/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked and enters the zero-I/O resident APE fast path by reference; active measured rescue preserves genuine partial BPS gains, recursively feeds only strict derived improvements back through bounded same-handoff passes, stops each candidate at strict-positive all-in economics, preserves candidate identity across alternate-route overlays, and keeps execution authority unchanged');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked and enters the zero-I/O resident APE fast path by reference; active measured rescue preserves genuine partial BPS gains, recursively feeds only strict derived improvements back through bounded same-handoff passes, prioritizes explicit lower-fee pair/pool routes and fresh zero/lowest-fee flash providers without double-counting or adding a wait, stops each candidate at strict-positive all-in economics, preserves candidate identity across alternate-route overlays, and keeps execution authority unchanged');
