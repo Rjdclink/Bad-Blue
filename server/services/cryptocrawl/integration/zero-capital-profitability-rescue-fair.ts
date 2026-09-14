@@ -14,6 +14,13 @@ export interface FairZeroCapitalProfitabilityRescueInput {
   fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
 }
 
+function copyOpportunity(opportunity: ZeroCapitalOpportunity): ZeroCapitalOpportunity {
+  return {
+    ...opportunity,
+    route: opportunity.route.map(leg => ({ ...leg })),
+  };
+}
+
 /**
  * Compatibility entry name retained for canonical discovery. Runtime behavior is
  * deliberately singular: locked Stage-1 output is handed directly in-memory to
@@ -22,6 +29,10 @@ export interface FairZeroCapitalProfitabilityRescueInput {
  * execution authority. Shared-principal composition is triggered only from inside
  * this same Stage-2 pipeline and runs in parallel so it cannot delay a good single
  * route. There is no persisted fairness scheduler or second transformation loop.
+ *
+ * The Stage-1 objects themselves are never handed to a transformation worker.
+ * Stage 2/3 receive a fresh structural copy on every attempt, preserving the
+ * locked Stage-1 candidate identity, order, BPS and lifetime exactly as observed.
  */
 export async function runFairZeroCapitalProfitabilityRescue(
   input: FairZeroCapitalProfitabilityRescueInput,
@@ -29,9 +40,13 @@ export async function runFairZeroCapitalProfitabilityRescue(
   const fromQuotedRoute: FairZeroCapitalProfitabilityRescueInput['fromQuotedRoute'] =
     (quote, blockTimestamp) => input.fromQuotedRoute.call(zeroCapitalEngine, quote, blockTimestamp);
 
+  // Snapshot the locked Stage-1 boundary once. Handoff supervision may inspect this
+  // snapshot, but all transformation workers receive independent copies below.
+  const stageOneSnapshot = input.opportunities.map(copyOpportunity);
+
   const result = await handoffStageOneToAtomicBps({
     chain: input.chain,
-    opportunities: input.opportunities,
+    opportunities: stageOneSnapshot,
     consume: async handoff => {
       // ACK is emitted by the actual Stage-2 consumer, not by the supervisor. This
       // makes a broken Stage-1 -> Stage-2 call contract observable immediately while
@@ -39,6 +54,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
       handoff.acknowledge();
       const transformed = await runZeroCapitalAtomicBpsEngine({
         ...input,
+        opportunities: stageOneSnapshot.map(copyOpportunity),
         fromQuotedRoute,
       });
       if (!handoff.isActive()) return transformed;
@@ -70,6 +86,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     oneTransformationAuthority: true,
     oneTransformationPipeline: true,
     stageOneDirectInMemoryHandoff: true,
+    stageOneInputIsolatedFromTransformation: true,
     stageTwoExplicitAcknowledgement: true,
     boundedRecursiveHandoffSupervision: true,
     concurrentDuplicateStageTwoRuns: false,
