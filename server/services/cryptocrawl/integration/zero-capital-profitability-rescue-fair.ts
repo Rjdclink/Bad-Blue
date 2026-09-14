@@ -6,6 +6,7 @@ import { primeApeResidentRouting } from './atomic-profitability-resident-routing
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
 import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
 import { runZeroCapitalProfitabilityRescueV3 } from './zero-capital-profitability-rescue-v3.js';
+import { runZeroCapitalRouteSplitRescue } from './zero-capital-route-split-rescue.js';
 
 export interface FairZeroCapitalProfitabilityRescueInput {
   chain: SupportedChain;
@@ -109,12 +110,55 @@ export async function runFairZeroCapitalProfitabilityRescue(
 
   const strictPositiveAfterRescue = transformed.filter(opportunity => opportunity.expiresAt > Date.now() && opportunity.expectedProfit > 0n).length;
   const postDecision = setImmediate(() => {
-    void runZeroCapitalAtomicStackTactic({ chain: input.chain, provider: input.provider, opportunities: transformed }).catch(error => {
-      logger.debug('[ZeroCapitalProfitabilityRescueFair] Post-APE composite tactic degraded locally', {
-        component: 'ZeroCapitalProfitabilityRescueFair', chain: input.chain,
-        error: error instanceof Error ? error.message : String(error), singleRouteResultAffected: false, executionAuthority: false,
+    void (async () => {
+      // Route splitting deliberately runs only after the single-route APE decision.
+      // It feeds fresh partial-route evidence into the existing exact-simulated
+      // composite receiver path and therefore does not add execution authority or
+      // latency to the returned single-route result.
+      const splitResult = await runZeroCapitalRouteSplitRescue({
+        ...input,
+        opportunities: transformed,
+      }).catch(error => {
+        logger.debug('[ZeroCapitalProfitabilityRescueFair] Post-APE route-split tactic degraded locally', {
+          component: 'ZeroCapitalProfitabilityRescueFair',
+          chain: input.chain,
+          error: error instanceof Error ? error.message : String(error),
+          singleRouteResultAffected: false,
+          parentOpportunityKilled: false,
+          executionAuthority: false,
+        });
+        return null;
       });
-    });
+
+      // Preserve the existing general composite tactic after split-specific attempts.
+      // Running it second avoids racing the same per-token composite in-flight key.
+      const stackResult = await runZeroCapitalAtomicStackTactic({
+        chain: input.chain,
+        provider: input.provider,
+        opportunities: transformed,
+      }).catch(error => {
+        logger.debug('[ZeroCapitalProfitabilityRescueFair] Post-APE composite tactic degraded locally', {
+          component: 'ZeroCapitalProfitabilityRescueFair', chain: input.chain,
+          error: error instanceof Error ? error.message : String(error), singleRouteResultAffected: false, executionAuthority: false,
+        });
+        return null;
+      });
+
+      logger.info('[ZeroCapitalProfitabilityRescueFair] Post-decision APE composite tactics completed', {
+        component: 'ZeroCapitalProfitabilityRescueFair',
+        chain: input.chain,
+        splitAttemptedCandidates: splitResult?.attemptedCandidates ?? 0,
+        splitRoutePairsTried: splitResult?.routePairsTried ?? 0,
+        splitCompositePromoted: splitResult?.promoted ?? 0,
+        splitCompositePromotionIds: splitResult?.promotedOpportunityIds ?? [],
+        generalCompositePromoted: stackResult?.promoted ?? 0,
+        generalCompositePromotionIds: stackResult?.promotedOpportunityIds ?? [],
+        postDecisionOnly: true,
+        blocksSingleRouteApeReturn: false,
+        independentExecutionAuthority: false,
+      });
+    })();
+
     logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> APE active rescue continuation completed', {
       component: 'ZeroCapitalProfitabilityRescueFair', chain: input.chain,
       profitabilityFinishLine: 'strict_positive_all_in_base_units', residentFastPathFirst: true,
@@ -131,6 +175,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
       stageTwoHandoffSupervisorOnHotPath: false, stageTwoAcknowledgementWaitOnHotPath: false,
       stageOneMutation: false, syntheticEconomics: false, externalQueueOnHotPath: false,
       persistenceOnHotPath: false, supabaseOnHotPath: false, compositeTacticInsideSamePipeline: true,
+      routeSplitTacticScheduledAfterApeDecision: true, routeSplitTacticBlocksSingleRouteReturn: false,
       compositeTacticBlocksSingleRouteReturn: false, compositeTacticScheduledAfterApeDecision: true,
       independentCompositePromotionLoop: false, executionAuthority: false,
     });
