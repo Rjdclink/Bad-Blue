@@ -21,7 +21,7 @@ import {
 import { defaultEthereumPrimaryMarketAnchorRoutes } from './primary-market-anchor-routes.js';
 
 const UNISWAP_V3_QUOTER_ABI = [
-  'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee,uint256 amountIn,uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
+  'function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) returns (uint256 amountOut)',
 ];
 
 const V2_ROUTER_ABI = [
@@ -40,14 +40,14 @@ const V2_ROUTERS: Partial<Record<SupportedSwapProtocol, Partial<Record<Supported
     ethereum: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F',
     polygon: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
     arbitrum: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
-    bsc: '0x1b02dA8Cb0d097e8D57A175b88c7D8b47997506',
-    avalanche: '0x1b02dA8Cb0d097e8D57A175b88c7D8b47997506',
+    bsc: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
+    avalanche: '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',
   },
   pancakeswapV2: {
     bsc: '0x10ED43C718714eb63d5aA57B78B54704E256024E',
   },
   traderJoeV1: {
-    avalanche: '0x60aE616a2155Ee3dA68541Ba4544862310933d4',
+    avalanche: '0x60aE616a2155Ee3d9A68541Ba4544862310933d4',
   },
 };
 
