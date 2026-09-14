@@ -86,7 +86,13 @@ function residentBestBpsOverlay(
   if (!Number.isFinite(resident.netProfitBps) || resident.netProfitBps <= currentBps) return opportunity;
 
   const refined = input.fromQuotedRoute(resident, originalBlockTimestamp(opportunity));
-  if (refined.expiresAt <= Date.now() || refined.id !== opportunity.id) return opportunity;
+  if (refined.id !== opportunity.id) return opportunity;
+  // fromQuotedRoute normally stamps a fresh lifetime for a newly acquired quote.
+  // This is an overlay of evidence from the SAME upstream size sweep, so APE must
+  // inherit Stage-1 freshness instead of manufacturing a new observation window.
+  refined.timestamp = opportunity.timestamp;
+  refined.expiresAt = opportunity.expiresAt;
+  if (refined.expiresAt <= Date.now()) return opportunity;
   if (opportunity.inputAssetUsdPrice !== undefined) refined.inputAssetUsdPrice = opportunity.inputAssetUsdPrice;
   return refined;
 }
@@ -210,6 +216,7 @@ export function runZeroCapitalAtomicBpsEngine(
       exploratoryCallsCreatedByApe: 0,
       residentSizeEvidenceReadOnly: true,
       upstreamSizeSweepRepeatedByApe: false,
+      overlayInheritsStageOneFreshness: true,
       crossThreadTransfer: false,
       ringBufferOnHotPath: false,
       intermediateQueueOnHotPath: false,
