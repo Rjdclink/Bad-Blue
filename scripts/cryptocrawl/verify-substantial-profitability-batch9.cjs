@@ -65,7 +65,7 @@ const behaviors = [
   ['cex', 'smallest_risk_adjusted_then_exact_bps_to_break_even_first', 'risk-adjusted near-miss ordering'],
 
   ['zero', 'baseUnitsFromUsd(usd: number, decimals: number, inputTokenUsdPrice: number)', 'token-price-and-decimal-correct sizing'],
-  ['zero', 'opportunity.expiresAt > now', 'fresh-only zero-capital rescue selection'],
+  ['zero', 'opportunity.expiresAt + rescueSeedGraceMs() > now', 'bounded stale seed may be structural input for a fresh requote only'],
   ['zero', 'refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()', 'fresh requote expiry validation'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS', 'provider evidence freshness bound'],
   ['zero', 'ZERO_CAPITAL_PROVIDER_MAX_UTILIZATION', 'provider utilization ceiling'],
@@ -112,9 +112,10 @@ for (const [fileKey, pattern, name] of behaviors) {
 }
 
 if (!source.zero.includes('function recoverableByAtomicSurplus') ||
-    !source.zero.includes('opportunity.expiresAt > now') ||
+    !source.zero.includes('opportunity.expiresAt + rescueSeedGraceMs() > now') ||
+    !source.zero.includes('recentlyExpiredSeedIsStructuralOnly: true') ||
     !source.zero.includes('refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()')) {
-  throw new Error('[substantial-profitability-batch9] zero-capital rescue must admit only fresh near-misses and require independently fresh refined evidence');
+  throw new Error('[substantial-profitability-batch9] zero-capital rescue may use only a bounded recently expired seed as structural requote input and must require independently fresh refined evidence before any economic improvement survives');
 }
 if (!source.cex.includes('function scheduleNext') ||
     !source.cex.includes('setTimeout(() =>') ||
@@ -174,4 +175,4 @@ if (fs.existsSync(path.join(root, 'server/services/cryptocrawl/integration/zero-
   throw new Error('[substantial-profitability-batch9] duplicate zero-capital size/provider optimizer wrappers must remain retired');
 }
 
-console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue remains single-owner after locked Stage-1 classification, the resident APE fast path runs first on the exact Stage-1 references, bounded active measured rescue derives fresh evidence without mutating Stage 1 or gaining execution authority, fresh requotes supersede stale seeds without extending stale evidence, Profit Ladder remains realized-profit telemetry/accounting rather than Atomic borrowing or execution veto authority, canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
+console.log('[substantial-profitability-batch9] PASS: fifty-three behavior-level profitability enhancements are present; zero-capital rescue remains single-owner after locked Stage-1 classification, the resident APE fast path runs first on the exact Stage-1 references, bounded active measured rescue derives fresh evidence without mutating Stage 1 or gaining execution authority, bounded recently expired seeds are structural requote inputs only and cannot extend stale economics, fresh requotes supersede stale seeds, Profit Ladder remains realized-profit telemetry/accounting rather than Atomic borrowing or execution veto authority, canonical execution uses the live price mesh, duplicate optimizer wrappers remain retired, and implemented CEX topology remains settlement-gated');
