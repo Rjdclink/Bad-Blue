@@ -9,6 +9,7 @@ import {
 import { fetchJsonWithRetry } from '../utils/resilient-http.js';
 import { getCoinbaseAdvancedSpotProductDirectory } from './coinbase-advanced-market-data.js';
 import { getCachedOkxExecutionRestBaseUrl } from './cex-private-authority.js';
+import { getHedgedDexQuote } from './dex-quote-provider-mesh.js';
 import { zeroXRequestBudget } from './zerox-request-budget.js';
 import { resolveZeroXRequestPolicy, type ZeroXRequestPurpose } from './zerox-request-policy.js';
 
@@ -188,7 +189,7 @@ class MarketDataProviders {
     coincap: { provider: 'coincap', state: 'not_queried', observedAt: null, detail: 'not queried' },
     coingecko: { provider: 'coingecko', state: 'not_queried', observedAt: null, detail: 'not queried' },
     coinstats: { provider: 'coinstats', state: 'not_queried', observedAt: null, detail: 'not queried' },
-    '0x': { provider: '0x', state: 'not_queried', observedAt: null, detail: 'not queried' },
+    '0x': { provider: '0x', state: 'not_queried', observedAt: null, detail: 'legacy 0x network path retired; hedged DEX mesh is authoritative' },
   };
 
   getProviderStatuses(): MarketDataProviderStatus[] {
@@ -302,6 +303,12 @@ class MarketDataProviders {
     tradeSurplusRecipient?: string;
     tradeSurplusMaxBps?: number;
   }): Promise<DexQuoteObservation | null> {
+    // The hedged mesh is now the sole live DEX quote path. The historical 0x
+    // implementation below remains syntactically present only to preserve
+    // compatibility telemetry and make rollback local/reversible; it is not
+    // reachable from production quote requests.
+    return getHedgedDexQuote(request);
+
     const now = Date.now();
     const bypassUnavailableCooldown = request.purpose === 'execution' || request.forceRefresh === true;
     if (this.zeroXUnavailableUntil > now && !bypassUnavailableCooldown) {
