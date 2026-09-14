@@ -1,6 +1,7 @@
 import { Contract, BigNumber, ethers, providers } from 'ethers';
 import { multiProviderRpcManager, type SupportedChain as RpcSupportedChain } from '../../api/blockchain-providers.js';
 import type { SupportedExecutionChain } from './onchain-payload-builder.js';
+import { getFlashLoanDemandHint } from './flash-loan-demand-hint.js';
 import { resolveSponsoredReceiverVault } from './sponsored-receiver-manager.js';
 
 export type FlashLoanProviderKind = 'balancer_v2' | 'aave_v3' | 'morpho_blue';
@@ -384,6 +385,31 @@ async function measureWithRouteLocalFailover(
   }
 }
 
+function upsertEvidence(target: FlashLoanProviderEconomics[], value: FlashLoanProviderEconomics): void {
+  const index = target.findIndex(item => item.provider === value.provider);
+  if (index < 0) target.push(value);
+  else if (value.observedAt >= target[index].observedAt) target[index] = value;
+}
+
+function dualEvidenceCanFund(
+  evidence: readonly FlashLoanProviderEconomics[],
+  requestedAmount: bigint,
+): boolean {
+  const complete = (item: FlashLoanProviderEconomics | undefined): item is FlashLoanProviderEconomics => Boolean(
+    item
+    && item.executableEvidenceComplete
+    && item.availableLiquidity !== null
+    && item.availableLiquidity > 0n
+    && item.feeBps !== null
+    && item.feeRateNumerator !== null
+    && item.feeRateDenominator !== null,
+  );
+  const balancer = evidence.find(item => item.provider === 'balancer_v2');
+  const aave = evidence.find(item => item.provider === 'aave_v3');
+  if (!complete(balancer) || !complete(aave)) return false;
+  return balancer.availableLiquidity! + aave.availableLiquidity! >= requestedAmount;
+}
+
 export async function measureFlashLoanProviders(input: {
   chain: SupportedExecutionChain;
   provider: providers.Provider;
@@ -428,26 +454,72 @@ export async function measureFlashLoanProviders(input: {
 
   if (attempts.length === 0) return [];
 
-  // Unsupported providers are omitted before work begins. A configured protocol
-  // may truthfully return incomplete/zero-liquidity evidence, which must remain a
-  // fulfilled measurement. Only transport/contract-call failures reject. If every
-  // applicable protocol rejects, propagate failure so callers do not cache an empty
-  // batch as if it were valid market evidence.
-  const settled = await Promise.allSettled(attempts.map(attempt => attempt.promise));
-  const evidence = settled.flatMap(result =>
-    result.status === 'fulfilled' && result.value ? [result.value] : [],
-  );
-  if (evidence.length === 0 && settled.every(result => result.status === 'rejected')) {
-    const failures = settled.map((result, index) => {
-      const kind = attempts[index].kind;
-      const reason = result.status === 'rejected'
-        ? result.reason instanceof Error ? result.reason.message : String(result.reason)
-        : 'no evidence';
-      return `${kind}:${reason}`;
-    });
-    throw new Error(`All applicable flash-loan provider measurements failed for ${input.chain}: ${failures.join(' | ')}`);
+  const requestedAmount = getFlashLoanDemandHint(input.chain, input.asset);
+  if (requestedAmount === null || requestedAmount <= 0n) {
+    // Non-APE callers retain the prior exhaustive behavior. The resident demand
+    // hint is advisory only and never becomes a prerequisite for measurement.
+    const settled = await Promise.allSettled(attempts.map(attempt => attempt.promise));
+    const evidence = settled.flatMap(result =>
+      result.status === 'fulfilled' && result.value ? [result.value] : [],
+    );
+    if (evidence.length === 0 && settled.every(result => result.status === 'rejected')) {
+      const failures = settled.map((result, index) => {
+        const kind = attempts[index].kind;
+        const reason = result.status === 'rejected'
+          ? result.reason instanceof Error ? result.reason.message : String(result.reason)
+          : 'no evidence';
+        return `${kind}:${reason}`;
+      });
+      throw new Error(`All applicable flash-loan provider measurements failed for ${input.chain}: ${failures.join(' | ')}`);
+    }
+    return evidence;
   }
-  return evidence;
+
+  // APE has already published the largest live amount for this chain/asset batch.
+  // Resolve as soon as one measured single provider can fund that amount, or when
+  // measured Aave+Balancer liquidity can fund it together. The SAME array object
+  // remains live after resolution, so slower siblings enrich the caller's resident
+  // cache without holding the current fundable opportunity behind a straggler.
+  return new Promise<FlashLoanProviderEconomics[]>((resolve, reject) => {
+    const evidence: FlashLoanProviderEconomics[] = [];
+    const failures: string[] = [];
+    let remaining = attempts.length;
+    let resolved = false;
+
+    const amountFundable = () =>
+      selectMeasuredFlashLoanProvider(evidence, requestedAmount) !== null
+      || dualEvidenceCanFund(evidence, requestedAmount);
+
+    const maybeResolve = () => {
+      if (resolved || !amountFundable()) return;
+      resolved = true;
+      resolve(evidence);
+    };
+
+    const finish = () => {
+      if (remaining > 0) return;
+      if (resolved) return;
+      if (evidence.length === 0 && failures.length === attempts.length) {
+        reject(new Error(`All applicable flash-loan provider measurements failed for ${input.chain}: ${failures.join(' | ')}`));
+        return;
+      }
+      resolved = true;
+      resolve(evidence);
+    };
+
+    for (const attempt of attempts) {
+      void attempt.promise.then(value => {
+        if (value) upsertEvidence(evidence, value);
+        remaining -= 1;
+        maybeResolve();
+        finish();
+      }).catch(error => {
+        failures.push(`${attempt.kind}:${error instanceof Error ? error.message : String(error)}`);
+        remaining -= 1;
+        finish();
+      });
+    }
+  });
 }
 
 export function selectMeasuredFlashLoanProvider(
