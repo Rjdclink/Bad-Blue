@@ -62,14 +62,25 @@ assert.match(residentApe, /apiCallsCreatedByApe: 0/);
 assert.match(residentApe, /stageOneMutation: false/);
 assert.match(residentApe, /executionAuthority: false/);
 
-// Active rescue must use measured route/provider evidence and strict positive all-in
-// base units before a transformed result can leave the APE profitability boundary.
+// Active rescue must use fresh measured route/provider evidence, preserve every
+// strict measured BPS improvement, and use a bounded hedged quote race instead of
+// waiting for the slowest member of a full batch. Only strict-positive all-in base
+// units may proceed to downstream canonical execution; partial gains remain rescue
+// evidence and never acquire execution authority.
 assert.match(activeRescue, /measureFlashLoanProviders\(/);
 assert.match(activeRescue, /quoteConfiguredZeroCapitalRoute\(/);
-assert.match(activeRescue, /Promise\.allSettled\(sizes\.map/);
+assert.match(activeRescue, /function quoteWithDeadline\(/);
+assert.match(activeRescue, /Promise\.race\(pending\.values\(\)\)/);
+assert.match(activeRescue, /ZERO_CAPITAL_RESCUE_HEDGE_WIDTH/);
+assert.match(activeRescue, /routeFamilyAlternativesActuated: true/);
+assert.match(activeRescue, /quoteRaceWaitsForSlowest: false/);
+assert.match(activeRescue, /partialMeasuredBpsImprovementPreserved: true/);
+assert.match(activeRescue, /if \(!best \|\| !strictImprovement\(opportunity, best\)\)/);
+assert.match(activeRescue, /partialBpsImprovements \+= 1/);
 assert.match(activeRescue, /candidate\.netProfit > 0n/);
 assert.match(activeRescue, /exactStrictPositiveRequiredBeforePromotion: true/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
+assert.doesNotMatch(activeRescue, /Promise\.allSettled\(sizes\.map/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked at -10 BPS; resident APE fast path is unchanged; active measured rescue is reconnected with derived evidence only and strict-positive promotion before downstream canonical execution');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked at -10 BPS; resident APE fast path is unchanged; active measured rescue preserves genuine partial BPS gains, uses bounded route/provider/size hedging without waiting for the slowest quote, and still requires strict-positive all-in economics before downstream canonical execution');
