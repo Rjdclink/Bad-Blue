@@ -29,9 +29,11 @@ assert.match(fairRescue, /opportunities: input\.opportunities/);
 assert.match(fairRescue, /stageOneSameReferenceContinuation: true/);
 assert.match(fairRescue, /stageOneStructuralCopies: 0/);
 assert.match(fairRescue, /stageTwoHandoffSupervisorOnHotPath: false/);
+assert.match(fairRescue, /const postDecision = setImmediate\(/);
 assert.doesNotMatch(fairRescue, /copyOpportunity/);
 assert.doesNotMatch(fairRescue, /handoffStageOneToAtomicBps/);
 assert.doesNotMatch(fairRescue, /stageOneSnapshot/);
+assert.doesNotMatch(fairRescue, /queueMicrotask/);
 
 // APE itself is local/in-memory only. No exploratory quote/provider/price/database work.
 assert.match(ape, /export function runZeroCapitalAtomicBpsEngine/);
@@ -40,17 +42,21 @@ assert.match(ape, /maximize_exact_executable_net_bps_from_already_arrived_eviden
 assert.match(ape, /routeQuotesCreatedByApe: 0/);
 assert.match(ape, /rpcCallsCreatedByApe: 0/);
 assert.match(ape, /apiCallsCreatedByApe: 0/);
+assert.match(ape, /supabaseReadsCreatedByApe: 0/);
+assert.match(ape, /supabaseWritesCreatedByApe: 0/);
 assert.match(ape, /duplicateFlashChecksCreatedByApe: 0/);
 assert.match(ape, /waitsForSlowerUnfinishedRoutes: false/);
 assert.match(ape, /residentRouting: '2_active_plus_1_hedge_plus_2_dormant_reserve'/);
+assert.match(ape, /const telemetry = setImmediate\(/);
 assert.match(ape, /return ordered;/);
 assert.doesNotMatch(ape, /quoteConfiguredZeroCapitalRoute/);
 assert.doesNotMatch(ape, /prewarmAtomicBpsEvidence/);
 assert.doesNotMatch(ape, /refreshAtomicBpsProviderEvidence/);
 assert.doesNotMatch(ape, /measureFlashLoanProviders/);
 assert.doesNotMatch(ape, /livePriceMesh/);
-assert.doesNotMatch(ape, /supabase/i);
+assert.doesNotMatch(ape, /from\(['"]@supabase|from ['"].*supabase|\.from\(['"]/i);
 assert.doesNotMatch(ape, /Promise\.all|Promise\.race|await\s+/);
+assert.doesNotMatch(ape, /queueMicrotask/);
 assert.doesNotMatch(ape, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
 
 // Resident contextual routing is exactly 2 active + 1 hedge + 2 reserve, with
