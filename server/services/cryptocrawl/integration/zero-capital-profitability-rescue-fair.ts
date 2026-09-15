@@ -2,8 +2,9 @@ import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
-import { buildApeProfitabilityToolboxPlan } from './ape-profitability-toolbox.js';
 import {
+  apeStructuralFirstCandidate,
+  apeV4FirstCandidate,
   buildApeCandidateRescueSnapshots,
   buildApeTierBudget,
   isApeUnresolvedOwnershipCandidate,
@@ -87,6 +88,8 @@ export async function runFairZeroCapitalProfitabilityRescue(
   primeApeResidentRouting(input.opportunities);
   const residentFastPath = runZeroCapitalAtomicBpsEngine({ ...input, opportunities: input.opportunities });
   const activeRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
+  const initialV4FirstCandidates = activeRescueCandidates.filter(apeV4FirstCandidate);
+  const initialStructuralFirstCandidates = activeRescueCandidates.filter(apeStructuralFirstCandidate);
   const boundFromQuotedRoute = input.fromQuotedRoute.bind(zeroCapitalEngine);
 
   let transformed = residentFastPath;
@@ -139,14 +142,18 @@ export async function runFairZeroCapitalProfitabilityRescue(
   };
 
   if (activeRescueCandidates.length > 0) {
-    activeMeasuredRescueInvoked = true;
     try {
+      // Exact resident gross-edge classification prevents V4's provider/cost
+      // machinery from spending candidate lifetime on a route that has no gross
+      // edge to compress. Structural candidates remain APE-owned and flow directly
+      // to route rescue below; nothing is rejected or removed from the toolbox.
       const passInput = prioritizeApeRescueCandidates({
         roots: residentFastPath,
-        current: transformed.filter(stillNeedsMeasuredRescue),
+        current: transformed.filter(stillNeedsMeasuredRescue).filter(apeV4FirstCandidate),
         startedAt: rescueStartedAt,
       });
       if (passInput.length > 0 && Date.now() < deadlineAt) {
+        activeMeasuredRescueInvoked = true;
         const measured = await runZeroCapitalProfitabilityRescueV4({
           ...input,
           opportunities: passInput,
@@ -172,7 +179,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
         }
       }
 
-      if (Date.now() >= deadlineAt) recursiveWallClockStops = 1;
+      if (activeMeasuredRescueInvoked && Date.now() >= deadlineAt) recursiveWallClockStops = 1;
     } catch (error) {
       activeMeasuredRescueError = error instanceof Error ? error.message : String(error);
       logger.warn('[ZeroCapitalProfitabilityRescueFair] Deadline-aware APE rescue degraded locally; latest strict improvements continue', {
@@ -226,26 +233,23 @@ export async function runFairZeroCapitalProfitabilityRescue(
   let firstStrictPositiveTool: 'route_split' | 'shared_principal_stack' | null = null;
 
   if (unresolved.length > 0) {
-    const driverCounts = new Map<string, number>();
-    for (const opportunity of unresolved) {
-      const plan = buildApeProfitabilityToolboxPlan(opportunity);
-      const driver = plan?.advice.dominantCostDriver ?? 'unknown';
-      driverCounts.set(driver, (driverCounts.get(driver) ?? 0) + 1);
-    }
-    const fixedCostCount = (driverCounts.get('gas') ?? 0)
-      + (driverCounts.get('relay') ?? 0)
-      + (driverCounts.get('flash_premium') ?? 0)
-      + (driverCounts.get('bridge') ?? 0);
-    const impactCount = (driverCounts.get('slippage_impact') ?? 0)
-      + (driverCounts.get('exchange_fees') ?? 0);
-    splitFirst = impactCount >= fixedCostCount;
+    // Worker selection now uses exact resident gross economics instead of building
+    // the heavyweight advisory BPS toolbox on the live candidate clock.
+    const structuralCount = unresolved.filter(apeStructuralFirstCandidate).length;
+    const costPositiveCount = unresolved.length - structuralCount;
+    splitFirst = structuralCount > 0 && structuralCount >= costPositiveCount;
+    const splitCandidates = [...unresolved].sort((left, right) =>
+      Number(apeStructuralFirstCandidate(right)) - Number(apeStructuralFirstCandidate(left))
+      || left.expiresAt - right.expiresAt,
+    );
+    const stackCandidates = unresolved.filter(apeV4FirstCandidate);
 
     const runSplit = async () => {
       if (!canStartCompositeWork() || firstStrictPositiveTool !== null) return;
       splitInvoked = true;
       splitResult = await runZeroCapitalRouteSplitRescue({
         ...input,
-        opportunities: unresolved,
+        opportunities: splitCandidates,
         fromQuotedRoute: boundFromQuotedRoute,
       }).catch(error => {
         routeSplitError = error instanceof Error ? error.message : String(error);
@@ -263,12 +267,15 @@ export async function runFairZeroCapitalProfitabilityRescue(
     };
 
     const runStack = async () => {
-      if (unresolved.length < 2 || !canStartCompositeWork() || firstStrictPositiveTool !== null) return;
+      // Shared-principal composition can only compress costs when member cycles
+      // already have positive gross route value. Do not spend its hot-path work on
+      // structurally non-positive-gross candidates that cannot benefit from it.
+      if (stackCandidates.length < 2 || !canStartCompositeWork() || firstStrictPositiveTool !== null) return;
       stackInvoked = true;
       stackResult = await runZeroCapitalAtomicStackTactic({
         chain: input.chain,
         provider: input.provider,
-        opportunities: unresolved,
+        opportunities: stackCandidates,
       }).catch(error => {
         stackError = error instanceof Error ? error.message : String(error);
         logger.debug('[ZeroCapitalProfitabilityRescueFair] In-APE shared-principal composite tactic degraded locally', {
@@ -301,6 +308,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
     activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV4',
     activeMeasuredRescueInvoked,
     activeMeasuredRescueCandidates: activeRescueCandidates.length,
+    v4CostPositiveGrossCandidates: initialV4FirstCandidates.length,
+    structuralNonPositiveGrossCandidatesBypassingV4: initialStructuralFirstCandidates.length,
+    workerDefectClassificationSource: 'resident_exact_gross_base_units_no_io',
+    workerDefectClassificationAddsNetworkLatency: false,
+    advisoryBpsIntelligenceOnFairCriticalPath: false,
     activeMeasuredRescueOverlays,
     streamedMeasuredImprovements,
     alternateRouteIdentityRebindings,
