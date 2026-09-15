@@ -39,8 +39,8 @@ assert.match(residentApe, /apiCallsCreatedByApe: 0/);
 assert.match(residentApe, /stageOneMutation: false/);
 assert.match(residentApe, /executionAuthority: false/);
 
-// Every live finite negative candidate that reaches APE is rescue-owned. V4 may
-// not add another fixed BPS entry floor after Stage One.
+// Every finite negative candidate that reaches APE is rescue-owned. V4 may not
+// add another fixed BPS entry floor after Stage One.
 assert.match(toolbox, /export function isApeRescueCandidate/);
 assert.match(toolbox, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(activeRescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
@@ -71,9 +71,9 @@ assert.match(toolbox, /driver === 'slippage_impact' \|\| driver === 'latency_dec
 assert.match(toolbox, /superPlan\.residualNotionalFractions/);
 assert.match(activeRescue, /dynamicSizeLadder: 'bps_toolbox_driver_aware_provider_boundaries_residual_fractions_and_fixed_cost_dilution'/);
 
-// V4 shares provider races, reuses an exact resident starting quote when present,
-// falls back to a live quote only when necessary, and consumes candidate results in
-// completion order instead of waiting for the full batch.
+// V4 shares provider races, reuses only an exact-notional resident starting quote
+// when present, falls back to a live quote only when necessary, and consumes
+// candidate results in completion order instead of waiting for the full batch.
 assert.match(gateway, /runZeroCapitalProfitabilityRescueV4\(\{/);
 assert.match(gateway, /deadlineAt,/);
 assert.match(gateway, /maxRefinements: maxPasses/);
@@ -83,8 +83,9 @@ assert.match(gateway, /stageOneMutation: false/);
 assert.match(gateway, /syntheticEconomics: false/);
 assert.match(activeRescue, /const providerRaces = new Map<string, Promise<FlashLoanProviderEconomics\[\]>>\(\)/);
 assert.match(activeRescue, /if \(providerRaces\.has\(key\)\) continue;/);
-assert.match(activeRescue, /const residentInitial = peekResidentBestBpsQuote\(primaryRoute\.id\)/);
-assert.match(activeRescue, /const residentMatchesIntended = residentInitial\?\.amountIn === intendedAmount/);
+assert.match(activeRescue, /const residentInitial = peekResidentExactQuote\(primaryRoute\.id, intendedAmount\)/);
+assert.match(activeRescue, /const residentMatchesIntended = residentInitial !== null/);
+assert.doesNotMatch(activeRescue, /peekResidentBestBpsQuote/);
 assert.match(activeRescue, /const initialQuotePromise: Promise<TimedQuoteResult> = residentMatchesIntended/);
 assert.match(activeRescue, /: quoteOnce\(primaryRoute, intendedAmount\)/);
 assert.doesNotMatch(activeRescue, /const initialQuotePromise = quoteOnce\(primaryRoute, intendedAmount\)/);
@@ -181,4 +182,4 @@ assert.match(activeRescue, /stageOneMutation: false/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; APE reuses resident starting proof before any requote, consumes rescue work in completion order, assigns every valid Route Splitter candidate before splittability can reject exact work, exposes arrived structural alternatives through a resident workbench, piggybacks peer hints without a queue/poll/ack path, and keeps exact aggregate all-in economics plus the canonical executor as the only promotion authorities');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; APE requires exact-notional resident starting proof before avoiding a requote, consumes rescue work in completion order, assigns every valid Route Splitter candidate before splittability can reject exact work, exposes arrived structural alternatives through a resident workbench, piggybacks peer hints without a queue/poll/ack path, and keeps exact aggregate all-in economics plus the canonical executor as the only promotion authorities');
