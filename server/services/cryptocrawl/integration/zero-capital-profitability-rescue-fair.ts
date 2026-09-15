@@ -20,6 +20,8 @@ export interface FairZeroCapitalProfitabilityRescueInput {
   fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
 }
 
+const fallbackRotationCursorByChain = new Map<string, number>();
+
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const value = Number(raw);
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
@@ -31,6 +33,10 @@ function recursivePassLimit(): number {
 
 function recursiveWallClockBudgetMs(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_RECURSIVE_MAX_MS, 3_000, 250, 10_000));
+}
+
+function fallbackCandidateBudget(): number {
+  return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_FALLBACK_CANDIDATE_BUDGET, 2, 1, 5));
 }
 
 function stillNeedsMeasuredRescue(opportunity: ZeroCapitalOpportunity): boolean {
@@ -69,6 +75,37 @@ function hasLiveResidentRouteEvidence(
   return Boolean(resident && resident.chain === opportunity.chain);
 }
 
+/**
+ * Bound cold/missing resident recovery globally instead of multiplying a per-candidate
+ * retry allowance across the whole pass. The closest-to-profit miss always receives
+ * one slot; remaining slots rotate through other misses so a degraded route cannot
+ * permanently starve unrelated alternatives. Unadmitted candidates are not rejected
+ * or mutated; they return unchanged and are eligible again on the next fresh scan.
+ */
+function selectResidentMissRecoveryCandidates(
+  chain: SupportedChain,
+  candidates: readonly ZeroCapitalOpportunity[],
+  budget: number,
+): ZeroCapitalOpportunity[] {
+  if (candidates.length <= budget) return [...candidates];
+  const ranked = [...candidates].sort((left, right) => {
+    if (right.netProfitBps !== left.netProfitBps) return right.netProfitBps - left.netProfitBps;
+    if (right.expectedProfit !== left.expectedProfit) return right.expectedProfit > left.expectedProfit ? 1 : -1;
+    return left.id.localeCompare(right.id);
+  });
+  if (budget <= 1 || ranked.length <= 1) return ranked.slice(0, 1);
+
+  const selected: ZeroCapitalOpportunity[] = [ranked[0]];
+  const rotating = ranked.slice(1);
+  const start = (fallbackRotationCursorByChain.get(chain) ?? 0) % rotating.length;
+  const slots = Math.min(budget - 1, rotating.length);
+  for (let offset = 0; offset < slots; offset += 1) {
+    selected.push(rotating[(start + offset) % rotating.length]);
+  }
+  fallbackRotationCursorByChain.set(chain, (start + slots) % rotating.length);
+  return selected;
+}
+
 function strictDerivedImprovement(before: ZeroCapitalOpportunity, after: ZeroCapitalOpportunity): boolean {
   if (after === before) return false;
   if (!Number.isFinite(before.netProfitBps) || !Number.isFinite(after.netProfitBps)) return false;
@@ -85,10 +122,13 @@ export async function runFairZeroCapitalProfitabilityRescue(
   primeApeResidentRouting(input.opportunities);
   const residentFastPath = runZeroCapitalAtomicBpsEngine({ ...input, opportunities: input.opportunities });
   const measuredRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
-  const activeRescueCandidates = measuredRescueCandidates.filter(
+  const residentMissCandidates = measuredRescueCandidates.filter(
     opportunity => !hasLiveResidentRouteEvidence(input, opportunity),
   );
-  const residentEvidenceSuppressedRemoteRescue = measuredRescueCandidates.length - activeRescueCandidates.length;
+  const recoveryBudget = fallbackCandidateBudget();
+  const activeRescueCandidates = selectResidentMissRecoveryCandidates(input.chain, residentMissCandidates, recoveryBudget);
+  const residentEvidenceSuppressedRemoteRescue = measuredRescueCandidates.length - residentMissCandidates.length;
+  const recoveryBudgetDeferredCandidates = residentMissCandidates.length - activeRescueCandidates.length;
   const boundFromQuotedRoute = input.fromQuotedRoute.bind(zeroCapitalEngine);
 
   let transformed = residentFastPath;
@@ -236,8 +276,13 @@ export async function runFairZeroCapitalProfitabilityRescue(
       profitabilityFinishLine: 'strict_positive_all_in_base_units',
       residentFastPathFirst: true,
       residentRouteEvidencePrimary: true,
-      remoteMeasuredRescuePolicy: 'resident_miss_recovery_only',
+      remoteMeasuredRescuePolicy: 'resident_miss_recovery_only_with_bounded_fair_admission',
       residentEvidenceSuppressedRemoteRescue,
+      residentMissCandidates: residentMissCandidates.length,
+      fallbackCandidateBudget: recoveryBudget,
+      recoveryBudgetDeferredCandidates,
+      recoveryRotationFairness: true,
+      deferredCandidatesRemainEligibleNextFreshScan: true,
       activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV4',
       activeMeasuredRescueInvoked,
       activeMeasuredRescueCandidates: activeRescueCandidates.length,
