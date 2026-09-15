@@ -2,11 +2,12 @@ import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
+import { buildApeProfitabilityToolboxPlan } from './ape-profitability-toolbox.js';
 import { primeApeResidentRouting } from './atomic-profitability-resident-routing.js';
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
-import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
+import { runZeroCapitalAtomicStackTactic, type AtomicStackTacticResult } from './zero-capital-atomic-stack-wiring.js';
 import { runZeroCapitalProfitabilityRescueV4 } from './zero-capital-profitability-rescue-v4.js';
-import { runZeroCapitalRouteSplitRescue } from './zero-capital-route-split-rescue.js';
+import { runZeroCapitalRouteSplitRescue, type ZeroCapitalRouteSplitRescueResult } from './zero-capital-route-split-rescue.js';
 
 export interface FairZeroCapitalProfitabilityRescueInput {
   chain: SupportedChain;
@@ -29,6 +30,10 @@ function recursiveWallClockBudgetMs(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_RECURSIVE_MAX_MS, 3_000, 250, 10_000));
 }
 
+function compositeToolboxBudgetMs(): number {
+  return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_COMPOSITE_MAX_MS, 2_500, 250, 7_500));
+}
+
 function stillNeedsMeasuredRescue(opportunity: ZeroCapitalOpportunity): boolean {
   return opportunity.expiresAt > Date.now()
     && opportunity.flashLoanAmount > 0n
@@ -43,6 +48,30 @@ function strictDerivedImprovement(before: ZeroCapitalOpportunity, after: ZeroCap
   if (after.expectedProfit <= 0n) return false;
   if (after.expectedProfit !== before.expectedProfit) return after.expectedProfit > before.expectedProfit;
   return after.netProfitBps > before.netProfitBps;
+}
+
+function emptySplitResult(): ZeroCapitalRouteSplitRescueResult {
+  return {
+    attemptedCandidates: 0,
+    routePairsTried: 0,
+    splitRatiosTried: 0,
+    partialQuotesLaunched: 0,
+    partialQuoteFailures: 0,
+    compositeMeasurements: 0,
+    promoted: 0,
+    promotedOpportunityIds: [],
+    executionAuthority: false,
+  };
+}
+
+function emptyStackResult(): AtomicStackTacticResult {
+  return {
+    attemptedGroups: 0,
+    measuredVariants: 0,
+    promoted: 0,
+    promotedOpportunityIds: [],
+    executionAuthority: false,
+  };
 }
 
 /** Stage-1 stays immutable; only derived measured overlays are eligible to replace APE output. */
@@ -145,104 +174,149 @@ export async function runFairZeroCapitalProfitabilityRescue(
     opportunity => opportunity.expiresAt > Date.now() && opportunity.expectedProfit > 0n,
   ).length;
 
-  const postDecision = setImmediate(() => {
-    void (async () => {
-      const splitResult = await runZeroCapitalRouteSplitRescue({
+  const unresolved = transformed.filter(stillNeedsMeasuredRescue);
+  const compositeStartedAt = Date.now();
+  const compositeBudgetMs = compositeToolboxBudgetMs();
+  let splitResult = emptySplitResult();
+  let stackResult = emptyStackResult();
+  let routeSplitError: string | null = null;
+  let stackError: string | null = null;
+  let splitInvoked = false;
+  let stackInvoked = false;
+  let splitFirst = true;
+
+  if (unresolved.length > 0) {
+    const driverCounts = new Map<string, number>();
+    for (const opportunity of unresolved) {
+      const plan = buildApeProfitabilityToolboxPlan(opportunity);
+      const driver = plan?.advice.dominantCostDriver ?? 'unknown';
+      driverCounts.set(driver, (driverCounts.get(driver) ?? 0) + 1);
+    }
+    const fixedCostCount = (driverCounts.get('gas') ?? 0)
+      + (driverCounts.get('relay') ?? 0)
+      + (driverCounts.get('flash_premium') ?? 0)
+      + (driverCounts.get('bridge') ?? 0);
+    const impactCount = (driverCounts.get('slippage_impact') ?? 0)
+      + (driverCounts.get('exchange_fees') ?? 0);
+    splitFirst = impactCount >= fixedCostCount;
+
+    const runSplit = async () => {
+      if (Date.now() - compositeStartedAt >= compositeBudgetMs) return;
+      splitInvoked = true;
+      splitResult = await runZeroCapitalRouteSplitRescue({
         ...input,
-        opportunities: transformed,
+        opportunities: unresolved,
         fromQuotedRoute: boundFromQuotedRoute,
       }).catch(error => {
-        logger.debug('[ZeroCapitalProfitabilityRescueFair] Post-APE route-split tactic degraded locally', {
+        routeSplitError = error instanceof Error ? error.message : String(error);
+        logger.debug('[ZeroCapitalProfitabilityRescueFair] In-APE route-split tactic degraded locally', {
           component: 'ZeroCapitalProfitabilityRescueFair',
           chain: input.chain,
-          error: error instanceof Error ? error.message : String(error),
+          error: routeSplitError,
           singleRouteResultAffected: false,
           parentOpportunityKilled: false,
           executionAuthority: false,
         });
-        return null;
+        return emptySplitResult();
       });
+    };
 
-      const stackResult = await runZeroCapitalAtomicStackTactic({
+    const runStack = async () => {
+      if (unresolved.length < 2 || Date.now() - compositeStartedAt >= compositeBudgetMs) return;
+      stackInvoked = true;
+      stackResult = await runZeroCapitalAtomicStackTactic({
         chain: input.chain,
         provider: input.provider,
-        opportunities: transformed,
+        opportunities: unresolved,
       }).catch(error => {
-        logger.debug('[ZeroCapitalProfitabilityRescueFair] Post-APE composite tactic degraded locally', {
+        stackError = error instanceof Error ? error.message : String(error);
+        logger.debug('[ZeroCapitalProfitabilityRescueFair] In-APE shared-principal composite tactic degraded locally', {
           component: 'ZeroCapitalProfitabilityRescueFair',
           chain: input.chain,
-          error: error instanceof Error ? error.message : String(error),
+          error: stackError,
           singleRouteResultAffected: false,
           executionAuthority: false,
         });
-        return null;
+        return emptyStackResult();
       });
+    };
 
-      logger.info('[ZeroCapitalProfitabilityRescueFair] Post-decision APE composite tactics completed', {
-        component: 'ZeroCapitalProfitabilityRescueFair',
-        chain: input.chain,
-        splitAttemptedCandidates: splitResult?.attemptedCandidates ?? 0,
-        splitRoutePairsTried: splitResult?.routePairsTried ?? 0,
-        splitCompositePromoted: splitResult?.promoted ?? 0,
-        splitCompositePromotionIds: splitResult?.promotedOpportunityIds ?? [],
-        generalCompositePromoted: stackResult?.promoted ?? 0,
-        generalCompositePromotionIds: stackResult?.promotedOpportunityIds ?? [],
-        postDecisionOnly: true,
-        blocksSingleRouteApeReturn: false,
-        independentExecutionAuthority: false,
-      });
-    })();
+    if (splitFirst) {
+      await runSplit();
+      await runStack();
+    } else {
+      await runStack();
+      await runSplit();
+    }
+  }
 
-    logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> deadline-aware anytime APE continuation completed', {
-      component: 'ZeroCapitalProfitabilityRescueFair',
-      chain: input.chain,
-      profitabilityFinishLine: 'strict_positive_all_in_base_units',
-      residentFastPathFirst: true,
-      activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV4',
-      activeMeasuredRescueInvoked,
-      activeMeasuredRescueCandidates: activeRescueCandidates.length,
-      activeMeasuredRescueOverlays,
-      streamedMeasuredImprovements,
-      alternateRouteIdentityRebindings,
-      strictPositiveAfterRescue,
-      activeMeasuredRescueError,
-      recursiveMeasuredPasses,
-      recursiveMeasuredPassLimit: maxPasses,
-      recursiveWallClockBudgetMs: wallClockBudgetMs,
-      recursiveHardDeadlineAt: deadlineAt,
-      recursiveStrictPositiveStops,
-      recursiveNoImprovementStops,
-      recursiveWallClockStops,
-      recursivePartialImprovementFeedback: true,
-      passBarrierRemoved: true,
-      candidateLocalAnytimeRefinement: true,
-      hardDeadlinePropagatedIntoMeasuredRescue: true,
-      recursiveStrictImprovementRequired: true,
-      recursiveStopsAtStrictPositivePerCandidate: true,
-      recursiveProviderFailureLocal: true,
-      fromQuotedRouteContextBound: true,
-      stageOneSameReferenceIntoResidentFastPath: true,
-      activeRescueCreatesDerivedEvidenceOnly: true,
-      derivedOverlayPreservesCandidateIdentity: true,
-      alternateRouteEvidencePreservedInDerivedOverlay: true,
-      stageOneSameReferenceContinuation: true,
-      stageOneStructuralCopies: 0,
-      stageTwoHandoffSupervisorOnHotPath: false,
-      stageTwoAcknowledgementWaitOnHotPath: false,
-      stageOneMutation: false,
-      syntheticEconomics: false,
-      externalQueueOnHotPath: false,
-      persistenceOnHotPath: false,
-      supabaseOnHotPath: false,
-      compositeTacticInsideSamePipeline: true,
-      routeSplitTacticScheduledAfterApeDecision: true,
-      routeSplitTacticBlocksSingleRouteReturn: false,
-      compositeTacticBlocksSingleRouteReturn: false,
-      compositeTacticScheduledAfterApeDecision: true,
-      independentCompositePromotionLoop: false,
-      executionAuthority: false,
-    });
+  const compositeElapsedMs = Date.now() - compositeStartedAt;
+  logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> full-toolbox deadline-aware APE continuation completed', {
+    component: 'ZeroCapitalProfitabilityRescueFair',
+    chain: input.chain,
+    profitabilityFinishLine: 'strict_positive_all_in_base_units',
+    residentFastPathFirst: true,
+    activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV4',
+    activeMeasuredRescueInvoked,
+    activeMeasuredRescueCandidates: activeRescueCandidates.length,
+    activeMeasuredRescueOverlays,
+    streamedMeasuredImprovements,
+    alternateRouteIdentityRebindings,
+    strictPositiveAfterRescue,
+    unresolvedAfterSingleRouteRescue: unresolved.length,
+    activeMeasuredRescueError,
+    recursiveMeasuredPasses,
+    recursiveMeasuredPassLimit: maxPasses,
+    recursiveWallClockBudgetMs: wallClockBudgetMs,
+    recursiveHardDeadlineAt: deadlineAt,
+    recursiveStrictPositiveStops,
+    recursiveNoImprovementStops,
+    recursiveWallClockStops,
+    recursivePartialImprovementFeedback: true,
+    passBarrierRemoved: true,
+    candidateLocalAnytimeRefinement: true,
+    hardDeadlinePropagatedIntoMeasuredRescue: true,
+    recursiveStrictImprovementRequired: true,
+    recursiveStopsAtStrictPositivePerCandidate: true,
+    recursiveProviderFailureLocal: true,
+    fromQuotedRouteContextBound: true,
+    stageOneSameReferenceIntoResidentFastPath: true,
+    activeRescueCreatesDerivedEvidenceOnly: true,
+    derivedOverlayPreservesCandidateIdentity: true,
+    alternateRouteEvidencePreservedInDerivedOverlay: true,
+    stageOneSameReferenceContinuation: true,
+    stageOneStructuralCopies: 0,
+    stageTwoHandoffSupervisorOnHotPath: false,
+    stageTwoAcknowledgementWaitOnHotPath: false,
+    stageOneMutation: false,
+    syntheticEconomics: false,
+    externalQueueOnHotPath: false,
+    persistenceOnHotPath: false,
+    supabaseOnHotPath: false,
+    compositeTacticInsideSamePipeline: true,
+    toolboxFinalRescueBeforeReturn: true,
+    toolboxCompositeBudgetMs: compositeBudgetMs,
+    toolboxCompositeElapsedMs: compositeElapsedMs,
+    toolboxCompositeOrder: splitFirst ? 'route_split_then_shared_principal_stack' : 'shared_principal_stack_then_route_split',
+    routeSplitInvoked: splitInvoked,
+    routeSplitAttemptedCandidates: splitResult.attemptedCandidates,
+    routeSplitRoutePairsTried: splitResult.routePairsTried,
+    routeSplitCompositePromoted: splitResult.promoted,
+    routeSplitCompositePromotionIds: splitResult.promotedOpportunityIds,
+    routeSplitError,
+    generalCompositeInvoked: stackInvoked,
+    generalCompositeAttemptedGroups: stackResult.attemptedGroups,
+    generalCompositeMeasuredVariants: stackResult.measuredVariants,
+    generalCompositePromoted: stackResult.promoted,
+    generalCompositePromotionIds: stackResult.promotedOpportunityIds,
+    generalCompositeError: stackError,
+    routeSplitTacticScheduledAfterApeDecision: false,
+    routeSplitTacticBlocksSingleRouteReturn: unresolved.length > 0,
+    compositeTacticBlocksSingleRouteReturn: unresolved.length > 0,
+    compositeTacticScheduledAfterApeDecision: false,
+    independentCompositePromotionLoop: false,
+    executionAuthority: false,
   });
-  postDecision.unref?.();
+
   return transformed;
 }

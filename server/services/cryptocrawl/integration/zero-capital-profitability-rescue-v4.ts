@@ -13,6 +13,13 @@ import {
   type QuotedZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
 import { getProfitLadderDailyProfitBudget } from '../governance/profit-ladder-daily-profit-budget.js';
+import {
+  apePrefersRouteAlternatives,
+  buildApeProfitabilityToolboxPlan,
+  buildApeTargetAmounts,
+  isApeRescueCandidate,
+  type ApeProfitabilityToolboxPlan,
+} from './ape-profitability-toolbox.js';
 
 type TimedQuoteResult = {
   quote: QuotedZeroCapitalRoute | null;
@@ -71,10 +78,6 @@ const concurrencyByChain = new Map<string, ConcurrencyState>();
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const value = Number(raw);
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
-}
-
-function atomicSurplusEntryFloorBps(): number {
-  return bounded(process.env.ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS, -10, -100, 0);
 }
 
 function rescueSeedGraceMs(): number {
@@ -188,10 +191,7 @@ function bpsFromBaseUnits(value: bigint, notional: bigint): number {
 }
 
 function recoverableByAtomicSurplus(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
-  return opportunity.expiresAt + rescueSeedGraceMs() > now
-    && opportunity.flashLoanAmount > 0n
-    && Number.isFinite(opportunity.netProfitBps)
-    && opportunity.netProfitBps >= atomicSurplusEntryFloorBps();
+  return isApeRescueCandidate(opportunity, rescueSeedGraceMs(), now);
 }
 
 function routeForOpportunity(
@@ -407,49 +407,6 @@ function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1000);
 }
 
-function multiplyAmount(amount: bigint, numerator: bigint, denominator = 100n): bigint {
-  if (amount <= 0n || numerator <= 0n || denominator <= 0n) return 0n;
-  const value = amount * numerator / denominator;
-  return value > 0n ? value : 1n;
-}
-
-function targetedAmounts(
-  intended: bigint,
-  fundingCeiling: bigint,
-  evidence: readonly FlashLoanProviderEconomics[],
-): bigint[] {
-  if (intended <= 0n || fundingCeiling <= 0n) return [];
-  const clamped = intended < fundingCeiling ? intended : fundingCeiling;
-  const values: bigint[] = [clamped];
-  const safe = safeProviderEvidence(evidence)
-    .sort((left, right) => {
-      const feeDelta = (left.feeBps ?? Number.POSITIVE_INFINITY) - (right.feeBps ?? Number.POSITIVE_INFINITY);
-      if (feeDelta !== 0) return feeDelta;
-      const leftLiquidity = left.availableLiquidity ?? 0n;
-      const rightLiquidity = right.availableLiquidity ?? 0n;
-      return leftLiquidity === rightLiquidity ? 0 : leftLiquidity > rightLiquidity ? -1 : 1;
-    });
-  for (const item of safe) {
-    const capacity = item.availableLiquidity ?? 0n;
-    if (capacity > 0n && capacity < clamped) values.push(capacity);
-  }
-  values.push(multiplyAmount(clamped, 75n));
-  values.push(multiplyAmount(clamped, 50n));
-  values.push(multiplyAmount(clamped, 35n));
-  if (fundingCeiling > intended) {
-    const doubled = intended * 2n;
-    values.push(doubled < fundingCeiling ? doubled : fundingCeiling);
-  }
-  const seen = new Set<string>();
-  return values.filter(value => {
-    if (value <= 0n || value > fundingCeiling) return false;
-    const key = value.toString();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
 function awaitWithDeadline<T>(promise: Promise<T>, deadlineAt: number, fallback: T): Promise<T> {
   const waitMs = remainingMs(deadlineAt);
   if (waitMs <= 0) return Promise.resolve(fallback);
@@ -556,6 +513,8 @@ export async function runZeroCapitalProfitabilityRescueV4(
   const quoteCache = new Map<string, Promise<TimedQuoteResult>>();
   const providerRaces = new Map<string, Promise<FlashLoanProviderEconomics[]>>();
   const routeMaxSuccessfulAmount = new Map<string, bigint>();
+  const toolboxPlans = new Map<string, ApeProfitabilityToolboxPlan | null>();
+  const toolboxDominantDrivers = new Map<string, number>();
 
   let providerRaceCount = 0;
   let providerProbeFailures = 0;
@@ -580,10 +539,26 @@ export async function runZeroCapitalProfitabilityRescueV4(
   let strictPositiveEarlyWins = 0;
   let anytimeRefinementIterations = 0;
   let streamingImprovementCallbacks = 0;
+  let toolboxPlansBuilt = 0;
+  let toolboxRouteFirstSearches = 0;
+  let toolboxSizeFirstSearches = 0;
+
+  const toolboxPlanFor = (opportunity: ZeroCapitalOpportunity): ApeProfitabilityToolboxPlan | null => {
+    if (toolboxPlans.has(opportunity.id)) return toolboxPlans.get(opportunity.id) ?? null;
+    const plan = buildApeProfitabilityToolboxPlan(opportunity);
+    toolboxPlans.set(opportunity.id, plan);
+    if (plan) {
+      toolboxPlansBuilt += 1;
+      const driver = plan.advice.dominantCostDriver;
+      toolboxDominantDrivers.set(driver, (toolboxDominantDrivers.get(driver) ?? 0) + 1);
+    }
+    return plan;
+  };
 
   const providerKeyFor = (opportunity: ZeroCapitalOpportunity) => `${chain}:${opportunity.inputToken.toLowerCase()}`;
   for (const opportunity of opportunities) {
     if (!recoverableByAtomicSurplus(opportunity) || deadlineReached(deadlineAt)) continue;
+    toolboxPlanFor(opportunity);
     const key = providerKeyFor(opportunity);
     if (providerRaces.has(key)) continue;
     providerRaceCount += 1;
@@ -621,6 +596,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
     if (routes.length === 0) return opportunity;
     const providerRace = providerRaces.get(providerKeyFor(opportunity));
     if (!providerRace) return opportunity;
+    const toolboxPlan = toolboxPlanFor(opportunity);
 
     const intendedAmount = opportunity.flashLoanAmount;
     const primaryRoute = routes[0];
@@ -668,7 +644,15 @@ export async function runZeroCapitalProfitabilityRescueV4(
       }
     }
 
-    const amounts = targetedAmounts(intendedAmount, fundingCeiling, providerMeasurements);
+    const safeEvidence = safeProviderEvidence(providerMeasurements);
+    const amounts = buildApeTargetAmounts({
+      intended: intendedAmount,
+      fundingCeiling,
+      providerCapacityBoundaries: safeEvidence
+        .map(item => item.availableLiquidity ?? 0n)
+        .filter(value => value > 0n),
+      plan: toolboxPlan,
+    });
     const targetAmount = amounts[0] ?? (intendedAmount < fundingCeiling ? intendedAmount : fundingCeiling);
     const seen = new Set<string>([`${primaryRoute.id}:${intendedAmount.toString()}`]);
     const targets: QuoteTarget[] = [];
@@ -688,8 +672,16 @@ export async function runZeroCapitalProfitabilityRescueV4(
       targets.push({ route, amount, plan });
     };
 
-    for (const route of routes.slice(1)) addTarget(route, targetAmount);
-    for (const amount of amounts) addTarget(primaryRoute, amount);
+    const routeFirst = apePrefersRouteAlternatives(toolboxPlan);
+    if (routeFirst) {
+      toolboxRouteFirstSearches += 1;
+      for (const route of routes.slice(1)) addTarget(route, targetAmount);
+      for (const amount of amounts) addTarget(primaryRoute, amount);
+    } else {
+      toolboxSizeFirstSearches += 1;
+      for (const amount of amounts) addTarget(primaryRoute, amount);
+      for (const route of routes.slice(1)) addTarget(route, targetAmount);
+    }
     for (const amount of amounts.slice(1)) {
       for (const route of routes.slice(1)) addTarget(route, amount);
     }
@@ -815,14 +807,24 @@ export async function runZeroCapitalProfitabilityRescueV4(
     })),
     providerLiquidityTelemetrySeparatedFromRouteQuoteCapacity: true,
     routeSplitExecutionSupported: false, routeSplitPromotionSuppressed: true,
-    routeSplitReason: 'current_canonical_quote_and_execution_object_represents_one_sequential_route_only',
-    dynamicSizeLadder: 'intended_or_provider_clamp_then_provider_fee_boundaries_then_75_50_35_percent_with_one_fixed_cost_dilution_probe',
+    routeSplitReason: 'current_canonical_quote_and_execution_object_represents_one_sequential_route_only; composite split tactic owned by outer APE toolbox',
+    dynamicSizeLadder: 'bps_toolbox_driver_aware_provider_boundaries_residual_fractions_and_fixed_cost_dilution',
+    fixedBpsRescueEntryFloor: false,
+    rescueOwnership: 'every_live_finite_negative_stage1_candidate_received_by_ape',
     resizeInsteadOfReject: true,
     liquidityShortagePolicy: 'reroute_or_resize_until_compatible_profitable_combinations_exhausted',
+    toolboxPlansBuilt,
+    toolboxDominantDrivers: [...toolboxDominantDrivers.entries()].map(([driver, count]) => ({ driver, count })),
+    toolboxRouteFirstSearches,
+    toolboxSizeFirstSearches,
+    bpsSuperEngineUsedForSearchScheduling: true,
+    economicTransformationAdviceUsedForSearchScheduling: true,
+    researchBpsTacticsUsedForSearchScheduling: true,
+    advisoryCanVetoDeterministicPositive: false,
     combinationsExhausted, improved, partialBpsImprovements, strictPositiveRecoveries, invalidFreshRefinement,
     anytimeRefinementIterations, streamingImprovementCallbacks, passBarrierRemoved: true,
     candidateLocalRecursiveFeedback: true, refinementLimit,
-    advisoryBpsIntelligenceOnCriticalPath: false, profitLadderDatabaseReadOnCriticalPath: false,
+    advisoryBpsIntelligenceOnCriticalPath: true, profitLadderDatabaseReadOnCriticalPath: false,
     feeOrderingChanged: false, stageOneMutation: false, freshExactRequoteRequired: true,
     exactStrictPositiveRequiredBeforePromotion: true, syntheticEconomics: false, executionAuthority: false,
   });
