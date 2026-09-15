@@ -14,6 +14,16 @@ const before = (source, first, second, message) => {
   assert.ok(b >= 0, `${message}: missing second marker ${second}`);
   assert.ok(a < b, message);
 };
+const collectTsFiles = relative => {
+  const absolute = path.join(root, relative);
+  const files = [];
+  for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
+    const child = path.join(relative, entry.name);
+    if (entry.isDirectory()) files.push(...collectTsFiles(child));
+    else if (entry.isFile() && entry.name.endsWith('.ts')) files.push(child.replaceAll('\\', '/'));
+  }
+  return files;
+};
 
 const floor = read('server/services/cryptocrawl/integration/zero-capital-profit-output-floor.ts');
 const stageOne = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
@@ -24,6 +34,8 @@ const merit = read('server/services/cryptocrawl/integration/ape-adaptive-command
 const prices = read('server/services/cryptocrawl/bridge/live-price-mesh.ts');
 const stack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 const barrier = read('server/services/cryptocrawl/integration/zero-capital-dynamic-attempt-barrier-wiring.ts');
+const router = read('server/services/cryptocrawl/execution/unified-execution-router.ts');
+const resources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
 const scheduler = read('server/services/cryptocrawl/execution/canonical-execution-scheduler.ts');
 const executor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 
@@ -68,6 +80,20 @@ has(stack, 'missingCompositeReceiverFailsBeforeRpc: true', 'composite zero-I/O c
 has(stack, 'requiredProfitBaseUnitsForFiveDollarOutput', 'composite $5 base-unit target missing');
 has(stack, 'if (!clearsFiveDollarOutputFloor(opportunity, measuredAt)) return null;', 'composite may expose an under-$5 measured opportunity');
 
+// Unified routing must keep positive-but-under-$5 ZERO_CAPITAL candidates in reacquisition/APE instead of admission.
+has(router, 'ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'unified router does not import the canonical $5 output authority');
+has(router, 'deterministicNet >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'unified router can admit ZERO_CAPITAL below $5');
+has(router, 'reacquire:atomic_minimum_output_profit_not_met', 'under-$5 ZERO_CAPITAL reacquisition reason missing');
+
+// Resource admission must fail in memory before gas decision, database leases, or scarce resource claims.
+has(resources, 'clearsFiveDollarOutputFloor', 'resource scheduler $5 gate missing');
+before(
+  resources,
+  'if (!clearsFiveDollarOutputFloor(opportunity)) return null;',
+  'const gasDecision = await strictCanonicalGasDecision(opportunity.chain);',
+  '$5 resource gate must precede gas-decision I/O',
+);
+
 // Pre-broadcast barrier must reject locally before gas-funding/network work.
 has(barrier, 'evaluateFiveDollarOutputFloor(opportunity, observedAt)', 'pre-broadcast $5 assertion missing');
 before(
@@ -101,4 +127,14 @@ before(
 );
 has(executor, 'minimum_output_profit_usd:${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}', 'prepared-composite $5 provenance missing');
 
-console.log('[ape-latency-five-dollar-floor] PASS: Stage 1 remains locked; APE keeps sub-$5 candidates; resident/singleflight/fail-fast latency controls are active; $5 is reasserted before scheduling and canonical execution');
+// The lower-level flash executor intentionally has no duplicate hot-path floor computation.
+// Enforce structurally that production code can reach it only through the already-gated canonical executor.
+const flashImporters = collectTsFiles('server/services/cryptocrawl')
+  .filter(relative => read(relative).includes("zero-capital-flash-canonical-executor.js"));
+assert.deepEqual(
+  flashImporters,
+  ['server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts'],
+  'lower-level flash executor gained a caller that can bypass the canonical $5 gate',
+);
+
+console.log('[ape-latency-five-dollar-floor] PASS: Stage 1 remains locked; APE keeps sub-$5 candidates; $5 is enforced at unified admission, resource admission, scheduling, pre-broadcast, and the sole canonical execution entrypoint without duplicate hot-path work');
