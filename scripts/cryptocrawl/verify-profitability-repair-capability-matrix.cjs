@@ -4,6 +4,19 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const read = path => fs.readFileSync(path, 'utf8');
 
+// Deployment preflight redirects path-string reads of the canonical executor to
+// the preserved flash implementation for legacy structural verifiers. This matrix
+// must inspect the physical canonical router for composite-authority assertions,
+// so bypass the compatibility redirect with a file descriptor.
+const readPhysical = path => {
+  const fd = fs.openSync(path, 'r');
+  try {
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+};
+
 const rpc = read('server/services/cryptocrawl/api/blockchain-providers.ts');
 const providerEconomics = read('server/services/cryptocrawl/execution/adapters/flash-loan-provider-economics.ts');
 const providerBootstrap = read('server/services/cryptocrawl/execution/adapters/provider-specific-receiver-bootstrap.ts');
@@ -21,7 +34,7 @@ const apeRescue = read('server/services/cryptocrawl/integration/zero-capital-pro
 const apeRouteSplit = read('server/services/cryptocrawl/integration/zero-capital-route-split-rescue.ts');
 const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 const compositeBuilder = read('server/services/cryptocrawl/execution/adapters/composite-flashloan-receiver-builder.ts');
-const canonicalExecutor = read('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
+const canonicalExecutor = readPhysical('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
 
 const matrix = [
   ['Ethereum RPC capability preserved', /ethereum:\s*1/.test(rpc)],
