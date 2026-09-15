@@ -15,6 +15,7 @@ import {
 import {
   calculateMeasuredFlashLoanFee,
   measureBalancerFlashLoanEconomics,
+  type FlashLoanProviderEconomics,
 } from '../execution/adapters/flash-loan-provider-economics.js';
 import { verifyFlashLoanReceiverCapability } from '../execution/adapters/flash-loan-receiver-capability.js';
 import {
@@ -132,15 +133,19 @@ function chooseStack(opportunities: readonly ZeroCapitalOpportunity[]): ZeroCapi
       return grossProfit(right) > grossProfit(left) ? 1 : -1;
     });
 
+  // Adaptive topology policy may rank/size work, but it is advisory and cannot
+  // veto a deterministic two-cycle candidate. Two closed cycles are the actual
+  // composite receiver minimum; policy.minLegs never becomes admission authority.
+  const maximumLegs = Math.max(2, policy.maxLegs);
   const selected: ZeroCapitalOpportunity[] = [];
   let stepCount = 0;
   for (const opportunity of eligible) {
-    if (selected.length >= policy.maxLegs) break;
+    if (selected.length >= maximumLegs) break;
     if (stepCount + opportunity.route.length > 16) continue;
     selected.push(opportunity);
     stepCount += opportunity.route.length;
   }
-  return selected.length >= Math.max(2, policy.minLegs) ? selected : [];
+  return selected.length >= 2 ? selected : [];
 }
 
 function stackVariants(stack: readonly ZeroCapitalOpportunity[]): ZeroCapitalOpportunity[][] {
@@ -172,6 +177,7 @@ async function measureTargetStack(input: {
   provider: providers.JsonRpcProvider;
   wallet: Wallet;
   receiver: string;
+  flashLoanEconomics: FlashLoanProviderEconomics;
   opportunities: ZeroCapitalOpportunity[];
 }): Promise<MeasuredTargetStack | null> {
   if (input.chain === 'europa' || input.opportunities.length < 2) return null;
@@ -215,12 +221,13 @@ async function measureTargetStack(input: {
   }, 0n);
   if (sharedPrincipal <= 0n) return null;
 
-  const balancer = await measureBalancerFlashLoanEconomics({
-    chain: input.chain as any,
-    provider: input.provider,
-    asset: loanToken,
-  }).catch(() => null);
-  if (!balancer?.executableEvidenceComplete || balancer.availableLiquidity === null || balancer.availableLiquidity < sharedPrincipal) return null;
+  const balancer = input.flashLoanEconomics;
+  if (
+    balancer.provider !== 'balancer_v2'
+    || !balancer.executableEvidenceComplete
+    || balancer.availableLiquidity === null
+    || balancer.availableLiquidity < sharedPrincipal
+  ) return null;
   const combinedFlashFee = calculateMeasuredFlashLoanFee(balancer, sharedPrincipal);
   if (combinedFlashFee === null) return null;
 
@@ -329,6 +336,7 @@ async function measureTargetStack(input: {
     'exact_strict_positive_composite_gas_estimate',
     'shared_flash_loan_principal',
     'measured_balancer_flash_fee_for_shared_principal',
+    'shared_provider_measurement_reused_across_variants',
     'measured_combined_gas_cost',
     'measured_combined_relay_cost',
     'input_authority:single_atomic_bps_engine_stage1_admitted_candidates',
@@ -520,24 +528,32 @@ async function runGroup(input: {
   provider: providers.JsonRpcProvider;
   wallet: Wallet;
   opportunities: ZeroCapitalOpportunity[];
+  claimPromotion: () => boolean;
 }): Promise<{ measuredVariants: number; promotedOpportunityId: string | null }> {
   const stack = chooseStack(input.opportunities);
   if (stack.length < 2) return { measuredVariants: 0, promotedOpportunityId: null };
-  const compositeCapability = await verifyFlashLoanReceiverCapability({
-    kind: 'balancer_composite_v2',
-    chain: input.chain,
-    provider: input.provider,
-    expectedOwner: input.wallet.address,
-  }).catch(() => null);
-  if (!compositeCapability) return { measuredVariants: 0, promotedOpportunityId: null };
+
+  const loanToken = stack[0].inputToken;
+  const [compositeCapability, balancerEconomics] = await Promise.all([
+    verifyFlashLoanReceiverCapability({
+      kind: 'balancer_composite_v2',
+      chain: input.chain,
+      provider: input.provider,
+      expectedOwner: input.wallet.address,
+    }).catch(() => null),
+    measureBalancerFlashLoanEconomics({
+      chain: input.chain as any,
+      provider: input.provider,
+      asset: loanToken,
+    }).catch(() => null),
+  ]);
+  if (!compositeCapability || !balancerEconomics?.executableEvidenceComplete) {
+    return { measuredVariants: 0, promotedOpportunityId: null };
+  }
 
   const variants = stackVariants(stack).filter(variant => variant.every(member => member.expiresAt > Date.now()));
   if (variants.length === 0) return { measuredVariants: 0, promotedOpportunityId: null };
 
-  // Completion-order, bounded-wave measurement: a strict-positive exact result can
-  // advance immediately instead of waiting for every slower variant. At most one
-  // sibling measurement can remain read-only after an early win; it has no
-  // promotion/execution authority and its result is ignored.
   const waveWidth = Math.min(2, variants.length);
   let measuredVariants = 0;
   let abandonedReadOnlyMeasurements = 0;
@@ -552,6 +568,7 @@ async function runGroup(input: {
         provider: input.provider,
         wallet: input.wallet,
         receiver: compositeCapability.address,
+        flashLoanEconomics: balancerEconomics,
         opportunities: variant,
       }).then(
         measured => ({ index, measured }),
@@ -570,7 +587,7 @@ async function runGroup(input: {
     }
   }
 
-  if (!best) return { measuredVariants, promotedOpportunityId: null };
+  if (!best || !input.claimPromotion()) return { measuredVariants, promotedOpportunityId: null };
   promoteMeasuredStack(best);
 
   const bestInputTokenUsdPrice = Number(best.opportunity.inputAssetUsdPrice);
@@ -592,6 +609,8 @@ async function runGroup(input: {
     abandonedReadOnlyMeasurements,
     completionOrderVariantMeasurement: true,
     fullVariantBatchBarrier: false,
+    sharedProviderMeasurementPerGroup: true,
+    adaptiveMinLegsAdmissionAuthority: false,
     profitLadderReadOnMeasurementPath: false,
     profitLadderCompositionVetoAuthority: false,
     promotionAuthority: 'single_atomic_bps_engine',
@@ -603,10 +622,9 @@ async function runGroup(input: {
 
 /**
  * Engine-owned composite tactic. The single Atomic-BPS engine is the only caller
- * that may trigger measurement/promotion. Groups are measured in parallel, but a
- * token group shares one in-flight promise so duplicate engine deliveries cannot
- * race two composite promotions. This tactic never blocks or executes a single
- * route and has no independent registry listener.
+ * that may trigger measurement/promotion. Groups are consumed in completion order;
+ * once a strict-positive exact winner claims promotion, unrelated slower groups no
+ * longer hold up the caller and cannot independently claim the same tactic pass.
  */
 export async function runZeroCapitalAtomicStackTactic(input: {
   chain: SupportedChain;
@@ -629,46 +647,72 @@ export async function runZeroCapitalAtomicStackTactic(input: {
     groups.set(key, group);
   }
 
-  const tasks = [...groups.entries()].filter(([, group]) => group.length >= 2).map(([token, opportunities]) => {
+  let promotionClaimed = false;
+  const claimPromotion = () => {
+    if (promotionClaimed) return false;
+    promotionClaimed = true;
+    return true;
+  };
+
+  const tasks = [...groups.entries()].filter(([, group]) => group.length >= 2).map(([token, opportunities], index) => {
     const key = `${input.chain}:${token}`;
     const existing = tacticInFlight.get(key);
-    if (existing) return existing;
-    let task: Promise<AtomicStackTacticResult>;
-    task = runGroup({ chain: input.chain, provider: input.provider, wallet, opportunities })
-      .then(result => ({
-        attemptedGroups: 1,
-        measuredVariants: result.measuredVariants,
-        promoted: result.promotedOpportunityId ? 1 : 0,
-        promotedOpportunityIds: result.promotedOpportunityId ? [result.promotedOpportunityId] : [],
-        executionAuthority: false as const,
-      }))
-      .catch(error => {
-        logger.debug('[ZeroCapitalStack] Engine-owned composite tactic rejected locally', {
-          component: 'ZeroCapitalAtomicStackWiring',
-          chain: input.chain,
-          inputToken: token,
-          error: error instanceof Error ? error.message : String(error),
-          individualExecutionAffected: false,
-          promotionAuthority: 'single_atomic_bps_engine',
-          executionAuthority: false,
+    const task = existing ?? (() => {
+      let created: Promise<AtomicStackTacticResult>;
+      created = runGroup({ chain: input.chain, provider: input.provider, wallet, opportunities, claimPromotion })
+        .then(result => ({
+          attemptedGroups: 1,
+          measuredVariants: result.measuredVariants,
+          promoted: result.promotedOpportunityId ? 1 : 0,
+          promotedOpportunityIds: result.promotedOpportunityId ? [result.promotedOpportunityId] : [],
+          executionAuthority: false as const,
+        }))
+        .catch(error => {
+          logger.debug('[ZeroCapitalStack] Engine-owned composite tactic rejected locally', {
+            component: 'ZeroCapitalAtomicStackWiring',
+            chain: input.chain,
+            inputToken: token,
+            error: error instanceof Error ? error.message : String(error),
+            individualExecutionAffected: false,
+            promotionAuthority: 'single_atomic_bps_engine',
+            executionAuthority: false,
+          });
+          return { attemptedGroups: 1, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false as const };
+        })
+        .finally(() => {
+          if (tacticInFlight.get(key) === created) tacticInFlight.delete(key);
         });
-        return { attemptedGroups: 1, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false as const };
-      })
-      .finally(() => {
-        if (tacticInFlight.get(key) === task) tacticInFlight.delete(key);
-      });
-    tacticInFlight.set(key, task);
-    return task;
+      tacticInFlight.set(key, created);
+      return created;
+    })();
+    return task.then(result => ({ index, result }));
   });
 
-  const results = await Promise.all(tasks);
-  return {
-    attemptedGroups: results.reduce((sum, result) => sum + result.attemptedGroups, 0),
-    measuredVariants: results.reduce((sum, result) => sum + result.measuredVariants, 0),
-    promoted: results.reduce((sum, result) => sum + result.promoted, 0),
-    promotedOpportunityIds: results.flatMap(result => result.promotedOpportunityIds),
+  if (tasks.length === 0) {
+    return { attemptedGroups: 0, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false };
+  }
+
+  const active = new Map<number, Promise<{ index: number; result: AtomicStackTacticResult }>>();
+  tasks.forEach((task, index) => active.set(index, task));
+  const aggregate: AtomicStackTacticResult = {
+    attemptedGroups: 0,
+    measuredVariants: 0,
+    promoted: 0,
+    promotedOpportunityIds: [],
     executionAuthority: false,
   };
+
+  while (active.size > 0) {
+    const settled = await Promise.race([...active.values()]);
+    active.delete(settled.index);
+    aggregate.attemptedGroups += settled.result.attemptedGroups;
+    aggregate.measuredVariants += settled.result.measuredVariants;
+    aggregate.promoted += settled.result.promoted;
+    aggregate.promotedOpportunityIds.push(...settled.result.promotedOpportunityIds);
+    if (settled.result.promoted > 0) return aggregate;
+  }
+
+  return aggregate;
 }
 
 /** Compatibility installer only. Runtime startup may still call this name, but it
@@ -680,6 +724,8 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
   logger.info('[ZeroCapitalStack] Composite capability registered as single-engine tactic', {
     component: 'ZeroCapitalAtomicStackWiring',
     receiverKind: 'balancer_composite_v2',
+    verifiedCompositeProviderSet: ['balancer_v2'],
+    unsupportedCompositeProvidersAreNotFabricated: true,
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
     minimumProfitBaseUnits: STRICT_POSITIVE_PROFIT_BASE_UNITS.toString(),
     stageOneThresholdAuthority: false,
@@ -689,7 +735,11 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     promotionAuthority: 'single_atomic_bps_engine',
     parallelVariantMeasurement: true,
     completionOrderVariantMeasurement: true,
+    completionOrderGroupMeasurement: true,
     fullVariantBatchBarrier: false,
+    fullGroupBatchBarrier: false,
+    sharedProviderMeasurementPerGroup: true,
+    adaptiveMinLegsAdmissionAuthority: false,
     exactStrictPositiveCompositeCallRequired: true,
     exactCompositeGasEstimateRequired: true,
     measuredBalancerFlashFeeRequired: true,
