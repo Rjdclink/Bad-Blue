@@ -30,7 +30,7 @@ const chainEvents = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-
 const ingest = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-settlement-ingest.ts');
 const builder = read('server/services/cryptocrawl/execution/builder-sponsored-receiver-bootstrap.ts');
 const apeGateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
-const apeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v3.ts');
+const apeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
 const apeRouteSplit = read('server/services/cryptocrawl/integration/zero-capital-route-split-rescue.ts');
 const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 const compositeBuilder = read('server/services/cryptocrawl/execution/adapters/composite-flashloan-receiver-builder.ts');
@@ -62,13 +62,18 @@ const matrix = [
   ['10 percent retained capital remains preserved', /retainedFractionBps:\s*1_000/.test(ingest)],
   ['builder cold start uses measured sequential gas', /eth_simulateV1/.test(builder) && /fixed_gas_ceiling_admission:false/.test(builder)],
 
-  // Atomic Profitability Engine V3: the resident APE and Stage One remain unchanged;
-  // active rescue replaces the quote storm with bounded measured transformations.
-  ['APE gateway preserves resident fast path before active rescue', /runZeroCapitalAtomicBpsEngine/.test(apeGateway) && /runZeroCapitalProfitabilityRescueV3/.test(apeGateway)],
-  ['APE recursion still requires strict measured improvement', /if \(passImprovements === 0\)/.test(apeGateway) && /recursiveStrictImprovementRequired: true/.test(apeGateway)],
+  // Atomic Profitability Engine V4: the resident APE and Stage One remain unchanged;
+  // active rescue uses one absolute deadline, bounded hedged transformations and
+  // candidate-local anytime refinement instead of whole-pass recursion barriers.
+  ['APE gateway preserves resident fast path before active rescue', /runZeroCapitalAtomicBpsEngine/.test(apeGateway) && /runZeroCapitalProfitabilityRescueV4/.test(apeGateway) && /activeRescueCandidates = residentFastPath\.filter/.test(apeGateway)],
+  ['APE refinement still requires strict measured improvement', /function strictDerivedImprovement\(/.test(apeGateway) && /if \(!strictDerivedImprovement\(before, normalized\)\) return false;/.test(apeGateway) && /recursiveStrictImprovementRequired: true/.test(apeGateway)],
+  ['APE propagates one absolute deadline into measured rescue', /const deadlineAt = rescueStartedAt \+ wallClockBudgetMs/.test(apeGateway) && /deadlineAt,/.test(apeGateway) && /hardDeadlinePropagatedIntoMeasuredRescue: true/.test(apeGateway)],
+  ['APE removes whole-pass barrier with candidate-local anytime feedback', /onImprovement: \(root, before, candidate\)/.test(apeGateway) && /passBarrierRemoved: true/.test(apeGateway) && /candidateLocalAnytimeRefinement: true/.test(apeGateway)],
   ['APE shares provider races per pass and asset', /const providerRaces = new Map/.test(apeRescue) && /one_per_pass_chain_asset/.test(apeRescue)],
-  ['APE starts route quote and provider probe in parallel', /initialQuotePromise/.test(apeRescue) && /Promise\.all\(\[initialQuotePromise, providerRace\]\)/.test(apeRescue)],
+  ['APE starts route quote and provider probe in parallel', /initialQuotePromise/.test(apeRescue) && /providerMeasurementsPromise/.test(apeRescue) && /Promise\.all\(\[initialQuotePromise, providerMeasurementsPromise\]\)/.test(apeRescue)],
   ['APE evaluates independent candidates concurrently', /mapConcurrent\(opportunities, concurrency, evaluate\)/.test(apeRescue) && /candidateRescueSerial: false/.test(apeRescue)],
+  ['APE uses bounded hedged quote waves rather than serial transformation waits', /hedgedWaveWidth/.test(apeRescue) && /Promise\.race\(\[\.\.\.active\.values\(\)\]\)/.test(apeRescue) && /strictPositiveEarlyWins/.test(apeRescue)],
+  ['APE adapts quote deadlines and candidate concurrency from measured pressure', /adaptiveQuoteTimeoutMs/.test(apeRescue) && /updateConcurrency/.test(apeRescue) && /adaptiveRouteP95Timeouts: true/.test(apeRescue) && /adaptiveConcurrency: true/.test(apeRescue)],
   ['APE resizes provider-limited notionals instead of immediate rejection', /executableFundingCeiling/.test(apeRescue) && /targetedAmounts/.test(apeRescue) && /resizeInsteadOfReject: true/.test(apeRescue)],
   ['APE retains Aave plus Balancer stacking economics', /selectMeasuredDualFlashLoanAllocation/.test(apeRescue) && /aave_balancer_dual/.test(apeRescue)],
   ['APE does not fabricate unsupported Morpho stacking', /morphoStackingEnabled: false/.test(apeRescue)],
