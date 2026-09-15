@@ -35,18 +35,21 @@ has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler must reta
 
 // Shared-principal composition is an internal tactic of the single Atomic-BPS
 // pipeline. It receives the already Stage-1-admitted set rather than owning a second
-// configurable near-miss threshold. It still rejects blocked/expired/unmeasurable
-// members and promotes only after exact simulation proves at least one base unit of
-// all-in net profit plus a real measured composition gain. Daily realized-profit
-// governance remains separate from this measurement worker: Profit Ladder must not
-// become a pre-measurement database dependency or a composition veto.
+// configurable near-miss threshold. Structural ownership survives evidence expiry,
+// but exact simulation rejects stale evidence before it can gain economic or
+// execution authority. Blocked/unmeasurable members still fail locally, and promotion
+// occurs only after exact simulation proves at least one base unit of all-in net
+// profit plus a real measured composition gain. Daily realized-profit governance
+// remains separate from this measurement worker: Profit Ladder must not become a
+// pre-measurement database dependency or a composition veto.
 has(gateway, 'runZeroCapitalAtomicStackTactic', 'single Atomic-BPS gateway must own composite tactic triggering');
 has(gateway, 'compositeTacticInsideSamePipeline: true', 'composite tactic must remain inside the single transformation pipeline');
 has(gateway, 'compositeTacticBlocksSingleRouteReturn: false', 'composite tactic must not delay a profitable single route');
 has(stack, "candidate.status !== 'blocked'", 'atomic stack tactic must reject blocked candidates');
-has(stack, "candidate.status !== 'expired'", 'atomic stack tactic must reject expired candidates');
-has(stack, 'opportunity.expiresAt <= Date.now()', 'atomic stack tactic must require fresh opportunity evidence');
-has(stack, 'candidate.expiresAt > Date.now()', 'atomic stack tactic must require fresh candidate evidence');
+has(stack, 'Structural ownership is independent of evidence freshness.', 'atomic stack must preserve stale candidate ownership independently of evidence freshness');
+has(stack, 'Stale candidates stay owned/plannable, but stale route evidence never gains', 'atomic stack must explicitly separate durable ownership from fresh simulation authority');
+has(stack, 'if (input.opportunities.some(opportunity => opportunity.expiresAt <= now)) return null;', 'atomic stack exact simulation must reject stale opportunity evidence');
+has(stack, 'const expiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt), input.deadlineAt ?? Number.MAX_SAFE_INTEGER);', 'atomic stack exact proof deadline must remain bounded by member evidence expiry');
 has(stack, "candidate.depth.status !== 'unavailable'", 'atomic stack tactic must require measurable route depth');
 has(stack, 'input_authority:single_atomic_bps_engine_stage1_admitted_candidates', 'atomic stack tactic must inherit its intake authority from the locked Stage-1 stream');
 has(stack, 'stageOneThresholdAuthority: false', 'atomic stack tactic must not own Stage-1 threshold authority');
@@ -90,4 +93,4 @@ execFileSync(
   { stdio: 'inherit', env: process.env },
 );
 
-console.log('[required-execution-evidence] PASS: execution remains guarded by topology-correct economics plus minimum sufficient live evidence; ZERO_CAPITAL_ATOMIC uses exact strict-positive all-in base units with no +10 magnitude floor; Atomic composition is an internal single-pipeline tactic over Stage-1-admitted candidates and may promote only when exact simulation proves positive net plus measured composition gain; Profit Ladder stays off the Atomic composition measurement path and cannot become a shadow veto');
+console.log('[required-execution-evidence] PASS: execution remains guarded by topology-correct economics plus minimum sufficient live evidence; ZERO_CAPITAL_ATOMIC uses exact strict-positive all-in base units with no +10 magnitude floor; Atomic composition retains stale candidate ownership for bounded reacquisition/planning but grants no stale economic or execution authority, and may promote only when fresh exact simulation proves positive net plus measured composition gain; Profit Ladder stays off the Atomic composition measurement path and cannot become a shadow veto');
