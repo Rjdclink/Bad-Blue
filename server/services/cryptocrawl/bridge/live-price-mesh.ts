@@ -14,12 +14,8 @@ import {
  */
 class LivePriceMesh {
   private readonly residentEvidence = new Map<string, Readonly<ZeroCapitalPriceEvidence>>();
+  private readonly refreshInFlight = new Map<string, Promise<Map<string, number>>>();
 
-  /**
-   * The underlying live client can legally return an entry from its bounded live
-   * cache. Price evidence therefore backdates observedAt by that maximum cache age
-   * instead of pretending a cache hit was freshly measured at the call boundary.
-   */
   private liveCacheTtlMs(): number {
     const configured = Number(process.env.LIVE_PRICE_CACHE_TTL_MS || 3_000);
     return Number.isFinite(configured)
@@ -34,8 +30,11 @@ class LivePriceMesh {
       : 5_000;
   }
 
-  async getLiveSymbolPrices(symbols: string[]): Promise<Map<string, number>> {
-    const prices = await coinGeckoPriceClient.getLiveSymbolPrices(symbols);
+  private normalizedSymbols(symbols: readonly string[]): string[] {
+    return [...new Set(symbols.map(symbol => symbol.trim().toUpperCase()).filter(Boolean))].sort();
+  }
+
+  private publishResidentEvidence(prices: ReadonlyMap<string, number>): void {
     const receivedAt = Date.now();
     const conservativeObservedAt = Math.max(0, receivedAt - this.liveCacheTtlMs());
     const expiresAt = conservativeObservedAt + this.evidenceMaxAgeMs();
@@ -51,8 +50,30 @@ class LivePriceMesh {
         source: 'live_price_mesh',
       }));
     }
+  }
 
-    return prices;
+  /**
+   * Identical concurrent refreshes share one provider-mesh request. There is no
+   * batching timer, poll, sleep or extra queue: the first caller starts immediately
+   * and siblings reuse the same in-flight promise.
+   */
+  async getLiveSymbolPrices(symbols: string[]): Promise<Map<string, number>> {
+    const normalized = this.normalizedSymbols(symbols);
+    if (normalized.length === 0) return new Map<string, number>();
+    const key = normalized.join('|');
+    const existing = this.refreshInFlight.get(key);
+    if (existing) return existing;
+
+    const pending = coinGeckoPriceClient.getLiveSymbolPrices(normalized)
+      .then(prices => {
+        this.publishResidentEvidence(prices);
+        return prices;
+      })
+      .finally(() => {
+        if (this.refreshInFlight.get(key) === pending) this.refreshInFlight.delete(key);
+      });
+    this.refreshInFlight.set(key, pending);
+    return pending;
   }
 
   /**
