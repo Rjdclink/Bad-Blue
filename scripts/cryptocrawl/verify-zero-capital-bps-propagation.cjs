@@ -259,9 +259,12 @@ assert.doesNotMatch(executor, /opportunity\.netProfitBps > 0/);
 assert.match(executor, /terminalEconomics\(/);
 assert.doesNotMatch(executorEntry, /ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS/);
 
-// Zero-operator-capital truth remains hard-bound.
-assert.match(gasFunding, /function strictZeroOperatorCostRequired\(\): boolean \{\s*return true;\s*\}/);
+// Zero-initial-capital truth remains hard-bound; lifetime zero-operator-cost is an explicit opt-in mode.
+assert.match(gasFunding, /ZERO_INITIAL_CAPITAL_STRICT_OPERATOR_ZERO_COST/);
+assert.match(gasFunding, /toLowerCase\(\) === 'true'/);
 assert.match(gasFunding, /sponsorOperatorMonetaryCostProvenZero === true/);
+assert.match(gasFunding, /if \(sponsorConfiguredAndReady && !requireZeroOperatorCost\)/);
+assert.match(gasFunding, /providerBillingLiability: true/);
 assert.match(gasFunding, /providerBillingLiability: false/);
 assert.match(realizedPolicy, /provider_sponsored_receipt_equivalent_gas_cost/);
 assert.match(executorFlash, /operatorNativeGasInputRequired: false/);
