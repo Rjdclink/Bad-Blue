@@ -13,11 +13,10 @@ const MAX_DAILY_PROFIT_CEILING_USD = 3_500;
 const PROFIT_CUSHION_USD = 50;
 
 /**
- * The operator calendar is an advisory pacing/learning policy only. Canonical
- * profitability, governance, resource, freshness, settlement and circuit-breaker
- * authorities decide whether a trade may execute. The only operator-layer hard
- * rejection retained here is idempotency for an already-reserved/submitted/
- * terminal opportunity.
+ * The operator calendar is advisory learning/telemetry only. Historical daily
+ * trade/profit fields remain readable for schema compatibility, but they never
+ * gate, throttle, reject, delay, or signal against canonical profitable trading.
+ * The only operator-layer hard rejection is duplicate opportunity idempotency.
  */
 export type OperatorStrategyAdvisorySignal =
   | 'learning_day'
@@ -126,15 +125,12 @@ function stateFromRow(row: any): OperatorTradingStrategyState {
   const isTradeDay = row.is_trade_day === true;
   const advisorySignals: OperatorStrategyAdvisorySignal[] = [];
   if (!isTradeDay) advisorySignals.push('learning_day');
-  if (realizedProfitUsd + 1e-9 >= stopProfitUsd) advisorySignals.push('daily_profit_stop');
-  if (submittedTrades >= maxTrades) advisorySignals.push('daily_trade_limit');
   return {
     localDate: canonicalSqlDate(row.local_date),
     cycleStart: canonicalSqlDate(row.cycle_start),
     cycleEnd: canonicalSqlDate(row.cycle_end),
     dayOffset: Number(row.day_offset),
     isTradeDay,
-    // Learning is concurrent/advisory. It never becomes an exclusive runtime mode.
     learningMode: false,
     learningDayScheduled: !isTradeDay,
     maxTrades,
@@ -436,6 +432,8 @@ export const OPERATOR_STRATEGY_CONSTANTS = Object.freeze({
   minDailyProfitCeilingUsd: MIN_DAILY_PROFIT_CEILING_USD,
   maxDailyProfitCeilingUsd: MAX_DAILY_PROFIT_CEILING_USD,
   profitCushionUsd: PROFIT_CUSHION_USD,
+  dailyTradeLimitAuthority: false,
+  dailyProfitStopAuthority: false,
   executionAuthority: false,
   advisoryOnly: true,
 });
