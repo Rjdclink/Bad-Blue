@@ -5,6 +5,7 @@ export type ApeRescueDefect = 'cost_positive_gross' | 'structural_nonpositive_gr
 export interface ApeCandidateRescueSnapshot {
   id: string;
   generation: string;
+  evidenceGeneration: string;
   fresh: boolean;
   unresolved: boolean;
   baselineBps: number;
@@ -71,9 +72,19 @@ export function isApeFreshMeasuredCandidate(
   return isApeUnresolvedOwnershipCandidate(opportunity) && opportunity.expiresAt > now;
 }
 
-/** Stable candidate/work identity; evidence freshness is tracked separately. */
+/** Stable candidate/work identity. */
 function generationOf(opportunity: ZeroCapitalOpportunity): string {
   return opportunity.id;
+}
+
+/** Independently version the evidence carried by that stable candidate. */
+function evidenceGenerationOf(opportunity: ZeroCapitalOpportunity): string {
+  return [
+    opportunity.timestamp,
+    opportunity.expiresAt,
+    opportunity.netProfitBps,
+    opportunity.flashLoanAmount.toString(),
+  ].join(':');
 }
 
 /**
@@ -101,6 +112,7 @@ export function buildApeCandidateRescueSnapshots(input: {
     return {
       id: opportunity.id,
       generation: generationOf(opportunity),
+      evidenceGeneration: evidenceGenerationOf(opportunity),
       fresh: opportunity.expiresAt > now,
       unresolved: isApeUnresolvedOwnershipCandidate(opportunity),
       baselineBps,
