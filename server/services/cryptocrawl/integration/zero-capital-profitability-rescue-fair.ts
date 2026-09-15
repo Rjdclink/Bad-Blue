@@ -1,6 +1,6 @@
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
-import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import { primeApeResidentRouting } from './atomic-profitability-resident-routing.js';
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
@@ -48,6 +48,10 @@ export async function runFairZeroCapitalProfitabilityRescue(
   primeApeResidentRouting(input.opportunities);
   const residentFastPath = runZeroCapitalAtomicBpsEngine({ ...input, opportunities: input.opportunities });
   const activeRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
+  // `fromQuotedRoute` is an instance method on the canonical engine. APE receives
+  // it through the discovery gateway as a callback, so preserve its instance
+  // context before any measured rescue or split-route tactic invokes it.
+  const boundFromQuotedRoute = input.fromQuotedRoute.bind(zeroCapitalEngine);
 
   let transformed = residentFastPath;
   let activeMeasuredRescueInvoked = false;
@@ -72,7 +76,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
         }
         const passInput = transformed.filter(stillNeedsMeasuredRescue);
         if (passInput.length === 0) break;
-        const measured = await runZeroCapitalProfitabilityRescueV3({ ...input, opportunities: passInput });
+        const measured = await runZeroCapitalProfitabilityRescueV3({
+          ...input,
+          opportunities: passInput,
+          fromQuotedRoute: boundFromQuotedRoute,
+        });
         recursiveMeasuredPasses += 1;
         const replacements = new Map<string, ZeroCapitalOpportunity>();
         let passImprovements = 0;
@@ -118,6 +126,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
       const splitResult = await runZeroCapitalRouteSplitRescue({
         ...input,
         opportunities: transformed,
+        fromQuotedRoute: boundFromQuotedRoute,
       }).catch(error => {
         logger.debug('[ZeroCapitalProfitabilityRescueFair] Post-APE route-split tactic degraded locally', {
           component: 'ZeroCapitalProfitabilityRescueFair',
@@ -169,6 +178,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
       recursiveStrictPositiveStops, recursiveNoImprovementStops, recursiveWallClockStops,
       recursivePartialImprovementFeedback: true, recursiveStrictImprovementRequired: true,
       recursiveStopsAtStrictPositivePerCandidate: true, recursiveProviderFailureLocal: true,
+      fromQuotedRouteContextBound: true,
       stageOneSameReferenceIntoResidentFastPath: true, activeRescueCreatesDerivedEvidenceOnly: true,
       derivedOverlayPreservesCandidateIdentity: true, alternateRouteEvidencePreservedInDerivedOverlay: true,
       stageOneSameReferenceContinuation: true, stageOneStructuralCopies: 0,
