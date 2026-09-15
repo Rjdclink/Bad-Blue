@@ -111,9 +111,8 @@ export function routeInventoryFingerprint(routes: readonly ConfiguredZeroCapital
 
 export function routeFamilyKey(route: ConfiguredZeroCapitalRoute): string {
   const protocols = route.legs.map(leg => leg.protocol.toLowerCase()).join('>');
-  const pools = route.legs.map(leg => leg.pool?.toLowerCase() ?? '').join('>');
-  const fees = route.legs.map(leg => leg.feeTier ?? leg.fee ?? '').join('>');
-  return `${routeStructuralKey(route)}|${protocols}|${pools}|${fees}`;
+  const tokenPath = route.legs.map(leg => `${leg.tokenIn.toLowerCase()}>${leg.tokenOut.toLowerCase()}`).join('|');
+  return `${routeStructuralKey(route)}|${protocols}|${tokenPath}`;
 }
 
 function outcomeKey(route: ConfiguredZeroCapitalRoute): string {
@@ -315,6 +314,8 @@ export function buildBoundedStackVariants(
   maxMembers: number,
   maxSteps: number,
 ): ZeroCapitalOpportunity[][] {
+  const memberLimit = Math.max(2, Math.min(8, maxMembers));
+  const candidatePoolLimit = Math.max(memberLimit, Math.min(8, memberLimit + 2));
   const candidates = [...opportunities]
     .filter(item => item.route.length >= 2 && item.route.length <= maxSteps)
     .sort((left, right) => {
@@ -323,7 +324,7 @@ export function buildBoundedStackVariants(
       if (leftPotential !== rightPotential) return leftPotential > rightPotential ? -1 : 1;
       return right.netProfitBps - left.netProfitBps;
     })
-    .slice(0, Math.max(2, Math.min(8, maxMembers)));
+    .slice(0, candidatePoolLimit);
 
   const variants: Array<{ members: ZeroCapitalOpportunity[]; potential: bigint }> = [];
   for (let left = 0; left < candidates.length; left += 1) {
@@ -339,14 +340,16 @@ export function buildBoundedStackVariants(
   }
 
   // Add progressively larger high-potential combinations, but do not require them
-  // to be prefixes of the original ranking.
+  // to be prefixes of the original ranking. One oversized member is local to that
+  // combination and cannot suppress later smaller compatible members.
   for (const seed of [...variants]) {
-    if (seed.members.length >= maxMembers) continue;
+    if (seed.members.length >= memberLimit) continue;
     let steps = seed.members.reduce((sum, item) => sum + item.route.length, 0);
     const members = [...seed.members];
     for (const candidate of candidates) {
       if (members.some(item => item.id === candidate.id)) continue;
-      if (members.length >= maxMembers || steps + candidate.route.length > maxSteps) break;
+      if (members.length >= memberLimit) break;
+      if (steps + candidate.route.length > maxSteps) continue;
       members.push(candidate);
       steps += candidate.route.length;
       variants.push({
