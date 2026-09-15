@@ -123,10 +123,10 @@ function scheduleToolboxPrewarm(opportunity: ZeroCapitalOpportunity, generation:
 
 /**
  * A gross-negative candidate cannot be repaired by cost reduction or notional
- * resizing alone. This zero-I/O deterministic fallback therefore chooses route
- * transformation immediately while the richer advisory plan prewarms. It carries
- * no economic or execution authority and disappears as soon as resident advice is
- * ready. This removes the old null-plan => size-first semantic accident.
+ * resizing alone as its first semantic assumption. This zero-I/O deterministic
+ * fallback therefore chooses route transformation immediately while richer
+ * advisory state prewarms. Advisory systems may refine ordering but cannot
+ * override the exact gross-sign rescue mode.
  */
 function deterministicStructuralFallback(opportunity: ZeroCapitalOpportunity): ApeProfitabilityToolboxPlan | null {
   const defect = buildApeDefectVector(opportunity);
@@ -153,7 +153,7 @@ function deterministicStructuralFallback(opportunity: ZeroCapitalOpportunity): A
     executionAuthority: false,
     provenance: [
       'deterministic_gross_sign_rescue_classifier',
-      'gross_nonpositive_requires_edge_transformation',
+      'gross_nonpositive_requires_edge_transformation_first',
       'no_advisory_wait',
       'synthetic_economics:false',
     ],
@@ -168,11 +168,20 @@ function deterministicStructuralFallback(opportunity: ZeroCapitalOpportunity): A
   };
 }
 
+function applyDeterministicRescueMode(
+  opportunity: ZeroCapitalOpportunity,
+  plan: ApeProfitabilityToolboxPlan | null,
+): ApeProfitabilityToolboxPlan | null {
+  const defect = buildApeDefectVector(opportunity);
+  if (!defect.structuralEdgeDefect) return plan;
+  if (!plan) return deterministicStructuralFallback(opportunity);
+  return { ...plan, deterministicGrossSignFallback: true };
+}
+
 /**
  * Returns resident advisory intelligence when available. Missing advisory state is
- * prewarmed after the current decision turn and never blocks exact rescue. The only
- * synchronous fallback is deterministic gross-sign classification, which makes a
- * structural-negative candidate route-first without performing extra I/O.
+ * prewarmed after the current decision turn and never blocks exact rescue. Exact
+ * gross sign remains sovereign even after richer advice arrives.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
@@ -181,7 +190,7 @@ export function buildApeProfitabilityToolboxPlan(
   const generation = toolboxGeneration(opportunity);
   const cached = residentToolboxPlans.get(opportunity.id);
   if (cached && cached.generation === generation && cached.expiresAt > now && cached.ready) {
-    return cached.plan ?? deterministicStructuralFallback(opportunity);
+    return applyDeterministicRescueMode(opportunity, cached.plan);
   }
 
   residentToolboxPlans.set(opportunity.id, {
@@ -221,6 +230,7 @@ export function apeTargetAttemptLimit(
 
 export function apePrefersRouteAlternatives(plan: ApeProfitabilityToolboxPlan | null): boolean {
   if (!plan) return false;
+  if (plan.deterministicGrossSignFallback) return true;
   const transforms = new Set(plan.advice.transformations);
   if (transforms.has('alternate_route_or_pool') && !transforms.has('smaller_or_split_notional')) return true;
   const policy = plan.hyperdynamic;
