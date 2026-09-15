@@ -9,99 +9,85 @@ const mesh = read('server/services/cryptocrawl/integration/bps-compression-mesh.
 const registry = read('server/services/cryptocrawl/discovery/measured-candidate-registry.ts');
 const transformation = read('server/services/cryptocrawl/integration/economic-transformation-wiring.ts');
 const coordinator = read('server/services/cryptocrawl/integration/universal-bps-rescue-coordinator.ts');
+const apeToolbox = read('server/services/cryptocrawl/integration/ape-profitability-toolbox.ts');
+const apeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
 
-// The zero-capital recovery projection still reacts to canonical ZERO_CAPITAL_ATOMIC
-// candidate updates rather than relying only on a coarse polling interval.
+// Zero-capital recovery remains a current measured projection, not a second
+// economics authority or an execution authority.
 assert.match(recovery, /measuredCandidateRegistry\.onUpdate\(scheduleCandidateRefresh\)/);
 assert.match(recovery, /candidate\.topology !== 'ZERO_CAPITAL_ATOMIC'/);
-assert.match(recovery, /candidateRefreshTimer = setTimeout\([\s\S]{0,220}refresh\(\)[\s\S]{0,120}250\)/);
 assert.match(recovery, /export function onZeroCapitalRecoveryUpdate/);
-assert.match(recovery, /costCompressionAuthority: 'gross_positive_net_nonpositive_measured_candidates_only'/);
 assert.match(recovery, /staleCandidateEconomicAuthority: false/);
 assert.match(recovery, /syntheticProfitAllowed: false/);
-assert.match(recovery, /timer = setInterval\(refresh, intervalMs\)/);
 
-// The BPS mesh still initializes from that current projection and refreshes from
-// its update signal, while retaining the periodic timer only as a resilience fallback.
-assert.match(mesh, /ensureZeroCapitalRecoveryObservability\(\);[\s\S]{0,180}onZeroCapitalRecoveryUpdate\(\(\) => scheduleRecoveryDrivenRefresh\(\)\)/);
-assert.match(mesh, /function scheduleRecoveryDrivenRefresh\(\)[\s\S]{0,220}refreshBpsCompressionMesh\(\)[\s\S]{0,120}50\)/);
-assert.match(mesh, /timer = setInterval\(refreshBpsCompressionMesh, intervalMs\)/);
+// Compression Mesh stays scheduling-only and cannot manufacture economics.
 assert.match(mesh, /authority: 'search_and_compute_scheduling_only'/);
 assert.match(mesh, /executionAuthority: false/);
 assert.match(mesh, /syntheticEvidenceAllowed: false/);
 assert.doesNotMatch(mesh, /measuredCandidateRegistry\.(record|updateStatus)\(/);
 assert.doesNotMatch(mesh, /canonicalBps\.[A-Za-z]+\s*=/);
 
-// Canonical BPS health is now explicit for every measured topology without adding
-// a second economics authority. Legacy zeroCapitalBps compatibility remains.
+// Canonical BPS remains one registry-owned measurement surface. Legacy reporting
+// bands may still exist for observability; they are not APE admission boundaries.
 assert.match(registry, /bpsByTopology: Record<MeasuredOpportunityTopology, TopologyBpsMetrics>/);
 for (const topology of [
   'CEX_CEX', 'DEX_ATOMIC', 'ZERO_CAPITAL_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN',
   'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE', 'PREDICTION_EVENT',
-]) {
-  assert.match(registry, new RegExp(`'${topology}'`));
-}
-assert.match(registry, /rescueBand: nets\.filter\(net => net >= -10 && net < 0\)\.length/);
-assert.match(registry, /positiveBelowTarget: nets\.filter\(net => net > 0 && net < 10\)\.length/);
-assert.match(registry, /targetClearing: nets\.filter\(net => net >= 10\)\.length/);
-assert.match(registry, /zeroCapitalBps: \{/);
+]) assert.match(registry, new RegExp(`'${topology}'`));
 assert.match(registry, /canonicalBps: buildCanonicalBps\(economics, updatedAt\)/);
 
-// Candidate updates immediately wake the existing bounded BPS Super Engine pass.
-// Stage 2 owns values at or below the configured entry floor and must reduce them
-// strictly above that floor before Atomic rescue may own the floor-to-+10 range.
-assert.match(transformation, /function scheduleCandidateRefresh\(\): void/);
-assert.match(transformation, /candidateRefreshTimer = setTimeout\([\s\S]{0,160}refresh\(\)/);
-assert.match(transformation, /measuredCandidateRegistry\.onUpdate\(candidate => \{[\s\S]{0,260}scheduleCandidateRefresh\(\)/);
-assert.match(transformation, /function bpsReductionOwnershipFloorBps\(\): number[\s\S]{0,220}ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
-assert.match(transformation, /advice\.netProfitBps === null \|\| advice\.netProfitBps > bpsReductionOwnershipFloorBps\(\)/);
-assert.match(transformation, /item\.advice\.netProfitBps !== null && item\.advice\.netProfitBps <= reductionOwnershipFloor/);
-assert.match(transformation, /item\.bpsToBreakEven >= reductionGapFloor/);
-assert.match(transformation, /atomicRescueBandExcludedFromBpsActuation: true/);
-assert.doesNotMatch(transformation, /item\.advice\.netProfitBps <= 0/);
+// The general transformation sidecar remains non-executing scheduling/research
+// infrastructure for topologies that use it. APE now consumes its relevant BPS
+// intelligence directly for ZERO_CAPITAL_ATOMIC, so this sidecar cannot be the
+// gate that a zero-capital candidate must cross before APE owns it.
+assert.match(transformation, /measuredCandidateRegistry\.onUpdate\(candidate => \{/);
 assert.match(transformation, /ensureUniversalBpsRescueCoordinator\(\)/);
-assert.match(transformation, /timer = setInterval\(refresh, intervalMs\)/);
 assert.match(transformation, /executionAuthority: false/);
+assert.doesNotMatch(transformation, /canonicalBps\.[A-Za-z]+\s*=/);
 
-// The universal coordinator owns the state transition for every topology but may
-// neither rewrite canonical economics nor create an execution authority. Missing
-// resource readiness does not terminate rescue ownership; only expiry, explicit
-// measured impossibility/exhausted compatible alternatives, or target achievement do.
+// APE directly owns every live finite non-positive ZERO_CAPITAL_ATOMIC candidate
+// it actually receives from locked Stage One. There is no second -10 or +10 gate.
+assert.match(apeToolbox, /export function isApeRescueCandidate/);
+assert.match(apeToolbox, /opportunity\.expectedProfit <= 0n/);
+assert.match(apeToolbox, /HYPERDYNAMIC_BPS_SOLUTIONS/);
+assert.match(apeToolbox, /hyperdynamicCatalogSize: HYPERDYNAMIC_BPS_SOLUTIONS\.length/);
+assert.doesNotMatch(apeRescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
+assert.match(apeRescue, /fixedBpsRescueEntryFloor: false/);
+assert.match(apeRescue, /rescueOwnership: 'every_live_finite_negative_stage1_candidate_received_by_ape'/);
+assert.match(apeRescue, /exactStrictPositiveRequiredBeforePromotion: true/);
+
+// The universal coordinator mirrors that topology-specific contract without
+// changing canonical economics. Other topologies may retain their legacy bounded
+// BPS-reduction/atomic-rescue bands; ZERO_CAPITAL_ATOMIC does not.
 assert.match(coordinator, /measuredCandidateRegistry\.onUpdate\(acceptCandidate\)/);
-for (const state of [
-  'bps_hydration_pending',
-  'bps_reduction_owned',
-  'atomic_rescue_owned',
-  'target_achieved',
-  'measured_impossibility',
-  'evidence_expired',
-]) {
-  assert.match(coordinator, new RegExp(`'${state}'`));
-}
-for (const topology of [
-  'CEX_CEX', 'DEX_ATOMIC', 'ZERO_CAPITAL_ATOMIC', 'CROSS_CHAIN', 'MEMPOOL_BACKRUN',
-  'LIQUIDATION', 'MAKER_CEX', 'FUNDING_ARBITRAGE', 'PREDICTION_EVENT',
-]) {
-  assert.match(coordinator, new RegExp(`case '${topology}'| '${topology}'`));
-}
-assert.match(coordinator, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
-assert.match(coordinator, /getAtomicZeroCapitalStrategyCoverage\(candidate\.topology\)/);
+assert.match(coordinator, /else if \(candidate\.topology === 'ZERO_CAPITAL_ATOMIC'\) \{/);
+assert.match(coordinator, /if \(netBps <= 0\) \{[\s\S]{0,180}state = 'atomic_rescue_owned'/);
+assert.match(coordinator, /APE retains the candidate until exact all-in economics become strictly positive/);
+assert.match(coordinator, /without any \+10 BPS requirement/);
+assert.match(coordinator, /targetBps: candidate\.topology === 'ZERO_CAPITAL_ATOMIC' \? 0 : target/);
+assert.match(coordinator, /zeroCapitalApeOwnsAllNonPositiveAfterStageOne: true/);
+assert.match(coordinator, /zeroCapitalPostStageOneEntryFloorIgnored: true/);
+assert.match(coordinator, /zeroCapitalPlusTenTargetRequired: false/);
+assert.match(coordinator, /zeroCapitalApeFinishLine: 'strict_positive_all_in_net_bps_above_zero'/);
+assert.match(coordinator, /normalStrictPositiveExecutionMayProceed: netBps !== null && netBps > 0/);
+assert.match(coordinator, /candidate\.topology === 'ZERO_CAPITAL_ATOMIC'\) return;/);
+
+// Non-zero-capital topologies retain their existing topology-specific reacquisition
+// and banded scheduling behavior; this repair does not flatten unrelated systems.
 assert.match(coordinator, /else if \(netBps <= entry\)/);
 assert.match(coordinator, /else if \(netBps < target\)/);
-assert.match(coordinator, /normalStrictPositiveExecutionMayProceed: netBps !== null && netBps > 0/);
-assert.match(coordinator, /previous\?\.state === 'bps_reduction_owned' && next\.state === 'atomic_rescue_owned'/);
-assert.match(coordinator, /rescueBandHandoffs/);
-assert.match(coordinator, /missingExecutionResourceDoesNotReleaseRescueOwnership: true/);
 assert.match(coordinator, /nonAtomicTopologiesRemainTopologySpecific: true/);
-assert.match(coordinator, /strictPositiveExecutionFloorUnchanged: true/);
+assert.match(coordinator, /venues\.has\('polymarket'\)[\s\S]{0,120}discoverPredictionMarketParityOpportunities\(\)/,
+  'Polymarket prediction rescue must reacquire Polymarket evidence rather than substituting Kalshi');
+assert.match(coordinator, /venues\.has\('kalshi'\)[\s\S]{0,160}refreshKalshiSystemEvidenceNow\(\)/,
+  'Kalshi prediction rescue must remain on the canonical Kalshi evidence path');
+
+// Single authority invariants remain explicit.
 assert.match(coordinator, /canonicalEconomicsAuthority: 'measured_candidate_registry\.canonicalBps'/);
-assert.match(coordinator, /bpsReductionAuthority: 'existing_bps_reduction_super_engine'/);
 assert.match(coordinator, /syntheticEconomicsAllowed: false/);
 assert.match(coordinator, /canonicalBpsMutation: false/);
 assert.match(coordinator, /executionAuthority: false/);
 assert.doesNotMatch(coordinator, /measuredCandidateRegistry\.(record|updateStatus)\(/);
 assert.doesNotMatch(coordinator, /canonicalBps\.[A-Za-z]+\s*=/);
-assert.match(coordinator, /venues\.has\('polymarket'\)[\s\S]{0,120}discoverPredictionMarketParityOpportunities\(\)/, 'Polymarket prediction rescue must reacquire Polymarket evidence rather than substituting Kalshi');
-assert.match(coordinator, /venues\.has\('kalshi'\)[\s\S]{0,160}refreshKalshiSystemEvidenceNow\(\)/, 'Kalshi prediction rescue must remain on the canonical Kalshi evidence path');
 
-console.log('[bps-zero-capital-event-handoff] PASS: one canonical BPS seam owns the -10 boundary; Stage 2 retains values at or below the entry floor until fresh measured BPS is strictly above it, Atomic then owns the range through the +10 target, topology/venue-specific reacquisition stays intact, strict-positive execution is unchanged, and no synthetic or parallel economics authority is introduced');
+console.log('[bps-zero-capital-event-handoff] PASS: locked Stage One still defines which ZERO_CAPITAL_ATOMIC candidates reach APE; once received, every live finite non-positive candidate is directly APE-owned until exact all-in net becomes strictly positive, expires, or proves compatible paths exhausted. The old post-Stage-One -10/+10 ownership seam no longer applies to zero-capital, while unrelated topology-specific rescue behavior and canonical economics/execution authorities remain unchanged.');

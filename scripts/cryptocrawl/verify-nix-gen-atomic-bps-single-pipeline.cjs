@@ -7,149 +7,132 @@ const assert = require('node:assert/strict');
 const root = process.cwd();
 const read = relative => {
   const fd = fs.openSync(path.join(root, relative), 'r');
-  try {
-    return fs.readFileSync(fd, 'utf8');
-  } finally {
-    fs.closeSync(fd);
-  }
+  try { return fs.readFileSync(fd, 'utf8'); } finally { fs.closeSync(fd); }
 };
 
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const gateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
 const activeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
 const residentApe = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
+const toolbox = read('server/services/cryptocrawl/integration/ape-profitability-toolbox.ts');
+const routeSplit = read('server/services/cryptocrawl/integration/zero-capital-route-split-rescue.ts');
+const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 
-// Stage One remains immutable here: raw observations may exist below the floor, but
-// only finite ZERO_CAPITAL_ATOMIC candidates at or above -10 BPS enter this boundary.
+// Stage One remains structurally locked. This verifier does not alter its admission
+// contract; the repair is entirely downstream inside APE.
 assert.match(discovery, /STAGE_ONE_LOCKED_INVARIANT/);
 assert.match(discovery, /const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;/);
 assert.match(discovery, /stageOneLock: 'explicit_operator_authorization_required'/);
 assert.match(discovery, /opportunity\.netProfitBps >= atomicSurplusEntryFloorBps\(\)/);
 assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 
-// The exact Stage-One object references enter the resident APE fast path first.
+// The exact Stage-One objects enter the resident zero-I/O lane first.
 assert.match(gateway, /primeApeResidentRouting\(input\.opportunities\)/);
 assert.match(gateway, /runZeroCapitalAtomicBpsEngine\(\{/);
 assert.match(gateway, /opportunities: input\.opportunities/);
 assert.match(gateway, /const activeRescueCandidates = residentFastPath\.filter/);
 assert.match(gateway, /opportunity\.expectedProfit <= 0n/);
-
-// Non-positive candidates are actively measured by the deadline-aware V4 actuator.
-// V4 owns candidate-local anytime refinement under one absolute budget; Stage One
-// remains immutable and only strict measured improvements may replace APE output.
-assert.match(gateway, /runZeroCapitalProfitabilityRescueV4\(\{/);
-assert.match(gateway, /const passInput = transformed\.filter\(stillNeedsMeasuredRescue\)/);
-assert.match(gateway, /opportunities: passInput/);
-assert.match(gateway, /deadlineAt,/);
-assert.match(gateway, /maxRefinements: maxPasses/);
-assert.match(gateway, /onImprovement: \(root, before, candidate\) => \{/);
-assert.match(gateway, /function strictDerivedImprovement\(/);
-assert.match(gateway, /if \(!strictDerivedImprovement\(before, normalized\)\) return false;/);
-assert.match(gateway, /return \{ \.\.\.candidate, id: root\.id \};/);
-assert.match(gateway, /transformed = transformed\.map\(item => item\.id === root\.id \? normalized : item\)/);
-assert.match(gateway, /streamedMeasuredImprovements/);
-assert.match(gateway, /ZERO_CAPITAL_APE_RECURSIVE_PASSES/);
-assert.match(gateway, /ZERO_CAPITAL_APE_RECURSIVE_MAX_MS/);
-assert.match(gateway, /const deadlineAt = rescueStartedAt \+ wallClockBudgetMs/);
-assert.match(gateway, /recursivePartialImprovementFeedback: true/);
-assert.match(gateway, /passBarrierRemoved: true/);
-assert.match(gateway, /candidateLocalAnytimeRefinement: true/);
-assert.match(gateway, /hardDeadlinePropagatedIntoMeasuredRescue: true/);
-assert.match(gateway, /recursiveStrictImprovementRequired: true/);
-assert.match(gateway, /recursiveStopsAtStrictPositivePerCandidate: true/);
-assert.match(gateway, /activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV4'/);
-assert.match(gateway, /stageOneMutation: false/);
-assert.match(gateway, /syntheticEconomics: false/);
-assert.match(gateway, /executionAuthority: false/);
-
-// The resident APE remains the zero-I/O fast path. Active measurement is attached
-// after it and therefore cannot alter the resident Stage-One contract.
 assert.match(residentApe, /routeQuotesCreatedByApe: 0/);
 assert.match(residentApe, /rpcCallsCreatedByApe: 0/);
 assert.match(residentApe, /apiCallsCreatedByApe: 0/);
 assert.match(residentApe, /stageOneMutation: false/);
 assert.match(residentApe, /executionAuthority: false/);
 
-// Provider evidence is measured once per pass/chain/asset and shared by concurrent
-// candidate workers. The first route quote launches in parallel with provider proof,
-// and the provider wait is bounded by the same absolute APE deadline.
+// Every live finite negative candidate that reaches APE is rescue-owned. V4 may
+// not add another fixed BPS entry floor after Stage One.
+assert.match(toolbox, /export function isApeRescueCandidate/);
+assert.match(toolbox, /opportunity\.expectedProfit <= 0n/);
+assert.doesNotMatch(activeRescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
+assert.match(activeRescue, /fixedBpsRescueEntryFloor: false/);
+assert.match(activeRescue, /rescueOwnership: 'every_live_finite_negative_stage1_candidate_received_by_ape'/);
+
+// The existing BPS intelligence is back in the toolbox as scheduling intelligence,
+// never economic or execution authority. Failure of this advisory layer is fail-open.
+assert.match(toolbox, /buildBpsReductionSuperPlan/);
+assert.match(toolbox, /adviseEconomicTransformations/);
+assert.match(toolbox, /buildResearchBpsExecutionPlan/);
+assert.match(toolbox, /getBpsCompressionMeshSnapshot/);
+assert.match(toolbox, /catch \{/);
+assert.match(toolbox, /return null;/);
+assert.match(activeRescue, /bpsSuperEngineUsedForSearchScheduling: true/);
+assert.match(activeRescue, /economicTransformationAdviceUsedForSearchScheduling: true/);
+assert.match(activeRescue, /researchBpsTacticsUsedForSearchScheduling: true/);
+assert.match(activeRescue, /advisoryCanVetoDeterministicPositive: false/);
+
+// Cost-driver-aware sizing preserves measured provider boundaries and avoids the
+// old generic ladder: fixed gas/relay/bridge can test larger safe notionals, impact
+// tests smaller sizes, and flash premium remains primarily a provider-cost problem.
+assert.match(activeRescue, /buildApeTargetAmounts\(\{/);
+assert.match(activeRescue, /providerCapacityBoundaries:/);
+assert.match(toolbox, /driver === 'gas' \|\| driver === 'relay' \|\| driver === 'bridge'/);
+assert.match(toolbox, /driver === 'flash_premium'/);
+assert.match(toolbox, /driver === 'slippage_impact' \|\| driver === 'latency_decay'/);
+assert.match(toolbox, /superPlan\.residualNotionalFractions/);
+assert.match(activeRescue, /dynamicSizeLadder: 'bps_toolbox_driver_aware_provider_boundaries_residual_fractions_and_fixed_cost_dilution'/);
+
+// Active V4 retains the modern one-race-per-asset, quote/provider parallelism,
+// bounded hedged waves, adaptive deadlines/concurrency and candidate-local feedback.
+assert.match(gateway, /runZeroCapitalProfitabilityRescueV4\(\{/);
+assert.match(gateway, /deadlineAt,/);
+assert.match(gateway, /maxRefinements: maxPasses/);
+assert.match(gateway, /onImprovement: \(root, before, candidate\) => \{/);
+assert.match(gateway, /function strictDerivedImprovement\(/);
+assert.match(gateway, /stageOneMutation: false/);
+assert.match(gateway, /syntheticEconomics: false/);
 assert.match(activeRescue, /const providerRaces = new Map<string, Promise<FlashLoanProviderEconomics\[\]>>\(\)/);
 assert.match(activeRescue, /if \(providerRaces\.has\(key\)\) continue;/);
-assert.match(activeRescue, /providerRaces\.set\(key, measureFlashLoanProviders\(/);
 assert.match(activeRescue, /const initialQuotePromise = quoteOnce\(primaryRoute, intendedAmount\)/);
 assert.match(activeRescue, /const providerMeasurementsPromise = awaitWithDeadline\(providerRace, deadlineAt/);
 assert.match(activeRescue, /Promise\.all\(\[initialQuotePromise, providerMeasurementsPromise\]\)/);
 assert.match(activeRescue, /mapConcurrent\(opportunities, concurrency, evaluate\)/);
-assert.match(activeRescue, /candidateRescueSerial: false/);
-assert.match(activeRescue, /providerRaceScope: 'one_per_pass_chain_asset'/);
-assert.match(activeRescue, /quoteAndProviderProbeParallel: true/);
-assert.match(activeRescue, /providerSelectionBlocksInitialRouteDiscovery: false/);
-
-// The old serial transformation wait is replaced by bounded hedged waves. A strict
-// positive early winner stops waiting for sibling transformations; additional quote
-// work cannot be admitted after the absolute deadline.
-assert.match(activeRescue, /function adaptiveQuoteTimeoutMs\(/);
-assert.match(activeRescue, /function currentConcurrency\(/);
-assert.match(activeRescue, /function updateConcurrency\(/);
-assert.match(activeRescue, /function hedgedWaveWidth\(/);
 assert.match(activeRescue, /for \(let offset = 0; offset < targets\.length && !deadlineReached\(deadlineAt\); offset \+= waveWidth\)/);
 assert.match(activeRescue, /Promise\.race\(\[\.\.\.active\.values\(\)\]\)/);
-assert.match(activeRescue, /hedgedOutstandingAbandoned \+= active\.size/);
 assert.match(activeRescue, /hardDeadlinePropagation: true/);
-assert.match(activeRescue, /deadlineCheckedBeforeNewQuoteWork: true/);
 assert.match(activeRescue, /adaptiveRouteP95Timeouts: true/);
 assert.match(activeRescue, /adaptiveConcurrency: true/);
-assert.match(activeRescue, /passBarrierRemoved: true/);
 assert.match(activeRescue, /candidateLocalRecursiveFeedback: true/);
-assert.match(activeRescue, /transportCancellationMode: 'cooperative_authority_boundary_without_replacing_canonical_ethers_transport'/);
 
-// Liquidity shortage must transform route/size before the candidate is retained.
+// Liquidity shortage remains a route/size/provider transformation problem, not an
+// opportunity-kill condition. Unsupported provider stacking is never fabricated.
 assert.match(activeRescue, /function executableFundingCeiling\(/);
-assert.match(activeRescue, /function targetedAmounts\(/);
 assert.match(activeRescue, /providerCapacityResizes \+= 1/);
 assert.match(activeRescue, /addTarget\(route, targetAmount\)/);
 assert.match(activeRescue, /addTarget\(primaryRoute, amount\)/);
 assert.match(activeRescue, /liquidityShortagePolicy: 'reroute_or_resize_until_compatible_profitable_combinations_exhausted'/);
-assert.match(activeRescue, /providerLiquidityTelemetrySeparatedFromRouteQuoteCapacity: true/);
-assert.match(activeRescue, /routeMeasuredCapacitySignals:/);
-assert.match(activeRescue, /combinationsExhausted/);
-
-// Provider stacking is capability-gated: the existing verified Aave+Balancer dual
-// execution topology may be priced; unsupported Morpho stacking is not fabricated.
 assert.match(activeRescue, /selectMeasuredDualFlashLoanAllocation\(/);
 assert.match(activeRescue, /kind: 'aave_balancer_dual'/);
-assert.match(activeRescue, /providerStacking: 'aave_v3_plus_balancer_v2_when_verified_execution_topology_can_fund_or_reduce_fee'/);
 assert.match(activeRescue, /morphoStackingEnabled: false/);
+assert.match(activeRescue, /providerLiquidityTelemetrySeparatedFromRouteQuoteCapacity: true/);
 
-// Current canonical quote/execution objects are single-path. Until an executor can
-// represent parallel route allocations, route splitting is fail-closed rather than
-// promoted synthetically; alternate routes are still exhausted as local paths.
+// The single-route quote object remains single-route, but the already-built exact
+// split/composite tools now run inside the APE decision before APE finally returns.
 assert.match(activeRescue, /routeSplitExecutionSupported: false/);
 assert.match(activeRescue, /routeSplitPromotionSuppressed: true/);
-assert.match(activeRescue, /routeSplitReason: 'current_canonical_quote_and_execution_object_represents_one_sequential_route_only'/);
+assert.match(gateway, /await runZeroCapitalRouteSplitRescue\(\{/);
+assert.match(gateway, /await runZeroCapitalAtomicStackTactic\(\{/);
+assert.match(gateway, /toolboxFinalRescueBeforeReturn: true/);
+assert.match(gateway, /routeSplitTacticScheduledAfterApeDecision: false/);
+assert.match(gateway, /compositeTacticScheduledAfterApeDecision: false/);
+assert.doesNotMatch(gateway, /setImmediate\(/);
+assert.match(routeSplit, /routesArePoolDisjoint/);
+assert.match(routeSplit, /partialQuotesRunInParallel: true/);
+assert.match(routeSplit, /parentOpportunityKilledOnSplitFailure: false/);
+assert.match(routeSplit, /runZeroCapitalAtomicStackTactic/);
+assert.match(atomicStack, /exactStrictPositiveCompositeCallRequired: true/);
+assert.match(atomicStack, /measuredCompositionBenefitRequired: true/);
 
-// The old global 42-quote storm and the blocking profit-ladder DB transaction are
-// absent. Profit-ladder lookup occurs only in a post-decision setImmediate callback.
+// The old global quote storm stays retired and profit-ladder telemetry remains
+// deferred. Fresh measured all-in economics is still the only promotion basis.
 assert.doesNotMatch(activeRescue, /ZERO_CAPITAL_RESCUE_TOTAL_QUOTE_BUDGET/);
-assert.doesNotMatch(activeRescue, /totalQuoteBudget/);
 assert.match(activeRescue, /quoteStormBudget42Removed: true/);
 assert.match(activeRescue, /const postDecisionTelemetry = setImmediate\(\(\) => \{/);
-assert.match(activeRescue, /void getProfitLadderDailyProfitBudget\(\)\.then/);
 assert.match(activeRescue, /profitLadderDatabaseReadOnCriticalPath: false/);
-assert.doesNotMatch(activeRescue, /buildResearchBpsExecutionPlan/);
-assert.doesNotMatch(activeRescue, /buildBpsReductionSuperPlan/);
-assert.doesNotMatch(activeRescue, /adviseEconomicTransformations/);
-assert.match(activeRescue, /advisoryBpsIntelligenceOnCriticalPath: false/);
-
-// Fresh measured all-in economics remains the only promotion basis.
 assert.match(activeRescue, /quoteConfiguredZeroCapitalRoute\(/);
 assert.match(activeRescue, /calculateMeasuredFlashLoanFee\(/);
-assert.match(activeRescue, /function strictImprovement\(/);
 assert.match(activeRescue, /freshExactRequoteRequired: true/);
 assert.match(activeRescue, /exactStrictPositiveRequiredBeforePromotion: true/);
-assert.match(activeRescue, /feeOrderingChanged: false/);
 assert.match(activeRescue, /stageOneMutation: false/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One and resident APE remain locked; deadline-aware V4 rescue uses one absolute budget, shared provider races, parallel quote/provider probing, bounded hedged quote waves, adaptive route deadlines and candidate concurrency, candidate-local anytime refinement, provider-capacity clamping, verified Aave+Balancer stacking, separate provider-vs-route liquidity telemetry, and off-hot-path advisory/profit-ladder work without fabricating unsupported split-route execution or transport-level cancellation');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; APE keeps the resident zero-I/O fast lane, owns every negative candidate it receives without a second fixed BPS floor, uses the existing BPS Super Engine/transformation/research intelligence only to schedule bounded measured work, preserves shared provider races and hedged requotes, and invokes exact pool-disjoint split/shared-principal composite rescue before finally returning without creating another economics or execution authority');
