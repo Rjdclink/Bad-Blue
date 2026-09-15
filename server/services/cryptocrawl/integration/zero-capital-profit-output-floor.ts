@@ -10,7 +10,7 @@ import type { ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
  * exhausted, freshness/deadline constraints make further work invalid, or its
  * candidate-local generation is retired by the APE state authority.
  */
-export const ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 0;
+export const ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = Number.MIN_VALUE;
 export const ZERO_CAPITAL_STRICT_POSITIVE_MIN_BASE_UNITS = 1n;
 
 export interface ZeroCapitalOutputFloorDecision {
