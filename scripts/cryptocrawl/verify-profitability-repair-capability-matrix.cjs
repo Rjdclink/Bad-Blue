@@ -22,6 +22,7 @@ const ingest = read('server/services/cryptocrawl/ghost-wallet/ghost-wallet-settl
 const builder = read('server/services/cryptocrawl/execution/builder-sponsored-receiver-bootstrap.ts');
 const discovery = read('server/services/cryptocrawl/discovery/zero-capital-canonical-discovery.ts');
 const apeGateway = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-fair.ts');
+const apeOrchestration = read('server/services/cryptocrawl/integration/ape-rescue-orchestration.ts');
 const apeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
 const apeToolbox = read('server/services/cryptocrawl/integration/ape-profitability-toolbox.ts');
 const residentApe = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
@@ -56,13 +57,10 @@ const matrix = [
   ['10 percent retained capital remains preserved', /retainedFractionBps:\s*1_000/.test(ingest)],
   ['builder cold start uses measured sequential gas', /eth_simulateV1/.test(builder) && /fixed_gas_ceiling_admission:false/.test(builder)],
 
-  // Stage One and resident fast lane are untouched by the toolbox repair.
   ['Stage One lock remains present', /STAGE_ONE_LOCKED_INVARIANT/.test(discovery) && /const STAGE_ONE_ZERO_CAPITAL_ENTRY_FLOOR_BPS = -10;/.test(discovery)],
   ['resident APE remains zero-I/O and non-mutating', /routeQuotesCreatedByApe: 0/.test(residentApe) && /rpcCallsCreatedByApe: 0/.test(residentApe) && /stageOneMutation: false/.test(residentApe)],
   ['APE gateway preserves resident fast path before active rescue', /primeApeResidentRouting/.test(apeGateway) && /runZeroCapitalAtomicBpsEngine/.test(apeGateway) && /runZeroCapitalProfitabilityRescueV4/.test(apeGateway)],
 
-  // Full toolbox restoration: no second arbitrary BPS gate, but existing advisory
-  // intelligence informs which exact measured transformation APE spends time on.
   ['APE has no second fixed BPS rescue floor', /isApeRescueCandidate/.test(apeToolbox) && /opportunity\.expectedProfit <= 0n/.test(apeToolbox) && !/ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/.test(apeRescue)],
   ['APE reconnects BPS Super Engine', /buildBpsReductionSuperPlan/.test(apeToolbox) && /bpsSuperEngineUsedForSearchScheduling: true/.test(apeRescue)],
   ['APE reconnects economic transformation intelligence', /adviseEconomicTransformations/.test(apeToolbox) && /economicTransformationAdviceUsedForSearchScheduling: true/.test(apeRescue)],
@@ -72,9 +70,8 @@ const matrix = [
   ['APE uses cost-driver-aware dynamic sizing', /buildApeTargetAmounts/.test(apeRescue) && /superPlan\.residualNotionalFractions/.test(apeToolbox) && /driver === 'slippage_impact'/.test(apeToolbox) && /driver === 'flash_premium'/.test(apeToolbox)],
   ['APE preserves provider-capacity boundaries in sizing', /providerCapacityBoundaries:/.test(apeRescue) && /providerSafeBorrowAmount/.test(apeRescue)],
 
-  // Modern V4 mechanics remain intact.
   ['APE refinement still requires strict measured improvement', /function strictDerivedImprovement\(/.test(apeGateway) && /recursiveStrictImprovementRequired: true/.test(apeGateway)],
-  ['APE propagates one absolute deadline into measured rescue', /const deadlineAt = rescueStartedAt \+ wallClockBudgetMs/.test(apeGateway) && /hardDeadlinePropagatedIntoMeasuredRescue: true/.test(apeGateway)],
+  ['APE preserves one hard deadline while reserving bounded downstream tool time', /const hardDeadlineAt = rescueStartedAt \+ wallClockBudgetMs/.test(apeGateway) && /const deadlineAt = tierBudget\.v4DeadlineAt/.test(apeGateway) && /recursiveHardDeadlineAt: hardDeadlineAt/.test(apeGateway) && /hardDeadlinePropagatedIntoMeasuredRescue: true/.test(apeGateway) && /deadlineStoppedIsToolboxExhausted: false/.test(apeGateway) && /v4DeadlineAt = Math\.max\(now, freshnessBoundaryAt - downstreamReserveMs\)/.test(apeOrchestration)],
   ['APE removes whole-pass barrier with candidate-local anytime feedback', /onImprovement: \(root, before, candidate\)/.test(apeGateway) && /candidateLocalAnytimeRefinement: true/.test(apeGateway)],
   ['APE shares provider races per pass and asset', /const providerRaces = new Map/.test(apeRescue) && /one_per_pass_chain_asset/.test(apeRescue)],
   ['APE starts route quote and provider probe in parallel', /initialQuotePromise/.test(apeRescue) && /providerMeasurementsPromise/.test(apeRescue) && /Promise\.all\(\[initialQuotePromise, providerMeasurementsPromise\]\)/.test(apeRescue)],
@@ -90,8 +87,6 @@ const matrix = [
   ['APE profit ladder cannot block the V4 quote path', /postDecisionTelemetry = setImmediate/.test(apeRescue) && /profitLadderDatabaseReadOnCriticalPath: false/.test(apeRescue)],
   ['APE preserves exact positive economics and no execution authority', /exactStrictPositiveRequiredBeforePromotion: true/.test(apeRescue) && /syntheticEconomics: false/.test(apeRescue) && /executionAuthority: false/.test(apeRescue)],
 
-  // Existing expensive tools are in the same APE toolbox now, invoked only after
-  // cheap single-route rescue leaves unresolved candidates.
   ['APE invokes route split before final return', /await runZeroCapitalRouteSplitRescue/.test(apeGateway) && /routeSplitTacticScheduledAfterApeDecision: false/.test(apeGateway) && /toolboxFinalRescueBeforeReturn: true/.test(apeGateway)],
   ['APE invokes shared-principal stack before final return', /await runZeroCapitalAtomicStackTactic/.test(apeGateway) && /compositeTacticScheduledAfterApeDecision: false/.test(apeGateway)],
   ['APE route split requires pool-disjoint route pairs', /routesArePoolDisjoint/.test(apeRouteSplit) && /pairConstraint: 'pool_disjoint'/.test(apeRouteSplit)],
