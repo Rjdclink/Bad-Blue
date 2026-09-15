@@ -31,6 +31,7 @@ const apeRouteSplit = read('server/services/cryptocrawl/integration/zero-capital
 const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 const compositeBuilder = read('server/services/cryptocrawl/execution/adapters/composite-flashloan-receiver-builder.ts');
 const canonicalExecutor = readPhysical('server/services/cryptocrawl/execution/zero-capital-canonical-executor.ts');
+const adaptiveCommand = read('server/services/cryptocrawl/integration/ape-adaptive-command.ts');
 
 const matrix = [
   ['Ethereum RPC capability preserved', /ethereum:\s*1/.test(rpc)],
@@ -73,7 +74,9 @@ const matrix = [
 
   ['APE refinement still requires strict measured improvement', /function strictDerivedImprovement\(/.test(apeGateway) && /recursiveStrictImprovementRequired: true/.test(apeGateway)],
   ['APE preserves one freshness-capped hard boundary with protected structural/V4/composite lanes', /const configuredHardDeadlineAt = rescueStartedAt \+ wallClockBudgetMs/.test(apeGateway) && /const hardDeadlineAt = tierBudget\.hardDeadlineAt/.test(apeGateway) && /recursiveHardDeadlineAt: hardDeadlineAt/.test(apeGateway) && /hardDeadlinePropagatedIntoMeasuredRescue: true/.test(apeGateway) && /deadlineStoppedIsToolboxExhausted: false/.test(apeGateway) && /const freshnessBoundaryAt = Math\.min\(configuredBoundaryAt, observedFreshBoundaryAt\)/.test(apeOrchestration) && /const structuralDeadlineAt = Math\.min\(hardDeadlineAt, now \+ structuralBudgetMs\)/.test(apeOrchestration) && /const v4DeadlineAt = Math\.min\(hardDeadlineAt, structuralDeadlineAt \+ v4BudgetMs\)/.test(apeOrchestration) && /const compositeDeadlineAt = hardDeadlineAt/.test(apeOrchestration)],
-  ['APE removes whole-pass barrier with candidate-local anytime feedback', /onImprovement: \(root, before, candidate\)/.test(apeGateway) && /candidateLocalAnytimeRefinement: true/.test(apeGateway)],
+  ['APE removes whole-pass barrier with candidate-local anytime feedback', /onImprovement: \(root, prior, candidate\)/.test(apeGateway) && /if \(Date\.now\(\) >= deadlineAt\) return;/.test(apeGateway) && /replaceIfBetter\(root, prior, candidate, true\)/.test(apeGateway) && /settleBeforeDeadline\(pending, deadlineAt, \[\.\.\.eligible\]\)/.test(apeGateway) && /candidateLocalAnytimeRefinement: true/.test(apeGateway)],
+  ['APE merit promotion and generation-local retirement are search-only', /recordApeCommandOutcome/.test(adaptiveCommand) && /candidateRetiredForGeneration/.test(adaptiveCommand) && /meritPromotionAuthority: 'search_priority_only'/.test(adaptiveCommand) && /exactEconomicsAuthority: false/.test(adaptiveCommand)],
+  ['APE counterfactual multi-brain planner remains advisory', /buildApeCounterfactualPlan/.test(adaptiveCommand) && /reciprocalRankFusion/.test(adaptiveCommand) && /brainCount: 5/.test(adaptiveCommand) && /executionAuthority: false/.test(adaptiveCommand)],
   ['APE shares provider races per pass and asset', /const providerRaces = new Map/.test(apeRescue) && /one_per_pass_chain_asset/.test(apeRescue)],
   ['APE starts route quote and provider probe in parallel', /initialQuotePromise/.test(apeRescue) && /providerMeasurementsPromise/.test(apeRescue) && /Promise\.all\(\[initialQuotePromise, providerMeasurementsPromise\]\)/.test(apeRescue)],
   ['APE evaluates independent candidates concurrently', /mapConcurrentUntilStrictPositive\(/.test(apeRescue) && /const output = await mapConcurrentUntilStrictPositive\(/.test(apeRescue) && /candidateRescueSerial: false/.test(apeRescue)],
@@ -88,8 +91,8 @@ const matrix = [
   ['APE profit ladder cannot block the V4 quote path', /postDecisionTelemetry = setImmediate/.test(apeRescue) && /profitLadderDatabaseReadOnCriticalPath: false/.test(apeRescue)],
   ['APE preserves exact positive economics and no execution authority', /exactStrictPositiveRequiredBeforePromotion: true/.test(apeRescue) && /syntheticEconomics: false/.test(apeRescue) && /executionAuthority: false/.test(apeRescue)],
 
-  ['APE invokes route split before final return', /await runZeroCapitalRouteSplitRescue/.test(apeGateway) && /routeSplitTacticScheduledAfterApeDecision: false/.test(apeGateway) && /toolboxFinalRescueBeforeReturn: true/.test(apeGateway)],
-  ['APE invokes shared-principal stack before final return', /await runZeroCapitalAtomicStackTactic/.test(apeGateway) && /compositeTacticScheduledAfterApeDecision: false/.test(apeGateway)],
+  ['APE invokes route split before final return', /const pending = runZeroCapitalRouteSplitRescue\(\{/.test(apeGateway) && /settleBeforeDeadline\(pending, deadlineAt, emptySplitResult\(\)\)/.test(apeGateway) && /routeSplitTacticScheduledAfterApeDecision: false/.test(apeGateway) && /toolboxFinalRescueBeforeReturn: true/.test(apeGateway)],
+  ['APE invokes shared-principal stack before final return', /const pending = runZeroCapitalAtomicStackTactic\(\{/.test(apeGateway) && /settleBeforeDeadline\(pending, compositeHardDeadlineAt, emptyStackResult\(\)\)/.test(apeGateway) && /compositeTacticScheduledAfterApeDecision: false/.test(apeGateway)],
   ['APE route split requires pool-disjoint route pairs', /function routesArePoolDisjoint\(/.test(apeWorkbench) && /assignment\.splitPairs/.test(apeRouteSplit) && /all_resident_alternatives_visible_pool_disjoint_only_for_split_execution/.test(apeRouteSplit)],
   ['APE route split quotes both partial paths concurrently', /Promise\.all\(\[/.test(apeRouteSplit) && /partialQuotesRunInParallel: true/.test(apeRouteSplit)],
   ['APE route split uses bounded allocation probes', /leftPercent: 50n/.test(apeRouteSplit) && /leftPercent: 65n/.test(apeRouteSplit) && /leftPercent: 35n/.test(apeRouteSplit)],
