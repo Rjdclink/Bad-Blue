@@ -88,7 +88,8 @@ requireText('stack', 'combinedExpectedProfit < targetNetProfitBaseUnits', 'stric
 requireText('stack', 'estimatedGas > allowedGas', 'bounded block-gas feasibility');
 requireText('stack', 'zeroCapitalCompositeSelectionRegistry.record(selection)', 'prepared selection registration');
 requireText('stack', "promotion_authority:single_atomic_bps_engine", 'single pipeline owns promotion');
-requireText('stack', 'profitLadderCompositionVetoAuthority: false', 'Profit Ladder cannot veto composition');
+requireText('stack', 'aggregateTerminalEconomicsAuthority: true', 'aggregate terminal economics remains composition authority');
+forbid('stack', /profitLadder|getProfitLadder/i, 'Profit Ladder composition veto path');
 requireText('compositeRegistry', 'targetNetProfitBaseUnits', 'exact base-unit compatibility binding retained in evidence');
 requireText('compositeRegistry', 'combinedExpectedProfit < input.targetNetProfitBaseUnits', 'evidence rejects nonpositive compatibility result');
 requireText('compositeSelection', 'expectedNetProfit < selection.targetNetProfitBaseUnits', 'prepared selection rejects nonpositive compatibility result');
@@ -102,4 +103,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('[unified-multileg-adaptive-engine] PASS: ordinary composite admission remains deterministic-positive; zero-capital composition is a parallel tactic inside the one Atomic-BPS pipeline, with exact strictly-positive shared-principal evidence, no duplicate Stage-1 threshold, no independent promotion loop, and no arbitrary +10 BPS finish line.');
+console.log('[unified-multileg-adaptive-engine] PASS: ordinary composite admission remains deterministic-positive; zero-capital composition is a parallel tactic inside the one Atomic-BPS pipeline, with exact strictly-positive shared-principal evidence, no duplicate Stage-1 threshold, no independent promotion loop, no Profit Ladder composition veto path, and no arbitrary +10 BPS finish line.');
