@@ -17,7 +17,6 @@ import {
 } from './ape-resident-workbench.js';
 import { selectPersistentSplitRatio, settleBeforeDeadline } from './ape-hypergraph-intelligence.js';
 import { runZeroCapitalAtomicStackTactic, type AtomicStackTacticResult } from './zero-capital-atomic-stack-wiring.js';
-import { clearsFiveDollarOutputFloor } from './zero-capital-profit-output-floor.js';
 
 export interface ZeroCapitalRouteSplitRescueInput {
   chain: SupportedChain;
@@ -282,7 +281,7 @@ function quoteToTransientChild(input: {
       bpsToBreakEven: input.quote.bpsToBreakEven,
     },
     executableCapability: false,
-    executionCapabilityReason: 'APE partial-route child is measurement-only; aggregate composite exact simulation and $5 output floor remain authoritative',
+    executionCapabilityReason: 'APE partial-route child is measurement-only; aggregate composite exact simulation and strict-positive all-in execution threshold remain authoritative',
     missingInformation: ['required:composite_route_split_exact_simulation'],
     provenance: [
       'ape_route_split_child',
@@ -419,11 +418,6 @@ export async function runZeroCapitalRouteSplitRescue(
     if (splittable) result.splittableCandidates! += 1;
     else result.unsplittableCandidates! += 1;
 
-    if (clearsFiveDollarOutputFloor(parent)) {
-      incrementReason(rejectionReasons, 'already_five_dollar_output');
-      return;
-    }
-
     const parentCandidate = measuredCandidateRegistry.get(parent.id);
     if (!parentCandidate) {
       incrementReason(rejectionReasons, 'registry_parent_missing_refresh_required');
@@ -451,10 +445,9 @@ export async function runZeroCapitalRouteSplitRescue(
       result.residentAlternativeImprovements! += 1;
       improvedOpportunities.push(residentImprovement);
       input.onImprovement?.(parent, residentImprovement);
-      if (clearsFiveDollarOutputFloor(residentImprovement)) {
-        incrementReason(rejectionReasons, 'resident_five_dollar_output_replaced_split_work');
-        return;
-      }
+      // Crossing strict-positive execution eligibility does not retire route/split
+      // optimization. Continue until compatible measured alternatives are exhausted
+      // or the parent deadline closes.
     }
 
     if (!splittable) {
@@ -494,6 +487,11 @@ export async function runZeroCapitalRouteSplitRescue(
         .filter((value): value is RatioQuoteResult => value !== null);
 
       for (const quoted of quotedRatios) {
+        if (Date.now() >= parentDeadline(input)) {
+          result.deadlineStops! += 1;
+          incrementReason(rejectionReasons, 'wave_deadline_before_composite_measurement');
+          return;
+        }
         if (!quoted.leftQuote || !quoted.rightQuote) {
           result.partialQuoteFailures += Number(!quoted.leftQuote) + Number(!quoted.rightQuote);
           incrementReason(rejectionReasons, 'partial_quote_unavailable');
@@ -539,8 +537,9 @@ export async function runZeroCapitalRouteSplitRescue(
         result.promoted += composite.promoted;
         result.promotedOpportunityIds.push(...composite.promotedOpportunityIds);
         retireTransientChildren(children, composite.promotedOpportunityIds);
-
-        if (composite.promoted > 0) return;
+        // A promoted executable composite is retained, but it does not terminate the
+        // candidate's remaining compatible split ratios/pairs. Better measured profit
+        // may still be available inside the existing bounded deadline.
       }
     }
   };
@@ -554,7 +553,9 @@ export async function runZeroCapitalRouteSplitRescue(
     ...telemetryResult,
     candidateOwnershipExpires: false,
     negativeBpsRejected: false,
-    positiveBelowFiveDollarsRetainedForRescue: true,
+    strictPositiveCandidatesRetainedForOptimization: true,
+    strictPositiveStopsRouteSplitOptimization: false,
+    promotedCompositeStopsRemainingSplitSearch: false,
     staleEvidenceRefreshesInsteadOfKillingCandidate: true,
     candidatesRunConcurrently: true,
     ratiosWithinPairRunConcurrently: true,
