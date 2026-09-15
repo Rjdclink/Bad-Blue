@@ -60,8 +60,8 @@ has(stack, 'exact_strict_positive_composite_eth_call_passed', 'atomic stack must
 must(!stack.includes('ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS'), 'retired Atomic +10 target variable must not return');
 must(!stack.includes('atomicSurplusTargetBps'), 'retired Atomic +10 target helper must not return');
 must(!stack.includes('getProfitLadderDailyProfitBudget'), 'Profit Ladder database reads must stay off Atomic composition measurement path');
-has(stack, 'profitLadderReadOnMeasurementPath: false', 'Atomic composition must expose that Profit Ladder reads are off the measurement path');
-has(stack, 'profitLadderCompositionVetoAuthority: false', 'Profit Ladder must not veto Atomic composition');
+has(stack, 'aggregateEconomicsAuthority: true', 'Atomic composition must expose aggregate exact economics as the composition authority');
+has(stack, 'adaptiveMinLegsVetoAuthority: false', 'advisory topology policy must not veto Atomic composition');
 has(stack, 'completionOrderVariantMeasurement: true', 'atomic stack variants must be consumed in completion order');
 has(stack, 'fullVariantBatchBarrier: false', 'atomic stack strict-positive promotion must not wait on a full variant batch');
 has(stack, "status: 'eligible'", 'only the newly measured strictly-positive composite may be promoted eligible');
