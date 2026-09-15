@@ -24,9 +24,11 @@ type CachedToolboxPlan = {
   generation: string;
   expiresAt: number;
   plan: ApeProfitabilityToolboxPlan | null;
+  ready: boolean;
 };
 
 const residentToolboxPlans = new Map<string, CachedToolboxPlan>();
+const residentToolboxBuilds = new Set<string>();
 const MAX_RESIDENT_TOOLBOX_PLANS = 512;
 
 function scaledAmount(amount: bigint, factor: number): bigint {
@@ -70,13 +72,55 @@ function pruneResidentToolboxPlans(now = Date.now()): void {
   }
 }
 
+function computeToolboxPlan(opportunity: ZeroCapitalOpportunity): ApeProfitabilityToolboxPlan | null {
+  try {
+    const candidate = measuredCandidateRegistry.get(opportunity.id);
+    if (!candidate || candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return null;
+    const advice = adviseEconomicTransformations(candidate);
+    const research = buildResearchBpsExecutionPlan(candidate, advice);
+    const mesh = getBpsCompressionMeshSnapshot();
+    const superPlan = buildBpsReductionSuperPlan(candidate, advice, research, null, mesh);
+    return {
+      advice,
+      superPlan,
+      hyperdynamic: mesh?.hyperdynamic ?? null,
+      hyperdynamicCatalogSize: HYPERDYNAMIC_BPS_SOLUTIONS.length,
+      activeHyperdynamicSolutionKeys: [...(mesh?.hyperdynamic.activeSolutionKeys ?? [])],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function scheduleToolboxPrewarm(opportunity: ZeroCapitalOpportunity, generation: string): void {
+  const key = `${opportunity.id}:${generation}`;
+  if (residentToolboxBuilds.has(key)) return;
+  residentToolboxBuilds.add(key);
+  const task = setImmediate(() => {
+    try {
+      if (Date.now() >= opportunity.expiresAt) return;
+      const currentGeneration = toolboxGeneration(opportunity);
+      if (currentGeneration !== generation) return;
+      residentToolboxPlans.set(opportunity.id, {
+        generation,
+        expiresAt: opportunity.expiresAt,
+        plan: computeToolboxPlan(opportunity),
+        ready: true,
+      });
+      pruneResidentToolboxPlans();
+    } finally {
+      residentToolboxBuilds.delete(key);
+    }
+  });
+  task.unref?.();
+}
+
 /**
- * Reconnects the existing BPS Super Engine, 25 research tactics and exact
- * 100-method Hyperdynamic catalog to APE strictly as search/scheduling guidance.
- * The result is generation-fenced in resident memory so repeated rescue passes do
- * not rebuild identical advisory work while the same candidate is still fresh.
- * Advisory failure is always local: it can remove a scheduling hint, never
- * suppress measured route/provider/size rescue or change canonical economics.
+ * Returns only already-resident advisory intelligence on the candidate hot path.
+ * A missing plan is prewarmed after the current decision turn and never blocks
+ * exact route/provider/size rescue. The next pass can reuse it at effectively
+ * constant lookup cost. Advisory failure remains local and cannot change canonical
+ * economics, candidate ownership or execution eligibility.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
@@ -84,35 +128,19 @@ export function buildApeProfitabilityToolboxPlan(
   const now = Date.now();
   const generation = toolboxGeneration(opportunity);
   const cached = residentToolboxPlans.get(opportunity.id);
-  if (cached && cached.generation === generation && cached.expiresAt > now) return cached.plan;
-
-  let plan: ApeProfitabilityToolboxPlan | null = null;
-  try {
-    const candidate = measuredCandidateRegistry.get(opportunity.id);
-    if (candidate && candidate.topology === 'ZERO_CAPITAL_ATOMIC') {
-      const advice = adviseEconomicTransformations(candidate);
-      const research = buildResearchBpsExecutionPlan(candidate, advice);
-      const mesh = getBpsCompressionMeshSnapshot();
-      const superPlan = buildBpsReductionSuperPlan(candidate, advice, research, null, mesh);
-      plan = {
-        advice,
-        superPlan,
-        hyperdynamic: mesh?.hyperdynamic ?? null,
-        hyperdynamicCatalogSize: HYPERDYNAMIC_BPS_SOLUTIONS.length,
-        activeHyperdynamicSolutionKeys: [...(mesh?.hyperdynamic.activeSolutionKeys ?? [])],
-      };
-    }
-  } catch {
-    plan = null;
+  if (cached && cached.generation === generation && cached.expiresAt > now && cached.ready) {
+    return cached.plan;
   }
 
   residentToolboxPlans.set(opportunity.id, {
     generation,
     expiresAt: Math.max(now + 1, opportunity.expiresAt),
-    plan,
+    plan: null,
+    ready: false,
   });
   pruneResidentToolboxPlans(now);
-  return plan;
+  scheduleToolboxPrewarm(opportunity, generation);
+  return null;
 }
 
 /**
