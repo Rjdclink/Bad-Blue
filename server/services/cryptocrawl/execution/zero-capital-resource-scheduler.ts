@@ -6,6 +6,7 @@ import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capita
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import { evaluateAtomicZeroCapitalAdmission } from '../governance/atomic-zero-capital-strategy-coverage.js';
 import { withCryptaraSupabasePriority } from '../integration/cryptara-supabase-admission-worker.js';
+import { clearsFiveDollarOutputFloor } from '../integration/zero-capital-profit-output-floor.js';
 import { getCanonicalZeroCapitalGasDecision } from '../runtime/zero-capital-gas-authority.js';
 import {
   RESOURCE_LEASE_TABLE as TABLE,
@@ -339,7 +340,7 @@ class ZeroCapitalResourceScheduler {
     opportunity: ZeroCapitalOpportunity,
     fundingMode: string,
   ): Promise<ZeroCapitalResourceLease | null> {
-    if (opportunity.expectedProfit <= 0n || Date.now() > opportunity.expiresAt) return null;
+    if (!clearsFiveDollarOutputFloor(opportunity)) return null;
     const gasDecision = await strictCanonicalGasDecision(opportunity.chain);
     if (!gasDecision || gasDecision.mode !== fundingMode) return null;
     const admission = evaluateAtomicZeroCapitalAdmission({
