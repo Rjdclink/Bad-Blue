@@ -5,6 +5,7 @@ import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capita
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import {
   peekResidentBestBpsQuote,
+  peekResidentExactQuote,
   quoteConfiguredZeroCapitalRoute,
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
@@ -14,7 +15,8 @@ import {
   primeApeResidentWorkbench,
   type ApeResidentRoutePair,
 } from './ape-resident-workbench.js';
-import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
+import { selectPersistentSplitRatio, settleBeforeDeadline } from './ape-hypergraph-intelligence.js';
+import { runZeroCapitalAtomicStackTactic, type AtomicStackTacticResult } from './zero-capital-atomic-stack-wiring.js';
 
 export interface ZeroCapitalRouteSplitRescueInput {
   chain: SupportedChain;
@@ -77,6 +79,11 @@ function alignRouteCostBasisToStageOne(
   };
 }
 
+/**
+ * Resident gross evidence picks the first ratio. A persistent ratio frontier then
+ * advances one exact ratio per work wave instead of launching six RPC calls for
+ * every pair every time. No ratio is deleted; later waves cover the remainder.
+ */
 function splitRatiosForPair(pair: ApeResidentRoutePair): SplitRatio[] {
   const left = peekResidentBestBpsQuote(pair.left.id);
   const right = peekResidentBestBpsQuote(pair.right.id);
@@ -98,7 +105,7 @@ function splitRatiosForPair(pair: ApeResidentRoutePair): SplitRatio[] {
     ratios.push(fallback);
     if (ratios.length >= FALLBACK_SPLIT_RATIOS.length) break;
   }
-  return ratios;
+  return selectPersistentSplitRatio(`${pair.left.id}|${pair.right.id}`, ratios);
 }
 
 function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
@@ -137,12 +144,7 @@ function exactBpsImprovement(current: ZeroCapitalOpportunity, candidate: ZeroCap
     > current.expectedProfit * candidate.flashLoanAmount;
 }
 
-/**
- * Resident evidence wins immediately. Only a missing/stale evidence generation
- * triggers a refresh, and that refresh is shared by LivePriceMesh rather than
- * creating a new price authority. A fresh parent scalar is compatibility fallback.
- */
-async function resolveInputUsdPrice(parent: ZeroCapitalOpportunity): Promise<number | null> {
+async function resolveInputUsdPrice(parent: ZeroCapitalOpportunity, deadlineAt: number): Promise<number | null> {
   const now = Date.now();
   const resident = livePriceMesh.peekLiveSymbolPriceEvidence(parent.inputAssetSymbol, now);
   if (resident) return resident.priceUsd;
@@ -150,7 +152,11 @@ async function resolveInputUsdPrice(parent: ZeroCapitalOpportunity): Promise<num
   const compatibility = parent.expiresAt > now ? finitePositive(parent.inputAssetUsdPrice) : null;
   if (compatibility !== null) return compatibility;
 
-  await livePriceMesh.getLiveSymbolPrices([parent.inputAssetSymbol]).catch(() => new Map<string, number>());
+  await settleBeforeDeadline(
+    livePriceMesh.getLiveSymbolPrices([parent.inputAssetSymbol]),
+    deadlineAt,
+    new Map<string, number>(),
+  );
   return livePriceMesh.peekLiveSymbolPriceEvidence(parent.inputAssetSymbol)?.priceUsd ?? null;
 }
 
@@ -325,11 +331,47 @@ function parentDeadline(input: ZeroCapitalRouteSplitRescueInput): number {
   return input.deadlineAt ?? Number.MAX_SAFE_INTEGER;
 }
 
+function emptyCompositeResult(): AtomicStackTacticResult {
+  return { attemptedGroups: 0, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false };
+}
+
 export async function runZeroCapitalRouteSplitRescue(
   input: ZeroCapitalRouteSplitRescueInput,
 ): Promise<ZeroCapitalRouteSplitRescueResult> {
   const rejectionReasons: Record<string, number> = {};
   const improvedOpportunities: ZeroCapitalOpportunity[] = [];
+  const exactQuoteInFlight = new Map<string, Promise<QuotedZeroCapitalRoute | null>>();
+  let residentExactQuoteHits = 0;
+  let splitQuoteSingleflightHits = 0;
+  let deadlineBoundQuoteStops = 0;
+
+  const quoteExact = (route: ConfiguredZeroCapitalRoute, amount: bigint): Promise<QuotedZeroCapitalRoute | null> => {
+    if (Date.now() >= parentDeadline(input)) {
+      deadlineBoundQuoteStops += 1;
+      return Promise.resolve(null);
+    }
+    const resident = peekResidentExactQuote(route.id, amount);
+    if (resident) {
+      residentExactQuoteHits += 1;
+      return Promise.resolve(resident);
+    }
+    const key = `${route.id}:${amount.toString()}`;
+    const existing = exactQuoteInFlight.get(key);
+    if (existing) {
+      splitQuoteSingleflightHits += 1;
+      return existing;
+    }
+    const pending = settleBeforeDeadline(
+      quoteConfiguredZeroCapitalRoute({ ...route, amountIn: amount.toString() }, input.provider),
+      parentDeadline(input),
+      null,
+    ).finally(() => {
+      if (exactQuoteInFlight.get(key) === pending) exactQuoteInFlight.delete(key);
+    });
+    exactQuoteInFlight.set(key, pending);
+    return pending;
+  };
+
   const result: ZeroCapitalRouteSplitRescueResult = {
     attemptedCandidates: 0,
     routePairsTried: 0,
@@ -367,8 +409,6 @@ export async function runZeroCapitalRouteSplitRescue(
     result.validCandidates! += 1;
     result.attemptedCandidates += 1;
 
-    // Cache eviction or an evidence-generation change can never reject ownership.
-    // Re-prime locally from the already-owned candidate/topology at memory speed.
     let assignment = getApeResidentWorkAssignment(parent);
     if (!assignment) {
       primeApeResidentWorkbench({ opportunities: [parent], configuredRoutes: input.configuredRoutes });
@@ -399,10 +439,7 @@ export async function runZeroCapitalRouteSplitRescue(
       return;
     }
 
-    // Price refresh starts at the same time as structural inspection. Resident
-    // evidence resolves synchronously; a missing generation is refreshed rather
-    // than turning the candidate into a rejection.
-    const usdPrice = await resolveInputUsdPrice(parent);
+    const usdPrice = await resolveInputUsdPrice(parent, parentDeadline(input));
     if (usdPrice === null) {
       incrementReason(rejectionReasons, 'fresh_input_price_refresh_pending');
       return;
@@ -442,8 +479,6 @@ export async function runZeroCapitalRouteSplitRescue(
         right: alignRouteCostBasisToStageOne(residentPair.right, parent),
       };
 
-      // All ratios for one independent route pair launch together. This removes
-      // ratio-by-ratio head-of-line blocking without adding a timer or queue.
       const ratioJobs = splitRatiosForPair(pair).map(async ratio => {
         if (Date.now() >= parentDeadline(input)) return null;
         const amounts = splitAmounts(parent.flashLoanAmount, ratio);
@@ -454,8 +489,8 @@ export async function runZeroCapitalRouteSplitRescue(
         result.splitRatiosTried += 1;
         result.partialQuotesLaunched += 2;
         const [leftQuote, rightQuote] = await Promise.all([
-          quoteConfiguredZeroCapitalRoute({ ...pair.left, amountIn: amounts.left.toString() }, input.provider).catch(() => null),
-          quoteConfiguredZeroCapitalRoute({ ...pair.right, amountIn: amounts.right.toString() }, input.provider).catch(() => null),
+          quoteExact(pair.left, amounts.left),
+          quoteExact(pair.right, amounts.right),
         ]);
         return { ratio, leftQuote, rightQuote } satisfies RatioQuoteResult;
       });
@@ -495,12 +530,16 @@ export async function runZeroCapitalRouteSplitRescue(
         }
 
         const children = [leftChild, rightChild];
-        const composite = await runZeroCapitalAtomicStackTactic({
-          chain: input.chain,
-          provider: input.provider,
-          opportunities: children,
-          deadlineAt: parentDeadline(input),
-        });
+        const composite = await settleBeforeDeadline(
+          runZeroCapitalAtomicStackTactic({
+            chain: input.chain,
+            provider: input.provider,
+            opportunities: children,
+            deadlineAt: parentDeadline(input),
+          }),
+          parentDeadline(input),
+          emptyCompositeResult(),
+        );
         result.compositeMeasurements += composite.measuredVariants;
         result.promoted += composite.promoted;
         result.promotedOpportunityIds.push(...composite.promotedOpportunityIds);
@@ -511,8 +550,6 @@ export async function runZeroCapitalRouteSplitRescue(
     }
   };
 
-  // Candidates are independent work. Run them concurrently so one slow pool,
-  // provider or route never head-of-line blocks another APE-owned candidate.
   await Promise.all(input.opportunities.map(processParent));
 
   const { improvedOpportunities: _improvements, ...telemetryResult } = result;
@@ -525,6 +562,8 @@ export async function runZeroCapitalRouteSplitRescue(
     staleEvidenceRefreshesInsteadOfKillingCandidate: true,
     candidatesRunConcurrently: true,
     ratiosWithinPairRunConcurrently: true,
+    ratiosPerPairPerWave: 1,
+    persistentRatioFrontier: true,
     candidatesPreFilteredBeforeSplittability: false,
     candidateSliceBeforeSplittability: false,
     arbitraryFirstNRoutePairEligibilityCap: false,
@@ -532,10 +571,16 @@ export async function runZeroCapitalRouteSplitRescue(
     residentAssignmentRebuildOnCacheMiss: true,
     residentPriceEvidenceFirst: true,
     missingPriceRefreshesThroughCanonicalMesh: true,
+    residentExactQuoteHits,
+    splitQuoteSingleflightHits,
+    splitExactQuoteSingleflight: true,
+    deadlineBoundQuoteStops,
+    everyAwaitedSplitQuoteBoundedByApeDeadline: true,
+    lateSplitQuoteCannotExtendWaveAuthority: true,
     residentPeerHintsPiggybacked: true,
     peerHintSeparateQueue: false,
     peerHintPolling: false,
-    splitRatioPolicy: 'resident_gross_bps_weighted_first_then_existing_fallbacks',
+    splitRatioPolicy: 'resident_gross_weighted_best_first_then_persistent_frontier_across_waves',
     residentRoutePairOrdering: true,
     extraRpcForSplitIntelligence: false,
     structuralVisibility: 'all_resident_alternatives_visible_pool_disjoint_only_for_split_execution',

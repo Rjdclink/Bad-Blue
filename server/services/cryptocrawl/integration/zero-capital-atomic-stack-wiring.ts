@@ -14,6 +14,7 @@ import {
 import {
   calculateMeasuredFlashLoanFee,
   measureBalancerFlashLoanEconomics,
+  peekResidentFlashLoanProviderEvidence,
   type FlashLoanProviderEconomics,
 } from '../execution/adapters/flash-loan-provider-economics.js';
 import { verifyFlashLoanReceiverCapability } from '../execution/adapters/flash-loan-receiver-capability.js';
@@ -32,6 +33,7 @@ import {
   type ZeroCapitalCompositeEvidence,
 } from '../optimization/zero-capital-composite-evidence-registry.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
+import { buildBoundedStackVariants, settleBeforeDeadline } from './ape-hypergraph-intelligence.js';
 
 const installed = new WeakSet<object>();
 const tacticInFlight = new Map<string, Promise<AtomicStackTacticResult>>();
@@ -181,12 +183,12 @@ function buildCompositeMemberPlan(
   };
 }
 
+/** Structural ownership is independent of evidence freshness. */
 function individuallyComposable(opportunity: ZeroCapitalOpportunity): boolean {
   if (
     opportunity.id.startsWith(COMPOSITE_ID_PREFIX)
     || opportunity.chain === 'europa'
     || opportunity.route.length < 2
-    || opportunity.expiresAt <= Date.now()
     || !Number.isFinite(opportunity.netProfitBps)
   ) return false;
   const first = opportunity.route[0];
@@ -206,9 +208,7 @@ function chooseStack(opportunities: readonly ZeroCapitalOpportunity[]): ZeroCapi
       const candidate = measuredCandidateRegistry.get(opportunity.id);
       return individuallyComposable(opportunity)
         && candidate?.topology === 'ZERO_CAPITAL_ATOMIC'
-        && candidate.expiresAt > Date.now()
         && candidate.status !== 'blocked'
-        && candidate.status !== 'expired'
         && candidate.depth.status !== 'unavailable';
     })
     .sort((left, right) => {
@@ -217,29 +217,17 @@ function chooseStack(opportunities: readonly ZeroCapitalOpportunity[]): ZeroCapi
       return grossProfit(right) > grossProfit(left) ? 1 : -1;
     });
 
-  const selected: ZeroCapitalOpportunity[] = [];
-  let stepCount = 0;
-  for (const opportunity of eligible) {
-    if (selected.length >= maxLegs) break;
-    if (stepCount + opportunity.route.length > 16) continue;
-    selected.push(opportunity);
-    stepCount += opportunity.route.length;
-  }
-  // Adaptive minLegs may rank preferred assembly sizes, but cannot veto a valid
-  // deterministic two-cycle composite. Exact aggregate economics is sovereign.
-  return selected.length >= 2 ? selected : [];
+  // Keep the bounded structural frontier, including stale-owned members. Freshness
+  // is enforced only at exact simulation time so stale evidence does not erase
+  // candidate ownership or composition planning.
+  return eligible.slice(0, Math.max(2, Math.min(8, maxLegs + 2)));
 }
 
 function stackVariants(stack: readonly ZeroCapitalOpportunity[]): ZeroCapitalOpportunity[][] {
   const maxVariants = Math.trunc(bounded(process.env.ZERO_CAPITAL_COMPOSITE_VARIANTS, 5, 1, 8));
-  const variants: ZeroCapitalOpportunity[][] = [];
-  for (let count = 2; count <= stack.length; count += 1) variants.push(stack.slice(0, count));
-  if (variants.length <= maxVariants) return variants.reverse();
-  const picked = new Set<number>([variants.length - 1, 0]);
-  for (let index = 1; picked.size < maxVariants && index < variants.length - 1; index += 1) {
-    picked.add(Math.round(index * (variants.length - 1) / Math.max(1, maxVariants - 1)));
-  }
-  return [...picked].sort((a, b) => b - a).map(index => variants[index]);
+  const policy = adaptiveTopologyOptimizer.getAssemblyPolicy();
+  const maxMembers = Math.max(2, Math.min(8, policy.maxLegs));
+  return buildBoundedStackVariants(stack, maxVariants, maxMembers, 16);
 }
 
 function combinedGasCostFromEstimate(opportunities: readonly ZeroCapitalOpportunity[], estimatedGas: bigint): bigint {
@@ -263,6 +251,11 @@ async function measureTargetStack(input: {
     .map(opportunity => measuredCandidateRegistry.get(opportunity.id))
     .filter((candidate): candidate is MeasuredCandidate => candidate !== null);
   if (memberCandidates.length !== input.opportunities.length) return null;
+
+  // Stale candidates stay owned/plannable, but stale route evidence never gains
+  // exact simulation or execution authority.
+  const now = Date.now();
+  if (input.opportunities.some(opportunity => opportunity.expiresAt <= now)) return null;
 
   const first = input.opportunities[0];
   const inputTokenUsdPrice = Number(first.inputAssetUsdPrice);
@@ -320,63 +313,74 @@ async function measureTargetStack(input: {
   };
   const probePayload = buildCompositeFlashLoanReceiverPayload(probePlan);
   const probeRequest = { from: input.wallet.address, to: probePayload.to, data: probePayload.data, value: probePayload.value };
-  try {
-    if (deadlineReached(expiresAt)) return null;
-    await input.provider.call(probeRequest);
-  } catch {
-    return null;
-  }
-  if (deadlineReached(expiresAt)) return null;
-  let estimatedGas = BigInt((await input.provider.estimateGas(probeRequest)).toString());
-  if (estimatedGas <= 0n) return null;
 
+  // RPC proof is deadline-authoritative. Independent call/estimate work is paired
+  // instead of serially repeated, cutting the fixed convergence sequence while
+  // keeping exact call + exact gas proof mandatory.
+  const [probeCallPassed, probeGas] = await Promise.all([
+    settleBeforeDeadline(
+      input.provider.call(probeRequest).then(() => true),
+      expiresAt,
+      false,
+    ),
+    settleBeforeDeadline(
+      input.provider.estimateGas(probeRequest).then(value => BigInt(value.toString())),
+      expiresAt,
+      0n,
+    ),
+  ]);
+  if (!probeCallPassed || probeGas <= 0n || deadlineReached(expiresAt)) return null;
+
+  let estimatedGas = probeGas;
   let combinedGasCost = combinedGasCostFromEstimate(input.opportunities, estimatedGas);
   let requiredOnchainResidual = targetNetProfitBaseUnits + combinedGasCost + relayFee;
   let payload = buildCompositeFlashLoanReceiverPayload({ ...probePlan, minProfit: requiredOnchainResidual.toString() });
-  for (let pass = 0; pass < 2; pass += 1) {
-    if (deadlineReached(expiresAt)) return null;
-    const request = { from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value };
-    try {
-      await input.provider.call(request);
-    } catch {
-      return null;
-    }
-    if (deadlineReached(expiresAt)) return null;
-    const nextGas = BigInt((await input.provider.estimateGas(request)).toString());
-    if (nextGas <= 0n) return null;
-    combinedGasCost = combinedGasCostFromEstimate(input.opportunities, nextGas);
-    requiredOnchainResidual = targetNetProfitBaseUnits + combinedGasCost + relayFee;
-    estimatedGas = nextGas;
-    payload = buildCompositeFlashLoanReceiverPayload({ ...probePlan, minProfit: requiredOnchainResidual.toString() });
-  }
+  let exactRequest = { from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value };
 
-  if (deadlineReached(expiresAt)) return null;
-  const exactRequest = { from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value };
-  try {
-    await input.provider.call(exactRequest);
-  } catch {
-    return null;
-  }
-  if (deadlineReached(expiresAt)) return null;
-  estimatedGas = BigInt((await input.provider.estimateGas(exactRequest)).toString());
-  if (estimatedGas <= 0n) return null;
-  combinedGasCost = combinedGasCostFromEstimate(input.opportunities, estimatedGas);
-  requiredOnchainResidual = targetNetProfitBaseUnits + combinedGasCost + relayFee;
-  payload = buildCompositeFlashLoanReceiverPayload({ ...probePlan, minProfit: requiredOnchainResidual.toString() });
-  try {
-    if (deadlineReached(expiresAt)) return null;
-    await input.provider.call({ from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value });
-  } catch {
-    return null;
-  }
-  if (deadlineReached(expiresAt)) return null;
-
-  // Independent already-required chain data is acquired together rather than in
-  // serial. This removes a wait; it does not add a new proof or provider call.
-  const [block, feeData] = await Promise.all([
-    input.provider.getBlock('latest'),
-    input.provider.getFeeData(),
+  const chainContextPromise = settleBeforeDeadline(
+    Promise.all([input.provider.getBlock('latest'), input.provider.getFeeData()]),
+    expiresAt,
+    null,
+  );
+  const [exactCallPassed, exactGas] = await Promise.all([
+    settleBeforeDeadline(
+      input.provider.call(exactRequest).then(() => true),
+      expiresAt,
+      false,
+    ),
+    settleBeforeDeadline(
+      input.provider.estimateGas(exactRequest).then(value => BigInt(value.toString())),
+      expiresAt,
+      0n,
+    ),
   ]);
+  if (!exactCallPassed || exactGas <= 0n || deadlineReached(expiresAt)) return null;
+
+  estimatedGas = exactGas;
+  const exactGasCost = combinedGasCostFromEstimate(input.opportunities, estimatedGas);
+  const exactRequiredResidual = targetNetProfitBaseUnits + exactGasCost + relayFee;
+  combinedGasCost = exactGasCost;
+
+  // Numeric minProfit changes can alter execution branching even when calldata
+  // structure is unchanged. Recheck once only when convergence changes the exact
+  // residual; no fixed two-pass loop remains.
+  if (exactRequiredResidual !== requiredOnchainResidual) {
+    requiredOnchainResidual = exactRequiredResidual;
+    payload = buildCompositeFlashLoanReceiverPayload({ ...probePlan, minProfit: requiredOnchainResidual.toString() });
+    exactRequest = { from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value };
+    const finalCallPassed = await settleBeforeDeadline(
+      input.provider.call(exactRequest).then(() => true),
+      expiresAt,
+      false,
+    );
+    if (!finalCallPassed || deadlineReached(expiresAt)) return null;
+  } else {
+    requiredOnchainResidual = exactRequiredResidual;
+  }
+
+  const chainContext = await chainContextPromise;
+  if (!chainContext || deadlineReached(expiresAt)) return null;
+  const [block, feeData] = chainContext;
   const maxBlockFraction = bounded(process.env.CRYPTOCRAWL_MULTILEG_MAX_BLOCK_GAS_FRACTION, 0.50, 0.10, 0.80);
   const blockGasLimit = BigInt(block.gasLimit.toString());
   const allowedGas = blockGasLimit * BigInt(Math.floor(maxBlockFraction * 1_000_000)) / 1_000_000n;
@@ -410,7 +414,10 @@ async function measureTargetStack(input: {
     'aggregate_terminal_repayment_and_profit_authoritative',
     'exact_strict_positive_composite_eth_call_passed',
     'exact_strict_positive_composite_gas_estimate',
+    'deadline_authoritative_rpc_proof',
+    'bounded_gas_convergence_without_fixed_retry_loop',
     'shared_flash_loan_principal',
+    'resident_flash_provider_evidence_preferred',
     'measured_balancer_flash_fee_for_shared_principal',
     'measured_combined_gas_cost',
     'measured_combined_relay_cost',
@@ -593,6 +600,34 @@ function promoteMeasuredStack(measured: MeasuredTargetStack): void {
   }
 }
 
+async function resolveBalancerCompositeProvider(input: {
+  chain: SupportedChain;
+  provider: providers.JsonRpcProvider;
+  asset: string;
+  deadlineAt?: number;
+}): Promise<{ evidence: FlashLoanProviderEconomics | null; residentHit: boolean }> {
+  const resident = peekResidentFlashLoanProviderEvidence(input.chain as any, input.asset);
+  const residentBalancer = resident
+    .filter(item => item.provider === 'balancer_v2' && item.executableEvidenceComplete)
+    .sort((left, right) => right.observedAt - left.observedAt)[0] ?? null;
+  if (residentBalancer) return { evidence: residentBalancer, residentHit: true };
+  if (deadlineReached(input.deadlineAt)) return { evidence: null, residentHit: false };
+
+  // Current deployed composite ABI is Balancer-specific. Aave/Morpho remain valid
+  // alternatives for single-route funding, but are not fabricated as composite
+  // providers until a matching deployed receiver ABI is proven.
+  const measured = await settleBeforeDeadline(
+    measureBalancerFlashLoanEconomics({
+      chain: input.chain as any,
+      provider: input.provider,
+      asset: input.asset,
+    }),
+    input.deadlineAt,
+    null,
+  );
+  return { evidence: measured, residentHit: false };
+}
+
 async function runGroup(input: {
   chain: SupportedChain;
   provider: providers.JsonRpcProvider;
@@ -603,21 +638,24 @@ async function runGroup(input: {
   const stack = chooseStack(input.opportunities);
   if (stack.length < 2 || deadlineReached(input.deadlineAt)) return { measuredVariants: 0, promotedOpportunityId: null };
 
-  // Receiver capability and provider economics are independent, required facts.
-  // Measure them once per token group and in parallel, then reuse for every variant.
-  const [compositeCapability, balancer] = await Promise.all([
+  const capabilityPromise = settleBeforeDeadline(
     verifyFlashLoanReceiverCapability({
       kind: 'balancer_composite_v2',
       chain: input.chain,
       provider: input.provider,
       expectedOwner: input.wallet.address,
-    }).catch(() => null),
-    measureBalancerFlashLoanEconomics({
-      chain: input.chain as any,
-      provider: input.provider,
-      asset: stack[0].inputToken,
-    }).catch(() => null),
-  ]);
+    }),
+    input.deadlineAt,
+    null,
+  );
+  const providerPromise = resolveBalancerCompositeProvider({
+    chain: input.chain,
+    provider: input.provider,
+    asset: stack[0].inputToken,
+    deadlineAt: input.deadlineAt,
+  });
+  const [compositeCapability, providerResolution] = await Promise.all([capabilityPromise, providerPromise]);
+  const balancer = providerResolution.evidence;
   if (!compositeCapability || !balancer?.executableEvidenceComplete || deadlineReached(input.deadlineAt)) {
     return { measuredVariants: 0, promotedOpportunityId: null };
   }
@@ -670,10 +708,16 @@ async function runGroup(input: {
     completionOrderVariantMeasurement: true,
     fullVariantBatchBarrier: false,
     providerEconomicsMeasuredOncePerGroup: true,
+    providerEconomicsResidentHit: providerResolution.residentHit,
+    providerEconomicsResidentMeshPreferred: true,
     receiverCapabilityMeasuredOncePerGroup: true,
     aggregateEconomicsAuthority: true,
     individualChildPositiveGrossRequired: false,
     adaptiveMinLegsVetoAuthority: false,
+    nonPrefixBoundedVariantSearch: true,
+    staleOwnershipSeparatedFromFreshExecutionAuthority: true,
+    fixedCompositeRpcConvergenceLoopRemoved: true,
+    deadlineAuthoritativeRpcProof: true,
     promotionAuthority: 'single_atomic_bps_engine',
     executionAuthority: false,
   });
@@ -734,9 +778,6 @@ export async function runZeroCapitalAtomicStackTactic(input: {
     return task;
   });
 
-  // Completion-order group consumption removes the outer Promise.all barrier. A
-  // strict-positive group returns immediately; unrelated in-flight groups retain
-  // read-only local work and have no authority to delay that winner.
   const active = new Map<number, Promise<{ index: number; result: AtomicStackTacticResult }>>();
   tasks.forEach((task, index) => active.set(index, task.then(result => ({ index, result }))));
   const aggregate: AtomicStackTacticResult = {
@@ -781,7 +822,14 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     exactStrictPositiveCompositeCallRequired: true,
     exactCompositeGasEstimateRequired: true,
     measuredBalancerFlashFeeRequired: true,
+    residentProviderEvidencePreferred: true,
     balancerProviderMeasurementSharedAcrossVariants: true,
+    compositeProviderCompatibility: 'balancer_v2_only_until_matching_aave_or_morpho_composite_receiver_abi_is_proven',
+    providerAlternativesNarrowingPreventedByFalseCapabilityClaims: true,
+    nonPrefixBoundedVariantSearch: true,
+    staleOwnershipSeparatedFromFreshExecutionAuthority: true,
+    deadlineAuthoritativeRpcProof: true,
+    fixedCompositeRpcConvergenceLoopRemoved: true,
     measuredCompositionBenefitRequired: true,
     individualChildPositiveGrossRequired: false,
     aggregateTerminalEconomicsAuthority: true,

@@ -21,6 +21,11 @@ import {
   isApeRescueCandidate,
   type ApeProfitabilityToolboxPlan,
 } from './ape-profitability-toolbox.js';
+import {
+  buildApeDefectVector,
+  recordApeRouteOutcome,
+  selectPersistentRouteFrontier,
+} from './ape-hypergraph-intelligence.js';
 
 type TimedQuoteResult = {
   quote: QuotedZeroCapitalRoute | null;
@@ -281,24 +286,19 @@ function compatibleRoutesForOpportunity(
     ? [seed, ...compatible.filter(route => route.id !== seed.id)]
     : compatible;
   const ordered = orderRoutesByExplicitTradingFee(originalOrder);
-  const selected: ConfiguredZeroCapitalRoute[] = [];
-  const deferred: ConfiguredZeroCapitalRoute[] = [];
-  const families = new Set<string>();
-  for (const route of ordered) {
-    const family = routeFamily(route);
-    if (families.has(family)) {
-      deferred.push(route);
-      continue;
-    }
-    families.add(family);
-    selected.push(route);
-    if (selected.length >= maximum) return selected;
-  }
-  for (const route of deferred) {
-    if (selected.length >= maximum) break;
-    selected.push(route);
-  }
-  return selected;
+  if (ordered.length === 0) return [];
+
+  // A bounded work wave no longer means repeatedly checking the same route prefix.
+  // The resident frontier rotates across compatible alternatives and uses prior
+  // measured outcomes only as ordering advice. The original route remains first so
+  // current evidence can still be reused without a new quote when resident.
+  const frontier = selectPersistentRouteFrontier({
+    opportunity,
+    routes: ordered,
+    width: maximum,
+  });
+  if (!seed) return frontier;
+  return [seed, ...frontier.filter(route => route.id !== seed.id)].slice(0, maximum);
 }
 
 function providerFresh(evidence: FlashLoanProviderEconomics, now = Date.now()): boolean {
@@ -512,8 +512,6 @@ async function mapConcurrentUntilStrictPositive<T, R>(
     if (!stopped) launch();
   }
 
-  // Outstanding work already in transport may settle, but it has no authority to
-  // publish after the shared winner flag is set. Do not wait for it here.
   for (let index = 0; index < items.length; index += 1) {
     if (results[index] === undefined) results[index] = fallback(items[index]);
   }
@@ -566,6 +564,9 @@ export async function runZeroCapitalProfitabilityRescueV4(
   let toolboxPlansBuilt = 0;
   let toolboxRouteFirstSearches = 0;
   let toolboxSizeFirstSearches = 0;
+  let deterministicGrossRouteFirstSearches = 0;
+  let persistentRouteFrontierUses = 0;
+  let learnedRouteOutcomesRecorded = 0;
   let residentInitialQuoteHits = 0;
   let residentInitialQuoteMisses = 0;
   let residentFreshnessInherited = 0;
@@ -636,9 +637,11 @@ export async function runZeroCapitalProfitabilityRescueV4(
     if (passWinnerFound || !recoverableByAtomicSurplus(opportunity) || deadlineReached(deadlineAt)) return opportunity;
     const routes = compatibleRoutesForOpportunity(configuredRoutes, opportunity);
     if (routes.length === 0) return opportunity;
+    persistentRouteFrontierUses += 1;
     const providerRace = providerRaces.get(providerKeyFor(opportunity));
     if (!providerRace) return opportunity;
 
+    const defect = buildApeDefectVector(opportunity);
     const intendedAmount = opportunity.flashLoanAmount;
     const primaryRoute = routes[0];
     const residentInitial = peekResidentExactQuote(primaryRoute.id, intendedAmount);
@@ -673,6 +676,24 @@ export async function runZeroCapitalProfitabilityRescueV4(
     if (initialResult.timedOut) routeQuoteTimeouts += 1;
     else if (initialResult.failed) routeQuoteFailures += 1;
 
+    const recordOutcome = (
+      route: ConfiguredZeroCapitalRoute,
+      quote: QuotedZeroCapitalRoute | null,
+      plan: FundingPlan | null,
+      latencyMs: number,
+    ): void => {
+      if (!quote || !plan || deadlineReached(deadlineAt)) return;
+      const adjusted = adjustForFundingPlan(quote, plan);
+      recordApeRouteOutcome({
+        route,
+        beforeBps: opportunity.netProfitBps,
+        afterBps: adjusted.netProfitBps,
+        latencyMs,
+        strictPositive: clearsStrictProfitability(adjusted),
+      });
+      learnedRouteOutcomesRecorded += 1;
+    };
+
     const consider = (
       quote: QuotedZeroCapitalRoute | null,
       plan: FundingPlan | null,
@@ -692,6 +713,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
       return clearsStrictProfitability(adjusted);
     };
 
+    recordOutcome(primaryRoute, initialResult.quote, intendedFundingPlan, initialResult.elapsedMs);
     if (consider(initialResult.quote, intendedFundingPlan, Boolean(residentMatchesIntended))) {
       const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness);
       if (refined.expiresAt > refined.timestamp && refined.expiresAt > Date.now() && strictImprovement(opportunity, best!)) {
@@ -701,8 +723,6 @@ export async function runZeroCapitalProfitabilityRescueV4(
       }
     }
 
-    // Advisory scheduling is deferred until it can actually replace additional
-    // search work. A resident strict-positive recovery above never pays this cost.
     const toolboxPlan = toolboxPlanFor(opportunity);
     const safeEvidence = safeProviderEvidence(providerMeasurements);
     const amounts = buildApeTargetAmounts({
@@ -732,7 +752,8 @@ export async function runZeroCapitalProfitabilityRescueV4(
       targets.push({ route, amount, plan });
     };
 
-    const routeFirst = apePrefersRouteAlternatives(toolboxPlan);
+    const routeFirst = defect.structuralEdgeDefect || apePrefersRouteAlternatives(toolboxPlan);
+    if (defect.structuralEdgeDefect) deterministicGrossRouteFirstSearches += 1;
     if (routeFirst) {
       toolboxRouteFirstSearches += 1;
       for (const route of routes.slice(1)) addTarget(route, targetAmount);
@@ -768,6 +789,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
           routeQuoteFailures += 1;
           continue;
         }
+        recordOutcome(target.route, result.quote, target.plan, result.elapsedMs);
         if (initialRouteFailed && target.route.id === primaryRoute.id && target.amount < intendedAmount) {
           routeResizeRecoveries += 1;
           initialRouteFailed = false;
@@ -876,6 +898,10 @@ export async function runZeroCapitalProfitabilityRescueV4(
     providerStacking: 'aave_v3_plus_balancer_v2_when_verified_execution_topology_can_fund_or_reduce_fee',
     morphoStackingEnabled: false, morphoStackingReason: 'no_verified_multi_provider_execution_topology_found',
     routeQuoteFailures, routeQuoteTimeouts, routeResizeRecoveries, routeAlternativesTried,
+    persistentRouteFrontierUses,
+    learnedRouteOutcomesRecorded,
+    deterministicGrossRouteFirstSearches,
+    persistentRouteFrontierOrderingAuthority: 'advisory_only_exact_quote_economics_sovereign',
     residentInitialQuoteHits, residentInitialQuoteMisses, residentFreshnessInherited,
     unchangedPrimaryRouteRequoteAvoidedWhenResidentExactSizeExists: true,
     residentQuoteNeverExtendsCandidateFreshness: true,
@@ -897,6 +923,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
     bpsSuperEngineUsedForSearchScheduling: true,
     economicTransformationAdviceUsedForSearchScheduling: true,
     researchBpsTacticsUsedForSearchScheduling: true,
+    exactGrossSignOverridesAdvisoryRouteOrdering: true,
     advisoryCanVetoDeterministicPositive: false,
     advisoryBpsIntelligenceBeforeResidentInitialProof: false,
     combinationsExhausted, improved, partialBpsImprovements, strictPositiveRecoveries, invalidFreshRefinement,

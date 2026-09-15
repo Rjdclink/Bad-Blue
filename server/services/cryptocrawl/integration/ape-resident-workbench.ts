@@ -3,6 +3,7 @@ import type {
   ConfiguredRouteLeg,
   ConfiguredZeroCapitalRoute,
 } from '../execution/adapters/onchain-route-quoter.js';
+import { routeInventoryFingerprint, routeTopologySignature } from './ape-hypergraph-intelligence.js';
 
 export type ApeWorkerKind = 'route_split' | 'v4_cost_rescue' | 'shared_principal_stack' | 'execution_ready';
 
@@ -38,9 +39,14 @@ type StructuralIndex = {
 
 const assignments = new Map<string, ApeResidentWorkAssignment>();
 const peerHints = new Map<string, ApeResidentPeerHint>();
-let structuralInventoryIdentity: readonly ConfiguredZeroCapitalRoute[] | null = null;
+let structuralInventoryFingerprint: string | null = null;
+let structuralRouteSignatures = new Map<string, string>();
+let structuralRouteKeys = new Map<string, string>();
 let structuralIndex: StructuralIndex = { routesByKey: new Map(), splitPairsByKey: new Map() };
 let structuralIndexBuilds = 0;
+let structuralIndexFullBuilds = 0;
+let structuralIndexIncrementalBuilds = 0;
+let structuralIndexStableHits = 0;
 let assignmentPrimes = 0;
 let dynamicArrivedRoutesAdded = 0;
 let peerHintsPublished = 0;
@@ -91,25 +97,85 @@ function safeSplitPairs(routes: readonly ConfiguredZeroCapitalRoute[]): ApeResid
   return output;
 }
 
+function buildBucket(routes: readonly ConfiguredZeroCapitalRoute[], key: string): {
+  routes: readonly ConfiguredZeroCapitalRoute[];
+  pairs: readonly ApeResidentRoutePair[];
+} | null {
+  const bucket = routes.filter(route => structuralKey(route) === key);
+  if (bucket.length === 0) return null;
+  const residentRoutes = Object.freeze([...bucket]);
+  return {
+    routes: residentRoutes,
+    pairs: Object.freeze(safeSplitPairs(residentRoutes)),
+  };
+}
+
+/**
+ * Content-stable topology identity prevents an equivalent newly allocated route
+ * array from rebuilding the quadratic split-pair index. When topology actually
+ * changes, only affected structural buckets are rebuilt unless the change is broad.
+ */
 function ensureStructuralIndex(routes: readonly ConfiguredZeroCapitalRoute[]): void {
-  if (structuralInventoryIdentity === routes) return;
-  const mutable = new Map<string, ConfiguredZeroCapitalRoute[]>();
-  for (const route of routes) {
-    const key = structuralKey(route);
-    const bucket = mutable.get(key);
-    if (bucket) bucket.push(route);
-    else mutable.set(key, [route]);
+  const fingerprint = routeInventoryFingerprint(routes);
+  if (structuralInventoryFingerprint === fingerprint) {
+    structuralIndexStableHits += 1;
+    return;
   }
 
-  const routesByKey = new Map<string, readonly ConfiguredZeroCapitalRoute[]>();
-  const splitPairsByKey = new Map<string, readonly ApeResidentRoutePair[]>();
-  for (const [key, bucket] of mutable) {
-    const residentRoutes = Object.freeze([...bucket]);
-    routesByKey.set(key, residentRoutes);
-    splitPairsByKey.set(key, Object.freeze(safeSplitPairs(residentRoutes)));
+  const nextSignatures = new Map<string, string>();
+  const nextKeys = new Map<string, string>();
+  const changedKeys = new Set<string>();
+  for (const route of routes) {
+    const signature = routeTopologySignature(route);
+    const key = structuralKey(route);
+    nextSignatures.set(route.id, signature);
+    nextKeys.set(route.id, key);
+    if (structuralRouteSignatures.get(route.id) !== signature) changedKeys.add(key);
   }
-  structuralIndex = { routesByKey, splitPairsByKey };
-  structuralInventoryIdentity = routes;
+  for (const [routeId, priorKey] of structuralRouteKeys) {
+    if (!nextSignatures.has(routeId)) changedKeys.add(priorKey);
+  }
+
+  const broadChange = structuralInventoryFingerprint === null
+    || changedKeys.size > Math.max(4, Math.ceil(Math.max(1, structuralIndex.routesByKey.size) / 2));
+
+  if (broadChange) {
+    const mutable = new Map<string, ConfiguredZeroCapitalRoute[]>();
+    for (const route of routes) {
+      const key = structuralKey(route);
+      const bucket = mutable.get(key);
+      if (bucket) bucket.push(route);
+      else mutable.set(key, [route]);
+    }
+    const routesByKey = new Map<string, readonly ConfiguredZeroCapitalRoute[]>();
+    const splitPairsByKey = new Map<string, readonly ApeResidentRoutePair[]>();
+    for (const [key, bucket] of mutable) {
+      const residentRoutes = Object.freeze([...bucket]);
+      routesByKey.set(key, residentRoutes);
+      splitPairsByKey.set(key, Object.freeze(safeSplitPairs(residentRoutes)));
+    }
+    structuralIndex = { routesByKey, splitPairsByKey };
+    structuralIndexFullBuilds += 1;
+  } else {
+    const routesByKey = new Map(structuralIndex.routesByKey);
+    const splitPairsByKey = new Map(structuralIndex.splitPairsByKey);
+    for (const key of changedKeys) {
+      const bucket = buildBucket(routes, key);
+      if (!bucket) {
+        routesByKey.delete(key);
+        splitPairsByKey.delete(key);
+        continue;
+      }
+      routesByKey.set(key, bucket.routes);
+      splitPairsByKey.set(key, bucket.pairs);
+    }
+    structuralIndex = { routesByKey, splitPairsByKey };
+    structuralIndexIncrementalBuilds += 1;
+  }
+
+  structuralInventoryFingerprint = fingerprint;
+  structuralRouteSignatures = nextSignatures;
+  structuralRouteKeys = nextKeys;
   structuralIndexBuilds += 1;
 }
 
@@ -173,10 +239,7 @@ function primaryWorker(opportunity: ZeroCapitalOpportunity): ApeWorkerKind {
   return grossProfit(opportunity) > 0n ? 'v4_cost_rescue' : 'route_split';
 }
 
-/**
- * Every finite negative candidate keeps the complete compatible rescue toolbox.
- * Ordering is only a latency optimization; negative gross/net is never rejection.
- */
+/** Every finite negative candidate keeps the complete compatible rescue toolbox. */
 function fallbackWorkers(opportunity: ZeroCapitalOpportunity): readonly ApeWorkerKind[] {
   if (opportunity.expectedProfit > 0n) return [];
   return grossProfit(opportunity) > 0n
@@ -184,11 +247,6 @@ function fallbackWorkers(opportunity: ZeroCapitalOpportunity): readonly ApeWorke
     : ['v4_cost_rescue', 'shared_principal_stack', 'route_split'];
 }
 
-/**
- * Resident maps are caches, not ownership authorities. Size eviction may discard
- * reconstructible cache state only; workers re-prime immediately from the owned
- * candidate and configured topology. Evidence expiry never deletes ownership.
- */
 function prune(): void {
   while (assignments.size > MAX_RESIDENT_ENTRIES) {
     const key = assignments.keys().next().value as string | undefined;
@@ -204,12 +262,6 @@ function prune(): void {
   }
 }
 
-/**
- * Replaces Splitter-side configured-route indexing/pair discovery. Stable topology
- * is built once per immutable configured-route inventory. Candidate-time work is
- * only resident map access plus representation of a Stage-1 route that is absent
- * from configured inventory. No network, database, model, queue or scheduler I/O.
- */
 export function primeApeResidentWorkbench(input: {
   opportunities: readonly ZeroCapitalOpportunity[];
   configuredRoutes: readonly ConfiguredZeroCapitalRoute[];
@@ -255,11 +307,6 @@ export function getApeResidentWorkAssignment(
   return assignment;
 }
 
-/**
- * Piggyback a hint only when a worker is already publishing a useful improvement.
- * Evidence expiry is metadata only; it cannot erase candidate ownership or the
- * scheduling hint needed to refresh/re-route that candidate on its next turn.
- */
 export function publishApeResidentPeerHint(
   opportunity: ZeroCapitalOpportunity,
   preferredRouteId: string | null = null,
@@ -288,6 +335,11 @@ export function getApeResidentWorkbenchSnapshot() {
     peerHints: peerHints.size,
     structuralKeys: structuralIndex.routesByKey.size,
     structuralIndexBuilds,
+    structuralIndexFullBuilds,
+    structuralIndexIncrementalBuilds,
+    structuralIndexStableHits,
+    structuralInventoryFingerprint,
+    structuralTopologyIdentityMode: 'stable_content_fingerprint_plus_incremental_changed_buckets' as const,
     assignmentPrimes,
     dynamicArrivedRoutesAdded,
     peerHintsPublished,
