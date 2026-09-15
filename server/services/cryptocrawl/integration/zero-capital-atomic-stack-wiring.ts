@@ -17,7 +17,10 @@ import {
   peekResidentFlashLoanProviderEvidence,
   type FlashLoanProviderEconomics,
 } from '../execution/adapters/flash-loan-provider-economics.js';
-import { verifyFlashLoanReceiverCapability } from '../execution/adapters/flash-loan-receiver-capability.js';
+import {
+  resolveConfiguredFlashLoanReceiver,
+  verifyFlashLoanReceiverCapability,
+} from '../execution/adapters/flash-loan-receiver-capability.js';
 import type {
   OnchainSwapLeg,
   SupportedSwapProtocol,
@@ -34,6 +37,11 @@ import {
 } from '../optimization/zero-capital-composite-evidence-registry.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
 import { buildBoundedStackVariants, settleBeforeDeadline } from './ape-hypergraph-intelligence.js';
+import {
+  clearsFiveDollarOutputFloor,
+  requiredProfitBaseUnitsForFiveDollarOutput,
+  ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+} from './zero-capital-profit-output-floor.js';
 
 const installed = new WeakSet<object>();
 const tacticInFlight = new Map<string, Promise<AtomicStackTacticResult>>();
@@ -111,11 +119,24 @@ function deadlineReached(deadlineAt?: number): boolean {
   return deadlineAt !== undefined && Date.now() >= deadlineAt;
 }
 
+function emptyTacticResult(): AtomicStackTacticResult {
+  return { attemptedGroups: 0, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false };
+}
+
+function configuredCompositeReceiver(chain: SupportedChain): string | null {
+  if (chain === 'europa') return null;
+  try {
+    return resolveConfiguredFlashLoanReceiver('balancer_composite_v2', chain as any);
+  } catch {
+    return null;
+  }
+}
+
 function normalizeProtocol(protocol: string): SupportedSwapProtocol {
   const normalized = protocol.trim().toLowerCase();
   if (normalized === 'uniswapv3' || normalized === 'uniswap_v3' || normalized === 'uniswap-v3') return 'uniswapV3';
   if (normalized === 'sushiswap' || normalized === 'sushi') return 'sushiswap';
-  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushi-v3') return 'sushiswapV3';
+  if (normalized === 'sushiswapv3' || normalized === 'sushiswap_v3' || normalized === 'sushiswap-v3' || normalized === 'sushi-v3') return 'sushiswapV3';
   if (normalized === 'pancakeswapv2' || normalized === 'pancakeswap_v2' || normalized === 'pancakeswap-v2' || normalized === 'pancakev2' || normalized === 'pancake-v2') return 'pancakeswapV2';
   if (normalized === 'traderjoev1' || normalized === 'traderjoe_v1' || normalized === 'traderjoe-v1' || normalized === 'joev1' || normalized === 'joe-v1') return 'traderJoeV1';
   if (normalized === 'aaveghogsm' || normalized === 'aave_gho_gsm' || normalized === 'aave-gho-gsm') return 'aaveGhoGsm';
@@ -138,11 +159,6 @@ function applyHaircut(raw: bigint, bps: number): string {
   return ((raw * BigInt(boundedBps)) / 10_000n).toString();
 }
 
-/**
- * Builds only the already-quoted swap steps required by the composite receiver.
- * It deliberately has no per-member profitability admission because the V2
- * receiver settles repayment and minProfit only after all cycles complete.
- */
 function buildCompositeMemberPlan(
   opportunity: ZeroCapitalOpportunity,
   receiver: string,
@@ -183,7 +199,6 @@ function buildCompositeMemberPlan(
   };
 }
 
-/** Structural ownership is independent of evidence freshness. */
 function individuallyComposable(opportunity: ZeroCapitalOpportunity): boolean {
   if (
     opportunity.id.startsWith(COMPOSITE_ID_PREFIX)
@@ -216,10 +231,6 @@ function chooseStack(opportunities: readonly ZeroCapitalOpportunity[]): ZeroCapi
       if (right.netProfitBps !== left.netProfitBps) return right.netProfitBps - left.netProfitBps;
       return grossProfit(right) > grossProfit(left) ? 1 : -1;
     });
-
-  // Keep the bounded structural frontier, including stale-owned members. Freshness
-  // is enforced only at exact simulation time so stale evidence does not erase
-  // candidate ownership or composition planning.
   return eligible.slice(0, Math.max(2, Math.min(8, maxLegs + 2)));
 }
 
@@ -252,14 +263,14 @@ async function measureTargetStack(input: {
     .filter((candidate): candidate is MeasuredCandidate => candidate !== null);
   if (memberCandidates.length !== input.opportunities.length) return null;
 
-  // Stale candidates stay owned/plannable, but stale route evidence never gains
-  // exact simulation or execution authority.
   const now = Date.now();
   if (input.opportunities.some(opportunity => opportunity.expiresAt <= now)) return null;
 
   const first = input.opportunities[0];
   const inputTokenUsdPrice = Number(first.inputAssetUsdPrice);
   if (!(Number.isFinite(inputTokenUsdPrice) && inputTokenUsdPrice > 0)) return null;
+  const targetNetProfitBaseUnits = requiredProfitBaseUnitsForFiveDollarOutput(first, inputTokenUsdPrice);
+  if (targetNetProfitBaseUnits === null || targetNetProfitBaseUnits < STRICT_POSITIVE_PROFIT_BASE_UNITS) return null;
 
   const profitRecipient = process.env.CRYPTO_PROFIT_WALLET_ADDRESS || process.env.BRIDGE_WALLET_ADDRESS || input.wallet.address;
   let individualPlans: CompositeMemberPlan[];
@@ -295,7 +306,6 @@ async function measureTargetStack(input: {
   if (combinedGrossProfit <= 0n) return null;
   const individualExpectedProfitSum = input.opportunities.reduce((sum, opportunity) => sum + opportunity.expectedProfit, 0n);
   const relayFee = input.opportunities.reduce((sum, opportunity) => sum + (opportunity.relayFeeInInputToken || 0n), 0n);
-  const targetNetProfitBaseUnits = STRICT_POSITIVE_PROFIT_BASE_UNITS;
   const targetNetProfitBps = bpsFromSharedPrincipal(targetNetProfitBaseUnits, sharedPrincipal);
   const expiresAt = Math.min(...input.opportunities.map(opportunity => opportunity.expiresAt), input.deadlineAt ?? Number.MAX_SAFE_INTEGER);
   if (Date.now() >= expiresAt) return null;
@@ -305,7 +315,7 @@ async function measureTargetStack(input: {
     receiver: input.receiver,
     loanToken,
     loanAmount: sharedPrincipal.toString(),
-    minProfit: STRICT_POSITIVE_PROFIT_BASE_UNITS.toString(),
+    minProfit: targetNetProfitBaseUnits.toString(),
     profitRecipient,
     steps,
     cycleEndStepIndexes,
@@ -314,20 +324,9 @@ async function measureTargetStack(input: {
   const probePayload = buildCompositeFlashLoanReceiverPayload(probePlan);
   const probeRequest = { from: input.wallet.address, to: probePayload.to, data: probePayload.data, value: probePayload.value };
 
-  // RPC proof is deadline-authoritative. Independent call/estimate work is paired
-  // instead of serially repeated, cutting the fixed convergence sequence while
-  // keeping exact call + exact gas proof mandatory.
   const [probeCallPassed, probeGas] = await Promise.all([
-    settleBeforeDeadline(
-      input.provider.call(probeRequest).then(() => true),
-      expiresAt,
-      false,
-    ),
-    settleBeforeDeadline(
-      input.provider.estimateGas(probeRequest).then(value => BigInt(value.toString())),
-      expiresAt,
-      0n,
-    ),
+    settleBeforeDeadline(input.provider.call(probeRequest).then(() => true), expiresAt, false),
+    settleBeforeDeadline(input.provider.estimateGas(probeRequest).then(value => BigInt(value.toString())), expiresAt, 0n),
   ]);
   if (!probeCallPassed || probeGas <= 0n || deadlineReached(expiresAt)) return null;
 
@@ -343,16 +342,8 @@ async function measureTargetStack(input: {
     null,
   );
   const [exactCallPassed, exactGas] = await Promise.all([
-    settleBeforeDeadline(
-      input.provider.call(exactRequest).then(() => true),
-      expiresAt,
-      false,
-    ),
-    settleBeforeDeadline(
-      input.provider.estimateGas(exactRequest).then(value => BigInt(value.toString())),
-      expiresAt,
-      0n,
-    ),
+    settleBeforeDeadline(input.provider.call(exactRequest).then(() => true), expiresAt, false),
+    settleBeforeDeadline(input.provider.estimateGas(exactRequest).then(value => BigInt(value.toString())), expiresAt, 0n),
   ]);
   if (!exactCallPassed || exactGas <= 0n || deadlineReached(expiresAt)) return null;
 
@@ -361,18 +352,11 @@ async function measureTargetStack(input: {
   const exactRequiredResidual = targetNetProfitBaseUnits + exactGasCost + relayFee;
   combinedGasCost = exactGasCost;
 
-  // Numeric minProfit changes can alter execution branching even when calldata
-  // structure is unchanged. Recheck once only when convergence changes the exact
-  // residual; no fixed two-pass loop remains.
   if (exactRequiredResidual !== requiredOnchainResidual) {
     requiredOnchainResidual = exactRequiredResidual;
     payload = buildCompositeFlashLoanReceiverPayload({ ...probePlan, minProfit: requiredOnchainResidual.toString() });
     exactRequest = { from: input.wallet.address, to: payload.to, data: payload.data, value: payload.value };
-    const finalCallPassed = await settleBeforeDeadline(
-      input.provider.call(exactRequest).then(() => true),
-      expiresAt,
-      false,
-    );
+    const finalCallPassed = await settleBeforeDeadline(input.provider.call(exactRequest).then(() => true), expiresAt, false);
     if (!finalCallPassed || deadlineReached(expiresAt)) return null;
   } else {
     requiredOnchainResidual = exactRequiredResidual;
@@ -422,11 +406,14 @@ async function measureTargetStack(input: {
     'measured_combined_gas_cost',
     'measured_combined_relay_cost',
     'input_authority:single_atomic_bps_engine_stage1_admitted_candidates',
-    `strict_positive_profit_floor_base_units:${targetNetProfitBaseUnits.toString()}`,
+    `strict_positive_profit_floor_base_units:${STRICT_POSITIVE_PROFIT_BASE_UNITS.toString()}`,
+    `five_dollar_output_floor_base_units:${targetNetProfitBaseUnits.toString()}`,
+    `minimum_output_profit_usd:${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}`,
     `measured_duplicate_flash_fee_savings:${measuredFlashFeeSavings.toString()}`,
     `measured_combined_gas_savings:${measuredGasSavings.toString()}`,
     `input_token_usd_price:${inputTokenUsdPrice}`,
     'combined_all_in_net_strict_positive',
+    'combined_all_in_net_at_least_five_usd',
     'principal_repayment_enforced_by_composite_receiver',
     'synthetic_evidence:false',
   ];
@@ -508,6 +495,7 @@ async function measureTargetStack(input: {
     timestamp: measuredAt,
     expiresAt,
   };
+  if (!clearsFiveDollarOutputFloor(opportunity, measuredAt)) return null;
 
   return { evidence, selection, opportunity, members: input.opportunities, memberCandidates };
 }
@@ -519,6 +507,8 @@ function inheritedDiscoveryFloor(memberCandidates: readonly MeasuredCandidate[])
 
 function promoteMeasuredStack(measured: MeasuredTargetStack): void {
   const { evidence, selection, opportunity, memberCandidates } = measured;
+  if (!clearsFiveDollarOutputFloor(opportunity)) return;
+
   zeroCapitalCompositeEvidenceRegistry.record(evidence);
   zeroCapitalCompositeSelectionRegistry.record(selection);
   zeroCapitalRouteEvidenceRegistry.record(opportunity);
@@ -552,7 +542,7 @@ function promoteMeasuredStack(measured: MeasuredTargetStack): void {
     venues,
     chains: [opportunity.chain],
     rawQuotes,
-    depth: { status: 'measured', detail: `Exact ${evidence.opportunityIds.length}-cycle shared-principal composite measured against a strict-positive payload` },
+    depth: { status: 'measured', detail: `Exact ${evidence.opportunityIds.length}-cycle shared-principal composite measured against the canonical $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} output floor` },
     economics: {
       grossProfitUsd,
       deterministicNetProfitUsd: netProfitUsd,
@@ -573,7 +563,7 @@ function promoteMeasuredStack(measured: MeasuredTargetStack): void {
       bpsToBreakEven: 0,
     },
     executableCapability: true,
-    executionCapabilityReason: 'Single Atomic-BPS engine selected an exact prepared shared-principal composite that remains strictly profitable after measured flash fee, gas and relay costs',
+    executionCapabilityReason: `Single Atomic-BPS engine selected an exact prepared shared-principal composite with at least $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} all-in net profit after measured flash fee, gas and relay costs`,
     missingInformation: [],
     provenance: [
       ...evidence.provenance,
@@ -583,6 +573,7 @@ function promoteMeasuredStack(measured: MeasuredTargetStack): void {
       `atomic_multileg_shared_principal_bps:${evidence.sharedPrincipalStackedBps.toFixed(6)}`,
       `atomic_multileg_estimated_gas:${evidence.estimatedGas.toString()}`,
       `measured_composite_gain_usd:${evidence.compositionGainUsd.toFixed(8)}`,
+      `minimum_output_profit_usd:${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}`,
       'promotion_authority:single_atomic_bps_engine',
       'canonical_execution_required:zero_capital_composite_prepared',
     ],
@@ -613,9 +604,6 @@ async function resolveBalancerCompositeProvider(input: {
   if (residentBalancer) return { evidence: residentBalancer, residentHit: true };
   if (deadlineReached(input.deadlineAt)) return { evidence: null, residentHit: false };
 
-  // Current deployed composite ABI is Balancer-specific. Aave/Morpho remain valid
-  // alternatives for single-route funding, but are not fabricated as composite
-  // providers until a matching deployed receiver ABI is proven.
   const measured = await settleBeforeDeadline(
     measureBalancerFlashLoanEconomics({
       chain: input.chain as any,
@@ -633,6 +621,7 @@ async function runGroup(input: {
   provider: providers.JsonRpcProvider;
   wallet: Wallet;
   opportunities: ZeroCapitalOpportunity[];
+  configuredReceiver: string;
   deadlineAt?: number;
 }): Promise<{ measuredVariants: number; promotedOpportunityId: string | null }> {
   const stack = chooseStack(input.opportunities);
@@ -644,6 +633,7 @@ async function runGroup(input: {
       chain: input.chain,
       provider: input.provider,
       expectedOwner: input.wallet.address,
+      address: input.configuredReceiver,
     }),
     input.deadlineAt,
     null,
@@ -691,17 +681,20 @@ async function runGroup(input: {
     }
   }
 
-  if (!best) return { measuredVariants, promotedOpportunityId: null };
+  if (!best || !clearsFiveDollarOutputFloor(best.opportunity)) {
+    return { measuredVariants, promotedOpportunityId: null };
+  }
   promoteMeasuredStack(best);
 
   const expectedNetProfitUsd = baseUnitsToUsd(best.evidence.combinedExpectedProfit, best.evidence.inputTokenDecimals, Number(best.opportunity.inputAssetUsdPrice));
-  logger.info('[ZeroCapitalStack] Single Atomic-BPS engine promoted strict-positive shared-principal composition', {
+  logger.info('[ZeroCapitalStack] Single Atomic-BPS engine promoted $5-clearing shared-principal composition', {
     component: 'ZeroCapitalAtomicStackWiring',
     chain: best.opportunity.chain,
     opportunityId: best.opportunity.id,
     memberOpportunityIds: best.evidence.opportunityIds,
     combinedExpectedProfit: best.evidence.combinedExpectedProfit.toString(),
     combinedExpectedProfitUsd: expectedNetProfitUsd,
+    minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
     achievedNetProfitBps: best.evidence.sharedPrincipalStackedBps,
     measuredCompositionGain: best.evidence.measuredCompositionGain.toString(),
     measuredVariantsBeforePromotion: measuredVariants,
@@ -730,12 +723,16 @@ export async function runZeroCapitalAtomicStackTactic(input: {
   opportunities: readonly ZeroCapitalOpportunity[];
   deadlineAt?: number;
 }): Promise<AtomicStackTacticResult> {
-  if (input.chain === 'europa' || input.opportunities.length < 2 || deadlineReached(input.deadlineAt)) {
-    return { attemptedGroups: 0, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false };
-  }
+  if (input.chain === 'europa' || input.opportunities.length < 2 || deadlineReached(input.deadlineAt)) return emptyTacticResult();
+
+  // Zero-I/O capability gate: an absent configured receiver makes this entire tactic
+  // impossible, so return before grouping, provider measurement or any RPC work.
+  const receiver = configuredCompositeReceiver(input.chain);
+  if (!receiver) return emptyTacticResult();
+
   const target = zeroCapitalEngine as unknown as ZeroCapitalStackRuntime;
   const wallet = target.executionWallets.get(input.chain);
-  if (!wallet) return { attemptedGroups: 0, measuredVariants: 0, promoted: 0, promotedOpportunityIds: [], executionAuthority: false };
+  if (!wallet) return emptyTacticResult();
 
   const groups = new Map<string, ZeroCapitalOpportunity[]>();
   for (const opportunity of input.opportunities) {
@@ -751,7 +748,14 @@ export async function runZeroCapitalAtomicStackTactic(input: {
     const existing = tacticInFlight.get(key);
     if (existing) return existing;
     let task: Promise<AtomicStackTacticResult>;
-    task = runGroup({ chain: input.chain, provider: input.provider, wallet, opportunities, deadlineAt: input.deadlineAt })
+    task = runGroup({
+      chain: input.chain,
+      provider: input.provider,
+      wallet,
+      opportunities,
+      configuredReceiver: receiver,
+      deadlineAt: input.deadlineAt,
+    })
       .then(result => ({
         attemptedGroups: 1,
         measuredVariants: result.measuredVariants,
@@ -780,13 +784,7 @@ export async function runZeroCapitalAtomicStackTactic(input: {
 
   const active = new Map<number, Promise<{ index: number; result: AtomicStackTacticResult }>>();
   tasks.forEach((task, index) => active.set(index, task.then(result => ({ index, result }))));
-  const aggregate: AtomicStackTacticResult = {
-    attemptedGroups: 0,
-    measuredVariants: 0,
-    promoted: 0,
-    promotedOpportunityIds: [],
-    executionAuthority: false,
-  };
+  const aggregate = emptyTacticResult();
 
   while (active.size > 0 && !deadlineReached(input.deadlineAt)) {
     const settled = await Promise.race([...active.values()]);
@@ -809,6 +807,8 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     receiverKind: 'balancer_composite_v2',
     profitabilityFinishLine: 'strict_positive_all_in_base_units',
     minimumProfitBaseUnits: STRICT_POSITIVE_PROFIT_BASE_UNITS.toString(),
+    minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+    strictPositiveNecessaryButNotSufficientForPromotion: true,
     stageOneThresholdAuthority: false,
     stageOneEnvironmentThresholdRead: false,
     independentMeasuredCandidateListener: false,
@@ -826,6 +826,7 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     balancerProviderMeasurementSharedAcrossVariants: true,
     compositeProviderCompatibility: 'balancer_v2_only_until_matching_aave_or_morpho_composite_receiver_abi_is_proven',
     providerAlternativesNarrowingPreventedByFalseCapabilityClaims: true,
+    missingCompositeReceiverFailsBeforeRpc: true,
     nonPrefixBoundedVariantSearch: true,
     staleOwnershipSeparatedFromFreshExecutionAuthority: true,
     deadlineAuthoritativeRpcProof: true,
