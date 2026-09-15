@@ -5,6 +5,7 @@ export type ApeRescueDefect = 'cost_positive_gross' | 'structural_nonpositive_gr
 export interface ApeCandidateRescueSnapshot {
   id: string;
   generation: string;
+  evidenceGeneration: string;
   fresh: boolean;
   unresolved: boolean;
   baselineBps: number;
@@ -36,10 +37,8 @@ function grossProfitBaseUnits(opportunity: ZeroCapitalOpportunity): bigint {
 /**
  * Cheap exact defect classification from evidence already present on the Stage-1
  * candidate. No registry read, model, RPC, database call, quote or new economics
- * calculation is introduced. A candidate with positive gross route value can be
- * rescued by cost/provider/size compression; a non-positive-gross candidate first
- * needs a structural route/edge change because cost compression cannot create
- * gross edge that is not there.
+ * calculation is introduced. Classification chooses the fastest first tool only;
+ * it never removes another compatible rescue tool from a negative candidate.
  */
 export function classifyApeRescueDefect(opportunity: ZeroCapitalOpportunity): ApeRescueDefect {
   return grossProfitBaseUnits(opportunity) > 0n
@@ -57,9 +56,8 @@ export function apeStructuralFirstCandidate(opportunity: ZeroCapitalOpportunity)
 
 /**
  * APE ownership and execution freshness are intentionally separate concepts.
- * A timed-out or newly-stale negative candidate remains APE-owned until its
- * compatible toolbox is genuinely exhausted. Freshness is still mandatory for
- * measured tools and canonical promotion; this predicate never grants execution.
+ * A timed-out or stale negative candidate remains APE-owned. Fresh exact evidence
+ * is still mandatory for promotion/execution, but negative BPS is work, not reject.
  */
 export function isApeUnresolvedOwnershipCandidate(opportunity: ZeroCapitalOpportunity): boolean {
   return opportunity.flashLoanAmount > 0n
@@ -74,8 +72,19 @@ export function isApeFreshMeasuredCandidate(
   return isApeUnresolvedOwnershipCandidate(opportunity) && opportunity.expiresAt > now;
 }
 
+/** Stable candidate/work identity. */
 function generationOf(opportunity: ZeroCapitalOpportunity): string {
-  return `${opportunity.id}:${opportunity.timestamp}:${opportunity.expiresAt}`;
+  return opportunity.id;
+}
+
+/** Independently version the evidence carried by that stable candidate. */
+function evidenceGenerationOf(opportunity: ZeroCapitalOpportunity): string {
+  return [
+    opportunity.timestamp,
+    opportunity.expiresAt,
+    opportunity.netProfitBps,
+    opportunity.flashLoanAmount.toString(),
+  ].join(':');
 }
 
 /**
@@ -103,6 +112,7 @@ export function buildApeCandidateRescueSnapshots(input: {
     return {
       id: opportunity.id,
       generation: generationOf(opportunity),
+      evidenceGeneration: evidenceGenerationOf(opportunity),
       fresh: opportunity.expiresAt > now,
       unresolved: isApeUnresolvedOwnershipCandidate(opportunity),
       baselineBps,
@@ -118,9 +128,8 @@ export function buildApeCandidateRescueSnapshots(input: {
 
 /**
  * Momentum and distance change scheduling priority, never candidate survival.
- * Urgency is the final tiebreaker so a short-lived candidate is not hidden behind
- * a materially equivalent long-lived candidate. This function performs only
- * bounded in-memory comparisons.
+ * Fresh evidence is preferred because it can be acted on immediately, but stale
+ * candidates remain in the same ownership set and are refreshed by workers.
  */
 export function prioritizeApeRescueCandidates(input: {
   roots: readonly ZeroCapitalOpportunity[];
@@ -142,16 +151,15 @@ export function prioritizeApeRescueCandidates(input: {
     }
     if (a.improvementBps !== b.improvementBps) return b.improvementBps - a.improvementBps;
     if (a.distanceToPositiveBps !== b.distanceToPositiveBps) return a.distanceToPositiveBps - b.distanceToPositiveBps;
-    if (a.slackMs !== b.slackMs) return a.slackMs - b.slackMs;
     if (a.quoteLatencyMs !== b.quoteLatencyMs) return a.quoteLatencyMs - b.quoteLatencyMs;
     return a.id.localeCompare(b.id);
   });
 }
 
 /**
- * Reserve a slice of the already-existing candidate window for downstream tools
- * and final proof. This never lengthens the hot path: it only prevents V4 from
- * consuming 100% of the window that already exists.
+ * Reserve part of the existing APE wave for downstream tools. Candidate/evidence
+ * expiry is deliberately NOT a hard boundary: stale evidence is refreshed and the
+ * candidate remains owned. This function introduces no wait, poll or extra I/O.
  */
 export function buildApeTierBudget(input: {
   candidates: readonly ZeroCapitalOpportunity[];
@@ -160,23 +168,13 @@ export function buildApeTierBudget(input: {
   now?: number;
 }): ApeTierBudget {
   const now = input.now ?? Date.now();
-  const finiteExpiries = input.candidates
-    .filter(isApeUnresolvedOwnershipCandidate)
-    .map(candidate => candidate.expiresAt)
-    .filter(expiry => Number.isFinite(expiry) && expiry > now)
-    .sort((a, b) => a - b);
+  const freshnessBoundaryAt = input.hardDeadlineAt;
+  const usableWindowMs = Math.max(0, input.hardDeadlineAt - now);
 
-  const freshnessBoundaryAt = finiteExpiries.length > 0
-    ? Math.min(input.hardDeadlineAt, finiteExpiries[0])
-    : input.hardDeadlineAt;
-  const usableWindowMs = Math.max(0, freshnessBoundaryAt - now);
-
-  // Dynamic, bounded reserve: at most 30% of the already-existing window, with
-  // a small ceiling. No new waiting or I/O is introduced.
   const targetReserve = Math.min(750, Math.floor(usableWindowMs * 0.30));
   const maximumReserve = Math.max(0, usableWindowMs - 75);
   const downstreamReserveMs = Math.min(maximumReserve, Math.max(0, targetReserve));
-  const v4DeadlineAt = Math.max(now, freshnessBoundaryAt - downstreamReserveMs);
+  const v4DeadlineAt = Math.max(now, input.hardDeadlineAt - downstreamReserveMs);
 
   return {
     hardDeadlineAt: input.hardDeadlineAt,

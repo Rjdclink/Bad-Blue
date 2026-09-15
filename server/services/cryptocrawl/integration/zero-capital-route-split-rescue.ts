@@ -1,5 +1,6 @@
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import { measuredCandidateRegistry, type MeasuredCandidate } from '../discovery/measured-candidate-registry.js';
 import {
@@ -10,6 +11,7 @@ import {
 } from '../execution/adapters/onchain-route-quoter.js';
 import {
   getApeResidentWorkAssignment,
+  primeApeResidentWorkbench,
   type ApeResidentRoutePair,
 } from './ape-resident-workbench.js';
 import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
@@ -46,6 +48,12 @@ export interface ZeroCapitalRouteSplitRescueResult {
 type SplitRatio = {
   leftPercent: bigint;
   rightPercent: bigint;
+};
+
+type RatioQuoteResult = {
+  ratio: SplitRatio;
+  leftQuote: QuotedZeroCapitalRoute | null;
+  rightQuote: QuotedZeroCapitalRoute | null;
 };
 
 const FALLBACK_SPLIT_RATIOS: readonly SplitRatio[] = [
@@ -96,7 +104,7 @@ function splitRatiosForPair(pair: ApeResidentRoutePair): SplitRatio[] {
 function blockTimestamp(opportunity: ZeroCapitalOpportunity): number {
   const suffix = opportunity.id.match(/-(\d{8,})$/)?.[1];
   const parsed = Number(suffix);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(opportunity.timestamp / 1000);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : Math.floor(Date.now() / 1000);
 }
 
 function splitAmounts(total: bigint, ratio: SplitRatio): { left: bigint; right: bigint } | null {
@@ -129,10 +137,28 @@ function exactBpsImprovement(current: ZeroCapitalOpportunity, candidate: ZeroCap
     > current.expectedProfit * candidate.flashLoanAmount;
 }
 
+/**
+ * Resident evidence wins immediately. Only a missing/stale evidence generation
+ * triggers a refresh, and that refresh is shared by LivePriceMesh rather than
+ * creating a new price authority. A fresh parent scalar is compatibility fallback.
+ */
+async function resolveInputUsdPrice(parent: ZeroCapitalOpportunity): Promise<number | null> {
+  const now = Date.now();
+  const resident = livePriceMesh.peekLiveSymbolPriceEvidence(parent.inputAssetSymbol, now);
+  if (resident) return resident.priceUsd;
+
+  const compatibility = parent.expiresAt > now ? finitePositive(parent.inputAssetUsdPrice) : null;
+  if (compatibility !== null) return compatibility;
+
+  await livePriceMesh.getLiveSymbolPrices([parent.inputAssetSymbol]).catch(() => new Map<string, number>());
+  return livePriceMesh.peekLiveSymbolPriceEvidence(parent.inputAssetSymbol)?.priceUsd ?? null;
+}
+
 function residentAlternativeImprovement(
   parent: ZeroCapitalOpportunity,
   routes: readonly ConfiguredZeroCapitalRoute[],
   preferredRouteId: string | null,
+  usdPrice: number,
   fromQuotedRoute: ZeroCapitalRouteSplitRescueInput['fromQuotedRoute'],
 ): ZeroCapitalOpportunity | null {
   let best: ZeroCapitalOpportunity | null = null;
@@ -145,9 +171,7 @@ function residentAlternativeImprovement(
     const overlay: ZeroCapitalOpportunity = {
       ...derived,
       id: parent.id,
-      timestamp: parent.timestamp,
-      expiresAt: Math.min(parent.expiresAt, derived.expiresAt),
-      ...(parent.inputAssetUsdPrice !== undefined ? { inputAssetUsdPrice: parent.inputAssetUsdPrice } : {}),
+      inputAssetUsdPrice: usdPrice,
     };
     if (overlay.expiresAt <= Date.now() || !exactBpsImprovement(parent, overlay)) return;
     if (!best || exactBpsImprovement(best, overlay)) {
@@ -173,30 +197,30 @@ function quoteToTransientChild(input: {
   parentCandidate: MeasuredCandidate;
   route: ConfiguredZeroCapitalRoute;
   quote: QuotedZeroCapitalRoute;
+  usdPrice: number;
   side: 'left' | 'right';
   fromQuotedRoute: ZeroCapitalRouteSplitRescueInput['fromQuotedRoute'];
 }): ZeroCapitalOpportunity | null {
-  const usdPrice = finitePositive(input.parent.inputAssetUsdPrice);
-  if (usdPrice === null || input.quote.amountIn <= 0n) return null;
+  if (input.usdPrice <= 0 || input.quote.amountIn <= 0n) return null;
 
   const derived = input.fromQuotedRoute(input.quote, blockTimestamp(input.parent));
   const now = Date.now();
-  const expiresAt = Math.min(input.parent.expiresAt, derived.expiresAt);
+  const expiresAt = derived.expiresAt;
   if (expiresAt <= now) return null;
 
   const opportunity: ZeroCapitalOpportunity = {
     ...derived,
     id: childId(input.parent, input.route, input.quote.amountIn, input.side),
-    inputAssetUsdPrice: usdPrice,
+    inputAssetUsdPrice: input.usdPrice,
     timestamp: now,
     expiresAt,
   };
 
-  const notionalUsd = baseUnitsToUsd(input.quote.amountIn, opportunity.inputTokenDecimals, usdPrice);
-  const grossProfitUsd = baseUnitsToUsd(input.quote.grossProfit, opportunity.inputTokenDecimals, usdPrice);
-  const netProfitUsd = baseUnitsToUsd(input.quote.netProfit, opportunity.inputTokenDecimals, usdPrice);
-  const gasUsd = baseUnitsToUsd(input.quote.estimatedGasCostInInputToken, opportunity.inputTokenDecimals, usdPrice);
-  const feeUsd = baseUnitsToUsd(input.quote.flashLoanFeeInInputToken, opportunity.inputTokenDecimals, usdPrice);
+  const notionalUsd = baseUnitsToUsd(input.quote.amountIn, opportunity.inputTokenDecimals, input.usdPrice);
+  const grossProfitUsd = baseUnitsToUsd(input.quote.grossProfit, opportunity.inputTokenDecimals, input.usdPrice);
+  const netProfitUsd = baseUnitsToUsd(input.quote.netProfit, opportunity.inputTokenDecimals, input.usdPrice);
+  const gasUsd = baseUnitsToUsd(input.quote.estimatedGasCostInInputToken, opportunity.inputTokenDecimals, input.usdPrice);
+  const feeUsd = baseUnitsToUsd(input.quote.flashLoanFeeInInputToken, opportunity.inputTokenDecimals, input.usdPrice);
 
   measuredCandidateRegistry.record({
     opportunityId: opportunity.id,
@@ -296,8 +320,9 @@ function incrementReason(reasons: Record<string, number>, reason: string): void 
   reasons[reason] = (reasons[reason] ?? 0) + 1;
 }
 
-function parentDeadline(input: ZeroCapitalRouteSplitRescueInput, parent: ZeroCapitalOpportunity): number {
-  return Math.min(parent.expiresAt, input.deadlineAt ?? Number.MAX_SAFE_INTEGER);
+/** Candidate TTL never ends APE ownership; this deadline bounds one work wave only. */
+function parentDeadline(input: ZeroCapitalRouteSplitRescueInput): number {
+  return input.deadlineAt ?? Number.MAX_SAFE_INTEGER;
 }
 
 export async function runZeroCapitalRouteSplitRescue(
@@ -325,39 +350,34 @@ export async function runZeroCapitalRouteSplitRescue(
   };
   if (input.chain === 'europa' || input.opportunities.length === 0) return result;
 
-  // No pre-filter, no candidate slice and no first-N survival gate. Every input is
-  // classified in place, and every valid negative candidate records an attempt
-  // before splittability is allowed to affect what exact work follows.
-  for (const parent of input.opportunities) {
-    const now = Date.now();
+  const processParent = async (parent: ZeroCapitalOpportunity): Promise<void> => {
     if (parent.chain !== input.chain) {
       incrementReason(rejectionReasons, 'chain_mismatch');
-      continue;
-    }
-    if (parent.expiresAt <= now) {
-      incrementReason(rejectionReasons, 'expired_before_worker');
-      continue;
+      return;
     }
     if (parent.flashLoanAmount <= 1n) {
       incrementReason(rejectionReasons, 'nonpositive_split_notional');
-      continue;
+      return;
     }
-    if (finitePositive(parent.inputAssetUsdPrice) === null) {
-      incrementReason(rejectionReasons, 'missing_input_asset_usd_price');
-      continue;
+    if (!Number.isFinite(parent.netProfitBps)) {
+      incrementReason(rejectionReasons, 'nonfinite_economics');
+      return;
     }
 
     result.validCandidates! += 1;
     result.attemptedCandidates += 1;
 
-    // Splittability is read from the resident assignment before profitability or
-    // route-family heuristics can discard the candidate. This is the worker's one
-    // resident lookup; peer hints ride on the same object.
-    const assignment = getApeResidentWorkAssignment(parent, now);
+    // Cache eviction or an evidence-generation change can never reject ownership.
+    // Re-prime locally from the already-owned candidate/topology at memory speed.
+    let assignment = getApeResidentWorkAssignment(parent);
     if (!assignment) {
-      incrementReason(rejectionReasons, 'resident_assignment_missing');
+      primeApeResidentWorkbench({ opportunities: [parent], configuredRoutes: input.configuredRoutes });
+      assignment = getApeResidentWorkAssignment(parent);
+    }
+    if (!assignment) {
+      incrementReason(rejectionReasons, 'resident_assignment_rebuild_unavailable');
       result.unsplittableCandidates! += 1;
-      continue;
+      return;
     }
 
     const splittable = assignment.splitPairs.length > 0;
@@ -366,26 +386,33 @@ export async function runZeroCapitalRouteSplitRescue(
 
     if (parent.expectedProfit > 0n) {
       incrementReason(rejectionReasons, 'already_strict_positive');
-      continue;
+      return;
     }
 
     const parentCandidate = measuredCandidateRegistry.get(parent.id);
     if (!parentCandidate) {
-      incrementReason(rejectionReasons, 'registry_parent_missing');
-      continue;
+      incrementReason(rejectionReasons, 'registry_parent_missing_refresh_required');
+      return;
     }
     if (parentCandidate.topology !== 'ZERO_CAPITAL_ATOMIC') {
       incrementReason(rejectionReasons, 'wrong_parent_topology');
-      continue;
+      return;
     }
 
-    // A worker that cannot split still does useful work: consume any better exact
-    // route quote already resident from the upstream sweep. No route search or RPC
-    // is added. The peer's preferred route is inspected first when already present.
+    // Price refresh starts at the same time as structural inspection. Resident
+    // evidence resolves synchronously; a missing generation is refreshed rather
+    // than turning the candidate into a rejection.
+    const usdPrice = await resolveInputUsdPrice(parent);
+    if (usdPrice === null) {
+      incrementReason(rejectionReasons, 'fresh_input_price_refresh_pending');
+      return;
+    }
+
     const residentImprovement = residentAlternativeImprovement(
       parent,
       assignment.routes,
       assignment.peerHint?.preferredRouteId ?? null,
+      usdPrice,
       input.fromQuotedRoute,
     );
     if (residentImprovement) {
@@ -394,22 +421,20 @@ export async function runZeroCapitalRouteSplitRescue(
       input.onImprovement?.(parent, residentImprovement);
       if (residentImprovement.expectedProfit > 0n) {
         incrementReason(rejectionReasons, 'resident_strict_positive_replaced_split_work');
-        continue;
+        return;
       }
     }
 
     if (!splittable) {
       incrementReason(rejectionReasons, 'no_safe_pool_disjoint_split_pair');
-      continue;
+      return;
     }
 
-    let promotedParentSplit = false;
     for (const residentPair of assignment.splitPairs) {
-      if (promotedParentSplit) break;
-      if (Date.now() >= parentDeadline(input, parent)) {
+      if (Date.now() >= parentDeadline(input)) {
         result.deadlineStops! += 1;
-        incrementReason(rejectionReasons, 'deadline_before_next_pair');
-        break;
+        incrementReason(rejectionReasons, 'wave_deadline_before_next_pair');
+        return;
       }
       result.routePairsTried += 1;
       const pair: ApeResidentRoutePair = {
@@ -417,39 +442,40 @@ export async function runZeroCapitalRouteSplitRescue(
         right: alignRouteCostBasisToStageOne(residentPair.right, parent),
       };
 
-      for (const ratio of splitRatiosForPair(pair)) {
-        if (Date.now() >= parentDeadline(input, parent)) {
-          result.deadlineStops! += 1;
-          incrementReason(rejectionReasons, 'deadline_before_next_ratio');
-          break;
-        }
+      // All ratios for one independent route pair launch together. This removes
+      // ratio-by-ratio head-of-line blocking without adding a timer or queue.
+      const ratioJobs = splitRatiosForPair(pair).map(async ratio => {
+        if (Date.now() >= parentDeadline(input)) return null;
         const amounts = splitAmounts(parent.flashLoanAmount, ratio);
         if (!amounts) {
           incrementReason(rejectionReasons, 'invalid_split_amounts');
-          continue;
+          return null;
         }
         result.splitRatiosTried += 1;
         result.partialQuotesLaunched += 2;
-
         const [leftQuote, rightQuote] = await Promise.all([
           quoteConfiguredZeroCapitalRoute({ ...pair.left, amountIn: amounts.left.toString() }, input.provider).catch(() => null),
           quoteConfiguredZeroCapitalRoute({ ...pair.right, amountIn: amounts.right.toString() }, input.provider).catch(() => null),
         ]);
-        if (!leftQuote || !rightQuote) {
-          result.partialQuoteFailures += Number(!leftQuote) + Number(!rightQuote);
+        return { ratio, leftQuote, rightQuote } satisfies RatioQuoteResult;
+      });
+
+      const quotedRatios = (await Promise.all(ratioJobs))
+        .filter((value): value is RatioQuoteResult => value !== null);
+
+      for (const quoted of quotedRatios) {
+        if (!quoted.leftQuote || !quoted.rightQuote) {
+          result.partialQuoteFailures += Number(!quoted.leftQuote) + Number(!quoted.rightQuote);
           incrementReason(rejectionReasons, 'partial_quote_unavailable');
           continue;
         }
 
-        // Individual partial profitability is deliberately not an eligibility
-        // gate. The Balancer composite receiver settles only aggregate terminal
-        // repayment + minProfit, so one weak cycle may be offset by another. Exact
-        // aggregate eth_call/gas/all-in economics below remain sovereign.
         const leftChild = quoteToTransientChild({
           parent,
           parentCandidate,
           route: pair.left,
-          quote: leftQuote,
+          quote: quoted.leftQuote,
+          usdPrice,
           side: 'left',
           fromQuotedRoute: input.fromQuotedRoute,
         });
@@ -457,7 +483,8 @@ export async function runZeroCapitalRouteSplitRescue(
           parent,
           parentCandidate,
           route: pair.right,
-          quote: rightQuote,
+          quote: quoted.rightQuote,
+          usdPrice,
           side: 'right',
           fromQuotedRoute: input.fromQuotedRoute,
         });
@@ -472,31 +499,39 @@ export async function runZeroCapitalRouteSplitRescue(
           chain: input.chain,
           provider: input.provider,
           opportunities: children,
-          deadlineAt: parentDeadline(input, parent),
+          deadlineAt: parentDeadline(input),
         });
         result.compositeMeasurements += composite.measuredVariants;
         result.promoted += composite.promoted;
         result.promotedOpportunityIds.push(...composite.promotedOpportunityIds);
         retireTransientChildren(children, composite.promotedOpportunityIds);
 
-        if (composite.promoted > 0) {
-          promotedParentSplit = true;
-          break;
-        }
+        if (composite.promoted > 0) return;
       }
     }
-  }
+  };
+
+  // Candidates are independent work. Run them concurrently so one slow pool,
+  // provider or route never head-of-line blocks another APE-owned candidate.
+  await Promise.all(input.opportunities.map(processParent));
 
   const { improvedOpportunities: _improvements, ...telemetryResult } = result;
-  logger.info('[ZeroCapitalRouteSplitRescue] APE composite route-split rescue completed', {
+  logger.info('[ZeroCapitalRouteSplitRescue] APE hyperwarp route-split rescue completed', {
     component: 'ZeroCapitalRouteSplitRescue',
     chain: input.chain,
     ...telemetryResult,
+    candidateOwnershipExpires: false,
+    negativeBpsRejected: false,
+    staleEvidenceRefreshesInsteadOfKillingCandidate: true,
+    candidatesRunConcurrently: true,
+    ratiosWithinPairRunConcurrently: true,
     candidatesPreFilteredBeforeSplittability: false,
     candidateSliceBeforeSplittability: false,
     arbitraryFirstNRoutePairEligibilityCap: false,
-    everyValidCandidateRecordsAttempt: true,
     residentStructuralAssignment: true,
+    residentAssignmentRebuildOnCacheMiss: true,
+    residentPriceEvidenceFirst: true,
+    missingPriceRefreshesThroughCanonicalMesh: true,
     residentPeerHintsPiggybacked: true,
     peerHintSeparateQueue: false,
     peerHintPolling: false,

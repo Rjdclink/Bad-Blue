@@ -36,11 +36,6 @@ function exactNetBps(opportunity: ZeroCapitalOpportunity): number {
   ) / Number(BPS_PRECISION_SCALE);
 }
 
-/**
- * Compare net-profit ratios in base units without converting either side to a
- * floating-point BPS value. This lets already-arrived evidence win on arbitrarily
- * small real BPS improvements without adding a quote, RPC call, or search step.
- */
 function strictlyHigherExactBps(input: {
   candidateProfit: bigint;
   candidateAmount: bigint;
@@ -62,11 +57,15 @@ function rescueMode(opportunity: ZeroCapitalOpportunity): ApeRescueMode {
   return grossProfit(opportunity) > 0n ? 'cost' : 'edge';
 }
 
-function liveStageOneCandidate(opportunity: ZeroCapitalOpportunity, now = Date.now()): boolean {
-  return opportunity.expiresAt > now
-    && opportunity.flashLoanAmount > 0n
+/** Candidate ownership is independent from the freshness of its current evidence. */
+function apeOwnedStageOneCandidate(opportunity: ZeroCapitalOpportunity): boolean {
+  return opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
     && Number.isFinite(exactNetBps(opportunity));
+}
+
+function hasFreshEvidence(opportunity: ZeroCapitalOpportunity, now: number): boolean {
+  return opportunity.expiresAt > now;
 }
 
 function routeForOpportunity(
@@ -89,10 +88,9 @@ function originalBlockTimestamp(opportunity: ZeroCapitalOpportunity): number {
 }
 
 /**
- * Consume only a quote that the existing upstream bounded size sweep already made.
- * Stage 1 keeps its original highest-dollar-profit candidate exactly as before; APE
- * may create a separate result overlay only when the resident variant has strictly
- * better measured net BPS. No Stage-1 object is mutated or structurally copied.
+ * Consume only an already-resident better-BPS quote. A stale parent never gains a
+ * fabricated lifetime here; downstream rescue refreshes evidence while preserving
+ * the candidate identity/ownership.
  */
 function residentBestBpsOverlay(
   input: ZeroCapitalAtomicBpsEngineInput,
@@ -110,16 +108,11 @@ function residentBestBpsOverlay(
     incumbentProfit: opportunity.expectedProfit,
     incumbentAmount: opportunity.flashLoanAmount,
   });
-  // Keep the numeric check as a compatibility guard, but exact base-unit ratio is
-  // authoritative when both representations round to the same displayed BPS.
   if (resident.netProfitBps <= currentBps && !exactBpsHigher) return opportunity;
   if (!exactBpsHigher) return opportunity;
 
   const refined = input.fromQuotedRoute(resident, originalBlockTimestamp(opportunity));
   if (refined.id !== opportunity.id) return opportunity;
-  // fromQuotedRoute normally stamps a fresh lifetime for a newly acquired quote.
-  // This is an overlay of evidence from the SAME upstream size sweep, so APE must
-  // inherit Stage-1 freshness instead of manufacturing a new observation window.
   refined.timestamp = opportunity.timestamp;
   refined.expiresAt = opportunity.expiresAt;
   if (refined.expiresAt <= Date.now()) return opportunity;
@@ -128,24 +121,9 @@ function residentBestBpsOverlay(
 }
 
 /**
- * Canonical Atomic Profitability Engine (APE), latency-safe hot path.
- *
- * Stage 1 remains the locked >= -10 BPS classifier. APE receives those exact
- * opportunity objects by reference and performs only local, in-memory ordering and
- * exact all-in BPS comparison. It never quotes a route, measures a provider, reads
- * Supabase, persists state, calls a model, performs historical lookup, or waits for
- * unfinished alternatives. Route/provider/builder exploration belongs before the
- * hot path or in the existing canonical proof layers that are required anyway.
- *
- * Size optimization is not repeated: the existing upstream bounded notional sweep
- * retains its best-BPS quote in resident memory while preserving its Stage-1 return
- * semantics. APE can consume that already-arrived quote immediately as an overlay.
- *
- * The resident routing table is explicitly 2 active + 1 hedge + 2 dormant reserve
- * per same-spread contextual cohort. Every additional set of candidates forms
- * another cohort, so the lane width is never an eligibility cap. A better candidate
- * may lead only when its evidence has already arrived; no ready strict-positive
- * candidate waits for new evidence to be created.
+ * Canonical Atomic Profitability Engine (APE), zero-copy latency-safe front end.
+ * Negative BPS is APE work, not a rejection condition. Candidate ownership never
+ * expires; only evidence freshness controls whether current proof can be reused.
  */
 export function runZeroCapitalAtomicBpsEngine(
   input: ZeroCapitalAtomicBpsEngineInput,
@@ -154,16 +132,18 @@ export function runZeroCapitalAtomicBpsEngine(
     return input.opportunities.length === 0 ? [] : [...input.opportunities];
   }
 
-  // Normal flow is primed immediately before this call by the fused Stage-1 -> APE
-  // continuation. This fallback is local-only and exists solely for compatibility
-  // with any direct caller; it performs no I/O and copies no opportunity object.
   if (input.opportunities.some(opportunity => !hasApeResidentPlacement(opportunity.id))) {
     primeApeResidentRouting(input.opportunities);
   }
 
   const startedAt = Date.now();
+  const startedAtNs = process.hrtime.bigint();
+  const freshnessSnapshotAt = startedAt;
   const ordered = orderApeResidentOpportunities(input.opportunities);
-  const live = ordered.filter(opportunity => liveStageOneCandidate(opportunity));
+  const owned = ordered.filter(apeOwnedStageOneCandidate);
+  const freshEvidenceCandidates = owned.filter(opportunity => hasFreshEvidence(opportunity, freshnessSnapshotAt)).length;
+  const staleEvidenceCandidates = owned.length - freshEvidenceCandidates;
+  const fullOwnedCandidateCoverage = owned.length === input.opportunities.filter(apeOwnedStageOneCandidate).length;
   const refinedById = new Map<string, ZeroCapitalOpportunity>();
   resetFlashLoanDemandHints(input.chain as any);
 
@@ -178,7 +158,7 @@ export function runZeroCapitalAtomicBpsEngine(
   let bestAvailableStrictPositiveBps: number | null = null;
   let bestAvailableStrictPositiveId: string | null = null;
 
-  for (const opportunity of live) {
+  for (const opportunity of owned) {
     const mode = rescueMode(opportunity);
     if (mode === 'cost') costRescueCandidates += 1;
     else if (mode === 'edge') edgeRescueCandidates += 1;
@@ -195,14 +175,20 @@ export function runZeroCapitalAtomicBpsEngine(
       refinedById.set(opportunity.id, refined);
     }
     const candidate = refined;
-    observeFlashLoanDemandHint({
-      chain: candidate.chain as any,
-      asset: candidate.inputToken,
-      amount: candidate.flashLoanAmount,
-      expiresAt: candidate.expiresAt,
-    });
+
+    // Demand hints describe currently usable evidence only. A stale candidate is
+    // still owned by APE, but its old amount is not represented as fresh capacity.
+    if (hasFreshEvidence(candidate, freshnessSnapshotAt)) {
+      observeFlashLoanDemandHint({
+        chain: candidate.chain as any,
+        asset: candidate.inputToken,
+        amount: candidate.flashLoanAmount,
+        expiresAt: candidate.expiresAt,
+      });
+    }
+
     const netBps = exactNetBps(candidate);
-    if (candidate.expectedProfit > 0n) {
+    if (candidate.expectedProfit > 0n && hasFreshEvidence(candidate, freshnessSnapshotAt)) {
       strictPositiveAlreadyArrived += 1;
       if (bestAvailableStrictPositiveBps === null || netBps > bestAvailableStrictPositiveBps) {
         bestAvailableStrictPositiveBps = netBps;
@@ -212,28 +198,44 @@ export function runZeroCapitalAtomicBpsEngine(
   }
 
   const output = ordered.map(opportunity => refinedById.get(opportunity.id) ?? opportunity);
+  const returnBoundaryAt = Date.now();
+  const elapsedMsBeforeReturn = Number(process.hrtime.bigint() - startedAtNs) / 1_000_000;
+  const telemetrySnapshot = {
+    eligibleCandidatesReceived: input.opportunities.length,
+    ownedCandidates: owned.length,
+    freshEvidenceCandidates,
+    staleEvidenceCandidates,
+    fullOwnedCandidateCoverage,
+    freshnessSnapshotAt,
+    returnBoundaryAt,
+    activeCandidates,
+    hedgeCandidates,
+    reserveCandidates,
+    costRescueCandidates,
+    edgeRescueCandidates,
+    executionRescueCandidates,
+    strictPositiveAlreadyArrived,
+    residentBestBpsSizeOverlays,
+    bestAvailableStrictPositiveId,
+    bestAvailableStrictPositiveBps,
+    elapsedMsBeforeReturn,
+  };
 
-  // Telemetry is explicitly behind the decision and behind the caller's Promise
-  // continuation. No microtask is inserted between Stage 1, APE, or downstream proof.
   const telemetry = setImmediate(() => {
     logger.info('[AtomicProfitabilityEngine] Fused zero-copy APE pass completed', {
       component: 'AtomicProfitabilityEngine',
       acronym: 'APE',
       chain: input.chain,
-      eligibleCandidatesReceived: input.opportunities.length,
-      liveCandidates: live.length,
-      fullStageOneCandidateCoverage: live.length === input.opportunities.filter(item => liveStageOneCandidate(item)).length,
-      activeCandidates,
-      hedgeCandidates,
-      reserveCandidates,
-      costRescueCandidates,
-      edgeRescueCandidates,
-      executionRescueCandidates,
-      strictPositiveAlreadyArrived,
-      residentBestBpsSizeOverlays,
-      bestAvailableStrictPositiveId,
-      bestAvailableStrictPositiveBps,
-      elapsedMsBeforeReturn: Date.now() - startedAt,
+      ...telemetrySnapshot,
+      // Backward-compatible fields now explicitly mean fresh-evidence coverage.
+      liveCandidates: freshEvidenceCandidates,
+      fullStageOneCandidateCoverage: fullOwnedCandidateCoverage,
+      candidateOwnershipExpires: false,
+      negativeBpsRejected: false,
+      staleEvidenceRequiresRefresh: true,
+      staleEvidenceExecutionAllowed: false,
+      deferredLogDelayExcludedFromApeLatency: true,
+      monotonicReturnBoundaryMeasurement: true,
       profitabilityFinishLine: 'strict_positive_all_in_base_units',
       optimizationObjective: 'maximize_exact_executable_net_bps_from_already_arrived_evidence',
       exactBaseUnitBpsWinnerComparison: true,

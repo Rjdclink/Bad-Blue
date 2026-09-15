@@ -61,6 +61,11 @@ function toolboxGeneration(opportunity: ZeroCapitalOpportunity): string {
   return `${opportunity.id}:${opportunity.timestamp}:${opportunity.expiresAt}:${opportunity.netProfitBps}:${opportunity.flashLoanAmount.toString()}`;
 }
 
+function toolboxPlanTtlMs(): number {
+  const configured = Number(process.env.ZERO_CAPITAL_APE_TOOLBOX_PLAN_TTL_MS || 5_000);
+  return Number.isFinite(configured) ? Math.max(500, Math.min(30_000, Math.trunc(configured))) : 5_000;
+}
+
 function pruneResidentToolboxPlans(now = Date.now()): void {
   for (const [key, value] of residentToolboxPlans) {
     if (value.expiresAt <= now) residentToolboxPlans.delete(key);
@@ -98,12 +103,11 @@ function scheduleToolboxPrewarm(opportunity: ZeroCapitalOpportunity, generation:
   residentToolboxBuilds.add(key);
   const task = setImmediate(() => {
     try {
-      if (Date.now() >= opportunity.expiresAt) return;
       const currentGeneration = toolboxGeneration(opportunity);
       if (currentGeneration !== generation) return;
       residentToolboxPlans.set(opportunity.id, {
         generation,
-        expiresAt: opportunity.expiresAt,
+        expiresAt: Date.now() + toolboxPlanTtlMs(),
         plan: computeToolboxPlan(opportunity),
         ready: true,
       });
@@ -118,9 +122,8 @@ function scheduleToolboxPrewarm(opportunity: ZeroCapitalOpportunity, generation:
 /**
  * Returns only already-resident advisory intelligence on the candidate hot path.
  * A missing plan is prewarmed after the current decision turn and never blocks
- * exact route/provider/size rescue. The next pass can reuse it at effectively
- * constant lookup cost. Advisory failure remains local and cannot change canonical
- * economics, candidate ownership or execution eligibility.
+ * exact route/provider/size rescue. Advisory-plan freshness is independent from
+ * candidate ownership; expiring a plan can never expire a candidate.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
@@ -134,7 +137,7 @@ export function buildApeProfitabilityToolboxPlan(
 
   residentToolboxPlans.set(opportunity.id, {
     generation,
-    expiresAt: Math.max(now + 1, opportunity.expiresAt),
+    expiresAt: now + toolboxPlanTtlMs(),
     plan: null,
     ready: false,
   });
@@ -144,22 +147,22 @@ export function buildApeProfitabilityToolboxPlan(
 }
 
 /**
- * APE owns every live, finite, negative Stage-1 candidate it receives. There is
- * deliberately no fixed BPS entry floor here: profitability is determined only
- * by exact all-in economics after bounded compatible transformations are tried.
+ * APE owns every finite non-positive candidate it receives regardless of the age
+ * of the evidence generation attached to that object. Stale evidence is a refresh
+ * requirement, not a candidate-deletion condition. This predicate grants no
+ * execution authority; exact fresh measured proof is still required to promote.
  */
 export function isApeRescueCandidate(
   opportunity: ZeroCapitalOpportunity,
-  graceMs: number,
-  now = Date.now(),
+  _graceMs: number,
+  _now = Date.now(),
 ): boolean {
-  return opportunity.expiresAt + Math.max(0, graceMs) > now
-    && opportunity.flashLoanAmount > 0n
+  return opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
     && opportunity.expectedProfit <= 0n;
 }
 
-/** Hyperdynamic policy can expand or contract bounded quote work, never economics. */
+/** Hyperdynamic policy can expand or contract one quote wave, never candidate survival. */
 export function apeTargetAttemptLimit(
   configuredBase: number,
   plan: ApeProfitabilityToolboxPlan | null,
@@ -184,12 +187,10 @@ export function apePrefersRouteAlternatives(plan: ApeProfitabilityToolboxPlan | 
 }
 
 /**
- * Builds a bounded size search from the existing BPS toolbox. Measured fixed-cost
+ * Builds a bounded size wave from the existing BPS toolbox. Measured fixed-cost
  * pressure explores larger safe notionals first to dilute gas/relay/bridge cost;
- * impact pressure explores smaller sizes first. Flash premium is treated as a
- * provider-cost surface rather than a fixed cost: provider selection does the
- * primary work while size probes stay close to the measured route. Super Engine
- * residual fractions and provider capacity boundaries remain first-class probes.
+ * impact pressure explores smaller sizes first. A bounded wave is only a latency
+ * control: unresolved candidate ownership continues into later evidence generations.
  */
 export function buildApeTargetAmounts(input: {
   intended: bigint;
