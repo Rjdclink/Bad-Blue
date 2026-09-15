@@ -1,7 +1,3 @@
-import { operatorTradingStrategy } from './operator-trading-strategy.js';
-import { profitLadder } from './profit-ladder.js';
-import { stageManager } from './stage-management.js';
-
 export interface ProfitLadderDailyProfitBudget {
   evaluatedAt: number;
   localDate: string;
@@ -18,57 +14,55 @@ export interface ProfitLadderDailyProfitBudget {
   borrowingNotionalAuthority: false;
 }
 
+const STRATEGY_TIMEZONE = 'America/Chicago';
+
+function localDateKey(epochMs: number): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: STRATEGY_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(epochMs));
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 /**
- * Canonical daily PROFIT budget for zero-capital execution.
- *
- * Profit Ladder controls how much realized profit the system may retain in a day.
- * It never controls flash-loan principal, quote notional, provider liquidity, or
- * route size. Tier/stage alignment is telemetry only here: StageManager remains
- * the independent execution-posture authority and this budget cannot veto a trade
- * for anything except the remaining daily profit allowance.
+ * Compatibility snapshot for legacy callers that still import the old daily
+ * budget helper. This function intentionally performs no database, Profit
+ * Ladder, Stage Manager, provider, quote, or model work and exposes no pre-trade
+ * cap. Profit Ladder accounting/allocation is settlement-time only; canonical
+ * strict-positive economics remains the sole pre-submission profit authority.
  */
 export async function getProfitLadderDailyProfitBudget(
   now = Date.now(),
 ): Promise<ProfitLadderDailyProfitBudget> {
-  const tier = profitLadder.getCurrentTier();
-  const stage = stageManager.getStageConfig();
-  const operator = await operatorTradingStrategy.getState(now);
-  const stageAligned = Number(tier.stage) === Number(stage.stage);
-  const configuredCap = Number(tier.maxDailyProfitUSD);
-  const dailyProfitCapUsd = Number.isFinite(configuredCap) && configuredCap > 0
-    ? configuredCap
-    : null;
-  const realizedProfitUsd = Number.isFinite(Number(operator.realizedProfitUsd))
-    ? Math.max(0, Number(operator.realizedProfitUsd))
-    : 0;
-  const remainingProfitUsd = dailyProfitCapUsd === null
-    ? null
-    : Math.max(0, dailyProfitCapUsd - realizedProfitUsd);
-
   return {
     evaluatedAt: now,
-    localDate: operator.localDate,
-    tierId: tier.id,
-    tierName: tier.name,
-    stage: Number(stage.stage),
-    stageAligned,
-    targetDailyProfitUsd: Math.max(0, Number(tier.targetDailyProfitUSD) || 0),
-    dailyProfitCapUsd,
-    realizedProfitUsd,
-    remainingProfitUsd,
-    exhausted: dailyProfitCapUsd !== null && remainingProfitUsd !== null && remainingProfitUsd <= 1e-9,
+    localDate: localDateKey(now),
+    tierId: 0,
+    tierName: 'post_trade_only',
+    stage: 0,
+    stageAligned: true,
+    targetDailyProfitUsd: 0,
+    dailyProfitCapUsd: null,
+    realizedProfitUsd: 0,
+    remainingProfitUsd: null,
+    exhausted: false,
     authority: 'profit_ladder_daily_realized_profit_only',
     borrowingNotionalAuthority: false,
   };
 }
 
+/**
+ * Legacy compatibility predicate. There is no pre-trade Profit Ladder capacity
+ * gate: any strictly positive expected profit remains eligible for canonical
+ * execution, subject only to the actual execution/economics/safety authorities.
+ */
 export function expectedProfitFitsDailyBudget(
   expectedNetProfitUsd: number,
-  budget: ProfitLadderDailyProfitBudget,
-  toleranceUsd = 0.01,
+  _budget: ProfitLadderDailyProfitBudget,
+  _toleranceUsd = 0.01,
 ): boolean {
-  if (!(Number.isFinite(expectedNetProfitUsd) && expectedNetProfitUsd > 0)) return false;
-  if (budget.remainingProfitUsd === null) return true;
-  const tolerance = Number.isFinite(toleranceUsd) ? Math.max(0, toleranceUsd) : 0.01;
-  return expectedNetProfitUsd <= budget.remainingProfitUsd + tolerance;
+  return Number.isFinite(expectedNetProfitUsd) && expectedNetProfitUsd > 0;
 }
