@@ -39,6 +39,31 @@ const AAVE_DATA_PROVIDER_ABI = [
 const BALANCER_FIXED_POINT_ONE = 10n ** 18n;
 const AAVE_BPS_DENOMINATOR = 10_000n;
 
+// One chain/asset provider race is shared across all downstream APE consumers.
+// The candidate never depends on this cache for identity or survival: stale/missing
+// evidence causes a new shared measurement generation, never candidate deletion.
+const residentFlashProviderEvidence = new Map<string, FlashLoanProviderEconomics[]>();
+const flashProviderEvidenceInFlight = new Map<string, Promise<FlashLoanProviderEconomics[]>>();
+
+function residentProviderEvidenceMaxAgeMs(): number {
+  const configured = Number(process.env.ZERO_CAPITAL_PROVIDER_EVIDENCE_MAX_AGE_MS || 5_000);
+  return Number.isFinite(configured) ? Math.max(500, Math.min(30_000, Math.trunc(configured))) : 5_000;
+}
+
+function providerEvidenceKey(chain: SupportedExecutionChain, asset: string): string {
+  return `${chain}:${asset.toLowerCase()}`;
+}
+
+export function peekResidentFlashLoanProviderEvidence(
+  chain: SupportedExecutionChain,
+  asset: string,
+  maxAgeMs = residentProviderEvidenceMaxAgeMs(),
+  now = Date.now(),
+): FlashLoanProviderEconomics[] {
+  const evidence = residentFlashProviderEvidence.get(providerEvidenceKey(chain, asset)) ?? [];
+  return evidence.filter(item => now - item.observedAt <= maxAgeMs);
+}
+
 // Morpho Blue's core interface defines flashFee as exactly zero and maxFlashLoan
 // as the token balance held by the singleton. Addresses are public on-chain
 // infrastructure, not credentials. Environment overrides remain authoritative so
@@ -410,7 +435,7 @@ function dualEvidenceCanFund(
   return balancer.availableLiquidity! + aave.availableLiquidity! >= requestedAmount;
 }
 
-export async function measureFlashLoanProviders(input: {
+async function measureFlashLoanProvidersUncached(input: {
   chain: SupportedExecutionChain;
   provider: providers.Provider;
   asset: string;
@@ -456,8 +481,6 @@ export async function measureFlashLoanProviders(input: {
 
   const requestedAmount = getFlashLoanDemandHint(input.chain, input.asset);
   if (requestedAmount === null || requestedAmount <= 0n) {
-    // Non-APE callers retain the prior exhaustive behavior. The resident demand
-    // hint is advisory only and never becomes a prerequisite for measurement.
     const settled = await Promise.allSettled(attempts.map(attempt => attempt.promise));
     const evidence = settled.flatMap(result =>
       result.status === 'fulfilled' && result.value ? [result.value] : [],
@@ -475,11 +498,6 @@ export async function measureFlashLoanProviders(input: {
     return evidence;
   }
 
-  // APE has already published the largest live amount for this chain/asset batch.
-  // Resolve as soon as one measured single provider can fund that amount, or when
-  // measured Aave+Balancer liquidity can fund it together. The SAME array object
-  // remains live after resolution, so slower siblings enrich the caller's resident
-  // cache without holding the current fundable opportunity behind a straggler.
   return new Promise<FlashLoanProviderEconomics[]>((resolve, reject) => {
     const evidence: FlashLoanProviderEconomics[] = [];
     const failures: string[] = [];
@@ -520,6 +538,62 @@ export async function measureFlashLoanProviders(input: {
       });
     }
   });
+}
+
+function startSharedFlashProviderMeasurement(input: {
+  chain: SupportedExecutionChain;
+  provider: providers.Provider;
+  asset: string;
+}): Promise<FlashLoanProviderEconomics[]> {
+  const key = providerEvidenceKey(input.chain, input.asset);
+  const existing = flashProviderEvidenceInFlight.get(key);
+  if (existing) return existing;
+
+  const pending = measureFlashLoanProvidersUncached(input).then(measured => {
+    const current = residentFlashProviderEvidence.get(key) ?? [];
+    const merged = [...current];
+    for (const item of measured) upsertEvidence(merged, item);
+    residentFlashProviderEvidence.set(key, merged);
+    return merged;
+  }).finally(() => {
+    if (flashProviderEvidenceInFlight.get(key) === pending) flashProviderEvidenceInFlight.delete(key);
+  });
+  flashProviderEvidenceInFlight.set(key, pending);
+  return pending;
+}
+
+export function prewarmFlashLoanProviderEvidence(input: {
+  chain: SupportedExecutionChain;
+  provider: providers.Provider;
+  asset: string;
+}): Promise<FlashLoanProviderEconomics[]> {
+  return startSharedFlashProviderMeasurement(input);
+}
+
+export async function measureFlashLoanProviders(input: {
+  chain: SupportedExecutionChain;
+  provider: providers.Provider;
+  asset: string;
+}): Promise<FlashLoanProviderEconomics[]> {
+  const requestedAmount = getFlashLoanDemandHint(input.chain, input.asset);
+  const resident = peekResidentFlashLoanProviderEvidence(input.chain, input.asset);
+  if (
+    requestedAmount !== null
+    && requestedAmount > 0n
+    && resident.length > 0
+    && (
+      selectMeasuredFlashLoanProvider(resident, requestedAmount) !== null
+      || dualEvidenceCanFund(resident, requestedAmount)
+    )
+  ) {
+    const maxAgeMs = residentProviderEvidenceMaxAgeMs();
+    const oldestObservedAt = resident.reduce((minimum, item) => Math.min(minimum, item.observedAt), Date.now());
+    if (Date.now() - oldestObservedAt >= Math.floor(maxAgeMs / 2)) {
+      void startSharedFlashProviderMeasurement(input).catch(() => undefined);
+    }
+    return resident;
+  }
+  return startSharedFlashProviderMeasurement(input);
 }
 
 export function selectMeasuredFlashLoanProvider(
