@@ -1,6 +1,7 @@
 import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { FlashLoanProviderEconomics } from '../execution/adapters/flash-loan-provider-economics.js';
+import { getResidentPriceEvidence } from './zero-capital-price-evidence.js';
 
 export interface AtomicBpsPreparedEvidence {
   inputTokenUsdPrice: number | null;
@@ -76,10 +77,9 @@ export function prewarmAtomicBpsEvidence(input: {
   compatibilityPrewarms += input.opportunities.length;
   const result = new Map<string, Promise<AtomicBpsPreparedEvidence>>();
   for (const opportunity of input.opportunities) {
-    const quoted = Number(opportunity.inputAssetUsdPrice);
-    const inputTokenUsdPrice = Number.isFinite(quoted) && quoted > 0 ? quoted : null;
+    const residentPrice = getResidentPriceEvidence(opportunity);
     const evidence: AtomicBpsPreparedEvidence = {
-      inputTokenUsdPrice,
+      inputTokenUsdPrice: residentPrice?.priceUsd ?? null,
       providerEvidence: [],
       providerEvidenceSnapshot: () => [],
       providerFailures: () => [],
