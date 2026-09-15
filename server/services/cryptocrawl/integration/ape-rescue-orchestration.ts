@@ -174,7 +174,7 @@ export function buildApeTierBudget(input: {
   const targetReserve = Math.min(750, Math.floor(usableWindowMs * 0.30));
   const maximumReserve = Math.max(0, usableWindowMs - 75);
   const downstreamReserveMs = Math.min(maximumReserve, Math.max(0, targetReserve));
-  const v4DeadlineAt = Math.max(now, input.hardDeadlineAt - downstreamReserveMs);
+  const v4DeadlineAt = Math.max(now, freshnessBoundaryAt - downstreamReserveMs);
 
   return {
     hardDeadlineAt: input.hardDeadlineAt,
