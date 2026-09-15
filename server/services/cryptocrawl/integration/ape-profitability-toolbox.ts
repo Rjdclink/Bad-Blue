@@ -5,12 +5,19 @@ import {
   adviseEconomicTransformations,
   type EconomicTransformationAdvice,
 } from '../optimization/economic-transformation-engine.js';
+import {
+  HYPERDYNAMIC_BPS_SOLUTIONS,
+  type HyperdynamicBpsPlan,
+} from '../optimization/hyperdynamic-bps-solution-engine.js';
 import { buildResearchBpsExecutionPlan } from '../optimization/research-bps-execution-tactics.js';
 import { getBpsCompressionMeshSnapshot } from './bps-compression-mesh.js';
 
 export interface ApeProfitabilityToolboxPlan {
   advice: EconomicTransformationAdvice;
   superPlan: BpsReductionSuperPlan;
+  hyperdynamic: HyperdynamicBpsPlan | null;
+  hyperdynamicCatalogSize: number;
+  activeHyperdynamicSolutionKeys: string[];
 }
 
 function scaledAmount(amount: bigint, factor: number): bigint {
@@ -34,11 +41,16 @@ function uniqueBounded(values: readonly bigint[], ceiling: bigint): bigint[] {
   return result;
 }
 
+function clampInteger(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
 /**
- * Reconnects the existing BPS Super Engine and transformation intelligence to the
- * Atomic Profitability Engine strictly as search/scheduling guidance. Advisory
- * failure is always local: it can remove a scheduling hint, never suppress APE's
- * measured route/provider/size rescue or change canonical economics.
+ * Reconnects the existing BPS Super Engine, 25 research tactics and exact
+ * 100-method Hyperdynamic catalog to APE strictly as search/scheduling guidance.
+ * Advisory failure is always local: it can remove a scheduling hint, never
+ * suppress measured route/provider/size rescue or change canonical economics.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
@@ -48,14 +60,15 @@ export function buildApeProfitabilityToolboxPlan(
     if (!candidate || candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return null;
     const advice = adviseEconomicTransformations(candidate);
     const research = buildResearchBpsExecutionPlan(candidate, advice);
-    const superPlan = buildBpsReductionSuperPlan(
-      candidate,
+    const mesh = getBpsCompressionMeshSnapshot();
+    const superPlan = buildBpsReductionSuperPlan(candidate, advice, research, null, mesh);
+    return {
       advice,
-      research,
-      null,
-      getBpsCompressionMeshSnapshot(),
-    );
-    return { advice, superPlan };
+      superPlan,
+      hyperdynamic: mesh?.hyperdynamic ?? null,
+      hyperdynamicCatalogSize: HYPERDYNAMIC_BPS_SOLUTIONS.length,
+      activeHyperdynamicSolutionKeys: [...(mesh?.hyperdynamic.activeSolutionKeys ?? [])],
+    };
   } catch {
     return null;
   }
@@ -77,11 +90,28 @@ export function isApeRescueCandidate(
     && opportunity.expectedProfit <= 0n;
 }
 
+/** Hyperdynamic policy can expand or contract bounded quote work, never economics. */
+export function apeTargetAttemptLimit(
+  configuredBase: number,
+  plan: ApeProfitabilityToolboxPlan | null,
+): number {
+  const policy = plan?.hyperdynamic;
+  if (!policy) return clampInteger(configuredBase, 3, 16);
+  const multiplier = policy.quoteBudgetMultiplier
+    * Math.sqrt(Math.max(0.55, policy.zeroCapitalPriorityMultiplier))
+    * Math.sqrt(Math.max(0.70, policy.liquidityFocusMultiplier));
+  return clampInteger(Math.round(configuredBase * multiplier), 3, 16);
+}
+
 export function apePrefersRouteAlternatives(plan: ApeProfitabilityToolboxPlan | null): boolean {
   if (!plan) return false;
   const transforms = new Set(plan.advice.transformations);
-  return transforms.has('alternate_route_or_pool')
-    && !transforms.has('smaller_or_split_notional');
+  if (transforms.has('alternate_route_or_pool') && !transforms.has('smaller_or_split_notional')) return true;
+  const policy = plan.hyperdynamic;
+  if (!policy) return false;
+  const routePressure = policy.venueDiversityMultiplier * policy.liquidityFocusMultiplier;
+  const sizePressure = policy.sizeRefinementMultiplier;
+  return routePressure > sizePressure * 1.05;
 }
 
 /**
@@ -139,8 +169,5 @@ export function buildApeTargetAmounts(input: {
   if (driver === 'slippage_impact' || driver === 'latency_decay') {
     return bounded.sort((left, right) => left === right ? 0 : left < right ? -1 : 1);
   }
-  return [
-    clamped,
-    ...bounded.filter(value => value !== clamped),
-  ];
+  return [clamped, ...bounded.filter(value => value !== clamped)];
 }
