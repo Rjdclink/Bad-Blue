@@ -13,16 +13,16 @@ const MAX_DAILY_PROFIT_CEILING_USD = 3_500;
 const PROFIT_CUSHION_USD = 50;
 
 /**
- * The operator calendar is advisory learning/telemetry only. Historical daily
- * trade/profit fields remain readable for schema compatibility, but they never
- * gate, throttle, reject, delay, or signal against canonical profitable trading.
- * The only operator-layer hard rejection is duplicate opportunity idempotency.
+ * Learning-day cadence is advisory. The legacy max_trades/submitted_trades fields
+ * remain readable for schema/history compatibility but have zero execution veto
+ * authority. The realized daily profit stop remains hard: completed profitable
+ * settlements update realized_profit_usd, and only subsequent trades stop once
+ * the configured daily stop has been reached.
  */
-export type OperatorStrategyAdvisorySignal =
-  | 'learning_day'
-  | 'daily_trade_limit'
-  | 'daily_profit_stop';
-export type OperatorStrategyBlockReason = OperatorStrategyAdvisorySignal | 'duplicate_opportunity';
+export type OperatorStrategyAdvisorySignal = 'learning_day';
+// daily_trade_limit remains in the type only for scheduler/source compatibility;
+// this module never emits or enforces it.
+export type OperatorStrategyBlockReason = 'daily_profit_stop' | 'daily_trade_limit' | 'duplicate_opportunity';
 
 export interface OperatorTradingStrategyState {
   localDate: string;
@@ -123,6 +123,10 @@ function stateFromRow(row: any): OperatorTradingStrategyState {
   const stopProfitUsd = Number(row.stop_profit_usd);
   const realizedProfitUsd = Number(row.realized_profit_usd);
   const isTradeDay = row.is_trade_day === true;
+  const dailyProfitCapReached = Number.isFinite(stopProfitUsd)
+    && stopProfitUsd > 0
+    && Number.isFinite(realizedProfitUsd)
+    && realizedProfitUsd + 1e-9 >= stopProfitUsd;
   const advisorySignals: OperatorStrategyAdvisorySignal[] = [];
   if (!isTradeDay) advisorySignals.push('learning_day');
   return {
@@ -131,16 +135,18 @@ function stateFromRow(row: any): OperatorTradingStrategyState {
     cycleEnd: canonicalSqlDate(row.cycle_end),
     dayOffset: Number(row.day_offset),
     isTradeDay,
+    // Learning is concurrent/advisory. It never becomes an exclusive runtime mode.
     learningMode: false,
     learningDayScheduled: !isTradeDay,
+    // Legacy persisted counters remain visible but never count down execution capacity.
     maxTrades,
     submittedTrades,
-    remainingTrades: Math.max(0, maxTrades - submittedTrades),
+    remainingTrades: Number.MAX_SAFE_INTEGER,
     profitCeilingUsd,
     stopProfitUsd,
     realizedProfitUsd,
-    executionAllowed: true,
-    blockReason: null,
+    executionAllowed: !dailyProfitCapReached,
+    blockReason: dailyProfitCapReached ? 'daily_profit_stop' : null,
     advisorySignals,
   };
 }
@@ -206,6 +212,7 @@ async function ensureDayForDate(dateKey = localDateKey()): Promise<OperatorTradi
             cycleStart,
             dayOffset,
             tradeSet.has(dayOffset),
+            // Persist a legacy value for schema compatibility only; it has no veto authority.
             randomInt(MIN_DAILY_TRADES, MAX_DAILY_TRADES + 1),
             ceiling,
             ceiling - PROFIT_CUSHION_USD,
@@ -293,6 +300,10 @@ class OperatorTradingStrategy {
       if (existing.rowCount === 1 && ['RESERVED','SUBMITTED','TERMINAL'].includes(String(existing.rows[0].status))) {
         await client.query('COMMIT');
         return { allowed: false, reservationId: null, state, reason: 'duplicate_opportunity' };
+      }
+      if (state.blockReason === 'daily_profit_stop') {
+        await client.query('COMMIT');
+        return { allowed: false, reservationId: null, state, reason: 'daily_profit_stop' };
       }
 
       const reservationId = existing.rowCount === 1
@@ -427,13 +438,14 @@ export const OPERATOR_STRATEGY_CONSTANTS = Object.freeze({
   cycleDays: CYCLE_DAYS,
   tradeDaysPerCycle: TRADE_DAYS_PER_CYCLE,
   learningDaysPerCycle: LEARNING_DAYS_PER_CYCLE,
+  // Legacy schema metadata only; no daily trade-count execution cap exists.
   minDailyTrades: MIN_DAILY_TRADES,
   maxDailyTrades: MAX_DAILY_TRADES,
   minDailyProfitCeilingUsd: MIN_DAILY_PROFIT_CEILING_USD,
   maxDailyProfitCeilingUsd: MAX_DAILY_PROFIT_CEILING_USD,
   profitCushionUsd: PROFIT_CUSHION_USD,
   dailyTradeLimitAuthority: false,
-  dailyProfitStopAuthority: false,
+  dailyProfitStopAuthority: true,
   executionAuthority: false,
-  advisoryOnly: true,
+  advisoryOnly: false,
 });
