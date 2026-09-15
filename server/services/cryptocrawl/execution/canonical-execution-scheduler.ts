@@ -8,6 +8,10 @@ import { getBpsReductionSuperEngineSnapshot } from '../optimization/bps-reductio
 import { orderCexCandidatesWithNixGen } from '../optimization/nix-gen/cex-ordering.js';
 import { orderSettlementCapableMeasuredDecisionsWithNixGen } from '../optimization/nix-gen/measured-portfolio-preparation.js';
 import { zeroCapitalRouteEvidenceRegistry } from '../optimization/zero-capital-route-evidence-registry.js';
+import {
+  clearsFiveDollarOutputFloor,
+  ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+} from '../integration/zero-capital-profit-output-floor.js';
 import { endToEndLatencyHarness, type LatencyOutcome } from '../runtime/end-to-end-latency-harness.js';
 import { getCryptoCrawlerRuntimeAttestation, isRuntimeIdentitySafe } from '../runtime/runtime-attestation.js';
 import { runtimeInvariantMonitor } from '../runtime/runtime-invariant-monitor.js';
@@ -59,7 +63,6 @@ export interface CanonicalExecutionSchedulerStats {
 
 type Candidate = CanonicalOpportunitySnapshot & { plan: NonNullable<CanonicalOpportunitySnapshot['plan']> };
 type BpsEdgeHalfLifeState = { symbol: string; emaLifetimeMs: number; completedSamples: number };
-
 type LifecycleMaintenanceResult = { ok: true; error: null } | { ok: false; error: string };
 
 function boundedInt(raw: unknown, fallback: number, min: number, max: number): number {
@@ -213,6 +216,8 @@ class CanonicalExecutionScheduler {
       component: 'CanonicalExecutionScheduler', baseIntervalMs: baseDispatchIntervalMs(), maxIntervalMs: maxDispatchIntervalMs(), boundedJitterFraction: dispatchJitterFraction(), dispatchBatchLimit: dispatchBatchLimit(), ownerId: executionResourceScheduler.getOwnerId(),
       authority: 'canonical_eligible_opportunities_and_admitted_measured_topologies',
       zeroCapitalAtomicAuthority: 'single_parent_scheduler_to_single_canonical_executor',
+      zeroCapitalMinimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+      zeroCapitalFloorCheckedBeforeOperatorReservation: true,
       schedulingObjective: 'positive_all_in_net_x_freshness_x_cost_efficiency_x_rank_x_terminal_calibration_x_bps_decay_urgency',
       bpsSuperEngineSchedulingAuthority: 'bounded_priority_boost_only', bpsSuperEngineExecutionAuthority: false,
       nixGenAdvisoryOrderingEnabled: process.env.CRYPTOCRAWL_NIX_GEN_ADVISORY_ORDERING !== 'false', nixGenExecutionAuthority: false,
@@ -245,6 +250,10 @@ class CanonicalExecutionScheduler {
   }
   private requestImmediateDispatch(candidate: MeasuredCandidate): void {
     if (!this.started || candidate.expiresAt <= Date.now() || isOperatorStop(this.lastIdleReason)) return;
+    if (
+      candidate.topology === 'ZERO_CAPITAL_ATOMIC'
+      && Number(candidate.economics.deterministicNetProfitUsd) < ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD
+    ) return;
     this.immediateWakeRequested = true;
     if (this.immediateWakeScheduled) return;
     this.immediateWakeScheduled = true;
@@ -333,6 +342,21 @@ class CanonicalExecutionScheduler {
       ));
       let anyDispatched = false;
       for (const decision of candidates) {
+        let zeroCapitalOpportunity = null;
+        if (decision.topology === 'ZERO_CAPITAL_ATOMIC') {
+          const candidate = measuredCandidateRegistry.get(decision.opportunityId);
+          const opportunity = zeroCapitalRouteEvidenceRegistry.getOpportunity(decision.opportunityId);
+          const exactEligible = candidate?.status === 'eligible'
+            && candidate.executableCapability === true
+            && candidate.missingInformation.length === 0
+            && candidate.expiresAt > Date.now()
+            && opportunity !== null
+            && opportunity.expiresAt > Date.now()
+            && clearsFiveDollarOutputFloor(opportunity);
+          if (!exactEligible || !opportunity) continue;
+          zeroCapitalOpportunity = opportunity;
+        }
+
         const strategy = decision.topology === 'ZERO_CAPITAL_ATOMIC' ? 'zero_capital_atomic'
           : decision.topology === 'LIQUIDATION' ? 'aave_liquidation'
             : decision.topology === 'DEX_ATOMIC' ? 'dex_0x_atomic_roundtrip'
@@ -343,26 +367,17 @@ class CanonicalExecutionScheduler {
         const reservationId = reservation.reservationId;
         try {
           if (decision.topology === 'ZERO_CAPITAL_ATOMIC') {
-            const candidate = measuredCandidateRegistry.get(decision.opportunityId);
-            const opportunity = zeroCapitalRouteEvidenceRegistry.getOpportunity(decision.opportunityId);
-            const exactEligible = candidate?.status === 'eligible'
-              && candidate.executableCapability === true
-              && candidate.missingInformation.length === 0
-              && candidate.expiresAt > Date.now()
-              && opportunity !== null
-              && opportunity.expiresAt > Date.now()
-              && opportunity.expectedProfit > 0n;
-            if (!exactEligible || !opportunity) {
+            if (!zeroCapitalOpportunity) {
               await operatorTradingStrategy.releaseReservation(reservationId);
               continue;
             }
-
-            const result = await executeCanonicalZeroCapitalOpportunity(opportunity);
+            const result = await executeCanonicalZeroCapitalOpportunity(zeroCapitalOpportunity);
             if (!result.submitted || !result.transactionHash) {
               await operatorTradingStrategy.releaseReservation(reservationId);
               logger.info('[ExecutionScheduler] ZERO_CAPITAL_ATOMIC deferred before submission', {
                 component: 'CanonicalExecutionScheduler', opportunityId: decision.opportunityId,
                 status: result.status, error: result.error, operatorSlotConsumed: false,
+                minimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
                 schedulerAuthority: 'canonical_only',
               });
               continue;
@@ -482,11 +497,6 @@ class CanonicalExecutionScheduler {
     const operatorState = await this.loadOperatorState();
     if (!operatorState || !operatorState.executionAllowed) return;
 
-    // Fresh positive CEX evidence has a sub-second/seconds shelf life. Existing
-    // funding and Kalshi lifecycle maintenance still starts every scheduler cycle,
-    // but an unrelated slow lifecycle call is no longer awaited before the fresh
-    // CEX lane. When no fresh CEX exists, the same maintenance remains a hard gate
-    // before lifecycle-dependent measured/Kalshi new exposure.
     const freshCexFastLaneAvailable = currentCandidates().length > 0;
     let measured: { dispatched: boolean; submitted: boolean } = { dispatched: false, submitted: false };
     let refreshedOperatorState = operatorState;
