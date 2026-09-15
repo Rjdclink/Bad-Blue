@@ -29,12 +29,15 @@ assert.match(discovery, /stageOneLock: 'explicit_operator_authorization_required
 assert.match(discovery, /opportunity\.netProfitBps >= atomicSurplusEntryFloorBps\(\)/);
 assert.doesNotMatch(discovery, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 
-// The exact Stage-One objects enter the resident zero-I/O lane first.
+// The exact Stage-One objects enter the resident zero-I/O lane first. APE now
+// retains both negative and positive-but-under-$5 candidates until the canonical
+// Stage-2/execution output floor clears.
 assert.match(gateway, /primeApeResidentRouting\(input\.opportunities\)/);
 assert.match(gateway, /runZeroCapitalAtomicBpsEngine\(\{/);
 assert.match(gateway, /opportunities: input\.opportunities/);
 assert.match(gateway, /const activeRescueCandidates = residentFastPath\.filter/);
-assert.match(gateway, /opportunity\.expectedProfit <= 0n/);
+assert.match(gateway, /needsApeRescueForFiveDollarOutput\(opportunity\)/);
+assert.match(gateway, /positiveBelowFiveDollarsRemainsApeOwned: true/);
 assert.match(residentApe, /routeQuotesCreatedByApe: 0/);
 assert.match(residentApe, /rpcCallsCreatedByApe: 0/);
 assert.match(residentApe, /apiCallsCreatedByApe: 0/);
