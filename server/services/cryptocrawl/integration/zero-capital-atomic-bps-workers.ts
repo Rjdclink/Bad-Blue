@@ -1,9 +1,12 @@
 import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
+import type { ZeroCapitalPriceEvidence } from '../core/zero-capital-price-evidence.js';
+import { livePriceMesh } from '../bridge/live-price-mesh.js';
 import type { FlashLoanProviderEconomics } from '../execution/adapters/flash-loan-provider-economics.js';
 
 export interface AtomicBpsPreparedEvidence {
   inputTokenUsdPrice: number | null;
+  inputTokenPriceEvidence?: Readonly<ZeroCapitalPriceEvidence> | null;
   providerEvidence: FlashLoanProviderEconomics[];
   providerEvidenceSnapshot: () => FlashLoanProviderEconomics[];
   providerFailures: () => [];
@@ -31,6 +34,9 @@ const AUDIT_RING_MAX = 512;
 let compatibilityReads = 0;
 let compatibilityPrewarms = 0;
 let auditObservations = 0;
+let residentPriceEvidenceHits = 0;
+let residentPriceEvidenceMisses = 0;
+let legacyUnverifiedPriceIgnored = 0;
 
 function freshnessBudgetMs(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
   const remaining = Math.max(0, opportunity.expiresAt - now);
@@ -64,9 +70,10 @@ export function refreshAtomicBpsProviderEvidence(
 }
 
 /**
- * Compatibility prewarm now snapshots only evidence already attached to Stage 1.
+ * Compatibility prewarm snapshots only evidence already resident before APE.
  * It performs zero API/RPC/database/model/persistence work and does not copy the
- * opportunity or route. APE itself no longer requires this worker.
+ * opportunity or route. A legacy scalar without provenance is deliberately not
+ * treated as fresh market evidence; the resident mesh must prove freshness.
  */
 export function prewarmAtomicBpsEvidence(input: {
   chain: SupportedChain;
@@ -76,10 +83,16 @@ export function prewarmAtomicBpsEvidence(input: {
   compatibilityPrewarms += input.opportunities.length;
   const result = new Map<string, Promise<AtomicBpsPreparedEvidence>>();
   for (const opportunity of input.opportunities) {
-    const quoted = Number(opportunity.inputAssetUsdPrice);
-    const inputTokenUsdPrice = Number.isFinite(quoted) && quoted > 0 ? quoted : null;
+    const priceEvidence = livePriceMesh.peekLiveSymbolPriceEvidence(opportunity.inputAssetSymbol);
+    if (priceEvidence) residentPriceEvidenceHits += 1;
+    else {
+      residentPriceEvidenceMisses += 1;
+      const legacy = Number(opportunity.inputAssetUsdPrice);
+      if (Number.isFinite(legacy) && legacy > 0) legacyUnverifiedPriceIgnored += 1;
+    }
     const evidence: AtomicBpsPreparedEvidence = {
-      inputTokenUsdPrice,
+      inputTokenUsdPrice: priceEvidence?.priceUsd ?? null,
+      inputTokenPriceEvidence: priceEvidence,
       providerEvidence: [],
       providerEvidenceSnapshot: () => [],
       providerFailures: () => [],
@@ -111,6 +124,9 @@ export function getAtomicBpsWorkerSnapshot() {
       economicAuthority: false,
       compatibilityReads,
       compatibilityPrewarms,
+      residentPriceEvidenceHits,
+      residentPriceEvidenceMisses,
+      legacyUnverifiedPriceIgnored,
       livePriceCalls: 0,
       liveProviderMeasurements: 0,
       providerRefreshCalls: 0,
