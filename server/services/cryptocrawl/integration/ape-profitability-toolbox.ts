@@ -36,24 +36,29 @@ function uniqueBounded(values: readonly bigint[], ceiling: bigint): bigint[] {
 
 /**
  * Reconnects the existing BPS Super Engine and transformation intelligence to the
- * Atomic Profitability Engine strictly as search/scheduling guidance. It never
- * changes canonical economics, grants execution authority, or manufactures BPS.
+ * Atomic Profitability Engine strictly as search/scheduling guidance. Advisory
+ * failure is always local: it can remove a scheduling hint, never suppress APE's
+ * measured route/provider/size rescue or change canonical economics.
  */
 export function buildApeProfitabilityToolboxPlan(
   opportunity: ZeroCapitalOpportunity,
 ): ApeProfitabilityToolboxPlan | null {
-  const candidate = measuredCandidateRegistry.get(opportunity.id);
-  if (!candidate || candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return null;
-  const advice = adviseEconomicTransformations(candidate);
-  const research = buildResearchBpsExecutionPlan(candidate, advice);
-  const superPlan = buildBpsReductionSuperPlan(
-    candidate,
-    advice,
-    research,
-    null,
-    getBpsCompressionMeshSnapshot(),
-  );
-  return { advice, superPlan };
+  try {
+    const candidate = measuredCandidateRegistry.get(opportunity.id);
+    if (!candidate || candidate.topology !== 'ZERO_CAPITAL_ATOMIC') return null;
+    const advice = adviseEconomicTransformations(candidate);
+    const research = buildResearchBpsExecutionPlan(candidate, advice);
+    const superPlan = buildBpsReductionSuperPlan(
+      candidate,
+      advice,
+      research,
+      null,
+      getBpsCompressionMeshSnapshot(),
+    );
+    return { advice, superPlan };
+  } catch {
+    return null;
+  }
 }
 
 /**
