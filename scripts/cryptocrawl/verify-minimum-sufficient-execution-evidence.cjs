@@ -37,7 +37,9 @@ has(scheduler, 'candidate.missingInformation.length === 0', 'scheduler must reta
 // pipeline. It receives the already Stage-1-admitted set rather than owning a second
 // configurable near-miss threshold. It still rejects blocked/expired/unmeasurable
 // members and promotes only after exact simulation proves at least one base unit of
-// all-in net profit plus a real measured composition gain. Profit Ladder is telemetry.
+// all-in net profit plus a real measured composition gain. Daily realized-profit
+// governance remains separate from this measurement worker: Profit Ladder must not
+// become a pre-measurement database dependency or a composition veto.
 has(gateway, 'runZeroCapitalAtomicStackTactic', 'single Atomic-BPS gateway must own composite tactic triggering');
 has(gateway, 'compositeTacticInsideSamePipeline: true', 'composite tactic must remain inside the single transformation pipeline');
 has(gateway, 'compositeTacticBlocksSingleRouteReturn: false', 'composite tactic must not delay a profitable single route');
@@ -57,9 +59,11 @@ has(stack, 'measuredCompositionGain <= 0n', 'atomic stack must require a real me
 has(stack, 'exact_strict_positive_composite_eth_call_passed', 'atomic stack must preserve exact strict-positive simulation evidence');
 must(!stack.includes('ZERO_CAPITAL_ATOMIC_SURPLUS_TARGET_BPS'), 'retired Atomic +10 target variable must not return');
 must(!stack.includes('atomicSurplusTargetBps'), 'retired Atomic +10 target helper must not return');
-has(stack, 'const budget = await getProfitLadderDailyProfitBudget().catch(() => null);', 'Profit Ladder daily budget may remain observable telemetry');
-has(stack, 'dailyRemainingProfitUsd: budget?.remainingProfitUsd ?? null', 'remaining Profit Ladder budget may remain visible as telemetry');
+must(!stack.includes('getProfitLadderDailyProfitBudget'), 'Profit Ladder database reads must stay off Atomic composition measurement path');
+has(stack, 'profitLadderReadOnMeasurementPath: false', 'Atomic composition must expose that Profit Ladder reads are off the measurement path');
 has(stack, 'profitLadderCompositionVetoAuthority: false', 'Profit Ladder must not veto Atomic composition');
+has(stack, 'completionOrderVariantMeasurement: true', 'atomic stack variants must be consumed in completion order');
+has(stack, 'fullVariantBatchBarrier: false', 'atomic stack strict-positive promotion must not wait on a full variant batch');
 has(stack, "status: 'eligible'", 'only the newly measured strictly-positive composite may be promoted eligible');
 has(stack, 'executableCapability: true', 'strictly-positive composite must receive explicit executable capability');
 has(stack, 'missingInformation: []', 'promoted composite must carry complete execution evidence');
@@ -86,4 +90,4 @@ execFileSync(
   { stdio: 'inherit', env: process.env },
 );
 
-console.log('[required-execution-evidence] PASS: execution remains guarded by topology-correct economics plus minimum sufficient live evidence; ZERO_CAPITAL_ATOMIC uses exact strict-positive all-in base units with no +10 magnitude floor; Atomic composition is an internal single-pipeline tactic over Stage-1-admitted candidates and may promote only when exact simulation proves positive net plus measured composition gain; Profit Ladder/optional/advisory completeness cannot become shadow vetoes');
+console.log('[required-execution-evidence] PASS: execution remains guarded by topology-correct economics plus minimum sufficient live evidence; ZERO_CAPITAL_ATOMIC uses exact strict-positive all-in base units with no +10 magnitude floor; Atomic composition is an internal single-pipeline tactic over Stage-1-admitted candidates and may promote only when exact simulation proves positive net plus measured composition gain; Profit Ladder stays off the Atomic composition measurement path and cannot become a shadow veto');
