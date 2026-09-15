@@ -62,10 +62,12 @@ const matrix = [
   ['10 percent retained capital remains preserved', /retainedFractionBps:\s*1_000/.test(ingest)],
   ['builder cold start uses measured sequential gas', /eth_simulateV1/.test(builder) && /fixed_gas_ceiling_admission:false/.test(builder)],
 
-  // Atomic Profitability Engine V4: the resident APE and Stage One remain unchanged;
-  // active rescue uses one absolute deadline, bounded hedged transformations and
-  // candidate-local anytime refinement instead of whole-pass recursion barriers.
-  ['APE gateway preserves resident fast path before active rescue', /runZeroCapitalAtomicBpsEngine/.test(apeGateway) && /runZeroCapitalProfitabilityRescueV4/.test(apeGateway) && /activeRescueCandidates = residentFastPath\.filter/.test(apeGateway)],
+  // Atomic Profitability Engine V4: Stage One and the resident APE remain unchanged.
+  // Upstream resident route/size evidence is now the primary path; remote measured
+  // rescue is admitted only for true resident misses under a bounded fair budget.
+  ['APE gateway preserves resident fast path before fallback rescue', /runZeroCapitalAtomicBpsEngine/.test(apeGateway) && /runZeroCapitalProfitabilityRescueV4/.test(apeGateway) && /const residentFastPath = runZeroCapitalAtomicBpsEngine/.test(apeGateway)],
+  ['APE remote measured rescue is resident-miss recovery only', /const residentMissCandidates = measuredRescueCandidates\.filter/.test(apeGateway) && /!hasLiveResidentRouteEvidence\(input, opportunity\)/.test(apeGateway) && /remoteMeasuredRescuePolicy: 'resident_miss_recovery_only_with_bounded_fair_admission'/.test(apeGateway)],
+  ['APE resident-miss recovery is globally bounded and fairly rotated', /fallbackCandidateBudget\(/.test(apeGateway) && /selectResidentMissRecoveryCandidates/.test(apeGateway) && /fallbackRotationCursorByChain/.test(apeGateway) && /deferredCandidatesRemainEligibleNextFreshScan: true/.test(apeGateway)],
   ['APE refinement still requires strict measured improvement', /function strictDerivedImprovement\(/.test(apeGateway) && /if \(!strictDerivedImprovement\(before, normalized\)\) return false;/.test(apeGateway) && /recursiveStrictImprovementRequired: true/.test(apeGateway)],
   ['APE propagates one absolute deadline into measured rescue', /const deadlineAt = rescueStartedAt \+ wallClockBudgetMs/.test(apeGateway) && /deadlineAt,/.test(apeGateway) && /hardDeadlinePropagatedIntoMeasuredRescue: true/.test(apeGateway)],
   ['APE removes whole-pass barrier with candidate-local anytime feedback', /onImprovement: \(root, before, candidate\)/.test(apeGateway) && /passBarrierRemoved: true/.test(apeGateway) && /candidateLocalAnytimeRefinement: true/.test(apeGateway)],
