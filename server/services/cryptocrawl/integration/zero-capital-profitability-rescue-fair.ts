@@ -1,11 +1,7 @@
 import logger from '../../../logger.js';
 import type { providers } from 'ethers';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
-import {
-  peekResidentBestBpsQuote,
-  type ConfiguredZeroCapitalRoute,
-  type QuotedZeroCapitalRoute,
-} from '../execution/adapters/onchain-route-quoter.js';
+import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import { primeApeResidentRouting } from './atomic-profitability-resident-routing.js';
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
 import { runZeroCapitalAtomicStackTactic } from './zero-capital-atomic-stack-wiring.js';
@@ -20,8 +16,6 @@ export interface FairZeroCapitalProfitabilityRescueInput {
   fromQuotedRoute: (quote: QuotedZeroCapitalRoute, blockTimestamp: number) => ZeroCapitalOpportunity;
 }
 
-const fallbackRotationCursorByChain = new Map<string, number>();
-
 function bounded(raw: unknown, fallback: number, min: number, max: number): number {
   const value = Number(raw);
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
@@ -35,75 +29,11 @@ function recursiveWallClockBudgetMs(): number {
   return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_RECURSIVE_MAX_MS, 3_000, 250, 10_000));
 }
 
-function fallbackCandidateBudget(): number {
-  return Math.trunc(bounded(process.env.ZERO_CAPITAL_APE_FALLBACK_CANDIDATE_BUDGET, 2, 1, 5));
-}
-
 function stillNeedsMeasuredRescue(opportunity: ZeroCapitalOpportunity): boolean {
   return opportunity.expiresAt > Date.now()
     && opportunity.flashLoanAmount > 0n
     && Number.isFinite(opportunity.netProfitBps)
     && opportunity.expectedProfit <= 0n;
-}
-
-function routeForOpportunity(
-  routes: readonly ConfiguredZeroCapitalRoute[],
-  opportunity: ZeroCapitalOpportunity,
-): ConfiguredZeroCapitalRoute | null {
-  let best: ConfiguredZeroCapitalRoute | null = null;
-  for (const route of routes) {
-    if (route.chain !== opportunity.chain) continue;
-    if (opportunity.id !== route.id && !opportunity.id.startsWith(`${route.id}-`)) continue;
-    if (!best || route.id.length > best.id.length) best = route;
-  }
-  return best;
-}
-
-/**
- * The upstream bounded size sweep already performed the expensive route measurements
- * and retains its best-BPS quote in resident memory. When that evidence is still
- * live, starting another RPC/provider search in the same APE continuation would be
- * duplicate work. V4 therefore becomes recovery for a true resident miss only.
- */
-function hasLiveResidentRouteEvidence(
-  input: FairZeroCapitalProfitabilityRescueInput,
-  opportunity: ZeroCapitalOpportunity,
-): boolean {
-  const route = routeForOpportunity(input.configuredRoutes, opportunity);
-  if (!route) return false;
-  const resident = peekResidentBestBpsQuote(route.id);
-  return Boolean(resident && resident.chain === opportunity.chain);
-}
-
-/**
- * Bound cold/missing resident recovery globally instead of multiplying a per-candidate
- * retry allowance across the whole pass. The closest-to-profit miss always receives
- * one slot; remaining slots rotate through other misses so a degraded route cannot
- * permanently starve unrelated alternatives. Unadmitted candidates are not rejected
- * or mutated; they return unchanged and are eligible again on the next fresh scan.
- */
-function selectResidentMissRecoveryCandidates(
-  chain: SupportedChain,
-  candidates: readonly ZeroCapitalOpportunity[],
-  budget: number,
-): ZeroCapitalOpportunity[] {
-  if (candidates.length <= budget) return [...candidates];
-  const ranked = [...candidates].sort((left, right) => {
-    if (right.netProfitBps !== left.netProfitBps) return right.netProfitBps - left.netProfitBps;
-    if (right.expectedProfit !== left.expectedProfit) return right.expectedProfit > left.expectedProfit ? 1 : -1;
-    return left.id.localeCompare(right.id);
-  });
-  if (budget <= 1 || ranked.length <= 1) return ranked.slice(0, 1);
-
-  const selected: ZeroCapitalOpportunity[] = [ranked[0]];
-  const rotating = ranked.slice(1);
-  const start = (fallbackRotationCursorByChain.get(chain) ?? 0) % rotating.length;
-  const slots = Math.min(budget - 1, rotating.length);
-  for (let offset = 0; offset < slots; offset += 1) {
-    selected.push(rotating[(start + offset) % rotating.length]);
-  }
-  fallbackRotationCursorByChain.set(chain, (start + slots) % rotating.length);
-  return selected;
 }
 
 function strictDerivedImprovement(before: ZeroCapitalOpportunity, after: ZeroCapitalOpportunity): boolean {
@@ -121,14 +51,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
 ): Promise<ZeroCapitalOpportunity[]> {
   primeApeResidentRouting(input.opportunities);
   const residentFastPath = runZeroCapitalAtomicBpsEngine({ ...input, opportunities: input.opportunities });
-  const measuredRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
-  const residentMissCandidates = measuredRescueCandidates.filter(
-    opportunity => !hasLiveResidentRouteEvidence(input, opportunity),
-  );
-  const recoveryBudget = fallbackCandidateBudget();
-  const activeRescueCandidates = selectResidentMissRecoveryCandidates(input.chain, residentMissCandidates, recoveryBudget);
-  const residentEvidenceSuppressedRemoteRescue = measuredRescueCandidates.length - residentMissCandidates.length;
-  const recoveryBudgetDeferredCandidates = residentMissCandidates.length - activeRescueCandidates.length;
+  const activeRescueCandidates = residentFastPath.filter(stillNeedsMeasuredRescue);
   const boundFromQuotedRoute = input.fromQuotedRoute.bind(zeroCapitalEngine);
 
   let transformed = residentFastPath;
@@ -175,7 +98,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
   if (activeRescueCandidates.length > 0) {
     activeMeasuredRescueInvoked = true;
     try {
-      const passInput = activeRescueCandidates.filter(stillNeedsMeasuredRescue);
+      const passInput = transformed.filter(stillNeedsMeasuredRescue);
       if (passInput.length > 0 && Date.now() < deadlineAt) {
         const measured = await runZeroCapitalProfitabilityRescueV4({
           ...input,
@@ -205,7 +128,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
       if (Date.now() >= deadlineAt) recursiveWallClockStops = 1;
     } catch (error) {
       activeMeasuredRescueError = error instanceof Error ? error.message : String(error);
-      logger.warn('[ZeroCapitalProfitabilityRescueFair] Resident-miss APE rescue degraded locally; latest strict improvements continue', {
+      logger.warn('[ZeroCapitalProfitabilityRescueFair] Deadline-aware APE rescue degraded locally; latest strict improvements continue', {
         component: 'ZeroCapitalProfitabilityRescueFair',
         chain: input.chain,
         error: activeMeasuredRescueError,
@@ -270,19 +193,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
       });
     })();
 
-    logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> resident-first APE continuation completed', {
+    logger.info('[ZeroCapitalProfitabilityRescueFair] Stage-1 -> deadline-aware anytime APE continuation completed', {
       component: 'ZeroCapitalProfitabilityRescueFair',
       chain: input.chain,
       profitabilityFinishLine: 'strict_positive_all_in_base_units',
       residentFastPathFirst: true,
-      residentRouteEvidencePrimary: true,
-      remoteMeasuredRescuePolicy: 'resident_miss_recovery_only_with_bounded_fair_admission',
-      residentEvidenceSuppressedRemoteRescue,
-      residentMissCandidates: residentMissCandidates.length,
-      fallbackCandidateBudget: recoveryBudget,
-      recoveryBudgetDeferredCandidates,
-      recoveryRotationFairness: true,
-      deferredCandidatesRemainEligibleNextFreshScan: true,
       activeMeasuredRescueOwner: 'ZeroCapitalProfitabilityRescueV4',
       activeMeasuredRescueInvoked,
       activeMeasuredRescueCandidates: activeRescueCandidates.length,
