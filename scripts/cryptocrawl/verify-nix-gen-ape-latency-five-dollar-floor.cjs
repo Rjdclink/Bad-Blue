@@ -33,6 +33,7 @@ const split = read('server/services/cryptocrawl/integration/zero-capital-route-s
 const merit = read('server/services/cryptocrawl/integration/ape-adaptive-command.ts');
 const prices = read('server/services/cryptocrawl/bridge/live-price-mesh.ts');
 const stack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
+const coordinator = read('server/services/cryptocrawl/integration/universal-bps-rescue-coordinator.ts');
 const barrier = read('server/services/cryptocrawl/integration/zero-capital-dynamic-attempt-barrier-wiring.ts');
 const router = read('server/services/cryptocrawl/execution/unified-execution-router.ts');
 const resources = read('server/services/cryptocrawl/execution/zero-capital-resource-scheduler.ts');
@@ -58,6 +59,13 @@ has(fair, 'unavailableCompositeConsumesHotPathTime: false', 'unavailable composi
 has(v4, 'fiveDollarOutputRequiredBeforeApeStop: true', 'V4 may stop before $5');
 has(v4, 'positiveBelowFiveDollarsContinuesRefinement: true', 'V4 must continue refining positive-but-under-$5 candidates');
 has(v4, 'clearsFiveDollarOutputFloor(current)', 'V4 $5 current-candidate stop gate missing');
+
+// Universal rescue may never release ZERO_CAPITAL merely because it crossed $0.
+has(coordinator, 'ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'universal rescue does not use the canonical $5 authority');
+has(coordinator, 'deterministicNetProfitUsd >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD', 'universal rescue can release ZERO_CAPITAL below $5');
+has(coordinator, "zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_usd_at_least_5'", 'universal rescue $5 finish-line telemetry missing');
+has(coordinator, 'zeroCapitalApeOwnsAllSubFiveDollarAfterStageOne: true', 'universal rescue sub-$5 ownership telemetry missing');
+has(coordinator, 'zeroCapitalFiveDollarExecutionFloorAuthoritative: true', 'universal rescue $5 execution authority marker missing');
 
 // Price and split latency: resident first, per-symbol singleflight, zero waiting on split price misses.
 has(prices, 'symbolRefreshInFlight', 'per-symbol price singleflight missing');
@@ -137,4 +145,4 @@ assert.deepEqual(
   'lower-level flash executor gained a caller that can bypass the canonical $5 gate',
 );
 
-console.log('[ape-latency-five-dollar-floor] PASS: Stage 1 remains locked; APE keeps sub-$5 candidates; $5 is enforced at unified admission, resource admission, scheduling, pre-broadcast, and the sole canonical execution entrypoint without duplicate hot-path work');
+console.log('[ape-latency-five-dollar-floor] PASS: Stage 1 remains locked; APE and universal rescue keep sub-$5 candidates; $5 is enforced at rescue ownership, unified admission, resource admission, scheduling, pre-broadcast, and the sole canonical execution entrypoint without duplicate hot-path work');
