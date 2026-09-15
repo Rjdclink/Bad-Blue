@@ -132,21 +132,35 @@ assert.match(workbench, /externalIo: false/);
 assert.match(workbench, /executionAuthority: false/);
 assert.match(workbench, /economicAuthority: false/);
 
-// Route Splitter must visibly take every valid candidate before splittability can
-// reject exact split work. No first-N candidate cap can silently hide later work.
+// Route Splitter must keep every finite negative candidate owned, rebuild resident
+// assignment state from memory on cache miss, refresh stale price evidence instead
+// of killing the candidate, and execute independent candidate/ratio work concurrently.
 assert.match(gateway, /await runZeroCapitalRouteSplitRescue\(\{/);
 assert.match(routeSplit, /result\.validCandidates! \+= 1;\s*result\.attemptedCandidates \+= 1;/);
-assert.match(routeSplit, /const assignment = getApeResidentWorkAssignment\(parent, now\)/);
+assert.match(routeSplit, /let assignment = getApeResidentWorkAssignment\(parent\)/);
+assert.match(routeSplit, /primeApeResidentWorkbench\(\{ opportunities: \[parent\], configuredRoutes: input\.configuredRoutes \}\)/);
+assert.match(routeSplit, /assignment = getApeResidentWorkAssignment\(parent\)/);
+assert.match(routeSplit, /candidateOwnershipExpires: false/);
+assert.match(routeSplit, /negativeBpsRejected: false/);
+assert.match(routeSplit, /staleEvidenceRefreshesInsteadOfKillingCandidate: true/);
+assert.match(routeSplit, /residentAssignmentRebuildOnCacheMiss: true/);
+assert.match(routeSplit, /residentPriceEvidenceFirst: true/);
+assert.match(routeSplit, /missingPriceRefreshesThroughCanonicalMesh: true/);
+assert.match(routeSplit, /candidatesRunConcurrently: true/);
+assert.match(routeSplit, /ratiosWithinPairRunConcurrently: true/);
+assert.match(routeSplit, /await Promise\.all\(input\.opportunities\.map\(processParent\)\)/);
+assert.match(routeSplit, /const ratioJobs = splitRatiosForPair\(pair\)\.map\(async ratio =>/);
+assert.match(routeSplit, /const quotedRatios = \(await Promise\.all\(ratioJobs\)\)/);
 assert.match(routeSplit, /candidatesPreFilteredBeforeSplittability: false/);
 assert.match(routeSplit, /candidateSliceBeforeSplittability: false/);
 assert.match(routeSplit, /arbitraryFirstNRoutePairEligibilityCap: false/);
-assert.match(routeSplit, /everyValidCandidateRecordsAttempt: true/);
 assert.match(routeSplit, /structuralVisibility: 'all_resident_alternatives_visible_pool_disjoint_only_for_split_execution'/);
 assert.match(routeSplit, /partialQuotesRunInParallel: true/);
 assert.match(routeSplit, /individualChildPositiveGrossRequired: false/);
 assert.match(routeSplit, /aggregateCompositeEconomicsAuthoritative: true/);
 assert.match(routeSplit, /parentOpportunityKilledOnSplitFailure: false/);
-assert.match(routeSplit, /deadlineAt: parentDeadline\(input, parent\)/);
+assert.match(routeSplit, /function parentDeadline\(input: ZeroCapitalRouteSplitRescueInput\): number/);
+assert.match(routeSplit, /deadlineAt: parentDeadline\(input\)/);
 assert.match(routeSplit, /runZeroCapitalAtomicStackTactic/);
 
 // Composite exact aggregate economics is sovereign. Provider/receiver measurements
@@ -182,4 +196,4 @@ assert.match(activeRescue, /stageOneMutation: false/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; APE requires exact-notional resident starting proof before avoiding a requote, consumes rescue work in completion order, assigns every valid Route Splitter candidate before splittability can reject exact work, exposes arrived structural alternatives through a resident workbench, piggybacks peer hints without a queue/poll/ack path, and keeps exact aggregate all-in economics plus the canonical executor as the only promotion authorities');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; APE requires exact-notional resident starting proof, retains negative candidates independently of evidence TTL, rebuilds resident work state on cache miss, refreshes stale evidence, runs independent split work concurrently, and keeps exact aggregate all-in economics plus the canonical executor as the only promotion authorities');
