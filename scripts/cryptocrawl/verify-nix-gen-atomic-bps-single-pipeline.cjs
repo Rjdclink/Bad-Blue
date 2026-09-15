@@ -44,13 +44,13 @@ assert.match(residentApe, /apiCallsCreatedByApe: 0/);
 assert.match(residentApe, /stageOneMutation: false/);
 assert.match(residentApe, /executionAuthority: false/);
 
-// Every finite negative candidate that reaches APE is rescue-owned. V4 may not
-// add another fixed BPS entry floor after Stage One.
+// Every finite sub-$5 candidate that reaches APE is rescue-owned. V4 may not add
+// another fixed BPS entry floor after Stage One.
 assert.match(toolbox, /export function isApeRescueCandidate/);
 assert.match(toolbox, /opportunity\.expectedProfit <= 0n/);
 assert.doesNotMatch(activeRescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 assert.match(activeRescue, /fixedBpsRescueEntryFloor: false/);
-assert.match(activeRescue, /rescueOwnership: 'every_live_finite_negative_stage1_candidate_received_by_ape'/);
+assert.match(activeRescue, /rescueOwnership: 'every_finite_sub_five_dollar_stage1_candidate_received_by_ape'/);
 
 // Existing BPS intelligence remains scheduling intelligence only.
 assert.match(toolbox, /buildBpsReductionSuperPlan/);

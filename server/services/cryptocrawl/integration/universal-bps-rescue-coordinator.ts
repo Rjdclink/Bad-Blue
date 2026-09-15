@@ -15,6 +15,7 @@ import {
 import { measuredOpportunityGraph } from '../discovery/opportunity-graph.js';
 import { getAtomicZeroCapitalStrategyCoverage } from '../governance/atomic-zero-capital-strategy-coverage.js';
 import { refreshKalshiSystemEvidenceNow } from './kalshi-system-wiring.js';
+import { ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD } from './zero-capital-profit-output-floor.js';
 
 export type UniversalBpsRescueState =
   | 'bps_hydration_pending'
@@ -83,6 +84,11 @@ function sweepIntervalMs(): number {
 function finiteNetBps(candidate: MeasuredCandidate): number | null {
   const value = candidate.canonicalBps.netBps;
   return value !== null && Number.isFinite(value) ? Number(value) : null;
+}
+
+function finiteDeterministicNetProfitUsd(candidate: MeasuredCandidate): number | null {
+  const value = Number(candidate.economics.deterministicNetProfitUsd);
+  return Number.isFinite(value) ? value : null;
 }
 
 function explicitMeasuredImpossibility(candidate: MeasuredCandidate): boolean {
@@ -161,6 +167,10 @@ function classify(candidate: MeasuredCandidate, now = Date.now()): UniversalBpsR
   const entry = entryFloorBps();
   const target = targetBps();
   const netBps = finiteNetBps(candidate);
+  const deterministicNetProfitUsd = finiteDeterministicNetProfitUsd(candidate);
+  const zeroCapitalOutputCleared = candidate.topology === 'ZERO_CAPITAL_ATOMIC'
+    && deterministicNetProfitUsd !== null
+    && deterministicNetProfitUsd >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD;
   let state: UniversalBpsRescueState;
   let reason: string;
 
@@ -174,12 +184,12 @@ function classify(candidate: MeasuredCandidate, now = Date.now()): UniversalBpsR
     state = 'bps_hydration_pending';
     reason = 'Canonical net BPS is not yet fully measured; topology-specific evidence reacquisition retains ownership.';
   } else if (candidate.topology === 'ZERO_CAPITAL_ATOMIC') {
-    if (netBps <= 0) {
+    if (!zeroCapitalOutputCleared) {
       state = 'atomic_rescue_owned';
-      reason = `Canonical zero-capital net ${netBps} BPS is non-positive; APE retains the candidate until exact all-in economics become strictly positive, evidence expires, or compatible paths are explicitly exhausted.`;
+      reason = `Canonical zero-capital output is ${deterministicNetProfitUsd ?? 'unmeasured'} USD at ${netBps} BPS; APE retains the candidate until fresh exact all-in net reaches at least $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD}, evidence expires, or compatible paths are explicitly exhausted.`;
     } else {
       state = 'target_achieved';
-      reason = `Canonical zero-capital net ${netBps} BPS is strictly positive; APE's profitability finish line is satisfied without any +10 BPS requirement.`;
+      reason = `Canonical zero-capital output ${deterministicNetProfitUsd} USD clears the $${ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD} exact all-in finish line without any +10 BPS requirement.`;
     }
   } else if (netBps <= entry) {
     state = 'bps_reduction_owned';
@@ -204,7 +214,9 @@ function classify(candidate: MeasuredCandidate, now = Date.now()): UniversalBpsR
     expiresAt: candidate.expiresAt,
     atomicity: coverage.atomicity,
     executionFamily: coverage.executionFamily,
-    normalStrictPositiveExecutionMayProceed: netBps !== null && netBps > 0,
+    normalStrictPositiveExecutionMayProceed: candidate.topology === 'ZERO_CAPITAL_ATOMIC'
+      ? zeroCapitalOutputCleared
+      : netBps !== null && netBps > 0,
     topologySpecificExecutionPreserved: true,
     reason,
   };
@@ -373,7 +385,8 @@ function acceptCandidate(candidate: MeasuredCandidate): void {
       executionFamily: next.executionFamily,
       normalStrictPositiveExecutionMayProceed: next.normalStrictPositiveExecutionMayProceed,
       topologySpecificExecutionPreserved: true,
-      zeroCapitalApeOwnsAllNonPositiveAfterStageOne: next.topology === 'ZERO_CAPITAL_ATOMIC',
+      zeroCapitalApeOwnsAllSubFiveDollarAfterStageOne: next.topology === 'ZERO_CAPITAL_ATOMIC',
+      zeroCapitalMinimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
       canonicalBpsMutation: false,
       executionAuthority: false,
     });
@@ -424,7 +437,8 @@ export function getUniversalBpsRescueSnapshot() {
     observedAt: Date.now(),
     entryFloorBps: entryFloorBps(),
     targetBps: targetBps(),
-    zeroCapitalApeFinishLine: 'strict_positive_all_in_net_bps_above_zero' as const,
+    zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_usd_at_least_5' as const,
+    zeroCapitalMinimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
     zeroCapitalPostStageOneEntryFloorIgnored: true as const,
     zeroCapitalPlusTenTargetRequired: false as const,
     totalTracked: rows.length,
@@ -440,12 +454,13 @@ export function getUniversalBpsRescueSnapshot() {
     stageTwoBoundaryCrossings,
     stageTwoMeasurementMisses,
     reacquisitionInFlight: [...reacquisitionInFlight.keys()],
-    lifecycle: 'topology_specific: ZERO_CAPITAL_ATOMIC finite non-positive -> APE atomic_rescue_owned -> strict-positive target_achieved; other topologies retain legacy hydration/BPS-reduction/atomic rescue bands' as const,
+    lifecycle: 'topology_specific: ZERO_CAPITAL_ATOMIC finite sub-$5 -> APE atomic_rescue_owned -> fresh exact >=$5 target_achieved; other topologies retain legacy hydration/BPS-reduction/atomic rescue bands' as const,
     canonicalEconomicsAuthority: 'measured_candidate_registry.canonicalBps' as const,
     bpsReductionAuthority: 'existing_bps_reduction_super_engine' as const,
     stageTwoMeasurementAuthority: 'fresh_same_market_canonical_reacquisition_non_zero_capital_only' as const,
     universalAtomicAuthority: 'rescue_ownership_and_topology_specific_reacquisition_only' as const,
-    strictPositiveExecutionFloorUnchanged: true as const,
+    strictPositiveExecutionFloorUnchanged: false as const,
+    zeroCapitalFiveDollarExecutionFloorAuthoritative: true as const,
     stageTwoRequiresStrictlyAboveEntryFloor: true as const,
     topologySpecificExecutionPreserved: true as const,
     syntheticEconomicsAllowed: false as const,
@@ -475,12 +490,14 @@ export function ensureUniversalBpsRescueCoordinator(): void {
     bpsReductionAuthority: 'existing_bps_reduction_super_engine',
     stageTwoMeasurementAuthority: 'fresh_same_market_canonical_reacquisition_non_zero_capital_only',
     zeroCapitalAtomicPath: 'stage1_direct_to_ape_full_toolbox_same_cycle_rescue',
-    zeroCapitalApeOwnsAllNonPositiveAfterStageOne: true,
-    zeroCapitalApeFinishLine: 'strict_positive_all_in_net_bps_above_zero',
+    zeroCapitalApeOwnsAllSubFiveDollarAfterStageOne: true,
+    zeroCapitalMinimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
+    zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_usd_at_least_5',
     zeroCapitalPostStageOneEntryFloorIgnored: true,
     zeroCapitalPlusTenTargetRequired: false,
     nonAtomicTopologiesRemainTopologySpecific: true,
-    strictPositiveExecutionFloorUnchanged: true,
+    strictPositiveExecutionFloorUnchanged: false,
+    zeroCapitalFiveDollarExecutionFloorAuthoritative: true,
     stageTwoRequiresStrictlyAboveEntryFloor: true,
     missingExecutionResourceDoesNotReleaseRescueOwnership: true,
     syntheticEconomicsAllowed: false,

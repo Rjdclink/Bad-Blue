@@ -45,31 +45,33 @@ assert.match(transformation, /ensureUniversalBpsRescueCoordinator\(\)/);
 assert.match(transformation, /executionAuthority: false/);
 assert.doesNotMatch(transformation, /canonicalBps\.[A-Za-z]+\s*=/);
 
-// APE directly owns every live finite non-positive ZERO_CAPITAL_ATOMIC candidate
-// it actually receives from locked Stage One. There is no second -10 or +10 gate.
+// APE directly owns every live finite sub-$5 ZERO_CAPITAL_ATOMIC candidate it
+// receives from locked Stage One. There is no second -10 or +10 gate.
 assert.match(apeToolbox, /export function isApeRescueCandidate/);
 assert.match(apeToolbox, /opportunity\.expectedProfit <= 0n/);
 assert.match(apeToolbox, /HYPERDYNAMIC_BPS_SOLUTIONS/);
 assert.match(apeToolbox, /hyperdynamicCatalogSize: HYPERDYNAMIC_BPS_SOLUTIONS\.length/);
 assert.doesNotMatch(apeRescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/);
 assert.match(apeRescue, /fixedBpsRescueEntryFloor: false/);
-assert.match(apeRescue, /rescueOwnership: 'every_live_finite_negative_stage1_candidate_received_by_ape'/);
-assert.match(apeRescue, /exactStrictPositiveRequiredBeforePromotion: true/);
+assert.match(apeRescue, /rescueOwnership: 'every_finite_sub_five_dollar_stage1_candidate_received_by_ape'/);
+assert.match(apeRescue, /fiveDollarOutputRequiredBeforeApeStop: true/);
 
-// The universal coordinator mirrors that topology-specific contract without
-// changing canonical economics. Other topologies may retain their legacy bounded
-// BPS-reduction/atomic-rescue bands; ZERO_CAPITAL_ATOMIC does not.
+// The universal coordinator mirrors the same $5 topology-specific contract without
+// changing canonical economics. Other topologies retain their legacy bounded bands.
 assert.match(coordinator, /measuredCandidateRegistry\.onUpdate\(acceptCandidate\)/);
-assert.match(coordinator, /else if \(candidate\.topology === 'ZERO_CAPITAL_ATOMIC'\) \{/);
-assert.match(coordinator, /if \(netBps <= 0\) \{[\s\S]{0,180}state = 'atomic_rescue_owned'/);
-assert.match(coordinator, /APE retains the candidate until exact all-in economics become strictly positive/);
+assert.match(coordinator, /const zeroCapitalOutputCleared = candidate\.topology === 'ZERO_CAPITAL_ATOMIC'/);
+assert.match(coordinator, /deterministicNetProfitUsd >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD/);
+assert.match(coordinator, /if \(!zeroCapitalOutputCleared\) \{[\s\S]{0,180}state = 'atomic_rescue_owned'/);
+assert.match(coordinator, /APE retains the candidate until fresh exact all-in net reaches at least/);
 assert.match(coordinator, /without any \+10 BPS requirement/);
 assert.match(coordinator, /targetBps: candidate\.topology === 'ZERO_CAPITAL_ATOMIC' \? 0 : target/);
-assert.match(coordinator, /zeroCapitalApeOwnsAllNonPositiveAfterStageOne: true/);
+assert.match(coordinator, /zeroCapitalApeOwnsAllSubFiveDollarAfterStageOne: true/);
+assert.match(coordinator, /zeroCapitalMinimumOutputProfitUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD/);
 assert.match(coordinator, /zeroCapitalPostStageOneEntryFloorIgnored: true/);
 assert.match(coordinator, /zeroCapitalPlusTenTargetRequired: false/);
-assert.match(coordinator, /zeroCapitalApeFinishLine: 'strict_positive_all_in_net_bps_above_zero'/);
-assert.match(coordinator, /normalStrictPositiveExecutionMayProceed: netBps !== null && netBps > 0/);
+assert.match(coordinator, /zeroCapitalApeFinishLine: 'fresh_exact_all_in_net_profit_usd_at_least_5'/);
+assert.match(coordinator, /zeroCapitalFiveDollarExecutionFloorAuthoritative: true/);
+assert.match(coordinator, /normalStrictPositiveExecutionMayProceed: candidate\.topology === 'ZERO_CAPITAL_ATOMIC'[\s\S]{0,100}\? zeroCapitalOutputCleared/);
 assert.match(coordinator, /candidate\.topology === 'ZERO_CAPITAL_ATOMIC'\) return;/);
 
 // Non-zero-capital topologies retain their existing topology-specific reacquisition
@@ -90,4 +92,4 @@ assert.match(coordinator, /executionAuthority: false/);
 assert.doesNotMatch(coordinator, /measuredCandidateRegistry\.(record|updateStatus)\(/);
 assert.doesNotMatch(coordinator, /canonicalBps\.[A-Za-z]+\s*=/);
 
-console.log('[bps-zero-capital-event-handoff] PASS: locked Stage One still defines which ZERO_CAPITAL_ATOMIC candidates reach APE; once received, every live finite non-positive candidate is directly APE-owned until exact all-in net becomes strictly positive, expires, or proves compatible paths exhausted. The old post-Stage-One -10/+10 ownership seam no longer applies to zero-capital, while unrelated topology-specific rescue behavior and canonical economics/execution authorities remain unchanged.');
+console.log('[bps-zero-capital-event-handoff] PASS: locked Stage One defines which ZERO_CAPITAL_ATOMIC candidates reach APE; once received, every live finite sub-$5 candidate remains APE-owned until fresh exact all-in net reaches at least $5, expires, or proves compatible paths exhausted. Unrelated topology-specific rescue behavior and canonical economics/execution authorities remain unchanged.');
