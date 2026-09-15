@@ -2,7 +2,11 @@ import type { providers } from 'ethers';
 import type { SupportedChain, ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ZeroCapitalPriceEvidence } from '../core/zero-capital-price-evidence.js';
 import { livePriceMesh } from '../bridge/live-price-mesh.js';
-import type { FlashLoanProviderEconomics } from '../execution/adapters/flash-loan-provider-economics.js';
+import {
+  peekResidentFlashLoanProviderEvidence,
+  prewarmFlashLoanProviderEvidence,
+  type FlashLoanProviderEconomics,
+} from '../execution/adapters/flash-loan-provider-economics.js';
 
 export interface AtomicBpsPreparedEvidence {
   inputTokenUsdPrice: number | null;
@@ -37,43 +41,46 @@ let auditObservations = 0;
 let residentPriceEvidenceHits = 0;
 let residentPriceEvidenceMisses = 0;
 let legacyUnverifiedPriceIgnored = 0;
+let residentProviderEvidenceHits = 0;
+let residentProviderEvidenceMisses = 0;
+let providerPrewarmSignals = 0;
 
-function freshnessBudgetMs(opportunity: ZeroCapitalOpportunity, now = Date.now()): number {
-  const remaining = Math.max(0, opportunity.expiresAt - now);
-  return Math.max(100, Math.min(1_250, Math.floor(remaining / 4)));
+function freshnessBudgetMs(_opportunity: ZeroCapitalOpportunity): number {
+  const configured = Number(process.env.ZERO_CAPITAL_APE_EVIDENCE_REFRESH_BUDGET_MS || 1_250);
+  return Number.isFinite(configured) ? Math.max(100, Math.min(5_000, Math.trunc(configured))) : 1_250;
 }
 
 /**
- * Compatibility-only accessor retained for callers compiled against the former
- * APE worker surface. It deliberately performs no provider measurement. Canonical
- * provider proof remains in zero-capital-flash-provider-wiring after APE.
+ * Compatibility accessor now returns only already-resident provider evidence.
+ * It never starts network work and therefore remains safe for callers expecting
+ * the old APE worker surface.
  */
 export async function getAtomicBpsProviderEvidence(
-  _chain: SupportedChain,
+  chain: SupportedChain,
   _provider: providers.Provider,
-  _asset: string,
-  _maxAgeMs = 1_250,
+  asset: string,
+  maxAgeMs = 1_250,
   _forceRefresh = false,
 ): Promise<FlashLoanProviderEconomics[]> {
   compatibilityReads += 1;
-  return [];
+  return peekResidentFlashLoanProviderEvidence(chain as any, asset, maxAgeMs);
 }
 
-/** No hot-path refresh exists in APE. Retained only as a non-I/O compatibility shim. */
+/** Nonblocking refresh signal; callers never wait on provider measurement here. */
 export function refreshAtomicBpsProviderEvidence(
   chain: SupportedChain,
   provider: providers.Provider,
   asset: string,
-  maxAgeMs = 1_250,
+  _maxAgeMs = 1_250,
 ): Promise<FlashLoanProviderEconomics[]> {
-  return getAtomicBpsProviderEvidence(chain, provider, asset, maxAgeMs, false);
+  providerPrewarmSignals += 1;
+  return prewarmFlashLoanProviderEvidence({ chain: chain as any, provider, asset });
 }
 
 /**
- * Compatibility prewarm snapshots only evidence already resident before APE.
- * It performs zero API/RPC/database/model/persistence work and does not copy the
- * opportunity or route. A legacy scalar without provenance is deliberately not
- * treated as fresh market evidence; the resident mesh must prove freshness.
+ * Snapshots evidence already resident before APE. Missing provider evidence is
+ * prewarmed concurrently without putting I/O onto the current APE decision path.
+ * Candidate ownership is independent from every evidence TTL.
  */
 export function prewarmAtomicBpsEvidence(input: {
   chain: SupportedChain;
@@ -90,11 +97,30 @@ export function prewarmAtomicBpsEvidence(input: {
       const legacy = Number(opportunity.inputAssetUsdPrice);
       if (Number.isFinite(legacy) && legacy > 0) legacyUnverifiedPriceIgnored += 1;
     }
+
+    const providerEvidence = peekResidentFlashLoanProviderEvidence(
+      input.chain as any,
+      opportunity.inputToken,
+    );
+    if (providerEvidence.length > 0) residentProviderEvidenceHits += 1;
+    else {
+      residentProviderEvidenceMisses += 1;
+      providerPrewarmSignals += 1;
+      void prewarmFlashLoanProviderEvidence({
+        chain: input.chain as any,
+        provider: input.provider,
+        asset: opportunity.inputToken,
+      }).catch(() => undefined);
+    }
+
     const evidence: AtomicBpsPreparedEvidence = {
       inputTokenUsdPrice: priceEvidence?.priceUsd ?? null,
       inputTokenPriceEvidence: priceEvidence,
-      providerEvidence: [],
-      providerEvidenceSnapshot: () => [],
+      providerEvidence,
+      providerEvidenceSnapshot: () => peekResidentFlashLoanProviderEvidence(
+        input.chain as any,
+        opportunity.inputToken,
+      ),
       providerFailures: () => [],
       preparedAt: Date.now(),
       freshnessBudgetMs: freshnessBudgetMs(opportunity),
@@ -119,7 +145,7 @@ export function observeAtomicBpsOutcome(observation: AtomicBpsAuditObservation):
 export function getAtomicBpsWorkerSnapshot() {
   return {
     speedWorker: {
-      purpose: 'compatibility_snapshot_only_no_live_io',
+      purpose: 'resident_evidence_snapshot_and_nonblocking_prewarm',
       executionAuthority: false,
       economicAuthority: false,
       compatibilityReads,
@@ -127,11 +153,14 @@ export function getAtomicBpsWorkerSnapshot() {
       residentPriceEvidenceHits,
       residentPriceEvidenceMisses,
       legacyUnverifiedPriceIgnored,
+      residentProviderEvidenceHits,
+      residentProviderEvidenceMisses,
+      providerPrewarmSignals,
       livePriceCalls: 0,
-      liveProviderMeasurements: 0,
-      providerRefreshCalls: 0,
-      rpcCalls: 0,
-      apiCalls: 0,
+      liveProviderMeasurementsOnDecisionPath: 0,
+      providerRefreshCallsBlockingDecisionPath: 0,
+      rpcCallsOnDecisionPath: 0,
+      apiCallsOnDecisionPath: 0,
       databaseReads: 0,
       databaseWrites: 0,
       modelCalls: 0,
