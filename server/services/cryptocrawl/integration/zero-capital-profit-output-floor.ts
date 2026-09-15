@@ -21,11 +21,34 @@ export interface ZeroCapitalOutputFloorDecision {
 
 function normalizedDecimals(decimals: number): number {
   if (!Number.isFinite(decimals)) return 0;
-  return Math.max(0, Math.min(18, Math.trunc(decimals)));
+  return Math.max(0, Math.min(36, Math.trunc(decimals)));
 }
 
-function pow10Number(decimals: number): number {
-  return 10 ** normalizedDecimals(decimals);
+function tokenScale(decimals: number): bigint {
+  return 10n ** BigInt(normalizedDecimals(decimals));
+}
+
+/** Exact rational representation of the already-measured JS price value. */
+function positiveNumberRational(value: number): { numerator: bigint; denominator: bigint } | null {
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const text = value.toString().toLowerCase();
+  const [coefficient, exponentText] = text.split('e');
+  const exponent = exponentText === undefined ? 0 : Number(exponentText);
+  if (!Number.isInteger(exponent)) return null;
+  const [whole = '0', fraction = ''] = coefficient.split('.');
+  const digits = `${whole}${fraction}`.replace(/^0+/, '') || '0';
+  const numeratorBase = BigInt(digits);
+  if (numeratorBase <= 0n) return null;
+  const decimalExponent = exponent - fraction.length;
+  if (decimalExponent >= 0) {
+    return { numerator: numeratorBase * (10n ** BigInt(decimalExponent)), denominator: 1n };
+  }
+  return { numerator: numeratorBase, denominator: 10n ** BigInt(-decimalExponent) };
+}
+
+function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  if (numerator <= 0n || denominator <= 0n) return 0n;
+  return (numerator + denominator - 1n) / denominator;
 }
 
 export function freshOpportunityInputUsdPrice(
@@ -41,11 +64,13 @@ export function requiredProfitBaseUnitsForFiveDollarOutput(
   opportunity: ZeroCapitalOpportunity,
   priceUsd = freshOpportunityInputUsdPrice(opportunity),
 ): bigint | null {
-  if (!(Number.isFinite(priceUsd) && Number(priceUsd) > 0)) return null;
-  const scale = pow10Number(opportunity.inputTokenDecimals);
-  const required = Math.ceil((ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD / Number(priceUsd)) * scale);
-  if (!Number.isSafeInteger(required) || required <= 0) return null;
-  return BigInt(required);
+  const rational = positiveNumberRational(Number(priceUsd));
+  if (!rational) return null;
+  const requiredUsdNumerator = BigInt(ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD)
+    * tokenScale(opportunity.inputTokenDecimals)
+    * rational.denominator;
+  const required = ceilDiv(requiredUsdNumerator, rational.numerator);
+  return required > 0n ? required : null;
 }
 
 export function evaluateFiveDollarOutputFloor(
@@ -76,11 +101,10 @@ export function evaluateFiveDollarOutputFloor(
   }
 
   const requiredProfitBaseUnits = requiredProfitBaseUnitsForFiveDollarOutput(opportunity, priceUsd);
-  const scale = pow10Number(opportunity.inputTokenDecimals);
-  const expectedProfitUsd = Number(opportunity.expectedProfit) / scale * priceUsd;
+  const decimals = normalizedDecimals(opportunity.inputTokenDecimals);
+  const expectedProfitUsd = Number(opportunity.expectedProfit) / (10 ** decimals) * priceUsd;
   const satisfied = requiredProfitBaseUnits !== null
-    && opportunity.expectedProfit >= requiredProfitBaseUnits
-    && expectedProfitUsd >= ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD;
+    && opportunity.expectedProfit >= requiredProfitBaseUnits;
 
   return {
     minimumUsd: ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD,
