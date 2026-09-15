@@ -15,6 +15,7 @@ const gateway = read('server/services/cryptocrawl/integration/zero-capital-profi
 const activeRescue = read('server/services/cryptocrawl/integration/zero-capital-profitability-rescue-v4.ts');
 const residentApe = read('server/services/cryptocrawl/integration/zero-capital-atomic-bps-engine.ts');
 const toolbox = read('server/services/cryptocrawl/integration/ape-profitability-toolbox.ts');
+const workbench = read('server/services/cryptocrawl/integration/ape-resident-workbench.ts');
 const routeSplit = read('server/services/cryptocrawl/integration/zero-capital-route-split-rescue.ts');
 const atomicStack = read('server/services/cryptocrawl/integration/zero-capital-atomic-stack-wiring.ts');
 
@@ -46,8 +47,8 @@ assert.doesNotMatch(activeRescue, /ZERO_CAPITAL_ATOMIC_SURPLUS_ENTRY_FLOOR_BPS/)
 assert.match(activeRescue, /fixedBpsRescueEntryFloor: false/);
 assert.match(activeRescue, /rescueOwnership: 'every_live_finite_negative_stage1_candidate_received_by_ape'/);
 
-// The existing BPS intelligence is back in the toolbox as scheduling intelligence,
-// never economic or execution authority. Failure of this advisory layer is fail-open.
+// The existing BPS intelligence remains scheduling intelligence only. A resident
+// exact proof is checked before advisory planning so advice cannot delay a winner.
 assert.match(toolbox, /buildBpsReductionSuperPlan/);
 assert.match(toolbox, /adviseEconomicTransformations/);
 assert.match(toolbox, /buildResearchBpsExecutionPlan/);
@@ -58,10 +59,10 @@ assert.match(activeRescue, /bpsSuperEngineUsedForSearchScheduling: true/);
 assert.match(activeRescue, /economicTransformationAdviceUsedForSearchScheduling: true/);
 assert.match(activeRescue, /researchBpsTacticsUsedForSearchScheduling: true/);
 assert.match(activeRescue, /advisoryCanVetoDeterministicPositive: false/);
+assert.match(activeRescue, /advisoryBpsIntelligenceBeforeResidentInitialProof: false/);
 
 // Cost-driver-aware sizing preserves measured provider boundaries and avoids the
-// old generic ladder: fixed gas/relay/bridge can test larger safe notionals, impact
-// tests smaller sizes, and flash premium remains primarily a provider-cost problem.
+// old generic ladder.
 assert.match(activeRescue, /buildApeTargetAmounts\(\{/);
 assert.match(activeRescue, /providerCapacityBoundaries:/);
 assert.match(toolbox, /driver === 'gas' \|\| driver === 'relay' \|\| driver === 'bridge'/);
@@ -70,8 +71,9 @@ assert.match(toolbox, /driver === 'slippage_impact' \|\| driver === 'latency_dec
 assert.match(toolbox, /superPlan\.residualNotionalFractions/);
 assert.match(activeRescue, /dynamicSizeLadder: 'bps_toolbox_driver_aware_provider_boundaries_residual_fractions_and_fixed_cost_dilution'/);
 
-// Active V4 retains the modern one-race-per-asset, quote/provider parallelism,
-// bounded hedged waves, adaptive deadlines/concurrency and candidate-local feedback.
+// V4 shares provider races, reuses an exact resident starting quote when present,
+// falls back to a live quote only when necessary, and consumes candidate results in
+// completion order instead of waiting for the full batch.
 assert.match(gateway, /runZeroCapitalProfitabilityRescueV4\(\{/);
 assert.match(gateway, /deadlineAt,/);
 assert.match(gateway, /maxRefinements: maxPasses/);
@@ -81,12 +83,19 @@ assert.match(gateway, /stageOneMutation: false/);
 assert.match(gateway, /syntheticEconomics: false/);
 assert.match(activeRescue, /const providerRaces = new Map<string, Promise<FlashLoanProviderEconomics\[\]>>\(\)/);
 assert.match(activeRescue, /if \(providerRaces\.has\(key\)\) continue;/);
-assert.match(activeRescue, /const initialQuotePromise = quoteOnce\(primaryRoute, intendedAmount\)/);
+assert.match(activeRescue, /const residentInitial = peekResidentBestBpsQuote\(primaryRoute\.id\)/);
+assert.match(activeRescue, /const residentMatchesIntended = residentInitial\?\.amountIn === intendedAmount/);
+assert.match(activeRescue, /const initialQuotePromise: Promise<TimedQuoteResult> = residentMatchesIntended/);
+assert.match(activeRescue, /: quoteOnce\(primaryRoute, intendedAmount\)/);
+assert.doesNotMatch(activeRescue, /const initialQuotePromise = quoteOnce\(primaryRoute, intendedAmount\)/);
+assert.match(activeRescue, /unchangedPrimaryRouteRequoteAvoidedWhenResidentExactSizeExists: true/);
+assert.match(activeRescue, /residentQuoteNeverExtendsCandidateFreshness: true/);
 assert.match(activeRescue, /const providerMeasurementsPromise = awaitWithDeadline\(providerRace, deadlineAt/);
 assert.match(activeRescue, /Promise\.all\(\[initialQuotePromise, providerMeasurementsPromise\]\)/);
-assert.match(activeRescue, /mapConcurrent\(opportunities, concurrency, evaluate\)/);
-assert.match(activeRescue, /for \(let offset = 0; offset < targets\.length && !deadlineReached\(deadlineAt\); offset \+= waveWidth\)/);
+assert.match(activeRescue, /mapConcurrentUntilStrictPositive\(/);
 assert.match(activeRescue, /Promise\.race\(\[\.\.\.active\.values\(\)\]\)/);
+assert.match(activeRescue, /fullCandidateBatchBarrier: false/);
+assert.match(activeRescue, /for \(let offset = 0; offset < targets\.length && !passWinnerFound && !deadlineReached\(deadlineAt\); offset \+= waveWidth\)/);
 assert.match(activeRescue, /hardDeadlinePropagation: true/);
 assert.match(activeRescue, /adaptiveRouteP95Timeouts: true/);
 assert.match(activeRescue, /adaptiveConcurrency: true/);
@@ -104,22 +113,60 @@ assert.match(activeRescue, /kind: 'aave_balancer_dual'/);
 assert.match(activeRescue, /morphoStackingEnabled: false/);
 assert.match(activeRescue, /providerLiquidityTelemetrySeparatedFromRouteQuoteCapacity: true/);
 
-// The single-route quote object remains single-route, but the already-built exact
-// split/composite tools now run inside the APE decision before APE finally returns.
-assert.match(activeRescue, /routeSplitExecutionSupported: false/);
-assert.match(activeRescue, /routeSplitPromotionSuppressed: true/);
+// Resident worker preparation replaces Splitter-side route scanning. It can expose
+// an already-arrived Stage-One route that configured inventory did not represent,
+// and peer hints piggyback on the same resident state without a separate channel.
+assert.match(gateway, /primeApeResidentWorkbench\(\{/);
+assert.match(gateway, /publishApeResidentPeerHint\(normalized\)/);
+assert.match(workbench, /function routeFromArrivedOpportunity\(/);
+assert.match(workbench, /export function getApeResidentWorkAssignment\(/);
+assert.match(workbench, /export function publishApeResidentPeerHint\(/);
+assert.match(workbench, /configuredRouteFilteringOnSplitWorkerPath: false/);
+assert.match(workbench, /candidatePresliceBeforeSplittability: false/);
+assert.match(workbench, /peerHintTransport: 'piggybacked_existing_worker_result'/);
+assert.match(workbench, /peerHintQueue: false/);
+assert.match(workbench, /peerHintPolling: false/);
+assert.match(workbench, /peerHintAcknowledgement: false/);
+assert.match(workbench, /externalIo: false/);
+assert.match(workbench, /executionAuthority: false/);
+assert.match(workbench, /economicAuthority: false/);
+
+// Route Splitter must visibly take every valid candidate before splittability can
+// reject exact split work. No first-N candidate cap can silently hide later work.
 assert.match(gateway, /await runZeroCapitalRouteSplitRescue\(\{/);
+assert.match(routeSplit, /result\.validCandidates! \+= 1;\s*result\.attemptedCandidates \+= 1;/);
+assert.match(routeSplit, /const assignment = getApeResidentWorkAssignment\(parent, now\)/);
+assert.match(routeSplit, /candidatesPreFilteredBeforeSplittability: false/);
+assert.match(routeSplit, /candidateSliceBeforeSplittability: false/);
+assert.match(routeSplit, /arbitraryFirstNRoutePairEligibilityCap: false/);
+assert.match(routeSplit, /everyValidCandidateRecordsAttempt: true/);
+assert.match(routeSplit, /structuralVisibility: 'all_resident_alternatives_visible_pool_disjoint_only_for_split_execution'/);
+assert.match(routeSplit, /partialQuotesRunInParallel: true/);
+assert.match(routeSplit, /individualChildPositiveGrossRequired: false/);
+assert.match(routeSplit, /aggregateCompositeEconomicsAuthoritative: true/);
+assert.match(routeSplit, /parentOpportunityKilledOnSplitFailure: false/);
+assert.match(routeSplit, /deadlineAt: parentDeadline\(input, parent\)/);
+assert.match(routeSplit, /runZeroCapitalAtomicStackTactic/);
+
+// Composite exact aggregate economics is sovereign. Provider/receiver measurements
+// are shared per group, adaptive minLegs cannot veto a deterministic two-cycle
+// composite, and completion-order group handling removes the outer Promise.all wait.
 assert.match(gateway, /await runZeroCapitalAtomicStackTactic\(\{/);
+assert.match(atomicStack, /exactStrictPositiveCompositeCallRequired: true/);
+assert.match(atomicStack, /measuredCompositionBenefitRequired: true/);
+assert.match(atomicStack, /aggregateEconomicsAuthority: true/);
+assert.match(atomicStack, /individualChildPositiveGrossRequired: false/);
+assert.match(atomicStack, /adaptiveMinLegsVetoAuthority: false/);
+assert.match(atomicStack, /providerEconomicsMeasuredOncePerGroup: true/);
+assert.match(atomicStack, /receiverCapabilityMeasuredOncePerGroup: true/);
+assert.match(atomicStack, /fullVariantBatchBarrier: false/);
+assert.match(atomicStack, /Promise\.race\(\[\.\.\.active\.values\(\)\]\)/);
+assert.match(atomicStack, /if \(settled\.result\.promoted > 0\) return aggregate/);
+assert.match(gateway, /hardDeadlinePropagatedIntoSplitAndComposite: true/);
 assert.match(gateway, /toolboxFinalRescueBeforeReturn: true/);
 assert.match(gateway, /routeSplitTacticScheduledAfterApeDecision: false/);
 assert.match(gateway, /compositeTacticScheduledAfterApeDecision: false/);
 assert.doesNotMatch(gateway, /setImmediate\(/);
-assert.match(routeSplit, /routesArePoolDisjoint/);
-assert.match(routeSplit, /partialQuotesRunInParallel: true/);
-assert.match(routeSplit, /parentOpportunityKilledOnSplitFailure: false/);
-assert.match(routeSplit, /runZeroCapitalAtomicStackTactic/);
-assert.match(atomicStack, /exactStrictPositiveCompositeCallRequired: true/);
-assert.match(atomicStack, /measuredCompositionBenefitRequired: true/);
 
 // The old global quote storm stays retired and profit-ladder telemetry remains
 // deferred. Fresh measured all-in economics is still the only promotion basis.
@@ -129,10 +176,9 @@ assert.match(activeRescue, /const postDecisionTelemetry = setImmediate\(\(\) => 
 assert.match(activeRescue, /profitLadderDatabaseReadOnCriticalPath: false/);
 assert.match(activeRescue, /quoteConfiguredZeroCapitalRoute\(/);
 assert.match(activeRescue, /calculateMeasuredFlashLoanFee\(/);
-assert.match(activeRescue, /freshExactRequoteRequired: true/);
 assert.match(activeRescue, /exactStrictPositiveRequiredBeforePromotion: true/);
 assert.match(activeRescue, /stageOneMutation: false/);
 assert.match(activeRescue, /syntheticEconomics: false/);
 assert.match(activeRescue, /executionAuthority: false/);
 
-console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; APE keeps the resident zero-I/O fast lane, owns every negative candidate it receives without a second fixed BPS floor, uses the existing BPS Super Engine/transformation/research intelligence only to schedule bounded measured work, preserves shared provider races and hedged requotes, and invokes exact pool-disjoint split/shared-principal composite rescue before finally returning without creating another economics or execution authority');
+console.log('[atomic-bps-single-pipeline] PASS: Stage One remains locked; APE reuses resident starting proof before any requote, consumes rescue work in completion order, assigns every valid Route Splitter candidate before splittability can reject exact work, exposes arrived structural alternatives through a resident workbench, piggybacks peer hints without a queue/poll/ack path, and keeps exact aggregate all-in economics plus the canonical executor as the only promotion authorities');
