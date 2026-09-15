@@ -200,21 +200,6 @@ export function recordApeCommandOutcome(input: {
   state.lastTactic = input.tactic;
 }
 
-export function recordApeCommandGroupOutcome(input: {
-  roots: readonly ZeroCapitalOpportunity[];
-  tactic: ApeTactic;
-  elapsedMs: number;
-  improvedRootIds?: ReadonlySet<string>;
-}): void {
-  const improved = input.improvedRootIds ?? new Set<string>();
-  for (const root of input.roots) {
-    const after = improved.has(root.id)
-      ? { ...root, expectedProfit: root.expectedProfit + 1n, netProfitBps: root.netProfitBps + Number.EPSILON }
-      : root;
-    recordApeCommandOutcome({ root, before: root, after, tactic: input.tactic, elapsedMs: input.elapsedMs });
-  }
-}
-
 /** Current-generation retirement only. New Stage-1 evidence creates a new generation. */
 export function candidateRetiredForGeneration(root: ZeroCapitalOpportunity): boolean {
   const state = stateFor(root);
