@@ -46,7 +46,8 @@ has(floor, 'opportunity.expectedProfit >= requiredProfitBaseUnits', 'base-unit s
 has(floor, 'export function clearsStrictPositiveOutputThreshold', 'canonical strict-positive predicate missing');
 has(floor, 'export function needsApeOptimization', 'threshold-independent APE ownership predicate missing');
 has(floor, 'clearsFiveDollarOutputFloor = clearsStrictPositiveOutputThreshold', 'compatibility alias must resolve to strict-positive authority');
-has(floor, 'requiredProfitBaseUnitsForFiveDollarOutput = requiredStrictPositiveProfitBaseUnits', 'legacy base-unit alias must not retain a $5 requirement');
+has(floor, 'export function requiredProfitBaseUnitsForFiveDollarOutput', 'legacy base-unit helper signature missing');
+has(floor, 'return requiredStrictPositiveProfitBaseUnits(opportunity)', 'legacy base-unit helper must resolve to strict-positive authority');
 assert.ok(!floor.includes('ZERO_CAPITAL_MINIMUM_OUTPUT_PROFIT_USD = 5'), 'hard $5 threshold reintroduced');
 
 // Stage 1 remains locked and does not import Stage-2/execution threshold authority.
@@ -68,6 +69,12 @@ has(v4, 'crossCandidateWinnerStops: 0', 'V4 cross-candidate winner stop remains'
 has(v4, 'mapConcurrentCandidateLocal', 'V4 unordered candidate-local concurrency missing');
 assert.ok(!v4.includes('passWinnerFound'), 'global pass winner authority reintroduced');
 assert.ok(!v4.includes('clearsFiveDollarOutputFloor'), 'V4 must not use an execution threshold as an optimization stop');
+
+// Route split also continues after the candidate becomes execution-positive.
+has(split, 'strictPositiveStopsRouteSplitOptimization: false', 'route split stops at strict-positive execution eligibility');
+has(split, 'promotedCompositeStopsRemainingSplitSearch: false', 'route split stops after the first promoted composite');
+assert.ok(!split.includes("'already_five_dollar_output'"), 'route split still rejects already-positive candidates through the old finish gate');
+assert.ok(!split.includes("'resident_five_dollar_output_replaced_split_work'"), 'resident positive improvement still terminates split work');
 
 // Candidate identity/generation has one synchronous in-memory authority.
 has(merit, 'export function getApeCandidateGeneration', 'candidate generation authority missing');
@@ -91,7 +98,7 @@ has(resources, 'clearsFiveDollarOutputFloor', 'resource scheduler lost canonical
 has(barrier, 'evaluateFiveDollarOutputFloor(opportunity, observedAt)', 'pre-broadcast threshold assertion missing');
 has(scheduler, 'clearsFiveDollarOutputFloor(opportunity)', 'scheduler threshold assertion missing');
 has(executor, 'evaluateFiveDollarOutputFloor(opportunity, startedAt)', 'canonical executor threshold assertion missing');
-has(stack, 'requiredProfitBaseUnitsForFiveDollarOutput', 'composite strict-positive base-unit target alias missing');
+has(stack, 'requiredProfitBaseUnitsForFiveDollarOutput', 'composite strict-positive base-unit target compatibility helper missing');
 
 // Gates remain before scarce/I/O work.
 before(resources, 'if (!clearsFiveDollarOutputFloor(opportunity)) return null;', 'const gasDecision = await strictCanonicalGasDecision(opportunity.chain);', 'resource threshold must precede gas decision I/O');
