@@ -8,7 +8,7 @@ import {
 } from '../execution/adapters/flash-loan-provider-economics.js';
 import { selectMeasuredDualFlashLoanAllocation } from '../execution/adapters/dual-flash-loan-provider-mesh.js';
 import {
-  peekResidentBestBpsQuote,
+  peekResidentExactQuote,
   quoteConfiguredZeroCapitalRoute,
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
@@ -641,8 +641,8 @@ export async function runZeroCapitalProfitabilityRescueV4(
 
     const intendedAmount = opportunity.flashLoanAmount;
     const primaryRoute = routes[0];
-    const residentInitial = peekResidentBestBpsQuote(primaryRoute.id);
-    const residentMatchesIntended = residentInitial?.amountIn === intendedAmount;
+    const residentInitial = peekResidentExactQuote(primaryRoute.id, intendedAmount);
+    const residentMatchesIntended = residentInitial !== null;
     if (residentMatchesIntended) residentInitialQuoteHits += 1;
     else residentInitialQuoteMisses += 1;
     const initialQuotePromise: Promise<TimedQuoteResult> = residentMatchesIntended
