@@ -3,6 +3,12 @@ import type { providers } from 'ethers';
 import { zeroCapitalEngine, type SupportedChain, type ZeroCapitalOpportunity } from '../core/zero-capital-engine.js';
 import type { ConfiguredZeroCapitalRoute, QuotedZeroCapitalRoute } from '../execution/adapters/onchain-route-quoter.js';
 import { buildApeProfitabilityToolboxPlan } from './ape-profitability-toolbox.js';
+import {
+  buildApeCandidateRescueSnapshots,
+  buildApeTierBudget,
+  isApeUnresolvedOwnershipCandidate,
+  prioritizeApeRescueCandidates,
+} from './ape-rescue-orchestration.js';
 import { primeApeResidentRouting } from './atomic-profitability-resident-routing.js';
 import { runZeroCapitalAtomicBpsEngine } from './zero-capital-atomic-bps-engine.js';
 import { runZeroCapitalAtomicStackTactic, type AtomicStackTacticResult } from './zero-capital-atomic-stack-wiring.js';
@@ -96,7 +102,15 @@ export async function runFairZeroCapitalProfitabilityRescue(
   const rescueStartedAt = Date.now();
   const maxPasses = recursivePassLimit();
   const wallClockBudgetMs = recursiveWallClockBudgetMs();
-  const deadlineAt = rescueStartedAt + wallClockBudgetMs;
+  const hardDeadlineAt = rescueStartedAt + wallClockBudgetMs;
+  const tierBudget = buildApeTierBudget({
+    candidates: activeRescueCandidates,
+    startedAt: rescueStartedAt,
+    hardDeadlineAt,
+  });
+  // V4 receives only its bounded share of the already-existing window. This
+  // deliberately preserves downstream-tool opportunity without extending latency.
+  const deadlineAt = tierBudget.v4DeadlineAt;
 
   const normalizeToRootIdentity = (
     root: ZeroCapitalOpportunity,
@@ -127,7 +141,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
   if (activeRescueCandidates.length > 0) {
     activeMeasuredRescueInvoked = true;
     try {
-      const passInput = transformed.filter(stillNeedsMeasuredRescue);
+      const passInput = prioritizeApeRescueCandidates({
+        roots: residentFastPath,
+        current: transformed.filter(stillNeedsMeasuredRescue),
+        startedAt: rescueStartedAt,
+      });
       if (passInput.length > 0 && Date.now() < deadlineAt) {
         const measured = await runZeroCapitalProfitabilityRescueV4({
           ...input,
@@ -174,9 +192,30 @@ export async function runFairZeroCapitalProfitabilityRescue(
     opportunity => opportunity.expiresAt > Date.now() && opportunity.expectedProfit > 0n,
   ).length;
 
-  const unresolved = transformed.filter(stillNeedsMeasuredRescue);
+  // Ownership is deliberately independent from freshness. Expiry may prevent a
+  // measured tool from starting, but it may never be recorded as toolbox exhaustion.
+  const unresolvedApeOwned = prioritizeApeRescueCandidates({
+    roots: residentFastPath,
+    current: transformed.filter(isApeUnresolvedOwnershipCandidate),
+    startedAt: rescueStartedAt,
+  });
+  const unresolved = unresolvedApeOwned.filter(stillNeedsMeasuredRescue);
+  const staleButApeOwned = unresolvedApeOwned.filter(opportunity => !stillNeedsMeasuredRescue(opportunity));
+  const rescueSnapshots = buildApeCandidateRescueSnapshots({
+    roots: residentFastPath,
+    current: unresolvedApeOwned,
+    startedAt: rescueStartedAt,
+  });
+
   const compositeStartedAt = Date.now();
   const compositeBudgetMs = compositeToolboxBudgetMs();
+  const latestFreshExpiryAt = unresolved.length > 0
+    ? Math.max(...unresolved.map(opportunity => opportunity.expiresAt))
+    : hardDeadlineAt;
+  const compositeHardDeadlineAt = Math.min(hardDeadlineAt, latestFreshExpiryAt);
+  const canStartCompositeWork = () => Date.now() < compositeHardDeadlineAt
+    && Date.now() - compositeStartedAt < compositeBudgetMs;
+
   let splitResult = emptySplitResult();
   let stackResult = emptyStackResult();
   let routeSplitError: string | null = null;
@@ -184,6 +223,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
   let splitInvoked = false;
   let stackInvoked = false;
   let splitFirst = true;
+  let firstStrictPositiveTool: 'route_split' | 'shared_principal_stack' | null = null;
 
   if (unresolved.length > 0) {
     const driverCounts = new Map<string, number>();
@@ -201,7 +241,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
     splitFirst = impactCount >= fixedCostCount;
 
     const runSplit = async () => {
-      if (Date.now() - compositeStartedAt >= compositeBudgetMs) return;
+      if (!canStartCompositeWork() || firstStrictPositiveTool !== null) return;
       splitInvoked = true;
       splitResult = await runZeroCapitalRouteSplitRescue({
         ...input,
@@ -219,10 +259,11 @@ export async function runFairZeroCapitalProfitabilityRescue(
         });
         return emptySplitResult();
       });
+      if (splitResult.promoted > 0) firstStrictPositiveTool = 'route_split';
     };
 
     const runStack = async () => {
-      if (unresolved.length < 2 || Date.now() - compositeStartedAt >= compositeBudgetMs) return;
+      if (unresolved.length < 2 || !canStartCompositeWork() || firstStrictPositiveTool !== null) return;
       stackInvoked = true;
       stackResult = await runZeroCapitalAtomicStackTactic({
         chain: input.chain,
@@ -239,6 +280,7 @@ export async function runFairZeroCapitalProfitabilityRescue(
         });
         return emptyStackResult();
       });
+      if (stackResult.promoted > 0) firstStrictPositiveTool = 'shared_principal_stack';
     };
 
     if (splitFirst) {
@@ -264,11 +306,18 @@ export async function runFairZeroCapitalProfitabilityRescue(
     alternateRouteIdentityRebindings,
     strictPositiveAfterRescue,
     unresolvedAfterSingleRouteRescue: unresolved.length,
+    unresolvedApeOwnedAfterSingleRouteRescue: unresolvedApeOwned.length,
+    staleButApeOwnedAfterSingleRouteRescue: staleButApeOwned.length,
+    deadlineStoppedIsToolboxExhausted: false,
     activeMeasuredRescueError,
     recursiveMeasuredPasses,
     recursiveMeasuredPassLimit: maxPasses,
     recursiveWallClockBudgetMs: wallClockBudgetMs,
-    recursiveHardDeadlineAt: deadlineAt,
+    recursiveHardDeadlineAt: hardDeadlineAt,
+    v4ReservedDeadlineAt: deadlineAt,
+    downstreamReserveMs: tierBudget.downstreamReserveMs,
+    candidateFreshnessBoundaryAt: tierBudget.freshnessBoundaryAt,
+    candidateUsableWindowMs: tierBudget.usableWindowMs,
     recursiveStrictPositiveStops,
     recursiveNoImprovementStops,
     recursiveWallClockStops,
@@ -276,9 +325,15 @@ export async function runFairZeroCapitalProfitabilityRescue(
     passBarrierRemoved: true,
     candidateLocalAnytimeRefinement: true,
     hardDeadlinePropagatedIntoMeasuredRescue: true,
+    downstreamStatefulOpportunityReservedBeforeV4: tierBudget.downstreamReserveMs > 0,
     recursiveStrictImprovementRequired: true,
     recursiveStopsAtStrictPositivePerCandidate: true,
     recursiveProviderFailureLocal: true,
+    candidatePriorityUsesMeasuredMomentumDistanceSlackAndLatency: true,
+    candidatePriorityNeverOwnsEconomics: true,
+    rescueSnapshotCount: rescueSnapshots.length,
+    rescueSnapshotMaxImprovementBps: rescueSnapshots.reduce((best, item) => Math.max(best, item.improvementBps), 0),
+    rescueSnapshotMaxVelocityBpsPerSecond: rescueSnapshots.reduce((best, item) => Math.max(best, item.improvementVelocityBpsPerSecond), 0),
     fromQuotedRouteContextBound: true,
     stageOneSameReferenceIntoResidentFastPath: true,
     activeRescueCreatesDerivedEvidenceOnly: true,
@@ -297,7 +352,10 @@ export async function runFairZeroCapitalProfitabilityRescue(
     toolboxFinalRescueBeforeReturn: true,
     toolboxCompositeBudgetMs: compositeBudgetMs,
     toolboxCompositeElapsedMs: compositeElapsedMs,
+    toolboxCompositeHardDeadlineAt: compositeHardDeadlineAt,
     toolboxCompositeOrder: splitFirst ? 'route_split_then_shared_principal_stack' : 'shared_principal_stack_then_route_split',
+    firstStrictPositiveTool,
+    skipRemainingStatefulToolsAfterStrictPositive: true,
     routeSplitInvoked: splitInvoked,
     routeSplitAttemptedCandidates: splitResult.attemptedCandidates,
     routeSplitRoutePairsTried: splitResult.routePairsTried,
