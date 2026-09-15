@@ -21,7 +21,6 @@ import {
   zeroCapitalCompositeSelectionRegistry,
   type ZeroCapitalCompositePreparedSelection,
 } from '../execution/zero-capital-composite-selection-registry.js';
-import { getProfitLadderDailyProfitBudget } from '../governance/profit-ladder-daily-profit-budget.js';
 import { adaptiveTopologyOptimizer } from '../optimization/adaptive-topology-optimizer.js';
 import {
   zeroCapitalCompositeEvidenceRegistry,
@@ -532,28 +531,46 @@ async function runGroup(input: {
   }).catch(() => null);
   if (!compositeCapability) return { measuredVariants: 0, promotedOpportunityId: null };
 
-  const budget = await getProfitLadderDailyProfitBudget().catch(() => null);
   const variants = stackVariants(stack).filter(variant => variant.every(member => member.expiresAt > Date.now()));
-  const settled = await Promise.allSettled(variants.map(variant => measureTargetStack({
-    chain: input.chain,
-    provider: input.provider,
-    wallet: input.wallet,
-    receiver: compositeCapability.address,
-    opportunities: variant,
-  })));
-  const measured = settled
-    .filter((result): result is PromiseFulfilledResult<MeasuredTargetStack | null> => result.status === 'fulfilled')
-    .map(result => result.value)
-    .filter((result): result is MeasuredTargetStack => result !== null);
-  if (measured.length === 0) return { measuredVariants: variants.length, promotedOpportunityId: null };
+  if (variants.length === 0) return { measuredVariants: 0, promotedOpportunityId: null };
 
-  measured.sort((left, right) => {
-    if (right.evidence.combinedExpectedProfit !== left.evidence.combinedExpectedProfit) {
-      return right.evidence.combinedExpectedProfit > left.evidence.combinedExpectedProfit ? 1 : -1;
+  // Completion-order, bounded-wave measurement: a strict-positive exact result can
+  // advance immediately instead of waiting for every slower variant. At most one
+  // sibling measurement can remain read-only after an early win; it has no
+  // promotion/execution authority and its result is ignored.
+  const waveWidth = Math.min(2, variants.length);
+  let measuredVariants = 0;
+  let abandonedReadOnlyMeasurements = 0;
+  let best: MeasuredTargetStack | null = null;
+
+  for (let offset = 0; offset < variants.length && !best; offset += waveWidth) {
+    const wave = variants.slice(offset, offset + waveWidth);
+    const active = new Map<number, Promise<{ index: number; measured: MeasuredTargetStack | null }>>();
+    wave.forEach((variant, index) => {
+      const pending = measureTargetStack({
+        chain: input.chain,
+        provider: input.provider,
+        wallet: input.wallet,
+        receiver: compositeCapability.address,
+        opportunities: variant,
+      }).then(
+        measured => ({ index, measured }),
+        () => ({ index, measured: null }),
+      );
+      active.set(index, pending);
+    });
+
+    while (active.size > 0 && !best) {
+      const settled = await Promise.race([...active.values()]);
+      active.delete(settled.index);
+      measuredVariants += 1;
+      if (!settled.measured) continue;
+      best = settled.measured;
+      abandonedReadOnlyMeasurements += active.size;
     }
-    return right.evidence.sharedPrincipalStackedBps - left.evidence.sharedPrincipalStackedBps;
-  });
-  const best = measured[0];
+  }
+
+  if (!best) return { measuredVariants, promotedOpportunityId: null };
   promoteMeasuredStack(best);
 
   const bestInputTokenUsdPrice = Number(best.opportunity.inputAssetUsdPrice);
@@ -571,15 +588,17 @@ async function runGroup(input: {
     combinedExpectedProfitUsd: expectedNetProfitUsd,
     achievedNetProfitBps: best.evidence.sharedPrincipalStackedBps,
     measuredCompositionGain: best.evidence.measuredCompositionGain.toString(),
-    dailyProfitCapUsd: budget?.dailyProfitCapUsd ?? null,
-    dailyRealizedProfitUsd: budget?.realizedProfitUsd ?? null,
-    dailyRemainingProfitUsd: budget?.remainingProfitUsd ?? null,
+    measuredVariantsBeforePromotion: measuredVariants,
+    abandonedReadOnlyMeasurements,
+    completionOrderVariantMeasurement: true,
+    fullVariantBatchBarrier: false,
+    profitLadderReadOnMeasurementPath: false,
     profitLadderCompositionVetoAuthority: false,
     promotionAuthority: 'single_atomic_bps_engine',
     independentRegistryListener: false,
     executionAuthority: false,
   });
-  return { measuredVariants: variants.length, promotedOpportunityId: best.opportunity.id };
+  return { measuredVariants, promotedOpportunityId: best.opportunity.id };
 }
 
 /**
@@ -669,10 +688,13 @@ export function ensureZeroCapitalAtomicStackWiring(): void {
     independentPromotionAuthority: false,
     promotionAuthority: 'single_atomic_bps_engine',
     parallelVariantMeasurement: true,
+    completionOrderVariantMeasurement: true,
+    fullVariantBatchBarrier: false,
     exactStrictPositiveCompositeCallRequired: true,
     exactCompositeGasEstimateRequired: true,
     measuredBalancerFlashFeeRequired: true,
     measuredCompositionBenefitRequired: true,
+    profitLadderReadOnMeasurementPath: false,
     profitLadderCompositionVetoAuthority: false,
     borrowingNotionalAuthority: false,
     syntheticEconomics: false,
