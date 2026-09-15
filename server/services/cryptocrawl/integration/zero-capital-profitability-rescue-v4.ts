@@ -8,6 +8,7 @@ import {
 } from '../execution/adapters/flash-loan-provider-economics.js';
 import { selectMeasuredDualFlashLoanAllocation } from '../execution/adapters/dual-flash-loan-provider-mesh.js';
 import {
+  peekResidentBestBpsQuote,
   quoteConfiguredZeroCapitalRoute,
   type ConfiguredZeroCapitalRoute,
   type QuotedZeroCapitalRoute,
@@ -477,22 +478,45 @@ function quoteWithDeadline(
   });
 }
 
-async function mapConcurrent<T, R>(
+async function mapConcurrentUntilStrictPositive<T, R>(
   items: readonly T[],
   limit: number,
   worker: (item: T, index: number) => Promise<R>,
+  stopWhen: (result: R) => boolean,
+  fallback: (item: T) => R,
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
+  const active = new Map<number, Promise<{ index: number; result: R }>>();
   let cursor = 0;
-  const runner = async () => {
-    while (true) {
+
+  const launch = () => {
+    while (active.size < Math.min(limit, items.length) && cursor < items.length) {
       const index = cursor;
       cursor += 1;
-      if (index >= items.length) return;
-      results[index] = await worker(items[index], index);
+      const item = items[index];
+      const pending = worker(item, index).then(
+        result => ({ index, result }),
+        () => ({ index, result: fallback(item) }),
+      );
+      active.set(index, pending);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => runner()));
+
+  launch();
+  let stopped = false;
+  while (active.size > 0 && !stopped) {
+    const settled = await Promise.race([...active.values()]);
+    active.delete(settled.index);
+    results[settled.index] = settled.result;
+    stopped = stopWhen(settled.result);
+    if (!stopped) launch();
+  }
+
+  // Outstanding work already in transport may settle, but it has no authority to
+  // publish after the shared winner flag is set. Do not wait for it here.
+  for (let index = 0; index < items.length; index += 1) {
+    if (results[index] === undefined) results[index] = fallback(items[index]);
+  }
   return results;
 }
 
@@ -542,6 +566,11 @@ export async function runZeroCapitalProfitabilityRescueV4(
   let toolboxPlansBuilt = 0;
   let toolboxRouteFirstSearches = 0;
   let toolboxSizeFirstSearches = 0;
+  let residentInitialQuoteHits = 0;
+  let residentInitialQuoteMisses = 0;
+  let residentFreshnessInherited = 0;
+  let candidateBatchEarlyStops = 0;
+  let passWinnerFound = false;
 
   const toolboxPlanFor = (opportunity: ZeroCapitalOpportunity): ApeProfitabilityToolboxPlan | null => {
     if (toolboxPlans.has(opportunity.id)) return toolboxPlans.get(opportunity.id) ?? null;
@@ -558,7 +587,6 @@ export async function runZeroCapitalProfitabilityRescueV4(
   const providerKeyFor = (opportunity: ZeroCapitalOpportunity) => `${chain}:${opportunity.inputToken.toLowerCase()}`;
   for (const opportunity of opportunities) {
     if (!recoverableByAtomicSurplus(opportunity) || deadlineReached(deadlineAt)) continue;
-    toolboxPlanFor(opportunity);
     const key = providerKeyFor(opportunity);
     if (providerRaces.has(key)) continue;
     providerRaceCount += 1;
@@ -590,19 +618,39 @@ export async function runZeroCapitalProfitabilityRescueV4(
     return pending;
   };
 
+  const deriveFromQuote = (
+    opportunity: ZeroCapitalOpportunity,
+    quote: QuotedZeroCapitalRoute,
+    inheritCurrentFreshness: boolean,
+  ): ZeroCapitalOpportunity => {
+    const refined = fromQuotedRoute(quote, blockTimestamp(opportunity));
+    if (!inheritCurrentFreshness) return refined;
+    refined.timestamp = opportunity.timestamp;
+    refined.expiresAt = Math.min(opportunity.expiresAt, refined.expiresAt);
+    if (opportunity.inputAssetUsdPrice !== undefined) refined.inputAssetUsdPrice = opportunity.inputAssetUsdPrice;
+    residentFreshnessInherited += 1;
+    return refined;
+  };
+
   const refineOnce = async (opportunity: ZeroCapitalOpportunity): Promise<ZeroCapitalOpportunity> => {
-    if (!recoverableByAtomicSurplus(opportunity) || deadlineReached(deadlineAt)) return opportunity;
+    if (passWinnerFound || !recoverableByAtomicSurplus(opportunity) || deadlineReached(deadlineAt)) return opportunity;
     const routes = compatibleRoutesForOpportunity(configuredRoutes, opportunity);
     if (routes.length === 0) return opportunity;
     const providerRace = providerRaces.get(providerKeyFor(opportunity));
     if (!providerRace) return opportunity;
-    const toolboxPlan = toolboxPlanFor(opportunity);
 
     const intendedAmount = opportunity.flashLoanAmount;
     const primaryRoute = routes[0];
-    const initialQuotePromise = quoteOnce(primaryRoute, intendedAmount);
+    const residentInitial = peekResidentBestBpsQuote(primaryRoute.id);
+    const residentMatchesIntended = residentInitial?.amountIn === intendedAmount;
+    if (residentMatchesIntended) residentInitialQuoteHits += 1;
+    else residentInitialQuoteMisses += 1;
+    const initialQuotePromise: Promise<TimedQuoteResult> = residentMatchesIntended
+      ? Promise.resolve({ quote: residentInitial, timedOut: false, failed: false, elapsedMs: 0, deadlineExhausted: false })
+      : quoteOnce(primaryRoute, intendedAmount);
     const providerMeasurementsPromise = awaitWithDeadline(providerRace, deadlineAt, [] as FlashLoanProviderEconomics[]);
     const [initialResult, providerMeasurements] = await Promise.all([initialQuotePromise, providerMeasurementsPromise]);
+    if (passWinnerFound) return opportunity;
     if (deadlineReached(deadlineAt) && providerMeasurements.length === 0) {
       hardDeadlineStops += 1;
       return opportunity;
@@ -620,14 +668,23 @@ export async function runZeroCapitalProfitabilityRescueV4(
     if (intendedAmount > fundingCeiling) providerCapacityResizes += 1;
 
     let best: QuotedZeroCapitalRoute | null = null;
+    let bestInheritsCurrentFreshness = false;
     let initialRouteFailed = initialResult.quote === null;
     if (initialResult.timedOut) routeQuoteTimeouts += 1;
     else if (initialResult.failed) routeQuoteFailures += 1;
 
-    const consider = (quote: QuotedZeroCapitalRoute | null, plan: FundingPlan | null): boolean => {
+    const consider = (
+      quote: QuotedZeroCapitalRoute | null,
+      plan: FundingPlan | null,
+      inheritsCurrentFreshness = false,
+    ): boolean => {
       if (!quote || !plan) return false;
       const adjusted = adjustForFundingPlan(quote, plan);
-      best = quoteBetter(best, adjusted);
+      const selected = quoteBetter(best, adjusted);
+      if (selected === adjusted) {
+        best = adjusted;
+        bestInheritsCurrentFreshness = inheritsCurrentFreshness;
+      }
       if (plan.kind === 'single') singleProviderPlansUsed += 1;
       else dualProviderPlansUsed += 1;
       const priorMax = routeMaxSuccessfulAmount.get(quote.id) ?? 0n;
@@ -635,8 +692,8 @@ export async function runZeroCapitalProfitabilityRescueV4(
       return clearsStrictProfitability(adjusted);
     };
 
-    if (consider(initialResult.quote, intendedFundingPlan)) {
-      const refined = fromQuotedRoute(best!, blockTimestamp(opportunity));
+    if (consider(initialResult.quote, intendedFundingPlan, Boolean(residentMatchesIntended))) {
+      const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness);
       if (refined.expiresAt > refined.timestamp && refined.expiresAt > Date.now() && strictImprovement(opportunity, best!)) {
         improved += 1;
         strictPositiveRecoveries += 1;
@@ -644,6 +701,9 @@ export async function runZeroCapitalProfitabilityRescueV4(
       }
     }
 
+    // Advisory scheduling is deferred until it can actually replace additional
+    // search work. A resident strict-positive recovery above never pays this cost.
+    const toolboxPlan = toolboxPlanFor(opportunity);
     const safeEvidence = safeProviderEvidence(providerMeasurements);
     const amounts = buildApeTargetAmounts({
       intended: intendedAmount,
@@ -686,7 +746,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
       for (const route of routes.slice(1)) addTarget(route, amount);
     }
 
-    for (let offset = 0; offset < targets.length && !deadlineReached(deadlineAt); offset += waveWidth) {
+    for (let offset = 0; offset < targets.length && !passWinnerFound && !deadlineReached(deadlineAt); offset += waveWidth) {
       const wave = targets.slice(offset, offset + waveWidth);
       if (wave.length === 0) break;
       hedgedWaves += 1;
@@ -696,7 +756,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
         active.set(index, pending);
       });
 
-      while (active.size > 0 && !deadlineReached(deadlineAt)) {
+      while (active.size > 0 && !passWinnerFound && !deadlineReached(deadlineAt)) {
         const settled = await Promise.race([...active.values()]);
         active.delete(settled.index);
         const { target, result } = settled;
@@ -712,9 +772,9 @@ export async function runZeroCapitalProfitabilityRescueV4(
           routeResizeRecoveries += 1;
           initialRouteFailed = false;
         }
-        if (!consider(result.quote, target.plan)) continue;
+        if (!consider(result.quote, target.plan, false)) continue;
 
-        const refined = fromQuotedRoute(best!, blockTimestamp(opportunity));
+        const refined = deriveFromQuote(opportunity, best!, bestInheritsCurrentFreshness);
         if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
           invalidFreshRefinement += 1;
           break;
@@ -734,7 +794,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
       return opportunity;
     }
 
-    const refined = fromQuotedRoute(best, blockTimestamp(opportunity));
+    const refined = deriveFromQuote(opportunity, best, bestInheritsCurrentFreshness);
     if (refined.expiresAt <= refined.timestamp || refined.expiresAt <= Date.now()) {
       invalidFreshRefinement += 1;
       return opportunity;
@@ -747,23 +807,36 @@ export async function runZeroCapitalProfitabilityRescueV4(
   };
 
   const evaluate = async (root: ZeroCapitalOpportunity): Promise<ZeroCapitalOpportunity> => {
-    if (!recoverableByAtomicSurplus(root)) return root;
+    if (passWinnerFound || !recoverableByAtomicSurplus(root)) return root;
     let current = root;
     for (let refinement = 0; refinement < refinementLimit; refinement += 1) {
-      if (deadlineReached(deadlineAt) || current.expectedProfit > 0n) break;
+      if (passWinnerFound || deadlineReached(deadlineAt) || current.expectedProfit > 0n) break;
       anytimeRefinementIterations += 1;
       const next = await refineOnce(current);
+      if (passWinnerFound) return current;
       if (next === current || next.netProfitBps <= current.netProfitBps) break;
+      if (next.expectedProfit > 0n) passWinnerFound = true;
       if (input.onImprovement) {
         streamingImprovementCallbacks += 1;
         input.onImprovement(root, current, next);
       }
       current = next;
+      if (passWinnerFound) break;
     }
     return current;
   };
 
-  const output = await mapConcurrent(opportunities, concurrency, evaluate);
+  const output = await mapConcurrentUntilStrictPositive(
+    opportunities,
+    concurrency,
+    evaluate,
+    result => {
+      const won = (result as ZeroCapitalOpportunity).expectedProfit > 0n;
+      if (won) candidateBatchEarlyStops += 1;
+      return won;
+    },
+    item => item,
+  );
   const elapsedMs = Date.now() - passStartedAt;
   const timeoutRate = targetedQuoteAttempts > 0 ? routeQuoteTimeouts / targetedQuoteAttempts : 0;
   const nextConcurrency = updateConcurrency(chain, concurrency, timeoutRate, opportunities.length, elapsedMs, passBudgetMs);
@@ -794,6 +867,7 @@ export async function runZeroCapitalProfitabilityRescueV4(
     configuredQuoteTimeoutCeilingMs: targetedQuoteTimeoutMs(), adaptiveRouteP95Timeouts: true,
     targetedQuoteAttempts, hedgedWaveWidth: waveWidth, hedgedWaves, hedgedOutstandingAbandoned,
     strictPositiveEarlyWins, candidateRescueSerial: false, quoteStormBudget42Removed: true,
+    candidateBatchEarlyStops, fullCandidateBatchBarrier: false,
     providerRaceCount, providerProbeFailures, sharedProviderRace: true,
     providerRaceScope: 'one_per_pass_chain_asset', quoteAndProviderProbeParallel: true,
     providerSelectionBlocksInitialRouteDiscovery: false,
@@ -802,6 +876,9 @@ export async function runZeroCapitalProfitabilityRescueV4(
     providerStacking: 'aave_v3_plus_balancer_v2_when_verified_execution_topology_can_fund_or_reduce_fee',
     morphoStackingEnabled: false, morphoStackingReason: 'no_verified_multi_provider_execution_topology_found',
     routeQuoteFailures, routeQuoteTimeouts, routeResizeRecoveries, routeAlternativesTried,
+    residentInitialQuoteHits, residentInitialQuoteMisses, residentFreshnessInherited,
+    unchangedPrimaryRouteRequoteAvoidedWhenResidentExactSizeExists: true,
+    residentQuoteNeverExtendsCandidateFreshness: true,
     routeMeasuredCapacitySignals: [...routeMaxSuccessfulAmount.entries()].map(([routeId, maxSuccessfulAmount]) => ({
       routeId, maxSuccessfulAmount: maxSuccessfulAmount.toString(),
     })),
@@ -821,11 +898,13 @@ export async function runZeroCapitalProfitabilityRescueV4(
     economicTransformationAdviceUsedForSearchScheduling: true,
     researchBpsTacticsUsedForSearchScheduling: true,
     advisoryCanVetoDeterministicPositive: false,
+    advisoryBpsIntelligenceBeforeResidentInitialProof: false,
     combinationsExhausted, improved, partialBpsImprovements, strictPositiveRecoveries, invalidFreshRefinement,
     anytimeRefinementIterations, streamingImprovementCallbacks, passBarrierRemoved: true,
     candidateLocalRecursiveFeedback: true, refinementLimit,
-    advisoryBpsIntelligenceOnCriticalPath: true, profitLadderDatabaseReadOnCriticalPath: false,
-    feeOrderingChanged: false, stageOneMutation: false, freshExactRequoteRequired: true,
+    advisoryBpsIntelligenceOnCriticalPath: toolboxPlansBuilt > 0, profitLadderDatabaseReadOnCriticalPath: false,
+    feeOrderingChanged: false, stageOneMutation: false,
+    freshExactRequoteRequired: residentInitialQuoteMisses > 0,
     exactStrictPositiveRequiredBeforePromotion: true, syntheticEconomics: false, executionAuthority: false,
   });
 
